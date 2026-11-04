@@ -31,6 +31,7 @@ const doc = (...paragraphs: string[]) => ({
 interface Diff {
   from: number;
   to: number;
+  hiddenChanges: number;
   changes: {
     field: string;
     name?: string;
@@ -193,6 +194,14 @@ describe('comparing entry versions over HTTP', () => {
     const body = (await res.json()) as Diff;
     expect(body.changes.map((c) => c.field)).not.toContain('internalNotes');
     expect(JSON.stringify(body)).not.toContain('draft two');
+    // Counted, so a publisher is never told nothing changed; never named.
+    expect(body.hiddenChanges).toBe(1);
+    expect(JSON.stringify(body)).not.toContain('internalNotes');
+
+    const same = (await (await diff('from=draft&to=draft', reader)).json()) as Diff;
+    expect(same.hiddenChanges).toBe(0);
+    const open = (await (await diff('from=published&to=draft', admin)).json()) as Diff;
+    expect(open.hiddenChanges).toBe(0);
 
     const page = await app.request(`${M}/entries`, {
       method: 'POST',

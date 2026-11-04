@@ -10,20 +10,15 @@ import {
   AlertDialogTitle,
 } from '@contentworker/ui/alert-dialog';
 import { Button } from '@contentworker/ui/button';
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from '@contentworker/ui/sheet';
+import { Sheet, SheetDescription, SheetHeader, SheetTitle } from '@contentworker/ui/sheet';
 import { SkeletonText } from '@contentworker/ui/skeleton';
 import { type InfiniteData, useQueryClient } from '@tanstack/react-query';
 import { FileText } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate, useParams } from 'react-router';
+import { useNavigate, useParams, useSearchParams } from 'react-router';
 import { BulkJobProgress } from '~/cms/components/bulk-job-progress';
 import { EntryFilterBar } from '~/cms/components/EntryFilterBar';
+import { InlineConfirm } from '~/cms/components/InlineConfirm';
 import {
   LoadingStatus,
   PageSkeleton,
@@ -32,7 +27,8 @@ import {
   rememberedCount,
 } from '~/cms/components/loading';
 import { Empty, EmptyState, PageHeader } from '~/cms/components/page';
-import { EntryDiff } from '../components/EntryDiff';
+import { ResponsiveSheetContent } from '~/cms/components/responsive-sheet';
+import { ColumnPicker } from '../components/entries/ColumnPicker';
 import {
   EntriesTable,
   type EntryRowActions,
@@ -40,10 +36,18 @@ import {
   SORT_UPDATED,
 } from '../components/entries/EntriesTable';
 import { EntryBulkBar } from '../components/entries/EntryBulkBar';
+import { EntryDiff } from '../components/entries/EntryReview';
 import { PublishConfirm } from '../components/entries/PublishConfirm';
+import { SavedViewsMenu } from '../components/entries/SavedViewsMenu';
 import { orDirect, useAssistantEdit, usePageContext } from '../lib/assistant';
 import { bulkSummary, jobFailures, jobOutcome } from '../lib/bulk-jobs';
 import { useClient } from '../lib/client-context';
+import {
+  CONNECTION_PARAMS,
+  type EntryListState,
+  listStateFromParams,
+  listStateToParams,
+} from '../lib/entry-url';
 import { plural } from '../lib/format';
 import {
   ApiError,
@@ -107,7 +111,10 @@ const JOB_VERBS: Record<TrashJobAction, { readonly done: string; readonly doing:
   purge: { done: 'Permanently deleted', doing: 'Permanently deleting' },
 };
 
-/** What a bulk confirm asks about: publishing, or the trash's two that need asking. */
+/**
+ * What a bulk confirm asks about. Publish and purge can't be undone, so they ask in a modal;
+ * Unpublish (its toast has Undo) and the trash (its entries can be restored) ask in place.
+ */
 type BulkConfirm = 'publish' | 'unpublish' | 'trash' | 'purge';
 
 /** Each confirm's question, what it says will happen, and its button. */
@@ -184,6 +191,7 @@ export function EntriesList() {
   // Bulk action awaiting confirmation (bulk selections are tedious to rebuild,
   // so the whole batch is confirmed once before it runs).
   const [confirmBulk, setConfirmBulk] = useState<BulkConfirm | null>(null);
+  const bulkBarRef = useRef<HTMLDivElement>(null);
   // A trash, restore or permanent delete of the ticked entries, running as a job on the server.
   const [entryJob, setEntryJob] = useState<{
     readonly action: TrashJobAction;
@@ -201,16 +209,25 @@ export function EntriesList() {
     readonly count: number;
     readonly reason: string;
   } | null>(null);
-  // Filter state is bound to the type it was authored for and reset in-render
-  // when the type changes, so a stale filter (naming another type's fields)
-  // can never be combined with the new type's query key — not even for the
-  // 250ms the debounce would otherwise lag.
-  const [filterState, setFilterState] = useState<{
-    typeId: string | undefined;
-    query: EntryListQuery;
-  }>({ typeId, query: {} });
-  if (filterState.typeId !== typeId) {
-    setFilterState({ typeId, query: {} });
+  // The list's filters, search, sort, columns and open saved view are its URL, so a link and a
+  // view agree and Back undoes a view picked. The URL belongs to this type's page: another type is
+  // another path, with none of this one's filters (which name this type's fields).
+  const [searchParams, setSearchParams] = useSearchParams();
+  const listState = useMemo(() => listStateFromParams(searchParams), [searchParams]);
+  const filterState = useMemo(() => ({ typeId, query: listState.query }), [typeId, listState]);
+  const setListState = (next: EntryListState, opts: { push?: boolean } = {}) => {
+    const params = listStateToParams(next);
+    // The connection's own parameters stay where they are.
+    for (const key of CONNECTION_PARAMS) {
+      const value = searchParams.get(key);
+      if (value !== null) params.set(key, value);
+    }
+    setSearchParams(params, { replace: !opts.push });
+  };
+  // What is ticked, open or being confirmed is per type: reset in-render when the type changes.
+  const [shownType, setShownType] = useState(typeId);
+  if (shownType !== typeId) {
+    setShownType(typeId);
     setPicked(new Set());
     setDiffEntry(null);
     setConfirmPurge(null);
@@ -221,8 +238,8 @@ export function EntriesList() {
     // A running job is kept: it goes on on the server whatever is open, and its card (and the
     // reload when it ends) still say what it did. Only what is ticked is per type.
   }
-  const query = filterState.typeId === typeId ? filterState.query : {};
-  const setQuery = (q: EntryListQuery) => setFilterState({ typeId, query: q });
+  const query = listState.query;
+  const setQuery = (q: EntryListQuery) => setListState({ ...listState, query: q });
 
   const selectedType = types.find((t) => t.apiId === typeId);
   usePageContext(
@@ -296,6 +313,10 @@ export function EntriesList() {
     }, BULK_JOB_POLL_MS);
     return () => clearInterval(timer);
   }, [runningJob, client]);
+  // Asked in place, the list stays usable: clearing the ticks answers the question.
+  useEffect(() => {
+    if (picked.size === 0) setConfirmBulk(null);
+  }, [picked.size]);
   // Once it has finished: say so, reload the list, and keep what failed ticked, named from the
   // job's report. Once per finished job (polling stops, so the object no longer changes).
   const finishedJob = entryJob && entryJob.job.status !== 'running' ? entryJob : null;
@@ -534,8 +555,8 @@ export function EntriesList() {
       action === 'publish' ? needsPublish(statusOf(id)) : isLive(statusOf(id)),
     );
 
-  // A bulk change through the assistant's card. Without it, the page's own dialog confirms the
-  // batch (`confirmBulk`), and `bulk` runs it straight through the API.
+  // A bulk change through the assistant's card. Without it, the page confirms the batch itself
+  // (`confirmBulk`), and `bulk` runs it straight through the API.
   const requestBulk = (action: 'publish' | 'unpublish') => {
     const ids = bulkIds(action);
     const verb = action === 'publish' ? 'Published' : 'Unpublished';
@@ -559,7 +580,7 @@ export function EntriesList() {
   // The trash's bulk actions run as a job on the server over everything ticked, and this tab
   // watches it, as the asset library does. Moving to the trash and deleting for good stop at the
   // assistant's card (`bulk_job_start`), whose answer is the job, followed here as if this page
-  // had started it; without the assistant, the page's own dialog asks. Restoring runs at once,
+  // had started it; without the assistant, the page asks itself. Restoring runs at once,
   // straight through the API, as a row's Restore does. The bar waits while a job runs.
   const followJob = (action: TrashJobAction, job: BulkJobSummary) => {
     setBulkFailures(null);
@@ -786,9 +807,15 @@ export function EntriesList() {
   }
 
   const count = entries.length;
-  const hasQuery = (query.filters?.length ?? 0) > 0 || !!query.search || query.mine === true;
-  // Clearing filters keeps the sort and the trash view: they aren't filters.
-  const clearFilters = () => setQuery({ order: query.order, trashed: query.trashed });
+  const hasQuery =
+    (query.filters?.length ?? 0) > 0 ||
+    !!query.search ||
+    query.where !== undefined ||
+    query.mine === true ||
+    (query.linksToEntry?.length ?? 0) > 0;
+  // Clearing filters keeps the sort, the trash view and kept link parameters: they aren't filters.
+  const clearFilters = () =>
+    setQuery({ order: query.order, trashed: query.trashed, extra: query.extra });
   const sortBy = (field: string) => {
     const order = nextOrder(query.order?.[0], field);
     setQuery({ ...query, order: order ? [order] : undefined });
@@ -801,6 +828,39 @@ export function EntriesList() {
         ? [...picked]
         : [];
   const confirmCopy = confirmBulk ? CONFIRM_COPY[confirmBulk] : null;
+  // What the batch changes, by name: the first few, then how many more.
+  const confirmNames = (
+    <ul className="space-y-0.5 text-sm">
+      {confirmIds.slice(0, NAMED).map((id) => (
+        <li key={id}>
+          <span className="font-medium">{titleOf(id)}</span>
+          {idDetail(id, titleOf(id))}
+        </li>
+      ))}
+      {confirmIds.length > NAMED ? (
+        <li className="text-muted-foreground">and {confirmIds.length - NAMED} more</li>
+      ) : null}
+    </ul>
+  );
+  const runConfirmed = () => {
+    const action = confirmBulk;
+    setConfirmBulk(null);
+    if (action === 'publish') void bulk('publish', 'Published', 'published');
+    else if (action === 'unpublish') void bulk('unpublish', 'Unpublished', 'draft');
+    else if (action) void startJob(action);
+  };
+  // Where focus goes from an answer asked in place: the bar's button that asked, disabled by the
+  // job it may have started, else Clear, or the search once the bar has gone with the selection.
+  const afterBulkAsk = (action: BulkConfirm) => {
+    const asked = bulkBarRef.current?.querySelector<HTMLButtonElement>(
+      `[data-bulk-action="${action}"]`,
+    );
+    if (asked && !asked.disabled) return asked;
+    return (
+      bulkBarRef.current?.querySelector<HTMLElement>('[aria-label="Clear selection"]') ??
+      document.querySelector<HTMLElement>('[aria-label="Search entries"]')
+    );
+  };
   // The total is known only for the whole type: filters and the trash count what was read, with a
   // "+" while more may follow.
   const total =
@@ -854,7 +914,7 @@ export function EntriesList() {
       {/* Ticking anything swaps the filter bar for what can be done to the ticked entries, held
           under the shell's header; the table's sticky header sits under it (`--sticky-above`). */}
       {bulkBar ? (
-        <div className="sticky top-(--shell-h) z-20 -my-2 bg-background py-2">
+        <div ref={bulkBarRef} className="sticky top-(--shell-h) z-20 -my-2 bg-background py-2">
           {viewingTrash ? (
             <EntryBulkBar
               count={picked.size}
@@ -882,9 +942,50 @@ export function EntriesList() {
               onClear={() => setPicked(new Set())}
             />
           )}
+          {(confirmBulk === 'unpublish' || confirmBulk === 'trash') && confirmCopy ? (
+            <InlineConfirm
+              className="mt-2"
+              message={confirmCopy.title(plural(confirmIds.length, 'entry', 'entries'))}
+              note={confirmCopy.says}
+              details={confirmNames}
+              cancelLabel={confirmCopy.keep}
+              onCancel={() => setConfirmBulk(null)}
+              returnFocus={() => afterBulkAsk(confirmBulk)}
+            >
+              <Button type="button" size="sm" disabled={busy} onClick={runConfirmed}>
+                {confirmCopy.button}
+              </Button>
+            </InlineConfirm>
+          ) : null}
         </div>
       ) : (
-        <EntryFilterBar type={selectedType} value={query} onChange={setQuery} />
+        <EntryFilterBar
+          type={selectedType}
+          value={query}
+          onChange={setQuery}
+          leading={
+            // Views are of the live list, not the trash.
+            viewingTrash ? undefined : (
+              <SavedViewsMenu
+                type={selectedType}
+                state={listState}
+                onApply={(next) => {
+                  setPicked(new Set());
+                  setListState(next, { push: true });
+                }}
+                canShare={access?.scopes.includes('content:manage') ?? false}
+                subject={access?.subject}
+              />
+            )
+          }
+          trailing={
+            <ColumnPicker
+              type={selectedType}
+              columns={listState.columns}
+              onChange={(columns) => setListState({ ...listState, columns })}
+            />
+          }
+        />
       )}
       <p className="sr-only" aria-live="polite">
         {picked.size > 0 ? `${plural(picked.size, 'entry', 'entries')} selected` : ''}
@@ -968,6 +1069,7 @@ export function EntriesList() {
             onPickAll={() => {}}
             actions={rowActions}
             order={query.order?.[0]}
+            columns={listState.columns}
             pending={rememberedCount(countKey)}
           />
         </>
@@ -1000,6 +1102,7 @@ export function EntriesList() {
               onPickAll={(all) => setPicked(all ? new Set(entries.map((e) => e.id)) : new Set())}
               actions={rowActions}
               order={query.order?.[0]}
+              columns={listState.columns}
               onSort={sortBy}
               onLoadMore={hasMore ? () => void entriesQuery.fetchNextPage() : undefined}
               loadingMore={entriesQuery.isFetchingNextPage}
@@ -1024,8 +1127,10 @@ export function EntriesList() {
         </Refreshing>
       )}
 
+      {/* Publishing and deleting for good have no way back, so they are the modal ones: the rest
+          of the bulk bar asks in place, under it. */}
       <AlertDialog
-        open={confirmBulk !== null}
+        open={confirmBulk === 'publish' || confirmBulk === 'purge'}
         onOpenChange={(open) => {
           if (!open) setConfirmBulk(null);
         }}
@@ -1037,30 +1142,13 @@ export function EntriesList() {
             </AlertDialogTitle>
             <AlertDialogDescription>{confirmCopy?.says}</AlertDialogDescription>
           </AlertDialogHeader>
-          {/* What the batch changes, by name: the first few, then how many more. */}
-          <ul className="space-y-0.5 text-sm">
-            {confirmIds.slice(0, NAMED).map((id) => (
-              <li key={id}>
-                <span className="font-medium">{titleOf(id)}</span>
-                {idDetail(id, titleOf(id))}
-              </li>
-            ))}
-            {confirmIds.length > NAMED ? (
-              <li className="text-muted-foreground">and {confirmIds.length - NAMED} more</li>
-            ) : null}
-          </ul>
+          {confirmNames}
           <AlertDialogFooter>
             <AlertDialogCancel>{confirmCopy?.keep}</AlertDialogCancel>
             <AlertDialogAction
               variant={confirmBulk === 'purge' ? 'destructive' : 'default'}
               disabled={busy}
-              onClick={() => {
-                const action = confirmBulk;
-                setConfirmBulk(null);
-                if (action === 'publish') void bulk('publish', 'Published', 'published');
-                else if (action === 'unpublish') void bulk('unpublish', 'Unpublished', 'draft');
-                else if (action) void startJob(action);
-              }}
+              onClick={runConfirmed}
             >
               {confirmCopy?.button}
             </AlertDialogAction>
@@ -1074,7 +1162,6 @@ export function EntriesList() {
           if (!open) setConfirmPublish(null);
         }}
         title={confirmPublish ? titleOf(confirmPublish.id) : ''}
-        contentType={selectedType}
         status={confirmPublish?.status}
         compare={
           confirmPublish ? { client, entry: confirmPublish, locale: conn.locale } : undefined
@@ -1112,6 +1199,7 @@ export function EntriesList() {
           <AlertDialogFooter>
             <AlertDialogCancel>Keep in trash</AlertDialogCancel>
             <AlertDialogAction
+              variant="destructive"
               disabled={busy}
               onClick={() => {
                 const entry = confirmPurge;
@@ -1126,7 +1214,7 @@ export function EntriesList() {
       </AlertDialog>
 
       <Sheet open={!!diffEntry} onOpenChange={(o) => !o && setDiffEntry(null)}>
-        <SheetContent side="right" className="w-full overflow-y-auto sm:max-w-xl">
+        <ResponsiveSheetContent className="w-full overflow-y-auto sm:max-w-xl">
           <SheetHeader>
             <SheetTitle>Diff vs published</SheetTitle>
             <SheetDescription>Draft changes since this entry was last published.</SheetDescription>
@@ -1134,7 +1222,7 @@ export function EntriesList() {
           <div className="px-4 pb-4">
             {diffEntry && <EntryDiff client={client} entry={diffEntry} locale={conn.locale} />}
           </div>
-        </SheetContent>
+        </ResponsiveSheetContent>
       </Sheet>
     </div>
   );

@@ -35,7 +35,8 @@ import {
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Link, useBlocker, useParams } from 'react-router';
 import { InlineConfirm } from '~/cms/components/InlineConfirm';
-import { PageHeader, Section } from '~/cms/components/page';
+import { LoadingStatus } from '~/cms/components/loading';
+import { Body, PageHeader, Section } from '~/cms/components/page';
 import { When } from '~/cms/components/when';
 import { Connections } from '~/cms/components/workflow/Connections';
 import { CopilotDialog } from '~/cms/components/workflow/CopilotDialog';
@@ -45,6 +46,7 @@ import { useEditHistory } from '~/cms/components/workflow/history';
 import { Inspector, type InspectorOptions } from '~/cms/components/workflow/Inspector';
 import { Palette } from '~/cms/components/workflow/Palette';
 import { ProposalBanner, type WorkflowProposal } from '~/cms/components/workflow/ProposalBanner';
+import { useAssistantIfAny } from '~/cms/lib/assistant';
 import { useClient } from '~/cms/lib/client-context';
 import { useMedia, WIDE } from '~/cms/lib/device';
 import { plural } from '~/cms/lib/format';
@@ -110,7 +112,7 @@ export function WorkflowEditor() {
   }
   if (!query.data) {
     return (
-      <>
+      <Body>
         <PageHeader
           title="Workflow not available"
           description="It may have been deleted, or it isn’t in this environment."
@@ -118,31 +120,32 @@ export function WorkflowEditor() {
         <Link to="/workflows" className="text-link text-sm hover:underline">
           Back to workflows
         </Link>
-      </>
+      </Body>
     );
   }
   return <Editor key={query.data.id} loaded={query.data} />;
 }
 
 /** The editor's frame while the workflow loads: its header, then palette, canvas and inspector. */
-function EditorSkeleton() {
+export function EditorSkeleton() {
   return (
-    <div
-      className="-mx-4 flex flex-col sm:-mx-6 lg:h-[calc(100dvh-var(--shell-h))]"
-      aria-busy="true"
-    >
-      <span className="sr-only" role="status">
-        Loading the workflow
-      </span>
+    <div className="flex flex-col lg:h-[calc(100dvh-var(--shell-h))] lg:pb-safe-0" aria-busy="true">
+      <LoadingStatus>Loading the workflow</LoadingStatus>
       <div className="flex items-center gap-3 border-b px-4 py-2.5 sm:px-5">
         <Skeleton className="h-8 w-64" />
         <Skeleton className="h-8 w-40" />
         <Skeleton className="ml-auto hidden h-8 w-48 lg:block" />
       </div>
-      <div className="flex min-h-0 flex-1 gap-4 p-4">
-        <Skeleton className="hidden h-96 w-56 lg:block" />
-        <Skeleton className="h-96 flex-1" />
-        <Skeleton className="hidden h-96 w-72 lg:block" />
+      <div className="grid min-h-0 flex-1 lg:grid-cols-[220px_minmax(0,1fr)_340px]">
+        <div className="hidden min-h-0 border-r p-3 lg:block">
+          <Skeleton className="h-full" />
+        </div>
+        <div className="h-[60vh] min-h-[360px] p-3 lg:h-auto lg:min-h-0">
+          <Skeleton className="h-full" />
+        </div>
+        <div className="hidden min-h-0 border-l p-4 lg:block">
+          <Skeleton className="h-full" />
+        </div>
       </div>
     </div>
   );
@@ -225,6 +228,8 @@ function Editor({ loaded }: { loaded: WorkflowSummary }) {
   const node = selected
     ? (viewed ? viewed.graph : flow.graph).nodes.find((n) => n.id === selected)
     : undefined;
+  // With Coworker open, the inspector gives the canvas its width until a step is picked.
+  const inspectorCollapsed = Boolean(useAssistantIfAny()?.open) && !node;
 
   const setGraph = useCallback(
     (g: WorkflowGraph) => setFlow((f) => ({ ...f, graph: g })),
@@ -396,7 +401,7 @@ function Editor({ loaded }: { loaded: WorkflowSummary }) {
   const types = typesQuery.data ?? [];
 
   return (
-    <div className="-mx-4 flex flex-col sm:-mx-6 lg:h-[calc(100dvh-var(--shell-h))]">
+    <div className="flex flex-col lg:h-[calc(100dvh-var(--shell-h))] lg:pb-safe-0">
       <header className="flex flex-wrap items-center gap-3 border-b px-4 py-2.5 sm:px-5">
         <div className="min-w-0">
           {/* From md the shell's breadcrumbs hold the way back; below it this does. */}
@@ -606,7 +611,8 @@ function Editor({ loaded }: { loaded: WorkflowSummary }) {
               Dismiss
             </Button>
           </div>
-          <ul className="mt-1 list-disc space-y-0.5 pl-5 text-bad">
+          {/* However many checks fail, the canvas keeps its row: the list scrolls, the page doesn't. */}
+          <ul className="mt-1 list-disc space-y-0.5 pl-5 text-bad lg:max-h-40 lg:overflow-y-auto">
             {refusal.map((e, i) => (
               // biome-ignore lint/suspicious/noArrayIndexKey: issues can repeat a message
               <li key={i}>{e.message}</li>
@@ -676,8 +682,12 @@ function Editor({ loaded }: { loaded: WorkflowSummary }) {
         className={cn(
           'grid min-h-0 flex-1',
           wide && viewing === null
-            ? 'lg:grid-cols-[220px_minmax(0,1fr)_340px]'
-            : 'lg:grid-cols-[minmax(0,1fr)_340px]',
+            ? inspectorCollapsed
+              ? 'lg:grid-cols-[220px_minmax(0,1fr)]'
+              : 'lg:grid-cols-[220px_minmax(0,1fr)_340px]'
+            : inspectorCollapsed
+              ? 'lg:grid-cols-[minmax(0,1fr)]'
+              : 'lg:grid-cols-[minmax(0,1fr)_340px]',
         )}
       >
         {wide && viewing === null ? (
@@ -685,8 +695,9 @@ function Editor({ loaded }: { loaded: WorkflowSummary }) {
             <Palette onPick={(t) => addNode(t)} />
           </aside>
         ) : null}
-        <div className="h-[60vh] min-h-[360px] p-3 lg:h-auto">
+        <div className="h-[60vh] min-h-[360px] p-3 lg:h-auto lg:min-h-0">
           <FlowCanvas
+            className="lg:min-h-0"
             graph={shownGraph}
             editable={!readOnly && !proposal}
             issues={proposal || viewed ? undefined : firstIssue}
@@ -698,7 +709,10 @@ function Editor({ loaded }: { loaded: WorkflowSummary }) {
           />
         </div>
         <aside
-          className="min-h-0 overflow-y-auto border-t p-4 lg:border-t-0 lg:border-l"
+          className={cn(
+            'min-h-0 overflow-y-auto border-t p-4 lg:border-t-0 lg:border-l',
+            inspectorCollapsed && 'lg:hidden',
+          )}
           aria-label={node ? 'Step settings' : 'Workflow settings'}
         >
           {node && !proposal ? (

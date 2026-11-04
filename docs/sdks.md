@@ -456,6 +456,8 @@ cma.entries.setSeo(id, { locale?, title?, description?, canonicalUrl?, noindex?,
 cma.redirects.list({ q?, limit?, cursor? }) / .get(id) / .create(input) / .update(id, changes) / .delete(id)
 cma.redirects.import({ format: 'csv' | 'json', data, dryRun? }) / .resolve(path, { locale? }) / .analyze() / .collapseChains()
 
+cma.savedViews.list({ contentType? }) / .get(id) / .run(id, { limit?, cursor?, locale? }) / .create(input) / .update(id, changes) / .delete(id, { revision? })
+
 cma.menus.list() / .get(id) / .preview(id, { locale? }) / .resolve(handle, { locale? }) / .create(input) / .update(id, changes) / .moveItem(id, move) / .delete(id, { revision? })
 
 cma.webhooks.list() / .create(input) / .update(id, patch) / .delete(id) / .deliveries(id)
@@ -500,6 +502,10 @@ cma.apiKeys.list() / .create({ kind, name }) / .revoke(id)   // admin scope
   `redirects.resolve` answers `null` on `404`.
 - `menus.update` replaces the whole tree when given `items`; with `revision` (and on `moveItem` and
   `delete`) a menu saved since is a `409`.
+- `savedViews.create` stores `query` in the structured form (`filters`, `where`, `order`, `search`,
+  `extra`); `savedViews.run` is the caller's own Preview list query, `{ view, items, total,
+  nextCursor?, ignored?, typeMissing? }`. Another person's personal view is a `404`, and a view's
+  `createdBy` is left out for a key that isn't served author ids.
 - `apiKeys.create` returns the raw token exactly once; only its hash is stored.
 - `entries.list` reads `GET /preview/:space/:env/entries` on the same origin (the Management API
   has no entry list): the latest saved version, drafts included, `{ items, total }` with `total`

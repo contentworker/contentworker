@@ -39,6 +39,9 @@ import type {
   Release,
   ReleaseItem,
   ReleaseWithItems,
+  SavedView,
+  SavedViewQuery,
+  SavedViewVisibility,
   ScheduledAction,
   ScheduledActionType,
   ScheduledEntityType,
@@ -298,6 +301,18 @@ export interface EntryListQuery {
   readonly trashed?: boolean;
   /** Only the entries the signed-in person created (`sys.createdBy=me`). */
   readonly mine?: boolean;
+  /**
+   * AND/OR groups of predicates (the API's `where`), as a saved view or a link carries them. The
+   * filter bar edits only `filters`; a tree is kept and sent as it is.
+   */
+  readonly where?: unknown;
+  /** Only entries linking to one of these, from any field (the API's `links_to_entry`). */
+  readonly linksToEntry?: readonly string[];
+  /**
+   * Link parameters this admin doesn't apply (from a newer client or a saved view's `extra`):
+   * kept in the URL and saved with a view, never sent with the list request.
+   */
+  readonly extra?: Readonly<Record<string, string>>;
 }
 
 /** Namespaces a field path for the query string: `sys.*` stays, else `fields.*`. */
@@ -312,7 +327,8 @@ export function entryQueryParams(query: EntryListQuery): URLSearchParams {
     const path = fieldPath(f.field);
     const key = f.op === 'eq' ? path : `${path}[${f.op}]`;
     const value = Array.isArray(f.value) ? f.value.join(',') : String(f.value ?? '');
-    params.set(key, value);
+    // Appended: two filters on one key are two conditions, and the API reads them both.
+    params.append(key, value);
   }
   if (query.order?.length) {
     params.set(
@@ -320,6 +336,8 @@ export function entryQueryParams(query: EntryListQuery): URLSearchParams {
       query.order.map((o) => `${o.direction === 'desc' ? '-' : ''}${fieldPath(o.field)}`).join(','),
     );
   }
+  if (query.where !== undefined) params.set('where', JSON.stringify(query.where));
+  if (query.linksToEntry?.length) params.set('links_to_entry', query.linksToEntry.join(','));
   if (query.search) params.set('query', query.search);
   if (query.limit != null) params.set('limit', String(query.limit));
   if (query.trashed) params.set('trashed', 'true');
@@ -506,6 +524,63 @@ export interface SetupResult {
   readonly signIn?: string;
 }
 
+/**
+ * A request that didn't answer in time, so a form hung on it can let go. Whether a write landed is
+ * unknown: the server may have finished it, or may yet. So `write` errors never say nothing was
+ * saved, and a form whose request isn't idempotent makes the retry a choice.
+ */
+export class RequestTimeoutError extends Error {
+  constructor(readonly write: boolean) {
+    super(write ? UNCONFIRMED_SAVE : 'That took too long, and nothing was changed. Try again.');
+  }
+}
+
+/** Said of any save with no answer to go on, whatever stopped the answer. */
+export const UNCONFIRMED_SAVE =
+  'The save didn’t confirm. It may still have gone through, so check before you try again.';
+
+/** A save the admin stopped itself, before sending anything. */
+export class SaveRefusedError extends Error {}
+
+/**
+ * Whether a failed save is known to have changed nothing: the server answered and said no, or it
+ * never left. Anything else (a timeout, a dropped connection, a 5xx, an answer that can't be read)
+ * leaves the write's outcome unknown, so nothing may say it wasn't saved.
+ */
+export const refusedSave = (err: unknown): boolean =>
+  err instanceof SaveRefusedError ||
+  (err instanceof ApiError && err.status >= 400 && err.status < 500);
+
+/** A failed save in words: with no answer to go on, what to do, not a bare "Failed to fetch". */
+export const saveFailureMessage = (err: unknown): string =>
+  err instanceof TypeError || (err instanceof ApiError && err.status >= 500)
+    ? UNCONFIRMED_SAVE
+    : apiErrorMessage(err);
+
+/** How long a request may take, and whether it can change anything. */
+interface RequestLimit {
+  readonly ms: number;
+  readonly read?: boolean;
+}
+
+/*
+ * The limits sit past what the server can take, so only a request that has really hung reaches
+ * one: they are for a dialog waiting on an answer, not for pacing the work. GETs have none (nothing
+ * holds a form on one), nor do file uploads and the live stream, which don't go through `req`:
+ * those run as long as their bytes do, and an upload has its own Cancel.
+ */
+/** Any write not named below: one row, or a few. */
+const WRITE_LIMIT: RequestLimit = { ms: 30_000 };
+/** A batch in one request: a bulk change, a release, a redirect import, a plugin's bundle. */
+const BATCH_LIMIT: RequestLimit = { ms: 120_000 };
+/** A whole import or environment in one request, or a space installing its sample content. */
+const LARGE_LIMIT: RequestLimit = { ms: 300_000 };
+/** A read sent as a POST: a dry run, or fetching and checking something. */
+const CHECK_LIMIT: RequestLimit = { ms: 120_000, read: true };
+/** A model's write; past the 120s the AI adapter allows a single call. */
+const MODEL_WRITE_LIMIT: RequestLimit = { ms: 180_000 };
+const MODEL_READ_LIMIT: RequestLimit = { ms: 180_000, read: true };
+
 /** The server's own message from an ApiError (`{ error: { message } }`), else the error's text. */
 export function apiErrorMessage(err: unknown): string {
   if (err instanceof ApiError) {
@@ -641,6 +716,15 @@ export interface MenuPreview {
   readonly items: readonly MenuItemPreview[];
 }
 
+/** A saved view to create: `shared` needs content:manage, personal is the person's own. */
+export interface SavedViewInput {
+  readonly name: string;
+  readonly contentTypeApiId: string | null;
+  readonly visibility: SavedViewVisibility;
+  readonly query: SavedViewQuery;
+  readonly columns?: readonly string[] | null;
+}
+
 /** A menu's own fields; `items` replaces the whole tree. */
 export interface MenuInput {
   readonly handle: string;
@@ -709,6 +793,8 @@ export interface VersionDiff {
   readonly from: number;
   readonly to: number;
   readonly changes: readonly FieldDiff[];
+  /** How many fields changed that this person may not read; they go live all the same. */
+  readonly hiddenChanges: number;
 }
 
 /** How a source-environment item relates to the target. */
@@ -1298,12 +1384,18 @@ export function createManagementClient(
   const mgmt = `${root}/spaces/${conn.space}/environments/${conn.environment}`;
   const preview = `${root}/preview/${conn.space}/${conn.environment}`;
   const delivery = `${root}/delivery/${conn.space}/${conn.environment}`;
-  async function req<T>(method: string, url: string, body?: unknown): Promise<T> {
+  async function send<T>(
+    method: string,
+    url: string,
+    body: unknown,
+    signal: AbortSignal | undefined,
+  ): Promise<T> {
     const res = await fetchImpl(url, {
       method,
       headers: apiHeaders({ 'content-type': 'application/json' }),
       credentials: 'same-origin',
       body: body === undefined ? undefined : JSON.stringify(body),
+      ...(signal ? { signal } : {}),
     });
     rememberBookmark(res);
     if (!res.ok) {
@@ -1318,6 +1410,33 @@ export function createManagementClient(
       throw new ApiError(res.status, `${method} ${url} → ${res.status} ${text}`, body);
     }
     return (res.status === 204 ? undefined : await res.json()) as T;
+  }
+  async function req<T>(
+    method: string,
+    url: string,
+    body?: unknown,
+    signal?: AbortSignal,
+    limit: RequestLimit = WRITE_LIMIT,
+  ): Promise<T> {
+    if (method === 'GET') return send<T>(method, url, body, signal);
+    // Its own controller, so that running out of time is told apart from the caller's abort.
+    const expiry = new AbortController();
+    const abort = () => expiry.abort();
+    signal?.addEventListener('abort', abort, { once: true });
+    if (signal?.aborted) abort();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timedOut = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        reject(new RequestTimeoutError(!limit.read));
+        abort();
+      }, limit.ms);
+    });
+    try {
+      return await Promise.race([send<T>(method, url, body, expiry.signal), timedOut]);
+    } finally {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', abort);
+    }
   }
   // The bytes go on the signed URL the API handed out, to the api's /media/ route through the web
   // Worker (same origin), not through the JSON API.
@@ -1372,7 +1491,7 @@ export function createManagementClient(
       locales?: string[];
       starter?: SpaceStarter;
     }): Promise<SpaceRef & { starter: SpaceStarter }> {
-      return req('POST', `${root}/spaces`, input);
+      return req('POST', `${root}/spaces`, input, undefined, LARGE_LIMIT);
     },
     /** Environments (branches) in the current space. */
     async listEnvironments(): Promise<Environment[]> {
@@ -1410,7 +1529,7 @@ export function createManagementClient(
       contentTypes?: string[];
       entries?: string[];
     }): Promise<MergeResult> {
-      return req('POST', `${spaceBase}/merge`, input);
+      return req('POST', `${spaceBase}/merge`, input, undefined, LARGE_LIMIT);
     },
     /** Reads the space's append-only audit trail, newest first (requires space:admin). */
     async listAuditLog(
@@ -1584,20 +1703,18 @@ export function createManagementClient(
       return req('DELETE', `${mgmt}/entries/${encodeURIComponent(id)}/published`);
     },
     /** AI-draft field values for a content type from a natural-language prompt. */
-    generateEntry(input: {
-      contentTypeApiId: string;
-      prompt: string;
-      tier?: ModelTier;
-    }): Promise<GeneratedDraft> {
-      return req('POST', `${mgmt}/entries/generate`, input);
+    generateEntry(
+      input: { contentTypeApiId: string; prompt: string; tier?: ModelTier },
+      signal?: AbortSignal,
+    ): Promise<GeneratedDraft> {
+      return req('POST', `${mgmt}/entries/generate`, input, signal, MODEL_READ_LIMIT);
     },
     /** Map free-form prose into a content type's structured fields (Canvas authoring). */
-    canvasEntry(input: {
-      contentTypeApiId: string;
-      prose: string;
-      tier?: ModelTier;
-    }): Promise<GeneratedDraft> {
-      return req('POST', `${mgmt}/entries/canvas`, input);
+    canvasEntry(
+      input: { contentTypeApiId: string; prose: string; tier?: ModelTier },
+      signal?: AbortSignal,
+    ): Promise<GeneratedDraft> {
+      return req('POST', `${mgmt}/entries/canvas`, input, signal, MODEL_READ_LIMIT);
     },
 
     // --- assets ----------------------------------------------------------
@@ -1626,7 +1743,7 @@ export function createManagementClient(
       assets: number;
       job?: BulkJobSummary;
     }> {
-      return req('POST', `${mgmt}/assets/reindex`, opts);
+      return req('POST', `${mgmt}/assets/reindex`, opts, undefined, BATCH_LIMIT);
     },
     createAsset(input: {
       fileName: string;
@@ -1650,7 +1767,7 @@ export function createManagementClient(
      * read what failed, by asset name, with {@link getBulkJobReport}.
      */
     startAssetBulkJob(input: AssetBulkRequest): Promise<BulkJobSummary> {
-      return req('POST', `${mgmt}/assets/bulk`, input);
+      return req('POST', `${mgmt}/assets/bulk`, input, undefined, BATCH_LIMIT);
     },
     /** Starts replacing an asset's file: a signed PUT for the next version, and what to commit. */
     startAssetFileReplacement(
@@ -1688,7 +1805,7 @@ export function createManagementClient(
     },
     /** Files assets in a folder; `null` takes them back to the root. */
     moveAssets(ids: readonly string[], folderId: string | null): Promise<{ moved: number }> {
-      return req('POST', `${mgmt}/assets/move`, { ids, folderId });
+      return req('POST', `${mgmt}/assets/move`, { ids, folderId }, undefined, BATCH_LIMIT);
     },
     /** Takes an asset out of Delivery and out of the library's default view. */
     archiveAsset(id: string): Promise<Asset> {
@@ -1863,6 +1980,8 @@ export function createManagementClient(
         'POST',
         `${mgmt}/assets/${encodeURIComponent(assetId)}/uploads/${encodeURIComponent(uploadId)}/complete`,
         { parts },
+        undefined,
+        BATCH_LIMIT,
       );
     },
     /**
@@ -1979,8 +2098,15 @@ export function createManagementClient(
         locale?: string;
         apply?: boolean;
       } = {},
+      signal?: AbortSignal,
     ): Promise<{ actionId: string; output: string; applied: boolean }> {
-      return req('POST', `${mgmt}/ai-actions/${encodeURIComponent(id)}/run`, input);
+      return req(
+        'POST',
+        `${mgmt}/ai-actions/${encodeURIComponent(id)}/run`,
+        input,
+        signal,
+        input.apply ? MODEL_WRITE_LIMIT : MODEL_READ_LIMIT,
+      );
     },
 
     // --- functions (event-triggered) -------------------------------------
@@ -2010,18 +2136,18 @@ export function createManagementClient(
     },
     /** Reports what an import would do. Writes nothing. */
     analyzeImport(input: ImportRequest): Promise<ImportAnalysis> {
-      return req('POST', `${mgmt}/imports/analyze`, input);
+      return req('POST', `${mgmt}/imports/analyze`, input, undefined, CHECK_LIMIT);
     },
     runImport(input: ImportRequest): Promise<ImportResult> {
-      return req('POST', `${mgmt}/imports`, input);
+      return req('POST', `${mgmt}/imports`, input, undefined, LARGE_LIMIT);
     },
     /** Starts the same import as a resumable job, for files too big for one request. */
     startImportJob(input: ImportRequest): Promise<{ job: BulkJobSummary }> {
-      return req('POST', `${mgmt}/imports/job`, input);
+      return req('POST', `${mgmt}/imports/job`, input, undefined, LARGE_LIMIT);
     },
     /** Reports what importing a space export into this environment would do. Writes nothing. */
     analyzeSpaceExport(input: SpaceExportRequest): Promise<SpaceExportReport> {
-      return req('POST', `${mgmt}/imports/space-export/analyze`, input);
+      return req('POST', `${mgmt}/imports/space-export/analyze`, input, undefined, CHECK_LIMIT);
     },
     /** Writes the model and starts the jobs that create and then publish everything else. */
     startSpaceExportImport(input: SpaceExportRequest): Promise<{
@@ -2029,7 +2155,7 @@ export function createManagementClient(
       job: BulkJobSummary | null;
       publishJobId: string | null;
     }> {
-      return req('POST', `${mgmt}/imports/space-export`, input);
+      return req('POST', `${mgmt}/imports/space-export`, input, undefined, LARGE_LIMIT);
     },
     /**
      * Who the session is in this space: its scopes, and the bulk jobs over entries its role may
@@ -2076,7 +2202,7 @@ export function createManagementClient(
       bundle: string;
       approvedCapabilities: string[];
     }): Promise<InstalledPluginSummary> {
-      return req('POST', `${spaceBase}/plugins`, input);
+      return req('POST', `${spaceBase}/plugins`, input, undefined, BATCH_LIMIT);
     },
     /**
      * Fetches a package over HTTPS and installs it, disabled.
@@ -2090,11 +2216,11 @@ export function createManagementClient(
      * screen has a manifest to show. Install with `expectedChecksum` set to
      * what this returned.
      */
-    inspectPluginPackage(input: {
-      packageUrl: string;
-      expectedChecksum?: string;
-    }): Promise<InspectedPluginPackage> {
-      return req('POST', `${spaceBase}/plugins/from-url/inspect`, input);
+    inspectPluginPackage(
+      input: { packageUrl: string; expectedChecksum?: string },
+      signal?: AbortSignal,
+    ): Promise<InspectedPluginPackage> {
+      return req('POST', `${spaceBase}/plugins/from-url/inspect`, input, signal, CHECK_LIMIT);
     },
     installPluginFromUrl(input: {
       packageUrl: string;
@@ -2103,7 +2229,7 @@ export function createManagementClient(
       expectedId?: string;
       expectedVersion?: string;
     }): Promise<InstalledPluginSummary> {
-      return req('POST', `${spaceBase}/plugins/from-url`, input);
+      return req('POST', `${spaceBase}/plugins/from-url`, input, undefined, BATCH_LIMIT);
     },
     /**
      * Replaces the manifest and bundle. Omit `approvedCapabilities` to carry the
@@ -2118,7 +2244,13 @@ export function createManagementClient(
         approvedCapabilities?: string[];
       },
     ): Promise<InstalledPluginSummary> {
-      return req('PUT', `${spaceBase}/plugins/${encodeURIComponent(id)}`, input);
+      return req(
+        'PUT',
+        `${spaceBase}/plugins/${encodeURIComponent(id)}`,
+        input,
+        undefined,
+        BATCH_LIMIT,
+      );
     },
     /**
      * Records a fresh capability decision without changing the code. Never
@@ -2224,7 +2356,7 @@ export function createManagementClient(
       failed: number;
       results: { id: string; ok: boolean; error?: string }[];
     }> {
-      return req('POST', `${mgmt}/bulk/entries/${action}`, { ids });
+      return req('POST', `${mgmt}/bulk/entries/${action}`, { ids }, undefined, BATCH_LIMIT);
     },
 
     // --- agent actions (audit → work packages) ---------------------------
@@ -2244,7 +2376,13 @@ export function createManagementClient(
       }[];
       taskIds: string[];
     }> {
-      return req('POST', `${mgmt}/entries/${encodeURIComponent(id)}/audit`, input);
+      return req(
+        'POST',
+        `${mgmt}/entries/${encodeURIComponent(id)}/audit`,
+        input,
+        undefined,
+        MODEL_WRITE_LIMIT,
+      );
     },
 
     // --- AI content operations over an entry -----------------------------
@@ -2253,28 +2391,52 @@ export function createManagementClient(
       id: string,
       input: { targetLocale: string; sourceLocale?: string; apply?: boolean },
     ): Promise<{ fields: EntryFields; translatedFields: string[]; applied: boolean }> {
-      return req('POST', `${mgmt}/entries/${encodeURIComponent(id)}/translate`, input);
+      return req(
+        'POST',
+        `${mgmt}/entries/${encodeURIComponent(id)}/translate`,
+        input,
+        undefined,
+        MODEL_WRITE_LIMIT,
+      );
     },
     /** Summarizes an entry; `apply` writes the summary into `targetField`. */
     summarizeEntry(
       id: string,
       input: { locale?: string; maxWords?: number; targetField?: string; apply?: boolean } = {},
     ): Promise<{ summary: string; applied: boolean }> {
-      return req('POST', `${mgmt}/entries/${encodeURIComponent(id)}/summarize`, input);
+      return req(
+        'POST',
+        `${mgmt}/entries/${encodeURIComponent(id)}/summarize`,
+        input,
+        undefined,
+        MODEL_READ_LIMIT,
+      );
     },
     /** Generates a value for one scalar field; `apply` saves it. */
     autofillField(
       id: string,
       input: { field: string; locale?: string; instructions?: string; apply?: boolean },
     ): Promise<{ field: string; value: unknown; applied: boolean }> {
-      return req('POST', `${mgmt}/entries/${encodeURIComponent(id)}/autofill`, input);
+      return req(
+        'POST',
+        `${mgmt}/entries/${encodeURIComponent(id)}/autofill`,
+        input,
+        undefined,
+        MODEL_WRITE_LIMIT,
+      );
     },
     /** Suggests taxonomy tags for an entry; `apply` creates + assigns them. */
     suggestEntryTags(
       id: string,
       input: { apply?: boolean } = {},
     ): Promise<{ tagIds: string[]; newTags: string[]; applied: boolean }> {
-      return req('POST', `${mgmt}/entries/${encodeURIComponent(id)}/suggest-tags`, input);
+      return req(
+        'POST',
+        `${mgmt}/entries/${encodeURIComponent(id)}/suggest-tags`,
+        input,
+        undefined,
+        MODEL_READ_LIMIT,
+      );
     },
     /** Persists a reviewed tag suggestion exactly as approved (no model re-run). */
     applyEntryTags(
@@ -2289,21 +2451,33 @@ export function createManagementClient(
      * answer and the embed holds what its URL says. A URL that may not be embedded is a 422.
      */
     resolveEmbed(url: string): Promise<{ embed: EmbedData; resolved: boolean }> {
-      return req('POST', `${mgmt}/embeds/resolve`, { url });
+      return req('POST', `${mgmt}/embeds/resolve`, { url }, undefined, CHECK_LIMIT);
     },
     /** Suggests alt text for an image; `apply` writes it to the asset metadata. */
     generateAltText(
       id: string,
       input: { locale?: string; context?: string; apply?: boolean } = {},
     ): Promise<{ altText: string; locale: string; applied: boolean }> {
-      return req('POST', `${mgmt}/assets/${encodeURIComponent(id)}/alt-text`, input);
+      return req(
+        'POST',
+        `${mgmt}/assets/${encodeURIComponent(id)}/alt-text`,
+        input,
+        undefined,
+        MODEL_READ_LIMIT,
+      );
     },
     /** Suggests taxonomy tags for an image; `apply` creates + assigns them. */
     autoTagAsset(
       id: string,
       input: { apply?: boolean } = {},
     ): Promise<{ tagIds: string[]; newTags: string[]; applied: boolean }> {
-      return req('POST', `${mgmt}/assets/${encodeURIComponent(id)}/auto-tag`, input);
+      return req(
+        'POST',
+        `${mgmt}/assets/${encodeURIComponent(id)}/auto-tag`,
+        input,
+        undefined,
+        MODEL_WRITE_LIMIT,
+      );
     },
     /** Resolves a transformed-image URL for an asset (focal-point-aware). */
     transformAsset(
@@ -2349,7 +2523,7 @@ export function createManagementClient(
         contentType: file.type || 'application/octet-stream',
       });
       await putFile(upload, file);
-      return req<Asset>('POST', `${base}/commit`, commit);
+      return req<Asset>('POST', `${base}/commit`, commit, undefined, BATCH_LIMIT);
     },
     /**
      * Video upload: create the draft video asset, POST the bytes straight to
@@ -2515,18 +2689,23 @@ export function createManagementClient(
       return req('DELETE', `${mgmt}/redirects/${encodeURIComponent(id)}`);
     },
     /** All or nothing; `dryRun` reports what it would do. */
-    importRedirects(input: {
-      format: 'csv' | 'json';
-      data: string;
-      dryRun?: boolean;
-    }): Promise<RedirectImportReport> {
-      return req('POST', `${mgmt}/redirects/import`, input);
+    importRedirects(
+      input: { format: 'csv' | 'json'; data: string; dryRun?: boolean },
+      signal?: AbortSignal,
+    ): Promise<RedirectImportReport> {
+      return req(
+        'POST',
+        `${mgmt}/redirects/import`,
+        input,
+        signal,
+        input.dryRun ? CHECK_LIMIT : BATCH_LIMIT,
+      );
     },
     analyzeRedirects(): Promise<RedirectSetReport & { count: number; max: number }> {
       return req('GET', `${mgmt}/redirects/analysis`);
     },
     collapseRedirectChains(): Promise<{ updated: number }> {
-      return req('POST', `${mgmt}/redirects/collapse-chains`);
+      return req('POST', `${mgmt}/redirects/collapse-chains`, undefined, undefined, BATCH_LIMIT);
     },
     /** What a path resolves to among the enabled redirects, or null. */
     async resolveRedirect(path: string, locale?: string): Promise<RedirectMatch | null> {
@@ -2539,6 +2718,26 @@ export function createManagementClient(
       }
     },
 
+    // --- saved views (the space's: every environment shows the same) -----
+    /** The views this person can pick for a type: their own, and the space's shared ones. */
+    async listSavedViews(contentType: string): Promise<SavedView[]> {
+      const qs = `?content_type=${encodeURIComponent(contentType)}`;
+      return (await req<{ items: SavedView[] }>('GET', `${mgmt}/saved-views${qs}`)).items;
+    },
+    /** 422 naming each bad part of the query; 403 for a shared view without content:manage. */
+    createSavedView(input: SavedViewInput): Promise<SavedView> {
+      return req('POST', `${mgmt}/saved-views`, input);
+    },
+    /** With `revision`, a view saved since is a 409 rather than an overwrite. */
+    updateSavedView(
+      id: string,
+      changes: Partial<Omit<SavedViewInput, 'contentTypeApiId'>> & { readonly revision?: number },
+    ): Promise<SavedView> {
+      return req('PATCH', `${mgmt}/saved-views/${encodeURIComponent(id)}`, changes);
+    },
+    deleteSavedView(id: string): Promise<void> {
+      return req('DELETE', `${mgmt}/saved-views/${encodeURIComponent(id)}`);
+    },
     // --- settings: menus (environment-scoped) ----------------------------
     async listMenus(): Promise<MenuSummary[]> {
       return (await req<{ items: MenuSummary[] }>('GET', `${mgmt}/menus`)).items;
@@ -2655,7 +2854,13 @@ export function createManagementClient(
     },
     /** Ships the bundle — every member publishes/unpublishes in one transaction. */
     publishRelease(id: string): Promise<ReleaseWithItems> {
-      return req('POST', `${mgmt}/releases/${encodeURIComponent(id)}/published`);
+      return req(
+        'POST',
+        `${mgmt}/releases/${encodeURIComponent(id)}/published`,
+        undefined,
+        undefined,
+        BATCH_LIMIT,
+      );
     },
 
     // --- scheduled actions -----------------------------------------------
@@ -2764,15 +2969,14 @@ export function createManagementClient(
       return req('GET', `${mgmt}/workflows/${encodeURIComponent(id)}/versions/${version}`);
     },
     validateWorkflowGraph(graph: WorkflowGraph): Promise<WorkflowGraphValidation> {
-      return req('POST', `${mgmt}/workflows/validate`, { graph });
+      return req('POST', `${mgmt}/workflows/validate`, { graph }, undefined, CHECK_LIMIT);
     },
     /** Proposes a graph from a prompt (editing `graph` when given). Never saves. */
-    workflowCopilot(input: {
-      prompt: string;
-      graph?: WorkflowGraph;
-      contentTypes?: readonly string[];
-    }): Promise<WorkflowCopilotProposal> {
-      return req('POST', `${mgmt}/workflows/copilot`, input);
+    workflowCopilot(
+      input: { prompt: string; graph?: WorkflowGraph; contentTypes?: readonly string[] },
+      signal?: AbortSignal,
+    ): Promise<WorkflowCopilotProposal> {
+      return req('POST', `${mgmt}/workflows/copilot`, input, signal, MODEL_READ_LIMIT);
     },
 
     // --- workflow runs and tasks -------------------------------------------

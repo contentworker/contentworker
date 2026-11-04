@@ -32,6 +32,11 @@ export interface InlineConfirmProps {
   /** Called by the safe choice and by Escape. */
   readonly onCancel: () => void;
   /**
+   * Called by Escape in place of `onCancel`, where the safe choice throws work away (a model's
+   * proposal, say): Escape is not a decision to discard.
+   */
+  readonly onEscape?: () => void;
+  /**
    * Where focus goes when the confirm closes and focus would otherwise fall to
    * `<body>`. Defaults to whatever was focused when it opened, if still in the
    * DOM. Pass this when the confirm *replaces* its trigger, since the original
@@ -48,7 +53,8 @@ export interface InlineConfirmProps {
 }
 
 /**
- * An "are you sure?" in place, where the action was, never a modal.
+ * An "are you sure?" in place, where the action was: how anything undoable confirms (a modal is
+ * only for what can't be undone).
  *
  * - Focus lands on the safe choice (Cancel), so a stray Enter backs out.
  * - Escape cancels the newest open confirm only, and is swallowed so an
@@ -66,6 +72,7 @@ export function InlineConfirm({
   details,
   cancelLabel = 'Cancel',
   onCancel,
+  onEscape,
   returnFocus,
   className,
   children,
@@ -75,8 +82,8 @@ export function InlineConfirm({
   const cancel = useRef<HTMLButtonElement>(null);
   // Latest callbacks without re-running the effect, which would pull focus
   // back to the safe choice on every re-render.
-  const onCancelRef = useRef(onCancel);
-  onCancelRef.current = onCancel;
+  const onEscapeRef = useRef(onEscape ?? onCancel);
+  onEscapeRef.current = onEscape ?? onCancel;
   const returnFocusRef = useRef(returnFocus);
   returnFocusRef.current = returnFocus;
 
@@ -96,7 +103,7 @@ export function InlineConfirm({
       if (e.key !== 'Escape' || e.defaultPrevented || confirmHolding(e.target) !== me) return;
       e.preventDefault();
       e.stopPropagation();
-      onCancelRef.current();
+      onEscapeRef.current();
     };
     window.addEventListener('keydown', onKey, true);
     return () => {

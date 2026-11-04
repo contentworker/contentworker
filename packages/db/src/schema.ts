@@ -29,6 +29,8 @@ import type {
   RenditionFit,
   RenditionFormat,
   RolePreset,
+  SavedViewQuery,
+  SavedViewVisibility,
   StoredInviteStatus,
   WorkflowGraph,
   WorkflowGraphDefinition,
@@ -1297,6 +1299,31 @@ export const menus = sqliteTable(
   (t) => [
     primaryKey({ columns: [t.spaceId, t.environmentId, t.id] }),
     uniqueIndex('menus_by_handle').on(t.spaceId, t.environmentId, t.handle),
+  ],
+);
+
+/**
+ * Saved views of the entries list (0029_saved_views): a named structured query and columns,
+ * personal or shared. Space-scoped: every environment of a space shows the same views.
+ */
+export const savedViews = sqliteTable(
+  'saved_views',
+  {
+    spaceId: text('space_id').notNull(),
+    id: text('id').notNull(),
+    name: text('name').notNull(),
+    contentType: text('content_type'),
+    visibility: text('visibility').$type<SavedViewVisibility>().notNull(),
+    createdBy: text('created_by').notNull(),
+    query: text('query', { mode: 'json' }).$type<SavedViewQuery>().notNull(),
+    columns: text('columns', { mode: 'json' }).$type<string[]>(),
+    revision: integer('revision').notNull(),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+    updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.spaceId, t.id] }),
+    index('saved_views_by_owner').on(t.spaceId, t.visibility, t.createdBy),
   ],
 );
 

@@ -5,6 +5,7 @@ import {
   type WorkflowTemplateId,
 } from '@contentworker/domain';
 import { Button } from '@contentworker/ui/button';
+import { DialogError } from '@contentworker/ui/dialog';
 import {
   Field,
   FieldDescription,
@@ -19,16 +20,22 @@ import { Segmented, SegmentedItem } from '@contentworker/ui/segmented';
 import { Skeleton } from '@contentworker/ui/skeleton';
 import { Table, TableBody, TableHead, Td, Th, Tr } from '@contentworker/ui/table';
 import { Search, Trash2, Workflow } from 'lucide-react';
-import { useId, useMemo, useState } from 'react';
+import { useEffect, useId, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router';
 import { Ago } from '~/cms/components/ago';
+import {
+  DiscardAsk,
+  type DiscardGuard,
+  GuardCancel,
+  useDiscardGuard,
+} from '~/cms/components/discard-guard';
 import { FormSheet } from '~/cms/components/form-sheet';
 import { InlineConfirm } from '~/cms/components/InlineConfirm';
 import { Empty, PageHeader, Section } from '~/cms/components/page';
 import { CopilotDialog } from '~/cms/components/workflow/CopilotDialog';
 import { plural } from '~/cms/lib/format';
 import { useClient } from '../lib/client-context';
-import type { WorkflowListItem } from '../lib/management';
+import { refusedSave, type WorkflowListItem } from '../lib/management';
 import { useContentTypesQuery, useInvalidate, useScopedQuery } from '../lib/queries';
 import { useToast } from '../lib/toast';
 
@@ -66,6 +73,14 @@ export function Workflows() {
   const invalidate = useInvalidate();
   const navigate = useNavigate();
   const [sheetOpen, setSheetOpen] = useState(false);
+  const [formDirty, setFormDirty] = useState(false);
+  const [formSaving, setFormSaving] = useState(false);
+  const guard = useDiscardGuard({
+    open: sheetOpen,
+    dirty: formDirty,
+    saving: formSaving,
+    onOpenChange: setSheetOpen,
+  });
   const [copilotOpen, setCopilotOpen] = useState(false);
   const [filter, setFilter] = useState('');
 
@@ -93,8 +108,12 @@ export function Workflows() {
             <Button type="button" size="sm" variant="outline" onClick={() => setCopilotOpen(true)}>
               Draft with AI
             </Button>
-            <FormSheet open={sheetOpen} onOpenChange={setSheetOpen} label="New workflow">
+            <FormSheet open={sheetOpen} onOpenChange={guard.onOpenChange} label="New workflow">
               <NewWorkflowForm
+                guard={guard}
+                onDirty={setFormDirty}
+                onSaving={setFormSaving}
+                onUnconfirmed={() => void invalidate(['workflows'])}
                 onCreated={async (id) => {
                   setSheetOpen(false);
                   await invalidate(['workflows']);
@@ -202,7 +221,19 @@ export function gatingLabel(w: Pick<WorkflowListItem, 'gatesPublish' | 'publishG
 }
 
 /** The New workflow sheet's form: a name, then a template or a blank start. */
-function NewWorkflowForm({ onCreated }: { onCreated: (id: string) => Promise<void> }) {
+function NewWorkflowForm({
+  onCreated,
+  guard,
+  onDirty,
+  onSaving,
+  onUnconfirmed,
+}: {
+  onCreated: (id: string) => Promise<void>;
+  guard: DiscardGuard;
+  onDirty: (dirty: boolean) => void;
+  onSaving: (saving: boolean) => void;
+  onUnconfirmed: () => void;
+}) {
   const { client } = useClient();
   const [name, setName] = useState('');
   const [start, setStart] = useState<Start>('template');
@@ -215,6 +246,15 @@ function NewWorkflowForm({ onCreated }: { onCreated: (id: string) => Promise<voi
   const templateId = useId();
   const hintId = useId();
   const chosen = TEMPLATES.find((t) => t.id === template);
+  const dirty = name.trim() !== '';
+  useEffect(() => {
+    onDirty(dirty);
+    return () => onDirty(false);
+  }, [dirty, onDirty]);
+  useEffect(() => {
+    onSaving(busy);
+    return () => onSaving(false);
+  }, [busy, onSaving]);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -236,7 +276,9 @@ function NewWorkflowForm({ onCreated }: { onCreated: (id: string) => Promise<voi
       });
       await onCreated(workflow.id);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(guard.saveFailed(err));
+      // It may have landed: the list behind the sheet is where to check.
+      if (!refusedSave(err)) onUnconfirmed();
     } finally {
       setBusy(false);
     }
@@ -302,17 +344,19 @@ function NewWorkflowForm({ onCreated }: { onCreated: (id: string) => Promise<voi
             <FieldDescription className="text-xs">{chosen?.description}</FieldDescription>
           </Field>
         ) : null}
-        {error ? (
-          <p className="text-bad text-sm" role="alert">
-            {error}
-          </p>
-        ) : null}
-        <Button type="submit" size="sm" className="self-start" disabled={busy}>
-          {busy ? 'Creating…' : 'Create workflow'}
-        </Button>
+        {error ? <DialogError>{error}</DialogError> : null}
         <FieldDescription className="text-xs">
           A new workflow starts no runs until it is published.
         </FieldDescription>
+        <div className="flex justify-end gap-2">
+          <DiscardAsk guard={guard} message="Discard this workflow?">
+            <GuardCancel guard={guard} />
+            <Button type="submit" disabled={busy}>
+              {/* A name isn't unique, so a retry could make a second one: the button says so. */}
+              {busy ? 'Creating…' : guard.unconfirmed ? 'Create again' : 'Create workflow'}
+            </Button>
+          </DiscardAsk>
+        </div>
       </FieldGroup>
     </form>
   );

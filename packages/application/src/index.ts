@@ -74,6 +74,7 @@ export * from './redirects';
 export * from './releases';
 export * from './render';
 export * from './roles';
+export * from './saved-views';
 export * from './scheduler-alerts';
 export * from './scheduler-health';
 export * from './scheduling';

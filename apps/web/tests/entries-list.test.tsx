@@ -21,11 +21,20 @@ const client = {
   trashEntry: vi.fn(async () => {}),
   restoreEntry: vi.fn(async () => {}),
   publishEntry: vi.fn<(id: string) => Promise<unknown>>(async () => ({})),
-  getPublished: vi.fn(async (id: string) => ({
-    id,
+  diffVersions: vi.fn(async (entryId: string) => ({
+    entryId,
     contentType: 'article',
-    fields: { title: 'Pricing' },
-    publishedAt: '2026-10-01T00:00:00.000Z',
+    from: 1,
+    to: 2,
+    changes: [
+      {
+        field: 'title',
+        name: 'Title',
+        fieldType: 'Symbol',
+        kind: 'changed',
+        locales: [{ locale: 'en-US', kind: 'changed', before: 'Pricing', after: 'Pricing page' }],
+      },
+    ],
   })),
   unpublishEntry: vi.fn<(id: string) => Promise<unknown>>(async () => ({})),
   bulkEntryAction: vi.fn(async (_action: string, ids: string[]) => ({
@@ -45,6 +54,7 @@ const client = {
   })),
   cancelBulkJob: vi.fn(),
   getSpaceAccess: vi.fn(async () => fullAccess),
+  listSavedViews: vi.fn(async () => []),
 };
 
 /** The session's access in the space: an unrestricted publisher unless a test says otherwise. */
@@ -76,6 +86,14 @@ vi.mock('~/cms/lib/client-context', () => ({
     conn: { space: 's', environment: 'main', locale: 'en-US' },
     busy: false,
     // Like the real runner: a failure is surfaced, never rethrown.
+    run: async (fn: () => Promise<void>) => {
+      try {
+        await fn();
+      } catch {}
+    },
+  }),
+  useLocalRun: () => ({
+    busy: false,
     run: async (fn: () => Promise<void>) => {
       try {
         await fn();
@@ -252,6 +270,60 @@ describe('EntriesList unpublish and Undo', () => {
     expect(client.publishEntry).toHaveBeenCalledExactlyOnceWith('e-live');
   });
 
+  const tick = async (title: string) =>
+    fireEvent.click(await screen.findByRole('checkbox', { name: `Select “${title}”` }));
+
+  it('survives the content types arriving after it first draws', async () => {
+    client.listEntryPage.mockResolvedValue({ items: ENTRIES });
+    const base = { locales: ['en-US'], defaultLocale: 'en-US', reload() {} };
+    const queryClient = new QueryClient();
+    const wrap = (outlet: object) => (
+      <QueryClientProvider client={queryClient}>
+        <ToastProvider>
+          <MemoryRouter initialEntries={['/content/article']}>
+            <Routes>
+              <Route path="/content" element={<Outlet context={outlet} />}>
+                <Route path=":typeId" element={<EntriesList />} />
+              </Route>
+            </Routes>
+          </MemoryRouter>
+        </ToastProvider>
+      </QueryClientProvider>
+    );
+    const view = render(wrap({ ...base, types: [], typesPending: true }));
+    view.rerender(wrap({ ...base, types: [article], typesPending: false }));
+    expect(await screen.findByRole('button', { name: 'View trash' })).toBeTruthy();
+  });
+
+  it('backing out of a bulk ask hands focus back to the button that asked', async () => {
+    setup();
+    await tick('About us');
+    await tick('Careers');
+    const unpublish = screen.getByRole('button', { name: 'Unpublish selected' });
+    fireEvent.click(unpublish);
+    const ask = await screen.findByRole('alertdialog', { name: 'Unpublish 2 entries?' });
+    fireEvent.keyDown(document.activeElement as Element, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    expect(ask.isConnected).toBe(false);
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        screen.getByRole('button', { name: 'Unpublish selected' }),
+      ),
+    );
+    expect(client.bulkEntryAction).not.toHaveBeenCalled();
+  });
+
+  it('clearing the ticks answers a question asked in place', async () => {
+    setup();
+    await tick('About us');
+    fireEvent.click(screen.getByRole('button', { name: 'Move to trash' }));
+    await screen.findByRole('alertdialog', { name: 'Move 1 entry to the trash?' });
+    fireEvent.click(screen.getByRole('button', { name: 'Clear selection' }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    await tick('About us');
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+  });
+
   const bulkUnpublish = async (titles: string[]) => {
     for (const t of titles) {
       fireEvent.click(await screen.findByRole('checkbox', { name: `Select “${t}”` }));
@@ -300,9 +372,10 @@ describe('EntriesList row Publish', () => {
     setup();
     fireEvent.click(await screen.findByRole('button', { name: 'Publish “Pricing page”' }));
     const dialog = await screen.findByRole('alertdialog', { name: 'Publish “Pricing page”?' });
-    // The draft against what delivery serves now, as the editor's confirm compares it.
+    // The draft against the published version, as the editor's confirm and the card compare it.
     await within(dialog).findByText('1 field changed');
-    expect(client.getPublished).toHaveBeenCalledWith('e-changed');
+    expect(client.diffVersions).toHaveBeenCalledWith('e-changed', 'published', 'draft');
+    expect(within(dialog).getByText('Pricing page')).toBeTruthy();
     expect(client.publishEntry).not.toHaveBeenCalled();
 
     fireEvent.click(within(dialog).getByRole('button', { name: 'Publish entry' }));
@@ -316,7 +389,7 @@ describe('EntriesList row Publish', () => {
     setup();
     fireEvent.click(await screen.findByRole('button', { name: 'Publish “Pricing page”' }));
     const dialog = await screen.findByRole('alertdialog', { name: 'Publish “Pricing page”?' });
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Keep as draft' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Keep live version' }));
     await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
     expect(client.publishEntry).not.toHaveBeenCalled();
     expect(within(rowOf('Pricing page')).getByText('Changed')).toBeTruthy();
@@ -474,8 +547,9 @@ describe('EntriesList counts and paging', () => {
   it(
     'starts again from the first page on a search, and a miss keeps the headers',
     async () => {
+      // A few rows and a cursor prove the restart; a full page only slows the render under load.
       setup(async (_type, query) =>
-        query?.search ? { items: [] } : { items: page(0), nextCursor: 'c2' },
+        query?.search ? { items: [] } : { items: page(0).slice(0, 5), nextCursor: 'c2' },
       );
       await screen.findByRole('link', { name: 'Entry 0' }, { timeout: FIRST_RENDER_MS });
       fireEvent.change(screen.getByRole('searchbox', { name: 'Search entries' }), {
@@ -616,6 +690,10 @@ describe('EntriesList bulk bar', () => {
     for (const t of ['About us', 'Careers']) await tick(t);
     fireEvent.click(screen.getByRole('button', { name: 'Unpublish selected' }));
     const dialog = await screen.findByRole('alertdialog', { name: 'Unpublish 2 entries?' });
+    // In place under the bar, naming what it changes, with the safe choice focused.
+    expect(dialog.closest('[data-slot="alert-dialog-content"]')).toBeNull();
+    expect(within(dialog).getByText('About us')).toBeTruthy();
+    expect(document.activeElement).toBe(within(dialog).getByRole('button', { name: 'Keep as is' }));
     fireEvent.click(within(dialog).getByRole('button', { name: 'Unpublish entries' }));
     await screen.findByText('1 entry failed');
     expect(screen.getByText(/Locked by a release/)).toBeTruthy();
@@ -676,6 +754,7 @@ describe('EntriesList trash jobs', () => {
     });
     expect(within(dialog).getByText(/unpublished first/)).toBeTruthy();
     expect(within(dialog).getByText('About us')).toBeTruthy();
+    expect(dialog.closest('[data-slot="alert-dialog-content"]')).toBeNull();
     expect(client.startEntryBulkJob).not.toHaveBeenCalled();
     const before = client.listEntryPage.mock.calls.length;
     fireEvent.click(within(dialog).getByRole('button', { name: 'Move to trash' }));

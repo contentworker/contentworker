@@ -751,7 +751,9 @@ function RevokeKeyButton(props: { name: string; onConfirm: () => void }) {
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel>Cancel</AlertDialogCancel>
-          <AlertDialogAction onClick={props.onConfirm}>Revoke key</AlertDialogAction>
+          <AlertDialogAction variant="destructive" onClick={props.onConfirm}>
+            Revoke key
+          </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
@@ -1018,7 +1020,9 @@ function DeleteWebhookButton(props: { url: string; onConfirm: () => void }) {
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel>Cancel</AlertDialogCancel>
-          <AlertDialogAction onClick={props.onConfirm}>Delete</AlertDialogAction>
+          <AlertDialogAction variant="destructive" onClick={props.onConfirm}>
+            Delete
+          </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>

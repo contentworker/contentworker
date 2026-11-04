@@ -4,6 +4,7 @@ import {
   getVersion,
   listVersions,
   restoreVersion,
+  visibleDiff,
 } from '@contentworker/application';
 import {
   assertWritableFields,
@@ -48,7 +49,8 @@ export function registerVersionTools(server: McpServer, t: ToolContext): void {
         '(the current draft) or "published". Returns every field with its kind (added, removed, ' +
         'changed, unchanged) per locale, and for a change a typed detail: word-level text ' +
         'segments, link targets by id, list elements matched by key with moves, or rich-text ' +
-        'blocks with word changes inside each changed block.',
+        'blocks with word changes inside each changed block. Fields you may not read are left out; ' +
+        'hiddenChanges counts the ones that changed.',
       inputSchema: toolSchema('entries_diff_versions', () =>
         z.object({
           id: z.string(),
@@ -61,15 +63,9 @@ export function registerVersionTools(server: McpServer, t: ToolContext): void {
     },
     async (args) => {
       guard(SCOPES.previewRead, scopeOf(args));
-      const type = await authorizeEntryRead(scopeOf(args), args.id);
+      await authorizeEntryRead(scopeOf(args), args.id);
       const diff = await diffVersions(ctx, scopeOf(args), args.id, args.from, args.to);
-      // Drop denied fields from the diff so they can't leak via before/after.
-      const allowed = maskDeniedFields(
-        principal,
-        type,
-        Object.fromEntries(diff.changes.map((ch) => [ch.field, ch])),
-      );
-      return ok({ ...diff, changes: Object.values(allowed) });
+      return ok(visibleDiff(principal, diff));
     },
   );
 

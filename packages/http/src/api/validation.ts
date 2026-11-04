@@ -28,6 +28,10 @@ import {
   MAX_SEO_TITLE_LENGTH,
   MAX_SHARE_PASSWORD,
   MAX_URL_PATTERN_LENGTH,
+  MAX_VIEW_COLUMNS,
+  MAX_VIEW_FILTERS,
+  MAX_VIEW_NAME_LENGTH,
+  MAX_VIEW_ORDER,
   MAX_ZIP_ASSETS,
   PLUGIN_SETTING_MAX_STRING,
   SPACE_ID_PATTERN,
@@ -192,6 +196,67 @@ export const menuMoveBody = z.object({
   parentId: z.string().min(1).nullable().describe('The new parent, or null for the top level'),
   index: z.int().min(0).describe('Position among the new siblings; past the end appends'),
   revision: z.int().min(1).optional(),
+});
+// A saved view's query is checked by the domain with the live query's validators (strictly),
+// which name each bad part (`query.where.or[1]`); here only its outline.
+const savedViewQuery = z
+  .object({
+    filters: z
+      .array(z.object({}).loose())
+      .max(MAX_VIEW_FILTERS)
+      .optional()
+      .describe('Field predicates, ANDed: { field, op, value } as in an entries query'),
+    where: z
+      .unknown()
+      .optional()
+      .describe('AND/OR groups of predicates: {"or": [...]} or {"and": [...]}, nestable'),
+    order: z
+      .array(z.object({ field: z.string(), direction: z.enum(['asc', 'desc']) }))
+      .max(MAX_VIEW_ORDER)
+      .optional(),
+    search: z.string().optional().describe('Full-text search over text fields'),
+    extra: z
+      .record(z.string(), z.unknown())
+      .optional()
+      .describe('Query keys this version does not apply, kept verbatim (a run reports them)'),
+  })
+  .loose()
+  .describe('The structured query: never a query string');
+const savedViewColumns = z
+  .array(z.string())
+  .max(MAX_VIEW_COLUMNS)
+  .nullable()
+  .optional()
+  .describe(
+    'Columns besides the display field, in order: sys.status, sys.updatedAt or field apiIds; null is the default',
+  );
+const savedViewVisibility = z
+  .enum(['personal', 'shared'])
+  .describe(
+    'personal: yours alone. shared: everyone in the space who can read its type (content:manage)',
+  );
+export const savedViewBody = z.object({
+  name: z.string().min(1).max(MAX_VIEW_NAME_LENGTH),
+  contentTypeApiId: z
+    .string()
+    .min(1)
+    .nullable()
+    .optional()
+    .describe('The content type whose entries it lists; absent or null for every type'),
+  visibility: savedViewVisibility.optional(),
+  query: savedViewQuery.optional(),
+  columns: savedViewColumns,
+});
+export const savedViewPatchBody = z.object({
+  name: z.string().min(1).max(MAX_VIEW_NAME_LENGTH).optional(),
+  visibility: savedViewVisibility.optional(),
+  query: savedViewQuery.optional().describe('Replaces the whole query'),
+  columns: savedViewColumns,
+  revision: z
+    .int()
+    .min(1)
+    .optional()
+    .describe('The revision this change was made against: a view saved since is a 409'),
 });
 const redirectFields = {
   source: z

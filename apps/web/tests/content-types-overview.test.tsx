@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
 import type { ContentType } from '@contentworker/domain';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Outlet, Route, Routes } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { ContentTypeEntryCounts } from '~/cms/lib/management';
+import { ApiError, type ContentTypeEntryCounts, RequestTimeoutError } from '~/cms/lib/management';
 
 const client = {
   contentTypeEntryCounts: vi.fn<() => Promise<ContentTypeEntryCounts[]>>(),
@@ -68,6 +68,54 @@ const rowOf = (name: string) => {
 };
 
 describe('content types overview', () => {
+  describe('a save that fails', () => {
+    const article = {
+      ...type('article', 'Article', 'published'),
+      fields: [{ apiId: 'title', name: 'Title', type: 'Symbol' }],
+    } as unknown as ContentType;
+    const trySave = async () => {
+      client.contentTypeEntryCounts.mockResolvedValue([]);
+      setup([article]);
+      fireEvent.click(await screen.findByRole('button', { name: 'Edit “Article”' }));
+      await screen.findByRole('dialog');
+      fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Story' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+      return screen.findByRole('alert');
+    };
+    const ask = async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+      return screen.findByRole('alertdialog', { name: /Discard/ });
+    };
+
+    it('keeps the form and asks honestly when the save timed out', async () => {
+      client.saveContentType.mockRejectedValueOnce(new RequestTimeoutError(true));
+      expect((await trySave()).textContent).toContain('didn’t confirm');
+      expect((screen.getByLabelText('Name') as HTMLInputElement).value).toBe('Story');
+      expect((await ask()).textContent).toContain('may have gone through');
+    });
+
+    it('says nothing was saved when the save itself was refused', async () => {
+      client.saveContentType.mockRejectedValueOnce(new ApiError(422, 'PUT → 422'));
+      await trySave();
+      expect((await ask()).textContent).toContain('Nothing has been saved.');
+      expect(client.publishContentType).not.toHaveBeenCalled();
+    });
+
+    it('never says so when the draft saved and only its publish was refused', async () => {
+      client.saveContentType.mockResolvedValueOnce(undefined);
+      client.publishContentType.mockRejectedValueOnce(
+        new ApiError(422, 'POST → 422', { error: { message: 'Entries would break' } }),
+      );
+      const alert = await trySave();
+      expect(alert.textContent).toContain(
+        'The draft saved but wasn’t published: Entries would break',
+      );
+      await waitFor(() => expect(client.publishContentType).toHaveBeenCalledOnce());
+      const question = await ask();
+      expect(question.textContent).not.toContain('Nothing has been saved');
+    });
+  });
+
   it('shows each type’s entry counts, and a badge only on a draft schema', async () => {
     client.contentTypeEntryCounts.mockResolvedValue([
       { contentType: 'article', total: 1240, draft: 3, changed: 2, published: 1235, archived: 4 },

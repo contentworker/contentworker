@@ -1,21 +1,12 @@
 import type { ContentType } from '@contentworker/domain';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@contentworker/ui/alert-dialog';
 import { Badge } from '@contentworker/ui/badge';
 import { Button } from '@contentworker/ui/button';
 import { SkeletonPill, SkeletonText } from '@contentworker/ui/skeleton';
 import { History, RotateCcw } from 'lucide-react';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Ago } from '~/cms/components/ago';
 import { CollapsibleCard } from '~/cms/components/CollapsibleCard';
+import { InlineConfirm } from '~/cms/components/InlineConfirm';
 import { LoadingStatus } from '~/cms/components/loading';
 import { RevisionDiff } from '~/cms/components/RevisionDiff';
 import { ToneBadge } from '~/cms/components/status';
@@ -33,8 +24,9 @@ type Against = 'draft' | 'published';
  * entry that is live, against the published version) and restore.
  * Restore appends a NEW version carrying the old fields, so history is never
  * rewritten — after it runs, the parent reloads the form via `onRestored`. It goes through the
- * assistant, as a confirm card in its panel; when the assistant can't be reached, it confirms in
- * its own dialog and restores through the API.
+ * assistant, as a confirm card in its panel; when the assistant can't be reached, it asks in place
+ * under the version and restores through the API. Asking in place because it can be undone: the
+ * version it replaces is still in the list, to restore in turn.
  */
 export function VersionHistory(props: {
   entryId: string;
@@ -68,6 +60,9 @@ export function VersionHistory(props: {
   // Version awaiting restore confirmation (restore reseeds the form, so it is
   // never a single-click action).
   const [confirmRestore, setConfirmRestore] = useState<number | null>(null);
+  // The Restore that asked: it is disabled while the assistant answers, so it has lost focus by
+  // the time the question opens.
+  const restoreAsked = useRef<HTMLButtonElement | null>(null);
 
   const compare = (version: number, side: Against) =>
     run(async () => {
@@ -85,10 +80,10 @@ export function VersionHistory(props: {
     void compare(version, 'draft');
   };
 
-  // Asks through the assistant's card; without it, through this panel's own dialog.
+  // Asks through the assistant's card; without it, in place under the version.
   const requestRestore = (version: number) =>
     run(async () => {
-      // The card says what the dialog warned of: restoring discards the form's unsaved edits.
+      // The card says what asking in place warns of: restoring discards the form's unsaved edits.
       const what = props.about ? `Version ${version} of ${props.about}` : `Version ${version}`;
       const unsaved = props.hasUnsavedChanges?.()
         ? ' · unsaved edits in the form are discarded'
@@ -103,17 +98,21 @@ export function VersionHistory(props: {
       else if ('output' in r) await restored(version);
     });
 
-  const restore = (version: number) =>
-    run(async () => {
+  const restore = async (version: number) => {
+    let done = false;
+    await run(async () => {
       await client.restoreVersion(props.entryId, version);
       await restored(version);
+      done = true;
     });
+    // After `run`: until then the Restore that asked is disabled and can't take focus back.
+    if (done) setConfirmRestore(null);
+  };
 
   const restored = async (version: number) => {
     toast.success(`Restored version ${version} as a new draft`);
     setDiff(null);
     setDiffWith(null);
-    setConfirmRestore(null);
     await invalidate(['versions', props.entryId]);
     props.onRestored();
   };
@@ -191,7 +190,10 @@ export function VersionHistory(props: {
                         type="button"
                         variant="outline"
                         size="sm"
-                        onClick={() => void requestRestore(v.version)}
+                        onClick={(e) => {
+                          restoreAsked.current = e.currentTarget;
+                          void requestRestore(v.version);
+                        }}
                         disabled={busy}
                       >
                         <RotateCcw className="size-3.5" />
@@ -200,6 +202,30 @@ export function VersionHistory(props: {
                     )}
                   </div>
                 </div>
+
+                {confirmRestore === v.version && (
+                  <InlineConfirm
+                    className="mt-2"
+                    message={`Restore version ${v.version}?`}
+                    note={`Its fields become a new draft version; history is kept.${
+                      props.hasUnsavedChanges?.()
+                        ? ' Unsaved edits in the form will be discarded.'
+                        : ''
+                    }`}
+                    cancelLabel="Keep current draft"
+                    onCancel={() => setConfirmRestore(null)}
+                    returnFocus={() => restoreAsked.current}
+                  >
+                    <Button
+                      type="button"
+                      size="sm"
+                      disabled={busy}
+                      onClick={() => void restore(v.version)}
+                    >
+                      Restore version
+                    </Button>
+                  </InlineConfirm>
+                )}
 
                 {diffWith === v.version && diff && (
                   <div className="mt-2 space-y-3 border-t pt-2">
@@ -237,33 +263,6 @@ export function VersionHistory(props: {
           })}
         </ul>
       )}
-      <AlertDialog
-        open={confirmRestore !== null}
-        onOpenChange={(open) => {
-          if (!open) setConfirmRestore(null);
-        }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Restore version {confirmRestore}?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Version {confirmRestore}’s fields become a new draft version; history is kept.
-              {props.hasUnsavedChanges?.() ? ' Unsaved edits in the form will be discarded.' : ''}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Keep current draft</AlertDialogCancel>
-            <AlertDialogAction
-              disabled={busy}
-              onClick={() => {
-                if (confirmRestore !== null) void restore(confirmRestore);
-              }}
-            >
-              Restore version
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </CollapsibleCard>
   );
 }

@@ -30,7 +30,7 @@ const field = (apiId: string, extra: Partial<FieldDefinition> = {}): FieldDefini
 const typeWith = (...fields: FieldDefinition[]) =>
   defineContentType({ apiId: 'thing', name: 'Thing', displayField: 'title', fields });
 
-/** A type as a later release could store it, past the write checks of this one. */
+/** A type as stored, without the write checks `defineContentType` runs. */
 const stored = (...fields: FieldDefinition[]): ContentType => ({
   apiId: 'thing',
   name: 'Thing',
@@ -148,10 +148,16 @@ describe('Date formats', () => {
     ).toMatch(/applies to a Date/);
   });
 
-  it('refuses a time-only Date on write for now, but keeps one already stored', () => {
-    expect(
-      refusal(() => typeWith(field('title'), field('opens', { type: 'Date', format: 'time' }))),
-    ).toMatch(/accepted on write by the next/);
+  it('accepts a time-only Date, new or already stored, and a list of them', () => {
+    const ct = typeWith(
+      field('title'),
+      field('opens', { type: 'Date', format: 'time', position: 1 }),
+      field('slots', { type: 'Array', items: { type: 'Date', format: 'time' }, position: 2 }),
+    );
+    expect(ct.fields.find((f) => f.apiId === 'opens')?.format).toBe('time');
+    expect(issues(ct, { title: 'x', opens: '09:30', slots: ['10:00', '25:00'] })).toEqual([
+      'slots[1]: Expected a time (hh:mm)',
+    ]);
     const current = stored(field('opens', { type: 'Date', format: 'time', position: 1 }));
     expect(() => reviseContentType(current, { name: 'Renamed' })).not.toThrow();
   });
@@ -187,11 +193,10 @@ describe('lists of scalars', () => {
     expect(issues(ct, { title: 'x', tags: [1] })).toEqual(['tags: Array item must be a string']);
   });
 
-  it('refuses a new list of Text, Integer, Number or Date on write for now', () => {
+  it('accepts a new list of Text, Integer, Number or Date on write', () => {
     for (const type of ['Text', 'Integer', 'Number', 'Date'] as const) {
-      expect(
-        refusal(() => typeWith(field('title'), field('list', { type: 'Array', items: { type } }))),
-      ).toMatch(new RegExp(`A list of ${type} values is read by this release`));
+      const made = typeWith(field('title'), field('list', { type: 'Array', items: { type } }));
+      expect(made.fields.find((f) => f.apiId === 'list')?.items?.type).toBe(type);
     }
     expect(() => reviseContentType(ct, { name: 'Still editable' })).not.toThrow();
   });

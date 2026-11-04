@@ -5,6 +5,7 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogError,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -38,6 +39,7 @@ import {
   Plus,
 } from 'lucide-react';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { DiscardAsk, GuardCancel, useDiscardGuard } from '~/cms/components/discard-guard';
 import { EntityPicker } from '~/cms/components/EntityPicker';
 import { ConfirmButton } from '~/cms/components/InlineConfirm';
 import { EmptyState, Section } from '~/cms/components/page';
@@ -51,6 +53,7 @@ import {
   type MenuItemPreview,
   type MenuItemStatus,
   type MenuSummary,
+  refusedSave,
 } from '../lib/management';
 import { useInvalidate, useScopedQuery } from '../lib/queries';
 import { useToast } from '../lib/toast';
@@ -347,6 +350,8 @@ function MenuEditor(props: { client: ManagementClient; id: string; onClose: () =
   const preview = useScopedQuery(['menus', id, 'preview'], () => client.previewMenu(id)).data;
   const [menu, setMenu] = useState<Menu>();
   const [stale, setStale] = useState(false);
+  // A write here may have landed, so the revision that moved may be this person's own.
+  const [unconfirmed, setUnconfirmed] = useState(false);
   const [editing, setEditing] = useState<MenuItem | 'new' | null>(null);
   const [renaming, setRenaming] = useState(false);
   const [said, setSaid] = useState('');
@@ -401,6 +406,7 @@ function MenuEditor(props: { client: ManagementClient; id: string; onClose: () =
       if (done) toast.success(done);
       return next;
     } catch (err) {
+      if (!refusedSave(err)) setUnconfirmed(true);
       if (isStale(err)) setStale(true);
       else toast.error(apiErrorMessage(err));
       throw err;
@@ -440,7 +446,9 @@ function MenuEditor(props: { client: ManagementClient; id: string; onClose: () =
         <Alert variant="warning">
           <AlertTitle>This menu changed since you opened it</AlertTitle>
           <AlertDescription>
-            Someone else saved it. Reload to see their version; your last change wasn’t saved.
+            {unconfirmed
+              ? 'That may be your own save that didn’t confirm, or someone else’s. Reload to see what’s there; your last change wasn’t saved.'
+              : 'Someone else saved it. Reload to see their version; your last change wasn’t saved.'}
           </AlertDescription>
           <AlertAction>
             <Button
@@ -450,6 +458,7 @@ function MenuEditor(props: { client: ManagementClient; id: string; onClose: () =
                 setMenu(await client.getMenu(id));
                 await invalidate(['menus']);
                 setStale(false);
+                setUnconfirmed(false);
               }}
             >
               Reload
@@ -649,6 +658,14 @@ function MenuDialog(props: {
   const [issues, setIssues] = useState<Record<string, string>>({});
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
+  const guard = useDiscardGuard({
+    saving: busy,
+    dirty:
+      name !== (m?.name ?? '') ||
+      handle !== (m?.handle ?? '') ||
+      description !== (m?.description ?? ''),
+    onOpenChange: props.onOpenChange,
+  });
 
   const suggest = (n: string) =>
     n
@@ -670,16 +687,17 @@ function MenuDialog(props: {
       });
       props.onOpenChange(false);
     } catch (err) {
+      const said = guard.saveFailed(err);
       const fields = apiFieldIssues(err);
       setIssues(fields);
-      if (Object.keys(fields).length === 0) setError(apiErrorMessage(err));
+      if (Object.keys(fields).length === 0) setError(said);
     } finally {
       setBusy(false);
     }
   };
 
   return (
-    <Dialog open onOpenChange={props.onOpenChange}>
+    <Dialog open onOpenChange={guard.onOpenChange}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>{m ? 'Rename menu' : 'New menu'}</DialogTitle>
@@ -734,14 +752,14 @@ function MenuDialog(props: {
               onChange={(e) => setDescription(e.target.value)}
             />
           </div>
-          {error && <p className="text-destructive text-sm">{error}</p>}
+          {error && <DialogError>{error}</DialogError>}
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => props.onOpenChange(false)}>
-              Cancel
-            </Button>
-            <Button type="submit" disabled={busy || !name.trim() || !handle.trim()}>
-              {busy ? 'Saving…' : m ? 'Save' : 'Create menu'}
-            </Button>
+            <DiscardAsk guard={guard} message="Discard this menu?">
+              <GuardCancel guard={guard} />
+              <Button type="submit" disabled={busy || !name.trim() || !handle.trim()}>
+                {busy ? 'Saving…' : m ? 'Save' : 'Create menu'}
+              </Button>
+            </DiscardAsk>
           </DialogFooter>
         </form>
       </DialogContent>
@@ -797,6 +815,14 @@ export function MenuItemDialog(props: {
       : null;
   };
   const chosen = linkOf();
+  const guard = useDiscardGuard({
+    saving: busy,
+    dirty:
+      JSON.stringify(chosen) !== JSON.stringify(link ?? null) ||
+      label !== (item?.label ?? '') ||
+      newTab !== (item?.target === '_blank'),
+    onOpenChange: props.onOpenChange,
+  });
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -814,12 +840,13 @@ export function MenuItemDialog(props: {
       });
       props.onOpenChange(false);
     } catch (err) {
+      const said = guard.saveFailed(err);
       // The API names the item by its path (items[3].link.url): the last part is the field.
       const fields = Object.fromEntries(
         Object.entries(apiFieldIssues(err)).map(([f, m]) => [f.split('.').at(-1) ?? f, m]),
       );
       setIssues(fields);
-      if (Object.keys(fields).length === 0 && !isStale(err)) setError(apiErrorMessage(err));
+      if (Object.keys(fields).length === 0 && !isStale(err)) setError(said);
       if (isStale(err)) props.onOpenChange(false);
     } finally {
       setBusy(false);
@@ -829,7 +856,7 @@ export function MenuItemDialog(props: {
   const linkIssue = issues.url ?? issues.link;
 
   return (
-    <Dialog open onOpenChange={props.onOpenChange}>
+    <Dialog open onOpenChange={guard.onOpenChange}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>{item ? 'Edit item' : 'New item'}</DialogTitle>
@@ -941,14 +968,14 @@ export function MenuItemDialog(props: {
             <Switch id={`${id}-tab`} checked={newTab} onCheckedChange={setNewTab} />
             <Label htmlFor={`${id}-tab`}>Open in a new tab</Label>
           </div>
-          {error && <p className="text-destructive text-sm">{error}</p>}
+          {error && <DialogError>{error}</DialogError>}
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => props.onOpenChange(false)}>
-              Cancel
-            </Button>
-            <Button type="submit" disabled={busy || !chosen || (kind === 'url' && !label.trim())}>
-              {busy ? 'Saving…' : item ? 'Save item' : 'Add item'}
-            </Button>
+            <DiscardAsk guard={guard} message="Discard this menu item?">
+              <GuardCancel guard={guard} />
+              <Button type="submit" disabled={busy || !chosen || (kind === 'url' && !label.trim())}>
+                {busy ? 'Saving…' : item ? 'Save item' : 'Add item'}
+              </Button>
+            </DiscardAsk>
           </DialogFooter>
         </form>
       </DialogContent>

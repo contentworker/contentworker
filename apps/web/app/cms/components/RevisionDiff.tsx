@@ -24,7 +24,7 @@ const KIND_TONE: Record<DiffKind, Tone> = {
   unchanged: 'idle',
 };
 
-function KindBadge({ kind, moved }: { kind: DiffKind; moved?: boolean }) {
+export function KindBadge({ kind, moved }: { kind: DiffKind; moved?: boolean }) {
   if (moved && kind === 'unchanged') return <ToneBadge tone="idle" label="Moved" />;
   return (
     <span className="inline-flex items-center gap-1">
@@ -293,6 +293,16 @@ function FieldRow(props: {
  * a link's target). Unchanged fields are counted, not shown. Every change is said in words as well
  * as tinted.
  */
+/** Fields that changed which this person may not read: never "No field changes". */
+const hiddenChanged = (n: number) => `${n} ${n === 1 ? 'field' : 'fields'} you can’t read changed`;
+
+/** How many fields changed, the ones this person can't read included. */
+export function changeCount(changed: number, hidden: number): string {
+  if (changed === 0) return hidden > 0 ? hiddenChanged(hidden) : 'No field changes';
+  const count = `${changed} ${changed === 1 ? 'field' : 'fields'} changed`;
+  return hidden > 0 ? `${count} · ${hiddenChanged(hidden)}` : count;
+}
+
 export function RevisionDiff(props: {
   diff: VersionDiff;
   contentType?: ContentType;
@@ -314,9 +324,7 @@ export function RevisionDiff(props: {
       <p className="text-muted-foreground text-xs">
         <span className="font-mono">{props.fromLabel}</span> →{' '}
         <span className="font-mono">{props.toLabel}</span> ·{' '}
-        {changed.length === 0
-          ? 'No field changes'
-          : `${changed.length} ${changed.length === 1 ? 'field' : 'fields'} changed`}
+        {changeCount(changed.length, diff.hiddenChanges)}
       </p>
       {changed.length > 0 ? (
         <ul className="space-y-3">

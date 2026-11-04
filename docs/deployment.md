@@ -87,6 +87,11 @@ scheduled actions, asset expiry, retention, the reseal and the rest. Two things 
 
 ## Provisioning a deployment
 
+The registry defaults to `deployments/` in this repository. `FLEET_REGISTRY` points `scripts/fleet.ts`
+and `scripts/provision.sh` at another directory, and `FLEET_REPO` (`owner/name`) sets the GitHub
+repository `provision.sh` creates the environment and secrets on. Set both to work against a private
+ops repository, so a customer's entry and secrets never land in a public one.
+
 1. Add `deployments/<id>.jsonc` (`id`, `ring`, `slot`, optionally `domain`, `sso`, `email`).
 2. Run `./scripts/provision.sh <id>` (needs `wrangler login` or `CLOUDFLARE_API_TOKEN`, and
    `gh auth login`). It is safe to re-run; it:
@@ -202,7 +207,11 @@ then only the new).
   each ring waits for the previous one to finish cleanly and calls `deploy.yml` once per
   deployment (`general` four at a time).
 
-`.github/workflows/deploy.yml`, per deployment:
+`.github/workflows/deploy.yml` checks out the commit and runs `scripts/deploy.sh <id>`, so the steps
+always come from the commit being shipped. Each step below is a titled group in the job's log, and a
+failure names the one it stopped at. The script refuses to run outside GitHub Actions unless
+`CONTENTWORKER_DEPLOY=1`, and removes the deployment's secrets from its environment once they are
+written to files, so builds never see them. Per deployment:
 
 1. Render the config and collect each app's secrets.
 2. **Record a point-in-time recovery bookmark** (the restore point for this deploy).

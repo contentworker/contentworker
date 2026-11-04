@@ -36,12 +36,17 @@ as **Published · Spring launch notes**.
   waits for your answer. **Confirm** does it; **Not now** leaves everything as it was. Actions
   are publishing and unpublishing an entry, moving it to the trash, deleting it for good,
   restoring a version from the history panel, and changing several entries at once.
+  Publishing an entry that has been live lists the fields that change, and **Review changes** shows
+  each one's published and draft values. If the card can't show that, **Confirm** stays off and
+  the card says what to do: try again, switch back to the space or environment you asked in, or
+  choose **Not now** and ask again.
 - **An edit** runs at once, doesn't open the panel, and leaves a line. Edits are saving a draft,
   creating an entry, duplicating one and restoring one from the trash.
 
 When Coworker can't be reached, the panel says so in one quiet line (**Can't reach Coworker right
 now. Edits you make on the page still go through.**). The page then makes each
-edit itself, confirming in its own dialog where it confirmed before.
+edit itself, confirming in its own dialog where it confirmed before. That dialog holds a publish
+the same way: if it can't show what goes live, **Publish entry** stays off until **Try again** can.
 
 ## Asking it things
 
@@ -50,8 +55,9 @@ drafts?", "Suggest tags for this entry". Reads run without asking and show as a 
 conversation.
 
 Anything the model proposes that changes something stops at a confirm card, the same as a page
-action, and nothing is sent until you confirm. A declined card reads "left as it was". A card
-that nobody answers is let go after a day.
+action, and nothing is sent until you confirm. A publish card's list comes from the entry's
+version history, not from the model. A declined card reads "left as it was". A card that nobody
+answers is let go after a day.
 
 A card that publishes, unpublishes or restores an entry is held to the entry as it was when the
 card was made: the version on your screen for a page's card, the current version when the model

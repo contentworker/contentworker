@@ -38,6 +38,7 @@ export * from './rich-text/embed';
 export * from './rich-text/from-html';
 export * from './rich-text/rich-text';
 export * from './rich-text/rich-text-diff';
+export * from './saved-view/saved-view';
 export * from './scheduling/agent-schedule';
 export * from './scheduling/cron';
 export * from './scheduling/scheduled-action';
