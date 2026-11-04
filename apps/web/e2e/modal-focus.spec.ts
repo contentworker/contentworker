@@ -8,6 +8,7 @@ import {
   useCmsScope,
   withoutAssistant,
 } from './cms';
+import { settle } from './settle';
 
 /*
  * Closing a modal hands focus back to what opened it, however it was opened. WebKit is why this
@@ -36,6 +37,9 @@ async function press(page: Page, control: Locator, way: Way) {
 async function roundTrip(page: Page, way: Way, opener: Locator, surface: Locator, out: Locator) {
   await press(page, opener, way);
   await expect(surface).toBeVisible();
+  // Radix hands Escape from layer to layer a render after one opens: pressed in that frame, faster
+  // than a hand, it would reach the layer underneath as well.
+  await settle(page);
   if (way === 'pointer') await out.click();
   else await page.keyboard.press('Escape');
   await expect(surface).toBeHidden();

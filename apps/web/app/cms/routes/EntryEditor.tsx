@@ -126,6 +126,7 @@ export function EntryEditor() {
   const [genOpen, setGenOpen] = useState(false);
   const [canvasOpen, setCanvasOpen] = useState(false);
   const publishButton = useRef<HTMLButtonElement>(null);
+  const publishAnswered = useRef(false);
   // Bumped after a restore to re-seed the form (EntryForm reads `initial` once).
   const [formKey, setFormKey] = useState(0);
   // A new entry being created: from its save until the created entry's editor takes over, this
@@ -311,6 +312,7 @@ export function EntryEditor() {
       changes = diff.changes.filter((c) => c.kind !== 'unchanged');
       hiddenChanges = diff.hiddenChanges;
     }
+    publishAnswered.current = false;
     setPublishConfirm({ changes, hiddenChanges });
   };
 
@@ -536,11 +538,12 @@ export function EntryEditor() {
   const live = meta?.status === 'published' && !dirty;
   // A new entry can always be created; a saved one has nothing to save until it is edited.
   const canSave = !busy && initial !== null && (dirty || !isEdit);
-  // Publish can't always take focus back: it is off while the publish runs, and for good once the
-  // entry is live. Then the action beside it does (⋯, or Copy preview link where the row has room).
+  // Publish can't always take focus back: answered yes, it is off while the publish runs and for
+  // good once the entry is live, which may be a moment after the dialog has gone. Then the action
+  // beside it does (⋯, or Copy preview link where the row has room).
   const afterPublishConfirm = () => {
     const publish = publishButton.current;
-    if (publish && !publish.disabled) return publish;
+    if (publish && !publish.disabled && !publishAnswered.current) return publish;
     return Array.from(pageBarRef.current?.querySelectorAll('button:enabled') ?? [])
       .filter((b): b is HTMLButtonElement => b instanceof HTMLButtonElement)
       .findLast((b) => b.checkVisibility?.() ?? true);
@@ -876,7 +879,10 @@ export function EntryEditor() {
           entryQuery.data ? { client, entry: entryQuery.data, locale: conn.locale } : undefined
         }
         busy={busy}
-        onConfirm={() => void confirmPublish()}
+        onConfirm={() => {
+          publishAnswered.current = true;
+          void confirmPublish();
+        }}
         returnFocus={afterPublishConfirm}
       />
 
