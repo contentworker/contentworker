@@ -918,8 +918,10 @@ with content grants reads no assets (lists are empty, gets are 403, embeds stay 
 ### GraphQL Delivery
 
 `ALL /delivery/:space/:env/graphql` serves a schema **generated from Delivery's published view of the
-content types** by `@contentworker/graphql-gen`. Cached per `(space, environment)` keyed on the
-versions in that view, so a draft of a live type rebuilds nothing.
+content types** by `@contentworker/graphql-gen`. Cached per `(space, environment)` keyed on a digest
+of what shapes it (each visible type's id, fields and singleton flag in that view), so a draft of a
+live type rebuilds nothing, and a merge or promotion that publishes other fields at a version already
+served does.
 
 - A live type is in the schema as last published: a draft revision's fields arrive with its publish.
 - A type that was **never published** is in the schema as it stands, draft or not, and its published
@@ -927,7 +929,11 @@ versions in that view, so a draft of a live type rebuilds nothing.
   before definitions were kept (0030), until its next publish.
 - Publishing an entry doesn't wait for its type: a value for a field only a draft has is served by
   REST at once (entries are delivered as stored), and GraphQL has no such field until the type is
-  published.
+  published. The same goes for a field whose type a draft changes: with `rating` an `Integer` as
+  published and a `Symbol` in a draft, an entry published with `rating: "great"` is served by REST as
+  it is, and GraphQL answers that field `null` with `Int cannot represent non-integer value` until the
+  type is published (`publishing.ts` works from the current definition; the schema is the published
+  one).
 - A publish that changes a field's type changes its GraphQL type at that moment: a published value
   the new type can't represent is `null` with an error on that field.
 

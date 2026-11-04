@@ -564,7 +564,14 @@ interface ContentType {
   is either never published or was revised before 0030; Delivery can't tell which, so both behave
   as they always have: in GraphQL, out of the routes, sitemap and menus, until the next publish.
   Entries don't wait for any of this: they validate against the current row and can be published
-  under a draft, so REST can show a draft-only field's value before GraphQL has the field.
+  under a draft, so REST can show a draft-only field's value before GraphQL has the field, and a
+  value of a draft's changed field type (`rating`: `Integer` published, `Symbol` in the draft, a
+  value of `"great"`) is `null` with an error on GraphQL until the type is published.
+  `DeliveredContentType` is the view's type: it leaves out the admin-only `group`, `description`,
+  `icon` and `layout`. Saving a menu checks a link against the pattern served or one in a draft,
+  so a menu can be built ahead of a publish; `previewMenu` reports what Delivery does (`no_url`
+  until then). A promotion of a published definition is assessed against what the target serves
+  too, not only its working draft.
 - `group`, `description`, `icon` and `layout` follow one rule on a draft or revision: left out
   keeps the stored value, `null` (or blank text) clears it, and a value stored as it stands passes
   unchecked. They are columns on `content_types` (0026), not part of the `fields` JSON.

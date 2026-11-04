@@ -35,6 +35,9 @@ new field instead, before publishing that kind of change.
 A type that has never been published is in the GraphQL schema as it stands, but not in the routes,
 the sitemap or menus. Entries don't wait for their type: you can write and publish them under a draft
 definition, and the REST API serves them as stored, including a value for a field only the draft has.
+GraphQL still has the published field. If `rating` is an `Integer` as published and a `Symbol` in a
+draft, an entry published with `rating: "great"` comes back from REST as `"great"`, and from GraphQL as
+`null` with an error on that field, until the type is published.
 
 ### URL pattern
 

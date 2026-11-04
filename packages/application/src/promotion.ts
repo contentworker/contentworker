@@ -517,39 +517,47 @@ async function assessPromotion(
   if (target.environmentId === 'main') reasons.push('The target is main');
   for (const a of aliases) reasons.push(`The alias "${a.alias}" points at the target`);
 
+  const kept = await ctx.store.contentTypes.publishedDefinitions(target);
   const typeChanges: Record<string, string[]> = {};
   for (const ct of types) {
     const current = await ctx.store.contentTypes.get(target, ct.apiId);
     if (!current) continue;
-    const changes: string[] = [];
+    const changes = new Set<string>();
     const incoming = new Map(ct.fields.map((f) => [f.apiId, f]));
-    for (const f of current.fields) {
-      const next = incoming.get(f.apiId);
-      if (!next) continue;
-      if (next.type !== f.type) changes.push(`changes "${f.apiId}" from ${f.type} to ${next.type}`);
-      else if (next.required && !f.required) changes.push(`makes "${f.apiId}" required`);
+    // Against the target's working definition and, when a published definition replaces it, what
+    // the target serves: its own draft may have dropped a field Delivery still has. A draft
+    // arriving changes nothing served, so only the working definition matters then.
+    const live = ct.status === 'published' ? kept.get(ct.apiId) : undefined;
+    for (const before of live ? [current, { ...current, fields: live.fields }] : [current]) {
+      for (const f of before.fields) {
+        const next = incoming.get(f.apiId);
+        if (!next) continue;
+        if (next.type !== f.type) {
+          changes.add(`changes "${f.apiId}" from ${f.type} to ${next.type}`);
+        } else if (next.required && !f.required) changes.add(`makes "${f.apiId}" required`);
+      }
+      // Removals at any depth, then whether the target's entries still hold what is removed: the
+      // apply would refuse those (`updateContentType`), so the approver sees which entries first.
+      for (const at of removedFields(before.fields, ct.fields)) {
+        changes.add(`removes the field "${at}"`);
+      }
+      for (const [at, variants] of removedVariants(before.fields, ct.fields)) {
+        for (const v of variants) changes.add(`removes the block variant "${v}" from "${at}"`);
+      }
+      const inUse = await removedContentInUse(ctx, target, before, ct);
+      for (const { field, entries } of inUse.fieldsInUse) {
+        changes.add(
+          `removes a field entries in the target still hold: ${describeRemovedInUse(field, entries)}`,
+        );
+      }
+      for (const { variant, entries } of inUse.variantsInUse) {
+        changes.add(
+          `removes a block variant entries in the target still use: ${describeRemovedInUse(variant, entries)}`,
+        );
+      }
     }
-    // Removals at any depth, then whether the target's entries still hold what is removed: the
-    // apply would refuse those (`updateContentType`), so the approver sees which entries first.
-    for (const at of removedFields(current.fields, ct.fields)) {
-      changes.push(`removes the field "${at}"`);
-    }
-    for (const [at, variants] of removedVariants(current.fields, ct.fields)) {
-      for (const v of variants) changes.push(`removes the block variant "${v}" from "${at}"`);
-    }
-    const inUse = await removedContentInUse(ctx, target, current, ct);
-    for (const { field, entries } of inUse.fieldsInUse) {
-      changes.push(
-        `removes a field entries in the target still hold: ${describeRemovedInUse(field, entries)}`,
-      );
-    }
-    for (const { variant, entries } of inUse.variantsInUse) {
-      changes.push(
-        `removes a block variant entries in the target still use: ${describeRemovedInUse(variant, entries)}`,
-      );
-    }
-    if (changes.length) {
-      typeChanges[ct.apiId] = changes;
+    if (changes.size) {
+      typeChanges[ct.apiId] = [...changes];
       for (const c of changes) reasons.push(`The content type "${ct.apiId}" ${c}`);
     }
   }

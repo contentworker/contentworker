@@ -77,6 +77,12 @@ export interface PublishedContentTypeDefinition {
 }
 
 /**
+ * A type as Delivery reads it. Only what Delivery needs: the admin-only details are never in it,
+ * so nothing delivered can come to depend on them.
+ */
+export type DeliveredContentType = Omit<ContentType, 'group' | 'description' | 'icon' | 'layout'>;
+
+/**
  * A type as Delivery serves it. A published row is the published definition, whatever else is
  * stored. A draft with a `published` definition is a live type with an unpublished revision, and
  * serves that, reporting `published`. A draft with none stays as it is: never published, or
@@ -84,17 +90,26 @@ export interface PublishedContentTypeDefinition {
  * flag is always the one last published.
  */
 export function deliveredContentType(
-  current: ContentType,
+  current: DeliveredContentType,
   published: PublishedContentTypeDefinition | null,
   publishedSingleton: boolean,
-): ContentType {
-  const { singleton: _draft, urlPattern: _pattern, ...rest } = current;
+): DeliveredContentType {
+  const { apiId, status } = current;
   const flag = publishedSingleton ? { singleton: true as const } : {};
-  if (current.status === 'published' || !published) {
-    return { ...rest, ...(current.urlPattern ? { urlPattern: current.urlPattern } : {}), ...flag };
+  if (status === 'published' || !published) {
+    return {
+      apiId,
+      name: current.name,
+      displayField: current.displayField,
+      fields: current.fields,
+      ...(current.urlPattern ? { urlPattern: current.urlPattern } : {}),
+      ...flag,
+      version: current.version,
+      status,
+    };
   }
   return {
-    ...rest,
+    apiId,
     name: published.name,
     displayField: published.displayField,
     fields: published.fields,

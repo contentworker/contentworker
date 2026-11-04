@@ -42,7 +42,13 @@ so the target serves what the source served. Versions start again in the target,
 The field is optional and `snapshotVersion` stays 1: a snapshot from before it, or a draft with
 nothing kept, imports as a plain draft. A merge or a promotion copies the source's current
 definition and no `published`: over a live target the target keeps serving its own definition until
-it is published, and into a target without the type it arrives as a plain draft.
+it is published. Into a target without the type it arrives as a plain draft, which is a type never
+published there: GraphQL serves it as it stands at once, and the routes, sitemap and menus leave it
+out until it is published.
+
+Preflight runs each definition, and `published`, through `defineContentType`, so one that can't be
+written is refused (`422`, and on a dry run) before anything is, rather than partway through an
+environment that then can't be imported into again.
 
 A snapshot's content model is normalised once, before the checks (`normalizeSnapshotModel`): an
 `in` list stored before options were checked keeps its usable options, once each (and goes when

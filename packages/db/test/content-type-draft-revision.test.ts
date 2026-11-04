@@ -517,3 +517,85 @@ describe('copying a live type with a draft', () => {
     expect(await listDeliveredRoutes(ctx, target)).toEqual([]);
   });
 });
+
+describe('the published view on D1', () => {
+  it('holds no admin-only details', async () => {
+    const { ctx, scope } = await harness();
+    await updateContentType(ctx, scope, 'page', {
+      group: 'Site',
+      description: 'Pages',
+      icon: 'file',
+    });
+    await publishContentType(ctx, scope, 'page');
+    const live = await delivered(ctx, scope);
+    for (const key of ['group', 'description', 'icon', 'layout']) {
+      expect(live).not.toHaveProperty(key);
+    }
+  });
+});
+
+/**
+ * A replica behind the migration: every statement naming the column fails as D1 fails it, because
+ * the name is rewritten to one the database truly lacks. Only reads go through this.
+ */
+const replicaBehind0030 = (target: D1Database): D1Database => {
+  const lag = (sql: string) => sql.replaceAll('published_definition', 'published_definition_lag');
+  return new Proxy(target, {
+    get(t, key) {
+      if (key === 'prepare') return (sql: string) => t.prepare(lag(sql));
+      const value = Reflect.get(t, key, t);
+      return typeof value === 'function' ? value.bind(t) : value;
+    },
+  });
+};
+
+describe('a read replica that hasn’t reached 0030', () => {
+  it('answers Delivery’s read as a database with nothing kept', async () => {
+    const { ctx, scope } = await harness();
+    const lagging = createD1Store(replicaBehind0030(testDb));
+    const reads = deliveryReads({ ...ctx, store: lagging });
+    const { contentTypes = [], config } = await reads.read(scope, {
+      contentTypes: true,
+      config: true,
+    });
+    expect(config).toBeTruthy();
+    expect(contentTypes.find((t) => t.apiId === 'page')).toMatchObject({
+      urlPattern: '/{slug}',
+      status: 'published',
+    });
+  });
+
+  it('answers a lone read of the types, and a singleton read', async () => {
+    const { ctx, scope } = await harness();
+    const lagging = createD1Store(replicaBehind0030(testDb));
+    expect(await listDeliveredRoutes({ ...ctx, store: lagging }, scope)).toEqual([
+      { contentType: 'page', urlPattern: '/{slug}' },
+    ]);
+    const { singleton } = await lagging.delivery.read(scope, {
+      singleton: { contentType: 'page' },
+    });
+    expect(singleton?.contentType).toMatchObject({ apiId: 'page' });
+  });
+
+  it('reports nothing kept', async () => {
+    const { scope } = await harness();
+    const lagging = createD1Store(replicaBehind0030(testDb));
+    expect((await lagging.contentTypes.publishedDefinitions(scope)).size).toBe(0);
+  });
+
+  it('still surfaces any other failed read', async () => {
+    const { scope } = await harness();
+    const broken = new Proxy(testDb, {
+      get(t, key) {
+        if (key === 'prepare') {
+          return (sql: string) => t.prepare(sql.replaceAll('"content_types"', '"no_such_table"'));
+        }
+        const value = Reflect.get(t, key, t);
+        return typeof value === 'function' ? value.bind(t) : value;
+      },
+    });
+    await expect(
+      createD1Store(broken).delivery.read(scope, { contentTypes: true }),
+    ).rejects.toThrow();
+  });
+});

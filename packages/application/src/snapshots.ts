@@ -12,12 +12,15 @@ import {
   type Concept,
   type ConceptScheme,
   type ContentType,
+  type ContentTypeDraft,
   carriedAuthorshipIssues,
   checkMenuDescription,
   checkMenuHandle,
   checkMenuItems,
   checkMenuName,
   checkRedirect,
+  DomainError,
+  defineContentType,
   type EntryFields,
   type EntryMetadata,
   extractReferences,
@@ -604,7 +607,9 @@ export async function writeSnapshotModel(
       name: ct.name,
       displayField: ct.displayField,
       fields: [...ct.fields],
-      ...(ct.urlPattern ? { urlPattern: ct.urlPattern } : {}),
+      // Stated either way: left out, a revision would keep the pattern just published above, and
+      // a draft that dropped the slug it names couldn't be saved at all.
+      urlPattern: ct.urlPattern ?? null,
       singleton: ct.singleton === true,
       ...(ct.group ? { group: ct.group } : {}),
       ...(ct.description ? { description: ct.description } : {}),
@@ -1017,6 +1022,43 @@ function preflight(
   const assetIds = new Set(snapshot.assets.map((a) => a.id));
   const vctx = { defaultLocale: config.defaultLocale, locales: config.locales };
   const issues: FieldIssue[] = [];
+
+  // The model is written first, one type at a time: one that can't be written would stop the import
+  // partway, in an environment no longer empty, so it can't be run again. Stopped here instead.
+  const definable = (ct: SnapshotContentType, label: string, draft: ContentTypeDraft) => {
+    try {
+      defineContentType(draft);
+    } catch (err) {
+      if (!(err instanceof DomainError)) throw err;
+      const said =
+        err instanceof ValidationError
+          ? err.issues.map((i) => `${i.field}: ${i.message}`).join('; ')
+          : err.message;
+      issues.push({ field: 'contentTypes', message: `${label} of "${ct.apiId}": ${said}` });
+    }
+  };
+  for (const ct of snapshot.contentTypes) {
+    definable(ct, 'The definition', {
+      apiId: ct.apiId,
+      name: ct.name,
+      displayField: ct.displayField,
+      fields: [...ct.fields],
+      ...(ct.urlPattern ? { urlPattern: ct.urlPattern } : {}),
+      ...(ct.group ? { group: ct.group } : {}),
+      ...(ct.description ? { description: ct.description } : {}),
+      ...(ct.icon ? { icon: ct.icon } : {}),
+      ...(ct.layout ? { layout: ct.layout } : {}),
+    });
+    if (ct.published) {
+      definable(ct, 'The published definition', {
+        apiId: ct.apiId,
+        name: ct.published.name,
+        displayField: ct.published.displayField,
+        fields: [...ct.published.fields],
+        ...(ct.published.urlPattern ? { urlPattern: ct.published.urlPattern } : {}),
+      });
+    }
+  }
 
   // Folders are created before anything that could fail on them: a bad one stops the import here.
   const folders = new Map((snapshot.assetFolders ?? []).map((f) => [f.id, f]));

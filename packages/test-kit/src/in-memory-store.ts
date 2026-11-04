@@ -15,6 +15,7 @@ import {
   type ContentType,
   cloneJson,
   coversEnvironment,
+  type DeliveredContentType,
   type DomainEvent,
   deliveredContentType,
   type Entry,
@@ -499,7 +500,7 @@ export class InMemoryContentStore implements ContentStore {
   };
 
   /** As the D1 delivery read: the published view of one type. */
-  private deliveredContentType(scope: Scope, ct: ContentType): ContentType {
+  private deliveredContentType(scope: Scope, ct: ContentType): DeliveredContentType {
     const key = `${scopeKey(scope)}::${ct.apiId}`;
     return deliveredContentType(
       ct,
@@ -509,7 +510,7 @@ export class InMemoryContentStore implements ContentStore {
   }
 
   /** As the D1 delivery read: each type as last published. */
-  private async deliveredContentTypes(scope: Scope): Promise<ContentType[]> {
+  private async deliveredContentTypes(scope: Scope): Promise<DeliveredContentType[]> {
     return (await this.contentTypes.list(scope)).map((ct) => this.deliveredContentType(scope, ct));
   }
 

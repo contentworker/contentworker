@@ -17,6 +17,7 @@ import type {
   Concept,
   ConceptScheme,
   ContentType,
+  DeliveredContentType,
   DomainEvent,
   Entry,
   EntryFields,
@@ -1550,7 +1551,7 @@ export interface DeliveryReadRequest {
 /** A content type and its published entry, as {@link DeliveryReadRequest.singleton} reads them. */
 export interface SingletonRead {
   /** As Delivery serves it (`deliveredContentType`). Null when no content type has the apiId. */
-  readonly contentType: ContentType | null;
+  readonly contentType: DeliveredContentType | null;
   /**
    * Whether the type's published revision is a singleton: what Delivery serves by, so a draft
    * revision turning the flag on or off changes nothing there until the type is published.
@@ -1616,9 +1617,10 @@ export interface DeliveryReadResult {
   /**
    * The published view of every type (`deliveredContentType`), not the working definitions
    * `ContentTypeRepo` reads: a live type with a draft revision is here as last published, and a
-   * draft with no published definition as it stands, status `draft`.
+   * draft with no published definition as it stands, status `draft`. Never the admin-only
+   * details (`DeliveredContentType`).
    */
-  readonly contentTypes?: ContentType[];
+  readonly contentTypes?: DeliveredContentType[];
   readonly renditions?: AssetRendition[];
   readonly entry?: PublishedEntry | null;
   readonly asset?: PublishedAsset | null;

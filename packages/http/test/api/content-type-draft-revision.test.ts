@@ -1,3 +1,9 @@
+import {
+  createContentType,
+  createEnvironment,
+  mergeEnvironments,
+  publishContentType,
+} from '@contentworker/application';
 import type { ApiConfig } from '@contentworker/platform/config';
 import type { InMemoryContentStore } from '@contentworker/test-kit';
 import { describe, expect, it } from 'vitest';
@@ -24,6 +30,7 @@ const cma = { Authorization: 'Bearer cma', 'Content-Type': 'application/json' };
 const cda = { Authorization: 'Bearer cda', 'Content-Type': 'application/json' };
 const M = '/spaces/s1/environments/main';
 const D = '/delivery/s1/main';
+const scope = { spaceId: 's1', environmentId: 'main' };
 
 const field = (apiId: string, type: string, position: number) => ({
   apiId,
@@ -199,6 +206,41 @@ describe('what stays as it was', () => {
     expect((await graphql('{ pageCollection { subtitle } }')).status).toBe(200);
   });
 
+  it('errors on a value published under a draft’s field type, until the type is published', async () => {
+    const { app, save, publish, graphql } = await setup();
+    const rated = [...fields, field('rating', 'Integer', 2)];
+    await save({ ...definition, fields: rated });
+    await publish('page');
+    await save({ ...definition, fields: [...fields, field('rating', 'Symbol', 2)] });
+    const res = await app.request(`${M}/entries`, {
+      method: 'POST',
+      headers: cma,
+      body: JSON.stringify({
+        contentTypeApiId: 'page',
+        fields: {
+          title: { 'en-US': 'R' },
+          slug: { 'en-US': 'r' },
+          rating: { 'en-US': 'great' },
+        },
+      }),
+    });
+    const { entry } = (await res.json()) as { entry: { id: string } };
+    await app.request(`${M}/entries/${entry.id}/published`, { method: 'POST', headers: cma });
+
+    const rest = await app.request(`${D}/entries/${entry.id}?locale=en-US`, { headers: cda });
+    expect(((await rest.json()) as { fields: unknown }).fields).toMatchObject({ rating: 'great' });
+    const query = '{ pageCollection { slug rating } }';
+    const before = await graphql(query);
+    expect(JSON.stringify(before.body.errors)).toContain('Int cannot represent');
+    expect(before.body.data?.pageCollection).toContainEqual({ slug: 'r', rating: null });
+
+    await publish('page');
+    expect((await graphql(query)).body.data?.pageCollection).toContainEqual({
+      slug: 'r',
+      rating: 'great',
+    });
+  });
+
   it('announces nothing for a draft save, so no purge follows', async () => {
     const { wired, save } = await setup();
     const store = wired.ctx.store as unknown as InMemoryContentStore;
@@ -206,5 +248,35 @@ describe('what stays as it was', () => {
     const was = count();
     await save({ ...definition, name: 'Pages' });
     expect(count()).toBe(was);
+  });
+});
+
+describe('GraphQL’s schema cache', () => {
+  it('rebuilds for a publish that changes fields at the same version', async () => {
+    const { app, wired, graphql } = await setup();
+    const query = '{ pageCollection { subtitle } }';
+    expect((await graphql(query)).status).toBe(400); // warms the cache at page@1
+
+    const staging = { spaceId: 's1', environmentId: 'staging' };
+    await createEnvironment(wired.ctx, 's1', 'staging');
+    await createContentType(wired.ctx, staging, {
+      ...definition,
+      fields: [...fields, field('subtitle', 'Symbol', 2)],
+    } as Parameters<typeof createContentType>[2]);
+    await publishContentType(wired.ctx, staging, 'page');
+    await mergeEnvironments(wired.ctx, 's1', 'staging', 'main', { contentTypes: ['page'] });
+    expect((await wired.ctx.store.contentTypes.get(scope, 'page'))?.version).toBe(1);
+
+    expect((await graphql(query)).status).toBe(200);
+    expect(app).toBeDefined();
+  });
+
+  it('builds nothing new for a draft of a live type', async () => {
+    const { save, graphql } = await setup();
+    const before = await graphql('{ __type(name: "Page") { fields { name } } }');
+    await save({ ...definition, fields: [...fields, field('subtitle', 'Symbol', 2)] });
+    expect((await graphql('{ __type(name: "Page") { fields { name } } }')).body).toEqual(
+      before.body,
+    );
   });
 });

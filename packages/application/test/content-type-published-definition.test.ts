@@ -1,4 +1,10 @@
-import { ConflictError, type FieldDefinition } from '@contentworker/domain';
+import {
+  ConflictError,
+  type FieldDefinition,
+  type Principal,
+  SCOPES,
+  ValidationError,
+} from '@contentworker/domain';
 import { FixedClock, InMemoryContentStore, SequenceIdGenerator } from '@contentworker/test-kit';
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
@@ -21,6 +27,7 @@ import {
   previewMenu,
   publishContentType,
   publishEntry,
+  requestPromotion,
   updateContentType,
   updateEntry,
   writeSnapshotModel,
@@ -28,6 +35,12 @@ import {
 
 /** The test-kit's half of 0030_published_definition; `packages/db/test` holds D1 to the same. */
 const scope = { spaceId: 's1', environmentId: 'main' };
+const promoter: Principal = {
+  spaceId: 's1',
+  kind: 'user',
+  subject: 'ada',
+  scopes: [SCOPES.contentPublish],
+};
 const copy = { spaceId: 's1', environmentId: 'copy' };
 
 const field = (
@@ -337,5 +350,239 @@ describe('copying a live type with a draft', () => {
     expect(await getContentType(ctx, copy, 'page')).toMatchObject({ status: 'draft' });
     expect((await store.contentTypes.publishedDefinitions(copy)).size).toBe(0);
     expect(await listDeliveredRoutes(ctx, copy)).toEqual([]);
+  });
+});
+
+describe('a clone of a draft that cleared the URL pattern', () => {
+  it('keeps the draft’s clearing, though the draft dropped the slug too', async () => {
+    await updateContentType(ctx, scope, 'page', {
+      urlPattern: null,
+      fields: [field('title', 'Symbol', 0)],
+    });
+    await cloneEnvironment(ctx, scope, copy);
+    const working = await getContentType(ctx, copy, 'page');
+    expect(working.urlPattern).toBeUndefined();
+    expect(working.fields.map((f) => f.apiId)).toEqual(['title']);
+    expect(await delivered(copy)).toMatchObject({ urlPattern: '/{slug}', status: 'published' });
+  });
+
+  it('keeps the draft’s clearing when the slug stays', async () => {
+    await updateContentType(ctx, scope, 'page', { urlPattern: null });
+    await cloneEnvironment(ctx, scope, copy);
+    expect((await getContentType(ctx, copy, 'page')).urlPattern).toBeUndefined();
+  });
+});
+
+describe('a saved menu’s links', () => {
+  async function published() {
+    const { entry } = await createEntry(ctx, scope, {
+      contentTypeApiId: 'page',
+      fields: { title: { 'en-US': 'a' }, slug: { 'en-US': 'a' } },
+    });
+    await publishEntry(ctx, scope, entry.id);
+    return entry.id;
+  }
+  const menuOf = (entryId: string) =>
+    createMenu(ctx, scope, {
+      handle: 'main',
+      name: 'Main',
+      items: [{ id: 'a', link: { type: 'entry', entryId } }],
+    });
+
+  it('takes an entry of a live type whose draft cleared the pattern Delivery still serves', async () => {
+    const id = await published();
+    await updateContentType(ctx, scope, 'page', { urlPattern: null });
+    const menu = await menuOf(id);
+    expect((await previewMenu(ctx, scope, menu.id)).items[0]).toMatchObject({
+      status: 'live',
+      url: '/a',
+    });
+  });
+
+  it('takes a pattern only a draft has, and the preview says Delivery has no URL yet', async () => {
+    await createContentType(ctx, scope, {
+      apiId: 'note',
+      name: 'Note',
+      displayField: 'title',
+      fields,
+    });
+    await publishContentType(ctx, scope, 'note');
+    const { entry } = await createEntry(ctx, scope, {
+      contentTypeApiId: 'note',
+      fields: { title: { 'en-US': 'n' }, slug: { 'en-US': 'n' } },
+    });
+    await publishEntry(ctx, scope, entry.id);
+    await updateContentType(ctx, scope, 'note', { urlPattern: '/n/{slug}' });
+    const menu = await menuOf(entry.id);
+    expect((await previewMenu(ctx, scope, menu.id)).items[0]).toMatchObject({ status: 'no_url' });
+  });
+
+  it('takes an entry of a never-published draft with a pattern', async () => {
+    await createContentType(ctx, scope, {
+      apiId: 'event',
+      name: 'Event',
+      displayField: 'title',
+      urlPattern: '/e/{slug}',
+      fields,
+    });
+    const { entry } = await createEntry(ctx, scope, {
+      contentTypeApiId: 'event',
+      fields: { title: { 'en-US': 'e' }, slug: { 'en-US': 'e' } },
+    });
+    await expect(menuOf(entry.id)).resolves.toMatchObject({ handle: 'main' });
+  });
+
+  it('still refuses an entry of a type with no pattern anywhere', async () => {
+    await createContentType(ctx, scope, {
+      apiId: 'note',
+      name: 'Note',
+      displayField: 'title',
+      fields,
+    });
+    const { entry } = await createEntry(ctx, scope, {
+      contentTypeApiId: 'note',
+      fields: { title: { 'en-US': 'n' }, slug: { 'en-US': 'n' } },
+    });
+    await expect(menuOf(entry.id)).rejects.toBeInstanceOf(ValidationError);
+  });
+});
+
+describe('the delete check when the kept definition has no pattern', () => {
+  it('ignores a pattern only the draft has: Delivery doesn’t route it', async () => {
+    await createContentType(ctx, scope, {
+      apiId: 'note',
+      name: 'Note',
+      displayField: 'title',
+      fields,
+    });
+    await publishContentType(ctx, scope, 'note');
+    await updateContentType(ctx, scope, 'note', { urlPattern: '/n/{slug}' });
+    expect((await contentTypeDependents(ctx, scope, 'note')).urlPattern).toBeUndefined();
+    await deleteContentType(ctx, scope, 'note');
+    expect(await store.contentTypes.get(scope, 'note')).toBeNull();
+  });
+
+  it('still counts a never-published draft’s pattern', async () => {
+    await createContentType(ctx, scope, {
+      apiId: 'event',
+      name: 'Event',
+      displayField: 'title',
+      urlPattern: '/e/{slug}',
+      fields,
+    });
+    expect((await contentTypeDependents(ctx, scope, 'event')).urlPattern).toBe('/e/{slug}');
+  });
+});
+
+describe('the published view’s shape', () => {
+  it('leaves out the admin-only details, as D1 does', async () => {
+    await updateContentType(ctx, scope, 'page', {
+      group: 'Site',
+      description: 'Pages',
+      icon: 'file',
+      layout: { tabs: [{ apiId: 'main', name: 'Main', groups: [] }] },
+    });
+    await publishContentType(ctx, scope, 'page');
+    const live = await delivered();
+    for (const key of ['group', 'description', 'icon', 'layout']) {
+      expect(live).not.toHaveProperty(key);
+    }
+  });
+});
+
+describe('a promotion over a target with a draft', () => {
+  const secret = [...fields, field('secret', 'Symbol', 2)];
+
+  it('names a field the promotion removes that the target still serves', async () => {
+    // The target serves `secret`; its own draft already dropped it, so that draft alone shows no risk.
+    await updateContentType(ctx, scope, 'page', { fields: secret });
+    await publishContentType(ctx, scope, 'page');
+    await updateContentType(ctx, scope, 'page', { fields });
+    await createContentType(ctx, copy, {
+      apiId: 'page',
+      name: 'Page',
+      displayField: 'title',
+      urlPattern: '/{slug}',
+      fields,
+    });
+    await publishContentType(ctx, copy, 'page');
+    const { risk } = await requestPromotion(ctx, promoter, 's1', {
+      source: 'copy',
+      target: 'main',
+      contentTypes: ['page'],
+    });
+    expect(risk.reasons.join('\n')).toContain('removes the field "secret"');
+  });
+
+  it('says nothing of it when what arrives is a draft, which changes nothing served', async () => {
+    await updateContentType(ctx, scope, 'page', { fields: secret });
+    await publishContentType(ctx, scope, 'page');
+    await updateContentType(ctx, scope, 'page', { fields });
+    await createContentType(ctx, copy, {
+      apiId: 'page',
+      name: 'Page',
+      displayField: 'title',
+      urlPattern: '/{slug}',
+      fields,
+    });
+    const { risk } = await requestPromotion(ctx, promoter, 's1', {
+      source: 'copy',
+      target: 'main',
+      contentTypes: ['page'],
+    });
+    expect(risk.reasons.join('\n')).not.toContain('secret');
+  });
+});
+
+describe('a snapshot with a definition that can’t be written', () => {
+  const crafted: FieldDefinition[] = [
+    ...fields,
+    {
+      ...field('body', 'Array', 2),
+      items: {
+        type: 'Component',
+        variants: [
+          { apiId: 'hero', name: 'Hero', fields: [] },
+          { apiId: 'hero', name: 'Twice', fields: [] },
+        ],
+      },
+    } as FieldDefinition,
+  ];
+
+  it('refuses a bad block in the type, writing nothing', async () => {
+    const snapshot = await exportSnapshot(ctx, scope);
+    const bad = {
+      ...snapshot,
+      contentTypes: snapshot.contentTypes.map((ct) => ({ ...ct, fields: crafted })),
+    };
+    const refused = await importSnapshot(ctx, copy, bad).catch((err: unknown) => err);
+    expect(refused).toBeInstanceOf(ValidationError);
+    expect(JSON.stringify((refused as ValidationError).issues)).toContain('page');
+    expect(await store.contentTypes.list(copy)).toEqual([]);
+  });
+
+  it('refuses a bad block in the published definition, writing nothing', async () => {
+    await updateContentType(ctx, scope, 'page', { name: 'Two' });
+    const snapshot = await exportSnapshot(ctx, scope);
+    const bad = {
+      ...snapshot,
+      contentTypes: snapshot.contentTypes.map((ct) =>
+        ct.published ? { ...ct, published: { ...ct.published, fields: crafted } } : ct,
+      ),
+    };
+    await expect(importSnapshot(ctx, copy, bad)).rejects.toBeInstanceOf(ValidationError);
+    expect(await store.contentTypes.list(copy)).toEqual([]);
+  });
+
+  it('reports it on a dry run', async () => {
+    const snapshot = await exportSnapshot(ctx, scope);
+    const bad = {
+      ...snapshot,
+      contentTypes: snapshot.contentTypes.map((ct) => ({ ...ct, fields: crafted })),
+    };
+    await expect(importSnapshot(ctx, copy, bad, { dryRun: true })).rejects.toBeInstanceOf(
+      ValidationError,
+    );
+    expect(await store.contentTypes.list(copy)).toEqual([]);
   });
 });
