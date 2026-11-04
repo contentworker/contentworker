@@ -46,6 +46,31 @@ export type FilterOp = (typeof FILTER_OPS)[number];
  */
 export const ANY_FIELD = '*';
 
+/**
+ * A filter's query-string key: `fields.<apiId>` (with up to three component segments after it),
+ * `sys.<name>`, or a taxonomy association, `metadata.tags` / `metadata.concepts` (ids) and
+ * `metadata.tags.slug` / `metadata.concepts.slug` (slugs), each with an optional `[op]`.
+ */
+export const ENTRY_FILTER_KEY =
+  /^(fields\.[A-Za-z0-9_]+(?:\.[A-Za-z_][A-Za-z0-9_]*){0,3}|sys\.[A-Za-z0-9_]+|metadata\.(?:tags|concepts)(?:\.slug)?)(?:\[(\w+)\])?$/;
+
+/** The query-string keys an entries list reads beside its filters. */
+export const ENTRY_QUERY_PARAMS = [
+  'content_type',
+  'cursor',
+  'limit',
+  'links_to_entry',
+  'locale',
+  'order',
+  'preview_token',
+  'query',
+  'select',
+  'since',
+  'skip',
+  'trashed',
+  'where',
+] as const;
+
 /** A single field-level predicate. `field` may be a content field apiId, a path into a
  *  component (`seo.title`), a `sys.*` pseudo-field (e.g. `sys.publishedAt`), a `metadata.*`
  *  association, or {@link ANY_FIELD} for a reference filter over every field. */

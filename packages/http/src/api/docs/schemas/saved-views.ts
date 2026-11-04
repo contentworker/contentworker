@@ -63,4 +63,8 @@ export const savedViewRun = z.object({
     .array(z.string())
     .optional()
     .describe('Kept query keys (query.extra) this version did not apply'),
+  typeMissing: z
+    .literal(true)
+    .optional()
+    .describe('The view’s content type isn’t in this environment: nothing to list'),
 });

@@ -3,6 +3,7 @@ import {
   type FieldDefinition,
   ForbiddenError,
   MAX_PERSONAL_VIEWS,
+  MAX_SHARED_VIEWS,
   NotFoundError,
   type Principal,
   SCOPES,
@@ -199,13 +200,13 @@ describe('saved views', () => {
     const view = await createSavedView(ctx, scope, bob, {
       name: 'Mine',
       contentTypeApiId: 'article',
-      query: { extra: { 'sys.createdBy': 'me' } },
+      query: { extra: { assignee: 'me' } },
     });
-    expect(view.query.extra).toEqual({ 'sys.createdBy': 'me' });
+    expect(view.query.extra).toEqual({ assignee: 'me' });
     const renamed = await updateSavedView(ctx, scope, bob, view.id, { name: 'Mine, renamed' });
-    expect(renamed.query.extra).toEqual({ 'sys.createdBy': 'me' });
+    expect(renamed.query.extra).toEqual({ assignee: 'me' });
     const run = await runSavedView(ctx, scope, bob, view.id);
-    expect(run.ignored).toEqual(['sys.createdBy']);
+    expect(run.ignored).toEqual(['assignee']);
     expect(run.items).toHaveLength(3);
   });
 
@@ -264,12 +265,42 @@ describe('saved views', () => {
     const byKey = await createSavedView(ctx, scope, key, { name: 'K', visibility: 'shared' });
     expect(byKey.createdBy).toBe('cma');
 
-    // Unsharing makes it the unsharer's own.
-    const unshared = await updateSavedView(ctx, scope, ada, shared.id, { visibility: 'personal' });
-    expect(unshared.createdBy).toBe('ada@example.com');
+    // Its creator stops sharing it: theirs alone again, as a fresh read says.
+    await updateSavedView(ctx, scope, ada, shared.id, { visibility: 'personal' });
+    const unshared = await getSavedView(ctx, scope, ada, shared.id);
+    expect(unshared).toMatchObject({ visibility: 'personal', createdBy: 'ada@example.com' });
+    expect((await listSavedViews(ctx, scope, ada)).map((v) => v.id)).toContain(shared.id);
     await expect(getSavedView(ctx, scope, bob, shared.id)).rejects.toBeInstanceOf(NotFoundError);
     await deleteSavedView(ctx, scope, ada, shared.id);
     await expect(getSavedView(ctx, scope, ada, shared.id)).rejects.toBeInstanceOf(NotFoundError);
+  });
+
+  it('lets only the creator stop sharing a view: nobody else can take it, nor strand it', async () => {
+    const cleo = person('cleo@example.com', MANAGE);
+    const unshare = 'visibility: Only the person who created a shared view can stop sharing it';
+    const keyless = 'visibility: Only a person has personal views';
+    const shared = await createSavedView(ctx, scope, ada, { name: 'Team', visibility: 'shared' });
+    const byKey = await createSavedView(ctx, scope, key, { name: 'K', visibility: 'shared' });
+
+    for (const [who, id, said] of [
+      [cleo, shared.id, unshare], // another manager: a person, but not this view's
+      [key, shared.id, keyless], // a key has no personal views to keep it in
+      [ada, byKey.id, unshare], // nobody is a key's view's creator, so it stays shared
+    ] as const) {
+      const [issue] = await refusal(
+        updateSavedView(ctx, scope, who, id, { visibility: 'personal' }),
+      );
+      expect(issue).toContain(said);
+      expect(await getSavedView(ctx, scope, ada, id)).toMatchObject({
+        visibility: 'shared',
+        revision: 1,
+      });
+    }
+    // Still everyone's, and anyone with content:manage can still change or delete it.
+    expect((await listSavedViews(ctx, scope, bob)).map((v) => v.name)).toEqual(['K', 'Team']);
+    await updateSavedView(ctx, scope, cleo, shared.id, { name: 'Team, renamed' });
+    expect((await getSavedView(ctx, scope, bob, shared.id)).createdBy).toBe('ada@example.com');
+    await deleteSavedView(ctx, scope, ada, byKey.id);
   });
 
   it('runs a shared view with the viewer’s grants, never the creator’s', async () => {
@@ -381,6 +412,118 @@ describe('saved views', () => {
     expect(back.columns).toBeUndefined();
     await deleteSavedView(ctx, scope, bob, view.id, 4);
     expect(await listSavedViews(ctx, scope, bob)).toEqual([]);
+  });
+
+  it('holds a change of visibility to the same caps as a new view', async () => {
+    const at = '2026-01-01T00:00:00.000Z';
+    const stored = (over: { id: string; visibility: 'personal' | 'shared'; createdBy: string }) =>
+      ctx.store.savedViews.save(scope, {
+        name: over.id,
+        contentTypeApiId: null,
+        query: {},
+        revision: 1,
+        createdAt: at,
+        updatedAt: at,
+        ...over,
+      });
+    const toShare = await createSavedView(ctx, scope, ada, { name: 'To share' });
+    const toTake = await createSavedView(ctx, scope, ada, {
+      name: 'To take',
+      visibility: 'shared',
+    });
+    for (let i = 1; i < MAX_SHARED_VIEWS; i++) {
+      await stored({ id: `s${i}`, visibility: 'shared', createdBy: 'cma' });
+    }
+    // The space is full: nothing more is shared, however it gets there.
+    expect(
+      await refusal(updateSavedView(ctx, scope, ada, toShare.id, { visibility: 'shared' })),
+    ).toEqual([`visibility: A space holds at most ${MAX_SHARED_VIEWS} shared views`]);
+    expect((await getSavedView(ctx, scope, ada, toShare.id)).visibility).toBe('personal');
+    // A view staying shared isn't counted against itself.
+    await updateSavedView(ctx, scope, ada, toTake.id, { name: 'Renamed', visibility: 'shared' });
+
+    for (let i = 1; i < MAX_PERSONAL_VIEWS; i++) {
+      await stored({ id: `p${i}`, visibility: 'personal', createdBy: ada.subject as string });
+    }
+    // Taken back, a view counts against the owner's personal views.
+    expect(
+      await refusal(updateSavedView(ctx, scope, ada, toTake.id, { visibility: 'personal' })),
+    ).toEqual([
+      `visibility: A person keeps at most ${MAX_PERSONAL_VIEWS} personal views in a space`,
+    ]);
+    expect((await getSavedView(ctx, scope, ada, toTake.id)).visibility).toBe('shared');
+    // Room made, it goes through.
+    await deleteSavedView(ctx, scope, ada, 'p1');
+    await updateSavedView(ctx, scope, ada, toTake.id, { visibility: 'personal' });
+    expect((await getSavedView(ctx, scope, ada, toTake.id)).visibility).toBe('personal');
+  });
+
+  it('keeps the columns a role hides where they stood when that role saves columns', async () => {
+    const editor = person('ed@example.com', MANAGE, [
+      { contentTypeApiId: 'article', actions: ['read'], deniedFields: ['salary'] },
+    ]);
+    const view = await createSavedView(ctx, scope, ada, {
+      name: 'Pay',
+      contentTypeApiId: 'article',
+      visibility: 'shared',
+      columns: ['sys.status', 'salary', 'section', 'sys.updatedAt'],
+    });
+    const stored = async () => (await ctx.store.savedViews.get(scope, view.id))?.columns;
+    const shown = await getSavedView(ctx, scope, editor, view.id);
+    expect(shown.columns).toEqual(['sys.status', 'section', 'sys.updatedAt']);
+
+    const saved = await updateSavedView(ctx, scope, editor, view.id, {
+      columns: ['section', 'sys.status'],
+    });
+    // The editor still isn't shown it; the store and its other readers still have it, in place.
+    expect(saved.columns).toEqual(['section', 'sys.status']);
+    expect(await stored()).toEqual(['section', 'salary', 'sys.status']);
+
+    // Past the end of a shorter list it goes last; a hidden column can't be added by naming it.
+    await updateSavedView(ctx, scope, editor, view.id, { columns: ['section'] });
+    expect(await stored()).toEqual(['section', 'salary']);
+    await updateSavedView(ctx, scope, editor, view.id, { columns: ['salary'] });
+    expect(await stored()).toEqual(['salary']);
+    // Back to the default keeps it too, beside the default columns.
+    await updateSavedView(ctx, scope, editor, view.id, { columns: null });
+    expect(await stored()).toEqual(['salary', 'sys.status', 'sys.updatedAt']);
+    // A role that sees it replaces it like any other column.
+    await updateSavedView(ctx, scope, ada, view.id, { columns: ['section'] });
+    expect(await stored()).toEqual(['section']);
+    await updateSavedView(ctx, scope, ada, view.id, { columns: null });
+    expect(await stored()).toBeUndefined();
+  });
+
+  it('says when a view’s content type is missing, and can still be changed and deleted', async () => {
+    await createContentType(ctx, staging, {
+      apiId: 'promo',
+      name: 'Promo',
+      displayField: 'title',
+      fields: [field({ apiId: 'title', type: 'Symbol' })],
+    });
+    await publishContentType(ctx, staging, 'promo');
+    const view = await createSavedView(ctx, staging, bob, {
+      name: 'Promos',
+      contentTypeApiId: 'promo',
+      columns: ['title'],
+    });
+    expect((await runSavedView(ctx, staging, bob, view.id)).typeMissing).toBeUndefined();
+
+    // `main` has no such type: not an empty result, and not an error.
+    const run = await runSavedView(ctx, scope, bob, view.id);
+    expect(run).toMatchObject({ items: [], typeMissing: true });
+    expect(run.view.id).toBe(view.id);
+    expect((await listSavedViews(ctx, scope, bob)).map((v) => v.id)).toContain(view.id);
+
+    // Back to the default columns, and other changes, need no type; naming columns does.
+    await updateSavedView(ctx, scope, bob, view.id, { columns: null, name: 'Old promos' });
+    expect(await getSavedView(ctx, scope, bob, view.id)).toMatchObject({ name: 'Old promos' });
+    expect((await getSavedView(ctx, scope, bob, view.id)).columns).toBeUndefined();
+    expect(
+      await refusal(updateSavedView(ctx, scope, bob, view.id, { columns: ['title'] })),
+    ).toEqual(['contentTypeApiId: No content type "promo" in this environment']);
+    await deleteSavedView(ctx, scope, bob, view.id);
+    await expect(getSavedView(ctx, scope, bob, view.id)).rejects.toBeInstanceOf(NotFoundError);
   });
 
   it('caps the personal views a person keeps', async () => {

@@ -4,6 +4,7 @@ import {
   type AppContext,
   createContentType,
   createEntry,
+  createEnvironment,
   createSpace,
   publishContentType,
 } from '@contentworker/application';
@@ -141,6 +142,33 @@ describe('saved view tools (MCP), on the HTTP routes’ use-cases', () => {
     expect(stale.isError).toBe(true);
     expect((await call('views_delete', { id: view.id })).body).toEqual({ deleted: view.id });
     expect((await call('views_list')).body).toMatchObject({ total: 0 });
+  });
+
+  it('says a type is missing, and refuses to unshare another’s view, as HTTP does', async () => {
+    const deps = await seeded();
+    const person = (subject: string): Principal => ({
+      spaceId: SPACE,
+      kind: 'user',
+      subject,
+      scopes: [SCOPES.previewRead, SCOPES.contentManage],
+    });
+    const ada = await connect(deps, person('ada@example.com'));
+    const cleo = await connect(deps, person('cleo@example.com'));
+    const shared = (await ada('views_create', {
+      name: 'Team',
+      contentType: 'staff',
+      visibility: 'shared',
+    })) as { body: View };
+    const refused = await cleo('views_update', { id: shared.body.id, visibility: 'personal' });
+    expect(refused.isError).toBe(true);
+    expect(refused.text).toContain('Only the person who created a shared view');
+    expect((await ada('views_get', { id: shared.body.id })).body).toMatchObject({
+      visibility: 'shared',
+    });
+
+    await createEnvironment(deps.ctx, SPACE, 'empty');
+    const run = await ada('views_run', { id: shared.body.id, environment: 'empty' });
+    expect(run.body).toMatchObject({ items: [], typeMissing: true });
   });
 
   it('treats another person’s personal view as not found', async () => {

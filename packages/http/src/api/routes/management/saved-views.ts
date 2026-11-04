@@ -28,6 +28,9 @@ function revisionOf(raw: string | undefined): number | undefined {
 
 const SHARED_NEEDS_MANAGE =
   'A shared view needs content:manage to create, change, share, unshare or delete. ';
+const UNSHARE =
+  'Only the person who created a shared view can stop sharing it (anyone else gets a 422 and ' +
+  'can save a copy). ';
 const NOT_YOURS =
   'Another person’s personal view, a view over a type you can’t read, or one naming a field ' +
   'your role hides is a 404.';
@@ -99,7 +102,8 @@ export function savedViewsRoutes(deps: AuthDeps): Hono<AuthVars> {
       description:
         'One page of the view’s entries, as the Preview list answers your own query: your ' +
         'grants narrow the types and your field rules mask the fields, whoever saved the view. ' +
-        `Page with nextCursor. ${NOT_YOURS}`,
+        'Page with nextCursor. Where the view’s content type isn’t in this environment, an ' +
+        `empty page with typeMissing: true. ${NOT_YOURS}`,
       query: {
         limit: `Page size (at most ${MAX_PAGE_LIMIT})`,
         cursor: 'nextCursor from the previous page',
@@ -126,8 +130,10 @@ export function savedViewsRoutes(deps: AuthDeps): Hono<AuthVars> {
       ok: viewDocs.savedView,
       description:
         'Fields left out keep their value; query replaces the whole query; columns null goes ' +
-        'back to the default. Its content type is fixed. With revision, a view saved since is ' +
-        `a 409. ${SHARED_NEEDS_MANAGE}${NOT_YOURS}`,
+        'back to the default (and works where the view’s content type is missing, where other ' +
+        'columns are a 422); columns your role hides stay where they are. Its content type is ' +
+        'fixed. A new visibility must fit the view caps. With revision, a view saved since is ' +
+        `a 409. ${SHARED_NEEDS_MANAGE}${UNSHARE}${NOT_YOURS}`,
     }),
     requireScope(SCOPES.previewRead),
     async (c) =>

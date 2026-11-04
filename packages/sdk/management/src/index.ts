@@ -445,6 +445,8 @@ export interface SavedViewRun {
   readonly nextCursor?: string;
   /** `query.extra` keys this server didn't apply. */
   readonly ignored?: readonly string[];
+  /** The view's content type isn't in this environment: the page is empty for that reason. */
+  readonly typeMissing?: true;
 }
 
 export interface Entry extends EntryAuthorship {

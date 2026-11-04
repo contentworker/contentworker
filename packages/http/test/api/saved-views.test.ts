@@ -2,6 +2,7 @@ import {
   addMember,
   createContentType,
   createEntry,
+  createEnvironment,
   createRole,
   findMemberForSignIn,
   publishContentType,
@@ -34,7 +35,14 @@ const writer = who('writer');
 const nosy = who('nosy');
 const pagesOnly = who('pages');
 
-type View = { id: string; name: string; revision: number; columns?: string[]; createdBy: string };
+type View = {
+  id: string;
+  name: string;
+  revision: number;
+  visibility?: string;
+  columns?: string[];
+  createdBy: string;
+};
 type Run = {
   items: { contentType: string; fields: Record<string, Record<string, unknown>> }[];
   total: number;
@@ -43,9 +51,12 @@ type Run = {
 
 describe('saved views over HTTP', () => {
   let app: ReturnType<typeof createApp>;
+  let ctx: ReturnType<typeof wire>['ctx'];
 
   beforeEach(async () => {
-    const { ctx, rag, blob, ai } = wire(config);
+    const wired = wire(config);
+    const { rag, blob, ai } = wired;
+    ctx = wired.ctx;
     app = createApp(ctx, config, rag, blob, ai);
     await createContentType(ctx, scope, {
       apiId: 'staff',
@@ -137,7 +148,7 @@ describe('saved views over HTTP', () => {
       query: {
         filters: [{ field: 'fields.team', op: 'eq', value: 'web' }],
         order: [{ field: 'name', direction: 'desc' }],
-        extra: { 'sys.createdBy': 'me' },
+        extra: { assignee: 'me' },
       },
       columns: ['team', 'sys.status'],
     });
@@ -150,7 +161,7 @@ describe('saved views over HTTP', () => {
       await call(writer, 'GET', `/saved-views/${view.id}/entries`)
     ).json()) as Run;
     expect(run.items.map((e) => e.fields.name?.['en-US'])).toEqual(['Ben', 'Ana']);
-    expect(run).toMatchObject({ total: 2, ignored: ['sys.createdBy'] });
+    expect(run).toMatchObject({ total: 2, ignored: ['assignee'] });
     const page = (await (
       await call(writer, 'GET', `/saved-views/${view.id}/entries?limit=1`)
     ).json()) as Run & { nextCursor?: string };
@@ -200,6 +211,86 @@ describe('saved views over HTTP', () => {
     expect(
       (await call(lead, 'PATCH', `/saved-views/${mine.id}`, { visibility: 'shared' })).status,
     ).toBe(404);
+  });
+
+  it('lets only a shared view’s creator stop sharing it, as a fresh read shows', async () => {
+    const shared = await create(lead, { name: 'Team', visibility: 'shared' });
+    await addMember(ctx, 's1', { email: 'rival@example.com', role: 'manager' });
+    await findMemberForSignIn(ctx, 's1', 'rival', 'rival@example.com');
+    const rival = who('rival');
+
+    const refused = await call(rival, 'PATCH', `/saved-views/${shared.id}`, {
+      visibility: 'personal',
+    });
+    expect(refused.status).toBe(422);
+    expect(await refused.text()).toContain('Only the person who created a shared view');
+    expect(await names(writer)).toEqual(['Team']);
+
+    const done = await call(lead, 'PATCH', `/saved-views/${shared.id}`, { visibility: 'personal' });
+    expect(done.status).toBe(200);
+    const read = (await (await call(lead, 'GET', `/saved-views/${shared.id}`)).json()) as View;
+    expect(read).toMatchObject({ visibility: 'personal', createdBy: shared.createdBy });
+    expect(await names(writer)).toEqual([]);
+    expect(await names(lead)).toEqual(['Team']);
+  });
+
+  it('keeps columns a role hides when that role saves over a shared view', async () => {
+    const shared = await create(lead, {
+      name: 'Pay',
+      contentTypeApiId: 'staff',
+      visibility: 'shared',
+      columns: ['salary', 'team'],
+    });
+    const role = await createRole(ctx, 's1', {
+      name: 'Managers without salaries',
+      scopes: ['preview:read', 'content:manage'],
+      contentGrants: [{ contentTypeApiId: '*', actions: ['read'], deniedFields: ['salary'] }],
+    } as Parameters<typeof createRole>[2]);
+    await addMember(ctx, 's1', { email: 'hide2@example.com', role: role.id });
+    await findMemberForSignIn(ctx, 's1', 'hide2', 'hide2@example.com');
+
+    const res = await call(who('hide2'), 'PATCH', `/saved-views/${shared.id}`, {
+      columns: ['sys.status'],
+    });
+    expect(res.status, await res.clone().text()).toBe(200);
+    expect(((await res.json()) as View).columns).toEqual(['sys.status']);
+    const read = (await (await call(lead, 'GET', `/saved-views/${shared.id}`)).json()) as View;
+    expect(read.columns).toEqual(['salary', 'sys.status']);
+  });
+
+  it('reports a view whose type this environment lacks, and still changes and deletes it', async () => {
+    const view = await create(writer, {
+      name: 'Staff',
+      contentTypeApiId: 'staff',
+      columns: ['team'],
+    });
+    await createEnvironment(ctx, 's1', 'empty');
+    const inEmpty = async (method: string, path: string, body?: unknown) => {
+      const target = `/spaces/s1/environments/empty${path}`;
+      return app.request(target, {
+        method,
+        headers: {
+          'Content-Type': 'application/json',
+          'x-cw-principal': await signPrincipal(
+            KEY,
+            writer,
+            principalTarget(method, new URL(target, 'http://x').pathname),
+          ),
+        },
+        ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+      });
+    };
+    const run = await inEmpty('GET', `/saved-views/${view.id}/entries`);
+    expect(run.status).toBe(200);
+    expect(await run.json()).toMatchObject({ items: [], total: 0, typeMissing: true });
+    const ok = await call(writer, 'GET', `/saved-views/${view.id}/entries`);
+    expect(((await ok.json()) as Run & { typeMissing?: true }).typeMissing).toBeUndefined();
+
+    expect((await inEmpty('PATCH', `/saved-views/${view.id}`, { columns: ['team'] })).status).toBe(
+      422,
+    );
+    expect((await inEmpty('PATCH', `/saved-views/${view.id}`, { columns: null })).status).toBe(200);
+    expect((await inEmpty('DELETE', `/saved-views/${view.id}`)).status).toBe(204);
   });
 
   it('never widens what a viewer sees: a shared view runs under the viewer’s role', async () => {
@@ -258,6 +349,29 @@ describe('saved views over HTTP', () => {
       await call(pagesOnly, 'GET', `/saved-views/${everything.id}/entries`)
     ).json()) as Run;
     expect(memos.items.map((e) => e.contentType)).toEqual(['memo']);
+  });
+
+  it('answers a where too deep to read, or a known key in extra, with a 422', async () => {
+    const raw = `{"name":"Deep","query":{"where":${'{"or":['.repeat(50_000)}{"field":"name","op":"eq","value":"a"}${']}'.repeat(50_000)}}}`;
+    const res = await app.request(`${M}/saved-views`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-cw-principal': await signPrincipal(
+          KEY,
+          writer,
+          principalTarget('POST', `${M}/saved-views`),
+        ),
+      },
+      body: raw,
+    });
+    expect(res.status).toBe(422);
+    const known = await call(writer, 'POST', '/saved-views', {
+      name: 'Sneaky',
+      query: { extra: { where: '{"field":"salary","op":"gt","value":0}' } },
+    });
+    expect(known.status).toBe(422);
+    expect(await known.text()).toContain('query.extra');
   });
 
   it('refuses a malformed query with 422, naming the part', async () => {

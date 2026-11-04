@@ -15,11 +15,13 @@ import {
   MAX_SHARED_VIEWS,
   maskDeniedFields,
   NotFoundError,
+  ownsSavedView,
   type Principal,
   type SavedView,
   type SavedViewVisibility,
   SCOPES,
   type Scope,
+  savedViewColumnsAfter,
   savedViewEntryQuery,
   savedViewFor,
   ValidationError,
@@ -40,6 +42,10 @@ import { listPreviewEntryPage, type PreviewEntryPage } from './preview';
  * (`preview:read`, checked by the surfaces). A shared view changes what everyone's views menu
  * offers, so creating one, changing one, or sharing or unsharing a view needs `content:manage`,
  * the scope that shapes the space's model and menus.
+ *
+ * A view keeps its creator for life. Stopping sharing is therefore the creator's alone: it makes
+ * the view theirs again, and it can't be anyone else's, so nobody can take a view from the space
+ * for themselves (they can save a copy), and one a key created stays shared until it's deleted.
  */
 
 /** Times an update without a revision reads and saves before giving up to a busier writer. */
@@ -126,6 +132,35 @@ function authorizeWrite(
   assertQueryRespectsFieldRules(principal, savedViewEntryQuery(next));
 }
 
+/**
+ * Refuses what would take a person past their personal views, or the space past its shared ones.
+ * A cap on what they hold, not a guarantee under a race: two writes at once may both pass it,
+ * which costs a view over, never a broken one.
+ */
+async function assertRoomFor(
+  ctx: AppContext,
+  scope: Scope,
+  visibility: SavedViewVisibility,
+  owner: string,
+): Promise<void> {
+  const held = await ctx.store.savedViews.list(scope, visibility === 'personal' ? { owner } : {});
+  const count = held.filter(
+    (v) => v.visibility === visibility && (visibility === 'shared' || v.createdBy === owner),
+  ).length;
+  const cap = visibility === 'personal' ? MAX_PERSONAL_VIEWS : MAX_SHARED_VIEWS;
+  if (count >= cap) {
+    throw new ValidationError([
+      {
+        field: 'visibility',
+        message:
+          visibility === 'personal'
+            ? `A person keeps at most ${MAX_PERSONAL_VIEWS} personal views in a space`
+            : `A space holds at most ${MAX_SHARED_VIEWS} shared views`,
+      },
+    ]);
+  }
+}
+
 // --- reads ----------------------------------------------------------------
 
 /**
@@ -168,13 +203,20 @@ export interface SavedViewRun extends PreviewEntryPage {
   };
   /** `query.extra` keys this version doesn't apply: the list is wider than they'd make it. */
   readonly ignored?: readonly string[];
+  /**
+   * The view's content type isn't in this environment (deleted, or never there): the page is
+   * empty for that reason, not because nothing matched.
+   */
+  readonly typeMissing?: true;
 }
 
 /**
  * Runs a view as the caller's own entries query: through the Preview list, with the caller's
  * grants narrowing the types and the caller's field rules masking the fields, never the view
  * creator's. A shared view can therefore show two people two different lists, each what they
- * could have filtered for themselves.
+ * could have filtered for themselves. Where its content type is missing there is nothing to query:
+ * an empty page with `typeMissing`, a fact about this environment rather than a failure, as the
+ * same view may run elsewhere.
  */
 export async function runSavedView(
   ctx: AppContext,
@@ -188,6 +230,17 @@ export async function runSavedView(
   // `visibleView` already checked this; asked again where the query is made, so the gate sits
   // beside what it guards.
   assertQueryRespectsFieldRules(principal, query);
+  const ignored = Object.keys(view.query.extra ?? {});
+  const ran = {
+    id: view.id,
+    name: view.name,
+    contentTypeApiId: view.contentTypeApiId,
+    revision: view.revision,
+    ...(view.columns ? { columns: view.columns } : {}),
+  };
+  if (view.contentTypeApiId && !(await ctx.store.contentTypes.get(scope, view.contentTypeApiId))) {
+    return { view: ran, items: [], typeMissing: true, ...(ignored.length ? { ignored } : {}) };
+  }
   const page = await listPreviewEntryPage(
     ctx,
     scope,
@@ -204,15 +257,8 @@ export async function runSavedView(
         : {}),
     },
   );
-  const ignored = Object.keys(view.query.extra ?? {});
   return {
-    view: {
-      id: view.id,
-      name: view.name,
-      contentTypeApiId: view.contentTypeApiId,
-      revision: view.revision,
-      ...(view.columns ? { columns: view.columns } : {}),
-    },
+    view: ran,
     items: page.items
       .filter((e) => canAccessContentType(principal, 'read', e.contentType))
       .map((e) => ({ ...e, fields: maskDeniedFields(principal, e.contentType, e.fields) })),
@@ -237,27 +283,7 @@ export async function createSavedView(
   const type = await typeNamed(ctx, scope, contentTypeApiId);
   const columns = checkSavedViewColumns(input.columns, type);
   const createdBy = auditActor(principal);
-  // A cap on what a person and a space hold, not a guarantee under a race: two creates at once
-  // may both pass it, which costs a view over, never a broken one.
-  const held = await ctx.store.savedViews.list(
-    scope,
-    visibility === 'personal' ? { owner: createdBy } : {},
-  );
-  const count = held.filter(
-    (v) => v.visibility === visibility && (visibility === 'shared' || v.createdBy === createdBy),
-  ).length;
-  const cap = visibility === 'personal' ? MAX_PERSONAL_VIEWS : MAX_SHARED_VIEWS;
-  if (count >= cap) {
-    throw new ValidationError([
-      {
-        field: 'visibility',
-        message:
-          visibility === 'personal'
-            ? `A person keeps at most ${MAX_PERSONAL_VIEWS} personal views in a space`
-            : `A space holds at most ${MAX_SHARED_VIEWS} shared views`,
-      },
-    ]);
-  }
+  await assertRoomFor(ctx, scope, visibility, createdBy);
   const at = ctx.clock.now().toISOString();
   const view: SavedView = {
     id: ctx.ids.newId(),
@@ -277,8 +303,11 @@ export async function createSavedView(
 
 /**
  * Changes a view: its name, its query, its columns, or who sees it. Fields left out keep their
- * value. Sharing a personal view (or making a shared one personal again) needs `content:manage`;
- * a shared view made personal becomes the caller's.
+ * value. Sharing a personal view (or making a shared one personal again) needs `content:manage`,
+ * and only the view's creator, a person, can make a shared view personal again. The new visibility
+ * has to fit the same caps a new view does. Columns the caller's role hides stay where they are
+ * ({@link savedViewColumnsAfter}); `columns: null` needs no content type, so it works where the
+ * view's is missing, and any other columns are refused there, with nothing to check them against.
  */
 export async function updateSavedView(
   ctx: AppContext,
@@ -306,23 +335,38 @@ export async function updateSavedView(
       },
       current,
     );
+    if (
+      current.visibility === 'shared' &&
+      nextVisibility === 'personal' &&
+      !ownsSavedView(principal, current)
+    ) {
+      throw new ValidationError([
+        {
+          field: 'visibility',
+          message:
+            'Only the person who created a shared view can stop sharing it; save a copy to keep your own',
+        },
+      ]);
+    }
+    if (nextVisibility !== current.visibility) {
+      await assertRoomFor(ctx, scope, nextVisibility, current.createdBy);
+    }
     let columns = current.columns;
     if (patch.columns !== undefined) {
-      columns = checkSavedViewColumns(
-        patch.columns,
-        await typeNamed(ctx, scope, current.contentTypeApiId),
-      );
+      const given =
+        patch.columns === null
+          ? undefined
+          : checkSavedViewColumns(
+              patch.columns,
+              await typeNamed(ctx, scope, current.contentTypeApiId),
+            );
+      columns = savedViewColumnsAfter(principal, current, given);
     }
     const { columns: _c, ...kept } = current;
     const next: SavedView = {
       ...kept,
       name: name ?? current.name,
       visibility: nextVisibility,
-      // Made personal, a view is the person's who made it so; they are the one who can reach it.
-      createdBy:
-        nextVisibility === 'personal' && current.visibility === 'shared'
-          ? auditActor(principal)
-          : current.createdBy,
       query: nextQuery,
       ...(columns ? { columns } : {}),
       revision: current.revision + 1,

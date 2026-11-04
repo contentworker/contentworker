@@ -7,10 +7,13 @@ import {
 import type { ContentType } from '../content-type/content-type';
 import { type FieldIssue, ValidationError } from '../errors';
 import {
+  ENTRY_FILTER_KEY,
+  ENTRY_QUERY_PARAMS,
   fieldPath,
   isQueryField,
   MAX_PATH_FILTERS,
   MAX_WHERE_CONDITIONS,
+  MAX_WHERE_DEPTH,
   parseQueryWhere,
   type QueryFilter,
   type QueryNode,
@@ -28,7 +31,9 @@ import { isPersonPrincipal } from '../workflow/runs';
  * A view lives in a space, not in one environment: it is how people work through the content,
  * not content, so a branch environment opens with the same views and nothing about a view rides
  * a snapshot, a clone or a merge. It is run in whichever environment is asked for, where a field
- * that environment's type doesn't have simply matches nothing.
+ * that environment's type doesn't have simply matches nothing, and where the type itself may be
+ * missing: deleting a type leaves its views alone (another environment may still have it), a run
+ * there says so, and the view can still be changed or deleted.
  *
  * The query is stored in the domain's structured form (the `QueryFilter`s and `QueryNode` tree a
  * live query parses into), never as a query string, and checked by the same validators a live
@@ -77,7 +82,7 @@ export interface SavedViewQuery {
   /**
    * Query keys a newer client sent that this version doesn't apply (a `me` filter, say), kept
    * verbatim so a save made here doesn't drop them. Never applied when the view runs: a run says
-   * which it left out.
+   * which it left out. Never a key anything here reads ({@link isSavedViewExtraKey}).
    */
   readonly extra?: Readonly<Record<string, unknown>>;
 }
@@ -102,12 +107,41 @@ export interface SavedView {
 const CONTROL = /\p{Cc}/u;
 const EXTRA_KEY = /^[A-Za-z0-9_.[\]-]{1,64}$/;
 const FIELD_ID = /^[A-Za-z0-9_]+$/;
+/** The admin list's own URL keys beside the entries query's: the open view, the columns, the connection. */
+const LIST_URL_PARAMS = ['view', 'columns', 'space', 'env'];
+const KNOWN_KEYS: ReadonlySet<string> = new Set([...ENTRY_QUERY_PARAMS, ...LIST_URL_PARAMS]);
+/**
+ * Deeper than any tree `parseQueryWhere` accepts (each group is an object and an array, a leaf an
+ * object and a value list): past this it is refused unread, so nothing recurses down a hostile one.
+ */
+const MAX_WHERE_JSON_DEPTH = MAX_WHERE_DEPTH * 2 + 3;
+
+/**
+ * Whether a query key may be kept in `extra`: one nothing here reads. A filter key or a list or
+ * connection parameter never is, so `extra` can't turn into a live filter, a page size or another
+ * space once a client writes it back into a URL.
+ */
+export function isSavedViewExtraKey(key: string): boolean {
+  return EXTRA_KEY.test(key) && !KNOWN_KEYS.has(key) && !ENTRY_FILTER_KEY.test(key);
+}
 
 const isScalar = (v: unknown) =>
   v === null || typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean';
 /** A comparand or a kept value: a JSON scalar, or a list of them. Never an object. */
 const isPlainValue = (v: unknown) =>
   v === undefined || isScalar(v) || (Array.isArray(v) && v.every(isScalar));
+
+/** Whether JSON nests past `limit`, walked with a stack: this runs on untrusted depth. */
+function nestsPast(root: unknown, limit: number): boolean {
+  const pending: [unknown, number][] = [[root, 0]];
+  for (let next = pending.pop(); next; next = pending.pop()) {
+    const [value, depth] = next;
+    if (!value || typeof value !== 'object') continue;
+    if (depth >= limit) return true;
+    for (const child of Object.values(value)) pending.push([child, depth + 1]);
+  }
+  return false;
+}
 
 const fail = (field: string, message: string): never => {
   throw new ValidationError([{ field, message }]);
@@ -190,7 +224,12 @@ export function checkSavedViewQuery(raw: unknown): SavedViewQuery {
 
   let where: QueryNode | undefined;
   if (q.where !== undefined && q.where !== null) {
-    if (JSON.stringify(q.where).length > MAX_VIEW_WHERE_LENGTH) {
+    if (nestsPast(q.where, MAX_WHERE_JSON_DEPTH)) {
+      issues.push({
+        field: 'query.where',
+        message: `groups nest at most ${MAX_WHERE_DEPTH} deep`,
+      });
+    } else if (JSON.stringify(q.where).length > MAX_VIEW_WHERE_LENGTH) {
       issues.push({
         field: 'query.where',
         message: `where is at most ${MAX_VIEW_WHERE_LENGTH} characters of JSON`,
@@ -268,10 +307,19 @@ export function checkSavedViewQuery(raw: unknown): SavedViewQuery {
       issues.push({ field: 'query.extra', message: 'extra is an object of query keys' });
     } else {
       const entries = Object.entries(e as Record<string, unknown>);
-      if (
+      const read = entries
+        .map(([k]) => k)
+        .filter((k) => EXTRA_KEY.test(k) && !isSavedViewExtraKey(k));
+      if (read.length) {
+        issues.push({
+          field: 'query.extra',
+          message: `extra keeps keys this version doesn't read; not ${read.join(', ')}: use filters, where, order or search`,
+        });
+      } else if (
         entries.length > MAX_VIEW_EXTRA_KEYS ||
-        JSON.stringify(e).length > MAX_VIEW_EXTRA_LENGTH ||
-        entries.some(([k, v]) => !EXTRA_KEY.test(k) || !isPlainValue(v))
+        // Values first: only plain ones are short enough to stringify unchecked.
+        entries.some(([k, v]) => !EXTRA_KEY.test(k) || !isPlainValue(v)) ||
+        JSON.stringify(e).length > MAX_VIEW_EXTRA_LENGTH
       ) {
         issues.push({
           field: 'query.extra',
@@ -325,6 +373,32 @@ export function checkSavedViewColumns(
   });
   if (issues.length) throw new ValidationError(issues);
   return [...seen];
+}
+
+/**
+ * The columns a save stores, given the ones the caller sent (`undefined`: back to the default).
+ * What `principal` is shown leaves out the columns their role hides ({@link savedViewFor}), so
+ * what they send can't name them: those stay where they stood, for everyone else's sake. A column
+ * they send that their role hides and the view doesn't hold isn't added.
+ */
+export function savedViewColumnsAfter(
+  principal: Principal,
+  view: Pick<SavedView, 'contentTypeApiId' | 'columns'>,
+  given: readonly string[] | undefined,
+): readonly string[] | undefined {
+  const denied = new Set(
+    view.contentTypeApiId ? deniedFieldsFor(principal, view.contentTypeApiId) : [],
+  );
+  const stored = view.columns ?? [];
+  if (denied.size === 0 || (!given && !stored.some((c) => denied.has(c)))) return given;
+  const next = (given ?? DEFAULT_VIEW_COLUMNS).filter((c) => !denied.has(c));
+  stored.forEach((c, i) => {
+    if (denied.has(c)) next.splice(Math.min(i, next.length), 0, c);
+  });
+  if (next.length > MAX_VIEW_COLUMNS) {
+    fail('columns', `A view holds at most ${MAX_VIEW_COLUMNS} columns, those your role hides too`);
+  }
+  return next;
 }
 
 /** The entries query a view runs: its type and its applied query parts (never `extra`). */

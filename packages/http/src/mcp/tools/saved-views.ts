@@ -54,7 +54,7 @@ export function registerSavedViewTools(server: McpServer, t: ToolContext): void 
       extra: z
         .record(z.string(), z.any())
         .optional()
-        .describe('query keys to keep verbatim that this version does not apply'),
+        .describe('query keys to keep verbatim that this version does not read'),
     })
     .describe('The structured query, as entries_query takes it');
   const columns = z
@@ -107,7 +107,8 @@ export function registerSavedViewTools(server: McpServer, t: ToolContext): void 
       description:
         'Run a saved view: one page of its entries through the same query as entries_query, ' +
         'with your own grants and hidden fields applied (never the creator’s). Pass nextCursor ' +
-        'back as cursor for the next page. ignored names kept query keys it did not apply.',
+        'back as cursor for the next page. ignored names kept query keys it did not apply; ' +
+        'typeMissing says the view’s content type is not in this environment.',
       inputSchema: toolSchema('views_run', () =>
         z.object({
           id: z.string(),
@@ -169,7 +170,8 @@ export function registerSavedViewTools(server: McpServer, t: ToolContext): void 
       description:
         'Change a saved view: name, query (replaced whole), columns (null for the default) or ' +
         'visibility. Pass the revision you read to be refused rather than overwrite a save made ' +
-        'since. Anything shared needs content:manage.',
+        'since. Anything shared needs content:manage, and only the view’s creator can stop ' +
+        'sharing it; anyone else can save a copy with views_create.',
       inputSchema: toolSchema('views_update', () =>
         z.object({
           id: z.string(),

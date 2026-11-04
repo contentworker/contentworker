@@ -3,6 +3,7 @@ import {
   canSeeSavedView,
   checkSavedViewColumns,
   checkSavedViewQuery,
+  isSavedViewExtraKey,
   MAX_PATH_FILTERS,
   type Principal,
   type SavedView,
@@ -77,6 +78,62 @@ describe('saved view queries', () => {
     ]);
     expect(issues(() => checkSavedViewQuery({ extra: { 'a b': 1 } }))).toEqual([
       expect.stringContaining('query.extra'),
+    ]);
+  });
+
+  it('refuses in extra any key something here reads, so it can never come alive in a URL', () => {
+    for (const key of [
+      'where',
+      'order',
+      'query',
+      'trashed',
+      'view',
+      'columns',
+      'space',
+      'env',
+      'locale',
+      'limit',
+      'skip',
+      'select',
+      'content_type',
+      'since',
+      'links_to_entry',
+      'preview_token',
+      'fields.salary[gt]',
+      'sys.status',
+      'metadata.tags[in]',
+      'metadata.tags.slug',
+    ]) {
+      expect(isSavedViewExtraKey(key), key).toBe(false);
+      expect(
+        issues(() => checkSavedViewQuery({ extra: { [key]: 'x' } })),
+        key,
+      ).toEqual([expect.stringContaining(`not ${key}`)]);
+    }
+    expect(checkSavedViewQuery({ extra: { assignee: 'me', 'next.thing': 1 } }).extra).toEqual({
+      assignee: 'me',
+      'next.thing': 1,
+    });
+  });
+
+  it('refuses a where or an extra too deep to read with a 422, not a stack overflow', () => {
+    const nest = (depth: number, leaf: unknown) => {
+      let node = leaf;
+      for (let i = 0; i < depth; i++) node = { or: [node] };
+      return node;
+    };
+    const leaf = { field: 'title', op: 'eq', value: 'a' };
+    const deep = nest(200_000, leaf);
+    expect(issues(() => checkSavedViewQuery({ where: deep }))).toEqual([
+      expect.stringContaining('query.where: groups nest at most 4 deep'),
+    ]);
+    expect(issues(() => checkSavedViewQuery({ extra: { kept: deep } }))).toEqual([
+      expect.stringContaining('query.extra'),
+    ]);
+    // Just past the cap it is the parser that says where; at it, the tree is fine.
+    expect(checkSavedViewQuery({ where: nest(4, leaf) }).where).toBeDefined();
+    expect(issues(() => checkSavedViewQuery({ where: nest(5, leaf) }))).toEqual([
+      expect.stringContaining('groups nest at most 4 deep'),
     ]);
   });
 

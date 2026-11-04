@@ -82,7 +82,7 @@ describe('saved views on D1', () => {
       },
       order: [{ field: 'sys.updatedAt', direction: 'desc' as const }],
       search: 'cats',
-      extra: { 'sys.createdBy': 'me' },
+      extra: { assignee: 'me' },
     };
     const shared = await createSavedView(ctx, scope, ada, {
       name: 'Team',
@@ -131,6 +131,24 @@ describe('saved views on D1', () => {
     expect((await store.savedViews.get(scope, view.id))?.name).toBe('Two');
     await store.savedViews.delete(scope, view.id, 2);
     expect(await store.savedViews.get(scope, view.id)).toBeNull();
+  });
+
+  it('keeps a view’s creator and creation time through every save, as the in-memory store does', async () => {
+    const { ctx, scope, person } = await harness();
+    const view = await createSavedView(ctx, scope, person('bob'), { name: 'Mine' });
+    await store.savedViews.save(
+      scope,
+      {
+        ...view,
+        createdBy: 'mallory',
+        createdAt: '2030-01-01T00:00:00.000Z',
+        revision: 2,
+      },
+      1,
+    );
+    const read = await store.savedViews.get(scope, view.id);
+    expect(read).toMatchObject({ createdBy: view.createdBy, createdAt: view.createdAt });
+    expect(read?.revision).toBe(2);
   });
 
   it('runs a stored where tree through the D1 entries query', async () => {
