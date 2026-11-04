@@ -281,6 +281,25 @@ describe("a deleted environment's files, next to other data in the bucket", () =
       occurredAt: '2026-01-01T00:00:00.000Z',
     }) as const;
 
+  it('stay while a clone in another space still names them', async () => {
+    const blob = new FakeBlobStore();
+    await blob.put('s1/staging/cloned/y.png', 'y', 'image/png');
+    await blob.put('s1/staging/only-here/x.png', 'x', 'image/png');
+    await createSpace(ctx, { spaceId: 's2', name: 'S2', defaultLocale: 'en-US' });
+    await store.assets.create({ spaceId: 's2', environmentId: 'main' }, {
+      id: 'cloned',
+      status: 'draft',
+      r2Key: 's1/staging/cloned/y.png',
+      file: { url: '/media/s1/staging/cloned/y.png', fileName: 'y.png', contentType: 'image/png' },
+      title: {},
+      description: {},
+      metadata: { altText: {}, tags: [] },
+    } as never);
+    await deleteEnvironment(ctx, 's1', 'staging', { confirm: 'staging', principal: admin });
+    await dispatchEvent(ctx, { sender: new RecordingWebhookSender(), blob }, purgeDue(staging));
+    expect(blob.keys()).toEqual(['s1/staging/cloned/y.png']);
+  });
+
   it("never reach another space's version bodies, staging or plugin bundles", async () => {
     const blob = new FakeBlobStore();
     await createSpace(ctx, { spaceId: 's2', name: 'S2', defaultLocale: 'en-US' });

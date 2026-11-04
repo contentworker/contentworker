@@ -109,6 +109,22 @@ pipeline.
 7. Replay events from the outbox for the incident window if downstream systems may have missed
    them.
 
-**RPO** for the database is the point-in-time recovery granularity (any minute within the
-retention window). **RTO** is dominated by the restore itself; workers redeploy or roll back in
-seconds.
+## Recovery objectives
+
+The targets each store is held to. **RPO** is how much recent data a recovery may lose; **RTO** is
+how long the recovery may take. "Met" says whether the target can be reached today.
+
+| Store                                         | RPO                                 | RTO                   | Met                                                                                             |
+| --------------------------------------------- | ----------------------------------- | --------------------- | ----------------------------------------------------------------------------------------------- |
+| The database                                  | 1 minute, within the 30-day window  | 1 hour, plus reindex  | Not proven: the procedure above has not been timed in a drill                                   |
+| Object storage: asset bytes and plugins       | 24 hours                            | 8 hours               | **No**: nothing holds a copy of the bytes                                                       |
+| Object storage: `versions/`                   | 24 hours                            | 8 hours               | **No**: nothing holds a copy of the bodies                                                      |
+| The vector index, `SearchShardDO`             | n/a (rebuildable)                   | 24 hours              | Not proven: a reindex runs per space and environment, by hand                                   |
+| Key-value cache, edge caches                  | n/a (rebuildable)                   | Minutes               | Yes: rebuilt on demand                                                                          |
+| `AssistantAgent`                              | Best effort, 30-day object recovery | 1 day                 | **No**: nothing calls the object's point-in-time recovery                                       |
+| Durable workflows                             | None                                | 1 day, re-run by hand | Not proven: instances are not rebuilt from their rows                                           |
+| Queues                                        | The outbox window (168 hours)       | 1 hour                | Domain events only: messages the outbox doesn't feed can't replay                               |
+| `DATA_KEY`, `TOKEN_PEPPER`, `PASSWORD_PEPPER` | Zero                                | 1 hour                | **No**: `provision.sh` generates them straight into write-only secrets, so nothing escrows them |
+
+Workers redeploy or roll back in seconds, so a database restore's RTO is dominated by the restore
+itself.

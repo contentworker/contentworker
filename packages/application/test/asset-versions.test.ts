@@ -20,6 +20,7 @@ import {
   assetGateEntry,
   assetKeyVersion,
   assetObjectKey,
+  cloneEnvironment,
   commitAssetFile,
   createAsset,
   createEnvironment,
@@ -499,6 +500,19 @@ describe('deleting a versioned asset', () => {
         .filter((k) => k.includes(asset.id))
         .sort(),
     ).toEqual([`shop/main/${asset.id}/hero.png`, v2Key]);
+  });
+
+  it('keeps the files while a clone in another space still names them', async () => {
+    const asset = await upload(h);
+    const key = assetFileKey(scope, asset);
+    const outlet = { spaceId: 'outlet', environmentId: 'main' };
+    await createSpace(h.ctx, { spaceId: 'outlet', name: 'Outlet', defaultLocale: 'en-US' });
+    await cloneEnvironment(h.ctx, scope, outlet);
+    // A clone keeps its source's keys rather than copying the bytes.
+    expect(assetFileKey(outlet, await getAsset(h.ctx, outlet, asset.id))).toBe(key);
+    await deleteAsset(h.ctx, scope, asset.id);
+    await h.drain();
+    expect(h.blob.keys()).toContain(key);
   });
 
   it('builds the delivered snapshot from the version’s own key', () => {

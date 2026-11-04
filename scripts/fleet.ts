@@ -275,11 +275,13 @@ export function loadDeployments(dir = join(ROOT, 'deployments')): Deployment[] {
   const list = readdirSync(dir)
     .filter((f) => f.endsWith('.jsonc'))
     .map((f) => toDeployment(readJsonc(join(dir, f)), f));
-  const dup = (key: (d: Deployment) => string | number) => {
+  const dup = (key: (d: Deployment) => string | number | undefined) => {
     const seen = new Set<string | number>();
     for (const d of list) {
-      if (seen.has(key(d))) return key(d);
-      seen.add(key(d));
+      const v = key(d);
+      if (v === undefined) continue;
+      if (seen.has(v)) return v;
+      seen.add(v);
     }
     return undefined;
   };
@@ -288,6 +290,9 @@ export function loadDeployments(dir = join(ROOT, 'deployments')): Deployment[] {
     ['slot', (d: Deployment) => d.slot],
     ['domain', (d: Deployment) => d.domain],
     ['suffix', (d: Deployment) => d.suffix],
+    // A copied id would run one customer's Workers and migrations on another's data.
+    ['d1Id', (d: Deployment) => d.d1Id],
+    ['kvId', (d: Deployment) => d.kvId],
   ] as const) {
     const v = dup(key);
     if (v !== undefined) throw new Error(`two deployments share ${what} ${JSON.stringify(v)}`);

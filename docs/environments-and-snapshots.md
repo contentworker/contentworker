@@ -21,7 +21,9 @@ visible rather than silent. An uploaded snapshot's asset may only name files in 
 imported into (`confineSnapshotFiles`): a file key naming another space is dropped, so the asset
 points at its own (empty) key, because a snapshot is anyone's JSON and those keys are served as
 they stand. A clone (`POST …/clone`, including across spaces) keeps its source's keys, since the
-caller can read that space. The import report names everything it did not carry.
+caller can read that space, so the two share the bytes: deleting the asset or the environment on
+either side leaves them while any environment of the deployment has an asset with that id. The
+import report names everything it did not carry.
 
 **Import replays domain operations** rather than injecting rows: entries go through `createEntry`
 and are republished through `publishEntry`. That is slower than a bulk insert, and deliberate:
