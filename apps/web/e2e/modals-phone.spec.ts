@@ -212,3 +212,24 @@ test('a destructive alert stays centred on a phone', async ({ page, request }) =
   await alert.getByRole('button', { name: 'Cancel' }).click();
   await expect(alert).toBeHidden();
 });
+
+test('with no room between them, the header and footer scroll with the body', async ({ page }) => {
+  await openCms(page, '/settings/roles');
+  await page.getByRole('button', { name: 'Access' }).first().click();
+  const sheet = page.getByRole('dialog');
+  await expect(sheet.getByRole('button', { name: 'Save access' })).toBeAttached();
+  await settle(page);
+  const header = sheet.locator('[data-slot="sheet-header"]');
+  await expect(header).toHaveCSS('position', 'sticky');
+
+  // A phone on its side with the keyboard up.
+  await page.setViewportSize({ width: 700, height: 200 });
+  await expect(header).toHaveCSS('position', 'static');
+  const body = sheet.locator('[data-slot="sheet-body"]');
+  await body.evaluate((el) => {
+    el.scrollTop = el.scrollHeight;
+  });
+  await expectReachable(page, sheet.getByRole('button', { name: 'Cancel' }));
+  await page.setViewportSize({ width: 390, height: 659 });
+  await expect(header).toHaveCSS('position', 'sticky');
+});

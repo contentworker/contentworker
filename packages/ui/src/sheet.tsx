@@ -5,6 +5,7 @@ import type * as React from 'react';
 import { Button } from './button';
 import { useFocusReturn } from './lib/focus-return';
 import { keyboardInset } from './lib/keyboard-inset';
+import { keyboardScrollable } from './lib/keyboard-scroll';
 import { cn } from './lib/utils';
 
 function Sheet({ ...props }: React.ComponentProps<typeof SheetPrimitive.Root>) {
@@ -83,9 +84,10 @@ function SheetContent({
             to its edges, and the close button sits outside it, so a long sheet keeps every way out
             and its action in reach. The scroll padding keeps a field tabbed to clear of both. */}
         <div
+          ref={keyboardScrollable}
           data-slot="sheet-body"
           className={cn(
-            'flex min-h-0 flex-1 scroll-pt-20 scroll-pb-36 flex-col gap-4 overflow-y-auto overscroll-contain',
+            'flex min-h-0 flex-1 scroll-pt-20 scroll-pb-36 flex-col gap-4 overflow-y-auto overscroll-contain outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset',
             bodyClassName,
           )}
         >
@@ -112,7 +114,10 @@ function SheetHeader({ className, ...props }: React.ComponentProps<'div'>) {
   return (
     <div
       data-slot="sheet-header"
-      className={cn('sticky top-0 z-10 flex flex-col gap-1.5 bg-popover p-4 pr-14', className)}
+      className={cn(
+        'sticky top-0 z-10 flex flex-col gap-1.5 bg-popover p-4 pr-14 in-data-cramped:static',
+        className,
+      )}
       {...props}
     />
   );
@@ -123,7 +128,7 @@ function SheetFooter({ className, ...props }: React.ComponentProps<'div'>) {
     <div
       data-slot="sheet-footer"
       className={cn(
-        'sticky bottom-0 z-10 mt-auto flex flex-col-reverse gap-2 bg-popover p-4 sm:flex-row sm:justify-end',
+        'sticky bottom-0 z-10 mt-auto flex flex-col-reverse gap-2 bg-popover p-4 in-data-cramped:static sm:flex-row sm:justify-end',
         className,
       )}
       {...props}
