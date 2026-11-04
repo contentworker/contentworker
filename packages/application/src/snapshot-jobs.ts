@@ -117,7 +117,9 @@ export async function startSnapshotImport(
       return url ? { asset, url } : { asset };
     }),
     // With the snapshot's own taxonomy ids: remapped as each entry is created (see config).
-    ...snapshot.entries.map((entry) => ({ entry: stagedEntry(entry, new Map(), publishing) })),
+    ...snapshot.entries.map((entry) => ({
+      entry: stagedEntry(entry, new Map(), publishing, options.keepCreators),
+    })),
   ];
   if (createItems.length === 0) {
     await writeSnapshotModel(ctx, target, snapshot, report.skipped as string[]);
@@ -315,6 +317,7 @@ async function runClonePrepare(
       publish: config.publish !== false,
       jobIds: { create: createJobId, publish: publishJobId },
       filesFrom: source.spaceId,
+      keepCreators: true,
     });
     return { succeeded: 1, failures: [] };
   } catch (err) {

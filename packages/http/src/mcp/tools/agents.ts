@@ -10,7 +10,13 @@ import {
   listAgentSchedules,
   updateAgentSchedule,
 } from '@contentworker/application';
-import { assertWritableFields, authorizeContent, SCOPES, type Scope } from '@contentworker/domain';
+import {
+  assertWritableFields,
+  authorizeContent,
+  principalActorId,
+  SCOPES,
+  type Scope,
+} from '@contentworker/domain';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { ok, READ_ONLY, scopeArgs, scopeOf, type ToolContext, toolSchema } from './shared';
@@ -167,7 +173,7 @@ export function registerAgentTools(server: McpServer, t: ToolContext): void {
           ctx,
           scopeOf(args),
           args.id,
-          { approve: true, decidedBy: principal.subject ?? principal.kind },
+          { approve: true, decidedBy: principalActorId(principal) },
           { signalReview: deps.signalReview },
         ),
       );
@@ -190,7 +196,7 @@ export function registerAgentTools(server: McpServer, t: ToolContext): void {
           ctx,
           scopeOf(args),
           args.id,
-          { approve: false, decidedBy: principal.subject ?? principal.kind },
+          { approve: false, decidedBy: principalActorId(principal) },
           { signalReview: deps.signalReview },
         ),
       );

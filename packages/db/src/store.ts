@@ -19,8 +19,10 @@ import {
   type EntryMetadata,
   type EntryVersion,
   type EventType,
+  entrySysOf,
   type InstalledPlugin,
   isWebhookSendRequest,
+  type LocaleSettings,
   type MemberInvite,
   type Menu,
   matchesTopic,
@@ -382,12 +384,21 @@ function makeEntryRepo(
     const ids = idList(snapshots.map((s) => s.entryId));
     // The usage counts move in the same batch: the old snapshots' terms come off before the
     // upsert replaces them, the new ones' go on after it.
+    // Each row's first publish is read from `entries` in the same batch, after the aggregate save
+    // that set it with COALESCE: the copy can't diverge from it, whatever the snapshot carried.
+    // That subquery binds three values where the column bound one, hence the wider rows.
+    const perRow = Object.keys(getTableColumns(schema.entryPublished)).length + 2;
     await writeAll(x, [
       takeUsage(db, scope, ids),
-      ...insertChunks(schema.entryPublished, snapshots, (chunk) =>
+      ...chunked(snapshots, perRow, 0).map((chunk) =>
         db
           .insert(schema.entryPublished)
-          .values(chunk.map((s) => publishedRow(scope, s)))
+          .values(
+            chunk.map((s) => ({
+              ...publishedRow(scope, s),
+              firstPublishedAt: sql`(SELECT ${schema.entries.firstPublishedAt} FROM ${schema.entries} WHERE ${schema.entries.spaceId} = ${scope.spaceId} AND ${schema.entries.environmentId} = ${scope.environmentId} AND ${schema.entries.id} = ${s.entryId})`,
+            })),
+          )
           .onConflictDoUpdate({
             target: [
               schema.entryPublished.spaceId,
@@ -400,6 +411,7 @@ function makeEntryRepo(
               fields: sql`excluded.fields`,
               metadata: sql`excluded.metadata`,
               publishedAt: sql`excluded.published_at`,
+              firstPublishedAt: sql`excluded.first_published_at`,
             },
           }),
       ),
@@ -511,6 +523,8 @@ function makeEntryRepo(
         const p = buildFilterPrefilter(query, vFields, {
           entryId: sql`${schema.entries.id}`,
           contentTypeApiId: sql`${schema.entries.contentTypeApiId}`,
+          createdBy: sql`${schema.entries.createdBy}`,
+          updatedBy: sql`${schema.entries.modifiedBy}`,
         });
         if (p) conditions.push(p);
         if (query.search) {
@@ -544,12 +558,7 @@ function makeEntryRepo(
         results,
         query,
         (r) => r.fields,
-        (r) => ({
-          id: r.entry.id,
-          contentType: r.entry.contentTypeApiId,
-          status: r.entry.status,
-          updatedAt: r.updatedAt,
-        }),
+        (r) => entrySysOf(r.entry, r.updatedAt),
       );
       if (!query.select) return filtered;
       return filtered.map((r) => ({
@@ -761,12 +770,7 @@ function makeEntryRepo(
         entries.map((e) =>
           db
             .update(schema.entries)
-            .set({
-              status: e.status,
-              currentVersion: e.currentVersion,
-              publishedVersion: e.publishedVersion ?? null,
-              updatedAt: at,
-            })
+            .set(aggregateSet(e, at))
             .where(and(scopeFilter(schema.entries, scope), eq(schema.entries.id, e.id))),
         ),
       );
@@ -1037,6 +1041,7 @@ function makeEntryRepo(
           id: r.entryId,
           contentType: r.contentTypeApiId,
           publishedAt: r.publishedAt,
+          firstPublishedAt: r.firstPublishedAt,
           'metadata.tags': r.metadata?.tags ?? [],
           'metadata.concepts': r.metadata?.concepts ?? [],
         }),
@@ -1673,7 +1678,12 @@ function makeAssetRepo(x: Exec): AssetRepo {
  * Published assets in publish order, filtered and paged: the statement and how to read its rows,
  * apart, so `delivery.read` can send it in a batch.
  */
-function publishedAssetPage(db: Db, scope: Scope, query: PublishedAssetQuery) {
+function publishedAssetPage(
+  db: Db,
+  scope: Scope,
+  query: PublishedAssetQuery,
+  opts: { readonly withLocales?: boolean } = {},
+) {
   const p = schema.assetPublished;
   const a = schema.assets;
   const filters = query.filters ?? {};
@@ -1699,8 +1709,7 @@ function publishedAssetPage(db: Db, scope: Scope, query: PublishedAssetQuery) {
     conds.push(sql`(${p.publishedAt}, ${p.assetId}) > (${value}, ${id})`);
   }
   return {
-    query: db
-      .select()
+    query: assetSelection(db, scope, Boolean(opts.withLocales))
       .from(p)
       .where(and(...conds))
       .orderBy(asc(p.publishedAt), asc(p.assetId))
@@ -4151,6 +4160,9 @@ function toSpaceConfig(row: SpaceRow): SpaceConfig {
     defaultLocale: row.defaultLocale,
     locales: row.locales,
     ...(row.fallbacks ? { fallbacks: row.fallbacks } : {}),
+    ...(row.localeSettings && Object.keys(row.localeSettings).length > 0
+      ? { localeSettings: row.localeSettings }
+      : {}),
     ...(row.workflowSeparateDuties ? { workflowSeparateDuties: true } : {}),
     ...(row.trashRetentionDays !== null ? { trashRetentionDays: row.trashRetentionDays } : {}),
   };
@@ -4178,6 +4190,7 @@ function makeSpaceRepo(x: Exec): SpaceRepo {
             defaultLocale: config.defaultLocale,
             locales: [...config.locales],
             fallbacks: config.fallbacks ?? null,
+            localeSettings: config.localeSettings ? { ...config.localeSettings } : null,
             workflowSeparateDuties: config.workflowSeparateDuties ?? false,
             trashRetentionDays: config.trashRetentionDays ?? null,
           })
@@ -4188,6 +4201,8 @@ function makeSpaceRepo(x: Exec): SpaceRepo {
               defaultLocale: config.defaultLocale,
               locales: [...config.locales],
               fallbacks: config.fallbacks ?? null,
+              // Kept unless the config names its own: re-creating a space keeps what was set.
+              ...(config.localeSettings ? { localeSettings: { ...config.localeSettings } } : {}),
             },
           }),
       );
@@ -4216,6 +4231,24 @@ function makeSpaceRepo(x: Exec): SpaceRepo {
           .set({ trashRetentionDays: days })
           .where(eq(schema.spaces.id, spaceId)),
       );
+    },
+    async setLocaleSettings(spaceId, settings, expected) {
+      const s = schema.spaces;
+      // The column holds the JSON text this repo wrote, which a read parses and re-serializes to the
+      // same text (key order kept), so comparing text is comparing what the caller read.
+      const unchanged =
+        expected && Object.keys(expected).length > 0
+          ? eq(sql`${s.localeSettings}`, JSON.stringify(expected))
+          : isNull(s.localeSettings);
+      const cas = and(eq(s.id, spaceId), unchanged);
+      const set = { localeSettings: Object.keys(settings).length > 0 ? { ...settings } : null };
+      if (x.inUnit) {
+        await x.write(db.update(s).set(set).where(cas));
+        x.expectChanged(1);
+        return;
+      }
+      const rows = await db.update(s).set(set).where(cas).returning({ id: s.id });
+      if (rows.length !== 1) throw new TransactionConflictError();
     },
     async setWorkflowSeparateDuties(spaceId, value) {
       await x.write(
@@ -6513,9 +6546,42 @@ const publishedEntriesQuery = (db: Db, scope: Scope, ids: readonly string[]) =>
     );
 
 /** At most `100 - RESERVED` ids: callers chunk. */
-const publishedAssetsQuery = (db: Db, scope: Scope, ids: readonly string[]) =>
-  db
-    .select()
+/**
+ * The space's `locale_settings`, as a column an asset statement can carry: a constant subquery,
+ * which SQLite evaluates once per statement, so an all-locale asset read costs no statement of
+ * its own for the config it needs.
+ */
+const spaceLocalesColumn = (scope: Scope) =>
+  sql<
+    string | null
+  >`(SELECT ${schema.spaces.localeSettings} FROM ${schema.spaces} WHERE ${schema.spaces.id} = ${scope.spaceId})`.as(
+    'space_locale_settings',
+  );
+
+/** The settings an asset row carried (see {@link spaceLocalesColumn}), `{}` for none. */
+const localesOfRow = (row: { spaceLocaleSettings?: string | null }) =>
+  row.spaceLocaleSettings
+    ? (JSON.parse(row.spaceLocaleSettings) as Record<string, LocaleSettings>)
+    : {};
+
+const assetSelection = (db: Db, scope: Scope, withLocales: boolean) =>
+  withLocales
+    ? db.select({
+        ...getTableColumns(schema.assetPublished),
+        spaceLocaleSettings: spaceLocalesColumn(scope),
+      })
+    : db.select({
+        ...getTableColumns(schema.assetPublished),
+        spaceLocaleSettings: sql<string | null>`NULL`.as('space_locale_settings'),
+      });
+
+const publishedAssetsQuery = (
+  db: Db,
+  scope: Scope,
+  ids: readonly string[],
+  opts: { readonly withLocales?: boolean } = {},
+) =>
+  assetSelection(db, scope, Boolean(opts.withLocales))
     .from(schema.assetPublished)
     .where(
       and(
@@ -6620,8 +6686,12 @@ function makeDeliveryReadRepo(x: Exec): DeliveryReadRepo {
         });
       }
       if (request.assetId !== undefined) {
-        add(publishedAssetsQuery(db, scope, [request.assetId]), ([row]) => {
+        const query = request.assetLocales
+          ? publishedAssetsQuery(db, scope, [request.assetId], { withLocales: true })
+          : publishedAssetsQuery(db, scope, [request.assetId]);
+        add(query, ([row]) => {
           result.asset = row ? toPublishedAsset(row) : null;
+          if (row && request.assetLocales) result.assetLocales = localesOfRow(row);
         });
       }
       if (request.entryIds) {
@@ -6643,9 +6713,13 @@ function makeDeliveryReadRepo(x: Exec): DeliveryReadRepo {
         }
       }
       if (request.assetPage) {
-        const page = publishedAssetPage(db, scope, request.assetPage);
+        const page = publishedAssetPage(db, scope, request.assetPage, {
+          withLocales: Boolean(request.assetLocales),
+        });
         add(page.query, (rows) => {
           result.assetPage = page.of(rows);
+          const [first] = rows;
+          if (first && request.assetLocales) result.assetLocales = localesOfRow(first);
         });
       }
       if (request.tags) {
@@ -6774,7 +6848,10 @@ export interface D1StoreOptions {
 /** The repos `withTransaction` hands out, built over one unit of work. */
 function makeTx(x: Exec, scanLimit: number, versionBodies?: BlobStore): ContentStoreTx {
   return {
-    spaces: { markEnvironmentPurgeProgress: makeSpaceRepo(x).markEnvironmentPurgeProgress },
+    spaces: (({ markEnvironmentPurgeProgress, setLocaleSettings }) => ({
+      markEnvironmentPurgeProgress,
+      setLocaleSettings,
+    }))(makeSpaceRepo(x)),
     contentTypes: makeContentTypeRepo(x),
     entries: makeEntryRepo(x, scanLimit, versionBodies),
     assets: makeAssetRepo(x),
@@ -6891,6 +6968,10 @@ const toEntry = (r: EntryRow): Entry => ({
   status: r.status,
   currentVersion: r.currentVersion,
   publishedVersion: r.publishedVersion,
+  createdAt: r.createdAt?.toISOString() ?? null,
+  createdBy: r.createdBy,
+  updatedBy: r.modifiedBy,
+  firstPublishedAt: r.firstPublishedAt?.toISOString() ?? null,
 });
 
 type AgentRunRow = typeof schema.agentRuns.$inferSelect;
@@ -7050,6 +7131,7 @@ const toPublished = (r: PubRow): PublishedEntry => ({
   version: r.version,
   fields: r.fields,
   publishedAt: r.publishedAt.toISOString(),
+  ...(r.firstPublishedAt ? { firstPublishedAt: r.firstPublishedAt.toISOString() } : {}),
   ...(r.metadata ? { metadata: r.metadata } : {}),
 });
 
@@ -7064,18 +7146,28 @@ const publishedRow = (scope: Scope, snapshot: PublishedEntry) => ({
     ? { tags: [...snapshot.metadata.tags], concepts: [...snapshot.metadata.concepts] }
     : null,
   publishedAt: new Date(snapshot.publishedAt),
+  firstPublishedAt: snapshot.firstPublishedAt ? new Date(snapshot.firstPublishedAt) : null,
 });
 
-const entryRow = (scope: Scope, entry: Entry) => ({
-  spaceId: scope.spaceId,
-  environmentId: scope.environmentId,
-  id: entry.id,
-  contentTypeApiId: entry.contentTypeApiId,
-  status: entry.status,
-  currentVersion: entry.currentVersion,
-  publishedVersion: entry.publishedVersion,
-  updatedAt: new Date(),
-});
+const isoDate = (iso: string | null | undefined): Date | null => (iso ? new Date(iso) : null);
+
+const entryRow = (scope: Scope, entry: Entry) => {
+  const at = new Date();
+  return {
+    spaceId: scope.spaceId,
+    environmentId: scope.environmentId,
+    id: entry.id,
+    contentTypeApiId: entry.contentTypeApiId,
+    status: entry.status,
+    currentVersion: entry.currentVersion,
+    publishedVersion: entry.publishedVersion,
+    updatedAt: at,
+    createdAt: isoDate(entry.createdAt) ?? at,
+    createdBy: entry.createdBy ?? null,
+    modifiedBy: entry.updatedBy ?? null,
+    firstPublishedAt: isoDate(entry.firstPublishedAt),
+  };
+};
 
 const versionRow = (scope: Scope, version: EntryVersion) => ({
   spaceId: scope.spaceId,
@@ -7086,6 +7178,7 @@ const versionRow = (scope: Scope, version: EntryVersion) => ({
   // Honor a use-case-supplied timestamp (deterministic via the clock); else the
   // column defaults to the insert instant.
   ...(version.createdAt ? { createdAt: new Date(version.createdAt) } : {}),
+  createdBy: version.createdBy ?? null,
 });
 
 type EntryVersionRow = typeof schema.entryVersions.$inferSelect;
@@ -7094,17 +7187,31 @@ const toVersion = (r: EntryVersionRow): EntryVersion => ({
   version: r.version,
   fields: r.fields,
   createdAt: r.createdAt.toISOString(),
+  createdBy: r.createdBy,
+});
+
+/**
+ * What an aggregate save writes: the pointers, the change's time and author, and the first
+ * publish. Creation is never rewritten, and `first_published_at` only fills in: a lost race
+ * between two first publishes, or a stale aggregate, can't move it.
+ */
+const aggregateSet = (entry: Entry, at: Date) => ({
+  status: entry.status,
+  currentVersion: entry.currentVersion,
+  publishedVersion: entry.publishedVersion ?? null,
+  updatedAt: at,
+  modifiedBy: entry.updatedBy ?? null,
+  ...(entry.firstPublishedAt
+    ? {
+        firstPublishedAt: sql`COALESCE(${schema.entries.firstPublishedAt}, ${Date.parse(entry.firstPublishedAt)})`,
+      }
+    : {}),
 });
 
 /** The aggregate UPDATE (an UPDATE, so a concurrently deleted row stays deleted). */
 function saveEntryAggregate(db: Db, scope: Scope, entry: Entry) {
   return db
     .update(schema.entries)
-    .set({
-      status: entry.status,
-      currentVersion: entry.currentVersion,
-      publishedVersion: entry.publishedVersion,
-      updatedAt: new Date(),
-    })
+    .set(aggregateSet(entry, new Date()))
     .where(and(scopeFilter(schema.entries, scope), eq(schema.entries.id, entry.id)));
 }

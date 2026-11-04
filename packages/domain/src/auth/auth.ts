@@ -421,6 +421,55 @@ export function assertQueryRespectsFieldRules(
   if (query.search) throw new ForbiddenError(`content:search:${type ?? '*'}`);
 }
 
+/** The `sys.*` fields that name a person or key: who created an entry and who changed it last. */
+export const AUTHOR_ID_FIELDS: readonly string[] = ['sys.createdBy', 'sys.updatedBy'];
+
+/**
+ * Whether a principal may read who wrote an entry (`createdBy`, `updatedBy`): a teammate signed in
+ * (whatever their role), the admin token, or a key holding a management scope. A preview key (and
+ * a preview token) reads drafts for a front end, and a person's or key's id is not its business.
+ */
+export function seesAuthorIds(principal: Pick<Principal, 'kind' | 'scopes'>): boolean {
+  if (principal.kind === 'user' || principal.kind === 'admin') return true;
+  return [SCOPES.contentWrite, SCOPES.contentPublish, SCOPES.contentManage, SCOPES.spaceAdmin].some(
+    (s) => principal.scopes.includes(s),
+  );
+}
+
+/**
+ * Refuses a query that filters (in `filters` or anywhere in a `where` tree) or orders on
+ * {@link AUTHOR_ID_FIELDS} for a principal that doesn't see them (a 400): the answer would reveal
+ * what the response leaves out.
+ */
+export function assertAuthorIdQuery(
+  principal: Pick<Principal, 'kind' | 'scopes'>,
+  query: {
+    readonly filters?: readonly { readonly field: string }[];
+    readonly where?: QueryNode;
+    readonly order?: readonly { readonly field: string }[];
+  },
+): void {
+  if (seesAuthorIds(principal)) return;
+  const named = [...(query.filters ?? []), ...queryNodeFilters(query.where), ...(query.order ?? [])]
+    .map((f) => f.field)
+    .find((f) => AUTHOR_ID_FIELDS.includes(f));
+  if (named) {
+    throw new DomainError(
+      'author_ids_not_served',
+      `${named} is not served to this key: filter and sort on it with a management key`,
+    );
+  }
+}
+
+/** An entry without who wrote it, for a principal that doesn't see that ({@link seesAuthorIds}). */
+export function withAuthorIdsFor<
+  T extends { readonly createdBy?: unknown; readonly updatedBy?: unknown },
+>(principal: Pick<Principal, 'kind' | 'scopes'>, entry: T): T | Omit<T, 'createdBy' | 'updatedBy'> {
+  if (seesAuthorIds(principal)) return entry;
+  const { createdBy: _c, updatedBy: _u, ...rest } = entry;
+  return rest;
+}
+
 /**
  * Strips the fields this principal may not read from an entry's field map.
  * Returns the input unchanged for unrestricted principals.

@@ -3,11 +3,12 @@ import {
   countEntriesByContentType,
   createContentType,
   getContentType,
-  getSpaceConfig,
+  getLocaleSettings,
   listContentTypes,
   listFieldValues,
   MAX_FIELD_VALUES_PAGE,
   publishContentType,
+  setLocaleSettings,
 } from '@contentworker/application';
 import {
   assertQueryRespectsFieldRules,
@@ -20,7 +21,7 @@ import { Hono } from 'hono';
 import { type AuthDeps, type AuthVars, requireScope } from '../../auth';
 import { doc } from '../../docs/openapi';
 import * as contentTypeDocs from '../../docs/schemas/content-types';
-import { contentTypeBody, parseBody } from '../../validation';
+import { contentTypeBody, localeSettingsBody, parseBody } from '../../validation';
 import { BASE, scopeOf } from './shared';
 
 export function contentTypesRoutes(deps: AuthDeps): Hono<AuthVars> {
@@ -28,8 +29,29 @@ export function contentTypesRoutes(deps: AuthDeps): Hono<AuthVars> {
   const app = new Hono<AuthVars>();
 
   // --- space config (locales) --------------------------------------------
+  // Each locale's settings come resolved: whether Delivery serves it, and its text direction.
   app.get(`${BASE}/space-config`, requireScope(SCOPES.previewRead), async (c) =>
-    c.json(await getSpaceConfig(ctx, scopeOf(c))),
+    c.json(await getLocaleSettings(ctx, scopeOf(c))),
+  );
+  app.put(
+    `${BASE}/locale-settings`,
+    doc('Content types', 'Set the space’s locale settings', {
+      body: localeSettingsBody,
+      description:
+        'Per locale: `delivered` (false keeps it out of Delivery: a request naming it is 404, ' +
+        'fallback chains skip it, all-locale responses and the sitemap’s alternates leave it ' +
+        'out; editors still write and preview it) and `direction` (`ltr` or `rtl`, the `dir` of ' +
+        'its inputs in the admin). A locale left out keeps its settings. The default locale is ' +
+        'always delivered. Answers the space config, every locale resolved. Applies to every ' +
+        'environment of the space. Needs `space:admin`.',
+    }),
+    requireScope(SCOPES.spaceAdmin),
+    async (c) => {
+      const body = await parseBody(c, localeSettingsBody);
+      return c.json(
+        await setLocaleSettings(ctx, c.get('principal'), scopeOf(c), body.localeSettings),
+      );
+    },
   );
 
   // --- content types ------------------------------------------------------

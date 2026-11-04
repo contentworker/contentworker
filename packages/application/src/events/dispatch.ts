@@ -279,8 +279,13 @@ export async function dispatchEvent(
   }
 
   // 2d. A rendition preset changed: delivered assets list the space's renditions, embedded in
-  // cached entry renders of every environment, so each environment's scope epoch bumps.
-  if (deps.cache && event.type === 'asset_renditions.changed') {
+  // cached entry renders of every environment, so each environment's scope epoch bumps. Locale
+  // settings belong to the space too, and every cached render was made with them: a locale turned
+  // off must leave every environment's cache at once.
+  if (
+    deps.cache &&
+    (event.type === 'asset_renditions.changed' || event.type === 'space_locales.changed')
+  ) {
     const tags = (await ctx.store.spaces.listEnvironments(scope.spaceId))
       .map((env) => epochTag({ spaceId: scope.spaceId, environmentId: env.id }))
       .filter((t) => !deps.invalidatedTags?.has(t));

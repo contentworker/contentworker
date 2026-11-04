@@ -219,7 +219,19 @@ export interface ManagementClientOptions {
   readonly onUnauthorized?: () => void;
 }
 
-export interface EntryAggregate {
+/**
+ * Who wrote an entry and when, as the api records it (null when unknown: an entry from before it
+ * was recorded). Actor ids read as words through `actorLabel`.
+ */
+export interface EntryAuthorship {
+  readonly createdAt?: string | null;
+  readonly createdBy?: string | null;
+  /** Who made the last change. */
+  readonly updatedBy?: string | null;
+  readonly firstPublishedAt?: string | null;
+}
+
+export interface EntryAggregate extends EntryAuthorship {
   readonly id: string;
   readonly contentTypeApiId: string;
   readonly status: string;
@@ -228,7 +240,7 @@ export interface EntryAggregate {
 }
 
 /** Preview view of an entry (current/draft version). */
-export interface PreviewEntry {
+export interface PreviewEntry extends EntryAuthorship {
   readonly id: string;
   readonly contentType: string;
   readonly status: string;
@@ -284,6 +296,8 @@ export interface EntryListQuery {
   readonly limit?: number;
   /** List the trash instead of live entries. Trash is hidden by default. */
   readonly trashed?: boolean;
+  /** Only the entries the signed-in person created (`sys.createdBy=me`). */
+  readonly mine?: boolean;
 }
 
 /** Namespaces a field path for the query string: `sys.*` stays, else `fields.*`. */
@@ -309,6 +323,8 @@ export function entryQueryParams(query: EntryListQuery): URLSearchParams {
   if (query.search) params.set('query', query.search);
   if (query.limit != null) params.set('limit', String(query.limit));
   if (query.trashed) params.set('trashed', 'true');
+  // `me` is whoever the api's principal is: the signed-in person, without the admin naming them.
+  if (query.mine) params.set('sys.createdBy', 'me');
   return params;
 }
 
@@ -353,7 +369,17 @@ export interface SpaceConfig {
   readonly defaultLocale: string;
   readonly locales: readonly string[];
   readonly fallbacks?: Readonly<Record<string, string | null>>;
+  /**
+   * Every locale's settings, resolved by the api: whether Delivery serves it (an undelivered one
+   * is still edited and previewed) and which way its text runs, the `dir` of its inputs.
+   */
+  readonly localeSettings?: Readonly<
+    Record<string, { readonly delivered: boolean; readonly direction: TextDirection }>
+  >;
 }
+
+/** Which way a locale's text runs. */
+export type TextDirection = 'ltr' | 'rtl';
 
 /** A published entry as served by the Delivery API (locale-collapsed, links embedded). */
 export interface DeliveredEntry {
@@ -1301,6 +1327,17 @@ export function createManagementClient(
   return {
     getSpaceConfig(): Promise<SpaceConfig> {
       return req('GET', `${mgmt}/space-config`);
+    },
+    /**
+     * Sets locales' settings (`delivered`, `direction`); a locale left out keeps its own. Answers
+     * the space config with every locale resolved. Needs `space:admin`.
+     */
+    setLocaleSettings(
+      localeSettings: Readonly<
+        Record<string, { readonly delivered?: boolean; readonly direction?: TextDirection }>
+      >,
+    ): Promise<SpaceConfig> {
+      return req('PUT', `${mgmt}/locale-settings`, { localeSettings });
     },
     /** Spaces the current token can reach (admin → all; a scoped key → its own). */
     async listSpaces(): Promise<SpaceRef[]> {

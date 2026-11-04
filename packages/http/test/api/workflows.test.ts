@@ -351,6 +351,21 @@ describe('workflow routes', () => {
     ).toBe(403);
   });
 
+  it('records an agent-review decision under the same actor id as authorship', async () => {
+    const scope = { spaceId: 's1', environmentId: 'main' };
+    const review = await createAgentReview(ctx, scope, {
+      workflow: 'enrich',
+      entryId,
+      proposed: { title: { 'en-US': 'Better' } },
+      notes: [],
+    });
+    const approved = await call('POST', `/agent-reviews/${review.id}/approve`);
+    expect(approved.status).toBe(200);
+    expect(approved.body.review).toMatchObject({ status: 'approved', decidedBy: 'admin-token' });
+    const entry = await call('GET', `/entries/${entryId}`);
+    expect((entry.body.entry as Json).updatedBy).toBe('admin-token');
+  });
+
   it('counts what waits in Approvals, as each caller’s lists show it', async () => {
     const workflowId = await publishedWorkflow();
     for (const id of [entryId, pageEntryId]) {

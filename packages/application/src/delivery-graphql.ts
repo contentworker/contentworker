@@ -1,6 +1,7 @@
 import {
   assertQueryRespectsFieldRules,
   canAccessContentType,
+  isLocaleDelivered,
   type Principal,
   resolveLocalizedValue,
   type Scope,
@@ -16,7 +17,7 @@ import {
 } from './delivery';
 import { type DeliveryReads, deliveryReads } from './delivery-reads';
 import { entryQueryFrom, mergeWhereJson } from './entry-query';
-import { hybridSearch, type RagDeps } from './rag';
+import { deliveredSearch, type RagDeps } from './rag';
 
 export interface DeliveryGraphDeps {
   /** Semantic search's embeddings and index; absent, `search` is lexical only. */
@@ -111,19 +112,23 @@ export function deliveryGraphResolvers(
     localize: async (value, locale) => {
       const config = await spaceConfig();
       if (!config) return null;
+      const requested = locale ?? config.defaultLocale;
+      // A locale the space doesn't deliver reads as nothing, as `entry` does for one: never its
+      // values, and never another locale's under its name.
+      if (!isLocaleDelivered(config, requested)) return null;
       const v = resolveLocalizedValue(
         value,
         {
           defaultLocale: config.defaultLocale,
           locales: config.locales,
-          fallbacks: config.fallbacks,
+          ...(config.fallbacks ? { fallbacks: config.fallbacks } : {}),
         },
-        locale ?? config.defaultLocale,
+        requested,
       );
       return typeof v === 'string' ? v : null;
     },
     search: async (query, topK) => {
-      const raw = await hybridSearch(deps.rag, ctx, scope, query, { topK });
+      const raw = await deliveredSearch(deps.rag, ctx, scope, query, { topK, reads });
       return visibleSearchHits(ctx, scope, principal, raw);
     },
   };

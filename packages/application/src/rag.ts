@@ -1,13 +1,20 @@
-import type { EntryFields, Scope, SearchReindexRequestedEvent } from '@contentworker/domain';
+import type {
+  EntryFields,
+  LocaleConfig,
+  Scope,
+  SearchReindexRequestedEvent,
+} from '@contentworker/domain';
 import {
   BLOCK_KEY,
   BLOCK_TYPE_KEY,
+  isLocaleDelivered,
   isRichTextDocument,
   RateLimitedError,
   richTextToPlainText,
 } from '@contentworker/domain';
 import type { EmbeddingsProvider, SearchIndex, VectorRow, VectorStore } from '@contentworker/ports';
 import type { AppContext } from './context';
+import { type DeliveryReads, deliveryReads } from './delivery-reads';
 
 export interface RagDeps {
   readonly embeddings: EmbeddingsProvider;
@@ -343,14 +350,37 @@ export interface SearchHit {
 }
 
 /**
+ * What a search may quote and match on. Delivery passes the space's config (`delivered`), so a
+ * locale the space doesn't serve neither matches nor appears in a snippet; Management searches
+ * every locale.
+ */
+export interface SearchLocales {
+  readonly delivered?: LocaleConfig;
+}
+
+/** Whether `config` turns any locale off, so a search must look past the indexes' own answers. */
+const hidesALocale = (config: LocaleConfig | undefined): config is LocaleConfig =>
+  !!config?.localeSettings &&
+  Object.values(config.localeSettings).some((s) => s.delivered === false);
+
+/** An entry's text in the locales a search may see, per locale. */
+function searchableText(fields: EntryFields, delivered: LocaleConfig | undefined): string {
+  return Object.entries(extractTextByLocale(fields))
+    .filter(([locale]) => !delivered || isLocaleDelivered(delivered, locale))
+    .map(([, text]) => text)
+    .join('\n\n');
+}
+
+/**
  * Semantic search: embeds the query and returns the best-matching entries,
- * deduplicated to the highest-scoring chunk per entry.
+ * deduplicated to the highest-scoring chunk per entry. With `delivered`, a chunk in a locale the
+ * space doesn't deliver is no match (its entry can still match on another locale's chunk).
  */
 export async function semanticSearch(
   deps: RagDeps,
   scope: Scope,
   query: string,
-  opts: { topK?: number; minScore?: number } = {},
+  opts: { topK?: number; minScore?: number } & SearchLocales = {},
 ): Promise<SearchHit[]> {
   const topK = clampTopK(opts.topK);
   // Exclude zero/negative-similarity (orthogonal) matches by default.
@@ -364,6 +394,7 @@ export async function semanticSearch(
   const matches = await deps.vectors.query(scope, embedding, { topK: overFetch, minScore });
   const best = new Map<string, SearchHit>();
   for (const m of matches) {
+    if (opts.delivered && m.locale && !isLocaleDelivered(opts.delivered, m.locale)) continue;
     const existing = best.get(m.entryId);
     if (!existing || m.score > existing.score) {
       best.set(m.entryId, { entryId: m.entryId, score: m.score, snippet: m.chunkText });
@@ -387,9 +418,10 @@ export async function hybridSearch(
   ctx: AppContext,
   scope: Scope,
   query: string,
-  opts: { topK?: number; lexicalOnly?: boolean } = {},
+  opts: { topK?: number; lexicalOnly?: boolean } & SearchLocales = {},
 ): Promise<SearchHit[]> {
   const topK = clampTopK(opts.topK);
+  const { delivered } = opts;
   // Over-fetch per leg so a hit ranked just outside topK in both legs can
   // still fuse into the final topK.
   const fetchK = topK * 2;
@@ -408,10 +440,31 @@ export async function hybridSearch(
   };
   const [semantic, lexical] = await Promise.all([
     deps && !opts.lexicalOnly
-      ? semanticSearch(deps, scope, query, { topK: fetchK })
+      ? semanticSearch(deps, scope, query, { topK: fetchK, ...(delivered ? { delivered } : {}) })
       : Promise.resolve([]),
     lexicalLeg(),
   ]);
+  // The lexical indexes hold every locale's text. When the space turns one off, each lexical hit
+  // is checked and re-ranked against its delivered text alone, so an entry that matched only in
+  // an undelivered locale drops out and one that matched mostly there ranks on what's served.
+  const published = new Map<string, EntryFields>();
+  let lexicalHits: readonly { entryId: string }[] = lexical;
+  if (hidesALocale(delivered) && lexical.length > 0) {
+    const rows = await ctx.store.entries.getPublishedMany(
+      scope,
+      lexical.map((h) => h.entryId),
+    );
+    for (const row of rows) published.set(row.entryId, row.fields);
+    const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
+    lexicalHits = lexical
+      .map((h) => {
+        const fields = published.get(h.entryId);
+        const text = fields ? searchableText(fields, delivered).toLowerCase() : '';
+        return { entryId: h.entryId, score: termFrequency(text, terms) };
+      })
+      .filter((h) => h.score > 0)
+      .sort((a, b) => b.score - a.score || a.entryId.localeCompare(b.entryId));
+  }
 
   const fused = new Map<string, { score: number; snippet?: string }>();
   const add = (entryId: string, rank: number, snippet?: string) => {
@@ -423,7 +476,7 @@ export async function hybridSearch(
   semantic.forEach((hit, rank) => {
     add(hit.entryId, rank, hit.snippet);
   });
-  lexical.forEach((hit, rank) => {
+  lexicalHits.forEach((hit, rank) => {
     add(hit.entryId, rank);
   });
 
@@ -436,21 +489,69 @@ export async function hybridSearch(
     ranked.map(async ([entryId, hit]) => ({
       entryId,
       score: hit.score,
-      snippet: hit.snippet ?? (await snippetFor(ctx, scope, entryId, query)),
+      snippet:
+        hit.snippet ??
+        (await snippetFor(ctx, scope, entryId, query, delivered, published.get(entryId))),
     })),
   );
 }
 
-/** A short excerpt around the first query-term match in the published text. */
+/**
+ * Every term's occurrences in `text` added up, or 0 when any term is missing (all must match, as
+ * in the lexical indexes).
+ */
+function termFrequency(text: string, terms: readonly string[]): number {
+  let score = 0;
+  for (const term of terms) {
+    let n = 0;
+    for (let at = text.indexOf(term); at !== -1; at = text.indexOf(term, at + term.length)) n += 1;
+    if (n === 0) return 0;
+    score += n;
+  }
+  return score;
+}
+
+/**
+ * Delivery's search (REST `/search`, GraphQL `search`): hybrid, or one leg by `mode`, over the
+ * locales the space delivers only. Its config comes from the request's reads, so a GraphQL query
+ * that already read it doesn't again.
+ */
+export async function deliveredSearch(
+  deps: RagDeps | undefined,
+  ctx: AppContext,
+  scope: Scope,
+  query: string,
+  opts: {
+    readonly topK?: number;
+    readonly mode?: 'hybrid' | 'semantic' | 'lexical';
+    readonly reads?: DeliveryReads;
+  } = {},
+): Promise<SearchHit[]> {
+  const { config } = await (opts.reads ?? deliveryReads(ctx)).read(scope, { config: true });
+  const locales: SearchLocales = config ? { delivered: config } : {};
+  const topK = opts.topK !== undefined ? { topK: opts.topK } : {};
+  if (opts.mode === 'semantic' && deps) {
+    return semanticSearch(deps, scope, query, { ...topK, ...locales });
+  }
+  return hybridSearch(deps, ctx, scope, query, {
+    ...topK,
+    ...locales,
+    lexicalOnly: opts.mode === 'lexical',
+  });
+}
+
+/** A short excerpt around the first query-term match in the published text a search may see. */
 async function snippetFor(
   ctx: AppContext,
   scope: Scope,
   entryId: string,
   query: string,
+  delivered: LocaleConfig | undefined,
+  known: EntryFields | undefined,
 ): Promise<string> {
-  const published = await ctx.store.entries.getPublished(scope, entryId);
-  if (!published) return '';
-  const text = Object.values(extractTextByLocale(published.fields)).join('\n\n');
+  const fields = known ?? (await ctx.store.entries.getPublished(scope, entryId))?.fields;
+  if (!fields) return '';
+  const text = searchableText(fields, delivered);
   const lower = text.toLowerCase();
   const term = query
     .toLowerCase()

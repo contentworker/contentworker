@@ -15,6 +15,7 @@ import {
   seedGuidedType,
   seedIngestFindings,
   statusOf,
+  stubLocales,
   uploadAssetBytes,
   useCmsScope,
   withoutAssistant,
@@ -344,6 +345,46 @@ test('Settings → Trash: turning retention on asks in place before it saves', a
   await expect(page.getByText('Delete trashed entries after 3650 days?')).toBeHidden();
   await page.reload();
   await expect(page.getByRole('radio', { name: 'Keep until deleted' })).toBeChecked();
+});
+
+test('Settings → Locales: a direction saves at once, turning delivery off asks first', async ({
+  page,
+}) => {
+  // Stubbed in the browser (see stubLocales): the shared space's settings never change.
+  const sent = await stubLocales(page, { ar: { delivered: true, direction: 'ltr' } });
+  await openCms(page, '/settings/locales');
+  // The default locale can't stop being delivered, and says why.
+  const en = page.getByRole('switch', { name: 'Deliver en-US' });
+  await expect(en).toBeDisabled();
+  await expect(en).toHaveAccessibleDescription(/every fallback ends here/);
+
+  await page
+    .getByRole('radiogroup', { name: 'Text direction of ar' })
+    .getByRole('radio', {
+      name: 'Right to left',
+    })
+    .click();
+  await expect.poll(() => sent).toEqual([{ localeSettings: { ar: { direction: 'rtl' } } }]);
+  await expect(
+    page.getByRole('radiogroup', { name: 'Text direction of ar' }).getByRole('radio', {
+      name: 'Right to left',
+    }),
+  ).toBeChecked();
+
+  const ar = page.getByRole('switch', { name: 'Deliver ar' });
+  await ar.click();
+  await expect(page.getByRole('alertdialog', { name: 'Stop delivering ar?' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Keep delivering' })).toBeFocused();
+  await page.getByRole('button', { name: 'Keep delivering' }).click();
+  await expect(ar).toBeChecked();
+  expect(sent).toHaveLength(1);
+  await ar.click();
+  await page.getByRole('button', { name: 'Stop delivering' }).click();
+  await expect(ar).not.toBeChecked();
+  expect(sent.at(-1)).toEqual({ localeSettings: { ar: { delivered: false } } });
+  // The header's locale switcher reads the same config, refreshed by the save.
+  await page.getByRole('combobox', { name: 'Locale' }).click();
+  await expect(page.getByRole('option', { name: 'ar Not delivered' })).toBeVisible();
 });
 
 test('duplicates an entry into a new draft marked as a copy', async ({ page, request }) => {
@@ -1197,4 +1238,32 @@ test('guidance saved in the content type dialog shows on the entry form', async 
   await expect(subtitle).toHaveAccessibleDescription(/One line under the title\./);
   // Listed values are offered as a select.
   await expect(page.getByLabel('Status').getByRole('option')).toHaveText(['None', 'open', 'let']);
+});
+
+test('the editor names who created and last edited an entry, and Mine lists one’s own', async ({
+  page,
+  request,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const title = `Authored ${Date.now()}`;
+  // Through the same origin as the browser: the signed-in person is its author.
+  const id = await createDraft(request, title);
+  await openCms(page, `/content/article/${id}`);
+  const pane = page.getByRole('complementary', { name: 'Side pane' });
+  await pane.getByRole('radio', { name: 'Details' }).click();
+  // The person reads as "You", never as their id; the creation time is a <time>.
+  await expect(pane.getByText('Created by').locator('+ dd')).toContainText('You');
+  await expect(pane.getByText('Created by').locator('+ dd time')).toHaveCount(1);
+  await expect(pane.getByText('Last edited by').locator('+ dd')).toContainText(/^You · /);
+  await expect(pane.getByText('Last edited by').locator('+ dd time')).toHaveCount(1);
+
+  await openCms(page, '/content/article');
+  const mine = page.getByRole('button', { name: 'Mine' });
+  await mine.click();
+  await expect(mine).toHaveAttribute('aria-pressed', 'true');
+  await expect(
+    page.getByRole('table').getByRole('link', { name: title, exact: true }),
+  ).toBeVisible();
+  await page.getByRole('button', { name: 'Clear' }).click();
+  await expect(mine).toHaveAttribute('aria-pressed', 'false');
 });

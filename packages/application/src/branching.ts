@@ -6,9 +6,11 @@ import {
   type EntryVersion,
   NotFoundError,
   type Scope,
+  stampChanged,
+  stampCreated,
   type ValidationContext,
 } from '@contentworker/domain';
-import type { AppContext } from './context';
+import { type AppContext, actorOf } from './context';
 import { allPages } from './paging';
 import { resolveEnvironment, resolveWritableEnvironment } from './spaces';
 
@@ -172,7 +174,7 @@ export async function mergeEnvironments(
         );
       }
       assertEntryFieldsValid(targetCt, found.fields, vctx);
-      await applyEntry(ctx, tgt, entryId, found.entry.contentTypeApiId, found.fields);
+      await applyEntry(ctx, tgt, found.entry, found.fields);
       mergedEntries.push(entryId);
     }
   }
@@ -180,34 +182,55 @@ export async function mergeEnvironments(
   return { mergedContentTypes, mergedEntries };
 }
 
-/** Creates the entry in the target (preserving id) or appends a new version. */
+/**
+ * Creates the entry in the target (preserving id) or appends a new version. A new one is the
+ * source's, merged: like a promotion, it keeps who created it, when, and when it was first
+ * published, and the merge's actor made its latest change. One the target already has keeps its own.
+ */
 async function applyEntry(
   ctx: AppContext,
   tgt: Scope,
-  entryId: string,
-  contentTypeApiId: string,
+  from: Entry,
   fields: EntryFields,
 ): Promise<void> {
+  const { id: entryId, contentTypeApiId } = from;
   const existing = await ctx.store.entries.get(tgt, entryId);
   const now = ctx.clock.now().toISOString();
+  const actor = actorOf(ctx);
   if (!existing) {
-    const entry: Entry = {
-      id: entryId,
-      contentTypeApiId,
-      status: 'draft',
-      currentVersion: 1,
-      publishedVersion: null,
-    };
-    const version: EntryVersion = { entryId, version: 1, fields, createdAt: now };
+    const entry = stampCreated(
+      {
+        id: entryId,
+        contentTypeApiId,
+        status: 'draft',
+        currentVersion: 1,
+        publishedVersion: null,
+        ...(from.createdAt ? { createdAt: from.createdAt } : {}),
+        ...(from.createdBy !== undefined ? { createdBy: from.createdBy } : {}),
+        ...(from.firstPublishedAt ? { firstPublishedAt: from.firstPublishedAt } : {}),
+      },
+      actor,
+      now,
+    );
+    const version: EntryVersion = { entryId, version: 1, fields, createdAt: now, createdBy: actor };
     await ctx.store.entries.create(tgt, entry, version);
     return;
   }
   const nextVersion = existing.entry.currentVersion + 1;
-  const entry: Entry = {
-    ...existing.entry,
-    currentVersion: nextVersion,
-    status: existing.entry.publishedVersion === null ? 'draft' : 'changed',
+  const entry = stampChanged(
+    {
+      ...existing.entry,
+      currentVersion: nextVersion,
+      status: existing.entry.publishedVersion === null ? 'draft' : 'changed',
+    },
+    actor,
+  );
+  const version: EntryVersion = {
+    entryId,
+    version: nextVersion,
+    fields,
+    createdAt: now,
+    createdBy: actor,
   };
-  const version: EntryVersion = { entryId, version: nextVersion, fields, createdAt: now };
   await ctx.store.entries.saveVersion(tgt, entry, version);
 }

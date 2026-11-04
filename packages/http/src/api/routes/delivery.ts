@@ -3,6 +3,7 @@ import {
   assetTransformTarget,
   clampCount,
   type DeliveryReads,
+  deliveredSearch,
   deliveredSitemapFile,
   deliveryGraphResolvers,
   deliveryReads,
@@ -12,7 +13,6 @@ import {
   getDeliveredMenu,
   getDeliveredTag,
   getPublishedEntry,
-  hybridSearch,
   listDeliveredAssets,
   listDeliveredConcepts,
   listDeliveredMenus,
@@ -29,7 +29,6 @@ import {
   parseImageTransform,
   resolveDeliveredRedirect,
   searchDeliveredAssets,
-  semanticSearch,
   transformPublishedAssetUrl,
   visibleSearchHits,
 } from '@contentworker/application';
@@ -157,16 +156,13 @@ export function deliveryRoutes(deps: AuthDeps, describe: Describe = undocumented
   // ?mode=lexical selects a single leg.
   app.get(`${BASE}/search`, describe('search'), requireScope(SCOPES.searchRead), async (c) => {
     const q = c.req.query('q') ?? '';
-    const mode = c.req.query('mode') ?? 'hybrid';
-    const opts = { topK: clampCount(c.req.query('top_k'), MAX_PAGE_LIMIT, { min: 1 }) };
+    const mode = c.req.query('mode');
     const scope = scopeOf(c);
-    let hits =
-      mode === 'semantic'
-        ? await semanticSearch(rag, scope, q, opts)
-        : await hybridSearch(rag, ctx, scope, q, {
-            ...opts,
-            lexicalOnly: mode === 'lexical',
-          });
+    // Over the locales the space delivers only: an undelivered one neither matches nor is quoted.
+    let hits = await deliveredSearch(rag, ctx, scope, q, {
+      topK: clampCount(c.req.query('top_k'), MAX_PAGE_LIMIT, { min: 1 }),
+      mode: mode === 'semantic' || mode === 'lexical' ? mode : 'hybrid',
+    });
     hits = await visibleSearchHits(ctx, scope, c.get('principal'), hits);
     return c.json({ hits });
   });

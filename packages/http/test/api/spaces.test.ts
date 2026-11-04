@@ -70,7 +70,10 @@ describe('POST /spaces', () => {
     expect(body.installed.contentTypes).toBe(8);
     expect(body.installed.entries).toBe(39);
     expect(body.installed.assets).toBeGreaterThan(0);
-    expect(await entries('acme')).toHaveLength(39);
+    const installed = (await entries('acme')) as { createdBy: string | null }[];
+    expect(installed).toHaveLength(39);
+    // Credited to the admin who asked for it, as the MCP tool credits its caller.
+    expect(new Set(installed.map((e) => e.createdBy))).toEqual(new Set(['usr_admin']));
     // The seeded space next door is untouched.
     expect(await entries('s1')).toEqual([]);
 

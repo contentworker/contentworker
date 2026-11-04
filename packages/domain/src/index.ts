@@ -15,6 +15,7 @@ export * from './content-type/content-type';
 export * from './content-type/field';
 export * from './content-type/field-values';
 export * from './content-type/slug';
+export * from './entry/authorship';
 export * from './entry/entry';
 export * from './entry/entry-diff';
 export * from './errors';

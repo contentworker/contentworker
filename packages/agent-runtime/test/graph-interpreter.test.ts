@@ -313,6 +313,7 @@ describe('graph interpreter', () => {
       await h.act.compensateNode({
         scope,
         runId: run.id,
+        workflowId: run.workflowId,
         entryId: h.entryId,
         generation: 1,
         nodeId: 'publish',

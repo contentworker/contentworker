@@ -149,7 +149,7 @@ export async function enrichWorkflow(
     );
   }
 
-  await act.applyFields(input.scope, input.entryId, fields);
+  await act.applyFields(input.scope, input.entryId, fields, 'enrich');
   return {
     workflow: 'enrich',
     entryId: input.entryId,
@@ -235,7 +235,7 @@ export async function curateWorkflow(
     );
   }
 
-  await act.applyFields(input.scope, input.entryId, changed);
+  await act.applyFields(input.scope, input.entryId, changed, 'curate');
   return {
     workflow: 'curate',
     entryId: input.entryId,
@@ -445,7 +445,7 @@ async function runEntryPass(
     if (perEntry.some((r) => r.workflow === 'moderate' && r.status === 'held')) {
       // Record the retraction only AFTER it succeeds: the ledger must not
       // claim flagged content was pulled from delivery when it wasn't.
-      await act.retractEntry(input.scope, entryId);
+      await act.retractEntry(input.scope, entryId, 'moderate');
       await act.recordRun(input.scope, {
         workflow: 'moderate',
         entryId,

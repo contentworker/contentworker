@@ -16,7 +16,7 @@ import { type AuthDeps, type AuthVars, requireScope } from '../../auth';
 import { doc } from '../../docs/openapi';
 import * as releaseDocs from '../../docs/schemas/releases';
 import { createReleaseBody, parseBody, releaseItemBody, scheduleBody } from '../../validation';
-import { BASE, scopeOf } from './shared';
+import { actingCtx, BASE, scopeOf } from './shared';
 
 export function releasesRoutes(deps: AuthDeps): Hono<AuthVars> {
   const { ctx } = deps;
@@ -64,7 +64,9 @@ export function releasesRoutes(deps: AuthDeps): Hono<AuthVars> {
   );
   app.post(`${BASE}/releases/:id/published`, requireScope(SCOPES.contentPublish), async (c) =>
     c.json(
-      await publishRelease(ctx, scopeOf(c), c.req.param('id'), { principal: c.get('principal') }),
+      await publishRelease(actingCtx(ctx, c), scopeOf(c), c.req.param('id'), {
+        principal: c.get('principal'),
+      }),
     ),
   );
 

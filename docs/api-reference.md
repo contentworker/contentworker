@@ -147,6 +147,7 @@ Delivery and Preview entry list endpoints, and GraphQL resolvers, share the quer
 | Links to entry    | `links_to_entry=<id>[,<id>]`          | Any field links to the entry; refused (403) to a key with hidden fields |
 | Groups            | `where=<json>`                        | `and`/`or` groups of `{ field, op, value }`, ≤ 4 deep, ≤ 20 predicates (`parseQueryWhere`); ANDed with the rest |
 | System field      | `sys.publishedAt[gt]=<iso>`           | Filter on `sys.*` pseudo-fields                                       |
+| Authorship        | `sys.createdBy=me`                    | Preview and Management: `sys.createdBy`/`sys.updatedBy` (`me` is the caller), `sys.createdAt`, `sys.firstPublishedAt`; Delivery has `sys.firstPublishedAt` only |
 | Taxonomy          | `metadata.tags.slug=news`             | Delivery only: entries carrying a tag (`metadata.tags` by id; `metadata.concepts[.slug]` for concepts) |
 | Sort              | `order=fields.title,-sys.publishedAt` | Comma-separated; `-` prefix = descending                              |
 | Projection        | `select=fields.title,fields.body`     | Return only listed field apiIds                                       |
@@ -322,7 +323,8 @@ principal) may call it; the web app does when it ends a person's access (see
 
 | Method | Path                               | Scope             | Description                        |
 | ------ | ---------------------------------- | ----------------- | ---------------------------------- |
-| GET    | `…/space-config`                   | `preview:read`    | Space settings for the environment |
+| GET    | `…/space-config`                   | `preview:read`    | Space settings for the environment, with `localeSettings` resolved per locale (`delivered`, `direction`) |
+| PUT    | `…/locale-settings`                | `space:admin`     | `{ localeSettings: { <locale>: { delivered?, direction? } } }`: a locale not delivered is edited and previewed, never served by Delivery; the default locale is always delivered; answers the space config |
 | GET    | `…/content-types`                  | `preview:read`    | List content types                 |
 | POST   | `…/content-types`                  | `content:manage`  | Create/update content type         |
 | GET    | `…/content-types/entry-counts`     | `preview:read`    | Entries per type, by status        |
@@ -929,8 +931,17 @@ ascending), ties broken by entry id. In the default order an entry edited betwee
 never skipped; under another order, an edit to a sorted field can move an entry across the
 cursor. A cursor from another order is refused (`422`). A role limited to some content types
 pages over those types only, so every page is full and no cursor points at an entry it can't
-read. `sys.updatedAt` sorts and filters like any `sys.*` field. The MCP tool `entries_query` is
-the same read, paged the same way.
+read. `sys.updatedAt` sorts and filters like any `sys.*` field, and so does authorship: each
+entry carries `createdAt`, `createdBy`, `updatedBy` and `firstPublishedAt` (null when unknown), and
+`sys.createdBy=me` lists the caller's own. `me` is the caller's actor id: a person's own subject,
+`admin-token`, or for an API key its kind (`cma`), so `me` from one CMA key also matches entries
+any other CMA key wrote. `createdBy` and `updatedBy` go only to teammates and keys holding a
+management scope (`content:write`, `content:publish`, `content:manage` or `space:admin`): a preview
+key or preview token gets each entry without them (here, in `GET …/entries/:id`, in version
+history, whose `createdBy` it also drops, and in the MCP trash listing), and a filter or `order`
+on `sys.createdBy` or `sys.updatedBy` from one, anywhere in `where` too, is
+`400 author_ids_not_served`. The MCP tool `entries_query` is the same read, paged the same way,
+under the same rule.
 
 Preview's asset URLs (original, renditions and srcset) are all signed and expire together (at
 least 15 minutes), on the media origin when one is set. The MCP tools `asset_preview_list` and

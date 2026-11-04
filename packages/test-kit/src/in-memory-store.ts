@@ -21,6 +21,7 @@ import {
   type EntryMetadata,
   type EntryVersion,
   type EntryWorkflowState,
+  entrySysOf,
   type InstalledPlugin,
   inviteStatus,
   isWebhookSendRequest,
@@ -218,7 +219,24 @@ export class InMemoryContentStore implements ContentStore {
     getConfig: async (scope) => this.spaceConfigs.get(scope.spaceId) ?? null,
     list: async () => [...this.spaceConfigs.values()],
     create: async (config) => {
-      this.spaceConfigs.set(config.spaceId, config);
+      // As D1: re-creating a space keeps its locale settings unless the config names its own.
+      const kept = this.spaceConfigs.get(config.spaceId)?.localeSettings;
+      this.spaceConfigs.set(
+        config.spaceId,
+        !config.localeSettings && kept ? { ...config, localeSettings: kept } : config,
+      );
+    },
+    setLocaleSettings: async (spaceId, settings, expected) => {
+      const config = this.spaceConfigs.get(spaceId);
+      // As D1's compare-and-set: changed (or gone) since the caller read it is a lost race.
+      const was = config?.localeSettings;
+      const same = (a: unknown) => (a && Object.keys(a).length > 0 ? JSON.stringify(a) : null);
+      if (!config || same(was) !== same(expected)) throw new TransactionConflictError();
+      const { localeSettings: _was, ...rest } = config;
+      this.spaceConfigs.set(
+        spaceId,
+        Object.keys(settings).length > 0 ? { ...rest, localeSettings: { ...settings } } : rest,
+      );
     },
     getTrashSweepCursor: async (scope) => this.trashSweepCursors.get(scopeKey(scope)) ?? null,
     setTrashSweepCursor: async (scope, cursor) => {
@@ -396,9 +414,30 @@ export class InMemoryContentStore implements ContentStore {
     },
   };
 
-  private setEntry(scope: Scope, entry: Entry): void {
+  /**
+   * As D1 writes an entry: a create records its authorship whole; a later save keeps the creation
+   * and fills in the first publish only once (`COALESCE`), whatever the aggregate it is handed says.
+   */
+  /** As D1: the snapshot's first publish is the entry's, as its aggregate holds it now. */
+  private setPublished(scope: Scope, snapshot: PublishedEntry): void {
+    const key = `${scopeKey(scope)}::${snapshot.entryId}`;
+    const { firstPublishedAt: _carried, ...rest } = snapshot;
+    const first = this.entryData.get(key)?.firstPublishedAt;
+    this.publishedData.set(key, { ...rest, ...(first ? { firstPublishedAt: first } : {}) });
+  }
+
+  private setEntry(scope: Scope, entry: Entry, created = false): void {
     const key = `${scopeKey(scope)}::${entry.id}`;
-    this.entryData.set(key, entry);
+    const before = created ? undefined : this.entryData.get(key);
+    this.entryData.set(key, {
+      ...entry,
+      createdAt: before
+        ? (before.createdAt ?? null)
+        : (entry.createdAt ?? new Date(this.nowMs()).toISOString()),
+      createdBy: before ? (before.createdBy ?? null) : (entry.createdBy ?? null),
+      updatedBy: entry.updatedBy ?? null,
+      firstPublishedAt: before?.firstPublishedAt ?? entry.firstPublishedAt ?? null,
+    });
     this.lastEntryTouch = Math.max(this.nowMs(), this.lastEntryTouch + 1);
     this.entryTouched.set(key, new Date(this.lastEntryTouch).toISOString());
   }
@@ -459,12 +498,7 @@ export class InMemoryContentStore implements ContentStore {
         withFields,
         query,
         (r) => r.fields,
-        (r) => ({
-          id: r.entry.id,
-          contentType: r.entry.contentTypeApiId,
-          status: r.entry.status,
-          updatedAt: r.updatedAt,
-        }),
+        (r) => entrySysOf(r.entry, r.updatedAt),
       );
       if (!query.select) return filtered;
       return filtered.map((r) => ({
@@ -516,7 +550,7 @@ export class InMemoryContentStore implements ContentStore {
         .slice(0, query.limit);
     },
     create: async (scope, entry, version) => {
-      this.setEntry(scope, entry);
+      this.setEntry(scope, entry, true);
       this.versionData.set(`${scopeKey(scope)}::${entry.id}`, [version]);
     },
     saveVersion: async (scope, entry, version) => {
@@ -652,10 +686,10 @@ export class InMemoryContentStore implements ContentStore {
       return marked;
     },
     putPublished: async (scope, snapshot) => {
-      this.publishedData.set(`${scopeKey(scope)}::${snapshot.entryId}`, snapshot);
+      this.setPublished(scope, snapshot);
     },
     putPublishedMany: async (scope, snapshots) => {
-      for (const s of snapshots) this.publishedData.set(`${scopeKey(scope)}::${s.entryId}`, s);
+      for (const s of snapshots) this.setPublished(scope, s);
     },
     removePublished: async (scope, entryId) => {
       this.publishedData.delete(`${scopeKey(scope)}::${entryId}`);
@@ -721,6 +755,7 @@ export class InMemoryContentStore implements ContentStore {
           id: r.entryId,
           contentType: r.contentTypeApiId,
           publishedAt: r.publishedAt,
+          firstPublishedAt: r.firstPublishedAt,
           'metadata.tags': r.metadata?.tags ?? [],
           'metadata.concepts': r.metadata?.concepts ?? [],
         }),
@@ -1713,6 +1748,10 @@ export class InMemoryContentStore implements ContentStore {
         ...(renditions ? { renditions } : {}),
         ...(request.entryId !== undefined ? { entry: entry ?? null } : {}),
         ...(request.assetId !== undefined ? { asset: asset ?? null } : {}),
+        // As D1, where the settings ride the asset statement: present when it found anything.
+        ...(request.assetLocales && (asset || assetPage?.items.length)
+          ? { assetLocales: { ...(this.spaceConfigs.get(scope.spaceId)?.localeSettings ?? {}) } }
+          : {}),
         ...(entries ? { entries } : {}),
         ...(assets ? { assets } : {}),
         ...(assetPage ? { assetPage } : {}),

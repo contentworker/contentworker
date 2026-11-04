@@ -198,6 +198,7 @@ export function createVectorizeStore(
         .map(
           (m): VectorMatch => ({
             entryId: String(m.metadata?.entryId ?? ''),
+            ...(typeof m.metadata?.locale === 'string' ? { locale: m.metadata.locale } : {}),
             chunkText: String(m.metadata?.chunkText ?? ''),
             score: m.score,
           }),

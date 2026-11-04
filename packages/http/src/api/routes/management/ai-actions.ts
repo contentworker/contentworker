@@ -8,7 +8,7 @@ import { SCOPES } from '@contentworker/domain';
 import { Hono } from 'hono';
 import { type AuthDeps, type AuthVars, requireScope } from '../../auth';
 import { createAiActionBody, parseBody, runAiActionBody } from '../../validation';
-import { BASE, scopeOf } from './shared';
+import { actingCtx, BASE, scopeOf } from './shared';
 
 export function aiActionsRoutes(deps: AuthDeps): Hono<AuthVars> {
   const { ctx, ai } = deps;
@@ -28,7 +28,7 @@ export function aiActionsRoutes(deps: AuthDeps): Hono<AuthVars> {
   app.post(`${BASE}/ai-actions/:id/run`, requireScope(SCOPES.contentWrite), async (c) =>
     c.json(
       await runAIAction(
-        ctx,
+        actingCtx(ctx, c),
         ai,
         scopeOf(c),
         c.req.param('id'),

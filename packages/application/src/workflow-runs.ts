@@ -934,6 +934,7 @@ export async function cancelWorkflowRun(
         await compensateWorkflowNode(ctx, deps, {
           scope,
           runId,
+          workflowId: run.workflowId,
           entryId: run.entryId,
           generation: r.generation,
           nodeId: r.nodeId,

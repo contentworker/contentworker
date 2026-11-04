@@ -37,6 +37,7 @@ export type DomainEvent =
   | InviteEmailDueEvent
   | RedirectsChangedEvent
   | MenusChangedEvent
+  | SpaceLocalesChangedEvent
   | WebhookTestEvent;
 
 export interface BaseEvent {
@@ -151,6 +152,17 @@ export interface AssetIngestedEvent extends BaseEvent {
 export interface AssetRenditionsChangedEvent extends BaseEvent {
   readonly type: 'asset_renditions.changed';
   readonly name: string;
+}
+
+/**
+ * A space's locale settings changed (a locale delivered or not, its text direction). Settings
+ * belong to the whole space, so the engine purges what every environment of it delivers: a locale
+ * just turned off must stop being served at once, from every cache.
+ */
+export interface SpaceLocalesChangedEvent extends BaseEvent {
+  readonly type: 'space_locales.changed';
+  /** The locales Delivery no longer serves, after the change. */
+  readonly undelivered: readonly string[];
 }
 
 /**

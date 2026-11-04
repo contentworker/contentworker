@@ -29,6 +29,7 @@ import type {
   InstalledPlugin,
   InviteStatus,
   LocaleCode,
+  LocaleSettings,
   LocalizedValue,
   MemberInvite,
   Menu,
@@ -1271,7 +1272,7 @@ export interface SchedulerJobRepo {
 /** The transactional view of the store handed to `withTransaction`. */
 export interface ContentStoreTx {
   /** Only the purge's progress mark, which commits with the event that continues the purge. */
-  readonly spaces: Pick<SpaceRepo, 'markEnvironmentPurgeProgress'>;
+  readonly spaces: Pick<SpaceRepo, 'markEnvironmentPurgeProgress' | 'setLocaleSettings'>;
   readonly contentTypes: ContentTypeRepo;
   readonly entries: EntryRepo;
   readonly assets: AssetRepo;
@@ -1446,6 +1447,8 @@ export interface SpaceConfig {
   readonly locales: readonly LocaleCode[];
   /** locale -> fallback locale (null = none). Defaults to the default locale. */
   readonly fallbacks?: Readonly<Record<LocaleCode, LocaleCode | null>>;
+  /** Per-locale settings (delivered, direction); a locale absent takes the defaults. */
+  readonly localeSettings?: Readonly<Record<LocaleCode, LocaleSettings>>;
   /**
    * The space's default for workflow approvals whose node leaves `separateDuties` unset: when
    * true, whoever started a run can't decide its approvals. Absent means false.
@@ -1472,6 +1475,12 @@ export interface Environment {
 export interface DeliveryReadRequest {
   /** The space's configuration (locales, fallbacks). */
   readonly config?: boolean;
+  /**
+   * With `assetId` or `assetPage`: the space's per-locale settings, read on that statement rather
+   * than one of their own, as `assetLocales` (what an all-locale asset read needs to leave out the
+   * locales the space doesn't deliver). Present when the asset or page holds anything.
+   */
+  readonly assetLocales?: boolean;
   /** Every content type in the scope. */
   readonly contentTypes?: boolean;
   /** The space's rendition presets. */
@@ -1556,6 +1565,8 @@ export interface MenuRead {
  */
 export interface DeliveryReadResult {
   readonly config?: SpaceConfig | null;
+  /** The space's per-locale settings (`{}` for none), when asked and the asset read found rows. */
+  readonly assetLocales?: Readonly<Record<LocaleCode, LocaleSettings>>;
   readonly contentTypes?: ContentType[];
   readonly renditions?: AssetRendition[];
   readonly entry?: PublishedEntry | null;
@@ -1596,6 +1607,16 @@ export interface SpaceRepo {
   setWorkflowSeparateDuties(spaceId: string, value: boolean): Promise<void>;
   /** Sets how many days the space keeps trashed entries; null turns retention off. */
   setTrashRetentionDays(spaceId: string, days: number | null): Promise<void>;
+  /**
+   * Replaces the space's per-locale settings (an empty object: the defaults for every locale),
+   * provided they are still `expected` (what the caller read; undefined: none set). Another change
+   * in between is a lost race: `TransactionConflictError`, at commit inside a unit.
+   */
+  setLocaleSettings(
+    spaceId: string,
+    settings: Readonly<Record<LocaleCode, LocaleSettings>>,
+    expected: Readonly<Record<LocaleCode, LocaleSettings>> | undefined,
+  ): Promise<void>;
   /** Where the trash retention sweep resumes in this environment; null is from the oldest. */
   getTrashSweepCursor(scope: Scope): Promise<ExpiredTrashEntry | null>;
   setTrashSweepCursor(scope: Scope, cursor: ExpiredTrashEntry | null): Promise<void>;
@@ -1726,6 +1747,9 @@ export interface PublishedEntry {
   readonly version: number;
   readonly fields: EntryFields;
   readonly publishedAt: string;
+  /** When the entry was first published (kept through unpublish and republish); absent when
+   *  unknown, for an entry first published before it was recorded. */
+  readonly firstPublishedAt?: string;
   /** Taxonomy associations captured at publish time (tags + concepts). */
   readonly metadata?: EntryMetadata;
 }
@@ -1803,6 +1827,11 @@ export interface EntryQuery {
    * different locale per store. Populated by the delivery/preview use-cases from SpaceConfig.
    */
   readonly fallbackLocales?: readonly LocaleCode[];
+  /**
+   * Locales filtering, ordering and search never read. Delivery names the ones the space doesn't
+   * deliver, so a value in a locale it doesn't serve never decides a match or an order.
+   */
+  readonly hiddenLocales?: readonly LocaleCode[];
 }
 
 /** One ranked full-text match from the published read model. */

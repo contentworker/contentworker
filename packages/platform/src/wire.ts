@@ -336,11 +336,11 @@ export const passwords: PasswordHasher = pbkdf2PasswordHasher;
 export interface MediaWired {
   /**
    * Through a read-replica session: the gate's fallback, the rendition presets, and the share
-   * links and collections a share page reads.
+   * links, collections and space locales a share page reads.
    */
   readonly store?: Pick<
     ContentStore,
-    'assets' | 'assetRenditions' | 'assetShareLinks' | 'assetCollections'
+    'assets' | 'assetRenditions' | 'assetShareLinks' | 'assetCollections' | 'spaces'
   >;
   /** The engine's published-asset gate (KV_CACHE). */
   readonly assetGate?: AssetGate;

@@ -7,6 +7,7 @@ import {
   runPublishAgents,
 } from '../agent-actions';
 import type { AppContext } from '../context';
+import { liveEventOf } from '../delivery';
 import { type DispatchDeps, dispatchEvent } from './dispatch';
 
 export interface ConsumeDeps extends DispatchDeps {
@@ -39,7 +40,11 @@ export async function consumeEvent(
   // is for one webhook alone (and only ever arrives inside a WebhookSendRequest).
   if (event.type === 'invite.email_due' || event.type === 'webhook.test') return [];
   if (deps.bus) {
-    await deps.bus.publish(event).catch((err) => deps.onLiveError?.(err));
+    const bus = deps.bus;
+    // Undelivered locales never reach a Delivery subscriber (`liveEventOf`).
+    await liveEventOf(ctx, event)
+      .then((live) => bus.publish(live))
+      .catch((err) => deps.onLiveError?.(err));
   }
   if (deps.agents && deps.agentConfig && event.type === 'entry.published') {
     return runPublishAgents(ctx, deps.agents, event.scope, event.entryId, deps.agentConfig);

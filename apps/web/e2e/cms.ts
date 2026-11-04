@@ -130,6 +130,56 @@ export async function openCms(page: Page, path: string) {
   );
 }
 
+type LocaleStub = { readonly delivered: boolean; readonly direction: 'ltr' | 'rtl' };
+
+/**
+ * Locale settings for one page only, stubbed in the browser so no spec changes the shared space's
+ * settings under another: `GET …/space-config` answers the real config with `locales` added and
+ * their settings set, and `PUT …/locale-settings` is recorded, applied to the stub and answered as
+ * the api would (the config, every locale resolved). Returns the bodies the page sent.
+ */
+export async function stubLocales(page: Page, locales: Readonly<Record<string, LocaleStub>>) {
+  let settings: Record<string, LocaleStub> = { ...locales };
+  let real: { locales: string[]; localeSettings?: Record<string, LocaleStub> } | null = null;
+  const sent: unknown[] = [];
+  const config = () => {
+    const base = real ?? { locales: [] };
+    return {
+      ...base,
+      locales: [...base.locales, ...Object.keys(settings).filter((l) => !base.locales.includes(l))],
+      localeSettings: { ...base.localeSettings, ...settings },
+    };
+  };
+  await page.route(`**${MGMT}/space-config`, async (route) => {
+    // A refetch can still be in flight when the test ends and its page closes: that request has
+    // no one left to answer, so its failure is dropped rather than reported against no test.
+    try {
+      const res = await route.fetch();
+      real = await res.json();
+      await route.fulfill({ response: res, json: config() });
+    } catch (err) {
+      if (!/Test ended|Target page, context or browser has been closed/.test(String(err)))
+        throw err;
+    }
+  });
+  await page.route(`**${MGMT}/locale-settings`, async (route) => {
+    if (route.request().method() !== 'PUT') return route.fallback();
+    const body = route.request().postDataJSON() as {
+      localeSettings: Record<string, Partial<LocaleStub>>;
+    };
+    sent.push(body);
+    for (const [locale, change] of Object.entries(body.localeSettings)) {
+      const was = settings[locale] ?? real?.localeSettings?.[locale];
+      settings = {
+        ...settings,
+        [locale]: { delivered: true, direction: 'ltr', ...was, ...change },
+      };
+    }
+    await route.fulfill({ json: config() });
+  });
+  return sent;
+}
+
 /** A fresh draft article, through the API; returns its id. */
 export async function createDraft(request: APIRequestContext, title: string, body?: string) {
   const res = await api(request, 'POST', `${MGMT}/entries`, {

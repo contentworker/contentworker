@@ -1,5 +1,5 @@
 import type { AppContext } from '@contentworker/application';
-import { getEntry } from '@contentworker/application';
+import { actingAs, getEntry } from '@contentworker/application';
 import {
   type ApiKey,
   type Asset,
@@ -24,6 +24,13 @@ export const scopeOf = (c: Context<AuthVars>): Scope => ({
   spaceId: c.req.param('space') as string,
   environmentId: c.get('environmentId') ?? (c.req.param('env') as string),
 });
+
+/**
+ * The use-cases' context for this request, acting as its principal: what they write (an entry's
+ * `createdBy` and `updatedBy`, a version's author, a job's chunks) is recorded as that principal's.
+ */
+export const actingCtx = (ctx: AppContext, c: Context<AuthVars>): AppContext =>
+  actingAs(ctx, c.get('principal'));
 
 // Public projections that strip secrets before they leave the server: API keys
 // never expose their stored hash, webhooks never expose their signing secret.

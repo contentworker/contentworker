@@ -12,7 +12,9 @@ import {
   authorizeContent,
   canAccessContentType,
   ENTRY_OPERATION_ACTIONS,
+  maskDeniedFields,
   SCOPES,
+  withAuthorIdsFor,
 } from '@contentworker/domain';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
@@ -57,7 +59,17 @@ export function registerTrashTools(server: McpServer, t: ToolContext): void {
         limit: args.limit,
         archived: true,
       });
-      return ok(items.filter((e) => canAccessContentType(principal, 'read', e.contentType)));
+      // The same projection as entries_query: denied fields masked, author ids for those who see them.
+      return ok(
+        items
+          .filter((e) => canAccessContentType(principal, 'read', e.contentType))
+          .map((e) =>
+            withAuthorIdsFor(principal, {
+              ...e,
+              fields: maskDeniedFields(principal, e.contentType, e.fields),
+            }),
+          ),
+      );
     },
   );
 

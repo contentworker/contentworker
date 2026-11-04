@@ -106,6 +106,27 @@ describe('admin ManagementClient', () => {
     expect(calls[0]?.url).toBe('/spaces/s1/environments/main/space-config');
   });
 
+  it('sets locale settings with a PUT of only the locales changed', async () => {
+    const { fn, calls } = fakeFetch(() => ({
+      spaceId: 's1',
+      name: 'Space 1',
+      defaultLocale: 'en-US',
+      locales: ['en-US', 'ar'],
+      localeSettings: {
+        'en-US': { delivered: true, direction: 'ltr' },
+        ar: { delivered: false, direction: 'rtl' },
+      },
+    }));
+    const client = createManagementClient(conn, fn);
+    const cfg = await client.setLocaleSettings({ ar: { delivered: false } });
+    expect(cfg.localeSettings?.ar?.delivered).toBe(false);
+    expect(calls[0]?.url).toBe('/spaces/s1/environments/main/locale-settings');
+    expect(calls[0]?.init?.method).toBe('PUT');
+    expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({
+      localeSettings: { ar: { delivered: false } },
+    });
+  });
+
   it('publishes via the management entries action', async () => {
     const { fn, calls } = fakeFetch(() => ({ id: 'e1', status: 'published' }));
     const client = createManagementClient(conn, fn);

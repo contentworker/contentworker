@@ -18,11 +18,13 @@ import {
   restore,
   type Scope,
   saveDraft,
+  stampChanged,
+  stampCreated,
   uniqueClaims,
   type ValidationContext,
 } from '@contentworker/domain';
 import type { BlobStore, EntryRepo } from '@contentworker/ports';
-import type { AppContext } from './context';
+import { type AppContext, actorOf } from './context';
 import { runHook, runPureHook } from './hooks';
 import { unpublishEntryTx } from './publishing';
 import { versionBodyPrefix } from './version-archive';
@@ -52,6 +54,11 @@ export interface CreateEntryInput {
    * so every link between them still resolves in the target. Not accepted over the API.
    */
   readonly id?: string;
+  /**
+   * Authorship the entry brings from where it was copied (an environment clone or promotion), kept
+   * instead of crediting whoever copied it. Not accepted over the API.
+   */
+  readonly authorship?: Pick<Entry, 'createdAt' | 'createdBy' | 'firstPublishedAt'>;
 }
 
 export interface EntryView {
@@ -80,18 +87,25 @@ export async function createEntry(
   );
 
   const id = input.id ?? ctx.ids.newId();
-  const entry: Entry = {
-    id,
-    contentTypeApiId: input.contentTypeApiId,
-    status: 'draft',
-    currentVersion: 1,
-    publishedVersion: null,
-  };
+  const now = ctx.clock.now().toISOString();
+  const entry = stampCreated(
+    {
+      id,
+      contentTypeApiId: input.contentTypeApiId,
+      status: 'draft',
+      currentVersion: 1,
+      publishedVersion: null,
+      ...input.authorship,
+    },
+    actorOf(ctx),
+    now,
+  );
   const version: EntryVersion = {
     entryId: id,
     version: 1,
     fields,
-    createdAt: ctx.clock.now().toISOString(),
+    createdAt: now,
+    createdBy: actorOf(ctx),
   };
 
   const claims = uniqueClaims(contentType, fields);
@@ -212,11 +226,15 @@ export async function saveEntryDraft(
 
   const { entry, version } = saveDraft(current, normalized);
   // Keep status consistent with the published pointer.
-  const synced: Entry = {
-    ...entry,
-    status: deriveStatus(entry.currentVersion, entry.publishedVersion, false),
+  const synced: Entry = stampChanged(
+    { ...entry, status: deriveStatus(entry.currentVersion, entry.publishedVersion, false) },
+    actorOf(ctx),
+  );
+  const stamped: EntryVersion = {
+    ...version,
+    createdAt: ctx.clock.now().toISOString(),
+    createdBy: actorOf(ctx),
   };
-  const stamped: EntryVersion = { ...version, createdAt: ctx.clock.now().toISOString() };
 
   const claims = uniqueClaims(contentType, normalized);
   if (claims.length === 0 && !hasUniqueFields(contentType)) {
@@ -343,7 +361,7 @@ export async function trashEntry(ctx: AppContext, scope: Scope, id: string): Pro
       found.entry.publishedVersion !== null
         ? await unpublishEntryTx(ctx, tx, scope, id)
         : found.entry;
-    const archived = archive(base);
+    const archived = stampChanged(archive(base), actorOf(ctx));
     await tx.entries.saveAggregate(scope, archived);
     // A trashed entry gives its slug back: an editor who deleted "about"
     // expects to be able to create a new "about", not to be blocked by
@@ -357,7 +375,7 @@ export async function trashEntry(ctx: AppContext, scope: Scope, id: string): Pro
 export async function restoreEntry(ctx: AppContext, scope: Scope, id: string): Promise<Entry> {
   const found = await ctx.store.entries.get(scope, id);
   if (!found) throw new NotFoundError('Entry', id);
-  const restored = restore(found.entry);
+  const restored = stampChanged(restore(found.entry), actorOf(ctx));
   const contentType = await ctx.store.contentTypes.get(scope, found.entry.contentTypeApiId);
   const claims = contentType ? uniqueClaims(contentType, found.fields) : [];
 

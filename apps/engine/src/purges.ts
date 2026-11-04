@@ -142,6 +142,13 @@ export async function planPurges(
       }
       break;
     }
+    case 'space_locales.changed':
+      // Locale settings belong to the space: what every environment delivers changes with them
+      // (a locale turned off is no longer served, nor reached by a fallback, nor in the sitemap).
+      for (const env of await ctx.store.spaces.listEnvironments(spaceId)) {
+        plan.delivery.add(deliveryScopeTag(spaceId, env.id));
+      }
+      break;
     case 'environment.deleted':
     // Each purge step too: the last one clears the gate again (an entry written back while the
     // rows were still there), so the environment's cached media is purged after it, now and once

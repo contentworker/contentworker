@@ -28,7 +28,7 @@ import { isUncheckedFallback } from './ai-provenance';
 import { auditActor } from './audit';
 import { compareEnvironments } from './branching';
 import { describeRemovedInUse, publishContentType, removedContentInUse } from './content-types';
-import type { AppContext } from './context';
+import { type AppContext, withActor } from './context';
 import { createEntry, updateEntry } from './entries';
 import { loadPublishGuard } from './publish-gate';
 import { publishEntry } from './publishing';
@@ -318,10 +318,12 @@ export async function listPromotions(
  * the target holds what was pinned. Any failure marks it `failed`, naming the cause; what was
  * applied before the failure stays, like any other edits.
  */
-async function applyPromotion(ctx: AppContext, promotion: Promotion): Promise<Promotion> {
+async function applyPromotion(base: AppContext, promotion: Promotion): Promise<Promotion> {
   if (promotion.status !== 'applying') {
     throw new InvalidStateError(`Promotion ${promotion.id} is ${promotion.status}`);
   }
+  // Written as whoever approved it, whether the approval's request or a later sweep applies it.
+  const ctx = withActor(base, promotion.decidedBy ?? promotion.requestedBy);
   const source: Scope = { spaceId: promotion.spaceId, environmentId: promotion.source };
   const target: Scope = { spaceId: promotion.spaceId, environmentId: promotion.target };
   const result = {
@@ -377,10 +379,21 @@ async function applyPromotion(ctx: AppContext, promotion: Promotion): Promise<Pr
       if (await ctx.store.entries.get(target, e.entryId)) {
         await updateEntry(ctx, target, e.entryId, version.fields);
       } else {
+        // A new entry in the target is the source's, promoted: it keeps who created it and when.
+        const from = (await ctx.store.entries.get(source, e.entryId))?.entry;
         await createEntry(ctx, target, {
           contentTypeApiId: e.contentTypeApiId,
           fields: version.fields,
           id: e.entryId,
+          ...(from
+            ? {
+                authorship: {
+                  createdAt: from.createdAt ?? null,
+                  createdBy: from.createdBy ?? null,
+                  firstPublishedAt: from.firstPublishedAt ?? null,
+                },
+              }
+            : {}),
         });
       }
       result.entries.push(e.entryId);

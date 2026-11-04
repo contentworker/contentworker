@@ -18,6 +18,9 @@ export interface DeliveredEntry<F extends Fields = Fields> {
   readonly contentType: string;
   readonly fields: F;
   readonly publishedAt: string;
+  /** When the entry was first published (sort with `-sys.firstPublishedAt`); absent when unknown.
+   *  Delivery serves no other authorship. */
+  readonly firstPublishedAt?: string;
 }
 
 /**

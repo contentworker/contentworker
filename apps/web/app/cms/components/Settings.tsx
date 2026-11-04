@@ -41,6 +41,7 @@ import { BranchMerge } from '~/cms/components/BranchMerge';
 import { ConnectedApps } from '~/cms/components/ConnectedApps';
 import { Functions } from '~/cms/components/Functions';
 import { ConfirmButton } from '~/cms/components/InlineConfirm';
+import { LocaleSettings } from '~/cms/components/LocaleSettings';
 import { LoadingStatus } from '~/cms/components/loading';
 import { Menus } from '~/cms/components/Menus';
 import { Plugins } from '~/cms/components/Plugins';
@@ -80,6 +81,7 @@ const SECTION_BODY: Record<string, (client: ManagementClient) => React.ReactNode
   'ai-actions': (client) => <AiActions client={client} />,
   extensions: (client) => <AppExtensions client={client} />,
   plugins: (client) => <Plugins client={client} />,
+  locales: (client) => <LocaleSettings client={client} />,
   redirects: (client) => <Redirects client={client} />,
   menus: (client) => <Menus client={client} />,
   trash: (client) => <TrashSettings client={client} />,

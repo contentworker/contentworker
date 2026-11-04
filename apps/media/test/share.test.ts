@@ -11,10 +11,13 @@ import {
   createSpace,
   publishAsset,
   revokeAssetShareLink,
+  setAssetMetadata,
+  setLocaleSettings,
   shareLinkUrl,
   syncAssetGate,
 } from '@contentworker/application';
 import { createD1Store } from '@contentworker/db';
+import { SCOPES } from '@contentworker/domain';
 import { pbkdf2PasswordHasher } from '@contentworker/security/credentials';
 import { FakeBlobStore } from '@contentworker/test-kit';
 import { describe, expect, it } from 'vitest';
@@ -116,6 +119,67 @@ describe('share links on the media origin', () => {
     expect(maxAge).toBeGreaterThan(0);
     expect(maxAge).toBeLessThanOrEqual(3600);
     await res.body?.cancel();
+  });
+
+  it('titles a file in the default locale, else a delivered one, never one turned off', async () => {
+    const ctx = context();
+    const scope = { spaceId: `share-space-${++seq}`, environmentId: 'main' };
+    await createSpace(ctx, {
+      spaceId: scope.spaceId,
+      name: 'Locales',
+      defaultLocale: 'en-US',
+      locales: ['en-US', 'fr', 'de'],
+    });
+    await setLocaleSettings(
+      ctx,
+      { spaceId: scope.spaceId, kind: 'cma', scopes: [SCOPES.spaceAdmin] },
+      scope,
+      { fr: { delivered: false } },
+    );
+    const blob = new FakeBlobStore();
+    const shared = async (title: Record<string, string>, alt: Record<string, string>) => {
+      const { asset } = await createAsset(ctx, blob, scope, {
+        fileName: 'pic.png',
+        contentType: 'image/png',
+        title,
+      });
+      await setAssetMetadata(ctx, scope, asset.id, { altText: alt });
+      await env.MEDIA_BUCKET.put(asset.r2Key as string, 'PNG', {
+        httpMetadata: { contentType: 'image/png' },
+      });
+      await publishAsset(ctx, scope, asset.id);
+      const link = await createAssetShareLink(ctx, scope, {
+        targetType: 'asset',
+        targetId: asset.id,
+        expiresAt: inDays(7),
+      });
+      const path = new URL(shareLinkUrl(ctx, scope, link.id) as string).pathname;
+      const media = (exports as unknown as { Media: { fetch(r: Request): Promise<Response> } })
+        .Media;
+      const json = await media.fetch(new Request(`https://media.internal${path}?f=json`));
+      const html = await textOf(
+        await media.fetch(new Request(`https://media.internal${path}?f=html`)),
+      );
+      return { json: (await json.json()) as { title: string; files: { title: string }[] }, html };
+    };
+
+    // fr comes first in the map and is turned off: the delivered de text stands in.
+    const hidden = await shared(
+      { fr: 'Titre caché', de: 'Bild' },
+      { fr: 'Texte caché', de: 'Alt' },
+    );
+    expect(hidden.json.title).toBe('Bild');
+    expect(hidden.json.files.map((f) => f.title)).toEqual(['Bild']);
+    expect(hidden.html).toContain('alt="Alt"');
+    expect(hidden.html).not.toContain('caché');
+    // The default locale wins over whichever comes first.
+    const preferred = await shared({ de: 'Bild', 'en-US': 'Picture' }, { de: 'Alt', 'en-US': 'A' });
+    expect(preferred.json.title).toBe('Picture');
+    expect(preferred.html).toContain('alt="A"');
+    // Only a hidden locale's text: the file name, never the hidden title.
+    const only = await shared({ fr: 'Seulement' }, { fr: 'Seulement' });
+    expect(only.json.title).toBe('pic.png');
+    expect(only.html).not.toContain('Seulement');
   });
 
   it('serves a member’s file inline, a download only when allowed, and nothing else', async () => {

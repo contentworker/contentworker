@@ -27,7 +27,7 @@ import {
   moveAssetsBody,
   parseBody,
 } from '../../validation';
-import { assetUrls, BASE, scopeOf } from './shared';
+import { actingCtx, assetUrls, BASE, scopeOf } from './shared';
 
 export function assetsRoutes(deps: AuthDeps): Hono<AuthVars> {
   const { ctx, blob, rag } = deps;
@@ -166,7 +166,7 @@ export function assetsRoutes(deps: AuthDeps): Hono<AuthVars> {
         assetBulkActionPublishes(action) ? SCOPES.contentPublish : SCOPES.contentWrite,
         c.req.param('space'),
       );
-      const job = await startAssetBulkJob(ctx, scopeOf(c), {
+      const job = await startAssetBulkJob(actingCtx(ctx, c), scopeOf(c), {
         action,
         ids: body.ids,
         ...(body.folderId !== undefined ? { folderId: body.folderId } : {}),

@@ -12,6 +12,7 @@
  *   - `links_to_entry=<id>`              → any field links to that entry (`<id>,<id>`: any)
  *   - `where=<json>`                     → AND/OR groups of predicates (`parseQueryWhere`)
  *   - `sys.publishedAt[gt]=<iso>`        → `sys.*` pseudo-fields
+ *   - `sys.createdBy=me`                 → authorship; `me` is the caller (see `resolveMe`)
  *   - `metadata.tags[in]=<id>,<id>`      → taxonomy associations by id (also `metadata.concepts`)
  *   - `metadata.tags.slug=news`          → by slug (eq|ne|in|nin; also `metadata.concepts.slug`)
  *   - `order=fields.title,-sys.publishedAt`  → sort keys (`-` = descending)
@@ -256,4 +257,30 @@ export function usesReferenceFilters(query: Pick<EntryQuery, 'filters' | 'where'
 /** Convenience: parse straight from a `URLSearchParams`. */
 export function parseEntryQuery(params: URLSearchParams): EntryQuery {
   return entryQueryFrom(params.entries());
+}
+
+/** The `sys.*` fields that name an actor, where `me` stands for the caller. */
+const ACTOR_FIELDS: ReadonlySet<string> = new Set(['sys.createdBy', 'sys.updatedBy']);
+
+/** The value that stands for the caller in an actor filter: `sys.createdBy=me`. */
+export const ME = 'me';
+
+/**
+ * Replaces `me` in the query's actor filters (`sys.createdBy`, `sys.updatedBy`, any operator) with
+ * the caller's actor id, so "my entries" is one query parameter on every surface. Without a caller
+ * to name (`actor` null), `me` matches nothing rather than an actor literally called "me".
+ */
+export function resolveMe(query: EntryQuery, actor: string | null): EntryQuery {
+  if (!query.filters?.some((f) => ACTOR_FIELDS.has(f.field))) return query;
+  // No actor id is empty, so an unnamed caller's `me` matches no entry.
+  const me = actor ?? '';
+  const swap = (v: unknown) => (v === ME ? me : v);
+  return {
+    ...query,
+    filters: query.filters.map((f) =>
+      ACTOR_FIELDS.has(f.field)
+        ? { ...f, value: Array.isArray(f.value) ? f.value.map(swap) : swap(f.value) }
+        : f,
+    ),
+  };
 }
