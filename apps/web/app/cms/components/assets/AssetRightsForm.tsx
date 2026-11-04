@@ -1,6 +1,7 @@
 import type { Asset, AssetRights } from '@contentworker/domain';
 import { Alert, AlertDescription, AlertTitle } from '@contentworker/ui/alert';
 import { Button } from '@contentworker/ui/button';
+import { DialogError } from '@contentworker/ui/dialog';
 import { Input } from '@contentworker/ui/input';
 import { Label } from '@contentworker/ui/label';
 import { useEffect, useState } from 'react';
@@ -15,7 +16,12 @@ import {
   timeUntil,
 } from '~/cms/lib/assets';
 import { useClient } from '~/cms/lib/client-context';
-import { apiErrorMessage, apiFieldIssues, isForbidden } from '~/cms/lib/management';
+import {
+  apiErrorMessage,
+  apiFieldIssues,
+  isForbidden,
+  RequestTimeoutError,
+} from '~/cms/lib/management';
 import { useToast } from '~/cms/lib/toast';
 import { useNow } from '~/cms/lib/use-now';
 
@@ -73,6 +79,8 @@ export function AssetRightsForm(props: {
   }, [dirty, onDirty]);
   const [issues, setIssues] = useState<Record<string, string>>({});
   const [refusal, setRefusal] = useState<{ forbidden: boolean; message: string } | null>(null);
+  // A save that didn't answer: it may have gone through, so it can't say it wasn't saved.
+  const [unconfirmed, setUnconfirmed] = useState<string>();
   const [busy, setBusy] = useState(false);
   const { onSaving } = props;
   useEffect(() => {
@@ -103,6 +111,7 @@ export function AssetRightsForm(props: {
 
   const save = async () => {
     setConfirmExpire(false);
+    setUnconfirmed(undefined);
     setBusy(true);
     setRefusal(null);
     try {
@@ -122,7 +131,9 @@ export function AssetRightsForm(props: {
       const named = (['license', 'credit', 'expiresAt', 'embargoUntil'] as const).some(
         (f) => fields[`rights.${f}`] ?? fields[f],
       );
-      if (isForbidden(err)) {
+      if (err instanceof RequestTimeoutError) {
+        setUnconfirmed(err.message);
+      } else if (isForbidden(err)) {
         setRefusal({
           forbidden: true,
           message:
@@ -187,6 +198,7 @@ export function AssetRightsForm(props: {
           <AlertDescription>{refusal.message}</AlertDescription>
         </Alert>
       )}
+      {unconfirmed && <DialogError>{unconfirmed}</DialogError>}
       {field('license', 'License', { maxLength: 500, placeholder: 'CC BY 4.0, Getty editorial…' })}
       {field('credit', 'Credit', { maxLength: 500, placeholder: 'Photo: Ada Lovelace' })}
       {field(

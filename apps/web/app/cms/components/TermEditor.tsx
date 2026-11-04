@@ -1,5 +1,6 @@
 import type { TermUsageSummary } from '@contentworker/domain';
 import { Button } from '@contentworker/ui/button';
+import { DialogError } from '@contentworker/ui/dialog';
 import { Input } from '@contentworker/ui/input';
 import { Label } from '@contentworker/ui/label';
 import { Sheet, SheetDescription, SheetHeader, SheetTitle } from '@contentworker/ui/sheet';
@@ -77,10 +78,14 @@ export function TermEditor({
   // Its own write, not `busy`, which any action on the page sets.
   const [saving, setSaving] = useState(false);
   const guard = useDiscardGuard({ open: term !== null, dirty, saving, onOpenChange });
+  const [error, setError] = useState<string>();
   const save = async (changes: TermChanges) => {
     setSaving(true);
+    setError(undefined);
     try {
       await onSave(changes);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
     } finally {
       setSaving(false);
     }
@@ -105,6 +110,7 @@ export function TermEditor({
             busy={busy}
             onSave={(changes) => void save(changes)}
             guard={guard}
+            error={error}
             onDirty={setDirty}
           />
         ) : null}
@@ -130,6 +136,7 @@ function TermForm({
   busy,
   onSave,
   guard,
+  error,
   onDirty,
 }: {
   kind: 'tag' | 'concept';
@@ -139,6 +146,7 @@ function TermForm({
   busy: boolean;
   onSave: (changes: TermChanges) => void;
   guard: DiscardGuard;
+  error: string | undefined;
   onDirty: (dirty: boolean) => void;
 }) {
   const id = useId();
@@ -221,6 +229,7 @@ function TermForm({
           </p>
         </fieldset>
       ) : null}
+      {error && <DialogError>{error}</DialogError>}
       <div className="flex justify-end gap-2">
         <DiscardAsk guard={guard} message={`Discard your changes to “${term.label}”?`}>
           <GuardCancel guard={guard} />

@@ -19,7 +19,11 @@ import { LoadingStatus } from '~/cms/components/loading';
 import { toApiId } from '../lib/api-id';
 import { useClient } from '../lib/client-context';
 import { plural } from '../lib/format';
-import type { BulkJobSummary, ContentTypeDependents } from '../lib/management';
+import {
+  type BulkJobSummary,
+  type ContentTypeDependents,
+  RequestTimeoutError,
+} from '../lib/management';
 import { useScopedQuery } from '../lib/queries';
 
 /**
@@ -161,6 +165,8 @@ export function DeleteContentTypeDialog(props: {
   const [typed, setTyped] = useState('');
   const [withEntries, setWithEntries] = useState(false);
   const [error, setError] = useState<string>();
+  // A delete that didn't answer: it may have gone through, so it can't say "It wasn't deleted".
+  const [unconfirmed, setUnconfirmed] = useState<string>();
   const [busy, setBusy] = useState(false);
 
   const d = deps.data;
@@ -189,13 +195,15 @@ export function DeleteContentTypeDialog(props: {
     e.preventDefault();
     if (!ready) return;
     setError(undefined);
+    setUnconfirmed(undefined);
     setBusy(true);
     try {
       const done = await client.deleteContentType(apiId, { purgeEntries: entries > 0 });
       props.onDeleted(done.deleted ? null : done.job);
       props.onOpenChange(false);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      if (err instanceof RequestTimeoutError) setUnconfirmed(err.message);
+      else setError(err instanceof Error ? err.message : String(err));
     } finally {
       setBusy(false);
     }
@@ -285,6 +293,7 @@ export function DeleteContentTypeDialog(props: {
               )}
             </>
           )}
+          {unconfirmed && <DialogError>{unconfirmed}</DialogError>}
           {error && (
             <Alert variant="destructive">
               <AlertTitle>It wasn’t deleted</AlertTitle>

@@ -173,14 +173,22 @@ function ConceptsTab() {
       await invalidate(['concepts', schemeId]);
     });
 
-  const saveConcept = (id: string, changes: TermChanges) =>
-    run(async () => {
-      const { label: prefLabel, ...fields } = changes;
-      await client.updateConcept(id, { ...(prefLabel ? { prefLabel } : {}), ...fields });
-      toast.success('Concept saved');
-      setEditing(null);
-      await invalidate(['concepts', schemeId]);
+  // A failure is thrown on, so the editor says it beside the form it kept.
+  const saveConcept = async (id: string, changes: TermChanges) => {
+    let failed: unknown;
+    await run(async () => {
+      try {
+        const { label: prefLabel, ...fields } = changes;
+        await client.updateConcept(id, { ...(prefLabel ? { prefLabel } : {}), ...fields });
+        toast.success('Concept saved');
+        setEditing(null);
+        await invalidate(['concepts', schemeId]);
+      } catch (err) {
+        failed = err;
+      }
     });
+    if (failed !== undefined) throw failed;
+  };
 
   const removeConcept = (id: string) =>
     run(async () => {
@@ -421,14 +429,22 @@ function TagsTab() {
       await invalidate(['tags']);
     });
 
-  const save = (id: string, changes: TermChanges) =>
-    run(async () => {
-      const { label, ...fields } = changes;
-      await client.updateTag(id, { ...(label ? { name: label } : {}), ...fields });
-      toast.success('Tag saved');
-      setEditing(null);
-      await invalidate(['tags']);
+  // A failure is thrown on, so the editor says it beside the form it kept.
+  const save = async (id: string, changes: TermChanges) => {
+    let failed: unknown;
+    await run(async () => {
+      try {
+        const { label, ...fields } = changes;
+        await client.updateTag(id, { ...(label ? { name: label } : {}), ...fields });
+        toast.success('Tag saved');
+        setEditing(null);
+        await invalidate(['tags']);
+      } catch (err) {
+        failed = err;
+      }
     });
+    if (failed !== undefined) throw failed;
+  };
 
   const remove = (id: string) =>
     run(async () => {

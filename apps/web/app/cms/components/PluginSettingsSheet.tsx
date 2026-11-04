@@ -1,5 +1,6 @@
 import { Alert, AlertDescription, AlertTitle } from '@contentworker/ui/alert';
 import { Button } from '@contentworker/ui/button';
+import { DialogError } from '@contentworker/ui/dialog';
 import { Input } from '@contentworker/ui/input';
 import { Label } from '@contentworker/ui/label';
 import { NativeSelect, NativeSelectOption } from '@contentworker/ui/native-select';
@@ -20,6 +21,7 @@ import {
   type ManagementClient,
   type PluginSettingField,
   type PluginSettingsView,
+  RequestTimeoutError,
 } from '~/cms/lib/management';
 import {
   defaultHint,
@@ -150,6 +152,8 @@ function SettingsForm(props: {
   const [draft, setDraft] = useState<SettingsDraft>(() => settingsDraft(view));
   const [issues, setIssues] = useState<Readonly<Record<string, string>>>({});
   const [refusal, setRefusal] = useState<Refusal | null>(null);
+  // A save that didn't answer: it may have gone through, so it can't say it wasn't saved.
+  const [unconfirmed, setUnconfirmed] = useState<string>();
   const [busy, setBusy] = useState(false);
 
   const patch = settingsPatch(view, draft);
@@ -174,6 +178,7 @@ function SettingsForm(props: {
     if (!dirty) return;
     setBusy(true);
     setRefusal(null);
+    setUnconfirmed(undefined);
     try {
       const next = await props.client.setPluginSettings(plugin.id, {
         values: patch,
@@ -186,7 +191,9 @@ function SettingsForm(props: {
       const { byKey, form } = settingsIssues(view.fields, err);
       setIssues(byKey);
       const first = view.fields.find((f) => byKey[f.key]);
-      if (isForbidden(err)) {
+      if (err instanceof RequestTimeoutError) {
+        setUnconfirmed(err.message);
+      } else if (isForbidden(err)) {
         setRefusal({ kind: 'forbidden', message: FORBIDDEN });
       } else if (err instanceof ApiError && err.status === 409) {
         setRefusal({
@@ -247,6 +254,7 @@ function SettingsForm(props: {
         />
       ))}
 
+      {unconfirmed && <DialogError>{unconfirmed}</DialogError>}
       <div className="flex flex-wrap items-center gap-3 pt-1">
         <DiscardAsk guard={props.guard} message={`Discard your changes to ${plugin.name}?`}>
           <Button type="submit" disabled={busy || !dirty}>

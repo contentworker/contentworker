@@ -41,6 +41,7 @@ import {
   apiFieldIssues,
   type ManagementClient,
   type RedirectImportReport,
+  RequestTimeoutError,
 } from '../lib/management';
 import { useInvalidate, useScopedQuery } from '../lib/queries';
 import { useToast } from '../lib/toast';
@@ -543,6 +544,8 @@ export function ImportRedirectsDialog(props: {
   // Check is a dry run, a read: it stays closable, where the import itself holds the dialog.
   const [checking, setChecking] = useState(false);
   const check = useStoppable();
+  // An import that didn't answer may have gone through: "Nothing was imported" could be untrue.
+  const [unconfirmed, setUnconfirmed] = useState(false);
   const guard = useDiscardGuard({
     saving: busy,
     open: props.open,
@@ -552,6 +555,7 @@ export function ImportRedirectsDialog(props: {
 
   const refused = (err: unknown) => {
     setChecked(null);
+    setUnconfirmed(err instanceof RequestTimeoutError);
     const issues = apiFieldIssues(err);
     const listed = Object.entries(issues).map(([f, m]) => {
       const row = /^rows\[(\d+)\]/.exec(f)?.[1];
@@ -649,7 +653,7 @@ export function ImportRedirectsDialog(props: {
             />
           </div>
           {problems.length > 0 && (
-            <DialogError title="Nothing was imported">
+            <DialogError {...(unconfirmed ? {} : { title: 'Nothing was imported' })}>
               <ul className="list-disc ps-4">
                 {problems.slice(0, 10).map((p) => (
                   <li key={p}>{p}</li>

@@ -444,7 +444,8 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   live) and sending only the entries it changes. A polite sr-only line says "2 entries selected".
   The header checkbox is mixed while some are ticked. A new order or a search leaves ticked only
   what it still shows. Bulk changes confirm once, naming the first five entries and counting the
-  rest ("and 3 more"); what failed stays ticked and is named in an Alert. **The trash** (View
+  rest ("and 3 more"): Publish selected in a dialog, Unpublish selected and Move to trash in place
+  under the bar, Keep as is focused; what failed stays ticked and is named in an Alert. **The trash** (View
   trash) is the same table with each title as plain text, a row's outline Restore and "Delete
   permanently…" in its ⋯ menu (a dialog naming the entry); its rows tick too, and its bulk bar
   offers Restore selected and Delete permanently… (both outline). Move to trash, Restore selected
@@ -452,7 +453,8 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   trash ("Move 2 entries to the trash?", saying live ones are unpublished first) and Delete
   permanently ("Permanently delete 2 entries?", naming them, saying it can't be undone and that an
   entry published entries link to is kept; Keep in trash, then a destructive Delete permanently)
-  confirm at the assistant's card, or the page's own dialog without it; Restore selected runs at
+  confirm at the assistant's card; without it the page asks, in place for the trash and in a
+  dialog for Delete permanently. Restore selected runs at
   once, as a row's Restore does. Each of the three a role can't start (it doesn't hold that job's
   actions on every type, as the api's `bulkJobs` answer says) is disabled, with the reason under
   the bar (`aria-describedby`). The job shows
@@ -534,7 +536,8 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   is, its title beside Add tab; each tab a row (its name, a ghost Remove), and each field row gains
   Tab and Group selects once a tab exists.
 - **Releases, Workflows, Taxonomy:** `PageHeader` with the page's one "New …" (a `Plus` and the
-  noun), then cards or a stacked table.
+  noun), then cards or a stacked table. Publishing a release confirms in an alert dialog, naming
+  what goes live and what to look at first (never-published entries, members in the trash).
 - **Assets** (`cms/components/AssetLibrary.tsx`, `cms/components/assets/`): `PageHeader` with
   Upload, which names the open folder ("Upload to “Brand”"); the library section is the drop
   target too, ringed while files are over it. From md the **folder tree** stands beside the
@@ -851,7 +854,10 @@ for code and data blocks only.
     Escape, a press outside, the close button and Cancel all ask in place of its buttons ("Discard
     this redirect?", Keep editing focused, then a destructive Discard); saving doesn't ask, and an
     untouched form just closes. A save under way holds the form: Cancel waits, and a try at leaving
-    says "Still saving". Only a save holds it; a read (Check, Fetch) stays closable. A form of a line
+    says "Still saving". Only a save holds it; a read (Check, Fetch) stays closable. A save that
+    never answers times out (`RequestTimeoutError`, in `req`): the form lets go and keeps what was
+    typed, and `DialogError` says the save didn't confirm and to check before trying again, never
+    that nothing was saved. Where a create has no natural key, the button turns to "Create again". A form of a line
     or two (a view's name, an invitation, a clone's name) isn't guarded, and New space and New
     environment keep what was typed when they close. Dialogs that talk to a model keep their work instead: the prompt
     and a draft under review stay for when they open again, and only Discard or Apply clear them.
@@ -869,10 +875,10 @@ for code and data blocks only.
   application, deleting a webhook, uninstalling a plugin (its settings and stored data go with it),
   deleting a saved view, starting a new conversation, discarding an entry's unsaved changes, and
   Delete permanently and deleting a content type are modals: the data is gone, and asking again
-  makes something new rather than bringing it back. An entry's publish confirms in a modal too: readers
-  and webhooks have it at once, and no undo calls that back. The rule's open debt: the entries
-  list's bulk Unpublish and Move to trash can be undone and still confirm in a dialog, listing what
-  they change; a release's publish can't be and still confirms in place.
+  makes something new rather than bringing it back. A publish confirms in a modal too, an entry's, a
+  bulk publish or a release's: readers and webhooks have it at once, and no undo calls that back.
+  Unpublishing and moving to the trash ask in place, one entry or many: Undo or Restore puts them
+  back.
 - **Toasts** (`cms/lib/toast.tsx`): a card above the tab bar with a status dot and the words; an undo
   toast carries its Undo action.
 - **Form sheet** (`cms/components/form-sheet.tsx`): a list page's create form behind one "New …"

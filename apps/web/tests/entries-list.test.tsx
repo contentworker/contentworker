@@ -261,6 +261,38 @@ describe('EntriesList unpublish and Undo', () => {
     expect(client.publishEntry).toHaveBeenCalledExactlyOnceWith('e-live');
   });
 
+  const tick = async (title: string) =>
+    fireEvent.click(await screen.findByRole('checkbox', { name: `Select “${title}”` }));
+
+  it('backing out of a bulk ask hands focus back to the button that asked', async () => {
+    setup();
+    await tick('About us');
+    await tick('Careers');
+    const unpublish = screen.getByRole('button', { name: 'Unpublish selected' });
+    fireEvent.click(unpublish);
+    const ask = await screen.findByRole('alertdialog', { name: 'Unpublish 2 entries?' });
+    fireEvent.keyDown(document.activeElement as Element, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    expect(ask.isConnected).toBe(false);
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        screen.getByRole('button', { name: 'Unpublish selected' }),
+      ),
+    );
+    expect(client.bulkEntryAction).not.toHaveBeenCalled();
+  });
+
+  it('clearing the ticks answers a question asked in place', async () => {
+    setup();
+    await tick('About us');
+    fireEvent.click(screen.getByRole('button', { name: 'Move to trash' }));
+    await screen.findByRole('alertdialog', { name: 'Move 1 entry to the trash?' });
+    fireEvent.click(screen.getByRole('button', { name: 'Clear selection' }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    await tick('About us');
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+  });
+
   const bulkUnpublish = async (titles: string[]) => {
     for (const t of titles) {
       fireEvent.click(await screen.findByRole('checkbox', { name: `Select “${t}”` }));
@@ -626,6 +658,10 @@ describe('EntriesList bulk bar', () => {
     for (const t of ['About us', 'Careers']) await tick(t);
     fireEvent.click(screen.getByRole('button', { name: 'Unpublish selected' }));
     const dialog = await screen.findByRole('alertdialog', { name: 'Unpublish 2 entries?' });
+    // In place under the bar, naming what it changes, with the safe choice focused.
+    expect(dialog.closest('[data-slot="alert-dialog-content"]')).toBeNull();
+    expect(within(dialog).getByText('About us')).toBeTruthy();
+    expect(document.activeElement).toBe(within(dialog).getByRole('button', { name: 'Keep as is' }));
     fireEvent.click(within(dialog).getByRole('button', { name: 'Unpublish entries' }));
     await screen.findByText('1 entry failed');
     expect(screen.getByText(/Locked by a release/)).toBeTruthy();
@@ -686,6 +722,7 @@ describe('EntriesList trash jobs', () => {
     });
     expect(within(dialog).getByText(/unpublished first/)).toBeTruthy();
     expect(within(dialog).getByText('About us')).toBeTruthy();
+    expect(dialog.closest('[data-slot="alert-dialog-content"]')).toBeNull();
     expect(client.startEntryBulkJob).not.toHaveBeenCalled();
     const before = client.listEntryPage.mock.calls.length;
     fireEvent.click(within(dialog).getByRole('button', { name: 'Move to trash' }));

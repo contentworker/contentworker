@@ -364,6 +364,11 @@ describe('Releases destructive actions', () => {
     fireEvent.click(publishNow);
 
     const dialog = screen.getByRole('alertdialog', { name: 'Publish “Spring campaign”?' });
+    // It can't be undone, so it is a modal, and the safe choice has focus.
+    expect(dialog.getAttribute('data-slot')).toBe('alert-dialog-content');
+    await waitFor(() =>
+      expect(document.activeElement).toBe(within(dialog).getByRole('button', { name: 'Cancel' })),
+    );
     expect(client.publishRelease).not.toHaveBeenCalled();
     expect(await within(dialog).findByText('Hello world')).toBeTruthy();
     expect(await within(dialog).findByText('Brand new')).toBeTruthy();

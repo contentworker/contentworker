@@ -12,6 +12,7 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogError,
   DialogHeader,
   DialogTitle,
 } from '@contentworker/ui/dialog';
@@ -34,7 +35,12 @@ import {
 } from '~/cms/lib/assets';
 import { useClient } from '~/cms/lib/client-context';
 import { dateTime } from '~/cms/lib/format';
-import { apiErrorMessage, apiFieldIssues, isForbidden } from '~/cms/lib/management';
+import {
+  apiErrorMessage,
+  apiFieldIssues,
+  isForbidden,
+  RequestTimeoutError,
+} from '~/cms/lib/management';
 import { useInvalidate, useScopedQuery } from '~/cms/lib/queries';
 import { useToast } from '~/cms/lib/toast';
 import { useNow } from '~/cms/lib/use-now';
@@ -84,6 +90,8 @@ export function AssetShareDialog(props: {
   const [busy, setBusy] = useState(false);
   const [issues, setIssues] = useState<Record<string, string>>({});
   const [refusal, setRefusal] = useState<string | null>(null);
+  // A link that didn't answer may exist: the list below is where to check, so it is read again.
+  const [unconfirmed, setUnconfirmed] = useState<string>();
   // The link just made: it takes focus (its Copy button), so it can be copied at once.
   const [made, setMade] = useState<string | null>(null);
   const listHeading = useRef<HTMLHeadingElement>(null);
@@ -127,6 +135,7 @@ export function AssetShareDialog(props: {
     e.preventDefault();
     setIssues({});
     setRefusal(null);
+    setUnconfirmed(undefined);
     const expiresAt = shareExpiresAt(choice, custom, Date.now());
     if (!expiresAt) {
       setIssues({ expiresAt: 'Choose the date and time the link stops opening.' });
@@ -148,7 +157,10 @@ export function AssetShareDialog(props: {
     } catch (err) {
       const fields = apiFieldIssues(err);
       setIssues(fields);
-      if (isForbidden(err)) setRefusal(FORBIDDEN);
+      if (err instanceof RequestTimeoutError) {
+        setUnconfirmed(err.message);
+        void links.refetch();
+      } else if (isForbidden(err)) setRefusal(FORBIDDEN);
       else if (!fields.expiresAt && !fields.password) setRefusal(apiErrorMessage(err));
     } finally {
       setBusy(false);
@@ -186,6 +198,7 @@ export function AssetShareDialog(props: {
   const what = target.type === 'asset' ? 'this file' : 'the collection’s files';
   const form = (
     <form className="space-y-4" onSubmit={create} noValidate aria-label="New share link">
+      {unconfirmed && <DialogError>{unconfirmed}</DialogError>}
       {refusal && (
         <Alert variant="destructive">
           <AlertTitle>The link wasn’t created</AlertTitle>

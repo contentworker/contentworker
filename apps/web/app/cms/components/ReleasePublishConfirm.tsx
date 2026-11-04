@@ -1,9 +1,17 @@
 import type { ContentType, ReleaseItem } from '@contentworker/domain';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@contentworker/ui/alert-dialog';
 import { Badge } from '@contentworker/ui/badge';
-import { Button } from '@contentworker/ui/button';
 import { useQueries } from '@tanstack/react-query';
 import { Rocket } from 'lucide-react';
-import { InlineConfirm } from '~/cms/components/InlineConfirm';
 import { StatusBadge } from '~/cms/components/status';
 import { useClient } from '../lib/client-context';
 import type { PreviewEntry } from '../lib/management';
@@ -31,7 +39,7 @@ function titleOf(entry: PreviewEntry, types: readonly ContentType[], locale: str
 }
 
 /**
- * "Publish this release?" before it ships: what goes out (count, titles, capped
+ * "Publish this release?" before it ships, in a modal since it can't be undone: what goes out (count, titles, capped
  * with "+N more") and what to look at first (entries going live for the first
  * time, entries that will be unpublished, members in the trash or gone, which
  * make the whole transaction fail). Shares the `['release', id]` cache with the
@@ -44,7 +52,6 @@ export function ReleasePublishConfirm(props: {
   readonly onCancel: () => void;
   readonly onConfirm: () => void;
   readonly returnFocus?: () => HTMLElement | null | undefined;
-  readonly className?: string;
 }) {
   const { client, conn } = useClient();
   const keys = useQueryKeys();
@@ -102,15 +109,21 @@ export function ReleasePublishConfirm(props: {
   const more = members.length - shown.length;
 
   return (
-    <InlineConfirm
-      message={`Publish ${name}?`}
-      note={note}
-      onCancel={props.onCancel}
-      returnFocus={props.returnFocus}
-      className={props.className}
-      details={
-        items.length > 0 ? (
-          <div className="space-y-2">
+    <AlertDialog open onOpenChange={(open) => !open && props.onCancel()}>
+      <AlertDialogContent
+        onCloseAutoFocus={(e) => {
+          const target = props.returnFocus?.();
+          if (!target?.isConnected) return;
+          e.preventDefault();
+          target.focus();
+        }}
+      >
+        <AlertDialogHeader>
+          <AlertDialogTitle>Publish {name}?</AlertDialogTitle>
+          <AlertDialogDescription>{note}</AlertDialogDescription>
+        </AlertDialogHeader>
+        {items.length > 0 ? (
+          <div className="space-y-2 text-sm">
             <ul className="space-y-1" aria-label="Entries in this release">
               {shown.map(({ item, entry }) => (
                 <li key={item.entityId} className="flex min-w-0 items-center gap-2">
@@ -139,18 +152,19 @@ export function ReleasePublishConfirm(props: {
               </ul>
             )}
           </div>
-        ) : null
-      }
-    >
-      <Button
-        type="button"
-        size="sm"
-        disabled={props.busy || detail.isPending || items.length === 0}
-        onClick={props.onConfirm}
-      >
-        <Rocket className="size-4" />
-        {items.length > 0 ? `Publish ${plural(items.length, 'entry', 'entries')}` : 'Publish'}
-      </Button>
-    </InlineConfirm>
+        ) : null}
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            variant="default"
+            disabled={props.busy || detail.isPending || items.length === 0}
+            onClick={props.onConfirm}
+          >
+            <Rocket className="size-4" />
+            {items.length > 0 ? `Publish ${plural(items.length, 'entry', 'entries')}` : 'Publish'}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }

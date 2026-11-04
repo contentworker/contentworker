@@ -2,6 +2,7 @@ import type { Asset, ReferenceEdge, Tag } from '@contentworker/domain';
 import { Badge } from '@contentworker/ui/badge';
 import { Button } from '@contentworker/ui/button';
 import { ComposeLoader, composeIcons } from '@contentworker/ui/compose-loader';
+import { DialogError } from '@contentworker/ui/dialog';
 import { Input } from '@contentworker/ui/input';
 import { Label } from '@contentworker/ui/label';
 import {
@@ -79,6 +80,7 @@ export function AssetDetailSheet(props: {
   const [sharing, setSharing] = useState(false);
   const [rightsDirty, setRightsDirty] = useState(false);
   const [rightsSaving, setRightsSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string>();
   // The original a possible duplicate points at, waiting on "discard your edits?".
   const [confirmOpen, setConfirmOpen] = useState<string | null>(null);
   const imgRef = useRef<HTMLButtonElement>(null);
@@ -252,6 +254,7 @@ export function AssetDetailSheet(props: {
 
   const save = async () => {
     setBusy(true);
+    setSaveError(undefined);
     try {
       await client.setAssetMetadata(asset.id, {
         ...(altChanged ? { altText: { ...asset.metadata.altText, [locale]: altText } } : {}),
@@ -265,7 +268,7 @@ export function AssetDetailSheet(props: {
       if (rightsDirty) guard.onOpenChange(false);
       else props.onOpenChange(false);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : String(e));
+      setSaveError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }
@@ -672,6 +675,7 @@ export function AssetDetailSheet(props: {
         {/* Save metadata saves the Details tab; the other tabs act at once or have their own. */}
         {(tab === 'details' || guard.asking) && (
           <SheetFooter>
+            {saveError && <DialogError>{saveError}</DialogError>}
             <DiscardAsk
               guard={guard}
               message={`Discard your changes to ${asset.file.fileName}?`}

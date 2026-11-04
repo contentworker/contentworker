@@ -4,6 +4,7 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogError,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -49,6 +50,7 @@ import { StatusBadge } from '~/cms/components/status';
 import { When } from '~/cms/components/when';
 import { humanize, plural, statusLabel } from '~/cms/lib/format';
 import { useClient } from '../lib/client-context';
+import { RequestTimeoutError } from '../lib/management';
 import {
   useAllEntriesQuery,
   useContentTypesQuery,
@@ -356,15 +358,24 @@ export function Releases() {
         <CreateReleaseDialog
           open={creating}
           onOpenChange={setCreating}
-          onCreate={(input) =>
-            run(async () => {
-              const created = await client.createRelease(input);
-              setCreating(false);
-              toast.success('Release created');
-              await reload();
-              setOpenId(created.id);
-            })
-          }
+          onCreate={async (input) => {
+            let failed: unknown;
+            await run(async () => {
+              try {
+                const created = await client.createRelease(input);
+                setCreating(false);
+                toast.success('Release created');
+                await reload();
+                setOpenId(created.id);
+              } catch (err) {
+                failed = err;
+              }
+            });
+            if (failed === undefined) return;
+            // It may have landed: the list behind the dialog is where to check.
+            if (failed instanceof RequestTimeoutError) await reload();
+            throw failed;
+          }}
           busy={busy}
         />
 
@@ -388,6 +399,10 @@ export function CreateReleaseDialog(props: {
   const [description, setDescription] = useState('');
   // Its own write, not `busy`, which any action on the page sets.
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string>();
+  // A release has no natural key, so a create that didn't confirm can't be retried blindly: it
+  // could make a second one. The button says what it would do.
+  const [unconfirmed, setUnconfirmed] = useState(false);
   const guard = useDiscardGuard({
     saving,
     open: props.open,
@@ -397,8 +412,13 @@ export function CreateReleaseDialog(props: {
 
   const create = async () => {
     setSaving(true);
+    setError(undefined);
     try {
       await props.onCreate({ title: title.trim(), description: description.trim() || undefined });
+      setUnconfirmed(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      setUnconfirmed(err instanceof RequestTimeoutError);
     } finally {
       setSaving(false);
     }
@@ -409,6 +429,8 @@ export function CreateReleaseDialog(props: {
     if (props.open) {
       setTitle('');
       setDescription('');
+      setError(undefined);
+      setUnconfirmed(false);
     }
   }, [props.open]);
 
@@ -439,6 +461,7 @@ export function CreateReleaseDialog(props: {
             />
           </div>
         </div>
+        {error && <DialogError>{error}</DialogError>}
         <DialogFooter>
           <DiscardAsk guard={guard} message="Discard this release?">
             <GuardCancel guard={guard} />
@@ -447,7 +470,7 @@ export function CreateReleaseDialog(props: {
               disabled={!title.trim() || props.busy}
               onClick={() => void create()}
             >
-              Create
+              {unconfirmed ? 'Create again' : 'Create'}
             </Button>
           </DiscardAsk>
         </DialogFooter>
