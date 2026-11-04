@@ -39,6 +39,9 @@ import type {
   Release,
   ReleaseItem,
   ReleaseWithItems,
+  SavedView,
+  SavedViewQuery,
+  SavedViewVisibility,
   ScheduledAction,
   ScheduledActionType,
   ScheduledEntityType,
@@ -298,6 +301,18 @@ export interface EntryListQuery {
   readonly trashed?: boolean;
   /** Only the entries the signed-in person created (`sys.createdBy=me`). */
   readonly mine?: boolean;
+  /**
+   * AND/OR groups of predicates (the API's `where`), as a saved view or a link carries them. The
+   * filter bar edits only `filters`; a tree is kept and sent as it is.
+   */
+  readonly where?: unknown;
+  /** Only entries linking to one of these, from any field (the API's `links_to_entry`). */
+  readonly linksToEntry?: readonly string[];
+  /**
+   * Link parameters this admin doesn't apply (from a newer client or a saved view's `extra`):
+   * kept in the URL and saved with a view, never sent with the list request.
+   */
+  readonly extra?: Readonly<Record<string, string>>;
 }
 
 /** Namespaces a field path for the query string: `sys.*` stays, else `fields.*`. */
@@ -312,7 +327,8 @@ export function entryQueryParams(query: EntryListQuery): URLSearchParams {
     const path = fieldPath(f.field);
     const key = f.op === 'eq' ? path : `${path}[${f.op}]`;
     const value = Array.isArray(f.value) ? f.value.join(',') : String(f.value ?? '');
-    params.set(key, value);
+    // Appended: two filters on one key are two conditions, and the API reads them both.
+    params.append(key, value);
   }
   if (query.order?.length) {
     params.set(
@@ -320,6 +336,8 @@ export function entryQueryParams(query: EntryListQuery): URLSearchParams {
       query.order.map((o) => `${o.direction === 'desc' ? '-' : ''}${fieldPath(o.field)}`).join(','),
     );
   }
+  if (query.where !== undefined) params.set('where', JSON.stringify(query.where));
+  if (query.linksToEntry?.length) params.set('links_to_entry', query.linksToEntry.join(','));
   if (query.search) params.set('query', query.search);
   if (query.limit != null) params.set('limit', String(query.limit));
   if (query.trashed) params.set('trashed', 'true');
@@ -639,6 +657,15 @@ export interface MenuPreview {
   readonly menu: Menu;
   readonly locale: string;
   readonly items: readonly MenuItemPreview[];
+}
+
+/** A saved view to create: `shared` needs content:manage, personal is the person's own. */
+export interface SavedViewInput {
+  readonly name: string;
+  readonly contentTypeApiId: string | null;
+  readonly visibility: SavedViewVisibility;
+  readonly query: SavedViewQuery;
+  readonly columns?: readonly string[] | null;
 }
 
 /** A menu's own fields; `items` replaces the whole tree. */
@@ -2539,6 +2566,26 @@ export function createManagementClient(
       }
     },
 
+    // --- saved views (the space's: every environment shows the same) -----
+    /** The views this person can pick for a type: their own, and the space's shared ones. */
+    async listSavedViews(contentType: string): Promise<SavedView[]> {
+      const qs = `?content_type=${encodeURIComponent(contentType)}`;
+      return (await req<{ items: SavedView[] }>('GET', `${mgmt}/saved-views${qs}`)).items;
+    },
+    /** 422 naming each bad part of the query; 403 for a shared view without content:manage. */
+    createSavedView(input: SavedViewInput): Promise<SavedView> {
+      return req('POST', `${mgmt}/saved-views`, input);
+    },
+    /** With `revision`, a view saved since is a 409 rather than an overwrite. */
+    updateSavedView(
+      id: string,
+      changes: Partial<Omit<SavedViewInput, 'contentTypeApiId'>> & { readonly revision?: number },
+    ): Promise<SavedView> {
+      return req('PATCH', `${mgmt}/saved-views/${encodeURIComponent(id)}`, changes);
+    },
+    deleteSavedView(id: string): Promise<void> {
+      return req('DELETE', `${mgmt}/saved-views/${encodeURIComponent(id)}`);
+    },
     // --- settings: menus (environment-scoped) ----------------------------
     async listMenus(): Promise<MenuSummary[]> {
       return (await req<{ items: MenuSummary[] }>('GET', `${mgmt}/menus`)).items;

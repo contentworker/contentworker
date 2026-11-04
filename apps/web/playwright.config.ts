@@ -31,8 +31,13 @@ export default defineConfig({
     {
       name: 'iphone',
       // The editor's action bar sits above the tab bar only on a phone: measured here too, with
-      // the entry form's tabs.
-      testMatch: ['shell.spec.ts', 'editor-action-bar.spec.ts', 'entry-tabs.spec.ts'],
+      // the entry form's tabs and the entries list.
+      testMatch: [
+        'shell.spec.ts',
+        'editor-action-bar.spec.ts',
+        'entry-tabs.spec.ts',
+        'entries-list-phone.spec.ts',
+      ],
       use: { ...devices['iPhone 15'] },
     },
     {

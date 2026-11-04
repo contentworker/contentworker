@@ -239,6 +239,175 @@ test('the bulk bar offers what applies to the ticked drafts and names them in it
   await expect(page.getByRole('searchbox', { name: 'Search entries' })).toBeVisible();
 });
 
+test('saves the list as a view, reopens it from a clean list and from its link, and shares it', async ({
+  page,
+  request,
+}) => {
+  const stamp = Date.now();
+  for (const which of ['keep', 'other']) {
+    const res = await api(request, 'POST', `${MGMT}/entries`, {
+      contentTypeApiId: 'article',
+      fields: { title: { 'en-US': `View ${stamp} ${which}` } },
+    });
+    expect(res.ok(), await res.text()).toBe(true);
+  }
+  const keep = page.getByRole('row', { name: new RegExp(`View ${stamp} keep`) });
+  const other = page.getByRole('row', { name: new RegExp(`View ${stamp} other`) });
+  await openCms(page, '/content/article');
+  await page.getByRole('searchbox', { name: 'Search entries' }).fill(`View ${stamp} keep`);
+  // The search is the URL, as the API reads it.
+  await expect(page).toHaveURL(new RegExp(`query=View(\\+|%20)${stamp}`));
+  await expect(other).toHaveCount(0);
+  await expect(keep).toBeVisible();
+
+  const name = `Keepers ${stamp}`;
+  await page.getByRole('button', { name: 'Views' }).click();
+  await page.getByRole('menuitem', { name: 'Save as new view…' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Save view' });
+  await dialog.getByRole('textbox', { name: 'Name' }).fill(name);
+  await dialog.getByRole('button', { name: 'Save view' }).click();
+  await expect(page.getByText(`Saved “${name}”`)).toBeVisible();
+  await expect(page).toHaveURL(/view=/);
+  const link = page.url();
+
+  // A clean list shows both; the view brings its filter back.
+  await openCms(page, '/content/article');
+  await expect(other).toBeVisible();
+  await page.getByRole('button', { name: 'Views' }).click();
+  await page.getByRole('menuitemradio', { name }).click();
+  await expect(keep).toBeVisible();
+  await expect(other).toHaveCount(0);
+
+  // Its link opens the same list.
+  await page.goto(link);
+  await expect(keep).toBeVisible();
+  await expect(other).toHaveCount(0);
+  await expect(page.getByRole('button', { name: new RegExp(name) })).toBeVisible();
+
+  // Shared, it moves under the space's views.
+  await page.getByRole('button', { name: new RegExp(name) }).click();
+  await page.getByRole('menuitem', { name: 'Share with the space' }).click();
+  await expect(page.getByText(`“${name}” is shared with everyone in the space`)).toBeVisible();
+  await page.getByRole('button', { name: new RegExp(name) }).click();
+  const menu = page.getByRole('menu');
+  await expect(menu.getByText('Shared with the space')).toBeVisible();
+  await expect(menu.getByRole('menuitemradio', { name })).toBeVisible();
+  await page.keyboard.press('Escape');
+  const listed = await api(request, 'GET', `${MGMT}/saved-views?content_type=article`);
+  const views = (await listed.json()) as { items: { name: string; visibility: string }[] };
+  expect(views.items.find((v) => v.name === name)?.visibility).toBe('shared');
+});
+
+test('a saved view: renamed, saved over, refused when stale, unshared, then deleted', async ({
+  page,
+  request,
+}) => {
+  const stamp = Date.now();
+  await createDraft(request, `Flow ${stamp} one`);
+  await createDraft(request, `Flow ${stamp} two`);
+  await openCms(page, '/content/article');
+  const searchbox = page.getByRole('searchbox', { name: 'Search entries' });
+
+  // Typing in the list is the list's own state: it asks nothing of the shell's server loader.
+  const loads: string[] = [];
+  page.on('request', (r) => {
+    if (new URL(r.url()).pathname.endsWith('.data')) loads.push(r.url());
+  });
+  await searchbox.pressSequentially(`Flow ${stamp} one`);
+  await expect(page).toHaveURL(new RegExp(`query=Flow(\\+|%20)${stamp}(\\+|%20)one`));
+  expect(loads).toEqual([]);
+
+  const views = page.getByRole('button', { name: 'Views' });
+  const first = `Flow view ${stamp}`;
+  const name = `Renamed ${stamp}`;
+  const trigger = (view: string) => page.getByRole('button', { name: new RegExp(view) });
+  await views.click();
+  await page.getByRole('menuitem', { name: 'Save as new view…' }).click();
+  const saving = page.getByRole('dialog', { name: 'Save view' });
+  await saving.getByRole('textbox', { name: 'Name' }).fill(first);
+  await saving.getByRole('switch', { name: 'Share with the space' }).click();
+  await saving.getByRole('button', { name: 'Save view' }).click();
+  await expect(page.getByText(`Saved “${first}” for everyone`)).toBeVisible();
+  // An open view's trigger says so, with its visible text in the name.
+  await expect(trigger(first)).toHaveAccessibleName(`View: ${first}`);
+
+  await trigger(first).click();
+  await page.getByRole('menuitem', { name: 'Rename…' }).click();
+  const renaming = page.getByRole('dialog', { name: 'Rename view' });
+  await renaming.getByRole('textbox', { name: 'Name' }).fill(name);
+  await renaming.getByRole('button', { name: 'Rename' }).click();
+  await expect(page.getByText(`Renamed to “${name}”`)).toBeVisible();
+  await expect(trigger(name)).toHaveAccessibleName(`View: ${name}`);
+
+  // Edited, it says so; someone else saving first refuses this save, and it reads the view again.
+  await searchbox.fill(`Flow ${stamp}`);
+  await expect(trigger(`${name}.*edited`)).toBeVisible();
+  const listed = await api(request, 'GET', `${MGMT}/saved-views?content_type=article`);
+  const saved = (await listed.json()) as { items: { id: string; name: string }[] };
+  const id = saved.items.find((v) => v.name === name)?.id;
+  const other = await api(request, 'PATCH', `${MGMT}/saved-views/${id}`, {
+    query: { search: `Flow ${stamp} two` },
+  });
+  expect(other.ok(), await other.text()).toBe(true);
+  await trigger(name).click();
+  const save = page.getByRole('menuitem', { name: `Save changes to “${name}”` });
+  await save.click();
+  await expect(page.getByText(/saved by someone else since/)).toBeVisible();
+  await expect(page).toHaveURL(new RegExp(`query=Flow(\\+|%20)${stamp}(&|$)`));
+  // Asked again, on the view as it now stands, it goes through.
+  await trigger(name).click();
+  await save.click();
+  await expect(page.getByText(`Saved “${name}”`)).toBeVisible();
+  await expect(trigger(name)).not.toContainText('edited');
+  const read = await api(request, 'GET', `${MGMT}/saved-views/${id}`);
+  expect(((await read.json()) as { query: unknown }).query).toEqual({ search: `Flow ${stamp}` });
+
+  // Unshared, it is the creator's alone: back under their own views, as a fresh read says.
+  await trigger(name).click();
+  await page.getByRole('menuitem', { name: 'Stop sharing' }).click();
+  await expect(page.getByText(`“${name}” is yours alone now`)).toBeVisible();
+  await page.reload();
+  await trigger(name).click();
+  const menu = page.getByRole('menu');
+  await expect(menu.getByText('Your views')).toBeVisible();
+  await expect(menu.getByRole('menuitem', { name: 'Share with the space' })).toBeVisible();
+
+  // Backing out of the delete and going through with it both leave the keyboard on the trigger.
+  await menu.getByRole('menuitem', { name: 'Delete view…' }).click();
+  const confirm = page.getByRole('alertdialog', { name: `Delete “${name}”?` });
+  await confirm.getByRole('button', { name: 'Keep view' }).click();
+  await expect(confirm).toBeHidden();
+  await expect(trigger(name)).toBeFocused();
+  await trigger(name).click();
+  await page.getByRole('menuitem', { name: 'Delete view…' }).click();
+  await confirm.getByRole('button', { name: 'Delete view' }).click();
+  await expect(page.getByText(`Deleted “${name}”`)).toBeVisible();
+  await expect(views).toBeFocused();
+  await expect(page).not.toHaveURL(/view=/);
+});
+
+test('a link’s grouped conditions show in the filters and can be removed', async ({
+  page,
+  request,
+}) => {
+  const stamp = Date.now();
+  await createDraft(request, `Group ${stamp} in`);
+  await createDraft(request, `Other ${stamp} out`);
+  const where = { or: [{ field: 'title', op: 'startsWith', value: `Group ${stamp}` }] };
+  await openCms(page, `/content/article?where=${encodeURIComponent(JSON.stringify(where))}`);
+  const kept = page.getByRole('row', { name: new RegExp(`Group ${stamp} in`) });
+  const other = page.getByRole('row', { name: new RegExp(`Other ${stamp} out`) });
+  await expect(kept).toBeVisible();
+  await expect(other).toHaveCount(0);
+
+  await page.getByRole('button', { name: /^Filters/ }).click();
+  await expect(page.getByText(/grouped conditions/)).toBeVisible();
+  await page.getByRole('button', { name: 'Remove them' }).click();
+  await expect(page.getByText(/grouped conditions/)).toHaveCount(0);
+  await expect(page).not.toHaveURL(/where=/);
+  await expect(other).toBeVisible();
+});
+
 test('trashes an entry, restores it, then deletes it permanently', async ({ page, request }) => {
   const title = `Trash ${Date.now()}`;
   await api(request, 'POST', `${MGMT}/entries`, {
@@ -1314,6 +1483,20 @@ test('a singleton type opens its one entry, and refuses a second', async ({ page
     fields: { title: { 'en-US': 'Another' } },
   });
   expect(second.status()).toBe(409);
+
+  // Its list, reached past the sidebar, keeps the views menu: a view of the one row saves and opens.
+  await openCms(page, `/content/${apiId}`);
+  const table = page.getByRole('main').getByRole('table');
+  await expect(table.getByRole('link', { name: 'Our site' })).toBeVisible();
+  await page.getByRole('button', { name: 'Views' }).click();
+  await page.getByRole('menuitem', { name: 'Save as new view…' }).click();
+  const saving = page.getByRole('dialog', { name: 'Save view' });
+  await saving.getByLabel('Name', { exact: true }).fill('The one');
+  await saving.getByRole('button', { name: 'Save view' }).click();
+  await expect(saving).toBeHidden();
+  await expect(page.getByRole('button', { name: /The one/ })).toBeVisible();
+  await expect(page).toHaveURL(/[?&]view=/);
+  await expect(table.getByRole('link', { name: 'Our site' })).toBeVisible();
 });
 
 test('a content type is cloned, then deleted with its entries, from its menu', async ({

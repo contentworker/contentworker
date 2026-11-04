@@ -24,6 +24,7 @@
 import {
   ANY_FIELD,
   assertPathFilterBudget,
+  ENTRY_FILTER_KEY,
   FILTER_OPS,
   type FilterOp,
   parseQueryWhere,
@@ -36,14 +37,6 @@ import {
 import type { EntryQuery } from '@contentworker/ports';
 
 const OPS: ReadonlySet<string> = new Set(FILTER_OPS);
-
-/**
- * `fields.<apiId>` (with up to three component segments after it), `sys.<name>`, or a taxonomy
- * association: `metadata.tags` / `metadata.concepts` (ids) and `metadata.tags.slug` /
- * `metadata.concepts.slug` (slugs).
- */
-const FILTER_KEY =
-  /^(fields\.[A-Za-z0-9_]+(?:\.[A-Za-z_][A-Za-z0-9_]*){0,3}|sys\.[A-Za-z0-9_]+|metadata\.(?:tags|concepts)(?:\.slug)?)(?:\[(\w+)\])?$/;
 
 /** The longest `where` parameter read, in characters: a bounded tree is far shorter. */
 export const MAX_WHERE_LENGTH = 8192;
@@ -219,7 +212,7 @@ export function entryQueryFrom(entries: Iterable<[string, string]>): EntryQuery 
       );
       continue;
     }
-    const m = FILTER_KEY.exec(key);
+    const m = ENTRY_FILTER_KEY.exec(key);
     if (m) {
       const filter = toFilter(m[1] as string, m[2] ?? 'eq', value);
       if (filter) filters.push(checked(filter, key));

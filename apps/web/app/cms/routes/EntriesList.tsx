@@ -21,7 +21,7 @@ import { SkeletonText } from '@contentworker/ui/skeleton';
 import { type InfiniteData, useQueryClient } from '@tanstack/react-query';
 import { FileText } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate, useParams } from 'react-router';
+import { useNavigate, useParams, useSearchParams } from 'react-router';
 import { BulkJobProgress } from '~/cms/components/bulk-job-progress';
 import { EntryFilterBar } from '~/cms/components/EntryFilterBar';
 import {
@@ -33,6 +33,7 @@ import {
 } from '~/cms/components/loading';
 import { Empty, EmptyState, PageHeader } from '~/cms/components/page';
 import { EntryDiff } from '../components/EntryDiff';
+import { ColumnPicker } from '../components/entries/ColumnPicker';
 import {
   EntriesTable,
   type EntryRowActions,
@@ -41,9 +42,16 @@ import {
 } from '../components/entries/EntriesTable';
 import { EntryBulkBar } from '../components/entries/EntryBulkBar';
 import { PublishConfirm } from '../components/entries/PublishConfirm';
+import { SavedViewsMenu } from '../components/entries/SavedViewsMenu';
 import { orDirect, useAssistantEdit, usePageContext } from '../lib/assistant';
 import { bulkSummary, jobFailures, jobOutcome } from '../lib/bulk-jobs';
 import { useClient } from '../lib/client-context';
+import {
+  CONNECTION_PARAMS,
+  type EntryListState,
+  listStateFromParams,
+  listStateToParams,
+} from '../lib/entry-url';
 import { plural } from '../lib/format';
 import {
   ApiError,
@@ -201,16 +209,25 @@ export function EntriesList() {
     readonly count: number;
     readonly reason: string;
   } | null>(null);
-  // Filter state is bound to the type it was authored for and reset in-render
-  // when the type changes, so a stale filter (naming another type's fields)
-  // can never be combined with the new type's query key — not even for the
-  // 250ms the debounce would otherwise lag.
-  const [filterState, setFilterState] = useState<{
-    typeId: string | undefined;
-    query: EntryListQuery;
-  }>({ typeId, query: {} });
-  if (filterState.typeId !== typeId) {
-    setFilterState({ typeId, query: {} });
+  // The list's filters, search, sort, columns and open saved view are its URL, so a link and a
+  // view agree and Back undoes a view picked. The URL belongs to this type's page: another type is
+  // another path, with none of this one's filters (which name this type's fields).
+  const [searchParams, setSearchParams] = useSearchParams();
+  const listState = useMemo(() => listStateFromParams(searchParams), [searchParams]);
+  const filterState = useMemo(() => ({ typeId, query: listState.query }), [typeId, listState]);
+  const setListState = (next: EntryListState, opts: { push?: boolean } = {}) => {
+    const params = listStateToParams(next);
+    // The connection's own parameters stay where they are.
+    for (const key of CONNECTION_PARAMS) {
+      const value = searchParams.get(key);
+      if (value !== null) params.set(key, value);
+    }
+    setSearchParams(params, { replace: !opts.push });
+  };
+  // What is ticked, open or being confirmed is per type: reset in-render when the type changes.
+  const [shownType, setShownType] = useState(typeId);
+  if (shownType !== typeId) {
+    setShownType(typeId);
     setPicked(new Set());
     setDiffEntry(null);
     setConfirmPurge(null);
@@ -221,8 +238,8 @@ export function EntriesList() {
     // A running job is kept: it goes on on the server whatever is open, and its card (and the
     // reload when it ends) still say what it did. Only what is ticked is per type.
   }
-  const query = filterState.typeId === typeId ? filterState.query : {};
-  const setQuery = (q: EntryListQuery) => setFilterState({ typeId, query: q });
+  const query = listState.query;
+  const setQuery = (q: EntryListQuery) => setListState({ ...listState, query: q });
 
   const selectedType = types.find((t) => t.apiId === typeId);
   usePageContext(
@@ -786,9 +803,15 @@ export function EntriesList() {
   }
 
   const count = entries.length;
-  const hasQuery = (query.filters?.length ?? 0) > 0 || !!query.search || query.mine === true;
-  // Clearing filters keeps the sort and the trash view: they aren't filters.
-  const clearFilters = () => setQuery({ order: query.order, trashed: query.trashed });
+  const hasQuery =
+    (query.filters?.length ?? 0) > 0 ||
+    !!query.search ||
+    query.where !== undefined ||
+    query.mine === true ||
+    (query.linksToEntry?.length ?? 0) > 0;
+  // Clearing filters keeps the sort, the trash view and kept link parameters: they aren't filters.
+  const clearFilters = () =>
+    setQuery({ order: query.order, trashed: query.trashed, extra: query.extra });
   const sortBy = (field: string) => {
     const order = nextOrder(query.order?.[0], field);
     setQuery({ ...query, order: order ? [order] : undefined });
@@ -884,7 +907,33 @@ export function EntriesList() {
           )}
         </div>
       ) : (
-        <EntryFilterBar type={selectedType} value={query} onChange={setQuery} />
+        <EntryFilterBar
+          type={selectedType}
+          value={query}
+          onChange={setQuery}
+          leading={
+            // Views are of the live list, not the trash.
+            viewingTrash ? undefined : (
+              <SavedViewsMenu
+                type={selectedType}
+                state={listState}
+                onApply={(next) => {
+                  setPicked(new Set());
+                  setListState(next, { push: true });
+                }}
+                canShare={access?.scopes.includes('content:manage') ?? false}
+                subject={access?.subject}
+              />
+            )
+          }
+          trailing={
+            <ColumnPicker
+              type={selectedType}
+              columns={listState.columns}
+              onChange={(columns) => setListState({ ...listState, columns })}
+            />
+          }
+        />
       )}
       <p className="sr-only" aria-live="polite">
         {picked.size > 0 ? `${plural(picked.size, 'entry', 'entries')} selected` : ''}
@@ -968,6 +1017,7 @@ export function EntriesList() {
             onPickAll={() => {}}
             actions={rowActions}
             order={query.order?.[0]}
+            columns={listState.columns}
             pending={rememberedCount(countKey)}
           />
         </>
@@ -1000,6 +1050,7 @@ export function EntriesList() {
               onPickAll={(all) => setPicked(all ? new Set(entries.map((e) => e.id)) : new Set())}
               actions={rowActions}
               order={query.order?.[0]}
+              columns={listState.columns}
               onSort={sortBy}
               onLoadMore={hasMore ? () => void entriesQuery.fetchNextPage() : undefined}
               loadingMore={entriesQuery.isFetchingNextPage}

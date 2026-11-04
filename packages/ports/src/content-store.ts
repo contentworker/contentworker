@@ -49,6 +49,7 @@ import type {
   Release,
   ReleaseItem,
   Role,
+  SavedView,
   ScheduledAction,
   Scope,
   SpaceMember,
@@ -141,6 +142,7 @@ export interface ContentStore {
   readonly taxonomy: TaxonomyRepo;
   readonly redirects: RedirectRepo;
   readonly menus: MenuRepo;
+  readonly savedViews: SavedViewRepo;
   readonly audit: AuditRepo;
   readonly aiActions: AIActionRepo;
   readonly functions: FunctionRepo;
@@ -354,6 +356,28 @@ export interface MenuRepo {
    */
   save(scope: Scope, menu: Menu, expected?: number): Promise<void>;
   /** Deletes a menu still at revision `expected`, as `save` checks it. */
+  delete(scope: Scope, id: string, expected: number): Promise<void>;
+}
+
+/**
+ * Saved views of the entries list. A view belongs to a space, not an environment: the repo reads
+ * and writes by `scope.spaceId`, so every environment of the space sees the same views. A save is
+ * a compare-and-set on the view's revision, as a menu's is.
+ */
+export interface SavedViewRepo {
+  /**
+   * The space's shared views and, with `owner`, that person's personal views: everything one
+   * person can be shown, at most `MAX_SHARED_VIEWS + MAX_PERSONAL_VIEWS` rows, by name.
+   */
+  list(scope: Scope, opts?: { readonly owner?: string }): Promise<SavedView[]>;
+  get(scope: Scope, id: string): Promise<SavedView | null>;
+  /**
+   * Writes `view` (at its own `revision`). Without `expected` it is inserted: an id another view
+   * holds is a `ConflictError`. With `expected` it replaces the view only while that is still at
+   * revision `expected`, else `TransactionConflictError`.
+   */
+  save(scope: Scope, view: SavedView, expected?: number): Promise<void>;
+  /** Deletes a view still at revision `expected`, as `save` checks it. */
   delete(scope: Scope, id: string, expected: number): Promise<void>;
 }
 

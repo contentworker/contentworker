@@ -45,6 +45,7 @@ const client = {
   })),
   cancelBulkJob: vi.fn(),
   getSpaceAccess: vi.fn(async () => fullAccess),
+  listSavedViews: vi.fn(async () => []),
 };
 
 /** The session's access in the space: an unrestricted publisher unless a test says otherwise. */
@@ -76,6 +77,14 @@ vi.mock('~/cms/lib/client-context', () => ({
     conn: { space: 's', environment: 'main', locale: 'en-US' },
     busy: false,
     // Like the real runner: a failure is surfaced, never rethrown.
+    run: async (fn: () => Promise<void>) => {
+      try {
+        await fn();
+      } catch {}
+    },
+  }),
+  useLocalRun: () => ({
+    busy: false,
     run: async (fn: () => Promise<void>) => {
       try {
         await fn();
@@ -474,8 +483,9 @@ describe('EntriesList counts and paging', () => {
   it(
     'starts again from the first page on a search, and a miss keeps the headers',
     async () => {
+      // A few rows and a cursor prove the restart; a full page only slows the render under load.
       setup(async (_type, query) =>
-        query?.search ? { items: [] } : { items: page(0), nextCursor: 'c2' },
+        query?.search ? { items: [] } : { items: page(0).slice(0, 5), nextCursor: 'c2' },
       );
       await screen.findByRole('link', { name: 'Entry 0' }, { timeout: FIRST_RENDER_MS });
       fireEvent.change(screen.getByRole('searchbox', { name: 'Search entries' }), {

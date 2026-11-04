@@ -46,6 +46,7 @@ import { registerReadTools } from './tools/read';
 import { registerRedirectTools } from './tools/redirects';
 import { registerReleaseTools } from './tools/releases';
 import { registerRoleTools } from './tools/roles';
+import { registerSavedViewTools } from './tools/saved-views';
 import { registerSchedulerTools } from './tools/scheduler';
 import { registerSeoTools } from './tools/seo';
 import { DEFAULT_ENV, DEFAULT_SPACE, ok, type ToolContext } from './tools/shared';
@@ -113,6 +114,7 @@ const TOOL_AREAS: readonly ((server: McpServer, t: ToolContext) => void)[] = [
   registerRedirectTools,
   registerSeoTools,
   registerMenuTools,
+  registerSavedViewTools,
   registerTaxonomyTools,
   registerAgentTools,
   registerAuditLogTools,

@@ -48,6 +48,7 @@ import {
   Link,
   NavLink,
   Outlet,
+  type ShouldRevalidateFunctionArgs,
   useLoaderData,
   useLocation,
   useNavigate,
@@ -75,6 +76,7 @@ import { Mark } from '~/components/mark';
 import { authEnabled, requireUser } from '~/lib/auth.server';
 import { useMedia } from '~/lib/device';
 import { db } from '~/lib/env.server';
+import { revalidateUnlessSearchOnly } from '~/lib/revalidate';
 import { atLeast, type Principal, ROLE_LABELS } from '~/lib/roles';
 import { pageShortcut } from '~/lib/shortcuts';
 import { type ThemeChoice, useTheme } from '~/lib/theme';
@@ -105,6 +107,11 @@ export async function loader({ request }: Route.LoaderArgs) {
     authEnabled(),
   ]);
   return { auth, me, nav: true, admins, sidebarOpen };
+}
+
+/** Who is signed in doesn't change with a page's search: typing in a list skips this loader. */
+export function shouldRevalidate(args: ShouldRevalidateFunctionArgs) {
+  return revalidateUnlessSearchOnly(args);
 }
 
 /** A link in the shell; `match` overrides "this path or under it" for the page reading as current. */

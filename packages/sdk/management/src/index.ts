@@ -386,6 +386,70 @@ export interface EntryAuthorship {
   readonly firstPublishedAt: string | null;
 }
 
+/** One predicate of a saved view's query, as an entries query takes it. */
+export interface SavedViewFilter {
+  /** A field apiId, a component path (`seo.title`) or a `sys.*` field. */
+  readonly field: string;
+  /** `eq`, `ne`, `in`, `nin`, `gt`, `gte`, `lt`, `lte`, `between`, `exists`, `match`, … */
+  readonly op: string;
+  readonly value?: unknown;
+}
+
+/** AND and OR groups of predicates, nestable (at most 4 deep, 20 predicates). */
+export type SavedViewWhere =
+  | SavedViewFilter
+  | { readonly and: readonly SavedViewWhere[] }
+  | { readonly or: readonly SavedViewWhere[] };
+
+/** A saved view's structured query: never a query string. */
+export interface SavedViewQuery {
+  readonly filters?: readonly SavedViewFilter[];
+  readonly where?: SavedViewWhere;
+  readonly order?: readonly { readonly field: string; readonly direction: 'asc' | 'desc' }[];
+  readonly search?: string;
+  /** Query keys kept verbatim that this server doesn't apply (a run lists them in `ignored`). */
+  readonly extra?: Readonly<Record<string, unknown>>;
+}
+
+/** A named entries query and the columns to show, personal or shared with the space. */
+export interface SavedView {
+  readonly id: string;
+  readonly name: string;
+  /** null: the entries of every type. */
+  readonly contentTypeApiId: string | null;
+  readonly visibility: 'personal' | 'shared';
+  /** Who created it; left out for a key that isn't served author ids. */
+  readonly createdBy?: string;
+  readonly query: SavedViewQuery;
+  /** Columns besides the display field; absent is `sys.status`, `sys.updatedAt`. */
+  readonly columns?: readonly string[];
+  /** Send it back with a change to be refused (409) rather than overwrite a save made since. */
+  readonly revision: number;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface SavedViewInput {
+  readonly name: string;
+  readonly contentTypeApiId?: string | null;
+  /** Default `personal`; `shared` needs content:manage. */
+  readonly visibility?: 'personal' | 'shared';
+  readonly query?: SavedViewQuery;
+  readonly columns?: readonly string[] | null;
+}
+
+/** One page of a saved view's entries, run with the caller's own grants. */
+export interface SavedViewRun {
+  readonly view: Pick<SavedView, 'id' | 'name' | 'contentTypeApiId' | 'revision' | 'columns'>;
+  readonly items: readonly PreviewEntry[];
+  readonly total: number;
+  readonly nextCursor?: string;
+  /** `query.extra` keys this server didn't apply. */
+  readonly ignored?: readonly string[];
+  /** The view's content type isn't in this environment: the page is empty for that reason. */
+  readonly typeMissing?: true;
+}
+
 export interface Entry extends EntryAuthorship {
   readonly id: string;
   readonly contentTypeApiId: string;
@@ -1517,6 +1581,33 @@ export function createManagementClient(opts: ManagementClientOptions) {
       ) => post<Menu>(`${envBase}/menus/${e(id)}/move`, move),
       delete: (id: string, o: { readonly revision?: number } = {}) =>
         del<void>(`${envBase}/menus/${e(id)}`, { revision: o.revision }),
+    },
+    /**
+     * Saved views of the entries list: yours and the space's shared ones. Another person's
+     * personal view, or one your role can't see, is a 404; anything shared needs content:manage.
+     */
+    savedViews: {
+      list: async (o: { readonly contentType?: string } = {}) =>
+        (
+          await get<{ items: SavedView[] }>(`${envBase}/saved-views`, {
+            content_type: o.contentType,
+          })
+        ).items,
+      get: (id: string) => get<SavedView>(`${envBase}/saved-views/${e(id)}`),
+      /** One page of the view's entries, with your own grants and hidden fields applied. */
+      run: (
+        id: string,
+        o: { readonly limit?: number; readonly cursor?: string; readonly locale?: string } = {},
+      ) => get<SavedViewRun>(`${envBase}/saved-views/${e(id)}/entries`, { ...o }),
+      /** 422 naming each bad part of the query; 403 for a shared view without content:manage. */
+      create: (input: SavedViewInput) => post<SavedView>(`${envBase}/saved-views`, input),
+      /** `query` replaces the whole query; with `revision`, a save made since is a 409. */
+      update: (
+        id: string,
+        changes: Partial<Omit<SavedViewInput, 'contentTypeApiId'>> & { readonly revision?: number },
+      ) => patch<SavedView>(`${envBase}/saved-views/${e(id)}`, changes),
+      delete: (id: string, o: { readonly revision?: number } = {}) =>
+        del<void>(`${envBase}/saved-views/${e(id)}`, { revision: o.revision }),
     },
     /** Redirects: delivery data a front end applies (content:manage to change them). */
     redirects: {
