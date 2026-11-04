@@ -361,7 +361,8 @@ export function EntryEditor() {
           return;
         }
         toast.success('Draft updated');
-        if (chainPublish) await publish(view.entry);
+        // Named as just saved: this render's title is from before the save.
+        if (chainPublish) await publish(view.entry, titleOf(fields) ?? about);
       } finally {
         // A create that failed or wasn't saved hands the form back.
         if (!isEdit && !swapped) setSwapping(false);
@@ -378,14 +379,14 @@ export function EntryEditor() {
 
   // Publishing: a card in the assistant, or, when it can't be reached, the page's own dialog. No
   // `run` here: callers wrap it, and `run` doesn't nest.
-  const publish = async (agg: EntryAggregate | null) => {
+  const publish = async (agg: EntryAggregate | null, label = about) => {
     if (!entryId) return;
     // Held to the version on screen: confirmed after someone saved a newer draft, it is refused.
     const version = agg?.currentVersion ?? meta?.version;
     const r = await edit<EntryAggregate>(
       'entries_publish',
       { id: entryId, ...(version ? { expectedVersion: version } : {}) },
-      about,
+      label,
     );
     if (r === null) return computePublishConfirm(agg);
     if ('output' in r) published(r.output, neverPublished(agg));
