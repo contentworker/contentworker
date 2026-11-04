@@ -478,15 +478,15 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   Publish while anything isn't live, a disabled "Published" when live and clean) stays under the
   shell's header from md, and below md its buttons sit above the tab bar. The secondary actions
   (Draft from prose, Generate with AI, Copy preview link) are ghost and fold into a ghost ⋯ menu
-  ("More entry actions") when the editor is narrower than 56rem. Publishing an entry that has been
-  live confirms with what changed, from the editor and from an entries row alike
-  (`entries/PublishConfirm.tsx`), held as the card is (Publish entry stays off until the read has
+  ("More entry actions") when the editor is narrower than 56rem. Publishing always confirms, from
+  the editor and from an entries row alike, with the assistant or without it: readers and webhooks
+  have a publish at once, and no undo calls that back. An entry that has been live confirms with
+  what changed (`entries/PublishConfirm.tsx`), held as the card is (Publish entry stays off until the read has
   something to show, says why, and a failed read offers Try again; the cancel always works): each
   changed field by name, its published and draft values side
   by side where the container has room and stacked where it hasn't (a container query, so a dialog
   or the Coworker column narrows it as a phone does), links by the title of what they point at,
-  unchanged fields behind "Show 4 unchanged fields". The scroller takes keyboard focus. A first publish confirms in the editor, where the whole entry is
-  in front of you, and goes at once from a row, with Undo in the toast. Beside the form sits the **side pane** (after felix's):
+  unchanged fields behind "Show 4 unchanged fields". The scroller takes keyboard focus. A first publish asks the same way, saying the whole entry goes live, with Keep as draft as the safe choice. Beside the form sits the **side pane** (after felix's):
   where the row the two share is wide enough for both (a 420px form and a 336px pane; collapsing
   the sidebar buys the room back) it stands behind a hairline divider, sticky, scrolling on its own;
   narrower, it stacks under the form. The divider is an ARIA splitter (drag, arrows, Shift for a

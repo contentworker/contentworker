@@ -996,7 +996,7 @@ test.describe('publishing from a row, without the assistant', () => {
     expect(await region.getAttribute('tabindex')).toBe('0');
   });
 
-  test('a draft publishes at once with an Undo that returns it to draft', async ({
+  test('a draft confirms before it goes live, and Keep as draft leaves it one', async ({
     page,
     request,
   }) => {
@@ -1004,16 +1004,24 @@ test.describe('publishing from a row, without the assistant', () => {
     const id = await createDraft(request, title);
     await openCms(page, '/content/article');
     const row = page.getByRole('row', { name: new RegExp(title) });
-    await row.getByRole('button', { name: `Publish “${title}”` }).click();
+    const publish = row.getByRole('button', { name: `Publish “${title}”` });
 
-    // No confirmation for a first publish: it is live, and the toast offers the way back.
-    await expect(page.getByRole('alertdialog')).toHaveCount(0);
-    const toast = page.getByText(`“${title}” published`);
-    await expect(toast).toBeVisible();
-    await page.getByRole('button', { name: 'Undo' }).click();
-    await expect(page.getByText(`“${title}” is back to draft`)).toBeVisible();
+    await publish.click();
+    const dialog = page.getByRole('alertdialog', { name: `Publish “${title}”?` });
+    await expect(dialog.getByRole('button', { name: 'Keep as draft' })).toBeFocused();
+    await dialog.getByRole('button', { name: 'Keep as draft' }).click();
+    await expect(dialog).toBeHidden();
+    await expect(publish).toBeFocused();
     expect(await statusOf(request, id)).toBe('draft');
-    await expect(row.getByText('Draft', { exact: true })).toBeVisible();
+
+    await publish.click();
+    await dialog.getByRole('button', { name: 'Publish entry' }).click();
+    await expect(page.getByText(`“${title}” published`)).toBeVisible();
+    // Readers and webhooks have it now, so there is no Undo to offer.
+    await expect(page.getByRole('button', { name: 'Undo' })).toHaveCount(0);
+    expect(await statusOf(request, id)).toBe('published');
+    // The row's Publish has gone: its title keeps the keyboard on the row.
+    await expect(row.getByRole('link', { name: title })).toBeFocused();
   });
 });
 
