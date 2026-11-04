@@ -601,7 +601,8 @@ interface ContentType {
   keyset read); `finishContentTypeDeletion` deletes the type on the job's clean
   `bulk.job_completed`, and records the outcome on the job (`BulkJobRepo.mergeConfig`,
   `config.typeDeletion`: `{ deleted: true }` or `{ deleted: false, reason }`, also when the job is
-  stopped). `cloneContentType` defines a copy (fields, display field, singleton; not `urlPattern`)
+  stopped). `cloneContentType` defines a copy (fields, display field, singleton, group, description, icon,
+  layout; not `urlPattern`)
   at version 1 under a new `apiId`, inserted by `ContentTypeRepo.create`, which never overwrites.
 - `checkUrlPattern(pattern, fields)` — a pattern is a path starting with `/` (at most
   `MAX_URL_PATTERN_LENGTH`, 512; no space, `?`, `#`, `[`, `]` or `\`) whose `{…}` placeholders are
