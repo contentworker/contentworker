@@ -4,6 +4,7 @@ import {
   canAccessContentType,
   deniedFieldsFor,
   type Principal,
+  withAuthorIdsFor,
 } from '../auth/auth';
 import type { ContentType } from '../content-type/content-type';
 import { type FieldIssue, ValidationError } from '../errors';
@@ -105,6 +106,9 @@ export interface SavedView {
   readonly updatedAt: string;
 }
 
+/** A view as a caller is served it: `createdBy` only to who is served author ids. */
+export type ServedSavedView = Omit<SavedView, 'createdBy'> & { readonly createdBy?: string };
+
 const CONTROL = /\p{Cc}/u;
 const EXTRA_KEY = /^[A-Za-z0-9_.[\]-]{1,64}$/;
 const FIELD_ID = /^[A-Za-z0-9_]+$/;
@@ -174,6 +178,11 @@ function checkFilter(raw: unknown, at: string, issues: FieldIssue[]): QueryFilte
     typeof v.field === 'string' && v.field.startsWith('fields.')
       ? v.field.slice('fields.'.length)
       : v.field;
+  // Before anything spells it: a list nested deep enough overflows the stack as a string.
+  if (typeof field !== 'string') {
+    issues.push({ field: at, message: 'a filter names its field as a string' });
+    return null;
+  }
   const filter = {
     field,
     op: v.op === undefined ? 'eq' : v.op,
@@ -447,11 +456,13 @@ export function canSeeSavedView(principal: Principal, view: SavedView): boolean 
 
 /**
  * A view as `principal` is shown it: columns naming a field their role hides are left out (the
- * column would only ever be empty for them, and its values are masked anyway).
+ * column would only ever be empty for them, and its values are masked anyway), and so is who
+ * created it for a key that isn't served author ids, as an entry's author is.
  */
-export function savedViewFor(principal: Principal, view: SavedView): SavedView {
-  if (!view.columns || !view.contentTypeApiId) return view;
-  const denied = new Set(deniedFieldsFor(principal, view.contentTypeApiId));
-  if (denied.size === 0) return view;
-  return { ...view, columns: view.columns.filter((c) => !denied.has(c)) };
+export function savedViewFor(principal: Principal, view: SavedView): ServedSavedView {
+  const shown = withAuthorIdsFor(principal, view);
+  if (!shown.columns || !shown.contentTypeApiId) return shown;
+  const denied = new Set(deniedFieldsFor(principal, shown.contentTypeApiId));
+  if (denied.size === 0) return shown;
+  return { ...shown, columns: shown.columns.filter((c) => !denied.has(c)) };
 }

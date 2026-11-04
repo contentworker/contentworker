@@ -524,7 +524,28 @@ describe('saved views', () => {
     expect(rows.some((e) => 'createdBy' in e || 'updatedBy' in e)).toBe(false);
     await expect(getSavedView(ctx, scope, reader, view.id)).rejects.toBeInstanceOf(NotFoundError);
     await expect(runSavedView(ctx, scope, reader, view.id)).rejects.toBeInstanceOf(NotFoundError);
-    expect((await listSavedViews(ctx, scope, reader)).map((v) => v.name)).toEqual(['All']);
+    const listed = await listSavedViews(ctx, scope, reader);
+    expect(listed.map((v) => v.name)).toEqual(['All']);
+
+    // Nor who created a view: a shared view's creator is a person's id too.
+    expect(listed[0]).not.toHaveProperty('createdBy');
+    expect(await getSavedView(ctx, scope, reader, all.id)).not.toHaveProperty('createdBy');
+    expect((await getSavedView(ctx, scope, key, all.id)).createdBy).toBe(all.createdBy);
+    expect((await getSavedView(ctx, scope, bob, all.id)).createdBy).toBe(all.createdBy);
+    expect((await ctx.store.savedViews.get(scope, all.id))?.createdBy).toBe(all.createdBy);
+  });
+
+  it('holds new columns to the rule a save over a view does', async () => {
+    const editor = person('ed@example.com', MANAGE, [
+      { contentTypeApiId: '*', actions: ['read'], deniedFields: ['salary'] },
+    ]);
+    const made = await createSavedView(ctx, scope, editor, {
+      name: 'No pay',
+      contentTypeApiId: 'article',
+      columns: ['salary', 'section'],
+    });
+    expect(made.columns).toEqual(['section']);
+    expect((await ctx.store.savedViews.get(scope, made.id))?.columns).toEqual(['section']);
   });
 
   it('says when a view’s content type is missing, and can still be changed and deleted', async () => {

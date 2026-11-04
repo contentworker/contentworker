@@ -22,6 +22,7 @@ import {
   type SavedViewVisibility,
   SCOPES,
   type Scope,
+  type ServedSavedView,
   savedViewColumnsAfter,
   savedViewEntryQuery,
   savedViewFor,
@@ -177,7 +178,7 @@ export async function listSavedViews(
   scope: Scope,
   principal: Principal,
   opts: { readonly contentTypeApiId?: string } = {},
-): Promise<SavedView[]> {
+): Promise<ServedSavedView[]> {
   const owner = isPersonPrincipal(principal) ? principal.subject : undefined;
   const views = await ctx.store.savedViews.list(scope, owner ? { owner } : {});
   return views
@@ -196,7 +197,7 @@ export async function getSavedView(
   scope: Scope,
   principal: Principal,
   id: string,
-): Promise<SavedView> {
+): Promise<ServedSavedView> {
   return savedViewFor(principal, await visibleView(ctx, scope, principal, id));
 }
 
@@ -290,14 +291,18 @@ export async function createSavedView(
   scope: Scope,
   principal: Principal,
   input: SavedViewInput,
-): Promise<SavedView> {
+): Promise<ServedSavedView> {
   const name = checkSavedViewName(input.name);
   const visibility = checkSavedViewVisibility(input.visibility ?? 'personal');
   const contentTypeApiId = input.contentTypeApiId ?? null;
   const query = checkSavedViewQuery(input.query);
   authorizeWrite(principal, scope, { visibility, contentTypeApiId, query });
   const type = await typeNamed(ctx, scope, contentTypeApiId);
-  const columns = checkSavedViewColumns(input.columns, type);
+  const columns = savedViewColumnsAfter(
+    principal,
+    { contentTypeApiId },
+    checkSavedViewColumns(input.columns, type),
+  );
   const createdBy = auditActor(principal);
   await assertRoomFor(ctx, scope, visibility, createdBy);
   const at = ctx.clock.now().toISOString();
@@ -314,7 +319,7 @@ export async function createSavedView(
     updatedAt: at,
   };
   await ctx.store.savedViews.save(scope, view);
-  return view;
+  return savedViewFor(principal, view);
 }
 
 /**
@@ -331,7 +336,7 @@ export async function updateSavedView(
   principal: Principal,
   id: string,
   patch: SavedViewPatch,
-): Promise<SavedView> {
+): Promise<ServedSavedView> {
   const name = patch.name === undefined ? undefined : checkSavedViewName(patch.name);
   const visibility =
     patch.visibility === undefined ? undefined : checkSavedViewVisibility(patch.visibility);

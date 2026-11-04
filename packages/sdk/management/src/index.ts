@@ -418,7 +418,8 @@ export interface SavedView {
   /** null: the entries of every type. */
   readonly contentTypeApiId: string | null;
   readonly visibility: 'personal' | 'shared';
-  readonly createdBy: string;
+  /** Who created it; left out for a key that isn't served author ids. */
+  readonly createdBy?: string;
   readonly query: SavedViewQuery;
   /** Columns besides the display field; absent is `sys.status`, `sys.updatedAt`. */
   readonly columns?: readonly string[];

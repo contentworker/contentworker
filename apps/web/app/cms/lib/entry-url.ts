@@ -175,19 +175,35 @@ function barValue(op: string, value: unknown): EntryFilter['value'] {
   return String(value);
 }
 
+/** A view's reference filters over every field. */
+const anyFieldFilters = (q: SavedViewQuery) =>
+  (q.filters ?? []).filter((f) => f.field === ANY_FIELD);
+
+/**
+ * The tree a view opens with. `links_to_entry` is one any-of condition, so it can stand in for a
+ * single any-field filter only; several are ANDed, and no filter key can spell them, so they ride
+ * in `where`, which a list sends as it is.
+ */
+function openedWhere(q: SavedViewQuery): SavedViewQuery['where'] {
+  const refs = anyFieldFilters(q);
+  if (refs.length < 2) return q.where;
+  const rest = q.where === undefined ? [] : 'and' in q.where ? q.where.and : [q.where];
+  return { and: [...refs, ...rest] };
+}
+
 /** The list a saved view opens: its query, in the bar's terms, and its columns. */
 export function viewToListState(view: SavedView): EntryListState {
   const q = view.query;
+  const where = openedWhere(q);
   const extra = Object.fromEntries(
     Object.entries(q.extra ?? {})
       .filter(([k]) => isSavedViewExtraKey(k))
       .map(([k, v]) => [k, Array.isArray(v) ? v.join(',') : String(v ?? '')]),
   );
   const filters = (q.filters ?? []).filter((f) => f.field !== ANY_FIELD && !isMine(f));
-  const linksToEntry = (q.filters ?? [])
-    .filter((f) => f.field === ANY_FIELD)
-    .flatMap((f) => barValue(f.op, f.value))
-    .map(String);
+  const anyField = anyFieldFilters(q);
+  const linksToEntry =
+    anyField.length === 1 ? anyField.flatMap((f) => barValue(f.op, f.value)).map(String) : [];
   return {
     viewId: view.id,
     query: {
@@ -202,7 +218,7 @@ export function viewToListState(view: SavedView): EntryListState {
         : {}),
       ...(q.order?.length ? { order: q.order } : {}),
       ...(q.search ? { search: q.search } : {}),
-      ...(q.where !== undefined ? { where: q.where } : {}),
+      ...(where !== undefined ? { where } : {}),
       ...(linksToEntry.length ? { linksToEntry } : {}),
       ...(q.filters?.some(isMine) ? { mine: true } : {}),
       ...(Object.keys(extra).length ? { extra } : {}),
@@ -220,7 +236,9 @@ const spelled = (value: unknown) => (Array.isArray(value) ? value.join(',') : St
  *
  * The URL holds every comparand as text, so a filter that still reads as one of `saved`'s (the
  * query the list was opened from) is stored as that one, typed as it was: `rank > 3` stays the
- * number, and `match ''` or `eq null` aren't taken for a filter nobody finished typing.
+ * number, and `match ''` or `eq null` aren't taken for a filter nobody finished typing. A kept
+ * `extra` value that still reads as `saved`'s stays verbatim the same way, and the tree a view
+ * opened with goes back to the filters and tree it was saved as.
  */
 export function listQueryToViewQuery(
   query: EntryListQuery,
@@ -250,12 +268,24 @@ export function listQueryToViewQuery(
     filters.push(asSaved(ANY_FIELD, op, value) ?? { field: ANY_FIELD, op, value });
   }
   if (query.mine) filters.push(MINE);
+  const reopened =
+    saved !== undefined &&
+    anyFieldFilters(saved).length > 1 &&
+    JSON.stringify(query.where) === JSON.stringify(openedWhere(saved));
+  if (reopened) filters.push(...anyFieldFilters(saved));
+  const where = reopened ? saved.where : (query.where as SavedViewQuery['where']);
+  const extra = Object.fromEntries(
+    Object.entries(query.extra ?? {}).map(([k, v]) => {
+      const kept = saved?.extra && Object.hasOwn(saved.extra, k) ? saved.extra[k] : undefined;
+      return [k, kept !== undefined && spelled(kept) === v ? kept : v];
+    }),
+  );
   return {
     ...(filters.length ? { filters } : {}),
-    ...(query.where !== undefined ? { where: query.where as SavedViewQuery['where'] } : {}),
+    ...(where !== undefined ? { where } : {}),
     ...(query.order?.length ? { order: query.order } : {}),
     ...(query.search ? { search: query.search } : {}),
-    ...(query.extra && Object.keys(query.extra).length ? { extra: query.extra } : {}),
+    ...(Object.keys(extra).length ? { extra } : {}),
   };
 }
 

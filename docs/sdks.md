@@ -504,7 +504,8 @@ cma.apiKeys.list() / .create({ kind, name }) / .revoke(id)   // admin scope
   `delete`) a menu saved since is a `409`.
 - `savedViews.create` stores `query` in the structured form (`filters`, `where`, `order`, `search`,
   `extra`); `savedViews.run` is the caller's own Preview list query, `{ view, items, total,
-  nextCursor?, ignored?, typeMissing? }`. Another person's personal view is a `404`.
+  nextCursor?, ignored?, typeMissing? }`. Another person's personal view is a `404`, and a view's
+  `createdBy` is left out for a key that isn't served author ids.
 - `apiKeys.create` returns the raw token exactly once; only its hash is stored.
 - `entries.list` reads `GET /preview/:space/:env/entries` on the same origin (the Management API
   has no entry list): the latest saved version, drafts included, `{ items, total }` with `total`

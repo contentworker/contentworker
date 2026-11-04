@@ -366,6 +366,19 @@ describe('saved views over HTTP', () => {
       body: raw,
     });
     expect(res.status).toBe(422);
+    const deepField = await app.request(`${M}/saved-views`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-cw-principal': await signPrincipal(
+          KEY,
+          writer,
+          principalTarget('POST', `${M}/saved-views`),
+        ),
+      },
+      body: `{"name":"Deep","query":{"filters":[{"op":"eq","field":${'['.repeat(50_000)}${']'.repeat(50_000)}}]}}`,
+    });
+    expect(deepField.status).toBe(422);
     const known = await call(writer, 'POST', '/saved-views', {
       name: 'Sneaky',
       query: { extra: { where: '{"field":"salary","op":"gt","value":0}' } },

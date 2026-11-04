@@ -137,6 +137,14 @@ describe('saved view queries', () => {
     ]);
   });
 
+  it('refuses a filter whose field isn’t a string, however deep the list it is', () => {
+    let deep: unknown = [];
+    for (let i = 0; i < 200_000; i++) deep = [deep];
+    expect(issues(() => checkSavedViewQuery({ filters: [{ field: deep, op: 'eq' }] }))).toEqual([
+      'query.filters[0]: a filter names its field as a string',
+    ]);
+  });
+
   it('keeps columns to known sys columns and the type’s own fields', () => {
     const type = { apiId: 'staff', fields: [{ apiId: 'team' }] } as never;
     expect(checkSavedViewColumns(['fields.team', 'sys.status'], type)).toEqual([
@@ -170,6 +178,15 @@ describe('who sees a saved view', () => {
     expect(canSeeSavedView(user('ada'), mine)).toBe(true);
     expect(canSeeSavedView(user('bob'), mine)).toBe(false);
     expect(canSeeSavedView({ spaceId: 's', kind: 'cma', scopes: [] }, mine)).toBe(false);
+  });
+
+  it('serves who created a view only to who is served author ids', () => {
+    const previewKey: Principal = { spaceId: 's', kind: 'cpa', scopes: ['preview:read'] };
+    expect(savedViewFor(previewKey, view())).not.toHaveProperty('createdBy');
+    expect(savedViewFor(previewKey, view({ columns: ['team'] }))).toEqual(
+      expect.objectContaining({ columns: ['team'] }),
+    );
+    expect(savedViewFor(user('bob'), view()).createdBy).toBe('ada');
   });
 
   it('hides a view naming a field the role hides, and drops hidden columns', () => {

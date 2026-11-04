@@ -118,7 +118,8 @@ describe('saved views on D1', () => {
   it('refuses a lost race at the revision and a reused id', async () => {
     const { ctx, scope, person } = await harness();
     const bob = person('bob');
-    const view = await createSavedView(ctx, scope, bob, { name: 'One' });
+    const made = await createSavedView(ctx, scope, bob, { name: 'One' });
+    const view = (await store.savedViews.get(scope, made.id)) as SavedView;
     await updateSavedView(ctx, scope, bob, view.id, { name: 'Two' });
     const stale: SavedView = { ...view, name: 'Late', revision: 2 };
     await expect(store.savedViews.save(scope, stale, 1)).rejects.toBeInstanceOf(

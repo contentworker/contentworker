@@ -387,7 +387,20 @@ describe('the views menu', () => {
     await waitFor(() =>
       expect(client.updateSavedView).toHaveBeenCalledWith('v1', {
         query: { filters: [{ field: 'section', op: 'eq', value: 'news' }], search: 'x' },
-        columns: ['section'],
+        revision: 1,
+      }),
+    );
+  });
+
+  it('sends columns with a save only when they changed', async () => {
+    views.push(view({ columns: ['section'] }));
+    setup('/content/article?view=v1&columns=section,body');
+    await open(/News.*edited/);
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Save changes to “News”' }));
+    await waitFor(() =>
+      expect(client.updateSavedView).toHaveBeenCalledWith('v1', {
+        query: {},
+        columns: ['section', 'body'],
         revision: 1,
       }),
     );
@@ -453,7 +466,6 @@ describe('the views menu', () => {
     await waitFor(() =>
       expect(client.updateSavedView).toHaveBeenCalledWith('v1', {
         query: { filters: [{ field: 'section', op: 'gt', value: 3 }], search: 'x' },
-        columns: null,
         revision: 1,
       }),
     );

@@ -1125,7 +1125,7 @@ interface SavedView {
   name: string;
   contentTypeApiId: string | null; // null: the entries of every type
   visibility: 'personal' | 'shared';
-  createdBy: string; // as the audit log names the creator; a personal view's owner
+  createdBy?: string; // as the audit log names the creator; a personal view's owner; left out for a key not served author ids
   query: SavedViewQuery; // { filters?, where?, order?, search?, extra? }
   columns?: string[]; // after the display field; absent: sys.status, sys.updatedAt
   revision: number;
@@ -1166,8 +1166,9 @@ themselves, and would have no answer for a view a key created, which has no pers
 that view stays shared until it is deleted.
 
 A run acts as the caller, so a shared view's `sys.createdBy=me` is each reader's own entries. A key
-that isn't served author ids gets none in a run's rows, and a view naming them isn't shown to it
-(`assertAuthorIdQuery`, in `canSeeSavedView`).
+that isn't served author ids gets none in a run's rows, a view's `createdBy` is left out for it
+(`savedViewFor`), and a view naming them isn't shown to it (`assertAuthorIdQuery`, in
+`canSeeSavedView`).
 
 **A view of a deleted content type.** Views are per space and types per environment, so deleting a
 type doesn't cascade: the same view may be good in another environment, and the type may come back

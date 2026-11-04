@@ -38,7 +38,10 @@ export const savedView = z.object({
     ),
   createdBy: z
     .string()
-    .describe('The creator as the audit log names them; a personal view’s owner'),
+    .optional()
+    .describe(
+      'The creator as the audit log names them; a personal view’s owner. Left out for a key not served author ids',
+    ),
   query: savedViewQuery,
   columns: z
     .array(z.string())

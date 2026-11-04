@@ -133,6 +133,43 @@ describe('the entries list URL', () => {
     });
   });
 
+  it('keeps several any-field filters ANDed, through the URL and back into a save', () => {
+    const refs = [
+      { field: '*', op: 'ref' as const, value: 'e1' },
+      { field: '*', op: 'refIn' as const, value: ['e2', 'e3'] },
+    ];
+    const where = { field: 'rank', op: 'gt' as const, value: 3 };
+    const query = { filters: [...refs, { field: 'team', op: 'eq' as const, value: 'a' }], where };
+    const refsView = view({ query });
+    const opened = viewToListState(refsView);
+    expect(opened.query.linksToEntry).toBeUndefined();
+
+    const state = listStateFromParams(listStateToParams(opened));
+    expect(state.query.where).toEqual({ and: [...refs, where] });
+    expect(entryQueryParams(state.query).get('links_to_entry')).toBeNull();
+    expect(JSON.parse(entryQueryParams(state.query).get('where') as string)).toEqual({
+      and: [...refs, where],
+    });
+    expect(matchesView(state, refsView)).toBe(true);
+
+    const saved = listQueryToViewQuery(state.query, query);
+    expect(saved.where).toEqual(where);
+    expect(saved.filters).toEqual(expect.arrayContaining(query.filters));
+    expect(saved.filters).toHaveLength(3);
+  });
+
+  it('keeps a saved extra value verbatim while the URL still spells it', () => {
+    const saved = { extra: { rank: 3, tags: ['a', 'b'], flag: false, gone: 'x' } };
+    const opened = viewToListState(view({ query: saved }));
+    expect(listQueryToViewQuery(opened.query, saved).extra).toEqual(saved.extra);
+    const edited = { extra: { rank: '4', tags: 'a,b', constructor: 'x' } };
+    expect(listQueryToViewQuery(edited, saved).extra).toEqual({
+      rank: '4',
+      tags: ['a', 'b'],
+      constructor: 'x',
+    });
+  });
+
   it('sends links_to_entry to the list, and saves it as the any-field filter it is', () => {
     const state = listStateFromParams(new URLSearchParams('links_to_entry=e1,e2'));
     expect(state.query).toEqual({ linksToEntry: ['e1', 'e2'] });

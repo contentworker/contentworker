@@ -51,6 +51,10 @@ type NameDialog = { readonly mode: 'new' } | { readonly mode: 'rename'; readonly
 const columnsFit = (view: SavedView, columns: EntryListState['columns']) =>
   view.contentTypeApiId !== null || (columns ?? []).every((c) => c.startsWith('sys.'));
 
+/** Whether the list's columns are the view's own, the default for both or the same list. */
+const sameColumns = (view: SavedView, columns: EntryListState['columns']) =>
+  JSON.stringify(view.columns) === JSON.stringify(columns);
+
 /**
  * The entries list's views menu: pick a saved view (yours, then the space's shared ones), save
  * what the list shows now as a new view, or save it over the open one, rename it, share it with
@@ -111,7 +115,9 @@ export function SavedViewsMenu(props: {
       try {
         saved = await client.updateSavedView(view.id, {
           query: listQueryToViewQuery(state.query, view.query),
-          ...(fit ? { columns: state.columns ?? null } : {}),
+          // Only when they changed: columns are checked against this environment's type, and a
+          // query-only edit shouldn't be refused over a column it never touched.
+          ...(fit && !sameColumns(view, state.columns) ? { columns: state.columns ?? null } : {}),
           revision: view.revision,
         });
       } catch (err) {
