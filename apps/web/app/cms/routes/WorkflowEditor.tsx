@@ -46,6 +46,7 @@ import { useEditHistory } from '~/cms/components/workflow/history';
 import { Inspector, type InspectorOptions } from '~/cms/components/workflow/Inspector';
 import { Palette } from '~/cms/components/workflow/Palette';
 import { ProposalBanner, type WorkflowProposal } from '~/cms/components/workflow/ProposalBanner';
+import { useAssistantIfAny } from '~/cms/lib/assistant';
 import { useClient } from '~/cms/lib/client-context';
 import { useMedia, WIDE } from '~/cms/lib/device';
 import { plural } from '~/cms/lib/format';
@@ -227,6 +228,8 @@ function Editor({ loaded }: { loaded: WorkflowSummary }) {
   const node = selected
     ? (viewed ? viewed.graph : flow.graph).nodes.find((n) => n.id === selected)
     : undefined;
+  // With Coworker open, the inspector gives the canvas its width until a step is picked.
+  const inspectorCollapsed = Boolean(useAssistantIfAny()?.open) && !node;
 
   const setGraph = useCallback(
     (g: WorkflowGraph) => setFlow((f) => ({ ...f, graph: g })),
@@ -679,8 +682,12 @@ function Editor({ loaded }: { loaded: WorkflowSummary }) {
         className={cn(
           'grid min-h-0 flex-1',
           wide && viewing === null
-            ? 'lg:grid-cols-[220px_minmax(0,1fr)_340px]'
-            : 'lg:grid-cols-[minmax(0,1fr)_340px]',
+            ? inspectorCollapsed
+              ? 'lg:grid-cols-[220px_minmax(0,1fr)]'
+              : 'lg:grid-cols-[220px_minmax(0,1fr)_340px]'
+            : inspectorCollapsed
+              ? 'lg:grid-cols-[minmax(0,1fr)]'
+              : 'lg:grid-cols-[minmax(0,1fr)_340px]',
         )}
       >
         {wide && viewing === null ? (
@@ -702,7 +709,10 @@ function Editor({ loaded }: { loaded: WorkflowSummary }) {
           />
         </div>
         <aside
-          className="min-h-0 overflow-y-auto border-t p-4 lg:border-t-0 lg:border-l"
+          className={cn(
+            'min-h-0 overflow-y-auto border-t p-4 lg:border-t-0 lg:border-l',
+            inspectorCollapsed && 'lg:hidden',
+          )}
           aria-label={node ? 'Step settings' : 'Workflow settings'}
         >
           {node && !proposal ? (

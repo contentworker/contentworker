@@ -722,7 +722,8 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
 ## Screens that change shape
 
 - **Workflow editor** (`cms/routes/WorkflowEditor.tsx`): full-bleed, the window's height at lg
-  (the page never scrolls; its columns do). At lg it builds, palette | canvas | inspector. On touch, a palette item is tapped in (dragging is offered only to
+  (the page never scrolls; its columns do). At lg it builds, palette | canvas | inspector; with
+  Coworker open the inspector steps aside until a step is picked. On touch, a palette item is tapped in (dragging is offered only to
   a fine pointer: iPadOS drag is unreliable), node handles grow and carry a 32px target, and a
   connection snaps from 40px. Below lg it is review-only, saying so in place ("Building workflows
   needs a wider screen…"): the canvas, the checks and each step's settings show read-only, and

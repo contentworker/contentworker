@@ -84,6 +84,38 @@ test('the editor collapses an open sidebar and fills the width on a wide screen'
     .toBe(0);
 });
 
+test('with Coworker open the inspector gives the canvas its width until a step is picked', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1024, height: 768 });
+  await openCms(page, '/workflows');
+  await page.getByRole('button', { name: 'New workflow' }).click();
+  const sheet = page.getByRole('dialog', { name: 'New workflow' });
+  await sheet.getByRole('textbox', { name: 'Name' }).fill(`Beside ${Date.now()}`);
+  await sheet.getByRole('combobox', { name: 'Template' }).selectOption('tpl-editorial-review');
+  await sheet.getByRole('button', { name: 'Create workflow' }).click();
+  const settings = page.getByRole('complementary', { name: 'Workflow settings' });
+  await expect(settings).toBeVisible({ timeout: 15_000 });
+
+  const coworker = page.getByRole('button', { name: 'Coworker', exact: true });
+  await coworker.click();
+  await expect(settings).toBeHidden();
+  const canvas = page.locator('.react-flow');
+  await expect.poll(async () => (await canvas.boundingBox())?.width ?? 0).toBeGreaterThan(250);
+
+  // A picked step keeps its inspector open beside Coworker.
+  await coworker.click();
+  await expect(settings).toBeVisible();
+  // By keyboard: at this width the first step can sit outside the canvas's frame.
+  await page.locator('.react-flow__node').first().focus();
+  await page.keyboard.press('Enter');
+  const step = page.getByRole('complementary', { name: 'Step settings' });
+  await expect(step).toBeVisible();
+  await coworker.click();
+  await expect(coworker).toHaveAttribute('aria-pressed', 'true');
+  await expect(step).toBeVisible();
+});
+
 test('a hard load draws the full-width frame, and a missing workflow says so', async ({ page }) => {
   await page.setViewportSize({ width: 2200, height: 1000 });
   let release = () => {};
