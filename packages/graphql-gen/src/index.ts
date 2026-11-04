@@ -186,6 +186,11 @@ function typeFor(
     }
     return new GraphQLList(componentType(names, preferredName, field.items.fields));
   }
+  // A list of scalars is a list of that scalar. A list of links stays JSON (links arrive resolved).
+  const itemType = field.type === 'Array' ? field.items?.type : undefined;
+  if (itemType && itemType !== 'Link' && itemType !== 'Component') {
+    return new GraphQLList(scalarFor({ ...field, type: itemType }));
+  }
   return scalarFor(field);
 }
 

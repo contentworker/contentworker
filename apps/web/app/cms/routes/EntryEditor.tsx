@@ -261,6 +261,7 @@ export function EntryEditor() {
       assets: (assetsQuery.data ?? []).map((a) => ({
         id: a.id,
         label: String(a.title?.[conn.locale] ?? a.file.fileName),
+        mimeType: a.file.contentType,
       })),
     };
   }, [allEntriesQuery.data, assetsQuery.data, types, conn.locale]);

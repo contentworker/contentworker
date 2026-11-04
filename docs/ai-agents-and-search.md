@@ -158,9 +158,14 @@ interface DraftEntryInput {
   `description` is `describeFieldForModel(field)`: the name, then the field's guidance as one
   capped line, labelled as describing the field and wrapped in `<user_content>` (delimiter tags in
   it, spaced or nested, are stripped until none is left: `stripDelimiters`; the system prompt
-  carries `UNTRUSTED_CONTENT_GUARD`). Its rules become JSON Schema constraints (`in` as an `enum`
-  of option values). Autofill, the `ai.enrich` node and the agent runtime describe fields the same
-  way.
+  carries `UNTRUSTED_CONTENT_GUARD`). Its validations become JSON Schema constraints (`in` as an
+  `enum` of option values). Its conditional `rules` are named in words inside the same delimited
+  span (`describeFieldRules`), since a rule quotes author values. Autofill, the `ai.enrich` node and
+  the agent runtime describe fields the same way.
+- Values for fields the draft's own values hide or disable are left out of the result
+  (`withoutClosedFields`, settled to a fixed point), so a draft never fills a field nobody sees or
+  one that is read-only. Autofill refuses such a field; `ai.enrich`, translation and the agent
+  runtime skip them.
 - Generated values are wrapped in the space's default locale.
 - Returns `{ contentTypeApiId, fields, usage }`. Pair it with `createEntry` to actually author.
 

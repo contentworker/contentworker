@@ -384,25 +384,31 @@ async function applyPromotion(base: AppContext, promotion: Promotion): Promise<P
       const version = await ctx.store.entries.getVersion(source, e.entryId, e.version);
       if (!version) throw new NotFoundError('Entry version', `${e.entryId}@${e.version}`);
       pinned.set(e.entryId, version.fields);
+      // The source's pinned version, copied whole (see `EntryWriteOptions.copy`).
       if (await ctx.store.entries.get(target, e.entryId)) {
-        await updateEntry(ctx, target, e.entryId, version.fields);
+        await updateEntry(ctx, target, e.entryId, version.fields, { copy: true });
       } else {
         // A new entry in the target is the source's, promoted: it keeps who created it and when.
         const from = (await ctx.store.entries.get(source, e.entryId))?.entry;
-        await createEntry(ctx, target, {
-          contentTypeApiId: e.contentTypeApiId,
-          fields: version.fields,
-          id: e.entryId,
-          ...(from
-            ? {
-                authorship: {
-                  createdAt: from.createdAt ?? null,
-                  createdBy: from.createdBy ?? null,
-                  firstPublishedAt: from.firstPublishedAt ?? null,
-                },
-              }
-            : {}),
-        });
+        await createEntry(
+          ctx,
+          target,
+          {
+            contentTypeApiId: e.contentTypeApiId,
+            fields: version.fields,
+            id: e.entryId,
+            ...(from
+              ? {
+                  authorship: {
+                    createdAt: from.createdAt ?? null,
+                    createdBy: from.createdBy ?? null,
+                    firstPublishedAt: from.firstPublishedAt ?? null,
+                  },
+                }
+              : {}),
+          },
+          { copy: true },
+        );
       }
       result.entries.push(e.entryId);
     }

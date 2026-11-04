@@ -1,6 +1,8 @@
 import {
   assertEntryFieldsValid,
   type ContentType,
+  DATE_FORMAT_EXAMPLES,
+  type DateFormat,
   type EntryFields,
   type FieldDefinition,
   NotFoundError,
@@ -8,6 +10,7 @@ import {
   optionValue,
   type Scope,
   ValidationError,
+  withoutClosedFields,
 } from '@contentworker/domain';
 import type { AIProvider, ModelTier } from '@contentworker/ports';
 import { recordAgentRun } from './agent-audit';
@@ -59,11 +62,19 @@ function jsonTypeFor(field: FieldDefinition): Record<string, unknown> {
       return {
         ...base,
         type: 'string',
-        description: `${describeFieldForModel(field)} (ISO-8601 date)`,
+        description: `${describeFieldForModel(field)} (${dateWritten(field.format)})`,
       };
     default:
       return { ...base, type: 'string' };
   }
+}
+
+/** How a Date value is written, for the model: its format's form, or any ISO-8601 date. */
+function dateWritten(format: DateFormat | undefined): string {
+  if (format === 'date') return `a date, ${DATE_FORMAT_EXAMPLES.date}`;
+  if (format === 'datetime') return `a date and time, ${DATE_FORMAT_EXAMPLES.datetime}`;
+  if (format === 'time') return `a time of day, ${DATE_FORMAT_EXAMPLES.time}`;
+  return 'ISO-8601 date';
 }
 
 /**
@@ -86,6 +97,23 @@ function constraintsFor(field: FieldDefinition): Record<string, unknown> {
     ...(text && v.size?.max !== undefined ? { maxLength: v.size.max } : {}),
     ...(text && v.regexp ? { pattern: v.regexp.pattern } : {}),
   };
+}
+
+/**
+ * A model's values as entry fields under the default locale, without a value for any field the
+ * type's rules hide or disable given the rest of the draft: the schema asks for every field (strict
+ * structured output requires it), so the rules are applied to the answer.
+ */
+function draftedFields(
+  ct: ContentType,
+  generated: Record<string, unknown>,
+  defaultLocale: string,
+): EntryFields {
+  const fields: EntryFields = {};
+  for (const [apiId, value] of Object.entries(generated)) {
+    if (value !== null && value !== undefined) fields[apiId] = { [defaultLocale]: value };
+  }
+  return withoutClosedFields(ct.fields, fields, defaultLocale);
 }
 
 export interface DraftEntryInput {
@@ -138,13 +166,7 @@ export async function draftEntry(
   }
 
   // Wrap each generated scalar into the localized shape under the default locale.
-  const generated = result.object as Record<string, unknown>;
-  const fields: EntryFields = {};
-  for (const [apiId, value] of Object.entries(generated)) {
-    if (value !== null && value !== undefined) {
-      fields[apiId] = { [config.defaultLocale]: value };
-    }
-  }
+  const fields = draftedFields(ct, result.object as Record<string, unknown>, config.defaultLocale);
 
   // Validation gate — identical to the human write path.
   assertEntryFieldsValid(ct, fields, {
@@ -214,13 +236,7 @@ export async function canvasToEntry(
     throw new ValidationError([{ field: '', message: 'Model did not return structured output' }]);
   }
 
-  const mapped = result.object as Record<string, unknown>;
-  const fields: EntryFields = {};
-  for (const [apiId, value] of Object.entries(mapped)) {
-    if (value !== null && value !== undefined) {
-      fields[apiId] = { [config.defaultLocale]: value };
-    }
-  }
+  const fields = draftedFields(ct, result.object as Record<string, unknown>, config.defaultLocale);
 
   assertEntryFieldsValid(ct, fields, {
     defaultLocale: config.defaultLocale,

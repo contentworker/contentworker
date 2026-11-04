@@ -519,6 +519,19 @@ export function maskDeniedFields<T>(
 }
 
 /**
+ * The fields of a type this principal may not write: those its role denies or makes read-only.
+ * Empty for an unrestricted principal.
+ */
+export function unwritableFieldsFor(
+  principal: Principal,
+  contentTypeApiId: string,
+): readonly string[] {
+  if (!principal.contentGrants) return [];
+  const grant = grantFor(principal, contentTypeApiId);
+  return [...new Set([...(grant?.deniedFields ?? []), ...(grant?.readOnlyFields ?? [])])];
+}
+
+/**
  * Enforces field-level write rules: writing a denied or read-only field
  * throws ForbiddenError. No-op for unrestricted principals.
  */

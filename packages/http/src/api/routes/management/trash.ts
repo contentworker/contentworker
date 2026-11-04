@@ -13,7 +13,10 @@ import {
   assertWritableFields,
   authorizeContent,
   ENTRY_OPERATION_ACTIONS,
+  maskDeniedFields,
   SCOPES,
+  unwritableFieldsFor,
+  withAuthorIdsFor,
 } from '@contentworker/domain';
 import { Hono } from 'hono';
 import { type AuthDeps, type AuthVars, requireScope } from '../../auth';
@@ -109,15 +112,24 @@ export function trashRoutes(deps: AuthDeps): Hono<AuthVars> {
     doc('Entries', 'Duplicate an entry', {
       ok: entryDocs.createdEntry,
       status: 201,
-      description: 'Copies fields and taxonomy metadata into a new draft.',
+      description:
+        'Copies fields and taxonomy metadata into a new draft. A role needs read and write on the ' +
+        'type; the copy holds every field, and answers without the ones the role may not read.',
     }),
     requireScope(SCOPES.contentWrite),
     async (c) => {
-      await guardEntry(c, c.req.param('id'), 'read');
+      // Writing a copy is a write of that content type, not just a read: refused before it exists.
+      await guardEntry(c, c.req.param('id'), ['read', 'write']);
       const created = await duplicateEntry(actingCtx(ctx, c), scopeOf(c), c.req.param('id'));
-      // Writing a copy is a write of that content type, not just a read.
-      authorizeContent(c.get('principal'), 'write', created.entry.contentTypeApiId);
-      return c.json(created, 201);
+      const principal = c.get('principal');
+      return c.json(
+        {
+          ...created,
+          entry: withAuthorIdsFor(principal, created.entry),
+          fields: maskDeniedFields(principal, created.entry.contentTypeApiId, created.fields),
+        },
+        201,
+      );
     },
   );
 
@@ -133,14 +145,27 @@ export function trashRoutes(deps: AuthDeps): Hono<AuthVars> {
     async (c) => {
       const body = await parseBody(c, updateEntryBody);
       const principal = c.get('principal');
+      let unwritable: readonly string[] = [];
       if (principal.contentGrants) {
         const { entry } = await getEntry(ctx, scopeOf(c), c.req.param('id'));
         authorizeContent(principal, 'write', entry.contentTypeApiId);
         assertWritableFields(principal, entry.contentTypeApiId, body.fields ?? {});
+        unwritable = unwritableFieldsFor(principal, entry.contentTypeApiId);
       }
-      return c.json(
-        await updateEntry(actingCtx(ctx, c), scopeOf(c), c.req.param('id'), body.fields),
+      const saved = await updateEntry(
+        actingCtx(ctx, c),
+        scopeOf(c),
+        c.req.param('id'),
+        body.fields,
+        {
+          unwritable,
+        },
       );
+      // The save kept the fields this writer may not write; the ones it may not read stay hidden.
+      return c.json({
+        ...saved,
+        fields: maskDeniedFields(principal, saved.entry.contentTypeApiId, saved.fields),
+      });
     },
   );
 

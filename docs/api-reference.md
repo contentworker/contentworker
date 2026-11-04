@@ -98,7 +98,7 @@ deleted after its check is refused (`404`).
 ## System endpoints
 
 | Method | Path                    | Auth | Response                                                 |
-| ------ | ----------------------- | ---- | -------------------------------------------------------- |
+| ------ | ----------------------- | ---- | ---------------------------------------------------- |
 | GET    | `/health`               | none | `{ "status": "ok", "scheduler": "ok" }` (below)          |
 | GET    | `/health/scheduler`     | none | `{ "scheduler": "ok" }`, `503` unless `ok` (below)       |
 | GET    | `/ready`                | none | `{ "status": "ready", "role": "<role>" }`                |
@@ -139,7 +139,7 @@ Delivery and Preview entry list endpoints, and GraphQL resolvers, share the quer
 `include`:
 
 | Parameter         | Syntax                                | Meaning                                                               |
-| ----------------- | ------------------------------------- | --------------------------------------------------------------------- |
+| ----------------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------ |
 | Field filter      | `fields.<apiId>=v`                    | Equals                                                                |
 | Field filter (op) | `fields.<apiId>[op]=v`                | `op` ∈ `ne`, `in`, `nin`, `gt`, `gte`, `lt`, `lte`, `between` (`low,high`), `exists`, `match`, `startsWith` |
 | Component path    | `fields.seo.title[op]=v`              | A component member (up to 4 segments); through a list of components, any element's |
@@ -287,7 +287,7 @@ The body, the analysis report and the format notes are in
 ### API keys, tokens & roles
 
 | Method | Path                                      | Scope         | Description                                                                                  |
-| ------ | ----------------------------------------- | ------------- | -------------------------------------------------------------------------------------------- |
+| ------ | ----------------------------- | ------------- | ------------------------------------------------------------------------- |
 | GET    | `/spaces/:space/api-keys`                 | `space:admin` | List keys                                                                                    |
 | POST   | `/spaces/:space/api-keys`                 | `space:admin` | Mint key (`kind`, optional `roleId`); raw `token` returned once                              |
 | DELETE | `/spaces/:space/api-keys/:id`             | `space:admin` | Revoke a key (also how a personal access token or OAuth token is revoked)                    |
@@ -333,7 +333,7 @@ principal) may call it; the web app does when it ends a person's access (see
 | POST   | `…/content-types/:apiId/published` | `content:publish` | Publish definition                 |
 | GET    | `…/content-types/:apiId/dependents` | `preview:read`   | What blocks a delete: `{ entries: { live, trashed }, linkedFrom, menus, redirects, urlPattern? }`; `403` for a role without read on the type |
 | DELETE | `…/content-types/:apiId`           | `content:manage`  | Delete (`{ deleted: true }`, emits `content_type.deleted`); `409` naming every dependent (`details.dependents`); `?purge_entries=true` (also `content:write` and `content:publish`, and a role on every type) → `202 { deleted: false, job }`, a `content_type_delete` bulk job that trashes and purges each entry, then deletes the type on `bulk.job_completed`; the job's `config.typeDeletion` (on `GET …/bulk/jobs/:id`) is then `{ deleted: true }` or `{ deleted: false, reason }` (also when the job is stopped) |
-| POST   | `…/content-types/:apiId/clone`     | `content:manage`  | `{ apiId, name }` → the copy (`201`): fields, display field, singleton; not `urlPattern`; draft, version 1; `409` for a taken apiId, also when a concurrent clone or create took it after the check (the insert never overwrites) |
+| POST   | `…/content-types/:apiId/clone`     | `content:manage`  | `{ apiId, name }` → the copy (`201`): fields, display field, singleton, group, description, icon, layout; not `urlPattern`; draft, version 1; `409` for a taken apiId, also when a concurrent clone or create took it after the check (the insert never overwrites) |
 
 A content type may carry `urlPattern` (a path starting with `/` whose placeholders are `{id}`,
 `{locale}` or its own `Slug` fields' apiIds, e.g. `/blog/{slug}`; `null` or `''` clears it; `422`
@@ -368,7 +368,7 @@ a caller pastes into a file, and wrapping it in a JSON string only makes it some
 ### Entries: CRUD and publishing
 
 | Method | Path                               | Scope             | Description                                                                                                    |
-| ------ | ---------------------------------- | ----------------- | -------------------------------------------------------------------------------------------------------------- |
+| ------ | ---------------------------------- | ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | POST   | `…/entries`                        | `content:write`   | Create draft `{ contentTypeApiId, fields }`                                                                    |
 | GET    | `…/entries/:id`                    | `preview:read`    | Get current entry (RBAC-filtered fields)                                                                       |
 | PUT    | `…/entries/:id`                    | `content:write`   | Save new draft version                                                                                         |
@@ -381,7 +381,7 @@ a caller pastes into a file, and wrapping it in a JSON string only makes it some
 | DELETE | `…/entries/:id/permanent`          | `content:publish` | **Irreversible** delete of a trashed entry. `?force=true` overrides the inbound-link guard                     |
 | GET    | `…/trash-settings`                 | `preview:read`    | `{ retentionDays }` (null: off, the default)                                                                   |
 | PUT    | `…/trash-settings`                 | `space:admin`     | `{ retentionDays: 1..3650 \| null }`: the hourly `trash-retention` sweep purges entries trashed longer ago, in every environment of the space, never one a published entry links to |
-| POST   | `…/entries/:id/duplicate`          | `content:write`   | Copy fields + taxonomy metadata into a new draft                                                               |
+| POST   | `…/entries/:id/duplicate`          | `content:write`   | Copy fields + taxonomy metadata into a new draft; a role needs read and write on the type, and the response is masked for it |
 | POST   | `…/entries/:id/preview-link`       | `content:write`   | Mint a shareable preview link `{ ttlHours?, previewBaseUrl? }` (default 72 h); `201 { url, token, expiresAt }` |
 | POST   | `…/embeds/resolve`                 | `content:write`   | Resolve a media URL `{ url }` into a rich-text `embed` node's data; `200 { embed, resolved }`                  |
 
@@ -453,7 +453,7 @@ which is valid to store. See [Rich text](./domain-model.md#rich-text).
 ### Entries: versioning and bulk
 
 | Method | Path                                      | Scope             | Description                                                                 |
-| ------ | ----------------------------------------- | ----------------- | --------------------------------------------------------------------------- |
+| ------ | ----------------------------------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | GET    | `…/entries/:id/versions`                  | `preview:read`    | Version list                                                                |
 | GET    | `…/entries/:id/versions/diff`             | `preview:read`    | Readable diff (`?from`, `?to`: a version, `draft` or `published`)           |
 | GET    | `…/entries/:id/versions/:version`         | `preview:read`    | Get specific version                                                        |
@@ -675,7 +675,7 @@ caller can't read. A run never exposes its starter's resolved principal, only `s
 ### Taxonomy
 
 | Method | Path                              | Scope            | Description                                                                                                        |
-| ------ | --------------------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------ |
+| ------ | --------------------------------- | ---------------- | ---------------------------------------------------------------------------------------------------------------- |
 | GET    | `…/taxonomy/schemes`              | `preview:read`   | List concept schemes                                                                                               |
 | POST   | `…/taxonomy/schemes`              | `content:manage` | Create scheme                                                                                                      |
 | DELETE | `…/taxonomy/schemes/:id`          | `content:manage` | Delete scheme                                                                                                      |
@@ -714,7 +714,7 @@ the whole set and answers `422` for a loop or a duplicate source (a chain is all
 [Domain model](./domain-model.md#redirects).
 
 | Method | Path                           | Scope            | Description                                                                                                                              |
-| ------ | ------------------------------ | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| ------ | ----------------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
 | GET    | `…/redirects`                  | `preview:read`   | List: `q` (substring of source, destination or note), `limit`, `cursor`                                                                  |
 | POST   | `…/redirects`                  | `content:manage` | Create `{ source, destination, status?, locale?, enabled?, note? }` (`201`, `{ redirect, chains }`)                                      |
 | GET    | `…/redirects/:id`              | `preview:read`   | Get one                                                                                                                                  |
@@ -736,7 +736,7 @@ An entry's SEO metadata is its type's `Seo` field ([Domain model](./domain-model
 it is also written with the entry's other fields (`PUT …/entries/:id`).
 
 | Method | Path                    | Scope           | Description                                                                                                                                                                       |
-| ------ | ----------------------- | --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ------ | ------------------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | PATCH  | `…/entries/:id/seo`     | `content:write` | Change one locale `{ locale?, title?, description?, canonicalUrl?, noindex?, ogImage? }` (left out keeps, `null` clears) → the entry view, a new draft; `422` without a `Seo` field. A role's field rules apply to the `Seo` field (`403` when it is read-only or denied) |
 | GET    | `…/sitemap`             | `preview:read`  | What Delivery's `sitemap` serves: `from`, `limit` → `{ items, next }`                                                                                                              |
 
@@ -749,7 +749,7 @@ not versioned; Delivery resolves its entry links against published entries when 
 [Domain model](./domain-model.md#menus).
 
 | Method | Path                     | Scope            | Notes                                                                                                                                           |
-| ------ | ------------------------ | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| ------ | ------------------------- | ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
 | GET    | `…/menus`                | `preview:read`   | `{ items, total }`: every menu by handle, `{ id, handle, name, description?, itemCount, revision, updatedAt }`, no items                         |
 | POST   | `…/menus`                | `content:manage` | Create `{ handle, name, description?, items? }` (`201`); `409` for a taken handle, `422` naming each bad item (`items[0].children[1].link`)      |
 | GET    | `…/menus/:id`            | `preview:read`   | The menu with its item tree and `revision`                                                                                                      |
@@ -787,7 +787,7 @@ field never becomes a label, and a denied slug field drops the item. Every write
 ### Webhooks
 
 | Method | Path                        | Scope         | Description    |
-| ------ | --------------------------- | ------------- | -------------- |
+| ------ | ---------------------------------------------- | ------------- | ------------------------------------------------------------------------------------------- |
 | GET    | `…/webhooks`                | `space:admin` | List webhooks  |
 | POST   | `…/webhooks`                | `space:admin` | Create webhook |
 | PUT    | `…/webhooks/:id`            | `space:admin` | Update webhook |
@@ -814,7 +814,7 @@ Base path: `/delivery/:space/:env`. Reads the denormalized **published** read mo
 delivery cache when `KV_CACHE` is bound; up to ~60 s cross-location staleness after a publish). List/get responses apply granular RBAC when the key is role-bound.
 
 | Method   | Path                                         | Scope           | Description                                                                                                                                                                                                                                                                                                                   |
-| -------- | -------------------------------------------- | --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| -------- | ----------------------------------------------- | --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | GET      | `/delivery/:space/:env/entries`              | `delivery:read` | List published entries                                                                                                                                                                                                                                                                                                        |
 | GET      | `/delivery/:space/:env/entries/:id`          | `delivery:read` | Get one published entry                                                                                                                                                                                                                                                                                                       |
 | GET      | `/delivery/:space/:env/assets`               | `delivery:read` | List published assets: `limit`, `cursor` (or `skip`), `kind`, `tag`, `folder` (id or `root`), `locale` → `{ items, total, nextCursor? }`. With `q`, a hybrid search of published assets only (needs `search:read` too, else 403) → `{ items, total, facets }`; a content-granted key gets an empty result with empty `facets` |
@@ -891,6 +891,10 @@ with content grants reads no assets (lists are empty, gets are 403, embeds stay 
   `placeholder { thumbhash dominantColor }` (type `AssetPlaceholder`, nullable),
   `focalPoint { x y }`, `video { status hlsUrl dashUrl thumbnailUrl durationSeconds }`,
   `rights { credit license }`, `file`.
+- A list of scalars is a GraphQL list of that scalar: `[String]` for `Symbol`, `Text` and `Date`,
+  `[Int]` for `Integer`, `[Float]` for `Number`. A list of links or components stays `JSON`.
+  **Breaking (schema):** a list of `Symbol` values was `JSON` before; client types generated from
+  the schema change from a JSON scalar to `[String]`.
 
 ### Live Content (SSE)
 

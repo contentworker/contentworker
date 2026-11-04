@@ -227,9 +227,9 @@ read paths), 10 GB per database.
 `0001_init.sql` creates:
 
 | Tables                                                                                                                                            | Purpose                                                                                   |
-| ------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| ------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
 | `spaces`, `environments`, `environment_aliases`                                                                                                   | Spaces, branches, alias → environment                                                     |
-| `content_types`                                                                                                                                   | Content-type definitions (`fields` JSON)                                                  |
+| `content_types`                                                                                                                                   | Content-type definitions (`fields` JSON; group, description, icon, `layout` JSON from 0026) |
 | `entries`, `entry_versions`, `entry_published`, `entry_metadata`, `entry_unique_values`                                                           | Entry aggregate, version ledger, published read model, tags/concepts, unique-field claims |
 | `assets`, `asset_published`                                                                                                                       | Asset metadata and its published read model                                               |
 | `references`                                                                                                                                      | Link graph (reverse lookups for invalidation and usage)                                   |
@@ -337,6 +337,12 @@ space's value, means off), the nullable `environments.trash_sweep_cursor` (JSON 
 where the retention sweep resumes in that environment; NULL is from the oldest) and the partial index `entries_trashed` on `(space_id, environment_id,
 updated_at, id) WHERE status = 'archived'`, which the engine's trash retention sweep reads. Nothing
 is backfilled (see [Architecture](./architecture.md)).
+
+`0026_content_type_details.sql` adds four nullable columns to `content_types`: `group_name`,
+`description`, `icon` and `layout` (JSON, the entry form's tabs and field groups; editor-only and
+never delivered). Code older than the migration neither reads nor writes them, and its upsert
+names only the columns it knows, so a save from it leaves them as they were. Nothing is
+backfilled (see [Domain model](./domain-model.md#content-type)).
 
 `0025_locale_settings.sql` adds the nullable JSON `spaces.locale_settings` (`{ delivered?,
 direction? }` by locale) beside `locales`, which stays the string array older code reads; NULL,

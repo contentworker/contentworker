@@ -293,6 +293,10 @@ function makeContentTypeRepo(x: Exec): ContentTypeRepo {
         singleton: ct.singleton === true,
         // Delivery serves by the flag as last published: a draft save leaves it as it was.
         publishedSingleton: ct.status === 'published' && ct.singleton === true,
+        group: ct.group ?? null,
+        description: ct.description ?? null,
+        icon: ct.icon ?? null,
+        layout: ct.layout ?? null,
       };
       await x.write(
         db
@@ -317,6 +321,10 @@ function makeContentTypeRepo(x: Exec): ContentTypeRepo {
                 ct.status === 'published'
                   ? values.publishedSingleton
                   : sql`${schema.contentTypes.publishedSingleton}`,
+              group: values.group,
+              description: values.description,
+              icon: values.icon,
+              layout: values.layout,
             },
           }),
       );
@@ -337,6 +345,10 @@ function makeContentTypeRepo(x: Exec): ContentTypeRepo {
           urlPattern: ct.urlPattern ?? null,
           singleton: ct.singleton === true,
           publishedSingleton: ct.status === 'published' && ct.singleton === true,
+          group: ct.group ?? null,
+          description: ct.description ?? null,
+          icon: ct.icon ?? null,
+          layout: ct.layout ?? null,
         })
         .onConflictDoNothing();
       if (x.inUnit) {
@@ -7113,6 +7125,10 @@ const toContentType = (r: CtRow): ContentType => ({
   fields: r.fields,
   ...(r.urlPattern ? { urlPattern: r.urlPattern } : {}),
   ...(r.singleton ? { singleton: true as const } : {}),
+  ...(r.group ? { group: r.group } : {}),
+  ...(r.description ? { description: r.description } : {}),
+  ...(r.icon ? { icon: r.icon } : {}),
+  ...(r.layout ? { layout: r.layout } : {}),
   version: r.version,
   status: r.status,
 });

@@ -168,6 +168,11 @@ export function ContentTypesOverview() {
                         <span className="font-mono">{ct.apiId}</span>
                         {ct.singleton ? ' · one entry only' : null}
                       </div>
+                      {ct.description && (
+                        <p className="line-clamp-2 max-w-measure text-muted-foreground text-xs">
+                          {ct.description}
+                        </p>
+                      )}
                     </Td>
                     <Td numeric label="Entries">
                       {figure(n?.total)}

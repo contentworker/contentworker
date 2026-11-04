@@ -2,6 +2,7 @@ import {
   type ContentType,
   type EntryFields,
   type FieldDefinition,
+  fieldStates,
   NotFoundError,
   type Scope,
   ValidationError,
@@ -90,8 +91,12 @@ export async function translateEntry(
   }
 
   const source_texts: Record<string, string> = {};
+  // A field its rules hide or disable in the target locale takes no translation.
+  const states = fieldStates(ct.fields, fields, input.targetLocale, defaultLocale);
   for (const f of ct.fields) {
     if (!TEXT_TYPES.has(f.type) || !f.localized) continue;
+    const state = states.get(f.apiId);
+    if (state?.hidden || state?.disabled) continue;
     const value = fields[f.apiId]?.[source];
     if (typeof value === 'string' && value.trim()) source_texts[f.apiId] = value;
   }
@@ -261,6 +266,17 @@ export async function autofillField(
   if (!SCALAR_TYPES.has(def.type)) {
     throw new ValidationError([
       { field: input.field, message: `Cannot autofill a ${def.type} field` },
+    ]);
+  }
+  // The rules read the entry as stored: a value for a field they hide would be content nobody
+  // sees, and a disabled one would be refused on save anyway.
+  const state = fieldStates(ct.fields, fields, locale, defaultLocale).get(def.apiId);
+  if (state?.hidden || state?.disabled) {
+    throw new ValidationError([
+      {
+        field: input.field,
+        message: `Cannot autofill a field its rules ${state.hidden ? 'hide' : 'disable'}`,
+      },
     ]);
   }
 

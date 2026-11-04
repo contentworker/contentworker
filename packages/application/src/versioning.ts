@@ -127,5 +127,7 @@ export async function restoreVersion(
     assertExpectedVersion(found.entry, opts);
   }
   const target = await getVersion(ctx, scope, entryId, version);
-  return updateEntry(ctx, scope, entryId, target.fields);
+  // The old version whole, as it was stored (see `EntryWriteOptions.copy`): a field its rules now
+  // disable takes its old value back rather than refusing the restore.
+  return updateEntry(ctx, scope, entryId, target.fields, { copy: true });
 }

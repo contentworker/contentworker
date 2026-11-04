@@ -1,4 +1,14 @@
-import { FIELD_GUIDANCE_LIMITS } from '@contentworker/domain';
+import {
+  ARRAY_ITEM_TYPES,
+  CONTENT_TYPE_LIMITS,
+  DATE_FORMATS,
+  FIELD_GUIDANCE_LIMITS,
+  LAYOUT_LIMITS,
+  MAX_FIELD_RULES,
+  PATTERN_PRESETS,
+  RULE_ACTIONS,
+  RULE_OPERATORS,
+} from '@contentworker/domain';
 import { z } from 'zod';
 
 /**
@@ -39,7 +49,18 @@ export const fieldValidations = z
         'Allowed values (Symbol, Text, Integer, Number). A labelled option stores its `value`',
       ),
     regexp: z
-      .object({ pattern: z.string(), flags: z.string().optional() })
+      .object({
+        pattern: z.string().optional().describe('Required unless a preset is named'),
+        flags: z.string().optional(),
+        preset: z
+          .enum(Object.keys(PATTERN_PRESETS) as [keyof typeof PATTERN_PRESETS])
+          .optional()
+          .describe(
+            `A named pattern: ${Object.entries(PATTERN_PRESETS)
+              .map(([k, p]) => `\`${k}\` (${p.name})`)
+              .join(', ')}. Saved with its pattern and flags filled in`,
+          ),
+      })
       .optional()
       .describe('A pattern a Symbol or Text value must match'),
     range: range.optional().describe('Inclusive bounds of an Integer or Number'),
@@ -50,12 +71,25 @@ export const fieldValidations = z
       .array(z.string())
       .optional()
       .describe('The content types a Link may point at'),
+    dateRange: z
+      .object({ min: z.string().optional(), max: z.string().optional() })
+      .optional()
+      .describe('Inclusive bounds of a Date, written in its format'),
+    assetMimeTypes: z
+      .array(z.string())
+      .max(50)
+      .optional()
+      .describe(
+        'MIME types an asset Link (or Array of them) accepts, exact (`application/pdf`) or by family (`image/*`); checked against the asset on write',
+      ),
     messages: z
       .object({
         in: z.string().optional(),
         regexp: z.string().optional(),
         range: z.string().optional(),
         size: z.string().optional(),
+        dateRange: z.string().optional(),
+        assetMimeTypes: z.string().optional(),
       })
       .optional()
       .describe(
@@ -63,6 +97,29 @@ export const fieldValidations = z
       ),
   })
   .loose();
+
+/** A conditional rule: hide or disable the field while a sibling's value matches. */
+export const fieldRule = z.object({
+  action: z
+    .enum(RULE_ACTIONS)
+    .describe(
+      '`hide`: not shown and not required. `disable`: read-only, keeping its stored value; a write that changes it is refused',
+    ),
+  when: z.object({
+    field: z
+      .string()
+      .describe(
+        'The sibling read: another field at the same level, or a dot path into a sibling component (`hero.style`)',
+      ),
+    operator: z
+      .enum(RULE_OPERATORS)
+      .describe('`gt` and `lt` compare a number sibling; `empty` and `notEmpty` take no value'),
+    value: z
+      .union([z.string(), z.number(), z.boolean(), z.array(z.union([z.string(), z.number()]))])
+      .optional()
+      .describe('What the sibling is compared with: a list for `in`'),
+  }),
+});
 
 export const field = z.object({
   apiId: z.string(),
@@ -85,7 +142,13 @@ export const field = z.object({
   type: z
     .string()
     .describe(
-      'Field type: Symbol, Slug, Text, RichText, Integer, Number, Boolean, Date, Location, JSON, Link, Component or Array. RichText values are a document tree (`nodeType`/`content`), never HTML; external media is an `embed` node holding structured data',
+      'Field type: Symbol, Slug, Text, RichText, Integer, Number, Boolean, Date, Location, Seo, JSON, Link, Component or Array (of Symbol, Text, Integer, Number, Date, Link or Component). RichText values are a document tree (`nodeType`/`content`), never HTML; external media is an `embed` node holding structured data',
+    ),
+  format: z
+    .enum(DATE_FORMATS)
+    .optional()
+    .describe(
+      'Date: `date` (YYYY-MM-DD), `datetime` (YYYY-MM-DDThh:mm, optional seconds and offset) or `time` (hh:mm). Absent, any ISO-8601 string',
     ),
   localized: z.boolean(),
   required: z.boolean(),
@@ -93,11 +156,19 @@ export const field = z.object({
   unique: z.boolean().optional(),
   defaultValue: z.unknown().optional(),
   validations: fieldValidations.optional(),
+  rules: z
+    .array(fieldRule)
+    .max(MAX_FIELD_RULES)
+    .optional()
+    .describe(
+      'Hide or disable the field while a sibling matches; any matching rule applies. Rules read the values being written, on every surface',
+    ),
   linkType: z.enum(['Entry', 'Asset']).optional(),
   fields: nestedFields.optional().describe('Component: the nested field definitions'),
   items: z
     .object({
-      type: z.enum(['Symbol', 'Link', 'Component']),
+      type: z.enum(ARRAY_ITEM_TYPES),
+      format: z.enum(DATE_FORMATS).optional().describe('For a list of Dates'),
       linkType: z.enum(['Entry', 'Asset']).optional(),
       validations: fieldValidations.optional(),
       fields: nestedFields.optional().describe('Array of Component: the shape of every element'),
@@ -120,6 +191,52 @@ export const field = z.object({
     .describe('Array: the element definition'),
 });
 
+/** The entry form's tabs and field groups: editor-only, never delivered. */
+export const contentTypeLayout = z
+  .object({
+    tabs: z
+      .array(
+        z.object({
+          apiId: z.string().describe('Stable tab id, unique in the layout'),
+          name: z.string().max(LAYOUT_LIMITS.name),
+          groups: z
+            .array(
+              z.object({
+                name: z
+                  .string()
+                  .max(LAYOUT_LIMITS.name)
+                  .optional()
+                  .describe('Shown as the group’s heading; without one, fields in order'),
+                fields: z.array(z.string()).describe('Top-level field apiIds, each placed once'),
+                collapsed: z.boolean().optional().describe('A named group drawn closed'),
+              }),
+            )
+            .max(LAYOUT_LIMITS.groupsPerTab),
+        }),
+      )
+      .min(1)
+      .max(LAYOUT_LIMITS.tabs),
+  })
+  .describe(
+    'How the admin’s entry form arranges the fields into tabs and groups. Editor-only: it changes nothing stored or validated, and Delivery never serves it. Fields it does not place follow on the first tab',
+  );
+
+/** A content type's group, description and icon: what the admin files and draws it by. */
+export const contentTypeDetails = {
+  group: z
+    .string()
+    .max(CONTENT_TYPE_LIMITS.group)
+    .describe('The admin’s sidebar lists types under their group'),
+  description: z
+    .string()
+    .max(CONTENT_TYPE_LIMITS.description)
+    .describe('What the type is for, for editors and agents'),
+  icon: z
+    .string()
+    .max(CONTENT_TYPE_LIMITS.icon)
+    .describe('A kebab-case icon name the admin draws beside the type, e.g. newspaper'),
+};
+
 export const contentType = z.object({
   apiId: z.string(),
   name: z.string(),
@@ -133,8 +250,26 @@ export const contentType = z.object({
     .literal(true)
     .optional()
     .describe('Holds at most one entry, served at GET …/singletons/:apiId; absent otherwise'),
+  group: contentTypeDetails.group.optional(),
+  description: contentTypeDetails.description.optional(),
+  icon: contentTypeDetails.icon.optional(),
+  layout: contentTypeLayout.optional(),
   version: z.int(),
   status: z.enum(['draft', 'published']),
+  warnings: z
+    .array(
+      z.object({
+        field: z.string(),
+        entries: z.int().describe('Entries holding a value the new rule refuses'),
+        message: z.string(),
+      }),
+    )
+    .optional()
+    .describe(
+      'On a save only: fields whose new format, dateRange or assetMimeTypes refuses values ' +
+        'entries already hold. The save went ahead; each such entry is refused on its next ' +
+        'save until the value is changed.',
+    ),
 });
 
 /** A published content type's place on the site, as Delivery serves it (`GET …/routes`). */

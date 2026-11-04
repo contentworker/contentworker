@@ -206,14 +206,17 @@ export async function executeImport(
       continue;
     }
     try {
+      // Judged as the plan judged it: on the record's values (see `EntryWriteOptions.copy`).
       if (record.action === 'update' && record.entryId) {
         await updateImportedEntry(ctx, scope, record.entryId, record.fields, blockedFields);
         updated += 1;
       } else {
-        await createEntry(ctx, scope, {
-          contentTypeApiId: contentType.apiId,
-          fields: record.fields,
-        });
+        await createEntry(
+          ctx,
+          scope,
+          { contentTypeApiId: contentType.apiId, fields: record.fields },
+          { copy: true },
+        );
         created += 1;
       }
     } catch (err) {
@@ -251,7 +254,7 @@ export async function updateImportedEntry(
   blockedFields: readonly string[],
 ): Promise<void> {
   if (blockedFields.length === 0) {
-    await updateEntry(ctx, scope, entryId, fields);
+    await updateEntry(ctx, scope, entryId, fields, { copy: true });
     return;
   }
   const found = await ctx.store.entries.get(scope, entryId);
@@ -265,6 +268,7 @@ export async function updateImportedEntry(
       ...Object.entries(fields).filter(([apiId]) => !blockedFields.includes(apiId)),
       ...blockedFields.filter((f) => Object.hasOwn(stored, f)).map((f) => [f, stored[f]] as const),
     ]) as EntryFields,
+    { copy: true },
   );
 }
 

@@ -3,6 +3,9 @@
  * model: a content type is an ordered list of typed, validated fields.
  */
 
+import type { FieldRule } from './field-rules';
+import type { PatternPreset } from './patterns';
+
 export const FIELD_TYPES = [
   'Symbol', // short text (single line)
   'Slug', // URL-safe identifier (normalized; usually unique)
@@ -17,10 +20,40 @@ export const FIELD_TYPES = [
   'JSON', // arbitrary JSON object
   'Link', // reference to another entry or asset
   'Component', // a group of nested typed fields
-  'Array', // array of Symbols, Links or Components
+  'Array', // array of scalars (Symbol, Text, Integer, Number, Date), Links or Components
 ] as const;
 
 export type FieldType = (typeof FIELD_TYPES)[number];
+
+/** What an Array's elements may be: a scalar, a link or a component. */
+export const ARRAY_ITEM_TYPES = [
+  'Symbol',
+  'Text',
+  'Integer',
+  'Number',
+  'Date',
+  'Link',
+  'Component',
+] as const;
+export type ArrayItemType = (typeof ARRAY_ITEM_TYPES)[number];
+
+/** The scalar element types: a list of them is edited, and its elements checked, value by value. */
+export const SCALAR_ITEM_TYPES: readonly ArrayItemType[] = [
+  'Symbol',
+  'Text',
+  'Integer',
+  'Number',
+  'Date',
+];
+
+/**
+ * What a Date value holds: a calendar `date` (`2026-11-03`), a `datetime` (`2026-11-03T14:30`,
+ * optionally with seconds and a `Z` or `±hh:mm` offset) or a `time` of day (`14:30`, optionally
+ * `14:30:15`). A Date field without a format takes any ISO-8601 string `Date.parse` reads, as
+ * before formats existed.
+ */
+export const DATE_FORMATS = ['date', 'datetime', 'time'] as const;
+export type DateFormat = (typeof DATE_FORMATS)[number];
 
 /** What a Link (or Array of Links) points at. */
 export type LinkType = 'Entry' | 'Asset';
@@ -50,7 +83,14 @@ export type FieldOption =
   | { readonly value: string | number; readonly label: string };
 
 /** The validation rules a custom message can replace the default error text of. */
-export const MESSAGE_RULES = ['in', 'regexp', 'range', 'size'] as const;
+export const MESSAGE_RULES = [
+  'in',
+  'regexp',
+  'range',
+  'size',
+  'dateRange',
+  'assetMimeTypes',
+] as const;
 export type MessageRule = (typeof MESSAGE_RULES)[number];
 
 /**
@@ -60,14 +100,28 @@ export type MessageRule = (typeof MESSAGE_RULES)[number];
 export interface FieldValidations {
   /** Allowed values (enumeration), bare or labelled. */
   in?: readonly FieldOption[];
-  /** Regular expression a Symbol/Text value must match. */
-  regexp?: { pattern: string; flags?: string };
+  /**
+   * Regular expression a Symbol/Text value must match. With `preset`, a named pattern
+   * (`PATTERN_PRESETS`): the domain writes its `pattern` and `flags` when the type is saved, so
+   * the stored rule is always a plain, screened pattern.
+   */
+  regexp?: { pattern: string; flags?: string; preset?: PatternPreset };
   /** Numeric range (inclusive) for Integer/Number. */
   range?: { min?: number; max?: number };
   /** Length range (inclusive) for Symbol/Text, or item count for Array. */
   size?: { min?: number; max?: number };
   /** For Link/Array-of-Link: restrict to these content type apiIds. */
   linkContentTypes?: readonly string[];
+  /**
+   * For a Date: the earliest and latest value (inclusive), written in the field's format.
+   * Either bound may be left out.
+   */
+  dateRange?: { min?: string; max?: string };
+  /**
+   * For an asset Link (or an Array of them): the MIME types a linked asset may have, exact
+   * (`application/pdf`) or by family (`image/*`). Checked against the asset itself on write.
+   */
+  assetMimeTypes?: readonly string[];
   /**
    * The error text a broken rule reports instead of the default, keyed by rule:
    * `{ regexp: 'Enter a five-digit ZIP code' }`. A map rather than a key inside
@@ -206,6 +260,8 @@ export interface FieldDefinition {
    */
   readonly description?: string;
   readonly type: FieldType;
+  /** For a Date field: what its value holds (see {@link DATE_FORMATS}); absent, any ISO-8601 string. */
+  readonly format?: DateFormat;
   /** Whether values may differ per locale. */
   readonly localized: boolean;
   readonly required: boolean;
@@ -230,11 +286,19 @@ export interface FieldDefinition {
    */
   readonly defaultValue?: unknown;
   readonly validations?: FieldValidations;
+  /**
+   * Hide or disable the field while a sibling's value matches (see `field-rules.ts`). A hidden
+   * field is not required; a disabled one keeps its stored value and refuses a change. Evaluated
+   * in the domain, so the admin, the API, MCP and generation all agree.
+   */
+  readonly rules?: readonly FieldRule[];
   /** For Link fields: whether it links an Entry or Asset. */
   readonly linkType?: LinkType;
   /** For Array fields: the element definition. */
   readonly items?: {
-    readonly type: Extract<FieldType, 'Symbol' | 'Link' | 'Component'>;
+    readonly type: ArrayItemType;
+    /** For a list of Dates: what each element holds. */
+    readonly format?: DateFormat;
     readonly linkType?: LinkType;
     readonly validations?: FieldValidations;
     /** For Array-of-Component: the shape of each element. */

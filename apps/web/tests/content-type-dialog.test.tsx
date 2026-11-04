@@ -119,7 +119,7 @@ describe('the type dropdown', () => {
     renderDialog();
     // A component with no fields is refused by the domain, so offering the type
     // without nested-field authoring would only produce a save that fails.
-    fireEvent.click(screen.getAllByRole('combobox')[0] as HTMLElement);
+    fireEvent.click(screen.getAllByRole('combobox', { name: /^Type for/ })[0] as HTMLElement);
     await waitFor(() => expect(screen.getAllByRole('option').length).toBeGreaterThan(0));
     const options = screen.getAllByRole('option').map((o) => o.textContent);
     expect(options).toContain('Symbol');

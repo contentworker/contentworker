@@ -20,8 +20,10 @@ import {
   describeAnswers,
   type EntryFields,
   eventTypeFor,
+  fieldStates,
   interpolate,
   logicHolds,
+  openProposals,
   RateLimitedError,
   type RunContext,
   SCOPES,
@@ -815,8 +817,16 @@ export const AI_EXECUTORS: Record<string, Exec> = {
       const v = i.run.entry.fields?.[apiId]?.[locale];
       return typeof v === 'string' && v.trim() !== '';
     };
-    // The enrich agent's rule: fill the text fields that are still empty.
-    const empty = ct.fields.filter((f) => TEXT_TYPES.has(f.type) && !filled(f.apiId));
+    // The enrich agent's rule: fill the text fields that are still empty, and that the type's
+    // rules neither hide nor disable.
+    const states = fieldStates(ct.fields, i.run.entry.fields ?? {}, locale, locale);
+    const open = (apiId: string) => {
+      const s = states.get(apiId);
+      return !s?.hidden && !s?.disabled;
+    };
+    const empty = ct.fields.filter(
+      (f) => TEXT_TYPES.has(f.type) && !filled(f.apiId) && open(f.apiId),
+    );
     const settled = awaitReview ? 'approved' : 'applied';
     if (!empty.length) {
       return { branches: [settled], output: { proposed: {} }, summary: 'Nothing to enrich' };
@@ -845,11 +855,13 @@ export const AI_EXECUTORS: Record<string, Exec> = {
       },
       { ...call(i, 'workflow.enrich'), fallback: () => ({}) },
     );
-    const proposed: EntryFields = {};
+    const generated: EntryFields = {};
     for (const f of empty) {
       const v = r.value[f.apiId];
-      if (typeof v === 'string' && v.trim()) proposed[f.apiId] = { [locale]: v.trim() };
+      if (typeof v === 'string' && v.trim()) generated[f.apiId] = { [locale]: v.trim() };
     }
+    // Judged with the stored values, as they will be saved: one filled field can close another.
+    const proposed = openProposals(ct.fields, i.run.entry.fields ?? {}, generated, locale);
     const fields = Object.keys(proposed);
     if (!fields.length) {
       return {

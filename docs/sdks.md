@@ -534,7 +534,7 @@ try {
 ```
 
 | Guard                | `code`                              | Details on `err.error`                                   |
-| -------------------- | ----------------------------------- | -------------------------------------------------------- |
+| -------------------- | ---------------------------------------- | ----------------------------------------- |
 | `isAssetInUse`       | `asset_in_use` (409)                | `usage`, `total`                                         |
 | `isAssetRightsError` | `asset_embargoed`, `asset_expired` (409) | `embargoUntil` or `expiresAt`, by `code`            |
 | `isValidationError`  | `validation_failed` (422)           | `issues`: `{ field, locale?, message }[]`                 |
@@ -605,8 +605,13 @@ For each content type it emits two interfaces plus shared helpers and lookup map
   embedded), `Seo` → `{ title?, description?, canonicalUrl?, noindex?, ogImage? }`, `Array` → element type `[]`. The generated prelude declares `DeliveredAsset`.
   An `in` validation becomes a literal union of its stored values (`status: 'draft' | 'live'`;
   a labelled option contributes its `value`) exactly where the domain enforces it
-  (`Symbol`/`Text`/`Integer`/`Number`); `required` controls optionality. A field's `description`
-  (else its `help`) goes into the property's doc comment.
+  (`Symbol`/`Text`/`Integer`/`Number`); `required` controls optionality, except that a required
+  field a conditional rule can hide is optional (a hidden field is not required). A list of
+  `Integer` or `Number` is `number[]`, of `Symbol`, `Text` or `Date` `string[]`. A field's
+  `description` (else its `help`) goes into the property's doc comment, with a Date field's
+  format (`date: YYYY-MM-DD`) and a note when rules hide or disable it. An older codegen types a
+  list of numbers as `string[]` and a hideable required field as required: regenerate after
+  upgrading.
   **Breaking (types):** the management SDK's `FieldDefinition.validations` was typed as an array
   of records; it is now the `FieldValidations` object the API returns (with `in: FieldOption[]`
   and `messages`). Code that indexed it as an array reads the rule by name instead.
@@ -699,3 +704,5 @@ schema generated from your content types at `POST /delivery/:space/:env/graphql`
 `delivery:read`). It needs no SDK — use any GraphQL client with a CDA token. `asset(id)` is a
 typed `Asset` with `url(rendition, width)`, `srcset`, `placeholder`, per-field `locale` arguments and `video`. See
 [API reference → GraphQL Delivery](./api-reference.md#graphql-delivery).
+**Breaking (GraphQL):** a list of `Symbol` values is now typed `[String]`, not `JSON`; regenerate
+client types made from the schema.

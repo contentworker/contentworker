@@ -25,6 +25,22 @@ Delivery API serves only entries whose content type is published.
      the empty input). Give allowed values labels with `validations.in: [{ value: 'draft', label:
      'Draft' }]` (entries store the `value`), and replace a rule's default error with
      `validations.messages`, e.g. `{ regexp: 'Enter a five-digit ZIP code' }`.
+   - `rules` (optional) — hide or disable a field while a sibling matches:
+     `[{ action: 'hide', when: { field: 'status', operator: 'ne', value: 'sold' } }]`. Operators
+     are `eq`, `ne`, `in` (a list), `empty`, `notEmpty`, and `gt`/`lt` for a number sibling;
+     `field` may be a dot path into a sibling component (`hero.style`). A hidden field is not
+     required; a disabled one keeps its stored value. Inside a list of components, `hide` only.
+   - `group`, `description`, `icon` (optional) — how the admin files and draws the type: the
+     sidebar lists types under their `group`; `icon` is a kebab-case name (`newspaper`).
+   - `layout` (optional, editor-only, never delivered) — tabs and field groups for the entry form:
+     `{ tabs: [{ apiId, name, groups: [{ name?, fields: [apiIds], collapsed? }] }] }`. Each field
+     at most once; unplaced fields follow on the first tab. Left out keeps it; `null` clears it.
+   - A Date's `format`: `date` (2026-11-03) or `datetime` (2026-11-03T14:30). A `time` format and
+     lists of `Text`, `Integer`, `Number` or `Date` are read but refused on write until the next
+     release; use `Symbol` lists or a `datetime` meanwhile.
+   - Validations beyond the basics: `regexp: { preset: 'email' }` (also `url`, `slug`, `phone`,
+     `hexColor`, `usZipCode`) instead of writing a pattern; `dateRange: { min?, max? }` on a Date;
+     `assetMimeTypes: ['image/*']` on an asset Link, checked against the asset on write.
    - `urlPattern` (optional) — where the type's entries live on the site, e.g. `/blog/{slug}`;
      placeholders are `{id}`, `{locale}` or the apiId of one of the type's own `Slug` fields
      (`null` clears it). When a publish changes a slug it names, contentworker writes a `301` from
@@ -36,22 +52,22 @@ Delivery API serves only entries whose content type is published.
 
 ## Choosing field types
 
-| Need                                                            | Type                                            |
-| --------------------------------------------------------------- | ----------------------------------------------- |
-| Title, name, short label                                        | `Symbol`                                        |
-| URL segment                                                     | `Slug` (usually `unique: true`)                 |
-| Plain long text                                                 | `Text`                                          |
-| Formatted body copy                                             | `RichText`                                      |
-| Whole / decimal number                                          | `Integer` / `Number`                            |
-| Flag                                                            | `Boolean`                                       |
-| Date or timestamp                                               | `Date` (ISO-8601)                               |
-| Coordinates                                                     | `Location` (`{ lat, lon }`)                     |
-| Reference to another entry or an asset                          | `Link` with `linkType: 'Entry' \| 'Asset'`      |
-| Reusable group of nested fields                                 | `Component`                                     |
-| Search title, description, canonical URL, noindex, social image | `Seo` (one per type, top level; fixed shape)    |
-| List of tags, references or components                          | `Array` with `items`                            |
-| Page of mixed sections (blocks)                                 | `Array` with `items.variants` (see below)       |
-| Anything else                                                   | `JSON` (last resort: no field-level validation) |
+| Need                                                            | Type                                                                         |
+| --------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| Title, name, short label                                        | `Symbol`                                                                     |
+| URL segment                                                     | `Slug` (usually `unique: true`)                                              |
+| Plain long text                                                 | `Text`                                                                       |
+| Formatted body copy                                             | `RichText`                                                                   |
+| Whole / decimal number                                          | `Integer` / `Number`                                                         |
+| Flag                                                            | `Boolean`                                                                    |
+| Date, timestamp or time of day                                  | `Date` with `format: 'date' \| 'datetime' \| 'time'`                         |
+| Coordinates                                                     | `Location` (`{ lat, lon }`)                                                  |
+| Reference to another entry or an asset                          | `Link` with `linkType: 'Entry' \| 'Asset'`                                   |
+| Reusable group of nested fields                                 | `Component`                                                                  |
+| Search title, description, canonical URL, noindex, social image | `Seo` (one per type, top level; fixed shape)                                 |
+| List of tags, numbers, dates, references or components          | `Array` with `items` (`type`: any scalar but Boolean, `Link` or `Component`) |
+| Page of mixed sections (blocks)                                 | `Array` with `items.variants` (see below)                                    |
+| Anything else                                                   | `JSON` (last resort: no field-level validation)                              |
 
 A `Seo` field's value is `{ title?, description?, canonicalUrl?, noindex?, ogImage? }` (`ogImage` is
 an asset link; `canonicalUrl` a site path or an absolute http(s) URL). With a `urlPattern`, the

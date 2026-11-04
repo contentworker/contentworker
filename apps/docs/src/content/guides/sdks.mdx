@@ -337,7 +337,10 @@ article.fields.title; // string
 Each content type becomes a delivery shape (`ArticleFields`, one value per field) and a management
 shape (`ArticleDraftFields`, keyed by locale). A field's `in` validation becomes a union of its
 allowed values (an option's `value`, not its label), and its description or help text becomes the
-property's doc comment. The same output is served at `GET …/content-types?format=typescript`.
+property's doc comment, with a Date field's format. A list of numbers is `number[]`, and a required
+field that a [conditional rule](/guides/content-modeling/#conditional-field-rules) can hide is
+optional. Regenerate after upgrading: an older generator types number lists as `string[]`. The
+same output is served at `GET …/content-types?format=typescript`.
 
 :::caution[Upgrade before labelling options]
 A field's `in` list can hold `{ value, label }` options. SDK releases from before that throw when

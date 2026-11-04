@@ -1,6 +1,6 @@
 ---
 title: Content modeling
-description: Content types, the thirteen field types, components, repeaters and blocks, validations, field guidance, and how to change a model safely.
+description: Content types and how the admin files and lays them out, the thirteen field types, dates, lists, components, repeaters and blocks, validations, field guidance, conditional field rules, and how to change a model safely.
 ---
 
 A content model is the set of content types in a space. You define it in the admin (**Content →
@@ -18,6 +18,8 @@ A content type has:
 - an ordered list of **fields**;
 - optionally a **URL pattern**, where its entries live on your site;
 - optionally **singleton**: it holds one entry only.
+- optionally a **group**, **description** and **icon**, and an editor **layout** (see
+  [Organizing the model](#organizing-the-model)).
 
 Creating or changing a content type makes a draft definition. Each revision bumps the type's
 `version`; publishing marks that version live for authoring and delivery and emits a
@@ -66,13 +68,13 @@ at once; until that draft is published, Delivery serves the published entry with
 | `Integer`   | A whole number                                       | integer                        |
 | `Number`    | A decimal number                                     | number                         |
 | `Boolean`   | Yes or no                                            | boolean                        |
-| `Date`      | A date or date and time                              | ISO 8601 string                |
+| `Date`      | A date, a date and time, or a time of day ([formats](#dates)) | string                 |
 | `Location`  | A point on a map                                     | `{ "lat": …, "lon": … }`       |
 | `Seo`       | Search title, description, canonical URL, noindex and social image ([SEO](/guides/seo/)); one per type | object |
 | `JSON`      | Free-form structured data                            | object                         |
 | `Link`      | A reference to an entry or an asset                  | `{ "id": …, "linkType": … }`   |
 | `Component` | A group of nested fields (a "hero", a "call to action") | object                      |
-| `Array`     | A list of `Symbol`, `Link` or `Component` items      | array                          |
+| `Array`     | A list of `Symbol`, `Text`, `Integer`, `Number`, `Date`, `Link` or `Component` items | array |
 
 Each field also says whether it is **required**, **localized** (a separate value per locale) and
 **unique** (no two entries of the type may share a value; a clash is refused with the entry that
@@ -184,18 +186,22 @@ deleted until those links are removed.
 | Validation          | Applies to                 | Checks                                       |
 | ------------------- | -------------------------- | -------------------------------------------- |
 | `in`                | Symbol, Text, Integer, Number | The value is one of a list (bare values, or `{ value, label }`) |
-| `regexp`            | Symbol, Text               | The value matches a pattern                  |
+| `regexp`            | Symbol, Text               | The value matches a pattern, or a named [preset](#pattern-presets) |
 | `range`             | Integer, Number            | The value is between a min and a max         |
 | `size`              | Symbol, Text, Array        | Length, or number of items, is within bounds |
 | `linkContentTypes`  | Link, Array of Link        | The linked entry is one of these types       |
+| `dateRange`         | Date                       | The date is between a min and a max          |
+| `assetMimeTypes`    | Asset Link, Array of them  | The linked asset's file is one of these types (`image/*` for a family) |
 
 Validations run on every write, from every surface: the admin, the API, imports, AI drafting and
-agents. An AI agent can't save an entry a person couldn't.
+agents. An AI agent can't save an entry a person couldn't. `assetMimeTypes` checks the file type an
+asset was declared with when it was uploaded, not the file's contents.
 
 Give `in` options labels and an entry still stores the value: editors pick by label from a select,
 and relabelling an option never invalidates content. Bare values and labelled options mix in one
 list; a value can't be empty, and `'1'` and `1` count as the same value. To replace a rule's
-default error, add `messages`, keyed by rule (`in`, `regexp`, `range`, `size`); a message for a rule
+default error, add `messages`, keyed by rule (`in`, `regexp`, `range`, `size`, `dateRange`,
+`assetMimeTypes`); a message for a rule
 the field doesn't declare is refused, and so is one on a list's elements (`items`), whose rules
 aren't enforced per element yet.
 
@@ -210,6 +216,69 @@ aren't enforced per element yet.
   }
 }
 ```
+
+### Pattern presets
+
+Instead of writing a regular expression, name a preset: `email`, `url` (http or https), `slug`,
+`phone` (international format, `+14155550123`), `hexColor` or `usZipCode`. Saving the type fills in
+the preset's pattern beside its name, so the rule reads the same everywhere:
+
+```json
+{ "apiId": "contact", "name": "Contact email", "type": "Symbol",
+  "validations": { "regexp": { "preset": "email" } } }
+```
+
+In the admin, pick one from **Pattern** in a text field's **Settings**.
+
+## Dates
+
+A `Date` field's `format` says what it holds, and how its value is written:
+
+| `format`   | Value              | Entry form            |
+| ---------- | ------------------ | --------------------- |
+| `date`     | `2026-11-03`       | a date picker         |
+| `datetime` | `2026-11-03T14:30` (seconds and a `Z` or `+01:00` offset optional) | date and time |
+| `time`     | `14:30`            | a time picker         |
+
+Without a format a Date takes any ISO 8601 date string, as before. Bound it with
+`validations.dateRange` (`{ "min": "2026-01-01" }`), written in the same format. Time-only fields
+can be read today and are accepted on write in the next release.
+
+## Lists
+
+An `Array` of `Symbol`, `Text`, `Integer`, `Number` or `Date` holds a list of those values, each
+checked as one (`"items": { "type": "Integer" }`; a list of dates takes `items.format`). The entry
+form edits it item by item, GraphQL types it as a list of the scalar (`[Int]`) and generated types
+as `number[]` or `string[]`. Lists of `Text`, `Integer`, `Number` and `Date` can be read today and
+are accepted on write in the next release; lists of `Symbol`, `Link` and `Component` work as before.
+
+## Organizing the model
+
+- **Group** files a type in the admin's sidebar under a heading (`Marketing`, `Docs`); types
+  without one are listed first.
+- **Description** says what the type is for, for editors choosing one and agents reading the model.
+- **Icon** is a short name the admin draws beside the type (`newspaper`, `calendar`).
+- **Layout** arranges the entry form into tabs, and fields within a tab into named groups, which
+  can start collapsed. It is for editors only: nothing about storage, validation or delivery
+  changes, and Delivery never serves it. Each field sits in one place; fields the layout doesn't
+  place follow on the first tab, so a new field always shows up.
+
+```json
+{
+  "group": "Editorial",
+  "icon": "newspaper",
+  "layout": {
+    "tabs": [
+      { "apiId": "content", "name": "Content", "groups": [{ "fields": ["title", "body"] }] },
+      { "apiId": "seo", "name": "SEO", "groups": [{ "name": "Search", "fields": ["seo"], "collapsed": true }] }
+    ]
+  }
+}
+```
+
+Set them in the content type dialog, or over the API and MCP (`model_create_content_type`); left
+out of a save they stay as they are, and `null` clears one. Removing a field removes it from the
+layout.
 
 ## Field guidance
 
@@ -226,6 +295,42 @@ field definition through the API or MCP (`model_create_content_type`). Agents ge
 rest of the definition from `model_get_content_type`, and AI drafting and autofill write to them.
 Generated TypeScript types carry a field's description (or help) as its doc comment.
 
+## Conditional field rules
+
+A field's `rules` hide or disable it while another field matches. A shipping address can show only
+when the delivery method is `post`; a price can lock once the status is `sold`:
+
+```json
+{
+  "apiId": "price",
+  "name": "Price",
+  "type": "Number",
+  "rules": [{ "action": "disable", "when": { "field": "status", "operator": "eq", "value": "sold" } }]
+}
+```
+
+- **`hide`**: the field leaves the entry form and isn't required. A value it already holds is kept,
+  and comes back into view when the rule stops matching.
+- **`disable`**: the field is read-only and keeps its stored value; a write that changes it is
+  refused. A new entry's disabled field keeps its default (or stays empty).
+
+`when.field` names a field beside this one, or a field inside a component beside it with a dot path
+(`hero.style`). The operators are `eq` and `ne` (equal or not to a string, number or boolean), `in`
+(one of a list), `empty` and `notEmpty`, and `gt` and `lt` (for a number field). Any matching rule
+applies, up to ten per field. Inside a list of components, a field can be hidden per item but not
+disabled.
+
+Rules are judged on the values being written, the same way everywhere: the entry form hides and
+locks fields as you type, and the API, MCP agents and AI drafting are held to them on save. AI
+drafting and autofill never write a hidden or disabled field. Add rules in the admin from a field's
+**Rules** button in the content type dialog, or on the field definition over the API and MCP.
+Generated TypeScript types make a required field that a rule can hide optional.
+
+Hide and disable are editorial aids, not access control: a hidden value is still stored and
+delivered, and anyone who can write the entry can open a disabled field by changing the value its
+rule reads. To keep a field from a role, use the role's field rules (denied or read-only fields,
+see [Roles](/guides/api-keys/#roles)).
+
 ## Changing a model
 
 - **Adding a field** is safe: existing entries simply have no value for it until edited. Make it
@@ -239,14 +344,18 @@ Generated TypeScript types carry a field's description (or help) as its doc comm
   (`details.fieldsInUse`). There is no override. Clear the value in those entries (save them
   without it), publish the ones that are live so the published version drops it too, and purge any
   in the trash; then remove the field.
+- **Tightening a rule** (a Date's `format` or `dateRange`, an asset link's `assetMimeTypes`) is
+  saved even when entries already hold values it refuses, and the response says how many under
+  `warnings` (`{ field, entries, message }`). Each of those entries is refused on its next save
+  until the value is changed.
 - **Renaming** a field's name is safe; its `apiId` is what code depends on, so treat that as
   permanent.
 - **Keep the model in a file.** `contentworker model export` writes it out, and `contentworker
   model apply --dry-run` shows what a changed file would add, change and remove before anything
   does; see the [command-line tool](/guides/cli/#the-content-model-as-code).
-- **Cloning a type** copies its fields, display field and singleton flag under a new API ID and
-  name, as a draft with no entries; its URL pattern stays behind, so two types never route the
-  same paths. In the admin it is **Clone…** in the type's menu on the Content page; over the API
+- **Cloning a type** copies its fields, display field, singleton flag, group, description, icon
+  and layout under a new API ID and name, as a draft with no entries; its URL pattern stays behind,
+  so two types never route the same paths. In the admin it is **Clone…** in the type's menu on the Content page; over the API
   `POST …/content-types/{apiId}/clone` with `{ apiId, name }`, over MCP `model_clone_content_type`.
 - **Deleting a type** is refused, naming every reason, while anything depends on it: entries (the
   trash included), another type whose links are restricted to it (in a component or block too), a

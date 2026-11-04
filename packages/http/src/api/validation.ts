@@ -36,6 +36,7 @@ import {
 import { STARTERS } from '@contentworker/seed';
 import type { Context } from 'hono';
 import { z } from 'zod';
+import { contentTypeDetails, contentTypeLayout } from './docs/schemas/content-types';
 
 /**
  * Parses a request JSON body against a zod schema, throwing a domain
@@ -307,7 +308,7 @@ export const roleBody = z.object({
   scopes: z.array(z.string().max(64)).max(64),
   contentGrants: z.array(contentGrant).max(500).optional(),
 });
-// The deep field shape (nested fields, validations, options, messages and guidance) is
+// The deep field shape (nested fields, validations, options, messages, guidance and rules) is
 // validated by the domain at every depth. The guidance keys are named here so the request
 // documents them, without caps or types: a revision may carry a value stored before guidance was
 // checked, which the domain lets through unchanged, so refusing it here would lock the type.
@@ -327,13 +328,30 @@ const fieldDef = z
       'What the field means, for agents and API readers',
       FIELD_GUIDANCE_LIMITS.description,
     ),
+    rules: z
+      .unknown()
+      .optional()
+      .describe(
+        'Hide or disable the field while a sibling matches: ' +
+          '[{ action: hide|disable, when: { field, operator: eq|ne|in|empty|notEmpty|gt|lt, value? } }]',
+      ),
+    format: z
+      .unknown()
+      .optional()
+      .describe('Date: date (YYYY-MM-DD), datetime (YYYY-MM-DDThh:mm) or time (hh:mm)'),
   })
   .loose();
+// Left out keeps a value on a revision; null clears it. Checked by the domain, which also lets a
+// value stored as it stands through.
+const detail = <T extends z.ZodType>(schema: T) => schema.nullable().optional();
 export const contentTypeBody = z.object({
   apiId: zId,
   name: zShort,
   displayField: zId,
-  description: zShort.optional(),
+  group: detail(contentTypeDetails.group),
+  description: detail(contentTypeDetails.description),
+  icon: detail(contentTypeDetails.icon),
+  layout: detail(contentTypeLayout),
   fields: z.array(fieldDef).max(500),
   urlPattern: z
     .string()

@@ -1,14 +1,17 @@
 import type { ContentType } from '../content-type/content-type';
+import { dateSortKey, dateValueProblem } from '../content-type/dates';
 import {
   BLOCK_KEY,
   BLOCK_TYPE_KEY,
   type ComponentVariant,
+  type DateFormat,
   type FieldDefinition,
   type FieldValidations,
   optionValue,
   ruleMessage,
   unsafeRegexReason,
 } from '../content-type/field';
+import { fieldState, sameFieldValue, valuesForRules } from '../content-type/field-rules';
 import { isSlug } from '../content-type/slug';
 import { type FieldIssue, ValidationError } from '../errors';
 import { validateRichText } from '../rich-text/rich-text';
@@ -19,10 +22,29 @@ export interface ValidationContext {
   readonly defaultLocale: LocaleCode;
   /** Locale codes permitted in the space. */
   readonly locales: readonly LocaleCode[];
+  /**
+   * The values this write replaces: the entry's current version on an update, the type's defaults
+   * on a create. Given, a field its rules disable must keep its value here. Left out by a reader
+   * that judges stored content rather than an edit (a snapshot, an import, a merge), which has no
+   * change to refuse.
+   */
+  readonly previous?: EntryFields;
 }
+
+/** The stored value a disabled field must keep, when the write is an edit; undefined when not. */
+type Kept = { readonly value: unknown } | undefined;
+
+const DISABLED_MESSAGE = 'Field is read-only while its rules disable it; it keeps its stored value';
 
 /** Max serialized size of a single JSON field value (per locale). */
 const MAX_JSON_FIELD_BYTES = 256 * 1024;
+
+/**
+ * The longest value a `regexp` rule is run against. Patterns are screened when a type is saved
+ * (`unsafeRegexReason`), but a backtracking engine can still go quadratic on a crafted value; past
+ * this length the value fails validation instead of being matched.
+ */
+export const MAX_REGEXP_INPUT = 10_000;
 
 /**
  * Validates a full set of entry field values against a content type. Returns
@@ -45,21 +67,41 @@ export function validateEntryFields(
     }
   }
 
+  // What the rules read in each locale, built once per locale and only when some field has rules.
+  const ruled = contentType.fields.some((f) => f.rules !== undefined);
+  const ruleValues = new Map<LocaleCode, Record<string, unknown>>();
+  const stateIn = (field: FieldDefinition, locale: LocaleCode) => {
+    if (!ruled) return { hidden: false, disabled: false };
+    let at = ruleValues.get(locale);
+    if (!at) {
+      at = valuesForRules(contentType.fields, fields, locale, ctx.defaultLocale);
+      ruleValues.set(locale, at);
+    }
+    return fieldState(field, at);
+  };
+
   for (const field of contentType.fields) {
     const localized = fields[field.apiId] ?? {};
     const targetLocales = field.localized ? ctx.locales : [ctx.defaultLocale];
 
     for (const locale of targetLocales) {
       const value = localized[locale];
+      const state = stateIn(field, locale);
+      const kept: Kept = ctx.previous ? { value: ctx.previous[field.apiId]?.[locale] } : undefined;
+      if (state.disabled && kept && !sameFieldValue(value, kept.value)) {
+        issues.push({ field: field.apiId, locale, message: DISABLED_MESSAGE });
+        continue;
+      }
       if (value === undefined || value === null) {
         // Required is enforced on the default locale only; other locales are
-        // optional and resolve via the fallback chain at delivery time.
-        if (field.required && locale === ctx.defaultLocale) {
+        // optional and resolve via the fallback chain at delivery time. A field
+        // its rules hide is not required: nobody can see it to fill it.
+        if (field.required && locale === ctx.defaultLocale && !state.hidden) {
           issues.push({ field: field.apiId, locale, message: 'Field is required' });
         }
         continue;
       }
-      validateValue(field, value, locale, issues, field.apiId);
+      validateValue(field, value, locale, issues, field.apiId, kept);
     }
 
     // A non-localized field must not carry values under non-default locales.
@@ -103,6 +145,7 @@ function validateValue(
   locale: LocaleCode,
   issues: FieldIssue[],
   path: string,
+  kept?: Kept,
 ): void {
   const push = (message: string): void => {
     issues.push({ field: path, locale, message });
@@ -139,6 +182,9 @@ function validateValue(
         const reason = unsafeRegexReason(v.regexp.pattern, v.regexp.flags);
         if (reason) {
           push(`Invalid pattern: ${reason}`);
+        } else if (value.length > MAX_REGEXP_INPUT) {
+          // Bounds the cost of any pattern the screen let through, a stored one included.
+          push(`Too long to check against its pattern (at most ${MAX_REGEXP_INPUT} characters)`);
         } else if (!new RegExp(v.regexp.pattern, v.regexp.flags).test(value)) {
           push(ruleMessage(v, 'regexp') ?? `Does not match pattern /${v.regexp.pattern}/`);
         }
@@ -159,11 +205,12 @@ function validateValue(
     case 'Boolean':
       if (typeof value !== 'boolean') push('Expected a boolean');
       break;
-    case 'Date':
-      if (typeof value !== 'string' || Number.isNaN(Date.parse(value))) {
-        push('Expected an ISO-8601 date string');
-      }
+    case 'Date': {
+      const problem = dateValueProblem(value, field.format);
+      if (problem) push(problem);
+      else checkDateRange(value as string, field.format, v, push);
       break;
+    }
     case 'Location': {
       const loc = value as { lat?: unknown; lon?: unknown };
       if (typeof loc?.lat !== 'number' || typeof loc?.lon !== 'number') {
@@ -194,7 +241,7 @@ function validateValue(
       if (!isLink(value)) push('Expected a link { id, linkType }');
       break;
     case 'Component': {
-      validateComponent(field.fields ?? [], value, locale, issues, path, push);
+      validateComponent(field.fields ?? [], value, locale, issues, path, push, kept);
       break;
     }
     case 'Seo': {
@@ -223,6 +270,10 @@ function validateValue(
         if (itemType === 'Link' && !isLink(item))
           push('Array item must be a link { id, linkType }');
         if (itemType === 'Symbol' && typeof item !== 'string') push('Array item must be a string');
+        // The other scalars report against the element, so "the third date" is sayable. Element
+        // rules (`items.validations`) are stored but not enforced per element yet.
+        const problem = scalarItemProblem(itemType, field.items?.format, item);
+        if (problem) issues.push({ field: `${path}[${index}]`, locale, message: problem });
         if (itemType === 'Component') {
           // Indexed, so "the third card is missing its title" is sayable.
           const at = `${path}[${index}]`;
@@ -250,6 +301,7 @@ function validateComponent(
   issues: FieldIssue[],
   path: string,
   push: (message: string) => void,
+  kept?: Kept,
 ): void {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     push('Expected an object of nested field values');
@@ -263,17 +315,32 @@ function validateComponent(
     }
   }
 
+  // A component's own fields: what is stored for it, when this is an edit of a single component
+  // (an Array's elements carry no `kept`, so `disable` never applies inside one).
+  const keptValues =
+    kept && typeof kept.value === 'object' && kept.value !== null && !Array.isArray(kept.value)
+      ? (kept.value as Record<string, unknown>)
+      : {};
   for (const f of nested) {
     const at = `${path}.${f.apiId}`;
     const nestedValue = values[f.apiId];
+    // Rules read the siblings inside this component value.
+    const state = fieldState(f, values);
+    const nestedKept: Kept = kept ? { value: keptValues[f.apiId] } : undefined;
+    if (state.disabled && nestedKept && !sameFieldValue(nestedValue, nestedKept.value)) {
+      issues.push({ field: at, locale, message: DISABLED_MESSAGE });
+      continue;
+    }
     if (nestedValue === undefined || nestedValue === null) {
       // Required means required wherever the component appears — including in
       // the fourth item of a repeater, which is the case that would otherwise
-      // slip through.
-      if (f.required) issues.push({ field: at, locale, message: 'Field is required' });
+      // slip through — unless the component's own rules hide the field.
+      if (f.required && !state.hidden) {
+        issues.push({ field: at, locale, message: 'Field is required' });
+      }
       continue;
     }
-    validateValue(f, nestedValue, locale, issues, at);
+    validateValue(f, nestedValue, locale, issues, at, nestedKept);
   }
 }
 
@@ -322,6 +389,26 @@ function validateBlocks(
   });
 }
 
+/** Why an element of a list of Text, Integer, Number or Date is not one, or null. */
+function scalarItemProblem(
+  type: string | undefined,
+  format: DateFormat | undefined,
+  item: unknown,
+): string | null {
+  switch (type) {
+    case 'Text':
+      return typeof item === 'string' ? null : 'Expected a string';
+    case 'Integer':
+      return typeof item === 'number' && Number.isInteger(item) ? null : 'Expected an integer';
+    case 'Number':
+      return typeof item === 'number' && Number.isFinite(item) ? null : 'Expected a number';
+    case 'Date':
+      return dateValueProblem(item, format);
+    default:
+      return null;
+  }
+}
+
 function isLink(value: unknown): value is { id: string; linkType: string } {
   const l = value as { id?: unknown; linkType?: unknown };
   return typeof l?.id === 'string' && typeof l?.linkType === 'string';
@@ -341,6 +428,25 @@ function checkIn(
   const allowed = v.in.map(optionValue);
   if (!allowed.includes(value))
     push(ruleMessage(v, 'in') ?? `Value must be one of: ${allowed.join(', ')}`);
+}
+
+function checkDateRange(
+  value: string,
+  format: DateFormat | undefined,
+  v: FieldValidations | undefined,
+  push: (m: string) => void,
+) {
+  const range = v?.dateRange;
+  if (!range) return;
+  const at = dateSortKey(value, format);
+  const min = typeof range.min === 'string' ? dateSortKey(range.min, format) : null;
+  const max = typeof range.max === 'string' ? dateSortKey(range.max, format) : null;
+  if (at === null) return;
+  if (min !== null && at < min)
+    push(ruleMessage(v, 'dateRange') ?? `Must be ${range.min} or later`);
+  if (max !== null && at > max) {
+    push(ruleMessage(v, 'dateRange') ?? `Must be ${range.max} or earlier`);
+  }
 }
 
 function checkRange(value: number, v: FieldValidations | undefined, push: (m: string) => void) {

@@ -30,7 +30,7 @@ A content type is an ordered list of typed, validated fields. The 13 field types
 (`FIELD_TYPES`):
 
 | Type        | Represents                                          | Stored value                   |
-| ----------- | --------------------------------------------------- | ------------------------------ |
+| ----------- | -------------------------------------------------------- | ------------------------------ |
 | `Symbol`    | Short single-line text                              | `string`                       |
 | `Slug`      | URL-safe identifier (normalized on write)           | `string`                       |
 | `Text`      | Long multi-line text                                | `string`                       |
@@ -38,13 +38,13 @@ A content type is an ordered list of typed, validated fields. The 13 field types
 | `Integer`   | Whole number                                        | integer                        |
 | `Number`    | Floating-point number                               | number                         |
 | `Boolean`   | True/false                                          | boolean                        |
-| `Date`      | ISO-8601 date/time                                  | string                         |
+| `Date`      | A date, date and time, or time of day (`format`)         | string                         |
 | `Location`  | Geographic point                                    | `{ lat: number, lon: number }` |
 | `Seo`       | Search engine metadata (see [SEO](#seo-and-the-sitemap)) | object of fixed shape     |
 | `JSON`      | Arbitrary JSON                                      | object                         |
 | `Link`      | Reference to an Entry or Asset                      | `{ id, linkType }`             |
 | `Component` | A group of nested typed fields                      | object keyed by nested apiId   |
-| `Array`     | List of `Symbol`, `Link` or `Component` (or blocks) | array                          |
+| `Array`     | List of scalars, `Link`s or `Component`s (or blocks)     | array                          |
 
 ### Components and repeaters
 
@@ -132,6 +132,12 @@ repeater is unchanged: its elements carry neither key.
   scan (`removedContentInUse` in `packages/application/src/content-types.ts`) serves both checks
   and the promotion risk check. There is no override, as for variants: clear the values, publish
   the entries whose published snapshot holds them, purge them from the trash, then remove it.
+- **Tightening a rule** on a top-level field (its `format`, `dateRange` or `assetMimeTypes`,
+  or its list items') is saved, never refused: `tightenedRulesInUse` judges each changed field
+  alone against the current version of every entry out of the trash (keyset pages of 100, a
+  page's linked assets read together, only when such a rule changed) and the save answers with
+  `warnings: [{ field, entries, message }]`, counting the entries the new rule refuses and the old
+  one took. Each such entry is refused on its next save until the value changes.
 
 **GraphQL** gives a blocks field a union named like a component in that place (`LandingPageBody`)
 with one object type per variant (`LandingPageBodyHero`), each exposing `_type`, `_key` and the
@@ -279,14 +285,17 @@ interface FieldDefinition {
   placeholder?: string; // an example in the empty input; never stored (≤ 200)
   description?: string; // what the field means, for agents and API readers (≤ 2000)
   type: FieldType;
+  format?: 'date' | 'datetime' | 'time'; // for Date fields (see Date formats)
   localized: boolean; // may values differ per locale?
   required: boolean;
   position: number; // ascending order within the type
   validations?: FieldValidations;
+  rules?: readonly FieldRule[]; // hide or disable it while a sibling matches (≤ 10)
   linkType?: 'Entry' | 'Asset'; // for Link fields
   items?: {
     // for Array fields
-    type: 'Symbol' | 'Link' | 'Component';
+    type: 'Symbol' | 'Text' | 'Integer' | 'Number' | 'Date' | 'Link' | 'Component';
+    format?: 'date' | 'datetime' | 'time'; // for a list of Dates
     linkType?: 'Entry' | 'Asset';
     validations?: FieldValidations;
     fields?: readonly FieldDefinition[]; // for Array-of-Component
@@ -301,14 +310,78 @@ interface FieldDefinition {
 ```ts
 interface FieldValidations {
   in?: readonly FieldOption[]; // enumeration (Symbol/Text/Integer/Number)
-  regexp?: { pattern: string; flags?: string }; // pattern match (Symbol/Text)
+  regexp?: { pattern: string; flags?: string; preset?: PatternPreset }; // pattern match (Symbol/Text)
   range?: { min?: number; max?: number }; // numeric range, inclusive (Integer/Number)
   size?: { min?: number; max?: number }; // length (Symbol/Text) or item count (Array)
   linkContentTypes?: readonly string[]; // restrict Link targets to these content-type apiIds
-  messages?: { in?: string; regexp?: string; range?: string; size?: string }; // custom error text
+  dateRange?: { min?: string; max?: string }; // inclusive Date bounds, in the field's format
+  assetMimeTypes?: readonly string[]; // an asset link's allowed MIME types: exact or `image/*`
+  messages?: { [rule in MessageRule]?: string }; // custom error text, keyed by rule
 }
 type FieldOption = string | number | { value: string | number; label: string };
 ```
+
+### Date formats
+
+A Date field's `format` says what its value holds, each in one written form (`dates.ts`):
+
+| `format`   | Value                                                                |
+| ---------- | -------------------------------------------------------------------- |
+| `date`     | `2026-11-03` (a real calendar date: `2026-02-30` is refused)         |
+| `datetime` | `2026-11-03T14:30`, optionally seconds, fraction and `Z` or `±hh:mm` |
+| `time`     | `14:30` or `14:30:15`                                                |
+| (none)     | any ISO-8601 string `Date.parse` reads, as before formats existed    |
+
+`validations.dateRange` bounds a Date inclusively; each bound is written in the field's format and
+checked when the type is saved (a bound that doesn't read, or `min` after `max`, is refused).
+Values compare by `dateSortKey`: milliseconds for a date or date and time, seconds into the day for
+a time. A list of Dates takes `items.format` and is checked element by element.
+
+### Lists of scalars
+
+An `Array`'s `items.type` is `Symbol`, `Text`, `Integer`, `Number`, `Date`, `Link` or `Component`.
+Each element of a list of scalars is checked against its type (and a Date element against
+`items.format`), with the issue reported at the element (`sizes[2]`). Element rules
+(`items.validations`) are stored but not yet enforced per element. GraphQL types a list of scalars
+as a list of that scalar (`[Int]`), and codegen as `number[]` or `string[]`.
+
+### Asset MIME types
+
+`validations.assetMimeTypes` on an asset `Link` (or an Array of them) lists the MIME types a linked
+asset may have, exactly (`application/pdf`) or by family (`image/*`); at most 50. The rule is on the
+field and the type on the asset, so it is checked on write by the use-case, not the validator:
+`assetMimeChecks` names every asset link under such a rule (any depth, every locale),
+`createEntry`, `updateEntry`, `validateEntry` and an environment merge (against the target's
+assets) read those assets in one batch (`assets.getMany`) and refuse one whose `file.contentType`
+doesn't match (`mimeTypeAllowed`), with the field's `messages.assetMimeTypes` when set; the
+default message names what the field takes, never the asset's own type. It checks the type the
+file was declared with on upload, not its bytes. A link to an asset that doesn't exist is left to
+the publish gate, as any link is.
+
+### Pattern presets
+
+`regexp.preset` names a pattern from `PATTERN_PRESETS` (`patterns.ts`): `email`, `url` (http or
+https), `slug`, `phone` (international, `+14155550123`), `hexColor` and `usZipCode`. When the type
+is saved (`compilePatternPresets`) the preset's `pattern` and `flags` are written into the rule
+beside its name, so the stored rule is an ordinary screened pattern every reader enforces, and a
+preset changed in a later release takes effect when the type is next saved. Each preset passes
+`unsafeRegexReason`. An unknown preset is refused by name.
+
+These settings are refused where they mean nothing (a `format` on a non-Date, `assetMimeTypes` on
+anything but an asset link, `items.format` on a non-Date list) and checked only when new against
+the stored field. Snapshot import and clone drop the ones a field can't use
+(`normalizeLegacyFields`).
+
+**Breaking (GraphQL):** a list of `Symbol` values (`Array` with `items.type: 'Symbol'`) was typed
+`JSON` and is now `[String]`, like every list of scalars (`[Int]`, `[Float]`, `[String]`); a
+query that selected it as a JSON scalar keeps working, but generated client types change.
+
+**Rollout.** A time-only Date (`format: 'time'`, or `items.format: 'time'`) and a list of `Text`,
+`Integer`, `Number` or `Date` are read by this release (validation, the entry form, codegen,
+GraphQL) but refused on write, because the release before it reads them wrongly: its validator
+demands a full ISO date and checks no list element, its form edits such a list as raw JSON, and
+its codegen types it as strings. The next release accepts them, once this one is deployed
+everywhere. Only a new use is refused, so a type that already holds one stays editable.
 
 ### Field guidance
 
@@ -348,12 +421,72 @@ and Text), and the entry form draws its select the same way. A list with nothing
 do guidance that isn't text within its cap, unusable messages and any message on an Array's
 elements. Readers treat a stored `in` that is not a list as no rule.
 
-`messages` replaces a rule's default error text, keyed by rule (`in`, `regexp`, `range`, `size`;
+`messages` replaces a rule's default error text, keyed by rule (`in`, `regexp`, `range`, `size`,
+`dateRange`, `assetMimeTypes`;
 at most 500 characters). It is a map rather than a key on each rule because `in` is a list. A
 message for a rule the field does not declare, or for an unknown rule, is refused when the type is
 defined, and so is any `messages` on an Array's `items.validations`: element rules are stored but
 not yet enforced per element (per-element `in` is planned). Content types are stored as JSON
 definitions, so none of this needs a migration.
+
+### Conditional field rules
+
+A field's `rules` hide or disable it while a sibling's value matches
+(`packages/domain/src/content-type/field-rules.ts`):
+
+```ts
+interface FieldRule {
+  action: 'hide' | 'disable';
+  when: {
+    field: string; // a sibling's apiId, or a dot path into a sibling Component (`hero.style`)
+    operator: 'eq' | 'ne' | 'in' | 'empty' | 'notEmpty' | 'gt' | 'lt';
+    value?: string | number | boolean | readonly (string | number)[]; // a list for `in`; none for empty/notEmpty
+  };
+}
+```
+
+Any matching rule applies. `eq`, `ne` and `in` compare strictly (`'2'` is not `2`); `empty` means
+absent, null, blank text or an empty list or object; `gt` and `lt` compare numbers and are refused
+on a sibling that is not an Integer or Number. A rule names a sibling at its own level: a top-level
+field reads top-level fields, a component's field reads the fields beside it in that component.
+
+`fieldState(field, values)` gives `{ hidden, disabled }` from the values being written, never from
+what was stored, so the admin's form (live, as the editor types) and the save judge the same thing.
+A condition reads a sibling's raw value whether or not that sibling is itself hidden, so rules
+never chase each other in a cycle. A top-level field's localized sibling is read in the same
+locale; one that is not localized, in the default locale.
+
+- **Hidden:** not shown in the entry form and not required. A value it holds is kept and still
+  validated, so switching the sibling back brings it back.
+- **Disabled:** read-only. Given the values the write replaces (`ValidationContext.previous`: the
+  stored version on an update, the type's defaults on a create), a value that differs from them is
+  refused ("Field is read-only while its rules disable it; it keeps its stored value"). A write
+  that stops the rule matching opens the field in the same write. Readers judging stored content
+  rather than an edit (snapshots, imports, merges, the workflow `validate` node) leave `previous`
+  out. `disable` is refused on a field inside an Array's element: elements are added, removed and
+  reordered, so an element has no stored value to keep. `hide` works per element.
+
+A rule must be usable when it is written (`ruleProblem`): a known action and operator, a sibling
+that exists (not the field itself, not a whole component), a value of the operator's shape (text
+at most 200 characters; an `in` list of 1 to 100). A revision cannot remove the sibling a kept rule
+reads. Snapshot import and clone drop unusable rules (`normalizeLegacyFields`).
+
+Generation never fills a hidden or disabled field: `describeFieldForModel` names the field's rules
+(`describeFieldRules`, in words) inside its delimited `<user_content>` span, since a rule quotes
+author values, and `withoutClosedFields` leaves the values of fields the draft's own values close
+out of a draft or canvas result. Autofill refuses a hidden or disabled field, and `ai.enrich`,
+translation and the agent runtime skip them. SDK codegen makes a required field that a rule can
+hide optional.
+
+Rules shipped without a reader-first step: a release from before them ignores `rules`, so after a
+rollback a hidden required field is required again and a disabled field is editable. Nothing
+stored is lost, but two things change for writers:
+
+- An entry saved while a required field was hidden and empty is refused on its next save by the
+  older release, until an editor fills the field.
+- The older release's MCP field schema strips the keys it doesn't know, so a content type revised
+  through MCP after a rollback loses its fields' `rules` and `format` (a revision through the admin
+  or the REST API keeps them, since its HTTP field schema stores unknown keys).
 
 ## The validation engine
 
@@ -365,17 +498,21 @@ Rules applied:
 
 1. **Unknown fields** — any key not in the content type is rejected.
 2. **Required** — enforced on the default locale only; other locales resolve via fallback at
-   delivery time.
-3. **Type checks** — per the table above (string/integer/number/boolean/valid ISO date/`{lat,lon}`
-   /object/`{id,linkType}`/array-of-items).
+   delivery time. A field its [rules](#conditional-field-rules) hide is not required, and a value
+   for a field they disable must equal the value it replaces.
+3. **Type checks** — per the table above (string/integer/number/boolean/a date in the field's
+   format/`{lat,lon}`/object/`{id,linkType}`/array-of-items, each element of a list of scalars
+   checked against its type).
 4. **Size** — `size.min`/`size.max` against string length or array item count.
 5. **Range** — `range.min`/`range.max` against numeric value.
 6. **Enumeration** — value must be the `value` of one of `validations.in`.
-7. **Regex** — `Symbol`/`Text` must match `validations.regexp`.
-8. **Localization** — non-localized fields must not carry values under non-default locales.
+7. **Regex** — `Symbol`/`Text` must match `validations.regexp` (a preset's compiled pattern).
+8. **Date range** — a Date must fall within `validations.dateRange`.
+9. **Localization** — non-localized fields must not carry values under non-default locales.
 
-A size, range, enumeration or regex issue reports `validations.messages[rule]` when the field sets
-one, else the default text.
+A size, range, enumeration, regex or date range issue reports `validations.messages[rule]` when
+the field sets one, else the default text. An asset link's MIME type is checked on write by the
+use-case (see [Asset MIME types](#asset-mime-types)).
 
 ```ts
 interface FieldIssue {
@@ -395,6 +532,10 @@ interface ContentType {
   fields: readonly FieldDefinition[];
   urlPattern?: string; // where its entries live on the site, e.g. /blog/{slug}
   singleton?: true; // holds at most one entry outside the trash; absent otherwise
+  group?: string; // the admin's sidebar lists types under their group (≤ 100)
+  description?: string; // what the type is for (≤ 2000)
+  icon?: string; // a kebab-case icon name the admin draws (≤ 40)
+  layout?: ContentTypeLayout; // editor-only tabs and field groups; never delivered
   version: number; // bumped on each revision
   status: 'draft' | 'published';
 }
@@ -406,6 +547,16 @@ interface ContentType {
 - `reviseContentType(current, changes)` — increments `version`, resets status to `draft`, sorts
   fields by `position`, optionally updates `name`/`displayField`/`fields`/`urlPattern` (`null` or
   `''` clears it) and `singleton` (left out, kept).
+- `group`, `description`, `icon` and `layout` follow one rule on a draft or revision: left out
+  keeps the stored value, `null` (or blank text) clears it, and a value stored as it stands passes
+  unchecked. They are columns on `content_types` (0026), not part of the `fields` JSON.
+- `layout` arranges the admin's entry form: `{ tabs: [{ apiId, name, groups: [{ name?, fields,
+  collapsed? }] }] }` (at most 20 tabs, 50 groups a tab; names at most 100). Each top-level field
+  is placed at most once, and a name that is not a field is refused (`checkLayout`), except that a
+  field the revision removes, or one a carried-over layout still names, leaves the layout quietly,
+  with any group or tab left empty. `layoutTabs(fields, layout)` resolves it for the form: fields it
+  doesn't place follow, in field order, at the end of the first tab, so a new field is never lost.
+  It changes nothing stored or validated, Delivery never serves it, and no webhook carries it.
 - **Singletons.** Every entry of a singleton type stakes `singletonClaim(apiId)` (field
   `SINGLETON_CLAIM_FIELD`, `$singleton`, which no field apiId can be) beside its unique values, so
   the `entry_unique_values` unique index admits one entry outside the trash whatever the race.
@@ -450,7 +601,8 @@ interface ContentType {
   keyset read); `finishContentTypeDeletion` deletes the type on the job's clean
   `bulk.job_completed`, and records the outcome on the job (`BulkJobRepo.mergeConfig`,
   `config.typeDeletion`: `{ deleted: true }` or `{ deleted: false, reason }`, also when the job is
-  stopped). `cloneContentType` defines a copy (fields, display field, singleton; not `urlPattern`)
+  stopped). `cloneContentType` defines a copy (fields, display field, singleton, group, description, icon,
+  layout; not `urlPattern`)
   at version 1 under a new `apiId`, inserted by `ContentTypeRepo.create`, which never overwrites.
 - `checkUrlPattern(pattern, fields)` — a pattern is a path starting with `/` (at most
   `MAX_URL_PATTERN_LENGTH`, 512; no space, `?`, `#`, `[`, `]` or `\`) whose `{…}` placeholders are
@@ -873,7 +1025,7 @@ with the entry, localized when the field is, and delivered with the entry's othe
 type opts in by declaring one.
 
 | Part           | Type                     | Rule                                                                                 |
-| -------------- | ------------------------ | ------------------------------------------------------------------------------------ |
+| -------------- | ---------------- | ----------------------------------------------------------------------------------------------- |
 | `title`        | `Symbol`                 | at most `MAX_SEO_TITLE_LENGTH` (200)                                                 |
 | `description`  | `Text`                   | at most `MAX_SEO_DESCRIPTION_LENGTH` (500)                                           |
 | `canonicalUrl` | `Symbol`                 | a site path (`/…`, not `//…`) or an absolute `http(s)` URL (`canonicalUrlIssue`); at most 2,048 |
@@ -1063,7 +1215,7 @@ See [Auth & RBAC](./auth-and-rbac.md) for the full model. The domain owns: the `
 All extend `DomainError` (`{ code, message, details? }`) and carry a stable, client-facing `code`:
 
 | Class                                 | `code`              | HTTP | Meaning                                                          |
-| ------------------------------------- | ------------------- | ---- | ---------------------------------------------------------------- |
+| ------------------------------------- | ------------------- | ---- | ------------------------------------------------------------------------------ |
 | `NotFoundError(resource, id)`         | `not_found`         | 404  | Resource missing                                                 |
 | `ValidationError(issues)`             | `validation_failed` | 422  | Carries `issues: FieldIssue[]`                                   |
 | `ConflictError(message, details?)`    | `conflict`          | 409  | Uniqueness or identity violation (e.g. duplicate apiId); `details` on the wire |

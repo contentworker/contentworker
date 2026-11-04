@@ -17,9 +17,12 @@ import {
 import {
   assertWritableFields,
   authorizeContent,
+  CONTENT_TYPE_LIMITS,
   type EntryFields,
   MAX_URL_PATTERN_LENGTH,
+  maskDeniedFields,
   SCOPES,
+  unwritableFieldsFor,
   ValidationError,
 } from '@contentworker/domain';
 import type { McpServer } from '@modelcontextprotocol/server';
@@ -44,7 +47,11 @@ export function registerWriteTools(server: McpServer, t: ToolContext): void {
         'Create or update a content type definition. A field can carry guidance for whoever ' +
         'fills it: `description` (what it means), `help` (how to fill it, shown under the ' +
         'input), `placeholder` (an example), labelled options in `validations.in` as ' +
-        '{ value, label }, and `validations.messages` to replace a rule’s default error text.',
+        '{ value, label }, and `validations.messages` to replace a rule’s default error text. ' +
+        '`rules` hide or disable a field while a sibling matches: a hidden field is not ' +
+        'required, and a disabled one keeps its stored value. The type can carry a `group` and ' +
+        '`icon` (how the admin lists it), a `description`, and an editor-only `layout` of tabs ' +
+        'and field groups for the entry form.',
       inputSchema: toolSchema('model_create_content_type', () =>
         z.object({
           apiId: z.string(),
@@ -67,6 +74,33 @@ export function registerWriteTools(server: McpServer, t: ToolContext): void {
               'holds at most one entry (site settings, a home page), read with singleton_get; ' +
                 'refused while the type has more than one entry. Left out, unchanged',
             ),
+          group: z
+            .string()
+            .max(CONTENT_TYPE_LIMITS.group)
+            .nullable()
+            .optional()
+            .describe('the admin sidebar lists types under their group; null clears it'),
+          description: z
+            .string()
+            .max(CONTENT_TYPE_LIMITS.description)
+            .nullable()
+            .optional()
+            .describe('what the type is for, for editors and agents; null clears it'),
+          icon: z
+            .string()
+            .max(CONTENT_TYPE_LIMITS.icon)
+            .nullable()
+            .optional()
+            .describe('a kebab-case icon name the admin draws, e.g. newspaper; null clears it'),
+          layout: z
+            .record(z.string(), z.any())
+            .nullable()
+            .optional()
+            .describe(
+              'editor-only entry form layout, never delivered: { tabs: [{ apiId, name, groups: ' +
+                '[{ name?, fields: [top-level field apiIds], collapsed? }] }] }; each field ' +
+                'placed at most once, unplaced fields follow on the first tab; null clears it',
+            ),
           ...scopeArgs,
         }),
       ),
@@ -80,6 +114,11 @@ export function registerWriteTools(server: McpServer, t: ToolContext): void {
           displayField: args.displayField,
           ...(args.urlPattern !== undefined ? { urlPattern: args.urlPattern } : {}),
           ...(args.singleton !== undefined ? { singleton: args.singleton } : {}),
+          ...(args.group !== undefined ? { group: args.group } : {}),
+          ...(args.description !== undefined ? { description: args.description } : {}),
+          ...(args.icon !== undefined ? { icon: args.icon } : {}),
+          // biome-ignore lint/suspicious/noExplicitAny: zod record → domain ContentTypeLayout, checked there
+          ...(args.layout !== undefined ? { layout: args.layout as any } : {}),
           // biome-ignore lint/suspicious/noExplicitAny: zod field shape → domain FieldDefinition
           fields: args.fields as any,
         }),
@@ -158,8 +197,9 @@ export function registerWriteTools(server: McpServer, t: ToolContext): void {
     'model_clone_content_type',
     {
       description:
-        'Copy a content type’s definition (fields, display field, singleton) under a new apiId ' +
-        'and name, as a draft with no entries. Not its URL pattern.',
+        'Copy a content type’s definition (fields, display field, singleton, group, description, ' +
+        'icon, layout) under a new apiId and name, as a draft with no entries. Not its URL ' +
+        'pattern.',
       inputSchema: toolSchema('model_clone_content_type', () =>
         z.object({
           apiId: z.string().describe('the type to copy'),
@@ -206,12 +246,21 @@ export function registerWriteTools(server: McpServer, t: ToolContext): void {
     },
     async (args) => {
       guard(SCOPES.contentWrite, scopeOf(args));
+      let unwritable: readonly string[] = [];
       if (principal.contentGrants) {
         const entry = await getPreviewEntry(ctx, scopeOf(args), args.id);
         authorizeContent(principal, 'write', entry.contentType);
         assertWritableFields(principal, entry.contentType, args.fields ?? {});
+        unwritable = unwritableFieldsFor(principal, entry.contentType);
       }
-      return ok(await updateEntry(ctx, scopeOf(args), args.id, args.fields as EntryFields));
+      const saved = await updateEntry(ctx, scopeOf(args), args.id, args.fields as EntryFields, {
+        unwritable,
+      });
+      // The save kept the fields this writer may not write; the ones it may not read stay hidden.
+      return ok({
+        ...saved,
+        fields: maskDeniedFields(principal, saved.entry.contentTypeApiId, saved.fields),
+      });
     },
   );
 
@@ -241,12 +290,24 @@ export function registerWriteTools(server: McpServer, t: ToolContext): void {
       guard(SCOPES.contentWrite, scopeOf(args));
       const fields = (args.fields ?? {}) as EntryFields;
       if (args.id !== undefined) {
+        let unwritable: readonly string[] = [];
+        let type = '';
         if (principal.contentGrants) {
           const entry = await getPreviewEntry(ctx, scopeOf(args), args.id);
-          authorizeContent(principal, 'write', entry.contentType);
-          assertWritableFields(principal, entry.contentType, fields);
+          type = entry.contentType;
+          authorizeContent(principal, 'write', type);
+          assertWritableFields(principal, type, fields);
+          unwritable = unwritableFieldsFor(principal, type);
         }
-        return ok(await validateEntry(ctx, scopeOf(args), { entryId: args.id, fields }));
+        const result = await validateEntry(
+          ctx,
+          scopeOf(args),
+          { entryId: args.id, fields },
+          { unwritable },
+        );
+        // Judged with the stored values of the fields this writer may not write; answered without
+        // the ones it may not read.
+        return ok({ ...result, fields: maskDeniedFields(principal, type, result.fields) });
       }
       const contentTypeApiId = args.contentType ?? '';
       authorizeContent(principal, 'write', contentTypeApiId);

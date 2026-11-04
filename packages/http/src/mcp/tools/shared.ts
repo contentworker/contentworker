@@ -2,8 +2,10 @@ import {
   type Asset,
   AssetRightsError,
   type ContentAction,
+  DATE_FORMATS,
   FIELD_GUIDANCE_LIMITS,
   FIELD_TYPES,
+  PATTERN_PRESETS,
   type PermissionScope,
   type Principal,
   type Scope,
@@ -70,21 +72,43 @@ export const fieldSchema = z.object({
       `what the field means, for agents and API readers (text, at most ` +
         `${FIELD_GUIDANCE_LIMITS.description} characters)`,
     ),
+  format: z
+    .enum(DATE_FORMATS)
+    .optional()
+    .describe(
+      'Date only: "date" (YYYY-MM-DD), "datetime" (YYYY-MM-DDThh:mm, optional seconds and ' +
+        'offset) or "time" (hh:mm); absent, any ISO-8601 string',
+    ),
   validations: z
     .record(z.string(), z.any())
     .optional()
     .describe(
       '{ in?: allowed values, each bare or { value, label } (entries store the value), ' +
-        'regexp?: { pattern, flags? }, range?: { min?, max? }, size?: { min?, max? }, ' +
-        'linkContentTypes?, messages?: { in|regexp|range|size: error text replacing the default } }',
+        `regexp?: { pattern, flags? } or { preset: ${Object.keys(PATTERN_PRESETS).join('|')} }, ` +
+        'range?: { min?, max? }, size?: { min?, max? }, linkContentTypes?, ' +
+        'dateRange?: { min?, max? } (a Date, in its format), ' +
+        'assetMimeTypes?: ["image/*", "application/pdf"] (an asset Link or list of them), ' +
+        'messages?: { in|regexp|range|size|dateRange|assetMimeTypes: error text replacing the default } }',
+    ),
+  // Shaped by the domain, which names what is wrong with a rule; described here so an agent can
+  // write one.
+  rules: z
+    .array(z.record(z.string(), z.any()))
+    .optional()
+    .describe(
+      'hide or disable this field while a sibling matches: [{ action: "hide"|"disable", when: ' +
+        '{ field: sibling apiId or dot path into a sibling component, operator: ' +
+        'eq|ne|in|empty|notEmpty|gt|lt, value? } }]. A hidden field is not required; a disabled ' +
+        'one keeps its stored value, and a write that changes it is refused',
     ),
   linkType: z.enum(['Entry', 'Asset']).optional(),
   items: z
     .record(z.string(), z.any())
     .optional()
     .describe(
-      'Array: { type: Symbol|Link|Component, linkType?, validations?, fields? } — or, for a ' +
-        'blocks field, { type: "Component", variants: [{ apiId, name, fields }] } instead of fields',
+      'Array: { type: Symbol|Text|Integer|Number|Date|Link|Component, format? (Date), ' +
+        'linkType?, validations?, fields? } — or, for a blocks field, { type: "Component", ' +
+        'variants: [{ apiId, name, fields }] } instead of fields',
     ),
   fields: z
     .array(z.record(z.string(), z.any()))

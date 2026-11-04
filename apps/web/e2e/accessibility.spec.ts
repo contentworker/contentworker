@@ -14,6 +14,8 @@ import {
   seedCms,
   seedGuidedType,
   seedIngestFindings,
+  seedLaidOutType,
+  seedRuledType,
   stubLocales,
   uploadAssetBytes,
   useCmsScope,
@@ -486,6 +488,36 @@ test('an entry with help, a placeholder and an options select has no accessibili
   await scan(page, info);
 });
 
+test('the content type dialog’s rules panel has no accessibility violations', async ({
+  page,
+  request,
+}, testInfo) => {
+  await seedRuledType(request);
+  await openCms(page, '/content');
+  await page.getByRole('button', { name: 'Edit “Ruled”' }).click();
+  // Open on a field that has rules; one added by hand on a field that has none.
+  await expect(page.getByRole('group', { name: 'Rules for Sold to' })).toBeVisible();
+  await page.getByRole('button', { name: 'Rules for Title' }).click();
+  await page.getByRole('button', { name: 'Add rule to Title' }).click();
+  await expect(page.getByLabel('Field read by Title rule 1')).toBeVisible();
+  await scan(page, testInfo);
+});
+
+test('an entry with a field its rules make read-only has no accessibility violations', async ({
+  page,
+  request,
+}, info) => {
+  test.skip(info.project.name.startsWith('iphone'), 'the editor is review-only on a phone');
+  await seedRuledType(request);
+  await openCms(page, '/content/ruled/new');
+  await page.getByLabel('Status').fill('sold', { timeout: 15_000 });
+  // Read-only, not disabled: still in the tab order, so the sweep sees it as a reader does.
+  await expect(page.getByLabel('Reference')).not.toBeEditable();
+  await expect(page.getByLabel('Reference')).toBeEnabled();
+  await expect(page.getByLabel('Sold to')).toBeVisible();
+  await scan(page, info);
+});
+
 test('the first-space notice and its dialog have no accessibility violations', async ({
   page,
 }, testInfo) => {
@@ -932,4 +964,32 @@ test('a content type’s clone and delete dialogs have no accessibility violatio
   const dialog = page.getByRole('dialog');
   await expect(dialog.getByRole('checkbox', { name: /Also delete its 1 entry/ })).toBeVisible();
   await scan(page, testInfo);
+});
+
+test('the content type dialog’s settings and layout have no accessibility violations', async ({
+  page,
+  request,
+}, testInfo) => {
+  await seedLaidOutType(request);
+  await openCms(page, '/content');
+  await page.getByRole('button', { name: 'Edit “Happening”' }).click();
+  await page.getByRole('button', { name: /^Settings for Day/ }).click();
+  await expect(page.getByLabel('Format for Day')).toBeVisible();
+  await page.getByRole('button', { name: /^Settings for Note/ }).click();
+  await expect(page.getByLabel('Pattern for Note')).toBeVisible();
+  await expect(page.getByLabel('Name of tab 1')).toBeVisible();
+  await expect(page.getByLabel('Tab for Day')).toBeVisible();
+  await scan(page, testInfo);
+});
+
+test('an entry form in tabs with a named group has no accessibility violations', async ({
+  page,
+  request,
+}, info) => {
+  test.skip(info.project.name.startsWith('iphone'), 'the editor is review-only on a phone');
+  await seedLaidOutType(request);
+  await openCms(page, '/content/happening/new');
+  await page.getByRole('tab', { name: 'When' }).click({ timeout: 15_000 });
+  await expect(page.getByRole('region', { name: 'Timing' })).toBeVisible();
+  await scan(page, info);
 });

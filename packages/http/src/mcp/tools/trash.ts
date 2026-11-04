@@ -9,7 +9,6 @@ import {
   trashEntry,
 } from '@contentworker/application';
 import {
-  authorizeContent,
   canAccessContentType,
   ENTRY_OPERATION_ACTIONS,
   maskDeniedFields,
@@ -153,17 +152,24 @@ export function registerTrashTools(server: McpServer, t: ToolContext): void {
   server.registerTool(
     'entries_duplicate',
     {
-      description: 'Copy an entry, with its taxonomy metadata, into a new draft.',
+      description:
+        'Copy an entry, with its taxonomy metadata, into a new draft. A role needs read and ' +
+        'write on the type; the copy holds every field, and answers without the ones the role ' +
+        'may not read.',
       inputSchema: toolSchema('entries_duplicate', () =>
         z.object({ id: z.string(), ...scopeArgs }),
       ),
     },
     async (args) => {
       guard(SCOPES.contentWrite, scopeOf(args));
-      await guardEntry(scopeOf(args), args.id, 'read');
+      // Writing a copy is a write of that content type, not just a read: refused before it exists.
+      await guardEntry(scopeOf(args), args.id, ['read', 'write']);
       const created = await duplicateEntry(ctx, scopeOf(args), args.id);
-      authorizeContent(principal, 'write', created.entry.contentTypeApiId);
-      return ok(created);
+      return ok({
+        ...created,
+        entry: withAuthorIdsFor(principal, created.entry),
+        fields: maskDeniedFields(principal, created.entry.contentTypeApiId, created.fields),
+      });
     },
   );
 }

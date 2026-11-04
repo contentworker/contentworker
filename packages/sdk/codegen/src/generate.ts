@@ -33,8 +33,13 @@ export interface FieldInput {
     readonly linkContentTypes?: readonly string[];
   };
   readonly linkType?: 'Entry' | 'Asset';
+  /** Conditional rules; a field a rule can hide may be absent even when required. */
+  readonly rules?: readonly { readonly action: string }[];
+  /** For a Date field: `date`, `datetime` or `time`; noted in the doc comment. */
+  readonly format?: string;
   readonly items?: {
     readonly type: string;
+    readonly format?: string;
     readonly linkType?: 'Entry' | 'Asset';
     readonly validations?: { readonly in?: readonly OptionInput[] };
     readonly fields?: readonly FieldInput[];
@@ -185,7 +190,7 @@ function renderContentType(ct: ContentTypeInput, typeName: string): string {
 
   for (const field of ct.fields) {
     const key = propertyKey(field.apiId);
-    const opt = field.required ? '' : '?';
+    const opt = present(field) ? '' : '?';
     const comment = fieldComment(field);
     delivery.push(`${comment}  ${key}${opt}: ${fieldValueType(field, { delivered: true })};`);
     draft.push(`${comment}  ${key}${opt}: Localized<${fieldValueType(field)}>;`);
@@ -253,11 +258,22 @@ export function fieldValueType(field: FieldInput, opts: { delivered?: boolean } 
         return `(${items.variants.map((v) => blockType(v, opts)).join(' | ')})[]`;
       }
       if (items?.type === 'Component') return `${componentType(items.fields, opts)}[]`;
+      if (items?.type === 'Integer' || items?.type === 'Number') return 'number[]';
+      // Symbol, Text and Date elements are strings.
       return 'string[]';
     }
     default:
       return 'unknown';
   }
+}
+
+/**
+ * Whether a value is always there: a required field, unless a rule can hide it (a hidden field is
+ * not required, so its value may be missing).
+ */
+function present(field: FieldInput): boolean {
+  if (!field.required) return false;
+  return !(Array.isArray(field.rules) && field.rules.some((r) => r?.action === 'hide'));
 }
 
 /** A component's nested fields as an inline object type. */
@@ -267,7 +283,7 @@ function componentType(
 ): string {
   if (!fields || fields.length === 0) return 'Record<string, unknown>';
   const rows = fields
-    .map((f) => `${propertyKey(f.apiId)}${f.required ? '' : '?'}: ${fieldValueType(f, opts)}`)
+    .map((f) => `${propertyKey(f.apiId)}${present(f) ? '' : '?'}: ${fieldValueType(f, opts)}`)
     .join('; ');
   // No `Localized<>` on nested values: a component is localized as a whole, so
   // the locale is resolved one level up and every leaf here is a bare value.
@@ -281,7 +297,7 @@ function componentType(
  */
 function blockType(variant: VariantInput, opts: { delivered?: boolean } = {}): string {
   const rows = variant.fields
-    .map((f) => `${propertyKey(f.apiId)}${f.required ? '' : '?'}: ${fieldValueType(f, opts)}`)
+    .map((f) => `${propertyKey(f.apiId)}${present(f) ? '' : '?'}: ${fieldValueType(f, opts)}`)
     .join('; ');
   return `{ _type: ${literal(variant.apiId)}; _key: string${rows ? `; ${rows}` : ''} }`;
 }
@@ -321,13 +337,32 @@ function fieldComment(field: FieldInput): string {
   // reading a type wants; help is the fallback.
   const guidance = (field.description ?? field.help)?.replace(/\s+/g, ' ').trim();
   if (guidance) notes.push(escapeComment(guidance));
+  const format =
+    field.type === 'Date'
+      ? field.format
+      : field.items?.type === 'Date'
+        ? field.items.format
+        : undefined;
+  const written = format ? DATE_WRITTEN[format] : undefined;
+  if (written) notes.push(written);
   if (field.localized) notes.push('localized');
+  if (Array.isArray(field.rules) && field.rules.length > 0) {
+    const actions = [...new Set(field.rules.map((r) => r?.action).filter(Boolean))];
+    notes.push(escapeComment(`conditional: ${actions.join(', ')} by rules`));
+  }
   if (field.linkType || field.items?.linkType) {
     const allowed = field.validations?.linkContentTypes;
     if (allowed?.length) notes.push(escapeComment(`links: ${allowed.join(', ')}`));
   }
   return notes.length ? `  /** ${notes.join(' — ')} */\n` : '';
 }
+
+/** How each Date format is written, for the doc comment. */
+const DATE_WRITTEN: Readonly<Record<string, string>> = {
+  date: 'date: YYYY-MM-DD',
+  datetime: 'date and time: YYYY-MM-DDThh:mm',
+  time: 'time: hh:mm',
+};
 
 function escapeComment(text: string): string {
   return text.replace(/\*\//g, '*\\/');

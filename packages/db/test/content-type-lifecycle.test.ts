@@ -127,6 +127,22 @@ describe('content type delete on D1', () => {
     expect(clone).toMatchObject({ version: 1, status: 'draft', displayField: 'title' });
   });
 
+  it('clones the group, description, icon and layout, which the insert stores', async () => {
+    const { ctx, scope } = await harness();
+    await updateContentType(ctx, scope, 'note', {
+      group: 'Docs',
+      description: 'A short note',
+      icon: 'newspaper',
+      layout: {
+        tabs: [{ apiId: 'main', name: 'Main', groups: [{ fields: ['title'] }] }],
+      },
+    });
+    const clone = await cloneContentType(ctx, scope, 'note', 'memo', 'Memo');
+    expect(clone).toMatchObject({ group: 'Docs', description: 'A short note', icon: 'newspaper' });
+    expect(clone.layout?.tabs[0]?.groups[0]?.fields).toEqual(['title']);
+    expect(await store.contentTypes.get(scope, 'memo')).toEqual(clone);
+  });
+
   it('refuses a second clone to one apiId at the insert, keeping the first', async () => {
     const { ctx, scope } = await harness();
     const first = await cloneContentType(ctx, scope, 'note', 'memo', 'Memo');

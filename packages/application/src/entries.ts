@@ -3,6 +3,7 @@ import {
   applyDefaults,
   archive,
   assertEntryFieldsValid,
+  assetMimeChecks,
   assignBlockKeys,
   ConflictError,
   deriveStatus,
@@ -10,8 +11,10 @@ import {
   type Entry,
   type EntryFields,
   type EntryVersion,
+  type FieldIssue,
   hasUniqueFields,
   InvalidStateError,
+  mimeTypeAllowed,
   NotFoundError,
   nextSlugCandidate,
   normalizeSlugFields,
@@ -23,12 +26,21 @@ import {
   stampCreated,
   uniqueClaims,
   type ValidationContext,
+  ValidationError,
 } from '@contentworker/domain';
 import { type BlobStore, type EntryRepo, TransactionConflictError } from '@contentworker/ports';
 import { type AppContext, actorOf } from './context';
 import { runHook, runPureHook } from './hooks';
 import { unpublishEntryTx } from './publishing';
 import { versionBodyPrefix } from './version-archive';
+
+/**
+ * A create judged as an edit of the type's defaults: a field its rules disable starts at its
+ * default (or empty) and cannot be given another value.
+ */
+function asCreate(contentType: ContentType, vctx: ValidationContext): ValidationContext {
+  return { ...vctx, previous: applyDefaults(contentType, {}, vctx.locales, vctx.defaultLocale) };
+}
 
 /** Loads the validation context (locales) for a scope. */
 async function loadValidationContext(ctx: AppContext, scope: Scope): Promise<ValidationContext> {
@@ -62,6 +74,43 @@ export interface CreateEntryInput {
   readonly authorship?: Pick<Entry, 'createdAt' | 'createdBy' | 'firstPublishedAt'>;
 }
 
+/** How a write's fields are judged. */
+export interface EntryWriteOptions {
+  /**
+   * A whole entry copied from elsewhere (a snapshot or space-export import, a promotion, a CSV or
+   * JSON import, a restored version): judged without previous values, so a field its rules
+   * disable is not held to its default or stored value. The copy carries what the source held;
+   * an interactive write (the API, MCP, AI, plugins) leaves this unset. Not accepted over the API.
+   */
+  readonly copy?: boolean;
+  /**
+   * Top-level fields the caller's role denies or makes read-only (`unwritableFieldsFor`). The
+   * caller can neither send nor read them all, so an update keeps their stored values: what is
+   * saved is what the caller sent plus what it may not touch, never an entry with those fields
+   * erased. A field among them that its rules disable then holds its stored value and passes.
+   */
+  readonly unwritable?: readonly string[];
+}
+
+/**
+ * The fields an update saves: those sent, with the stored values of the fields the caller may not
+ * write laid over them (it can't send those, so they are kept rather than dropped).
+ */
+function withUnwritable(
+  stored: EntryFields,
+  fields: EntryFields,
+  options: EntryWriteOptions,
+): EntryFields {
+  if (!options.unwritable?.length) return fields;
+  const out: EntryFields = { ...fields };
+  for (const apiId of options.unwritable) {
+    const kept = stored[apiId];
+    if (kept === undefined) delete out[apiId];
+    else out[apiId] = kept;
+  }
+  return out;
+}
+
 export interface EntryView {
   readonly entry: Entry;
   readonly fields: EntryFields;
@@ -72,6 +121,7 @@ export async function createEntry(
   ctx: AppContext,
   scope: Scope,
   input: CreateEntryInput,
+  options: EntryWriteOptions = {},
 ): Promise<EntryView> {
   const contentType = await requireContentType(ctx, scope, input.contentTypeApiId);
   if (contentType.singleton) await assertSingletonFree(ctx.store.entries, scope, contentType);
@@ -83,7 +133,7 @@ export async function createEntry(
     ctx,
     scope,
     contentType,
-    vctx,
+    options.copy ? vctx : asCreate(contentType, vctx),
     { contentTypeApiId: input.contentTypeApiId, fields: withDefaults },
     'save',
   );
@@ -180,7 +230,45 @@ async function prepareFields(
     () => ctx.ids.newId(),
   );
   assertEntryFieldsValid(contentType, fields, vctx);
+  await assertAssetMimeTypes(ctx, scope, contentType, fields);
   return { fields, skippedHooks: hooked.skipped };
+}
+
+/**
+ * Refuses a link to an asset whose file is not one of the MIME types its field allows
+ * (`validations.assetMimeTypes`). The rule is on the field and the type on the asset, so this is
+ * the one field check that reads: one batch for every linked asset, and none when no field has
+ * the rule. An asset that does not exist is left to the publish gate, as any link is.
+ */
+/**
+ * Refuses an asset link whose asset's declared file type (`file.contentType`, as uploaded) a MIME
+ * rule doesn't take. The message names the rule, never the asset's own type: the caller learns
+ * what the field takes, not what a file it may not read is. A link to an asset that isn't there is
+ * left to the publish gate.
+ */
+export async function assertAssetMimeTypes(
+  ctx: AppContext,
+  scope: Scope,
+  contentType: ContentType,
+  fields: EntryFields,
+): Promise<void> {
+  const checks = assetMimeChecks(contentType, fields);
+  if (checks.length === 0) return;
+  const assets = await ctx.store.assets.getMany(scope, [...new Set(checks.map((c) => c.assetId))]);
+  const mimeOf = new Map(assets.map((a) => [a.id, a.file.contentType]));
+  const issues: FieldIssue[] = [];
+  for (const c of checks) {
+    const mime = mimeOf.get(c.assetId);
+    if (mime === undefined || mimeTypeAllowed(mime, c.allowed)) continue;
+    issues.push({
+      field: c.field,
+      locale: c.locale,
+      message:
+        c.message ??
+        `Asset ${c.assetId} is not a file type this field takes (${c.allowed.join(', ')})`,
+    });
+  }
+  if (issues.length > 0) throw new ValidationError(issues);
 }
 
 /**
@@ -250,12 +338,21 @@ export async function updateEntry(
   scope: Scope,
   id: string,
   fields: EntryFields,
+  options: EntryWriteOptions = {},
 ): Promise<EntryView> {
   const found = await ctx.store.entries.get(scope, id);
   if (!found) throw new NotFoundError('Entry', id);
   const contentType = await requireContentType(ctx, scope, found.entry.contentTypeApiId);
   const vctx = await loadValidationContext(ctx, scope);
-  return saveEntryDraft(ctx, scope, found.entry, contentType, vctx, fields);
+  // The stored version is what a disabled field must keep, unless the whole entry is a copy.
+  return saveEntryDraft(
+    ctx,
+    scope,
+    found.entry,
+    contentType,
+    options.copy ? vctx : { ...vctx, previous: found.fields },
+    withUnwritable(found.fields, fields, options),
+  );
 }
 
 /**
@@ -347,6 +444,7 @@ export async function validateEntry(
   ctx: AppContext,
   scope: Scope,
   input: ValidateEntryInput,
+  options: Pick<EntryWriteOptions, 'unwritable'> = {},
 ): Promise<EntryValidation> {
   if ('entryId' in input) {
     const found = await ctx.store.entries.get(scope, input.entryId);
@@ -357,11 +455,11 @@ export async function validateEntry(
       ctx,
       scope,
       contentType,
-      vctx,
+      { ...vctx, previous: found.fields },
       {
         contentTypeApiId: found.entry.contentTypeApiId,
         entryId: input.entryId,
-        fields: input.fields,
+        fields: withUnwritable(found.fields, input.fields, options),
       },
       'dry-run',
     );
@@ -382,7 +480,7 @@ export async function validateEntry(
     ctx,
     scope,
     contentType,
-    vctx,
+    asCreate(contentType, vctx),
     { contentTypeApiId: input.contentTypeApiId, fields: withDefaults },
     'dry-run',
   );
@@ -551,10 +649,13 @@ export async function duplicateEntry(
   // values before trying to write it. Done here rather than by retrying on
   // conflict so the entry is created once, with a predictable slug.
   const fields = await freeUniqueValues(ctx, scope, contentType, marked);
-  const created = await createEntry(ctx, scope, {
-    contentTypeApiId: found.entry.contentTypeApiId,
-    fields,
-  });
+  // A whole-entry copy: a field its rules disable carries what the original holds.
+  const created = await createEntry(
+    ctx,
+    scope,
+    { contentTypeApiId: found.entry.contentTypeApiId, fields },
+    { copy: true },
+  );
 
   const metadata = await ctx.store.taxonomy.getEntryMetadata(scope, id);
   if (metadata && (metadata.tags.length > 0 || metadata.concepts.length > 0)) {

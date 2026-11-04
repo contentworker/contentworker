@@ -157,6 +157,11 @@ export interface GenerateFieldsInput {
   readonly scope: Scope;
   readonly contentTypeApiId: string;
   readonly fields: GuidedField[];
+  /**
+   * The entry the values will be written to. With it, a value for a field the type's rules would
+   * hide or disable once the values are in place is dropped (`openProposals`).
+   */
+  readonly entryId?: string;
   readonly context: string;
   /** Task framing for the model (e.g. fill empty fields vs. improve vs. repurpose). */
   readonly instruction?: string;

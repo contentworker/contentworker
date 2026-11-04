@@ -6,11 +6,11 @@ https://docs.contentworker.app/guides/cli/ and https://docs.contentworker.app/gu
 
 ## Two kinds of skill
 
-| Folder                  | For                                                     | Served                                    |
-| ----------------------- | ------------------------------------------------------- | ----------------------------------------- |
-| `packages/http/skills/` | An agent working *in* a workspace through MCP tools     | Embedded and served by the MCP server ([MCP](./mcp.md)) |
-| `skills/`               | A coding agent building *on* a workspace: SDKs and CLI  | Installed by developers from this repo     |
-| `.claude/skills/`       | Agents changing contentworker itself                    | This repo's Claude Code toolkit            |
+| Folder                  | For                                                    | Served                                                  |
+| ----------------------- | ------------------------------------------------------ | ------------------------------------------------------- |
+| `packages/http/skills/` | An agent working _in_ a workspace through MCP tools    | Embedded and served by the MCP server ([MCP](./mcp.md)) |
+| `skills/`               | A coding agent building _on_ a workspace: SDKs and CLI | Installed by developers from this repo                  |
+| `.claude/skills/`       | Agents changing contentworker itself                   | This repo's Claude Code toolkit                         |
 
 The `skills/` ones follow the open `SKILL.md` format: frontmatter with only `name` (the folder
 name) and `description` (what it covers and "Use when …"), a body under 500 lines, and detail in
@@ -20,16 +20,16 @@ name) and `description` (what it covers and "Use when …"), a body under 500 li
 
 `packages/cli/src`:
 
-| File             | Holds                                                                                   |
-| ---------------- | --------------------------------------------------------------------------------------- |
-| `bin.ts`         | The entry: `run(process.argv.slice(2), processIo())`                                    |
-| `run.ts`         | Argument parsing (`node:util` `parseArgs`, strict), dispatch, `--json`, errors to exit codes, help |
-| `commands.ts`    | `COMMANDS`, the registry: each command's name, options and handler. Help and the skills test read it |
+| File             | Holds                                                                                                                           |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `bin.ts`         | The entry: `run(process.argv.slice(2), processIo())`                                                                            |
+| `run.ts`         | Argument parsing (`node:util` `parseArgs`, strict), dispatch, `--json`, errors to exit codes, help                              |
+| `commands.ts`    | `COMMANDS`, the registry: each command's name, options and handler. Help and the skills test read it                            |
 | `session.ts`     | Which token and target a command uses: `CONTENTWORKER_TOKEN`, else the stored profile, refreshed when within a minute of expiry |
-| `oauth.ts`       | The RFC 8628 device flow against the api's authorization server: discovery, registration, polling, refresh, revocation |
-| `credentials.ts` | `credentials.json` in the user config dir, written 0600 in a 0700 directory, atomically (temp file and rename) |
-| `model.ts`       | Model files (JSON or a TypeScript module), normalization, and the plan `model apply` shows |
-| `io.ts`          | `Io`: process, fetch, clock, config dir and prompt, injected so tests run without a network or a terminal |
+| `oauth.ts`       | The RFC 8628 device flow against the api's authorization server: discovery, registration, polling, refresh, revocation          |
+| `credentials.ts` | `credentials.json` in the user config dir, written 0600 in a 0700 directory, atomically (temp file and rename)                  |
+| `model.ts`       | Model files (JSON or a TypeScript module), normalization, and the plan `model apply` shows                                      |
+| `io.ts`          | `Io`: process, fetch, clock, config dir and prompt, injected so tests run without a network or a terminal                       |
 
 Design points:
 
@@ -71,13 +71,13 @@ When the API's `info.version` changes in `packages/http/src/api/docs/openapi.ts`
 
 ## Tests
 
-| Suite                                   | Proves                                                                                   |
-| --------------------------------------- | ---------------------------------------------------------------------------------------- |
-| `packages/cli/test/auth.test.ts`        | Device-flow polling (interval, `slow_down`, deny, expiry), token file and directory modes, refresh and rotation, `CONTENTWORKER_TOKEN`, logout and revocation |
-| `packages/cli/test/model.test.ts`       | The plan (safe and destructive changes, nested components and block variants), JSON and TS model files, dry run, refusal, `--yes`, partial failure |
-| `packages/cli/test/commands.test.ts`    | Each command's request and `--json` shape, merge on update, bulk publish, import flow, doctor, exit codes |
-| `packages/cli/test/skills.test.ts`      | Every skill's frontmatter, and that each `contentworker` command and flag, `client.`/`cma.` method, SDK import, docs link and anchor, and relative link in `skills/` exists |
-| `packages/http/test/api/cli.test.ts`    | The CLI against the in-process api: device flow approved by a signed-in person, the 403 for a model change over OAuth, model round trip, entries, CSV import and re-run, types, doctor |
+| Suite                                | Proves                                                                                                                                                                                 |
+| ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `packages/cli/test/auth.test.ts`     | Device-flow polling (interval, `slow_down`, deny, expiry), token file and directory modes, refresh and rotation, `CONTENTWORKER_TOKEN`, logout and revocation                          |
+| `packages/cli/test/model.test.ts`    | The plan (safe and destructive changes, nested components and block variants), JSON and TS model files, dry run, refusal, `--yes`, partial failure                                     |
+| `packages/cli/test/commands.test.ts` | Each command's request and `--json` shape, merge on update, bulk publish, import flow, doctor, exit codes                                                                              |
+| `packages/cli/test/skills.test.ts`   | Every skill's frontmatter, and that each `contentworker` command and flag, `client.`/`cma.` method, SDK import, docs link and anchor, and relative link in `skills/` exists            |
+| `packages/http/test/api/cli.test.ts` | The CLI against the in-process api: device flow approved by a signed-in person, the 403 for a model change over OAuth, model round trip, entries, CSV import and re-run, types, doctor |
 
 The unit suites use a scripted fake server (`packages/cli/test/harness.ts`) whose `sleep` advances
 the clock, so no test waits. `packages/cli/turbo.json` adds `skills/`, the docs content and the SDK

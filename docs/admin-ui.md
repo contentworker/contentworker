@@ -93,7 +93,10 @@ menu at the sidebar's foot (the More sheet on a phone). Settings sections are ad
   the entry editor (TipTap rich text, components and repeaters, references, localized fields; a
   `Seo` field renders as a component of `SEO_FIELDS` in `EntryForm.tsx`, each part with a helper
   line wired to `aria-describedby`: title and description count characters against what search
-  results show, 60 and 160; canonical URL, hide from search engines, social image (asset picker)),
+  results show, 60 and 160; canonical URL, hide from search engines, social image (asset picker);
+  a type's layout as tabs and field groups; date inputs by format and list editors; fields its
+  rules hide, or make read-only with the reason linked, announced in a polite live line; see
+  DESIGN.md),
   version history, diff and restore, comments and tasks, metadata, AI assist; import
   (`/content/:typeId/import`) from CSV, JSON or a WordPress export, with a dry-run report before
   anything is written and a resumable job past 10,000 records; a whole space export

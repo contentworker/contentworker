@@ -12,6 +12,7 @@ import {
   authorizeContent,
   maskDeniedFields,
   SCOPES,
+  unwritableFieldsFor,
   ValidationError,
   withAuthorIdsFor,
 } from '@contentworker/domain';
@@ -82,12 +83,27 @@ export function entriesRoutes(deps: AuthDeps): Hono<AuthVars> {
       const principal = c.get('principal');
       const fields = body.fields ?? {};
       if (body.entryId !== undefined) {
+        let unwritable: readonly string[] = [];
+        let type = '';
         if (principal.contentGrants) {
           const { entry } = await getEntry(ctx, scopeOf(c), body.entryId);
-          authorizeContent(principal, 'write', entry.contentTypeApiId);
-          assertWritableFields(principal, entry.contentTypeApiId, fields);
+          type = entry.contentTypeApiId;
+          authorizeContent(principal, 'write', type);
+          assertWritableFields(principal, type, fields);
+          unwritable = unwritableFieldsFor(principal, type);
         }
-        return c.json(await validateEntry(ctx, scopeOf(c), { entryId: body.entryId, fields }));
+        const result = await validateEntry(
+          ctx,
+          scopeOf(c),
+          { entryId: body.entryId, fields },
+          { unwritable },
+        );
+        // Judged with the stored values of the fields this writer may not write; answered without
+        // the ones it may not read.
+        return c.json({
+          ...result,
+          fields: maskDeniedFields(principal, type, result.fields),
+        });
       }
       const contentTypeApiId = body.contentTypeApiId ?? '';
       authorizeContent(principal, 'write', contentTypeApiId);

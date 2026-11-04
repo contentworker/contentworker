@@ -14,6 +14,9 @@ import {
   seedCms,
   seedGuidedType,
   seedIngestFindings,
+  seedLaidOutType,
+  seedRuledType,
+  seedVenueType,
   statusOf,
   stubLocales,
   uploadAssetBytes,
@@ -1392,4 +1395,97 @@ test('a content type is cloned, then deleted with its entries, from its menu', a
   expect((await api(request, 'GET', `${MGMT}/content-types/${copyId}`)).status()).toBe(404);
   // Its row is gone: focus moves to the next row's menu button, or the page's heading.
   await expect.poll(focused).toMatch(/^(More actions for “(?!Copy \d+”).*”|H1)$/);
+});
+
+test('a field its rules hide appears and goes as its sibling changes, and the entry saves', async ({
+  page,
+  request,
+}) => {
+  await seedRuledType(request);
+  await openCms(page, '/content/ruled/new');
+  await expect(page.getByRole('button', { name: 'Save draft' })).toBeVisible(EDITOR_READY);
+  await page.getByLabel('Title').fill(`Ruled ${Date.now()}`);
+  const soldTo = page.getByLabel('Sold to');
+  await expect(soldTo).toHaveCount(0);
+  await page.getByLabel('Status').fill('sold');
+  await expect(soldTo).toBeVisible();
+  // Read-only while sold, and saying why; it keeps focus, so the reason is read on it.
+  const reference = page.getByLabel('Reference');
+  await expect(reference).not.toBeEditable();
+  await expect(reference).toHaveAttribute('aria-readonly', 'true');
+  await expect(reference).toHaveAccessibleDescription('Read-only while Status is "sold"');
+  await reference.focus();
+  await expect(reference).toBeFocused();
+  await page.getByLabel('Status').fill('open');
+  await expect(soldTo).toHaveCount(0);
+  // Hidden, so not required: the save goes through.
+  await page.getByRole('button', { name: 'Save draft' }).click();
+  await expect(page.getByText('Entry created')).toBeVisible();
+});
+
+test('a laid-out type: filed under its group, its entry form in tabs, a date field saved', async ({
+  page,
+  request,
+}) => {
+  await seedLaidOutType(request);
+  await openCms(page, '/content/happening/new');
+  await expect(page.getByRole('button', { name: 'Save draft' })).toBeVisible(EDITOR_READY);
+  // The content nav files it under its group (wide enough to show the nav).
+  const nav = page.getByRole('navigation', { name: 'Content types' });
+  if (await nav.isVisible()) {
+    await expect(
+      nav.getByRole('list', { name: 'Programme' }).getByRole('link', { name: 'Happening' }),
+    ).toBeVisible();
+  }
+  await page.getByLabel('Title').fill(`Happening ${Date.now()}`);
+  await page.getByRole('tab', { name: 'When' }).click();
+  await expect(page.getByRole('region', { name: 'Timing' })).toBeVisible();
+  await page.getByLabel('Day').fill('2026-11-03');
+  await page.getByRole('button', { name: 'Save draft' }).click();
+  await expect(page.getByText('Entry created')).toBeVisible();
+  await page.getByRole('tab', { name: 'When' }).click();
+  await expect(page.getByLabel('Day')).toHaveValue('2026-11-03');
+});
+
+test('entry tabs move with the arrow keys', async ({ page, request }) => {
+  await seedVenueType(request);
+  await openCms(page, '/content/venue/new');
+  const main = page.getByRole('tab', { name: 'Main' });
+  const contact = page.getByRole('tab', { name: 'Contact' });
+  await expect(main).toBeVisible(EDITOR_READY);
+  await main.focus();
+  await page.keyboard.press('ArrowRight');
+  await expect(contact).toBeFocused();
+  await expect(contact).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByRole('button', { name: 'Booking' })).toBeVisible();
+  await page.keyboard.press('ArrowLeft');
+  await expect(main).toBeFocused();
+  await expect(main).toHaveAttribute('aria-selected', 'true');
+});
+
+test('a rejected save opens the tab and the closed group holding the field it names', async ({
+  page,
+  request,
+}) => {
+  await seedVenueType(request);
+  await openCms(page, '/content/venue/new');
+  await expect(page.getByRole('button', { name: 'Save draft' })).toBeVisible(EDITOR_READY);
+  await page.getByLabel('Title').fill(`Venue ${Date.now()}`);
+  await page.getByRole('button', { name: 'Save draft' }).click();
+  await expect(page.getByRole('tab', { name: /Contact/ })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByLabel(/Booking email/)).toBeVisible();
+  await expect(page.getByRole('alert')).toContainText('Field is required');
+});
+
+test('an images-only asset link offers images only', async ({ page, request }) => {
+  const stamp = Date.now();
+  await seedVenueType(request);
+  await seedAsset(request, `Poster art ${stamp}`);
+  await seedAsset(request, `Floor plan ${stamp}`, { contentType: 'application/pdf' });
+  await openCms(page, '/content/venue/new');
+  const picker = page.getByRole('combobox', { name: /Poster/ });
+  await expect(picker).toBeVisible(EDITOR_READY);
+  await picker.fill(String(stamp));
+  await expect(page.getByRole('option', { name: `Poster art ${stamp}` })).toBeVisible();
+  await expect(page.getByRole('option', { name: `Floor plan ${stamp}` })).toHaveCount(0);
 });

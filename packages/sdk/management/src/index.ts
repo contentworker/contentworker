@@ -68,18 +68,49 @@ export type FieldOption =
   | { readonly value: string | number; readonly label: string };
 
 /** A field's validation rules. Entries store and are compared on an option's `value`. */
+/** A named pattern a Symbol or Text field can use instead of writing a regular expression. */
+export type PatternPreset = 'email' | 'url' | 'slug' | 'phone' | 'hexColor' | 'usZipCode';
+
+/** How a Date field's value is written: `2026-11-03`, `2026-11-03T14:30` or `14:30`. */
+export type DateFormat = 'date' | 'datetime' | 'time';
+
 export interface FieldValidations {
   readonly in?: readonly FieldOption[];
-  readonly regexp?: { readonly pattern: string; readonly flags?: string };
+  /** A pattern, or a named `preset` (saved with its pattern and flags filled in). */
+  readonly regexp?: {
+    readonly pattern?: string;
+    readonly flags?: string;
+    readonly preset?: PatternPreset;
+  };
   readonly range?: { readonly min?: number; readonly max?: number };
   readonly size?: { readonly min?: number; readonly max?: number };
   readonly linkContentTypes?: readonly string[];
+  /** A Date's inclusive bounds, written in its format. */
+  readonly dateRange?: { readonly min?: string; readonly max?: string };
+  /** An asset link's allowed MIME types, exact or by family (`image/*`). */
+  readonly assetMimeTypes?: readonly string[];
   /** The error text a broken rule reports instead of the default, keyed by rule. */
   readonly messages?: {
     readonly in?: string;
     readonly regexp?: string;
     readonly range?: string;
     readonly size?: string;
+    readonly dateRange?: string;
+    readonly assetMimeTypes?: string;
+  };
+}
+
+/**
+ * Hide or disable a field while a sibling's value matches. A hidden field is not required; a
+ * disabled one keeps its stored value, and a write that changes it is refused.
+ */
+export interface FieldRule {
+  readonly action: 'hide' | 'disable';
+  readonly when: {
+    /** A sibling field's apiId, or a dot path into a sibling component (`hero.style`). */
+    readonly field: string;
+    readonly operator: 'eq' | 'ne' | 'in' | 'empty' | 'notEmpty' | 'gt' | 'lt';
+    readonly value?: string | number | boolean | readonly (string | number)[];
   };
 }
 
@@ -96,6 +127,9 @@ export interface FieldDefinition {
   /** What the field means, for agents and API readers. */
   readonly description?: string;
   readonly validations?: FieldValidations;
+  readonly rules?: readonly FieldRule[];
+  /** For a Date field. */
+  readonly format?: DateFormat;
   readonly [key: string]: unknown;
 }
 
@@ -108,8 +142,28 @@ export interface ContentType {
   readonly urlPattern?: string;
   /** Holds at most one entry, read by type with the delivery client's `getSingleton`. */
   readonly singleton?: true;
+  /** The admin's sidebar lists types under their group. */
+  readonly group?: string;
+  readonly description?: string;
+  /** A kebab-case icon name the admin draws beside the type. */
+  readonly icon?: string;
+  /** Editor-only: how the admin's entry form arranges the fields. Never delivered. */
+  readonly layout?: ContentTypeLayout;
   readonly version: number;
   readonly status: ContentTypeStatus;
+}
+
+/** The entry form's tabs, each of named or unnamed groups of top-level field apiIds. */
+export interface ContentTypeLayout {
+  readonly tabs: readonly {
+    readonly apiId: string;
+    readonly name: string;
+    readonly groups: readonly {
+      readonly name?: string;
+      readonly fields: readonly string[];
+      readonly collapsed?: boolean;
+    }[];
+  }[];
 }
 
 /** What waits on a human decision in the environment (`GET …/approvals/count`). */
@@ -176,6 +230,11 @@ export interface ContentTypeDraft {
    * than one entry. Left out of a revision, unchanged.
    */
   readonly singleton?: boolean;
+  /** Each of these: left out keeps it on a revision; `null` clears it. */
+  readonly group?: string | null;
+  readonly description?: string | null;
+  readonly icon?: string | null;
+  readonly layout?: ContentTypeLayout | null;
 }
 
 /** A redirect: a front end (or an edge Worker) applies it; contentworker serves no site. */

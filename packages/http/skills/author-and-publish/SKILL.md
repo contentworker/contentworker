@@ -26,7 +26,11 @@ publishing does.
 
 - Read the type first (`model_get_content_type`). A field's `description` says what belongs in it
   and its `help` how to write it; follow both. Where `validations.in` lists `{ value, label }`
-  options, write the `value`, never the label.
+  options, write the `value`, never the label. A field with `rules` is hidden or disabled while a
+  sibling matches, judged on the values you write: leave a hidden field empty (it is not
+  required), and send a disabled field's stored value unchanged (a change is refused).
+- Write a Date in its field's `format`: `date` is `2026-11-03`, `datetime` `2026-11-03T14:30`,
+  `time` `14:30`; without one, any ISO-8601 string.
 - Field values are always **locale-keyed**: `{ "title": { "en-US": "Hello" } }`. That applies to
   non-localized fields too, under the space's default locale.
 - `entries_create` makes a draft. `entries_update` saves a **new draft version** whose fields are
