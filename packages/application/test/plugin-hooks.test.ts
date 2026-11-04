@@ -311,6 +311,56 @@ describe('a plugin cannot exceed its installer', () => {
     expect(entry?.fields.title).toBeUndefined();
   });
 
+  it('keeps the fields its installer may not write when it saves what it read', async () => {
+    const field = (apiId: string, position: number) => ({
+      apiId,
+      name: apiId,
+      type: 'Symbol' as const,
+      localized: false,
+      required: false,
+      position,
+    });
+    await createContentType(ctx, scope, {
+      apiId: 'note',
+      name: 'Note',
+      displayField: 'title',
+      fields: [field('title', 0), field('internalNotes', 1)],
+    });
+    await publishContentType(ctx, scope, 'note');
+    const { entry } = await createEntry(ctx, scope, {
+      contentTypeApiId: 'note',
+      fields: { title: { 'en-US': 'A' }, internalNotes: { 'en-US': 'secret' } },
+    });
+    await installEnabled({ capabilities: ['content:read', 'content:write'] });
+
+    const masked: Principal = {
+      spaceId: SPACE,
+      kind: 'cma',
+      scopes: [SCOPES.previewRead, SCOPES.contentWrite],
+      contentGrants: [
+        { contentTypeApiId: 'note', actions: ['read', 'write'], deniedFields: ['internalNotes'] },
+      ],
+    };
+    const runtime = fakeRuntime();
+    const d = createPluginHookDispatcher(ctx, blob, runtime, { principal: masked });
+    await d.dispatch('entry:beforeSave', {}, scope);
+
+    type Fields = Record<string, Record<string, unknown>>;
+    const caps = runtime.calls[0]?.caps as {
+      content: {
+        get(id: string): Promise<{ fields: Fields }>;
+        update(id: string, fields: Fields): Promise<{ fields: Fields }>;
+      };
+    };
+    const read = await caps.content.get(entry.id);
+    const saved = await caps.content.update(entry.id, { ...read.fields, title: { 'en-US': 'B' } });
+    expect(saved.fields).toEqual({ title: { 'en-US': 'B' } });
+    expect((await ctx.store.entries.get(scope, entry.id))?.fields).toEqual({
+      title: { 'en-US': 'B' },
+      internalNotes: { 'en-US': 'secret' },
+    });
+  });
+
   it('writes through the use-cases, so validation still applies', async () => {
     await installEnabled({ capabilities: ['content:write'] });
     const runtime = fakeRuntime();

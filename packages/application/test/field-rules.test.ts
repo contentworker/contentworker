@@ -17,6 +17,7 @@ import {
   createSpace,
   describeFieldForModel,
   draftEntry,
+  duplicateEntry,
   executeImport,
   exportSnapshot,
   importSnapshot,
@@ -286,6 +287,17 @@ describe('conditional field rules on whole-entry copies', () => {
     expect(result).toMatchObject({ created: 1, failed: [] });
   });
 
+  it('a duplicate copies it, and the copy is a new entry holding it', async () => {
+    const id = await holdingDisabledValue();
+    const dup = await duplicateEntry(ctx, main, id);
+    expect(dup.entry.id).not.toBe(id);
+    expect(dup.fields).toEqual({
+      title: { en: 'Flat (copy)' },
+      status: { en: 'open' },
+      reference: { en: 'REF-9' },
+    });
+  });
+
   it('a restore brings back the old version’s value of a field its rules now disable', async () => {
     const id = await holdingDisabledValue();
     const before = (await ctx.store.entries.get(main, id))?.entry.currentVersion ?? 0;
@@ -297,5 +309,61 @@ describe('conditional field rules on whole-entry copies', () => {
       status: { en: 'open' },
       reference: { en: 'REF-9' },
     });
+  });
+});
+
+/**
+ * A writer whose role denies or makes read-only some fields can't send them, so an update keeps
+ * their stored values instead of saving the entry without them.
+ */
+describe('an update from a writer with fields it may not write', () => {
+  const restricted = { unwritable: ['reference', 'soldTo'] };
+
+  beforeEach(async () => {
+    await publishContentType(ctx, scope, 'listing');
+  });
+
+  it('keeps their stored values, and keeps an absent one absent', async () => {
+    const { entry } = await createEntry(ctx, scope, {
+      contentTypeApiId: 'listing',
+      fields: { title: { en: 'Flat' } },
+    });
+    // Saved without a status, so `reference` is open and takes a value of its own.
+    await updateEntry(ctx, scope, entry.id, { title: { en: 'Flat' }, reference: { en: 'REF-9' } });
+
+    const checked = await validateEntry(
+      ctx,
+      scope,
+      { entryId: entry.id, fields: { title: { en: 'Renamed' } } },
+      restricted,
+    );
+    expect(checked.fields).toEqual({ title: { en: 'Renamed' }, reference: { en: 'REF-9' } });
+    const saved = await updateEntry(ctx, scope, entry.id, { title: { en: 'Renamed' } }, restricted);
+    expect(saved.fields).toEqual({ title: { en: 'Renamed' }, reference: { en: 'REF-9' } });
+  });
+
+  it('passes a disabled field it may not write, whatever that field holds', async () => {
+    const { entry } = await createEntry(ctx, scope, {
+      contentTypeApiId: 'listing',
+      fields: { title: { en: 'Flat' }, status: { en: 'open' } },
+    });
+    const saved = await updateEntry(
+      ctx,
+      scope,
+      entry.id,
+      { title: { en: 'Renamed' }, status: { en: 'open' } },
+      restricted,
+    );
+    // Disabled since the create, so it kept the default the create gave it.
+    expect(saved.fields.reference).toEqual({ en: 'REF-1' });
+  });
+
+  it('without the option, an omitted field is dropped, as an unrestricted save asks', async () => {
+    const { entry } = await createEntry(ctx, scope, {
+      contentTypeApiId: 'listing',
+      fields: { title: { en: 'Flat' } },
+    });
+    const saved = await updateEntry(ctx, scope, entry.id, { title: { en: 'Renamed' } });
+    expect(saved.fields).toEqual({ title: { en: 'Renamed' } });
   });
 });

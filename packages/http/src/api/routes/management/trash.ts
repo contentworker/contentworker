@@ -13,6 +13,7 @@ import {
   assertWritableFields,
   authorizeContent,
   ENTRY_OPERATION_ACTIONS,
+  maskDeniedFields,
   SCOPES,
   unwritableFieldsFor,
 } from '@contentworker/domain';
@@ -141,11 +142,20 @@ export function trashRoutes(deps: AuthDeps): Hono<AuthVars> {
         assertWritableFields(principal, entry.contentTypeApiId, body.fields ?? {});
         unwritable = unwritableFieldsFor(principal, entry.contentTypeApiId);
       }
-      return c.json(
-        await updateEntry(actingCtx(ctx, c), scopeOf(c), c.req.param('id'), body.fields, {
+      const saved = await updateEntry(
+        actingCtx(ctx, c),
+        scopeOf(c),
+        c.req.param('id'),
+        body.fields,
+        {
           unwritable,
-        }),
+        },
       );
+      // The save kept the fields this writer may not write; the ones it may not read stay hidden.
+      return c.json({
+        ...saved,
+        fields: maskDeniedFields(principal, saved.entry.contentTypeApiId, saved.fields),
+      });
     },
   );
 

@@ -166,6 +166,75 @@ describe('conditional field rules over HTTP', () => {
       const saved = await writer(`${M}/entries/${id}`, 'PUT', { fields: edit });
       expect(saved.status, await saved.clone().text()).toBe(200);
     }
+    // The save kept the price the writer could not send, and added none where there was none.
+    const priceOf = async (id: string) =>
+      ((await (await send(`${M}/entries/${id}`, 'GET')).json()) as { fields: { price?: unknown } })
+        .fields.price;
+    expect(await priceOf(filled)).toEqual({ 'en-US': 250_000 });
+    expect(await priceOf(empty)).toBeUndefined();
+  });
+
+  it('lets a writer save around a required field its role makes read-only', async () => {
+    const { ctx, rag, blob, ai } = wire(config);
+    const app = createApp(ctx, config, rag, blob, ai);
+    const as =
+      (headers: Record<string, string>) => (path: string, method: string, body?: unknown) =>
+        app.request(path, { method, headers, body: body ? JSON.stringify(body) : undefined });
+    const send = as(cma);
+    await send(`${M}/content-types`, 'POST', {
+      apiId: 'deal',
+      name: 'Deal',
+      displayField: 'title',
+      fields: [
+        { apiId: 'title', name: 'Title', type: 'Symbol', localized: false, position: 0 },
+        {
+          apiId: 'owner',
+          name: 'Owner',
+          type: 'Symbol',
+          localized: false,
+          required: true,
+          position: 1,
+        },
+      ],
+    });
+    await send(`${M}/content-types/deal/published`, 'POST');
+    const made = (await (
+      await send(`${M}/entries`, 'POST', {
+        contentTypeApiId: 'deal',
+        fields: { title: { 'en-US': 'A' }, owner: { 'en-US': 'Ada' } },
+      })
+    ).json()) as { entry: { id: string } };
+    const role = (await (
+      await app.request('/spaces/s1/roles', {
+        method: 'POST',
+        headers: { Authorization: 'Bearer admin', 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: 'Deal writer',
+          scopes: ['content:write', 'preview:read'],
+          contentGrants: [
+            { contentTypeApiId: 'deal', actions: ['read', 'write'], readOnlyFields: ['owner'] },
+          ],
+        }),
+      })
+    ).json()) as { id: string };
+    const { token } = (await (
+      await app.request('/spaces/s1/api-keys', {
+        method: 'POST',
+        headers: { Authorization: 'Bearer admin', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind: 'cma', roleId: role.id }),
+      })
+    ).json()) as { token: string };
+    const writer = as({ Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' });
+
+    const saved = await writer(`${M}/entries/${made.entry.id}`, 'PUT', {
+      fields: { title: { 'en-US': 'B' } },
+    });
+    expect(saved.status, await saved.clone().text()).toBe(200);
+    // Read-only, not denied: the writer may read what the save kept.
+    expect(((await saved.json()) as { fields: Record<string, unknown> }).fields).toEqual({
+      title: { 'en-US': 'B' },
+      owner: { 'en-US': 'Ada' },
+    });
   });
 
   it('refuses a rule that reads no sibling, naming the field', async () => {

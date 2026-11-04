@@ -20,6 +20,7 @@ import {
   CONTENT_TYPE_LIMITS,
   type EntryFields,
   MAX_URL_PATTERN_LENGTH,
+  maskDeniedFields,
   SCOPES,
   unwritableFieldsFor,
   ValidationError,
@@ -251,9 +252,14 @@ export function registerWriteTools(server: McpServer, t: ToolContext): void {
         assertWritableFields(principal, entry.contentType, args.fields ?? {});
         unwritable = unwritableFieldsFor(principal, entry.contentType);
       }
-      return ok(
-        await updateEntry(ctx, scopeOf(args), args.id, args.fields as EntryFields, { unwritable }),
-      );
+      const saved = await updateEntry(ctx, scopeOf(args), args.id, args.fields as EntryFields, {
+        unwritable,
+      });
+      // The save kept the fields this writer may not write; the ones it may not read stay hidden.
+      return ok({
+        ...saved,
+        fields: maskDeniedFields(principal, saved.entry.contentTypeApiId, saved.fields),
+      });
     },
   );
 
@@ -284,15 +290,23 @@ export function registerWriteTools(server: McpServer, t: ToolContext): void {
       const fields = (args.fields ?? {}) as EntryFields;
       if (args.id !== undefined) {
         let unwritable: readonly string[] = [];
+        let type = '';
         if (principal.contentGrants) {
           const entry = await getPreviewEntry(ctx, scopeOf(args), args.id);
-          authorizeContent(principal, 'write', entry.contentType);
-          assertWritableFields(principal, entry.contentType, fields);
-          unwritable = unwritableFieldsFor(principal, entry.contentType);
+          type = entry.contentType;
+          authorizeContent(principal, 'write', type);
+          assertWritableFields(principal, type, fields);
+          unwritable = unwritableFieldsFor(principal, type);
         }
-        return ok(
-          await validateEntry(ctx, scopeOf(args), { entryId: args.id, fields }, { unwritable }),
+        const result = await validateEntry(
+          ctx,
+          scopeOf(args),
+          { entryId: args.id, fields },
+          { unwritable },
         );
+        // Judged with the stored values of the fields this writer may not write; answered without
+        // the ones it may not read.
+        return ok({ ...result, fields: maskDeniedFields(principal, type, result.fields) });
       }
       const contentTypeApiId = args.contentType ?? '';
       authorizeContent(principal, 'write', contentTypeApiId);

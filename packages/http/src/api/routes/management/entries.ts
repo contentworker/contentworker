@@ -84,15 +84,26 @@ export function entriesRoutes(deps: AuthDeps): Hono<AuthVars> {
       const fields = body.fields ?? {};
       if (body.entryId !== undefined) {
         let unwritable: readonly string[] = [];
+        let type = '';
         if (principal.contentGrants) {
           const { entry } = await getEntry(ctx, scopeOf(c), body.entryId);
-          authorizeContent(principal, 'write', entry.contentTypeApiId);
-          assertWritableFields(principal, entry.contentTypeApiId, fields);
-          unwritable = unwritableFieldsFor(principal, entry.contentTypeApiId);
+          type = entry.contentTypeApiId;
+          authorizeContent(principal, 'write', type);
+          assertWritableFields(principal, type, fields);
+          unwritable = unwritableFieldsFor(principal, type);
         }
-        return c.json(
-          await validateEntry(ctx, scopeOf(c), { entryId: body.entryId, fields }, { unwritable }),
+        const result = await validateEntry(
+          ctx,
+          scopeOf(c),
+          { entryId: body.entryId, fields },
+          { unwritable },
         );
+        // Judged with the stored values of the fields this writer may not write; answered without
+        // the ones it may not read.
+        return c.json({
+          ...result,
+          fields: maskDeniedFields(principal, type, result.fields),
+        });
       }
       const contentTypeApiId = body.contentTypeApiId ?? '';
       authorizeContent(principal, 'write', contentTypeApiId);

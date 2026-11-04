@@ -488,6 +488,14 @@ Grants govern entry read/write/publish/delete/unpublish and content-type visibil
 list/get endpoints filter ungranted content types and `maskDeniedFields` on responses. Coarse
 scopes still gate search, GraphQL, SSE, and assets at the route level.
 
+A save stores exactly the fields it sends, but a key can't send a field its role denies or makes
+read-only. So `updateEntry` and `validateEntry` take `unwritable` (`unwritableFieldsFor`) and lay
+the stored values of those fields over what was sent before they validate and save: a restricted
+writer's save keeps them, and a required one doesn't block it. The response is still masked, so
+the kept value of a denied field never comes back to the writer. HTTP `PUT …/entries/:id` and
+`…/entries/validate`, MCP `entries_update` and `entries_validate`, and a plugin's `content.update`
+all pass it.
+
 ## API keys at rest
 
 ```ts

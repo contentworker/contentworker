@@ -131,6 +131,49 @@ describe('granular RBAC over HTTP', () => {
     expect(deniedField.status).toBe(403);
   });
 
+  it('keeps the fields a writer may not write when it saves, and answers without them', async () => {
+    const put = (fields: unknown) =>
+      app.request(`${M}/entries/${postId}`, {
+        method: 'PUT',
+        headers: editor,
+        body: JSON.stringify({ fields }),
+      });
+    const edit = { title: { 'en-US': 'B' } };
+
+    const checked = await app.request(`${M}/entries/validate`, {
+      method: 'POST',
+      headers: editor,
+      body: JSON.stringify({ entryId: postId, fields: edit }),
+    });
+    expect(checked.status).toBe(200);
+    expect(((await checked.json()) as { fields: object }).fields).not.toHaveProperty(
+      'internalNotes',
+    );
+
+    const saved = await put(edit);
+    expect(saved.status, await saved.clone().text()).toBe(200);
+    // The writer never sees the field it may not read, even though the save kept it.
+    expect(((await saved.json()) as { fields: object }).fields).not.toHaveProperty('internalNotes');
+    const asAdmin = (await (
+      await app.request(`${M}/entries/${postId}`, { headers: admin })
+    ).json()) as { entry: { currentVersion: number }; fields: Record<string, unknown> };
+    expect(asAdmin.entry.currentVersion).toBe(2);
+    expect(asAdmin.fields).toEqual({
+      title: { 'en-US': 'B' },
+      internalNotes: { 'en-US': 'secret' },
+    });
+
+    // A second save from the writer's own (masked) read keeps it too.
+    const reread = (await (
+      await app.request(`${M}/entries/${postId}`, { headers: editor })
+    ).json()) as { fields: Record<string, unknown> };
+    expect((await put({ ...reread.fields, title: { 'en-US': 'C' } })).status).toBe(200);
+    const again = (await (
+      await app.request(`${M}/entries/${postId}`, { headers: admin })
+    ).json()) as { fields: Record<string, unknown> };
+    expect(again.fields.internalNotes).toEqual({ 'en-US': 'secret' });
+  });
+
   it('counts entries per content type, leaving out types the role cannot read', async () => {
     type Counts = { items: { contentType: string; total: number; published: number }[] };
     const all = await app.request(`${M}/content-types/entry-counts`, { headers: admin });

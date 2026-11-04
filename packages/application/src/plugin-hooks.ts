@@ -11,6 +11,7 @@ import {
   pluginActor,
   type Scope,
   scopeForCapability,
+  unwritableFieldsFor,
 } from '@contentworker/domain';
 import type {
   AssetListQuery,
@@ -153,8 +154,16 @@ function buildCapabilities(
         contentTypeApiId: input.contentTypeApiId,
         fields: input.fields,
       });
-    content.update = async (id: string, fields: Record<string, never>) =>
-      updateEntry(asPlugin, scope, id, fields);
+    // A narrowed principal reads its entries masked, so its update keeps the fields it may not
+    // write rather than saving them erased, and answers masked as its reads do.
+    content.update = async (id: string, fields: Record<string, never>) => {
+      if (!principal.contentGrants) return updateEntry(asPlugin, scope, id, fields);
+      const { contentType } = await getPreviewEntry(ctx, scope, id);
+      const saved = await updateEntry(asPlugin, scope, id, fields, {
+        unwritable: unwritableFieldsFor(principal, contentType),
+      });
+      return { ...saved, fields: maskDeniedFields(principal, contentType, saved.fields) };
+    };
     capabilities.content = content;
   }
 

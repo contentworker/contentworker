@@ -85,25 +85,28 @@ export interface EntryWriteOptions {
   readonly copy?: boolean;
   /**
    * Top-level fields the caller's role denies or makes read-only (`unwritableFieldsFor`). The
-   * caller can neither send nor keep them, so a field among them that its rules disable is not
-   * held to its stored value: the same write gets the same answer whatever the field holds, and
-   * the answer says nothing about a value the caller may not read.
+   * caller can neither send nor read them all, so an update keeps their stored values: what is
+   * saved is what the caller sent plus what it may not touch, never an entry with those fields
+   * erased. A field among them that its rules disable then holds its stored value and passes.
    */
   readonly unwritable?: readonly string[];
 }
 
 /**
- * The stored values an edit is judged against: what a disabled field must keep. A field the
- * caller may not write is judged against what the write sends for it, so its disabled check
- * always passes.
+ * The fields an update saves: those sent, with the stored values of the fields the caller may not
+ * write laid over them (it can't send those, so they are kept rather than dropped).
  */
-function editOf(stored: EntryFields, fields: EntryFields, options: EntryWriteOptions): EntryFields {
-  if (!options.unwritable?.length) return stored;
-  const out: EntryFields = { ...stored };
+function withUnwritable(
+  stored: EntryFields,
+  fields: EntryFields,
+  options: EntryWriteOptions,
+): EntryFields {
+  if (!options.unwritable?.length) return fields;
+  const out: EntryFields = { ...fields };
   for (const apiId of options.unwritable) {
-    const sent = fields[apiId];
-    if (sent === undefined) delete out[apiId];
-    else out[apiId] = sent;
+    const kept = stored[apiId];
+    if (kept === undefined) delete out[apiId];
+    else out[apiId] = kept;
   }
   return out;
 }
@@ -347,8 +350,8 @@ export async function updateEntry(
     scope,
     found.entry,
     contentType,
-    options.copy ? vctx : { ...vctx, previous: editOf(found.fields, fields, options) },
-    fields,
+    options.copy ? vctx : { ...vctx, previous: found.fields },
+    withUnwritable(found.fields, fields, options),
   );
 }
 
@@ -452,11 +455,11 @@ export async function validateEntry(
       ctx,
       scope,
       contentType,
-      { ...vctx, previous: editOf(found.fields, input.fields, options) },
+      { ...vctx, previous: found.fields },
       {
         contentTypeApiId: found.entry.contentTypeApiId,
         entryId: input.entryId,
-        fields: input.fields,
+        fields: withUnwritable(found.fields, input.fields, options),
       },
       'dry-run',
     );
@@ -646,10 +649,13 @@ export async function duplicateEntry(
   // values before trying to write it. Done here rather than by retrying on
   // conflict so the entry is created once, with a predictable slug.
   const fields = await freeUniqueValues(ctx, scope, contentType, marked);
-  const created = await createEntry(ctx, scope, {
-    contentTypeApiId: found.entry.contentTypeApiId,
-    fields,
-  });
+  // A whole-entry copy: a field its rules disable carries what the original holds.
+  const created = await createEntry(
+    ctx,
+    scope,
+    { contentTypeApiId: found.entry.contentTypeApiId, fields },
+    { copy: true },
+  );
 
   const metadata = await ctx.store.taxonomy.getEntryMetadata(scope, id);
   if (metadata && (metadata.tags.length > 0 || metadata.concepts.length > 0)) {
