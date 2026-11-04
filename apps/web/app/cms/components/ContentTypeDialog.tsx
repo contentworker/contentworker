@@ -30,6 +30,7 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogError,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -47,6 +48,7 @@ import {
 import { Textarea } from '@contentworker/ui/textarea';
 import { Plus, Trash2 } from 'lucide-react';
 import { useState } from 'react';
+import { DiscardAsk, GuardCancel, useDiscardGuard } from '~/cms/components/discard-guard';
 import { toApiId } from '../lib/api-id';
 import { CONTENT_TYPE_ICONS, contentTypeIcon } from '../lib/content-type-icons';
 import {
@@ -567,6 +569,28 @@ export function ContentTypeDialog(props: {
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
 
+  // Everything a person can have changed, against how the form opened: a schema is long work, and
+  // a press outside the dialog must not throw it away.
+  const form = JSON.stringify({
+    name,
+    apiId,
+    fields,
+    displayField,
+    urlPattern,
+    singleton,
+    group,
+    description,
+    icon,
+    tabs,
+  });
+  const [opened] = useState(form);
+  const guard = useDiscardGuard({
+    saving: busy,
+    open: props.open,
+    dirty: form !== opened,
+    onOpenChange: props.onOpenChange,
+  });
+
   const setField = (i: number, patch: Partial<FieldRow>) =>
     setFields((prev) => prev.map((f, idx) => (idx === i ? { ...f, ...patch } : f)));
 
@@ -631,8 +655,8 @@ export function ContentTypeDialog(props: {
   };
 
   return (
-    <Dialog open={props.open} onOpenChange={props.onOpenChange}>
-      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
+    <Dialog open={props.open} onOpenChange={guard.onOpenChange}>
+      <DialogContent className="sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>{editing ? 'Edit content type' : 'New content type'}</DialogTitle>
           <DialogDescription>
@@ -1111,15 +1135,20 @@ export function ContentTypeDialog(props: {
             ))}
           </fieldset>
 
-          {error && <p className="text-sm text-destructive">{error}</p>}
+          {error && <DialogError>{error}</DialogError>}
 
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => props.onOpenChange(false)}>
-              Cancel
-            </Button>
-            <Button type="submit" disabled={busy}>
-              {busy ? 'Saving…' : editing ? 'Save changes' : 'Create content type'}
-            </Button>
+            <DiscardAsk
+              guard={guard}
+              message={
+                editing ? `Discard your changes to ${seed.name}?` : 'Discard this content type?'
+              }
+            >
+              <GuardCancel guard={guard} />
+              <Button type="submit" disabled={busy}>
+                {busy ? 'Saving…' : editing ? 'Save changes' : 'Create content type'}
+              </Button>
+            </DiscardAsk>
           </DialogFooter>
         </form>
       </DialogContent>

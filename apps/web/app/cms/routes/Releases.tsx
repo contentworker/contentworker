@@ -4,6 +4,7 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogError,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -17,13 +18,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@contentworker/ui/select';
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from '@contentworker/ui/sheet';
+import { Sheet, SheetDescription, SheetHeader, SheetTitle } from '@contentworker/ui/sheet';
 import { Skeleton } from '@contentworker/ui/skeleton';
 import {
   Table,
@@ -46,13 +41,16 @@ import { Link } from 'react-router';
 import { Ago } from '~/cms/components/ago';
 import { type EntryRef, entryPath, entryRef } from '~/cms/components/dashboard/entry-titles';
 import { useEntriesById } from '~/cms/components/dashboard/use-entries-by-id';
+import { DiscardAsk, GuardCancel, useDiscardGuard } from '~/cms/components/discard-guard';
 import { InlineConfirm } from '~/cms/components/InlineConfirm';
 import { EmptyState, PageHeader } from '~/cms/components/page';
 import { ReleasePublishConfirm } from '~/cms/components/ReleasePublishConfirm';
+import { ResponsiveSheetContent } from '~/cms/components/responsive-sheet';
 import { StatusBadge } from '~/cms/components/status';
 import { When } from '~/cms/components/when';
 import { humanize, plural, statusLabel } from '~/cms/lib/format';
 import { useClient } from '../lib/client-context';
+import { RequestTimeoutError } from '../lib/management';
 import {
   useAllEntriesQuery,
   useContentTypesQuery,
@@ -360,15 +358,24 @@ export function Releases() {
         <CreateReleaseDialog
           open={creating}
           onOpenChange={setCreating}
-          onCreate={(input) =>
-            run(async () => {
-              const created = await client.createRelease(input);
-              setCreating(false);
-              toast.success('Release created');
-              await reload();
-              setOpenId(created.id);
-            })
-          }
+          onCreate={async (input) => {
+            let failed: unknown;
+            await run(async () => {
+              try {
+                const created = await client.createRelease(input);
+                setCreating(false);
+                toast.success('Release created');
+                await reload();
+                setOpenId(created.id);
+              } catch (err) {
+                failed = err;
+              }
+            });
+            if (failed === undefined) return;
+            // It may have landed: the list behind the dialog is where to check.
+            if (failed instanceof RequestTimeoutError) await reload();
+            throw failed;
+          }}
           busy={busy}
         />
 
@@ -382,25 +389,53 @@ export function Releases() {
   );
 }
 
-function CreateReleaseDialog(props: {
+export function CreateReleaseDialog(props: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onCreate: (input: { title: string; description?: string }) => void;
+  onCreate: (input: { title: string; description?: string }) => Promise<void>;
   busy: boolean;
 }) {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
+  // Its own write, not `busy`, which any action on the page sets.
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string>();
+  // A release has no natural key, so a create that didn't confirm can't be retried blindly: it
+  // could make a second one. The button says what it would do.
+  const [unconfirmed, setUnconfirmed] = useState(false);
+  const guard = useDiscardGuard({
+    saving,
+    open: props.open,
+    dirty: title.trim() !== '' || description.trim() !== '',
+    onOpenChange: props.onOpenChange,
+  });
+
+  const create = async () => {
+    setSaving(true);
+    setError(undefined);
+    try {
+      await props.onCreate({ title: title.trim(), description: description.trim() || undefined });
+      setUnconfirmed(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      setUnconfirmed(err instanceof RequestTimeoutError);
+    } finally {
+      setSaving(false);
+    }
+  };
 
   // Reset fields each time the dialog opens.
   useEffect(() => {
     if (props.open) {
       setTitle('');
       setDescription('');
+      setError(undefined);
+      setUnconfirmed(false);
     }
   }, [props.open]);
 
   return (
-    <Dialog open={props.open} onOpenChange={props.onOpenChange}>
+    <Dialog open={props.open} onOpenChange={guard.onOpenChange}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>New release</DialogTitle>
@@ -426,19 +461,18 @@ function CreateReleaseDialog(props: {
             />
           </div>
         </div>
+        {error && <DialogError>{error}</DialogError>}
         <DialogFooter>
-          <Button type="button" variant="outline" onClick={() => props.onOpenChange(false)}>
-            Cancel
-          </Button>
-          <Button
-            type="button"
-            disabled={!title.trim() || props.busy}
-            onClick={() =>
-              props.onCreate({ title: title.trim(), description: description.trim() || undefined })
-            }
-          >
-            Create
-          </Button>
+          <DiscardAsk guard={guard} message="Discard this release?">
+            <GuardCancel guard={guard} />
+            <Button
+              type="button"
+              disabled={!title.trim() || props.busy}
+              onClick={() => void create()}
+            >
+              {unconfirmed ? 'Create again' : 'Create'}
+            </Button>
+          </DiscardAsk>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -532,7 +566,7 @@ function ReleaseDetailSheet(props: {
 
   return (
     <Sheet open={open} onOpenChange={(o) => !o && props.onClose()}>
-      <SheetContent side="right" className="flex w-full flex-col overflow-y-auto sm:max-w-lg">
+      <ResponsiveSheetContent className="flex w-full flex-col overflow-y-auto sm:max-w-lg">
         <SheetHeader>
           <SheetTitle>{release?.title ?? 'Release'}</SheetTitle>
           {release ? (
@@ -671,7 +705,7 @@ function ReleaseDetailSheet(props: {
             </div>
           )}
         </div>
-      </SheetContent>
+      </ResponsiveSheetContent>
     </Sheet>
   );
 }

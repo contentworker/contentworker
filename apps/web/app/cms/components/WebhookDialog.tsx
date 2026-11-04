@@ -4,6 +4,7 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogError,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -11,6 +12,7 @@ import {
 import { Input } from '@contentworker/ui/input';
 import { Label } from '@contentworker/ui/label';
 import { useState } from 'react';
+import { DiscardAsk, GuardCancel, useDiscardGuard } from '~/cms/components/discard-guard';
 import { WEBHOOK_TOPICS, type WebhookSummary, type WebhookTopic } from '../lib/management';
 
 /** Edit a webhook's endpoint, topics, secret, active state and which environments it hears. */
@@ -34,6 +36,18 @@ export function WebhookDialog(props: {
   const [secret, setSecret] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
+  const guard = useDiscardGuard({
+    saving: busy,
+    open: props.open,
+    dirty:
+      url !== props.webhook.url ||
+      secret !== '' ||
+      active !== props.webhook.active ||
+      everywhere !== wasEverywhere ||
+      topics.length !== props.webhook.topics.length ||
+      topics.some((t) => !props.webhook.topics.includes(t)),
+    onOpenChange: props.onOpenChange,
+  });
 
   const toggleTopic = (t: WebhookTopic) =>
     setTopics((prev) => (prev.includes(t) ? prev.filter((x) => x !== t) : [...prev, t]));
@@ -65,7 +79,7 @@ export function WebhookDialog(props: {
   };
 
   return (
-    <Dialog open={props.open} onOpenChange={props.onOpenChange}>
+    <Dialog open={props.open} onOpenChange={guard.onOpenChange}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>Edit webhook</DialogTitle>
@@ -121,15 +135,15 @@ export function WebhookDialog(props: {
             <span>Send events from every environment</span>
           </Label>
 
-          {error && <p className="text-sm text-destructive">{error}</p>}
+          {error && <DialogError>{error}</DialogError>}
 
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => props.onOpenChange(false)}>
-              Cancel
-            </Button>
-            <Button type="submit" disabled={busy}>
-              {busy ? 'Saving…' : 'Save changes'}
-            </Button>
+            <DiscardAsk guard={guard} message="Discard your changes to this webhook?">
+              <GuardCancel guard={guard} />
+              <Button type="submit" disabled={busy}>
+                {busy ? 'Saving…' : 'Save changes'}
+              </Button>
+            </DiscardAsk>
           </DialogFooter>
         </form>
       </DialogContent>

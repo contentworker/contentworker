@@ -95,7 +95,7 @@ export function PublishConfirm(props: PublishConfirmProps) {
         ) : null}
         <AlertDialogFooter>
           <AlertDialogCancel>Keep as draft</AlertDialogCancel>
-          <AlertDialogAction disabled={props.busy} onClick={props.onConfirm}>
+          <AlertDialogAction variant="default" disabled={props.busy} onClick={props.onConfirm}>
             Publish entry
           </AlertDialogAction>
         </AlertDialogFooter>

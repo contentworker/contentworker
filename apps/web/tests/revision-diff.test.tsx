@@ -132,7 +132,11 @@ vi.mock('~/cms/lib/client-context', () => ({
     busy: false,
     run: (fn: () => Promise<void>) => fn(),
   }),
-  useLocalRun: () => ({ busy: false, run: (fn: () => Promise<void>) => fn() }),
+  // As the real one does, it catches what the action throws (and toasts it).
+  useLocalRun: () => ({
+    busy: false,
+    run: (fn: () => Promise<void>) => fn().catch(() => {}),
+  }),
 }));
 
 const { ToastProvider } = await import('~/cms/lib/toast');
@@ -249,5 +253,43 @@ describe('VersionHistory compare', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Compare version 2' }));
     await screen.findByRole('region');
     expect(screen.queryByRole('button', { name: 'Live version' })).toBeNull();
+  });
+
+  it('asks in place before a restore, since the version it replaces stays in the list', async () => {
+    client.restoreVersion.mockClear();
+    renderHistory(false);
+    open();
+    const [restore] = await screen.findAllByRole('button', { name: 'Restore' });
+    fireEvent.click(restore as HTMLElement);
+
+    const ask = await screen.findByRole('alertdialog', { name: /Restore version 2\?/ });
+    // In the list, not over the page, and the safe choice has focus.
+    expect(ask.closest('li')).toBeTruthy();
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(document.activeElement).toBe(
+      within(ask).getByRole('button', { name: 'Keep current draft' }),
+    );
+
+    fireEvent.click(within(ask).getByRole('button', { name: 'Keep current draft' }));
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(client.restoreVersion).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(restore);
+
+    fireEvent.click(restore as HTMLElement);
+    fireEvent.click(await screen.findByRole('button', { name: 'Restore version' }));
+    await waitFor(() => expect(client.restoreVersion).toHaveBeenCalledWith('e1', 2));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+  });
+
+  it('keeps the question up when the restore is refused', async () => {
+    client.restoreVersion.mockReset();
+    client.restoreVersion.mockRejectedValueOnce(new Error('Refused'));
+    renderHistory(false);
+    open();
+    const [restore] = await screen.findAllByRole('button', { name: 'Restore' });
+    fireEvent.click(restore as HTMLElement);
+    fireEvent.click(await screen.findByRole('button', { name: 'Restore version' }));
+    await waitFor(() => expect(client.restoreVersion).toHaveBeenCalled());
+    expect(await screen.findByRole('alertdialog', { name: /Restore version 2\?/ })).toBeTruthy();
   });
 });

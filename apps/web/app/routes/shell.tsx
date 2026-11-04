@@ -274,9 +274,7 @@ function ShortcutsSheet({
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent side="right" className="gap-0 overflow-y-auto">
         <div className="border-b px-4 pt-4 pb-3 pr-14">
-          <SheetTitle className="font-semibold text-base tracking-title">
-            Keyboard shortcuts
-          </SheetTitle>
+          <SheetTitle>Keyboard shortcuts</SheetTitle>
           <SheetDescription className="text-xs">
             Single keys work outside fields, with no menu open.
           </SheetDescription>
@@ -870,9 +868,7 @@ function MoreMenu({ pages, deployment }: { pages: NavItem[]; deployment: NavItem
   return (
     <>
       <div className="border-b px-4 pt-4 pb-3 pr-14">
-        <SheetTitle className="truncate font-semibold text-base tracking-title">
-          {who(me)}
-        </SheetTitle>
+        <SheetTitle className="truncate">{who(me)}</SheetTitle>
         <SheetDescription className="text-xs">{ROLE_LABELS[me.role]}</SheetDescription>
       </div>
       <div className="border-b px-4 py-3">

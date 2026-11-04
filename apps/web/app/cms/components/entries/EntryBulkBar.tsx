@@ -68,6 +68,7 @@ export function EntryBulkBar(props: {
           type="button"
           size="sm"
           variant="outline"
+          data-bulk-action="unpublish"
           disabled={props.busy}
           onClick={props.onUnpublish}
         >
@@ -80,6 +81,7 @@ export function EntryBulkBar(props: {
           type="button"
           size="sm"
           variant="outline"
+          data-bulk-action="trash"
           onClick={props.onTrash}
           {...jobProps('trash')}
         >

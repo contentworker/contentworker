@@ -124,6 +124,7 @@ export function EntryEditor() {
     setPatchState((s) => ({ ...s, patch: { seq: (s.patch?.seq ?? 0) + 1, fields } }));
   const [genOpen, setGenOpen] = useState(false);
   const [canvasOpen, setCanvasOpen] = useState(false);
+  const moreActions = useRef<HTMLButtonElement>(null);
   // Bumped after a restore to re-seed the form (EntryForm reads `initial` once).
   const [formKey, setFormKey] = useState(0);
   // A new entry being created: from its save until the created entry's editor takes over, this
@@ -531,6 +532,14 @@ export function EntryEditor() {
   const live = meta?.status === 'published' && !dirty;
   // A new entry can always be created; a saved one has nothing to save until it is edited.
   const canSave = !busy && initial !== null && (dirty || !isEdit);
+  // Opened from the ⋯ menu, the item that asked is gone as a dialog closes: the keyboard carries on
+  // from ⋯. Beside the editor's own buttons, ⋯ is hidden and the dialog goes back to the button.
+  const backToActions = (e: Event) => {
+    const more = moreActions.current;
+    if (!more || getComputedStyle(more).display === 'none') return;
+    e.preventDefault();
+    more.focus();
+  };
   const secondary = [
     { label: 'Draft from prose', icon: PenLine, onSelect: () => setCanvasOpen(true) },
     { label: 'Generate with AI', icon: FileText, onSelect: () => setGenOpen(true) },
@@ -586,6 +595,7 @@ export function EntryEditor() {
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button
+                ref={moreActions}
                 type="button"
                 variant="ghost"
                 size="icon-sm"
@@ -834,6 +844,7 @@ export function EntryEditor() {
               Keep editing
             </AlertDialogCancel>
             <AlertDialogAction
+              variant="destructive"
               onClick={() => {
                 if (blocker.state !== 'blocked') return;
                 blockerProceededRef.current = true;
@@ -864,10 +875,13 @@ export function EntryEditor() {
       />
 
       <GenerateEntryDialog
+        // A draft under review stays when the dialog closes, but it was written for this entry.
+        key={entryId ?? 'new'}
         open={genOpen}
         onOpenChange={setGenOpen}
         contentType={selectedType}
         onGenerate={generate}
+        onCloseAutoFocus={backToActions}
         onApply={(fields) => {
           applyPatch(fields);
           toast.success('Applied the draft to the form. Save to keep it');
@@ -878,6 +892,7 @@ export function EntryEditor() {
         onOpenChange={setCanvasOpen}
         contentTypeName={selectedType.name}
         onMap={mapCanvas}
+        onCloseAutoFocus={backToActions}
       />
     </div>
   );
@@ -885,16 +900,20 @@ export function EntryEditor() {
   // Generate field values from a prompt. Returns the draft for the dialog to
   // show as a proposal; the form only changes on its Apply (throws on error so
   // the dialog can surface it; not wrapped in `run`).
-  async function generate(prompt: string, tier: ModelTier) {
+  async function generate(prompt: string, tier: ModelTier, signal: AbortSignal) {
     if (!selectedType) throw new Error('Content type not loaded');
-    return client.generateEntry({ contentTypeApiId: selectedType.apiId, prompt, tier });
+    return client.generateEntry({ contentTypeApiId: selectedType.apiId, prompt, tier }, signal);
   }
 
   // Canvas: map free-form prose into the form's fields (throws so the dialog can
   // surface the error; not wrapped in `run`).
-  async function mapCanvas(prose: string, tier: ModelTier) {
+  async function mapCanvas(prose: string, tier: ModelTier, signal: AbortSignal) {
     if (!selectedType) return;
-    const res = await client.canvasEntry({ contentTypeApiId: selectedType.apiId, prose, tier });
+    const res = await client.canvasEntry(
+      { contentTypeApiId: selectedType.apiId, prose, tier },
+      signal,
+    );
+    if (signal.aborted) return;
     applyPatch(res.fields);
     const total = res.usage.inputTokens + res.usage.outputTokens;
     toast.success(`Mapped ${Object.keys(res.fields).length} field(s) · ${total} tokens`);

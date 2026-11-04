@@ -1,9 +1,10 @@
 import type { Asset, AssetRights } from '@contentworker/domain';
 import { Alert, AlertDescription, AlertTitle } from '@contentworker/ui/alert';
 import { Button } from '@contentworker/ui/button';
+import { DialogError } from '@contentworker/ui/dialog';
 import { Input } from '@contentworker/ui/input';
 import { Label } from '@contentworker/ui/label';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { InlineConfirm } from '~/cms/components/InlineConfirm';
 import { StatusBadge } from '~/cms/components/status';
 import { When } from '~/cms/components/when';
@@ -15,7 +16,12 @@ import {
   timeUntil,
 } from '~/cms/lib/assets';
 import { useClient } from '~/cms/lib/client-context';
-import { apiErrorMessage, apiFieldIssues, isForbidden } from '~/cms/lib/management';
+import {
+  apiErrorMessage,
+  apiFieldIssues,
+  isForbidden,
+  RequestTimeoutError,
+} from '~/cms/lib/management';
 import { useToast } from '~/cms/lib/toast';
 import { useNow } from '~/cms/lib/use-now';
 
@@ -52,15 +58,35 @@ const zone = () => {
  * as instants with a zone. Setting rights takes content:publish, because they decide whether the
  * asset is delivered; a role without it is told so in place. Mount it with a `key` per asset.
  */
-export function AssetRightsForm(props: { asset: Asset; onAssetChange?: (asset: Asset) => void }) {
+export function AssetRightsForm(props: {
+  asset: Asset;
+  onAssetChange?: (asset: Asset) => void;
+  /** Says whether the form holds rights not yet saved, so the sheet can ask before it closes. */
+  onDirty?: (dirty: boolean) => void;
+  /** Says when a save is under way, so the sheet holds rather than offer to discard it. */
+  onSaving?: (saving: boolean) => void;
+}) {
   const { asset } = props;
   const { client } = useClient();
   const toast = useToast();
   const now = useNow(60_000);
   const [values, setValues] = useState<Values>(() => valuesOf(asset.rights));
+  const dirty = JSON.stringify(values) !== JSON.stringify(valuesOf(asset.rights));
+  const { onDirty } = props;
+  useEffect(() => {
+    onDirty?.(dirty);
+    return () => onDirty?.(false);
+  }, [dirty, onDirty]);
   const [issues, setIssues] = useState<Record<string, string>>({});
   const [refusal, setRefusal] = useState<{ forbidden: boolean; message: string } | null>(null);
+  // A save that didn't answer: it may have gone through, so it can't say it wasn't saved.
+  const [unconfirmed, setUnconfirmed] = useState<string>();
   const [busy, setBusy] = useState(false);
+  const { onSaving } = props;
+  useEffect(() => {
+    onSaving?.(busy);
+    return () => onSaving?.(false);
+  }, [busy, onSaving]);
   // An expiry already past on a published asset takes it out of Delivery at once: asked first.
   const [confirmExpire, setConfirmExpire] = useState(false);
   const published = asset.status === 'published';
@@ -85,6 +111,7 @@ export function AssetRightsForm(props: { asset: Asset; onAssetChange?: (asset: A
 
   const save = async () => {
     setConfirmExpire(false);
+    setUnconfirmed(undefined);
     setBusy(true);
     setRefusal(null);
     try {
@@ -104,7 +131,9 @@ export function AssetRightsForm(props: { asset: Asset; onAssetChange?: (asset: A
       const named = (['license', 'credit', 'expiresAt', 'embargoUntil'] as const).some(
         (f) => fields[`rights.${f}`] ?? fields[f],
       );
-      if (isForbidden(err)) {
+      if (err instanceof RequestTimeoutError) {
+        setUnconfirmed(err.message);
+      } else if (isForbidden(err)) {
         setRefusal({
           forbidden: true,
           message:
@@ -169,6 +198,7 @@ export function AssetRightsForm(props: { asset: Asset; onAssetChange?: (asset: A
           <AlertDescription>{refusal.message}</AlertDescription>
         </Alert>
       )}
+      {unconfirmed && <DialogError>{unconfirmed}</DialogError>}
       {field('license', 'License', { maxLength: 500, placeholder: 'CC BY 4.0, Getty editorial…' })}
       {field('credit', 'Credit', { maxLength: 500, placeholder: 'Photo: Ada Lovelace' })}
       {field(

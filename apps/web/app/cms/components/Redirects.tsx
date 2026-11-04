@@ -5,6 +5,7 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogError,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -32,6 +33,7 @@ import {
 import { Textarea } from '@contentworker/ui/textarea';
 import { ArrowRightLeft, Plus, Upload } from 'lucide-react';
 import { useId, useState } from 'react';
+import { DiscardAsk, GuardCancel, useDiscardGuard } from '~/cms/components/discard-guard';
 import { ConfirmButton } from '~/cms/components/InlineConfirm';
 import { EmptyState, Section } from '~/cms/components/page';
 import {
@@ -39,9 +41,11 @@ import {
   apiFieldIssues,
   type ManagementClient,
   type RedirectImportReport,
+  RequestTimeoutError,
 } from '../lib/management';
 import { useInvalidate, useScopedQuery } from '../lib/queries';
 import { useToast } from '../lib/toast';
+import { useStoppable } from '../lib/use-stoppable';
 
 const STATUSES = [
   { value: 301, label: '301 Moved permanently' },
@@ -343,6 +347,18 @@ export function RedirectDialog(props: {
   const [busy, setBusy] = useState(false);
   const [issues, setIssues] = useState<Record<string, string>>({});
   const [error, setError] = useState<string>();
+  const guard = useDiscardGuard({
+    saving: busy,
+    open: props.open,
+    dirty:
+      source !== (r?.source ?? '') ||
+      destination !== (r?.destination ?? '') ||
+      status !== (r?.status ?? 301) ||
+      locale !== (r?.locale ?? ALL) ||
+      enabled !== (r?.enabled ?? true) ||
+      note !== (r?.note ?? ''),
+    onOpenChange: props.onOpenChange,
+  });
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -389,7 +405,7 @@ export function RedirectDialog(props: {
     issues[name] ? `${id}-${name}-error` : hint ? `${id}-${name}-hint` : undefined;
 
   return (
-    <Dialog open={props.open} onOpenChange={props.onOpenChange}>
+    <Dialog open={props.open} onOpenChange={guard.onOpenChange}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>{r ? 'Edit redirect' : 'New redirect'}</DialogTitle>
@@ -488,14 +504,14 @@ export function RedirectDialog(props: {
             <Switch id={`${id}-enabled`} checked={enabled} onCheckedChange={setEnabled} />
             <Label htmlFor={`${id}-enabled`}>Enabled</Label>
           </div>
-          {error && <p className="text-destructive text-sm">{error}</p>}
+          {error && <DialogError>{error}</DialogError>}
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => props.onOpenChange(false)}>
-              Cancel
-            </Button>
-            <Button type="submit" disabled={busy || !source.trim() || !destination.trim()}>
-              {busy ? 'Saving…' : r ? 'Save changes' : 'Add redirect'}
-            </Button>
+            <DiscardAsk guard={guard} message="Discard this redirect?">
+              <GuardCancel guard={guard} />
+              <Button type="submit" disabled={busy || !source.trim() || !destination.trim()}>
+                {busy ? 'Saving…' : r ? 'Save changes' : 'Add redirect'}
+              </Button>
+            </DiscardAsk>
           </DialogFooter>
         </form>
       </DialogContent>
@@ -525,25 +541,52 @@ export function ImportRedirectsDialog(props: {
   const [checked, setChecked] = useState<RedirectImportReport | null>(null);
   const [problems, setProblems] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
+  // Check is a dry run, a read: it stays closable, where the import itself holds the dialog.
+  const [checking, setChecking] = useState(false);
+  const check = useStoppable();
+  // An import that didn't answer may have gone through: "Nothing was imported" could be untrue.
+  const [unconfirmed, setUnconfirmed] = useState(false);
+  const guard = useDiscardGuard({
+    saving: busy,
+    open: props.open,
+    dirty: data.trim() !== '',
+    onOpenChange: props.onOpenChange,
+  });
 
-  const run = async (dryRun: boolean) => {
+  const refused = (err: unknown) => {
+    setChecked(null);
+    setUnconfirmed(err instanceof RequestTimeoutError);
+    const issues = apiFieldIssues(err);
+    const listed = Object.entries(issues).map(([f, m]) => {
+      const row = /^rows\[(\d+)\]/.exec(f)?.[1];
+      return row !== undefined ? `Row ${Number(row) + 1}: ${m}` : m;
+    });
+    setProblems(listed.length > 0 ? listed : [apiErrorMessage(err)]);
+  };
+
+  const dryRun = async () => {
+    const signal = check.start();
+    setChecking(true);
+    setProblems([]);
+    try {
+      const report = await props.client.importRedirects({ format, data, dryRun: true }, signal);
+      if (!signal.aborted) setChecked(report);
+    } catch (err) {
+      if (!signal.aborted) refused(err);
+    } finally {
+      if (!signal.aborted) setChecking(false);
+    }
+  };
+
+  const run = async () => {
     setBusy(true);
     setProblems([]);
     try {
-      const report = await props.client.importRedirects({ format, data, dryRun });
-      if (dryRun) setChecked(report);
-      else {
-        await props.onImported(report);
-        props.onOpenChange(false);
-      }
+      const report = await props.client.importRedirects({ format, data, dryRun: false });
+      await props.onImported(report);
+      props.onOpenChange(false);
     } catch (err) {
-      setChecked(null);
-      const issues = apiFieldIssues(err);
-      const listed = Object.entries(issues).map(([f, m]) => {
-        const row = /^rows\[(\d+)\]/.exec(f)?.[1];
-        return row !== undefined ? `Row ${Number(row) + 1}: ${m}` : m;
-      });
-      setProblems(listed.length > 0 ? listed : [apiErrorMessage(err)]);
+      refused(err);
     } finally {
       setBusy(false);
     }
@@ -557,7 +600,7 @@ export function ImportRedirectsDialog(props: {
   };
 
   return (
-    <Dialog open={props.open} onOpenChange={props.onOpenChange}>
+    <Dialog open={props.open} onOpenChange={guard.onOpenChange}>
       <DialogContent className="sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>Import redirects</DialogTitle>
@@ -610,17 +653,14 @@ export function ImportRedirectsDialog(props: {
             />
           </div>
           {problems.length > 0 && (
-            <Alert variant="destructive">
-              <AlertTitle>Nothing was imported</AlertTitle>
-              <AlertDescription>
-                <ul className="list-disc ps-4">
-                  {problems.slice(0, 10).map((p) => (
-                    <li key={p}>{p}</li>
-                  ))}
-                  {problems.length > 10 && <li>and {problems.length - 10} more</li>}
-                </ul>
-              </AlertDescription>
-            </Alert>
+            <DialogError {...(unconfirmed ? {} : { title: 'Nothing was imported' })}>
+              <ul className="list-disc ps-4">
+                {problems.slice(0, 10).map((p) => (
+                  <li key={p}>{p}</li>
+                ))}
+                {problems.length > 10 && <li>and {problems.length - 10} more</li>}
+              </ul>
+            </DialogError>
           )}
           {checked && (
             <p role="status" className="text-sm">
@@ -632,18 +672,18 @@ export function ImportRedirectsDialog(props: {
           )}
         </div>
         <DialogFooter>
-          <Button type="button" variant="outline" onClick={() => props.onOpenChange(false)}>
-            Cancel
-          </Button>
-          {checked ? (
-            <Button disabled={busy} onClick={() => void run(false)}>
-              {busy ? 'Importing…' : 'Import'}
-            </Button>
-          ) : (
-            <Button disabled={busy || !data.trim()} onClick={() => void run(true)}>
-              {busy ? 'Checking…' : 'Check'}
-            </Button>
-          )}
+          <DiscardAsk guard={guard} message="Discard this import?">
+            <GuardCancel guard={guard} />
+            {checked ? (
+              <Button disabled={busy} onClick={() => void run()}>
+                {busy ? 'Importing…' : 'Import'}
+              </Button>
+            ) : (
+              <Button disabled={checking || !data.trim()} onClick={() => void dryRun()}>
+                {checking ? 'Checking…' : 'Check'}
+              </Button>
+            )}
+          </DiscardAsk>
         </DialogFooter>
       </DialogContent>
     </Dialog>
