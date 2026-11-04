@@ -221,6 +221,31 @@ in-browser model, page-per-language translation, and rich text or styles stored 
   fallbacks skip it and the sitemap's `hreflang` alternates leave it out; and a text direction,
   served on the space config and set as `dir` on the admin's inputs.
 
+#### Follow-ups from M1 and M2
+
+Found while building and reviewing M1 and M2. None blocks a release.
+
+- [ ] **Re-check a running job's starter.** Record who started a bulk job and check their access
+  again before each chunk, so a trash or purge job stops when its starter loses access.
+- [ ] **Audit promotion and cross-space clone.** Check both against per-type and field rules, as
+  imports, snapshots and merge now are.
+- [ ] **Delegated bearers and people.** Refuse invitations and member role changes from personal
+  access tokens and OAuth tokens, so a short-lived token can't create a lasting admin.
+- [ ] **Environment-wide checks in the use-cases.** Move `authorizeEveryContentType` from the HTTP
+  routes and MCP tools into the use-cases with a required principal, so a new surface can't skip it.
+- [ ] **Admin saves for read-only roles.** The editor sends every field, so a role with
+  `readOnlyFields` probably gets a 403 on save. Confirm it, and send only what the role may write.
+- [ ] **Linear email checks.** Replace the quadratic pattern in `isEmail` (`domain/auth/team.ts`) and
+  `security/credentials.ts`, as the `email` preset already was.
+- [ ] **Role version check.** A revision on `PUT /roles/:id`, closing the last read-then-write window
+  in the Access sheet.
+- [ ] **SDK paging.** `entries.list` sends `skip`, which the Preview list refuses; use `cursor` and
+  return `nextCursor`.
+- [ ] **Flaky browser tests.** Find the cause of the webhook dialog, webhook deliveries and asset
+  library tests that fail under a full parallel run and pass alone.
+- [ ] **Unused api email config.** Drop `EMAIL_FROM`, `EMAIL_FROM_NAME` and the `send_email` comment
+  from `apps/api/wrangler.jsonc`; nothing on the api sends email.
+
 #### M3. Collaboration
 
 - [ ] **Entry locks.** A stateful edge object per entry: a heartbeat lease, request-unlock, admin
