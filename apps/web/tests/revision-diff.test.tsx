@@ -283,8 +283,10 @@ describe('VersionHistory compare', () => {
     // In the list, not over the page, and the safe choice has focus.
     expect(ask.closest('li')).toBeTruthy();
     expect(screen.queryByRole('dialog')).toBeNull();
-    expect(document.activeElement).toBe(
-      within(ask).getByRole('button', { name: 'Keep current draft' }),
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        within(ask).getByRole('button', { name: 'Keep current draft' }),
+      ),
     );
 
     fireEvent.click(within(ask).getByRole('button', { name: 'Keep current draft' }));
