@@ -40,8 +40,6 @@ export function CanvasDialog(props: {
   contentTypeName: string;
   /** Maps the prose into the form; once `signal` aborts, it must leave the form alone. */
   onMap: (prose: string, tier: ModelTier, signal: AbortSignal) => Promise<void>;
-  /** Where focus goes as it closes, when what opened it may be gone. */
-  onCloseAutoFocus?: (event: Event) => void;
 }) {
   const [prose, setProse] = useState('');
   const [tier, setTier] = useState<ModelTier>('balanced');
@@ -77,7 +75,7 @@ export function CanvasDialog(props: {
 
   return (
     <Dialog open={props.open} onOpenChange={(o) => (o ? props.onOpenChange(o) : close())}>
-      <DialogContent className="sm:max-w-2xl" onCloseAutoFocus={props.onCloseAutoFocus}>
+      <DialogContent className="sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <PenLine className="size-4 text-primary" />

@@ -356,16 +356,45 @@ describe('EntriesList unpublish and Undo', () => {
 });
 
 describe('EntriesList row Publish', () => {
-  it('publishes a draft at once and offers Undo, which unpublishes it', async () => {
+  it('confirms a draft before anything goes live, and offers no Undo after', async () => {
+    setup();
+    fireEvent.click(await screen.findByRole('button', { name: 'Publish “Spring launch”' }));
+    const dialog = await screen.findByRole('alertdialog', { name: 'Publish “Spring launch”?' });
+    expect(client.publishEntry).not.toHaveBeenCalled();
+    // A draft has nothing live to compare with, so nothing is read and nothing holds the button.
+    expect(client.diffVersions).not.toHaveBeenCalled();
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Publish entry' }));
+    await screen.findByText('“Spring launch” published');
+    expect(client.publishEntry).toHaveBeenCalledExactlyOnceWith('e-draft');
+    // Readers and webhooks already have it: an Undo wouldn't call that back.
+    expect(screen.queryByRole('button', { name: 'Undo' })).toBeNull();
+  });
+
+  it('keeps a draft as a draft when the confirmation is declined', async () => {
+    setup();
+    fireEvent.click(await screen.findByRole('button', { name: 'Publish “Spring launch”' }));
+    const dialog = await screen.findByRole('alertdialog', { name: 'Publish “Spring launch”?' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Keep as draft' }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    expect(client.publishEntry).not.toHaveBeenCalled();
+    expect(within(rowOf('Spring launch')).getByText('Draft')).toBeTruthy();
+  });
+
+  it('sends a draft to the assistant’s card too, with no dialog of its own', async () => {
+    const edit = vi.fn(async () => ({ output: { id: 'e-draft', status: 'published' } }));
+    assistant.edit = edit;
     setup();
     fireEvent.click(await screen.findByRole('button', { name: 'Publish “Spring launch”' }));
     await screen.findByText('“Spring launch” published');
-    expect(client.publishEntry).toHaveBeenCalledExactlyOnceWith('e-draft');
+    expect(edit).toHaveBeenCalledExactlyOnceWith(
+      'entries_publish',
+      expect.objectContaining({ id: 'e-draft' }),
+      'Spring launch',
+    );
     expect(screen.queryByRole('alertdialog')).toBeNull();
-
-    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
-    await screen.findByText('“Spring launch” is back to draft');
-    expect(client.unpublishEntry).toHaveBeenCalledExactlyOnceWith('e-draft');
+    expect(client.publishEntry).not.toHaveBeenCalled();
+    expect(screen.queryByRole('button', { name: 'Undo' })).toBeNull();
   });
 
   it('confirms a changed entry with what changes before anything goes live', async () => {
@@ -414,6 +443,8 @@ describe('EntriesList row Publish', () => {
     setup();
     client.publishEntry.mockRejectedValueOnce(new Error('Validation failed'));
     fireEvent.click(await screen.findByRole('button', { name: 'Publish “Spring launch”' }));
+    const dialog = await screen.findByRole('alertdialog', { name: 'Publish “Spring launch”?' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Publish entry' }));
     await waitFor(() => expect(client.publishEntry).toHaveBeenCalledOnce());
     await waitFor(() => expect(within(rowOf('Spring launch')).getByText('Draft')).toBeTruthy());
     expect(screen.queryByText('“Spring launch” published')).toBeNull();
@@ -693,7 +724,11 @@ describe('EntriesList bulk bar', () => {
     // In place under the bar, naming what it changes, with the safe choice focused.
     expect(dialog.closest('[data-slot="alert-dialog-content"]')).toBeNull();
     expect(within(dialog).getByText('About us')).toBeTruthy();
-    expect(document.activeElement).toBe(within(dialog).getByRole('button', { name: 'Keep as is' }));
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        within(dialog).getByRole('button', { name: 'Keep as is' }),
+      ),
+    );
     fireEvent.click(within(dialog).getByRole('button', { name: 'Unpublish entries' }));
     await screen.findByText('1 entry failed');
     expect(screen.getByText(/Locked by a release/)).toBeTruthy();

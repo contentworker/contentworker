@@ -62,8 +62,6 @@ export function GenerateEntryDialog(props: {
   onGenerate: (prompt: string, tier: ModelTier, signal: AbortSignal) => Promise<GeneratedDraft>;
   /** Merges the reviewed draft into the editor form (unsaved). */
   onApply: (fields: EntryFields) => void;
-  /** Where focus goes as it closes, when what opened it may be gone. */
-  onCloseAutoFocus?: (event: Event) => void;
 }) {
   const { contentType } = props;
   const [prompt, setPrompt] = useState('');
@@ -143,7 +141,7 @@ export function GenerateEntryDialog(props: {
 
   return (
     <Dialog open={props.open} onOpenChange={(o) => (o ? props.onOpenChange(o) : close())}>
-      <DialogContent className="sm:max-w-lg" onCloseAutoFocus={props.onCloseAutoFocus}>
+      <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>Generate {contentType.name} draft</DialogTitle>
           <DialogDescription>

@@ -38,6 +38,7 @@ import { AiActions } from '~/cms/components/AiActions';
 import { AppExtensions } from '~/cms/components/AppExtensions';
 import { Ago } from '~/cms/components/ago';
 import { BranchMerge } from '~/cms/components/BranchMerge';
+import { ConfirmDialog } from '~/cms/components/ConfirmDialog';
 import { ConnectedApps } from '~/cms/components/ConnectedApps';
 import { Functions } from '~/cms/components/Functions';
 import { ConfirmButton } from '~/cms/components/InlineConfirm';
@@ -449,13 +450,9 @@ function RolesSettings(props: { client: ManagementClient }) {
   };
 
   const remove = async (id: string) => {
-    try {
-      await props.client.deleteRole(id);
-      await invalidate(['roles']);
-      toast.success('Role deleted');
-    } catch (err) {
-      toast.error(apiErrorMessage(err));
-    }
+    await props.client.deleteRole(id);
+    await invalidate(['roles']);
+    toast.success('Role deleted');
   };
 
   return (
@@ -521,18 +518,18 @@ function RolesSettings(props: { client: ManagementClient }) {
                       Clone
                     </Button>
                     {role.preset ? null : (
-                      <ConfirmButton
+                      <ConfirmDialog
                         message={`Delete the role “${role.name}”?`}
                         note="This can’t be undone."
                         confirmLabel="Delete role"
-                        onConfirm={() => void remove(role.id)}
+                        onConfirm={() => remove(role.id)}
                       >
                         {(ask) => (
                           <Button type="button" variant="ghost" size="sm" onClick={ask}>
                             Delete
                           </Button>
                         )}
-                      </ConfirmButton>
+                      </ConfirmDialog>
                     )}
                   </div>
                 </TableCell>

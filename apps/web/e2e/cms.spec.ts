@@ -848,7 +848,10 @@ test('deleting an asset an entry uses names that entry and links to it', async (
 }) => {
   const stamp = Date.now();
   const assetTitle = `Hero ${stamp}`;
-  const assetId = await seedAsset(request, assetTitle, { publish: true });
+  // In a folder of its own: seeded assets from a spec beside this one can't push it off the page,
+  // and an asset with no bytes isn't in the search index to be found by name.
+  const folderId = await seedAssetFolder(request, assetTitle);
+  const assetId = await seedAsset(request, assetTitle, { publish: true, folderId });
   const entryTitle = `Uses hero ${stamp}`;
   const created = await api(request, 'POST', `${MGMT}/entries`, {
     contentTypeApiId: 'article',
@@ -875,12 +878,16 @@ test('deleting an asset an entry uses names that entry and links to it', async (
   expect(published.ok(), await published.text()).toBe(true);
 
   await openCms(page, '/assets');
+  await page
+    .getByRole('navigation', { name: 'Folders' })
+    .getByRole('button', { name: assetTitle, exact: true })
+    .click();
   const library = page.getByRole('region', { name: 'Asset library' });
   await library.getByRole('button', { name: `Delete “${assetTitle}”` }).click();
-  await library
-    .getByRole('alertdialog', { name: new RegExp(`Delete “${assetTitle}”`) })
-    .getByRole('button', { name: 'Delete' })
-    .click();
+  // A modal, portalled out of the library: it can't be undone and its files go too.
+  const ask = page.getByRole('alertdialog', { name: new RegExp(`Delete “${assetTitle}”`) });
+  await expect(ask.getByRole('button', { name: 'Cancel' })).toBeFocused();
+  await ask.getByRole('button', { name: 'Delete asset' }).click();
 
   const notice = library
     .getByRole('alert')
@@ -996,7 +1003,7 @@ test.describe('publishing from a row, without the assistant', () => {
     expect(await region.getAttribute('tabindex')).toBe('0');
   });
 
-  test('a draft publishes at once with an Undo that returns it to draft', async ({
+  test('a draft confirms before it goes live, and Keep as draft leaves it one', async ({
     page,
     request,
   }) => {
@@ -1004,16 +1011,24 @@ test.describe('publishing from a row, without the assistant', () => {
     const id = await createDraft(request, title);
     await openCms(page, '/content/article');
     const row = page.getByRole('row', { name: new RegExp(title) });
-    await row.getByRole('button', { name: `Publish “${title}”` }).click();
+    const publish = row.getByRole('button', { name: `Publish “${title}”` });
 
-    // No confirmation for a first publish: it is live, and the toast offers the way back.
-    await expect(page.getByRole('alertdialog')).toHaveCount(0);
-    const toast = page.getByText(`“${title}” published`);
-    await expect(toast).toBeVisible();
-    await page.getByRole('button', { name: 'Undo' }).click();
-    await expect(page.getByText(`“${title}” is back to draft`)).toBeVisible();
+    await publish.click();
+    const dialog = page.getByRole('alertdialog', { name: `Publish “${title}”?` });
+    await expect(dialog.getByRole('button', { name: 'Keep as draft' })).toBeFocused();
+    await dialog.getByRole('button', { name: 'Keep as draft' }).click();
+    await expect(dialog).toBeHidden();
+    await expect(publish).toBeFocused();
     expect(await statusOf(request, id)).toBe('draft');
-    await expect(row.getByText('Draft', { exact: true })).toBeVisible();
+
+    await publish.click();
+    await dialog.getByRole('button', { name: 'Publish entry' }).click();
+    await expect(page.getByText(`“${title}” published`)).toBeVisible();
+    // Readers and webhooks have it now, so there is no Undo to offer.
+    await expect(page.getByRole('button', { name: 'Undo' })).toHaveCount(0);
+    expect(await statusOf(request, id)).toBe('published');
+    // The row's Publish has gone: its title keeps the keyboard on the row.
+    await expect(row.getByRole('link', { name: title })).toBeFocused();
   });
 });
 
@@ -1273,7 +1288,7 @@ test('an asset collection: made beside the folders, filled from the library, reo
   await expect(active.getByRole('listitem')).toHaveCount(1);
   await expect(active.getByText('View only')).toBeVisible();
   await active.getByRole('button', { name: /Revoke the link/ }).click();
-  await active
+  await page
     .getByRole('alertdialog', { name: /Revoke this link\?/ })
     .getByRole('button', { name: 'Revoke link' })
     .click();
@@ -1291,7 +1306,7 @@ test('an asset collection: made beside the folders, filled from the library, reo
   });
   await expect(zip.getByRole('status')).toContainText(`“${name}.zip” is ready: 3 files`);
 
-  // One taken out (it stays in the library), then the collection deleted after asking in place.
+  // One taken out (it stays in the library), then the collection deleted after asking.
   await list.getByRole('button', { name: `Remove “${files[1]}” from “${name}”` }).click();
   await expect(page.getByText(`Removed “${files[1]}” from “${name}”`)).toBeVisible();
   await expect.poll(order).toEqual([files[2], files[0]]);
@@ -1625,7 +1640,7 @@ test('a content type is cloned, then deleted with its entries, from its menu', a
   const remove = page.getByRole('dialog', { name: `Delete “Scratch ${stamp}”?` });
   await remove.getByLabel(/to confirm/).fill(apiId);
   await expect(remove.getByRole('button', { name: 'Delete type and entries' })).toBeDisabled();
-  await remove.getByRole('checkbox', { name: /Also delete its 1 entry/ }).check();
+  await remove.getByRole('checkbox', { name: /Delete its 1 entry too/ }).check();
   await remove.getByRole('button', { name: 'Delete type and entries' }).click();
   await expect(
     page.getByRole('status').filter({ hasText: `Deleted 1 entry of “Scratch ${stamp}”` }),

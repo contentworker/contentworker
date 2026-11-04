@@ -1,4 +1,4 @@
-import { useContext } from 'react';
+import { useContext, useEffect } from 'react';
 import {
   isRouteErrorResponse,
   Links,
@@ -55,6 +55,10 @@ const THEME_SCRIPT = `(function(){var d=document.documentElement,m=window.matchM
 
 export function Layout({ children }: { children: React.ReactNode }) {
   const nonce = useContext(NonceContext);
+  // Runs after every child's effects, so the page's listeners are attached. The e2e tests wait on it.
+  useEffect(() => {
+    document.documentElement.dataset.hydrated = '';
+  }, []);
   return (
     <html lang="en" data-theme="light" suppressHydrationWarning>
       <head>

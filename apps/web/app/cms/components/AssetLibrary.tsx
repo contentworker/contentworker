@@ -31,7 +31,7 @@ import {
   uploadSummary,
 } from '~/cms/components/assets/AssetUploadList';
 import { AssetZipProgress, useAssetZip } from '~/cms/components/assets/AssetZipProgress';
-import { InlineConfirm } from '~/cms/components/InlineConfirm';
+import { ConfirmDialog } from '~/cms/components/ConfirmDialog';
 import {
   LoadingStatus,
   Refreshing,
@@ -152,8 +152,8 @@ export function AssetLibrary(props: { locale: string }) {
   const [uploads, setUploads] = useState<UploadItem[]>([]);
   const [dragging, setDragging] = useState(false);
   const [bulkBusy, setBulkBusy] = useState(false);
-  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [inUse, setInUse] = useState<({ asset: Asset } & AssetInUse) | null>(null);
+  const refusedInUse = useRef<({ asset: Asset } & AssetInUse) | null>(null);
   // A bulk action's failures, by asset: named in place, and still selected to try again.
   const [bulkFailures, setBulkFailures] = useState<{
     readonly verb: string;
@@ -527,7 +527,6 @@ export function AssetLibrary(props: { locale: string }) {
       .catch(fail);
 
   const remove = async (asset: Asset) => {
-    setConfirmDelete(null);
     try {
       await client.deleteAsset(asset.id);
       setSelected((s) => {
@@ -539,9 +538,16 @@ export function AssetLibrary(props: { locale: string }) {
       await reload();
     } catch (e) {
       const used = assetUsageOf(e);
-      if (used) setInUse({ asset, ...used });
-      else fail(e);
+      if (!used) throw e;
+      refusedInUse.current = { asset, ...used };
     }
+  };
+  // Shown once the confirm has gone: the notice takes focus, which the dialog would hold on to.
+  const showInUse = (event: Event) => {
+    if (!refusedInUse.current) return;
+    event.preventDefault();
+    setInUse(refusedInUse.current);
+    refusedInUse.current = null;
   };
 
   // --- selection and bulk ---------------------------------------------------
@@ -794,73 +800,72 @@ export function AssetLibrary(props: { locale: string }) {
   const pick = () => fileRef.current?.click();
 
   /** The actions on one asset, the same in the grid and the list. */
-  const actions = (a: Asset, name: string) =>
-    confirmDelete === a.id ? (
-      <InlineConfirm
-        message={`Delete “${name}”?`}
-        note="Its files go too. This can’t be undone."
-        onCancel={() => setConfirmDelete(null)}
-      >
-        <Button type="button" size="sm" variant="destructive" onClick={() => void remove(a)}>
-          Delete
+  const actions = (a: Asset, name: string) => (
+    <div className="flex items-center gap-0.5">
+      {a.status === 'archived' ? (
+        <Button
+          type="button"
+          variant="ghost"
+          size="xs"
+          aria-label={`Restore “${name}”`}
+          onClick={() => restore(a)}
+        >
+          <ArchiveRestore aria-hidden="true" />
+          Restore
         </Button>
-      </InlineConfirm>
-    ) : (
-      <div className="flex items-center gap-0.5">
-        {a.status === 'archived' ? (
-          <Button
-            type="button"
-            variant="ghost"
-            size="xs"
-            aria-label={`Restore “${name}”`}
-            onClick={() => restore(a)}
-          >
-            <ArchiveRestore aria-hidden="true" />
-            Restore
-          </Button>
-        ) : a.status === 'published' ? (
-          <Button
-            type="button"
-            variant="ghost"
-            size="xs"
-            aria-label={`Unpublish “${name}”`}
-            onClick={() => unpublish(a)}
-          >
-            Unpublish
-          </Button>
-        ) : (
-          <Button
-            type="button"
-            variant="ghost"
-            size="xs"
-            aria-label={`Publish “${name}”`}
-            onClick={() => publish(a)}
-          >
-            Publish
-          </Button>
-        )}
-        {a.status !== 'archived' && (
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-xs"
-            aria-label={`Archive “${name}”`}
-            onClick={() => archive(a)}
-          >
-            <Archive aria-hidden="true" />
-          </Button>
-        )}
+      ) : a.status === 'published' ? (
+        <Button
+          type="button"
+          variant="ghost"
+          size="xs"
+          aria-label={`Unpublish “${name}”`}
+          onClick={() => unpublish(a)}
+        >
+          Unpublish
+        </Button>
+      ) : (
+        <Button
+          type="button"
+          variant="ghost"
+          size="xs"
+          aria-label={`Publish “${name}”`}
+          onClick={() => publish(a)}
+        >
+          Publish
+        </Button>
+      )}
+      {a.status !== 'archived' && (
         <Button
           type="button"
           variant="ghost"
           size="icon-xs"
-          aria-label={`Delete “${name}”`}
-          onClick={() => setConfirmDelete(a.id)}
+          aria-label={`Archive “${name}”`}
+          onClick={() => archive(a)}
         >
-          <Trash2 aria-hidden="true" />
+          <Archive aria-hidden="true" />
         </Button>
-      </div>
-    );
+      )}
+      <ConfirmDialog
+        message={`Delete “${name}”?`}
+        note="Its files go too. This can’t be undone."
+        confirmLabel="Delete asset"
+        onConfirm={() => remove(a)}
+        onCloseAutoFocus={showInUse}
+      >
+        {(ask) => (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            aria-label={`Delete “${name}”`}
+            onClick={ask}
+          >
+            <Trash2 aria-hidden="true" />
+          </Button>
+        )}
+      </ConfirmDialog>
+    </div>
+  );
 
   const badges = (a: Asset) => {
     const video = a.file.video;
@@ -933,7 +938,7 @@ export function AssetLibrary(props: { locale: string }) {
                 {name}
               </button>
               <div className="relative z-10 flex flex-wrap items-center justify-between gap-1">
-                {confirmDelete === a.id ? null : badges(a)}
+                {badges(a)}
                 {actions(a, name)}
               </div>
             </Card>

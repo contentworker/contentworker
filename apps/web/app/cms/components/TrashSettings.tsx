@@ -5,7 +5,7 @@ import { Label } from '@contentworker/ui/label';
 import { Segmented, SegmentedItem } from '@contentworker/ui/segmented';
 import { SkeletonText } from '@contentworker/ui/skeleton';
 import { useEffect, useId, useState } from 'react';
-import { ConfirmButton } from '~/cms/components/InlineConfirm';
+import { ConfirmDialog } from '~/cms/components/ConfirmDialog';
 import { LoadingStatus } from '~/cms/components/loading';
 import { Section } from '~/cms/components/page';
 import { plural } from '../lib/format';
@@ -60,16 +60,19 @@ export function TrashSettings(props: { client: ManagementClient }) {
   // Deleting sooner than before (or at all, from off) removes trash that is there today.
   const deletesSooner = next !== null && (saved === null || (saved !== undefined && next < saved));
 
+  const write = async () => {
+    await client.setTrashSettings({ retentionDays: next });
+    await invalidate(['trash-settings']);
+    toast.success(
+      next === null
+        ? 'Trashed entries are kept until someone deletes them'
+        : `Trashed entries are deleted after ${plural(next, 'day')}`,
+    );
+  };
   const save = async () => {
     setBusy(true);
     try {
-      await client.setTrashSettings({ retentionDays: next });
-      await invalidate(['trash-settings']);
-      toast.success(
-        next === null
-          ? 'Trashed entries are kept until someone deletes them'
-          : `Trashed entries are deleted after ${plural(next, 'day')}`,
-      );
+      await write();
     } catch (err) {
       toast.error(apiErrorMessage(err));
     } finally {
@@ -139,20 +142,19 @@ export function TrashSettings(props: { client: ManagementClient }) {
               : 'Entries stay in the trash until someone restores them or deletes them permanently.'}
           </p>
           {deletesSooner ? (
-            <ConfirmButton
+            <ConfirmDialog
               message={`Delete trashed entries after ${plural(next ?? 0, 'day')}?`}
               note="Entries already in the trash longer than that are deleted permanently at the next hourly sweep. That can’t be undone."
               cancelLabel="Keep as is"
               confirmLabel="Save and delete"
-              busy={busy}
-              onConfirm={() => void save()}
+              onConfirm={write}
             >
               {(ask) => (
                 <Button type="button" size="sm" disabled={busy || !changed} onClick={ask}>
                   Save
                 </Button>
               )}
-            </ConfirmButton>
+            </ConfirmDialog>
           ) : (
             <Button type="button" size="sm" disabled={busy || !changed} onClick={() => void save()}>
               Save

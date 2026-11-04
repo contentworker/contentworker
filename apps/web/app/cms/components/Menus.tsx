@@ -39,6 +39,7 @@ import {
   Plus,
 } from 'lucide-react';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { ConfirmDialog } from '~/cms/components/ConfirmDialog';
 import { DiscardAsk, GuardCancel, useDiscardGuard } from '~/cms/components/discard-guard';
 import { EntityPicker } from '~/cms/components/EntityPicker';
 import { ConfirmButton } from '~/cms/components/InlineConfirm';
@@ -54,6 +55,7 @@ import {
   type MenuItemStatus,
   type MenuSummary,
   refusedSave,
+  SaveRefusedError,
 } from '../lib/management';
 import { useInvalidate, useScopedQuery } from '../lib/queries';
 import { useToast } from '../lib/toast';
@@ -178,9 +180,9 @@ function MenuList(props: { client: ManagementClient; onOpen: (id: string) => voi
       await client.deleteMenu(m.id, m.revision);
       toast.success('Menu deleted');
     } catch (err) {
-      toast.error(
-        isStale(err) ? 'Someone changed this menu since the list loaded.' : apiErrorMessage(err),
-      );
+      throw isStale(err)
+        ? new SaveRefusedError('Someone changed this menu since the list loaded.')
+        : err;
     } finally {
       await invalidate(['menus']);
       setBusy(false);
@@ -246,12 +248,12 @@ function MenuList(props: { client: ManagementClient; onOpen: (id: string) => voi
                     {m.itemCount}
                   </TableCell>
                   <TableCell className="text-right">
-                    <ConfirmButton
+                    <ConfirmDialog
                       message={`Delete the menu “${m.name}”?`}
                       note={`Delivery stops serving “${m.handle}”: a site that renders it shows no navigation there.`}
                       confirmLabel="Delete menu"
                       busy={busy}
-                      onConfirm={() => void remove(m)}
+                      onConfirm={() => remove(m)}
                     >
                       {(ask) => (
                         <span className="flex justify-end gap-1">
@@ -273,7 +275,7 @@ function MenuList(props: { client: ManagementClient; onOpen: (id: string) => voi
                           </Button>
                         </span>
                       )}
-                    </ConfirmButton>
+                    </ConfirmDialog>
                   </TableCell>
                 </TableRow>
               ))}
