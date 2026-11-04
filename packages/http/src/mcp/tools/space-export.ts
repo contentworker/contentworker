@@ -1,12 +1,17 @@
 import { analyzeSpaceExport, startSpaceExportImport } from '@contentworker/application';
-import { SCOPES, type Scope, ValidationError } from '@contentworker/domain';
+import {
+  authorizeEveryContentType,
+  SCOPES,
+  type Scope,
+  ValidationError,
+} from '@contentworker/domain';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { spaceExportImportBody } from '../../api/validation';
 import { ok, scopeArgs, scopeOf, type ToolContext, toolSchema } from './shared';
 
 export function registerSpaceExportTools(server: McpServer, t: ToolContext): void {
-  const { deps, ctx, guard } = t;
+  const { deps, ctx, guard, principal } = t;
   // --- importing a whole space from the JSON space export format --------------
   const spaceExportArgs = {
     payload: spaceExportImportBody.shape.payload.describe('The export file, as JSON text'),
@@ -30,6 +35,8 @@ export function registerSpaceExportTools(server: McpServer, t: ToolContext): voi
       ]);
     }
     if (args.addLocales) guard(SCOPES.spaceAdmin, args);
+    // As the route: it writes (and publishes) entries of every type the export defines.
+    authorizeEveryContentType(principal, args.publish !== false ? ['write', 'publish'] : ['write']);
     return {
       reader: deps.spaceExportReader,
       input: {

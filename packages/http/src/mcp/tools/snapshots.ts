@@ -6,14 +6,14 @@ import {
   startEnvironmentClone,
   startSnapshotImport,
 } from '@contentworker/application';
-import { SCOPES } from '@contentworker/domain';
+import { authorizeEveryContentType, SCOPES } from '@contentworker/domain';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { snapshotBody } from '../../api/validation';
 import { ok, scopeArgs, scopeOf, type ToolContext, toolSchema } from './shared';
 
 export function registerSnapshotTools(server: McpServer, t: ToolContext): void {
-  const { deps, ctx, guard } = t;
+  const { deps, ctx, guard, principal } = t;
   // --- environment snapshots ----------------------------------------------
   server.registerTool(
     'environment_export',
@@ -28,6 +28,8 @@ export function registerSnapshotTools(server: McpServer, t: ToolContext): void {
     },
     async (args) => {
       guard(SCOPES.contentManage, scopeOf(args));
+      // Every entry of every type, every field: a role limited to some types or fields can't.
+      authorizeEveryContentType(principal, ['read']);
       return ok(await exportSnapshot(ctx, scopeOf(args), { limit: args.limit }));
     },
   );
@@ -60,6 +62,11 @@ export function registerSnapshotTools(server: McpServer, t: ToolContext): void {
         publish: args.publish,
         reindexAssets: Boolean(deps.assetIngest),
       };
+      // As the route: it writes (and publishes) entries of every type the snapshot defines.
+      authorizeEveryContentType(
+        principal,
+        args.publish !== false ? ['write', 'publish'] : ['write'],
+      );
       if (args.dryRun || !deps.blob)
         return ok(await importSnapshot(ctx, target, snapshot, options));
       return ok(await startSnapshotImport(ctx, deps.blob, target, snapshot, options));
@@ -97,6 +104,11 @@ export function registerSnapshotTools(server: McpServer, t: ToolContext): void {
       // Authorized separately: cloning into a space the caller cannot manage
       // would be a tenancy hole.
       guard(SCOPES.contentManage, to);
+      // An export of the source and an import into the target, on every content type alike.
+      authorizeEveryContentType(
+        principal,
+        args.publish !== false ? ['read', 'write', 'publish'] : ['read', 'write'],
+      );
       const options = {
         dryRun: args.dryRun,
         publish: args.publish,

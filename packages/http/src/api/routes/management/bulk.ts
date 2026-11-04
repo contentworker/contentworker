@@ -1,5 +1,6 @@
 import {
   authorizeBulkJob,
+  authorizeBulkJobAccess,
   bulkCreateEntries,
   bulkEntryAction,
   cancelBulkJob,
@@ -53,11 +54,12 @@ export function bulkRoutes(deps: AuthDeps): Hono<AuthVars> {
   // --- bulk jobs (durable, chunked; for id sets beyond the sync routes) ----
   // Granular per-entry RBAC guards are impractical at this cardinality, and a report names
   // entries of every content type, so start, cancel and report take a role that holds the job's
-  // actions on every type alike (`authorizeBulkJob`: no per-type grants, or one full `*` grant).
+  // actions on every type alike (`authorizeBulkJob`: no per-type grants, or one full `*` grant);
+  // an import job goes by what it reached (`authorizeBulkJobAccess`).
   // Job status and list (counts only) stay readable by any content:write key.
-  const guardJob = async (c: Context<AuthVars>) => {
+  const guardJob = async (c: Context<AuthVars>, access: 'report' | 'cancel') => {
     const job = await getBulkJob(ctx, scopeOf(c), c.req.param('id') ?? '');
-    authorizeBulkJob(c.get('principal'), job.action);
+    authorizeBulkJobAccess(c.get('principal'), job, access);
   };
   app.post(`${BASE}/bulk/jobs`, requireScope(SCOPES.contentPublish), async (c) => {
     const body = await parseBody(c, bulkJobBody);
@@ -75,11 +77,11 @@ export function bulkRoutes(deps: AuthDeps): Hono<AuthVars> {
     c.json(await getBulkJob(ctx, scopeOf(c), c.req.param('id'))),
   );
   app.get(`${BASE}/bulk/jobs/:id/report`, requireScope(SCOPES.contentWrite), async (c) => {
-    await guardJob(c);
+    await guardJob(c, 'report');
     return c.json(await getBulkJobReport(ctx, scopeOf(c), c.req.param('id')));
   });
   app.post(`${BASE}/bulk/jobs/:id/cancel`, requireScope(SCOPES.contentPublish), async (c) => {
-    await guardJob(c);
+    await guardJob(c, 'cancel');
     return c.json(await cancelBulkJob(ctx, scopeOf(c), c.req.param('id'), blob ? { blob } : {}));
   });
 

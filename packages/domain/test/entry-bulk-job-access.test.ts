@@ -1,12 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import {
+  authorizeEveryContentType,
   type ContentTypeGrant,
   canRunEntryBulkJob,
   ENTRY_BULK_JOB_KINDS,
   entryBulkJobsFor,
+  ForbiddenError,
+  holdsOnEveryContentType,
   type Principal,
   rolePresetDefinition,
   SCOPES,
+  unwritableFields,
 } from '../src/index';
 
 /**
@@ -94,5 +98,45 @@ describe('who may run a bulk job over entries', () => {
     ).toEqual([]);
     expect(entryBulkJobsFor(member([{ contentTypeApiId: 'post', actions: [...all] }]))).toEqual([]);
     expect(entryBulkJobsFor(member([]))).toEqual([]);
+  });
+});
+
+describe('who may act on every content type alike', () => {
+  const WRITES = ['read', 'write', 'publish'] as const;
+
+  it('passes a principal with no per-type grants, and one full `*` grant', () => {
+    expect(holdsOnEveryContentType(member(undefined), ['write', 'publish'])).toBe(true);
+    expect(holdsOnEveryContentType(preset('manager'), ['read', 'write', 'publish'])).toBe(true);
+  });
+
+  it('refuses a grant that misses an action, names a type or restricts a field', () => {
+    expect(holdsOnEveryContentType(preset('viewer'), ['write'])).toBe(false);
+    const narrow = member([{ contentTypeApiId: 'post', actions: WRITES }]);
+    expect(holdsOnEveryContentType(narrow, ['write'])).toBe(false);
+    const extra = member([
+      { contentTypeApiId: '*', actions: WRITES },
+      { contentTypeApiId: 'post', actions: ['read'] },
+    ]);
+    expect(holdsOnEveryContentType(extra, ['write'])).toBe(false);
+    for (const rule of [{ deniedFields: ['x'] }, { readOnlyFields: ['x'] }]) {
+      const restricted = member([{ contentTypeApiId: '*', actions: WRITES, ...rule }]);
+      expect(holdsOnEveryContentType(restricted, ['read'])).toBe(false);
+      expect(() => authorizeEveryContentType(restricted, ['read'])).toThrow(ForbiddenError);
+    }
+  });
+});
+
+describe('which fields a role may not write', () => {
+  it('lists the denied and read-only fields among those given, and nothing when unrestricted', () => {
+    const role = member([
+      {
+        contentTypeApiId: 'post',
+        actions: ['read', 'write'],
+        deniedFields: ['a'],
+        readOnlyFields: ['b'],
+      },
+    ]);
+    expect(unwritableFields(role, 'post', { a: 1, b: 2, c: 3 })).toEqual(['a', 'b']);
+    expect(unwritableFields(member(undefined), 'post', { a: 1 })).toEqual([]);
   });
 });

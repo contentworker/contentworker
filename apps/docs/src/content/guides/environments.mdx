@@ -83,7 +83,8 @@ merge whose entries would take a value another entry holds, or the same value tw
 with `409`, naming each entry and its holder; entries swapping values between them merge fine. An
 entry that is in the target's trash gets the new version and stays in the trash. The
 response lists `mergedContentTypes` and `mergedEntries`. The MCP tools are `environments_compare`
-and `environments_merge`.
+and `environments_merge`. A role limited per content type sees only the types it can read in a
+comparison, and merging entries needs `read` and `write` on every type with no field rules.
 
 ## Promote changes to the live environment
 

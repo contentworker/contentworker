@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { importArgs, ok, scopeOf, type ToolContext, toolSchema } from './shared';
 
 export function registerImportTools(server: McpServer, t: ToolContext): void {
-  const { deps, ctx, guard } = t;
+  const { deps, ctx, guard, principal } = t;
   // --- importing content from elsewhere -------------------------------------
   const toImport = (args: Record<string, unknown>) => ({
     payload: args.payload as string,
@@ -50,9 +50,16 @@ export function registerImportTools(server: McpServer, t: ToolContext): void {
     async (args) => {
       guard(SCOPES.contentWrite, scopeOf(args));
       return ok(
-        await analyzeImport(ctx, scopeOf(args), importSource(args.source), toImport(args), {
-          ...(args.conflicts ? { conflicts: args.conflicts } : {}),
-        }),
+        await analyzeImport(
+          ctx,
+          principal,
+          scopeOf(args),
+          importSource(args.source),
+          toImport(args),
+          {
+            ...(args.conflicts ? { conflicts: args.conflicts } : {}),
+          },
+        ),
       );
     },
   );
@@ -69,9 +76,16 @@ export function registerImportTools(server: McpServer, t: ToolContext): void {
     async (args) => {
       guard(SCOPES.contentWrite, scopeOf(args));
       return ok(
-        await executeImport(ctx, scopeOf(args), importSource(args.source), toImport(args), {
-          ...(args.conflicts ? { conflicts: args.conflicts } : {}),
-        }),
+        await executeImport(
+          ctx,
+          principal,
+          scopeOf(args),
+          importSource(args.source),
+          toImport(args),
+          {
+            ...(args.conflicts ? { conflicts: args.conflicts } : {}),
+          },
+        ),
       );
     },
   );

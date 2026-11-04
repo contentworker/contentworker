@@ -1,9 +1,12 @@
 import {
   type BulkChunkDueEvent,
+  canAccessContentType,
   canRunEntryBulkJob,
   ENTRY_BULK_JOB_KINDS,
   type EntryBulkJobKind,
   ForbiddenError,
+  hasFieldRules,
+  holdsOnEveryContentType,
   NotFoundError,
   type Principal,
   type Scope,
@@ -73,6 +76,33 @@ export function authorizeBulkJob(principal: Principal, action: BulkJobAction): v
   if (!allowed) {
     throw new ForbiddenError(`bulk ${action} jobs (a role holding them on every content type)`);
   }
+}
+
+/**
+ * Refuses a principal who may not read the report of, or cancel, this job. Beyond
+ * {@link authorizeBulkJob} (which goes by action alone, for a job not yet started), an import job
+ * says what it touched. One into a single type (`contentTypeApiId`: CSV, JSON, WordPress) needs
+ * `write` on that type; any other (a snapshot, clone or space export) reaches every type, so it
+ * needs `read` and `write` on all of them alike. The report of a single-type job also stays closed
+ * to a role with field rules on the type: a failure's message can quote a stored value (a unique
+ * conflict names it; a plugin's refusal says what it likes). Cancelling shows no failure.
+ */
+export function authorizeBulkJobAccess(
+  principal: Principal,
+  job: Pick<BulkJob, 'action' | 'config'>,
+  access: 'report' | 'cancel',
+): void {
+  if (job.action !== 'import') {
+    authorizeBulkJob(principal, job.action);
+    return;
+  }
+  const type = job.config?.contentTypeApiId;
+  const allowed =
+    typeof type === 'string'
+      ? canAccessContentType(principal, 'write', type) &&
+        (access === 'cancel' || !hasFieldRules(principal, type))
+      : holdsOnEveryContentType(principal, ['read', 'write']);
+  if (!allowed) throw new ForbiddenError(`the ${access} of this import job`);
 }
 
 export interface StartBulkJobInput {

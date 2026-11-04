@@ -170,7 +170,7 @@ without progress (`PURGE_STALE_SECONDS`). The pending purges are the `environmen
 
 Snapshots move content between contentworker environments. This moves it _in_, from a format
 someone else produced. The routes are `GET …/imports/sources`, `POST …/imports/analyze`,
-`POST …/imports` and `POST …/imports/job` (all `content:write`).
+`POST …/imports` and `POST …/imports/job` (all `content:write`). A role's grants apply too (below).
 
 Both POSTs take the same body, so analyzing and running are the same request to two paths:
 
@@ -214,6 +214,18 @@ Entries arrive as **drafts**. Publishing them is the existing bulk job, which is
 cancellable and reportable, none of which a flag on the import would be. A record that fails
 validation is skipped and reported rather than aborting the run, and trashed entries are never
 matched as conflicts: an import must not silently revive something someone deleted.
+
+**An import runs as whoever asked.** A role limited per content type
+gets a `403` for a type it can't write, at analyze as at the run, and for an `identityField` it
+can't read, or on a type it can't read (matching on a field answers which values it holds). A
+record that sets a field the role denies or makes read-only is skipped and listed in `issues`. An
+update keeps what those fields hold, since an update's fields are the whole new version and leaving
+one out would clear it; schema defaults apply to new entries only. A durable job is
+authorized when it starts: only records the caller may write are staged, and the engine writes those
+with no further check. A snapshot import, a clone, a snapshot export and a space export import need
+`content:manage` and a role holding their actions on every content type with no field rules (see
+[Custom roles](auth-and-rbac.md#custom-roles-granular-rbac)), because they touch types and fields
+that can't be checked one at a time.
 
 **Text for a RichText field is read as HTML.** Paragraphs, headings, lists, quotes, code blocks,
 rules, tables, links and inline marks map to their rich-text nodes; a blank-line-separated block of

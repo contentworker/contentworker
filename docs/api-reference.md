@@ -202,8 +202,8 @@ Base paths: `/spaces`, and `…` for `/spaces/:space/environments/:env`. Space-l
 | PUT    | `/spaces/:space/environment-aliases/:alias` | `space:admin`                        | Set alias → environment id                                                                |
 | DELETE | `/spaces/:space/environment-aliases/:alias` | `space:admin`                        | Remove alias                                                                              |
 | GET    | `/spaces/:space/audit-log`                  | `space:admin`                        | Space audit log (`?limit`, `?skip`)                                                       |
-| GET    | `/spaces/:space/compare`                    | `preview:read`                       | Compare two environments (`?from`, `?to`)                                                 |
-| POST   | `/spaces/:space/merge`                      | `content:manage`                     | Merge environment branch; `409` (`details.conflicts`) before any write when its entries would take a unique value twice; an entry in the target's trash stays there |
+| GET    | `/spaces/:space/compare`                    | `preview:read`                       | Compare two environments (`?from`, `?to`), limited to the types the role can read         |
+| POST   | `/spaces/:space/merge`                      | `content:manage`                     | Merge environment branch (entries need the actions on every content type); `409` (`details.conflicts`) before any write when its entries would take a unique value twice; an entry in the target's trash stays there |
 | POST   | `/spaces/:space/promotions`                 | `content:manage` + `content:publish` | Promote content between environments (`{ source, target, contentTypes?, entries? }`)      |
 | GET    | `/spaces/:space/promotions`                 | `content:publish`                    | List promotions, newest first (`?status=`)                                                |
 | GET    | `/spaces/:space/promotions/:id`             | `content:publish`                    | A promotion, its risk check and result                                                    |
@@ -468,8 +468,11 @@ which is valid to store. See [Rich text](./domain-model.md#rich-text).
 | POST   | `…/bulk/jobs/:id/cancel`                  | `content:publish` | Cancel a job                                                                |
 
 Reads of a job are `content:write` so that whoever can start an import can watch it. Starting,
-reading the report of, or cancelling a job needs an unrestricted role: a role-bound key with
-content grants gets `403`, because the report exposes entry ids across content types.
+reading the report of, or cancelling a job needs a role holding its actions on every content type
+(`403` otherwise), because the report exposes entry ids across content types. An import job goes by
+what it reached: `write` on the type of a CSV, JSON or WordPress job (its report also refused to a
+role with field rules on that type), and `read` and `write` on every type for a snapshot, clone or
+space export job.
 
 ### Entry metadata & taxonomy associations
 

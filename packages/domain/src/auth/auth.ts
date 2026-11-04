@@ -356,6 +356,22 @@ export const ENTRY_BULK_JOB_KINDS = Object.keys(BULK_JOB_CONTENT_ACTIONS) as Ent
  * narrower role, or one with an extra type-specific grant, is refused.
  */
 export function canRunEntryBulkJob(principal: Principal, kind: EntryBulkJobKind): boolean {
+  if (!holdsOnEveryContentType(principal, BULK_JOB_CONTENT_ACTIONS[kind])) return false;
+  // As `authorizeTrash`: trashing takes a live entry offline, so a grant that explicitly withholds
+  // `unpublish` can't trash in bulk either (a job meets live entries it can't tell apart up front).
+  return !(kind === 'trash' && grantFor(principal, '*')?.deniedActions?.includes('unpublish'));
+}
+
+/**
+ * Whether `principal` holds every one of `actions` on every content type alike: no per-type
+ * grants at all, or exactly one `*` grant that holds them (`grantedActions`) and restricts no
+ * field. What an operation over the whole environment needs (a bulk job, a snapshot import or
+ * export, a clone), since it touches types and fields it can't authorize one by one.
+ */
+export function holdsOnEveryContentType(
+  principal: Principal,
+  actions: readonly ContentAction[],
+): boolean {
   const grants = principal.contentGrants;
   if (!grants) return true;
   if (grants.length !== 1) return false;
@@ -363,15 +379,33 @@ export function canRunEntryBulkJob(principal: Principal, kind: EntryBulkJobKind)
   if (!grant || grant.contentTypeApiId !== '*') return false;
   if (grant.deniedFields?.length || grant.readOnlyFields?.length) return false;
   const held = grantedActions(grant);
-  if (!BULK_JOB_CONTENT_ACTIONS[kind].every((a) => held.has(a))) return false;
-  // As `authorizeTrash`: trashing takes a live entry offline, so a grant that explicitly withholds
-  // `unpublish` can't trash in bulk either (a job meets live entries it can't tell apart up front).
-  return !(kind === 'trash' && grant.deniedActions?.includes('unpublish'));
+  return actions.every((a) => held.has(a));
+}
+
+/**
+ * Enforces {@link holdsOnEveryContentType}: an environment-wide operation (a snapshot export,
+ * import or clone, a space export import) reads or writes every type and field there is, the
+ * ones it creates included, so a role limited to some types or with field rules is refused.
+ */
+export function authorizeEveryContentType(
+  principal: Principal,
+  actions: readonly ContentAction[],
+): void {
+  if (!holdsOnEveryContentType(principal, actions)) {
+    throw new ForbiddenError(`content:${actions.join('+')}:* (on every content type, every field)`);
+  }
 }
 
 /** The bulk jobs over entries `principal` may run (see {@link canRunEntryBulkJob}). */
 export function entryBulkJobsFor(principal: Principal): EntryBulkJobKind[] {
   return ENTRY_BULK_JOB_KINDS.filter((kind) => canRunEntryBulkJob(principal, kind));
+}
+
+/** Whether `principal`'s grant on `contentTypeApiId` denies a field or makes one read-only. */
+export function hasFieldRules(principal: Principal, contentTypeApiId: string): boolean {
+  if (!principal.contentGrants) return false;
+  const grant = grantFor(principal, contentTypeApiId);
+  return Boolean(grant?.deniedFields?.length || grant?.readOnlyFields?.length);
 }
 
 /** The fields `principal` may not read on `contentTypeApiId` (empty when unrestricted). */
@@ -493,14 +527,24 @@ export function assertWritableFields(
   contentTypeApiId: string,
   fields: Record<string, unknown>,
 ): void {
-  if (!principal.contentGrants) return;
+  const [blocked] = unwritableFields(principal, contentTypeApiId, fields);
+  if (blocked) throw new ForbiddenError(`content:write:${contentTypeApiId}.${blocked}`);
+}
+
+/**
+ * The keys of `fields` that `principal` may not write on `contentTypeApiId` (its grant's denied
+ * and read-only fields), in order; empty for unrestricted principals. For a caller that reports a
+ * blocked field rather than refusing the call (an import, per record).
+ */
+export function unwritableFields(
+  principal: Principal,
+  contentTypeApiId: string,
+  fields: Record<string, unknown>,
+): string[] {
+  if (!principal.contentGrants) return [];
   const grant = grantFor(principal, contentTypeApiId);
   const blocked = new Set([...(grant?.deniedFields ?? []), ...(grant?.readOnlyFields ?? [])]);
-  for (const apiId of Object.keys(fields)) {
-    if (blocked.has(apiId)) {
-      throw new ForbiddenError(`content:write:${contentTypeApiId}.${apiId}`);
-    }
-  }
+  return Object.keys(fields).filter((apiId) => blocked.has(apiId));
 }
 
 /**

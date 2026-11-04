@@ -2,10 +2,12 @@ import {
   assertEntryFieldsValid,
   ConflictError,
   type ContentType,
+  canAccessContentType,
   type Entry,
   type EntryFields,
   type EntryVersion,
   NotFoundError,
+  type Principal,
   type Scope,
   SINGLETON_CLAIM_FIELD,
   stampChanged,
@@ -120,6 +122,22 @@ export async function compareEnvironments(
         '',
       kind,
     })),
+  };
+}
+
+/**
+ * A comparison as `principal` may see it: only the content types it can read, and their entries.
+ * A comparison spans every type, so a role limited to some sees part of one.
+ */
+export function comparisonFor(
+  principal: Principal,
+  comparison: EnvironmentComparison,
+): EnvironmentComparison {
+  const readable = (apiId: string) => canAccessContentType(principal, 'read', apiId);
+  return {
+    ...comparison,
+    contentTypes: comparison.contentTypes.filter((c) => readable(c.apiId)),
+    entries: comparison.entries.filter((e) => readable(e.contentTypeApiId)),
   };
 }
 
