@@ -56,9 +56,10 @@ while IFS= read -r seg; do
   fi
 
   # scripts/deploy.sh runs everything above in one command. Reading or linting it is fine; anything
-  # else that names it is treated as running it.
-  m "(^|$S|/)scripts/deploy\.sh($S|$)" &&
-    ! m "^(cat|sed|grep|rg|head|tail|wc|ls|diff|shellcheck|git|bash$S+-n)($S|$)" &&
+  # else that names it is treated as running it, by its bare name too (`cd scripts && ./deploy.sh`).
+  # This is a tripwire, not the boundary: the script itself refuses to run outside CI.
+  m "(^|$S|/|\(|\`)deploy\.sh([^a-zA-Z0-9.]|$)" &&
+    ! m "^(cat|sed|grep|rg|head|tail|wc|ls|diff|shellcheck|chmod|git|gh|bash$S+-n)($S|$)" &&
     deny PreToolUse "Blocked \`$seg\`. $ci"
 
   # ── Ask: sometimes right, hard to undo ─────────────────────────────────────

@@ -7,15 +7,21 @@
 #   scripts/deploy.sh <id>
 #
 # Reads CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID, the deployment's secrets (fleet.ts SECRETS)
-# and, for a registry outside this repo, FLEET_REGISTRY. Only CI runs this for contentworker's fleet.
+# and, for a registry outside this repo, FLEET_REGISTRY. It refuses to run outside GitHub Actions
+# unless CONTENTWORKER_DEPLOY=1, which a self-hoster on other CI sets. contentworker's fleet deploys
+# from CI only.
 set -euo pipefail
 id="${1:?usage: scripts/deploy.sh <id>}"
+if [ "${GITHUB_ACTIONS:-}" != true ] && [ "${CONTENTWORKER_DEPLOY:-}" != 1 ]; then
+  echo "scripts/deploy.sh ships to production and runs in CI. To run it elsewhere, set CONTENTWORKER_DEPLOY=1." >&2
+  exit 1
+fi
 cd "$(dirname "$0")/.."
 
 sha="${GITHUB_SHA:-$(git rev-parse HEAD)}"
 short="${sha::7}"
 config="wrangler.$id.json"
-work=$(mktemp -d)
+work=$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/deploy.XXXXXX")
 current="start"
 group_open=""
 cancelled=""
@@ -96,24 +102,34 @@ finish() {
   local rc=$?
   trap - EXIT
   set +e
-  [ -n "$group_open" ] && echo "::endgroup::"
+  # First: nothing below needs the secrets files, and a second signal can end this function.
+  rm -rf "$work"
+  local failed_at=$current
   if [ "$rc" != 0 ]; then
-    echo "::error::Deploy of $id failed at: $current"
-    # A cancelled or timed-out job has seconds left, and a person decides what happens next.
+    echo
+    echo "::error::Deploy of $id failed at: $failed_at"
+    # A cancelled or timed-out job doesn't roll back: a person decides what happens next.
     if [ -z "$cancelled" ]; then
       if [ -n "$engine_deployed" ] && [ -z "$app_live" ]; then
+        step "Roll back"
         roll_back_app
       fi
       if [ -n "$docs_deployed" ]; then
+        step "Roll back docs"
         retry pnpm --filter @contentworker/docs-site exec wrangler rollback -y -m "Docs smoke test failed for $short"
       fi
     fi
   fi
-  rm -rf "$work"
+  [ -n "$group_open" ] && echo "::endgroup::"
+  # Last, so it is what a truncated failure log ends on.
+  if [ "$rc" != 0 ]; then echo "::error::Deploy of $id failed at: $failed_at"; fi
   exit "$rc"
 }
 trap finish EXIT
-trap 'cancelled=1; exit 130' INT TERM
+# Bash runs these once the current command returns. A cancel during a long `wrangler deploy` may
+# instead end in the runner's SIGKILL, which no trap sees; deploy.yml `exec`s this script so that kill
+# reaches it. A closed log pipe counts as a cancel, so it can't start a rollback.
+trap 'cancelled=1; exit 130' INT TERM HUP PIPE
 
 # A merge that silently skips its deploy looks like a deploy: fail instead.
 step "Check deploy credentials"
@@ -136,6 +152,11 @@ step "Collect secrets"
 for app in engine media api delivery web; do
   node scripts/fleet.ts secrets "$app" "$work/$app-secrets.json"
 done
+# Nothing after this needs them in the environment, and builds and their dependencies shouldn't see
+# them: from here each Worker's secrets exist only in its 0600 file.
+unset PRINCIPAL_KEY PRINCIPAL_KEY_PREVIOUS DATA_KEY DATA_KEY_PREVIOUS TOKEN_PEPPER \
+  MEDIA_SIGNING_SECRET PASSWORD_PEPPER SETUP_TOKEN OIDC_CLIENT_SECRET STREAM_WEBHOOK_SECRET \
+  MCP_TOKEN ADMIN_TOKEN
 
 # The restore point for this deploy: a migration can't be rolled back, but D1 Time Travel can
 # restore the database to this bookmark (docs/backup-and-restore.md).
@@ -184,16 +205,18 @@ web_deployed=1
 get() { curl -fsS --retry 30 --retry-all-errors --retry-delay 10 --retry-max-time 300 "$@"; }
 
 step "Smoke test"
-get "https://$DOMAIN/health"
+# Prints the body and ends its line, so what follows in the log still parses as a command.
+show() { get "$@"; echo; }
+show "https://$DOMAIN/health"
 # D1 and the api (over the service binding) both answer.
-get "https://$DOMAIN/health/deep"
+show "https://$DOMAIN/health/deep"
 # The admin itself renders (sign-in, or setup on a deployment with no people yet). Asked as a browser
 # asks: before setup a page request redirects to /setup, anything else is a 503.
 get -L -o /dev/null -H 'Accept: text/html' "https://$DOMAIN/login"
-get "https://$API_DOMAIN/health"
+show "https://$API_DOMAIN/health"
 get -o /dev/null "https://$API_DOMAIN/openapi.json"
-get "https://$CDN_DOMAIN/health"
-get "https://$MEDIA_DOMAIN/health"
+show "https://$CDN_DOMAIN/health"
+show "https://$MEDIA_DOMAIN/health"
 # The media origin serves nothing it wasn't told to: an unknown asset is a 404.
 status=$(curl -s -o /dev/null -w '%{http_code}' "https://$MEDIA_DOMAIN/smoke/main/none/v1/o/none")
 [ "$status" = 404 ] || { echo "::error::an unknown media URL answered $status, not 404"; exit 1; }

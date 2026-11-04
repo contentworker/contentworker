@@ -44,7 +44,8 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       # scripts/deploy.sh is the deploy: render, secrets, D1 bookmark, migrations, the Workers in
-      # order, smoke tests and rollback. It runs from the commit it ships.
+      # order, smoke tests and rollback. It runs from the commit it ships. `exec` makes it the process
+      # the runner signals on a cancel, not an orphan that keeps deploying.
       - name: Deploy
         env:
           PRINCIPAL_KEY: ${{ secrets.PRINCIPAL_KEY }}
@@ -59,4 +60,4 @@ jobs:
           STREAM_WEBHOOK_SECRET: ${{ secrets.STREAM_WEBHOOK_SECRET }}
           MCP_TOKEN: ${{ secrets.MCP_TOKEN }}
           ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
-        run: scripts/deploy.sh "$ID"
+        run: exec scripts/deploy.sh "$ID"
