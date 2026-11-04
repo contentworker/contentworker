@@ -3,9 +3,9 @@ import { useCallback, useRef } from 'react';
 /** What a person acts on, and so what can have opened an overlay. Not a container. */
 const CONTROL =
   'a[href], button, input, select, textarea, summary, [contenteditable="true"], [role^="menuitem"], [tabindex]:not([tabindex="-1"])';
-/** What can take focus when the opener can't. */
-const FOCUSABLE =
-  'a[href], button:enabled, input:enabled:not([type="hidden"]), select:enabled, textarea:enabled, [tabindex]:not([tabindex="-1"])';
+/** What can take focus by Tab. */
+export const FOCUSABLE =
+  'a[href], button:enabled, input:enabled:not([type="hidden"]), select:enabled, summary, textarea:enabled, [tabindex]:not([tabindex="-1"])';
 const OVERLAY =
   '[data-slot="dialog-content"], [data-slot="alert-dialog-content"], [data-slot="sheet-content"]';
 
@@ -17,8 +17,9 @@ const controlOf = (node: EventTarget | null) =>
 // can't say what asked. Listening from the start: the overlay mounts after the press it answers.
 let lastControl: HTMLElement | null = null;
 if (typeof document !== 'undefined') {
-  // A press on nothing moves the person on from the last control; focus going somewhere that isn't
-  // one (a dialog's own container, after a press in it) says nothing about what they pressed.
+  // A press on nothing moves the person on from the last control. Focus says nothing about a press
+  // when it lands on something that isn't a control (a dialog's own container), or on the focusable
+  // scroller around what was pressed, which is where Safari puts it.
   document.addEventListener(
     'pointerdown',
     (event) => {
@@ -29,7 +30,8 @@ if (typeof document !== 'undefined') {
   document.addEventListener(
     'focusin',
     (event) => {
-      lastControl = controlOf(event.target) ?? lastControl;
+      const control = controlOf(event.target);
+      if (control && !control.contains(lastControl)) lastControl = control;
     },
     true,
   );
@@ -70,8 +72,10 @@ interface Opener {
 const openers = new WeakMap<Element, Opener>();
 
 function openerNow(): Opener {
-  const found =
-    controlOf(document.activeElement) ?? (lastControl?.isConnected ? lastControl : null);
+  const active = controlOf(document.activeElement);
+  const pressed = lastControl?.isConnected ? lastControl : null;
+  // A press in a focusable scroller, in Safari, focuses the scroller: what was pressed is inside it.
+  const found = active?.contains(pressed) ? pressed : (active ?? pressed);
   const control = found && outOfMenus(found);
   const around: HTMLElement[] = [];
   for (let at = control?.parentElement; at && at.tagName !== 'MAIN'; at = at.parentElement) {

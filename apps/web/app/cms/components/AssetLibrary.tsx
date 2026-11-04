@@ -153,6 +153,7 @@ export function AssetLibrary(props: { locale: string }) {
   const [dragging, setDragging] = useState(false);
   const [bulkBusy, setBulkBusy] = useState(false);
   const [inUse, setInUse] = useState<({ asset: Asset } & AssetInUse) | null>(null);
+  const refusedInUse = useRef<({ asset: Asset } & AssetInUse) | null>(null);
   // A bulk action's failures, by asset: named in place, and still selected to try again.
   const [bulkFailures, setBulkFailures] = useState<{
     readonly verb: string;
@@ -537,9 +538,16 @@ export function AssetLibrary(props: { locale: string }) {
       await reload();
     } catch (e) {
       const used = assetUsageOf(e);
-      if (used) setInUse({ asset, ...used });
-      else fail(e);
+      if (!used) throw e;
+      refusedInUse.current = { asset, ...used };
     }
+  };
+  // Shown once the confirm has gone: the notice takes focus, which the dialog would hold on to.
+  const showInUse = (event: Event) => {
+    if (!refusedInUse.current) return;
+    event.preventDefault();
+    setInUse(refusedInUse.current);
+    refusedInUse.current = null;
   };
 
   // --- selection and bulk ---------------------------------------------------
@@ -841,7 +849,8 @@ export function AssetLibrary(props: { locale: string }) {
         message={`Delete “${name}”?`}
         note="Its files go too. This can’t be undone."
         confirmLabel="Delete asset"
-        onConfirm={() => void remove(a)}
+        onConfirm={() => remove(a)}
+        onCloseAutoFocus={showInUse}
       >
         {(ask) => (
           <Button

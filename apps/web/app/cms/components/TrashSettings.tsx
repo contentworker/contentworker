@@ -60,16 +60,19 @@ export function TrashSettings(props: { client: ManagementClient }) {
   // Deleting sooner than before (or at all, from off) removes trash that is there today.
   const deletesSooner = next !== null && (saved === null || (saved !== undefined && next < saved));
 
+  const write = async () => {
+    await client.setTrashSettings({ retentionDays: next });
+    await invalidate(['trash-settings']);
+    toast.success(
+      next === null
+        ? 'Trashed entries are kept until someone deletes them'
+        : `Trashed entries are deleted after ${plural(next, 'day')}`,
+    );
+  };
   const save = async () => {
     setBusy(true);
     try {
-      await client.setTrashSettings({ retentionDays: next });
-      await invalidate(['trash-settings']);
-      toast.success(
-        next === null
-          ? 'Trashed entries are kept until someone deletes them'
-          : `Trashed entries are deleted after ${plural(next, 'day')}`,
-      );
+      await write();
     } catch (err) {
       toast.error(apiErrorMessage(err));
     } finally {
@@ -144,8 +147,7 @@ export function TrashSettings(props: { client: ManagementClient }) {
               note="Entries already in the trash longer than that are deleted permanently at the next hourly sweep. That can’t be undone."
               cancelLabel="Keep as is"
               confirmLabel="Save and delete"
-              busy={busy}
-              onConfirm={() => void save()}
+              onConfirm={write}
             >
               {(ask) => (
                 <Button type="button" size="sm" disabled={busy || !changed} onClick={ask}>

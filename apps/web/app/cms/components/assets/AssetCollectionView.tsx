@@ -192,13 +192,9 @@ export function AssetCollectionView(props: {
   };
 
   const deleteCollection = async () => {
-    try {
-      await client.deleteAssetCollection(collection.id);
-      toast.success(`Deleted collection “${collection.name}”`);
-      props.onDeleted();
-    } catch (e) {
-      toast.error(apiErrorMessage(e));
-    }
+    await client.deleteAssetCollection(collection.id);
+    toast.success(`Deleted collection “${collection.name}”`);
+    props.onDeleted();
   };
 
   const onDragStart = (e: DragEvent, id: string) => {
@@ -271,7 +267,7 @@ export function AssetCollectionView(props: {
             message={`Delete “${collection.name}”?`}
             note="Its assets stay in the library; links shared to it stop opening."
             confirmLabel="Delete collection"
-            onConfirm={() => void deleteCollection()}
+            onConfirm={deleteCollection}
           >
             {(ask) => (
               <Button

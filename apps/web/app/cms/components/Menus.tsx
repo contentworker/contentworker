@@ -178,9 +178,7 @@ function MenuList(props: { client: ManagementClient; onOpen: (id: string) => voi
       await client.deleteMenu(m.id, m.revision);
       toast.success('Menu deleted');
     } catch (err) {
-      toast.error(
-        isStale(err) ? 'Someone changed this menu since the list loaded.' : apiErrorMessage(err),
-      );
+      throw isStale(err) ? new Error('Someone changed this menu since the list loaded.') : err;
     } finally {
       await invalidate(['menus']);
       setBusy(false);
@@ -251,7 +249,7 @@ function MenuList(props: { client: ManagementClient; onOpen: (id: string) => voi
                       note={`Delivery stops serving “${m.handle}”: a site that renders it shows no navigation there.`}
                       confirmLabel="Delete menu"
                       busy={busy}
-                      onConfirm={() => void remove(m)}
+                      onConfirm={() => remove(m)}
                     >
                       {(ask) => (
                         <span className="flex justify-end gap-1">

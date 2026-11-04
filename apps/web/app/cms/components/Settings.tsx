@@ -450,13 +450,9 @@ function RolesSettings(props: { client: ManagementClient }) {
   };
 
   const remove = async (id: string) => {
-    try {
-      await props.client.deleteRole(id);
-      await invalidate(['roles']);
-      toast.success('Role deleted');
-    } catch (err) {
-      toast.error(apiErrorMessage(err));
-    }
+    await props.client.deleteRole(id);
+    await invalidate(['roles']);
+    toast.success('Role deleted');
   };
 
   return (
@@ -526,7 +522,7 @@ function RolesSettings(props: { client: ManagementClient }) {
                         message={`Delete the role “${role.name}”?`}
                         note="This can’t be undone."
                         confirmLabel="Delete role"
-                        onConfirm={() => void remove(role.id)}
+                        onConfirm={() => remove(role.id)}
                       >
                         {(ask) => (
                           <Button type="button" variant="ghost" size="sm" onClick={ask}>

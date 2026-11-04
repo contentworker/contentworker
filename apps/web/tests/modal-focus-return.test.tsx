@@ -81,6 +81,36 @@ describe('closing an overlay opened from state', () => {
     await focused('Open');
   });
 
+  it('goes back to the button, not the scroller Safari focused for its press', async () => {
+    function InScroller() {
+      const [open, setOpen] = useState(false);
+      return (
+        <main>
+          {/* biome-ignore lint/a11y/noNoninteractiveTabindex: a scrolling table's wrapper. */}
+          <div tabIndex={0} data-testid="scroller">
+            <button type="button" onClick={() => setOpen(true)}>
+              Open
+            </button>
+          </div>
+          <Dialog open={open} onOpenChange={setOpen}>
+            <DialogContent aria-describedby={undefined}>
+              <DialogTitle>Details</DialogTitle>
+              <DialogClose>Done</DialogClose>
+            </DialogContent>
+          </Dialog>
+        </main>
+      );
+    }
+    render(<InScroller />);
+    const open = screen.getByRole('button', { name: 'Open' });
+    fireEvent.pointerDown(open);
+    screen.getByTestId('scroller').focus();
+    fireEvent.click(open);
+    await screen.findByRole('dialog');
+    close();
+    await focused('Open');
+  });
+
   it('leaves the choice to onCloseAutoFocus when it takes it', async () => {
     render(
       <Plain

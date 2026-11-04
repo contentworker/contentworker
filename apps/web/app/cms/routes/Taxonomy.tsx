@@ -148,17 +148,16 @@ function ConceptsTab() {
       setPickedSchemeId(created.id);
     });
 
-  const removeScheme = (id: string) =>
-    run(async () => {
-      await client.deleteScheme(id);
-      toast.success('Scheme deleted');
-      setPickedSchemeId('');
-      // Refetch schemes first: once the deleted scheme is gone from the list,
-      // its concepts query is inactive, so the concepts invalidation can't
-      // fire a doomed listConcepts() against the deleted scheme.
-      await invalidate(['schemes']);
-      await invalidate(['concepts']);
-    });
+  const removeScheme = async (id: string) => {
+    await client.deleteScheme(id);
+    toast.success('Scheme deleted');
+    setPickedSchemeId('');
+    // Refetch schemes first: once the deleted scheme is gone from the list,
+    // its concepts query is inactive, so the concepts invalidation can't
+    // fire a doomed listConcepts() against the deleted scheme.
+    await invalidate(['schemes']);
+    await invalidate(['concepts']);
+  };
 
   const addConcept = () =>
     run(async () => {
@@ -189,11 +188,10 @@ function ConceptsTab() {
     if (failed !== undefined) throw failed;
   };
 
-  const removeConcept = (id: string) =>
-    run(async () => {
-      await client.deleteConcept(id);
-      await invalidate(['concepts', schemeId]);
-    });
+  const removeConcept = async (id: string) => {
+    await client.deleteConcept(id);
+    await invalidate(['concepts', schemeId]);
+  };
 
   const tree = asTree(concepts);
 
@@ -243,7 +241,7 @@ function ConceptsTab() {
                     }
                     confirmLabel="Delete scheme"
                     busy={busy}
-                    onConfirm={() => void removeScheme(s.id)}
+                    onConfirm={() => removeScheme(s.id)}
                   >
                     {(ask) => (
                       <Button
@@ -342,7 +340,7 @@ function ConceptsTab() {
                         note={narrowerNote(concepts, concept.id)}
                         confirmLabel="Delete concept"
                         busy={busy}
-                        onConfirm={() => void removeConcept(concept.id)}
+                        onConfirm={() => removeConcept(concept.id)}
                       >
                         {(ask) => (
                           <Button
@@ -417,12 +415,11 @@ function TagsTab() {
     if (failed !== undefined) throw failed;
   };
 
-  const remove = (id: string) =>
-    run(async () => {
-      await client.deleteTag(id);
-      toast.success('Tag deleted');
-      await invalidate(['tags']);
-    });
+  const remove = async (id: string) => {
+    await client.deleteTag(id);
+    toast.success('Tag deleted');
+    await invalidate(['tags']);
+  };
 
   const open = tags.find((t) => t.id === editing);
 
@@ -494,7 +491,7 @@ function TagsTab() {
                           note="This can’t be undone."
                           confirmLabel="Delete tag"
                           busy={busy}
-                          onConfirm={() => void remove(t.id)}
+                          onConfirm={() => remove(t.id)}
                         >
                           {(ask) => (
                             <Button

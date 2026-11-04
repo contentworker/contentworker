@@ -868,8 +868,11 @@ for code and data blocks only.
   screen, less an on-screen keyboard and the safe areas; `SheetHeader` and `SheetFooter` stick to the
   edges of a body that scrolls (`bodyClassName` for its padding, `className` for the sheet's size),
   and the close button (a dialog's: a filled 32px `icon-sm`) sits outside the body, so a long sheet
-  never scrolls its way out or its action off a phone. Its footer is a dialog's, stacked primary
-  first on a phone. A consumer never puts `overflow-y-auto` on the content.
+  never scrolls its way out or its action off a phone. A body that overflows with nothing to tab
+  to takes focus itself, ringed and named as the sheet is, so the keyboard can scroll it. Its footer
+  is a dialog's, stacked primary first on a phone. A consumer never puts `overflow-y-auto` on the
+  content. Where pinning would leave no room between header and footer (a phone on its side with
+  the keyboard up), both let go and scroll with the body, in a dialog too (`data-cramped`).
   - **Title:** `section-title`, the same in a dialog, an alert dialog and a sheet.
   - **Closing:** focus goes back to what opened it, in a dialog, an alert dialog and a sheet alike
     (`ui/lib/focus-return.ts`): the control that was pressed even where Safari didn't focus it, a
@@ -905,7 +908,8 @@ for code and data blocks only.
   **The Blast Radius Rule:** how something asks follows what it reaches. Anything irreversible that
   touches content, files or access confirms in a modal, its act in `variant="destructive"`
   (`cms/components/ConfirmDialog.tsx`, the modal twin of `ConfirmButton`, or a dialog of its own when
-  it has more to say): the thing is gone, and asking again makes something new rather than bringing
+  it has more to say; it waits for the answer, its act held and Cancel with it, says a refusal in
+  the dialog, and closes once the page has moved on): the thing is gone, and asking again makes something new rather than bringing
   it back. Those are deleting an asset, a release, a workflow, a role, a menu, a collection, a saved
   view, a webhook or a content type; deleting a taxonomy scheme, concept or tag, which every entry
   carrying it loses; Delete permanently, and shortening how long the trash keeps entries; revoking a

@@ -46,7 +46,7 @@ import { useToast } from '../lib/toast';
  * (template or blank) beside "Draft with AI". Two workflows that start on the same thing for the same
  * content types both run, so each row names the others; creating, duplicating and drafting call
  * the workflow routes directly. Archive/restore is deferred: there is no archive use-case yet, so
- * delete (with its in-place confirm) stays.
+ * delete (with its modal confirm) stays.
  */
 
 const TEMPLATES = Object.entries(WORKFLOW_TEMPLATES).map(([id, make]) => {
@@ -416,12 +416,11 @@ function WorkflowRow({
       await invalidate(['workflows']);
       onOpen(workflow.id);
     });
-  const remove = () =>
-    act(async () => {
-      await client.deleteWorkflow(w.id);
-      toast.success('Workflow deleted');
-      await invalidate(['workflows']);
-    });
+  const remove = async () => {
+    await client.deleteWorkflow(w.id);
+    toast.success('Workflow deleted');
+    await invalidate(['workflows']);
+  };
 
   // What runs is the published version; the draft's trigger shows only where it differs.
   const published = w.publishedTrigger;
@@ -515,7 +514,7 @@ function WorkflowRow({
             note="Runs already started keep their version; the draft can’t be recovered."
             confirmLabel="Delete workflow"
             busy={busy}
-            onConfirm={() => void remove()}
+            onConfirm={remove}
           >
             {(ask) => (
               <Button

@@ -71,6 +71,8 @@ export function AssetShareDialog(props: {
   target: ShareTarget;
   /** For an asset: whether it is published (only a published asset can be shared). */
   published?: boolean;
+  /** For an asset: archived, it can't be published until it is restored. */
+  archived?: boolean;
   /** The asset was published from here, so it could be shared. */
   onPublished?: (asset: Asset) => void;
 }) {
@@ -104,6 +106,7 @@ export function AssetShareDialog(props: {
   const listHeading = useRef<HTMLHeadingElement>(null);
   const list = useRef<HTMLUListElement>(null);
   const formRef = useRef<HTMLFormElement>(null);
+  const revoked = useRef(false);
 
   // A fresh form each time the dialog opens on a target.
   useEffect(() => {
@@ -138,6 +141,7 @@ export function AssetShareDialog(props: {
 
   const forbidden = isForbidden(links.error);
   const unpublished = target.type === 'asset' && props.published === false && !publishedHere;
+  const archived = unpublished && props.archived === true;
   const active = links.data ?? [];
 
   const create = async (e: FormEvent) => {
@@ -179,6 +183,7 @@ export function AssetShareDialog(props: {
   // Goes live at once, as an asset's Publish does in the library. Refused under an embargo or past
   // an expiry, in the server's words.
   const publish = async () => {
+    if (publishing) return;
     setPublishRefusal(null);
     setPublishing(true);
     try {
@@ -194,14 +199,17 @@ export function AssetShareDialog(props: {
   };
 
   const revoke = async (link: AssetShareLink) => {
-    try {
-      await client.revokeShareLink(link.id);
-      toast.success('Link revoked; it stops opening within a minute');
-      await invalidate(key);
-      listHeading.current?.focus();
-    } catch (err) {
-      toast.error(apiErrorMessage(err));
-    }
+    await client.revokeShareLink(link.id);
+    revoked.current = true;
+    toast.success('Link revoked; it stops opening within a minute');
+    await invalidate(key);
+  };
+  // After the confirm has gone: it holds focus while it is up, and its row goes with the link.
+  const toTheList = (event: Event) => {
+    if (!revoked.current) return;
+    revoked.current = false;
+    event.preventDefault();
+    listHeading.current?.focus();
   };
 
   const copy = async (url: string) => {
@@ -360,13 +368,22 @@ export function AssetShareDialog(props: {
           </Alert>
         ) : (
           <>
+            {archived ? (
+              <Alert variant="warning">
+                <AlertTitle>Restore it to share it</AlertTitle>
+                <AlertDescription>
+                  A share link only serves published files, and this asset is archived. Restored, it
+                  comes back as a draft to publish.
+                </AlertDescription>
+              </Alert>
+            ) : null}
             {unpublished && publishRefusal ? (
               <Alert variant="destructive">
                 <AlertTitle>It wasn’t published</AlertTitle>
                 <AlertDescription>{publishRefusal}</AlertDescription>
               </Alert>
             ) : null}
-            {unpublished ? (
+            {archived ? null : unpublished ? (
               <Alert variant="warning">
                 <AlertTitle>Publish it to share it</AlertTitle>
                 <AlertDescription>
@@ -375,8 +392,9 @@ export function AssetShareDialog(props: {
                     type="button"
                     variant="outline"
                     size="sm"
-                    className="mt-2"
-                    disabled={publishing}
+                    // Not `disabled`: focus stays on it, for a refusal to find it there.
+                    aria-disabled={publishing || undefined}
+                    className="mt-2 aria-disabled:opacity-50"
                     onClick={() => void publish()}
                   >
                     {publishing ? 'Publishing…' : 'Publish asset'}
@@ -438,7 +456,8 @@ export function AssetShareDialog(props: {
                               message="Revoke this link?"
                               note="It stops opening within a minute. This can’t be undone."
                               confirmLabel="Revoke link"
-                              onConfirm={() => void revoke(link)}
+                              onConfirm={() => revoke(link)}
+                              onCloseAutoFocus={toTheList}
                             >
                               {(ask) => (
                                 <Button

@@ -1,6 +1,5 @@
 import {
   AlertDialog,
-  AlertDialogAction,
   AlertDialogCancel,
   AlertDialogContent,
   AlertDialogDescription,
@@ -8,7 +7,16 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@contentworker/ui/alert-dialog';
-import { type ReactNode, useState } from 'react';
+import { Button } from '@contentworker/ui/button';
+import { DialogError } from '@contentworker/ui/dialog';
+import { type ReactNode, useRef, useState } from 'react';
+import { apiErrorMessage, RequestTimeoutError } from '~/cms/lib/management';
+
+/**
+ * How long the dialog holds for an answer. A write times out sooner, in `req`, but what follows it
+ * (reading the list again) has no limit of its own, and must not hold a person here for good.
+ */
+const HOLD_MS = 45_000;
 
 export interface ConfirmDialogProps {
   /** The question, naming the thing acted on: `Delete “Spring campaign”?` */
@@ -21,7 +29,14 @@ export interface ConfirmDialogProps {
   readonly confirmLabel: string;
   /** Disables the confirming button (e.g. while another request is in flight). */
   readonly busy?: boolean;
-  readonly onConfirm: () => void;
+  /**
+   * Runs the act. The dialog stays, the act held, until this settles, so a second press can't send
+   * it twice and focus moves on from what is left once the list has been read again. A rejection
+   * is said in the dialog, which stays open.
+   */
+  readonly onConfirm: () => void | Promise<unknown>;
+  /** Where focus goes as it closes, for an answer that takes it elsewhere. */
+  readonly onCloseAutoFocus?: (event: Event) => void;
   /** Renders the trigger; call `ask` from its onClick to open the dialog. */
   readonly children: (ask: () => void) => ReactNode;
 }
@@ -29,7 +44,8 @@ export interface ConfirmDialogProps {
 /**
  * A trigger that asks in a modal before removing something for good: how anything irreversible
  * that touches content, files or access confirms (`ConfirmButton` is its in-place counterpart, for
- * what can be undone). The safe choice has focus, and closing goes back to the trigger.
+ * what can be undone). The safe choice has focus, and closing goes back to the trigger, or to what
+ * stood beside it when the act took it away.
  *
  * ```tsx
  * <ConfirmDialog
@@ -49,23 +65,74 @@ export function ConfirmDialog({
   confirmLabel,
   busy,
   onConfirm,
+  onCloseAutoFocus,
   children,
 }: ConfirmDialogProps) {
   const [asking, setAsking] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [failed, setFailed] = useState<string>();
+  // The state lags a double press: this doesn't.
+  const sent = useRef(false);
+  const held = sending || busy;
+
+  const confirm = async () => {
+    if (sent.current || busy) return;
+    sent.current = true;
+    setSending(true);
+    setFailed(undefined);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        onConfirm(),
+        new Promise((_, reject) => {
+          timer = setTimeout(() => reject(new RequestTimeoutError(true)), HOLD_MS);
+        }),
+      ]);
+      setAsking(false);
+    } catch (err) {
+      setFailed(apiErrorMessage(err));
+    } finally {
+      clearTimeout(timer);
+      sent.current = false;
+      setSending(false);
+    }
+  };
+
   return (
     <>
       {children(() => setAsking(true))}
-      <AlertDialog open={asking} onOpenChange={setAsking}>
-        <AlertDialogContent>
+      <AlertDialog
+        open={asking}
+        onOpenChange={(open) => {
+          // It has been sent: leaving wouldn't call it back, so the dialog waits for the answer.
+          if (sent.current) return;
+          setFailed(undefined);
+          setAsking(open);
+        }}
+      >
+        <AlertDialogContent {...(onCloseAutoFocus ? { onCloseAutoFocus } : {})}>
           <AlertDialogHeader>
             <AlertDialogTitle>{message}</AlertDialogTitle>
             <AlertDialogDescription>{note}</AlertDialogDescription>
           </AlertDialogHeader>
+          {sending ? (
+            <p role="status" className="text-muted-foreground text-sm">
+              Waiting for the answer. This closes when it’s done.
+            </p>
+          ) : null}
+          {failed ? <DialogError>{failed}</DialogError> : null}
           <AlertDialogFooter>
-            <AlertDialogCancel>{cancelLabel}</AlertDialogCancel>
-            <AlertDialogAction variant="destructive" disabled={busy} onClick={onConfirm}>
+            <AlertDialogCancel disabled={sending}>{cancelLabel}</AlertDialogCancel>
+            {/* Not `disabled`: focus stays on it through the wait, for a refusal to find it there. */}
+            <Button
+              type="button"
+              variant="destructive"
+              aria-disabled={held || undefined}
+              className="aria-disabled:pointer-events-none aria-disabled:opacity-50"
+              onClick={() => void confirm()}
+            >
               {confirmLabel}
-            </AlertDialogAction>
+            </Button>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

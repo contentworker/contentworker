@@ -78,7 +78,6 @@ export function Releases() {
   const invalidate = useInvalidate();
   const [creating, setCreating] = useState(false);
   const [openId, setOpenId] = useState<string | null>(null);
-  // At most one row asks "delete this?" at a time, in a row of its own beneath it.
   const releasesQuery = useScopedQuery(['releases'], () => client.listReleases());
   const scheduledQuery = useScopedQuery(['scheduled-actions'], () => client.listScheduledActions());
   const releases = releasesQuery.data ?? [];
@@ -102,13 +101,12 @@ export function Releases() {
   const reload = () =>
     invalidate(['releases'], ['scheduled-actions'], ['release'], ['entries'], ['entry']);
 
-  const remove = (id: string) =>
-    run(async () => {
-      await client.deleteRelease(id);
-      toast.success('Release deleted');
-      if (openId === id) setOpenId(null);
-      await reload();
-    });
+  const remove = async (id: string) => {
+    await client.deleteRelease(id);
+    toast.success('Release deleted');
+    if (openId === id) setOpenId(null);
+    await reload();
+  };
 
   const cancel = (id: string) =>
     run(async () => {
@@ -223,7 +221,7 @@ export function Releases() {
                                 note="Its entries stay as they are; the release itself can’t be recovered."
                                 confirmLabel="Delete release"
                                 busy={busy}
-                                onConfirm={() => void remove(r.id)}
+                                onConfirm={() => remove(r.id)}
                               >
                                 {(ask) => (
                                   <Tooltip>

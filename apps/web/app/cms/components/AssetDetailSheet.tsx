@@ -314,6 +314,7 @@ export function AssetDetailSheet(props: {
           onOpenChange={setSharing}
           target={{ type: 'asset', id: asset.id, name: asset.file.fileName }}
           published={asset.status === 'published'}
+          archived={asset.status === 'archived'}
           onPublished={(next) => {
             props.onAssetChange?.(next);
             props.onSaved();

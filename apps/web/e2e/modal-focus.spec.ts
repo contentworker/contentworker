@@ -1,6 +1,8 @@
 import { type APIRequestContext, expect, type Locator, type Page, test } from '@playwright/test';
 import {
+  api,
   createDraft,
+  MGMT,
   openCms,
   seedAsset,
   seedAssetFolder,
@@ -173,3 +175,120 @@ for (const way of ['pointer', 'keyboard'] as const) {
     });
   });
 }
+
+test('a long sheet with nothing to tab to scrolls by keyboard', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1000, height: 320 });
+  await openCms(page, '/content');
+  await page.keyboard.press('?');
+  const sheet = page.getByRole('dialog', { name: 'Keyboard shortcuts' });
+  await expect(sheet).toBeVisible();
+  await settle(page);
+  const body = sheet.locator('[data-slot="sheet-body"]');
+  const scrolled = () => body.evaluate((el) => el.scrollTop);
+  expect(await body.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true);
+
+  // The scroller holds the keyboard, named as the sheet is, and shows that it does.
+  await expect(body).toBeFocused();
+  await expect(body).toHaveAccessibleName('Keyboard shortcuts');
+  await page.keyboard.press('PageDown');
+  await expect.poll(scrolled).toBeGreaterThan(0);
+  const after = await scrolled();
+  await page.keyboard.press('ArrowDown');
+  await expect.poll(scrolled).toBeGreaterThan(after);
+  // Safari's Tab skips buttons unless the person has asked it not to.
+  if (testInfo.project.name === 'cms') {
+    await page.keyboard.press('Tab');
+    await expect(sheet.getByRole('button', { name: 'Close' })).toBeFocused();
+    await page.keyboard.press('Shift+Tab');
+    await expect(body).toBeFocused();
+  }
+  await page.keyboard.press('Escape');
+  await expect(sheet).toBeHidden();
+});
+
+test('a diff with nothing to tab to scrolls by keyboard too', async ({ page, request }) => {
+  const title = `Focus diff ${Date.now()}`;
+  const id = await createDraft(request, title, 'Live body');
+  const published = await api(request, 'POST', `${MGMT}/entries/${id}/published`);
+  expect(published.ok(), await published.text()).toBe(true);
+  const edited = await api(request, 'PUT', `${MGMT}/entries/${id}`, {
+    fields: { title: { 'en-US': title }, body: { 'en-US': 'Long line\n'.repeat(200) } },
+  });
+  expect(edited.ok(), await edited.text()).toBe(true);
+  await page.setViewportSize({ width: 1000, height: 320 });
+  await openCms(page, '/content/article');
+  await page.getByRole('button', { name: `More actions for ${title}` }).click();
+  await page.getByRole('menuitem', { name: 'Diff vs published' }).click();
+  const sheet = page.getByRole('dialog', { name: 'Diff vs published' });
+  const body = sheet.locator('[data-slot="sheet-body"]');
+  await expect(sheet.getByText('Long line').first()).toBeVisible();
+  await settle(page);
+  // A tab stop of its own, or something inside to hold the keyboard: either way, keys scroll it.
+  await page.keyboard.press('Tab');
+  await expect.poll(() => body.evaluate((el) => el.contains(document.activeElement))).toBe(true);
+  await page.keyboard.press('PageDown');
+  await expect.poll(() => body.evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
+});
+
+/** Two assets in a folder of their own, the folder open; returns their names. */
+async function twoAssets(page: Page, request: APIRequestContext, tag: string) {
+  const stamp = Date.now();
+  const folder = `${tag} ${stamp}`;
+  const folderId = await seedAssetFolder(request, folder);
+  const names = [`${tag} one ${stamp}`, `${tag} two ${stamp}`] as const;
+  for (const name of names) await seedAsset(request, name, { folderId });
+  await openCms(page, '/assets');
+  await page
+    .getByRole('navigation', { name: 'Folders' })
+    .getByRole('button', { name: folder, exact: true })
+    .click();
+  await expect(page.getByRole('button', { name: `Delete “${names[1]}”` })).toBeVisible();
+  return names;
+}
+
+test('after a delete, focus lands on what stood beside the row, not the page', async ({
+  page,
+  request,
+}) => {
+  const stamp = Date.now();
+  const titles = [`Focus gone ${stamp}`, `Focus stays ${stamp}`] as const;
+  for (const title of titles) {
+    const made = await api(request, 'POST', `${MGMT}/releases`, { title });
+    expect(made.ok(), await made.text()).toBe(true);
+  }
+  // Slower than the dialog's exit, as a real network is.
+  await page.route('**/releases/*', async (route) => {
+    if (route.request().method() === 'DELETE') await new Promise((r) => setTimeout(r, 500));
+    await route.fallback();
+  });
+  await openCms(page, '/releases');
+  await page.getByRole('button', { name: `Delete “${titles[0]}”` }).click();
+  const ask = page.getByRole('alertdialog');
+  await ask.getByRole('button', { name: 'Delete release' }).click();
+  // It holds through the wait, so what it closes onto is the list without the row.
+  await expect(ask.getByRole('status')).toBeVisible();
+  await expect(ask).toBeHidden();
+  await expect(page.getByRole('button', { name: `Delete “${titles[0]}”` })).toHaveCount(0);
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const a = document.activeElement;
+        return Boolean(a?.matches('button, a[href]') && a.closest('main'));
+      }),
+    )
+    .toBe(true);
+});
+
+test('a double press on the confirm sends one delete', async ({ page, request }) => {
+  const [gone] = await twoAssets(page, request, 'Focus double');
+  const deletes: string[] = [];
+  page.on('request', (r) => {
+    if (r.method() === 'DELETE' && r.url().includes('/assets/')) deletes.push(r.url());
+  });
+  await page.getByRole('button', { name: `Delete “${gone}”` }).click();
+  const ask = page.getByRole('alertdialog');
+  await settle(page);
+  await ask.getByRole('button', { name: 'Delete asset' }).dblclick();
+  await expect(page.getByRole('button', { name: `Open “${gone}”` })).toHaveCount(0);
+  expect(deletes).toHaveLength(1);
+});

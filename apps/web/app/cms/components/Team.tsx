@@ -94,11 +94,15 @@ export function Team(props: { client: ManagementClient }) {
   const data = team.data;
 
   const refresh = () => invalidate(['team']);
+  // For a confirm that says a refusal itself.
+  const attempt = async (fn: () => Promise<unknown>, done: string) => {
+    await fn();
+    await refresh();
+    toast.success(done);
+  };
   const act = async (fn: () => Promise<unknown>, done: string) => {
     try {
-      await fn();
-      await refresh();
-      toast.success(done);
+      await attempt(fn, done);
     } catch (err) {
       toast.error(apiErrorMessage(err));
     }
@@ -106,7 +110,7 @@ export function Team(props: { client: ManagementClient }) {
 
   return (
     <div className="space-y-6">
-      <People client={client} team={data} options={options} act={act} />
+      <People client={client} team={data} options={options} act={act} attempt={attempt} />
       <Keys team={data} options={options} act={act} client={client} />
       {data?.sso ? <SignIn client={client} team={data} act={act} /> : null}
     </div>
@@ -125,6 +129,7 @@ function People(props: {
   team: TeamSummary | undefined;
   options: Options;
   act: Act;
+  attempt: Act;
 }) {
   const { client, team, options, act } = props;
   const [email, setEmail] = useState('');
@@ -220,6 +225,7 @@ function People(props: {
                 team={team}
                 options={options}
                 act={act}
+                attempt={props.attempt}
                 client={client}
               />
             ))}
@@ -235,6 +241,7 @@ function PersonRow(props: {
   team: TeamSummary | undefined;
   options: Options;
   act: Act;
+  attempt: Act;
   client: ManagementClient;
 }) {
   const { person: p, team, options, act, client } = props;
@@ -297,7 +304,7 @@ function PersonRow(props: {
               message={`Remove ${who} from the team?`}
               note="They lose their role here; adding them again starts over."
               confirmLabel="Remove"
-              onConfirm={() => void act(() => client.removeMember(p.id), `${who} removed`)}
+              onConfirm={() => props.attempt(() => client.removeMember(p.id), `${who} removed`)}
             >
               {(ask) => (
                 <Button
