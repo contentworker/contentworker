@@ -19,5 +19,7 @@
   "docs": true,
   // AI Gateway request logs (model, tokens, cost; never prompt or answer).
   "aiGatewayLogs": true,
+  // Email Sending, onboarded on the mail subdomain so the apex keeps its own mail setup.
+  "email": { "from": "noreply@mail.contentworker.app", "fromName": "ContentWorker" },
   "kvId": "9ce1a0ea5a3f4da6b9a415be020b3c81"
 }
