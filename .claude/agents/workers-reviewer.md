@@ -25,7 +25,7 @@ the rollout rules.
 - `apps/web/wrangler.jsonc`: the `API` service binding, D1 for human auth, its rate limit.
 - `packages/platform/src/env.ts` (`EdgeEnv`), `config.ts`, `wire.ts`; `scripts/fleet.ts` (the
   renderer and `SECRETS`), `scripts/provision.sh`, `deployments/*.jsonc`.
-- Deploy order and rollback: `.github/workflows/deploy.yml` (engine → api → delivery → web; roll
+- Deploy order and rollback: `scripts/deploy.sh` (engine → api → delivery → web; roll
   back engine first; D1 never rolls back).
 
 ## Checks
@@ -39,7 +39,7 @@ the rollout rules.
    `apps/engine/src/index.ts`.
 3. **Fleet.** A new resource name or id is rendered per deployment in `fleet.ts` (with the suffix)
    and created in `provision.sh`; `node scripts/fleet.ts render <id>` produces it; a new secret is
-   in `SECRETS` and in `deploy.yml`'s "Collect secrets"; nothing secret in `vars`.
+   in `SECRETS` and in the env of `deploy.yml`'s Deploy step; nothing secret in `vars`.
 4. **Delivery.** The `Delivery` entrypoint stays unroutable and cached; the gateway authenticates
    before the cache; a new response dimension is part of the canonical URL; the purge path covers
    new tags.

@@ -12,7 +12,7 @@ cmd=$(field .tool_input.command)
 [ -z "$cmd" ] && exit 0
 cwd=$(field .cwd)
 
-ci="Production deploys from CI: merging to main runs .github/workflows/ci.yml, which calls deploy.yml for every deployment ring by ring: it records a D1 bookmark, migrates D1, deploys engine, api, delivery and web, smoke-tests, and rolls the Workers back (engine first) on a failure. Don't do it by hand. If a deploy job failed, re-run its failed jobs (\`gh run rerun <run-id> --failed\`); see the ci-triage skill."
+ci="Production deploys from CI: merging to main runs .github/workflows/ci.yml, which calls deploy.yml (scripts/deploy.sh) for every deployment ring by ring: it records a D1 bookmark, migrates D1, deploys engine, api, delivery and web, smoke-tests, and rolls the Workers back (engine first) on a failure. Don't do it by hand. If a deploy job failed, re-run its failed jobs (\`gh run rerun <run-id> --failed\`); see the ci-triage skill."
 
 S='[[:space:]]'
 while IFS= read -r seg; do
@@ -54,6 +54,13 @@ while IFS= read -r seg; do
     m "($S)(run$S+)?db:migrate:remote($S|$)" &&
       deny PreToolUse "Blocked \`$seg\`. Remote D1 migrations run in CI before the Workers deploy. Apply locally with \`pnpm db:migrate:local\`. $ci"
   fi
+
+  # scripts/deploy.sh runs everything above in one command. Reading or linting it is fine; anything
+  # else that names it is treated as running it, by its bare name too (`cd scripts && ./deploy.sh`).
+  # This is a tripwire, not the boundary: the script itself refuses to run outside CI.
+  m "(^|$S|/|\(|\`)deploy\.sh([^a-zA-Z0-9.]|$)" &&
+    ! m "^(cat|sed|grep|rg|head|tail|wc|ls|diff|shellcheck|chmod|git|gh|bash$S+-n)($S|$)" &&
+    deny PreToolUse "Blocked \`$seg\`. $ci"
 
   # ── Ask: sometimes right, hard to undo ─────────────────────────────────────
   m "(^|$S|/)wrangler$S+d1$S+execute($S.*)?$S--remote($S|=|$)" &&
