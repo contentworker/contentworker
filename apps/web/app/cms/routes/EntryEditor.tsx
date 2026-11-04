@@ -546,7 +546,7 @@ export function EntryEditor() {
     if (publish && !publish.disabled && !publishAnswered.current) return publish;
     return Array.from(pageBarRef.current?.querySelectorAll('button:enabled') ?? [])
       .filter((b): b is HTMLButtonElement => b instanceof HTMLButtonElement)
-      .findLast((b) => b.checkVisibility?.() ?? true);
+      .findLast((b) => b !== publish && b.type === 'button' && (b.checkVisibility?.() ?? true));
   };
   const secondary = [
     { label: 'Draft from prose', icon: PenLine, onSelect: () => setCanvasOpen(true) },
