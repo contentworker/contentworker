@@ -141,6 +141,9 @@ move.
 
 Personal settings (notifications, extra allows) go in `settings.local.json`, which is gitignored.
 
+Secrets are denied too: `Read` rules cover `.secrets/**`, `.dev.vars` and `.env` or `.env.*` at any
+depth, for the Read tool and for reads through Bash such as `cat`. `.dev.vars.example` stays readable.
+
 ## Testing the toolkit
 
 ```bash
