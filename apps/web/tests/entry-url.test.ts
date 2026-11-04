@@ -7,6 +7,7 @@ import {
   matchesView,
   viewToListState,
 } from '~/cms/lib/entry-url';
+import { entryQueryParams } from '~/cms/lib/management';
 
 const view = (over: Partial<SavedView> = {}): SavedView => ({
   id: 'v1',
@@ -61,23 +62,137 @@ describe('the entries list URL', () => {
       query: {
         filters: [{ field: 'rank', op: 'gt', value: 3 }],
         order: [{ field: 'title', direction: 'asc' }],
-        extra: { 'sys.createdBy': 'me' },
+        extra: { assignee: 'me' },
       },
       columns: ['rank'],
     });
     const state = viewToListState(saved);
     expect(listStateToParams(state).toString()).toBe(
-      'view=v1&fields.rank%5Bgt%5D=3&order=fields.title&sys.createdBy=me&columns=rank',
+      'view=v1&fields.rank%5Bgt%5D=3&order=fields.title&assignee=me&columns=rank',
     );
     expect(matchesView(state, saved)).toBe(true);
     // A link to it reads back as the same view, unchanged.
     expect(matchesView(listStateFromParams(listStateToParams(state)), saved)).toBe(true);
     expect(matchesView({ ...state, columns: undefined }, saved)).toBe(false);
-    expect(listQueryToViewQuery(state.query)).toEqual({
-      filters: [{ field: 'rank', op: 'gt', value: '3' }],
+    expect(listQueryToViewQuery(state.query, saved.query)).toEqual({
+      filters: [{ field: 'rank', op: 'gt', value: 3 }],
       order: [{ field: 'title', direction: 'asc' }],
-      extra: { 'sys.createdBy': 'me' },
+      extra: { assignee: 'me' },
     });
+  });
+
+  it('never lets a view’s extra act: a filter, a tree, the trash, a space or a page size', () => {
+    const saved = view({
+      query: {
+        extra: {
+          where: '{"field":"salary","op":"gt","value":0}',
+          order: '-fields.salary',
+          query: 'secret',
+          trashed: 'true',
+          view: 'someone-elses',
+          columns: 'salary',
+          space: 'other',
+          env: 'other',
+          locale: 'de',
+          limit: 1,
+          skip: 5,
+          select: 'fields.salary',
+          content_type: 'staff',
+          since: '2020',
+          links_to_entry: 'e1',
+          'fields.salary[gt]': 0,
+          'sys.status': 'draft',
+          'metadata.tags[in]': 't1',
+          'metadata.tags.slug': 'news',
+          assignee: 'me',
+        },
+      },
+    });
+    const state = viewToListState(saved);
+    expect(state.query).toEqual({ extra: { assignee: 'me' } });
+    const params = listStateToParams(state);
+    expect(params.toString()).toBe('view=v1&assignee=me');
+    // A state that somehow holds one still doesn't write it, and the URL reads back clean.
+    const forced = listStateToParams({
+      query: { extra: { where: '{}', 'fields.salary[gt]': '0', trashed: 'true', assignee: 'me' } },
+    });
+    expect(forced.toString()).toBe('assignee=me');
+    const read = listStateFromParams(params).query;
+    expect(read.filters).toBeUndefined();
+    expect(read.where).toBeUndefined();
+    expect(read.trashed).toBeUndefined();
+    expect(read.extra).toEqual({ assignee: 'me' });
+  });
+
+  it('keeps the Preview API’s control parameters out of extra', () => {
+    const url =
+      'limit=5&skip=2&select=fields.title&content_type=page&since=2020&cursor=c&preview_token=t' +
+      '&fields.title[nope]=x&metadata.tags.slug=news&assignee=me';
+    expect(listStateFromParams(new URLSearchParams(url)).query).toEqual({
+      extra: { assignee: 'me' },
+    });
+  });
+
+  it('sends links_to_entry to the list, and saves it as the any-field filter it is', () => {
+    const state = listStateFromParams(new URLSearchParams('links_to_entry=e1,e2'));
+    expect(state.query).toEqual({ linksToEntry: ['e1', 'e2'] });
+    expect(listStateToParams(state).get('links_to_entry')).toBe('e1,e2');
+    expect(entryQueryParams(state.query).get('links_to_entry')).toBe('e1,e2');
+    const saved = listQueryToViewQuery(state.query);
+    expect(saved).toEqual({ filters: [{ field: '*', op: 'refIn', value: ['e1', 'e2'] }] });
+    const opened = viewToListState(view({ query: saved }));
+    expect(opened.query).toEqual({ linksToEntry: ['e1', 'e2'] });
+    expect(listQueryToViewQuery({ linksToEntry: ['e1'] }).filters).toEqual([
+      { field: '*', op: 'ref', value: 'e1' },
+    ]);
+  });
+
+  it('sends every filter on one key to the list', () => {
+    const params = entryQueryParams({
+      filters: [
+        { field: 'rank', op: 'gt', value: '1' },
+        { field: 'rank', op: 'gt', value: '2' },
+        { field: 'tags', op: 'eq', value: 'a' },
+        { field: 'tags', op: 'eq', value: 'b' },
+      ],
+    });
+    expect(params.getAll('fields.rank[gt]')).toEqual(['1', '2']);
+    expect(params.getAll('fields.tags')).toEqual(['a', 'b']);
+  });
+
+  it('keeps an unchanged filter’s typed comparand on a re-save, through the URL and back', () => {
+    const query: SavedView['query'] = {
+      filters: [
+        { field: 'rank', op: 'gt', value: 3 },
+        { field: 'live', op: 'eq', value: true },
+        { field: 'rank', op: 'between', value: [1, 9] },
+        { field: 'title', op: 'match', value: '' },
+        { field: 'subtitle', op: 'eq', value: null as never },
+      ],
+    };
+    const state = listStateFromParams(listStateToParams(viewToListState(view({ query }))));
+    expect(listQueryToViewQuery(state.query, query)).toEqual(query);
+  });
+
+  it('stores what changed as typed, and each saved filter for one filter only', () => {
+    const query: SavedView['query'] = { filters: [{ field: 'rank', op: 'gt', value: 3 }] };
+    expect(
+      listQueryToViewQuery(
+        {
+          filters: [
+            { field: 'rank', op: 'gt', value: '3' },
+            { field: 'rank', op: 'gt', value: '3' },
+            { field: 'rank', op: 'lt', value: '9' },
+            { field: 'title', op: 'match', value: '' },
+          ],
+        },
+        query,
+      ).filters,
+    ).toEqual([
+      { field: 'rank', op: 'gt', value: 3 },
+      { field: 'rank', op: 'gt', value: '3' },
+      { field: 'rank', op: 'lt', value: '9' },
+    ]);
   });
 
   it('leaves a half-typed filter out of a saved view', () => {

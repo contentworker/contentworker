@@ -32,7 +32,12 @@ export function ColumnPicker(props: {
       .map((f) => ({ id: f.apiId, label: f.name })),
   ];
   const toggle = (id: string, on: boolean) => {
-    const next = on ? [...shown, id] : shown.filter((c) => c !== id);
+    const picked = new Set(shown);
+    if (on) picked.add(id);
+    else picked.delete(id);
+    // In the options' order, whatever order they were clicked in. It also lets go of a column this
+    // type doesn't have (a view from another environment), which nothing here can untick.
+    const next = options.map((o) => o.id).filter((c) => picked.has(c));
     // Back to the default reads as no choice at all, so the URL stays clean.
     const isDefault =
       next.length === DEFAULT_COLUMNS.length && next.every((c, i) => c === DEFAULT_COLUMNS[i]);

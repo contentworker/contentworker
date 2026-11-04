@@ -32,7 +32,7 @@ import { Input } from '@contentworker/ui/input';
 import { Label } from '@contentworker/ui/label';
 import { Switch } from '@contentworker/ui/switch';
 import { Bookmark, ChevronDown } from 'lucide-react';
-import { useId, useState } from 'react';
+import { useId, useRef, useState } from 'react';
 import { useClient, useLocalRun } from '../../lib/client-context';
 import {
   type EntryListState,
@@ -40,12 +40,16 @@ import {
   matchesView,
   viewToListState,
 } from '../../lib/entry-url';
-import { apiErrorMessage, apiFieldIssues } from '../../lib/management';
+import { ApiError, apiErrorMessage, apiFieldIssues } from '../../lib/management';
 import { useInvalidate, useScopedQuery } from '../../lib/queries';
 import { useToast } from '../../lib/toast';
 
 /** The name dialog's two jobs: naming a new view, or renaming the open one. */
 type NameDialog = { readonly mode: 'new' } | { readonly mode: 'rename'; readonly view: SavedView };
+
+/** A view over every type shows `sys.*` columns only: a type's field isn't its to keep. */
+const columnsFit = (view: SavedView, columns: EntryListState['columns']) =>
+  view.contentTypeApiId !== null || (columns ?? []).every((c) => c.startsWith('sys.'));
 
 /**
  * The entries list's views menu: pick a saved view (yours, then the space's shared ones), save
@@ -56,14 +60,18 @@ type NameDialog = { readonly mode: 'new' } | { readonly mode: 'rename'; readonly
  * link always agree, and the list runs as the reader's own query: a shared view never shows
  * anyone more than their role lets them see. Sharing, and changing a shared view, take
  * content:manage (`canShare`); without it the shared views are there to pick, not to change.
+ * Stopping sharing is the view's creator's alone (`subject`): anyone else saves a copy instead.
  */
 export function SavedViewsMenu(props: {
   type: ContentType;
   state: EntryListState;
   onApply(state: EntryListState): void;
   canShare: boolean;
+  /** Who is reading, as a view's `createdBy` names them. */
+  subject?: string;
 }) {
   const { type, state, canShare } = props;
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const { client } = useClient();
   const toast = useToast();
   const invalidate = useInvalidate();
@@ -77,6 +85,14 @@ export function SavedViewsMenu(props: {
   const current = state.viewId ? views.find((v) => v.id === state.viewId) : undefined;
   const changed = current ? !matchesView(state, current) : false;
   const editable = (v: SavedView) => v.visibility === 'personal' || canShare;
+  const canChangeSharing = (v: SavedView) =>
+    canShare && (v.visibility === 'personal' || v.createdBy === props.subject);
+  // Field columns can't be saved over a view of every type: only the query is, if it changed.
+  const saveable =
+    current !== undefined &&
+    changed &&
+    (columnsFit(current, state.columns) ||
+      !matchesView({ ...state, columns: current.columns }, current));
   // A personal view here is always the reader's own: the api lists no one else's.
   const mine = views.filter((v) => v.visibility === 'personal');
   const shared = views.filter((v) => v.visibility === 'shared');
@@ -90,13 +106,23 @@ export function SavedViewsMenu(props: {
 
   const saveChanges = (view: SavedView) =>
     run(async () => {
-      const saved = await client.updateSavedView(view.id, {
-        query: listQueryToViewQuery(state.query),
-        columns: state.columns ?? null,
-        revision: view.revision,
-      });
+      const fit = columnsFit(view, state.columns);
+      let saved: SavedView;
+      try {
+        saved = await client.updateSavedView(view.id, {
+          query: listQueryToViewQuery(state.query, view.query),
+          ...(fit ? { columns: state.columns ?? null } : {}),
+          revision: view.revision,
+        });
+      } catch (err) {
+        // Saved by someone else meanwhile: the menu reads the view again, so this list's changes
+        // can be saved over that, on purpose, the next time.
+        if (err instanceof ApiError && err.status === 409) await refresh();
+        throw err;
+      }
       await refresh();
-      props.onApply(viewToListState(saved));
+      const next = viewToListState(saved);
+      props.onApply(fit ? next : { ...next, columns: state.columns });
       toast.success(`Saved “${saved.name}”`);
     });
 
@@ -124,8 +150,11 @@ export function SavedViewsMenu(props: {
     <>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <Button type="button" variant="outline" size="sm" disabled={busy}>
+          {/* Stays enabled while a change saves: a disabled button can't take focus back from a
+              dialog. The menu's changes wait instead. */}
+          <Button ref={triggerRef} type="button" variant="outline" size="sm">
             <Bookmark aria-hidden="true" className="size-4" />
+            {current && <span className="sr-only">View: </span>}
             <span className="max-w-48 truncate">{current ? current.name : 'Views'}</span>
             {changed && (
               <span className="text-muted-foreground">
@@ -172,21 +201,28 @@ export function SavedViewsMenu(props: {
           </DropdownMenuItem>
           {current && editable(current) && (
             <>
-              {changed && (
-                <DropdownMenuItem onSelect={() => void saveChanges(current)}>
+              {saveable && (
+                <DropdownMenuItem disabled={busy} onSelect={() => void saveChanges(current)}>
                   Save changes to “{current.name}”
                 </DropdownMenuItem>
               )}
-              <DropdownMenuItem onSelect={() => setNaming({ mode: 'rename', view: current })}>
+              <DropdownMenuItem
+                disabled={busy}
+                onSelect={() => setNaming({ mode: 'rename', view: current })}
+              >
                 Rename…
               </DropdownMenuItem>
-              {canShare && (
-                <DropdownMenuItem onSelect={() => void toggleShare(current)}>
+              {canChangeSharing(current) && (
+                <DropdownMenuItem disabled={busy} onSelect={() => void toggleShare(current)}>
                   {current.visibility === 'shared' ? 'Stop sharing' : 'Share with the space'}
                 </DropdownMenuItem>
               )}
               <DropdownMenuSeparator />
-              <DropdownMenuItem variant="destructive" onSelect={() => setDeleting(current)}>
+              <DropdownMenuItem
+                variant="destructive"
+                disabled={busy}
+                onSelect={() => setDeleting(current)}
+              >
                 Delete view…
               </DropdownMenuItem>
             </>
@@ -213,7 +249,7 @@ export function SavedViewsMenu(props: {
               name,
               contentTypeApiId: type.apiId,
               visibility: share ? 'shared' : 'personal',
-              query: listQueryToViewQuery(state.query),
+              query: listQueryToViewQuery(state.query, current?.query),
               ...(state.columns ? { columns: state.columns } : {}),
             });
             await refresh();
@@ -226,7 +262,13 @@ export function SavedViewsMenu(props: {
       )}
 
       <AlertDialog open={deleting !== null} onOpenChange={(open) => !open && setDeleting(null)}>
-        <AlertDialogContent>
+        <AlertDialogContent
+          // The menu item that opened it is gone: the keyboard carries on from the trigger.
+          onCloseAutoFocus={(e) => {
+            e.preventDefault();
+            triggerRef.current?.focus();
+          }}
+        >
           <AlertDialogHeader>
             <AlertDialogTitle>Delete “{deleting?.name}”?</AlertDialogTitle>
             <AlertDialogDescription>

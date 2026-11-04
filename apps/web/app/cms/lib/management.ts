@@ -306,6 +306,8 @@ export interface EntryListQuery {
    * filter bar edits only `filters`; a tree is kept and sent as it is.
    */
   readonly where?: unknown;
+  /** Only entries linking to one of these, from any field (the API's `links_to_entry`). */
+  readonly linksToEntry?: readonly string[];
   /**
    * Link parameters this admin doesn't apply (from a newer client or a saved view's `extra`):
    * kept in the URL and saved with a view, never sent with the list request.
@@ -325,7 +327,8 @@ export function entryQueryParams(query: EntryListQuery): URLSearchParams {
     const path = fieldPath(f.field);
     const key = f.op === 'eq' ? path : `${path}[${f.op}]`;
     const value = Array.isArray(f.value) ? f.value.join(',') : String(f.value ?? '');
-    params.set(key, value);
+    // Appended: two filters on one key are two conditions, and the API reads them both.
+    params.append(key, value);
   }
   if (query.order?.length) {
     params.set(
@@ -334,6 +337,7 @@ export function entryQueryParams(query: EntryListQuery): URLSearchParams {
     );
   }
   if (query.where !== undefined) params.set('where', JSON.stringify(query.where));
+  if (query.linksToEntry?.length) params.set('links_to_entry', query.linksToEntry.join(','));
   if (query.search) params.set('query', query.search);
   if (query.limit != null) params.set('limit', String(query.limit));
   if (query.trashed) params.set('trashed', 'true');

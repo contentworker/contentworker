@@ -10,7 +10,7 @@ import {
   SelectValue,
 } from '@contentworker/ui/select';
 import { ListFilter, Plus, Search, UserRound, X } from 'lucide-react';
-import { type ReactNode, useId, useState } from 'react';
+import { type ReactNode, useEffect, useId, useRef, useState } from 'react';
 import { statusLabel } from '../lib/format';
 import type { EntryFilter, EntryListQuery } from '../lib/management';
 
@@ -171,6 +171,48 @@ function ValueInput(props: {
   );
 }
 
+/** How long the search box waits after a keystroke before the list's URL takes the text. */
+const SEARCH_WRITE_MS = 150;
+
+/**
+ * The search box. The list's state is its URL, which a navigation updates a moment after the
+ * keystroke: bound straight to it, fast typing loses characters. So the box holds its own text and
+ * writes it on a pause, and follows the URL when something else changes it (a view, Clear, Back).
+ */
+function SearchField(props: { value: string; onChange(text: string): void }) {
+  const [text, setText] = useState(props.value);
+  const written = useRef(props.value);
+  const onChange = useRef(props.onChange);
+  onChange.current = props.onChange;
+  useEffect(() => {
+    if (props.value === written.current) return;
+    written.current = props.value;
+    setText(props.value);
+  }, [props.value]);
+  useEffect(() => {
+    if (text === written.current) return;
+    const timer = setTimeout(() => {
+      written.current = text;
+      onChange.current(text);
+    }, SEARCH_WRITE_MS);
+    return () => clearTimeout(timer);
+  }, [text]);
+  return (
+    <Input
+      type="search"
+      aria-label="Search entries"
+      enterKeyHint="search"
+      autoCorrect="off"
+      autoCapitalize="off"
+      spellCheck={false}
+      className="h-9 pl-8"
+      placeholder="Search text fields…"
+      value={text}
+      onChange={(e) => setText(e.target.value)}
+    />
+  );
+}
+
 /**
  * Filter and search toolbar for the entries list (the table sorts from its own headers). Holds
  * no query state of its own beyond panel visibility — the parent owns the `EntryListQuery` so it
@@ -211,7 +253,10 @@ export function EntryFilterBar(props: {
 
   // A `where` tree (from a saved view or a link) counts as one: the bar doesn't edit its groups.
   const grouped = value.where !== undefined;
-  const activeCount = filters.length + (value.search ? 1 : 0) + (grouped ? 1 : 0);
+  // So does a `links_to_entry`, from a link or a view: the bar has no row for "any field".
+  const linked = (value.linksToEntry?.length ?? 0) > 0;
+  const activeCount =
+    filters.length + (value.search ? 1 : 0) + (grouped ? 1 : 0) + (linked ? 1 : 0);
   // "Mine" is a toggle of its own, beside the panel's filters; Clear clears it with them.
   const clearable = activeCount > 0 || value.mine === true;
 
@@ -219,22 +264,15 @@ export function EntryFilterBar(props: {
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2">
         {props.leading}
-        <div className="relative flex-1 sm:max-w-xs">
+        {/* On a phone the buttons share a row and the search has its own, wide enough to use. */}
+        <div className="relative flex-1 max-sm:order-first max-sm:basis-full sm:max-w-xs">
           <Search
             aria-hidden="true"
             className="-translate-y-1/2 absolute top-1/2 left-2.5 size-4 text-muted-foreground"
           />
-          <Input
-            type="search"
-            aria-label="Search entries"
-            enterKeyHint="search"
-            autoCorrect="off"
-            autoCapitalize="off"
-            spellCheck={false}
-            className="h-9 pl-8"
-            placeholder="Search text fields…"
+          <SearchField
             value={value.search ?? ''}
-            onChange={(e) => onChange({ ...value, search: e.target.value || undefined })}
+            onChange={(text) => onChange({ ...value, search: text || undefined })}
           />
         </div>
         <Button
@@ -277,6 +315,7 @@ export function EntryFilterBar(props: {
                 search: undefined,
                 where: undefined,
                 mine: undefined,
+                linksToEntry: undefined,
               })
             }
             className="text-muted-foreground"
@@ -290,7 +329,7 @@ export function EntryFilterBar(props: {
 
       {open && (
         <div id={panelId} className="card space-y-3 p-3">
-          {filters.length === 0 && !grouped && (
+          {filters.length === 0 && !grouped && !linked && (
             <p className="text-muted-foreground text-sm">No filters. Add one to narrow the list.</p>
           )}
           {grouped && (
@@ -306,6 +345,23 @@ export function EntryFilterBar(props: {
                 onClick={() => onChange({ ...value, where: undefined })}
               >
                 Remove them
+              </Button>
+            </div>
+          )}
+          {linked && (
+            <div className="flex flex-wrap items-center gap-2 text-sm">
+              <span className="text-muted-foreground">
+                Also only entries linking to the entry the saved view or link names.
+              </span>
+              <Button
+                type="button"
+                variant="link"
+                size="xs"
+                className="px-0"
+                aria-label="Remove the link condition"
+                onClick={() => onChange({ ...value, linksToEntry: undefined })}
+              >
+                Remove it
               </Button>
             </div>
           )}

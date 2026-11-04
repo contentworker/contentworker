@@ -31,15 +31,20 @@ their own role.
   **Save changes** writes them over the view.
 - **Rename…**, **Share with the space** or **Stop sharing**, and **Delete view…** act on the open
   view. Without `content:manage`, a shared view can be opened but not changed.
+- Only the person who created a shared view can stop sharing it, which makes it theirs alone again.
+  Anyone else can use **Save as new view…** to keep their own copy.
 - **Columns** picks what shows after the title: the status, when the entry last changed, and any
-  of the type's own fields. The choice is saved with the view.
+  of the type's own fields. The choice is saved with the view. A view over every type keeps the
+  status and when it changed only. On a phone, a row shows its status whatever the columns are.
 
 ## What a shared view can show
 
 A view never shows anyone more than they could filter for themselves. Running a view is your own
 entries query: your role decides which content types you see, and fields your role hides are left
 out of every row. A view whose filters, sort or search touch a field your role hides isn't offered
-to you at all, and a view of a content type you can't read isn't listed either.
+to you at all, and a view of a content type you can't read isn't listed either. If a column of a
+view shows a field your role hides, you don't see that column, and saving your changes leaves it in
+place for everyone else.
 
 ## From the API
 
@@ -70,6 +75,12 @@ The `query` takes the same filters and `where` groups as the
 [Preview and Delivery query string](/guides/reading-content/), and is checked just as strictly: a
 malformed part is a `422` that names it. Another person's personal view is a `404`. The routes are
 in the [REST API reference](/reference/rest-api/), under _Saved views_.
+
+Because views belong to the space and content types to an environment, a view can outlive its type
+there. A run in that environment returns no entries and `typeMissing: true`, so you can tell it
+from a list that matched nothing. The view is still there: you can rename it, change its query,
+reset it with `columns: null` or delete it. Only setting named columns is refused, as there is no
+type to check them against.
 
 The management SDK has `cma.savedViews.{list, get, run, create, update, delete}`
 ([SDKs](/guides/sdks/#saved-views)), and agents have the `views_*` [MCP tools](/guides/mcp/).

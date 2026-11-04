@@ -30,7 +30,13 @@ const client = {
     }),
   ),
   contentTypeEntryCounts: vi.fn(async () => []),
-  getSpaceAccess: vi.fn(async () => ({ spaceId: 's1', kind: 'user', ...access, bulkJobs: [] })),
+  getSpaceAccess: vi.fn(async () => ({
+    spaceId: 's1',
+    kind: 'user',
+    subject: 'ada',
+    ...access,
+    bulkJobs: [],
+  })),
   listSavedViews: vi.fn(async () => [...views]),
   createSavedView: vi.fn(async (input: Partial<SavedView>) => {
     const made = view({ ...input, id: 'v-new' });
@@ -71,6 +77,7 @@ vi.mock('~/cms/lib/assistant', async (importOriginal) => ({
 }));
 
 const { ToastProvider } = await import('~/cms/lib/toast');
+const { ApiError } = await import('~/cms/lib/management');
 const { EntriesList } = await import('~/cms/routes/EntriesList');
 
 function view(over: Partial<SavedView> = {}): SavedView {
@@ -117,6 +124,22 @@ const article = {
       localized: false,
       required: false,
       position: 1,
+    },
+    {
+      apiId: 'body',
+      name: 'Body',
+      type: 'RichText',
+      localized: false,
+      required: false,
+      position: 2,
+    },
+    {
+      apiId: 'blocks',
+      name: 'Blocks',
+      type: 'Array',
+      localized: false,
+      required: false,
+      position: 3,
     },
   ],
 } as ContentType;
@@ -184,6 +207,97 @@ describe('the entries list URL', () => {
     fireEvent.click(screen.getByRole('menuitemcheckbox', { name: 'Section' }));
     await waitFor(() => expect(search()).toContain('columns=sys.status,sys.updatedAt,section'));
   });
+
+  it('writes the search on a pause, and follows a URL something else changed', async () => {
+    views.push(view({ query: { search: 'from the view' } }));
+    setup('/content/article?query=old');
+    const box = (await screen.findByRole('searchbox', {
+      name: 'Search entries',
+    })) as HTMLInputElement;
+    expect(box.value).toBe('old');
+    // Every keystroke shows at once, whatever the URL has caught up to.
+    for (const value of ['ol', 'o', 'on', 'one']) {
+      fireEvent.change(box, { target: { value } });
+      expect(box.value).toBe(value);
+    }
+    expect(search()).toBe('?query=old');
+    await waitFor(() => expect(search()).toBe('?query=one'));
+    expect(box.value).toBe('one');
+
+    await waitFor(() => expect(client.listSavedViews).toHaveBeenCalled());
+    await open('Views');
+    fireEvent.click(await screen.findByRole('menuitemradio', { name: 'News' }));
+    await waitFor(() => expect(box.value).toBe('from the view'));
+  });
+
+  it('keeps columns in the picker’s order, whatever order they’re clicked in', async () => {
+    setup('/content/article?columns=body');
+    await open('Columns');
+    fireEvent.click(await screen.findByRole('menuitemcheckbox', { name: 'Section' }));
+    await waitFor(() => expect(search()).toBe('?columns=section,body'));
+    fireEvent.click(screen.getByRole('menuitemcheckbox', { name: 'Status' }));
+    await waitFor(() => expect(search()).toBe('?columns=sys.status,section,body'));
+  });
+
+  it('lets go of a column the type doesn’t have once the columns change', async () => {
+    setup('/content/article?columns=gone,section');
+    await open('Columns');
+    fireEvent.click(await screen.findByRole('menuitemcheckbox', { name: 'Status' }));
+    await waitFor(() => expect(search()).toBe('?columns=sys.status,section'));
+  });
+
+  it('sorts from a header only where a field has one value to sort by', async () => {
+    setup('/content/article?columns=sys.status,section,body,blocks');
+    await screen.findByRole('link', { name: 'Pricing' }, { timeout: 5000 });
+    for (const name of ['Title', 'Status', 'Section']) {
+      expect(screen.getByRole('button', { name })).toBeTruthy();
+    }
+    for (const name of ['Body', 'Blocks']) {
+      expect(screen.getByRole('columnheader', { name })).toBeTruthy();
+      expect(screen.queryByRole('button', { name })).toBeNull();
+    }
+  });
+
+  it('names what a cell can’t show, and titles what it may cut short', async () => {
+    const long = 'A section name long enough that a column would cut it short';
+    client.listEntryPage.mockResolvedValueOnce({
+      items: [
+        {
+          id: 'e1',
+          contentType: 'article',
+          status: 'draft',
+          version: 1,
+          fields: {
+            title: { 'en-US': 'Pricing' },
+            section: { 'en-US': long },
+            body: { 'en-US': { nodeType: 'document', content: [] } },
+            blocks: { 'en-US': [{ a: 1 }, { a: 2 }, { a: 3 }] },
+          },
+        },
+      ],
+    });
+    setup('/content/article?columns=section,body,blocks');
+    expect((await screen.findByRole('cell', { name: long })).getAttribute('title')).toBe(long);
+    const body = screen.getByRole('cell', { name: 'Rich text' });
+    expect(body.className).toContain('text-muted-foreground');
+    expect(body.getAttribute('title')).toBeNull();
+    expect(screen.getByRole('cell', { name: '3 items' })).toBeTruthy();
+    expect(screen.queryByText('—')).toBeNull();
+  });
+
+  it('always renders the status for a phone, once, whichever columns are picked', async () => {
+    setup('/content/article?columns=section');
+    const row = (await screen.findByRole('link', { name: 'Pricing' })).closest('tr') as HTMLElement;
+    const status = within(row).getByText('Draft').closest('td') as HTMLElement;
+    expect(status.className).toContain('md:hidden');
+    cleanup();
+    setup('/content/article');
+    const picked = (await screen.findByRole('link', { name: 'Pricing' })).closest(
+      'tr',
+    ) as HTMLElement;
+    expect(within(picked).getAllByText('Draft')).toHaveLength(1);
+    expect(within(picked).getByText('Draft').closest('td')?.className).not.toContain('md:hidden');
+  });
 });
 
 describe('the views menu', () => {
@@ -209,7 +323,7 @@ describe('the views menu', () => {
         undefined,
       ),
     );
-    const trigger = screen.getByRole('button', { name: /^News/ });
+    const trigger = screen.getByRole('button', { name: /^View:\s*News/ });
     expect(trigger.textContent).not.toContain('edited');
     fireEvent.change(screen.getByRole('searchbox', { name: 'Search entries' }), {
       target: { value: 'x' },
@@ -267,10 +381,92 @@ describe('the views menu', () => {
     expect(within(dialog).queryByRole('switch')).toBeNull();
   });
 
+  it('keeps a saved comparand’s type when saving changes over it', async () => {
+    views.push(view({ query: { filters: [{ field: 'section', op: 'gt', value: 3 }] } }));
+    setup('/content/article?view=v1&fields.section[gt]=3&query=x');
+    await open(/News.*edited/);
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Save changes to “News”' }));
+    await waitFor(() =>
+      expect(client.updateSavedView).toHaveBeenCalledWith('v1', {
+        query: { filters: [{ field: 'section', op: 'gt', value: 3 }], search: 'x' },
+        columns: null,
+        revision: 1,
+      }),
+    );
+  });
+
+  it('reads the view again when a save loses to someone else’s', async () => {
+    views.push(view());
+    client.updateSavedView.mockRejectedValueOnce(new ApiError(409, 'Saved by someone else'));
+    setup('/content/article?view=v1&query=x');
+    await open(/News.*edited/);
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Save changes to “News”' }));
+    await waitFor(() => expect(client.listSavedViews).toHaveBeenCalledTimes(2));
+    expect(search()).toContain('query=x');
+  });
+
+  it('leaves a type’s field columns out of a view over every type', async () => {
+    views.push(view({ contentTypeApiId: null, columns: ['sys.status'] }));
+    // Only the columns differ, and they can't be saved here: nothing to save over the view.
+    setup('/content/article?view=v1&columns=sys.status,section');
+    await open(/News.*edited/);
+    expect(screen.queryByRole('menuitem', { name: 'Save changes to “News”' })).toBeNull();
+    expect(screen.getByRole('menuitem', { name: 'Save as new view…' })).toBeTruthy();
+    cleanup();
+
+    // The query changed too: that is saved, and the list keeps showing the columns picked.
+    setup('/content/article?view=v1&columns=sys.status,section&query=x');
+    await open(/News.*edited/);
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Save changes to “News”' }));
+    await waitFor(() =>
+      expect(client.updateSavedView).toHaveBeenCalledWith('v1', {
+        query: { search: 'x' },
+        revision: 1,
+      }),
+    );
+    await waitFor(() => expect(search()).toContain('columns=sys.status,section'));
+    cleanup();
+
+    // Columns that all fit are saved like any others.
+    setup('/content/article?view=v1&columns=sys.updatedAt');
+    await open(/News.*edited/);
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Save changes to “News”' }));
+    await waitFor(() =>
+      expect(client.updateSavedView).toHaveBeenLastCalledWith(
+        'v1',
+        expect.objectContaining({ columns: ['sys.updatedAt'] }),
+      ),
+    );
+  });
+
+  it('offers Stop sharing to the view’s creator alone', async () => {
+    views.push(
+      view({ visibility: 'shared' }),
+      view({ id: 'v2', name: 'Theirs', createdBy: 'lead', visibility: 'shared' }),
+    );
+    setup('/content/article?view=v2');
+    await waitFor(() => expect(client.getSpaceAccess).toHaveBeenCalled());
+    await open(/^View:\s*Theirs/);
+    expect(await screen.findByRole('menuitem', { name: 'Rename…' })).toBeTruthy();
+    expect(screen.queryByRole('menuitem', { name: 'Stop sharing' })).toBeNull();
+    cleanup();
+
+    setup('/content/article?view=v1');
+    await waitFor(() => expect(client.getSpaceAccess).toHaveBeenCalled());
+    await open(/^View:\s*News/);
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Stop sharing' }));
+    await waitFor(() =>
+      expect(client.updateSavedView).toHaveBeenCalledWith('v1', {
+        visibility: 'personal',
+        revision: 1,
+      }),
+    );
+  });
+
   it('renames, shares and deletes the open view', async () => {
     views.push(view());
     setup('/content/article?view=v1');
-    await open(/^News/);
+    await open(/^View:\s*News/);
     fireEvent.click(screen.getByRole('menuitem', { name: 'Share with the space' }));
     await waitFor(() =>
       expect(client.updateSavedView).toHaveBeenCalledWith('v1', {
@@ -280,7 +476,7 @@ describe('the views menu', () => {
     );
     await screen.findByText('“News” is shared with everyone in the space');
 
-    await open(/^News/);
+    await open(/^View:\s*News/);
     fireEvent.click(screen.getByRole('menuitem', { name: 'Rename…' }));
     const dialog = await screen.findByRole('dialog', { name: 'Rename view' });
     fireEvent.change(within(dialog).getByRole('textbox', { name: 'Name' }), {
@@ -289,7 +485,7 @@ describe('the views menu', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Rename' }));
     await screen.findByText('Renamed to “Newsroom”');
 
-    await open(/^Newsroom/);
+    await open(/^View:\s*Newsroom/);
     fireEvent.click(screen.getByRole('menuitem', { name: 'Delete view…' }));
     const confirm = await screen.findByRole('alertdialog', { name: 'Delete “Newsroom”?' });
     expect(confirm.textContent).toContain('Everyone in the space loses this view');

@@ -807,7 +807,8 @@ export function EntriesList() {
     (query.filters?.length ?? 0) > 0 ||
     !!query.search ||
     query.where !== undefined ||
-    query.mine === true;
+    query.mine === true ||
+    (query.linksToEntry?.length ?? 0) > 0;
   // Clearing filters keeps the sort, the trash view and kept link parameters: they aren't filters.
   const clearFilters = () =>
     setQuery({ order: query.order, trashed: query.trashed, extra: query.extra });
@@ -921,6 +922,7 @@ export function EntriesList() {
                   setListState(next, { push: true });
                 }}
                 canShare={access?.scopes.includes('content:manage') ?? false}
+                subject={access?.subject}
               />
             )
           }

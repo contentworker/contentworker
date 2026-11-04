@@ -1139,7 +1139,9 @@ the columns to show. Its query is the structured form a live query parses into (
 a `QueryNode` tree), never a query string, read by `checkSavedViewQuery` with the live query's own
 validators (`queryFilterIssues` strictly, `parseQueryWhere`), so a stored view is never one the
 Preview list would refuse for its shape. `extra` keeps query keys this version doesn't apply (a
-newer client's), verbatim and never applied (`savedViewEntryQuery` leaves it out).
+newer client's), verbatim and never applied (`savedViewEntryQuery` leaves it out); it never holds a
+key anything here reads (`isSavedViewExtraKey`: a filter key, a list or connection parameter), so
+it can't become a live filter once a client writes it back into a URL.
 
 Views are **space-scoped**: how people work through the content, not content. Every environment of
 a space shows the same views, and none rides a snapshot, clone, merge or the environment purge; a
@@ -1147,12 +1149,30 @@ view runs in whichever environment asks, where a field that environment's type l
 nothing. `canSeeSavedView` decides who sees one: a personal view only its owner (a person:
 `isPersonPrincipal`), any view only a role that can read its type, and no role whose field rules
 hide a field the query names or which `search` would reach (`assertQueryRespectsFieldRules`).
-`savedViewFor` drops columns naming a hidden field. The use-cases
+`savedViewFor` drops columns naming a hidden field, and a save by that role keeps them where they
+stood (`savedViewColumnsAfter`), so saving columns never takes one from the people who can see it.
+The use-cases
 (`packages/application/src/saved-views.ts`) run a view as the caller's own Preview list query
 (`listPreviewEntryPage` with the caller's `readable` grant, then `maskDeniedFields`), ask
 `content:manage` of anything shared, and cap views at `MAX_PERSONAL_VIEWS` (50) per person and
 `MAX_SHARED_VIEWS` (100) per space, a check rather than a guarantee under a race, as menus' cap is.
-A write is a compare-and-set on `revision` (no event: nothing outside the admin reacts to a view).
+A change of visibility is held to the same caps as a new view. A write is a compare-and-set on
+`revision` (no event: nothing outside the admin reacts to a view).
+
+A view keeps its creator for life: `save` never writes `createdBy` on an update. So only the view's
+creator, a person, can stop sharing it; anyone else gets a `422` and can save a copy. Moving
+ownership instead would let any `content:manage` holder take a view away from the space for
+themselves, and would have no answer for a view a key created, which has no person to go back to:
+that view stays shared until it is deleted.
+
+**A view of a deleted content type.** Views are per space and types per environment, so deleting a
+type doesn't cascade: the same view may be good in another environment, and the type may come back
+through a merge. Where the type is missing, `runSavedView` answers an empty page with
+`typeMissing: true` (a fact about this environment, not an error, and not "nothing matched"), the
+view stays listed and readable, and it can still be renamed, requeried, reset with `columns: null`
+or deleted. Only naming columns is refused (`422`), with no type to check them against. The admin
+lists a type's views on that type's page, so it doesn't show these; they are reached over the API,
+MCP and the SDK.
 
 ## Webhooks
 

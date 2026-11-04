@@ -1,4 +1,12 @@
-import type { FilterOp, SavedView, SavedViewQuery } from '@contentworker/domain';
+import {
+  ANY_FIELD,
+  ENTRY_FILTER_KEY,
+  type FilterOp,
+  isSavedViewExtraKey,
+  type QueryFilter,
+  type SavedView,
+  type SavedViewQuery,
+} from '@contentworker/domain';
 import type { EntryFilter, EntryListQuery } from './management';
 
 /**
@@ -8,7 +16,11 @@ import type { EntryFilter, EntryListQuery } from './management';
  * agree: opening a view writes its query into the URL, and saving reads the URL back.
  *
  * Any other parameter is kept as it came (`extra`): a link from a newer client survives a round
- * trip through this one and is saved with a view, but is never sent with the list request.
+ * trip through this one and is saved with a view, but is never sent with the list request. Only a
+ * key nothing here reads is kept (`isSavedViewExtraKey`), on the way in and on the way out: written
+ * back into the URL, a saved `where` or `fields.x[gt]` would come alive as a filter, and `space` or
+ * `limit` as a connection or a page size. A control parameter of the Preview API's this list has no
+ * use for (`limit`, `select`, …) goes the same way.
  */
 
 export interface EntryListState {
@@ -38,25 +50,11 @@ const OPS: ReadonlySet<string> = new Set<FilterOp>([
 ]);
 const LIST_OPS: ReadonlySet<string> = new Set(['in', 'nin', 'between', 'refIn']);
 
-/** The filter keys the Preview API reads (`entry-query.ts`'s FILTER_KEY). */
-const FILTER_KEY =
-  /^(fields\.[A-Za-z0-9_]+(?:\.[A-Za-z_][A-Za-z0-9_]*){0,3}|sys\.[A-Za-z0-9_]+|metadata\.(?:tags|concepts))(?:\[(\w+)\])?$/;
-
 /**
- * Parameters with a meaning of their own here; anything else that isn't a filter is extra. The
- * connection's (`space`, `env`, `locale`: any CMS URL may carry them) belong to the client, not
- * the list, and are never saved with a view.
+ * The connection's parameters (any CMS URL may carry them): they belong to the client, not the
+ * list, and are never saved with a view.
  */
 export const CONNECTION_PARAMS: readonly string[] = ['space', 'env', 'locale'];
-const OWN = new Set([
-  'order',
-  'query',
-  'trashed',
-  'where',
-  'view',
-  'columns',
-  ...CONNECTION_PARAMS,
-]);
 
 const list = (raw: string) =>
   raw
@@ -71,6 +69,7 @@ export function listStateFromParams(params: URLSearchParams): EntryListState {
   let order: EntryListQuery['order'];
   let search: string | undefined;
   let where: unknown;
+  let linksToEntry: string[] | undefined;
   for (const [key, value] of params) {
     if (key === 'order') {
       order = list(value).map((token) => ({
@@ -91,19 +90,22 @@ export function listStateFromParams(params: URLSearchParams): EntryListState {
       }
       continue;
     }
-    if (OWN.has(key)) continue;
-    const m = FILTER_KEY.exec(key);
-    const op = m ? (m[2] ?? 'eq') : undefined;
-    if (!m || !op || !OPS.has(op)) {
-      extra[key] = value;
+    if (key === 'links_to_entry') {
+      linksToEntry = list(value);
       continue;
     }
-    const field = (m[1] as string).replace(/^fields\./, '');
-    filters.push({
-      field,
-      op: op as FilterOp,
-      value: LIST_OPS.has(op) ? list(value) : op === 'exists' ? value !== 'false' : value,
-    });
+    const m = ENTRY_FILTER_KEY.exec(key);
+    const op = m ? (m[2] ?? 'eq') : undefined;
+    // By id only: a view can't hold a slug filter, so this list doesn't apply one it can't save.
+    if (m && op && OPS.has(op) && !(m[1] as string).endsWith('.slug')) {
+      filters.push({
+        field: (m[1] as string).replace(/^fields\./, ''),
+        op: op as FilterOp,
+        value: LIST_OPS.has(op) ? list(value) : op === 'exists' ? value !== 'false' : value,
+      });
+    } else if (isSavedViewExtraKey(key)) {
+      extra[key] = value;
+    }
   }
   const view = params.get('view');
   const columns = params.get('columns');
@@ -113,6 +115,7 @@ export function listStateFromParams(params: URLSearchParams): EntryListState {
       ...(order?.length ? { order } : {}),
       ...(search ? { search } : {}),
       ...(where !== undefined ? { where } : {}),
+      ...(linksToEntry?.length ? { linksToEntry } : {}),
       ...(params.get('trashed') === 'true' ? { trashed: true } : {}),
       ...(Object.keys(extra).length ? { extra } : {}),
     },
@@ -136,6 +139,7 @@ export function listStateToParams(state: EntryListState): URLSearchParams {
     params.append(key, Array.isArray(f.value) ? f.value.join(',') : String(f.value ?? ''));
   }
   if (query.where !== undefined) params.set('where', JSON.stringify(query.where));
+  if (query.linksToEntry?.length) params.set('links_to_entry', query.linksToEntry.join(','));
   if (query.order?.length) {
     params.set(
       'order',
@@ -144,7 +148,9 @@ export function listStateToParams(state: EntryListState): URLSearchParams {
   }
   if (query.search) params.set('query', query.search);
   if (query.trashed) params.set('trashed', 'true');
-  for (const [k, v] of Object.entries(query.extra ?? {})) params.set(k, v);
+  for (const [k, v] of Object.entries(query.extra ?? {})) {
+    if (isSavedViewExtraKey(k)) params.set(k, v);
+  }
   if (state.columns) params.set('columns', state.columns.join(','));
   return params;
 }
@@ -161,17 +167,21 @@ function barValue(op: string, value: unknown): EntryFilter['value'] {
 export function viewToListState(view: SavedView): EntryListState {
   const q = view.query;
   const extra = Object.fromEntries(
-    Object.entries(q.extra ?? {}).map(([k, v]) => [
-      k,
-      Array.isArray(v) ? v.join(',') : String(v ?? ''),
-    ]),
+    Object.entries(q.extra ?? {})
+      .filter(([k]) => isSavedViewExtraKey(k))
+      .map(([k, v]) => [k, Array.isArray(v) ? v.join(',') : String(v ?? '')]),
   );
+  const filters = (q.filters ?? []).filter((f) => f.field !== ANY_FIELD);
+  const linksToEntry = (q.filters ?? [])
+    .filter((f) => f.field === ANY_FIELD)
+    .flatMap((f) => barValue(f.op, f.value))
+    .map(String);
   return {
     viewId: view.id,
     query: {
-      ...(q.filters?.length
+      ...(filters.length
         ? {
-            filters: q.filters.map((f) => ({
+            filters: filters.map((f) => ({
               field: f.field,
               op: f.op,
               value: barValue(f.op, f.value),
@@ -181,30 +191,53 @@ export function viewToListState(view: SavedView): EntryListState {
       ...(q.order?.length ? { order: q.order } : {}),
       ...(q.search ? { search: q.search } : {}),
       ...(q.where !== undefined ? { where: q.where } : {}),
+      ...(linksToEntry.length ? { linksToEntry } : {}),
       ...(Object.keys(extra).length ? { extra } : {}),
     },
     ...(view.columns ? { columns: view.columns } : {}),
   };
 }
 
+/** A comparand as the URL spells it, whatever its type. */
+const spelled = (value: unknown) => (Array.isArray(value) ? value.join(',') : String(value ?? ''));
+
 /**
  * What saving the list as a view stores: its query in the structured form (the trash flag isn't
  * part of a view). A half-typed filter (no value yet) isn't saved; it would be refused.
+ *
+ * The URL holds every comparand as text, so a filter that still reads as one of `saved`'s (the
+ * query the list was opened from) is stored as that one, typed as it was: `rank > 3` stays the
+ * number, and `match ''` or `eq null` aren't taken for a filter nobody finished typing.
  */
-export function listQueryToViewQuery(query: EntryListQuery): SavedViewQuery {
-  const filters = (query.filters ?? []).filter(
-    (f) => f.op === 'exists' || (Array.isArray(f.value) ? f.value.length > 0 : f.value !== ''),
-  );
+export function listQueryToViewQuery(
+  query: EntryListQuery,
+  saved?: SavedViewQuery,
+): SavedViewQuery {
+  const unclaimed = [...(saved?.filters ?? [])];
+  const asSaved = (field: string, op: FilterOp, value: unknown): QueryFilter | undefined => {
+    const at = unclaimed.findIndex(
+      (s) =>
+        s.field === field && s.op === op && spelled(barValue(s.op, s.value)) === spelled(value),
+    );
+    return at < 0 ? undefined : unclaimed.splice(at, 1)[0];
+  };
+  const filters = (query.filters ?? []).flatMap((f): QueryFilter[] => {
+    const kept = asSaved(f.field, f.op, f.value);
+    if (kept) return [kept];
+    const typed =
+      f.op === 'exists' || (Array.isArray(f.value) ? f.value.length > 0 : f.value !== '');
+    if (!typed) return [];
+    return [{ field: f.field, op: f.op, ...(f.value !== undefined ? { value: f.value } : {}) }];
+  });
+  const links = query.linksToEntry ?? [];
+  if (links.length) {
+    const [one] = links;
+    const op = links.length === 1 ? 'ref' : 'refIn';
+    const value = links.length === 1 ? one : links;
+    filters.push(asSaved(ANY_FIELD, op, value) ?? { field: ANY_FIELD, op, value });
+  }
   return {
-    ...(filters.length
-      ? {
-          filters: filters.map((f) => ({
-            field: f.field,
-            op: f.op,
-            ...(f.value !== undefined ? { value: f.value } : {}),
-          })),
-        }
-      : {}),
+    ...(filters.length ? { filters } : {}),
     ...(query.where !== undefined ? { where: query.where as SavedViewQuery['where'] } : {}),
     ...(query.order?.length ? { order: query.order } : {}),
     ...(query.search ? { search: query.search } : {}),
