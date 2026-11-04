@@ -15,6 +15,9 @@
  *   node scripts/fleet.ts set-kv <id> <kv id>  record the shared KV namespace id
  *   node scripts/fleet.ts demos                the provisioned demo deployments
  *
+ * The registry is deployments/ here, or the directory FLEET_REGISTRY names (the private ops repo's
+ * checkout, which holds the real fleet).
+ *
  * A rendered config is the app's wrangler.jsonc with the deployment's names, ids and hosts put in,
  * written next to it so its relative paths still resolve. Deploy order (CI): engine first (it owns
  * the Durable Object and Workflow classes the others bind by script name), then media (so it
@@ -22,12 +25,16 @@
  */
 
 import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { applyEdits, modify, type ParseError, parse, printParseErrorCode } from 'jsonc-parser';
 import { deriveAssistantKey } from './derive-assistant-key.ts';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
+/** Where the registry lives: FLEET_REGISTRY when set, else this repo's deployments/. */
+export const registryDir = (env: Record<string, string | undefined> = process.env) =>
+  env.FLEET_REGISTRY ? resolve(env.FLEET_REGISTRY) : join(ROOT, 'deployments');
+
 export const RINGS = ['staging', 'internal', 'canary', 'general'] as const;
 type Ring = (typeof RINGS)[number];
 
@@ -271,7 +278,7 @@ export function toDeployment(raw: Record<string, unknown>, file = 'deployment'):
   };
 }
 
-export function loadDeployments(dir = join(ROOT, 'deployments')): Deployment[] {
+export function loadDeployments(dir = registryDir()): Deployment[] {
   const list = readdirSync(dir)
     .filter((f) => f.endsWith('.jsonc'))
     .map((f) => toDeployment(readJsonc(join(dir, f)), f));
@@ -468,7 +475,7 @@ const RENDER: Record<App, (base: Config, d: Deployment) => Config> = {
 
 function byId(id: string | undefined): Deployment {
   const d = loadDeployments().find((x) => x.id === id);
-  if (!d) throw new Error(`no deployment ${JSON.stringify(id)} in deployments/`);
+  if (!d) throw new Error(`no deployment ${JSON.stringify(id)} in ${registryDir()}`);
   return d;
 }
 
@@ -552,7 +559,7 @@ export function shellVars(d: Deployment): Record<string, string> {
 
 function setField(id: string | undefined, field: 'd1Id' | 'kvId', value: string) {
   const d = byId(id);
-  const file = join(ROOT, 'deployments', `${d.id}.jsonc`);
+  const file = join(registryDir(), `${d.id}.jsonc`);
   const text = readFileSync(file, 'utf8');
   const edits = modify(text, [field], value, {
     formattingOptions: { insertSpaces: true, tabSize: 2 },
