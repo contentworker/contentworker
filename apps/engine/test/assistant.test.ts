@@ -686,6 +686,13 @@ describe('a model turn (the mock model)', () => {
       state: 'approval-requested',
     });
     expect(await statusOf(SPACE_A, id)).toBe('draft');
+    // The card reads what it would change from where the turn ran, which the agent says, not the model.
+    const proposal = (await messagesOf(ada)).find((m) =>
+      m.parts.some((x) => x.type === 'tool-entries_publish'),
+    );
+    expect(proposal?.metadata).toMatchObject({
+      scope: { spaceId: SPACE_A, environmentId: 'main' },
+    });
     panel.close();
   });
 

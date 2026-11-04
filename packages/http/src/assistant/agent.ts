@@ -717,8 +717,10 @@ export abstract class AssistantAgentBase extends AIChatAgent<AgentEnv> {
         // What the person sees of a failure: a tool's own words once reduced to what may be shown
         // (`Shown`), and nothing of anything else (a model's or the runtime's error).
         onError: (err) => (err instanceof Shown ? err.message : NOT_THROUGH),
+        // `scope` is where this turn's calls run: a card reads what it would change from there, and
+        // the model's tools have no scope of their own to say so.
         messageMetadata: ({ part }) =>
-          part.type === 'start' ? { source: used.source, at: Date.now() } : undefined,
+          part.type === 'start' ? { source: used.source, at: Date.now(), scope } : undefined,
       });
     } catch (err) {
       close();
