@@ -8,6 +8,7 @@
 import { ASSISTANT_TOOLS, isAssistantTool } from '@contentworker/domain';
 import { Button } from '@contentworker/ui/button';
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@contentworker/ui/card';
+import { Collapsible, CollapsibleContent } from '@contentworker/ui/collapsible';
 import { ComposeLoader } from '@contentworker/ui/compose-loader';
 import { cn } from '@contentworker/ui/lib/utils';
 import { type DynamicToolUIPart, getToolName, type ToolUIPart } from 'ai';
@@ -21,11 +22,25 @@ import {
   Search,
   X,
 } from 'lucide-react';
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router';
 import { Confirmation, ConfirmationActions } from '~/components/ai-elements/confirmation';
 import { MessageAction, MessageResponse } from '~/components/ai-elements/message';
+import { useAssistantIfAny } from '../../lib/assistant';
 import { metaOf } from '../../lib/assistant-client';
+import { useClient } from '../../lib/client-context';
+import type { Connection } from '../../lib/management';
+import {
+  ChangedFields,
+  type EntryReview,
+  FIRST_PUBLISH,
+  FieldReview,
+  fieldsGoLive,
+  NO_CHANGES,
+  ReviewFailed,
+  type ReviewTarget,
+  useEntryReview,
+} from '../entries/EntryReview';
 
 export type Part = ToolUIPart | DynamicToolUIPart;
 
@@ -254,12 +269,85 @@ export function isDestructive(part: Part): boolean {
   return action !== undefined ? DESTRUCTIVE_JOBS.has(action) : DESTRUCTIVE.has(getToolName(part));
 }
 
+/** Where a turn's calls run, as the agent stamps it on the model's reply. */
+export interface TurnScope {
+  readonly spaceId?: unknown;
+  readonly environmentId?: unknown;
+}
+
+/**
+ * Where a publish card's review reads from; `elsewhere`, when that isn't where the card runs. A page's
+ * card says where in its input. A model's input says nothing that counts: its turn's scope does.
+ */
+function publishTarget(
+  part: Part,
+  conn: Connection,
+  direct: boolean,
+  turn: TurnScope | undefined,
+): ReviewTarget | 'elsewhere' | null {
+  if (getToolName(part) !== 'entries_publish') return null;
+  const input = (part.input ?? {}) as Record<string, unknown>;
+  const { id, expectedVersion } = input;
+  if (typeof id !== 'string') return null;
+  const space = direct ? input.space : turn?.spaceId;
+  const environment = direct ? input.environment : turn?.environmentId;
+  // A card outlives a switch of space or environment, and an id can mean a different entry there.
+  if (space !== conn.space || environment !== conn.environment) return 'elsewhere';
+  return {
+    entryId: id,
+    ...(typeof expectedVersion === 'number' ? { version: expectedVersion } : {}),
+    ...(metaOf(part).about ? {} : { named: true }),
+  };
+}
+
+/**
+ * What a publish card will put live, from the system's own diff of the entry the call names. Nothing
+ * here comes from the model: its text never reaches this card, and a read that fails says so.
+ */
+function PublishReview({ review, elsewhere }: { review: EntryReview; elsewhere: boolean }) {
+  const [open, setOpen] = useState(false);
+  const id = useId();
+  const note = (text: string) => <p className="text-muted-foreground text-xs">{text}</p>;
+  if (elsewhere)
+    return note(
+      'This was asked in another space or environment. Switch back to see what goes live.',
+    );
+  // Held at about a short list's height, so Not now and Confirm don't move under the pointer.
+  if (review.status === 'loading')
+    return <div className="min-h-20">{note('Comparing with what’s live…')}</div>;
+  if (review.status === 'first') return note(FIRST_PUBLISH);
+  if (review.status === 'failed') return <ReviewFailed />;
+  if (review.status !== 'ready') return null;
+  const changed = review.fields.filter((f) => f.kind !== 'unchanged').length;
+  if (changed === 0) return note(NO_CHANGES);
+  return (
+    <Collapsible open={open} onOpenChange={setOpen} className="space-y-1">
+      {note(fieldsGoLive(changed))}
+      <ChangedFields fields={review.fields} />
+      <Button
+        variant="link"
+        size="xs"
+        className="px-0"
+        aria-expanded={open}
+        aria-controls={id}
+        onClick={() => setOpen((o) => !o)}
+      >
+        {open ? 'Hide changes' : 'Review changes'}
+      </Button>
+      <CollapsibleContent id={id}>
+        <FieldReview fields={review.fields} />
+      </CollapsibleContent>
+    </Collapsible>
+  );
+}
+
 /**
  * A call waiting for the person: a page's action, or anything the model proposed to change. One
- * press confirms it; Not now leaves everything as it was. Focus starts on the safe choice when the
- * card came from a page (the person just pressed for it) or the person is already in the
- * conversation, never pulled out of a field they are typing in. A card a newer, identical request
- * replaced stops asking, so only one button can do the thing.
+ * press confirms it; Not now leaves everything as it was. A publish lists what will go live, and
+ * can't be confirmed until that has been read. Focus starts on the safe choice when the card came
+ * from a page (the person just pressed for it) or the person is already in the conversation, never
+ * pulled out of a field they are typing in. A card a newer, identical request replaced stops
+ * asking, so only one button can do the thing.
  */
 export function ActionCard({
   part,
@@ -267,6 +355,7 @@ export function ActionCard({
   actionKey,
   direct,
   replaced,
+  turn,
 }: {
   part: Part;
   respond: (part: Part, approved: boolean) => void;
@@ -274,81 +363,121 @@ export function ActionCard({
   actionKey: string;
   direct: boolean;
   replaced?: boolean;
+  /** The scope of the turn a model's card came from. */
+  turn?: TurnScope;
 }) {
   const name = getToolName(part);
-  const about = aboutOf(part);
   const titleId = useId();
   const safe = useRef<HTMLButtonElement>(null);
   const [sent, setSent] = useState(false);
   const asking = part.state === 'approval-requested' && !replaced;
 
+  const { client, conn } = useClient();
+  const target = useMemo(
+    () => (asking ? publishTarget(part, conn, direct, turn) : null),
+    [asking, part, conn, direct, turn],
+  );
+  const elsewhere = target === 'elsewhere';
+  const review = useEntryReview(client, target === 'elsewhere' ? null : target, conn.locale);
+  const about = aboutOf(part) ?? ('title' in review && review.title ? review.title : undefined);
+
+  // The panel is inert until it opens, and focus can't land in it: a card that arrives first (a
+  // cold open, whose message can beat the page's answer) waits for that, then asks once.
+  const panelOpen = useAssistantIfAny()?.open ?? true;
+  const offered = useRef(false);
   useEffect(() => {
-    if (!asking) return;
+    if (!asking || !panelOpen || offered.current) return;
+    offered.current = true;
     const el = safe.current;
     const now = document.activeElement;
     const typing = now instanceof HTMLElement && now.matches('input, textarea, [contenteditable]');
     const inLog = !now || now === document.body || el?.closest('[role="log"]')?.contains(now);
     if ((direct && !typing) || inLog) el?.focus({ preventScroll: true });
-  }, [asking, direct]);
+  }, [asking, direct, panelOpen]);
 
-  if (replaced && part.state === 'approval-requested')
-    return <Line icon={Ban}>{toolTitle(name)}: replaced by the newer request below</Line>;
-  if (!asking) return <EditLine part={part} />;
+  // The buttons go when the card is answered, here or anywhere else. Focus that was on them stays
+  // with what replaces them, which outlives both, so it never falls to the body.
+  const holder = useRef<HTMLDivElement>(null);
+  const focusWithin = useRef(false);
+  useEffect(() => {
+    if (!asking && focusWithin.current && document.activeElement === document.body)
+      holder.current?.focus({ preventScroll: true });
+  }, [asking]);
+  const answer = (approved: boolean) => {
+    holder.current?.focus({ preventScroll: true });
+    setSent(true);
+    respond(part, approved);
+  };
 
   return (
-    <Confirmation
-      approval={part.approval}
-      state={part.state}
-      aria-labelledby={titleId}
-      data-action={actionKey}
-      className="cw-confirm my-1 scroll-my-4"
+    // biome-ignore lint/a11y/noStaticElementInteractions: it only notices focus; it is no control.
+    <div
+      ref={holder}
+      tabIndex={-1}
+      onFocus={() => {
+        focusWithin.current = true;
+      }}
+      onBlur={(e) => {
+        if (e.relatedTarget && !e.currentTarget.contains(e.relatedTarget))
+          focusWithin.current = false;
+      }}
     >
-      {/* No `overflow-hidden`: it would clip the buttons' touch areas (`hit-area`). */}
-      <Card size="sm" className="gap-3 overflow-visible pb-0 ring-wait/40">
-        <CardHeader>
-          <CardTitle>
-            <h3 id={titleId} className="min-w-0 font-semibold text-sm leading-snug">
-              {toolTitle(name)}
-            </h3>
-          </CardTitle>
-        </CardHeader>
-        {about ? (
-          <CardContent>
-            <p className="break-words text-ui leading-snug">{about}</p>
-          </CardContent>
-        ) : null}
-        <CardFooter className="flex-col items-stretch gap-2 rounded-b-2xl border-t bg-wait/10 pb-(--card-spacing)">
-          <p className="text-muted-foreground text-xs leading-snug">
-            Nothing changes until you confirm, here or wherever else you’re signed in.
-          </p>
-          <ConfirmationActions>
-            <Button
-              ref={safe}
-              size="sm"
-              variant="ghost"
-              disabled={sent}
-              onClick={() => {
-                setSent(true);
-                respond(part, false);
-              }}
-            >
-              Not now
-            </Button>
-            <Button
-              size="sm"
-              variant={isDestructive(part) ? 'destructive' : 'default'}
-              disabled={sent}
-              onClick={() => {
-                setSent(true);
-                respond(part, true);
-              }}
-            >
-              Confirm
-            </Button>
-          </ConfirmationActions>
-        </CardFooter>
-      </Card>
-    </Confirmation>
+      {replaced && part.state === 'approval-requested' ? (
+        <Line icon={Ban}>{toolTitle(name)}: replaced by the newer request below</Line>
+      ) : !asking ? (
+        <EditLine part={part} />
+      ) : (
+        <Confirmation
+          approval={part.approval}
+          state={part.state}
+          aria-labelledby={titleId}
+          data-action={actionKey}
+          className="cw-confirm my-1 scroll-my-4"
+        >
+          {/* No `overflow-hidden`: it would clip the buttons' touch areas (`hit-area`). */}
+          <Card size="sm" className="gap-3 overflow-visible pb-0 ring-wait/40">
+            <CardHeader>
+              <CardTitle>
+                <h3 id={titleId} className="min-w-0 font-semibold text-sm leading-snug">
+                  {toolTitle(name)}
+                </h3>
+              </CardTitle>
+            </CardHeader>
+            {about || target ? (
+              <CardContent className="space-y-2">
+                {about ? <p className="break-words text-ui leading-snug">{about}</p> : null}
+                {target ? <PublishReview review={review} elsewhere={elsewhere} /> : null}
+              </CardContent>
+            ) : null}
+            <CardFooter className="flex-col items-stretch gap-2 rounded-b-2xl border-t bg-wait/10 pb-(--card-spacing)">
+              <p className="text-muted-foreground text-xs leading-snug">
+                Nothing changes until you confirm, here or wherever else you’re signed in.
+              </p>
+              <ConfirmationActions>
+                <Button
+                  ref={safe}
+                  size="sm"
+                  variant="ghost"
+                  disabled={sent}
+                  data-safe-choice
+                  onClick={() => answer(false)}
+                >
+                  Not now
+                </Button>
+                <Button
+                  size="sm"
+                  variant={isDestructive(part) ? 'destructive' : 'default'}
+                  disabled={sent || review.status === 'loading'}
+                  onClick={() => answer(true)}
+                >
+                  Confirm
+                </Button>
+              </ConfirmationActions>
+            </CardFooter>
+          </Card>
+        </Confirmation>
+      )}
+    </div>
   );
 }
 
