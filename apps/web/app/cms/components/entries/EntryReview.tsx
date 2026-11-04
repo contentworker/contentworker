@@ -9,8 +9,9 @@ import type { DiffKind, FieldDiff, FieldType } from '@contentworker/domain';
 import { Alert, AlertDescription, AlertTitle } from '@contentworker/ui/alert';
 import { Button } from '@contentworker/ui/button';
 import { Collapsible, CollapsibleContent } from '@contentworker/ui/collapsible';
+import { cn } from '@contentworker/ui/lib/utils';
 import { TriangleAlert } from 'lucide-react';
-import { useEffect, useId, useMemo, useState } from 'react';
+import { type RefObject, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { humanize } from '../../lib/format';
 import { ApiError, type ManagementClient, type PreviewEntry } from '../../lib/management';
 import { entryRef, fetchEntriesById } from '../dashboard/entry-titles';
@@ -193,7 +194,7 @@ const IDLE: EntryReview = { status: 'idle' };
 
 /** Reads what publishing `target` would change; a read only, with no `target` nothing at all. */
 export function useEntryReview(
-  client: ManagementClient,
+  client: ManagementClient | undefined,
   target: ReviewTarget | null,
   locale: string,
 ): EntryReview {
@@ -207,7 +208,7 @@ export function useEntryReview(
   useEffect(() => {
     // Nothing kept for later: a target that comes back (a switch back) reads afresh.
     setReview(LOADING);
-    if (!entryId) return;
+    if (!entryId || !client) return;
     let live = true;
     readReview(
       client,
@@ -371,26 +372,77 @@ export function ReviewFailed({
 }
 
 /**
- * An entry's draft against its published version, in full. With `changes` (a diff the caller
- * already read and has said aloud) it shows them; otherwise it reads them and says how many.
+ * Why a publish can't be confirmed yet, in words, for the control it describes (`aria-describedby`).
+ * Always there, so a screen reader hears it fill; while the read runs, to a screen reader alone,
+ * since the review already says it is comparing.
+ */
+export function ReviewHold(props: {
+  id: string;
+  /** What the control does: "confirm", "publish". */
+  verb: string;
+  pending: boolean;
+  blocked: boolean;
+}) {
+  const { id, verb, pending, blocked } = props;
+  return (
+    <p
+      id={id}
+      role="status"
+      className={cn('text-xs leading-snug empty:hidden', pending && !blocked && 'sr-only')}
+    >
+      {blocked
+        ? `You can’t ${verb} until this can show what goes live.`
+        : pending
+          ? `You can’t ${verb} yet: still comparing with what’s live.`
+          : null}
+    </p>
+  );
+}
+
+/**
+ * A control can turn off with focus on it, which leaves focus nowhere: `to` takes it. `lost` says
+ * whether focus that has fallen to the body was this surface's to look after.
+ */
+export function useHandFocus(
+  off: boolean,
+  from: RefObject<HTMLElement | null>,
+  to: RefObject<HTMLElement | null>,
+  lost: () => boolean,
+) {
+  const latest = useRef(lost);
+  latest.current = lost;
+  useEffect(() => {
+    if (!off) return;
+    const now = document.activeElement;
+    if (now === from.current || (now === document.body && latest.current()))
+      to.current?.focus({ preventScroll: true });
+  }, [off, from, to]);
+}
+
+/**
+ * An entry's draft against its published version, in full: it reads them and says how many.
  */
 export function EntryDiff(props: {
   client: ManagementClient;
   entry: PreviewEntry;
   locale: string;
-  changes?: readonly FieldDiff[];
-  hiddenChanges?: number;
 }) {
-  const { client, entry, locale, changes, hiddenChanges } = props;
-  const target = useMemo(
-    () => ({
-      entryId: entry.id,
-      ...(changes ? { changes } : {}),
-      ...(hiddenChanges ? { hiddenChanges } : {}),
-    }),
-    [entry.id, changes, hiddenChanges],
-  );
-  const review = useEntryReview(client, target, locale);
+  const { client, entry, locale } = props;
+  const target = useMemo(() => ({ entryId: entry.id }), [entry.id]);
+  return <EntryDiffView review={useEntryReview(client, target, locale)} counted />;
+}
+
+/** A review in full, for whoever read it. `counted` says how many fields changed, above them. */
+export function EntryDiffView({
+  review,
+  counted,
+  onRetry,
+}: {
+  review: EntryReview;
+  counted: boolean;
+  /** Try again, where the caller has more to do than read again. */
+  onRetry?: () => void;
+}) {
   if (review.status === 'first')
     return (
       <Alert variant="destructive">
@@ -401,16 +453,16 @@ export function EntryDiff(props: {
         </AlertDescription>
       </Alert>
     );
-  if (review.status === 'failed') return <ReviewFailed onRetry={review.retry} />;
+  if (review.status === 'failed') return <ReviewFailed onRetry={onRetry ?? review.retry} />;
   if (review.status !== 'ready') return <p className="text-muted-foreground text-sm">Comparing…</p>;
   const count = review.fields.filter(isChanged).length;
   return (
     <div className="space-y-3">
-      {changes ? null : (
+      {counted ? (
         <p className="text-muted-foreground text-sm">
           {`${count} field${count === 1 ? '' : 's'} changed`}
         </p>
-      )}
+      ) : null}
       {review.hiddenChanges > 0 ? (
         <HiddenChanges count={review.hiddenChanges} alone={count === 0} />
       ) : null}

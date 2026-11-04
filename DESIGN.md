@@ -475,7 +475,9 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   (Draft from prose, Generate with AI, Copy preview link) are ghost and fold into a ghost ⋯ menu
   ("More entry actions") when the editor is narrower than 56rem. Publishing an entry that has been
   live confirms with what changed, from the editor and from an entries row alike
-  (`entries/PublishConfirm.tsx`): each changed field by name, its published and draft values side
+  (`entries/PublishConfirm.tsx`), held as the card is (Publish entry stays off until the read has
+  something to show, says why, and a failed read offers Try again; the cancel always works): each
+  changed field by name, its published and draft values side
   by side where the container has room and stacked where it hasn't (a container query, so a dialog
   or the Coworker column narrows it as a phone does), links by the title of what they point at,
   unchanged fields behind "Show 4 unchanged fields". The scroller takes keyboard focus. A first publish confirms in the editor, where the whole entry is

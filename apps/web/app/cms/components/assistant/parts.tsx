@@ -39,8 +39,10 @@ import {
   HiddenChanges,
   NO_CHANGES,
   ReviewFailed,
+  ReviewHold,
   type ReviewTarget,
   useEntryReview,
+  useHandFocus,
 } from '../entries/EntryReview';
 
 export type Part = ToolUIPart | DynamicToolUIPart;
@@ -432,14 +434,8 @@ export function ActionCard({
     if (!asking && focusWithin.current && document.activeElement === document.body)
       holder.current?.focus({ preventScroll: true });
   }, [asking]);
-  // Confirm can turn off with focus on it (a switch of environment): Not now takes it.
   const confirmButton = useRef<HTMLButtonElement>(null);
-  useEffect(() => {
-    if (!confirmOff || sent) return;
-    const now = document.activeElement;
-    if (now === confirmButton.current || (now === document.body && focusWithin.current))
-      safe.current?.focus({ preventScroll: true });
-  }, [confirmOff, sent]);
+  useHandFocus(confirmOff && !sent, confirmButton, safe, () => focusWithin.current);
   const answer = (approved: boolean) => {
     if (approved && confirmOff) return;
     holder.current?.focus({ preventScroll: true });
@@ -501,10 +497,14 @@ export function ActionCard({
               <p className="text-muted-foreground text-xs leading-snug">
                 Nothing changes until you confirm, here or wherever else you’re signed in.
               </p>
-              {/* Always there, so a screen reader hears it fill. */}
-              <p id={reasonId} role="status" className="text-xs leading-snug empty:hidden">
-                {blocked ? 'You can’t confirm until this card can show what goes live.' : null}
-              </p>
+              {target ? (
+                <ReviewHold
+                  id={reasonId}
+                  verb="confirm"
+                  pending={review.status === 'loading'}
+                  blocked={blocked}
+                />
+              ) : null}
               <ConfirmationActions>
                 <Button
                   ref={safe}
@@ -521,7 +521,7 @@ export function ActionCard({
                   variant={isDestructive(part) ? 'destructive' : 'default'}
                   ref={confirmButton}
                   disabled={confirmOff}
-                  aria-describedby={blocked ? reasonId : undefined}
+                  aria-describedby={target && confirmOff && !sent ? reasonId : undefined}
                   onClick={() => answer(true)}
                 >
                   Confirm

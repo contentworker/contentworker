@@ -3,7 +3,7 @@
 // diff all read it: field names and link titles rather than API ids and JSON, each changed locale,
 // unchanged fields behind a disclosure, and honest words when the diff can't be read.
 
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { EntryDiff, NO_CHANGES, reviewFields } from '~/cms/components/entries/EntryReview';
 import { PublishConfirm } from '~/cms/components/entries/PublishConfirm';
@@ -177,6 +177,120 @@ describe('changes this person can’t read', () => {
     );
     expect(screen.getByText('1 field you can’t read goes live.')).toBeTruthy();
     expect(screen.queryByText(NO_CHANGES)).toBeNull();
+  });
+});
+
+describe('Publish entry, until the dialog can show what goes live', () => {
+  const reason = 'You can’t publish until this can show what goes live.';
+  const onConfirm = vi.fn();
+  const dialog = (props: Partial<Parameters<typeof PublishConfirm>[0]> = {}) =>
+    render(
+      <PublishConfirm
+        open
+        onOpenChange={vi.fn()}
+        title="Pricing"
+        status="changed"
+        compare={{ client: asClient, entry, locale: 'en-US' }}
+        busy={false}
+        onConfirm={onConfirm}
+        {...props}
+      />,
+    );
+  const publish = () => screen.getByRole('button', { name: 'Publish entry' }) as HTMLButtonElement;
+  const cancel = () =>
+    screen.getByRole('button', { name: 'Keep live version' }) as HTMLButtonElement;
+  const describedBy = () =>
+    document.getElementById(publish().getAttribute('aria-describedby') ?? '')?.textContent;
+
+  beforeEach(() => onConfirm.mockReset());
+
+  it('is off while the read is pending, saying so, and Cancel still answers', async () => {
+    let arrive = (_: unknown) => {};
+    client.diffVersions.mockReturnValue(new Promise((r) => (arrive = r)));
+    const onOpenChange = vi.fn();
+    dialog({ onOpenChange });
+    expect(publish().disabled).toBe(true);
+    expect(describedBy()).toMatch(/still comparing/);
+    fireEvent.click(publish());
+    expect(onConfirm).not.toHaveBeenCalled();
+    await act(async () => arrive({ changes, hiddenChanges: 0 }));
+    await screen.findByText('5 fields changed');
+    expect(publish().disabled).toBe(false);
+    expect(publish().getAttribute('aria-describedby')).toBeNull();
+    fireEvent.click(cancel());
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it('is off after a failed read, in words, with Cancel free', async () => {
+    client.diffVersions.mockRejectedValue(new ApiError(500, 'boom'));
+    dialog();
+    await screen.findByText('Couldn’t load what changed');
+    expect(publish().disabled).toBe(true);
+    expect(describedBy()).toBe(reason);
+    expect(screen.getByText(reason).getAttribute('role')).toBe('status');
+    expect(cancel().disabled).toBe(false);
+  });
+
+  it('reads again on Try again, keeps focus on Cancel, and comes on once it can show', async () => {
+    client.diffVersions.mockRejectedValueOnce(new ApiError(500, 'boom'));
+    dialog();
+    const retry = await screen.findByRole('button', { name: 'Try again' });
+    retry.focus();
+    fireEvent.click(retry);
+    expect(document.activeElement).toBe(cancel());
+    await screen.findByText('5 fields changed');
+    expect(client.diffVersions).toHaveBeenCalledTimes(2);
+    expect(publish().disabled).toBe(false);
+    expect(screen.queryByText(reason)).toBeNull();
+  });
+
+  it('hands focus to Cancel if it turns off while focused', async () => {
+    const view = dialog({ changes: [changes[0]] as never });
+    await screen.findByText('Grace');
+    publish().focus();
+    view.rerender(
+      <PublishConfirm
+        open
+        onOpenChange={vi.fn()}
+        title="Pricing"
+        status="changed"
+        busy={false}
+        onConfirm={onConfirm}
+      />,
+    );
+    expect(publish().disabled).toBe(true);
+    expect(document.activeElement).toBe(cancel());
+  });
+
+  it('confirms a first publish, reading nothing', () => {
+    dialog({ status: 'draft' });
+    expect(publish().disabled).toBe(false);
+    expect(client.diffVersions).not.toHaveBeenCalled();
+  });
+
+  it('confirms a publish that changes nothing, and one that changes only hidden fields', async () => {
+    const none = dialog({ changes: [] });
+    expect(publish().disabled).toBe(false);
+    none.unmount();
+    const hiddenOnly = dialog({ changes: [], hiddenChanges: 1 });
+    expect(publish().disabled).toBe(false);
+    hiddenOnly.unmount();
+    client.diffVersions.mockResolvedValue({ changes: [changes[5]], hiddenChanges: 1 });
+    dialog();
+    await screen.findByText('1 field you can’t read goes live.');
+    expect(publish().disabled).toBe(false);
+  });
+
+  it('stays on with the editor’s own diff and no entry to compare: nothing can fail', () => {
+    dialog({ compare: undefined as never, changes: [changes[0]] as never });
+    expect(publish().disabled).toBe(false);
+    expect(client.diffVersions).not.toHaveBeenCalled();
+  });
+
+  it('is off with nothing to compare and no diff: it can show nothing', () => {
+    dialog({ compare: undefined as never });
+    expect(publish().disabled).toBe(true);
+    expect(describedBy()).toBe(reason);
   });
 });
 

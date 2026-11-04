@@ -447,7 +447,7 @@ describe('a publish card', () => {
     expect(confirm().disabled).toBe(false);
   });
 
-  const reason = 'You can’t confirm until this card can show what goes live.';
+  const reason = 'You can’t confirm until this can show what goes live.';
   /** Confirm is off, says why in words a screen reader is pointed at, and Not now still answers. */
   const expectBlocked = () => {
     const button = confirm();

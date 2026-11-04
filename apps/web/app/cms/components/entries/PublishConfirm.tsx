@@ -10,16 +10,20 @@ import {
   AlertDialogTitle,
 } from '@contentworker/ui/alert-dialog';
 import { cn } from '@contentworker/ui/lib/utils';
+import { useId, useRef } from 'react';
 import type { ManagementClient, PreviewEntry } from '../../lib/management';
 import {
   ChangedFields,
-  EntryDiff,
+  EntryDiffView,
   FIRST_PUBLISH,
   fieldsGoLive,
   HiddenChanges,
   hiddenGoLive,
   NO_CHANGES,
+  ReviewHold,
   reviewFields,
+  useEntryReview,
+  useHandFocus,
 } from './EntryReview';
 
 export interface PublishConfirmProps {
@@ -61,6 +65,24 @@ export function PublishConfirm(props: PublishConfirmProps) {
   const { changes, compare, status, hiddenChanges = 0 } = props;
   const firstPublish = status === 'draft';
   const review = !firstPublish && (!changes || changes.length > 0);
+  // Read here, not in the diff: what it shows decides whether Publish entry may be pressed. The
+  // editor's own diff has nothing left to fail, and with nothing to read, nothing can be shown.
+  const read = useEntryReview(
+    compare?.client,
+    props.open && review && compare
+      ? {
+          entryId: compare.entry.id,
+          ...(changes ? { changes, hiddenChanges } : {}),
+        }
+      : null,
+    compare?.locale ?? '',
+  );
+  const pending = read.status === 'loading';
+  const blocked = read.status === 'failed' || (review && !compare && !changes);
+  const reasonId = useId();
+  const cancel = useRef<HTMLButtonElement>(null);
+  const publish = useRef<HTMLButtonElement>(null);
+  useHandFocus(pending || blocked, publish, cancel, () => props.open);
   return (
     <AlertDialog open={props.open} onOpenChange={props.onOpenChange}>
       <AlertDialogContent
@@ -96,11 +118,14 @@ export function PublishConfirm(props: PublishConfirmProps) {
             className="cw-scroll cw-scroll-cue -m-1 max-h-[50dvh] min-w-0 overflow-y-auto rounded-sm p-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             {compare ? (
-              <EntryDiff
-                client={compare.client}
-                entry={compare.entry}
-                locale={compare.locale}
-                {...(changes ? { changes, hiddenChanges } : {})}
+              <EntryDiffView
+                review={read}
+                counted={!changes}
+                onRetry={() => {
+                  // The button goes with the failure; focus doesn't go with it.
+                  cancel.current?.focus({ preventScroll: true });
+                  if (read.status === 'failed') read.retry?.();
+                }}
               />
             ) : changes ? (
               <div className="space-y-3">
@@ -110,11 +135,17 @@ export function PublishConfirm(props: PublishConfirmProps) {
             ) : null}
           </section>
         ) : null}
+        <ReviewHold id={reasonId} verb="publish" pending={pending} blocked={blocked} />
         <AlertDialogFooter>
-          <AlertDialogCancel>
+          <AlertDialogCancel ref={cancel}>
             {firstPublish ? 'Keep as draft' : 'Keep live version'}
           </AlertDialogCancel>
-          <AlertDialogAction disabled={props.busy} onClick={props.onConfirm}>
+          <AlertDialogAction
+            ref={publish}
+            disabled={props.busy || pending || blocked}
+            aria-describedby={pending || blocked ? reasonId : undefined}
+            onClick={props.onConfirm}
+          >
             Publish entry
           </AlertDialogAction>
         </AlertDialogFooter>
