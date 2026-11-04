@@ -272,8 +272,8 @@ function ShortcutsSheet({
   const { enabled: assistantOn } = useAssistant();
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="gap-0 overflow-y-auto">
-        <div className="border-b px-4 pt-4 pb-3 pr-14">
+      <SheetContent side="right" bodyClassName="gap-0">
+        <div className="sticky top-0 z-10 border-b bg-popover px-4 pt-4 pb-3 pr-14">
           <SheetTitle>Keyboard shortcuts</SheetTitle>
           <SheetDescription className="text-xs">
             Single keys work outside fields, with no menu open.
@@ -831,7 +831,7 @@ function TabBar({
         </ul>
       </nav>
       <Sheet open={more} onOpenChange={setMore}>
-        <SheetContent side="bottom" className="gap-0 md:hidden">
+        <SheetContent side="bottom" className="md:hidden" bodyClassName="gap-0">
           <MoreMenu
             pages={pages
               .filter((p) => !p.tab)

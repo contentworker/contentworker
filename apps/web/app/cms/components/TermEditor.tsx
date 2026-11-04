@@ -3,7 +3,13 @@ import { Button } from '@contentworker/ui/button';
 import { DialogError } from '@contentworker/ui/dialog';
 import { Input } from '@contentworker/ui/input';
 import { Label } from '@contentworker/ui/label';
-import { Sheet, SheetDescription, SheetHeader, SheetTitle } from '@contentworker/ui/sheet';
+import {
+  Sheet,
+  SheetDescription,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
+} from '@contentworker/ui/sheet';
 import { Textarea } from '@contentworker/ui/textarea';
 import { useEffect, useId, useState } from 'react';
 import {
@@ -92,8 +98,8 @@ export function TermEditor({
   };
   return (
     <Sheet open={term !== null} onOpenChange={guard.onOpenChange}>
-      <ResponsiveSheetContent className="gap-0 overflow-y-auto sm:max-w-md">
-        <SheetHeader className="gap-1 border-b pt-4 pr-14 pb-3">
+      <ResponsiveSheetContent className="sm:max-w-md" bodyClassName="gap-0">
+        <SheetHeader className="gap-1 border-b pt-4 pb-3">
           <SheetTitle>{term ? `Edit “${term.label}”` : 'Edit'}</SheetTitle>
           <SheetDescription className="text-xs">
             {term ? usageLine(term.usage) : null}
@@ -230,14 +236,14 @@ function TermForm({
         </fieldset>
       ) : null}
       {error && <DialogError>{error}</DialogError>}
-      <div className="flex justify-end gap-2">
+      <SheetFooter className="-mx-4 -mb-4">
         <DiscardAsk guard={guard} message={`Discard your changes to “${term.label}”?`}>
           <GuardCancel guard={guard} />
           <Button type="submit" disabled={!changed || !label.trim() || busy}>
             Save {kind}
           </Button>
         </DiscardAsk>
-      </div>
+      </SheetFooter>
     </form>
   );
 }

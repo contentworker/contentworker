@@ -2,6 +2,7 @@ import { AlertDialog as AlertDialogPrimitive } from 'radix-ui';
 import type * as React from 'react';
 
 import { buttonVariants } from './button';
+import { DIALOG_SHEET_PLACEMENT } from './dialog';
 import { useFocusReturn } from './lib/focus-return';
 import { cn } from './lib/utils';
 
@@ -13,12 +14,25 @@ function AlertDialogTrigger(props: React.ComponentProps<typeof AlertDialogPrimit
   return <AlertDialogPrimitive.Trigger data-slot="alert-dialog-trigger" {...props} />;
 }
 
+/**
+ * Where it sits. `center`, at every width: a question, the same wherever it is asked. `sheet`: a
+ * review a person reads and then answers, from the bottom on a phone, in thumb reach.
+ */
+const PLACEMENTS = {
+  center:
+    'top-1/2 left-1/2 max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-4xl data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95',
+  sheet: DIALOG_SHEET_PLACEMENT,
+};
+
 function AlertDialogContent({
   className,
   children,
   onCloseAutoFocus,
+  placement = 'center',
   ...props
-}: React.ComponentProps<typeof AlertDialogPrimitive.Content>) {
+}: React.ComponentProps<typeof AlertDialogPrimitive.Content> & {
+  placement?: keyof typeof PLACEMENTS;
+}) {
   const focusReturn = useFocusReturn(onCloseAutoFocus);
   return (
     <AlertDialogPrimitive.Portal>
@@ -30,7 +44,8 @@ function AlertDialogContent({
         {...focusReturn}
         data-slot="alert-dialog-content"
         className={cn(
-          'fixed top-1/2 left-1/2 z-50 flex max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-4xl bg-popover text-popover-foreground shadow-xl ring-1 ring-foreground/5 outline-none dark:ring-foreground/10 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=closed]:duration-(--motion-instant) data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 data-[state=open]:duration-(--motion-move)',
+          'fixed z-50 flex flex-col overflow-hidden bg-popover text-popover-foreground shadow-xl ring-1 ring-foreground/5 outline-none dark:ring-foreground/10 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:duration-(--motion-instant) data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:duration-(--motion-move)',
+          PLACEMENTS[placement],
           className,
         )}
         {...props}
@@ -65,7 +80,7 @@ function AlertDialogFooter({ className, ...props }: React.ComponentProps<'div'>)
     <div
       data-slot="alert-dialog-footer"
       className={cn(
-        'sticky bottom-0 z-10 -mx-6 -mt-3 flex flex-col-reverse gap-2 bg-popover px-6 pt-3 pb-6 sm:flex-row sm:justify-end',
+        'sticky bottom-0 z-10 -mx-6 -mt-3 flex flex-col-reverse gap-2 bg-popover px-6 pt-3 pb-safe-6 sm:flex-row sm:justify-end',
         className,
       )}
       {...props}

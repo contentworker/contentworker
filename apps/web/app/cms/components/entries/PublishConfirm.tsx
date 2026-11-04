@@ -86,6 +86,8 @@ export function PublishConfirm(props: PublishConfirmProps) {
   return (
     <AlertDialog open={props.open} onOpenChange={props.onOpenChange}>
       <AlertDialogContent
+        // A review to read before answering, not a question: in thumb reach on a phone.
+        placement="sheet"
         className={cn(review && compare && 'sm:max-w-xl')}
         onCloseAutoFocus={(e) => {
           const target = props.returnFocus?.();

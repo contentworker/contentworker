@@ -333,7 +333,7 @@ export function AssetFolderTree(props: {
         <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
           <SheetContent
             side="bottom"
-            className="px-4 pb-6"
+            bodyClassName="px-4 pb-6"
             onCloseAutoFocus={(e) => {
               if (!createdInSheet.current) return;
               // The new folder is open: the select showing it is where the person is.

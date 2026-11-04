@@ -856,9 +856,17 @@ for code and data blocks only.
 - **Dialog** (`ui/dialog.tsx`, `ui/alert-dialog.tsx`): capped to the screen, less an on-screen
   keyboard (`--keyboard-inset`, since iOS leaves that out of `dvh`), so what gives way is the body,
   which scrolls: the header, the footer and the close button stay put and every action stays in
-  reach. A dialog comes from the bottom on a phone and sits centred from `sm`; an alert dialog is a
-  question, not a form, and stays centred. The palette anchors to the top at every width
-  (`placement="top"`), so its search box holds still as the results shrink.
+  reach. A focused field clears what is pinned, as it takes focus and as the keyboard rises. A dialog
+  comes from the bottom on a phone and sits centred from `sm`; an alert dialog is a question, not a
+  form, and stays centred, except the entry publish review (`placement="sheet"`), which is read
+  before it is answered and comes from the bottom as a dialog does, its Publish entry in thumb
+  reach. The palette anchors to the top at every width (`placement="top"`), so its search box holds
+  still as the results shrink.
+- **Sheet** (`ui/sheet.tsx`): built as a dialog is, from the side or from the bottom. Capped to the
+  screen, less an on-screen keyboard and the safe areas; `SheetHeader` and `SheetFooter` stick to the
+  edges of a body that scrolls (`bodyClassName` for its padding, `className` for the sheet's size),
+  and the close button sits outside the body, so a long sheet never scrolls its way out or its
+  action off a phone. A consumer never puts `overflow-y-auto` on the content.
   - **Title:** `section-title`, the same in a dialog, an alert dialog and a sheet.
   - **Closing:** focus goes back to what opened it, in a dialog, an alert dialog and a sheet alike
     (`ui/lib/focus-return.ts`): the control that was pressed even where Safari didn't focus it, a

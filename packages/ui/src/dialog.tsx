@@ -51,6 +51,9 @@ const PLACEMENTS = {
   top: 'top-[calc(var(--safe-top)+4rem)] left-1/2 max-h-[calc(100dvh-var(--keyboard-inset,0px)-var(--safe-top)-5rem)] w-[calc(100%-2rem)] -translate-x-1/2 rounded-4xl data-open:zoom-in-95 data-closed:zoom-out-95 sm:max-w-md',
 };
 
+/** For an alert dialog that reviews rather than asks: `sheet`, with the same phone behaviour. */
+const DIALOG_SHEET_PLACEMENT = PLACEMENTS.sheet;
+
 function DialogContent({
   className,
   bodyClassName,
@@ -207,6 +210,7 @@ function DialogError({
 }
 
 export {
+  DIALOG_SHEET_PLACEMENT,
   Dialog,
   DialogClose,
   DialogContent,

@@ -9,7 +9,7 @@ import {
   DialogTitle,
 } from '@contentworker/ui/dialog';
 import { keyboardInset } from '@contentworker/ui/lib/keyboard-inset';
-import { Sheet, SheetTitle } from '@contentworker/ui/sheet';
+import { Sheet, SheetFooter, SheetHeader, SheetTitle } from '@contentworker/ui/sheet';
 import { render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ResponsiveSheetContent } from '~/cms/components/responsive-sheet';
@@ -50,6 +50,32 @@ describe('responsive sheet', () => {
     matching(false);
     sheet();
     expect(screen.getByRole('dialog').getAttribute('data-side')).toBe('right');
+  });
+});
+
+describe('sheet body', () => {
+  it('scrolls the content, with the header, the footer and the way out pinned', () => {
+    matching(true);
+    render(
+      <Sheet open>
+        <ResponsiveSheetContent aria-describedby={undefined}>
+          <SheetHeader data-testid="head">
+            <SheetTitle>Details</SheetTitle>
+          </SheetHeader>
+          <p>Long content</p>
+          <SheetFooter data-testid="foot">
+            <button type="button">Save</button>
+          </SheetFooter>
+        </ResponsiveSheetContent>
+      </Sheet>,
+    );
+    const dialog = screen.getByRole('dialog');
+    const body = dialog.querySelector('[data-slot="sheet-body"]');
+    expect(body?.className).toContain('overflow-y-auto');
+    expect(dialog.className).toContain('overflow-hidden');
+    expect(body?.contains(screen.getByRole('button', { name: 'Close' }))).toBe(false);
+    expect(screen.getByTestId('head').className).toContain('sticky');
+    expect(screen.getByTestId('foot').className).toContain('sticky');
   });
 });
 

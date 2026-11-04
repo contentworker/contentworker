@@ -276,27 +276,28 @@ export function AssetDetailSheet(props: {
 
   return (
     <Sheet open={props.open} onOpenChange={guard.onOpenChange}>
-      <ResponsiveSheetContent className="w-full overflow-y-auto sm:max-w-lg">
+      <ResponsiveSheetContent className="w-full sm:max-w-lg">
         <SheetHeader>
           <SheetTitle className="truncate">{asset.file.fileName}</SheetTitle>
           <SheetDescription className="font-mono text-xs">
             {asset.file.contentType} · v{asset.version ?? 1}
           </SheetDescription>
-          {/* Sharing opens the share dialog over the sheet; it explains when the asset can't be
-              shared (not published) or the role can't share, rather than hiding the way in. */}
-          <div className="pt-1">
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              aria-haspopup="dialog"
-              onClick={() => setSharing(true)}
-            >
-              <Share2 aria-hidden="true" />
-              Share
-            </Button>
-          </div>
         </SheetHeader>
+        {/* Sharing opens the share dialog over the sheet; it explains when the asset can't be
+            shared (not published) or the role can't share, rather than hiding the way in. It
+            scrolls with the body: on a phone the pinned header has to stay short. */}
+        <div className="-mt-2 px-4">
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            aria-haspopup="dialog"
+            onClick={() => setSharing(true)}
+          >
+            <Share2 aria-hidden="true" />
+            Share
+          </Button>
+        </div>
         <AssetShareDialog
           open={sharing}
           onOpenChange={setSharing}
@@ -673,9 +674,11 @@ export function AssetDetailSheet(props: {
         </div>
 
         {/* Save metadata saves the Details tab; the other tabs act at once or have their own. */}
+        {(tab === 'details' || guard.asking) && saveError && (
+          <DialogError className="px-4">{saveError}</DialogError>
+        )}
         {(tab === 'details' || guard.asking) && (
           <SheetFooter>
-            {saveError && <DialogError>{saveError}</DialogError>}
             <DiscardAsk
               guard={guard}
               message={`Discard your changes to ${asset.file.fileName}?`}

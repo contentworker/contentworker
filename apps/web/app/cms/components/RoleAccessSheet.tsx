@@ -4,7 +4,13 @@ import { Checkbox } from '@contentworker/ui/checkbox';
 import { DialogError } from '@contentworker/ui/dialog';
 import { Label } from '@contentworker/ui/label';
 import { NativeSelect, NativeSelectOption } from '@contentworker/ui/native-select';
-import { Sheet, SheetDescription, SheetHeader, SheetTitle } from '@contentworker/ui/sheet';
+import {
+  Sheet,
+  SheetDescription,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
+} from '@contentworker/ui/sheet';
 import { useId, useState } from 'react';
 import { DiscardAsk, GuardCancel, useDiscardGuard } from '~/cms/components/discard-guard';
 import { ResponsiveSheetContent } from '~/cms/components/responsive-sheet';
@@ -65,8 +71,8 @@ export function RoleAccessSheet(props: {
 
   return (
     <Sheet open={props.open} onOpenChange={guard.onOpenChange}>
-      <ResponsiveSheetContent className="w-full gap-0 overflow-y-auto sm:max-w-lg">
-        <SheetHeader className="gap-1 border-b pt-4 pr-14 pb-3">
+      <ResponsiveSheetContent className="w-full sm:max-w-lg" bodyClassName="gap-0">
+        <SheetHeader className="gap-1 border-b pt-4 pb-3">
           <SheetTitle>Content access: {props.role.name}</SheetTitle>
           <SheetDescription className="text-xs">
             Write and Publish bring Delete and Unpublish with them; untick either to withhold it. An
@@ -175,7 +181,7 @@ export function RoleAccessSheet(props: {
             </div>
           ) : null}
           {error ? <DialogError>{error}</DialogError> : null}
-          <div className="flex justify-end gap-2">
+          <SheetFooter className="-mx-4 -mb-4">
             <DiscardAsk
               guard={guard}
               message={`Discard your changes to ${props.role.name}’s access?`}
@@ -185,7 +191,7 @@ export function RoleAccessSheet(props: {
                 Save access
               </Button>
             </DiscardAsk>
-          </div>
+          </SheetFooter>
         </form>
       </ResponsiveSheetContent>
     </Sheet>

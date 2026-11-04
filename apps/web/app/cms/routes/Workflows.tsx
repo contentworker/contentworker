@@ -17,6 +17,7 @@ import {
 import { Input } from '@contentworker/ui/input';
 import { NativeSelect, NativeSelectOption } from '@contentworker/ui/native-select';
 import { Segmented, SegmentedItem } from '@contentworker/ui/segmented';
+import { SheetFooter } from '@contentworker/ui/sheet';
 import { Skeleton } from '@contentworker/ui/skeleton';
 import { Table, TableBody, TableHead, Td, Th, Tr } from '@contentworker/ui/table';
 import { Search, Trash2, Workflow } from 'lucide-react';
@@ -354,14 +355,14 @@ function NewWorkflowForm({
         <FieldDescription className="text-xs">
           A new workflow starts no runs until it is published.
         </FieldDescription>
-        <div className="flex justify-end gap-2">
+        <SheetFooter className="-mx-4 -mb-4">
           <DiscardAsk guard={guard} message="Discard this workflow?">
             <GuardCancel guard={guard} />
             <Button type="submit" disabled={busy}>
               {busy ? 'Creating…' : unconfirmed ? 'Create again' : 'Create workflow'}
             </Button>
           </DiscardAsk>
-        </div>
+        </SheetFooter>
       </FieldGroup>
     </form>
   );

@@ -566,7 +566,7 @@ function ReleaseDetailSheet(props: {
 
   return (
     <Sheet open={open} onOpenChange={(o) => !o && props.onClose()}>
-      <ResponsiveSheetContent className="flex w-full flex-col overflow-y-auto sm:max-w-lg">
+      <ResponsiveSheetContent className="w-full sm:max-w-lg">
         <SheetHeader>
           <SheetTitle>{release?.title ?? 'Release'}</SheetTitle>
           {release ? (

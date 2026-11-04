@@ -4,7 +4,13 @@ import { DialogError } from '@contentworker/ui/dialog';
 import { Input } from '@contentworker/ui/input';
 import { Label } from '@contentworker/ui/label';
 import { NativeSelect, NativeSelectOption } from '@contentworker/ui/native-select';
-import { Sheet, SheetDescription, SheetHeader, SheetTitle } from '@contentworker/ui/sheet';
+import {
+  Sheet,
+  SheetDescription,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
+} from '@contentworker/ui/sheet';
 import { SkeletonPill, SkeletonText } from '@contentworker/ui/skeleton';
 import { Switch } from '@contentworker/ui/switch';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -72,8 +78,8 @@ export function PluginSettingsSheet(props: {
 
   return (
     <Sheet open onOpenChange={guard.onOpenChange}>
-      <ResponsiveSheetContent className="gap-0 overflow-y-auto sm:max-w-md">
-        <SheetHeader className="gap-1 border-b pt-4 pr-14 pb-3">
+      <ResponsiveSheetContent className="sm:max-w-md" bodyClassName="gap-0">
+        <SheetHeader className="gap-1 border-b pt-4 pb-3">
           <SheetTitle>{plugin.name} settings</SheetTitle>
           <SheetDescription className="text-xs">
             What the plugin reads when it runs. Secrets are write-only: once saved, they can be
@@ -255,19 +261,19 @@ function SettingsForm(props: {
       ))}
 
       {unconfirmed && <DialogError>{unconfirmed}</DialogError>}
-      <div className="flex flex-wrap items-center gap-3 pt-1">
+      <SheetFooter className="-mx-4 -mb-4 sm:items-center">
+        {view.updatedAt && (
+          <p className="text-muted-foreground text-xs sm:mr-auto">
+            Last saved <Ago at={view.updatedAt} />
+            {view.updatedBy ? ` by ${view.updatedBy}` : ''}
+          </p>
+        )}
         <DiscardAsk guard={props.guard} message={`Discard your changes to ${plugin.name}?`}>
           <Button type="submit" disabled={busy || !dirty}>
             {busy ? 'Saving…' : 'Save settings'}
           </Button>
         </DiscardAsk>
-        {view.updatedAt && (
-          <p className="text-muted-foreground text-xs">
-            Last saved <Ago at={view.updatedAt} />
-            {view.updatedBy ? ` by ${view.updatedBy}` : ''}
-          </p>
-        )}
-      </div>
+      </SheetFooter>
     </form>
   );
 }

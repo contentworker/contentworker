@@ -1188,7 +1188,7 @@ export function EntriesList() {
       </AlertDialog>
 
       <Sheet open={!!diffEntry} onOpenChange={(o) => !o && setDiffEntry(null)}>
-        <ResponsiveSheetContent className="w-full overflow-y-auto sm:max-w-xl">
+        <ResponsiveSheetContent className="w-full sm:max-w-xl">
           <SheetHeader>
             <SheetTitle>Diff vs published</SheetTitle>
             <SheetDescription>Draft changes since this entry was last published.</SheetDescription>
