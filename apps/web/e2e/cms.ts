@@ -125,6 +125,7 @@ export async function openCms(page: Page, path: string) {
   await page.goto(path, { waitUntil: 'load' });
   await page.waitForFunction(
     () =>
+      document.documentElement.hasAttribute('data-hydrated') &&
       getComputedStyle(document.body).overscrollBehaviorY === 'none' &&
       Boolean((window as unknown as { __reactRouterDataRouter?: object }).__reactRouterDataRouter),
   );
