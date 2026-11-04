@@ -127,11 +127,11 @@ test('the asset library, its list view and its bulk bar have no accessibility vi
   ).toBeVisible();
   await scan(page, testInfo);
 
-  // A delete confirm in place on a card: the tinted destructive pill on the confirm's tile, in
-  // both themes (its red is tuned per theme to hold 4.5:1 on that tint).
+  // A delete confirm: the tinted destructive pill on the alert dialog, in both themes (its red is
+  // tuned per theme to hold 4.5:1 on that tint).
   await library.getByRole('button', { name: `Delete “A11y ${stamp} root”` }).click();
-  const confirm = library.getByRole('alertdialog', { name: `Delete “A11y ${stamp} root”?` });
-  await expect(confirm.getByRole('button', { name: 'Delete' })).toBeVisible();
+  const confirm = page.getByRole('alertdialog', { name: `Delete “A11y ${stamp} root”?` });
+  await expect(confirm.getByRole('button', { name: 'Delete asset' })).toBeVisible();
   await scan(page, testInfo);
   await page.emulateMedia({ colorScheme: 'dark' });
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
@@ -207,7 +207,7 @@ test('an asset collection, its zip and its share dialog have no accessibility vi
   ).toHaveCount(1);
   await scan(page, testInfo);
   await dialog.getByRole('button', { name: /Revoke the link/ }).click();
-  await expect(dialog.getByRole('alertdialog', { name: /Revoke this link\?/ })).toBeVisible();
+  await expect(page.getByRole('alertdialog', { name: /Revoke this link\?/ })).toBeVisible();
   await page.emulateMedia({ colorScheme: 'dark' });
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
   await scan(page, testInfo);

@@ -24,6 +24,7 @@ import { Search, Trash2, Workflow } from 'lucide-react';
 import { useEffect, useId, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router';
 import { Ago } from '~/cms/components/ago';
+import { ConfirmDialog } from '~/cms/components/ConfirmDialog';
 import {
   DiscardAsk,
   type DiscardGuard,
@@ -31,7 +32,6 @@ import {
   useDiscardGuard,
 } from '~/cms/components/discard-guard';
 import { FormSheet } from '~/cms/components/form-sheet';
-import { InlineConfirm } from '~/cms/components/InlineConfirm';
 import { Empty, PageHeader, Section } from '~/cms/components/page';
 import { CopilotDialog } from '~/cms/components/workflow/CopilotDialog';
 import { plural } from '~/cms/lib/format';
@@ -48,9 +48,6 @@ import { useToast } from '../lib/toast';
  * the workflow routes directly. Archive/restore is deferred: there is no archive use-case yet, so
  * delete (with its in-place confirm) stays.
  */
-
-/** The table's columns, for the confirm row that spans them. */
-const COLUMNS = 6;
 
 const TEMPLATES = Object.entries(WORKFLOW_TEMPLATES).map(([id, make]) => {
   const t = make();
@@ -395,8 +392,6 @@ function WorkflowRow({
   const toast = useToast();
   const invalidate = useInvalidate();
   const [busy, setBusy] = useState(false);
-  const [confirming, setConfirming] = useState(false);
-  const deleteId = `workflow-delete-${w.id}`;
 
   const act = async (fn: () => Promise<void>) => {
     setBusy(true);
@@ -440,123 +435,104 @@ function WorkflowRow({
   const steps = w.graph.nodes.length;
   const approvals = w.graph.nodes.filter((n) => n.type === 'control.approval').length;
   return (
-    <>
-      <Tr>
-        <Td className="min-w-0 max-w-md">
-          <Link
-            to={`/workflows/${encodeURIComponent(w.id)}`}
-            className="font-medium text-foreground hover:underline"
-          >
-            {w.name}
-          </Link>
-          <p className="line-clamp-2 text-muted-foreground text-xs leading-relaxed">
-            {w.description || 'No description yet.'}
-          </p>
-          <p className="text-muted-foreground text-xs tabular">
-            {[
-              plural(steps, 'step'),
-              approvals ? (approvals === 1 ? 'a person approves' : `${approvals} approvals`) : null,
-            ]
-              .filter(Boolean)
-              .join(' · ')}
-          </p>
-        </Td>
-        <Td label="Starts">
-          {published ? (
-            published.label
-          ) : (
-            <span className="text-muted-foreground">
-              {w.latestVersion ? 'No trigger' : 'Not published'}
-            </span>
-          )}
-          {draftDiffers ? (
-            <p className="text-muted-foreground text-xs">Draft starts on {draft.label}</p>
-          ) : null}
-          {alongside.length ? (
-            <p className="text-muted-foreground text-xs">
-              {manual ? 'Editors choose between this and ' : 'Also starts: '}
-              {alongside.join(', ')}
-            </p>
-          ) : null}
-        </Td>
-        <Td label="Covers">
-          {w.contentTypes.length ? (
-            w.contentTypes.map(typeName).join(', ')
-          ) : (
-            <span className="text-muted-foreground">Every content type</span>
-          )}
-        </Td>
-        <Td label="Publishing">
-          <span className={w.publishGated ? undefined : 'text-muted-foreground'}>
-            {gatingLabel(w)}
+    <Tr>
+      <Td className="min-w-0 max-w-md">
+        <Link
+          to={`/workflows/${encodeURIComponent(w.id)}`}
+          className="font-medium text-foreground hover:underline"
+        >
+          {w.name}
+        </Link>
+        <p className="line-clamp-2 text-muted-foreground text-xs leading-relaxed">
+          {w.description || 'No description yet.'}
+        </p>
+        <p className="text-muted-foreground text-xs tabular">
+          {[
+            plural(steps, 'step'),
+            approvals ? (approvals === 1 ? 'a person approves' : `${approvals} approvals`) : null,
+          ]
+            .filter(Boolean)
+            .join(' · ')}
+        </p>
+      </Td>
+      <Td label="Starts">
+        {published ? (
+          published.label
+        ) : (
+          <span className="text-muted-foreground">
+            {w.latestVersion ? 'No trigger' : 'Not published'}
           </span>
-        </Td>
-        <Td label="Version" className="whitespace-nowrap">
-          {w.latestVersion ? (
-            <span className="font-medium">Published v{w.latestVersion}</span>
-          ) : (
-            <span className="text-muted-foreground">Draft, never published</span>
-          )}
-          {w.updatedAt ? (
-            <p className="text-muted-foreground text-xs">
-              Edited <Ago at={w.updatedAt} />
-            </p>
-          ) : null}
-        </Td>
-        <Td className="text-right">
-          <div className="flex justify-end gap-1">
-            <Button
-              type="button"
-              size="xs"
-              variant="ghost"
-              className="hit-area"
-              disabled={busy}
-              aria-label={`Duplicate “${w.name}”`}
-              onClick={() => void duplicate()}
-            >
-              Duplicate
-            </Button>
-            <Button
-              type="button"
-              size="xs"
-              variant="ghost"
-              className="hit-area"
-              id={deleteId}
-              disabled={busy}
-              aria-label={`Delete “${w.name}”`}
-              aria-expanded={confirming}
-              onClick={() => setConfirming((v) => !v)}
-            >
-              <Trash2 aria-hidden="true" /> Delete
-            </Button>
-          </div>
-        </Td>
-      </Tr>
-      {confirming ? (
-        <Tr>
-          <Td colSpan={COLUMNS}>
-            <InlineConfirm
-              message={`Delete “${w.name}”?`}
-              note="Runs already started keep their version; the draft can’t be recovered."
-              onCancel={() => setConfirming(false)}
-              returnFocus={() => document.getElementById(deleteId)}
-            >
+        )}
+        {draftDiffers ? (
+          <p className="text-muted-foreground text-xs">Draft starts on {draft.label}</p>
+        ) : null}
+        {alongside.length ? (
+          <p className="text-muted-foreground text-xs">
+            {manual ? 'Editors choose between this and ' : 'Also starts: '}
+            {alongside.join(', ')}
+          </p>
+        ) : null}
+      </Td>
+      <Td label="Covers">
+        {w.contentTypes.length ? (
+          w.contentTypes.map(typeName).join(', ')
+        ) : (
+          <span className="text-muted-foreground">Every content type</span>
+        )}
+      </Td>
+      <Td label="Publishing">
+        <span className={w.publishGated ? undefined : 'text-muted-foreground'}>
+          {gatingLabel(w)}
+        </span>
+      </Td>
+      <Td label="Version" className="whitespace-nowrap">
+        {w.latestVersion ? (
+          <span className="font-medium">Published v{w.latestVersion}</span>
+        ) : (
+          <span className="text-muted-foreground">Draft, never published</span>
+        )}
+        {w.updatedAt ? (
+          <p className="text-muted-foreground text-xs">
+            Edited <Ago at={w.updatedAt} />
+          </p>
+        ) : null}
+      </Td>
+      <Td className="text-right">
+        <div className="flex justify-end gap-1">
+          <Button
+            type="button"
+            size="xs"
+            variant="ghost"
+            className="hit-area"
+            disabled={busy}
+            aria-label={`Duplicate “${w.name}”`}
+            onClick={() => void duplicate()}
+          >
+            Duplicate
+          </Button>
+          <ConfirmDialog
+            message={`Delete “${w.name}”?`}
+            note="Runs already started keep their version; the draft can’t be recovered."
+            confirmLabel="Delete workflow"
+            busy={busy}
+            onConfirm={() => void remove()}
+          >
+            {(ask) => (
               <Button
                 type="button"
-                size="sm"
-                variant="destructive"
+                size="xs"
+                variant="ghost"
+                className="hit-area"
                 disabled={busy}
-                onClick={() => {
-                  setConfirming(false);
-                  void remove();
-                }}
+                aria-label={`Delete “${w.name}”`}
+                onClick={ask}
               >
-                Delete workflow
+                <Trash2 aria-hidden="true" /> Delete
               </Button>
-            </InlineConfirm>
-          </Td>
-        </Tr>
-      ) : null}
-    </>
+            )}
+          </ConfirmDialog>
+        </div>
+      </Td>
+    </Tr>
   );
 }

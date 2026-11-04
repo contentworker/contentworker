@@ -848,7 +848,10 @@ test('deleting an asset an entry uses names that entry and links to it', async (
 }) => {
   const stamp = Date.now();
   const assetTitle = `Hero ${stamp}`;
-  const assetId = await seedAsset(request, assetTitle, { publish: true });
+  // In a folder of its own: seeded assets from a spec beside this one can't push it off the page,
+  // and an asset with no bytes isn't in the search index to be found by name.
+  const folderId = await seedAssetFolder(request, assetTitle);
+  const assetId = await seedAsset(request, assetTitle, { publish: true, folderId });
   const entryTitle = `Uses hero ${stamp}`;
   const created = await api(request, 'POST', `${MGMT}/entries`, {
     contentTypeApiId: 'article',
@@ -875,12 +878,16 @@ test('deleting an asset an entry uses names that entry and links to it', async (
   expect(published.ok(), await published.text()).toBe(true);
 
   await openCms(page, '/assets');
+  await page
+    .getByRole('navigation', { name: 'Folders' })
+    .getByRole('button', { name: assetTitle, exact: true })
+    .click();
   const library = page.getByRole('region', { name: 'Asset library' });
   await library.getByRole('button', { name: `Delete “${assetTitle}”` }).click();
-  await library
-    .getByRole('alertdialog', { name: new RegExp(`Delete “${assetTitle}”`) })
-    .getByRole('button', { name: 'Delete' })
-    .click();
+  // A modal, portalled out of the library: it can't be undone and its files go too.
+  const ask = page.getByRole('alertdialog', { name: new RegExp(`Delete “${assetTitle}”`) });
+  await expect(ask.getByRole('button', { name: 'Cancel' })).toBeFocused();
+  await ask.getByRole('button', { name: 'Delete asset' }).click();
 
   const notice = library
     .getByRole('alert')
@@ -1281,7 +1288,7 @@ test('an asset collection: made beside the folders, filled from the library, reo
   await expect(active.getByRole('listitem')).toHaveCount(1);
   await expect(active.getByText('View only')).toBeVisible();
   await active.getByRole('button', { name: /Revoke the link/ }).click();
-  await active
+  await page
     .getByRole('alertdialog', { name: /Revoke this link\?/ })
     .getByRole('button', { name: 'Revoke link' })
     .click();
@@ -1299,7 +1306,7 @@ test('an asset collection: made beside the folders, filled from the library, reo
   });
   await expect(zip.getByRole('status')).toContainText(`“${name}.zip” is ready: 3 files`);
 
-  // One taken out (it stays in the library), then the collection deleted after asking in place.
+  // One taken out (it stays in the library), then the collection deleted after asking.
   await list.getByRole('button', { name: `Remove “${files[1]}” from “${name}”` }).click();
   await expect(page.getByText(`Removed “${files[1]}” from “${name}”`)).toBeVisible();
   await expect.poll(order).toEqual([files[2], files[0]]);

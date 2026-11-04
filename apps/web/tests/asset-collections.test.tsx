@@ -250,10 +250,10 @@ describe('asset collections', () => {
     );
   });
 
-  it('deletes it after asking in place, and goes back to the library', async () => {
+  it('deletes it after asking in a modal, and goes back to the library', async () => {
     await openLaunch();
     fireEvent.click(screen.getByRole('button', { name: 'Delete “Launch”' }));
-    const confirm = screen.getByRole('alertdialog', { name: /Delete “Launch”\?/ });
+    const confirm = await screen.findByRole('alertdialog', { name: /Delete “Launch”\?/ });
     expect(within(confirm).getByText(/assets stay in the library/)).toBeTruthy();
     fireEvent.click(within(confirm).getByRole('button', { name: 'Delete collection' }));
     await waitFor(() => expect(client.deleteAssetCollection).toHaveBeenCalledWith('c1'));

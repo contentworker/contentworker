@@ -3,7 +3,7 @@
  * are the deployment's own accounts (People and sign-in, /team), matched by email; adding someone
  * here gives them this space, not a deployment account. Long-lived API keys are listed with their
  * role too. Changing a role
- * asks in place (InlineConfirm); the space's last administrator can't be demoted, disabled,
+ * asks in place (InlineConfirm), and removing someone in a modal; the space's last administrator can't be demoted, disabled,
  * removed or revoked, and the page says so where the action would be rather than failing after.
  */
 
@@ -28,6 +28,7 @@ import {
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router';
 import { Ago } from '~/cms/components/ago';
+import { ConfirmDialog } from '~/cms/components/ConfirmDialog';
 import { ConfirmButton, InlineConfirm } from '~/cms/components/InlineConfirm';
 import { Empty, Section } from '~/cms/components/page';
 import { StatusBadge } from '~/cms/components/status';
@@ -292,7 +293,7 @@ function PersonRow(props: {
                 </Button>
               )}
             </ConfirmButton>
-            <ConfirmButton
+            <ConfirmDialog
               message={`Remove ${who} from the team?`}
               note="They lose their role here; adding them again starts over."
               confirmLabel="Remove"
@@ -309,7 +310,7 @@ function PersonRow(props: {
                   Remove
                 </Button>
               )}
-            </ConfirmButton>
+            </ConfirmDialog>
           </div>
         )}
       </TableCell>

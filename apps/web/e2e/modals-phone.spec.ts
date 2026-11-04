@@ -194,3 +194,21 @@ test('a publish review comes from the bottom of a phone, in thumb reach', async 
   await review.getByRole('button', { name: 'Keep as draft' }).click();
   await expect(review).toBeHidden();
 });
+
+test('a destructive alert stays centred on a phone', async ({ page, request }) => {
+  const name = `Phone alert ${Date.now()}`;
+  const folderId = await seedAssetFolder(request, name);
+  await seedAsset(request, name, { folderId });
+  await openCms(page, '/assets');
+  await page.getByRole('combobox', { name: 'Folder' }).selectOption({ label: name });
+  await page.getByRole('button', { name: `Delete “${name}”` }).click();
+  const alert = page.getByRole('alertdialog');
+  await expect(alert).toBeVisible();
+  await settle(page);
+  const box = await alert.boundingBox();
+  const height = page.viewportSize()?.height ?? 0;
+  expect(box).not.toBeNull();
+  if (box) expect(Math.abs(box.y + box.height / 2 - height / 2)).toBeLessThan(2);
+  await alert.getByRole('button', { name: 'Cancel' }).click();
+  await expect(alert).toBeHidden();
+});

@@ -54,8 +54,9 @@ export interface InlineConfirmProps {
 }
 
 /**
- * An "are you sure?" in place, where the action was: how anything undoable confirms (a modal is
- * only for what can't be undone).
+ * An "are you sure?" in place, where the action was: how anything undoable confirms, and the small
+ * config rows DESIGN.md names. What can't be undone and reaches content, files or access takes
+ * `ConfirmDialog`.
  *
  * - Focus lands on the safe choice (Cancel), so a stray Enter backs out.
  * - Escape cancels the newest open confirm only, and is swallowed so an

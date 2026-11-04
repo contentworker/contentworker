@@ -23,7 +23,7 @@ import { SkeletonText } from '@contentworker/ui/skeleton';
 import { Switch } from '@contentworker/ui/switch';
 import { Copy, Link2 } from 'lucide-react';
 import { type FormEvent, useEffect, useId, useRef, useState } from 'react';
-import { ConfirmButton } from '~/cms/components/InlineConfirm';
+import { ConfirmDialog } from '~/cms/components/ConfirmDialog';
 import { LoadingStatus } from '~/cms/components/loading';
 import { ToneBadge } from '~/cms/components/status';
 import {
@@ -378,7 +378,7 @@ export function AssetShareDialog(props: {
                                 Copy
                               </Button>
                             )}
-                            <ConfirmButton
+                            <ConfirmDialog
                               message="Revoke this link?"
                               note="It stops opening within a minute. This can’t be undone."
                               confirmLabel="Revoke link"
@@ -395,7 +395,7 @@ export function AssetShareDialog(props: {
                                   Revoke
                                 </Button>
                               )}
-                            </ConfirmButton>
+                            </ConfirmDialog>
                           </div>
                         </div>
                       </li>

@@ -211,12 +211,12 @@ describe('sharing an asset or a collection', () => {
     expect(within(alert).getByText(/publish it first/)).toBeTruthy();
   });
 
-  it('revokes a link after asking in place', async () => {
+  it('revokes a link after asking in a modal over the dialog', async () => {
     links = [link()];
     renderDialog();
     const revoke = await screen.findByRole('button', { name: /Revoke the link/ });
     fireEvent.click(revoke);
-    const confirm = screen.getByRole('alertdialog', { name: /Revoke this link\?/ });
+    const confirm = await screen.findByRole('alertdialog', { name: /Revoke this link\?/ });
     fireEvent.click(within(confirm).getByRole('button', { name: 'Revoke link' }));
     await waitFor(() => expect(client.revokeShareLink).toHaveBeenCalledWith('l1'));
     expect(await screen.findByText('No link opens it now.')).toBeTruthy();

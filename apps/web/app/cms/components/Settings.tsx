@@ -38,6 +38,7 @@ import { AiActions } from '~/cms/components/AiActions';
 import { AppExtensions } from '~/cms/components/AppExtensions';
 import { Ago } from '~/cms/components/ago';
 import { BranchMerge } from '~/cms/components/BranchMerge';
+import { ConfirmDialog } from '~/cms/components/ConfirmDialog';
 import { ConnectedApps } from '~/cms/components/ConnectedApps';
 import { Functions } from '~/cms/components/Functions';
 import { ConfirmButton } from '~/cms/components/InlineConfirm';
@@ -521,7 +522,7 @@ function RolesSettings(props: { client: ManagementClient }) {
                       Clone
                     </Button>
                     {role.preset ? null : (
-                      <ConfirmButton
+                      <ConfirmDialog
                         message={`Delete the role “${role.name}”?`}
                         note="This can’t be undone."
                         confirmLabel="Delete role"
@@ -532,7 +533,7 @@ function RolesSettings(props: { client: ManagementClient }) {
                             Delete
                           </Button>
                         )}
-                      </ConfirmButton>
+                      </ConfirmDialog>
                     )}
                   </div>
                 </TableCell>

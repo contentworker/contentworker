@@ -21,7 +21,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@contentworker/ui/tabs';
 import { Hash, Pencil, Tags, Trash2 } from 'lucide-react';
 import { useState } from 'react';
-import { ConfirmButton, InlineConfirm } from '~/cms/components/InlineConfirm';
+import { ConfirmDialog } from '~/cms/components/ConfirmDialog';
 import { EmptyState, PageHeader } from '~/cms/components/page';
 import { type EditableTerm, type TermChanges, TermEditor } from '~/cms/components/TermEditor';
 import { useClient } from '../lib/client-context';
@@ -123,7 +123,6 @@ function ConceptsTab() {
   const [label, setLabel] = useState('');
   const [broaderId, setBroaderId] = useState<string>(NONE);
   // The scheme or concept whose delete is awaiting an inline "are you sure?".
-  const [confirming, setConfirming] = useState<string | null>(null);
   // The concept open in the editor sheet.
   const [editing, setEditing] = useState<string | null>(null);
   const { locales, defaultLocale } = useLocales();
@@ -235,44 +234,31 @@ function ConceptsTab() {
                   >
                     {s.name}
                   </button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="size-7 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 aria-expanded:opacity-100"
-                    id={`scheme-delete-${s.id}`}
-                    aria-label={`Delete “${s.name}”`}
-                    aria-expanded={confirming === s.id}
-                    onClick={() => setConfirming(confirming === s.id ? null : s.id)}
-                    disabled={busy}
+                  <ConfirmDialog
+                    message={`Delete “${s.name}”?`}
+                    note={
+                      s.id === schemeId && concepts.length > 0
+                        ? `It holds ${concepts.length} ${concepts.length === 1 ? 'concept' : 'concepts'}. This can’t be undone.`
+                        : 'This can’t be undone.'
+                    }
+                    confirmLabel="Delete scheme"
+                    busy={busy}
+                    onConfirm={() => void removeScheme(s.id)}
                   >
-                    <Trash2 className="size-4" />
-                  </Button>
-                  {confirming === s.id && (
-                    <InlineConfirm
-                      message={`Delete “${s.name}”?`}
-                      note={
-                        s.id === schemeId && concepts.length > 0
-                          ? `It holds ${concepts.length} ${concepts.length === 1 ? 'concept' : 'concepts'}. This can’t be undone.`
-                          : 'This can’t be undone.'
-                      }
-                      onCancel={() => setConfirming(null)}
-                      returnFocus={() => document.getElementById(`scheme-delete-${s.id}`)}
-                    >
+                    {(ask) => (
                       <Button
                         type="button"
-                        size="sm"
-                        variant="destructive"
+                        variant="ghost"
+                        size="icon"
+                        className="size-7 opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+                        aria-label={`Delete “${s.name}”`}
+                        onClick={ask}
                         disabled={busy}
-                        onClick={() => {
-                          setConfirming(null);
-                          void removeScheme(s.id);
-                        }}
                       >
-                        Delete scheme
+                        <Trash2 className="size-4" />
                       </Button>
-                    </InlineConfirm>
-                  )}
+                    )}
+                  </ConfirmDialog>
                 </li>
               ))}
             </ul>
@@ -351,42 +337,27 @@ function ConceptsTab() {
                       >
                         <Pencil className="size-4" />
                       </Button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        className="size-7 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 aria-expanded:opacity-100"
-                        id={`concept-delete-${concept.id}`}
-                        aria-label={`Delete “${concept.prefLabel}”`}
-                        aria-expanded={confirming === concept.id}
-                        onClick={() => setConfirming(confirming === concept.id ? null : concept.id)}
-                        disabled={busy}
+                      <ConfirmDialog
+                        message={`Delete “${concept.prefLabel}”?`}
+                        note={narrowerNote(concepts, concept.id)}
+                        confirmLabel="Delete concept"
+                        busy={busy}
+                        onConfirm={() => void removeConcept(concept.id)}
                       >
-                        <Trash2 className="size-4" />
-                      </Button>
-                      {confirming === concept.id && (
-                        <InlineConfirm
-                          message={`Delete “${concept.prefLabel}”?`}
-                          note={narrowerNote(concepts, concept.id)}
-                          onCancel={() => setConfirming(null)}
-                          returnFocus={() =>
-                            document.getElementById(`concept-delete-${concept.id}`)
-                          }
-                        >
+                        {(ask) => (
                           <Button
                             type="button"
-                            size="sm"
-                            variant="destructive"
+                            variant="ghost"
+                            size="icon"
+                            className="size-7 opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+                            aria-label={`Delete “${concept.prefLabel}”`}
+                            onClick={ask}
                             disabled={busy}
-                            onClick={() => {
-                              setConfirming(null);
-                              void removeConcept(concept.id);
-                            }}
                           >
-                            Delete concept
+                            <Trash2 className="size-4" />
                           </Button>
-                        </InlineConfirm>
-                      )}
+                        )}
+                      </ConfirmDialog>
                     </li>
                   ))}
                 </ul>
@@ -518,7 +489,7 @@ function TagsTab() {
                         >
                           <Pencil className="size-4" />
                         </Button>
-                        <ConfirmButton
+                        <ConfirmDialog
                           message={`Delete the tag “${t.name}”?`}
                           note="This can’t be undone."
                           confirmLabel="Delete tag"
@@ -538,7 +509,7 @@ function TagsTab() {
                               <Trash2 className="size-4" />
                             </Button>
                           )}
-                        </ConfirmButton>
+                        </ConfirmDialog>
                       </div>
                     </TableCell>
                   </TableRow>

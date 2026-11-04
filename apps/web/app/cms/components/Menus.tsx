@@ -39,6 +39,7 @@ import {
   Plus,
 } from 'lucide-react';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { ConfirmDialog } from '~/cms/components/ConfirmDialog';
 import { DiscardAsk, GuardCancel, useDiscardGuard } from '~/cms/components/discard-guard';
 import { EntityPicker } from '~/cms/components/EntityPicker';
 import { ConfirmButton } from '~/cms/components/InlineConfirm';
@@ -245,7 +246,7 @@ function MenuList(props: { client: ManagementClient; onOpen: (id: string) => voi
                     {m.itemCount}
                   </TableCell>
                   <TableCell className="text-right">
-                    <ConfirmButton
+                    <ConfirmDialog
                       message={`Delete the menu “${m.name}”?`}
                       note={`Delivery stops serving “${m.handle}”: a site that renders it shows no navigation there.`}
                       confirmLabel="Delete menu"
@@ -272,7 +273,7 @@ function MenuList(props: { client: ManagementClient; onOpen: (id: string) => voi
                           </Button>
                         </span>
                       )}
-                    </ConfirmButton>
+                    </ConfirmDialog>
                   </TableCell>
                 </TableRow>
               ))}

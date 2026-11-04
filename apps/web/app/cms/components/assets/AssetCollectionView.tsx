@@ -20,7 +20,7 @@ import { AssetPreview } from '~/cms/components/AssetPreview';
 import { CollectionForm } from '~/cms/components/assets/AssetCollectionList';
 import { AssetShareDialog } from '~/cms/components/assets/AssetShareDialog';
 import { AssetZipProgress, type AssetZipState } from '~/cms/components/assets/AssetZipProgress';
-import { ConfirmButton } from '~/cms/components/InlineConfirm';
+import { ConfirmDialog } from '~/cms/components/ConfirmDialog';
 import { LoadingStatus } from '~/cms/components/loading';
 import { EmptyState } from '~/cms/components/page';
 import { StatusBadge } from '~/cms/components/status';
@@ -267,7 +267,7 @@ export function AssetCollectionView(props: {
             <Pencil aria-hidden="true" />
             Edit
           </Button>
-          <ConfirmButton
+          <ConfirmDialog
             message={`Delete “${collection.name}”?`}
             note="Its assets stay in the library; links shared to it stop opening."
             confirmLabel="Delete collection"
@@ -285,7 +285,7 @@ export function AssetCollectionView(props: {
                 Delete
               </Button>
             )}
-          </ConfirmButton>
+          </ConfirmDialog>
         </div>
       </div>
 

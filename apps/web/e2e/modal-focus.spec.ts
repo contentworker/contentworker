@@ -103,6 +103,30 @@ for (const way of ['pointer', 'keyboard'] as const) {
       await expect(card).toBeFocused();
     });
 
+    test('an alert over a dialog goes back into the dialog', async ({ page, request }) => {
+      const title = `Focus revoke ${way} ${Date.now()}`;
+      const folderId = await seedAssetFolder(request, title);
+      await seedAsset(request, title, { folderId, publish: true });
+      await openCms(page, '/assets');
+      await page
+        .getByRole('navigation', { name: 'Folders' })
+        .getByRole('button', { name: title, exact: true })
+        .click();
+      await page.getByRole('button', { name: `Open “${title}”` }).click();
+      await page.getByRole('dialog').first().getByRole('button', { name: 'Share' }).click();
+      const share = page.getByRole('dialog', { name: /^Share/ });
+      await share.getByRole('button', { name: 'Create link' }).click();
+      const alert = page.getByRole('alertdialog', { name: /Revoke this link/ });
+      await roundTrip(
+        page,
+        way,
+        share.getByRole('button', { name: /Revoke the link/ }),
+        alert,
+        alert.getByRole('button', { name: 'Cancel' }),
+      );
+      await expect(share).toBeVisible();
+    });
+
     test('Generate, from the ⋯ menu, goes back to ⋯', async ({ page, request }) => {
       const id = await createDraft(request, `Focus generate ${Date.now()}`);
       await openCms(page, `/content/article/${id}`);
