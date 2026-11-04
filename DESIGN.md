@@ -485,7 +485,11 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   changed field by name, its published and draft values side
   by side where the container has room and stacked where it hasn't (a container query, so a dialog
   or the Coworker column narrows it as a phone does), links by the title of what they point at,
-  unchanged fields behind "Show 4 unchanged fields". The scroller takes keyboard focus. A first publish confirms in the editor, where the whole entry is
+  unchanged fields behind "Show 4 unchanged fields". Fields the role can't read are counted with the
+  rest ("1 field you can't read changed", as every diff counts them, never "0 fields changed") and
+  always get the warning Alert, even when the editor's own diff has nothing else to list: that still
+  confirms, with the warning. "The draft matches" is said only once a read has shown it. The
+  scroller takes keyboard focus. A first publish confirms in the editor, where the whole entry is
   in front of you, and goes at once from a row, with Undo in the toast. Beside the form sits the **side pane** (after felix's):
   where the row the two share is wide enough for both (a 420px form and a 336px pane; collapsing
   the sidebar buys the room back) it stands behind a hairline divider, sticky, scrolling on its own;
@@ -873,7 +877,13 @@ for code and data blocks only.
     says "Still saving". Only a save holds it; a read (Check, Fetch) stays closable. A save that
     never answers times out (`RequestTimeoutError`, in `req`): the form lets go and keeps what was
     typed, and `DialogError` says the save didn't confirm and to check before trying again, never
-    that nothing was saved. Where a create has no natural key, the button turns to "Create again". A form of a line
+    that nothing was saved. A failed save goes to the guard (`saveFailed`), which tells a refusal
+    (a 4xx: the question can say "Nothing has been saved") from an outcome nobody knows (a timeout,
+    a dropped connection, a 5xx). After one of those the question says "A save here may have gone
+    through; discarding won't undo it.", in place of any note, until the form
+    closes: a refused retry doesn't speak for the save before it (its Alert says "This try was
+    refused", not that nothing was saved, and a create keeps "Create again"), and a "someone else
+    saved" conflict allows that it may have been their own. Where a create has no natural key, the button turns to "Create again". A form of a line
     or two (a view's name, an invitation, a clone's name) isn't guarded, and New space and New
     environment keep what was typed when they close. Dialogs that talk to a model keep their work instead: the prompt
     and a draft under review stay for when they open again, and only Discard or Apply clear them.

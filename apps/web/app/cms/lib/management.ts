@@ -531,13 +531,31 @@ export interface SetupResult {
  */
 export class RequestTimeoutError extends Error {
   constructor(readonly write: boolean) {
-    super(
-      write
-        ? 'The save didn’t confirm. It may still have gone through, so check before you try again.'
-        : 'That took too long, and nothing was changed. Try again.',
-    );
+    super(write ? UNCONFIRMED_SAVE : 'That took too long, and nothing was changed. Try again.');
   }
 }
+
+/** Said of any save with no answer to go on, whatever stopped the answer. */
+export const UNCONFIRMED_SAVE =
+  'The save didn’t confirm. It may still have gone through, so check before you try again.';
+
+/** A save the admin stopped itself, before sending anything. */
+export class SaveRefusedError extends Error {}
+
+/**
+ * Whether a failed save is known to have changed nothing: the server answered and said no, or it
+ * never left. Anything else (a timeout, a dropped connection, a 5xx, an answer that can't be read)
+ * leaves the write's outcome unknown, so nothing may say it wasn't saved.
+ */
+export const refusedSave = (err: unknown): boolean =>
+  err instanceof SaveRefusedError ||
+  (err instanceof ApiError && err.status >= 400 && err.status < 500);
+
+/** A failed save in words: with no answer to go on, what to do, not a bare "Failed to fetch". */
+export const saveFailureMessage = (err: unknown): string =>
+  err instanceof TypeError || (err instanceof ApiError && err.status >= 500)
+    ? UNCONFIRMED_SAVE
+    : apiErrorMessage(err);
 
 /** How long a request may take, and whether it can change anything. */
 interface RequestLimit {

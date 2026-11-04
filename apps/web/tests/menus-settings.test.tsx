@@ -39,7 +39,7 @@ vi.mock('~/cms/lib/queries', () => ({
 
 const { Menus } = await import('~/cms/components/Menus');
 const { ToastProvider } = await import('~/cms/lib/toast');
-const { ApiError } = await import('~/cms/lib/management');
+const { ApiError, RequestTimeoutError } = await import('~/cms/lib/management');
 type ManagementClient = import('~/cms/lib/management').ManagementClient;
 
 afterEach(() => {
@@ -125,7 +125,7 @@ describe('Settings → Menus', () => {
   it('lists menus by name, handle and item count', async () => {
     mount(fakeClient(menuOf([url('a', 'A')])));
     const table = await screen.findByRole('table', { name: 'Menus' });
-    expect(within(table).getByText('Main')).toBeTruthy();
+    expect(await within(table).findByText('Main')).toBeTruthy();
     expect(within(table).getByText('main')).toBeTruthy();
     expect(within(table).getByText('3')).toBeTruthy();
   });
@@ -239,6 +239,42 @@ describe('Settings → Menus', () => {
     await waitFor(() =>
       expect(screen.queryByText('This menu changed since you opened it')).toBeNull(),
     );
+  });
+
+  it('allows that the save it lost to may be the person’s own, after one didn’t confirm', async () => {
+    const client = fakeClient(menuOf([url('a', 'A'), url('b', 'B')]));
+    client.moveMenuItem
+      .mockRejectedValueOnce(new RequestTimeoutError(true))
+      .mockRejectedValueOnce(
+        new ApiError(409, 'conflict', { error: { code: 'conflict', message: 'saved since' } }),
+      );
+    const list = await openEditor(client);
+    const move = () => fireEvent.click(within(list).getByRole('button', { name: 'Move “B” up' }));
+    move();
+    await waitFor(() => expect(client.moveMenuItem).toHaveBeenCalledOnce());
+    await waitFor(() => {
+      move();
+      expect(client.moveMenuItem).toHaveBeenCalledTimes(2);
+    });
+    await screen.findByText('This menu changed since you opened it');
+    expect(screen.queryByText(/Someone else saved it/)).toBeNull();
+    expect(screen.getByText(/your own save that didn’t confirm/)).toBeTruthy();
+  });
+
+  it('asks honestly about an item whose save didn’t confirm', async () => {
+    const client = fakeClient(menuOf([url('a', 'A')], 2));
+    client.updateMenu.mockRejectedValueOnce(new RequestTimeoutError(true));
+    await openEditor(client);
+    fireEvent.click(screen.getByRole('button', { name: 'Add item' }));
+    const dialog = await screen.findByRole('dialog', { name: 'New item' });
+    fireEvent.change(within(dialog).getByLabelText('URL'), { target: { value: '/blog' } });
+    fireEvent.change(within(dialog).getByLabelText('Label'), { target: { value: 'Blog' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Add item' }));
+    await within(dialog).findByText(/didn’t confirm/);
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    const ask = await within(dialog).findByRole('alertdialog', { name: /Discard/ });
+    expect(ask.textContent).toContain('may have gone through');
+    expect(ask.textContent).not.toContain('Nothing has been saved');
   });
 
   it('adds a URL item by saving the whole tree with the revision', async () => {

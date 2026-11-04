@@ -211,6 +211,21 @@ describe('sharing an asset or a collection', () => {
     expect(within(alert).getByText(/publish it first/)).toBeTruthy();
   });
 
+  it('never says the link wasn’t created when no answer came, nor on a refused retry', async () => {
+    client.createShareLink
+      .mockRejectedValueOnce(new ApiError(503, 'POST → 503'))
+      .mockRejectedValueOnce(new ApiError(409, 'POST → 409'));
+    renderDialog();
+    const form = await screen.findByRole('form', { name: 'New share link' });
+    fireEvent.click(within(form).getByRole('button', { name: 'Create link' }));
+    await within(form).findByText(/didn’t confirm/);
+    expect(within(form).queryByText('The link wasn’t created')).toBeNull();
+
+    fireEvent.click(within(form).getByRole('button', { name: 'Create link' }));
+    await within(form).findByText('This try was refused');
+    expect(within(form).queryByText('The link wasn’t created')).toBeNull();
+  });
+
   it('revokes a link after asking in place', async () => {
     links = [link()];
     renderDialog();

@@ -95,7 +95,7 @@ describe('taxonomy screen', () => {
     fireEvent.mouseDown(await screen.findByRole('tab', { name: 'Tags' }));
     fireEvent.click(await screen.findByRole('tab', { name: 'Tags' }));
     const table = await screen.findByRole('table', { name: 'Tags' });
-    expect(within(table).getByText('travel')).toBeTruthy();
+    expect(await within(table).findByText('travel')).toBeTruthy();
     expect(within(table).getByText('3')).toBeTruthy();
 
     fireEvent.click(within(table).getByRole('button', { name: 'Edit “Travel”' }));

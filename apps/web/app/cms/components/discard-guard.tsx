@@ -2,6 +2,10 @@ import { Button } from '@contentworker/ui/button';
 import { cn } from '@contentworker/ui/lib/utils';
 import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { InlineConfirm } from '~/cms/components/InlineConfirm';
+import { refusedSave, saveFailureMessage } from '~/cms/lib/management';
+
+/** The question's note once a save may have landed: "Nothing has been saved" can't be known. */
+export const UNCONFIRMED_NOTE = 'A save here may have gone through; discarding won’t undo it.';
 
 export interface DiscardGuard {
   /** Hand this to the Dialog or Sheet, and call it for Cancel: every way out goes through it. */
@@ -11,6 +15,10 @@ export interface DiscardGuard {
   readonly saving: boolean;
   /** Someone tried to leave during that save, and is told why nothing happened. */
   readonly waiting: boolean;
+  /** A save failed with no refusal, so it may have landed. A later refusal doesn't speak for it. */
+  readonly unconfirmed: boolean;
+  /** Every failed save comes here, to tell a refusal from an unknown. Returns it in words. */
+  readonly saveFailed: (err: unknown) => string;
   readonly keep: () => void;
   readonly discard: () => void;
 }
@@ -24,21 +32,33 @@ export interface DiscardGuard {
  * During a save there is no question to ask: it has been sent, and "Nothing has been saved" would
  * be untrue. The form holds, {@link GuardCancel} is disabled, and a try at leaving says so. Only a
  * save holds it: a read (a dry run, a fetch to inspect) stays closable, so leave it out of `saving`.
+ *
+ * After a save fails the form lets go, and what the question may say depends on how it failed: a
+ * refusal saved nothing, anything else may have landed. The form hands the error to `saveFailed`,
+ * and from then until it closes {@link DiscardAsk} says so in place of any note.
  */
 export function useDiscardGuard({
   open = true,
   dirty,
   saving = false,
+  subject,
   onOpenChange,
 }: {
   open?: boolean;
   dirty: boolean;
   /** This form's own write in flight. */
   saving?: boolean;
+  /** What the form edits, where that can change while it stays open. */
+  subject?: unknown;
   onOpenChange: (open: boolean) => void;
 }): DiscardGuard {
   const [asking, setAsking] = useState(false);
   const [waiting, setWaiting] = useState(false);
+  const [unconfirmed, setUnconfirmed] = useState(false);
+  // Closing, or moving on to something else, starts a new form.
+  useEffect(() => {
+    setUnconfirmed(false);
+  }, [open, subject]);
   useEffect(() => {
     if (!saving) setWaiting(false);
   }, [saving]);
@@ -55,6 +75,11 @@ export function useDiscardGuard({
     asking,
     saving,
     waiting: waiting && saving,
+    unconfirmed,
+    saveFailed: (err) => {
+      if (!refusedSave(err)) setUnconfirmed(true);
+      return saveFailureMessage(err);
+    },
     keep: () => setAsking(false),
     discard: () => {
       setAsking(false);
@@ -73,7 +98,7 @@ export function DiscardAsk({
   guard: DiscardGuard;
   /** The question, naming what goes: "Discard this content type?" */
   message: ReactNode;
-  /** What is at stake, when part of the form has been saved. */
+  /** What is at stake, when part of the form has been saved. A save that may have landed wins. */
   note?: ReactNode;
   children: ReactNode;
 }) {
@@ -83,7 +108,7 @@ export function DiscardAsk({
       {guard.asking ? (
         <InlineConfirm
           message={message}
-          note={note}
+          note={guard.unconfirmed ? UNCONFIRMED_NOTE : note}
           cancelLabel="Keep editing"
           onCancel={guard.keep}
           // The buttons it stood in for are new ones by then.

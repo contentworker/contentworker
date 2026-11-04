@@ -41,7 +41,6 @@ import {
   apiFieldIssues,
   type ManagementClient,
   type RedirectImportReport,
-  RequestTimeoutError,
 } from '../lib/management';
 import { useInvalidate, useScopedQuery } from '../lib/queries';
 import { useToast } from '../lib/toast';
@@ -376,11 +375,12 @@ export function RedirectDialog(props: {
       });
       props.onOpenChange(false);
     } catch (err) {
+      const said = guard.saveFailed(err);
       const fields = apiFieldIssues(err);
       setIssues(fields);
       // A refusal about the set (a loop, a source taken) names a field too; anything else is
       // said under the form.
-      if (Object.keys(fields).length === 0) setError(apiErrorMessage(err));
+      if (Object.keys(fields).length === 0) setError(said);
     } finally {
       setBusy(false);
     }
@@ -544,8 +544,6 @@ export function ImportRedirectsDialog(props: {
   // Check is a dry run, a read: it stays closable, where the import itself holds the dialog.
   const [checking, setChecking] = useState(false);
   const check = useStoppable();
-  // An import that didn't answer may have gone through: "Nothing was imported" could be untrue.
-  const [unconfirmed, setUnconfirmed] = useState(false);
   const guard = useDiscardGuard({
     saving: busy,
     open: props.open,
@@ -553,15 +551,14 @@ export function ImportRedirectsDialog(props: {
     onOpenChange: props.onOpenChange,
   });
 
-  const refused = (err: unknown) => {
+  const refused = (err: unknown, said: string) => {
     setChecked(null);
-    setUnconfirmed(err instanceof RequestTimeoutError);
     const issues = apiFieldIssues(err);
     const listed = Object.entries(issues).map(([f, m]) => {
       const row = /^rows\[(\d+)\]/.exec(f)?.[1];
       return row !== undefined ? `Row ${Number(row) + 1}: ${m}` : m;
     });
-    setProblems(listed.length > 0 ? listed : [apiErrorMessage(err)]);
+    setProblems(listed.length > 0 ? listed : [said]);
   };
 
   const dryRun = async () => {
@@ -572,7 +569,7 @@ export function ImportRedirectsDialog(props: {
       const report = await props.client.importRedirects({ format, data, dryRun: true }, signal);
       if (!signal.aborted) setChecked(report);
     } catch (err) {
-      if (!signal.aborted) refused(err);
+      if (!signal.aborted) refused(err, apiErrorMessage(err));
     } finally {
       if (!signal.aborted) setChecking(false);
     }
@@ -586,7 +583,7 @@ export function ImportRedirectsDialog(props: {
       await props.onImported(report);
       props.onOpenChange(false);
     } catch (err) {
-      refused(err);
+      refused(err, guard.saveFailed(err));
     } finally {
       setBusy(false);
     }
@@ -653,7 +650,8 @@ export function ImportRedirectsDialog(props: {
             />
           </div>
           {problems.length > 0 && (
-            <DialogError {...(unconfirmed ? {} : { title: 'Nothing was imported' })}>
+            // An import that may have gone through can't say this, whatever fails after it.
+            <DialogError {...(guard.unconfirmed ? {} : { title: 'Nothing was imported' })}>
               <ul className="list-disc ps-4">
                 {problems.slice(0, 10).map((p) => (
                   <li key={p}>{p}</li>
