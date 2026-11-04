@@ -1,5 +1,6 @@
 import { expect, type Locator, type Page, test } from '@playwright/test';
 import { createDraft, EDITOR_READY, openCms, seedCms, useCmsScope, withoutAssistant } from './cms';
+import { settle } from './settle';
 
 /*
  * Dialogs on a phone: from the bottom, every way out and every action in reach, at the height an
@@ -71,9 +72,10 @@ test('at keyboard height the way out and the action stay in reach', async ({ pag
   await withoutAssistant(page);
   const dialog = await openGenerate(page, request);
   await page.setViewportSize({ width: 390, height: 370 });
-  await dialog.getByLabel('Prompt').fill('A launch post');
+  await dialog.getByRole('textbox', { name: 'Prompt' }).fill('A launch post');
 
   await expectReachable(page, dialog.getByRole('button', { name: 'Close' }));
+  await expect(dialog.getByRole('button', { name: 'Generate draft' })).toBeEnabled();
   await expectReachable(page, dialog.getByRole('button', { name: 'Generate draft' }));
   await expectReachable(page, dialog.getByRole('button', { name: 'Cancel' }));
 });
@@ -84,6 +86,7 @@ test('the palette keeps its search box still as the results shrink', async ({ pa
   const input = page.getByRole('combobox', { name: 'Command palette search' });
   await expect(input).toBeVisible();
   await expect(page.getByRole('option').first()).toBeVisible();
+  await settle(page);
   const before = await input.boundingBox();
   await input.fill('nothing is called this');
   await expect(page.getByRole('option')).toHaveCount(0);

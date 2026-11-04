@@ -269,6 +269,7 @@ describe('VersionHistory compare', () => {
     fireEvent.click(within(ask).getByRole('button', { name: 'Keep current draft' }));
     expect(screen.queryByRole('alertdialog')).toBeNull();
     expect(client.restoreVersion).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(restore);
 
     fireEvent.click(restore as HTMLElement);
     fireEvent.click(await screen.findByRole('button', { name: 'Restore version' }));

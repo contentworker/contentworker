@@ -3,7 +3,7 @@ import { Badge } from '@contentworker/ui/badge';
 import { Button } from '@contentworker/ui/button';
 import { SkeletonPill, SkeletonText } from '@contentworker/ui/skeleton';
 import { History, RotateCcw } from 'lucide-react';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Ago } from '~/cms/components/ago';
 import { CollapsibleCard } from '~/cms/components/CollapsibleCard';
 import { InlineConfirm } from '~/cms/components/InlineConfirm';
@@ -60,6 +60,9 @@ export function VersionHistory(props: {
   // Version awaiting restore confirmation (restore reseeds the form, so it is
   // never a single-click action).
   const [confirmRestore, setConfirmRestore] = useState<number | null>(null);
+  // The Restore that asked: it is disabled while the assistant answers, so it has lost focus by
+  // the time the question opens.
+  const restoreAsked = useRef<HTMLButtonElement | null>(null);
 
   const compare = (version: number, side: Against) =>
     run(async () => {
@@ -183,7 +186,10 @@ export function VersionHistory(props: {
                         type="button"
                         variant="outline"
                         size="sm"
-                        onClick={() => void requestRestore(v.version)}
+                        onClick={(e) => {
+                          restoreAsked.current = e.currentTarget;
+                          void requestRestore(v.version);
+                        }}
                         disabled={busy}
                       >
                         <RotateCcw className="size-3.5" />
@@ -204,6 +210,7 @@ export function VersionHistory(props: {
                     }`}
                     cancelLabel="Keep current draft"
                     onCancel={() => setConfirmRestore(null)}
+                    returnFocus={() => restoreAsked.current}
                   >
                     <Button
                       type="button"
