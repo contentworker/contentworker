@@ -1483,6 +1483,20 @@ test('a singleton type opens its one entry, and refuses a second', async ({ page
     fields: { title: { 'en-US': 'Another' } },
   });
   expect(second.status()).toBe(409);
+
+  // Its list, reached past the sidebar, keeps the views menu: a view of the one row saves and opens.
+  await openCms(page, `/content/${apiId}`);
+  const table = page.getByRole('main').getByRole('table');
+  await expect(table.getByRole('link', { name: 'Our site' })).toBeVisible();
+  await page.getByRole('button', { name: 'Views' }).click();
+  await page.getByRole('menuitem', { name: 'Save as new view…' }).click();
+  const saving = page.getByRole('dialog', { name: 'Save view' });
+  await saving.getByLabel('Name', { exact: true }).fill('The one');
+  await saving.getByRole('button', { name: 'Save view' }).click();
+  await expect(saving).toBeHidden();
+  await expect(page.getByRole('button', { name: /The one/ })).toBeVisible();
+  await expect(page).toHaveURL(/[?&]view=/);
+  await expect(table.getByRole('link', { name: 'Our site' })).toBeVisible();
 });
 
 test('a content type is cloned, then deleted with its entries, from its menu', async ({

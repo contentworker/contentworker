@@ -19,6 +19,7 @@ import {
   createEnvironment,
   createSavedView,
   createSpace,
+  deleteContentType,
   deleteSavedView,
   getSavedView,
   listSavedViews,
@@ -556,6 +557,56 @@ describe('saved views', () => {
     ).toEqual(['contentTypeApiId: No content type "promo" in this environment']);
     await deleteSavedView(ctx, scope, bob, view.id);
     await expect(getSavedView(ctx, scope, bob, view.id)).rejects.toBeInstanceOf(NotFoundError);
+  });
+
+  it('reports a type the delete flow took, and picks it up again if the type comes back', async () => {
+    const promo = {
+      apiId: 'promo',
+      name: 'Promo',
+      displayField: 'title',
+      fields: [field({ apiId: 'title', type: 'Symbol' })],
+    };
+    await createContentType(ctx, scope, promo);
+    await createContentType(ctx, staging, promo);
+    await publishContentType(ctx, staging, 'promo');
+    const mine = await createSavedView(ctx, scope, bob, {
+      name: 'Promos',
+      contentTypeApiId: 'promo',
+      columns: ['title'],
+    });
+    const shared = await createSavedView(ctx, scope, ada, {
+      name: 'Team promos',
+      contentTypeApiId: 'promo',
+      visibility: 'shared',
+      query: { filters: [{ field: 'title', op: 'match', value: 'team' }] },
+    });
+    const everyType = await createSavedView(ctx, scope, bob, { name: 'Everything' });
+
+    // A view is no dependent: nothing asks for it to go first, and the delete leaves it alone.
+    await deleteContentType(ctx, scope, 'promo');
+
+    for (const id of [mine.id, shared.id]) {
+      expect(await runSavedView(ctx, scope, bob, id)).toMatchObject({
+        items: [],
+        typeMissing: true,
+      });
+    }
+    expect((await listSavedViews(ctx, scope, bob)).map((v) => v.name)).toEqual(
+      expect.arrayContaining(['Promos', 'Team promos', 'Everything']),
+    );
+    // Only this environment lost it, and a view over every type never needed it.
+    expect((await runSavedView(ctx, staging, bob, mine.id)).typeMissing).toBeUndefined();
+    expect((await runSavedView(ctx, scope, bob, everyType.id)).typeMissing).toBeUndefined();
+
+    await createContentType(ctx, scope, promo);
+    await publishContentType(ctx, scope, 'promo');
+    await createEntry(ctx, scope, {
+      contentTypeApiId: 'promo',
+      fields: { title: { 'en-US': 'About' } },
+    });
+    const back = await runSavedView(ctx, scope, bob, mine.id);
+    expect(back.typeMissing).toBeUndefined();
+    expect(back.items).toHaveLength(1);
   });
 
   it('caps the personal views a person keeps', async () => {

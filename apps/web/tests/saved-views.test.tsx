@@ -148,9 +148,9 @@ function Where() {
   return <output data-testid="search">{useLocation().search}</output>;
 }
 
-function setup(url = '/content/article') {
+function setup(url = '/content/article', type: ContentType = article) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  const outlet = { types: [article], locales: ['en-US'], defaultLocale: 'en-US', reload() {} };
+  const outlet = { types: [type], locales: ['en-US'], defaultLocale: 'en-US', reload() {} };
   render(
     <QueryClientProvider client={queryClient}>
       <ToastProvider>
@@ -285,6 +285,57 @@ describe('the entries list URL', () => {
     expect(screen.queryByText('—')).toBeNull();
   });
 
+  it('joins a list of scalars and shows a date as written, sorting only the date', async () => {
+    const column = (apiId: string, name: string, over: object) => ({
+      apiId,
+      name,
+      localized: false,
+      required: false,
+      position: 4,
+      ...over,
+    });
+    const event = {
+      ...article,
+      fields: [
+        ...article.fields,
+        column('tags', 'Tags', { type: 'Array', items: { type: 'Symbol' } }),
+        column('scores', 'Scores', { type: 'Array', items: { type: 'Number' } }),
+        column('days', 'Days', { type: 'Array', items: { type: 'Date', format: 'date' } }),
+        column('doors', 'Doors', { type: 'Date', format: 'time' }),
+        column('spare', 'Spare', { type: 'Array', items: { type: 'Integer' } }),
+      ],
+    } as ContentType;
+    client.listEntryPage.mockResolvedValueOnce({
+      items: [
+        {
+          id: 'e1',
+          contentType: 'article',
+          status: 'draft',
+          version: 1,
+          fields: {
+            title: { 'en-US': 'Pricing' },
+            tags: { 'en-US': ['news', 'launch'] },
+            scores: { 'en-US': [1.5, 0, 3] },
+            days: { 'en-US': ['2026-11-03', '2026-11-04'] },
+            doors: { 'en-US': '14:30' },
+            spare: { 'en-US': [] },
+          },
+        },
+      ],
+    });
+    setup('/content/article?columns=tags,scores,days,doors,spare', event);
+    await screen.findByRole('cell', { name: 'news, launch' }, { timeout: 5000 });
+    // A zero is a value, and a list with nothing in it says nothing.
+    expect(screen.getByRole('cell', { name: '1.5, 0, 3' })).toBeTruthy();
+    expect(screen.getByRole('cell', { name: '2026-11-03, 2026-11-04' })).toBeTruthy();
+    expect(screen.getByRole('cell', { name: '14:30' })).toBeTruthy();
+    expect(screen.queryByText(/\bitems?\b/)).toBeNull();
+    expect(screen.getByRole('button', { name: 'Doors' })).toBeTruthy();
+    for (const name of ['Tags', 'Scores', 'Days', 'Spare']) {
+      expect(screen.queryByRole('button', { name })).toBeNull();
+    }
+  });
+
   it('always renders the status for a phone, once, whichever columns are picked', async () => {
     setup('/content/article?columns=section');
     const row = (await screen.findByRole('link', { name: 'Pricing' })).closest('tr') as HTMLElement;
@@ -365,6 +416,19 @@ describe('the views menu', () => {
       }),
     );
     await waitFor(() => expect(search()).toContain('view=v-new'));
+  });
+
+  it('works on a singleton’s list as on any other, its one row and all', async () => {
+    views.push(view({ name: 'Settings by status', columns: ['section'] }));
+    setup('/content/article', { ...article, singleton: true } as ContentType);
+    await screen.findByRole('link', { name: 'Pricing' }, { timeout: 5000 });
+    expect(client.listSavedViews).toHaveBeenCalledWith('article');
+    await open(/views/i);
+    fireEvent.click(await screen.findByRole('menuitemradio', { name: /Settings by status/ }));
+    await waitFor(() => expect(search()).toContain('view=v1'));
+    expect(search()).toContain('columns=section');
+    expect(await screen.findByRole('columnheader', { name: 'Section' })).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Pricing' })).toBeTruthy();
   });
 
   it('offers no sharing, and no changes to a shared view, without content:manage', async () => {

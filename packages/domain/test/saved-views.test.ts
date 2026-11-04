@@ -148,6 +148,20 @@ describe('saved view queries', () => {
     ]);
     expect(checkSavedViewColumns(null, type)).toBeUndefined();
   });
+
+  it('takes a list of scalars and a formatted date as columns, like any field', () => {
+    const type = {
+      apiId: 'event',
+      fields: [
+        { apiId: 'tags', type: 'Array', items: { type: 'Symbol' } },
+        { apiId: 'scores', type: 'Array', items: { type: 'Integer' } },
+        { apiId: 'days', type: 'Array', items: { type: 'Date', format: 'date' } },
+        { apiId: 'doors', type: 'Date', format: 'time' },
+      ],
+    } as never;
+    const columns = ['tags', 'scores', 'days', 'doors'];
+    expect(checkSavedViewColumns(columns, type)).toEqual(columns);
+  });
 });
 
 describe('who sees a saved view', () => {

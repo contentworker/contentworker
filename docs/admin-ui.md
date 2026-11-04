@@ -91,9 +91,8 @@ menu at the sidebar's foot (the More sheet on a phone). Settings sections are ad
   creator) stops sharing, and deletes; a shared view is offered to pick but not to change without
   `content:manage`. Over a view of every type, field columns aren't saved. **Columns**
   (`entries/ColumnPicker.tsx`) picks what shows after the title: Status, Updated and the type's own
-  fields, kept with the view;
-  a singleton type's sidebar and overview links go to `/content/:typeId/entry`
-  (`SingletonEntry.tsx`), which opens its one entry in the editor, or a new one when it has none,
+  fields, kept with the view; a singleton type's sidebar and overview links go to
+  `/content/:typeId/entry` (`SingletonEntry.tsx`), which opens its one entry in the editor, or a new one when it has none,
   and its rows offer no Duplicate; each type's row on the overview has a menu (`More actions for
   “…”`) with Clone… and Delete… (`ContentTypeActions.tsx`): the delete dialog reads
   `…/dependents`, names what blocks it, offers to delete the entries too (a `content_type_delete`
