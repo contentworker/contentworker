@@ -98,17 +98,21 @@ export function VersionHistory(props: {
       else if ('output' in r) await restored(version);
     });
 
-  const restore = (version: number) =>
-    run(async () => {
+  const restore = async (version: number) => {
+    let done = false;
+    await run(async () => {
       await client.restoreVersion(props.entryId, version);
       await restored(version);
+      done = true;
     });
+    // After `run`: until then the Restore that asked is disabled and can't take focus back.
+    if (done) setConfirmRestore(null);
+  };
 
   const restored = async (version: number) => {
     toast.success(`Restored version ${version} as a new draft`);
     setDiff(null);
     setDiffWith(null);
-    setConfirmRestore(null);
     await invalidate(['versions', props.entryId]);
     props.onRestored();
   };

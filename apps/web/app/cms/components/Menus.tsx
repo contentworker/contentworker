@@ -652,6 +652,7 @@ function MenuDialog(props: {
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
   const guard = useDiscardGuard({
+    busy,
     dirty:
       name !== (m?.name ?? '') ||
       handle !== (m?.handle ?? '') ||
@@ -809,6 +810,7 @@ export function MenuItemDialog(props: {
   };
   const chosen = linkOf();
   const guard = useDiscardGuard({
+    busy,
     dirty:
       JSON.stringify(chosen) !== JSON.stringify(link ?? null) ||
       label !== (item?.label ?? '') ||

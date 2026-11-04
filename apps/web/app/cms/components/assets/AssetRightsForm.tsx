@@ -3,7 +3,7 @@ import { Alert, AlertDescription, AlertTitle } from '@contentworker/ui/alert';
 import { Button } from '@contentworker/ui/button';
 import { Input } from '@contentworker/ui/input';
 import { Label } from '@contentworker/ui/label';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { InlineConfirm } from '~/cms/components/InlineConfirm';
 import { StatusBadge } from '~/cms/components/status';
 import { When } from '~/cms/components/when';
@@ -52,12 +52,23 @@ const zone = () => {
  * as instants with a zone. Setting rights takes content:publish, because they decide whether the
  * asset is delivered; a role without it is told so in place. Mount it with a `key` per asset.
  */
-export function AssetRightsForm(props: { asset: Asset; onAssetChange?: (asset: Asset) => void }) {
+export function AssetRightsForm(props: {
+  asset: Asset;
+  onAssetChange?: (asset: Asset) => void;
+  /** Says whether the form holds rights not yet saved, so the sheet can ask before it closes. */
+  onDirty?: (dirty: boolean) => void;
+}) {
   const { asset } = props;
   const { client } = useClient();
   const toast = useToast();
   const now = useNow(60_000);
   const [values, setValues] = useState<Values>(() => valuesOf(asset.rights));
+  const dirty = JSON.stringify(values) !== JSON.stringify(valuesOf(asset.rights));
+  const { onDirty } = props;
+  useEffect(() => {
+    onDirty?.(dirty);
+    return () => onDirty?.(false);
+  }, [dirty, onDirty]);
   const [issues, setIssues] = useState<Record<string, string>>({});
   const [refusal, setRefusal] = useState<{ forbidden: boolean; message: string } | null>(null);
   const [busy, setBusy] = useState(false);

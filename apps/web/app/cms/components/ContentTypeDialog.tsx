@@ -585,6 +585,7 @@ export function ContentTypeDialog(props: {
   });
   const [opened] = useState(form);
   const guard = useDiscardGuard({
+    busy,
     open: props.open,
     dirty: form !== opened,
     onOpenChange: props.onOpenChange,

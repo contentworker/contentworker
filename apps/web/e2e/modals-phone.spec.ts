@@ -73,6 +73,7 @@ test('at keyboard height the way out and the action stay in reach', async ({ pag
   const dialog = await openGenerate(page, request);
   await page.setViewportSize({ width: 390, height: 370 });
   await dialog.getByRole('textbox', { name: 'Prompt' }).fill('A launch post');
+  await settle(page);
 
   await expectReachable(page, dialog.getByRole('button', { name: 'Close' }));
   await expect(dialog.getByRole('button', { name: 'Generate draft' })).toBeEnabled();

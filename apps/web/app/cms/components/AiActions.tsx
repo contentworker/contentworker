@@ -23,6 +23,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { ConfirmButton } from '~/cms/components/InlineConfirm';
 import type { AIAction, ManagementClient, ModelTier } from '../lib/management';
 import { useToast } from '../lib/toast';
+import { useStoppable } from '../lib/use-stoppable';
 
 const TIERS: ModelTier[] = ['fast', 'balanced', 'flagship'];
 
@@ -81,18 +82,29 @@ export function AiActions(props: { client: ManagementClient }) {
     values: Record<string, string>;
   } | null>(null);
   const [running, setRunning] = useState(false);
+  const runRequest = useStoppable();
 
   const execute = async (action: AIAction, variables: Record<string, string>) => {
+    const signal = runRequest.start();
     setRunning(true);
     try {
-      const r = await client.runAIAction(action.id, { variables });
+      const r = await client.runAIAction(action.id, { variables }, signal);
+      if (signal.aborted) return;
       setOutput({ id: action.id, text: r.output });
       setRunFor(null);
     } catch (e) {
+      if (signal.aborted) return;
       toast.error(e instanceof Error ? e.message : String(e));
     } finally {
-      setRunning(false);
+      if (!signal.aborted) setRunning(false);
     }
+  };
+
+  // A model can hang: closing walks away from a run under way, and its answer is dropped.
+  const closeRun = () => {
+    runRequest.stop();
+    setRunning(false);
+    setRunFor(null);
   };
 
   const run = (action: AIAction) => {
@@ -243,7 +255,7 @@ export function AiActions(props: { client: ManagementClient }) {
         </div>
       )}
 
-      <Dialog open={runFor !== null} onOpenChange={(o) => !o && !running && setRunFor(null)}>
+      <Dialog open={runFor !== null} onOpenChange={(o) => !o && closeRun()}>
         <DialogContent className="sm:max-w-md">
           {runFor && (
             <>
@@ -276,12 +288,7 @@ export function AiActions(props: { client: ManagementClient }) {
                   </div>
                 ))}
                 <DialogFooter>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    disabled={running}
-                    onClick={() => setRunFor(null)}
-                  >
+                  <Button type="button" variant="outline" onClick={closeRun}>
                     Cancel
                   </Button>
                   <Button type="submit" disabled={running}>

@@ -46,7 +46,7 @@ function DialogOverlay({
  */
 const PLACEMENTS = {
   sheet:
-    'inset-x-0 bottom-[var(--keyboard-inset,0px)] max-h-[calc(100dvh-var(--keyboard-inset,0px)-var(--safe-top)-1rem)] rounded-t-4xl max-sm:data-open:slide-in-from-bottom max-sm:data-closed:slide-out-to-bottom max-sm:data-open:duration-(--motion-travel) sm:inset-x-auto sm:top-[calc(50%-var(--keyboard-inset,0px)/2)] sm:bottom-auto sm:left-1/2 sm:max-h-[calc(100dvh-var(--keyboard-inset,0px)-2rem)] sm:w-[calc(100%-2rem)] sm:max-w-md sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-4xl sm:data-open:zoom-in-95 sm:data-closed:zoom-out-95',
+    'inset-x-0 bottom-[var(--keyboard-inset,0px)] max-h-[calc(100dvh-var(--keyboard-inset,0px)-var(--safe-top)-1rem)] rounded-t-4xl max-sm:data-open:slide-in-from-bottom max-sm:data-closed:slide-out-to-bottom max-sm:data-open:duration-(--motion-travel) max-sm:data-open:ease-arrive sm:inset-x-auto sm:top-[calc(50%-var(--keyboard-inset,0px)/2)] sm:bottom-auto sm:left-1/2 sm:max-h-[calc(100dvh-var(--keyboard-inset,0px)-2rem)] sm:w-[calc(100%-2rem)] sm:max-w-md sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-4xl sm:data-open:zoom-in-95 sm:data-closed:zoom-out-95',
   top: 'top-[calc(var(--safe-top)+4rem)] left-1/2 max-h-[calc(100dvh-var(--keyboard-inset,0px)-var(--safe-top)-5rem)] w-[calc(100%-2rem)] -translate-x-1/2 rounded-4xl data-open:zoom-in-95 data-closed:zoom-out-95 sm:max-w-md',
 };
 
@@ -78,11 +78,12 @@ function DialogContent({
       >
         {/* The body scrolls and the dialog is capped, so at keyboard height it is the content that
             gives way: DialogHeader and DialogFooter stick to its edges, wherever the footer sits
-            (usually at the end of a form), and each brings the padding of its own edge. */}
+            (usually at the end of a form), and each brings the padding of its own edge. The
+            scroll padding keeps a field tabbed to, or an error, clear of both. */}
         <div
           data-slot="dialog-body"
           className={cn(
-            'grid min-h-0 flex-1 gap-6 overflow-y-auto overscroll-contain px-6 pt-6 pb-safe-6 has-[[data-slot=dialog-footer]]:pb-0 has-[>[data-slot=dialog-header]]:pt-0',
+            'grid min-h-0 flex-1 scroll-pt-28 scroll-pb-36 gap-6 overflow-y-auto overscroll-contain px-6 pt-6 pb-safe-6 has-[[data-slot=dialog-footer]]:pb-0 has-[>[data-slot=dialog-header]]:pt-0',
             bodyClassName,
           )}
         >
@@ -193,7 +194,7 @@ function DialogError({
       ref={ref}
       role="alert"
       data-slot="dialog-error"
-      className={cn('scroll-mb-24 text-destructive text-sm', className)}
+      className={cn('text-destructive text-sm', className)}
       {...props}
     >
       {title ? <p className="font-medium">{title}</p> : null}

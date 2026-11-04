@@ -2010,8 +2010,9 @@ export function createManagementClient(
         locale?: string;
         apply?: boolean;
       } = {},
+      signal?: AbortSignal,
     ): Promise<{ actionId: string; output: string; applied: boolean }> {
-      return req('POST', `${mgmt}/ai-actions/${encodeURIComponent(id)}/run`, input);
+      return req('POST', `${mgmt}/ai-actions/${encodeURIComponent(id)}/run`, input, signal);
     },
 
     // --- functions (event-triggered) -------------------------------------

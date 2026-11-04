@@ -502,6 +502,7 @@ function InstallPluginDialog(props: {
     props.onOpenChange(open);
   };
   const guard = useDiscardGuard({
+    busy,
     open: props.open,
     dirty: Boolean(manifest || bundle || packageUrl.trim()),
     onOpenChange: close,
@@ -748,6 +749,7 @@ function UpgradePluginDialog(props: {
   const [busy, setBusy] = useState(false);
 
   const guard = useDiscardGuard({
+    busy,
     dirty: Boolean(manifest || bundle),
     onOpenChange: props.onOpenChange,
   });

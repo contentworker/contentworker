@@ -279,7 +279,7 @@ export function CommandPalette() {
         showCloseButton={false}
         placement="top"
         className="sm:max-w-lg"
-        bodyClassName="flex flex-col gap-0 overflow-hidden p-0"
+        bodyClassName="flex flex-col gap-0 overflow-hidden p-0 pb-0!"
       >
         <DialogTitle className="sr-only">Command palette</DialogTitle>
         <div className="flex shrink-0 items-center gap-2 border-b px-3">

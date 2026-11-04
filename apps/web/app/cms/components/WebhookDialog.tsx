@@ -37,6 +37,7 @@ export function WebhookDialog(props: {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const guard = useDiscardGuard({
+    busy,
     open: props.open,
     dirty:
       url !== props.webhook.url ||

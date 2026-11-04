@@ -20,10 +20,13 @@ export interface DiscardGuard {
 export function useDiscardGuard({
   open = true,
   dirty,
+  busy = false,
   onOpenChange,
 }: {
   open?: boolean;
   dirty: boolean;
+  /** A save under way: nothing can be discarded now, so the form waits for it to settle. */
+  busy?: boolean;
   onOpenChange: (open: boolean) => void;
 }): DiscardGuard {
   const [asking, setAsking] = useState(false);
@@ -33,6 +36,7 @@ export function useDiscardGuard({
   }, [open, dirty]);
   return {
     onOpenChange: (next) => {
+      if (!next && busy) return;
       if (!next && dirty) setAsking(true);
       else onOpenChange(next);
     },

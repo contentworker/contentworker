@@ -40,6 +40,7 @@ export function RoleAccessSheet(props: {
   const [error, setError] = useState<string | null>(null);
   const dirty = !sameGrants(grants, props.role.contentGrants);
   const guard = useDiscardGuard({
+    busy,
     open: props.open,
     dirty,
     onOpenChange: props.onOpenChange,

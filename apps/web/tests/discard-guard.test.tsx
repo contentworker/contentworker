@@ -125,6 +125,29 @@ describe('discard guard', () => {
     expect(question()).toBeNull();
   });
 
+  it('waits for a save under way: nothing can be discarded once it has been sent', async () => {
+    let finish: () => void = () => {};
+    const onSave = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const onOpenChange = vi.fn();
+    render(<ContentTypeDialog open onOpenChange={onOpenChange} onSave={onSave} />);
+    typeName('Blog Post');
+    fireEvent.click(screen.getByRole('button', { name: 'Create content type' }));
+    await screen.findByRole('button', { name: 'Saving…' });
+
+    pressEscape();
+    pressOutside();
+
+    expect(question()).toBeNull();
+    expect(onOpenChange).not.toHaveBeenCalled();
+    finish();
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+  });
+
   it('holds a pasted redirect import', async () => {
     const onOpenChange = vi.fn();
     render(

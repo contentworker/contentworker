@@ -849,8 +849,10 @@ for code and data blocks only.
     beside the field, and a notice that blocks the task (a refusal with a way on) is an Alert.
   - **Leaving:** a form with work in it never goes quietly (`cms/components/discard-guard.tsx`).
     Escape, a press outside, the close button and Cancel all ask in place of its buttons ("Discard
-    this redirect?", Keep editing focused, then a destructive Discard); saving doesn't ask, and an
-    untouched form just closes. Dialogs that talk to a model keep their work instead: the prompt
+    this redirect?", Keep editing focused, then a destructive Discard); saving doesn't ask, a save
+    under way holds the form until it settles, and an untouched form just closes. A form of a line
+    or two (a view's name, an invitation, a clone's name) isn't guarded, and New space and New
+    environment keep what was typed when they close. Dialogs that talk to a model keep their work instead: the prompt
     and a draft under review stay for when they open again, and only Discard or Apply clear them.
     Closing one while the model works aborts the request and drops a late answer, so a model that
     hangs never holds the dialog shut.
@@ -866,10 +868,10 @@ for code and data blocks only.
   application, deleting a webhook, uninstalling a plugin (its settings and stored data go with it),
   deleting a saved view, starting a new conversation, discarding an entry's unsaved changes, and
   Delete permanently and deleting a content type are modals: the data is gone, and asking again
-  makes something new rather than bringing it back. A publish confirms in a modal too: readers and
-  webhooks have it at once, and no undo calls that back. The entries list's bulk Unpublish and Move
-  to trash can be undone and still confirm in a dialog, listing what they change; they are the
-  rule's open debt.
+  makes something new rather than bringing it back. An entry's publish confirms in a modal too: readers
+  and webhooks have it at once, and no undo calls that back. The rule's open debt: the entries
+  list's bulk Unpublish and Move to trash can be undone and still confirm in a dialog, listing what
+  they change; a release's publish can't be and still confirms in place.
 - **Toasts** (`cms/lib/toast.tsx`): a card above the tab bar with a status dot and the words; an undo
   toast carries its Undo action.
 - **Form sheet** (`cms/components/form-sheet.tsx`): a list page's create form behind one "New …"

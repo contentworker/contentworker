@@ -69,7 +69,7 @@ export function TermEditor({
   onOpenChange: (open: boolean) => void;
 }) {
   const [dirty, setDirty] = useState(false);
-  const guard = useDiscardGuard({ open: term !== null, dirty, onOpenChange });
+  const guard = useDiscardGuard({ open: term !== null, dirty, busy, onOpenChange });
   return (
     <Sheet open={term !== null} onOpenChange={guard.onOpenChange}>
       <ResponsiveSheetContent className="gap-0 overflow-y-auto sm:max-w-md">

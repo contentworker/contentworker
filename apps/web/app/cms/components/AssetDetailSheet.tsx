@@ -77,6 +77,7 @@ export function AssetDetailSheet(props: {
   const [refreshing, setRefreshing] = useState(false);
   const [tab, setTab] = useState<SheetTab>('details');
   const [sharing, setSharing] = useState(false);
+  const [rightsDirty, setRightsDirty] = useState(false);
   // The original a possible duplicate points at, waiting on "discard your edits?".
   const [confirmOpen, setConfirmOpen] = useState<string | null>(null);
   const imgRef = useRef<HTMLButtonElement>(null);
@@ -118,7 +119,8 @@ export function AssetDetailSheet(props: {
   const dirty = altChanged || tagsChanged || !sameFocal(focal, base.focal);
   const guard = useDiscardGuard({
     open: props.open,
-    dirty,
+    dirty: dirty || rightsDirty,
+    busy,
     onOpenChange: props.onOpenChange,
   });
 
@@ -652,7 +654,12 @@ export function AssetDetailSheet(props: {
             </TabsContent>
 
             <TabsContent value="rights" forceMount className="pt-3 data-[state=inactive]:hidden">
-              <AssetRightsForm key={asset.id} asset={asset} onAssetChange={props.onAssetChange} />
+              <AssetRightsForm
+                key={asset.id}
+                asset={asset}
+                onAssetChange={props.onAssetChange}
+                onDirty={setRightsDirty}
+              />
             </TabsContent>
           </Tabs>
         </div>

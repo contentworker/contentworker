@@ -512,3 +512,41 @@ describe('Release publish confirm', () => {
     expect((publishNow as HTMLButtonElement).disabled).toBe(true);
   });
 });
+
+describe('running an AI action', () => {
+  it('can be left while the model hangs, and a late answer is dropped', async () => {
+    let answer: (r: { output: string }) => void = () => {};
+    const runAIAction = vi.fn(
+      (_id: string, _input: unknown, _signal: AbortSignal) =>
+        new Promise<{ output: string }>((resolve) => {
+          answer = resolve;
+        }),
+    );
+    const hanging = {
+      listAIActions: async () => [
+        {
+          id: 'ai-2',
+          name: 'Translate',
+          promptTemplate: 'Into {{language}}',
+          variables: ['language'],
+          tier: 'fast',
+          createdAt: '2026-10-01T00:00:00.000Z',
+        },
+      ],
+      runAIAction,
+    };
+    renderWithProviders(<AiActions client={hanging as unknown as ManagementClient} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Run' }));
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Run action' }));
+    await within(dialog).findByRole('button', { name: 'Running…' });
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(runAIAction.mock.calls[0]?.[2].aborted).toBe(true);
+    answer({ output: 'Too late' });
+    await Promise.resolve();
+    expect(screen.queryByText('Too late')).toBeNull();
+  });
+});

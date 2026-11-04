@@ -388,6 +388,18 @@ describe('the Versions tab', () => {
 });
 
 describe('the Rights tab', () => {
+  it('asks before the sheet closes on rights not yet saved', async () => {
+    assets = [asset()];
+    renderLibrary();
+    const sheet = await openTab('photo.jpg', 'Rights');
+    fireEvent.change(within(sheet).getByLabelText('License'), { target: { value: 'CC0' } });
+
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+
+    expect(await screen.findByRole('alertdialog', { name: /Discard your changes/ })).toBeTruthy();
+    expect(screen.getByRole('dialog')).toBeTruthy();
+  });
+
   it('reads the saved rights as a status', async () => {
     assets = [
       asset({

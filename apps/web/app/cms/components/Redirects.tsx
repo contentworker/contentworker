@@ -346,6 +346,7 @@ export function RedirectDialog(props: {
   const [issues, setIssues] = useState<Record<string, string>>({});
   const [error, setError] = useState<string>();
   const guard = useDiscardGuard({
+    busy,
     open: props.open,
     dirty:
       source !== (r?.source ?? '') ||
@@ -541,6 +542,7 @@ export function ImportRedirectsDialog(props: {
   const [problems, setProblems] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const guard = useDiscardGuard({
+    busy,
     open: props.open,
     dirty: data.trim() !== '',
     onOpenChange: props.onOpenChange,

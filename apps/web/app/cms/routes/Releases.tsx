@@ -387,6 +387,7 @@ function CreateReleaseDialog(props: {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const guard = useDiscardGuard({
+    busy: props.busy,
     open: props.open,
     dirty: title.trim() !== '' || description.trim() !== '',
     onOpenChange: props.onOpenChange,
