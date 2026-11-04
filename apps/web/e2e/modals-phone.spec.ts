@@ -198,9 +198,10 @@ test('a publish review comes from the bottom of a phone, in thumb reach', async 
 test('a destructive alert stays centred on a phone', async ({ page, request }) => {
   const name = `Phone alert ${Date.now()}`;
   const folderId = await seedAssetFolder(request, name);
-  await seedAsset(request, name, { folderId });
+  await seedAsset(request, name, { folderId, archive: true });
   await openCms(page, '/assets');
   await page.getByRole('combobox', { name: 'Folder' }).selectOption({ label: name });
+  await page.getByRole('combobox', { name: 'Status' }).selectOption('archived');
   await page.getByRole('button', { name: `Delete “${name}”` }).click();
   const alert = page.getByRole('alertdialog');
   await expect(alert).toBeVisible();

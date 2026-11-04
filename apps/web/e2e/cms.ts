@@ -286,6 +286,8 @@ export async function seedAsset(
   opts: {
     readonly folderId?: string;
     readonly publish?: boolean;
+    /** Archived: the state an asset has to be in before it can be deleted. */
+    readonly archive?: boolean;
     readonly contentType?: string;
   } = {},
 ): Promise<string> {
@@ -301,6 +303,10 @@ export async function seedAsset(
   if (opts.publish) {
     const pub = await api(request, 'POST', `${MGMT}/assets/${asset.id}/published`);
     expect(pub.ok(), await pub.text()).toBe(true);
+  }
+  if (opts.archive) {
+    const archived = await api(request, 'POST', `${MGMT}/assets/${asset.id}/archive`);
+    expect(archived.ok(), await archived.text()).toBe(true);
   }
   return asset.id;
 }

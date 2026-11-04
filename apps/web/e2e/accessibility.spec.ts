@@ -117,6 +117,7 @@ test('the asset library, its list view and its bulk bar have no accessibility vi
   const folderId = await seedAssetFolder(request, `A11y ${stamp}`);
   await seedAsset(request, `A11y ${stamp} filed`, { folderId });
   await seedAsset(request, `A11y ${stamp} root`, { publish: true });
+  await seedAsset(request, `A11y ${stamp} archived`, { folderId, archive: true });
   await openCms(page, '/assets');
   const library = page.getByRole('region', { name: 'Asset library' });
   await expect(library.getByRole('button', { name: `Open “A11y ${stamp} root”` })).toBeVisible();
@@ -126,19 +127,6 @@ test('the asset library, its list view and its bulk bar have no accessibility vi
       .getByRole('button', { name: `A11y ${stamp}`, exact: true }),
   ).toBeVisible();
   await scan(page, testInfo);
-
-  // A delete confirm: the tinted destructive pill on the alert dialog, in both themes (its red is
-  // tuned per theme to hold 4.5:1 on that tint).
-  await library.getByRole('button', { name: `Delete “A11y ${stamp} root”` }).click();
-  const confirm = page.getByRole('alertdialog', { name: `Delete “A11y ${stamp} root”?` });
-  await expect(confirm.getByRole('button', { name: 'Delete asset' })).toBeVisible();
-  await scan(page, testInfo);
-  await page.emulateMedia({ colorScheme: 'dark' });
-  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
-  await scan(page, testInfo);
-  await page.emulateMedia({ colorScheme: 'light' });
-  await confirm.getByRole('button', { name: 'Cancel' }).click();
-  await expect(confirm).toBeHidden();
 
   await library.getByRole('radio', { name: 'List' }).click();
   await expect(library.getByRole('table')).toBeVisible();
@@ -152,6 +140,25 @@ test('the asset library, its list view and its bulk bar have no accessibility vi
   await library.getByRole('searchbox', { name: 'Search assets' }).fill(`a11y ${stamp}`);
   await expect(library.getByText(new RegExp(`for “a11y ${stamp}”`))).toBeVisible();
   await scan(page, testInfo);
+
+  // A delete confirm, which only an archived asset offers: the tinted destructive pill on the alert
+  // dialog, in both themes (its red is tuned per theme to hold 4.5:1 on that tint).
+  await library.getByRole('searchbox', { name: 'Search assets' }).fill('');
+  await page
+    .getByRole('navigation', { name: 'Folders' })
+    .getByRole('button', { name: `A11y ${stamp}`, exact: true })
+    .click();
+  await library.getByRole('combobox', { name: 'Status' }).selectOption('archived');
+  await library.getByRole('button', { name: `Delete “A11y ${stamp} archived”` }).click();
+  const confirm = page.getByRole('alertdialog', { name: `Delete “A11y ${stamp} archived”?` });
+  await expect(confirm.getByRole('button', { name: 'Delete asset' })).toBeVisible();
+  await scan(page, testInfo);
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  await scan(page, testInfo);
+  await page.emulateMedia({ colorScheme: 'light' });
+  await confirm.getByRole('button', { name: 'Cancel' }).click();
+  await expect(confirm).toBeHidden();
 });
 
 // A collection open in place of the library, with members to reorder, its zip card, and its
