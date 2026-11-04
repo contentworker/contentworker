@@ -16,6 +16,7 @@ import {
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   type AppContext,
+  archiveAsset,
   assetFileKey,
   assetGateEntry,
   assetKeyVersion,
@@ -510,6 +511,7 @@ describe('deleting a versioned asset', () => {
     await cloneEnvironment(h.ctx, scope, outlet);
     // A clone keeps its source's keys rather than copying the bytes.
     expect(assetFileKey(outlet, await getAsset(h.ctx, outlet, asset.id))).toBe(key);
+    await archiveAsset(h.ctx, scope, asset.id);
     await deleteAsset(h.ctx, scope, asset.id);
     await h.drain();
     expect(h.blob.keys()).toContain(key);
