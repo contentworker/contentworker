@@ -310,7 +310,8 @@ layout/nav.ts` is the one source of the pages, their order, names, icons and G-l
   voice control. Approvals is behind the `approvals` feature (`cms/lib/features.tsx`,
   on): off, it leaves the sidebar, the tab bar, the palette, the shortcuts list and its G-letter.
 - **Main** pads its foot by `--tabbar-h` and lays every page in `Body` (the page width and
-  gutters). Never hard-code the bar heights.
+  gutters), except a canvas: the workflow editor is `bare`, full-bleed beside the rail, and draws
+  its own frame and loading skeleton. Never hard-code the bar heights.
 - **Coworker (the assistant):** named Coworker everywhere a person sees it (the button, the panel's
   heading and accessible name, its messages, the shortcuts list); `assistant` in code. Behind the `assistant` feature (`cms/lib/features.tsx`, on). A column beside the
   page at lg; below that a sheet between the header and the tab bar,
@@ -720,8 +721,8 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
 
 ## Screens that change shape
 
-- **Workflow editor** (`cms/routes/WorkflowEditor.tsx`): at lg it builds,
-  palette | canvas | inspector. On touch, a palette item is tapped in (dragging is offered only to
+- **Workflow editor** (`cms/routes/WorkflowEditor.tsx`): full-bleed, the window's height at lg
+  (the page never scrolls; its columns do). At lg it builds, palette | canvas | inspector. On touch, a palette item is tapped in (dragging is offered only to
   a fine pointer: iPadOS drag is unreliable), node handles grow and carry a 32px target, and a
   connection snaps from 40px. Below lg it is review-only, saying so in place ("Building workflows
   needs a wider screen…"): the canvas, the checks and each step's settings show read-only, and

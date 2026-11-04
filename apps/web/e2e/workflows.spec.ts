@@ -1,5 +1,5 @@
 import AxeBuilder from '@axe-core/playwright';
-import { expect, test } from '@playwright/test';
+import { expect, type Page, test } from '@playwright/test';
 import { api, MGMT, openCms, seedCms, useCmsScope } from './cms';
 import { settle } from './settle';
 
@@ -21,6 +21,95 @@ test.beforeEach(async ({ page }, info) => {
     'the workflow editor is review-only below lg',
   );
   await useCmsScope(page);
+});
+
+/** The sidebar as a rail, in pixels. */
+const RAIL = 52;
+
+/** The sidebar's width on screen: its panel, border included. */
+const sidebarWidth = (page: Page) =>
+  page
+    .locator('[data-slot=sidebar-container]')
+    .evaluate((panel) => Math.round(panel.getBoundingClientRect().width));
+
+test('the editor collapses an open sidebar and fills the width on a wide screen', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 2200, height: 1000 });
+  await openCms(page, '/workflows');
+  // Open on the list, so the editor has to collapse it.
+  await expect.poll(() => sidebarWidth(page)).toBe(256);
+  await page.getByRole('button', { name: 'New workflow' }).click();
+  const sheet = page.getByRole('dialog', { name: 'New workflow' });
+  await sheet.getByRole('textbox', { name: 'Name' }).fill(`Wide ${Date.now()}`);
+  await sheet.getByRole('combobox', { name: 'Template' }).selectOption('tpl-editorial-review');
+  await sheet.getByRole('button', { name: 'Create workflow' }).click();
+  await expect(page.getByRole('textbox', { name: 'Workflow name' })).toBeVisible({
+    timeout: 15_000,
+  });
+
+  // The page follows the sidebar in, so wait for it to land rather than for the panel alone.
+  const pageLeft = async () => (await page.locator('#main').boundingBox())?.x;
+  await expect.poll(pageLeft).toBe(RAIL);
+  await expect.poll(() => sidebarWidth(page)).toBe(RAIL);
+
+  // The rail opens over the page, which stays where it was, and closes on Escape.
+  await page.getByRole('button', { name: 'Sidebar', exact: true }).click();
+  await expect.poll(() => sidebarWidth(page)).toBe(256);
+  expect(await pageLeft()).toBe(RAIL);
+  await page.keyboard.press('Escape');
+  await expect.poll(() => sidebarWidth(page)).toBe(RAIL);
+
+  const main = await page.locator('#main').boundingBox();
+  const inspector = await page
+    .getByRole('complementary', { name: 'Workflow settings' })
+    .boundingBox();
+  // The inspector sits flush with the page's right edge, past the 1400px reading width.
+  expect(main && inspector && inspector.x + inspector.width).toBeCloseTo(
+    (main?.x ?? 0) + (main?.width ?? 0),
+    0,
+  );
+  const palette = await page.getByRole('complementary', { name: 'Palette' }).boundingBox();
+  expect(palette?.x).toBe(main?.x);
+
+  // The frame fits the window: the palette's long list scrolls inside it, the page doesn't.
+  expect(await page.evaluate(() => document.documentElement.scrollHeight)).toBe(
+    await page.evaluate(() => window.innerHeight),
+  );
+
+  // A short window squeezes the canvas rather than scrolling the page.
+  await page.setViewportSize({ width: 1280, height: 480 });
+  await expect
+    .poll(() => page.evaluate(() => document.documentElement.scrollHeight - window.innerHeight))
+    .toBe(0);
+});
+
+test('a hard load draws the full-width frame, and a missing workflow says so', async ({ page }) => {
+  await page.setViewportSize({ width: 2200, height: 1000 });
+  let release = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route(/\/spaces(\?.*)?$/, async (route) => {
+    await held;
+    await route.continue();
+  });
+  await page.goto('/workflows/missing', { waitUntil: 'load' });
+
+  // Straight under main: nothing puts the loading frame in the page width.
+  const frame = page.locator('#main > [aria-busy="true"]');
+  await expect(frame).toBeVisible();
+  const [main, drawn] = await Promise.all([
+    page.locator('#main').boundingBox(),
+    frame.boundingBox(),
+  ]);
+  expect(drawn?.width).toBe(main?.width);
+
+  release();
+  await expect(page.getByRole('heading', { name: 'Workflow not available' })).toBeVisible({
+    timeout: 15_000,
+  });
+  await expect(page.getByRole('link', { name: 'Back to workflows' })).toBeVisible();
 });
 
 test('creates a workflow from a template, edits it and publishes it', async ({ page }) => {

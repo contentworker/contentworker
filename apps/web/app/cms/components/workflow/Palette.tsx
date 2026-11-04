@@ -41,7 +41,8 @@ export function Palette({ onPick }: { onPick: (type: string) => void }) {
         aria-label="Search steps"
         className="h-8 text-sm"
       />
-      <div className="mt-3 min-h-0 flex-1 space-y-4 overflow-y-auto pr-1">
+      {/* Relative, so the rows' absolutely placed sr-only labels scroll here, not the page. */}
+      <div className="relative mt-3 min-h-0 flex-1 space-y-4 overflow-y-auto pr-1">
         {sections.map(({ key, title, items }) => {
           if (!items.length) return null;
           return (
