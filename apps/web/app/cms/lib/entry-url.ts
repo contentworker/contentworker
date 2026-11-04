@@ -50,6 +50,11 @@ const OPS: ReadonlySet<string> = new Set<FilterOp>([
 ]);
 const LIST_OPS: ReadonlySet<string> = new Set(['in', 'nin', 'between', 'refIn']);
 
+/** The Mine toggle as a filter: the API's own spelling, each reader's own entries in a view. */
+const MINE: QueryFilter = { field: 'sys.createdBy', op: 'eq', value: 'me' };
+const isMine = (f: Pick<QueryFilter, 'field' | 'op' | 'value'>) =>
+  f.field === MINE.field && f.op === MINE.op && f.value === MINE.value;
+
 /**
  * The connection's parameters (any CMS URL may carry them): they belong to the client, not the
  * list, and are never saved with a view.
@@ -70,6 +75,7 @@ export function listStateFromParams(params: URLSearchParams): EntryListState {
   let search: string | undefined;
   let where: unknown;
   let linksToEntry: string[] | undefined;
+  let mine = false;
   for (const [key, value] of params) {
     if (key === 'order') {
       order = list(value).map((token) => ({
@@ -94,6 +100,10 @@ export function listStateFromParams(params: URLSearchParams): EntryListState {
       linksToEntry = list(value);
       continue;
     }
+    if (key === MINE.field && value === MINE.value) {
+      mine = true;
+      continue;
+    }
     const m = ENTRY_FILTER_KEY.exec(key);
     const op = m ? (m[2] ?? 'eq') : undefined;
     // By id only: a view can't hold a slug filter, so this list doesn't apply one it can't save.
@@ -116,6 +126,7 @@ export function listStateFromParams(params: URLSearchParams): EntryListState {
       ...(search ? { search } : {}),
       ...(where !== undefined ? { where } : {}),
       ...(linksToEntry?.length ? { linksToEntry } : {}),
+      ...(mine ? { mine } : {}),
       ...(params.get('trashed') === 'true' ? { trashed: true } : {}),
       ...(Object.keys(extra).length ? { extra } : {}),
     },
@@ -140,6 +151,7 @@ export function listStateToParams(state: EntryListState): URLSearchParams {
   }
   if (query.where !== undefined) params.set('where', JSON.stringify(query.where));
   if (query.linksToEntry?.length) params.set('links_to_entry', query.linksToEntry.join(','));
+  if (query.mine) params.set(MINE.field, MINE.value as string);
   if (query.order?.length) {
     params.set(
       'order',
@@ -171,7 +183,7 @@ export function viewToListState(view: SavedView): EntryListState {
       .filter(([k]) => isSavedViewExtraKey(k))
       .map(([k, v]) => [k, Array.isArray(v) ? v.join(',') : String(v ?? '')]),
   );
-  const filters = (q.filters ?? []).filter((f) => f.field !== ANY_FIELD);
+  const filters = (q.filters ?? []).filter((f) => f.field !== ANY_FIELD && !isMine(f));
   const linksToEntry = (q.filters ?? [])
     .filter((f) => f.field === ANY_FIELD)
     .flatMap((f) => barValue(f.op, f.value))
@@ -192,6 +204,7 @@ export function viewToListState(view: SavedView): EntryListState {
       ...(q.search ? { search: q.search } : {}),
       ...(q.where !== undefined ? { where: q.where } : {}),
       ...(linksToEntry.length ? { linksToEntry } : {}),
+      ...(q.filters?.some(isMine) ? { mine: true } : {}),
       ...(Object.keys(extra).length ? { extra } : {}),
     },
     ...(view.columns ? { columns: view.columns } : {}),
@@ -236,6 +249,7 @@ export function listQueryToViewQuery(
     const value = links.length === 1 ? one : links;
     filters.push(asSaved(ANY_FIELD, op, value) ?? { field: ANY_FIELD, op, value });
   }
+  if (query.mine) filters.push(MINE);
   return {
     ...(filters.length ? { filters } : {}),
     ...(query.where !== undefined ? { where: query.where as SavedViewQuery['where'] } : {}),

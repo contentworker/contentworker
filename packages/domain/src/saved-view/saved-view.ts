@@ -1,4 +1,5 @@
 import {
+  assertAuthorIdQuery,
   assertQueryRespectsFieldRules,
   canAccessContentType,
   deniedFieldsFor,
@@ -80,7 +81,7 @@ export interface SavedViewQuery {
   /** Full-text search over the type's text fields. */
   readonly search?: string;
   /**
-   * Query keys a newer client sent that this version doesn't apply (a `me` filter, say), kept
+   * Query keys a newer client sent that this version doesn't apply (a filter it lacks, say), kept
    * verbatim so a save made here doesn't drop them. Never applied when the view runs: a run says
    * which it left out. Never a key anything here reads ({@link isSavedViewExtraKey}).
    */
@@ -426,7 +427,8 @@ export function ownsSavedView(principal: Principal, view: Pick<SavedView, 'creat
  * can read its content type; and a view whose query names a field the principal's role hides
  * (a filter, a `where` predicate, a sort key) or searches a type with hidden fields, nobody under
  * that role. The query alone answers questions about the field, whatever is masked, so such a
- * view is skipped rather than shown and refused.
+ * view is skipped rather than shown and refused. The same goes for a view naming who wrote an
+ * entry, for a key that isn't served author ids.
  */
 export function canSeeSavedView(principal: Principal, view: SavedView): boolean {
   if (view.visibility === 'personal' && !ownsSavedView(principal, view)) return false;
@@ -434,7 +436,9 @@ export function canSeeSavedView(principal: Principal, view: SavedView): boolean 
     return false;
   }
   try {
-    assertQueryRespectsFieldRules(principal, savedViewEntryQuery(view));
+    const query = savedViewEntryQuery(view);
+    assertQueryRespectsFieldRules(principal, query);
+    assertAuthorIdQuery(principal, query);
     return true;
   } catch {
     return false;

@@ -13,6 +13,7 @@ import { FixedClock, InMemoryContentStore, SequenceIdGenerator } from '@contentw
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   type AppContext,
+  actingAs,
   createContentType,
   createEntry,
   createEnvironment,
@@ -492,6 +493,37 @@ describe('saved views', () => {
     expect(await stored()).toEqual(['section']);
     await updateSavedView(ctx, scope, ada, view.id, { columns: null });
     expect(await stored()).toBeUndefined();
+  });
+
+  it('runs sys.createdBy=me as each reader, and keeps author ids from a key not served them', async () => {
+    const mine = await createEntry(actingAs(ctx, bob), scope, {
+      contentTypeApiId: 'article',
+      fields: { title: { 'en-US': 'By Bob' } },
+    });
+    const view = await createSavedView(ctx, scope, ada, {
+      name: 'My entries',
+      contentTypeApiId: 'article',
+      visibility: 'shared',
+      query: { filters: [{ field: 'sys.createdBy', op: 'eq', value: 'me' }] },
+    });
+    expect((await runSavedView(ctx, scope, bob, view.id)).items.map((e) => e.id)).toEqual([
+      mine.entry.id,
+    ]);
+    expect((await runSavedView(ctx, scope, ada, view.id)).items).toEqual([]);
+
+    // A read key isn't told who wrote what: not in the rows, and not by a query that names it.
+    const reader: Principal = { spaceId: 'site', kind: 'cpa', scopes: READ };
+    const all = await createSavedView(ctx, scope, ada, {
+      name: 'All',
+      contentTypeApiId: 'article',
+      visibility: 'shared',
+    });
+    const rows = (await runSavedView(ctx, scope, reader, all.id)).items;
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.some((e) => 'createdBy' in e || 'updatedBy' in e)).toBe(false);
+    await expect(getSavedView(ctx, scope, reader, view.id)).rejects.toBeInstanceOf(NotFoundError);
+    await expect(runSavedView(ctx, scope, reader, view.id)).rejects.toBeInstanceOf(NotFoundError);
+    expect((await listSavedViews(ctx, scope, reader)).map((v) => v.name)).toEqual(['All']);
   });
 
   it('says when a view’s content type is missing, and can still be changed and deleted', async () => {

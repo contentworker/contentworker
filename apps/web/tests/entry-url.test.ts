@@ -147,6 +147,20 @@ describe('the entries list URL', () => {
     ]);
   });
 
+  it('reads Mine from the URL, and saves it as the filter each reader runs as their own', () => {
+    const state = listStateFromParams(new URLSearchParams('sys.createdBy=me&sys.status=draft'));
+    expect(state.query).toEqual({
+      filters: [{ field: 'sys.status', op: 'eq', value: 'draft' }],
+      mine: true,
+    });
+    expect(listStateToParams(state).get('sys.createdBy')).toBe('me');
+    const saved = listQueryToViewQuery(state.query);
+    expect(saved.filters).toContainEqual({ field: 'sys.createdBy', op: 'eq', value: 'me' });
+    expect(viewToListState(view({ query: saved })).query).toEqual(state.query);
+    // Someone else's id is an ordinary filter.
+    expect(listStateFromParams(new URLSearchParams('sys.createdBy=u1')).query.mine).toBeUndefined();
+  });
+
   it('sends every filter on one key to the list', () => {
     const params = entryQueryParams({
       filters: [

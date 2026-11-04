@@ -1165,6 +1165,10 @@ ownership instead would let any `content:manage` holder take a view away from th
 themselves, and would have no answer for a view a key created, which has no person to go back to:
 that view stays shared until it is deleted.
 
+A run acts as the caller, so a shared view's `sys.createdBy=me` is each reader's own entries. A key
+that isn't served author ids gets none in a run's rows, and a view naming them isn't shown to it
+(`assertAuthorIdQuery`, in `canSeeSavedView`).
+
 **A view of a deleted content type.** Views are per space and types per environment, so deleting a
 type doesn't cascade: the same view may be good in another environment, and the type may come back
 through a merge. Where the type is missing, `runSavedView` answers an empty page with

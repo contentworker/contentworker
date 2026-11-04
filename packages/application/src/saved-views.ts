@@ -1,4 +1,5 @@
 import {
+  assertAuthorIdQuery,
   assertQueryRespectsFieldRules,
   authorize,
   authorizeContent,
@@ -25,10 +26,11 @@ import {
   savedViewEntryQuery,
   savedViewFor,
   ValidationError,
+  withAuthorIdsFor,
 } from '@contentworker/domain';
 import { TransactionConflictError } from '@contentworker/ports';
 import { auditActor } from './audit';
-import type { AppContext } from './context';
+import { type AppContext, actingAs } from './context';
 import { listPreviewEntryPage, type PreviewEntryPage } from './preview';
 
 /**
@@ -129,7 +131,9 @@ function authorizeWrite(
     ]);
   }
   if (next.contentTypeApiId) authorizeContent(principal, 'read', next.contentTypeApiId);
-  assertQueryRespectsFieldRules(principal, savedViewEntryQuery(next));
+  const query = savedViewEntryQuery(next);
+  assertQueryRespectsFieldRules(principal, query);
+  assertAuthorIdQuery(principal, query);
 }
 
 /**
@@ -197,7 +201,12 @@ export async function getSavedView(
 }
 
 /** One page of a view's entries, and the query keys it kept but didn't apply. */
-export interface SavedViewRun extends PreviewEntryPage {
+export interface SavedViewRun extends Omit<PreviewEntryPage, 'items'> {
+  /** The Preview list's rows, without who wrote them for a key that isn't served that. */
+  readonly items: readonly (
+    | PreviewEntryPage['items'][number]
+    | Omit<PreviewEntryPage['items'][number], 'createdBy' | 'updatedBy'>
+  )[];
   readonly view: Pick<SavedView, 'id' | 'name' | 'contentTypeApiId' | 'revision'> & {
     readonly columns?: readonly string[];
   };
@@ -230,6 +239,7 @@ export async function runSavedView(
   // `visibleView` already checked this; asked again where the query is made, so the gate sits
   // beside what it guards.
   assertQueryRespectsFieldRules(principal, query);
+  assertAuthorIdQuery(principal, query);
   const ignored = Object.keys(view.query.extra ?? {});
   const ran = {
     id: view.id,
@@ -242,7 +252,8 @@ export async function runSavedView(
     return { view: ran, items: [], typeMissing: true, ...(ignored.length ? { ignored } : {}) };
   }
   const page = await listPreviewEntryPage(
-    ctx,
+    // Acting as the caller, so a shared view's `sys.createdBy=me` is each reader's own entries.
+    actingAs(ctx, principal),
     scope,
     {
       ...query,
@@ -261,7 +272,12 @@ export async function runSavedView(
     view: ran,
     items: page.items
       .filter((e) => canAccessContentType(principal, 'read', e.contentType))
-      .map((e) => ({ ...e, fields: maskDeniedFields(principal, e.contentType, e.fields) })),
+      .map((e) =>
+        withAuthorIdsFor(principal, {
+          ...e,
+          fields: maskDeniedFields(principal, e.contentType, e.fields),
+        }),
+      ),
     ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
     ...(ignored.length ? { ignored } : {}),
   };
