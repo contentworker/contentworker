@@ -337,12 +337,13 @@ export async function getDeliveredSingleton(
   const depth = clampDepth(opts.include);
   const reads = opts.reads ?? deliveryReads(ctx);
   const read = await reads.read(scope, { singleton: { contentType: apiId }, config: true });
+  const config = spaceConfig(scope, read.config);
+  assertDeliveredLocale(config, opts.locale);
   if (!read.singleton?.contentType || !read.singleton.publishedSingleton) {
     throw new NotFoundError('Singleton', apiId);
   }
   const snapshot = read.singleton.entry;
   if (!snapshot) throw new NotFoundError('Published singleton entry', apiId);
-  const config = spaceConfig(scope, read.config);
   const fetched = await prefetchLinked(ctx, scope, [snapshot], depth, opts, reads, config);
   return render(
     scope,

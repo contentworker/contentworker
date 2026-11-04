@@ -392,7 +392,12 @@ export function registerReadTools(server: McpServer, t: ToolContext): void {
       const entry = await getPreviewSingleton(ctx, scopeOf(args), args.contentType, {
         locale: args.locale,
       });
-      return ok({ ...entry, fields: maskDeniedFields(principal, entry.contentType, entry.fields) });
+      return ok(
+        withAuthorIdsFor(principal, {
+          ...entry,
+          fields: maskDeniedFields(principal, entry.contentType, entry.fields),
+        }),
+      );
     },
   );
 

@@ -97,6 +97,7 @@ export async function getPreviewSingleton(
     contentType: found.entry.contentTypeApiId,
     status: found.entry.status,
     version: found.entry.currentVersion,
+    ...authorshipOf(found.entry),
     fields: renderFields(found.fields, config, opts.locale),
   };
 }

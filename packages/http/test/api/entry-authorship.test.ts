@@ -206,6 +206,47 @@ describe('entry authorship over HTTP', () => {
     expect(((await read('/versions/1', cma)) as { createdBy: string }).createdBy).toBe('cma');
   });
 
+  it('serves a preview key a singleton without writer ids, and a management key with them', async () => {
+    await app.request(`${M}/content-types`, {
+      method: 'POST',
+      headers: cma,
+      body: JSON.stringify({
+        apiId: 'settings',
+        name: 'Settings',
+        displayField: 'title',
+        singleton: true,
+        fields: [
+          {
+            apiId: 'title',
+            name: 'Title',
+            type: 'Symbol',
+            localized: false,
+            required: false,
+            position: 0,
+          },
+        ],
+      }),
+    });
+    await app.request(`${M}/content-types/settings/published`, { method: 'POST', headers: cma });
+    const made = await app.request(`${M}/entries`, {
+      method: 'POST',
+      headers: cma,
+      body: JSON.stringify({ contentTypeApiId: 'settings', fields: { title: { 'en-US': 'One' } } }),
+    });
+    expect(made.status).toBe(201);
+
+    const read = async (headers: Record<string, string>) => {
+      const res = await app.request(`${P}/singletons/settings`, { headers });
+      expect(res.status).toBe(200);
+      return (await res.json()) as Record<string, unknown>;
+    };
+    const theirs = await read({ Authorization: 'Bearer cpa' });
+    expect(theirs).toMatchObject({ contentType: 'settings', createdAt: expect.any(String) });
+    expect(theirs).not.toHaveProperty('createdBy');
+    expect(theirs).not.toHaveProperty('updatedBy');
+    expect(await read(cma)).toMatchObject({ createdBy: 'cma', updatedBy: 'cma' });
+  });
+
   it('refuses a preview key a where predicate on a writer id', async () => {
     await create(cma, 'Draft');
     const cpa = { Authorization: 'Bearer cpa' };

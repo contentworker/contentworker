@@ -118,6 +118,55 @@ describe('locale settings over HTTP', () => {
     expect(((await back.json()) as { fields: { text: string } }).fields.text).toBe('Hallo');
   });
 
+  it('answers 404 for a singleton read in a locale turned off, on Delivery only', async () => {
+    await app.request(`${M}/content-types`, {
+      method: 'POST',
+      headers: cma,
+      body: JSON.stringify({
+        apiId: 'settings',
+        name: 'Settings',
+        displayField: 'text',
+        singleton: true,
+        fields: [
+          {
+            apiId: 'text',
+            name: 'Text',
+            type: 'Symbol',
+            localized: true,
+            required: false,
+            position: 0,
+          },
+        ],
+      }),
+    });
+    await app.request(`${M}/content-types/settings/published`, { method: 'POST', headers: cma });
+    const made = await app.request(`${M}/entries`, {
+      method: 'POST',
+      headers: cma,
+      body: JSON.stringify({
+        contentTypeApiId: 'settings',
+        fields: { text: { 'en-US': 'Hello', 'de-DE': 'Hallo' } },
+      }),
+    });
+    const { entry } = (await made.json()) as { entry: { id: string } };
+    await app.request(`${M}/entries/${entry.id}/published`, { method: 'POST', headers: cma });
+    const D = '/delivery/s1/main/singletons/settings';
+    expect((await app.request(`${D}?locale=de-DE`, { headers: cda })).status).toBe(200);
+
+    await setSettings(cma, { 'de-DE': { delivered: false } });
+    for (const qs of ['locale=de-DE', 'locale=de-DE&include=0']) {
+      expect((await app.request(`${D}?${qs}`, { headers: cda })).status).toBe(404);
+    }
+    const all = (await (await app.request(D, { headers: cda })).json()) as {
+      fields: { text: Record<string, string> };
+    };
+    expect(all.fields.text).toEqual({ 'en-US': 'Hello' });
+    const preview = await app.request(`/preview/s1/main/singletons/settings?locale=de-DE`, {
+      headers: cpa,
+    });
+    expect(((await preview.json()) as { fields: { text: string } }).fields.text).toBe('Hallo');
+  });
+
   it('neither finds nor quotes a locale turned off, on REST /search and GraphQL search', async () => {
     const D = '/delivery/s1/main';
     const hits = async () =>

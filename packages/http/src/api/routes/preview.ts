@@ -272,10 +272,12 @@ export function previewRoutes(deps: AuthDeps): Hono<AuthVars> {
       const entry = await getPreviewSingleton(ctx, scopeOf(c), apiId, {
         locale: c.req.query('locale'),
       });
-      return c.json({
-        ...entry,
-        fields: maskDeniedFields(principal, entry.contentType, entry.fields),
-      });
+      return c.json(
+        withAuthorIdsFor(principal, {
+          ...entry,
+          fields: maskDeniedFields(principal, entry.contentType, entry.fields),
+        }),
+      );
     },
   );
 
