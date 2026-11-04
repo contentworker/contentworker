@@ -276,7 +276,8 @@ describe('conditional field rules on whole-entry copies', () => {
         };
       },
     };
-    const result = await executeImport(ctx, copy, source, {
+    const writer: Principal = { ...admin, scopes: [SCOPES.contentWrite] };
+    const result = await executeImport(ctx, writer, copy, source, {
       payload: '',
       mapping: {
         contentTypeApiId: 'listing',
