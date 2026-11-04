@@ -264,6 +264,28 @@ describe('EntriesList unpublish and Undo', () => {
   const tick = async (title: string) =>
     fireEvent.click(await screen.findByRole('checkbox', { name: `Select “${title}”` }));
 
+  it('survives the content types arriving after it first draws', async () => {
+    client.listEntryPage.mockResolvedValue({ items: ENTRIES });
+    const base = { locales: ['en-US'], defaultLocale: 'en-US', reload() {} };
+    const queryClient = new QueryClient();
+    const wrap = (outlet: object) => (
+      <QueryClientProvider client={queryClient}>
+        <ToastProvider>
+          <MemoryRouter initialEntries={['/content/article']}>
+            <Routes>
+              <Route path="/content" element={<Outlet context={outlet} />}>
+                <Route path=":typeId" element={<EntriesList />} />
+              </Route>
+            </Routes>
+          </MemoryRouter>
+        </ToastProvider>
+      </QueryClientProvider>
+    );
+    const view = render(wrap({ ...base, types: [], typesPending: true }));
+    view.rerender(wrap({ ...base, types: [article], typesPending: false }));
+    expect(await screen.findByRole('button', { name: 'View trash' })).toBeTruthy();
+  });
+
   it('backing out of a bulk ask hands focus back to the button that asked', async () => {
     setup();
     await tick('About us');

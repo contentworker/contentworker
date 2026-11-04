@@ -313,6 +313,10 @@ export function EntriesList() {
     }, BULK_JOB_POLL_MS);
     return () => clearInterval(timer);
   }, [runningJob, client]);
+  // Asked in place, the list stays usable: clearing the ticks answers the question.
+  useEffect(() => {
+    if (picked.size === 0) setConfirmBulk(null);
+  }, [picked.size]);
   // Once it has finished: say so, reload the list, and keep what failed ticked, named from the
   // job's report. Once per finished job (polling stops, so the object no longer changes).
   const finishedJob = entryJob && entryJob.job.status !== 'running' ? entryJob : null;
@@ -838,10 +842,6 @@ export function EntriesList() {
       ) : null}
     </ul>
   );
-  // Asked in place, the list stays usable: clearing the ticks answers the question.
-  useEffect(() => {
-    if (picked.size === 0) setConfirmBulk(null);
-  }, [picked.size]);
   const runConfirmed = () => {
     const action = confirmBulk;
     setConfirmBulk(null);
