@@ -207,7 +207,9 @@ then only the new).
   each ring waits for the previous one to finish cleanly and calls `deploy.yml` once per
   deployment (`general` four at a time).
 
-`.github/workflows/deploy.yml`, per deployment:
+`.github/workflows/deploy.yml` checks out the commit and runs `scripts/deploy.sh <id>`, so the steps
+always come from the commit being shipped. Each step below is a titled group in the job's log, and a
+failure names the one it stopped at. Per deployment:
 
 1. Render the config and collect each app's secrets.
 2. **Record a point-in-time recovery bookmark** (the restore point for this deploy).

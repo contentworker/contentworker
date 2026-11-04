@@ -69,7 +69,7 @@ CI deploys every deployment from `main` in ring order (`staging` → `internal` 
   in `scripts/do-migrations.test.ts` in the same change; never edit, remove or reorder an existing
   tag. That test fails CI on any of those, and on `deleted_classes`, `renamed_classes` or
   `transferred_classes` unless allowlisted (`DESTRUCTIVE_ALLOWED`) after the data is planned with
-  the user. The engine can't roll back past a DO migration, so `deploy.yml` then leaves every
+  the user. The engine can't roll back past a DO migration, so `scripts/deploy.sh` then leaves every
   Worker on the new version: fix forward.
 - **Workflow names** are unique per account, which is why they carry the suffix.
 - **Jurisdiction** is fixed at creation for D1, R2 and Durable Objects; never change it for a
@@ -81,8 +81,8 @@ Secrets aren't in `wrangler.jsonc` or the registry. CI writes them per Worker fr
 deployment's GitHub environment (`node scripts/fleet.ts secrets <app> <out>`, the `SECRETS` map in
 `scripts/fleet.ts`): `PRINCIPAL_KEY`, `DATA_KEY`, `TOKEN_PEPPER`, `MEDIA_SIGNING_SECRET`,
 `PASSWORD_PEPPER`, `SETUP_TOKEN`, the `*_PREVIOUS` keys during a rotation, and the optional ones. A
-new secret means: add it to `SECRETS` for each app that reads it, to `deploy.yml`'s "Collect
-secrets" env, to the environment (the user does, or `provision.sh` for generated ones), and to
+new secret means: add it to `SECRETS` for each app that reads it, to the env of `deploy.yml`'s
+Deploy step, to the environment (the user does, or `provision.sh` for generated ones), and to
 `docs/configuration.md`. Never commit a secret or write one outside `.secrets/` (gitignored).
 
 ## Never

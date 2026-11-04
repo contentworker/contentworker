@@ -9,7 +9,8 @@ allowed-tools: Bash(gh run list *) Bash(gh run view *) Bash(gh pr checks *) Bash
 
 Workflows: `.github/workflows/ci.yml` (on every push and PR: `verify` and `devices`; on `main`
 also `plan`, then the rings `staging` → `internal` → `canary` → `general`, each calling
-`deploy.yml` once per deployment). `deploy.yml` renders the config, collects secrets, records a D1
+`deploy.yml` once per deployment). `deploy.yml` runs `scripts/deploy.sh`, whose log groups carry the
+`deploy:` names below and whose last error says "failed at: <group>". It renders the config, collects secrets, records a D1
 bookmark, migrates D1, deploys engine → api → delivery → web, smoke-tests, and rolls back (engine
 first) on a failure; then the docs for the deployment with `"docs": true`. `docs/deployment.md`
 describes them.

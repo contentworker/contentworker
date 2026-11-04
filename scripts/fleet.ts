@@ -554,6 +554,7 @@ export function shellVars(d: Deployment): Record<string, string> {
     JURISDICTION: d.jurisdiction ?? '',
     AI_GATEWAY_LOGS: String(d.aiGatewayLogs),
     SUFFIX: d.suffix,
+    DOCS: String(d.docs),
   };
 }
 
