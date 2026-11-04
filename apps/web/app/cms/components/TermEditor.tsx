@@ -5,7 +5,12 @@ import { Label } from '@contentworker/ui/label';
 import { Sheet, SheetDescription, SheetHeader, SheetTitle } from '@contentworker/ui/sheet';
 import { Textarea } from '@contentworker/ui/textarea';
 import { useEffect, useId, useState } from 'react';
-import { DiscardAsk, type DiscardGuard, useDiscardGuard } from '~/cms/components/discard-guard';
+import {
+  DiscardAsk,
+  type DiscardGuard,
+  GuardCancel,
+  useDiscardGuard,
+} from '~/cms/components/discard-guard';
 import { ResponsiveSheetContent } from '~/cms/components/responsive-sheet';
 import type { TermFields } from '~/cms/lib/management';
 
@@ -65,11 +70,21 @@ export function TermEditor({
   locales: readonly string[];
   defaultLocale: string;
   busy: boolean;
-  onSave: (changes: TermChanges) => void;
+  onSave: (changes: TermChanges) => Promise<void> | void;
   onOpenChange: (open: boolean) => void;
 }) {
   const [dirty, setDirty] = useState(false);
-  const guard = useDiscardGuard({ open: term !== null, dirty, busy, onOpenChange });
+  // Its own write, not `busy`, which any action on the page sets.
+  const [saving, setSaving] = useState(false);
+  const guard = useDiscardGuard({ open: term !== null, dirty, saving, onOpenChange });
+  const save = async (changes: TermChanges) => {
+    setSaving(true);
+    try {
+      await onSave(changes);
+    } finally {
+      setSaving(false);
+    }
+  };
   return (
     <Sheet open={term !== null} onOpenChange={guard.onOpenChange}>
       <ResponsiveSheetContent className="gap-0 overflow-y-auto sm:max-w-md">
@@ -88,7 +103,7 @@ export function TermEditor({
             locales={locales}
             defaultLocale={defaultLocale}
             busy={busy}
-            onSave={onSave}
+            onSave={(changes) => void save(changes)}
             guard={guard}
             onDirty={setDirty}
           />
@@ -208,9 +223,7 @@ function TermForm({
       ) : null}
       <div className="flex justify-end gap-2">
         <DiscardAsk guard={guard} message={`Discard your changes to “${term.label}”?`}>
-          <Button type="button" variant="outline" onClick={() => guard.onOpenChange(false)}>
-            Cancel
-          </Button>
+          <GuardCancel guard={guard} />
           <Button type="submit" disabled={!changed || !label.trim() || busy}>
             Save {kind}
           </Button>

@@ -78,6 +78,7 @@ export function AssetDetailSheet(props: {
   const [tab, setTab] = useState<SheetTab>('details');
   const [sharing, setSharing] = useState(false);
   const [rightsDirty, setRightsDirty] = useState(false);
+  const [rightsSaving, setRightsSaving] = useState(false);
   // The original a possible duplicate points at, waiting on "discard your edits?".
   const [confirmOpen, setConfirmOpen] = useState<string | null>(null);
   const imgRef = useRef<HTMLButtonElement>(null);
@@ -120,7 +121,7 @@ export function AssetDetailSheet(props: {
   const guard = useDiscardGuard({
     open: props.open,
     dirty: dirty || rightsDirty,
-    busy,
+    saving: busy || rightsSaving,
     onOpenChange: props.onOpenChange,
   });
 
@@ -150,7 +151,7 @@ export function AssetDetailSheet(props: {
 
   // Opening the original replaces this form: with edits in it, that is asked in place first.
   const openOriginal = (id: string) => {
-    if (dirty) setConfirmOpen(id);
+    if (dirty || rightsDirty) setConfirmOpen(id);
     else props.onOpenAsset?.(id);
   };
 
@@ -259,7 +260,10 @@ export function AssetDetailSheet(props: {
       });
       toast.success('Metadata saved');
       props.onSaved();
-      props.onOpenChange(false);
+      setBase({ altText, tagIds: [...tagIds], focal });
+      // Rights have their own Save: this one's success doesn't speak for them.
+      if (rightsDirty) guard.onOpenChange(false);
+      else props.onOpenChange(false);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
     } finally {
@@ -311,7 +315,7 @@ export function AssetDetailSheet(props: {
               {confirmOpen && (
                 <InlineConfirm
                   message="Open the original and discard your changes?"
-                  note="Alt text, tags and the focal point here are not saved."
+                  note="Alt text, tags, the focal point and rights here are not saved."
                   cancelLabel="Keep editing"
                   onCancel={() => setConfirmOpen(null)}
                 >
@@ -659,6 +663,7 @@ export function AssetDetailSheet(props: {
                 asset={asset}
                 onAssetChange={props.onAssetChange}
                 onDirty={setRightsDirty}
+                onSaving={setRightsSaving}
               />
             </TabsContent>
           </Tabs>
@@ -667,7 +672,11 @@ export function AssetDetailSheet(props: {
         {/* Save metadata saves the Details tab; the other tabs act at once or have their own. */}
         {(tab === 'details' || guard.asking) && (
           <SheetFooter>
-            <DiscardAsk guard={guard} message={`Discard your changes to ${asset.file.fileName}?`}>
+            <DiscardAsk
+              guard={guard}
+              message={`Discard your changes to ${asset.file.fileName}?`}
+              {...(dirty ? {} : { note: 'The rights here are not saved.' })}
+            >
               <Button type="button" onClick={save} disabled={busy}>
                 {busy ? 'Saving…' : 'Save metadata'}
               </Button>

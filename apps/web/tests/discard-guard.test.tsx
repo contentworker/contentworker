@@ -1,11 +1,13 @@
 // A form with work in it asks before it goes: a press outside it, Escape, the close button and
 // Cancel all reach the same question, in place of the form's buttons. An untouched form just closes.
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { ContentTypeDialog } from '~/cms/components/ContentTypeDialog';
 import { ImportRedirectsDialog } from '~/cms/components/Redirects';
+import { TermEditor } from '~/cms/components/TermEditor';
 import type { ManagementClient } from '~/cms/lib/management';
+import { CreateReleaseDialog } from '~/cms/routes/Releases';
 
 function NewContentType({ onClosed }: { onClosed: () => void }) {
   const [open, setOpen] = useState(true);
@@ -139,13 +141,169 @@ describe('discard guard', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Create content type' }));
     await screen.findByRole('button', { name: 'Saving…' });
 
+    // Cancel can't be pressed, and it says why rather than doing nothing.
+    expect(screen.getByRole('button', { name: 'Cancel' }).hasAttribute('disabled')).toBe(true);
+    expect(screen.queryByText(/Still saving/)).toBeNull();
+
     pressEscape();
     pressOutside();
 
     expect(question()).toBeNull();
     expect(onOpenChange).not.toHaveBeenCalled();
+    expect(screen.getByRole('status').textContent).toBe(
+      'Still saving. This closes when it’s done.',
+    );
     finish();
     await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+  });
+
+  it('asks again, and offers Cancel, once a refused save lets go', async () => {
+    let refuse: (e: Error) => void = () => {};
+    const onSave = () =>
+      new Promise<void>((_, reject) => {
+        refuse = reject;
+      });
+    render(<ContentTypeDialog open onOpenChange={() => {}} onSave={onSave} />);
+    typeName('Blog Post');
+    fireEvent.click(screen.getByRole('button', { name: 'Create content type' }));
+    await screen.findByRole('button', { name: 'Saving…' });
+    pressEscape();
+    await screen.findByRole('status');
+
+    refuse(new Error('Refused'));
+
+    await screen.findByRole('alert');
+    expect(screen.queryByText(/Still saving/)).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(await screen.findByRole('alertdialog', { name: /Discard this/ })).toBeTruthy();
+  });
+
+  it('stays closable during a dry run, a read, and drops its answer', async () => {
+    let signal: AbortSignal | undefined;
+    const importRedirects = vi.fn((_input: unknown, s?: AbortSignal) => {
+      signal = s;
+      return new Promise(() => {});
+    });
+    const onOpenChange = vi.fn();
+    const view = render(
+      <ImportRedirectsDialog
+        open
+        onOpenChange={onOpenChange}
+        client={{ importRedirects } as unknown as ManagementClient}
+        onImported={async () => {}}
+      />,
+    );
+    await screen.findByRole('dialog');
+    fireEvent.change(screen.getByLabelText('CSV'), { target: { value: '/old,/new,301' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Check' }));
+    await screen.findByRole('button', { name: 'Checking…' });
+
+    expect(screen.getByRole('button', { name: 'Cancel' }).hasAttribute('disabled')).toBe(false);
+    pressOutside();
+    fireEvent.click(await screen.findByRole('button', { name: 'Discard' }));
+
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+    // The page mounts it only while open.
+    view.unmount();
+    expect(signal?.aborted).toBe(true);
+  });
+
+  it('holds during the import itself, a write', async () => {
+    const importRedirects = vi
+      .fn()
+      .mockResolvedValueOnce({ created: 1, updated: 0, unchanged: 0, chains: [] })
+      .mockReturnValueOnce(new Promise(() => {}));
+    render(
+      <ImportRedirectsDialog
+        open
+        onOpenChange={() => {}}
+        client={{ importRedirects } as unknown as ManagementClient}
+        onImported={async () => {}}
+      />,
+    );
+    await screen.findByRole('dialog');
+    fireEvent.change(screen.getByLabelText('CSV'), { target: { value: '/old,/new,301' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Check' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Import' }));
+    await screen.findByRole('button', { name: 'Importing…' });
+
+    expect(screen.getByRole('button', { name: 'Cancel' }).hasAttribute('disabled')).toBe(true);
+  });
+
+  it('a new release can be left while something else on the page works', async () => {
+    const onOpenChange = vi.fn();
+    render(<CreateReleaseDialog open busy onOpenChange={onOpenChange} onCreate={async () => {}} />);
+    await screen.findByRole('dialog');
+    pressEscape();
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it('a new release waits for its own save', async () => {
+    let finish: () => void = () => {};
+    const onCreate = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const onOpenChange = vi.fn();
+    render(
+      <CreateReleaseDialog open busy={false} onOpenChange={onOpenChange} onCreate={onCreate} />,
+    );
+    fireEvent.change(await screen.findByLabelText('Title'), { target: { value: 'Spring' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create' }));
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Cancel' }).hasAttribute('disabled')).toBe(true),
+    );
+    pressEscape();
+    expect(onOpenChange).not.toHaveBeenCalled();
+    await screen.findByRole('status');
+    await act(async () => finish());
+    expect(screen.getByRole('button', { name: 'Cancel' }).hasAttribute('disabled')).toBe(false);
+  });
+
+  it('a term waits for its own save, not for the page being busy', async () => {
+    let finish: () => void = () => {};
+    const onSave = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const onOpenChange = vi.fn();
+    const term = {
+      label: 'News',
+      slug: 'news',
+      description: null,
+      labels: {},
+      usage: { count: 0, byContentType: {} },
+    };
+    const editor = (busy: boolean) => (
+      <TermEditor
+        kind="tag"
+        term={term}
+        locales={['en-US']}
+        defaultLocale="en-US"
+        busy={busy}
+        onSave={onSave}
+        onOpenChange={onOpenChange}
+      />
+    );
+    const view = render(editor(true));
+    await screen.findByRole('dialog');
+    pressEscape();
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+    onOpenChange.mockClear();
+
+    view.rerender(editor(false));
+    fireEvent.change(screen.getByLabelText(/^Name/), { target: { value: 'Newsroom' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save tag' }));
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Cancel' }).hasAttribute('disabled')).toBe(true),
+    );
+    pressEscape();
+    expect(onOpenChange).not.toHaveBeenCalled();
+    await act(async () => finish());
   });
 
   it('holds a pasted redirect import', async () => {

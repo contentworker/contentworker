@@ -2122,11 +2122,11 @@ export function createManagementClient(
      * screen has a manifest to show. Install with `expectedChecksum` set to
      * what this returned.
      */
-    inspectPluginPackage(input: {
-      packageUrl: string;
-      expectedChecksum?: string;
-    }): Promise<InspectedPluginPackage> {
-      return req('POST', `${spaceBase}/plugins/from-url/inspect`, input);
+    inspectPluginPackage(
+      input: { packageUrl: string; expectedChecksum?: string },
+      signal?: AbortSignal,
+    ): Promise<InspectedPluginPackage> {
+      return req('POST', `${spaceBase}/plugins/from-url/inspect`, input, signal);
     },
     installPluginFromUrl(input: {
       packageUrl: string;
@@ -2547,12 +2547,11 @@ export function createManagementClient(
       return req('DELETE', `${mgmt}/redirects/${encodeURIComponent(id)}`);
     },
     /** All or nothing; `dryRun` reports what it would do. */
-    importRedirects(input: {
-      format: 'csv' | 'json';
-      data: string;
-      dryRun?: boolean;
-    }): Promise<RedirectImportReport> {
-      return req('POST', `${mgmt}/redirects/import`, input);
+    importRedirects(
+      input: { format: 'csv' | 'json'; data: string; dryRun?: boolean },
+      signal?: AbortSignal,
+    ): Promise<RedirectImportReport> {
+      return req('POST', `${mgmt}/redirects/import`, input, signal);
     },
     analyzeRedirects(): Promise<RedirectSetReport & { count: number; max: number }> {
       return req('GET', `${mgmt}/redirects/analysis`);

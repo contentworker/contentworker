@@ -52,7 +52,8 @@ export function PluginSettingsSheet(props: {
   const [view, setView] = useState<PluginSettingsView>();
   const [loadError, setLoadError] = useState<unknown>();
   const [dirty, setDirty] = useState(false);
-  const guard = useDiscardGuard({ dirty, onOpenChange: props.onOpenChange });
+  const [saving, setSaving] = useState(false);
+  const guard = useDiscardGuard({ dirty, saving, onOpenChange: props.onOpenChange });
 
   const load = useCallback(async () => {
     setLoadError(undefined);
@@ -119,6 +120,7 @@ export function PluginSettingsSheet(props: {
               view={view}
               guard={guard}
               onDirty={setDirty}
+              onSaving={setSaving}
               onSaved={(next) => {
                 setView(next);
                 props.onOpenChange(false);
@@ -138,6 +140,7 @@ function SettingsForm(props: {
   view: PluginSettingsView;
   guard: DiscardGuard;
   onDirty: (dirty: boolean) => void;
+  onSaving: (saving: boolean) => void;
   onSaved: (view: PluginSettingsView) => void;
   onReload: () => Promise<void>;
 }) {
@@ -151,11 +154,15 @@ function SettingsForm(props: {
 
   const patch = settingsPatch(view, draft);
   const dirty = Object.keys(patch).length > 0;
-  const { onDirty } = props;
+  const { onDirty, onSaving } = props;
   useEffect(() => {
     onDirty(dirty);
     return () => onDirty(false);
   }, [dirty, onDirty]);
+  useEffect(() => {
+    onSaving(busy);
+    return () => onSaving(false);
+  }, [busy, onSaving]);
 
   const set = (key: string, value: SettingDraft) => {
     setDraft((d) => ({ ...d, [key]: value }));

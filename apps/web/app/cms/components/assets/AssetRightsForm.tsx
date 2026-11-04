@@ -57,6 +57,8 @@ export function AssetRightsForm(props: {
   onAssetChange?: (asset: Asset) => void;
   /** Says whether the form holds rights not yet saved, so the sheet can ask before it closes. */
   onDirty?: (dirty: boolean) => void;
+  /** Says when a save is under way, so the sheet holds rather than offer to discard it. */
+  onSaving?: (saving: boolean) => void;
 }) {
   const { asset } = props;
   const { client } = useClient();
@@ -72,6 +74,11 @@ export function AssetRightsForm(props: {
   const [issues, setIssues] = useState<Record<string, string>>({});
   const [refusal, setRefusal] = useState<{ forbidden: boolean; message: string } | null>(null);
   const [busy, setBusy] = useState(false);
+  const { onSaving } = props;
+  useEffect(() => {
+    onSaving?.(busy);
+    return () => onSaving?.(false);
+  }, [busy, onSaving]);
   // An expiry already past on a published asset takes it out of Delivery at once: asked first.
   const [confirmExpire, setConfirmExpire] = useState(false);
   const published = asset.status === 'published';

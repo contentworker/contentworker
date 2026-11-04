@@ -35,7 +35,7 @@ import {
 import { Puzzle } from 'lucide-react';
 import { Fragment, useState } from 'react';
 import { Confirmation } from '~/cms/components/ai/Confirmation';
-import { DiscardAsk, useDiscardGuard } from '~/cms/components/discard-guard';
+import { DiscardAsk, GuardCancel, useDiscardGuard } from '~/cms/components/discard-guard';
 import { PluginSettingsSheet } from '~/cms/components/PluginSettingsSheet';
 import { EmptyState } from '~/cms/components/page';
 import { ToneBadge } from '~/cms/components/status';
@@ -50,6 +50,7 @@ import {
 } from '../lib/management';
 import { useInvalidate, useScopedQuery } from '../lib/queries';
 import { useToast } from '../lib/toast';
+import { useStoppable } from '../lib/use-stoppable';
 
 const QUERY_KEY = ['plugins'];
 
@@ -167,7 +168,7 @@ export function Plugins(props: { client: ManagementClient }) {
           await invalidate(QUERY_KEY);
           toast.success(`${input.manifest.name} installed — enable it when you are ready`);
         }}
-        onInspect={(packageUrl) => client.inspectPluginPackage({ packageUrl })}
+        onInspect={(packageUrl, signal) => client.inspectPluginPackage({ packageUrl }, signal)}
         onInstallFromUrl={async ({ name, ...input }) => {
           await client.installPluginFromUrl(input);
           await invalidate(QUERY_KEY);
@@ -447,7 +448,7 @@ function InstallPluginDialog(props: {
     bundle: string;
     approvedCapabilities: string[];
   }) => Promise<void>;
-  onInspect: (packageUrl: string) => Promise<InspectedPluginPackage>;
+  onInspect: (packageUrl: string, signal: AbortSignal) => Promise<InspectedPluginPackage>;
   onInstallFromUrl: (input: {
     packageUrl: string;
     expectedChecksum: string;
@@ -462,6 +463,9 @@ function InstallPluginDialog(props: {
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
   const [packageUrl, setPackageUrl] = useState('');
+  // Fetching a package only reads: it stays closable, where installing holds the dialog.
+  const [inspecting, setInspecting] = useState(false);
+  const inspection = useStoppable();
   // What the server verified. Pinned on install, so a release swapped in
   // between the two calls is refused rather than installed under this approval.
   const [inspected, setInspected] = useState<InspectedPluginPackage>();
@@ -482,27 +486,34 @@ function InstallPluginDialog(props: {
   };
 
   const inspect = async () => {
-    setBusy(true);
+    const signal = inspection.start();
+    setInspecting(true);
     setError(undefined);
     try {
-      const found = await props.onInspect(packageUrl.trim());
+      const found = await props.onInspect(packageUrl.trim(), signal);
+      if (signal.aborted) return;
       setInspected(found);
       acceptManifest(found.manifest);
     } catch (err) {
+      if (signal.aborted) return;
       setInspected(undefined);
       setManifest(undefined);
       setError(err instanceof Error ? err.message : String(err));
     } finally {
-      setBusy(false);
+      if (!signal.aborted) setInspecting(false);
     }
   };
 
   const close = (open: boolean) => {
-    if (!open) reset();
+    if (!open) {
+      inspection.stop();
+      setInspecting(false);
+      reset();
+    }
     props.onOpenChange(open);
   };
   const guard = useDiscardGuard({
-    busy,
+    saving: busy,
     open: props.open,
     dirty: Boolean(manifest || bundle || packageUrl.trim()),
     onOpenChange: close,
@@ -607,10 +618,10 @@ function InstallPluginDialog(props: {
                 <Button
                   type="button"
                   variant="outline"
-                  disabled={busy || !packageUrl.trim()}
+                  disabled={inspecting || !packageUrl.trim()}
                   onClick={() => void inspect()}
                 >
-                  {busy ? 'Fetching…' : 'Fetch'}
+                  {inspecting ? 'Fetching…' : 'Fetch'}
                 </Button>
               </div>
               <p className="text-xs text-muted-foreground">
@@ -708,9 +719,7 @@ function InstallPluginDialog(props: {
 
           <DialogFooter>
             <DiscardAsk guard={guard} message="Discard this plugin install?">
-              <Button type="button" variant="outline" onClick={() => guard.onOpenChange(false)}>
-                Cancel
-              </Button>
+              <GuardCancel guard={guard} />
               <Button type="submit" disabled={busy || !ready}>
                 {busy ? 'Installing…' : 'Install disabled'}
               </Button>
@@ -749,7 +758,7 @@ function UpgradePluginDialog(props: {
   const [busy, setBusy] = useState(false);
 
   const guard = useDiscardGuard({
-    busy,
+    saving: busy,
     dirty: Boolean(manifest || bundle),
     onOpenChange: props.onOpenChange,
   });
@@ -862,9 +871,7 @@ function UpgradePluginDialog(props: {
 
           <DialogFooter>
             <DiscardAsk guard={guard} message="Discard this upgrade?">
-              <Button type="button" variant="outline" onClick={() => guard.onOpenChange(false)}>
-                Cancel
-              </Button>
+              <GuardCancel guard={guard} />
               <Button type="submit" disabled={busy || !manifest || !bundle}>
                 {busy ? 'Upgrading…' : widens ? 'Upgrade disabled' : 'Upgrade'}
               </Button>

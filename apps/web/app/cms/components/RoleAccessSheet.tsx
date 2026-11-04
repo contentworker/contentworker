@@ -6,7 +6,7 @@ import { Label } from '@contentworker/ui/label';
 import { NativeSelect, NativeSelectOption } from '@contentworker/ui/native-select';
 import { Sheet, SheetDescription, SheetHeader, SheetTitle } from '@contentworker/ui/sheet';
 import { useId, useState } from 'react';
-import { DiscardAsk, useDiscardGuard } from '~/cms/components/discard-guard';
+import { DiscardAsk, GuardCancel, useDiscardGuard } from '~/cms/components/discard-guard';
 import { ResponsiveSheetContent } from '~/cms/components/responsive-sheet';
 import { apiErrorMessage, type RoleSummary } from '../lib/management';
 import {
@@ -40,7 +40,7 @@ export function RoleAccessSheet(props: {
   const [error, setError] = useState<string | null>(null);
   const dirty = !sameGrants(grants, props.role.contentGrants);
   const guard = useDiscardGuard({
-    busy,
+    saving: busy,
     open: props.open,
     dirty,
     onOpenChange: props.onOpenChange,
@@ -180,9 +180,7 @@ export function RoleAccessSheet(props: {
               guard={guard}
               message={`Discard your changes to ${props.role.name}’s access?`}
             >
-              <Button type="button" variant="outline" onClick={() => guard.onOpenChange(false)}>
-                Cancel
-              </Button>
+              <GuardCancel guard={guard} />
               <Button type="submit" disabled={busy || !dirty}>
                 Save access
               </Button>

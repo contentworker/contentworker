@@ -396,7 +396,7 @@ function ConceptsTab() {
         locales={locales}
         defaultLocale={defaultLocale}
         busy={busy}
-        onSave={(changes) => editing && void saveConcept(editing, changes)}
+        onSave={(changes) => (editing ? saveConcept(editing, changes) : undefined)}
         onOpenChange={(open) => !open && setEditing(null)}
       />
     </div>
@@ -537,7 +537,7 @@ function TagsTab() {
         locales={locales}
         defaultLocale={defaultLocale}
         busy={busy}
-        onSave={(changes) => editing && void save(editing, changes)}
+        onSave={(changes) => (editing ? save(editing, changes) : undefined)}
         onOpenChange={(o) => !o && setEditing(null)}
       />
     </Card>

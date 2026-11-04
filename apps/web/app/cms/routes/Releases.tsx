@@ -40,7 +40,7 @@ import { Link } from 'react-router';
 import { Ago } from '~/cms/components/ago';
 import { type EntryRef, entryPath, entryRef } from '~/cms/components/dashboard/entry-titles';
 import { useEntriesById } from '~/cms/components/dashboard/use-entries-by-id';
-import { DiscardAsk, useDiscardGuard } from '~/cms/components/discard-guard';
+import { DiscardAsk, GuardCancel, useDiscardGuard } from '~/cms/components/discard-guard';
 import { InlineConfirm } from '~/cms/components/InlineConfirm';
 import { EmptyState, PageHeader } from '~/cms/components/page';
 import { ReleasePublishConfirm } from '~/cms/components/ReleasePublishConfirm';
@@ -378,20 +378,31 @@ export function Releases() {
   );
 }
 
-function CreateReleaseDialog(props: {
+export function CreateReleaseDialog(props: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onCreate: (input: { title: string; description?: string }) => void;
+  onCreate: (input: { title: string; description?: string }) => Promise<void>;
   busy: boolean;
 }) {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
+  // Its own write, not `busy`, which any action on the page sets.
+  const [saving, setSaving] = useState(false);
   const guard = useDiscardGuard({
-    busy: props.busy,
+    saving,
     open: props.open,
     dirty: title.trim() !== '' || description.trim() !== '',
     onOpenChange: props.onOpenChange,
   });
+
+  const create = async () => {
+    setSaving(true);
+    try {
+      await props.onCreate({ title: title.trim(), description: description.trim() || undefined });
+    } finally {
+      setSaving(false);
+    }
+  };
 
   // Reset fields each time the dialog opens.
   useEffect(() => {
@@ -430,18 +441,11 @@ function CreateReleaseDialog(props: {
         </div>
         <DialogFooter>
           <DiscardAsk guard={guard} message="Discard this release?">
-            <Button type="button" variant="outline" onClick={() => guard.onOpenChange(false)}>
-              Cancel
-            </Button>
+            <GuardCancel guard={guard} />
             <Button
               type="button"
               disabled={!title.trim() || props.busy}
-              onClick={() =>
-                props.onCreate({
-                  title: title.trim(),
-                  description: description.trim() || undefined,
-                })
-              }
+              onClick={() => void create()}
             >
               Create
             </Button>

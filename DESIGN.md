@@ -849,8 +849,9 @@ for code and data blocks only.
     beside the field, and a notice that blocks the task (a refusal with a way on) is an Alert.
   - **Leaving:** a form with work in it never goes quietly (`cms/components/discard-guard.tsx`).
     Escape, a press outside, the close button and Cancel all ask in place of its buttons ("Discard
-    this redirect?", Keep editing focused, then a destructive Discard); saving doesn't ask, a save
-    under way holds the form until it settles, and an untouched form just closes. A form of a line
+    this redirect?", Keep editing focused, then a destructive Discard); saving doesn't ask, and an
+    untouched form just closes. A save under way holds the form: Cancel waits, and a try at leaving
+    says "Still saving". Only a save holds it; a read (Check, Fetch) stays closable. A form of a line
     or two (a view's name, an invitation, a clone's name) isn't guarded, and New space and New
     environment keep what was typed when they close. Dialogs that talk to a model keep their work instead: the prompt
     and a draft under review stay for when they open again, and only Discard or Apply clear them.

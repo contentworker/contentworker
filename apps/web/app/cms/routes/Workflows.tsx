@@ -23,7 +23,12 @@ import { Search, Trash2, Workflow } from 'lucide-react';
 import { useEffect, useId, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router';
 import { Ago } from '~/cms/components/ago';
-import { DiscardAsk, type DiscardGuard, useDiscardGuard } from '~/cms/components/discard-guard';
+import {
+  DiscardAsk,
+  type DiscardGuard,
+  GuardCancel,
+  useDiscardGuard,
+} from '~/cms/components/discard-guard';
 import { FormSheet } from '~/cms/components/form-sheet';
 import { InlineConfirm } from '~/cms/components/InlineConfirm';
 import { Empty, PageHeader, Section } from '~/cms/components/page';
@@ -69,9 +74,11 @@ export function Workflows() {
   const navigate = useNavigate();
   const [sheetOpen, setSheetOpen] = useState(false);
   const [formDirty, setFormDirty] = useState(false);
+  const [formSaving, setFormSaving] = useState(false);
   const guard = useDiscardGuard({
     open: sheetOpen,
     dirty: formDirty,
+    saving: formSaving,
     onOpenChange: setSheetOpen,
   });
   const [copilotOpen, setCopilotOpen] = useState(false);
@@ -105,6 +112,7 @@ export function Workflows() {
               <NewWorkflowForm
                 guard={guard}
                 onDirty={setFormDirty}
+                onSaving={setFormSaving}
                 onCreated={async (id) => {
                   setSheetOpen(false);
                   await invalidate(['workflows']);
@@ -216,10 +224,12 @@ function NewWorkflowForm({
   onCreated,
   guard,
   onDirty,
+  onSaving,
 }: {
   onCreated: (id: string) => Promise<void>;
   guard: DiscardGuard;
   onDirty: (dirty: boolean) => void;
+  onSaving: (saving: boolean) => void;
 }) {
   const { client } = useClient();
   const [name, setName] = useState('');
@@ -238,6 +248,10 @@ function NewWorkflowForm({
     onDirty(dirty);
     return () => onDirty(false);
   }, [dirty, onDirty]);
+  useEffect(() => {
+    onSaving(busy);
+    return () => onSaving(false);
+  }, [busy, onSaving]);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -331,9 +345,7 @@ function NewWorkflowForm({
         </FieldDescription>
         <div className="flex justify-end gap-2">
           <DiscardAsk guard={guard} message="Discard this workflow?">
-            <Button type="button" variant="outline" onClick={() => guard.onOpenChange(false)}>
-              Cancel
-            </Button>
+            <GuardCancel guard={guard} />
             <Button type="submit" disabled={busy}>
               {busy ? 'Creating…' : 'Create workflow'}
             </Button>

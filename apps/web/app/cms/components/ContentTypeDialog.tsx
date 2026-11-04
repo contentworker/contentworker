@@ -48,7 +48,7 @@ import {
 import { Textarea } from '@contentworker/ui/textarea';
 import { Plus, Trash2 } from 'lucide-react';
 import { useState } from 'react';
-import { DiscardAsk, useDiscardGuard } from '~/cms/components/discard-guard';
+import { DiscardAsk, GuardCancel, useDiscardGuard } from '~/cms/components/discard-guard';
 import { toApiId } from '../lib/api-id';
 import { CONTENT_TYPE_ICONS, contentTypeIcon } from '../lib/content-type-icons';
 import {
@@ -585,7 +585,7 @@ export function ContentTypeDialog(props: {
   });
   const [opened] = useState(form);
   const guard = useDiscardGuard({
-    busy,
+    saving: busy,
     open: props.open,
     dirty: form !== opened,
     onOpenChange: props.onOpenChange,
@@ -1144,9 +1144,7 @@ export function ContentTypeDialog(props: {
                 editing ? `Discard your changes to ${seed.name}?` : 'Discard this content type?'
               }
             >
-              <Button type="button" variant="outline" onClick={() => guard.onOpenChange(false)}>
-                Cancel
-              </Button>
+              <GuardCancel guard={guard} />
               <Button type="submit" disabled={busy}>
                 {busy ? 'Saving…' : editing ? 'Save changes' : 'Create content type'}
               </Button>

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { PluginSettingsSheet } from '~/cms/components/PluginSettingsSheet';
 import { ApiError, type ManagementClient, type PluginSettingsView } from '~/cms/lib/management';
@@ -70,6 +70,32 @@ const open = (client: ManagementClient, onOpenChange = vi.fn()) =>
       <PluginSettingsSheet client={client} plugin={PLUGIN} onOpenChange={onOpenChange} />
     </ToastProvider>,
   );
+
+describe('leaving during a save', () => {
+  it('holds rather than offer to discard what has been sent', async () => {
+    const client = fakeClient(view());
+    let finish: (v: PluginSettingsView) => void = () => {};
+    client.setPluginSettings.mockReturnValueOnce(
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+    );
+    const onOpenChange = vi.fn();
+    open(client, onOpenChange);
+    const sheet = await screen.findByRole('dialog');
+    const [input] = await within(sheet).findAllByRole('textbox');
+    fireEvent.change(input as HTMLElement, { target: { value: 'changed' } });
+    fireEvent.click(within(sheet).getByRole('button', { name: 'Save settings' }));
+    await within(sheet).findByRole('button', { name: 'Saving…' });
+
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(onOpenChange).not.toHaveBeenCalled();
+    expect(within(sheet).getByRole('status').textContent).toContain('Still saving');
+    await act(async () => finish(view({ version: 2 })));
+  });
+});
 
 describe('settings patch', () => {
   it('sends nothing for an untouched form, and never a secret it was not given', () => {

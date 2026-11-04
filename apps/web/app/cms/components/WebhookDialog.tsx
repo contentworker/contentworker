@@ -12,7 +12,7 @@ import {
 import { Input } from '@contentworker/ui/input';
 import { Label } from '@contentworker/ui/label';
 import { useState } from 'react';
-import { DiscardAsk, useDiscardGuard } from '~/cms/components/discard-guard';
+import { DiscardAsk, GuardCancel, useDiscardGuard } from '~/cms/components/discard-guard';
 import { WEBHOOK_TOPICS, type WebhookSummary, type WebhookTopic } from '../lib/management';
 
 /** Edit a webhook's endpoint, topics, secret, active state and which environments it hears. */
@@ -37,7 +37,7 @@ export function WebhookDialog(props: {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const guard = useDiscardGuard({
-    busy,
+    saving: busy,
     open: props.open,
     dirty:
       url !== props.webhook.url ||
@@ -139,9 +139,7 @@ export function WebhookDialog(props: {
 
           <DialogFooter>
             <DiscardAsk guard={guard} message="Discard your changes to this webhook?">
-              <Button type="button" variant="outline" onClick={() => guard.onOpenChange(false)}>
-                Cancel
-              </Button>
+              <GuardCancel guard={guard} />
               <Button type="submit" disabled={busy}>
                 {busy ? 'Saving…' : 'Save changes'}
               </Button>

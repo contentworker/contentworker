@@ -39,7 +39,7 @@ import {
   Plus,
 } from 'lucide-react';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
-import { DiscardAsk, useDiscardGuard } from '~/cms/components/discard-guard';
+import { DiscardAsk, GuardCancel, useDiscardGuard } from '~/cms/components/discard-guard';
 import { EntityPicker } from '~/cms/components/EntityPicker';
 import { ConfirmButton } from '~/cms/components/InlineConfirm';
 import { EmptyState, Section } from '~/cms/components/page';
@@ -652,7 +652,7 @@ function MenuDialog(props: {
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
   const guard = useDiscardGuard({
-    busy,
+    saving: busy,
     dirty:
       name !== (m?.name ?? '') ||
       handle !== (m?.handle ?? '') ||
@@ -747,9 +747,7 @@ function MenuDialog(props: {
           {error && <DialogError>{error}</DialogError>}
           <DialogFooter>
             <DiscardAsk guard={guard} message="Discard this menu?">
-              <Button type="button" variant="outline" onClick={() => guard.onOpenChange(false)}>
-                Cancel
-              </Button>
+              <GuardCancel guard={guard} />
               <Button type="submit" disabled={busy || !name.trim() || !handle.trim()}>
                 {busy ? 'Saving…' : m ? 'Save' : 'Create menu'}
               </Button>
@@ -810,7 +808,7 @@ export function MenuItemDialog(props: {
   };
   const chosen = linkOf();
   const guard = useDiscardGuard({
-    busy,
+    saving: busy,
     dirty:
       JSON.stringify(chosen) !== JSON.stringify(link ?? null) ||
       label !== (item?.label ?? '') ||
@@ -964,9 +962,7 @@ export function MenuItemDialog(props: {
           {error && <DialogError>{error}</DialogError>}
           <DialogFooter>
             <DiscardAsk guard={guard} message="Discard this menu item?">
-              <Button type="button" variant="outline" onClick={() => guard.onOpenChange(false)}>
-                Cancel
-              </Button>
+              <GuardCancel guard={guard} />
               <Button type="submit" disabled={busy || !chosen || (kind === 'url' && !label.trim())}>
                 {busy ? 'Saving…' : item ? 'Save item' : 'Add item'}
               </Button>
