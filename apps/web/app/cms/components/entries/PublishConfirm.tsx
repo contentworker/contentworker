@@ -16,6 +16,7 @@ import {
   EntryDiff,
   FIRST_PUBLISH,
   fieldsGoLive,
+  HiddenChanges,
   hiddenGoLive,
   NO_CHANGES,
   reviewFields,
@@ -102,7 +103,10 @@ export function PublishConfirm(props: PublishConfirmProps) {
                 {...(changes ? { changes, hiddenChanges } : {})}
               />
             ) : changes ? (
-              <ChangedFields fields={reviewFields(changes, '')} />
+              <div className="space-y-3">
+                <ChangedFields fields={reviewFields(changes, '')} />
+                {hiddenChanges > 0 ? <HiddenChanges count={hiddenChanges} alone={false} /> : null}
+              </div>
             ) : null}
           </section>
         ) : null}

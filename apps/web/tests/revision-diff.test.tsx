@@ -153,6 +153,22 @@ describe('RevisionDiff', () => {
       />,
     );
 
+  it('never says no field changed while one the person can’t read did', () => {
+    const none = { ...diffOf(1, 3, v1, v1), hiddenChanges: 1 };
+    const view = render(<RevisionDiff diff={none} fromLabel="v1" toLabel="v3" />);
+    expect(screen.getByText(/1 field you can’t read changed/)).toBeTruthy();
+    expect(screen.queryByText(/No field changes/)).toBeNull();
+    view.unmount();
+    render(
+      <RevisionDiff
+        diff={{ ...diffOf(1, 3, v1, v3), hiddenChanges: 2 }}
+        fromLabel="v1"
+        toLabel="v3"
+      />,
+    );
+    expect(screen.getByText(/4 fields changed · 2 fields you can’t read changed/)).toBeTruthy();
+  });
+
   it('names each changed field as the content type does and counts the rest', () => {
     renderDiff();
     const region = screen.getByRole('region', { name: 'Changes from v1 to v3 (current draft)' });

@@ -285,13 +285,15 @@ function publishTarget(
   conn: Connection,
   direct: boolean,
   turn: TurnScope | undefined,
-): ReviewTarget | 'elsewhere' | null {
+): ReviewTarget | 'elsewhere' | 'unknown' | null {
   if (getToolName(part) !== 'entries_publish') return null;
   const input = (part.input ?? {}) as Record<string, unknown>;
   const { id, expectedVersion } = input;
   if (typeof id !== 'string') return null;
   const space = direct ? input.space : turn?.spaceId;
   const environment = direct ? input.environment : turn?.environmentId;
+  // Nothing says where it runs (no scope stored, or a continuation from elsewhere left none).
+  if (typeof space !== 'string' || typeof environment !== 'string') return 'unknown';
   // A card outlives a switch of space or environment, and an id can mean a different entry there.
   if (space !== conn.space || environment !== conn.environment) return 'elsewhere';
   return {
@@ -305,11 +307,20 @@ function publishTarget(
  * What a publish card will put live, from the system's own diff of the entry the call names. Nothing
  * here comes from the model: its text never reaches this card, and a read that fails says so.
  */
-function PublishReview({ review, elsewhere }: { review: EntryReview; elsewhere: boolean }) {
+function PublishReview({
+  review,
+  place,
+}: {
+  review: EntryReview;
+  /** Why the review wasn't read: the card runs somewhere else, or nothing says where. */
+  place?: 'elsewhere' | 'unknown' | undefined;
+}) {
   const [open, setOpen] = useState(false);
   const id = useId();
   const note = (text: string) => <p className="text-muted-foreground text-xs">{text}</p>;
-  if (elsewhere)
+  if (place === 'unknown')
+    return note('Coworker can’t tell where this runs, so it can’t show what goes live.');
+  if (place === 'elsewhere')
     return note(
       'This was asked in another space or environment. Switch back to see what goes live.',
     );
@@ -381,8 +392,12 @@ export function ActionCard({
     () => (asking ? publishTarget(part, conn, direct, turn) : null),
     [asking, part, conn, direct, turn],
   );
-  const elsewhere = target === 'elsewhere';
-  const review = useEntryReview(client, target === 'elsewhere' ? null : target, conn.locale);
+  const place = target === 'elsewhere' || target === 'unknown' ? target : undefined;
+  const review = useEntryReview(
+    client,
+    target === 'elsewhere' || target === 'unknown' ? null : target,
+    conn.locale,
+  );
   const about = aboutOf(part) ?? ('title' in review && review.title ? review.title : undefined);
 
   // The panel is inert until it opens, and focus can't land in it: a card that arrives first (a
@@ -450,7 +465,7 @@ export function ActionCard({
             {about || target ? (
               <CardContent className="space-y-2">
                 {about ? <p className="break-words text-ui leading-snug">{about}</p> : null}
-                {target ? <PublishReview review={review} elsewhere={elsewhere} /> : null}
+                {target ? <PublishReview review={review} place={place} /> : null}
               </CardContent>
             ) : null}
             <CardFooter className="flex-col items-stretch gap-2 rounded-b-2xl border-t bg-wait/10 pb-(--card-spacing)">

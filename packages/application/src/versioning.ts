@@ -79,7 +79,7 @@ export function visibleDiff(principal: Principal, diff: VersionDiff): VisibleVer
     ...diff,
     changes: Object.values(allowed),
     hiddenChanges: diff.changes.filter(
-      (c) => !(c.field in allowed) && c.locales.some((l) => l.kind !== 'unchanged'),
+      (c) => !Object.hasOwn(allowed, c.field) && c.locales.some((l) => l.kind !== 'unchanged'),
     ).length,
   };
 }

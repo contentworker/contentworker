@@ -180,6 +180,27 @@ describe('changes this person can’t read', () => {
   });
 });
 
+describe('the page’s confirmation with no entry to compare', () => {
+  it('still says what the person can’t read goes live', () => {
+    render(
+      <PublishConfirm
+        open
+        onOpenChange={vi.fn()}
+        title="Pricing"
+        status="changed"
+        changes={[changes[0]] as never}
+        hiddenChanges={2}
+        busy={false}
+        onConfirm={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole('list', { name: 'Changed fields' }).textContent).toContain(
+      'Written by',
+    );
+    expect(screen.getByText('2 fields you can’t read also go live.')).toBeTruthy();
+  });
+});
+
 describe('reviewFields', () => {
   it('shows each locale that changed, and names it only when there are several', () => {
     const two = {

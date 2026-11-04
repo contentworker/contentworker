@@ -500,25 +500,33 @@ describe('a publish card', () => {
   });
 
   it.each([
-    ['ran elsewhere', { spaceId: 'sp_1', environmentId: 'staging' }],
-    ['can’t say where it ran', undefined],
-  ])('reads nothing for a model’s card whose turn %s, whatever its input says', async (_, turn) => {
-    inRouter(
-      <ActionCard
-        part={card({
-          toolCallId: 'call_1',
-          toolMetadata: undefined,
-          input: { id: 'e1', space: 'sp_1', environment: 'main' },
-        })}
-        respond={vi.fn()}
-        actionKey="m1:0"
-        direct={false}
-        {...(turn ? { turn } : {})}
-      />,
-    );
-    await screen.findByText(/another space or environment/);
-    expect(client.diffVersions).not.toHaveBeenCalled();
-  });
+    [
+      'ran elsewhere',
+      { spaceId: 'sp_1', environmentId: 'staging' },
+      /another space or environment/,
+    ],
+    ['can’t say where it ran', undefined, /can’t tell where this runs/],
+  ])(
+    'reads nothing for a model’s card whose turn %s, whatever its input says',
+    async (_, turn, says) => {
+      inRouter(
+        <ActionCard
+          part={card({
+            toolCallId: 'call_1',
+            toolMetadata: undefined,
+            input: { id: 'e1', space: 'sp_1', environment: 'main' },
+          })}
+          respond={vi.fn()}
+          actionKey="m1:0"
+          direct={false}
+          {...(turn ? { turn } : {})}
+        />,
+      );
+      await screen.findByText(says);
+      expect(client.diffVersions).not.toHaveBeenCalled();
+      expect(confirm().disabled).toBe(false);
+    },
+  );
 
   it.each([
     ['entries_unpublish', { id: 'e1' }],

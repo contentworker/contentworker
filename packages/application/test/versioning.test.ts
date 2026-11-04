@@ -205,6 +205,13 @@ describe('a diff as one principal reads it', () => {
     expect(seen.hiddenChanges).toBe(1);
   });
 
+  it('counts a denied field named as an object’s own property would be', () => {
+    const named = { ...diff, changes: [field('constructor', 'changed')] };
+    const seen = visibleDiff(principal(['constructor']), named);
+    expect(seen.changes).toEqual([]);
+    expect(seen.hiddenChanges).toBe(1);
+  });
+
   it('hides nothing from a principal denied nothing', () => {
     const seen = visibleDiff(principal(), diff);
     expect(seen.changes).toHaveLength(3);
