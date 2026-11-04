@@ -1,6 +1,6 @@
 ---
 name: workers-reviewer
-description: Cloudflare Workers reviewer for contentworker's four Workers (web, api, delivery, engine) and their platform. Checks wrangler.jsonc binding parity against EdgeEnv and the code paths, script_name bindings to the engine's Durable Objects and Workflows, DO migration tags, the delivery cache and its unroutable Delivery entrypoint, fleet rendering and provisioning, Workers runtime pitfalls, and that every Worker still bundles. Use proactively after changes to apps/*/wrangler.jsonc, apps/{api,delivery,engine}/src, packages/platform, packages/adapters, deployments/ or scripts/fleet.ts. Read-only; dry-run bundles only, never deploys.
+description: Cloudflare Workers reviewer for contentworker's five runtime Workers (web, api, delivery, media, engine) and their platform. Checks wrangler.jsonc binding parity against EdgeEnv and the code paths, script_name bindings to the engine's Durable Objects and Workflows, DO migration tags, the delivery cache and its unroutable Delivery entrypoint, fleet rendering and provisioning, Workers runtime pitfalls, and that every Worker still bundles. Use proactively after changes to apps/*/wrangler.jsonc, apps/{api,delivery,engine}/src, packages/platform, packages/adapters, deployments/ or scripts/fleet.ts. Read-only; dry-run bundles only, never deploys.
 tools: Read, Grep, Glob, Bash
 model: inherit
 color: orange

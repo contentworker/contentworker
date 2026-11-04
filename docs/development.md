@@ -7,7 +7,10 @@ the database schema and the schema reference.
 
 - Node.js ≥ 24 (`.nvmrc`) and pnpm 10 (`packageManager` in the root `package.json`).
 - No platform account: local development runs every edge worker in the local runtime through the
-  platform's Vite plugin, with a local database.
+  platform's Vite plugin, with a local database. Remote bindings are off;
+  `CONTENTWORKER_REMOTE=1 pnpm dev` turns them on (it needs a `wrangler login`).
+- `jq`, for the Claude Code hooks in `.claude/` (without it they silently do nothing).
+- For the device tests only: `pnpm --filter @contentworker/web exec playwright install webkit chromium`.
 
 ## Running locally
 

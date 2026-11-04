@@ -17,14 +17,14 @@ install, build, run dev servers or touch the network unless the user asked for a
    `docs/development.md`, `docs/deployment.md` and `.claude/README.md` exists (root and package
    `scripts`, `turbo.json` tasks, the `@contentworker/*` names in each `package.json`), with the
    arguments shown. Every path they name exists. Every rule they state matches the code (grep it).
-   Root scripts that delegate to a package (`db:migrate:local`, `db:seed:local`, `sync:theme`,
+   Root scripts that delegate to a package (`db:migrate:local`, `sync:theme`,
    `docs:build`) point at a package that has that script.
 2. **Agent instructions.** `AGENTS.md` holds the rules and `CLAUDE.md` only imports it
    (`@AGENTS.md`): a rule written into `CLAUDE.md` instead is drift. The toolkit's skills, agents,
    rules and maps name real paths, scripts and identifiers (`pnpm test:toolkit` checks the maps'
    regexes and pages), and their descriptions say when to use them.
 3. **First hour.** From a clean clone: install, migrate the local D1, `pnpm dev`, the first test
-   run, the first e2e run. Is every prerequisite stated (Node ≥ 22.18, the pnpm version in
+   run, the first e2e run. Is every prerequisite stated (Node ≥ 24 (`.nvmrc`), the pnpm version in
    `packageManager`, `jq` for the hooks, Playwright browsers)? Does every env var a dev needs have a
    dev default (`LOCAL_STACK_VARS` in `apps/web/vite.config.ts`) or documentation?
 4. **Feedback loops.** How long until a contributor learns they broke something: hooks, scoped test

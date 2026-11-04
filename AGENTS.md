@@ -81,7 +81,8 @@ clients, Workflow clients), `@contentworker/http` (the Hono surface: routes, aut
   `check-types`, `test`, `build` and `dev` (`pnpm generate` by hand).
 - **Durable Object migration tags only ever append** (`apps/engine/wrangler.jsonc` and
   `scripts/do-migrations.test.ts`, in the same change). Never `deleted_classes` without a plan
-  for the data.
+  for the data. Classes stay on the `migrations` array, not the `exports` block newer Cloudflare
+  docs show: that switch is one-way, blocks version uploads and can't be rolled back across.
 - **Trust boundaries:** the api believes `x-cw-principal` only when signed with `PRINCIPAL_KEY`,
   bound to the request method and path and under 60 s old; the delivery `Delivery` entrypoint trusts its
   principal header only because nothing outside the Worker can reach it. Never add a trusted
@@ -102,9 +103,19 @@ pnpm --filter @contentworker/http test          # HTTP API + MCP against in-memo
 pnpm --filter @contentworker/application test   # use-cases against test-kit fakes
 node --test scripts/*.test.ts                   # fleet + DO-migration golden tests
 pnpm --filter @contentworker/api exec wrangler deploy --dry-run --outdir /tmp/api   # bundle check
-pnpm dev                                        # web + api + engine + delivery in one Vite session
+pnpm dev                                        # migrates the local D1, then the stack in one Vite session
+pnpm dev:reset                                  # wipe and re-migrate the local D1
+pnpm --filter @contentworker/web e2e            # Playwright device tests (browsers: docs/development.md)
 pnpm docs:build
 ```
+
+## Cloudflare docs
+
+Versions, defaults and config shapes change monthly: look them up, don't recall them. Search the
+docs MCP (`cloudflare-docs`) or fetch `https://developers.cloudflare.com/<product>/llms.txt`. The
+Cloudflare plugin's skills show hand deploys and remote migrations; here CI does both, the hooks
+refuse them, and the rules in this file win. Path-specific rules live in
+`.claude/rules/{web,workers,sdk,docs}.md`; other agents read the one for the area they edit.
 
 ## Conventions for new code
 

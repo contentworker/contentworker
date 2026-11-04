@@ -9,11 +9,11 @@ disable-model-invocation: true
 `pnpm dev` runs `apps/web` under Vite with the Cloudflare plugin and the api, engine and delivery
 Workers as auxiliary Workers (`apps/web/vite.config.ts`), all on one local D1 under
 `apps/web/.wrangler`. The auxiliary Workers get `LOCAL_STACK_VARS`: mock AI, local hash
-embeddings, in-memory vectors, fakes allowed, and dev secrets that are never a deployment's.
+embeddings, KV-backed vectors (`VECTOR_STORE=kv`), fakes allowed, and dev secrets that are never a deployment's.
 
 ## Start
 
-1. Migrate the local D1: `pnpm --filter @contentworker/web db:migrate:local`.
+1. Migrate the local D1: `pnpm db:migrate:local`.
 2. Start in the background (never foreground a server): `pnpm dev`. Note the URL Vite prints
    (React Router's dev server, `http://localhost:5173` unless taken).
 3. Wait for `GET /health` to answer 200.
