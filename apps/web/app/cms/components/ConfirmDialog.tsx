@@ -10,7 +10,7 @@ import {
 import { Button } from '@contentworker/ui/button';
 import { DialogError } from '@contentworker/ui/dialog';
 import { type ReactNode, useRef, useState } from 'react';
-import { apiErrorMessage, RequestTimeoutError } from '~/cms/lib/management';
+import { RequestTimeoutError, refusedSave, saveFailureMessage } from '~/cms/lib/management';
 
 /**
  * How long the dialog holds for an answer. A write times out sooner, in `req`, but what follows it
@@ -32,7 +32,8 @@ export interface ConfirmDialogProps {
   /**
    * Runs the act. The dialog stays, the act held, until this settles, so a second press can't send
    * it twice and focus moves on from what is left once the list has been read again. A rejection
-   * is said in the dialog, which stays open.
+   * is said in the dialog, which stays open; one with no answer says it may have gone through, and
+   * the safe choice stops claiming to keep anything.
    */
   readonly onConfirm: () => void | Promise<unknown>;
   /** Where focus goes as it closes, for an answer that takes it elsewhere. */
@@ -71,6 +72,8 @@ export function ConfirmDialog({
   const [asking, setAsking] = useState(false);
   const [sending, setSending] = useState(false);
   const [failed, setFailed] = useState<string>();
+  // A try that got no answer may have landed, so nothing here may say it didn't.
+  const [mayHaveLanded, setMayHaveLanded] = useState(false);
   // The state lags a double press: this doesn't.
   const sent = useRef(false);
   const held = sending || busy;
@@ -90,7 +93,10 @@ export function ConfirmDialog({
       ]);
       setAsking(false);
     } catch (err) {
-      setFailed(apiErrorMessage(err));
+      const said = saveFailureMessage(err);
+      // A refused retry doesn't speak for a try before it that may have landed.
+      setFailed(mayHaveLanded && refusedSave(err) ? `This try was refused. ${said}` : said);
+      if (!refusedSave(err)) setMayHaveLanded(true);
     } finally {
       clearTimeout(timer);
       sent.current = false;
@@ -107,6 +113,7 @@ export function ConfirmDialog({
           // It has been sent: leaving wouldn't call it back, so the dialog waits for the answer.
           if (sent.current) return;
           setFailed(undefined);
+          setMayHaveLanded(false);
           setAsking(open);
         }}
       >
@@ -122,7 +129,9 @@ export function ConfirmDialog({
           ) : null}
           {failed ? <DialogError>{failed}</DialogError> : null}
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={sending}>{cancelLabel}</AlertDialogCancel>
+            <AlertDialogCancel disabled={sending}>
+              {mayHaveLanded ? 'Close' : cancelLabel}
+            </AlertDialogCancel>
             {/* Not `disabled`: focus stays on it through the wait, for a refusal to find it there. */}
             <Button
               type="button"

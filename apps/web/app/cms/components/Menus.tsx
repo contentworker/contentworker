@@ -55,6 +55,7 @@ import {
   type MenuItemStatus,
   type MenuSummary,
   refusedSave,
+  SaveRefusedError,
 } from '../lib/management';
 import { useInvalidate, useScopedQuery } from '../lib/queries';
 import { useToast } from '../lib/toast';
@@ -179,7 +180,9 @@ function MenuList(props: { client: ManagementClient; onOpen: (id: string) => voi
       await client.deleteMenu(m.id, m.revision);
       toast.success('Menu deleted');
     } catch (err) {
-      throw isStale(err) ? new Error('Someone changed this menu since the list loaded.') : err;
+      throw isStale(err)
+        ? new SaveRefusedError('Someone changed this menu since the list loaded.')
+        : err;
     } finally {
       await invalidate(['menus']);
       setBusy(false);

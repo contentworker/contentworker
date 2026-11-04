@@ -81,6 +81,7 @@ vi.mock('~/cms/lib/client-context', () => ({
   useLocalRun: () => ({ busy: false, run: (fn: () => Promise<void>) => fn() }),
 }));
 
+const { ApiError } = await import('~/cms/lib/management');
 const { ConfirmDialog } = await import('~/cms/components/ConfirmDialog');
 const { ConfirmButton, InlineConfirm } = await import('~/cms/components/InlineConfirm');
 const { ToastProvider, useToast } = await import('~/cms/lib/toast');
@@ -203,13 +204,31 @@ describe('ConfirmDialog holding for its answer', () => {
   });
 
   it('says a refusal in the dialog and lets the person out', async () => {
-    const dialog = await open(() => Promise.reject(new Error('It is in use')));
+    const dialog = await open(() => Promise.reject(new ApiError(409, 'It is in use')));
     fireEvent.click(within(dialog).getByRole('button', { name: 'Delete release' }));
     expect((await within(dialog).findByRole('alert')).textContent).toBe('It is in use');
     const cancel = within(dialog).getByRole('button', { name: 'Cancel' });
     expect(cancel.hasAttribute('disabled')).toBe(false);
     fireEvent.click(cancel);
     await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+  });
+
+  it('after no answer, stops offering to keep anything, and a refused retry doesn’t undo that', async () => {
+    const onConfirm = vi
+      .fn()
+      .mockRejectedValueOnce(new ApiError(503, 'DELETE → 503'))
+      .mockRejectedValueOnce(new ApiError(404, 'DELETE → 404'));
+    const dialog = await open(onConfirm);
+    const confirm = within(dialog).getByRole('button', { name: 'Delete release' });
+    fireEvent.click(confirm);
+    expect((await within(dialog).findByRole('alert')).textContent).toContain(
+      'may still have gone through',
+    );
+    expect(within(dialog).getByRole('button', { name: 'Close' })).toBeTruthy();
+
+    fireEvent.click(confirm);
+    await within(dialog).findByText(/This try was refused/);
+    expect(within(dialog).getByRole('button', { name: 'Close' })).toBeTruthy();
   });
 
   it('lets go of an answer that never comes, without saying nothing happened', async () => {
@@ -224,7 +243,7 @@ describe('ConfirmDialog holding for its answer', () => {
       vi.useRealTimers();
     }
     expect(within(dialog).getByRole('alert').textContent).toContain('may still have gone through');
-    expect(within(dialog).getByRole('button', { name: 'Cancel' }).hasAttribute('disabled')).toBe(
+    expect(within(dialog).getByRole('button', { name: 'Close' }).hasAttribute('disabled')).toBe(
       false,
     );
   });

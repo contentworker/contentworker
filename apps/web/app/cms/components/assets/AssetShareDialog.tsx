@@ -41,6 +41,7 @@ import {
   apiFieldIssues,
   isForbidden,
   refusedSave,
+  saveFailureMessage,
   UNCONFIRMED_SAVE,
 } from '~/cms/lib/management';
 import { useInvalidate, useScopedQuery } from '~/cms/lib/queries';
@@ -76,6 +77,8 @@ export function AssetShareDialog(props: {
   archived?: boolean;
   /** The asset was published from here, so it could be shared. */
   onPublished?: (asset: Asset) => void;
+  /** A publish from here got no answer, so the asset should be read again. */
+  onPublishUnconfirmed?: () => void;
 }) {
   const { target } = props;
   const { client } = useClient();
@@ -102,7 +105,11 @@ export function AssetShareDialog(props: {
   // The link just made: it takes focus (its Copy button), so it can be copied at once.
   const [made, setMade] = useState<string | null>(null);
   const [publishing, setPublishing] = useState(false);
-  const [publishRefusal, setPublishRefusal] = useState<string | null>(null);
+  const [publishFailed, setPublishFailed] = useState<{ said: string; refused: boolean } | null>(
+    null,
+  );
+  // As with a link: a publish that got no answer may have landed.
+  const [publishMayHaveLanded, setPublishMayHaveLanded] = useState(false);
   // Published from here: the caller's `published` catches up when its read does.
   const [publishedHere, setPublishedHere] = useState(false);
   const listHeading = useRef<HTMLHeadingElement>(null);
@@ -121,7 +128,8 @@ export function AssetShareDialog(props: {
     setRefusal(null);
     setMade(null);
     setPublishedHere(false);
-    setPublishRefusal(null);
+    setPublishFailed(null);
+    setPublishMayHaveLanded(false);
   }, [props.open, target.type, target.id]);
 
   // Publish asset goes with the warning: the form that replaces it carries the keyboard on.
@@ -187,7 +195,7 @@ export function AssetShareDialog(props: {
   // an expiry, in the server's words.
   const publish = async () => {
     if (publishing) return;
-    setPublishRefusal(null);
+    setPublishFailed(null);
     setPublishing(true);
     try {
       const asset = await client.publishAsset(target.id);
@@ -195,7 +203,12 @@ export function AssetShareDialog(props: {
       setPublishedHere(true);
       props.onPublished?.(asset);
     } catch (err) {
-      setPublishRefusal(apiErrorMessage(err));
+      const refused = refusedSave(err);
+      setPublishFailed({ said: saveFailureMessage(err), refused });
+      if (!refused) {
+        setPublishMayHaveLanded(true);
+        props.onPublishUnconfirmed?.();
+      }
     } finally {
       setPublishing(false);
     }
@@ -383,10 +396,15 @@ export function AssetShareDialog(props: {
                 </AlertDescription>
               </Alert>
             ) : null}
-            {unpublished && publishRefusal ? (
+            {unpublished && publishFailed && !publishFailed.refused ? (
+              <DialogError>{publishFailed.said}</DialogError>
+            ) : null}
+            {unpublished && publishFailed?.refused ? (
               <Alert variant="destructive">
-                <AlertTitle>It wasn’t published</AlertTitle>
-                <AlertDescription>{publishRefusal}</AlertDescription>
+                <AlertTitle>
+                  {publishMayHaveLanded ? 'This try was refused' : 'It wasn’t published'}
+                </AlertTitle>
+                <AlertDescription>{publishFailed.said}</AlertDescription>
               </Alert>
             ) : null}
             {archived ? null : unpublished ? (

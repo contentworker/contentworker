@@ -234,7 +234,7 @@ describe('sharing an asset or a collection', () => {
   });
 
   it('keeps the warning when the publish is refused, saying why', async () => {
-    client.publishAsset.mockRejectedValueOnce(new Error('Under embargo'));
+    client.publishAsset.mockRejectedValueOnce(new ApiError(409, 'Under embargo'));
     renderDialog({ published: false });
     const publish = await screen.findByRole('button', { name: 'Publish asset' });
     publish.focus();
@@ -247,6 +247,21 @@ describe('sharing an asset or a collection', () => {
     expect(screen.queryByRole('form', { name: 'New share link' })).toBeNull();
     // The button that asked keeps focus through the wait and the refusal.
     expect(document.activeElement).toBe(publish);
+  });
+
+  it('never says it wasn’t published when no answer came, nor on a refused retry', async () => {
+    client.publishAsset
+      .mockRejectedValueOnce(new ApiError(503, 'POST → 503'))
+      .mockRejectedValueOnce(new ApiError(409, 'POST → 409'));
+    renderDialog({ published: false });
+    const publish = await screen.findByRole('button', { name: 'Publish asset' });
+    fireEvent.click(publish);
+    await screen.findByText(/didn’t confirm/);
+    expect(screen.queryByText('It wasn’t published')).toBeNull();
+
+    fireEvent.click(publish);
+    await screen.findByText('This try was refused');
+    expect(screen.queryByText('It wasn’t published')).toBeNull();
   });
 
   it('tells an archived asset to restore first, with nothing to press', async () => {

@@ -326,6 +326,7 @@ export function AssetDetailSheet(props: {
             props.onAssetChange?.(next);
             props.onSaved();
           }}
+          onPublishUnconfirmed={props.onSaved}
         />
 
         <div className="space-y-5 px-4 pb-4">

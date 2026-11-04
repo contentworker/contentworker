@@ -919,7 +919,8 @@ for code and data blocks only.
   touches content, files or access confirms in a modal, its act in `variant="destructive"`
   (`cms/components/ConfirmDialog.tsx`, the modal twin of `ConfirmButton`, or a dialog of its own when
   it has more to say; it waits for the answer, its act held and Cancel with it, says a refusal in
-  the dialog, and closes once the page has moved on): the thing is gone, and asking again makes something new rather than bringing
+  the dialog, and closes once the page has moved on; with no answer it says the act may have gone
+  through, and its safe choice reads Close): the thing is gone, and asking again makes something new rather than bringing
   it back. Those are deleting an asset, a release, a workflow, a role, a menu, a collection, a saved
   view, a webhook or a content type; deleting a taxonomy scheme, concept or tag, which every entry
   carrying it loses; Delete permanently, and shortening how long the trash keeps entries; revoking a
