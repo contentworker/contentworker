@@ -125,7 +125,7 @@ describe('Settings → Menus', () => {
   it('lists menus by name, handle and item count', async () => {
     mount(fakeClient(menuOf([url('a', 'A')])));
     const table = await screen.findByRole('table', { name: 'Menus' });
-    expect(within(table).getByText('Main')).toBeTruthy();
+    expect(await within(table).findByText('Main')).toBeTruthy();
     expect(within(table).getByText('main')).toBeTruthy();
     expect(within(table).getByText('3')).toBeTruthy();
   });
