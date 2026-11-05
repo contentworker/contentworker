@@ -136,7 +136,8 @@ function useDebounced<T>(value: T, ms: number): T {
 /**
  * The asset library: folders beside a filtered, paged grid or list. Upload by picking or dropping
  * any number of files (into the open folder), select several to move, publish or archive them, and
- * archive or delete one at a time; a delete the API refuses shows the entries that use the asset.
+ * archive one at a time, then delete what is archived; a delete the API refuses shows the entries
+ * that use the asset.
  */
 export function AssetLibrary(props: { locale: string }) {
   const { locale } = props;
@@ -834,7 +835,27 @@ export function AssetLibrary(props: { locale: string }) {
           Publish
         </Button>
       )}
-      {a.status !== 'archived' && (
+      {a.status === 'archived' ? (
+        <ConfirmDialog
+          message={`Delete “${name}”?`}
+          note="Its files go too. This can’t be undone."
+          confirmLabel="Delete asset"
+          onConfirm={() => remove(a)}
+          onCloseAutoFocus={showInUse}
+        >
+          {(ask) => (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-xs"
+              aria-label={`Delete “${name}”`}
+              onClick={ask}
+            >
+              <Trash2 aria-hidden="true" />
+            </Button>
+          )}
+        </ConfirmDialog>
+      ) : (
         <Button
           type="button"
           variant="ghost"
@@ -845,25 +866,6 @@ export function AssetLibrary(props: { locale: string }) {
           <Archive aria-hidden="true" />
         </Button>
       )}
-      <ConfirmDialog
-        message={`Delete “${name}”?`}
-        note="Its files go too. This can’t be undone."
-        confirmLabel="Delete asset"
-        onConfirm={() => remove(a)}
-        onCloseAutoFocus={showInUse}
-      >
-        {(ask) => (
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-xs"
-            aria-label={`Delete “${name}”`}
-            onClick={ask}
-          >
-            <Trash2 aria-hidden="true" />
-          </Button>
-        )}
-      </ConfirmDialog>
     </div>
   );
 
@@ -1195,14 +1197,6 @@ export function AssetLibrary(props: { locale: string }) {
                 name={assetName(inUse.asset, locale)}
                 usage={inUse.usage}
                 total={inUse.total}
-                onArchive={
-                  inUse.asset.status === 'archived'
-                    ? undefined
-                    : () => {
-                        archive(inUse.asset);
-                        setInUse(null);
-                      }
-                }
                 onDismiss={() => setInUse(null)}
               />
             )}
@@ -1394,7 +1388,7 @@ function AssetRowSkeleton({
   );
 }
 
-/** The ghost actions (Publish or Unpublish, Archive, Delete) as they sit at rest: a label, two icons. */
+/** The ghost actions (Publish or Unpublish, Archive or Delete) as they sit at rest: a label, two icons. */
 function AssetActionsSkeleton({ className }: { className?: string }) {
   return (
     <span className={cn('flex h-6 w-[8.25rem] items-center gap-2.5 px-2.5 text-xs', className)}>

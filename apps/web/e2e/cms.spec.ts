@@ -883,6 +883,8 @@ test('deleting an asset an entry uses names that entry and links to it', async (
     .getByRole('button', { name: assetTitle, exact: true })
     .click();
   const library = page.getByRole('region', { name: 'Asset library' });
+  await library.getByRole('button', { name: `Archive “${assetTitle}”` }).click();
+  await library.getByRole('combobox', { name: 'Status' }).selectOption('archived');
   await library.getByRole('button', { name: `Delete “${assetTitle}”` }).click();
   // A modal, portalled out of the library: it can't be undone and its files go too.
   const ask = page.getByRole('alertdialog', { name: new RegExp(`Delete “${assetTitle}”`) });

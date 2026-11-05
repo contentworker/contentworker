@@ -221,6 +221,11 @@ describe('the asset library over HTTP', () => {
     const b = await upload(app, { fileName: 'free.png', contentType: 'image/png' });
     const cpaDenied = await app.request(`${M}/assets/${b.id}`, { method: 'DELETE', headers: cpa });
     expect(cpaDenied.status).toBe(403);
+    // Not archived yet: the bytes can't come back, so archiving comes first.
+    const early = await app.request(`${M}/assets/${b.id}`, { method: 'DELETE', headers: cma });
+    expect(early.status).toBe(400);
+    expect((await json<{ error: { code: string } }>(early)).error.code).toBe('invalid_state');
+    await app.request(`${M}/assets/${b.id}/archive`, { method: 'POST', headers: cma });
     const gone = await app.request(`${M}/assets/${b.id}`, { method: 'DELETE', headers: cma });
     expect(gone.status).toBe(204);
     expect((await app.request(`${M}/assets/${b.id}`, { headers: cma })).status).toBe(404);

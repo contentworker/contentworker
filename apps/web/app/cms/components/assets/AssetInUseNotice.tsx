@@ -20,7 +20,6 @@ export function AssetInUseNotice(props: {
   usage: readonly AssetUsage[];
   /** Every link, counted; `usage` may carry only the first of them. */
   total: number;
-  onArchive?: () => void;
   onDismiss: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -61,11 +60,6 @@ export function AssetInUseNotice(props: {
           {more > 0 && <li className="text-muted-foreground">and {more} more</li>}
         </ul>
         <div className="flex gap-2 pt-1">
-          {props.onArchive && (
-            <Button type="button" size="sm" variant="outline" onClick={props.onArchive}>
-              Archive instead
-            </Button>
-          )}
           <Button type="button" size="sm" variant="ghost" onClick={props.onDismiss}>
             Dismiss
           </Button>

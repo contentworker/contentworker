@@ -20,6 +20,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import {
   type AppContext,
   type AssetIngestDeps,
+  archiveAsset,
   assetIngestInstanceId,
   assetReindexChunkRunner,
   assetTextKey,
@@ -604,6 +605,8 @@ describe('asset ingest, under failure and limits', () => {
     for (const a of [original, second, third]) await t.run(a.id);
     expect((await getAsset(t.ctx, scope, third.id)).duplicateOf).toBe(original.id);
 
+    await archiveAsset(t.ctx, scope, original.id);
+
     await deleteAsset(t.ctx, scope, original.id);
     expect((await getAsset(t.ctx, scope, second.id)).duplicateOf).toBeUndefined();
     expect((await getAsset(t.ctx, scope, third.id)).duplicateOf).toBe(second.id);
@@ -929,6 +932,8 @@ describe('asset ingest cleanup', () => {
     await t.run(asset.id);
     const textKey = assetTextKey(scope, asset.id, 1) as string;
     expect(await t.blob.get(textKey)).toBe('Heliotrope');
+
+    await archiveAsset(t.ctx, scope, asset.id);
 
     await deleteAsset(t.ctx, scope, asset.id);
     const deps = {

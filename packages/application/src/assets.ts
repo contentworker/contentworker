@@ -11,6 +11,8 @@ import {
   ConflictError,
   clearAcceptedSuggestions,
   emptyAssetMetadata,
+  extractReferences,
+  InvalidStateError,
   isReservedSpaceId,
   type LocalizedValue,
   MAX_ASSET_USAGE_SHOWN,
@@ -445,6 +447,39 @@ export async function getAssetUsage(
 }
 
 /**
+ * Every link that refuses an asset's deletion: {@link getAssetUsage}'s published ones, plus those
+ * in any entry's current version, which the reference graph doesn't hold. A draft, an unpublished
+ * entry or one in the trash needs the file as much as a live page does, and its bytes can't be
+ * brought back. Draft links past {@link MAX_ASSET_USAGE_SHOWN} aren't counted.
+ */
+async function linksKeepingAsset(
+  ctx: AppContext,
+  scope: Scope,
+  id: string,
+): Promise<ReferenceEdge[]> {
+  const [published, mentioning] = await Promise.all([
+    getAssetUsage(ctx, scope, id),
+    ctx.store.entries.idsMentioning(scope, id, MAX_ASSET_USAGE_SHOWN),
+  ]);
+  if (mentioning.length === 0) return published;
+  const [entries, contentTypes] = await Promise.all([
+    ctx.store.entries.getMany(scope, mentioning),
+    ctx.store.contentTypes.list(scope),
+  ]);
+  const types = new Map(contentTypes.map((t) => [t.apiId, t]));
+  const key = (edge: ReferenceEdge) => `${edge.fromEntryId}::${edge.fromField}`;
+  const links = new Map(published.map((edge) => [key(edge), edge]));
+  for (const { entry, fields } of entries) {
+    const type = types.get(entry.contentTypeApiId);
+    if (!type) continue;
+    for (const edge of extractReferences(entry.id, fields, type)) {
+      if (edge.toId === id) links.set(key(edge), edge);
+    }
+  }
+  return [...links.values()];
+}
+
+/**
  * Archives an asset: it stops being delivered at once (the published snapshot goes, in the same
  * unit as the `asset.unpublished` event that purges delivery caches) and can't be published until
  * restored. Archiving an archived asset changes nothing, so a retried request is harmless.
@@ -486,9 +521,10 @@ export async function restoreAsset(ctx: AppContext, scope: Scope, id: string): P
 }
 
 /**
- * Deletes an asset for good. Refused with {@link AssetInUseError} while any entry links to it
- * (archive it instead, or remove the links first); the store re-checks at commit, so a link made
- * in between refuses it too.
+ * Deletes an archived asset for good. Its bytes can't be brought back, so archiving comes first:
+ * that is the step `restoreAsset` undoes, and anything else is refused. Refused too with
+ * {@link AssetInUseError} while any entry links to it (remove the links first); the store
+ * re-checks at commit, so a published link made in between refuses it as well.
  *
  * The row, its published snapshot, its versions and its collection memberships go in one unit with
  * an `asset.deleted` event (and an `asset_collection.changed` per collection it was in);
@@ -497,10 +533,37 @@ export async function restoreAsset(ctx: AppContext, scope: Scope, id: string): P
  * emits `asset.unpublished`, as it leaves Delivery.
  */
 export async function deleteAsset(ctx: AppContext, scope: Scope, id: string): Promise<void> {
+  await removeAsset(ctx, scope, id, (asset) => {
+    if (asset.status !== 'archived') {
+      throw new InvalidStateError('Archive the asset before deleting it');
+    }
+  });
+}
+
+/**
+ * Removes a draft whose upload never landed, which has no bytes to lose and so no reason to be
+ * archived first: the abandoned-upload sweep and an aborted upload. Refused like any delete while
+ * an entry links to it.
+ */
+export async function deleteAbandonedAsset(
+  ctx: AppContext,
+  scope: Scope,
+  id: string,
+): Promise<void> {
+  await removeAsset(ctx, scope, id);
+}
+
+async function removeAsset(
+  ctx: AppContext,
+  scope: Scope,
+  id: string,
+  check?: (asset: Asset) => void,
+): Promise<void> {
   const asset = await ctx.store.assets.get(scope, id);
   if (!asset) throw new NotFoundError('Asset', id);
-  const usage = await getAssetUsage(ctx, scope, id);
+  const usage = await linksKeepingAsset(ctx, scope, id);
   if (usage.length > 0) throw await assetInUse(ctx, scope, id, usage);
+  check?.(asset);
   const now = ctx.clock.now().toISOString();
   const videoId = asset.file.video?.videoId;
   const [twins, collections] = await Promise.all([
@@ -550,7 +613,7 @@ export async function deleteAsset(ctx: AppContext, scope: Scope, id: string): Pr
   } catch (err) {
     // A link was made after the check: report it like the check would have.
     if (err instanceof TransactionConflictError) {
-      throw await assetInUse(ctx, scope, id, await getAssetUsage(ctx, scope, id));
+      throw await assetInUse(ctx, scope, id, await linksKeepingAsset(ctx, scope, id));
     }
     throw err;
   }
@@ -640,7 +703,7 @@ export interface AbandonedUploadSweep {
  *   lost, or the file predates ingest): its size is recorded, and the reindex job ingests it;
  * - no bytes, linked from an entry: it stays, its ingest marked `error` so the library shows why
  *   (deleting it would break the link);
- * - no bytes, unlinked: {@link deleteAsset}, whose `asset.deleted` event removes anything under the
+ * - no bytes, unlinked: {@link deleteAbandonedAsset}, whose `asset.deleted` event removes anything under the
  *   asset's prefix in the engine (retried there, not here).
  *
  * A store without `head` can't tell the first case from the others, so nothing is swept.
@@ -679,7 +742,7 @@ export async function sweepAbandonedUploads(
         counts.linked += 1;
         continue;
       }
-      await deleteAsset(ctx, scope, asset.id);
+      await deleteAbandonedAsset(ctx, scope, asset.id);
       counts.removed += 1;
     } catch (err) {
       if (err instanceof NotFoundError) continue; // deleted meanwhile

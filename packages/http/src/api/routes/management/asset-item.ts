@@ -376,8 +376,9 @@ export function assetItemRoutes(deps: AuthDeps): Hono<AuthVars> {
     doc('Assets', 'Delete an asset permanently', {
       status: 204,
       description:
-        'Irreversible. Refuses with 409 asset_in_use while entries link to it (archive it ' +
-        "instead): error.usage lists the first 50 links, each with the entry's contentTypeApiId " +
+        'Irreversible, so only an archived asset can be deleted: anything else is refused with 400 ' +
+        'invalid_state. Refuses with 409 asset_in_use while entries, drafts included, link to it: ' +
+        "error.usage lists the first 50 links, each with the entry's contentTypeApiId " +
         'and entryTitle, and error.total counts them all. Its files are removed in the background. ' +
         'Requires content:publish, as deleting an entry permanently does.',
     }),

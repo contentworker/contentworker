@@ -433,7 +433,7 @@ cma.assets.generateAltText(id, { locale?, context?, apply?, tier? }) → { altTe
 cma.assets.autoTag(id, { apply?, tier? }) → { tagIds, newTags, applied, usage }
 cma.assets.setRights(id, { license?, credit?, expiresAt?, embargoUntil? }) → Asset   // content:publish
 cma.assets.publish(id) / .unpublish(id) / .archive(id) / .restore(id) → Asset
-cma.assets.delete(id)                                 // 409 asset_in_use while linked
+cma.assets.delete(id)                                 // archived only; 409 asset_in_use while linked
 cma.assets.move(ids, folderId | null) → { moved }
 cma.assets.reingest(id) / .reindex({ all? })
 cma.assets.bulk({ action: 'move' | 'tag' | 'publish' | 'unpublish' | 'archive', ids, … }) → BulkJob
@@ -530,6 +530,7 @@ narrow it to the bodies a client branches on:
 import { isAssetInUse, isAssetRightsError, isValidationError } from '@contentworker/sdk/management';
 
 try {
+  await cma.assets.archive(id); // deleting needs an archived asset
   await cma.assets.delete(id);
 } catch (err) {
   if (isAssetInUse(err)) {

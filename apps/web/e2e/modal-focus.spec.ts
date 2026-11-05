@@ -230,18 +230,19 @@ test('a diff with nothing to tab to scrolls by keyboard too', async ({ page, req
   await expect.poll(() => body.evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
 });
 
-/** Two assets in a folder of their own, the folder open; returns their names. */
+/** Two archived assets in a folder of their own, the folder open; returns their names. */
 async function twoAssets(page: Page, request: APIRequestContext, tag: string) {
   const stamp = Date.now();
   const folder = `${tag} ${stamp}`;
   const folderId = await seedAssetFolder(request, folder);
   const names = [`${tag} one ${stamp}`, `${tag} two ${stamp}`] as const;
-  for (const name of names) await seedAsset(request, name, { folderId });
+  for (const name of names) await seedAsset(request, name, { folderId, archive: true });
   await openCms(page, '/assets');
   await page
     .getByRole('navigation', { name: 'Folders' })
     .getByRole('button', { name: folder, exact: true })
     .click();
+  await page.getByRole('combobox', { name: 'Status' }).selectOption('archived');
   await expect(page.getByRole('button', { name: `Delete “${names[1]}”` })).toBeVisible();
   return names;
 }

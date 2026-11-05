@@ -3,6 +3,7 @@ import { assetGateKey, createKvAssetGate } from '@contentworker/adapters/asset-g
 import {
   type AppContext,
   addToAssetCollection,
+  archiveAsset,
   commitAssetFile,
   consumeEvent,
   createAsset,
@@ -383,6 +384,7 @@ describe('collections and share links in the engine', () => {
     // A deleted member: its delete announces the collection (the membership is gone by now).
     const before = await lastRowid();
     await unpublishAsset(ctx, scope, asset.id);
+    await archiveAsset(ctx, scope, asset.id);
     await deleteAsset(ctx, scope, asset.id);
     const after = await consume(ctx, await eventsSince(scope, before));
     // Leaving Delivery (or the collection) is purged as a revocation: now and once more later.

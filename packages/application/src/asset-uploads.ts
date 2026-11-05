@@ -21,7 +21,7 @@ import {
   type CreateAssetInput,
   commitStoredReplacement,
   createUploadDraft,
-  deleteAsset,
+  deleteAbandonedAsset,
   prepareReplacement,
   prepareUploadDraft,
   withReadUrl,
@@ -371,7 +371,7 @@ export async function abortMultipartAssetUpload(
   if (asset?.status !== 'draft' || asset.file.size !== undefined) return;
   if (blob.head && (await blob.head(upload.r2Key))) return;
   try {
-    await deleteAsset(ctx, scope, assetId);
+    await deleteAbandonedAsset(ctx, scope, assetId);
   } catch (err) {
     // Linked meanwhile: the draft stays (the abandoned-upload sweep marks it), the upload is gone.
     if (!(err instanceof AssetInUseError || err instanceof NotFoundError)) throw err;

@@ -856,7 +856,9 @@ and the bytes go to the blob store (see
 
 `assetKind(contentType)` derives an `AssetKind` (`image`, `video`, `audio`, `document`, `other`;
 `ASSET_KINDS`) from the content type; the store keeps it in a column for filtering, so it is never
-set by a client. Deleting an asset that entries still link to throws `AssetInUseError`
+set by a client. Only an archived asset can be deleted (`InvalidStateError` otherwise, `400 invalid_state`), because
+its bytes can't be brought back. Deleting one that entries still link to, drafts and the trash
+included, throws `AssetInUseError`
 (`asset_in_use`), whose `usage` lists the links (`AssetUsage`: the edge plus the entry's
 `contentTypeApiId` and `entryTitle`, at most `MAX_ASSET_USAGE_SHOWN`, 50) and `total` counts them.
 

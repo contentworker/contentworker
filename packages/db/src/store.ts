@@ -588,6 +588,25 @@ function makeEntryRepo(
       );
       return new Map(rows.map((r) => [r.id, r.contentTypeApiId]));
     },
+    async idsMentioning(scope, text, limit) {
+      const e = schema.entries;
+      const v = schema.entryVersions;
+      const rows = await db
+        .select({ id: e.id })
+        .from(e)
+        .innerJoin(
+          v,
+          and(
+            eq(v.spaceId, e.spaceId),
+            eq(v.environmentId, e.environmentId),
+            eq(v.entryId, e.id),
+            eq(v.version, e.currentVersion),
+          ),
+        )
+        .where(and(scopeFilter(e, scope), sql`instr(${v.fields}, ${text}) > 0`))
+        .limit(limit);
+      return rows.map((r) => r.id);
+    },
     async list(scope, query: EntryQuery) {
       const advanced = isAdvancedQuery(query);
       const conditions = [scopeFilter(schema.entries, scope)];

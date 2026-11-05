@@ -203,6 +203,7 @@ describe('the media gate', () => {
     await publishAsset(h.ctx, scope, b.id);
     await drain();
     const mark3 = h.store.allEvents().length;
+    await archiveAsset(h.ctx, scope, b.id);
     await deleteAsset(h.ctx, scope, b.id);
     await drain(mark3);
     expect(await gate.get(scope, b.id)).toBeNull();

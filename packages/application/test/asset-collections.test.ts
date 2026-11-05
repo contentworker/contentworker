@@ -221,6 +221,7 @@ describe('asset collections', () => {
     await addToAssetCollection(ctx, scope, x.id, [asset.id]);
     await addToAssetCollection(ctx, scope, y.id, [asset.id]);
     const before = store.allEvents().length;
+    await archiveAsset(ctx, scope, asset.id);
     await deleteAsset(ctx, scope, asset.id);
     expect((await getAssetCollection(ctx, scope, x.id)).itemCount).toBe(0);
     expect(await store.assetCollections.collectionsOf(scope, asset.id, 10)).toEqual([]);
