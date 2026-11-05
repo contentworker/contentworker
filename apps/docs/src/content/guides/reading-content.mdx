@@ -241,8 +241,17 @@ is its published entry. A collection takes:
 | `search` | Full-text match over text fields, like `query=` |
 
 Each field resolves to one value, in the `locale` you pass or, without one, the space's default
-locale. Linked entries resolve one level deep. The schema changes when a content type is published. A GraphiQL page at
-`/graphiql/{space}/{env}` lets you explore it (queries still need a key).
+locale. Linked entries resolve one level deep. A GraphiQL page at `/graphiql/{space}/{env}` lets you explore
+it (queries still need a key).
+
+The schema changes when a content type is published: a live type keeps the definition last published
+through any draft. Two things to expect:
+
+- A type that has never been published is in the schema as it stands, and changes as it is saved.
+  Publish a type before you rely on its shape.
+- An entry can be published while its type has a draft. If it holds a value for a field only the draft
+  has, the REST API serves that value at once, and GraphQL has no such field until the type is
+  published.
 
 ## Live updates
 
@@ -289,7 +298,8 @@ your site, so a front end can route pages from the content model instead of hard
 Only published content types that have a URL pattern are listed, sorted by `contentType`. A
 pattern's placeholders are `{id}`, `{locale}` or one of the type's Slug fields (see
 [Content modeling](/guides/content-modeling/)). A key whose role limits it to some content types
-sees only their routes. A type with an unpublished revision drops out until it is published again.
+sees only their routes. A type with an unpublished revision stays listed under its last published
+pattern until the revision is published.
 
 ## Sitemap
 

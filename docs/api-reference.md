@@ -870,7 +870,7 @@ delivery cache when `KV_CACHE` is bound; up to ~60 s cross-location staleness af
 | GET      | `/delivery/:space/:env/menus`                | `delivery:read` | Every menu → `{ items, total }`, each `{ handle, name, description? }`, by handle (`listDeliveredMenus`, one statement) |
 | GET      | `/delivery/:space/:env/menus/:handle`        | `delivery:read` | One menu resolved for `?locale=` (default: the space's default, with its fallbacks) → `{ handle, name, description?, locale, items }`, each item `{ id, label, url, target?, attrs?, entry?, term?, children }`. Entry links resolve to the published entry's path from its published type's `urlPattern`; an item that doesn't resolve (unpublished, deleted, no URL in the locale, a type the key can't read) is dropped and its children lifted. `404` for an unknown handle. One round trip (`DeliveryReadRequest.menu`: the menu, and its linked published entries, tags and concepts through `json_tree` over its own row); cached under the scope's tag, purged by `menus.changed` and the entry publish events |
 | GET      | `/delivery/:space/:env/singletons/:apiId`    | `delivery:read` | A singleton type's published entry, in the shape of `…/entries/:id`, with `locale` and `include`; `404` when the type's published revision is not a singleton (a draft turning the flag on or off counts from its publish) or its entry is unpublished. One round trip for the type row and its entry (`DeliveryReadRequest.singleton`), plus one per include level (`getDeliveredSingleton`); a key without the type gets `403`. GraphQL: the singleton type's root without `id`. MCP: `singleton_get` with `published: true` |
-| GET      | `/delivery/:space/:env/routes`               | `delivery:read` | Site routes: every **published** content type with a `urlPattern` → `{ items, total }`, each `{ contentType, urlPattern }`, sorted by `contentType`; a key with content grants sees only the types it may read. One statement through `DeliveryReads` (`listDeliveredRoutes`); cached under the scope's tag, purged by `content_type.published`. MCP: `model_list_content_types` returns each type's `urlPattern` and `status` |
+| GET      | `/delivery/:space/:env/routes`               | `delivery:read` | Site routes: every **published** content type with a `urlPattern`, as last published (a draft revision changes nothing here until it is published) → `{ items, total }`, each `{ contentType, urlPattern }`, sorted by `contentType`; a key with content grants sees only the types it may read. One statement through `DeliveryReads` (`listDeliveredRoutes`); cached under the scope's tag, purged by `content_type.published`. MCP: `model_list_content_types` returns each type's `urlPattern` and `status` |
 | GET      | `/delivery/:space/:env/sitemap`              | `delivery:read` | A page of the sitemap: published entries of every published type with a `urlPattern`, by entry id → `{ items, next }`, each `{ entryId, contentType, lastmod, urls: [{ path, locale }] }`; `noindex` entries and entries canonical elsewhere left out. `from` (a previous `next`), `limit` (1–5000, default 1000), `base` (the site's URL, to judge absolute canonicals). Content grants apply as for `routes`. Two round trips (`listDeliveredSitemap`); cached under the scope's tag, purged by any publish, unpublish or `content_type.published` |
 | GET      | `/delivery/:space/:env/sitemap.xml`          | `delivery:read` | `application/xml` for crawlers: a sitemaps.org `urlset` of `base` + path with `lastmod` and `hreflang` alternates, or past one file an index of `<base>/sitemap.xml?page=<token>` (each page's range of entry ids). `base` (an absolute `http(s)` URL, path prefix kept) is required (`422` otherwise); `page` serves one page. A site proxies its own `/sitemap.xml` here with the query string |
 | GET      | `/delivery/:space/:env/search`               | `search:read`   | Search, **hybrid by default**                                                                                                                                                                                                                                                                                                 |
@@ -917,8 +917,25 @@ with content grants reads no assets (lists are empty, gets are 403, embeds stay 
 
 ### GraphQL Delivery
 
-`ALL /delivery/:space/:env/graphql` serves a schema **generated from published content types** by
-`@contentworker/graphql-gen`. Cached per `(space, environment)` keyed on content-type versions.
+`ALL /delivery/:space/:env/graphql` serves a schema **generated from Delivery's published view of the
+content types** by `@contentworker/graphql-gen`. Cached per `(space, environment)` keyed on a digest
+of what shapes it (each visible type's id, fields and singleton flag in that view), so a draft of a
+live type rebuilds nothing, and a merge or promotion that publishes other fields at a version already
+served does.
+
+- A live type is in the schema as last published: a draft revision's fields arrive with its publish.
+- A type that was **never published** is in the schema as it stands, draft or not, and its published
+  entries resolve, so queries that worked keep working. The same goes for a type left as a draft
+  before definitions were kept (0030), until its next publish.
+- Publishing an entry doesn't wait for its type: a value for a field only a draft has is served by
+  REST at once (entries are delivered as stored), and GraphQL has no such field until the type is
+  published. The same goes for a field whose type a draft changes: with `rating` an `Integer` as
+  published and a `Symbol` in a draft, an entry published with `rating: "great"` is served by REST as
+  it is, and GraphQL answers that field `null` with `Int cannot represent non-integer value` until the
+  type is published (`publishing.ts` works from the current definition; the schema is the published
+  one).
+- A publish that changes a field's type changes its GraphQL type at that moment: a published value
+  the new type can't represent is `null` with an error on that field.
 
 - Query via `?query=` (GET) or JSON body `{ query, variables?, operationName? }` (POST).
 - Resolvers call the same use-cases as REST with locale flattening and link resolution

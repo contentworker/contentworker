@@ -17,6 +17,7 @@ import type {
   Concept,
   ConceptScheme,
   ContentType,
+  DeliveredContentType,
   DomainEvent,
   Entry,
   EntryFields,
@@ -40,6 +41,7 @@ import type {
   PluginSettings,
   Promotion,
   PromotionStatus,
+  PublishedContentTypeDefinition,
   PublishGate,
   QueryFilter,
   QueryNode,
@@ -1548,8 +1550,8 @@ export interface DeliveryReadRequest {
 
 /** A content type and its published entry, as {@link DeliveryReadRequest.singleton} reads them. */
 export interface SingletonRead {
-  /** Null when no content type has the apiId. */
-  readonly contentType: ContentType | null;
+  /** As Delivery serves it (`deliveredContentType`). Null when no content type has the apiId. */
+  readonly contentType: DeliveredContentType | null;
   /**
    * Whether the type's published revision is a singleton: what Delivery serves by, so a draft
    * revision turning the flag on or off changes nothing there until the type is published.
@@ -1612,7 +1614,13 @@ export interface DeliveryReadResult {
   readonly config?: SpaceConfig | null;
   /** The space's per-locale settings (`{}` for none), when asked and the asset read found rows. */
   readonly assetLocales?: Readonly<Record<LocaleCode, LocaleSettings>>;
-  readonly contentTypes?: ContentType[];
+  /**
+   * The published view of every type (`deliveredContentType`), not the working definitions
+   * `ContentTypeRepo` reads: a live type with a draft revision is here as last published, and a
+   * draft with no published definition as it stands, status `draft`. Never the admin-only
+   * details (`DeliveredContentType`).
+   */
+  readonly contentTypes?: DeliveredContentType[];
   readonly renditions?: AssetRendition[];
   readonly entry?: PublishedEntry | null;
   readonly asset?: PublishedAsset | null;
@@ -1731,6 +1739,12 @@ export interface SpaceRepo {
 export interface ContentTypeRepo {
   get(scope: Scope, apiId: string): Promise<ContentType | null>;
   list(scope: Scope): Promise<ContentType[]>;
+  /**
+   * The definitions kept for types with a draft revision over a published one, by apiId: what
+   * Delivery serves for them. Types with nothing kept aren't in it. The store keeps these itself: a
+   * save that takes a published type to draft keeps what it was, and a publish drops it.
+   */
+  publishedDefinitions(scope: Scope): Promise<ReadonlyMap<string, PublishedContentTypeDefinition>>;
   /** Upserts the definition at its version. */
   save(scope: Scope, contentType: ContentType): Promise<void>;
   /**

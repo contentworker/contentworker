@@ -349,6 +349,30 @@ where the retention sweep resumes in that environment; NULL is from the oldest) 
 updated_at, id) WHERE status = 'archived'`, which the engine's trash retention sweep reads. Nothing
 is backfilled (see [Architecture](./architecture.md)).
 
+`0030_published_definition.sql` adds the nullable JSON `content_types.published_definition`, the
+definition a live type serves while a draft revision holds its row, and two triggers on `status`
+that keep it: `content_types_keep_published` copies the old row when a save leaves `published`, and
+`content_types_clear_published` clears it on a publish. Triggers, not the store, because CI migrates
+before deploying and a rollback leaves the migration: code that doesn't know the column saves rows
+here too, and a copy only new code made would go stale under it. The store's upsert doesn't name
+the column. Delivery reads the row whenever it is published, so nothing left beside it can be
+served. Nothing is backfilled: NULL serves the row as before. While a draft is outstanding a row
+holds its fields twice, against D1's 2 MB row limit; a save that would pass it is refused, which is
+about 1 MB of field definitions (see [Domain model](./domain-model.md#content-type)).
+
+The reads tolerate a read replica that hasn't reached 0030. CI migrates and then ships the Workers
+with no wait, and Delivery's session starts on any replica (`first-unconstrained`), so a new Worker
+can name the column on a replica still catching up. Delivery's read retries without it on `no such
+column`, and `ContentTypeRepo.publishedDefinitions` answers empty, which is right: nothing is kept
+on a database from before 0030. The column is always read table-qualified (`keptDefinition`):
+Drizzle leaves a single table's columns bare, and SQLite takes a double-quoted name it can't find
+for a string, so a bare read returns the text `published_definition` instead of failing. Management
+reads don't name the column. The triggers need no such care: writes go only to the primary. The
+retry can itself land on a replica past 0030, where it ignores a kept definition and serves the row:
+one response, possibly cached until the next purge or its max-age, and the next read is right. That
+is accepted as rare and self-clearing, with no marker to keep it out of the cache. Remove the retry
+once every deployment is past 0030.
+
 `0026_content_type_details.sql` adds four nullable columns to `content_types`: `group_name`,
 `description`, `icon` and `layout` (JSON, the entry form's tabs and field groups; editor-only and
 never delivered). Code older than the migration neither reads nor writes them, and its upsert

@@ -22,9 +22,22 @@ A content type has:
   [Organizing the model](#organizing-the-model)).
 
 Creating or changing a content type makes a draft definition. Each revision bumps the type's
-`version`; publishing marks that version live for authoring and delivery and emits a
+`version`; publishing makes that version what Delivery serves and emits a
 `content_type.published` event, so integrations (generated types, caches) can react. The admin's
 content type dialog publishes as it saves.
+
+Until a revision is published, Delivery keeps serving the definition last published: GraphQL's
+schema, the routes, the sitemap and menus don't change, and the Management API and MCP show the
+draft. Changing a field's type takes effect in GraphQL at the publish, so a published value the new
+type can't represent comes back `null` with an error on that field. Update those entries, or add a
+new field instead, before publishing that kind of change.
+
+A type that has never been published is in the GraphQL schema as it stands, but not in the routes,
+the sitemap or menus. Entries don't wait for their type: you can write and publish them under a draft
+definition, and the REST API serves them as stored, including a value for a field only the draft has.
+GraphQL still has the published field. If `rating` is an `Integer` as published and a `Symbol` in a
+draft, an entry published with `rating: "great"` comes back from REST as `"great"`, and from GraphQL as
+`null` with an error on that field, until the type is published.
 
 ### URL pattern
 

@@ -6,8 +6,9 @@ description: Design or change a contentworker content model — create content t
 
 # Model content
 
-A content type is a schema for entries. Entries validate against it on every write, and the
-Delivery API serves only entries whose content type is published.
+A content type is a schema for entries. Entries validate against it on every write. Delivery's
+routes, sitemap and menus list a type once it is published; published entries of a draft type are
+still served over REST and GraphQL.
 
 ## Steps
 
@@ -45,8 +46,9 @@ Delivery API serves only entries whose content type is published.
      placeholders are `{id}`, `{locale}` or the apiId of one of the type's own `Slug` fields
      (`null` clears it). When a publish changes a slug it names, contentworker writes a `301` from
      the old path to the new one, so you rarely need to create that redirect yourself.
-3. **Publish it** with `model_publish_content_type`. An unpublished change is invisible to
-   delivery.
+3. **Publish it** with `model_publish_content_type`. Until then a live type keeps serving its last
+   published definition. Two exceptions: a type never published is in GraphQL as it stands, and an
+   entry published under a draft has its values on REST at once, even for a field only the draft has.
 4. **Type your code** with `model_typescript` instead of guessing field names: it returns the delivery
    (locale-flattened) and management (locale-keyed) shapes for the live model.
 

@@ -127,9 +127,10 @@ async function checkLinks(
   const terms = targets.terms.filter((t) => !heldTerms.has(`${t.kind}:${t.id}`));
   if (entryIds.length === 0 && terms.length === 0) return;
   const wants = (kind: TermKind) => terms.some((t) => t.kind === kind);
-  const [entries, types, tags, concepts] = await Promise.all([
+  const [entries, types, kept, tags, concepts] = await Promise.all([
     entryIds.length > 0 ? ctx.store.entries.getMany(scope, entryIds) : [],
     entryIds.length > 0 ? ctx.store.contentTypes.list(scope) : [],
+    entryIds.length > 0 ? ctx.store.contentTypes.publishedDefinitions(scope) : new Map(),
     wants('tag') ? ctx.store.taxonomy.listTags(scope) : [],
     wants('concept') ? ctx.store.taxonomy.listConcepts(scope) : [],
   ]);
@@ -139,7 +140,11 @@ async function checkLinks(
       .filter((e) => canRead(access, e.entry.contentTypeApiId))
       .map((e) => [e.entry.id, e.entry.contentTypeApiId]),
   );
-  const patterned = new Set(types.filter((t) => t.urlPattern).map((t) => t.apiId));
+  // A pattern Delivery serves, or one still in a draft: a menu may be built ahead of a publish, and
+  // `previewMenu` says the link has no URL yet. A draft clearing the served one refuses nothing.
+  const patterned = new Set(
+    types.filter((t) => t.urlPattern || kept.get(t.apiId)?.urlPattern).map((t) => t.apiId),
+  );
   const termIds = new Set([
     ...tags.map((t) => `tag:${t.id}`),
     ...concepts.map((c) => `concept:${c.id}`),
@@ -579,7 +584,12 @@ export async function previewMenu(
   const hasEntries = targets.entryIds.length > 0;
   const [config, contentTypes, published, current, tags, concepts] = await Promise.all([
     ctx.store.spaces.getConfig(scope),
-    hasEntries ? ctx.store.contentTypes.list(scope) : [],
+    // As Delivery resolves it: the published view, or a live type's draft would say `no_url`.
+    hasEntries
+      ? deliveryReads(ctx)
+          .read(scope, { contentTypes: true })
+          .then((read) => read.contentTypes ?? [])
+      : [],
     hasEntries ? ctx.store.entries.getPublishedMany(scope, targets.entryIds) : [],
     hasEntries ? ctx.store.entries.getMany(scope, targets.entryIds) : [],
     wants('tag') ? ctx.store.taxonomy.listTags(scope) : [],

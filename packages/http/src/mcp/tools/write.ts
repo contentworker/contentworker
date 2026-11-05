@@ -129,7 +129,11 @@ export function registerWriteTools(server: McpServer, t: ToolContext): void {
   server.registerTool(
     'model_publish_content_type',
     {
-      description: 'Publish a content type so entries can be delivered against it.',
+      description:
+        'Publish a content type: its current definition becomes what Delivery serves (GraphQL, ' +
+        'routes, sitemap, menus). Until then a live type keeps serving its last published ' +
+        'definition; a type never published is left out of routes, sitemap and menus, but ' +
+        'GraphQL already serves it. Entries can be written and published either way.',
       inputSchema: toolSchema('model_publish_content_type', () =>
         z.object({ apiId: z.string(), ...scopeArgs }),
       ),

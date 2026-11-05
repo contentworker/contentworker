@@ -13,13 +13,16 @@ import {
   type Concept,
   ConflictError,
   type ContentType,
+  type DeliveredContentType,
   type DomainEvent,
+  deliveredContentType,
   type Entry,
   type EntryFields,
   type EntryMetadata,
   type EntryVersion,
   type EventType,
   entrySysOf,
+  type FieldDefinition,
   type InstalledPlugin,
   isWebhookSendRequest,
   type LocaleSettings,
@@ -30,6 +33,7 @@ import {
   type OutboxEntry,
   type PluginSettings,
   type Promotion,
+  type PublishedContentTypeDefinition,
   projectFields,
   type QueryFilter,
   QueryTooBroadError,
@@ -94,6 +98,7 @@ import type {
   ContentStoreTx,
   ContentTypeRepo,
   DeliveryReadRepo,
+  DeliveryReadRequest,
   DeliveryReadResult,
   DeploymentSettingsRepo,
   EntryQuery,
@@ -174,6 +179,7 @@ import {
   type Exec,
   isUniqueViolation,
   mapD1Error,
+  messageOf,
   selectChunked,
   UnitOfWork,
 } from './exec';
@@ -272,13 +278,34 @@ function makeContentTypeRepo(x: Exec): ContentTypeRepo {
   return {
     async get(scope, apiId) {
       const [row] = await db
-        .select()
+        .select(workingColumns)
         .from(schema.contentTypes)
         .where(and(scopeFilter(schema.contentTypes, scope), eq(schema.contentTypes.apiId, apiId)));
       return row ? toContentType(row) : null;
     },
     async list(scope) {
       return (await contentTypesQuery(db, scope)).map(toContentType);
+    },
+    async publishedDefinitions(scope) {
+      const t = schema.contentTypes;
+      const rows = await db
+        .select({
+          apiId: t.apiId,
+          definition: keptDefinition,
+          publishedSingleton: t.publishedSingleton,
+        })
+        .from(t)
+        .where(and(scopeFilter(t, scope), ne(t.status, 'published'), isNotNull(keptDefinition)))
+        // A replica behind 0030 has nothing kept to report.
+        .catch((err: unknown) => {
+          if (isBehind0030(err)) return [];
+          throw err;
+        });
+      return new Map(
+        rows.flatMap(({ apiId, definition, publishedSingleton }) =>
+          definition ? [[apiId, toPublishedDefinition(definition, publishedSingleton)]] : [],
+        ),
+      );
     },
     async save(scope, ct) {
       const values = {
@@ -6744,8 +6771,74 @@ function makeTaxonomyRepo(x: Exec): TaxonomyRepo {
 const spaceConfigQuery = (db: Db, scope: Scope) =>
   db.select().from(schema.spaces).where(eq(schema.spaces.id, scope.spaceId));
 
+// A working definition has no use for the copy of the published one: nothing reads it there.
+const { publishedDefinition: _kept, ...workingColumns } = getTableColumns(schema.contentTypes);
+
 const contentTypesQuery = (db: Db, scope: Scope) =>
-  db.select().from(schema.contentTypes).where(scopeFilter(schema.contentTypes, scope));
+  db
+    .select(workingColumns)
+    .from(schema.contentTypes)
+    .where(scopeFilter(schema.contentTypes, scope));
+
+/**
+ * `published_definition`, always with its table. Drizzle leaves a single table's columns bare, and
+ * SQLite reads a double-quoted name it can't find as a string, so on a replica behind 0030 a bare
+ * column isn't an error: every row "has" the text `published_definition`. Qualified, it fails as
+ * {@link isBehind0030} expects.
+ */
+const keptDefinition =
+  sql<schema.StoredPublishedDefinition | null>`${sql.identifier('content_types')}.${sql.identifier('published_definition')}`.mapWith(
+    schema.contentTypes.publishedDefinition,
+  );
+
+/**
+ * The columns the published view reads: the row's, and the kept definition. A row that has one
+ * brings no draft `fields` beside it, so the read is no larger than a row with only its own.
+ *
+ * `behind0030` is for a read replica that hasn't reached the migration ({@link isBehind0030}): the
+ * same shape without naming the column. Nothing is kept there, as nothing was before it, so each
+ * row is served as it stands.
+ */
+const deliveredContentTypeColumns = (behind0030: boolean) => {
+  const t = schema.contentTypes;
+  return {
+    apiId: t.apiId,
+    name: t.name,
+    displayField: t.displayField,
+    fields: behind0030
+      ? t.fields
+      : sql<
+          FieldDefinition[]
+        >`CASE WHEN ${t.status} <> 'published' AND ${keptDefinition} IS NOT NULL THEN '[]' ELSE ${t.fields} END`.mapWith(
+          t.fields,
+        ),
+    urlPattern: t.urlPattern,
+    version: t.version,
+    status: t.status,
+    publishedSingleton: t.publishedSingleton,
+    publishedDefinition: behind0030
+      ? sql<schema.StoredPublishedDefinition | null>`NULL`
+      : keptDefinition,
+  };
+};
+
+const deliveredContentTypesQuery = (db: Db, scope: Scope, behind0030: boolean, apiId?: string) => {
+  const t = schema.contentTypes;
+  return db
+    .select(deliveredContentTypeColumns(behind0030))
+    .from(t)
+    .where(and(scopeFilter(t, scope), apiId === undefined ? undefined : eq(t.apiId, apiId)));
+};
+
+/**
+ * Whether a read failed because the replica that answered predates 0030_published_definition. CI
+ * migrates and then deploys with no wait, and Delivery's session starts on any replica, which D1
+ * only promises is asynchronously up to date: a new Worker can name the column on a replica still
+ * catching up. The retry costs nothing unless that happens. Remove it once every deployment is
+ * past 0030.
+ */
+const isBehind0030 = (err: unknown): boolean =>
+  /no such column: .*published_definition/.test(messageOf(err));
 
 /** Rendition presets are the space's, not an environment's. */
 const renditionsQuery = (db: Db, scope: Scope) =>
@@ -6879,218 +6972,222 @@ function sitemapPageStartsQuery(db: Db, scope: Scope, query: SitemapQuery, size:
  */
 function makeDeliveryReadRepo(x: Exec): DeliveryReadRepo {
   const db = x.db;
-  return {
-    async read(scope, request) {
-      const queries: Query[] = [];
-      const settle: ((rows: never[]) => void)[] = [];
-      const add = <R>(query: PromiseLike<R[]>, take: (rows: R[]) => void) => {
-        queries.push(query as unknown as Query);
-        settle.push(take as (rows: never[]) => void);
-      };
-      const result: { -readonly [K in keyof DeliveryReadResult]: DeliveryReadResult[K] } = {};
+  const readOn = async (
+    scope: Scope,
+    request: DeliveryReadRequest,
+    behind0030: boolean,
+  ): Promise<DeliveryReadResult> => {
+    const queries: Query[] = [];
+    const settle: ((rows: never[]) => void)[] = [];
+    const add = <R>(query: PromiseLike<R[]>, take: (rows: R[]) => void) => {
+      queries.push(query as unknown as Query);
+      settle.push(take as (rows: never[]) => void);
+    };
+    const result: { -readonly [K in keyof DeliveryReadResult]: DeliveryReadResult[K] } = {};
 
-      if (request.config) {
-        add(spaceConfigQuery(db, scope), ([row]) => {
-          result.config = row ? toSpaceConfig(row) : null;
-        });
-      }
-      if (request.contentTypes) {
-        // Delivery's view: the singleton flag as last published, not as a draft has it.
-        add(contentTypesQuery(db, scope), (rows) => {
-          result.contentTypes = rows.map((row) =>
-            toContentType({ ...row, singleton: row.publishedSingleton }),
-          );
-        });
-      }
-      if (request.renditions) {
-        add(renditionsQuery(db, scope), (rows) => {
-          result.renditions = rows.map(toAssetRendition);
-        });
-      }
-      if (request.entryId !== undefined) {
-        add(publishedEntriesQuery(db, scope, [request.entryId]), ([row]) => {
-          result.entry = row ? toPublished(row) : null;
-        });
-      }
-      if (request.assetId !== undefined) {
-        const query = request.assetLocales
-          ? publishedAssetsQuery(db, scope, [request.assetId], { withLocales: true })
-          : publishedAssetsQuery(db, scope, [request.assetId]);
-        add(query, ([row]) => {
-          result.asset = row ? toPublishedAsset(row) : null;
-          if (row && request.assetLocales) result.assetLocales = localesOfRow(row);
-        });
-      }
-      if (request.entryIds) {
-        const entries: PublishedEntry[] = [];
-        result.entries = entries;
-        for (const chunk of chunked(request.entryIds, 1, RESERVED)) {
-          add(publishedEntriesQuery(db, scope, chunk), (rows) => {
-            entries.push(...rows.map(toPublished));
-          });
-        }
-      }
-      if (request.assetIds) {
-        const assets: PublishedAsset[] = [];
-        result.assets = assets;
-        for (const chunk of chunked(request.assetIds, 1, RESERVED)) {
-          add(publishedAssetsQuery(db, scope, chunk), (rows) => {
-            assets.push(...rows.map(toPublishedAsset));
-          });
-        }
-      }
-      if (request.assetPage) {
-        const page = publishedAssetPage(db, scope, request.assetPage, {
-          withLocales: Boolean(request.assetLocales),
-        });
-        add(page.query, (rows) => {
-          result.assetPage = page.of(rows);
-          const [first] = rows;
-          if (first && request.assetLocales) result.assetLocales = localesOfRow(first);
-        });
-      }
-      if (request.tags) {
-        add(tagsQuery(db, scope, request.tags), (rows) => {
-          result.tags = rows.map(toTag);
-        });
-      }
-      if (request.concepts) {
-        add(conceptsQuery(db, scope, request.concepts), (rows) => {
-          result.concepts = rows.map(toConcept);
-        });
-      }
-      if (request.termUsage) {
-        add(termUsageQuery(db, scope, request.termUsage), (rows) => {
-          result.termUsage = rows.map(toTermUsage);
-        });
-      }
-
-      if (request.sitemap) {
-        const query = request.sitemap;
-        const items: SitemapEntryRow[] = [];
-        result.sitemap = { items };
-        add(sitemapPageQuery(db, scope, query), (rows) => {
-          items.push(
-            ...rows.map((r) => ({
-              entryId: r.entryId,
-              contentTypeApiId: r.contentTypeApiId,
-              fields: r.fields ? (JSON.parse(r.fields) as EntryFields) : {},
-              publishedAt: r.publishedAt.toISOString(),
-            })),
-          );
-        });
-        if (query.pageStarts !== undefined) {
-          const starts: string[] = [];
-          result.sitemap = { items, pageStarts: starts };
-          add(sitemapPageStartsQuery(db, scope, query, query.pageStarts), (rows) => {
-            starts.push(...rows.map((r) => r.entryId));
-          });
-        }
-      }
-      if (request.menu) {
-        // The menu and what its links name, as four statements of the same batch: the links are
-        // read through the menu's own row, so nothing waits on a first round trip.
-        const { handle } = request.menu;
-        const read: { menu?: Menu; entries: PublishedEntry[]; tags: Tag[]; concepts: Concept[] } = {
-          entries: [],
-          tags: [],
-          concepts: [],
-        };
-        add(menuByHandleQuery(db, scope, handle), ([row]) => {
-          if (row) read.menu = toMenu(row);
-          result.menu = read.menu ? (read as MenuRead) : null;
-        });
-        const ep = schema.entryPublished;
-        add(
-          db
-            .select()
-            .from(ep)
-            .where(
-              and(
-                scopeFilter(ep, scope),
-                sql`${ep.entryId} IN ${menuLinkIds(scope, handle, { type: 'entry' })}`,
-              ),
-            ),
-          (rows) => {
-            read.entries = rows.map(toPublished);
-          },
-        );
-        add(
-          db
-            .select()
-            .from(schema.tags)
-            .where(
-              and(
-                scopeFilter(schema.tags, scope),
-                sql`${schema.tags.id} IN ${menuLinkIds(scope, handle, { type: 'term', termKind: 'tag' })}`,
-              ),
-            ),
-          (rows) => {
-            read.tags = rows.map(toTag);
-          },
-        );
-        add(
-          db
-            .select()
-            .from(schema.concepts)
-            .where(
-              and(
-                scopeFilter(schema.concepts, scope),
-                sql`${schema.concepts.id} IN ${menuLinkIds(scope, handle, { type: 'term', termKind: 'concept' })}`,
-              ),
-            ),
-          (rows) => {
-            read.concepts = rows.map(toConcept);
-          },
-        );
-      }
-
-      if (request.singleton) {
-        // The type and its published entry, two statements of the same batch: whether the type is
-        // a singleton at all is the caller's to judge, from the row read here.
-        const apiId = request.singleton.contentType;
-        const read: {
-          contentType: ContentType | null;
-          publishedSingleton: boolean;
-          entry: PublishedEntry | null;
-        } = { contentType: null, publishedSingleton: false, entry: null };
-        result.singleton = read;
-        add(
-          db
-            .select()
-            .from(schema.contentTypes)
-            .where(
-              and(scopeFilter(schema.contentTypes, scope), eq(schema.contentTypes.apiId, apiId)),
-            ),
-          ([row]) => {
-            read.contentType = row ? toContentType(row) : null;
-            read.publishedSingleton = row?.publishedSingleton === true;
-          },
-        );
-        const ep = schema.entryPublished;
-        add(
-          db
-            .select()
-            .from(ep)
-            .where(and(scopeFilter(ep, scope), eq(ep.contentTypeApiId, apiId)))
-            .orderBy(asc(ep.entryId))
-            .limit(1),
-          ([row]) => {
-            read.entry = row ? toPublished(row) : null;
-          },
-        );
-      }
-
-      if (queries.length === 0) return result;
-      const rows =
-        queries.length === 1
-          ? [await (queries[0] as unknown as PromiseLike<unknown[]>)]
-          : ((await db.batch(queries as unknown as [Query, ...Query[]])) as unknown[][]);
-      settle.forEach((take, i) => {
-        take((rows[i] ?? []) as never[]);
+    if (request.config) {
+      add(spaceConfigQuery(db, scope), ([row]) => {
+        result.config = row ? toSpaceConfig(row) : null;
       });
-      return result;
-    },
+    }
+    if (request.contentTypes) {
+      // Delivery's view: each type as last published, not as a draft has it.
+      add(deliveredContentTypesQuery(db, scope, behind0030), (rows) => {
+        result.contentTypes = rows.map(toDeliveredContentType);
+      });
+    }
+    if (request.renditions) {
+      add(renditionsQuery(db, scope), (rows) => {
+        result.renditions = rows.map(toAssetRendition);
+      });
+    }
+    if (request.entryId !== undefined) {
+      add(publishedEntriesQuery(db, scope, [request.entryId]), ([row]) => {
+        result.entry = row ? toPublished(row) : null;
+      });
+    }
+    if (request.assetId !== undefined) {
+      const query = request.assetLocales
+        ? publishedAssetsQuery(db, scope, [request.assetId], { withLocales: true })
+        : publishedAssetsQuery(db, scope, [request.assetId]);
+      add(query, ([row]) => {
+        result.asset = row ? toPublishedAsset(row) : null;
+        if (row && request.assetLocales) result.assetLocales = localesOfRow(row);
+      });
+    }
+    if (request.entryIds) {
+      const entries: PublishedEntry[] = [];
+      result.entries = entries;
+      for (const chunk of chunked(request.entryIds, 1, RESERVED)) {
+        add(publishedEntriesQuery(db, scope, chunk), (rows) => {
+          entries.push(...rows.map(toPublished));
+        });
+      }
+    }
+    if (request.assetIds) {
+      const assets: PublishedAsset[] = [];
+      result.assets = assets;
+      for (const chunk of chunked(request.assetIds, 1, RESERVED)) {
+        add(publishedAssetsQuery(db, scope, chunk), (rows) => {
+          assets.push(...rows.map(toPublishedAsset));
+        });
+      }
+    }
+    if (request.assetPage) {
+      const page = publishedAssetPage(db, scope, request.assetPage, {
+        withLocales: Boolean(request.assetLocales),
+      });
+      add(page.query, (rows) => {
+        result.assetPage = page.of(rows);
+        const [first] = rows;
+        if (first && request.assetLocales) result.assetLocales = localesOfRow(first);
+      });
+    }
+    if (request.tags) {
+      add(tagsQuery(db, scope, request.tags), (rows) => {
+        result.tags = rows.map(toTag);
+      });
+    }
+    if (request.concepts) {
+      add(conceptsQuery(db, scope, request.concepts), (rows) => {
+        result.concepts = rows.map(toConcept);
+      });
+    }
+    if (request.termUsage) {
+      add(termUsageQuery(db, scope, request.termUsage), (rows) => {
+        result.termUsage = rows.map(toTermUsage);
+      });
+    }
+
+    if (request.sitemap) {
+      const query = request.sitemap;
+      const items: SitemapEntryRow[] = [];
+      result.sitemap = { items };
+      add(sitemapPageQuery(db, scope, query), (rows) => {
+        items.push(
+          ...rows.map((r) => ({
+            entryId: r.entryId,
+            contentTypeApiId: r.contentTypeApiId,
+            fields: r.fields ? (JSON.parse(r.fields) as EntryFields) : {},
+            publishedAt: r.publishedAt.toISOString(),
+          })),
+        );
+      });
+      if (query.pageStarts !== undefined) {
+        const starts: string[] = [];
+        result.sitemap = { items, pageStarts: starts };
+        add(sitemapPageStartsQuery(db, scope, query, query.pageStarts), (rows) => {
+          starts.push(...rows.map((r) => r.entryId));
+        });
+      }
+    }
+    if (request.menu) {
+      // The menu and what its links name, as four statements of the same batch: the links are
+      // read through the menu's own row, so nothing waits on a first round trip.
+      const { handle } = request.menu;
+      const read: { menu?: Menu; entries: PublishedEntry[]; tags: Tag[]; concepts: Concept[] } = {
+        entries: [],
+        tags: [],
+        concepts: [],
+      };
+      add(menuByHandleQuery(db, scope, handle), ([row]) => {
+        if (row) read.menu = toMenu(row);
+        result.menu = read.menu ? (read as MenuRead) : null;
+      });
+      const ep = schema.entryPublished;
+      add(
+        db
+          .select()
+          .from(ep)
+          .where(
+            and(
+              scopeFilter(ep, scope),
+              sql`${ep.entryId} IN ${menuLinkIds(scope, handle, { type: 'entry' })}`,
+            ),
+          ),
+        (rows) => {
+          read.entries = rows.map(toPublished);
+        },
+      );
+      add(
+        db
+          .select()
+          .from(schema.tags)
+          .where(
+            and(
+              scopeFilter(schema.tags, scope),
+              sql`${schema.tags.id} IN ${menuLinkIds(scope, handle, { type: 'term', termKind: 'tag' })}`,
+            ),
+          ),
+        (rows) => {
+          read.tags = rows.map(toTag);
+        },
+      );
+      add(
+        db
+          .select()
+          .from(schema.concepts)
+          .where(
+            and(
+              scopeFilter(schema.concepts, scope),
+              sql`${schema.concepts.id} IN ${menuLinkIds(scope, handle, { type: 'term', termKind: 'concept' })}`,
+            ),
+          ),
+        (rows) => {
+          read.concepts = rows.map(toConcept);
+        },
+      );
+    }
+
+    if (request.singleton) {
+      // The type and its published entry, two statements of the same batch: whether the type is
+      // a singleton at all is the caller's to judge, from the row read here.
+      const apiId = request.singleton.contentType;
+      const read: {
+        contentType: ContentType | null;
+        publishedSingleton: boolean;
+        entry: PublishedEntry | null;
+      } = { contentType: null, publishedSingleton: false, entry: null };
+      result.singleton = read;
+      add(deliveredContentTypesQuery(db, scope, behind0030, apiId), ([row]) => {
+        read.contentType = row ? toDeliveredContentType(row) : null;
+        read.publishedSingleton = row?.publishedSingleton === true;
+      });
+      const ep = schema.entryPublished;
+      add(
+        db
+          .select()
+          .from(ep)
+          .where(and(scopeFilter(ep, scope), eq(ep.contentTypeApiId, apiId)))
+          .orderBy(asc(ep.entryId))
+          .limit(1),
+        ([row]) => {
+          read.entry = row ? toPublished(row) : null;
+        },
+      );
+    }
+
+    if (queries.length === 0) return result;
+    const rows =
+      queries.length === 1
+        ? [await (queries[0] as unknown as PromiseLike<unknown[]>)]
+        : ((await db.batch(queries as unknown as [Query, ...Query[]])) as unknown[][]);
+    settle.forEach((take, i) => {
+      take((rows[i] ?? []) as never[]);
+    });
+    return result;
+  };
+  return {
+    // Once more without the column only when the replica lacks it, so a read pays nothing for this.
+    // That second read can land on a replica past 0030, where it ignores a kept definition and
+    // serves the row: one response, possibly cached until the next purge or its max-age, and the
+    // next read is right. Accepted as rare and self-clearing. Remove this once every deployment is
+    // past 0030.
+    read: (scope, request) =>
+      readOn(scope, request, false).catch((err: unknown) => {
+        if (!isBehind0030(err)) throw err;
+        return readOn(scope, request, true);
+      }),
   };
 }
 
@@ -7212,7 +7309,7 @@ export function createD1Store(d1: D1Like, options: D1StoreOptions = {}): Content
 
 // ---- row mappers ----------------------------------------------------------
 
-type CtRow = typeof schema.contentTypes.$inferSelect;
+type CtRow = Omit<typeof schema.contentTypes.$inferSelect, 'publishedDefinition'>;
 type EntryRow = typeof schema.entries.$inferSelect;
 type PubRow = typeof schema.entryPublished.$inferSelect;
 
@@ -7230,6 +7327,42 @@ const toContentType = (r: CtRow): ContentType => ({
   version: r.version,
   status: r.status,
 });
+
+const toPublishedDefinition = (
+  { urlPattern, ...definition }: schema.StoredPublishedDefinition,
+  publishedSingleton: boolean,
+): PublishedContentTypeDefinition => ({
+  ...definition,
+  ...(urlPattern ? { urlPattern } : {}),
+  ...(publishedSingleton ? { singleton: true as const } : {}),
+});
+
+const toDeliveredContentType = (r: {
+  apiId: string;
+  name: string;
+  displayField: string;
+  fields: FieldDefinition[];
+  urlPattern: string | null;
+  version: number;
+  status: ContentType['status'];
+  publishedSingleton: boolean;
+  publishedDefinition: schema.StoredPublishedDefinition | null;
+}): DeliveredContentType =>
+  deliveredContentType(
+    {
+      apiId: r.apiId,
+      name: r.name,
+      displayField: r.displayField,
+      fields: r.fields,
+      ...(r.urlPattern ? { urlPattern: r.urlPattern } : {}),
+      version: r.version,
+      status: r.status,
+    },
+    r.publishedDefinition
+      ? toPublishedDefinition(r.publishedDefinition, r.publishedSingleton)
+      : null,
+    r.publishedSingleton,
+  );
 
 const toEntry = (r: EntryRow): Entry => ({
   id: r.id,

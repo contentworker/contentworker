@@ -179,10 +179,13 @@ const SINGLETON_NAMED = 10;
  * Every save over a stored definition is guarded on the singleton flag it read, so a save racing
  * a turn on or off fails (409) rather than undoing it.
  *
- * Delivery serves by the definition as last published (its singleton flag included), so a save
- * of a published definition (a merge or a promotion copies one) announces
- * `content_type.published` in the same unit, which purges the scope's delivery responses: one
- * event per published save. A draft's change reaches Delivery with its publish.
+ * Delivery serves the definition as last published, fields, URL pattern and singleton flag alike
+ * (`deliveredContentType`), so a save of a published definition (a merge or a promotion copies
+ * one) announces `content_type.published` in the same unit, which purges the scope's delivery
+ * responses: one event per published save. A draft over a live type changes nothing Delivery
+ * serves, so it needs no purge: the store keeps what the type was, and the change arrives with the
+ * publish. A draft with nothing kept (never published, or revised before definitions were kept)
+ * is served as it stands, and its save still reaches GraphQL unannounced, as it always has.
  */
 export async function saveContentTypeOver(
   ctx: AppContext,

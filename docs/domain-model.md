@@ -548,6 +548,30 @@ interface ContentType {
 - `reviseContentType(current, changes)` — increments `version`, resets status to `draft`, sorts
   fields by `position`, optionally updates `name`/`displayField`/`fields`/`urlPattern` (`null` or
   `''` clears it) and `singleton` (left out, kept).
+- **The published view.** `content_types` holds one row per type, the current revision, which is
+  what Management, MCP and the admin read. Delivery reads `deliveredContentType(row, kept,
+  publishedSingleton)` instead (`DeliveryReadResult.contentTypes`, `SingletonRead.contentType`): a
+  published row as it stands; a draft with a kept definition as that definition, reporting
+  `published`; a draft with none as it stands, reporting `draft`. `kept` is
+  `content_types.published_definition` (`PublishedContentTypeDefinition`: name, display field,
+  fields, URL pattern, version). Triggers from 0030_published_definition write it, on `status`, so
+  every writer gets the same result: leaving `published` keeps the row's old values, a publish
+  clears it, a draft over a draft leaves it. `ContentTypeRepo.publishedDefinitions(scope)` lists
+  them. So GraphQL, the routes, the sitemap, menus (and `previewMenu`), reference filters and
+  singletons all serve a live type as last published through a draft, and a draft save needs no
+  purge: it changes nothing they serve. Slug redirects and the delete check on a URL pattern
+  follow the same pattern (`slugRedirectWrites`, `contentTypeDependents`). A draft with nothing kept
+  is either never published or was revised before 0030; Delivery can't tell which, so both behave
+  as they always have: in GraphQL, out of the routes, sitemap and menus, until the next publish.
+  Entries don't wait for any of this: they validate against the current row and can be published
+  under a draft, so REST can show a draft-only field's value before GraphQL has the field, and a
+  value of a draft's changed field type (`rating`: `Integer` published, `Symbol` in the draft, a
+  value of `"great"`) is `null` with an error on GraphQL until the type is published.
+  `DeliveredContentType` is the view's type: it leaves out the admin-only `group`, `description`,
+  `icon` and `layout`. Saving a menu checks a link against the pattern served or one in a draft,
+  so a menu can be built ahead of a publish; `previewMenu` reports what Delivery does (`no_url`
+  until then). A promotion of a published definition is assessed against what the target serves
+  too, not only its working draft.
 - `group`, `description`, `icon` and `layout` follow one rule on a draft or revision: left out
   keeps the stored value, `null` (or blank text) clears it, and a value stored as it stands passes
   unchecked. They are columns on `content_types` (0026), not part of the `fields` JSON.
@@ -1042,7 +1066,8 @@ type such as `ArticleSeo`) and codegen read it as a component of `SEO_FIELDS`. `
 `null` clears it) and saves a new draft through the same path as `updateEntry`; it is refused
 (`422`) for a type with no `Seo` field, and for a non-default locale on an unlocalized one.
 
-**The sitemap** lists published entries of every published content type with a `urlPattern`.
+**The sitemap** lists published entries of every published content type with a `urlPattern`, each
+type as last published (see [the published view](#content-type)).
 `entrySitemapUrls` gives each entry its URLs: one per locale of the space when the pattern names
 `{locale}` or a localized slug, else the default locale only. Each locale reads the named slugs and
 the `Seo` value through the fallback chain, as Delivery does; a path two locales share is listed

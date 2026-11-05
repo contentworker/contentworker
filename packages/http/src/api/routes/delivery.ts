@@ -537,9 +537,12 @@ export function deliveryRoutes(deps: AuthDeps, describe: Describe = undocumented
   );
 
   // --- GraphQL Delivery ---------------------------------------------------
-  // Schema is generated from the content types the principal may read and
-  // cached content-addressed (scope + visible apiId@version set), so it
-  // rebuilds automatically when the content-type set/versions change and is
+  // Schema is generated from the published view of the content types the
+  // principal may read and cached content-addressed (scope + a digest of what
+  // shapes it: each visible type's id, published fields and singleton flag, so
+  // a draft of a live type rebuilds nothing, and a merge or promotion that
+  // publishes other fields at the same version does). It rebuilds when those
+  // change and is
   // shared across principals with the same visible shape. The schema holds NO
   // principal state — resolvers travel per-request via the GraphQL
   // contextValue (a cached schema serving another caller's closures would be
@@ -563,11 +566,14 @@ export function deliveryRoutes(deps: AuthDeps, describe: Describe = undocumented
       ? types.filter((t) => canAccessContentType(principal, 'read', t.apiId))
       : types;
     const shape = grantedTypes
-      // The singleton flag changes a root's shape on a publish that keeps the version.
-      .map((t) => `${t.apiId}@${t.version}${t.singleton ? ':singleton' : ''}`)
+      // The singleton flag changes a root's shape on a publish that keeps the version, and a merge
+      // or promotion can publish other fields at a version already served: only the fields say.
+      .map((t) => `${t.apiId}${t.singleton ? ':singleton' : ''}:${JSON.stringify(t.fields)}`)
       .sort()
-      .join(',');
-    const key = `${scope.spaceId}:${scope.environmentId}:${shape}`;
+      .join('\n');
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(shape));
+    const hex = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
+    const key = `${scope.spaceId}:${scope.environmentId}:${hex}`;
     const cached = schemaCache.get(key);
     if (cached) return cached;
     const schema = buildDeliverySchema(grantedTypes);

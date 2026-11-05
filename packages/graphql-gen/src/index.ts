@@ -217,8 +217,9 @@ function scalarFor(field: FieldDefinition): GraphQLOutputType {
 }
 
 /**
- * Builds a GraphQL Delivery schema from a set of published content types. Each
- * content type becomes an object type (scalar fields typed; rich/link fields as
+ * Builds a GraphQL Delivery schema from the types as Delivery reads them (the
+ * published view: a live type as last published, a never-published draft as it
+ * stands). Each content type becomes an object type (scalar fields typed; rich/link fields as
  * JSON), with `<type>` and `<type>Collection` root queries plus `asset` and
  * `search`. A singleton type's `<type>` takes no `id` to read its one entry. Field values come from the resolver-rendered entry, so locale
  * flattening and reference resolution are reused, not reimplemented.

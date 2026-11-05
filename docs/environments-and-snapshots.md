@@ -36,6 +36,25 @@ exist (create it first). Merging two content models is a different and much hard
 `compare`/`merge` for the intra-space case. Cloning is the cross-space case those cannot cover, and
 the target space is authorized separately so a clone cannot cross a tenancy boundary.
 
+A live type with a draft revision carries what it serves in `published` beside its draft
+(`SnapshotContentType`), and `writeSnapshotModel` publishes that first and saves the draft over it,
+so the target serves what the source served. Versions start again in the target, as for any type.
+The field is optional and `snapshotVersion` stays 1: a snapshot from before it, or a draft with
+nothing kept, imports as a plain draft. A merge or a promotion copies the source's current
+definition and no `published`: over a live target the target keeps serving its own definition until
+it is published. Into a target without the type it arrives as a plain draft, which is a type never
+published there: GraphQL serves it as it stands at once, and the routes, sitemap and menus leave it
+out until it is published.
+
+Preflight does what the write will do, so a definition that can't be written is refused (`422`, and
+on a dry run) before anything is, rather than partway through an environment that then can't be
+imported into again. A draft with a `published` definition is defined from that and revised over it
+(`reviseContentType`, which passes what it finds unchanged); anything else goes through
+`defineContentType`, and `published` on a published row is ignored, as the write ignores it. Both run
+on the normalised model, so a rule normalising finds unusable is gone before either: a draft that
+retypes `rating` under a rule comparing it with `gt` imports, and the rule stays in the target's
+published definition and not in its draft, where the source's draft still holds it.
+
 A snapshot's content model is normalised once, before the checks (`normalizeSnapshotModel`): an
 `in` list stored before options were checked keeps its usable options, once each (and goes when
 none is left), and unusable guidance, messages and conditional rules are dropped, rather than

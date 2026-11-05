@@ -98,7 +98,7 @@ export class UnitOfWork implements Exec {
   }
 }
 
-const messageOf = (err: unknown): string => {
+export const messageOf = (err: unknown): string => {
   const parts: string[] = [];
   let cur: unknown = err;
   // drizzle wraps the D1 error; D1 sometimes wraps SQLite's. Walk the cause chain.
