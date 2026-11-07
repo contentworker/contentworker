@@ -287,6 +287,7 @@ describe('patching an entry’s blocks', () => {
         op: 1,
         field: 'ops[1]',
         locale: 'en-US',
+        code: 'type_not_allowed',
         message: 'A "section" block can’t go here (one of: hero, cta)',
       },
     ]);
@@ -306,7 +307,45 @@ describe('patching an entry’s blocks', () => {
     expect((err as ValidationError).issues[0]).toMatchObject({
       field: 'body[1].label',
       message: 'Field is required',
+      // The block it falls in, by key: positions say nothing once a patch moves blocks.
+      block: { key: page.cta, type: 'cta', path: 'label' },
     });
+    expect(await versions(page.id)).toBe(1);
+  });
+
+  it('says what it refused: a read-only field by name, fields the caller can’t read by count', async () => {
+    const page = await landing();
+    const readOnly = await refusal(
+      patchEntryBlocks(
+        ctx,
+        scope,
+        page.id,
+        {
+          expectedVersion: page.version,
+          ops: [{ op: 'remove', field: 'body', key: page.cta }],
+        },
+        { unwritable: ['body'] },
+      ),
+    );
+    expect((readOnly as ForbiddenError).details).toEqual({ reason: 'read_only', field: 'body' });
+    const hidden = await refusal(
+      patchEntryBlocks(
+        ctx,
+        scope,
+        page.id,
+        {
+          expectedVersion: page.version,
+          ops: [
+            { op: 'remove', field: 'body', key: page.cta },
+            { op: 'insert', field: 'aside', block: { _type: 'cta', label: 'x' } },
+          ],
+        },
+        { unwritable: ['body', 'aside'], unreadable: ['aside'] },
+      ),
+    );
+    // Counted, never named: the caller can't read it.
+    expect((hidden as ForbiddenError).details).toEqual({ reason: 'hidden', hidden: 1 });
+    expect((hidden as Error).message).not.toContain('aside');
     expect(await versions(page.id)).toBe(1);
   });
 
@@ -322,11 +361,18 @@ describe('patching an entry’s blocks', () => {
       }),
     );
     expect((err as ValidationError).issues).toEqual([
-      { op: 0, field: 'ops[0]', locale: 'fr', message: '"fr" is not one of this space’s locales' },
+      {
+        op: 0,
+        field: 'ops[0]',
+        locale: 'fr',
+        code: 'bad_locale',
+        message: '"fr" is not one of this space’s locales',
+      },
       {
         op: 1,
         field: 'ops[1]',
         locale: 'de',
+        code: 'bad_locale',
         message: '"body" is not localized; only en-US is allowed',
       },
     ]);

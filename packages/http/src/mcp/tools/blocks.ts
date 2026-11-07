@@ -31,13 +31,13 @@ export function registerBlockTools(server: McpServer, t: ToolContext): void {
     },
     async (args) => {
       guard(SCOPES.contentWrite, scopeOf(args));
-      const unwritable = await authorizeBlockPatch(ctx, scopeOf(args), principal, args.id);
+      const access = await authorizeBlockPatch(ctx, scopeOf(args), principal, args.id);
       const checked = await checkEntryBlocks(
         ctx,
         scopeOf(args),
         args.id,
         { expectedVersion: args.expectedVersion, ops: args.ops as readonly BlockOpInput[] },
-        { unwritable },
+        access,
       );
       // As the route does: the answer shows only the fields the caller may read.
       return ok({
@@ -100,13 +100,13 @@ export function registerBlockTools(server: McpServer, t: ToolContext): void {
     },
     async (args) => {
       guard(SCOPES.contentWrite, scopeOf(args));
-      const unwritable = await authorizeBlockPatch(ctx, scopeOf(args), principal, args.id);
+      const access = await authorizeBlockPatch(ctx, scopeOf(args), principal, args.id);
       const saved = await patchEntryBlocks(
         ctx,
         scopeOf(args),
         args.id,
         { expectedVersion: args.expectedVersion, ops: args.ops as readonly BlockOpInput[] },
-        { unwritable },
+        access,
       );
       // As the route does: the answer shows only the fields the caller may read.
       return ok({

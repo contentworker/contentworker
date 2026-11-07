@@ -12,6 +12,7 @@ import {
   authorizeContent,
   authorizeTrash,
   type ContentAction,
+  ForbiddenError,
   inScope,
   type PermissionScope,
   type Principal,
@@ -266,6 +267,9 @@ export function buildServer(
           });
         } catch (err) {
           if (err instanceof ValidationError) return validationResult(err);
+          // A refusal that says what was refused (a read-only field) answers as REST's 403 body.
+          if (err instanceof ForbiddenError && err.details !== undefined)
+            return { ...ok(toHttpError(err).body), isError: true as const };
           throw toolFailure(name, err);
         }
       }) as never,

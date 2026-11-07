@@ -222,8 +222,12 @@ export class UnauthorizedError extends DomainError {
 }
 
 export class ForbiddenError extends DomainError {
-  constructor(scope: string) {
-    super('forbidden', `Missing required scope "${scope}"`);
+  /**
+   * `details` say what was refused where a client can act on it without parsing the message (a
+   * field its role makes read-only, how many it can't read); absent, the scope says it all.
+   */
+  constructor(scope: string, details?: Readonly<Record<string, unknown>>) {
+    super('forbidden', `Missing required scope "${scope}"`, details);
   }
 }
 

@@ -339,15 +339,22 @@ layout/nav.ts` is the one source of the pages, their order, names, icons and G-l
   system and never from the model's words (`assistant/proposal.tsx`): a draft save as the field
   diff from what the draft holds now (Now and After saving; a field the save leaves out is
   removed), a new entry by its fields, a batch by its first five entries' titles and "and N more",
-  a tagging by its tags' names, a release by its title, a block patch by its steps (each block
-  named by its type's name and label, "Changes Hero “Welcome”", never by its key) and the field
-  diff its dry run answers (`POST …/entries/blocks/validate`: the api's own checks, nothing
-  written), any other one-entry action by the entry's title. A block patch that can't be saved as
-  it stands keeps Confirm off and says why: in a destructive Alert when the draft moved past its
-  version, a step doesn't fit (in the domain's words, the block it is about named), the result
-  would break a rule of the model, or the role can't change a field; in the warning Alert,
-  counted, when it touches a field the person can't read; in a note when it changes nothing or
-  the call doesn't say what to change. It is held like a publish: Confirm stays off until that read is done, and a read that
+  a tagging by its tags' names, a release by its title, a block patch from its dry run (`POST
+  …/entries/blocks/validate`: the api's own checks, nothing written) by its steps, each block named
+  by its type's name and label and never by its key, a move or insert saying where it lands ("to
+  the end of Body", "at the start of Body", "after Call to action “Sign up”", "into Section
+  “Features”"), and Review changes showing each touched slot's order by block name, Now and After
+  saving ("Hero · Section · Call to action" → "Section · Call to action · Hero"), and each updated
+  block's own fields matched by key, never a positional diff of the list; any other one-entry
+  action by the entry's title. Open, Review changes replaces the summary list rather than
+  repeating it. A block patch that can't be saved as it stands keeps Confirm off and says why,
+  from the api's structured answer, never its wording: in a destructive Alert when the draft
+  moved past its version, a step doesn't fit (from its code, the block its key names), the result
+  would break a rule of the model (the block and its field, "Call to action “Sign up” › Label:
+  Field is required"), the role can't change a field, or the role can't change the entry (every
+  403 is a refusal, never Try again); in the warning Alert, counted, when it touches a field the
+  person can't read; in a note when it changes nothing or the call doesn't say what to change. It
+  is held like a publish: Confirm stays off until that read is done, and a read that
   fails offers Try again. A page's own cards list nothing more: the person just pressed for them on
   that entry. Every card says who asked for it in a caption under its title ("You asked for this
   on the page", or the mark in `ai` and "Coworker suggests this") and when, in its margin. Any

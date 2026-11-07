@@ -743,7 +743,9 @@ authorize(principal, scope, targetSpaceId): void
 `authorize` is the single decision point. In the API, `requireScope(scope)` middleware extracts
 the route's `:space` and calls it; in the MCP server (`POST /mcp`), each tool calls it before delegating to a
 use-case. A failure surfaces as **403** (`forbidden`); an unauthenticated request as **401**
-(`unauthorized`).
+(`unauthorized`). A refusal that says what it refused carries `error.details` (a block patch's
+`{ reason: "read_only", field }` or `{ reason: "hidden", hidden: n }`, which counts fields the
+caller can't read rather than naming them); MCP answers such a refusal with the same body.
 
 ## Scope → operation map
 

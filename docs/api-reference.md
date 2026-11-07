@@ -870,6 +870,20 @@ and the outline marks it `ambiguous`. An op on a block inside a block with no `_
 wrote, since an undo built from the patch would not restore them. The result is validated as any
 save is (field issues at `body[i].heading`).
 
+Refusals are structured, the same on REST and MCP, so a client acts on them without reading the
+message:
+
+- A `422` issue for an op carries `op` (its index), `code` (`unknown_key`, `ambiguous_key`,
+  `keyless_parent`, `type_not_allowed`, `into_itself`, `placed_by_itself`, `not_in_slot`,
+  `key_taken`, `bad_locale`, … : `BLOCK_PATCH_ISSUE_CODES` in the domain) and, when it is about an
+  existing block, `key` (that block's `_key`).
+- A `422` field issue from the result's validation also carries `block: { key, type, path }`: the
+  innermost keyed block its position falls in and the path inside it (`label`), since positions
+  say nothing once blocks move.
+- A `403` for a field carries `details`: `{ reason: "read_only", field }` for a field the role can
+  read but not write, or `{ reason: "hidden", hidden: n }` counting fields it can't read (never
+  named). A `403` with no details is the role refusing the entry itself.
+
 MCP: `entry_blocks_patch` (audited), `entry_blocks_validate` and `entry_blocks_outline` (`readOnlyHint`, not audited). Coworker offers `entry_blocks_outline` and proposes `entry_blocks_patch`; its card shows the dry run's field diff and holds Confirm while the dry run refuses.
 
 ### Menus

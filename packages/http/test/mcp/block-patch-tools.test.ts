@@ -191,6 +191,7 @@ describe('the blocks tools', () => {
         op: 1,
         field: 'ops[1]',
         locale: 'en-US',
+        code: 'type_not_allowed',
         message: 'A "hero" block can’t go here (one of: cta)',
       },
     ]);
@@ -276,5 +277,31 @@ describe('the blocks tools for a restricted role', () => {
     expect(r.isError).toBe(true);
     expect(r.text).toContain('content:write:page');
     expect((await readOnly.call('entry_blocks_outline', { id: readOnly.id })).isError).toBe(false);
+  });
+
+  it('answers a refusal with REST’s 403 body: a read-only field named, a hidden one counted', async () => {
+    const { id, sidebar, call } = await setup(writer);
+    for (const tool of ['entry_blocks_patch', 'entry_blocks_validate']) {
+      const locked = await call(tool, {
+        id,
+        expectedVersion: 1,
+        ops: [{ op: 'remove', field: 'sidebar', key: sidebar }],
+      });
+      expect(locked.isError).toBe(true);
+      expect(JSON.parse(locked.text).error).toMatchObject({
+        code: 'forbidden',
+        details: { reason: 'read_only', field: 'sidebar' },
+      });
+      const hidden = await call(tool, {
+        id,
+        expectedVersion: 1,
+        ops: [{ op: 'insert', field: 'notes', block: { _type: 'cta' } }],
+      });
+      expect(JSON.parse(hidden.text).error).toMatchObject({
+        code: 'forbidden',
+        details: { reason: 'hidden', hidden: 1 },
+      });
+      expect(hidden.text).not.toContain('notes');
+    }
   });
 });

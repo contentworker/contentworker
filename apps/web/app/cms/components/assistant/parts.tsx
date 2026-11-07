@@ -48,7 +48,8 @@ import {
   useHandFocus,
 } from '../entries/EntryReview';
 import { DEFAULT_STARTERS } from '../layout/CreateSpaceDialog';
-import { ProposalDetail, proposalOf, refusalHold, useProposalReview } from './proposal';
+import { refusalHold } from './block-proposal';
+import { ProposalDetail, proposalOf, useProposalReview } from './proposal';
 
 export type Part = ToolUIPart | DynamicToolUIPart;
 

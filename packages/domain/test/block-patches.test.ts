@@ -3,6 +3,7 @@ import {
   applyBlockPatch,
   type BlockOp,
   type BlockPatchResult,
+  blockAtPath,
   type ComponentVariant,
   type ContentType,
   defineContentType,
@@ -208,6 +209,9 @@ describe('inserting a block', () => {
         op: 0,
         field: 'ops[0]',
         locale: L,
+        // The block that holds it, by its key: a client names it from its own read.
+        code: 'key_taken',
+        key: 'c1',
         message: '_key "c1" is already held by a block in body (en-US)',
       },
     ]);
@@ -480,9 +484,44 @@ describe('addressing blocks by key', () => {
         op: 1,
         field: 'ops[1]',
         locale: L,
+        code: 'key_is_ref',
         message: '_key "x" is a ref in this patch; give the block another key',
       },
     ]);
+  });
+
+  it('names, by code and key, the existing block each refusal is about', () => {
+    const codeOf = (ops: BlockOp[], fields = page()) => {
+      const [issue] = refused(ops, fields);
+      return { code: issue?.code, key: issue?.key };
+    };
+    expect(codeOf([{ op: 'move', ...at, key: 'h1', to: { after: 'h1' } }])).toEqual({
+      code: 'placed_by_itself',
+      key: 'h1',
+    });
+    expect(
+      codeOf([{ op: 'move', ...at, key: 's1', to: { parent: { key: 's1', slot: 'items' } } }]),
+    ).toEqual({ code: 'into_itself', key: 's1' });
+    expect(codeOf([{ op: 'insert', ...at, before: 'h2', block: { _type: 'cta' } }])).toEqual({
+      code: 'not_in_slot',
+      key: 'h2',
+    });
+    expect(
+      codeOf([{ op: 'move', ...at, key: 's1', to: { parent: { key: 'h1', slot: 'items' } } }]),
+    ).toEqual({ code: 'not_a_slot', key: 'h1' });
+    // A moved block the target slot doesn't admit is named; a new one has no key yet.
+    expect(
+      codeOf([{ op: 'move', ...at, key: 's1', to: { parent: { key: 's1', slot: 'items' } } }]),
+    ).toEqual({ code: 'into_itself', key: 's1' });
+    expect(codeOf([{ op: 'update', ...at, key: 'h1', set: { label: 'x' } }])).toEqual({
+      code: 'unknown_field',
+      key: 'h1',
+    });
+    // The block that can't be found has no key to name it by.
+    expect(codeOf([{ op: 'remove', ...at, key: 'nope' }])).toEqual({
+      code: 'unknown_key',
+      key: undefined,
+    });
   });
 
   it('refuses an unknown key', () => {
@@ -501,6 +540,8 @@ describe('addressing blocks by key', () => {
         op: 0,
         field: 'ops[0]',
         locale: L,
+        code: 'ambiguous_key',
+        key: 'h1',
         message:
           '_key "h1" is held by 2 blocks in body (en-US), so it can’t say which one: give one ' +
           'of them a new _key with a full save first',
@@ -538,7 +579,13 @@ describe('a patch', () => {
       before,
     );
     expect(issues).toEqual([
-      { op: 1, field: 'ops[1]', locale: L, message: 'No block with _key "h1" in body (en-US)' },
+      {
+        op: 1,
+        field: 'ops[1]',
+        locale: L,
+        code: 'unknown_key',
+        message: 'No block with _key "h1" in body (en-US)',
+      },
     ]);
     expect(JSON.stringify(before)).toBe(snapshot);
   });
@@ -602,6 +649,35 @@ describe('inverting a patch', () => {
     expect(r.ok ? null : r.issues[0]?.message).toBe(
       'A block here has no _key: invert the applied ops, which carry them all',
     );
+  });
+});
+
+describe('the block a field issue falls in', () => {
+  it('finds the innermost keyed block a validation path names, and the path inside it', () => {
+    const fields = page();
+    expect(blockAtPath(LANDING, fields, L, 'body[0].heading')).toEqual({
+      key: 'h1',
+      type: 'hero',
+      path: 'heading',
+    });
+    expect(blockAtPath(LANDING, fields, L, 'body[1].items[1].label')).toEqual({
+      key: 'c1',
+      type: 'cta',
+      path: 'label',
+    });
+    // Through a plain component, to a block no op can address but an issue can still name.
+    expect(blockAtPath(LANDING, fields, L, 'body[1].aside.notes[0].label')).toEqual({
+      key: 'n1',
+      type: 'cta',
+      path: 'label',
+    });
+    expect(blockAtPath(LANDING, fields, L, 'body[2]')).toEqual({
+      key: 'c2',
+      type: 'cta',
+      path: '',
+    });
+    expect(blockAtPath(LANDING, fields, L, 'title')).toBeUndefined();
+    expect(blockAtPath(LANDING, fields, L, 'body[9].label')).toBeUndefined();
   });
 });
 

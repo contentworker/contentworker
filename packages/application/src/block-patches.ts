@@ -1,10 +1,13 @@
 import {
   applyBlockPatch,
   authorizeContent,
+  type BlockFieldIssue,
   type BlockOp,
   type BlockOutline,
   type BlockPatchIssue,
+  blockAtPath,
   type ContentType,
+  deniedFieldsFor,
   type Entry,
   type EntryFields,
   ForbiddenError,
@@ -52,6 +55,11 @@ export interface PatchEntryBlocksOptions {
    * on one of them is refused, as sending it in a whole-entry save is.
    */
   readonly unwritable?: readonly string[];
+  /**
+   * Those of them the role denies outright (`deniedFieldsFor`): the caller can't read them either,
+   * so a refusal counts them instead of naming them.
+   */
+  readonly unreadable?: readonly string[];
 }
 
 export interface BlockPatchView extends EntryView {
@@ -75,11 +83,33 @@ export async function authorizeBlockPatch(
   scope: Scope,
   principal: Principal,
   id: string,
-): Promise<readonly string[]> {
-  if (!principal.contentGrants) return [];
+): Promise<PatchEntryBlocksOptions> {
+  if (!principal.contentGrants) return {};
   const { entry } = await getEntry(ctx, scope, id);
   authorizeContent(principal, 'write', entry.contentTypeApiId);
-  return unwritableFieldsFor(principal, entry.contentTypeApiId);
+  return {
+    unwritable: unwritableFieldsFor(principal, entry.contentTypeApiId),
+    unreadable: deniedFieldsFor(principal, entry.contentTypeApiId),
+  };
+}
+
+/**
+ * A save's field issues with the block each falls in, by key (`blockAtPath`): `body[1].label`
+ * says nothing once the patch has moved the blocks, the block's key and type do.
+ */
+function withBlocks(
+  err: unknown,
+  contentType: ContentType,
+  fields: EntryFields,
+  defaultLocale: string,
+): unknown {
+  if (!(err instanceof ValidationError)) return err;
+  return new ValidationError(
+    err.issues.map((issue): BlockFieldIssue => {
+      const block = blockAtPath(contentType, fields, issue.locale ?? defaultLocale, issue.field);
+      return block ? { ...issue, block } : issue;
+    }),
+  );
 }
 
 /** A patch with every read and check done, ready to save (or to answer as a dry run). */
@@ -128,8 +158,23 @@ async function preparePatch(
   if (!contentType) throw new NotFoundError('ContentType', entry.contentTypeApiId);
   if (!config) throw new NotFoundError('Space', scope.spaceId);
 
+  // A field the caller can't read is counted, never named; one it can read but not write is named.
+  const hidden = new Set(
+    input.ops.flatMap((op) => (options.unreadable?.includes(op.field) ? [op.field] : [])),
+  );
+  if (hidden.size > 0) {
+    throw new ForbiddenError(`content:write:${contentType.apiId}`, {
+      reason: 'hidden',
+      hidden: hidden.size,
+    });
+  }
   const blocked = input.ops.find((op) => options.unwritable?.includes(op.field));
-  if (blocked) throw new ForbiddenError(`content:write:${contentType.apiId}.${blocked.field}`);
+  if (blocked) {
+    throw new ForbiddenError(`content:write:${contentType.apiId}.${blocked.field}`, {
+      reason: 'read_only',
+      field: blocked.field,
+    });
+  }
 
   // Validation reads a localized field in the space's locales only, and a field that isn't
   // localized in the default locale only: a block put anywhere else would be stored and never read.
@@ -137,7 +182,8 @@ async function preparePatch(
   const ops = input.ops.map((op, i) => {
     const locale = op.locale ?? config.defaultLocale;
     const def = contentType.fields.find((f) => f.apiId === op.field);
-    const issue = (message: string) => issues.push({ op: i, field: `ops[${i}]`, locale, message });
+    const issue = (message: string) =>
+      issues.push({ op: i, field: `ops[${i}]`, locale, code: 'bad_locale', message });
     if (!config.locales.includes(locale)) {
       issue(`"${locale}" is not one of this space’s locales`);
     } else if (def && !def.localized && locale !== config.defaultLocale) {
@@ -189,7 +235,9 @@ export async function patchEntryBlocks(
     { defaultLocale: config.defaultLocale, locales: config.locales, previous: before },
     after,
     before,
-  );
+  ).catch((err: unknown) => {
+    throw withBlocks(err, contentType, after, config.defaultLocale);
+  });
   return { ...view, keys: prepared.keys, inverse: undoFor(prepared, view.fields) };
 }
 
@@ -236,7 +284,9 @@ export async function checkEntryBlocks(
     scope,
     { entryId: id, fields: prepared.after },
     options.unwritable ? { unwritable: options.unwritable } : {},
-  );
+  ).catch((err: unknown) => {
+    throw withBlocks(err, prepared.contentType, prepared.after, prepared.config.defaultLocale);
+  });
   return {
     valid: true,
     contentTypeApiId: prepared.entry.contentTypeApiId,

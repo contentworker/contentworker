@@ -184,6 +184,7 @@ describe('patching an entry’s blocks over HTTP', () => {
         op: 1,
         field: 'ops[1]',
         locale: 'en-US',
+        code: 'unknown_key',
         message: `No block with _key "${hero}" in body (en-US)`,
       },
     ]);
@@ -247,6 +248,12 @@ describe('patching an entry’s blocks over HTTP', () => {
       ops: [{ op: 'update', field: 'body', key: hero, unset: ['heading'] }],
     });
     expect(broken.status).toBe(422);
+    // The rule's issue names the block it falls in by key, not only by position.
+    const issues = ((await broken.json()) as { error: { issues: unknown[] } }).error.issues;
+    expect(issues[0]).toMatchObject({
+      field: 'body[0].heading',
+      block: { key: hero, type: 'hero', path: 'heading' },
+    });
     const preview = await send(
       '/entries/blocks/validate',
       'POST',

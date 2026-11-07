@@ -39,13 +39,13 @@ export function blocksRoutes(deps: AuthDeps): Hono<AuthVars> {
     async (c) => {
       const { entryId, ...patch } = await parseBody(c, blockPatchCheckBody);
       const principal = c.get('principal');
-      const unwritable = await authorizeBlockPatch(ctx, scopeOf(c), principal, entryId);
+      const access = await authorizeBlockPatch(ctx, scopeOf(c), principal, entryId);
       const checked = await checkEntryBlocks(
         ctx,
         scopeOf(c),
         entryId,
         { expectedVersion: patch.expectedVersion, ops: patch.ops as readonly BlockOpInput[] },
-        { unwritable },
+        access,
       );
       // Judged with the stored values of the fields this writer may not write; answered without
       // the ones it may not read.
@@ -107,13 +107,13 @@ export function blocksRoutes(deps: AuthDeps): Hono<AuthVars> {
       const body = await parseBody(c, blockPatchBody);
       const id = c.req.param('id');
       const principal = c.get('principal');
-      const unwritable = await authorizeBlockPatch(ctx, scopeOf(c), principal, id);
+      const access = await authorizeBlockPatch(ctx, scopeOf(c), principal, id);
       const saved = await patchEntryBlocks(
         actingCtx(ctx, c),
         scopeOf(c),
         id,
         { expectedVersion: body.expectedVersion, ops: body.ops as readonly BlockOpInput[] },
-        { unwritable },
+        access,
       );
       // The save wrote the whole entry; the answer shows only the fields the caller may read.
       return c.json({

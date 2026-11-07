@@ -108,9 +108,50 @@ export type BlockOp =
 
 export const BLOCK_OP_KINDS = ['insert', 'update', 'move', 'remove', 'duplicate'] as const;
 
+/**
+ * Why an op can't apply, as a stable code a client can act on without reading the message. The
+ * message says the same in words, for a person or an agent reading it as is.
+ */
+export const BLOCK_PATCH_ISSUE_CODES = [
+  'unknown_op',
+  'not_a_blocks_field',
+  'not_a_list',
+  'unknown_key',
+  'ambiguous_key',
+  'keyless_parent',
+  'unknown_type',
+  'missing_type',
+  'type_not_allowed',
+  'not_a_slot',
+  'bad_parent',
+  'bad_position',
+  'not_in_slot',
+  'placed_by_itself',
+  'into_itself',
+  'bad_block',
+  'key_taken',
+  'key_is_ref',
+  'bad_ref',
+  'ref_taken',
+  'ref_is_key',
+  'nothing_to_update',
+  'unknown_field',
+  'holds_blocks',
+  'set_and_unset',
+  'not_invertible',
+  'bad_locale',
+] as const;
+export type BlockPatchIssueCode = (typeof BLOCK_PATCH_ISSUE_CODES)[number];
+
 /** A refusal, naming the op (its index in the patch) it came from. */
 export interface BlockPatchIssue extends FieldIssue {
   readonly op: number;
+  readonly code: BlockPatchIssueCode;
+  /**
+   * The existing block the refusal is about, by its `_key`, when there is one (the block that
+   * can't be found has none): a client names it from its own read rather than from the message.
+   */
+  readonly key?: string;
 }
 
 export type BlockPatchResult =
@@ -258,6 +299,64 @@ function labelOf(variant: ComponentVariant, item: Record<string, unknown>): stri
   return undefined;
 }
 
+// --- issues inside a block ---------------------------------------------------------
+
+/**
+ * The block a field issue's path falls in, by its key: validation names a value by position
+ * (`body[1].label`), which says nothing once blocks move, so a patch's issue also carries the block
+ * and the path inside it (`label`; empty for the block itself).
+ */
+export interface IssueBlock {
+  readonly key: string;
+  readonly type: string;
+  readonly path: string;
+}
+
+/** A field issue, with the innermost keyed block its path falls in when it falls in one. */
+export interface BlockFieldIssue extends FieldIssue {
+  readonly block?: IssueBlock;
+}
+
+/** The innermost keyed block `path` (`body[1].items[0].label`) falls in, in `locale` of `fields`. */
+export function blockAtPath(
+  contentType: ContentType,
+  fields: EntryFields,
+  locale: LocaleCode,
+  path: string,
+): IssueBlock | undefined {
+  const tokens = [...path.matchAll(/([A-Za-z]\w*)|\[(\d+)\]/g)];
+  const top = tokens[0]?.[1];
+  let def = contentType.fields.find((f) => f.apiId === top);
+  let value: unknown = top !== undefined ? fields[top]?.[locale] : undefined;
+  let defs: readonly FieldDefinition[] | undefined;
+  let found: IssueBlock | undefined;
+  for (const t of tokens.slice(1)) {
+    if (t[2] !== undefined) {
+      const item = Array.isArray(value) ? value[Number(t[2])] : undefined;
+      const variants = def ? blockVariants(def) : undefined;
+      if (variants && isRecord(item)) {
+        const key = keyOf(item);
+        const variant = variantOf(variants, item);
+        if (key !== undefined && variant) {
+          const rest = path.slice((t.index ?? 0) + t[0].length).replace(/^\./, '');
+          found = { key, type: variant.apiId, path: rest };
+        }
+        defs = variant?.fields;
+      } else {
+        defs = def?.type === 'Array' ? def.items?.fields : undefined;
+      }
+      value = item;
+    } else {
+      def = (defs ?? (def?.type === 'Component' ? def.fields : undefined))?.find(
+        (f) => f.apiId === t[1],
+      );
+      defs = def?.type === 'Component' ? def.fields : undefined;
+      value = isRecord(value) && t[1] !== undefined ? value[t[1]] : undefined;
+    }
+  }
+  return found;
+}
+
 // --- the engine ----------------------------------------------------------------
 
 /** Thrown by invert's `newKey`: an op without its keys can't be replayed. */
@@ -345,7 +444,15 @@ interface RunOk {
 type RunResult = RunOk | { readonly ok: false; readonly issues: readonly BlockPatchIssue[] };
 
 /** Why one op can't apply. Thrown inside an op, caught by the loop, tagged with the op's index. */
-class OpRefused extends Error {}
+class OpRefused extends Error {
+  constructor(
+    readonly code: BlockPatchIssueCode,
+    message: string,
+    readonly key?: string,
+  ) {
+    super(message);
+  }
+}
 
 function runPatch(
   contentType: ContentType,
@@ -366,21 +473,26 @@ function runPatch(
   const inverse: BlockOp[] = [];
 
   for (const [i, op] of ops.entries()) {
-    const issue = (message: string): BlockPatchIssue => ({
+    const issue = (code: BlockPatchIssueCode, message: string, key?: string): BlockPatchIssue => ({
       op: i,
       field: `ops[${i}]`,
       ...(typeof op?.locale === 'string' ? { locale: op.locale } : {}),
+      code,
+      ...(key !== undefined ? { key } : {}),
       message,
     });
     try {
       const raw: unknown = op;
       if (!isRecord(raw) || !BLOCK_OP_KINDS.includes(op.op)) {
-        throw new OpRefused(`Unknown op (one of: ${BLOCK_OP_KINDS.join(', ')})`);
+        throw new OpRefused('unknown_op', `Unknown op (one of: ${BLOCK_OP_KINDS.join(', ')})`);
       }
       const def = contentType.fields.find((f) => f.apiId === op.field);
       const rootVariants = def ? blockVariants(def) : undefined;
       if (!def || !rootVariants) {
-        throw new OpRefused(`"${op.field}" is not a blocks field of "${contentType.apiId}"`);
+        throw new OpRefused(
+          'not_a_blocks_field',
+          `"${op.field}" is not a blocks field of "${contentType.apiId}"`,
+        );
       }
       if (!copied.has(def.apiId)) {
         out[def.apiId] = clone(fields[def.apiId] ?? {}) as Record<LocaleCode, unknown>;
@@ -389,7 +501,10 @@ function runPatch(
       const localized = out[def.apiId] as Record<LocaleCode, unknown>;
       const held = localized[op.locale];
       if (held !== undefined && !Array.isArray(held)) {
-        throw new OpRefused(`${where(op)} holds something other than a list of blocks`);
+        throw new OpRefused(
+          'not_a_list',
+          `${where(op)} holds something other than a list of blocks`,
+        );
       }
       const tree = new Tree(op, rootVariants, localized, refs);
       const step = applyOne(tree, op, newKey);
@@ -400,11 +515,17 @@ function runPatch(
         keys[op.ref] = step.minted;
       }
     } catch (err) {
-      if (err instanceof OpRefused) return { ok: false, issues: [issue(err.message)] };
+      if (err instanceof OpRefused)
+        return { ok: false, issues: [issue(err.code, err.message, err.key)] };
       if (err instanceof MintRefused) {
         return {
           ok: false,
-          issues: [issue('A block here has no _key: invert the applied ops, which carry them all')],
+          issues: [
+            issue(
+              'not_invertible',
+              'A block here has no _key: invert the applied ops, which carry them all',
+            ),
+          ],
         };
       }
       throw err;
@@ -451,17 +572,22 @@ class Tree {
   find(key: string): Location {
     const resolved = this.resolve(key);
     const found = this.index.get(resolved) ?? [];
-    if (found.length === 0) throw new OpRefused(`No block with _key "${key}" in ${where(this.op)}`);
+    if (found.length === 0)
+      throw new OpRefused('unknown_key', `No block with _key "${key}" in ${where(this.op)}`);
     if (found.length > 1) {
       throw new OpRefused(
+        'ambiguous_key',
         `_key "${key}" is held by ${found.length} blocks in ${where(this.op)}, so it can’t say ` +
           'which one: give one of them a new _key with a full save first',
+        resolved,
       );
     }
     const at = found[0] as Location;
     if (at.orphan) {
       throw new OpRefused(
+        'keyless_parent',
         `Block "${key}" sits in a block with no _key; save the entry once to key it`,
+        resolved,
       );
     }
     return at;
@@ -481,16 +607,29 @@ class Tree {
     }
     const at = this.find(parent.key);
     const variant = variantOf(at.variants, at.block);
-    if (!variant) throw new OpRefused(`Block "${parent.key}" names no known _type`);
+    if (!variant)
+      throw new OpRefused(
+        'unknown_type',
+        `Block "${parent.key}" names no known _type`,
+        at.block[BLOCK_KEY] as string,
+      );
     const def = variant.fields.find((f) => f.apiId === parent.slot);
     const variants = def ? blockVariants(def) : undefined;
     if (!variants) {
-      throw new OpRefused(`"${parent.slot}" is not a blocks field of "${variant.apiId}" blocks`);
+      throw new OpRefused(
+        'not_a_slot',
+        `"${parent.slot}" is not a blocks field of "${variant.apiId}" blocks`,
+        parent.key,
+      );
     }
     const held = at.block[parent.slot];
     if (Array.isArray(held)) return { slot: held, variants };
     if (held !== undefined) {
-      throw new OpRefused(`"${parent.slot}" of block "${parent.key}" is not a list of blocks`);
+      throw new OpRefused(
+        'not_a_slot',
+        `"${parent.slot}" of block "${parent.key}" is not a list of blocks`,
+        parent.key,
+      );
     }
     const slot: unknown[] = [];
     at.block[parent.slot] = slot;
@@ -500,10 +639,11 @@ class Tree {
   /** The index a place names in `slot` (which no longer holds a block being moved). */
   positionIn(slot: unknown[], place: BlockPlace): number {
     const given = [place.before, place.after, place.index].filter((v) => v !== undefined);
-    if (given.length > 1) throw new OpRefused('Give at most one of before, after and index');
+    if (given.length > 1)
+      throw new OpRefused('bad_position', 'Give at most one of before, after and index');
     if (place.index !== undefined) {
       if (!Number.isInteger(place.index) || place.index < 0 || place.index > slot.length) {
-        throw new OpRefused(`index must be an integer from 0 to ${slot.length}`);
+        throw new OpRefused('bad_position', `index must be an integer from 0 to ${slot.length}`);
       }
       return place.index;
     }
@@ -513,7 +653,11 @@ class Tree {
     // Looked up in the slot as it is now: a move has taken its block out since the index was built.
     const index = slot.indexOf(at.block);
     if (at.slot !== slot || index < 0) {
-      throw new OpRefused(`Block "${sibling}" is not in the target slot`);
+      throw new OpRefused(
+        'not_in_slot',
+        `Block "${sibling}" is not in the target slot`,
+        this.resolve(sibling),
+      );
     }
     return place.before !== undefined ? index : index + 1;
   }
@@ -540,7 +684,7 @@ function applyOne(tree: Tree, op: BlockOp, newKey: () => string): Step {
   switch (op.op) {
     case 'insert': {
       const block = op.block;
-      if (!isRecord(block)) throw new OpRefused('block must be an object');
+      if (!isRecord(block)) throw new OpRefused('bad_block', 'block must be an object');
       checkRef(tree, op.ref);
       const { slot, variants } = tree.slotOf(op.parent && resolvedParent(tree, op.parent));
       admitted(variants, block);
@@ -548,10 +692,17 @@ function applyOne(tree: Tree, op: BlockOp, newKey: () => string): Step {
       const copy = rekeyBlock(variants, clone(block), (old) => {
         if (old === undefined) return newKey();
         if (tree.refs.has(old)) {
-          throw new OpRefused(`_key "${old}" is a ref in this patch; give the block another key`);
+          throw new OpRefused(
+            'key_is_ref',
+            `_key "${old}" is a ref in this patch; give the block another key`,
+          );
         }
         if (taken.has(old)) {
-          throw new OpRefused(`_key "${old}" is already held by a block in ${where(op)}`);
+          throw new OpRefused(
+            'key_taken',
+            `_key "${old}" is already held by a block in ${where(op)}`,
+            old,
+          );
         }
         taken.add(old);
         return old;
@@ -574,23 +725,35 @@ function applyOne(tree: Tree, op: BlockOp, newKey: () => string): Step {
     case 'update': {
       const at = tree.find(op.key);
       const variant = variantOf(at.variants, at.block);
-      if (!variant) throw new OpRefused(`Block "${op.key}" names no known _type`);
+      if (!variant)
+        throw new OpRefused(
+          'unknown_type',
+          `Block "${op.key}" names no known _type`,
+          tree.resolve(op.key),
+        );
       const set = op.set ?? {};
-      if (!isRecord(set)) throw new OpRefused('set must be an object');
+      if (!isRecord(set)) throw new OpRefused('bad_block', 'set must be an object');
       const unset = op.unset ?? [];
       const names = [...Object.keys(set), ...unset];
-      if (names.length === 0) throw new OpRefused('Nothing to update: give set or unset');
+      if (names.length === 0)
+        throw new OpRefused('nothing_to_update', 'Nothing to update: give set or unset');
       for (const name of names) {
         const f = variant.fields.find((d) => d.apiId === name);
-        if (!f) throw new OpRefused(`"${variant.apiId}" blocks have no field "${name}"`);
+        if (!f)
+          throw new OpRefused(
+            'unknown_field',
+            `"${variant.apiId}" blocks have no field "${name}"`,
+            tree.resolve(op.key),
+          );
         if (mayHoldBlocks(f)) {
           throw new OpRefused(
+            'holds_blocks',
             `"${name}" holds blocks: change them with insert, move, remove or duplicate`,
           );
         }
       }
       const both = unset.find((name) => Object.hasOwn(set, name));
-      if (both) throw new OpRefused(`"${both}" is both set and unset`);
+      if (both) throw new OpRefused('set_and_unset', `"${both}" is both set and unset`);
       const key = tree.resolve(op.key);
       const restore: Record<string, unknown> = {};
       const clear: string[] = [];
@@ -631,14 +794,22 @@ function applyOne(tree: Tree, op: BlockOp, newKey: () => string): Step {
       const to = op.to ?? {};
       for (const sibling of [to.before, to.after]) {
         if (sibling !== undefined && tree.resolve(sibling) === key) {
-          throw new OpRefused('A block can’t be placed before or after itself');
+          throw new OpRefused(
+            'placed_by_itself',
+            'A block can’t be placed before or after itself',
+            key,
+          );
         }
       }
       const parent = to.parent && resolvedParent(tree, to.parent);
       if (parent) {
         const holder = tree.find(parent.key);
         if (parent.key === key || holder.ancestors.includes(key)) {
-          throw new OpRefused('A block can’t be moved into itself or a block inside it');
+          throw new OpRefused(
+            'into_itself',
+            'A block can’t be moved into itself or a block inside it',
+            key,
+          );
         }
       }
       const { slot, variants } = tree.slotOf(parent);
@@ -675,7 +846,11 @@ function applyOne(tree: Tree, op: BlockOp, newKey: () => string): Step {
       const at = tree.find(op.key);
       checkRef(tree, op.ref);
       if (!variantOf(at.variants, at.block)) {
-        throw new OpRefused(`Block "${op.key}" names no known _type`);
+        throw new OpRefused(
+          'unknown_type',
+          `Block "${op.key}" names no known _type`,
+          tree.resolve(op.key),
+        );
       }
       const copy = rekeyBlock(at.variants, clone(at.block), () => newKey());
       const index = at.index + 1;
@@ -699,7 +874,7 @@ function applyOne(tree: Tree, op: BlockOp, newKey: () => string): Step {
 /** A parent whose key may be a ref, with the key it stands for. */
 function resolvedParent(tree: Tree, parent: BlockParent): BlockParent {
   if (!isRecord(parent) || typeof parent.key !== 'string' || typeof parent.slot !== 'string') {
-    throw new OpRefused('parent must be { key, slot }');
+    throw new OpRefused('bad_parent', 'parent must be { key, slot }');
   }
   return { key: tree.resolve(parent.key), slot: parent.slot };
 }
@@ -710,20 +885,29 @@ const parentOf = (parent: BlockParent | undefined, tree: Tree) =>
 /** Refuses a ref that is reused or could be taken for a key. */
 function checkRef(tree: Tree, ref: string | undefined): void {
   if (ref === undefined) return;
-  if (typeof ref !== 'string' || ref === '') throw new OpRefused('ref must be a non-empty string');
-  if (tree.refs.has(ref)) throw new OpRefused(`ref "${ref}" is already used in this patch`);
-  if (tree.index.has(ref)) throw new OpRefused(`ref "${ref}" is the _key of an existing block`);
+  if (typeof ref !== 'string' || ref === '')
+    throw new OpRefused('bad_ref', 'ref must be a non-empty string');
+  if (tree.refs.has(ref))
+    throw new OpRefused('ref_taken', `ref "${ref}" is already used in this patch`);
+  if (tree.index.has(ref))
+    throw new OpRefused('ref_is_key', `ref "${ref}" is the _key of an existing block`, ref);
 }
 
 /** The variant `block` names, refused when the slot doesn't admit it. */
 function admitted(variants: readonly ComponentVariant[], block: Block): ComponentVariant {
+  const key = keyOf(block);
   const type = block[BLOCK_TYPE_KEY];
   const allowed = variants.map((v) => v.apiId).join(', ');
   if (typeof type !== 'string' || type === '') {
-    throw new OpRefused(`The block has no _type (one of: ${allowed})`);
+    throw new OpRefused('missing_type', `The block has no _type (one of: ${allowed})`, key);
   }
   const variant = variantOf(variants, block);
-  if (!variant) throw new OpRefused(`A "${type}" block can’t go here (one of: ${allowed})`);
+  if (!variant)
+    throw new OpRefused(
+      'type_not_allowed',
+      `A "${type}" block can’t go here (one of: ${allowed})`,
+      key,
+    );
   return variant;
 }
 
