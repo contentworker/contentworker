@@ -138,7 +138,7 @@ rather than treating the deployment as sending no email.
 The api's request-rate middleware mounts only when at least one `RATE_LIMIT_*_PER_WINDOW` var is
 above 0. The `RATE_LIMIT_READ`, `_WRITE` and `_AI` bindings in `apps/api/wrangler.jsonc` (600, 120
 and 20 per 60 s) then enforce the limits; with all three vars at 0 the bindings are never
-consulted. No committed `wrangler.jsonc` or `deployments/*.jsonc` sets any of the vars, so the api
+consulted. No committed `wrangler.jsonc`, and no registry entry the maintainers keep, sets any of the vars, so the api
 applies no per-client request limit by default; set them to turn it on. The native bindings are per
 edge location and approximate. The delivery gateway is different: it always applies
 `RATE_LIMIT_READ` by client IP. The web worker's `API_LIMIT` binding covers the sign-in paths that

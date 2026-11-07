@@ -14,7 +14,7 @@ sections your change touches. Path-specific reminders live in
 
 ## The shape of the system
 
-One isolated stack per customer (`deployments/*.jsonc`, rendered by `scripts/fleet.ts`), D1 as
+One isolated stack per customer (a registry entry each, rendered by `scripts/fleet.ts`; the registry is in the private fleet repo), D1 as
 the system of record, five Workers split by traffic profile:
 
 | Worker          | Entry                    | Job                                                                                                      |

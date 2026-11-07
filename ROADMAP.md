@@ -7,7 +7,7 @@ split by traffic profile: `apps/web` (admin + human auth), `apps/api` (Managemen
 REST, MCP, OAuth, uploads and signed reads, live), `apps/delivery` (the cached public Delivery
 API), `apps/media` (published asset files at the edge) and `apps/engine` (queues, cron, stateful
 edge objects, durable workflows). Tenancy is one isolated deployment per
-customer (`deployments/*.jsonc`, rendered by `scripts/fleet.ts`). The domain and application
+customer (a registry entry each, rendered by `scripts/fleet.ts`). The domain and application
 layers, and their tests, carried over.
 
 Removed in v2, and not coming back:
@@ -176,7 +176,8 @@ Recovery targets not met yet (`docs/backup-and-restore.md`) and the move to a pr
 - [ ] **Off-account object storage copy.** Asset bytes, plugins and `versions/` have no second copy.
 - [ ] **Restore drill.** Time a database restore against its 1-hour target.
 - [ ] **Assistant recovery.** Nothing calls the conversation object's point-in-time recovery.
-- [ ] **Fleet cutover.** Move the registry, rings and production secrets to the private repo, setting
+- [ ] **Fleet cutover.** The registry and rings are in the private repo and this repo only dispatches
+  to it; still to move are the production secrets, set
   the secrets from escrow. The edge account token moves onto the environment there: as a repository
   secret today, any branch can read it, which steps around the environment's `main`-only policy.
   The escrow workflow moves too: it runs here first because only a job in this repository can read

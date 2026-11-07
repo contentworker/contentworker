@@ -83,7 +83,7 @@ only read is cited as read, not as passing.
   generated files): what each defers, and whether it marks missing behaviour.
 - **Flags and modes:** `ALLOW_FAKE_ADAPTERS`, `AI_MODE`, `SEED_DEV`, `AGENTS_MODERATE*`, model and
   feature vars in each `apps/*/wrangler.jsonc`, `LOCAL_STACK_VARS` in `apps/web/vite.config.ts`,
-  fields in `deployments/*.jsonc` and how `scripts/fleet.ts` renders them. Which are on, off, or
+  fields in the registry (format in `docs/deployment.md`) and how `scripts/fleet.ts` renders them. Which are on, off, or
   inconsistent across local, staging and the rings; code behind a flag that was never finished;
   flags fully rolled out that should go.
 - **Stubs and placeholders:** hardcoded returns, `not implemented`, empty `catch {}`, fakes or

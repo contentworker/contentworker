@@ -1,7 +1,7 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   // The template for every deployment: scripts/fleet.ts renders wrangler.<id>.json from this file
-  // and deployments/<id>.jsonc (names, ids, routes, vars). Never deploy this file by hand.
+  // and the deployment's registry entry <id>.jsonc (names, ids, routes, vars). Never deploy this file by hand.
   //
   // The engine: queue consumers, the cron sweeper, and the owner of every Durable Object and
   // Workflow class. No route, no workers.dev: the api and delivery Workers reach its objects and

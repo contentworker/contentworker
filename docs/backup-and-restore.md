@@ -17,8 +17,8 @@ What holds state, what is derivable, and how to recover a deployment.
 | **Queues**                             | In-flight events                                                                                                                                                                                                                                                                                                                               | Queues persist messages; lost events can be replayed from the outbox                                                                                                    |
 | **Durable workflows**                  | `AgentWorkflow` instances (on-publish and scheduled agent runs, review watchers) and `EditorialWorkflow` instances (one per editorial workflow run, `EDITORIAL_WF`)                                                                                                                                                                            | Agent runs are recorded proposals. Editorial runs have their records in the database (`workflow_runs`), but the instance holds the execution and is not rebuilt from it |
 
-Everything else (worker code, `wrangler.jsonc` templates, `deployments/*.jsonc`, migrations) is
-in git. Secrets live in each deployment's GitHub environment; `DATA_KEY`, `TOKEN_PEPPER` and
+Everything else (worker code, `wrangler.jsonc` templates, the fleet registry, migrations) is
+in git (the registry in the private fleet repo). Secrets live in each deployment's GitHub environment; `DATA_KEY`, `TOKEN_PEPPER` and
 `PASSWORD_PEPPER` must be escrowed, because losing one makes what it protects unreadable
 (sealed secrets, API key hashes, password hashes). See [Escrowing secrets](#escrowing-secrets).
 

@@ -20,7 +20,7 @@ the system of record; Workers, Queues, KV, R2, Durable Objects, Workflows, Vecto
 through AI Gateway, Images, Stream, Email Sending, Worker Loader). Four Workers split by traffic
 profile (`apps/web`, `apps/api`, `apps/delivery`, `apps/engine`), a hexagonal core
 (`domain` → `ports` → `application`), and one isolated deployment per customer
-(`deployments/*.jsonc`, rings staging → internal → canary → general). Read `README.md`,
+(a registry entry each, kept in the private fleet repo; rings staging → internal → canary → general). Read `README.md`,
 `AGENTS.md`, `ROADMAP.md`, `docs/architecture.md`, `docs/deployment.md`,
 `docs/backup-and-restore.md`, `docs/auth-and-rbac.md`, `docs/ai-agents-and-search.md` and
 `docs/plugins.md` before judging anything.

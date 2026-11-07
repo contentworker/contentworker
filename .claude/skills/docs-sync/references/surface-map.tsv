@@ -64,7 +64,7 @@
 ^packages/platform/src/do/	docs/architecture.md docs/ai-agents-and-search.md	prose
 ^apps/engine/src/	docs/architecture.md docs/events-and-webhooks.md	prose
 ^apps/delivery/src/	guides/reading-content docs/architecture.md docs/consistency.md docs/events-and-webhooks.md	prose
-^(deployments/|scripts/(fleet\.ts|provision\.sh)$)	docs/deployment.md docs/configuration.md	prose
+^(examples/fleet/|scripts/(fleet\.ts|provision\.sh)$)	docs/deployment.md docs/configuration.md	prose
 ^\.github/workflows/	docs/deployment.md docs/development.md	prose
 ^package\.json$	docs/development.md	prose
 #

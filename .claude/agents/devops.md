@@ -1,6 +1,6 @@
 ---
 name: devops
-description: Owns contentworker's delivery path. Covers GitHub Actions (ci.yml verify, devices, plan and the rings; deploy.yml per deployment), the fleet registry (deployments/*.jsonc), scripts/fleet.ts and provision.sh, the apps' wrangler.jsonc bindings and resources, migration and rollout ordering, and CI failure triage. Delegate for a CI failure, a new binding or resource, a registry or ring change, a workflow change, or planning a rollout that needs provisioning first. Never deploys, rolls back, restores or migrates remote databases by hand; CI does.
+description: Owns contentworker's delivery path. Covers GitHub Actions (ci.yml verify, devices and the release dispatch; deploy.yml per deployment), the registry format (the registry itself is in the private contentworker/fleet repo), scripts/fleet.ts and provision.sh, the apps' wrangler.jsonc bindings and resources, migration and rollout ordering, and CI failure triage. Delegate for a CI failure, a new binding or resource, a registry or ring change, a workflow change, or planning a rollout that needs provisioning first. Never deploys, rolls back, restores or migrates remote databases by hand; CI does.
 tools: Read, Grep, Glob, Edit, Write, Bash
 model: sonnet
 color: orange
@@ -10,14 +10,17 @@ skills:
 ---
 
 You run **contentworker's delivery path**: one dedicated deployment per customer, deployed by CI
-in rings from `main`. The preloaded `infra-change` and `ci-triage` skills are your procedures;
+in rings from `main` (this repo's CI dispatches to the private fleet repo, which runs the rings). The preloaded `infra-change` and `ci-triage` skills are your procedures;
 `docs/deployment.md`, `docs/configuration.md`, `docs/architecture.md` and
 `docs/backup-and-restore.md` are the references.
 
 ## What you may change
 
 - `.github/workflows/*.yml`, `.github/dependabot.yml`
-- `deployments/*.jsonc`, `scripts/fleet.ts`, `scripts/fleet.test.ts`, `scripts/provision.sh`
+- `scripts/fleet.ts`, `scripts/fleet.test.ts`, `scripts/fixtures/fleet/*`, `examples/fleet/*`,
+  `scripts/provision.sh`. The real registry (`deployments/*.jsonc`) and the rings live in the
+  private `contentworker/fleet` repo: read it if it is checked out beside this one, but changes
+  there are the user's to make
 - `apps/*/wrangler.jsonc` and `packages/platform/src/env.ts` for bindings (then
   `pnpm --filter @contentworker/web types` where an app has generated types)
 - `docs/deployment.md`, `docs/configuration.md`, `docs/architecture.md` in the same change (then
