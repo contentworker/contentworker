@@ -175,6 +175,13 @@ Recovery targets not met yet (`docs/backup-and-restore.md`) and the move to a pr
   outside GitHub and the edge account. Run for the live deployment and decrypted; setting the values
   back joins the restore drill.
 - [ ] **Off-account object storage copy.** Asset bytes, plugins and `versions/` have no second copy.
+  Deferred until a customer is close: no customer data exists yet. Decided: the copy goes to a second
+  Cloudflare account under a separate login. Planned shape: a nightly `rclone sync` from the fleet
+  repo, reading with a read-only token scoped to the bucket, so the main account holds no credential
+  for the backup. Deleted objects move to a `deleted/` prefix that a lifecycle rule expires after 35
+  days, past the database's 30-day recovery window, with `--max-delete` as a guard. Leave out
+  `imports/` and `zips/`. Bucket locks don't fit, because they would block those moves. Revisit a
+  Worker in the backup account if the data outgrows a nightly job.
 - [ ] **Restore drill.** Time a database restore against its 1-hour target.
 - [ ] **Assistant recovery.** Nothing calls the conversation object's point-in-time recovery.
 - [ ] **Fleet cutover.** Move the registry, rings and production secrets to the private repo, setting
