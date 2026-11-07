@@ -7,7 +7,12 @@ import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
 import { describe, expect, it } from 'vitest';
 import type { McpDeps } from '../../src/mcp/deps';
 import { buildServer } from '../../src/mcp/server';
-import { TOOL_SCOPES, toolListedFor, UNSCOPED_TOOLS } from '../../src/mcp/tool-scopes';
+import {
+  DEPLOYMENT_TOOLS,
+  TOOL_SCOPES,
+  toolListedFor,
+  UNSCOPED_TOOLS,
+} from '../../src/mcp/tool-scopes';
 
 const TOOLS_DIR = join(import.meta.dirname, '../../src/mcp/tools');
 
@@ -80,6 +85,18 @@ describe('the tools a caller is shown', () => {
     expect((await listed(none)).sort()).toEqual([...UNSCOPED_TOOLS].sort());
   });
 
+  it('keeps deployment tools from a caller bound to one space, still answering if called', async () => {
+    expect(await listed(reader)).not.toEqual(expect.arrayContaining([...DEPLOYMENT_TOOLS]));
+    for (const tool of DEPLOYMENT_TOOLS) expect(await listed(reader)).not.toContain(tool);
+    expect(await listed(everyScope)).toEqual(expect.arrayContaining([...DEPLOYMENT_TOOLS]));
+    const result = await (await connect(reader)).callTool({
+      name: 'scheduler_status',
+      arguments: {},
+    });
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result.content)).toMatch(/Deployment administrators only/);
+  });
+
   it('keeps an unlisted tool answering with the scope it needs', async () => {
     const client = await connect(reader);
     const result = await client.callTool({
@@ -104,6 +121,10 @@ describe('the tool scope table', () => {
       if (scopes.length === 0) expect(UNSCOPED_TOOLS, tool).toContain(tool);
       else expect([...(TOOL_SCOPES[tool] ?? [])].sort(), tool).toEqual(scopes);
     }
+  });
+
+  it('holds deployment tools to the unscoped list, where the use-case decides', () => {
+    for (const tool of DEPLOYMENT_TOOLS) expect(UNSCOPED_TOOLS, tool).toContain(tool);
   });
 
   it('names no tool that no longer exists', () => {

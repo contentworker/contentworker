@@ -411,6 +411,26 @@ export async function seedIngestFindings(request: APIRequestContext, stamp: numb
  * with none, and listed values on another (bare, so the type reads the same on every version of
  * the api). Created or updated by apiId, so it is safe to run per test.
  */
+/** A type of its own for a spec that saves one: specs run in parallel, and a save replaces it. */
+export async function seedBriefedType(request: APIRequestContext) {
+  const res = await api(request, 'POST', `${MGMT}/content-types`, {
+    apiId: 'briefed',
+    name: 'Briefed',
+    displayField: 'title',
+    fields: [
+      {
+        apiId: 'title',
+        name: 'Title',
+        type: 'Symbol',
+        localized: false,
+        required: true,
+        position: 0,
+      },
+    ],
+  });
+  expect(res.status()).toBeLessThan(300);
+}
+
 export async function seedGuidedType(request: APIRequestContext) {
   const field = (apiId: string, name: string, position: number, extra: object = {}) => ({
     apiId,

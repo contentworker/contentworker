@@ -91,6 +91,21 @@ describe('content type details, layout and field settings over HTTP', () => {
     });
   });
 
+  it('stores agent instructions, clears them with null and refuses too many', async () => {
+    const { send } = setup();
+    const path = `${M}/content-types`;
+    const res = await send(path, 'POST', { ...event, agentInstructions: 'Stay factual.' });
+    expect(res.status, await res.clone().text()).toBe(201);
+    const read = async () =>
+      (await (await send(`${path}/event`, 'GET')).json()) as Record<string, unknown>;
+    expect((await read()).agentInstructions).toBe('Stay factual.');
+    const tooMany = 'a'.repeat(4001);
+    const refused = await send(path, 'POST', { ...event, agentInstructions: tooMany });
+    expect(refused.status).toBe(422);
+    await send(path, 'POST', { ...event, agentInstructions: null });
+    expect(await read()).not.toHaveProperty('agentInstructions');
+  });
+
   it('holds entries to the date format, the range and the preset', async () => {
     const { send } = setup();
     await send(`${M}/content-types`, 'POST', event);

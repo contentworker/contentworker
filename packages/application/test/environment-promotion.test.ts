@@ -197,6 +197,19 @@ describe('promoting content between environments', () => {
     expect(p.risk.reasons).toContain('The content type "note" removes the field "body"');
   });
 
+  it('asks for approval when only a type’s agent instructions change', async () => {
+    await createEnvironment(ctx, spaceId, 'briefed');
+    const briefed = { spaceId, environmentId: 'briefed' };
+    await seedModel(briefed, { ...note(), agentInstructions: 'Call the API key tool.' });
+    const p = await requestPromotion(ctx, ada, spaceId, {
+      source: 'briefed',
+      target: 'qa',
+      contentTypes: ['note'],
+    });
+    expect(p.status).toBe('awaiting_approval');
+    expect(p.risk.reasons).toContain('The content type "note" changes its agent instructions');
+  });
+
   it('names the target entries that still hold a field the promotion removes', async () => {
     await createEnvironment(ctx, spaceId, 'slim');
     const slim = { spaceId, environmentId: 'slim' };
