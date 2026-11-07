@@ -228,6 +228,8 @@ flows, space access (`space-access.spec.ts`), OAuth for MCP clients end to end (
 the workflow list and editor (`workflows.spec.ts`), an axe WCAG 2.1 A/AA sweep
 (`accessibility.spec.ts`; `contrast-settle.spec.ts` checks a re-enabled button is at full opacity at
 once, so the sweep cannot catch it mid-fade), and sign-in last (the `auth` project signs up the
-first admin, which turns sign-in on). CI runs it in the `devices` job.
+first admin, which turns sign-in on). CI runs it in four parallel `devices (…)` jobs, split by
+`E2E_PART` (`webkit`, `axe`, `cms`, `sign-in`); `E2E_PART=cms pnpm --filter @contentworker/web e2e`
+runs one part locally.
 
 Assert accessible names only in Playwright: jsdom names some controls a real browser does not.

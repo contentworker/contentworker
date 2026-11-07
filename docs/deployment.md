@@ -213,8 +213,12 @@ then only the new).
   `AI_MODE=mock`),
   `pnpm test:fleet`, `pnpm test:toolkit`, and `pnpm audit --prod --audit-level high`.
 - **devices**: the web app's Playwright suite in WebKit (iPhone, iPad, desktop) and Chromium
-  against an offline dev server (`apps/web/e2e`). The `changes` job skips it for a pull request
-  that only touches `docs/`, `apps/docs/`, `.claude/` or top-level Markdown.
+  against an offline dev server (`apps/web/e2e`), in four jobs at once, each with its own server:
+  `devices (webkit)`, `devices (axe)`, `devices (cms)` and `devices (sign-in)`, split by `E2E_PART`
+  in `apps/web/playwright.config.ts`. A job named `devices` sums them up as the required check.
+  They run on pull requests, nightly on `main` and by hand (`gh workflow run ci.yml`), not on the
+  push a merge makes: the pull request already ran them. The `changes` job also skips them for a
+  pull request that only touches `docs/`, `apps/docs/`, `.claude/` or top-level Markdown.
 - **release** (push to `main` only): needs only `verify`, so deploys do not wait for `devices`. It
   dispatches `release.yml` in the private `contentworker/fleet` repository with the commit sha, using
   the repository secret `FLEET_DISPATCH_TOKEN` (a fine-grained token with Actions write on that
