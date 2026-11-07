@@ -407,11 +407,9 @@ export async function seedIngestFindings(request: APIRequestContext, stamp: numb
 }
 
 /**
- * A content type whose fields carry guidance: help and a placeholder on its title, a plain field
- * with none, and listed values on another (bare, so the type reads the same on every version of
- * the api). Created or updated by apiId, so it is safe to run per test.
+ * A type of its own for a spec that saves one: specs run in parallel, and a save replaces it.
+ * Its agent instructions are cleared, so a rerun on the same database starts without them.
  */
-/** A type of its own for a spec that saves one: specs run in parallel, and a save replaces it. */
 export async function seedBriefedType(request: APIRequestContext) {
   const res = await api(request, 'POST', `${MGMT}/content-types`, {
     apiId: 'briefed',
@@ -427,10 +425,16 @@ export async function seedBriefedType(request: APIRequestContext) {
         position: 0,
       },
     ],
+    agentInstructions: null,
   });
   expect(res.status()).toBeLessThan(300);
 }
 
+/**
+ * A content type whose fields carry guidance: help and a placeholder on its title, a plain field
+ * with none, and listed values on another (bare, so the type reads the same on every version of
+ * the api). Created or updated by apiId, so it is safe to run per test.
+ */
 export async function seedGuidedType(request: APIRequestContext) {
   const field = (apiId: string, name: string, position: number, extra: object = {}) => ({
     apiId,

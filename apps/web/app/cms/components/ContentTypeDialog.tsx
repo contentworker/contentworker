@@ -760,8 +760,8 @@ export function ContentTypeDialog(props: {
               id="ct-agent-instructions-hint"
               className="max-w-measure text-muted-foreground text-xs"
             >
-              How agents connected over MCP should write these entries. They read this with the
-              content type; it is never delivered. Optional.
+              How agents should write these entries. Agents, the assistant included, read this with
+              the content type; it is never delivered. Optional.
             </p>
           </div>
 

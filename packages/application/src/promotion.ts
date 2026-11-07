@@ -521,7 +521,14 @@ async function assessPromotion(
   const typeChanges: Record<string, string[]> = {};
   for (const ct of types) {
     const current = await ctx.store.contentTypes.get(target, ct.apiId);
-    if (!current) continue;
+    if (!current) {
+      // A new type changes no field the target has, but agents read its instructions as guidance.
+      if (ct.agentInstructions) {
+        typeChanges[ct.apiId] = ['adds agent instructions'];
+        reasons.push(`The content type "${ct.apiId}" adds agent instructions`);
+      }
+      continue;
+    }
     const changes = new Set<string>();
     const incoming = new Map(ct.fields.map((f) => [f.apiId, f]));
     // Against the target's working definition and, when a published definition replaces it, what

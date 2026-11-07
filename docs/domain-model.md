@@ -536,7 +536,7 @@ interface ContentType {
   group?: string; // the admin's sidebar lists types under their group (≤ 100)
   description?: string; // what the type is for (≤ 2000)
   icon?: string; // a kebab-case icon name the admin draws (≤ 40)
-  agentInstructions?: string; // style guidance for MCP agents; never delivered (≤ 4000)
+  agentInstructions?: string; // style guidance for agents; never delivered (≤ 4000)
   layout?: ContentTypeLayout; // editor-only tabs and field groups; never delivered
   version: number; // bumped on each revision
   status: 'draft' | 'published';
