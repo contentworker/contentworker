@@ -174,6 +174,12 @@ mobile-starlight-toc a[aria-current="true"] {
   font-weight: 500;
 }
 
+/* Starlight's check mark beside the current entry takes the text accent (the link blue); where
+   you are is brand. */
+mobile-starlight-toc a[aria-current="true"]::after {
+  background-color: var(--cw-brand);
+}
+
 /* ── Sidebar (the admin's: panel ground, ghost items) ───────────────────── */
 
 .sidebar-content {
