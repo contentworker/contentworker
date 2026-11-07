@@ -229,18 +229,27 @@ an **Admin** account with a password (`apps/web/app/lib/setup.server.ts`):
    already exist); if creating it fails, the code is given back;
 4. web SSO-only is turned off, so the new admin can sign in with the password.
 
+A first admin then lands on `/setup/space`, setup's second step (a recovery admin lands on
+`/team`): Coworker proposes the first space and creates it once they confirm its card, or they
+fill in the New space form, or skip to the admin.
+
 **Recovery**: `./scripts/setup-code.sh <id>` writes a new code to `.secrets/<id>/setup-code`, sets
 it on the deployment's GitHub environment and on the web worker. Redeeming it creates one more
 admin account even though others exist.
 
 The web app's `/setup` is the only first-run setup. The api has no setup gate and no setup routes
 of its own: it serves every route from the start, and a new deployment's first admin creates the
-first space (empty, or with the sample starter) from the CMS's no-spaces notice and adds people
+first space (empty, or with the sample starter) from setup's second step, the CMS's no-spaces
+notice or Coworker's setup scope (below), and adds people
 from the admin, through the web principal. `POST /spaces` takes `space:admin` across the
 deployment (`authorize(…, '*')`), which only a deployment-wide principal holds: the root tokens and
 a deployment admin signed in to the admin. A space's own keys and tokens, and a member (who gets a
 principal with no space and no scopes on a route that names none), are refused; the `space_create`
-MCP tool makes the same check.
+MCP tool makes the same check. Coworker reaches it only in its setup scope (`SETUP_SCOPE`, space and
+environment `*`): only a deployment admin's turn runs there, as their deployment-wide principal,
+offered `space_starters_list` and `space_create` alone, and `space_create` waits for their
+confirm. `offeredIn` refuses those two in a space and every other tool in setup, for a model's call
+and a page's `act` alike.
 
 ## Password reset
 

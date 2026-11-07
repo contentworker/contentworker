@@ -337,6 +337,12 @@ tab goes away. User-facing behaviour is in the
   at a confirm card; plain edits (save a draft, create, tag, comment) run at once. A confirm on `entries_publish`, `entries_unpublish` or
   `entries_restore_version` is held to the entry's version when the card was made, so a newer
   draft makes it a 409.
+- **No space yet.** With no space, the panel (and setup's second step, `/setup/space`) sends
+  `SETUP_SCOPE` (space and environment `*`). Only a deployment admin's turn runs there, as their
+  deployment-wide principal, with `SETUP_TOOLS` (`space_starters_list`, `space_create`) and a
+  system prompt that asks what the space is for and proposes one `space_create`. `offeredIn` holds
+  every call to its scope: setup tools never run in a space, and a space's tools never run in setup.
+  The AI budget meters setup turns under the `*` scope.
 - **Page edits skip the model.** `act` runs the exact tool call for what was pressed and joins the
   conversation as a tool call of its own (`direct_` ids); `resolve` answers its confirm card.
 - **Trust.** The object verifies the principal the web worker signed for its path (the

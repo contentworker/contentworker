@@ -1,4 +1,9 @@
-import type { AssistantContext, AssistantPage } from '@contentworker/domain';
+import {
+  type AssistantContext,
+  type AssistantPage,
+  isSetupScope,
+  SETUP_SCOPE,
+} from '@contentworker/domain';
 
 /** Ids as the admin uses them in a URL: no spaces, no path separators, not unbounded. */
 const ID = /^[\w.:-]{1,128}$/;
@@ -9,13 +14,20 @@ const label = (v: unknown, fallback: string) =>
 /**
  * The page context the panel sent with a message or a page edit, or null when it names no usable
  * scope: every turn and every edit runs in exactly one space and environment, so without them
- * there is nothing to do. A page that is malformed counts as "everything".
+ * there is nothing to do. A page that is malformed counts as "everything". `SETUP_SCOPE` (no space
+ * yet: setting one up) is a scope of its own, about no page.
  */
 export function readContext(raw: unknown): AssistantContext | null {
   if (!raw || typeof raw !== 'object') return null;
   const { scope, page } = raw as { scope?: unknown; page?: unknown };
   if (!scope || typeof scope !== 'object') return null;
   const { spaceId, environmentId, locale } = scope as Record<string, unknown>;
+  if (
+    typeof spaceId === 'string' &&
+    typeof environmentId === 'string' &&
+    isSetupScope({ spaceId, environmentId })
+  )
+    return { scope: SETUP_SCOPE, page: { kind: 'everything' } };
   if (typeof spaceId !== 'string' || !ID.test(spaceId)) return null;
   if (typeof environmentId !== 'string' || !ID.test(environmentId)) return null;
   return {

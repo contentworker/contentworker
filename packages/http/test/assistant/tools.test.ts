@@ -7,7 +7,13 @@ import {
   createSpace,
   publishContentType,
 } from '@contentworker/application';
-import { ASSISTANT_TOOLS, type Principal, SCOPES } from '@contentworker/domain';
+import {
+  ASSISTANT_TOOLS,
+  type Principal,
+  SCOPES,
+  SETUP_SCOPE,
+  SETUP_TOOLS,
+} from '@contentworker/domain';
 import {
   FixedClock,
   InMemoryContentStore,
@@ -81,6 +87,74 @@ const editorOfA: Principal = {
   scopes: Object.values(SCOPES),
 };
 
+const SCOPE_A = { spaceId: 'space-a', environmentId: 'main' };
+
+/** A deployment admin with no space, as `principalForWebUser` resolves them for setup. */
+const deploymentAdmin: Principal = {
+  spaceId: '*',
+  kind: 'user',
+  subject: 'usr_owner',
+  scopes: Object.values(SCOPES),
+};
+
+describe('the assistant without a space (setup)', () => {
+  let deps: McpDeps;
+  beforeEach(() => {
+    deps = makeDeps();
+  });
+
+  it('offers only the setup tools, and none of them in a space', async () => {
+    const inSetup = await listAssistantTools(deps, deploymentAdmin, SETUP_SCOPE);
+    expect([...inSetup.keys()].sort()).toEqual([...SETUP_TOOLS].sort());
+    const inSpace = await listAssistantTools(deps, deploymentAdmin, SCOPE_A);
+    expect([...SETUP_TOOLS].some((t) => inSpace.has(t))).toBe(false);
+  });
+
+  it('creates a space in setup, and refuses a space’s tool there', async () => {
+    const out = (await callAssistantTool(
+      deps,
+      deploymentAdmin,
+      'space_create',
+      { spaceId: 'first', name: 'First', defaultLocale: 'en-US' },
+      SETUP_SCOPE,
+    )) as { id: string };
+    expect(out.id).toBe('first');
+    await expect(
+      callAssistantTool(deps, deploymentAdmin, 'entries_query', {}, SETUP_SCOPE),
+    ).rejects.toThrow(/isn’t available here/);
+  });
+
+  it('only creates in setup: an existing space is never changed under a create', async () => {
+    await seedSpace(deps.ctx, 'space-a', 'In A');
+    await expect(
+      callAssistantTool(
+        deps,
+        deploymentAdmin,
+        'space_create',
+        { spaceId: 'space-a', name: 'Renamed', defaultLocale: 'en-US', starter: 'sample' },
+        SETUP_SCOPE,
+      ),
+    ).rejects.toThrow(/already exists/);
+    expect((await deps.ctx.store.spaces.list()).find((s) => s.spaceId === 'space-a')?.name).toBe(
+      'space-a',
+    );
+  });
+
+  it('never creates a space from inside one', async () => {
+    await seedSpace(deps.ctx, 'space-a', 'In A');
+    await expect(
+      callAssistantTool(
+        deps,
+        deploymentAdmin,
+        'space_create',
+        { spaceId: 'other', name: 'Other', defaultLocale: 'en-US' },
+        SCOPE_A,
+      ),
+    ).rejects.toThrow(/isn’t available here/);
+    expect((await deps.ctx.store.spaces.list()).map((s) => s.spaceId)).not.toContain('other');
+  });
+});
+
 describe('the assistant’s MCP tools', () => {
   let deps: McpDeps;
   beforeEach(() => {
@@ -88,8 +162,10 @@ describe('the assistant’s MCP tools', () => {
   });
 
   it('lists only the assistant’s tools, in order, with the scope arguments taken out', async () => {
-    const tools = await listAssistantTools(deps, editorOfA);
-    expect([...tools.keys()]).toEqual(Object.keys(ASSISTANT_TOOLS));
+    const tools = await listAssistantTools(deps, editorOfA, SCOPE_A);
+    expect([...tools.keys()]).toEqual(
+      Object.keys(ASSISTANT_TOOLS).filter((n) => !SETUP_TOOLS.has(n as never)),
+    );
     const get = tools.get('entries_get')!;
     expect(get.scoped).toEqual({ space: true, environment: true });
     expect(Object.keys(get.inputSchema.properties ?? {})).toEqual(['id']);
@@ -105,11 +181,13 @@ describe('the assistant’s MCP tools', () => {
     await seedSpace(deps.ctx, 'space-a', 'In A');
     const viewerOfA: Principal = { ...editorOfA, scopes: [SCOPES.previewRead] };
 
-    const offeredToViewer = await fresh.listAssistantTools(deps, viewerOfA);
+    const offeredToViewer = await fresh.listAssistantTools(deps, viewerOfA, scope);
     expect(offeredToViewer.has('entries_get')).toBe(true);
     expect(offeredToViewer.has('entries_publish')).toBe(false);
 
-    expect((await fresh.listAssistantTools(deps, editorOfA)).has('entries_publish')).toBe(true);
+    expect((await fresh.listAssistantTools(deps, editorOfA, scope)).has('entries_publish')).toBe(
+      true,
+    );
     // A tool the viewer wasn't offered still answers for itself, with the scope it needs.
     const refused = await fresh
       .callAssistantTool(deps, viewerOfA, 'entries_publish', { id: 'e1' }, scope)

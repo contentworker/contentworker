@@ -613,6 +613,14 @@ test('the first-space notice and its dialog have no accessibility violations', a
   await scan(page, testInfo);
 });
 
+test('setup’s first-space step has no accessibility violations', async ({ page }, testInfo) => {
+  await asFreshDeployment(page, () => false);
+  await openCms(page, '/setup/space');
+  await expect(page.getByRole('heading', { name: 'Your first space', level: 1 })).toBeVisible();
+  await expect(page.getByText('What will your first space hold?')).toBeVisible();
+  await scan(page, testInfo);
+});
+
 // The enterprise starter is off under the device tests (DEMO_STARTERS), so the browser is told it
 // is offered, the create goes through as an empty space, and the install's progress is stubbed:
 // what is scanned is the dialog's starter list and its progress view, running and failed.

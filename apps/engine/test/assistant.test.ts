@@ -10,8 +10,14 @@ import {
   updateEntry,
 } from '@contentworker/application';
 import { authDbOf, sessions, users } from '@contentworker/db/auth';
-import { type AssistantContext, assistantPath, DIRECT_CALL_PREFIX } from '@contentworker/domain';
 import {
+  type AssistantContext,
+  assistantPath,
+  DIRECT_CALL_PREFIX,
+  SETUP_SCOPE,
+} from '@contentworker/domain';
+import {
+  ADMINS_SET_UP,
   ALREADY_ANSWERED,
   ASSISTANT_RATE,
   answeredOnly,
@@ -788,6 +794,91 @@ describe('a model turn (the mock model)', () => {
     const panel = await socket(ada);
     const chunks = await panel.ask('List the content types', {} as AssistantContext);
     expect(JSON.stringify(chunks)).toMatch(/which space and environment/);
+    panel.close();
+  });
+});
+
+describe('setting up a space (no space yet)', () => {
+  const setup = { scope: SETUP_SCOPE, page: { kind: 'everything' } } satisfies AssistantContext;
+  const spaceExists = async (id: string) =>
+    (await ctx().store.spaces.list()).some((s) => s.spaceId === id);
+
+  it('proposes the space a deployment admin describes, and creates it only once they confirm', async () => {
+    const ada = await person('ada_setup');
+    const panel = await socket(ada);
+    await panel.ask('A field guide, empty so I can model my own', setup);
+    const card = (await messagesOf(ada))
+      .flatMap((m) => m.parts)
+      .find((x) => x.type === 'tool-space_create') as {
+      toolCallId: string;
+      state: string;
+      input: Record<string, unknown>;
+    };
+    expect(card).toMatchObject({
+      state: 'approval-requested',
+      input: {
+        name: 'Field guide',
+        spaceId: 'field-guide',
+        defaultLocale: 'en-US',
+        starter: 'empty',
+      },
+    });
+    expect(await spaceExists('field-guide')).toBe(false);
+
+    const continued = panel.nextOtherTurn();
+    panel.send({
+      type: 'cf_agent_tool_approval',
+      toolCallId: card.toolCallId,
+      approved: true,
+      autoContinue: true,
+    });
+    await continued;
+    expect(await partOf(ada, card.toolCallId)).toMatchObject({ state: 'output-available' });
+    expect(await spaceExists('field-guide')).toBe(true);
+    panel.close();
+  });
+
+  it('refuses a member: only a deployment admin sets up a space', async () => {
+    const bo = await person('bo_setup', 'member');
+    const panel = await socket(bo);
+    const chunks = await panel.ask('A recipe site', setup);
+    expect(JSON.stringify(chunks)).toContain(ADMINS_SET_UP);
+    expect(
+      (await messagesOf(bo)).flatMap((m) => m.parts).some((x) => x.type === 'tool-space_create'),
+    ).toBe(false);
+    panel.close();
+  });
+
+  it('refuses a member’s card in setup, and creates nothing', async () => {
+    const bo = await person('bo_setup_act', 'member');
+    const panel = await socket(bo);
+    const made = await panel.call('act', [
+      'space_create',
+      { spaceId: 'members-own', name: 'Members own', defaultLocale: 'en-US' },
+      setup,
+    ]);
+    expect(made.success).toBe(false);
+    expect(made.error).toContain(ADMINS_SET_UP);
+    expect(await spaceExists('members-own')).toBe(false);
+    panel.close();
+  });
+
+  it('runs no space’s tools without a space, and no setup tool in one', async () => {
+    const ada = await person('ada_setup_bounds');
+    const id = await entryIn(SPACE_A, 'Out of reach');
+    const panel = await socket(ada);
+    const inSetup = await panel.call('act', ['entries_publish', { id }, setup]);
+    expect(inSetup.success).toBe(false);
+    expect(inSetup.error).toMatch(/isn’t available here/);
+    expect(await statusOf(SPACE_A, id)).toBe('draft');
+    const inSpace = await panel.call('act', [
+      'space_create',
+      { spaceId: 'sneaky', name: 'Sneaky', defaultLocale: 'en-US' },
+      contextIn(SPACE_A),
+    ]);
+    expect(inSpace.success).toBe(false);
+    expect(inSpace.error).toMatch(/isn’t available here/);
+    expect(await spaceExists('sneaky')).toBe(false);
     panel.close();
   });
 });

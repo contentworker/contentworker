@@ -19,6 +19,9 @@ export default [
   // `/invite/<token>` moves the token into a cookie and redirects to `/invite`.
   route('invite/:token?', 'routes/invite.tsx'),
   layout('routes/shell.tsx', [
+    // Setup's last step: the first space, set up with Coworker. Signed in, but a page of its own
+    // (no sidebar or header: the shell draws it bare, `handle.bare`).
+    route('setup/space', 'routes/setup-space.tsx'),
     // An error boundary inside the shell, so a refused or missing page keeps the app around it.
     layout('routes/in-app.tsx', [
       // Signed in, `/` is the dashboard.

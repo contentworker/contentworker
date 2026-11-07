@@ -3,7 +3,8 @@
  * request to the same handler `/mcp` serves (./mcp/http.ts), authenticated as the person's own
  * principal, so the assistant can never do what an MCP client with their access couldn't. Only the
  * tools `ASSISTANT_TOOLS` names are offered, and every call runs in the page's space and
- * environment, whatever the arguments said.
+ * environment, whatever the arguments said. With no space (`SETUP_SCOPE`) only the setup tools
+ * run, and in a space never them (`offeredIn`).
  */
 
 import { wrapUntrusted } from '@contentworker/application';
@@ -11,6 +12,8 @@ import {
   ASSISTANT_TOOLS,
   type AssistantScope,
   type AssistantTool,
+  isSetupScope,
+  offeredIn,
   type Principal,
   SCOPES,
 } from '@contentworker/domain';
@@ -77,13 +80,19 @@ function assistantCatalogue(deps: McpDeps): Promise<Map<AssistantTool, ListedToo
   return listing;
 }
 
-/** The tools to offer `principal`: the catalogue, narrowed as `tools/list` narrows it for them. */
+/**
+ * The tools to offer `principal` in `scope`: the catalogue, held to the scope (`offeredIn`) and
+ * narrowed as `tools/list` narrows it for them.
+ */
 export async function listAssistantTools(
   deps: McpDeps,
   principal: Principal,
+  scope: AssistantScope,
 ): Promise<Map<AssistantTool, ListedTool>> {
   const catalogue = await assistantCatalogue(deps);
-  return new Map([...catalogue].filter(([name]) => toolListedFor(principal, name)));
+  return new Map(
+    [...catalogue].filter(([name]) => offeredIn(scope, name) && toolListedFor(principal, name)),
+  );
 }
 
 async function listAll(deps: McpDeps) {
@@ -150,6 +159,19 @@ export async function callAssistantTool(
   input: unknown,
   scope: AssistantScope,
 ): Promise<unknown> {
+  // A tool runs only where it is offered: never a space's tool without a space, nor the reverse.
+  if (!offeredIn(scope, name))
+    throw new ToolRefused(`${ASSISTANT_TOOLS[name].title} isn’t available here.`);
+  // `space_create` updates a space whose id exists. Its card reads "Create this space", so in setup
+  // it only ever creates one: an existing id is refused, never changed under a create's name.
+  if (name === 'space_create' && isSetupScope(scope)) {
+    const id = isRecord(input) ? input.spaceId : undefined;
+    if (
+      typeof id === 'string' &&
+      (await deps.ctx.store.spaces.list()).some((s) => s.spaceId === id)
+    )
+      throw new ToolRefused(`A space with the id ${id} already exists. Choose another id.`);
+  }
   // From the catalogue, not the caller's list: a tool they weren't offered still answers for
   // itself, with the scope it needs.
   const tool = (await assistantCatalogue(deps)).get(name);

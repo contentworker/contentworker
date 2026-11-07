@@ -35,3 +35,39 @@ test('a deployment admin creates the first space with sample content and lands i
   const scope = await page.evaluate(() => localStorage.getItem('contentworker-scope'));
   expect(JSON.parse(scope ?? '{}').space).toBe(id);
 });
+
+/**
+ * Setup's first-space step: Coworker's conversation, with the form one press away. The form makes
+ * the space and lands in it; skipping goes to the overview, where the notice still offers one.
+ */
+test('setup’s first-space step creates the space from its form and lands in it', async ({
+  page,
+}) => {
+  const stamp = Date.now().toString(36);
+  const id = `step-${stamp}`;
+  await asFreshDeployment(page, (spaceId) => spaceId === id);
+
+  await openCms(page, '/setup/space');
+  await expect(page.getByRole('heading', { name: 'Your first space', level: 1 })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Set up with Coworker' })).toBeVisible();
+  await page.getByRole('button', { name: 'Fill in a form instead' }).click();
+
+  const dialog = page.getByRole('dialog', { name: 'New space' });
+  await dialog.getByLabel('Name').fill(`Step ${stamp}`);
+  await dialog.getByRole('radio', { name: /Empty space/ }).check();
+  await dialog.getByRole('button', { name: 'Create space' }).click();
+  await expect(dialog).toBeHidden({ timeout: 30_000 });
+
+  await expect(page).toHaveURL(/\/dashboard$/);
+  await expect(page.getByRole('heading', { name: 'Create your first space' })).toBeHidden();
+  const scope = await page.evaluate(() => localStorage.getItem('contentworker-scope'));
+  expect(JSON.parse(scope ?? '{}').space).toBe(id);
+});
+
+test('skipping setup’s first-space step leaves the overview offering one', async ({ page }) => {
+  await asFreshDeployment(page, () => false);
+  await openCms(page, '/setup/space');
+  await page.getByRole('link', { name: 'Skip for now' }).click();
+  await expect(page).toHaveURL(/\/dashboard$/);
+  await expect(page.getByRole('heading', { name: 'Create your first space' })).toBeVisible();
+});

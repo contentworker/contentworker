@@ -3,6 +3,7 @@
 // once, or a card the page waits on), cards answered through `resolve`, the page making the edit
 // itself while the socket is down; and the parts a card and an edit line are drawn with.
 
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import type { UIMessage } from 'ai';
 import { MemoryRouter } from 'react-router';
@@ -16,9 +17,19 @@ const client = vi.hoisted(() => ({
   listContentTypes: vi.fn(async () => [] as unknown[]),
   listEntries: vi.fn(async () => [] as unknown[]),
   getAsset: vi.fn<(id: string) => Promise<unknown>>(),
+  listStarters: vi.fn(async () => [] as unknown[]),
 }));
-vi.mock('~/cms/lib/client-context', () => ({ useClient: () => ({ conn, client }) }));
-vi.mock('~/lib/use-me', () => ({ useMe: () => ({ kind: 'user', id: 'usr_1', role: 'admin' }) }));
+let scopeState: 'loading' | 'no-spaces' | 'error' | 'ready' = 'ready';
+let admin = true;
+const updateConn = vi.fn();
+vi.mock('~/cms/lib/client-context', () => ({
+  useClient: () => ({ conn, client, updateConn }),
+  useScopeState: () => scopeState,
+}));
+vi.mock('~/lib/use-me', () => ({
+  useMe: () => ({ kind: 'user', id: 'usr_1', role: 'admin' }),
+  useCan: () => admin,
+}));
 
 type Handlers = {
   onOpen?: () => void;
@@ -41,21 +52,25 @@ vi.mock('agents/react', () => ({
 const chat = vi.hoisted(() => ({
   messages: [] as UIMessage[],
   addToolApprovalResponse: vi.fn(),
+  body: undefined as undefined | (() => unknown),
 }));
 vi.mock('@cloudflare/ai-chat/react', () => ({
-  useAgentChat: () => ({
-    messages: chat.messages,
-    sendMessage: vi.fn(),
-    regenerate: vi.fn(),
-    status: 'ready',
-    stop: vi.fn(),
-    error: undefined,
-    clearError: vi.fn(),
-    addToolApprovalResponse: chat.addToolApprovalResponse,
-    clearHistory: vi.fn(),
-    isStreaming: false,
-    isRecovering: false,
-  }),
+  useAgentChat: (options: { body?: () => unknown }) => {
+    chat.body = options.body;
+    return {
+      messages: chat.messages,
+      sendMessage: vi.fn(),
+      regenerate: vi.fn(),
+      status: 'ready',
+      stop: vi.fn(),
+      error: undefined,
+      clearError: vi.fn(),
+      addToolApprovalResponse: chat.addToolApprovalResponse,
+      clearHistory: vi.fn(),
+      isStreaming: false,
+      isRecovering: false,
+    };
+  },
 }));
 
 const { AssistantProvider, useAssistantEdit } = await import('~/cms/lib/assistant');
@@ -70,13 +85,16 @@ function Page() {
   return null;
 }
 
+const queries = new QueryClient();
 const tree = () => (
-  <MemoryRouter>
-    <AssistantProvider>
-      <Page />
-      <AssistantPanel />
-    </AssistantProvider>
-  </MemoryRouter>
+  <QueryClientProvider client={queries}>
+    <MemoryRouter>
+      <AssistantProvider>
+        <Page />
+        <AssistantPanel />
+      </AssistantProvider>
+    </MemoryRouter>
+  </QueryClientProvider>
 );
 /** Renders the panel; `sync()` re-renders it with the conversation as `chat.messages` now holds. */
 const renderPanel = () => {
@@ -126,9 +144,120 @@ beforeEach(() => {
   client.diffVersions.mockReset().mockResolvedValue(diff);
   client.getEntry.mockReset();
   conn = home;
+  scopeState = 'ready';
+  admin = true;
+  updateConn.mockReset();
   localStorage.clear();
 });
 afterEach(() => vi.useRealTimers());
+
+describe('first run with no space yet', () => {
+  const inRouter = (ui: React.ReactNode) =>
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <MemoryRouter>{ui}</MemoryRouter>
+      </QueryClientProvider>,
+    );
+  /** A space Coworker created, its card confirmed and run. */
+  const createdTurn = (spaceId: string, starter: string) =>
+    ({
+      id: 'm_created',
+      role: 'assistant',
+      parts: [
+        {
+          type: 'tool-space_create',
+          toolCallId: 'call_space',
+          state: 'output-available',
+          input: { name: 'Field guide', spaceId, defaultLocale: 'en-US', starter },
+          output: { id: spaceId },
+        },
+      ],
+    }) as unknown as UIMessage;
+
+  it('asks a deployment admin what the first space will hold, and sets it up with no space', () => {
+    scopeState = 'no-spaces';
+    renderPanel();
+    expect(screen.getByText('What will your first space hold?')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'An empty space to model my own' })).toBeTruthy();
+    expect(screen.queryByText('What’s waiting to be published?')).toBeNull();
+    const box = screen.getByRole('textbox', { name: 'Message Coworker' }) as HTMLTextAreaElement;
+    expect(box.disabled).toBe(false);
+    // There is no page to ask about, and the turn runs in setup, not in a space.
+    expect(screen.queryByRole('button', { name: /Asking about/ })).toBeNull();
+    expect(chat.body!()).toEqual({
+      context: { scope: { spaceId: '*', environmentId: '*' }, page: { kind: 'everything' } },
+    });
+  });
+
+  it('tells someone who can’t set one up who can add them, and takes no question', () => {
+    scopeState = 'no-spaces';
+    admin = false;
+    renderPanel();
+    expect(screen.getByText('You aren’t on a space yet.')).toBeTruthy();
+    const box = screen.getByRole('textbox', { name: 'Message Coworker' }) as HTMLTextAreaElement;
+    expect(box.disabled).toBe(true);
+    expect((chat.body!() as { context: { scope: unknown } }).context.scope).toMatchObject({
+      spaceId: 'sp_1',
+    });
+  });
+
+  it('moves into the space it created, once the list has it, then offers what to try there', async () => {
+    scopeState = 'no-spaces';
+    const { sync } = renderPanel();
+    chat.messages = [createdTurn('field-guide', 'empty')];
+    sync();
+    await waitFor(() =>
+      expect(updateConn).toHaveBeenCalledWith({ space: 'field-guide', environment: 'main' }),
+    );
+    scopeState = 'ready';
+    sync();
+    expect(
+      screen.getByRole('button', { name: 'How do I model my first content type?' }),
+    ).toBeTruthy();
+  });
+
+  it('doesn’t move into a space created before the panel opened', () => {
+    scopeState = 'no-spaces';
+    chat.messages = [createdTurn('gone', 'sample')];
+    renderPanel();
+    expect(updateConn).not.toHaveBeenCalled();
+  });
+
+  it('offers the usual ideas once a space exists', () => {
+    renderPanel();
+    expect(screen.getByText('What’s waiting to be published?')).toBeTruthy();
+    expect(screen.queryByText('What will your first space hold?')).toBeNull();
+  });
+
+  it('shows what the space will be on its card, from the call’s own input', async () => {
+    inRouter(
+      <ActionCard
+        part={
+          {
+            type: 'tool-space_create',
+            toolCallId: 'call_1',
+            state: 'approval-requested',
+            input: {
+              name: 'Field guide',
+              spaceId: 'field-guide',
+              defaultLocale: 'en-US',
+              starter: 'sample',
+            },
+            approval: { id: 'call_1' },
+          } as never
+        }
+        respond={vi.fn()}
+        actionKey="m1:0"
+        direct={false}
+      />,
+    );
+    expect(screen.getByRole('heading', { name: 'Create this space' })).toBeTruthy();
+    expect(screen.getByText('field-guide')).toBeTruthy();
+    // Named as the New space form names it, from the deployment's own list.
+    expect(await screen.findByText('Start with sample content')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Confirm' })).toBeTruthy();
+  });
+});
 
 describe('a page’s edits through the panel', () => {
   it('connects to the person’s own agent', () => {
