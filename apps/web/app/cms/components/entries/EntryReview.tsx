@@ -240,6 +240,13 @@ export function useEntryReview(
     : review;
 }
 
+/** What a field review calls its two sides. */
+export interface ReviewLabels {
+  readonly before?: string;
+  readonly after: string;
+}
+const PUBLISH_LABELS: ReviewLabels = { before: 'Published', after: 'Draft' };
+
 /** Past this many a list of names stops and says how many more: Review changes has them all. */
 const LIST_MAX = 6;
 
@@ -274,9 +281,17 @@ function FieldHeading({ field, locale }: { field: ReviewField; locale?: string }
  * Each changed field's published value and its draft, side by side only where the space around them
  * allows (a container query, not the viewport: a dialog on a tablet and the assistant's column on a
  * desktop are as narrow as a phone). Each value carries its own label, so stacked they still read.
- * Unchanged fields wait behind a disclosure.
+ * Unchanged fields wait behind a disclosure. `labels` name the two sides for a change that isn't
+ * a publish (a draft save: what the draft holds now, and after); with no `before`, only the new
+ * value shows (an entry that doesn't exist yet).
  */
-export function FieldReview({ fields }: { fields: readonly ReviewField[] }) {
+export function FieldReview({
+  fields,
+  labels = PUBLISH_LABELS,
+}: {
+  fields: readonly ReviewField[];
+  labels?: ReviewLabels;
+}) {
   const changed = fields.filter(isChanged);
   const same = fields.filter((f) => !isChanged(f));
   const [open, setOpen] = useState(false);
@@ -289,15 +304,17 @@ export function FieldReview({ fields }: { fields: readonly ReviewField[] }) {
             f.rows.map((r) => (
               <li key={`${f.field}:${r.locale ?? ''}`} className="space-y-1 py-2 first:pt-0">
                 <FieldHeading field={f} {...(r.locale ? { locale: r.locale } : {})} />
-                <dl className="grid gap-x-4 gap-y-1 @md:grid-cols-2">
+                <dl className={cn('grid gap-x-4 gap-y-1', labels.before && '@md:grid-cols-2')}>
+                  {labels.before ? (
+                    <div className="min-w-0">
+                      <dt className="caption">{labels.before}</dt>
+                      <dd>
+                        <FieldValue value={r.before} muted />
+                      </dd>
+                    </div>
+                  ) : null}
                   <div className="min-w-0">
-                    <dt className="caption">Published</dt>
-                    <dd>
-                      <FieldValue value={r.before} muted />
-                    </dd>
-                  </div>
-                  <div className="min-w-0">
-                    <dt className="caption">Draft</dt>
+                    <dt className="caption">{labels.after}</dt>
                     <dd>
                       <FieldValue value={r.after} />
                     </dd>
@@ -385,8 +402,18 @@ export function ReviewHold(props: {
   verb: string;
   pending: boolean;
   blocked: boolean;
+  /** What the hold waits to show, and what it is doing meanwhile: a publish's by default. */
+  shows?: string;
+  reading?: string;
 }) {
-  const { id, verb, pending, blocked } = props;
+  const {
+    id,
+    verb,
+    pending,
+    blocked,
+    shows = 'what goes live',
+    reading = 'comparing with what’s live',
+  } = props;
   return (
     <p
       id={id}
@@ -394,9 +421,9 @@ export function ReviewHold(props: {
       className={cn('text-xs leading-snug empty:hidden', pending && !blocked && 'sr-only')}
     >
       {blocked
-        ? `You can’t ${verb} until this can show what goes live.`
+        ? `You can’t ${verb} until this can show ${shows}.`
         : pending
-          ? `You can’t ${verb} yet: still comparing with what’s live.`
+          ? `You can’t ${verb} yet: still ${reading}.`
           : null}
     </p>
   );

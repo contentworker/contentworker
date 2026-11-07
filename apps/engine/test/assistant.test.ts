@@ -28,6 +28,7 @@ import {
   RETENTION_MS,
   TOO_FAST,
 } from '@contentworker/http/assistant/agent';
+import { DECLINED_REASON, mockModel } from '@contentworker/http/assistant/model';
 import { NOT_THROUGH } from '@contentworker/http/assistant/tools';
 import type { EdgeEnv } from '@contentworker/platform/env';
 import { wireEdge } from '@contentworker/platform/wire';
@@ -507,6 +508,40 @@ describe('a page’s edits (no model)', () => {
       state: 'output-denied',
       approval: { id: callId, approved: false },
     });
+    panel.close();
+  });
+
+  it('tells the model a declined card was the person’s choice, not a failure', async () => {
+    const ada = await person('ada_decline_reason');
+    const id = await entryIn(SPACE_A, 'Stays out of the trash');
+    const panel = await socket(ada);
+    const asked = await panel.call('act', ['entries_trash', { id }, contextIn(SPACE_A)]);
+    const { callId } = asked.result as { callId: string };
+    await panel.call('resolve', [callId, false]);
+    // The SDK hands a denied call's reason to the model as its result's text.
+    const part = answeredOnly(await messagesOf(ada))
+      .flatMap((m) => m.parts)
+      .find((p) => (p as { toolCallId?: string }).toolCallId === callId);
+    expect(part).toMatchObject({
+      state: 'output-denied',
+      approval: { approved: false, reason: DECLINED_REASON },
+    });
+    // What it stores is left alone: the reason is for the model's reading only.
+    expect(await partOf(ada, callId)).toMatchObject({
+      approval: expect.not.objectContaining({ reason: expect.anything() }),
+    });
+
+    // The mock reads it as the decision it was.
+    const result = {
+      type: 'tool-result',
+      toolCallId: callId,
+      toolName: 'entries_trash',
+      output: { type: 'error-text', value: DECLINED_REASON },
+    };
+    const reply = await mockModel(contextIn(SPACE_A)).doGenerate({
+      prompt: [{ role: 'tool', content: [result] }],
+    } as never);
+    expect(reply.content).toEqual([{ type: 'text', text: 'Left as it was.' }]);
     panel.close();
   });
 

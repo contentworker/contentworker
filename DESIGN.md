@@ -335,8 +335,21 @@ layout/nav.ts` is the one source of the pages, their order, names, icons and G-l
   that fails offers Try again, a card from another space or environment asks to switch back, and one
   that can't say where it runs asks for Not now and a new question. Not now always works, and takes
   focus if Confirm loses it. Fields the person's role can't read aren't listed
-  but are counted in a warning Alert ("1 field you can't read goes live."), never "nothing changed". The other cards list nothing. Any other edit (saving, duplicating) runs
-  at once and leaves a line ("Published · Spring launch notes") linking to the entry. When its socket
+  but are counted in a warning Alert ("1 field you can't read goes live."), never "nothing changed". A card the model proposed shows what it would change, read from the
+  system and never from the model's words (`assistant/proposal.tsx`): a draft save as the field
+  diff from what the draft holds now (Now and After saving; a field the save leaves out is
+  removed), a new entry by its fields, a batch by its first five entries' titles and "and N more",
+  a tagging by its tags' names, a release by its title, any other one-entry action by the entry's
+  title. It is held like a publish: Confirm stays off until that read is done, and a read that
+  fails offers Try again. A page's own cards list nothing more: the person just pressed for them on
+  that entry. Every card says who asked for it in a caption under its title ("You asked for this
+  on the page", or the mark in `ai` and "Coworker suggests this") and when, in its margin. Any
+  other edit (saving, duplicating) runs at once and leaves a line ("Published · Spring launch
+  notes") linking to the entry, with its time in the margin (a `<time>`, outside the link). A
+  declined card's line says in the past tense what stayed as it was ("Not published · Spring
+  launch notes"), and a finished read says it is done ("Found entries · 10 results"). The
+  pinned waiting bar steps aside while its card is in view. A settled edit is announced to screen
+  readers as its line reads. When its socket
   is down the panel says so in one quiet line and the page makes the edit itself, confirming in
   place or in a dialog as The Blast Radius Rule says. Beside the column a page is narrower than the screen, so the Content pages'
   content-type list follows the page's width (it shows from 40rem of page), not the breakpoint.

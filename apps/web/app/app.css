@@ -579,6 +579,8 @@
   font-size: 13.5px;
   line-height: 1.6;
   overflow-wrap: anywhere;
+  /* A reading measure: the column is narrower than this, the sheet between phone and lg isn't. */
+  max-width: 68ch;
 }
 .cw-prose > * + * {
   margin-top: 0.6em;

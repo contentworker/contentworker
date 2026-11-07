@@ -1,8 +1,9 @@
 /**
  * How the assistant's messages read: prose; each read as a quiet line (what it is doing while the
  * reply streams, then that it's done); each edit as a line in the words of what happened, linking
- * to the entry it changed; and anything waiting for the person as a confirm card. A declined card
- * is neutral (the person chose it), never a failure.
+ * to the entry it changed; and anything waiting for the person as a confirm card, saying who asked
+ * for it and what it would change. A declined card is neutral (the person chose it), never a
+ * failure, and reads in the past tense ("Not published"), so it still makes sense later.
  */
 
 import { ASSISTANT_TOOLS, isAssistantTool } from '@contentworker/domain';
@@ -27,6 +28,7 @@ import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router';
 import { Confirmation, ConfirmationActions } from '~/components/ai-elements/confirmation';
 import { MessageAction, MessageResponse } from '~/components/ai-elements/message';
+import { Mark } from '~/components/mark';
 import { useAssistantIfAny } from '../../lib/assistant';
 import { metaOf } from '../../lib/assistant-client';
 import { useClient } from '../../lib/client-context';
@@ -46,6 +48,7 @@ import {
   useHandFocus,
 } from '../entries/EntryReview';
 import { DEFAULT_STARTERS } from '../layout/CreateSpaceDialog';
+import { ProposalDetail, proposalOf, useProposalReview } from './proposal';
 
 export type Part = ToolUIPart | DynamicToolUIPart;
 
@@ -123,9 +126,10 @@ const BULK_JOB_ABOUT: Record<string, (n: string) => string> = {
   purge: (n) => `Permanently delete ${n}`,
 };
 
-/** A bulk job's action, when the call is one. */
+/** A batch's action, when the call is one: a bulk job's, or a bulk publish or unpublish. */
 function bulkJobAction(part: Part): string | undefined {
-  if (getToolName(part) !== 'bulk_job_start') return undefined;
+  const name = getToolName(part);
+  if (name !== 'bulk_job_start' && name !== 'entries_bulk_action') return undefined;
   const action = (part.input as { action?: unknown } | undefined)?.action;
   return typeof action === 'string' ? action : undefined;
 }
@@ -139,23 +143,52 @@ export function aboutOf(part: Part): string | undefined {
   if (about) return about;
   const input = part.input as { ids?: unknown; entryIds?: unknown } | undefined;
   const action = bulkJobAction(part);
-  if (action !== undefined && Array.isArray(input?.entryIds)) {
-    const n = entriesCount(input.entryIds.length);
+  const batch = input?.entryIds ?? input?.ids;
+  if (action !== undefined && Array.isArray(batch)) {
+    const n = entriesCount(batch.length);
     return BULK_JOB_ABOUT[action]?.(n) ?? `${action}: ${n}`;
   }
   if (Array.isArray(input?.ids)) return entriesCount(input.ids.length);
   return undefined;
 }
 
+/**
+ * When something happened, as a line's margin note says it: the time today, else the day. Read in
+ * the person's own locale and clock.
+ */
+export function whenLabel(at: number, now = Date.now()): string {
+  const d = new Date(at);
+  const today = new Date(now).toDateString() === d.toDateString();
+  return today
+    ? d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+    : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+/** The moment a line or card is from, in its margin: quiet, tabular, and a real `<time>`. */
+function When({ at }: { at: number | undefined }) {
+  if (!at) return null;
+  return (
+    <time
+      dateTime={new Date(at).toISOString()}
+      className="ml-auto shrink-0 pl-2 font-normal text-muted-foreground text-xs tabular-nums"
+    >
+      {whenLabel(at)}
+    </time>
+  );
+}
+
 function Line({
   icon: Icon,
   tone = 'muted',
   href,
+  at,
   children,
 }: {
   icon: LucideIcon;
   tone?: 'muted' | 'ink' | 'bad' | 'running';
   href?: string | null;
+  /** When it happened (ms), for an edit's line. */
+  at?: number | undefined;
   children: React.ReactNode;
 }) {
   const line = (
@@ -180,13 +213,32 @@ function Line({
       </span>
     </span>
   );
-  return href ? (
-    <Link to={href} className="hit-area w-fit hover:underline">
-      {line}
-    </Link>
-  ) : (
-    line
+  if (!at) return href ? <LineLink href={href}>{line}</LineLink> : line;
+  // The time sits outside the link: it says when, it isn't where the link goes.
+  return (
+    <span className="flex min-w-0 items-start">
+      {href ? <LineLink href={href}>{line}</LineLink> : line}
+      <When at={at} />
+    </span>
   );
+}
+
+function LineLink({ href, children }: { href: string; children: React.ReactNode }) {
+  return (
+    <Link to={href} className="hit-area w-fit min-w-0 hover:underline">
+      {children}
+    </Link>
+  );
+}
+
+/** How many things a read's result holds, when it says: a list, a page of `items`, a `count`. */
+function resultCount(output: unknown): number | undefined {
+  if (Array.isArray(output)) return output.length;
+  if (!output || typeof output !== 'object') return undefined;
+  const o = output as Record<string, unknown>;
+  if (Array.isArray(o.items)) return typeof o.total === 'number' ? o.total : o.items.length;
+  if (typeof o.count === 'number') return o.count;
+  return undefined;
 }
 
 /**
@@ -194,7 +246,8 @@ function Line({
  * that failed, or that the reply left unfinished, says so in `bad`, with why.
  */
 export function ReadLine({ part, streaming }: { part: Part; streaming: boolean }) {
-  const title = toolTitle(getToolName(part));
+  const name = getToolName(part);
+  const title = toolTitle(name);
   const unfinished = part.state === 'input-streaming' || part.state === 'input-available';
   if (unfinished && streaming)
     return (
@@ -211,14 +264,22 @@ export function ReadLine({ part, streaming }: { part: Part; streaming: boolean }
         ) : null}
       </Line>
     );
-  return <Line icon={Search}>{title}</Line>;
+  // Done, in the past tense so it can't read as still running, with what it found when it says.
+  const n = part.state === 'output-available' ? resultCount(part.output) : undefined;
+  return (
+    <Line icon={Search}>
+      {isAssistantTool(name) ? ASSISTANT_TOOLS[name].done : name}
+      {n === undefined ? '' : ` · ${n} ${n === 1 ? 'result' : 'results'}`}
+    </Line>
+  );
 }
 
 /**
  * An edit, settled: "Published · Spring launch notes", linking to the entry when its output names
- * one. A declined card stays as it was ("left as it was"); a failed one says why.
+ * one. A declined card says what stayed as it was ("Not published · Spring launch notes"); a failed
+ * one says why. `at` is when it happened.
  */
-export function EditLine({ part }: { part: Part }) {
+export function EditLine({ part, at }: { part: Part; at?: number | undefined }) {
   const name = getToolName(part);
   const about = aboutOf(part);
   const info = isAssistantTool(name) ? ASSISTANT_TOOLS[name] : null;
@@ -227,14 +288,14 @@ export function EditLine({ part }: { part: Part }) {
     (part.state === 'approval-responded' && part.approval?.approved === false);
   if (declined)
     return (
-      <Line icon={Ban}>
-        {info?.title ?? name}
-        {about ? ` · ${about}` : ''}: left as it was
+      <Line icon={Ban} at={at}>
+        {info?.declined ?? `${info?.title ?? name}: left as it was`}
+        {about ? ` · ${about}` : ''}
       </Line>
     );
   if (part.state === 'output-error')
     return (
-      <Line icon={CircleAlert} tone="bad">
+      <Line icon={CircleAlert} tone="bad" at={at}>
         {info?.title ?? name} didn’t go through{about ? ` · ${about}` : ''}
         {part.errorText ? (
           <span className="block text-muted-foreground text-xs">{part.errorText}</span>
@@ -243,7 +304,7 @@ export function EditLine({ part }: { part: Part }) {
     );
   if (part.state === 'output-available')
     return (
-      <Line icon={ArrowUpRight} tone="ink" href={entryHref(part.output)}>
+      <Line icon={ArrowUpRight} tone="ink" href={entryHref(part.output)} at={at}>
         {info?.done ?? name}
         {about ? (
           <>
@@ -281,9 +342,26 @@ export interface TurnScope {
 }
 
 /**
- * Where a publish card's review reads from; `elsewhere`, when that isn't where the card runs. A page's
- * card says where in its input. A model's input says nothing that counts: its turn's scope does.
+ * Whether a card runs where the panel reads from: `here`, `elsewhere` (another space or environment)
+ * or `unknown`. A page's card says where in its input. A model's input says nothing that counts: its
+ * turn's scope does. A card outlives a switch of space or environment, and an id can mean a
+ * different entry there, so nothing is read for a card that isn't here.
  */
+function placeOf(
+  part: Part,
+  conn: Connection,
+  direct: boolean,
+  turn: TurnScope | undefined,
+): 'here' | 'elsewhere' | 'unknown' {
+  const input = (part.input ?? {}) as Record<string, unknown>;
+  const space = direct ? input.space : turn?.spaceId;
+  const environment = direct ? input.environment : turn?.environmentId;
+  // Nothing says where it runs (no scope stored, or a continuation from elsewhere left none).
+  if (typeof space !== 'string' || typeof environment !== 'string') return 'unknown';
+  return space === conn.space && environment === conn.environment ? 'here' : 'elsewhere';
+}
+
+/** Where a publish card's review reads from, or why it can't. */
 function publishTarget(
   part: Part,
   conn: Connection,
@@ -294,12 +372,8 @@ function publishTarget(
   const input = (part.input ?? {}) as Record<string, unknown>;
   const { id, expectedVersion } = input;
   if (typeof id !== 'string') return 'unknown';
-  const space = direct ? input.space : turn?.spaceId;
-  const environment = direct ? input.environment : turn?.environmentId;
-  // Nothing says where it runs (no scope stored, or a continuation from elsewhere left none).
-  if (typeof space !== 'string' || typeof environment !== 'string') return 'unknown';
-  // A card outlives a switch of space or environment, and an id can mean a different entry there.
-  if (space !== conn.space || environment !== conn.environment) return 'elsewhere';
+  const place = placeOf(part, conn, direct, turn);
+  if (place !== 'here') return place;
   return {
     entryId: id,
     ...(typeof expectedVersion === 'number' ? { version: expectedVersion } : {}),
@@ -367,9 +441,29 @@ function PublishReview({
 }
 
 /**
+ * Who asked for a card: the person, from the page (they just pressed for it), or Coworker, which
+ * proposed it. Said on every card, so a proposal never passes for something the person did.
+ */
+function Source({ direct }: { direct: boolean }) {
+  return (
+    <p className="flex items-center gap-1.5 text-muted-foreground text-xs">
+      {direct ? (
+        'You asked for this on the page'
+      ) : (
+        <>
+          <Mark className="size-3 shrink-0 text-ai" />
+          Coworker suggests this
+        </>
+      )}
+    </p>
+  );
+}
+
+/**
  * A call waiting for the person: a page's action, or anything the model proposed to change. One
  * press confirms it; Not now leaves everything as it was. A publish lists what will go live, and
- * can't be confirmed unless that has been read; Not now always can. Focus starts on the safe choice when the card came
+ * can't be confirmed unless that has been read; a model's proposal shows what it would change,
+ * read from the system (`ProposalDetail`), and is held the same way. Not now always can. Focus starts on the safe choice when the card came
  * from a page (the person just pressed for it) or the person is already in the conversation, never
  * pulled out of a field they are typing in. A card a newer, identical request replaced stops
  * asking, so only one button can do the thing.
@@ -381,6 +475,7 @@ export function ActionCard({
   direct,
   replaced,
   turn,
+  at,
 }: {
   part: Part;
   respond: (part: Part, approved: boolean) => void;
@@ -390,6 +485,8 @@ export function ActionCard({
   replaced?: boolean;
   /** The scope of the turn a model's card came from. */
   turn?: TurnScope;
+  /** When the card was made (ms). */
+  at?: number | undefined;
 }) {
   const name = getToolName(part);
   const titleId = useId();
@@ -408,10 +505,38 @@ export function ActionCard({
     target === 'elsewhere' || target === 'unknown' ? null : target,
     conn.locale,
   );
-  const about = aboutOf(part) ?? ('title' in review && review.title ? review.title : undefined);
-  // A publish that can't show what goes live can't be confirmed from here, wherever it's pressed.
-  const blocked = place !== undefined || review.status === 'failed';
-  const confirmOff = sent || blocked || review.status === 'loading';
+  // A model's proposal (other than a publish, read above) shows what it would change. A page's card
+  // needs no reading: the page made it from what the person was looking at.
+  const proposal = useMemo(
+    () => (asking && !direct && target === null ? proposalOf(part) : null),
+    [asking, direct, target, part],
+  );
+  const proposalPlace = useMemo(() => {
+    if (!proposal) return undefined;
+    const p = placeOf(part, conn, direct, turn);
+    return p === 'here' ? undefined : p;
+  }, [proposal, part, conn, direct, turn]);
+  const proposed = useProposalReview(
+    client,
+    proposal && !proposalPlace ? proposal : null,
+    conn.locale,
+  );
+  const reviewTitle =
+    'title' in review && review.title
+      ? review.title
+      : proposed.status === 'ready'
+        ? proposed.title
+        : undefined;
+  const about = aboutOf(part) ?? reviewTitle;
+  // A card that can't show what it changes can't be confirmed from here, wherever it's pressed.
+  const blocked = target
+    ? place !== undefined || review.status === 'failed'
+    : proposal
+      ? proposalPlace !== undefined || proposed.status === 'failed'
+      : false;
+  const pending = target ? review.status === 'loading' : proposed.status === 'loading';
+  const held = Boolean(target || proposal);
+  const confirmOff = sent || blocked || (held && pending);
   const reasonId = useId();
 
   // The panel is inert until it opens, and focus can't land in it: a card that arrives first (a
@@ -425,7 +550,13 @@ export function ActionCard({
     const now = document.activeElement;
     const typing = now instanceof HTMLElement && now.matches('input, textarea, [contenteditable]');
     const inLog = !now || now === document.body || el?.closest('[role="log"]')?.contains(now);
-    if ((direct && !typing) || inLog) el?.focus({ preventScroll: true });
+    if (!((direct && !typing) || inLog)) return;
+    el?.focus({ preventScroll: true });
+    // Its buttons come into view with it: on a phone they could open under the composer's bars.
+    const still = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    el?.closest('.cw-confirm')
+      ?.querySelector('[data-card-actions]')
+      ?.scrollIntoView?.({ block: 'nearest', behavior: still ? 'auto' : 'smooth' });
   }, [asking, direct, panelOpen]);
 
   // The buttons go when the card is answered, here or anywhere else. Focus that was on them stays
@@ -461,7 +592,7 @@ export function ActionCard({
       {replaced && part.state === 'approval-requested' ? (
         <Line icon={Ban}>{toolTitle(name)}: replaced by the newer request below</Line>
       ) : !asking ? (
-        <EditLine part={part} />
+        <EditLine part={part} at={at} />
       ) : (
         <Confirmation
           approval={part.approval}
@@ -472,17 +603,30 @@ export function ActionCard({
         >
           {/* No `overflow-hidden`: it would clip the buttons' touch areas (`hit-area`). */}
           <Card size="sm" className="gap-3 overflow-visible pb-0 ring-wait/40">
-            <CardHeader>
-              <CardTitle>
+            <CardHeader className="gap-1">
+              <CardTitle className="flex min-w-0 items-baseline">
                 <h3 id={titleId} className="min-w-0 font-semibold text-sm leading-snug">
                   {toolTitle(name)}
                 </h3>
+                <When at={at} />
               </CardTitle>
+              <Source direct={direct} />
             </CardHeader>
-            {about || target || name === 'space_create' ? (
+            {about || target || proposal || name === 'space_create' ? (
               <CardContent className="space-y-2">
                 {about ? <p className="break-words text-ui leading-snug">{about}</p> : null}
                 {name === 'space_create' ? <SpaceProposal input={part.input} /> : null}
+                {proposal ? (
+                  <ProposalDetail
+                    proposal={proposal}
+                    review={proposed}
+                    place={proposalPlace}
+                    onRetry={() => {
+                      safe.current?.focus({ preventScroll: true });
+                      if (proposed.status === 'failed') proposed.retry?.();
+                    }}
+                  />
+                ) : null}
                 {target ? (
                   <PublishReview
                     review={review}
@@ -496,7 +640,10 @@ export function ActionCard({
                 ) : null}
               </CardContent>
             ) : null}
-            <CardFooter className="flex-col items-stretch gap-2 rounded-b-2xl border-t bg-wait/10 pb-(--card-spacing)">
+            <CardFooter
+              data-card-actions
+              className="flex-col items-stretch gap-2 rounded-b-2xl border-t bg-wait/10 pb-(--card-spacing) dark:bg-wait/5"
+            >
               <p className="text-muted-foreground text-xs leading-snug">
                 Nothing changes until you confirm, here or wherever else you’re signed in.
               </p>
@@ -506,6 +653,15 @@ export function ActionCard({
                   verb="confirm"
                   pending={review.status === 'loading'}
                   blocked={blocked}
+                />
+              ) : proposal ? (
+                <ReviewHold
+                  id={reasonId}
+                  verb="confirm"
+                  pending={pending}
+                  blocked={blocked}
+                  shows="what changes"
+                  reading="reading what changes"
                 />
               ) : null}
               <ConfirmationActions>
@@ -524,7 +680,7 @@ export function ActionCard({
                   variant={isDestructive(part) ? 'destructive' : 'default'}
                   ref={confirmButton}
                   disabled={confirmOff}
-                  aria-describedby={target && confirmOff && !sent ? reasonId : undefined}
+                  aria-describedby={held && confirmOff && !sent ? reasonId : undefined}
                   onClick={() => answer(true)}
                 >
                   Confirm
@@ -608,6 +764,16 @@ export function CopyAction({ text }: { text: string }) {
   );
 }
 
+/**
+ * What a failed turn says. The agent already words its own failures for the person; what reaches
+ * here unworded is the connection's, which says nothing a person can act on.
+ */
+export function turnErrorText(message: string): string {
+  if (!message.trim() || /fetch|network|websocket|socket|ECONN|timed? ?out/i.test(message))
+    return 'The connection dropped before the reply finished. Try again.';
+  return message;
+}
+
 /** A turn that failed: what went wrong, in a sentence, with the way to try again. */
 export function TurnError({
   message,
@@ -623,7 +789,7 @@ export function TurnError({
       <CircleAlert className="mt-0.5 size-4 shrink-0 text-bad" aria-hidden="true" />
       <div className="min-w-0 flex-1">
         <p className="font-medium text-bad">Coworker couldn’t finish that reply.</p>
-        <p className="break-words text-muted-foreground text-xs">{message}</p>
+        <p className="break-words text-muted-foreground text-xs">{turnErrorText(message)}</p>
       </div>
       <Button size="xs" variant="outline" onClick={onRetry}>
         Try again

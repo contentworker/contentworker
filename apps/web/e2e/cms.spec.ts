@@ -987,7 +987,7 @@ test('a changed entry’s card says what goes live, and declining keeps focus in
   await expect(card.getByText('Edited body')).toBeVisible();
 
   await card.getByRole('button', { name: 'Not now' }).click();
-  await expect(page.getByText(/left as it was/).last()).toBeVisible();
+  await expect(page.getByText(`Not published · ${title}`).last()).toBeVisible();
   expect(await page.evaluate(() => document.activeElement === document.body)).toBe(false);
   expect(await statusOf(request, id)).toBe('changed');
 });

@@ -4,7 +4,7 @@
 // itself while the socket is down; and the parts a card and an edit line are drawn with.
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import type { UIMessage } from 'ai';
 import { MemoryRouter } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -17,6 +17,8 @@ const client = vi.hoisted(() => ({
   listContentTypes: vi.fn(async () => [] as unknown[]),
   listEntries: vi.fn(async () => [] as unknown[]),
   getAsset: vi.fn<(id: string) => Promise<unknown>>(),
+  listTags: vi.fn(async () => [] as unknown[]),
+  getRelease: vi.fn<(id: string) => Promise<unknown>>(),
   listStarters: vi.fn(async () => [] as unknown[]),
 }));
 let scopeState: 'loading' | 'no-spaces' | 'error' | 'ready' = 'ready';
@@ -75,7 +77,9 @@ vi.mock('@cloudflare/ai-chat/react', () => ({
 
 const { AssistantProvider, useAssistantEdit } = await import('~/cms/lib/assistant');
 const { AssistantPanel } = await import('~/cms/components/assistant/panel');
-const { ActionCard, EditLine, entryHref } = await import('~/cms/components/assistant/parts');
+const { ActionCard, EditLine, ReadLine, entryHref, turnErrorText, whenLabel } = await import(
+  '~/cms/components/assistant/parts'
+);
 const { ApiError } = await import('~/cms/lib/management');
 
 type Edit = ReturnType<typeof useAssistantEdit>;
@@ -435,7 +439,7 @@ describe('a card', () => {
     ).toBe(true);
   });
 
-  it('counts a batch’s entries when the page gave no label', () => {
+  it('says what a batch does to how many entries when the page gave no label', () => {
     inRouter(
       <ActionCard
         part={card({
@@ -449,7 +453,7 @@ describe('a card', () => {
       />,
     );
     expect(screen.getByText('Change these entries')).toBeTruthy();
-    expect(screen.getByText('3 entries')).toBeTruthy();
+    expect(screen.getByText('Publish 3 entries')).toBeTruthy();
   });
 
   it('says what a bulk job does to how many entries, and marks a removal destructive', () => {
@@ -485,7 +489,7 @@ describe('a card', () => {
     expect(screen.getByText(/replaced by the newer request/)).toBeTruthy();
   });
 
-  it('reads as left as it was once declined', () => {
+  it('says in the past tense what stayed as it was once declined', () => {
     inRouter(
       <ActionCard
         part={card({ state: 'output-denied', approval: { id: 'direct_1', approved: false } })}
@@ -494,9 +498,7 @@ describe('a card', () => {
         direct
       />,
     );
-    expect(
-      screen.getByText('Publish this entry · Spring launch notes: left as it was'),
-    ).toBeTruthy();
+    expect(screen.getByText('Not published · Spring launch notes')).toBeTruthy();
   });
 });
 
@@ -790,7 +792,7 @@ describe('a card’s focus', () => {
     await waitFor(() => expect(document.activeElement).toBe(holder));
     // The answer lands: the buttons go, and focus stays with the line that replaces them.
     view.rerender(<Frame part={answered} />);
-    expect(screen.getByText(/left as it was/)).toBeTruthy();
+    expect(screen.getByText(/Not published/)).toBeTruthy();
     expect(document.activeElement).toBe(holder);
   });
 
@@ -905,5 +907,210 @@ describe('an edit line', () => {
     );
     expect(screen.getByText(/didn’t go through/)).toBeTruthy();
     expect(screen.getByText('Publish blocked by moderation')).toBeTruthy();
+  });
+});
+
+describe('a model’s proposal', () => {
+  const inRouter = (ui: React.ReactNode) => render(<MemoryRouter>{ui}</MemoryRouter>);
+  const here = { spaceId: 'sp_1', environmentId: 'main' };
+  const article = {
+    apiId: 'article',
+    name: 'Article',
+    displayField: 'title',
+    fields: [
+      { apiId: 'title', name: 'Title', type: 'Symbol', position: 0 },
+      { apiId: 'body', name: 'Body', type: 'Text', position: 1 },
+    ],
+  };
+  const proposal = (type: string, input: Record<string, unknown>) =>
+    ({
+      type: `tool-${type}`,
+      toolCallId: 'call_1',
+      state: 'approval-requested',
+      input,
+      approval: { id: 'call_1' },
+    }) as never;
+  const confirm = () => screen.getByRole('button', { name: 'Confirm' }) as HTMLButtonElement;
+  const show = (part: never, turn: unknown = here) =>
+    inRouter(
+      <ActionCard
+        part={part}
+        respond={vi.fn()}
+        actionKey="m1:0"
+        direct={false}
+        turn={turn as never}
+      />,
+    );
+
+  beforeEach(() => {
+    client.listContentTypes.mockReset().mockResolvedValue([article]);
+    client.listEntries.mockReset().mockResolvedValue([]);
+    client.listTags.mockReset().mockResolvedValue([]);
+    client.getRelease.mockReset();
+    client.getEntry.mockResolvedValue({
+      id: 'e1',
+      contentType: 'article',
+      status: 'draft',
+      version: 3,
+      fields: { title: { 'en-US': 'Old' }, body: { 'en-US': 'Same' } },
+    });
+  });
+
+  it('says Coworker suggested it, and a page’s card that the person asked', async () => {
+    show(proposal('entries_update', { id: 'e1', fields: {} }));
+    expect(screen.getByText('Coworker suggests this')).toBeTruthy();
+    cleanup();
+    inRouter(<ActionCard part={card()} respond={vi.fn()} actionKey="m1:0" direct />);
+    expect(screen.getByText('You asked for this on the page')).toBeTruthy();
+  });
+
+  it('shows a draft save as the change from what the draft holds now, and holds Confirm until then', async () => {
+    show(
+      proposal('entries_update', {
+        id: 'e1',
+        fields: { title: { 'en-US': 'New' }, body: { 'en-US': 'Same' } },
+      }),
+    );
+    expect(confirm().disabled).toBe(true);
+    await screen.findByText('1 field changes in the draft:');
+    // Named by the entry's own title, read from the system.
+    expect(screen.getByText('Old')).toBeTruthy();
+    expect(confirm().disabled).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: 'Review changes' }));
+    const changes = screen.getByRole('list', { name: 'Changes' });
+    expect(within(changes).getByText('Now')).toBeTruthy();
+    expect(within(changes).getByText('After saving')).toBeTruthy();
+    expect(within(changes).getByText('New')).toBeTruthy();
+  });
+
+  it('counts a field a save leaves out as removed: the save is the whole new version', async () => {
+    show(proposal('entries_update', { id: 'e1', fields: { title: { 'en-US': 'Old' } } }));
+    await screen.findByText('1 field changes in the draft:');
+    const list = screen.getByRole('list', { name: 'Changed fields' });
+    expect(within(list).getByText('Body')).toBeTruthy();
+  });
+
+  it('names a batch’s first entries and counts the rest, before a removal can be confirmed', async () => {
+    const ids = Array.from({ length: 8 }, (_, i) => `e${i}`);
+    client.listEntries.mockResolvedValue(
+      ids.slice(0, 5).map((id) => ({
+        id,
+        contentType: 'article',
+        status: 'draft',
+        version: 1,
+        fields: { title: { 'en-US': `Story ${id}` } },
+      })),
+    );
+    show(proposal('bulk_job_start', { action: 'purge', entryIds: ids }));
+    expect(screen.getByText('Permanently delete 8 entries')).toBeTruthy();
+    expect(confirm().disabled).toBe(true);
+    await screen.findByText('Story e0');
+    expect(screen.getByText('Story e4')).toBeTruthy();
+    expect(screen.queryByText('Story e5')).toBeNull();
+    expect(screen.getByText('and 3 more')).toBeTruthy();
+    expect(confirm().disabled).toBe(false);
+    expect(confirm().getAttribute('data-variant')).toBe('destructive');
+  });
+
+  it('won’t confirm what it can’t read, and Try again reads it again', async () => {
+    client.getEntry.mockReset().mockRejectedValueOnce(new Error('down'));
+    show(proposal('entries_trash', { id: 'e1' }));
+    await screen.findByRole('button', { name: 'Try again' });
+    expect(confirm().disabled).toBe(true);
+    expect(screen.getByText('You can’t confirm until this can show what changes.')).toBeTruthy();
+    expect((screen.getByRole('button', { name: 'Not now' }) as HTMLButtonElement).disabled).toBe(
+      false,
+    );
+    client.getEntry.mockResolvedValue({
+      id: 'e1',
+      contentType: 'article',
+      status: 'draft',
+      version: 1,
+      fields: { title: { 'en-US': 'Spring notes' } },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    await screen.findByText('Spring notes');
+    expect(confirm().disabled).toBe(false);
+  });
+
+  it('reads nothing for a proposal made in another environment', () => {
+    show(proposal('entries_update', { id: 'e1', fields: {} }), {
+      spaceId: 'sp_1',
+      environmentId: 'staging',
+    });
+    expect(screen.getByText(/Switch back to see what changes/)).toBeTruthy();
+    expect(client.getEntry).not.toHaveBeenCalled();
+    expect(confirm().disabled).toBe(true);
+  });
+
+  it('names the tags a tagging would add, and the ones it would make', async () => {
+    client.listTags.mockResolvedValue([{ id: 't1', name: 'Launch' }]);
+    show(proposal('entry_apply_tags', { id: 'e1', tagIds: ['t1'], newTags: ['Spring'] }));
+    await screen.findByText('Launch');
+    expect(screen.getByText('Spring')).toBeTruthy();
+    expect(confirm().disabled).toBe(false);
+  });
+
+  it('names the release an entry would join', async () => {
+    client.getRelease.mockResolvedValue({ release: { id: 'r1', title: 'May launch' }, items: [] });
+    show(proposal('releases_add_entry', { releaseId: 'r1', entryId: 'e1' }));
+    await screen.findByText('May launch');
+    expect(screen.getByText(/Publishes with/)).toBeTruthy();
+  });
+});
+
+describe('a line’s words', () => {
+  const inRouter = (ui: React.ReactNode) => render(<MemoryRouter>{ui}</MemoryRouter>);
+
+  it('says a finished read in the past tense, with what it found', () => {
+    inRouter(
+      <ReadLine
+        part={
+          {
+            type: 'tool-entries_query',
+            toolCallId: 'r1',
+            state: 'output-available',
+            input: {},
+            output: { items: [1, 2, 3], total: 10 },
+          } as never
+        }
+        streaming={false}
+      />,
+    );
+    expect(screen.getByText('Found entries · 10 results')).toBeTruthy();
+  });
+
+  it('dates an edit in its margin', () => {
+    const at = Date.UTC(2026, 10, 2, 14, 5);
+    inRouter(
+      <EditLine
+        at={at}
+        part={card({
+          state: 'output-available',
+          output: { id: 'e1', contentTypeApiId: 'article' },
+          approval: { id: 'direct_1', approved: true },
+        })}
+      />,
+    );
+    const time = document.querySelector('time');
+    expect(time?.getAttribute('dateTime')).toBe(new Date(at).toISOString());
+    expect(time?.textContent).toBe(whenLabel(at));
+    // The time isn't part of where the line links.
+    expect(screen.getByRole('link').textContent).not.toContain(whenLabel(at));
+  });
+
+  it('reads a time today, and a day before today', () => {
+    const now = new Date(2026, 10, 7, 16, 0).getTime();
+    expect(whenLabel(new Date(2026, 10, 7, 9, 30).getTime(), now)).toMatch(/9:30/);
+    expect(whenLabel(new Date(2026, 10, 2, 9, 30).getTime(), now)).toMatch(/2/);
+    expect(whenLabel(new Date(2026, 10, 2, 9, 30).getTime(), now)).not.toMatch(/9:30/);
+  });
+
+  it('words a dropped connection for the person, and keeps the agent’s own words', () => {
+    expect(turnErrorText('Failed to fetch')).toMatch(/connection dropped/);
+    expect(turnErrorText('')).toMatch(/connection dropped/);
+    expect(turnErrorText('You can’t publish entries of this type.')).toBe(
+      'You can’t publish entries of this type.',
+    );
   });
 });
