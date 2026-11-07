@@ -119,14 +119,26 @@ fi
 # The GitHub environment the deploy job runs in, and its secrets. A secret already set is left
 # alone. DATA_KEY seals every stored secret and TOKEN_PEPPER is in every API key hash, and
 # PASSWORD_PEPPER in every password hash: once a deployment runs, none may change, so none is
-# generated while its api Worker already holds one. None is ever written to disk.
-gh api --method PUT "repos/$repo/environments/$ENVIRONMENT" >/dev/null
+# generated while a Worker already holds one. None is ever written to disk.
+#
+# Only main may read the environment: a branch that could would hold every secret. An environment
+# already limited to its branches is left as it is, because a PUT replaces its protection settings.
+environment="repos/$repo/environments/$ENVIRONMENT"
+if [ "$(gh api "$environment" --jq '.deployment_branch_policy.custom_branch_policies' 2>/dev/null)" != true ]; then
+  gh api --method PUT "$environment" --input - >/dev/null <<<'{"deployment_branch_policy":{"protected_branches":false,"custom_branch_policies":true}}'
+fi
+if ! gh api "$environment/deployment-branch-policies" --jq '.branch_policies[].name' | grep -qx main; then
+  gh api --method POST "$environment/deployment-branch-policies" -f name=main -f type=branch >/dev/null
+fi
 API_WORKER="contentworker-api$SUFFIX"
 EXISTING=$(gh secret list -R "$repo" --env "$ENVIRONMENT" --json name -q '.[].name')
+# The api holds DATA_KEY and TOKEN_PEPPER, and web alone holds PASSWORD_PEPPER.
 WORKER_SECRETS=""
-if WORKER_SECRETS=$(wrangler secret list --name "$API_WORKER" 2>/dev/null); then
-  WORKER_SECRETS=$(jq -r '.[].name' <<<"$WORKER_SECRETS" 2>/dev/null || true)
-fi
+for WORKER in "$API_WORKER" "contentworker-web$SUFFIX"; do
+  if HELD=$(wrangler secret list --name "$WORKER" 2>/dev/null); then
+    WORKER_SECRETS+=$'\n'$(jq -r '.[].name' <<<"$HELD" 2>/dev/null || true)
+  fi
+done
 # The engine's ASSISTANT_PRINCIPAL_KEY (and _PREVIOUS) isn't generated here: it is derived from
 # PRINCIPAL_KEY (and PRINCIPAL_KEY_PREVIOUS) at every deploy, by `fleet.ts secrets`, so a new
 # deployment gets it on its first deploy and a rotation of PRINCIPAL_KEY carries it along.
@@ -134,7 +146,7 @@ for KEY in PRINCIPAL_KEY DATA_KEY TOKEN_PEPPER MEDIA_SIGNING_SECRET PASSWORD_PEP
   if grep -qx "$KEY" <<<"$EXISTING"; then
     echo "$ENVIRONMENT already has $KEY"
   elif [ "$KEY" != PRINCIPAL_KEY ] && [ "$KEY" != MEDIA_SIGNING_SECRET ] && grep -qx "$KEY" <<<"$WORKER_SECRETS"; then
-    echo "$ENVIRONMENT has no $KEY, but $API_WORKER already holds one. Set the deployment's own"
+    echo "$ENVIRONMENT has no $KEY, but a Worker already holds one. Set the deployment's own"
     echo "value on $ENVIRONMENT from its escrowed copy; a new one would make what it protects unreadable."
     exit 1
   else
@@ -159,3 +171,5 @@ echo
 echo "Next: add CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID to $ENVIRONMENT if they aren't"
 echo "repository secrets, commit $id.jsonc in the registry, and merge: CI deploys it in its ring."
 echo "Then send the customer's first admin https://$DOMAIN/setup and the setup code in $file."
+echo "Escrow its secrets: run the Escrow secrets workflow on $repo for $ENVIRONMENT"
+echo "(docs/backup-and-restore.md, \"Escrowing secrets\")."

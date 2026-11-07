@@ -11,6 +11,8 @@ build
 .turbo/
 .DS_Store
 .secrets/
+escrow*.key
+escrow*.age
 
 # Claude Code local state
 .claude/logs/
