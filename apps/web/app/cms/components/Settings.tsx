@@ -39,14 +39,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@contentworker/ui/select';
-import {
-  Table,
-  TableBody,
-  Td as TableCell,
-  Th as TableHead,
-  TableHead as TableHeader,
-  Tr as TableRow,
-} from '@contentworker/ui/table';
 import { KeyRound, MoreHorizontalIcon, ShieldCheck, Signpost, Webhook } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { AiActions } from '~/cms/components/AiActions';
