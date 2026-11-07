@@ -112,6 +112,8 @@
     "REQUIRE_SECURE_SECRETS": "true",
     "SEED_DEV": "false",
     "SEED_SCALE": "1",
+    // The enterprise starter (a large demo brand, installed in the background): demos only.
+    "DEMO_STARTERS": "false",
     "AGENT_RUNTIME": "cloudflare-workflows",
     "AGENTS_ENRICH": "false",
     "AGENTS_MODERATE": "false",

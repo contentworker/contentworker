@@ -33,7 +33,7 @@ fork's own is `deployments/`, and `examples/fleet/example.jsonc` is a held start
 | `jurisdiction`  | `eu` or `fedramp`, for the database, object storage and stateful objects (set at creation)                                                                                     |
 | `hold`          | Skipped by CI: stays on what it runs now                                                                                                                                       |
 | `docs`          | Also deploys the public docs site                                                                                                                                              |
-| `demo`          | Public demo: models mocked (`AI_MODE=mock`, no AI gateway), no vector index, `ALLOW_FAKE_ADAPTERS=ai,vectors` on the api, delivery and engine; never in `general`              |
+| `demo`          | Public demo: models mocked (`AI_MODE=mock`, no AI gateway), no vector index, `ALLOW_FAKE_ADAPTERS=ai,vectors` on the api, delivery and engine, and the enterprise starter offered (`DEMO_STARTERS=true` on the api); never in `general` |
 | `aiGatewayLogs` | Rendered as `AI_GATEWAY_LOGS`: whether the AI gateway logs each call (prompts and answers never)                                                                               |
 | `sso`           | `{ issuer, clientId, trustEmail? }`: the customer's OIDC provider for admin sign-in (secret `OIDC_CLIENT_SECRET`)                                                              |
 | `email`         | `{ from, fromName? }`: edge email sender (workflow notify nodes, invitations, scheduler alerts; password reset codes on web); adds the engine's and web's `send_email` binding |

@@ -229,6 +229,13 @@ test('a demo mocks its models and has no vector index', () => {
   assert.equal(shellVars(demo).VECTORS, '');
 });
 
+test('a demo offers the enterprise starter on its api, and no one else does', () => {
+  const demo = toDeployment({ ...acme, id: 'demo-x', slot: 4, demo: true });
+  assert.equal(renderApi(base('api'), demo).vars.DEMO_STARTERS, 'true');
+  assert.equal(renderApi(base('api'), acme).vars.DEMO_STARTERS, 'false');
+  assert.equal(renderEngine(base('engine'), demo).vars.DEMO_STARTERS, undefined);
+});
+
 test('the registry is validated', () => {
   assert.throws(() => toDeployment({ id: 'Bad_Id', ring: 'canary', slot: 1 }), /id must be/);
   assert.throws(() => toDeployment({ id: 'api', ring: 'canary', slot: 1 }), /reserved/);

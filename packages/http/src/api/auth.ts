@@ -151,6 +151,11 @@ export interface AuthDeps {
    * invitations come back with their token only, and none is emailed.
    */
   readonly inviteOrigin?: string;
+  /**
+   * Whether creating a space offers the demo starters (`DEMO_STARTERS`): the enterprise starter,
+   * installed in the background. Absent: empty and sample only.
+   */
+  readonly demoStarters?: boolean;
 }
 
 const ADMIN: Principal = {

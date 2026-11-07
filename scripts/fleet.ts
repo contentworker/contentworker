@@ -430,6 +430,8 @@ function common(base: Config, d: Deployment, app: App): Config {
       c.vars.AI_MODE = 'mock';
       c.vars.AI_GATEWAY_ID = '';
       c.vars.ALLOW_FAKE_ADAPTERS = 'ai,vectors';
+      // The api offers the enterprise starter: a demo is where its brand is shown.
+      if ('DEMO_STARTERS' in c.vars) c.vars.DEMO_STARTERS = 'true';
     }
   }
   return c;

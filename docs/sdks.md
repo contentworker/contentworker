@@ -475,6 +475,7 @@ cma.releases.list() / .get(id) / .publish(id) / .delete(id)   // list: each with
 cma.scheduledActions.list({ status? }) / .create(input) / .cancel(id)
 
 cma.spaces.list() / .create({ spaceId, name, defaultLocale, starter? })  // deployment-wide
+cma.spaces.starters() / .starterInstall(spaceId, environmentId, install)
 cma.environments.list() / .create(id, name)           // space-level
 cma.environments.aliases.list() / .set(alias, envId) / .delete(alias)
 cma.apiKeys.list() / .create({ kind, name }) / .revoke(id)   // admin scope
@@ -519,7 +520,8 @@ cma.apiKeys.list() / .create({ kind, name }) / .revoke(id)   // admin scope
   read; if a draft was saved since, the server answers 409 and changes nothing (`?expectedVersion=`
   on the route; see [Consistency](./consistency.md#invariants)).
 - `spaces.create` takes the deployment's admin token (a space's own keys are refused);
-  `starter: 'sample'` installs the sample content before it returns.
+  `starter: 'sample'` installs the sample content before it returns; `'enterprise'`, where
+  `spaces.starters()` lists it, returns `installing` at once, followed with `spaces.starterInstall`.
 - A read after the client's own write sees it: see [Read-your-writes](#read-your-writes).
 
 ### Errors

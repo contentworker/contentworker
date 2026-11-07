@@ -100,6 +100,8 @@ function buildApp(wired: EdgeWired, env: EdgeEnv): Hono {
       adminToken: mcpToken,
       blob: wired.blob,
       moderateBeforePublish: wired.config.moderateBeforePublish,
+      // The enterprise starter, where the deployment offers it (as the HTTP API's).
+      demoStarters: wired.config.demoStarters,
       accessPolicy: WEB_SIGN_IN,
       // Where invitation links open: the admin's origin, as the HTTP API's.
       ...(wired.config.oauthIssuer

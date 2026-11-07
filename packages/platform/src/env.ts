@@ -201,6 +201,11 @@ export interface EdgeEnv {
   readonly SEED_ENV_ID?: string;
   readonly SEED_DEFAULT_LOCALE?: string;
   readonly SEED_LOCALES?: string;
+  /**
+   * `true` offers the demo starters (the enterprise starter, installed in the background) when a
+   * space is created: demo deployments and local dev. Unset or anything else: empty and sample.
+   */
+  readonly DEMO_STARTERS?: string;
   readonly AI_PROVIDER?: string;
   /**
    * Workers AI binding — required when AI_PROVIDER / EMBEDDINGS_PROVIDER is

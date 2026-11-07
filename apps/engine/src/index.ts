@@ -58,6 +58,7 @@ import {
   wireEdge,
 } from '@contentworker/platform/wire';
 import { redactCredentials } from '@contentworker/redaction';
+import { starterChunkRunner } from '@contentworker/seed';
 import { AssistantAgent } from './assistant';
 import {
   CRON_JOBS,
@@ -166,6 +167,8 @@ async function consumeEvents(batch: MessageBatch, env: EdgeEnv, wired: EdgeWired
     ...(wired.assetGate ? { assetGate: wired.assetGate } : {}),
     // Asset search: re-indexed on publish, removed on delete. Embeds under the same rule as rag.
     assetSearch: wired.assetSearch,
+    // A background starter's phases (`starter_install` chunks), each writing through the use-cases.
+    starterChunk: starterChunkRunner(wired.ctx, { blob: wired.blob }),
     // `asset_reindex` bulk chunks hand their assets to ingest through this queue.
     ...(wired.assetIngest ? { assetIngest: wired.assetIngest } : {}),
     // Zip downloads: `asset_zip.requested` starts the job's Workflow.

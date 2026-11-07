@@ -203,6 +203,8 @@ export const TOOL_SCOPES: Readonly<Record<string, readonly PermissionScope[]>> =
   space_create: [SCOPES.spaceAdmin],
   space_export_analyze: [SCOPES.contentManage],
   space_export_import: [SCOPES.contentManage],
+  space_starters_list: [SCOPES.spaceAdmin],
+  starter_install_get: [SCOPES.contentWrite],
   tasks_create: [SCOPES.contentWrite],
   tasks_list: [SCOPES.previewRead],
   tasks_resolve: [SCOPES.contentWrite],

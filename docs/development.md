@@ -73,6 +73,39 @@ schedules, reviews, audit entries). It installs inside the request: about 550 da
 held under a 600-call budget by `packages/db/test/starter.test.ts` against the 1,000 queries one
 invocation may make. If it has to grow past that, it becomes a background job.
 
+The **enterprise starter** (`starter: "enterprise"`, `packages/seed/src/enterprise/`) is that
+background job: a fictional global professional-services firm, Aldermoor, in 13 locales, too big
+for one request. `createSpaceWithStarter` creates the space with the brand's locales and fallbacks
+added to the caller's, then `startEnterpriseInstall` persists one `starter_install` bulk job per
+phase, each naming the next in `config.next`, and returns `installing: { install, jobId, steps }`
+at once. The engine runs each phase's single chunk through `starterChunkRunner` (injected into
+dispatch as `starterChunk`); the next phase's job is created in the write that finalizes the last,
+only after a clean run, so a phase that fails for good stops the install there. Every phase is
+idempotent, so creating the space again with the same starter finishes it. Progress is read from
+the environment's jobs (`getStarterInstall`, `GET …/starter-installs/:install`, the
+`starter_install_get` MCP tool). It is offered only where `DEMO_STARTERS=true` on the api (demo
+deployments, and `pnpm dev`, not under the device tests); anywhere else it is a `422` on
+`starter`. `GET /starters` and `space_starters_list` list what a deployment offers. Each phase's
+D1 calls (and its cheaper rerun) are held under an 800-call budget by
+`packages/db/test/enterprise-starter.test.ts`; a phase that grows past it splits in two. Local dev
+also installs the brand, in process, into its own space, `aldermoor`, beside the demo dataset
+(`seedDev`; a marker tag makes later boots one query).
+
+The brand covers 21 content types in seven groups. Every field type is used, along with
+components and page-building blocks, editor layouts, conditional rules, presets and URL patterns.
+It also includes:
+
+- about 300 entries in draft, published, changed and trashed states, plus locale-only legal pages;
+- 44 assets in folders and collections, with credits, an expiry and an embargo;
+- five concept schemes with translated labels, and editorial tags;
+- custom roles with field-level grants, and 22 team members;
+- seven workflow graphs with approvals parked in the inbox, and a newsroom step board;
+- comments, tasks, agent reviews and agent schedules;
+- releases and scheduled actions;
+- inactive webhooks and functions on the reserved `aldermoor.example` domain, admin extensions and
+  AI actions;
+- menus per market, redirects, shared saved views and a month of audit history.
+
 For a larger corpus, seed it into a database of its own so the everyday one stays small:
 
 ```bash

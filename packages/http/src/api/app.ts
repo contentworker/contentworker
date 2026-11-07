@@ -183,6 +183,7 @@ export function createApp(
     signalReview,
     trustedProxyCount: config.trustedProxyCount,
     moderateBeforePublish: config.moderateBeforePublish,
+    demoStarters: config.demoStarters,
     accessPolicy: WEB_SIGN_IN,
     ...(config.oauthIssuer ? { inviteOrigin: config.oauthIssuer.replace(/\/$/, '') } : {}),
     ...overrides,

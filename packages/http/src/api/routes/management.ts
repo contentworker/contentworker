@@ -115,6 +115,7 @@ export function managementRoutes(deps: AuthDeps): Hono<AuthVars> {
   app.use('/guides/*', principalMiddleware(deps));
   app.use('/deployment/*', principalMiddleware(deps));
   app.use('/spaces', principalMiddleware(deps));
+  app.use('/starters', principalMiddleware(deps));
   app.use('/spaces/*', principalMiddleware(deps));
   // Resolve environment aliases for any scoped (:env) route.
   app.use('/spaces/:space/environments/:env/*', environmentMiddleware(deps));

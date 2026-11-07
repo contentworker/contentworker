@@ -353,8 +353,42 @@ export interface SpaceRef {
   readonly name: string;
 }
 
-/** What a new space starts with: the sample content (`POST /spaces` `starter`), or nothing. */
-export type SpaceStarter = 'sample' | 'empty';
+/**
+ * What a new space starts with (`POST /spaces` `starter`): the sample content, nothing, or, where
+ * the deployment offers it, the enterprise demo, which installs in the background.
+ */
+export type SpaceStarter = 'sample' | 'empty' | 'enterprise';
+
+/** A starter as `GET /starters` lists it, in the order a picker shows them. */
+export interface SpaceStarterInfo {
+  readonly id: SpaceStarter;
+  readonly title: string;
+  readonly description: string;
+  /** Installs after the space is created, in the background, rather than before it returns. */
+  readonly background: boolean;
+}
+
+/** A background starter install that has started (`POST /spaces` `installing`). */
+export interface StarterInstallStarted {
+  readonly install: string;
+  readonly jobId: string;
+  readonly steps: number;
+}
+
+/** Where a background starter install has got to (`GET …/starter-installs/:install`). */
+export interface StarterInstall {
+  readonly install: string;
+  readonly starter: string;
+  /** The phase running now, or the last to run (1-based), of `steps`. */
+  readonly step: number;
+  readonly steps: number;
+  readonly phase: string;
+  readonly title: string;
+  readonly jobId: string;
+  readonly status: 'running' | 'completed' | 'failed';
+  /** What failed in the phase that stopped the install. */
+  readonly failures?: readonly { readonly id: string; readonly error: string }[];
+}
 
 /** An environment (branch) within a space. */
 export interface Environment {
@@ -965,7 +999,8 @@ export interface BulkJobSummary {
     | 'asset_unpublish'
     | 'asset_archive'
     | 'content_type_delete'
-    | 'set_fields';
+    | 'set_fields'
+    | 'starter_install';
   readonly status: 'running' | 'completed' | 'cancelled';
   readonly totalItems: number;
   readonly totalChunks: number;
@@ -1503,15 +1538,37 @@ export function createManagementClient(
       const r = await req<{ items: SpaceRef[] }>('GET', `${root}/spaces`);
       return r.items;
     },
-    /** Provision a new space, optionally with sample content (deployment admins only). */
+    /**
+     * Provision a new space, optionally with a starter (deployment admins only). A background
+     * starter answers at once with `installing`: follow it with {@link getStarterInstall}.
+     */
     createSpace(input: {
       spaceId: string;
       name: string;
       defaultLocale: string;
       locales?: string[];
       starter?: SpaceStarter;
-    }): Promise<SpaceRef & { starter: SpaceStarter }> {
+    }): Promise<SpaceRef & { starter: SpaceStarter; installing?: StarterInstallStarted }> {
       return req('POST', `${root}/spaces`, input, undefined, LARGE_LIMIT);
+    },
+    /** The starters a new space can use on this deployment (deployment admins only). */
+    async listStarters(): Promise<SpaceStarterInfo[]> {
+      const r = await req<{ items: SpaceStarterInfo[] }>('GET', `${root}/starters`);
+      return r.items;
+    },
+    /**
+     * A background starter install's progress, in the space it installs into (named here, not
+     * the current scope's, since the install is followed while the scope moves to it).
+     */
+    getStarterInstall(
+      spaceId: string,
+      environmentId: string,
+      install: string,
+    ): Promise<StarterInstall> {
+      return req(
+        'GET',
+        `${root}/spaces/${encodeURIComponent(spaceId)}/environments/${encodeURIComponent(environmentId)}/starter-installs/${encodeURIComponent(install)}`,
+      );
     },
     /** Environments (branches) in the current space. */
     async listEnvironments(): Promise<Environment[]> {

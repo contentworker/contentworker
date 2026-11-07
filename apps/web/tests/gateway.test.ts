@@ -46,6 +46,7 @@ describe('isApiPath', () => {
   it('forwards the api’s surfaces', () => {
     for (const p of [
       '/spaces',
+      '/starters',
       '/spaces/s1/environments/main/entries',
       '/preview/s1/entries',
       '/delivery/s1/entries',
