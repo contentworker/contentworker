@@ -45,7 +45,7 @@ export function redactBearerTokens(text: string): string {
 }
 
 /**
- * contentworker API tokens (`cwk_<kind>_<secret>`).
+ * ContentWorker API tokens (`cwk_<kind>_<secret>`).
  *
  * The kind survives — knowing a *delivery* key was rejected rather than a
  * management one is diagnostic; the secret is not.
