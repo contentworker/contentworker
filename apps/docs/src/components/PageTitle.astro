@@ -11,3 +11,21 @@ const { title, description } = Astro.locals.starlightRoute.entry.data;
   <h1 id="_top">{title}</h1>
   {description && <p class="cw-lede">{description}</p>}
 </header>
+
+<script>
+  // A table wider than the column scrolls sideways (Starlight sets it `display: block; overflow:
+  // auto`). Only a table that actually overflows becomes a tab stop, so a keyboard can scroll it
+  // and one that fits adds nothing to the tab order. Rides PageTitle because it renders on every
+  // content page.
+  const content = document.querySelector('.sl-markdown-content');
+  if (content) {
+    const mark = () => {
+      for (const table of content.querySelectorAll<HTMLTableElement>('table')) {
+        if (table.scrollWidth > table.clientWidth + 1) table.tabIndex = 0;
+        else table.removeAttribute('tabindex');
+      }
+    };
+    mark();
+    new ResizeObserver(mark).observe(content);
+  }
+</script>
