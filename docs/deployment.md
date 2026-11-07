@@ -106,10 +106,11 @@ To start your own, copy `examples/fleet/example.jsonc` to `deployments/<id>.json
 `FLEET_REGISTRY` directory) and edit it; it is held (`hold: true`) until you remove that.
 
 1. Add `<id>.jsonc` to the registry (`id`, `ring`, `slot`, optionally `domain`, `sso`, `email`).
-2. Run `./scripts/provision.sh <id>` (needs `wrangler login` or `CLOUDFLARE_API_TOKEN`, and
-   `gh auth login`). It is safe to re-run; it:
-   - creates the database, records its id, and turns on read replication (`mode: auto`;
-     with `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`, else it says how);
+2. Run `./scripts/provision.sh <id>` (needs `wrangler login` and `gh auth login`; no token to
+   paste: its two API calls use `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` when set, else
+   wrangler's login). It is safe to re-run; it:
+   - creates the database, records its id, and turns on read replication (`mode: auto`; when the
+     API refuses, it says how);
    - creates the shared key-value namespace and records its id;
    - creates the object storage bucket with lifecycle rules (`imports/` 7 days, `dlq/` 30 days,
      `zips/` 2 days, and `abort-multipart`, which aborts multipart uploads left unfinished for 2
@@ -127,8 +128,8 @@ To start your own, copy `examples/fleet/example.jsonc` to `deployments/<id>.json
    - writes the first administrator's one-time setup code to `.secrets/<id>/setup-code`
      (gitignored) and sets it as `SETUP_TOKEN`.
 3. Add `CLOUDFLARE_API_TOKEN` (with the permissions in [The deploy token](#the-deploy-token))
-   and `CLOUDFLARE_ACCOUNT_ID` to the environment if they are not repository secrets, commit the
-   registry file, and merge. CI deploys it in its ring.
+   and `CLOUDFLARE_ACCOUNT_ID` to the environment if they are not repository secrets of the fleet
+   repository, commit the registry file, and merge. CI deploys it in its ring.
 4. Send the customer's first admin `https://<domain>/setup` and the setup code.
 
 Edge image transforms and the video streaming service are account features; their bindings need
@@ -208,7 +209,10 @@ then only the new).
 
 `CLOUDFLARE_API_TOKEN` is an account-owned API token for the deployment's account. It needs
 exactly what `scripts/deploy.sh` does, and nothing `provision.sh` does (provisioning runs by hand
-under `wrangler login`):
+under `wrangler login`). One token can serve every deployment on the account: hold it, with
+`CLOUDFLARE_ACCOUNT_ID`, as repository secrets of the fleet repository, and every deployment's
+environment uses them (a secret of the same name on an environment overrides them). Each
+deployment's zone goes on the token:
 
 | Scope                   | Permission                        | Used by                                                                      |
 | ----------------------- | --------------------------------- | ---------------------------------------------------------------------------- |
