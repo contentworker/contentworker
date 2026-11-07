@@ -1183,7 +1183,7 @@ describe('a model’s block patch', () => {
     expect(confirm().disabled).toBe(true);
     expect(await stepsText()).toEqual([
       'Moves Hero “Welcome” to the end of Body',
-      'Moves Call to action “Sign up” at the start of Body',
+      'Moves Call to action “Sign up” to the start of Body',
     ]);
     // The call that runs on Confirm is the one checked.
     expect(client.checkBlockPatch).toHaveBeenCalledWith('e1', { expectedVersion: 3, ops });
@@ -1272,6 +1272,229 @@ describe('a model’s block patch', () => {
     expect(within(changes).getByText('Hero “Welcome” › Heading')).toBeTruthy();
     expect(within(changes).getByText('Welcome')).toBeTruthy();
     expect(within(changes).getByText('Hi')).toBeTruthy();
+  });
+
+  it('says a duplicate by its original, and a move across slots by where it goes in', async () => {
+    const copy = { ...heroBlock, _key: 'n-1' };
+    const inside = { _type: 'cta', _key: 'k-in', label: 'Inside' };
+    const last = { _type: 'hero', _key: 'k-last', heading: 'Last' };
+    const startWith = {
+      ...fields,
+      body: {
+        'en-US': [heroBlock, ctaBlock, { ...sectionBlock, items: [inside, last] }],
+        de: [],
+      },
+    };
+    client.getEntry.mockResolvedValue({
+      id: 'e1',
+      contentType: 'page',
+      status: 'draft',
+      version: 3,
+      fields: startWith,
+    });
+    client.checkBlockPatch.mockResolvedValue(
+      checked(
+        {
+          'en-US': [heroBlock, copy, { ...sectionBlock, items: [inside, ctaBlock, last] }],
+          de: [],
+        },
+        [
+          { op: 'insert', field: 'body', locale: 'en-US', index: 1, block: copy },
+          {
+            op: 'move',
+            field: 'body',
+            locale: 'en-US',
+            key: 'k-cta',
+            to: { parent: { key: 'k-sec', slot: 'items' }, index: 1 },
+          },
+        ],
+      ),
+    );
+    show(
+      patch({
+        ops: [
+          { op: 'duplicate', field: 'body', key: 'k-hero' },
+          {
+            op: 'move',
+            field: 'body',
+            key: 'k-cta',
+            to: { parent: { key: 'k-sec', slot: 'items' }, after: 'k-in' },
+          },
+        ],
+      }),
+    );
+    expect(await stepsText()).toEqual([
+      'Duplicates Hero “Welcome”',
+      'Moves Call to action “Sign up” into Section “Features”, after Call to action “Inside”',
+    ]);
+  });
+
+  it('sees two same-named blocks swap, numbering them, rather than calling it no change', async () => {
+    const one = { _type: 'hero', _key: 'k-1' };
+    const two = { _type: 'hero', _key: 'k-2' };
+    client.getEntry.mockResolvedValue({
+      id: 'e1',
+      contentType: 'page',
+      status: 'draft',
+      version: 3,
+      fields: { ...fields, body: { 'en-US': [one, two] } },
+    });
+    client.checkBlockPatch.mockResolvedValue(
+      checked({ 'en-US': [two, one] }, [
+        { op: 'move', field: 'body', locale: 'en-US', key: 'k-1', to: { index: 1 } },
+      ]),
+    );
+    show(patch({ ops: [{ op: 'move', field: 'body', key: 'k-1', to: { index: 1 } }] }));
+    expect(await stepsText()).toEqual(['Moves Hero to the end of Body']);
+    expect(confirm().disabled).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: 'Review changes' }));
+    const changes = screen.getByRole('list', { name: 'Changes' });
+    expect(within(changes).getByText('Hero (1) · Hero (2)')).toBeTruthy();
+    expect(within(changes).getByText('Hero (2) · Hero (1)')).toBeTruthy();
+  });
+
+  it('counts a block with no key in the place a step lands, and in the order', async () => {
+    const keyless = { _type: 'cta', label: 'Old' };
+    client.getEntry.mockResolvedValue({
+      id: 'e1',
+      contentType: 'page',
+      status: 'draft',
+      version: 3,
+      fields: { ...fields, body: { 'en-US': [keyless, heroBlock, ctaBlock] } },
+    });
+    client.checkBlockPatch.mockResolvedValue(
+      checked({ 'en-US': [keyless, ctaBlock, heroBlock] }, [
+        { op: 'move', field: 'body', locale: 'en-US', key: 'k-cta', to: { index: 1 } },
+      ]),
+    );
+    show(patch({ ops: [{ op: 'move', field: 'body', key: 'k-cta', to: { index: 1 } }] }));
+    // Index 1 is after the keyless block, not the start.
+    expect(await stepsText()).toEqual([
+      'Moves Call to action “Sign up” after Call to action “Old”',
+    ]);
+    fireEvent.click(screen.getByRole('button', { name: 'Review changes' }));
+    expect(
+      screen.getByText('Call to action “Old” · Hero “Welcome” · Call to action “Sign up”'),
+    ).toBeTruthy();
+  });
+
+  it('sees a link pointed elsewhere as a change, though both read “Linked entry”', async () => {
+    const linkPage = {
+      ...page,
+      fields: [
+        symbol('title', 'Title'),
+        blocks('body', 'Body', [
+          {
+            apiId: 'cta',
+            name: 'Call to action',
+            fields: [
+              symbol('label', 'Label'),
+              { ...symbol('target', 'Target'), type: 'Link', linkType: 'Entry' },
+            ],
+          },
+        ]),
+      ],
+    };
+    client.listContentTypes.mockResolvedValue([linkPage]);
+    const was = { ...ctaBlock, target: { id: 'a', linkType: 'Entry' } };
+    client.getEntry.mockResolvedValue({
+      id: 'e1',
+      contentType: 'page',
+      status: 'draft',
+      version: 3,
+      fields: { ...fields, body: { 'en-US': [was] } },
+    });
+    client.getBlocksOutline.mockResolvedValue(outline(['body']));
+    client.checkBlockPatch.mockResolvedValue(
+      checked({ 'en-US': [{ ...was, target: { id: 'b', linkType: 'Entry' } }] }, [
+        {
+          op: 'update',
+          field: 'body',
+          locale: 'en-US',
+          key: 'k-cta',
+          set: { target: { id: 'b', linkType: 'Entry' } },
+        },
+      ]),
+    );
+    show(
+      patch({
+        ops: [
+          {
+            op: 'update',
+            field: 'body',
+            key: 'k-cta',
+            set: { target: { id: 'b', linkType: 'Entry' } },
+          },
+        ],
+      }),
+    );
+    expect(await stepsText()).toEqual(['Changes Call to action “Sign up”']);
+    expect(confirm().disabled).toBe(false);
+  });
+
+  it('shows what a new block would hold before it is confirmed', async () => {
+    const added = { _type: 'hero', _key: 'n-1', heading: 'Spring launch' };
+    client.checkBlockPatch.mockResolvedValue(
+      checked({ 'en-US': [heroBlock, ctaBlock, sectionBlock, added], de: fields.body.de }, [
+        { op: 'insert', field: 'body', locale: 'en-US', index: 3, block: added },
+      ]),
+    );
+    show(
+      patch({
+        ops: [{ op: 'insert', field: 'body', block: { _type: 'hero', heading: 'Spring launch' } }],
+      }),
+    );
+    expect(await stepsText()).toEqual(['Adds Hero “Spring launch” to the end of Body']);
+    fireEvent.click(screen.getByRole('button', { name: 'Review changes' }));
+    const changes = screen.getByRole('list', { name: 'Changes' });
+    expect(within(changes).getByText('Hero “Spring launch” › Heading')).toBeTruthy();
+    // With the review open the summary is no longer a lead-in to a list.
+    expect(screen.getByText('2 changes in the draft.')).toBeTruthy();
+  });
+
+  it('names a rule broken in a new block by its type, the api having minted its key', async () => {
+    client.checkBlockPatch.mockRejectedValue(
+      unprocessable([
+        {
+          field: 'body[3].label',
+          locale: 'en-US',
+          message: 'Field is required',
+          block: { key: 'minted', type: 'cta', path: 'label' },
+        },
+      ]),
+    );
+    show(patch({ ops: [{ op: 'insert', field: 'body', block: { _type: 'cta' } }] }));
+    await screen.findByText(
+      'The new call to action › Label: Field is required. Choose Not now, then ask again.',
+    );
+  });
+
+  it('words every step refusal from its code, never the api’s own text', async () => {
+    client.checkBlockPatch.mockRejectedValue(
+      unprocessable([
+        {
+          op: 0,
+          field: 'ops[0]',
+          locale: 'en-US',
+          code: 'holds_blocks',
+          key: 'k-sec',
+          message: '"items" holds blocks: change them with insert, move, remove or duplicate',
+        },
+      ]),
+    );
+    show(patch({ ops: [{ op: 'update', field: 'body', key: 'k-sec', set: { items: [] } }] }));
+    await screen.findByText(/Section “Features” keeps its blocks in a field a change can’t set/);
+    expect(screen.queryByText(/"items"/)).toBeNull();
+  });
+
+  it('refuses, never offers Try again, when the person can’t read the entry it would change', async () => {
+    client.getEntry.mockRejectedValue(
+      new ApiError(403, 'Missing required scope "content:read:page"'),
+    );
+    show(patch({ ops: [remove] }));
+    await screen.findByText('Your role can’t change this entry');
+    expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull();
+    expect(confirm().disabled).toBe(true);
   });
 
   it('won’t confirm a patch made for a version the draft has moved past', async () => {

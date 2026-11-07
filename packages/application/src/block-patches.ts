@@ -102,10 +102,14 @@ function withBlocks(
   contentType: ContentType,
   fields: EntryFields,
   defaultLocale: string,
+  unreadable: readonly string[] = [],
 ): unknown {
   if (!(err instanceof ValidationError)) return err;
   return new ValidationError(
     err.issues.map((issue): BlockFieldIssue => {
+      // A field the caller can't read says no more than its path already did.
+      const top = /^[A-Za-z]\w*/.exec(issue.field)?.[0] ?? '';
+      if (unreadable.includes(top)) return issue;
       const block = blockAtPath(contentType, fields, issue.locale ?? defaultLocale, issue.field);
       return block ? { ...issue, block } : issue;
     }),
@@ -236,7 +240,7 @@ export async function patchEntryBlocks(
     after,
     before,
   ).catch((err: unknown) => {
-    throw withBlocks(err, contentType, after, config.defaultLocale);
+    throw withBlocks(err, contentType, after, config.defaultLocale, options.unreadable);
   });
   return { ...view, keys: prepared.keys, inverse: undoFor(prepared, view.fields) };
 }
@@ -285,7 +289,13 @@ export async function checkEntryBlocks(
     { entryId: id, fields: prepared.after },
     options.unwritable ? { unwritable: options.unwritable } : {},
   ).catch((err: unknown) => {
-    throw withBlocks(err, prepared.contentType, prepared.after, prepared.config.defaultLocale);
+    throw withBlocks(
+      err,
+      prepared.contentType,
+      prepared.after,
+      prepared.config.defaultLocale,
+      options.unreadable,
+    );
   });
   return {
     valid: true,

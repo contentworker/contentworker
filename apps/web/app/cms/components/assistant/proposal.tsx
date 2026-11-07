@@ -370,7 +370,11 @@ export function ProposalDetail({
           </ol>
         ) : null}
         {note(
-          blocks ? `${n} ${n === 1 ? 'change' : 'changes'} in the draft:` : fieldsChange(n, create),
+          // The colon introduces the list below it; open, the list steps aside, and so does it.
+          (blocks
+            ? `${n} ${n === 1 ? 'change' : 'changes'} in the draft:`
+            : fieldsChange(n, create)
+          ).replace(/:$/, open ? '.' : ':'),
         )}
         {/* Open, the review below names each change itself: the list would say it twice. */}
         {open ? null : <ChangedFields fields={review.fields} />}

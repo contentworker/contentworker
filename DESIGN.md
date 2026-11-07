@@ -342,10 +342,13 @@ layout/nav.ts` is the one source of the pages, their order, names, icons and G-l
   a tagging by its tags' names, a release by its title, a block patch from its dry run (`POST
   …/entries/blocks/validate`: the api's own checks, nothing written) by its steps, each block named
   by its type's name and label and never by its key, a move or insert saying where it lands ("to
-  the end of Body", "at the start of Body", "after Call to action “Sign up”", "into Section
-  “Features”"), and Review changes showing each touched slot's order by block name, Now and After
-  saving ("Hero · Section · Call to action" → "Section · Call to action · Hero"), and each updated
-  block's own fields matched by key, never a positional diff of the list; any other one-entry
+  the end of Body", a move "to the start of Body" and an insert "at the start of Body", "after
+  Call to action “Sign up”", "into Section “Features”", or the place by name too when the block
+  has several), and Review changes showing each touched slot's order by block name, Now and After
+  saving ("Hero · Section · Call to action" → "Section · Call to action · Hero"; a block with no
+  key counted in its place, two of one name numbered), each new block's own fields (what Coworker
+  would write), and each updated block's own fields matched by key and judged on the stored value,
+  never a positional diff of the list; any other one-entry
   action by the entry's title. Open, Review changes replaces the summary list rather than
   repeating it. A block patch that can't be saved as it stands keeps Confirm off and says why,
   from the api's structured answer, never its wording: in a destructive Alert when the draft

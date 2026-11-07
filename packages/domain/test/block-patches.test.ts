@@ -509,10 +509,26 @@ describe('addressing blocks by key', () => {
     expect(
       codeOf([{ op: 'move', ...at, key: 's1', to: { parent: { key: 'h1', slot: 'items' } } }]),
     ).toEqual({ code: 'not_a_slot', key: 'h1' });
-    // A moved block the target slot doesn't admit is named; a new one has no key yet.
+    // A moved block the target slot doesn't admit is named; a new block's own key names no
+    // existing block, so it isn't given.
+    const twoSections = page();
+    (body(twoSections) as Node[]).push({ _type: 'section', _key: 's2', title: 'More' });
     expect(
-      codeOf([{ op: 'move', ...at, key: 's1', to: { parent: { key: 's1', slot: 'items' } } }]),
-    ).toEqual({ code: 'into_itself', key: 's1' });
+      codeOf(
+        [{ op: 'move', ...at, key: 's2', to: { parent: { key: 's1', slot: 'items' } } }],
+        twoSections,
+      ),
+    ).toEqual({ code: 'type_not_allowed', key: 's2' });
+    expect(
+      codeOf([
+        {
+          op: 'insert',
+          ...at,
+          parent: { key: 's1', slot: 'items' },
+          block: { _type: 'section', _key: 'h1' },
+        },
+      ]),
+    ).toEqual({ code: 'type_not_allowed', key: undefined });
     expect(codeOf([{ op: 'update', ...at, key: 'h1', set: { label: 'x' } }])).toEqual({
       code: 'unknown_field',
       key: 'h1',

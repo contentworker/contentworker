@@ -813,7 +813,7 @@ function applyOne(tree: Tree, op: BlockOp, newKey: () => string): Step {
         }
       }
       const { slot, variants } = tree.slotOf(parent);
-      admitted(variants, at.block);
+      admitted(variants, at.block, key);
       at.slot.splice(at.index, 1);
       // Positions are judged without the block being moved, so `index` is where it ends up.
       const index = tree.positionIn(slot, to);
@@ -894,8 +894,15 @@ function checkRef(tree: Tree, ref: string | undefined): void {
 }
 
 /** The variant `block` names, refused when the slot doesn't admit it. */
-function admitted(variants: readonly ComponentVariant[], block: Block): ComponentVariant {
-  const key = keyOf(block);
+/**
+ * The variant `block` names, refused when the slot doesn't admit it. `key` is the existing block
+ * the refusal is about: a moved one; never a new block's own key, which names no existing block.
+ */
+function admitted(
+  variants: readonly ComponentVariant[],
+  block: Block,
+  key?: string,
+): ComponentVariant {
   const type = block[BLOCK_TYPE_KEY];
   const allowed = variants.map((v) => v.apiId).join(', ');
   if (typeof type !== 'string' || type === '') {
