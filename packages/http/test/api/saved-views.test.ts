@@ -6,6 +6,7 @@ import {
   createRole,
   findMemberForSignIn,
   publishContentType,
+  SYSTEM_CALLER,
 } from '@contentworker/application';
 import type { FieldDefinition } from '@contentworker/domain';
 import { principalTarget, signPrincipal } from '@contentworker/security/principal';
@@ -58,7 +59,7 @@ describe('saved views over HTTP', () => {
     const { rag, blob, ai } = wired;
     ctx = wired.ctx;
     app = createApp(ctx, config, rag, blob, ai);
-    await createContentType(ctx, scope, {
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
       apiId: 'staff',
       name: 'Staff',
       displayField: 'name',
@@ -68,7 +69,7 @@ describe('saved views over HTTP', () => {
         field({ apiId: 'salary', type: 'Integer', position: 2 }),
       ],
     });
-    await createContentType(ctx, scope, {
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
       apiId: 'memo',
       name: 'Memo',
       displayField: 'name',

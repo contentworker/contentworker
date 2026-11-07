@@ -32,6 +32,7 @@ import {
   publishContentType,
   recordAudit,
   restoreVersion,
+  SYSTEM_CALLER,
   setEntrySeo,
   startWorkflowRun,
   updateEntry,
@@ -87,7 +88,7 @@ describe('what a save tells its audit row', () => {
       defaultLocale: 'en-US',
       locales: ['en-US', 'de'],
     });
-    await createContentType(base, scope, {
+    await createContentType(base, SYSTEM_CALLER, scope, {
       apiId: 'post',
       name: 'Post',
       displayField: 'title',

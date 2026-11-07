@@ -28,6 +28,7 @@ import {
   loadRunEntry,
   type NodeResult,
   resumeWorkflowNode,
+  SYSTEM_CALLER,
   setEntryMetadata,
   WORKFLOW_COMPENSATIONS,
   WORKFLOW_EXECUTORS,
@@ -72,7 +73,7 @@ describe('workflow node executors', () => {
     webhooks = new RecordingWebhookSender();
     deps = { email, webhooks };
     await createSpace(ctx, { spaceId: 'blog', name: 'Blog', defaultLocale: 'en-US' });
-    await createContentType(ctx, scope, {
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
       apiId: 'post',
       name: 'Post',
       displayField: 'title',
@@ -620,7 +621,7 @@ describe('workflow node executors', () => {
   });
 
   it('ai.enrich proposes no value for a field the other proposals would hide', async () => {
-    await createContentType(ctx, scope, {
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
       apiId: 'brief',
       name: 'Brief',
       displayField: 'title',

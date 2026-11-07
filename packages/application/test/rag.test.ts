@@ -23,6 +23,7 @@ import {
   removeEntryEmbeddings,
   requestReindex,
   runReindexJob,
+  SYSTEM_CALLER,
   semanticSearch,
 } from '../src/index';
 
@@ -221,6 +222,7 @@ describe('reindex embeddings', () => {
       await createSpace(ctx, { spaceId, name: spaceId, defaultLocale: 'en-US' });
       await createContentType(
         ctx,
+        SYSTEM_CALLER,
         { spaceId, environmentId: 'main' },
         {
           apiId: 'article',

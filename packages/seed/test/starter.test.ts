@@ -21,6 +21,7 @@ import {
   listTasks,
   listWebhooks,
   listWorkflows,
+  SYSTEM_CALLER,
 } from '@contentworker/application';
 import {
   FakeBlobStore,
@@ -167,7 +168,7 @@ describe('installing the starter', { timeout: 30_000 }, () => {
   it('leaves an existing content type of the same apiId untouched', async () => {
     const ctx = makeContext();
     await createSpace(ctx, { spaceId: 'acme', name: 'Acme', defaultLocale: 'en-US' });
-    await createContentType(ctx, scope, {
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
       apiId: 'author',
       name: 'Writer',
       displayField: 'name',

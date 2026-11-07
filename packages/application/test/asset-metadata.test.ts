@@ -17,6 +17,7 @@ import {
   getPublishedAsset,
   publishAsset,
   publishEntry,
+  SYSTEM_CALLER,
   setAssetMetadata,
 } from '../src/index';
 
@@ -94,7 +95,7 @@ describe('asset usage', () => {
 
   it('lists entries that reference an asset once they are published', async () => {
     const assetId = await newAsset(ctx, blob);
-    await createContentType(ctx, scope, {
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
       apiId: 'post',
       name: 'Post',
       displayField: 'title',

@@ -3,11 +3,14 @@ import { FixedClock, InMemoryContentStore, SequenceIdGenerator } from '@contentw
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   type AppContext,
+  cloneContentType,
   createContentType,
   createEntry,
   createPreviewLink,
   createSpace,
   principalFromPreviewToken,
+  SYSTEM_CALLER,
+  updateContentType,
 } from '../src/index';
 
 const scope = { spaceId: 'site', environmentId: 'main' };
@@ -28,7 +31,7 @@ let ctx: AppContext;
 let clock: FixedClock;
 
 async function article(urlTemplate?: string) {
-  await createContentType(ctx, scope, {
+  await createContentType(ctx, SYSTEM_CALLER, scope, {
     apiId: 'article',
     name: 'Article',
     displayField: 'title',
@@ -145,34 +148,60 @@ describe('who may set a type’s preview URL', () => {
   const T = 'https://site.example/p?entry={id}&token={token}';
 
   it('holds a caller without read on the type to the stored value', async () => {
-    await expect(createContentType(ctx, scope, draft(T), modeller)).rejects.toBeInstanceOf(
+    await expect(createContentType(ctx, modeller, scope, draft(T))).rejects.toBeInstanceOf(
       ForbiddenError,
     );
-    await createContentType(ctx, scope, draft(T));
+    await createContentType(ctx, SYSTEM_CALLER, scope, draft(T));
     await expect(
-      createContentType(ctx, scope, draft('https://elsewhere.example/?t={token}'), modeller),
+      createContentType(ctx, modeller, scope, draft('https://elsewhere.example/?t={token}')),
     ).rejects.toBeInstanceOf(ForbiddenError);
     // Unchanged (trimmed), left out, or cleared: nothing more to authorize.
-    await createContentType(ctx, scope, draft(` ${T}`), modeller);
-    await createContentType(ctx, scope, draft(), modeller);
-    expect((await createContentType(ctx, scope, draft(null), modeller)).preview).toBeUndefined();
+    await createContentType(ctx, modeller, scope, draft(` ${T}`));
+    await createContentType(ctx, modeller, scope, draft());
+    expect((await createContentType(ctx, modeller, scope, draft(null))).preview).toBeUndefined();
     // Read on the type is enough.
     const reader = {
       ...modeller,
       contentGrants: [{ contentTypeApiId: 'article', actions: ['read' as const] }],
     };
-    expect((await createContentType(ctx, scope, draft(T), reader)).preview).toEqual({
+    expect((await createContentType(ctx, reader, scope, draft(T))).preview).toEqual({
       urlTemplate: T,
     });
   });
 
+  it('fails closed for a caller that is neither a principal nor the system marker', async () => {
+    // What a handler that dropped its principal, or passed arguments out of place, would send.
+    for (const caller of [undefined, null, 'system', {}, scope]) {
+      const as = caller as never;
+      // Before anything is read or written, whether or not a preview URL is set.
+      await expect(createContentType(ctx, as, scope, draft())).rejects.toBeInstanceOf(
+        ForbiddenError,
+      );
+      await expect(createContentType(ctx, as, scope, draft(T))).rejects.toBeInstanceOf(
+        ForbiddenError,
+      );
+    }
+    expect(await ctx.store.contentTypes.get(scope, 'article')).toBeNull();
+    await createContentType(ctx, SYSTEM_CALLER, scope, draft(T));
+    await expect(
+      updateContentType(ctx, undefined as never, scope, 'article', { name: 'Post' }),
+    ).rejects.toBeInstanceOf(ForbiddenError);
+    await expect(
+      cloneContentType(ctx, undefined as never, scope, 'article', 'story', 'Story'),
+    ).rejects.toBeInstanceOf(ForbiddenError);
+    // A request's principal is held to the read rule on the clone it would point elsewhere.
+    await expect(
+      cloneContentType(ctx, modeller, scope, 'article', 'story', 'Story'),
+    ).rejects.toBeInstanceOf(ForbiddenError);
+  });
+
   it('takes a plain-http dev server only on a local stack', async () => {
     const local = 'http://localhost:3000/p?token={token}';
-    await expect(createContentType(ctx, scope, draft(local))).rejects.toBeInstanceOf(
+    await expect(createContentType(ctx, SYSTEM_CALLER, scope, draft(local))).rejects.toBeInstanceOf(
       ValidationError,
     );
     const dev = { ...ctx, previewLoopback: true };
-    expect((await createContentType(dev, scope, draft(local))).preview).toEqual({
+    expect((await createContentType(dev, SYSTEM_CALLER, scope, draft(local))).preview).toEqual({
       urlTemplate: local,
     });
   });

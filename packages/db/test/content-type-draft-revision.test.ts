@@ -21,6 +21,7 @@ import {
   previewMenu,
   publishContentType,
   publishEntry,
+  SYSTEM_CALLER,
   updateContentType,
   updateEntry,
 } from '@contentworker/application';
@@ -59,7 +60,7 @@ async function harness() {
   const spaceId = `ct-draft-${uid()}`;
   await createSpace(ctx, { spaceId, name: 'Draft', defaultLocale: 'en-US' });
   const scope = { spaceId, environmentId: 'main' };
-  await createContentType(ctx, scope, { ...definition, urlPattern: '/{slug}' });
+  await createContentType(ctx, SYSTEM_CALLER, scope, { ...definition, urlPattern: '/{slug}' });
   await publishContentType(ctx, scope, 'page');
   const { entry } = await createEntry(ctx, scope, {
     contentTypeApiId: 'page',
@@ -123,7 +124,7 @@ const fieldIds = (ct: ContentType | undefined) => ct?.fields.map((f) => f.apiId)
 describe('a draft revision of a live content type on D1', () => {
   it('leaves Delivery’s definition as last published', async () => {
     const { ctx, scope } = await harness();
-    await updateContentType(ctx, scope, 'page', {
+    await updateContentType(ctx, SYSTEM_CALLER, scope, 'page', {
       fields: [...fields, field('subtitle', 'Symbol', 2)],
     });
     const { contentTypes = [] } = await deliveryReads(ctx).read(scope, { contentTypes: true });
@@ -135,7 +136,7 @@ describe('a draft revision of a live content type on D1', () => {
 
   it('keeps the type in the routes', async () => {
     const { ctx, scope } = await harness();
-    await updateContentType(ctx, scope, 'page', { name: 'Pages' });
+    await updateContentType(ctx, SYSTEM_CALLER, scope, 'page', { name: 'Pages' });
     expect(await listDeliveredRoutes(ctx, scope)).toEqual([
       { contentType: 'page', urlPattern: '/{slug}' },
     ]);
@@ -143,20 +144,20 @@ describe('a draft revision of a live content type on D1', () => {
 
   it('keeps the type’s entries in the sitemap', async () => {
     const { ctx, scope } = await harness();
-    await updateContentType(ctx, scope, 'page', { name: 'Pages' });
+    await updateContentType(ctx, SYSTEM_CALLER, scope, 'page', { name: 'Pages' });
     expect((await listDeliveredSitemap(ctx, scope)).items).toHaveLength(1);
   });
 
   it('keeps the entry’s URL in a menu', async () => {
     const { ctx, scope } = await harness();
     expect((await getDeliveredMenu(ctx, scope, 'main')).items[0]).toMatchObject({ url: '/about' });
-    await updateContentType(ctx, scope, 'page', { name: 'Pages' });
+    await updateContentType(ctx, SYSTEM_CALLER, scope, 'page', { name: 'Pages' });
     expect((await getDeliveredMenu(ctx, scope, 'main')).items[0]).toMatchObject({ url: '/about' });
   });
 
   it('keeps serving the URL pattern as last published', async () => {
     const { ctx, scope } = await harness();
-    await updateContentType(ctx, scope, 'page', { urlPattern: '/pages/{slug}' });
+    await updateContentType(ctx, SYSTEM_CALLER, scope, 'page', { urlPattern: '/pages/{slug}' });
     expect(await listDeliveredRoutes(ctx, scope)).toEqual([
       { contentType: 'page', urlPattern: '/{slug}' },
     ]);
@@ -166,7 +167,7 @@ describe('a draft revision of a live content type on D1', () => {
     const { ctx, scope } = await harness();
     await createEnvironment(ctx, scope.spaceId, 'staging');
     const staging = { ...scope, environmentId: 'staging' };
-    await createContentType(ctx, staging, { ...definition, urlPattern: '/{slug}' });
+    await createContentType(ctx, SYSTEM_CALLER, staging, { ...definition, urlPattern: '/{slug}' });
     await mergeEnvironments(ctx, scope.spaceId, 'staging', 'main', { contentTypes: ['page'] });
     expect(await listDeliveredRoutes(ctx, scope)).toEqual([
       { contentType: 'page', urlPattern: '/{slug}' },
@@ -187,7 +188,7 @@ describe('writers that know nothing of the column', () => {
   it('never serves an older definition after old code publishes and then saves a draft', async () => {
     const { ctx, scope } = await harness();
     // New code keeps v1 for a draft; old code publishes that draft, then saves one of its own.
-    await updateContentType(ctx, scope, 'page', { fields: withSubtitle });
+    await updateContentType(ctx, SYSTEM_CALLER, scope, 'page', { fields: withSubtitle });
     await saveAsOldCode(scope, { ...page, fields: withSubtitle, version: 2 });
     await saveAsOldCode(scope, { ...page, fields: withBoth, version: 3, status: 'draft' });
 
@@ -205,7 +206,7 @@ describe('writers that know nothing of the column', () => {
 
   it('clears the kept definition when old code publishes', async () => {
     const { ctx, scope } = await harness();
-    await updateContentType(ctx, scope, 'page', { fields: withSubtitle });
+    await updateContentType(ctx, SYSTEM_CALLER, scope, 'page', { fields: withSubtitle });
     expect(await kept(scope)).not.toBeNull();
     await saveAsOldCode(scope, { ...page, fields: withSubtitle, version: 2 });
     expect(await kept(scope)).toBeNull();
@@ -224,7 +225,7 @@ describe('writers that know nothing of the column', () => {
     expect(fieldIds(await delivered(ctx, scope))).toEqual(['title', 'slug']);
 
     // Nor does the next draft inherit it: leaving published keeps the row, not the leftover.
-    await updateContentType(ctx, scope, 'page', { fields: withSubtitle });
+    await updateContentType(ctx, SYSTEM_CALLER, scope, 'page', { fields: withSubtitle });
     expect(fieldIds(await delivered(ctx, scope))).toEqual(['title', 'slug']);
   });
 
@@ -244,7 +245,7 @@ describe('writers that know nothing of the column', () => {
     expect((await listDeliveredRoutes(ctx, scope)).map((r) => r.contentType)).toEqual(['page']);
 
     await publishContentType(ctx, scope, 'legacy');
-    await updateContentType(ctx, scope, 'legacy', { fields: withBoth });
+    await updateContentType(ctx, SYSTEM_CALLER, scope, 'legacy', { fields: withBoth });
     expect(fieldIds(await delivered(ctx, scope, 'legacy'))).toEqual(['title', 'slug', 'subtitle']);
   });
 });
@@ -254,8 +255,8 @@ describe('the definition kept for a live type', () => {
 
   it('stays the published one through later drafts, and goes with the publish', async () => {
     const { ctx, scope } = await harness();
-    await updateContentType(ctx, scope, 'page', { fields: subtitle });
-    await updateContentType(ctx, scope, 'page', { name: 'Pages' });
+    await updateContentType(ctx, SYSTEM_CALLER, scope, 'page', { fields: subtitle });
+    await updateContentType(ctx, SYSTEM_CALLER, scope, 'page', { name: 'Pages' });
     expect(await delivered(ctx, scope)).toMatchObject({ name: 'Page', version: 1 });
     expect(fieldIds(await delivered(ctx, scope))).toEqual(['title', 'slug']);
 
@@ -267,7 +268,10 @@ describe('the definition kept for a live type', () => {
 
   it('leaves the Management read as the draft', async () => {
     const { ctx, scope } = await harness();
-    await updateContentType(ctx, scope, 'page', { fields: subtitle, urlPattern: '/pages/{slug}' });
+    await updateContentType(ctx, SYSTEM_CALLER, scope, 'page', {
+      fields: subtitle,
+      urlPattern: '/pages/{slug}',
+    });
     const working = await getContentType(ctx, scope, 'page');
     expect(working).toMatchObject({ status: 'draft', version: 2, urlPattern: '/pages/{slug}' });
     expect(fieldIds(working)).toEqual(['title', 'slug', 'subtitle']);
@@ -276,7 +280,7 @@ describe('the definition kept for a live type', () => {
   it('is what the store reports for it, and only for it', async () => {
     const { ctx, scope } = await harness();
     expect((await store.contentTypes.publishedDefinitions(scope)).size).toBe(0);
-    await updateContentType(ctx, scope, 'page', { name: 'Pages' });
+    await updateContentType(ctx, SYSTEM_CALLER, scope, 'page', { name: 'Pages' });
     const definitions = await store.contentTypes.publishedDefinitions(scope);
     expect(definitions.get('page')).toMatchObject({
       name: 'Page',
@@ -316,21 +320,28 @@ describe('the definition kept for a live type', () => {
     const { ctx, scope } = await harness();
     await createEnvironment(ctx, scope.spaceId, 'staging');
     const staging = { ...scope, environmentId: 'staging' };
-    await createContentType(ctx, staging, { ...definition, urlPattern: '/s/{slug}' });
+    await createContentType(ctx, SYSTEM_CALLER, staging, {
+      ...definition,
+      urlPattern: '/s/{slug}',
+    });
     await publishContentType(ctx, staging, 'page');
-    await updateContentType(ctx, scope, 'page', { name: 'Pages' });
+    await updateContentType(ctx, SYSTEM_CALLER, scope, 'page', { name: 'Pages' });
     expect(await kept(staging)).toBeNull();
     expect((await delivered(ctx, staging))?.urlPattern).toBe('/s/{slug}');
   });
 
   it('goes with the type, so a new type of the name starts clean', async () => {
     const { ctx, scope } = await harness();
-    await createContentType(ctx, scope, { ...definition, apiId: 'note' });
+    await createContentType(ctx, SYSTEM_CALLER, scope, { ...definition, apiId: 'note' });
     await publishContentType(ctx, scope, 'note');
-    await updateContentType(ctx, scope, 'note', { name: 'Notes' });
+    await updateContentType(ctx, SYSTEM_CALLER, scope, 'note', { name: 'Notes' });
     expect(await kept(scope, 'note')).not.toBeNull();
     await deleteContentType(ctx, scope, 'note');
-    await createContentType(ctx, scope, { ...definition, apiId: 'note', name: 'Fresh' });
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
+      ...definition,
+      apiId: 'note',
+      name: 'Fresh',
+    });
     expect(await kept(scope, 'note')).toBeNull();
     expect(await delivered(ctx, scope, 'note')).toMatchObject({ name: 'Fresh', status: 'draft' });
   });
@@ -341,9 +352,9 @@ describe('the definition kept for a live type', () => {
     const env = `gone-${uid().slice(0, 8)}`;
     await createEnvironment(ctx, scope.spaceId, env);
     const gone = { ...scope, environmentId: env };
-    await createContentType(ctx, gone, definition);
+    await createContentType(ctx, SYSTEM_CALLER, gone, definition);
     await publishContentType(ctx, gone, 'page');
-    await updateContentType(ctx, gone, 'page', { name: 'Pages' });
+    await updateContentType(ctx, SYSTEM_CALLER, gone, 'page', { name: 'Pages' });
     expect(await kept(gone)).not.toBeNull();
     await store.spaces.deleteEnvironment(scope.spaceId, env, [], {
       id: uid(),
@@ -366,7 +377,10 @@ describe('the definition kept for a live type', () => {
     const { ctx, scope } = await harness();
     await createEnvironment(ctx, scope.spaceId, 'staging');
     const staging = { ...scope, environmentId: 'staging' };
-    await createContentType(ctx, staging, { ...definition, urlPattern: '/s/{slug}' });
+    await createContentType(ctx, SYSTEM_CALLER, staging, {
+      ...definition,
+      urlPattern: '/s/{slug}',
+    });
     await mergeEnvironments(ctx, scope.spaceId, 'staging', 'main', { contentTypes: ['page'] });
     expect((await delivered(ctx, scope))?.urlPattern).toBe('/{slug}');
 
@@ -380,14 +394,18 @@ describe('the definition kept for a live type', () => {
 describe('what else Delivery reads through the published view', () => {
   it('answers a singleton by the definition as last published', async () => {
     const { ctx, scope } = await harness();
-    await createContentType(ctx, scope, { ...definition, apiId: 'home', singleton: true });
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
+      ...definition,
+      apiId: 'home',
+      singleton: true,
+    });
     await publishContentType(ctx, scope, 'home');
     const { entry } = await createEntry(ctx, scope, {
       contentTypeApiId: 'home',
       fields: { title: { 'en-US': 'Home' } },
     });
     await publishEntry(ctx, scope, entry.id);
-    await updateContentType(ctx, scope, 'home', { singleton: false, name: 'Homes' });
+    await updateContentType(ctx, SYSTEM_CALLER, scope, 'home', { singleton: false, name: 'Homes' });
 
     expect((await getDeliveredSingleton(ctx, scope, 'home')).id).toBe(entry.id);
     const { singleton } = await deliveryReads(ctx).read(scope, {
@@ -403,7 +421,7 @@ describe('what else Delivery reads through the published view', () => {
   it('answers a reference filter by the links as last published', async () => {
     const { ctx, scope } = await harness();
     const link = { ...field('author', 'Link', 1), linkType: 'Entry' } as FieldDefinition;
-    await createContentType(ctx, scope, {
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
       apiId: 'post',
       name: 'Post',
       displayField: 'title',
@@ -436,7 +454,7 @@ describe('what else Delivery reads through the published view', () => {
     const ids = async () => (await listPublishedEntries(ctx, scope, query)).map((e) => e.id);
     expect(await ids()).toEqual([post.id]);
 
-    await updateContentType(ctx, scope, 'post', {
+    await updateContentType(ctx, SYSTEM_CALLER, scope, 'post', {
       fields: [field('title', 'Symbol', 0), field('author', 'Symbol', 1)],
     });
     expect(await ids()).toEqual([post.id]);
@@ -449,7 +467,7 @@ describe('what else Delivery reads through the published view', () => {
       fields: { title: { 'en-US': 'Team' }, slug: { 'en-US': 'team' } },
     });
     await publishEntry(ctx, scope, entry.id);
-    await updateContentType(ctx, scope, 'page', { urlPattern: '/pages/{slug}' });
+    await updateContentType(ctx, SYSTEM_CALLER, scope, 'page', { urlPattern: '/pages/{slug}' });
     await updateEntry(ctx, scope, entry.id, {
       title: { 'en-US': 'Team' },
       slug: { 'en-US': 'people' },
@@ -463,7 +481,7 @@ describe('what else Delivery reads through the published view', () => {
   it('previews a menu as Delivery resolves it', async () => {
     const { ctx, scope } = await harness();
     const menu = (await store.menus.all(scope))[0];
-    await updateContentType(ctx, scope, 'page', { urlPattern: '/pages/{slug}' });
+    await updateContentType(ctx, SYSTEM_CALLER, scope, 'page', { urlPattern: '/pages/{slug}' });
     expect((await previewMenu(ctx, scope, menu?.id ?? '')).items[0]).toMatchObject({
       url: '/about',
       status: 'live',
@@ -476,7 +494,10 @@ describe('copying a live type with a draft', () => {
 
   async function source() {
     const { ctx, scope } = await harness();
-    await updateContentType(ctx, scope, 'page', { fields: subtitle, urlPattern: '/p/{slug}' });
+    await updateContentType(ctx, SYSTEM_CALLER, scope, 'page', {
+      fields: subtitle,
+      urlPattern: '/p/{slug}',
+    });
     const target = { ...scope, environmentId: `copy-${uid().slice(0, 8)}` };
     await createEnvironment(ctx, scope.spaceId, target.environmentId);
     return { ctx, scope, target };
@@ -521,7 +542,7 @@ describe('copying a live type with a draft', () => {
 describe('the published view on D1', () => {
   it('holds no admin-only details', async () => {
     const { ctx, scope } = await harness();
-    await updateContentType(ctx, scope, 'page', {
+    await updateContentType(ctx, SYSTEM_CALLER, scope, 'page', {
       group: 'Site',
       description: 'Pages',
       icon: 'file',

@@ -10,6 +10,7 @@ import {
   createSpace,
   listPreviewEntries,
   publishContentType,
+  SYSTEM_CALLER,
   startImportJob,
 } from '@contentworker/application';
 import {
@@ -91,7 +92,7 @@ beforeEach(async () => {
   await createSpace(ctx, { spaceId: SPACE, name: 'Site', defaultLocale: 'en-US' });
   await createEnvironment(ctx, SPACE, 'empty');
   for (const apiId of ['post', 'page']) {
-    await createContentType(ctx, scope, {
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
       apiId,
       name: apiId,
       displayField: 'title',

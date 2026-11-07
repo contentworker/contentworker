@@ -31,6 +31,7 @@ import {
   publishContentType,
   publishEntry,
   restoreAsset,
+  SYSTEM_CALLER,
   trashEntry,
   unpublishEntry,
   updateEntry,
@@ -74,7 +75,7 @@ async function linkFromEntry(
   assetId: string,
   opts: { publish?: boolean; title?: string } = {},
 ) {
-  await createContentType(h.ctx, scope, {
+  await createContentType(h.ctx, SYSTEM_CALLER, scope, {
     apiId: 'page',
     name: 'Page',
     displayField: 'title',

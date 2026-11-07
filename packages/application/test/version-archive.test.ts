@@ -14,6 +14,7 @@ import {
   publishContentType,
   publishEntry,
   purgeEntry,
+  SYSTEM_CALLER,
   trashEntry,
   updateEntry,
   versionBodyKey,
@@ -30,7 +31,7 @@ beforeEach(async () => {
   blob = new FakeBlobStore();
   store.versionBodies = blob;
   ctx = { store, clock: new FixedClock(), ids: new SequenceIdGenerator('v') };
-  await createContentType(ctx, scope, {
+  await createContentType(ctx, SYSTEM_CALLER, scope, {
     apiId: 'note',
     name: 'Note',
     displayField: 'title',
@@ -44,7 +45,7 @@ beforeEach(async () => {
         position: 0,
       },
     ],
-  } as Parameters<typeof createContentType>[2]);
+  } as Parameters<typeof createContentType>[3]);
   await publishContentType(ctx, scope, 'note');
 });
 

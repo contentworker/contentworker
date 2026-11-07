@@ -7,6 +7,7 @@ import {
   getContentType,
   listContentTypes,
   publishContentType,
+  SYSTEM_CALLER,
 } from '@contentworker/application';
 import type { FieldDefinition } from '@contentworker/domain';
 import { FixedClock } from '@contentworker/test-kit';
@@ -54,26 +55,30 @@ const DRAFT = {
 describe('content type preview template on D1', () => {
   it('stores the template and reads it back with the type', async () => {
     const { ctx, scope } = await harness();
-    await createContentType(ctx, scope, DRAFT);
+    await createContentType(ctx, SYSTEM_CALLER, scope, DRAFT);
     expect((await getContentType(ctx, scope, 'article')).preview).toEqual({
       urlTemplate: TEMPLATE,
     });
     expect((await listContentTypes(ctx, scope))[0]?.preview).toEqual({ urlTemplate: TEMPLATE });
     // A revision that leaves it out keeps it.
-    await createContentType(ctx, scope, { ...DRAFT, preview: undefined, name: 'Post' });
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
+      ...DRAFT,
+      preview: undefined,
+      name: 'Post',
+    });
     expect((await getContentType(ctx, scope, 'article')).preview?.urlTemplate).toBe(TEMPLATE);
   });
 
   it('clears it with null', async () => {
     const { ctx, scope } = await harness();
-    await createContentType(ctx, scope, DRAFT);
-    await createContentType(ctx, scope, { ...DRAFT, preview: null });
+    await createContentType(ctx, SYSTEM_CALLER, scope, DRAFT);
+    await createContentType(ctx, SYSTEM_CALLER, scope, { ...DRAFT, preview: null });
     expect(await getContentType(ctx, scope, 'article')).not.toHaveProperty('preview');
   });
 
   it('never serves it through Delivery', async () => {
     const { ctx, scope } = await harness();
-    await createContentType(ctx, scope, DRAFT);
+    await createContentType(ctx, SYSTEM_CALLER, scope, DRAFT);
     await publishContentType(ctx, scope, 'article');
     const { contentTypes = [] } = await ctx.store.delivery.read(scope, { contentTypes: true });
     const delivered = contentTypes.find((t) => t.apiId === 'article');
@@ -83,7 +88,7 @@ describe('content type preview template on D1', () => {
 
   it('reads the column’s own name, as a replica behind 0035 returns it, as no template', async () => {
     const { ctx, scope } = await harness();
-    await createContentType(ctx, scope, DRAFT);
+    await createContentType(ctx, SYSTEM_CALLER, scope, DRAFT);
     await testDb
       .prepare(
         'UPDATE content_types SET preview_url_template = ? WHERE space_id = ? AND environment_id = ? AND api_id = ?',
@@ -95,7 +100,7 @@ describe('content type preview template on D1', () => {
 
   it('fills a preview link’s frontend URL from the stored template and the entry', async () => {
     const { ctx, scope } = await harness();
-    await createContentType(ctx, scope, DRAFT);
+    await createContentType(ctx, SYSTEM_CALLER, scope, DRAFT);
     const { entry } = await createEntry(ctx, scope, {
       contentTypeApiId: 'article',
       fields: { title: { 'en-US': 'Hello' }, slug: { 'en-US': 'hello-world' } },

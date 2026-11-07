@@ -8,6 +8,7 @@ import {
   createEntry,
   createSpace,
   publishContentType,
+  SYSTEM_CALLER,
 } from '@contentworker/application';
 import { type Principal, SCOPES } from '@contentworker/domain';
 import {
@@ -73,7 +74,7 @@ describe('richer queries over MCP', () => {
   beforeEach(async () => {
     deps = makeDeps();
     await createSpace(deps.ctx, { spaceId: SPACE, name: 'One', defaultLocale: 'en-US' });
-    await createContentType(deps.ctx, scope, {
+    await createContentType(deps.ctx, SYSTEM_CALLER, scope, {
       apiId: 'page',
       name: 'Page',
       displayField: 'title',

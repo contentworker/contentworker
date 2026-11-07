@@ -7,6 +7,7 @@ import {
   createEntry,
   publishContentType,
   publishEntry,
+  SYSTEM_CALLER,
   trashEntry,
   updateEntry,
 } from '../src/index.js';
@@ -17,7 +18,7 @@ const other = { spaceId: 's2', environmentId: 'main' };
 let ctx: AppContext;
 
 async function defineType(at: typeof scope, apiId: string) {
-  await createContentType(ctx, at, {
+  await createContentType(ctx, SYSTEM_CALLER, at, {
     apiId,
     name: apiId,
     displayField: 'title',

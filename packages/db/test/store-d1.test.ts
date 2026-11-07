@@ -7,6 +7,7 @@ import {
   deleteEnvironment,
   publishContentType,
   publishEntry,
+  SYSTEM_CALLER,
   startWorkflowRun,
 } from '@contentworker/application';
 import {
@@ -59,7 +60,7 @@ const settle = async <T>(ps: Promise<T>[]) => {
 
 beforeAll(async () => {
   await createSpace(ctx, { spaceId, name: 'UoW', defaultLocale: 'en-US', locales: ['en-US'] });
-  await createContentType(ctx, scope, {
+  await createContentType(ctx, SYSTEM_CALLER, scope, {
     apiId: 'article',
     name: 'Article',
     displayField: 'title',
@@ -578,7 +579,7 @@ describe('deleting an environment', () => {
   it('clears every environment-scoped table but the audit log, atomically with its events', async () => {
     const doomed = { spaceId, environmentId: `doomed-${uid().slice(0, 8)}` };
     await createEnvironment(ctx, spaceId, doomed.environmentId);
-    await createContentType(ctx, doomed, {
+    await createContentType(ctx, SYSTEM_CALLER, doomed, {
       apiId: 'article',
       name: 'Article',
       displayField: 'title',

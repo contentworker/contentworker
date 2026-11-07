@@ -16,6 +16,7 @@ import {
   indexEntryEmbeddings,
   type RagDeps,
   relatedEntries,
+  SYSTEM_CALLER,
 } from '../src/index';
 
 const scope = { spaceId: 'kb', environmentId: 'main' };
@@ -29,7 +30,7 @@ describe('content semantics', () => {
     ctx = { store, clock: new FixedClock(), ids: new SequenceIdGenerator('e') };
     rag = { embeddings: new LocalEmbeddingsProvider(512), vectors: new InMemoryVectorStore() };
     await createSpace(ctx, { spaceId: 'kb', name: 'KB', defaultLocale: 'en-US' });
-    await createContentType(ctx, scope, {
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
       apiId: 'article',
       name: 'Article',
       displayField: 'title',

@@ -2,8 +2,10 @@ import { createHash } from 'node:crypto';
 import { InProcessAgentRuntime, makeActivities } from '@contentworker/agent-runtime';
 import {
   type AppContext,
+  createContentType,
   createSpace,
   principalFromPreviewToken,
+  SYSTEM_CALLER,
 } from '@contentworker/application';
 import { type Principal, SCOPES } from '@contentworker/domain';
 import {
@@ -213,5 +215,18 @@ describe('content type preview URL template through MCP', () => {
     expect(link.previewPath).toBe(
       `/preview/${SPACE}/main/entries/${created.entry.id}?preview_token=${link.token}`,
     );
+  });
+
+  it('makes every save name its caller: a request handler can’t leave its principal out', async () => {
+    const { ctx } = await connect();
+    const scope = { spaceId: SPACE, environmentId: 'main' };
+    const draft = post as never;
+    // @ts-expect-error: the caller is required, a principal or SYSTEM_CALLER; there is no default
+    await expect(createContentType(ctx, scope, draft)).rejects.toThrow();
+    // @ts-expect-error: and nothing but the marker stands in for a principal
+    await expect(createContentType(ctx, { system: true }, scope, draft)).rejects.toThrow(
+      'principal or the system caller',
+    );
+    expect((await createContentType(ctx, SYSTEM_CALLER, scope, draft)).apiId).toBe('post');
   });
 });

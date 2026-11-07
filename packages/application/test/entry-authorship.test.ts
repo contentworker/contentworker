@@ -27,6 +27,7 @@ import {
   restoreEntry,
   runBulkChunk,
   runDueScheduledActions,
+  SYSTEM_CALLER,
   scheduleAction,
   stagedEntry,
   startBulkJob,
@@ -66,7 +67,7 @@ beforeEach(async () => {
     environments: ['main', 'staging', 'copy', 'upload'],
   });
   for (const scope of [main, staging]) {
-    await createContentType(base, scope, {
+    await createContentType(base, SYSTEM_CALLER, scope, {
       apiId: 'note',
       name: 'Note',
       displayField: 'title',

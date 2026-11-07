@@ -26,6 +26,7 @@ import {
   getBulkJobReport,
   publishContentType,
   publishEntry,
+  SYSTEM_CALLER,
   startBulkJob,
   trashEntry,
 } from '../src/index';
@@ -55,7 +56,7 @@ function setup() {
 type Harness = ReturnType<typeof setup>;
 
 async function model(h: Harness, s = scope) {
-  await createContentType(h.ctx, s, {
+  await createContentType(h.ctx, SYSTEM_CALLER, s, {
     apiId: 'post',
     name: 'Post',
     displayField: 'title',
@@ -87,7 +88,7 @@ async function model(h: Harness, s = scope) {
         position: 2,
       },
     ],
-  } as Parameters<typeof createContentType>[2]);
+  } as Parameters<typeof createContentType>[3]);
   await publishContentType(h.ctx, s, 'post');
 }
 

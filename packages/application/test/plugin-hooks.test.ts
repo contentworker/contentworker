@@ -20,6 +20,7 @@ import {
   createPluginHookDispatcher,
   installPlugin,
   publishContentType,
+  SYSTEM_CALLER,
   setPluginEnabled,
 } from '../src/index';
 
@@ -73,7 +74,7 @@ beforeEach(async () => {
   const store = new InMemoryContentStore();
   store.seedSpace({ spaceId: SPACE, defaultLocale: 'en-US', locales: ['en-US'] });
   ctx = { store, clock: new FixedClock(), ids: new SequenceIdGenerator('e') };
-  await createContentType(ctx, scope, {
+  await createContentType(ctx, SYSTEM_CALLER, scope, {
     apiId: 'article',
     name: 'Article',
     displayField: 'title',
@@ -87,7 +88,7 @@ beforeEach(async () => {
         position: 0,
       },
     ],
-  } as Parameters<typeof createContentType>[2]);
+  } as Parameters<typeof createContentType>[3]);
   await publishContentType(ctx, scope, 'article');
 });
 
@@ -320,7 +321,7 @@ describe('a plugin cannot exceed its installer', () => {
       required: false,
       position,
     });
-    await createContentType(ctx, scope, {
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
       apiId: 'note',
       name: 'Note',
       displayField: 'title',

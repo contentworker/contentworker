@@ -6,6 +6,7 @@ import {
   createEnvironment,
   createSpace,
   publishContentType,
+  SYSTEM_CALLER,
   setEnvironmentAlias,
 } from '@contentworker/application';
 import { type Principal, SCOPES } from '@contentworker/domain';
@@ -76,7 +77,7 @@ describe('MCP tool audit', () => {
     await createEnvironment(ctx, SPACE, 'staging');
     await setEnvironmentAlias(ctx, SPACE, 'prod', 'staging');
     for (const s of [scope, { spaceId: SPACE, environmentId: 'staging' }]) {
-      await createContentType(ctx, s, {
+      await createContentType(ctx, SYSTEM_CALLER, s, {
         apiId: 'article',
         name: 'Article',
         displayField: 'title',

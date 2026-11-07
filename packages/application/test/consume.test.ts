@@ -20,6 +20,7 @@ import {
   createSpace,
   createWebhook,
   publishEntry,
+  SYSTEM_CALLER,
   semanticSearch,
 } from '../src/index';
 
@@ -66,7 +67,7 @@ describe('consumeEvent', () => {
     sender = new RecordingWebhookSender();
     ctx = { store, clock: new FixedClock(), ids: new SequenceIdGenerator('c'), cache };
     await createSpace(ctx, { spaceId: 'shop', name: 'Shop', defaultLocale: 'en-US' });
-    await createContentType(ctx, scope, {
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
       apiId: 'article',
       name: 'Article',
       displayField: 'title',

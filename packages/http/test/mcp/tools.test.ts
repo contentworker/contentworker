@@ -7,6 +7,7 @@ import {
   createEntry,
   createSpace,
   publishContentType,
+  SYSTEM_CALLER,
 } from '@contentworker/application';
 import type { Principal } from '@contentworker/domain';
 import { SCOPES } from '@contentworker/domain';
@@ -78,7 +79,7 @@ function payload(result: { content?: { type: string; text?: string }[] }): unkno
 async function seed(deps: McpDeps) {
   const { ctx } = deps;
   await createSpace(ctx, { spaceId: SPACE, name: 'Shop', defaultLocale: 'en-US' });
-  await createContentType(ctx, scope, {
+  await createContentType(ctx, SYSTEM_CALLER, scope, {
     apiId: 'article',
     name: 'Article',
     displayField: 'title',
@@ -139,7 +140,7 @@ describe('MCP tools (end-to-end over the in-memory transport)', () => {
     const { ctx } = deps;
     const other = { spaceId: 'space-2', environmentId: 'main' };
     await createSpace(ctx, { spaceId: 'space-2', name: 'Other', defaultLocale: 'en-US' });
-    await createContentType(ctx, other, {
+    await createContentType(ctx, SYSTEM_CALLER, other, {
       apiId: 'secret',
       name: 'Secret',
       displayField: 'title',

@@ -7,6 +7,7 @@ import {
   createSpace,
   getPreviewEntry,
   publishContentType,
+  SYSTEM_CALLER,
   updateEntry,
 } from '@contentworker/application';
 import { authDbOf, sessions, users } from '@contentworker/db/auth';
@@ -55,7 +56,7 @@ async function seedSpace(spaceId: string) {
   const c = ctx();
   const scope = { spaceId, environmentId: 'main' };
   await createSpace(c, { spaceId, name: spaceId, defaultLocale: 'en-US' });
-  await createContentType(c, scope, {
+  await createContentType(c, SYSTEM_CALLER, scope, {
     apiId: 'article',
     name: 'Article',
     displayField: 'title',

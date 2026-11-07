@@ -13,6 +13,7 @@ import {
   duplicateEntry,
   publishContentType,
   restoreEntry,
+  SYSTEM_CALLER,
   trashEntry,
   updateEntry,
 } from '../src/index';
@@ -28,7 +29,7 @@ async function seed(slug: FieldOverrides = {}, extra: FieldOverrides[] = [], loc
   store = new InMemoryContentStore();
   store.seedSpace({ spaceId: 's1', defaultLocale: 'en-US', locales });
   ctx = { store, clock: new FixedClock(), ids: new SequenceIdGenerator('e') };
-  await createContentType(ctx, scope, {
+  await createContentType(ctx, SYSTEM_CALLER, scope, {
     apiId: 'article',
     name: 'Article',
     displayField: 'title',
@@ -52,7 +53,7 @@ async function seed(slug: FieldOverrides = {}, extra: FieldOverrides[] = [], loc
       },
       ...extra.map((f, i) => ({ localized: false, required: false, position: 2 + i, ...f })),
     ],
-  } as Parameters<typeof createContentType>[2]);
+  } as Parameters<typeof createContentType>[3]);
   await publishContentType(ctx, scope, 'article');
 }
 
@@ -166,7 +167,7 @@ describe('unique fields', () => {
   });
 
   it('scopes uniqueness to the content type', async () => {
-    await createContentType(ctx, scope, {
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
       apiId: 'page',
       name: 'Page',
       displayField: 'title',
@@ -189,7 +190,7 @@ describe('unique fields', () => {
           unique: true,
         },
       ],
-    } as Parameters<typeof createContentType>[2]);
+    } as Parameters<typeof createContentType>[3]);
     await publishContentType(ctx, scope, 'page');
 
     await createEntry(ctx, scope, article('Post', { slug: { 'en-US': 'about' } }));
@@ -214,7 +215,7 @@ describe('unique fields', () => {
 
   it('is refused on a field type where it could not mean anything', async () => {
     await expect(
-      createContentType(ctx, scope, {
+      createContentType(ctx, SYSTEM_CALLER, scope, {
         apiId: 'bad',
         name: 'Bad',
         displayField: 'body',
@@ -229,7 +230,7 @@ describe('unique fields', () => {
             unique: true,
           },
         ],
-      } as Parameters<typeof createContentType>[2]),
+      } as Parameters<typeof createContentType>[3]),
     ).rejects.toBeInstanceOf(ValidationError);
   });
 });

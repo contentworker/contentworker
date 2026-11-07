@@ -133,29 +133,24 @@ export function registerWriteTools(server: McpServer, t: ToolContext): void {
     async (args) => {
       guard(SCOPES.contentManage, scopeOf(args));
       return ok(
-        await createContentType(
-          ctx,
-          scopeOf(args),
-          {
-            apiId: args.apiId,
-            name: args.name,
-            displayField: args.displayField,
-            ...(args.urlPattern !== undefined ? { urlPattern: args.urlPattern } : {}),
-            ...(args.singleton !== undefined ? { singleton: args.singleton } : {}),
-            ...(args.group !== undefined ? { group: args.group } : {}),
-            ...(args.description !== undefined ? { description: args.description } : {}),
-            ...(args.icon !== undefined ? { icon: args.icon } : {}),
-            ...(args.agentInstructions !== undefined
-              ? { agentInstructions: args.agentInstructions }
-              : {}),
-            // biome-ignore lint/suspicious/noExplicitAny: zod record → domain ContentTypeLayout, checked there
-            ...(args.layout !== undefined ? { layout: args.layout as any } : {}),
-            ...(args.preview !== undefined ? { preview: args.preview } : {}),
-            // biome-ignore lint/suspicious/noExplicitAny: zod field shape → domain FieldDefinition
-            fields: args.fields as any,
-          },
-          principal,
-        ),
+        await createContentType(ctx, principal, scopeOf(args), {
+          apiId: args.apiId,
+          name: args.name,
+          displayField: args.displayField,
+          ...(args.urlPattern !== undefined ? { urlPattern: args.urlPattern } : {}),
+          ...(args.singleton !== undefined ? { singleton: args.singleton } : {}),
+          ...(args.group !== undefined ? { group: args.group } : {}),
+          ...(args.description !== undefined ? { description: args.description } : {}),
+          ...(args.icon !== undefined ? { icon: args.icon } : {}),
+          ...(args.agentInstructions !== undefined
+            ? { agentInstructions: args.agentInstructions }
+            : {}),
+          // biome-ignore lint/suspicious/noExplicitAny: zod record → domain ContentTypeLayout, checked there
+          ...(args.layout !== undefined ? { layout: args.layout as any } : {}),
+          ...(args.preview !== undefined ? { preview: args.preview } : {}),
+          // biome-ignore lint/suspicious/noExplicitAny: zod field shape → domain FieldDefinition
+          fields: args.fields as any,
+        }),
       );
     },
   );
@@ -251,7 +246,7 @@ export function registerWriteTools(server: McpServer, t: ToolContext): void {
     async (args) => {
       guard(SCOPES.contentManage, scopeOf(args));
       return ok(
-        await cloneContentType(ctx, scopeOf(args), args.apiId, args.newApiId, args.name, principal),
+        await cloneContentType(ctx, principal, scopeOf(args), args.apiId, args.newApiId, args.name),
       );
     },
   );

@@ -10,6 +10,7 @@ import {
   publishContentType,
   publishEntry,
   restoreVersion,
+  SYSTEM_CALLER,
   updateEntry,
   versionBodyKey,
 } from '@contentworker/application';
@@ -38,7 +39,7 @@ const title = (t: string) => ({ title: { 'en-US': t } });
 
 async function seedModel() {
   await createSpace(ctx, { spaceId, name: 'VB', defaultLocale: 'en-US', locales: ['en-US'] });
-  await createContentType(ctx, scope, {
+  await createContentType(ctx, SYSTEM_CALLER, scope, {
     apiId: 'note',
     name: 'Note',
     displayField: 'title',
@@ -52,7 +53,7 @@ async function seedModel() {
         position: 0,
       },
     ],
-  } as Parameters<typeof createContentType>[2]);
+  } as Parameters<typeof createContentType>[3]);
   await publishContentType(ctx, scope, 'note');
 }
 

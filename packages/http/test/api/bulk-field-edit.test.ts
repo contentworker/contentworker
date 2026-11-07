@@ -4,6 +4,7 @@ import {
   entryFieldsChunkRunner,
   publishContentType,
   runBulkChunk,
+  SYSTEM_CALLER,
 } from '@contentworker/application';
 import type { BulkChunkDueEvent, FieldDefinition } from '@contentworker/domain';
 import type { ApiConfig } from '@contentworker/platform/config';
@@ -50,7 +51,7 @@ const symbol = (apiId: string, position: number): FieldDefinition =>
 async function makeApp() {
   const wired = wire(config);
   const app = createApp(wired.ctx, config, wired.rag, wired.blob, wired.ai);
-  await createContentType(wired.ctx, scope, {
+  await createContentType(wired.ctx, SYSTEM_CALLER, scope, {
     apiId: 'note',
     name: 'Note',
     displayField: 'title',

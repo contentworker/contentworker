@@ -3,6 +3,7 @@ import {
   createEntry,
   publishContentType,
   publishEntry,
+  SYSTEM_CALLER,
   setEntryMetadata,
 } from '@contentworker/application';
 import type { ApiConfig } from '@contentworker/platform/config';
@@ -53,7 +54,7 @@ async function setup() {
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
     });
   for (const apiId of ['story', 'memo']) {
-    await createContentType(ctx, scope, {
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
       apiId,
       name: apiId,
       displayField: 'title',

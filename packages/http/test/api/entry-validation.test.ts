@@ -1,4 +1,4 @@
-import { createContentType, publishContentType } from '@contentworker/application';
+import { createContentType, publishContentType, SYSTEM_CALLER } from '@contentworker/application';
 import type { FieldDefinition } from '@contentworker/domain';
 import type { ApiConfig } from '@contentworker/platform/config';
 import { describe, expect, it } from 'vitest';
@@ -39,7 +39,7 @@ const field = (over: Partial<FieldDefinition> & Pick<FieldDefinition, 'apiId' | 
 async function makeApp() {
   const wired = wire(config);
   const app = createApp(wired.ctx, config, wired.rag, wired.blob, wired.ai);
-  await createContentType(wired.ctx, scope, {
+  await createContentType(wired.ctx, SYSTEM_CALLER, scope, {
     apiId: 'post',
     name: 'Post',
     displayField: 'title',

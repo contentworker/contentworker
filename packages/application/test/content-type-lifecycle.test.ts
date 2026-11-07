@@ -31,6 +31,7 @@ import {
   getBulkJobReport,
   publishContentType,
   publishEntry,
+  SYSTEM_CALLER,
   trashEntry,
   updateContentType,
 } from '../src/index';
@@ -77,13 +78,13 @@ const link = (apiId: string, to: string, position = 1) => ({
 });
 
 async function type(h: Harness, apiId: string, extra: Record<string, unknown> = {}, s = scope) {
-  await createContentType(h.ctx, s, {
+  await createContentType(h.ctx, SYSTEM_CALLER, s, {
     apiId,
     name: apiId,
     displayField: 'title',
     fields: [title],
     ...extra,
-  } as Parameters<typeof createContentType>[2]);
+  } as Parameters<typeof createContentType>[3]);
   await publishContentType(h.ctx, s, apiId);
 }
 
@@ -171,7 +172,7 @@ describe('deleting a content type', () => {
     h.store.contentTypes.get = async (s, apiId) => {
       const found = await get(s, apiId);
       h.store.contentTypes.get = get;
-      await updateContentType(h.ctx, scope, 'note', { name: 'Notes' });
+      await updateContentType(h.ctx, SYSTEM_CALLER, scope, 'note', { name: 'Notes' });
       return found;
     };
     await expect(deleteContentType(h.ctx, scope, 'note')).rejects.toThrow(/changed or gained/);
@@ -307,9 +308,9 @@ describe('cloning a content type', () => {
       singleton: true,
     });
     await entry(h, 'post');
-    await updateContentType(h.ctx, scope, 'post', { name: 'Post' });
+    await updateContentType(h.ctx, SYSTEM_CALLER, scope, 'post', { name: 'Post' });
 
-    const clone = await cloneContentType(h.ctx, scope, 'post', 'news', 'News');
+    const clone = await cloneContentType(h.ctx, SYSTEM_CALLER, scope, 'post', 'news', 'News');
     expect(clone).toMatchObject({
       apiId: 'news',
       name: 'News',
@@ -328,25 +329,25 @@ describe('cloning a content type', () => {
   it('refuses a taken apiId, an unknown source and an invalid apiId', async () => {
     await type(h, 'post');
     await type(h, 'page');
-    await expect(cloneContentType(h.ctx, scope, 'post', 'page', 'Page')).rejects.toBeInstanceOf(
-      ConflictError,
-    );
-    await expect(cloneContentType(h.ctx, scope, 'nope', 'x', 'X')).rejects.toBeInstanceOf(
-      NotFoundError,
-    );
-    await expect(cloneContentType(h.ctx, scope, 'post', 'bad-id', 'Bad')).rejects.toBeInstanceOf(
-      ValidationError,
-    );
+    await expect(
+      cloneContentType(h.ctx, SYSTEM_CALLER, scope, 'post', 'page', 'Page'),
+    ).rejects.toBeInstanceOf(ConflictError);
+    await expect(
+      cloneContentType(h.ctx, SYSTEM_CALLER, scope, 'nope', 'x', 'X'),
+    ).rejects.toBeInstanceOf(NotFoundError);
+    await expect(
+      cloneContentType(h.ctx, SYSTEM_CALLER, scope, 'post', 'bad-id', 'Bad'),
+    ).rejects.toBeInstanceOf(ValidationError);
   });
 
   it('refuses the second of two clones to one apiId, whose read saw it free', async () => {
     await type(h, 'post');
-    const first = await cloneContentType(h.ctx, scope, 'post', 'news', 'News');
+    const first = await cloneContentType(h.ctx, SYSTEM_CALLER, scope, 'post', 'news', 'News');
     // The second clone's read ran before the first committed: it saw no "news".
     const get = h.store.contentTypes.get;
     h.store.contentTypes.get = async (s, apiId) => (apiId === 'news' ? null : get(s, apiId));
     try {
-      const second = cloneContentType(h.ctx, scope, 'post', 'news', 'Newer');
+      const second = cloneContentType(h.ctx, SYSTEM_CALLER, scope, 'post', 'news', 'Newer');
       await expect(second).rejects.toBeInstanceOf(ConflictError);
     } finally {
       h.store.contentTypes.get = get;

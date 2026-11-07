@@ -15,6 +15,7 @@ import {
   indexEntryEmbeddings,
   publishEntry,
   type RagDeps,
+  SYSTEM_CALLER,
 } from '../src/index';
 
 const scope = { spaceId: 'kb', environmentId: 'main' };
@@ -40,7 +41,7 @@ describe('hybrid search (RRF over semantic + full-text)', () => {
     };
     deps = { embeddings: new LocalEmbeddingsProvider(512), vectors: new InMemoryVectorStore() };
     await createSpace(ctx, { spaceId: 'kb', name: 'KB', defaultLocale: 'en-US' });
-    await createContentType(ctx, scope, {
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
       apiId: 'article',
       name: 'Article',
       displayField: 'body',

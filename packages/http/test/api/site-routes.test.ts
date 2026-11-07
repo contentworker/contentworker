@@ -1,4 +1,4 @@
-import { createContentType, publishContentType } from '@contentworker/application';
+import { createContentType, publishContentType, SYSTEM_CALLER } from '@contentworker/application';
 import type { ApiConfig } from '@contentworker/platform/config';
 import { createDeliveryClient } from '@contentworker/sdk-core';
 import { describe, expect, it } from 'vitest';
@@ -35,7 +35,7 @@ async function setup() {
   const wired = wire(config);
   const app = createApp(wired.ctx, config, wired.rag, wired.blob, wired.ai);
   const define = async (apiId: string, urlPattern: string, publish = true) => {
-    await createContentType(wired.ctx, scope, {
+    await createContentType(wired.ctx, SYSTEM_CALLER, scope, {
       apiId,
       name: apiId,
       displayField: 'title',

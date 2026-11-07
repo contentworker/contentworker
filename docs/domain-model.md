@@ -657,9 +657,12 @@ interface ContentType {
   while a named field has no value. `createPreviewLink` returns it filled as `frontendUrl` (a
   localized field in the link's locale only; one that isn't, under the default locale). Stored in
   `content_types.preview_url_template` (0035); a promotion that adds or changes it needs approval.
-  `authorizePreviewChange` holds the caller (the HTTP route and MCP tool pass theirs to
-  `createContentType`, `updateContentType` and `cloneContentType`) to `read` on the type when it
-  sets a template other than the stored one: it decides where that type's preview tokens go.
+  `createContentType`, `updateContentType` and `cloneContentType` take a required caller as their
+  second argument (`ContentTypeCaller`): the request's principal (the HTTP route and MCP tool pass
+  theirs), or `SYSTEM_CALLER` for seeding and snapshot import, which are authorized as a whole.
+  Anything else is refused before a read (`assertContentTypeCaller`), so the check fails closed.
+  `authorizePreviewChange` holds a principal to `read` on the type when it sets a template other
+  than the stored one: it decides where that type's preview tokens go.
 
 ## Entry aggregate & state machine
 

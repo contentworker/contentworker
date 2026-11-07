@@ -36,6 +36,7 @@ import {
   publishSnapshotEntry,
   runBulkChunk,
   SNAPSHOT_JOB_CHUNK_SIZE,
+  SYSTEM_CALLER,
   setEntryMetadata,
   stagedEntry,
   stagedPublication,
@@ -69,7 +70,7 @@ async function drain(opts: { only?: (e: BulkChunkDueEvent) => boolean } = {}) {
 }
 
 async function seedSource() {
-  await createContentType(ctx, source, {
+  await createContentType(ctx, SYSTEM_CALLER, source, {
     apiId: 'category',
     name: 'Category',
     displayField: 'name',
@@ -101,7 +102,7 @@ async function seedSource() {
         position: 2,
       },
     ],
-  } as Parameters<typeof createContentType>[2]);
+  } as Parameters<typeof createContentType>[3]);
   await publishContentType(ctx, source, 'category');
   const asset = await store.assets.create(source, {
     id: 'asset-1',

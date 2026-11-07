@@ -8,7 +8,6 @@ import {
   type LinkingField,
   menuTargets,
   NotFoundError,
-  type Principal,
   type Scope,
   ValidationError,
 } from '@contentworker/domain';
@@ -20,7 +19,11 @@ import {
   TransactionConflictError,
 } from '@contentworker/ports';
 import { type BulkChunkOutcome, bulkMaxItemsOf, startBulkJob } from './bulk-jobs';
-import { authorizePreviewChange } from './content-types';
+import {
+  assertContentTypeCaller,
+  authorizePreviewChange,
+  type ContentTypeCaller,
+} from './content-types';
 import type { AppContext } from './context';
 import { purgeEntry, trashEntry } from './entries';
 
@@ -350,24 +353,25 @@ export async function finishContentTypeDeletion(
  * Copies a content type's definition under `newApiId` and `name`: its fields, display field and
  * singleton flag, as a new draft at version 1 with no entries. Not its URL pattern, which would
  * route the same paths to two types. A link restricted to the source type stays restricted to it.
- * A copied preview URL is set on the new type, so `principal` is held to `authorizePreviewChange`
+ * A copied preview URL is set on the new type, so `caller` is held to `authorizePreviewChange`
  * for it.
  */
 export async function cloneContentType(
   ctx: AppContext,
+  caller: ContentTypeCaller,
   scope: Scope,
   source: string,
   newApiId: string,
   name: string,
-  principal?: Principal,
 ): Promise<ContentType> {
+  assertContentTypeCaller(caller);
   const [from, taken] = await Promise.all([
     ctx.store.contentTypes.get(scope, source),
     ctx.store.contentTypes.get(scope, newApiId),
   ]);
   if (!from) throw new NotFoundError('ContentType', source);
   if (taken) throw new ConflictError(`A content type "${newApiId}" already exists`);
-  authorizePreviewChange(principal, newApiId, undefined, from.preview);
+  authorizePreviewChange(caller, newApiId, undefined, from.preview);
   // The copy keeps what the source holds as it stands: a loopback URL saved on a local stack too.
   const clone = defineContentType(
     {
