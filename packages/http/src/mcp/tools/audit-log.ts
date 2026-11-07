@@ -13,7 +13,8 @@ export function registerAuditLogTools(server: McpServer, t: ToolContext): void {
       description:
         'List a space’s append-only audit trail (mutating actions), newest first. Filters are ' +
         'exact matches and all apply together. Returns one page; pass nextCursor back as cursor, ' +
-        'with the same filters, for the next.',
+        'with the same filters, for the next. A row whose action saved entries carries `detail`: ' +
+        'each entry’s changed field paths and locales, never a value. Older rows have none.',
       inputSchema: toolSchema('audit_log_list', () =>
         z.object({
           space: z.string().optional(),

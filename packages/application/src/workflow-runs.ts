@@ -66,6 +66,7 @@ import {
 } from '@contentworker/ports';
 import { decideAgentReview } from './agent-reviews';
 import { recordAudit } from './audit';
+import { createChangeLog, withChanges } from './change-log';
 import type { AppContext } from './context';
 import { compensateWorkflowNode, type WorkflowNodeDeps } from './workflow-nodes/index';
 
@@ -923,6 +924,9 @@ export async function cancelWorkflowRun(
   } catch {
     // An instance that is already gone has nothing left to stop.
   }
+  // What undoing a node writes goes on this run's row, and on the surface's when it is collecting.
+  const changes = ctx.changes ?? createChangeLog();
+  const undoing = withChanges(ctx, changes);
   const undone: string[] = [];
   const rolledBack: string[] = [];
   const done = (await ctx.store.workflowRuns.listNodeRuns(scope, runId))
@@ -931,7 +935,7 @@ export async function cancelWorkflowRun(
   for (const r of done) {
     try {
       undone.push(
-        await compensateWorkflowNode(ctx, deps, {
+        await compensateWorkflowNode(undoing, deps, {
           scope,
           runId,
           workflowId: run.workflowId,
@@ -995,6 +999,7 @@ export async function cancelWorkflowRun(
     targetType: 'workflow_run',
     targetId: runId,
     status: 200,
+    detail: changes.detail(),
   });
   return { ok: ended?.status === 'cancelled', undone };
 }

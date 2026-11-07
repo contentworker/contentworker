@@ -18,7 +18,9 @@ export function auditLogRoutes(deps: AuthDeps): Hono<AuthVars> {
         'Every mutating action in the space, newest first. Filters are exact matches and all ' +
         'apply together. Walk the log by passing back the response’s nextCursor, with the same ' +
         'filters. A from or to that is not an ISO 8601 date or a date-time with an offset, a ' +
-        'from after to, and a cursor it cannot read are each a 422.',
+        'from after to, and a cursor it cannot read are each a 422. A row whose action saved ' +
+        'entries carries `detail`: each entry’s changed field paths and locales, never a value. ' +
+        'Older rows have none.',
       query: {
         environment: 'The environment acted in, by its name as recorded (never an alias)',
         actor: 'Who acted: a person’s id, admin-token, or the kind of key',

@@ -1,9 +1,11 @@
 import {
   actingAs,
+  createChangeLog,
   getEntry,
   getPreviewEntry,
   resolveEnvironment,
   resolveWritableEnvironment,
+  withChanges,
 } from '@contentworker/application';
 import {
   authorize,
@@ -156,7 +158,10 @@ export function buildServer(
   const { ai, rag, agents } = deps;
   // Every tool writes as this session's principal: entries it creates or changes record it as
   // their author, exactly as the HTTP API's routes do.
-  const ctx = actingAs(deps.ctx, principal);
+  // The server lives for one request (the transport is stateless), so its log is that call's, and
+  // the audit row below reads what the call's saves noted, as `auditMiddleware` does for a route.
+  const changes = createChangeLog();
+  const ctx = withChanges(actingAs(deps.ctx, principal), changes);
   const server = new McpServer(
     { name: 'contentworker', version: '0.1.0' },
     { cacheHints: CACHE_HINTS },
@@ -195,6 +200,7 @@ export function buildServer(
             args = { ...a, environment };
             requestedEnvironment.set(args as object, a.environment);
           }
+          changes.clear();
           const result = await handler(args, ...rest);
           if (!(result as { isError?: boolean } | undefined)?.isError) {
             await auditToolCall(ctx, {
@@ -206,6 +212,7 @@ export function buildServer(
               defaultSpace: DEFAULT_SPACE,
               defaultEnvironment: DEFAULT_ENV,
               targetId: args && typeof args === 'object' ? auditTarget.get(args) : undefined,
+              detail: changes.detail(),
             });
           }
           return result;

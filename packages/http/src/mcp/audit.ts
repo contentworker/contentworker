@@ -1,5 +1,10 @@
-import { type AppContext, auditActor, recordAudit } from '@contentworker/application';
-import type { Principal } from '@contentworker/domain';
+import {
+  type AppContext,
+  auditActor,
+  createdEntryOf,
+  recordAudit,
+} from '@contentworker/application';
+import type { AuditDetail, Principal } from '@contentworker/domain';
 
 /**
  * The MCP half of the audit trail. REST's `auditMiddleware` records every successful mutating
@@ -99,6 +104,8 @@ export interface ToolAuditInput {
   readonly defaultEnvironment: string;
   /** What the call created, when its arguments can't name it (`api_key_create`'s new key). */
   readonly targetId?: string;
+  /** What the call's saves changed, from the `ChangeLog` it ran with. */
+  readonly detail?: AuditDetail;
 }
 
 /**
@@ -114,7 +121,9 @@ export async function auditToolCall(ctx: AppContext, input: ToolAuditInput): Pro
     ? (str(args.space) ?? input.defaultSpace)
     : str(args.spaceId);
   if (!spaceId) return;
-  const targetId = input.targetId ?? str(args.id) ?? str(args.apiId) ?? str(args.alias);
+  const named = input.targetId ?? str(args.id) ?? str(args.apiId) ?? str(args.alias);
+  // A create's arguments can't name what it made; what it saved can, as on REST.
+  const created = named ? undefined : createdEntryOf(input.detail);
   try {
     await recordAudit(ctx, {
       spaceId,
@@ -123,9 +132,10 @@ export async function auditToolCall(ctx: AppContext, input: ToolAuditInput): Pro
         : undefined,
       actor: auditActor(input.principal),
       action: `MCP ${tool}`,
-      targetType: targetId ? toolTargetType(tool) : undefined,
-      targetId,
+      targetType: named ? toolTargetType(tool) : created && 'entry',
+      targetId: named ?? created?.entryId,
       status: 200,
+      detail: input.detail,
     });
   } catch {
     /* auditing must never break the tool call */

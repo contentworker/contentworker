@@ -13,6 +13,7 @@ import type {
   VideoHost,
 } from '@contentworker/ports';
 import type { AiCallRecord } from './ai-provenance';
+import type { ChangeLog } from './change-log';
 
 /** `live` calls the model; `mock` answers every `generateJson` from its heuristic. */
 export type AiMode = 'live' | 'mock';
@@ -32,6 +33,12 @@ export interface AppContext {
    * `withActor` for an agent, a workflow node, a job or the scheduler). Absent → unattributed (null).
    */
   readonly actor?: string;
+  /**
+   * Where this request's entry saves note what they changed, for its audit row. Like `actor`, never
+   * set at the composition root: a surface that writes an audit row sets one per request. Absent →
+   * nothing is collected and no diff runs (a queue consumer, a seed, a plugin's capability call).
+   */
+  readonly changes?: ChangeLog;
   /** Optional delivery cache; when absent, reads go straight to the store. */
   readonly cache?: Cache;
   /**

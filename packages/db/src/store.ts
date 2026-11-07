@@ -3410,6 +3410,7 @@ function makeAuditRepo(x: Exec): AuditRepo {
           targetId: entry.targetId ?? null,
           status: entry.status,
           at: new Date(entry.at),
+          detail: entry.detail ?? null,
         }),
       );
     },
@@ -3444,6 +3445,7 @@ function makeAuditRepo(x: Exec): AuditRepo {
         targetId: r.targetId ?? undefined,
         status: r.status,
         at: r.at.toISOString(),
+        ...(r.detail ? { detail: r.detail } : {}),
       }));
     },
   };
@@ -4591,6 +4593,7 @@ function makeSpaceRepo(x: Exec): SpaceRepo {
           targetId: audit.targetId ?? null,
           status: audit.status,
           at: new Date(audit.at),
+          detail: audit.detail ?? null,
         }),
       ]);
     },
