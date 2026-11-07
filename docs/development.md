@@ -23,6 +23,12 @@ pnpm dev     # applies packages/db/migrations to the local D1 (db:migrate:local)
 `pnpm db:migrate:local` is also the way to apply a new migration without restarting, and
 `pnpm dev:reset` deletes `apps/web/.wrangler/state` and migrates again, for a fresh database.
 
+`pnpm dev:first-run` starts the stack as a new deployment meets it: a database of its own
+(`apps/web/.wrangler/first-run`, wiped each start), nothing seeded, and the admin closed until set
+up, so `/setup` → `/setup/two-factor` → `/setup/space` can be walked. The setup code is
+`local-first-run`. Plain `pnpm dev` stays open (anyone is "Admin, no sign-in" until a first admin
+exists) and seeded. `CONTENTWORKER_FIRST_RUN` only works under `pnpm dev`: a build refuses it.
+
 `pnpm dev` runs `react-router dev` in `apps/web` (Vite, http://localhost:5173; `PORT=5174 pnpm
 dev` for another port). The port is fixed rather than "the next free one": the local OAuth issuer
 (`OAUTH_ISSUER`, so MCP clients can connect with OAuth as on a deployment), the MCP smoke scripts
