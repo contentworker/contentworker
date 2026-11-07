@@ -454,6 +454,8 @@ cma.bulkJobs.setFields({ contentTypeApiId, entryIds, fields })   // field → lo
 
 cma.entries.setSeo(id, { locale?, title?, description?, canonicalUrl?, noindex?, ogImage? })   // one locale of the Seo field; null clears
 cma.entries.move(id, { after: id | null } | { before: id | null })   // manual order; live, no publish
+cma.entries.outlineBlocks(id, { field?, locale? })   // blocks as a tree of keys, types, labels; version
+cma.entries.patchBlocks(id, { expectedVersion, ops })   // by _key, all or none; → { entry, fields, keys, inverse }
 
 cma.redirects.list({ q?, limit?, cursor? }) / .get(id) / .create(input) / .update(id, changes) / .delete(id)
 cma.redirects.import({ format: 'csv' | 'json', data, dryRun? }) / .resolve(path, { locale? }) / .analyze() / .collapseChains()

@@ -834,6 +834,39 @@ it is also written with the entry's other fields (`PUT …/entries/:id`).
 
 MCP: `entries_set_seo` (audited) and `sitemap_list` (`readOnlyHint`, not audited).
 
+### Block patches
+
+Key-addressed edits to an entry's blocks fields ([Domain model](./domain-model.md#blocks)), saved
+as a new draft through the same save as `PUT …/entries/:id` (`patchEntryBlocks` in
+`packages/application/src/block-patches.ts`).
+
+| Method | Path                   | Scope           | Description                                                                                                                                                                                                                                                                                                              |
+| ------ | ---------------------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| GET    | `…/entries/:id/blocks` | `preview:read`  | The current draft's blocks fields as a tree: `field`, `locale` narrow it → `{ entryId, version, fields: { [field]: { [locale]: [{ key, type, name, label?, path, ambiguous?, children? }] } } }`. Fields the role may not read are left out                                                                                 |
+| PATCH  | `…/entries/:id/blocks` | `content:write` | `{ expectedVersion, ops }` (1–100 ops, at most 64 KB) → `{ entry, fields, keys, inverse }`, a new draft. `409` when the entry is past `expectedVersion`; `422` with `op` and `field: ops[i]` on the first op that can't apply (nothing saved); `403` for an op on a field the role denies or makes read-only |
+
+Each op names `field` (a top-level blocks field) and optionally `locale` (default: the default
+locale):
+
+- `insert { parent?: { key, slot }, before | after | index, block: { _type, … }, ref? }`: at the end
+  when no place is given. Keys the block carries are kept unless the field already holds them;
+  missing ones (its own and those of blocks inside it) are minted with `ctx.ids.newId()`.
+- `update { key, set?, unset? }`: only the named fields of that block. A field that holds blocks
+  is refused; its children change through the structural ops.
+- `move { key, to: { parent?, before | after | index } }`: with its children; the place is judged
+  without the block itself; never into itself or a block inside it.
+- `remove { key }` with its children; `duplicate { key, ref? }` right after itself, fresh keys
+  throughout.
+
+Ops apply in order, each to the result of the ones before; a later op addresses a new block by its
+`ref`, and `keys` maps each ref to its key. A slot's admitted types are checked on insert and move.
+A `_key` held by two blocks of the field's tree (validation only refuses a duplicate within one
+list, so a key can repeat at two depths) is refused as ambiguous, and the outline marks it
+`ambiguous`. `inverse` is the ops that undo the patch: send them with the new `currentVersion`.
+The result is validated as any save is (field issues at `body[i].heading`).
+
+MCP: `entry_blocks_patch` (audited) and `entry_blocks_outline` (`readOnlyHint`, not audited).
+
 ### Menus
 
 Navigation menus are delivery data too: named trees of links a front end renders. A menu is live,

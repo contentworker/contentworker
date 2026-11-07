@@ -178,6 +178,10 @@ pattern, sorted by content type, so a front end can route pages from the content
 published page's paths per locale and its `lastmod` (see [SEO and sitemaps](/guides/seo/#the-sitemap)).
 The management client changes an entry's SEO metadata with `cma.entries.setSeo(id, change)`.
 
+**Blocks.** `cma.entries.outlineBlocks(id)` lists an entry's blocks by key, and
+`cma.entries.patchBlocks(id, { expectedVersion, ops })` inserts, updates, moves, removes and
+duplicates them by key as one new draft (see [Field types](/reference/field-types/#blocks)).
+
 **Redirects.** `client.redirects()` returns the environment's enabled redirects and
 `client.resolveRedirect(path, { locale })` asks Delivery about one path (`null` when none matches).
 The subpath `@contentworker/sdk/redirects` applies them in a front-door edge function:

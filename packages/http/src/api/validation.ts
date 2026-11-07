@@ -41,6 +41,7 @@ import {
 import { STARTERS } from '@contentworker/seed';
 import type { Context } from 'hono';
 import { z } from 'zod';
+import { blockPatchShape } from './docs/schemas/blocks';
 import { contentTypeDetails, contentTypeLayout } from './docs/schemas/content-types';
 
 /**
@@ -516,6 +517,8 @@ export const entrySeoShape = {
     .describe('Social sharing image: { id, linkType: "Asset" }'),
 };
 export const entrySeoBody = z.object(entrySeoShape);
+/** A key-addressed patch of an entry's blocks fields (`patchEntryBlocks`). */
+export const blockPatchBody = z.object(blockPatchShape);
 export const translateBody = z.object({
   targetLocale: zLocale,
   sourceLocale: zLocale.optional(),

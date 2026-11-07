@@ -1,0 +1,359 @@
+import {
+  ConflictError,
+  type FieldDefinition,
+  ForbiddenError,
+  InvalidStateError,
+  NotFoundError,
+  ValidationError,
+} from '@contentworker/domain';
+import { FixedClock, InMemoryContentStore, SequenceIdGenerator } from '@contentworker/test-kit';
+import { beforeEach, describe, expect, it } from 'vitest';
+import {
+  type AppContext,
+  BLOCK_PATCH_MAX_OPS,
+  type BlockOpInput,
+  createContentType,
+  createEntry,
+  createEnvironment,
+  createSpace,
+  getEntry,
+  outlineEntryBlocks,
+  patchEntryBlocks,
+  publishContentType,
+  trashEntry,
+} from '../src/index';
+
+const scope = { spaceId: 'site', environmentId: 'main' };
+const staging = { spaceId: 'site', environmentId: 'staging' };
+
+const field = (over: Partial<FieldDefinition> & Pick<FieldDefinition, 'apiId' | 'type'>) =>
+  ({
+    name: over.apiId,
+    localized: false,
+    required: false,
+    position: 0,
+    ...over,
+  }) as FieldDefinition;
+
+const hero = { apiId: 'hero', name: 'Hero', fields: [field({ apiId: 'heading', type: 'Symbol' })] };
+const cta = {
+  apiId: 'cta',
+  name: 'Call to action',
+  fields: [field({ apiId: 'label', type: 'Symbol', required: true })],
+};
+
+let store: InMemoryContentStore;
+let ctx: AppContext;
+
+const defineLanding = async (at = scope) => {
+  await createContentType(ctx, at, {
+    apiId: 'landing',
+    name: 'Landing',
+    displayField: 'title',
+    fields: [
+      field({ apiId: 'title', type: 'Symbol' }),
+      field({
+        apiId: 'body',
+        type: 'Array',
+        position: 1,
+        items: { type: 'Component', variants: [hero, cta] },
+      }),
+      field({
+        apiId: 'aside',
+        type: 'Array',
+        position: 2,
+        items: { type: 'Component', variants: [cta] },
+      }),
+    ],
+  });
+  await publishContentType(ctx, at, 'landing');
+};
+
+/** A landing page with a hero and a call to action; returns its id and the keys they were given. */
+const landing = async (at = scope) => {
+  const { entry, fields } = await createEntry(ctx, at, {
+    contentTypeApiId: 'landing',
+    fields: {
+      title: { 'en-US': 'Home' },
+      body: {
+        'en-US': [
+          { _type: 'hero', heading: 'Welcome' },
+          { _type: 'cta', label: 'Sign up' },
+        ],
+      },
+    },
+  });
+  const [h, c] = ((fields.body?.['en-US'] ?? []) as { _key: string }[]).map((b) => b._key);
+  return { id: entry.id, version: entry.currentVersion, hero: h as string, cta: c as string };
+};
+
+const versions = async (id: string, at = scope) =>
+  (await store.entries.listVersions(at, id)).length;
+
+const refusal = async (p: Promise<unknown>) => {
+  try {
+    await p;
+  } catch (err) {
+    return err;
+  }
+  throw new Error('expected a refusal');
+};
+
+beforeEach(async () => {
+  store = new InMemoryContentStore();
+  ctx = { store, clock: new FixedClock(), ids: new SequenceIdGenerator('t') };
+  await createSpace(ctx, {
+    spaceId: 'site',
+    name: 'Site',
+    defaultLocale: 'en-US',
+    locales: ['en-US', 'de'],
+  });
+  await defineLanding();
+});
+
+describe('patching an entry’s blocks', () => {
+  it('saves the ops as one new draft version, with keys from ctx.ids and the refs’ keys', async () => {
+    const page = await landing();
+    const saved = await patchEntryBlocks(ctx, scope, page.id, {
+      expectedVersion: page.version,
+      ops: [
+        {
+          op: 'insert',
+          field: 'body',
+          after: page.hero,
+          block: { _type: 'cta', label: 'Docs' },
+          ref: 'docs',
+        },
+        { op: 'update', field: 'body', key: page.hero, set: { heading: 'Hello' } },
+      ],
+    });
+    expect(saved.entry.currentVersion).toBe(page.version + 1);
+    const docsKey = saved.keys.docs as string;
+    expect(docsKey).toMatch(/^t-\d+$/);
+    expect(saved.fields.body?.['en-US']).toEqual([
+      { _type: 'hero', _key: page.hero, heading: 'Hello' },
+      { _type: 'cta', _key: docsKey, label: 'Docs' },
+      { _type: 'cta', _key: page.cta, label: 'Sign up' },
+    ]);
+    // What was answered is what was stored, and every other field kept its value.
+    expect((await getEntry(ctx, scope, page.id)).fields).toEqual(saved.fields);
+    expect(saved.fields.title).toEqual({ 'en-US': 'Home' });
+    expect(await versions(page.id)).toBe(2);
+  });
+
+  it('answers the ops that undo it, which a second patch can apply', async () => {
+    const page = await landing();
+    const before = (await getEntry(ctx, scope, page.id)).fields;
+    const saved = await patchEntryBlocks(ctx, scope, page.id, {
+      expectedVersion: page.version,
+      ops: [
+        { op: 'duplicate', field: 'body', key: page.hero },
+        { op: 'remove', field: 'body', key: page.cta },
+      ],
+    });
+    const undone = await patchEntryBlocks(ctx, scope, page.id, {
+      expectedVersion: saved.entry.currentVersion,
+      ops: saved.inverse,
+    });
+    expect(undone.fields).toEqual(before);
+  });
+
+  it('refuses a patch built on a version that is no longer current, saving nothing', async () => {
+    const page = await landing();
+    await patchEntryBlocks(ctx, scope, page.id, {
+      expectedVersion: page.version,
+      ops: [{ op: 'remove', field: 'body', key: page.cta }],
+    });
+    const err = await refusal(
+      patchEntryBlocks(ctx, scope, page.id, {
+        expectedVersion: page.version,
+        ops: [{ op: 'remove', field: 'body', key: page.hero }],
+      }),
+    );
+    expect(err).toBeInstanceOf(ConflictError);
+    expect((err as ConflictError).details).toEqual({ currentVersion: 2, expectedVersion: 1 });
+    expect(await versions(page.id)).toBe(2);
+  });
+
+  it('loses a race for the version as a 409, not as a save over the other one', async () => {
+    const page = await landing();
+    // D1 refuses a second save of the same version number; the in-memory store doesn't, so stand
+    // in for the writer that got there first.
+    const save = store.entries.saveVersion;
+    store.entries.saveVersion = async () => {
+      throw new ConflictError('Version 2 was saved by another writer');
+    };
+    const err = await refusal(
+      patchEntryBlocks(ctx, scope, page.id, {
+        expectedVersion: page.version,
+        ops: [{ op: 'remove', field: 'body', key: page.cta }],
+      }),
+    );
+    store.entries.saveVersion = save;
+    expect(err).toBeInstanceOf(ConflictError);
+    expect(await versions(page.id)).toBe(1);
+  });
+
+  it('refuses an op on a field the caller may not write, before applying anything', async () => {
+    const page = await landing();
+    const err = await refusal(
+      patchEntryBlocks(
+        ctx,
+        scope,
+        page.id,
+        {
+          expectedVersion: page.version,
+          ops: [
+            { op: 'insert', field: 'aside', block: { _type: 'cta', label: 'x' } },
+            { op: 'remove', field: 'body', key: page.cta },
+          ],
+        },
+        { unwritable: ['body'] },
+      ),
+    );
+    expect(err).toBeInstanceOf(ForbiddenError);
+    expect((err as Error).message).toContain('content:write:landing.body');
+    expect(await versions(page.id)).toBe(1);
+  });
+
+  it('is all-or-nothing: an op that can’t apply refuses the patch with its index', async () => {
+    const page = await landing();
+    const err = await refusal(
+      patchEntryBlocks(ctx, scope, page.id, {
+        expectedVersion: page.version,
+        ops: [
+          { op: 'remove', field: 'body', key: page.hero },
+          { op: 'insert', field: 'body', block: { _type: 'section' } },
+        ],
+      }),
+    );
+    expect(err).toBeInstanceOf(ValidationError);
+    expect((err as ValidationError).issues).toEqual([
+      {
+        op: 1,
+        field: 'ops[1]',
+        locale: 'en-US',
+        message: 'A "section" block can’t go here (one of: hero, cta)',
+      },
+    ]);
+    expect(await versions(page.id)).toBe(1);
+    expect((await getEntry(ctx, scope, page.id)).fields.body?.['en-US']).toHaveLength(2);
+  });
+
+  it('holds the result to the content model, as any save does', async () => {
+    const page = await landing();
+    const err = await refusal(
+      patchEntryBlocks(ctx, scope, page.id, {
+        expectedVersion: page.version,
+        ops: [{ op: 'update', field: 'body', key: page.cta, unset: ['label'] }],
+      }),
+    );
+    expect(err).toBeInstanceOf(ValidationError);
+    expect((err as ValidationError).issues[0]).toMatchObject({
+      field: 'body[1].label',
+      message: 'Field is required',
+    });
+    expect(await versions(page.id)).toBe(1);
+  });
+
+  it('defaults the locale and refuses one the field can’t hold', async () => {
+    const page = await landing();
+    const err = await refusal(
+      patchEntryBlocks(ctx, scope, page.id, {
+        expectedVersion: page.version,
+        ops: [
+          { op: 'remove', field: 'body', locale: 'fr', key: page.cta },
+          { op: 'remove', field: 'body', locale: 'de', key: page.cta },
+        ],
+      }),
+    );
+    expect((err as ValidationError).issues).toEqual([
+      { op: 0, field: 'ops[0]', locale: 'fr', message: '"fr" is not one of this space’s locales' },
+      {
+        op: 1,
+        field: 'ops[1]',
+        locale: 'de',
+        message: '"body" is not localized; only en-US is allowed',
+      },
+    ]);
+  });
+
+  it('caps a patch at 100 ops and 64KB', async () => {
+    const page = await landing();
+    const remove: BlockOpInput = { op: 'remove', field: 'body', key: page.cta };
+    const many = await refusal(
+      patchEntryBlocks(ctx, scope, page.id, {
+        expectedVersion: page.version,
+        ops: Array.from({ length: BLOCK_PATCH_MAX_OPS + 1 }, () => remove),
+      }),
+    );
+    expect((many as ValidationError).issues).toEqual([
+      { field: 'ops', message: 'At most 100 ops per patch' },
+    ]);
+    const large = await refusal(
+      patchEntryBlocks(ctx, scope, page.id, {
+        expectedVersion: page.version,
+        ops: [{ op: 'insert', field: 'body', block: { _type: 'cta', label: 'x'.repeat(70_000) } }],
+      }),
+    );
+    expect((large as ValidationError).issues).toEqual([
+      { field: 'ops', message: 'Ops exceed 65536 bytes' },
+    ]);
+    const none = await refusal(
+      patchEntryBlocks(ctx, scope, page.id, { expectedVersion: page.version, ops: [] }),
+    );
+    expect((none as ValidationError).issues).toEqual([
+      { field: 'ops', message: 'No ops to apply' },
+    ]);
+  });
+
+  it('refuses an entry in the trash', async () => {
+    const page = await landing();
+    const trashed = await trashEntry(ctx, scope, page.id);
+    const err = await refusal(
+      patchEntryBlocks(ctx, scope, page.id, {
+        expectedVersion: trashed.currentVersion,
+        ops: [{ op: 'remove', field: 'body', key: page.cta }],
+      }),
+    );
+    expect(err).toBeInstanceOf(InvalidStateError);
+  });
+
+  it('never reaches an entry of another environment', async () => {
+    await createEnvironment(ctx, 'site', 'staging');
+    const page = await landing();
+    const err = await refusal(
+      patchEntryBlocks(ctx, staging, page.id, {
+        expectedVersion: page.version,
+        ops: [{ op: 'remove', field: 'body', key: page.cta }],
+      }),
+    );
+    expect(err).toBeInstanceOf(NotFoundError);
+    expect(await versions(page.id)).toBe(1);
+    await expect(outlineEntryBlocks(ctx, staging, page.id)).rejects.toBeInstanceOf(NotFoundError);
+  });
+});
+
+describe('outlining an entry’s blocks', () => {
+  it('answers each blocks field’s tree with the version a patch passes back', async () => {
+    const page = await landing();
+    expect(await outlineEntryBlocks(ctx, scope, page.id, { field: 'body' })).toEqual({
+      entryId: page.id,
+      version: page.version,
+      fields: {
+        body: {
+          'en-US': [
+            { key: page.hero, type: 'hero', name: 'Hero', label: 'Welcome', path: 'body[0]' },
+            {
+              key: page.cta,
+              type: 'cta',
+              name: 'Call to action',
+              label: 'Sign up',
+              path: 'body[1]',
+            },
+          ],
+        },
+      },
+    });
+  });
+});
