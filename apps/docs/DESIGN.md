@@ -47,7 +47,9 @@ hand-edit it. `packages/design/tests/tokens.test.ts` fails when it is stale.
   "ContentWorker" wordmark, search as the admin's input pill, **API explorer** as the
   one primary pill, the theme select.
 - **Sidebar**: group labels 14px 600 ink; links 14px muted; the current page is the admin's active
-  nav item (muted fill, ink, a short brand tick at its start), not an inverted pill.
+  nav item (muted fill, ink, 500), not an inverted pill, and never a coloured tick or stripe at
+  its edge. Nested groups keep Starlight's hairline guide. Under forced colours the item takes a
+  hairline outline.
 - **Table of contents** (`TableOfContents.astro` over Starlight's): entries 13px muted on a 2px
   hairline rail that steps in on an S-curve where a heading nests. The current entry is ink 500
   and its stretch of the rail is brand, sliding along the rail (curves included) as you read;

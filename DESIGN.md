@@ -137,9 +137,13 @@ status.
 
 - **Brand** (`brand`, purple): ContentWorker's accent, the colour of its mark. It marks where you
   are and what you chose: the mark (sidebar, top bar, sign-in); the current item, in one rule
-  everywhere (the sidebar, a page's own list such as Settings sections, content types and asset
-  folders): a 2px tick 1rem long on its leading edge (`tick-current`), and its icon in brand when
-  it has one (on the phone's tab bar the tick runs along the top); the active tab's underline;
+  everywhere (the sidebar, a page's own list such as Settings sections, content types, asset
+  folders and taxonomy schemes): a 2px tick 1rem long on its leading edge (`tick-current`), and its icon in brand when
+  it has one (on the phone's tab bar the same tick runs along the top, `tick-current-top`). Hover
+  is a step lighter than the current fill and never lands on the current item, so a resting pointer
+  never reads as a second current page (nor does an open menu's or a pressed row's fill); under
+  forced colours both ticks turn `Highlight` and the item takes a hairline outline, except while
+  focused, when the focus outline shows. The active tab's underline;
   focus (`ring` and the page-wide outline); checked checkboxes, switches and radio items and the
   chosen option card; the text selection and the caret. A model's work wears it too: `ai`
   is the brand, so the AI loader (`ComposeLoader`), the AI stamp and agent proposals read as
@@ -258,7 +262,7 @@ layout/nav.ts` is the one source of the pages, their order, names, icons and G-l
   section and reading as current on any of its sections); the account at its foot; `SidebarRail`
   on its edge (for a mouse; on touch the mark is the toggle). The page you're on is
   `sidebar-accent`, 500, its icon in brand and a short brand tick at the row's start (the tab bar marks its tab along
-  its top), with `aria-current`, marked as soon as it is chosen, not when its page arrives. Group
+  its top); hover, press and an open menu are `sidebar-accent` at 60%, never on the current row; with `aria-current`, marked as soon as it is chosen, not when its page arrives. Group
   labels are captions. On touch every row is 44px.
 - **Expanded or a rail:** 16rem, or a 3.25rem rail of icons. The reader's choice is the
   `cw_sidebar_state` cookie. Below lg, and beside the assistant's column below xl, the sidebar stays a
@@ -416,8 +420,8 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
 - **Rows** from md are one height (the entries list's are 44px, its cells centred on the row); a
   row's quiet actions are ghost `xs` buttons, badge height, so they never set the row's height. A
   ticked row (`data-state="selected"`) takes a faint brand tint and the keyboard's row
-  (`data-active`) a brand rule at its leading edge, both from `Tr`, so they read apart and
-  together.
+  (`data-active`) an ink rule at its leading edge, both from `Tr`, so they read apart and
+  together. The keyboard's row is a cursor, not a place: it never wears the brand tick's colour.
 - **Figures** (`numeric`) are right-aligned, tabular and unbroken. Ids, API ids and keys are mono.
 - **Status** in a cell is a badge (`StatusBadge`, or `ToneBadge` for another vocabulary), never
   coloured text alone.
@@ -1040,5 +1044,6 @@ theme follows the system until the reader picks Light or Dark. There is no servi
   one summonable assistant.
 - **Don't** use coloured side-stripes as accents (a card's, row's or alert's thick coloured edge), or
   solid saturated fills for status. The current item's 2px `tick-current` marks place, not
-  emphasis, and is the one brand edge.
+  emphasis, and is the one brand edge; nothing else (a keyboard row, a hover, a nested level) is
+  drawn in brand at an item's edge.
 - **Don't** make a person wait on motion: an action responds at once.

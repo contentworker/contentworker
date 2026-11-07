@@ -80,6 +80,63 @@ describe('The current item', () => {
       .map(([file]) => file);
     expect(stripes).toEqual([]);
   });
+
+  it('is the one brand edge: no other row is ruled or striped in brand at its leading edge', () => {
+    const edges = Object.entries({ ...primitives, ...screens })
+      .filter(([, src]) =>
+        /inset_\d+px_0_var\(--brand\)|border-[lse]-brand|border-l-\[?var\(--brand|before:[^'"`\s]*bg-brand/.test(
+          src,
+        ),
+      )
+      .map(([file]) => file);
+    expect(edges).toEqual([]);
+  });
+
+  it('keeps its tick, and a hairline outline unless focused, under forced colours', () => {
+    for (const u of ['tick-current', 'tick-current-top']) {
+      const block = css.slice(css.indexOf(`@utility ${u} {`));
+      const body = block.slice(0, block.indexOf('\n}\n'));
+      const forced = body.slice(body.indexOf('@media (forced-colors: active)'));
+      expect(forced, u).toContain('&:not(:focus-visible)');
+      expect(forced, u).toContain('outline: 1px solid CanvasText');
+      expect(forced, u).toContain('background: Highlight');
+      expect(forced, u).toContain('forced-color-adjust: none');
+    }
+  });
+
+  it('never shares its fill with hover, press or an open menu, so nothing else looks current', () => {
+    const src = (name: string) =>
+      Object.entries({ ...primitives, ...screens }).find(([f]) => f.endsWith(name))?.[1] ?? '';
+    // The sidebar's menu button variants: the rows that can be current.
+    const sidebar = src('/sidebar.tsx');
+    const start = sidebar.indexOf('sidebarMenuButtonVariants = cva(');
+    const button = sidebar.slice(start, sidebar.indexOf('\n);\n', start));
+    expect(button).toContain('data-active:tick-current');
+    // Every fill other than the current one is guarded off the current row and a step lighter.
+    expect(button).not.toMatch(/(?<![:\w-])(hover|active|data-open):bg-sidebar-accent(?![/\w])/);
+    expect(button.match(/not-data-active:hover:bg-sidebar-accent\/60/g)).toHaveLength(3);
+    expect(button).toContain('not-data-active:active:bg-sidebar-accent/60');
+    expect(button).toContain('not-data-active:data-open:bg-sidebar-accent/60');
+    // A screen's own nav: the hover fill only on rows that aren't current.
+    expect(src('/AssetFolderTree.tsx')).toMatch(
+      /props\.current\s*\?\s*'tick-current[^']*'\s*:\s*'hover:bg-muted\/60'/,
+    );
+    expect(src('/routes/shell.tsx')).toContain('not-aria-[current=page]:hover:bg-accent/60');
+    // The More sheet's rows, the shell's one list that marks a current page.
+    const row = src('/routes/shell.tsx').match(/'flex min-h-11[^']*'/)?.[0] ?? '';
+    expect(row).toContain('tick-current');
+    expect(row).not.toMatch(/(?<![:\w-])hover:bg-accent(?![/\w])/);
+  });
+
+  it('never has its forced-colours outline removed by the row itself', () => {
+    // A bare outline-none / outline-hidden (not behind focus-visible) beats the utility's outline.
+    for (const [file, text] of Object.entries({ ...primitives, ...screens })) {
+      for (const cls of text.match(/['"`][^'"`]*tick-current[^'"`]*['"`]/g) ?? [])
+        expect(cls, file).not.toMatch(/(?<![:\w-])outline-(none|hidden)\b/);
+    }
+    const tree = Object.entries(screens).find(([f]) => f.endsWith('/AssetFolderTree.tsx'))?.[1];
+    expect(tree).not.toMatch(/(?<![:\w-])outline-none\b/);
+  });
 });
 
 describe('Ledger tokens in app.css', () => {

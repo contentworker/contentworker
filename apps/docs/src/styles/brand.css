@@ -202,8 +202,14 @@ mobile-starlight-toc a[aria-current="true"]::after {
   color: var(--cw-foreground);
 }
 
+/* A nested group is indented, not ruled: the admin draws no guide lines, and Starlight's hairline
+   stood 9px from the current item's tick, two vertical lines where there should be one. */
+.sidebar-content ul ul li {
+  border-inline-start: 0;
+}
+
 /* Where you are is the admin's active nav item: the raised fill, 500, and a short brand tick at the
-   row's start. */
+   row's start, set in from the pill's round end so the whole tick sits on the fill. */
 .sidebar-content a[aria-current="page"],
 .sidebar-content a[aria-current="page"]:hover,
 .sidebar-content a[aria-current="page"]:focus {
@@ -219,10 +225,23 @@ mobile-starlight-toc a[aria-current="true"]::after {
   top: 50%;
   height: 1rem;
   translate: 0 -50%;
-  inset-inline-start: 0;
+  inset-inline-start: 0.25rem;
   width: 2px;
   border-radius: 999px;
   background: var(--cw-brand);
+}
+
+/* Under forced colours the fill and the brand are overridden: the tick turns Highlight and the item
+   takes a hairline outline, as in the admin. */
+@media (forced-colors: active) {
+  .sidebar-content a[aria-current="page"]:not(:focus-visible) {
+    outline: 1px solid CanvasText;
+    outline-offset: -1px;
+  }
+  .sidebar-content a[aria-current="page"]::before {
+    forced-color-adjust: none;
+    background: Highlight;
+  }
 }
 
 /* ── Page header ────────────────────────────────────────────────────────── */

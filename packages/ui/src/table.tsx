@@ -101,8 +101,8 @@ function TableFoot(props: React.ComponentProps<'tfoot'>) {
 
 /**
  * A row. A ticked one (`data-state="selected"`) takes a faint brand tint: purple is "chosen". The
- * keyboard's row (`data-active`, J/K) is ruled in brand at its leading edge, over muted when it
- * isn't also ticked, so the two read apart and together.
+ * keyboard's row (`data-active`, J/K) is ruled in ink at its leading edge, over muted when it
+ * isn't also ticked, so the two read apart and together; brand's edge is the current page's tick.
  */
 function Tr({ className, ...props }: React.ComponentProps<'tr'>) {
   const stack = React.useContext(Stacked);
@@ -111,7 +111,7 @@ function Tr({ className, ...props }: React.ComponentProps<'tr'>) {
       role={stack ? 'row' : undefined}
       className={cn(
         'data-[state=selected]:bg-brand/8',
-        '[&[data-active]:not([data-state=selected])]:bg-muted/50 data-active:[&>td:first-child]:shadow-[inset_2px_0_var(--brand)]',
+        '[&[data-active]:not([data-state=selected])]:bg-muted/50 data-active:[&>td:first-child]:shadow-[inset_2px_0_var(--foreground)]',
         className,
       )}
       {...props}

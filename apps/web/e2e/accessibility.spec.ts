@@ -235,6 +235,54 @@ test('the audit log’s missed filter and backwards range have no accessibility 
   await scan(page, testInfo);
 });
 
+// Windows High Contrast (forced colours) overrides the current item's fill and its brand tick, so
+// the tick is kept as Highlight and the item takes a hairline outline (DESIGN.md, Brand): where
+// you are never rests on weight alone. Checked in each nav that marks a current item, and that a
+// hovered current row keeps its own fill when colours aren't forced.
+test('the current item stays marked under forced colours, and hover never looks current', async ({
+  page,
+}) => {
+  const marked = (locator: ReturnType<Page['locator']>) =>
+    locator.evaluate((el) => {
+      const own = getComputedStyle(el);
+      const tick = getComputedStyle(el, '::before');
+      return {
+        outline: own.outlineStyle,
+        tick: tick.content !== 'none' && tick.backgroundColor !== 'rgba(0, 0, 0, 0)',
+      };
+    });
+
+  await page.emulateMedia({ forcedColors: 'active' });
+  await openCms(page, '/settings/audit-log');
+  const sidebar = page.locator('[data-sidebar="menu-button"][data-active]');
+  const section = page
+    .getByRole('navigation', { name: 'Settings sections' })
+    .locator('[aria-current="page"]');
+  await expect(sidebar).toHaveCount(1);
+  await expect(section).toHaveCount(1);
+  expect(await marked(sidebar)).toEqual({ outline: 'solid', tick: true });
+  expect(await marked(section)).toEqual({ outline: 'solid', tick: true });
+
+  await openCms(page, '/assets');
+  const folder = page.getByRole('navigation', { name: 'Folders' }).locator('[aria-current="true"]');
+  await expect(folder).toHaveCount(1);
+  expect(await marked(folder)).toEqual({ outline: 'solid', tick: true });
+
+  // Colours not forced: no outline, and the pointer on the current row leaves its fill alone,
+  // while a row that isn't current takes a lighter one.
+  await page.emulateMedia({ forcedColors: 'none' });
+  await openCms(page, '/settings/audit-log');
+  const fill = (locator: ReturnType<Page['locator']>) =>
+    locator.evaluate((el) => getComputedStyle(el).backgroundColor);
+  expect(await marked(sidebar)).toEqual({ outline: 'none', tick: true });
+  const current = await fill(sidebar);
+  await sidebar.hover();
+  expect(await fill(sidebar)).toBe(current);
+  const other = page.locator('[data-sidebar="menu-button"]:not([data-active])').first();
+  await other.hover();
+  expect(await fill(other)).not.toBe(current);
+});
+
 test.describe('on a phone', () => {
   test.use({ viewport: { width: 393, height: 852 }, isMobile: true, hasTouch: true });
 
