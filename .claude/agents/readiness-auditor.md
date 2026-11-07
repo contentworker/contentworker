@@ -24,7 +24,7 @@ the code and account are right; report the gap as docs drift.
 
 ## What you're auditing
 
-- **Fleet.** One dedicated deployment per customer (`deployments/*.jsonc`), rings staging →
+- **Fleet.** One dedicated deployment per customer (registry in the private fleet repo), rings staging →
   internal → canary → general. Each deployment's configs come from
   `node scripts/fleet.ts render <id>` (allowed, read-only); `node scripts/fleet.ts names <id>`
   prints its resource names.

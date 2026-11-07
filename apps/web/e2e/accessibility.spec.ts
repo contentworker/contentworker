@@ -223,8 +223,26 @@ test('an asset collection, its zip and its share dialog have no accessibility vi
 
 // The collection view at phone width: the collections select, rows whose actions wrap under
 // the name, and the header's actions.
+test('the audit log’s missed filter and backwards range have no accessibility violations', async ({
+  page,
+}, testInfo) => {
+  await openCms(page, '/settings/audit-log');
+  await page.getByLabel('Actor', { exact: true }).fill(`nobody-${Date.now()}`);
+  await expect(page.getByText('No audit entries match these filters.')).toBeVisible();
+  await page.getByLabel('From', { exact: true }).fill('2026-03-02');
+  await page.getByLabel('To', { exact: true }).fill('2026-03-01');
+  await expect(page.getByRole('alert').filter({ hasText: 'To is before From.' })).toBeVisible();
+  await scan(page, testInfo);
+});
+
 test.describe('on a phone', () => {
   test.use({ viewport: { width: 393, height: 852 }, isMobile: true, hasTouch: true });
+
+  test('the audit log has no accessibility violations', async ({ page }, testInfo) => {
+    await openCms(page, '/settings/audit-log');
+    await expect(page.getByLabel('Target ID')).toBeVisible();
+    await scan(page, testInfo);
+  });
 
   test('an asset collection has no accessibility violations', async ({
     page,

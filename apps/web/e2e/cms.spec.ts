@@ -11,6 +11,7 @@ import {
   SPACE,
   seedAsset,
   seedAssetFolder,
+  seedBriefedType,
   seedCms,
   seedGuidedType,
   seedIngestFindings,
@@ -598,6 +599,31 @@ test('settings lists the space’s API keys, and the space access section', asyn
     .click();
   await expect(page.getByRole('heading', { name: 'API keys' })).toBeVisible();
   await expect(page.getByText(name)).toBeVisible();
+});
+
+test('Settings → Audit log: pressing a target filters the log, and Clear brings it back', async ({
+  page,
+  request,
+}) => {
+  const id = await createDraft(request, `Audited ${Date.now()}`);
+  const update = await api(request, 'PUT', `${MGMT}/entries/${id}`, {
+    fields: { title: { 'en-US': `Audited again ${Date.now()}` } },
+  });
+  expect(update.ok(), await update.text()).toBe(true);
+  await openCms(page, '/settings/audit-log');
+  await page
+    .getByRole('button', { name: `Filter by target ${id}` })
+    .first()
+    .click();
+  await expect(page.getByLabel('Target ID')).toHaveValue(id);
+  await expect(page.getByLabel('Target type')).toHaveValue('entry');
+  const rows = page.getByRole('button', { name: /^Filter by actor / });
+  // The save, and the create: a create's row names the entry it made.
+  await expect(rows).toHaveCount(2);
+  await expect(page.getByRole('cell', { name: /^title/ }).first()).toBeVisible();
+  await page.getByRole('button', { name: 'Clear filters' }).click();
+  await expect(page.getByLabel('Target ID')).toHaveValue('');
+  await expect.poll(() => rows.count()).toBeGreaterThan(1);
 });
 
 test('a webhook is sent a test, and its delivery is resent from the log', async ({ page }) => {
@@ -1499,6 +1525,22 @@ test('guidance saved in the content type dialog shows on the entry form', async 
   await expect(subtitle).toHaveAccessibleDescription(/One line under the title\./);
   // Listed values are offered as a select.
   await expect(page.getByLabel('Status').getByRole('option')).toHaveText(['None', 'open', 'let']);
+});
+
+test('agent instructions saved in the content type dialog are there when it reopens', async ({
+  page,
+  request,
+}) => {
+  await seedBriefedType(request);
+  await openCms(page, '/content');
+  await page.getByRole('button', { name: 'Edit “Briefed”' }).click();
+  await page.getByLabel('Agent instructions').fill('Keep titles short.');
+  await page.getByRole('button', { name: 'Save changes' }).click();
+  await expect(page.getByRole('dialog')).toBeHidden();
+
+  await openCms(page, '/content');
+  await page.getByRole('button', { name: 'Edit “Briefed”' }).click();
+  await expect(page.getByLabel('Agent instructions')).toHaveValue('Keep titles short.');
 });
 
 test('the editor names who created and last edited an entry, and Mine lists one’s own', async ({

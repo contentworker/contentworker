@@ -2952,9 +2952,24 @@ export class InMemoryContentStore implements ContentStore {
       this.auditData.push(entry);
     },
     list: async (spaceId, query) => {
-      let rows = this.auditData.filter((e) => e.spaceId === spaceId);
-      if (query.environmentId) rows = rows.filter((e) => e.environmentId === query.environmentId);
-      return [...rows].reverse().slice(0, query.limit ?? 100);
+      const { after, from, to } = query;
+      const newerThan = (a: { at: string; id: string }, b: { at: string; id: string }) =>
+        Date.parse(a.at) - Date.parse(b.at) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+      return this.auditData
+        .filter(
+          (e) =>
+            e.spaceId === spaceId &&
+            (!query.environmentId || e.environmentId === query.environmentId) &&
+            (!query.actor || e.actor === query.actor) &&
+            (!query.action || e.action === query.action) &&
+            (!query.targetType || e.targetType === query.targetType) &&
+            (!query.targetId || e.targetId === query.targetId) &&
+            (!from || Date.parse(e.at) >= Date.parse(from)) &&
+            (!to || Date.parse(e.at) <= Date.parse(to)) &&
+            (!after || newerThan(e, after) < 0),
+        )
+        .sort((a, b) => newerThan(b, a))
+        .slice(0, query.limit ?? 100);
     },
   };
 

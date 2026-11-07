@@ -560,6 +560,9 @@ export function ContentTypeDialog(props: {
   const [singleton, setSingleton] = useState(props.initial?.singleton === true);
   const [group, setGroup] = useState(props.initial?.group ?? '');
   const [description, setDescription] = useState(props.initial?.description ?? '');
+  const [agentInstructions, setAgentInstructions] = useState(
+    props.initial?.agentInstructions ?? '',
+  );
   const [icon, setIcon] = useState(props.initial?.icon ?? '');
   const [tabs, setTabs] = useState<TabRow[]>(
     () => props.initial?.layout?.tabs.map((t) => ({ apiId: t.apiId, name: t.name })) ?? [],
@@ -581,6 +584,7 @@ export function ContentTypeDialog(props: {
     group,
     description,
     icon,
+    agentInstructions,
     tabs,
   });
   const [opened] = useState(form);
@@ -641,6 +645,7 @@ export function ContentTypeDialog(props: {
         singleton,
         group: group.trim() || null,
         description: description.trim() || null,
+        agentInstructions: agentInstructions.trim() || null,
         icon: icon || null,
         ...(layoutTouched
           ? { layout: layoutFromRows(tabs, namedFields, props.initial?.layout) }
@@ -739,6 +744,25 @@ export function ContentTypeDialog(props: {
               placeholder="What this type is for"
               onChange={(e) => setDescription(e.target.value)}
             />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="ct-agent-instructions">Agent instructions</Label>
+            <Textarea
+              id="ct-agent-instructions"
+              rows={3}
+              value={agentInstructions}
+              maxLength={CONTENT_TYPE_LIMITS.agentInstructions}
+              placeholder="Keep titles under eight words. Never invent quotes."
+              aria-describedby="ct-agent-instructions-hint"
+              onChange={(e) => setAgentInstructions(e.target.value)}
+            />
+            <p
+              id="ct-agent-instructions-hint"
+              className="max-w-measure text-muted-foreground text-xs"
+            >
+              How agents connected over MCP should write these entries. They read this with the
+              content type; it is never delivered. Optional.
+            </p>
           </div>
 
           <div className="space-y-2">

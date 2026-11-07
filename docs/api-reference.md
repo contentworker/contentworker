@@ -201,7 +201,7 @@ Base paths: `/spaces`, and `…` for `/spaces/:space/environments/:env`. Space-l
 | GET    | `/spaces/:space/environment-aliases`        | `preview:read`                       | List aliases                                                                              |
 | PUT    | `/spaces/:space/environment-aliases/:alias` | `space:admin`                        | Set alias → environment id                                                                |
 | DELETE | `/spaces/:space/environment-aliases/:alias` | `space:admin`                        | Remove alias                                                                              |
-| GET    | `/spaces/:space/audit-log`                  | `space:admin`                        | Space audit log (`?limit`, `?skip`)                                                       |
+| GET    | `/spaces/:space/audit-log`                  | `space:admin`                        | Space audit log, a page at a time ([filters and paging](#audit-log))                      |
 | GET    | `/spaces/:space/compare`                    | `preview:read`                       | Compare two environments (`?from`, `?to`), limited to the types the role can read         |
 | POST   | `/spaces/:space/merge`                      | `content:manage`                     | Merge environment branch (entries need the actions on every content type); `409` (`details.conflicts`) before any write when its entries would take a unique value twice; an entry in the target's trash stays there |
 | POST   | `/spaces/:space/promotions`                 | `content:manage` + `content:publish` | Promote content between environments (`{ source, target, contentTypes?, entries? }`)      |
@@ -253,6 +253,66 @@ check first.
    for a person's edits. Afterwards it checks that the target holds the pinned fields
    (`result.mismatched`) and emits `environment.promoted`. A failure marks it `failed` with the
    error; whatever was applied before it stays.
+
+### Audit log
+
+`GET /spaces/:space/audit-log` returns `{ items, nextCursor? }`, newest first, ordered by `at` and
+then `id`. Every filter is an exact match and they all apply together:
+
+| Parameter     | Keeps                                                                                        |
+| ------------- | -------------------------------------------------------------------------------------------- |
+| `environment` | The environment acted in, as recorded: never resolved, so a deleted one stays readable       |
+| `actor`       | A person's id, `admin-token`, or the kind of key                                             |
+| `action`      | `<METHOD> <route>` for REST, `MCP <tool>` for a tool, or a use-case's own (`invite.created`) |
+| `targetType`  | The kind of thing acted on: `entry`, `release`, `content_type`, `environment_alias`, …       |
+| `targetId`    | The id of the thing acted on                                                                 |
+| `from`, `to`  | A time range, both ends inclusive                                                            |
+
+`from` and `to` take an ISO 8601 date, read as the start of that UTC day for `from` and its end for
+`to`, or a date-time with an offset. `limit` is at most 100 (the default), clamped rather than
+refused. Pass `nextCursor` back as `cursor`, with the same filters, for the next page; it is a keyset
+on (`at`, `id`), so entries appended while walking shift nothing and entries sharing a millisecond
+are neither lost nor repeated. A `from` or `to` it can't read, a `from` after `to` and a `cursor`
+it can't read are each `422`. MCP: `audit_log_list` takes the same filters and returns the
+same page.
+
+Entries written before migration `0031` have no `targetType` when they came from a REST or MCP call:
+their `targetId` still matches.
+
+A row whose action saved entries carries `detail`, and any other row has no such key (nor do rows
+written before migration `0032`):
+
+```json
+{
+  "entries": [
+    {
+      "entryId": "0198…",
+      "contentType": "article",
+      "kind": "updated",
+      "version": 7,
+      "paths": ["fields.title", "fields.hero.alt", "fields.sections[].heading"],
+      "locales": ["de"]
+    }
+  ]
+}
+```
+
+`paths` are the content model's: rich text, JSON, `Seo` values and scalar lists stop at the field,
+`[]` is an element of a list (an element added, removed or moved reports the list), and a nested key
+the model doesn't declare reports its parent. A created entry lists each field it was given, and
+its row names the entry as its target. `locales` are the space's locales the change touched, among
+localized fields. `undeclaredFields` counts changed fields the type no longer declares, which are
+not named. An empty `paths` is a save that changed nothing. `detail` never holds a value. It is
+capped at 4096 characters and 20 entries; a row past either has `truncated: true` and lists what
+fit. `audit_log_list` serves it unchanged, and a REST write and a tool call that made the same edit
+carry the same detail.
+
+Field edits are what `detail` covers: an entry's save made within the request, through any route or
+tool (creating, updating, SEO, restoring a version, duplicating, an AI `apply`, an approved agent
+review, the undo of a cancelled workflow run, an import that runs in the request). A promotion's
+entries are in its target environment, which `detail` doesn't name. Publishing, trashing, tags,
+every other kind of target, environment merges and work a job does later (bulk jobs, job-run
+imports) write their rows without it.
 
 ### Environment snapshots
 
@@ -333,7 +393,7 @@ principal) may call it; the web app does when it ends a person's access (see
 | POST   | `…/content-types/:apiId/published` | `content:publish` | Publish definition                 |
 | GET    | `…/content-types/:apiId/dependents` | `preview:read`   | What blocks a delete: `{ entries: { live, trashed }, linkedFrom, menus, redirects, urlPattern? }`; `403` for a role without read on the type |
 | DELETE | `…/content-types/:apiId`           | `content:manage`  | Delete (`{ deleted: true }`, emits `content_type.deleted`); `409` naming every dependent (`details.dependents`); `?purge_entries=true` (also `content:write` and `content:publish`, and a role on every type) → `202 { deleted: false, job }`, a `content_type_delete` bulk job that trashes and purges each entry, then deletes the type on `bulk.job_completed`; the job's `config.typeDeletion` (on `GET …/bulk/jobs/:id`) is then `{ deleted: true }` or `{ deleted: false, reason }` (also when the job is stopped) |
-| POST   | `…/content-types/:apiId/clone`     | `content:manage`  | `{ apiId, name }` → the copy (`201`): fields, display field, singleton, group, description, icon, layout; not `urlPattern`; draft, version 1; `409` for a taken apiId, also when a concurrent clone or create took it after the check (the insert never overwrites) |
+| POST   | `…/content-types/:apiId/clone`     | `content:manage`  | `{ apiId, name }` → the copy (`201`): fields, display field, singleton, group, description, icon, agent instructions, layout; not `urlPattern`; draft, version 1; `409` for a taken apiId, also when a concurrent clone or create took it after the check (the insert never overwrites) |
 
 A content type may carry `urlPattern` (a path starting with `/` whose placeholders are `{id}`,
 `{locale}` or its own `Slug` fields' apiIds, e.g. `/blog/{slug}`; `null` or `''` clears it; `422`

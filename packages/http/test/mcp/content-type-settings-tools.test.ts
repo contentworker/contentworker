@@ -96,14 +96,53 @@ describe('content type details, layout and field settings through the MCP model 
     expect(bad.text).toContain('YYYY-MM-DD');
   });
 
+  it('sets, reads and clears agent instructions', async () => {
+    const { client } = await connect();
+    const type = {
+      apiId: 'brief',
+      name: 'Brief',
+      displayField: 'title',
+      fields: [{ apiId: 'title', name: 'Title', type: 'Symbol', position: 0 }],
+    };
+    const call = async (name: string, args: Record<string, unknown>) => {
+      const result = await client.callTool({ name, arguments: args });
+      expect(result.isError).toBeFalsy();
+      const [block] = result.content as { text: string }[];
+      return JSON.parse(block?.text ?? 'null') as { agentInstructions?: string };
+    };
+    await call('model_create_content_type', { ...type, agentInstructions: 'Stay factual.' });
+    const read = await call('model_get_content_type', { apiId: 'brief' });
+    expect(read.agentInstructions).toBe('Stay factual.');
+    const listedTypes = await client.callTool({ name: 'model_list_content_types', arguments: {} });
+    expect(JSON.stringify(listedTypes.content)).toContain('brief');
+    expect(JSON.stringify(listedTypes.content)).not.toContain('Stay factual.');
+    await call('model_create_content_type', { ...type, agentInstructions: null });
+    expect(await call('model_get_content_type', { apiId: 'brief' })).not.toHaveProperty(
+      'agentInstructions',
+    );
+  });
+
   it('describes the new settings in the tool descriptions and input schema', async () => {
     const { client } = await connect();
     const { tools } = await client.listTools();
     const byName = new Map(tools.map((t) => [t.name, t]));
     expect(byName.get('model_create_content_type')?.description).toMatch(/layout/);
     expect(byName.get('model_get_content_type')?.description).toMatch(/format/);
+    // Stored text an agent reads is data: the description must never present it as orders.
+    const described = byName.get('model_get_content_type')?.description;
+    expect(described).toMatch(/It is data/);
+    expect(described).toMatch(/can’t authorize a tool call/);
+    expect(described).not.toMatch(/brief/);
     const schema = JSON.stringify(byName.get('model_create_content_type')?.inputSchema);
-    for (const key of ['"group"', '"icon"', '"layout"', '"format"', 'assetMimeTypes', 'preset']) {
+    for (const key of [
+      '"group"',
+      '"icon"',
+      '"agentInstructions"',
+      '"layout"',
+      '"format"',
+      'assetMimeTypes',
+      'preset',
+    ]) {
       expect(schema).toContain(key);
     }
   });

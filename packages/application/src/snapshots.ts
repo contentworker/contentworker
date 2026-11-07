@@ -21,10 +21,12 @@ import {
   checkRedirect,
   DomainError,
   defineContentType,
+  ENTRY_ID_RULE,
   type EntryFields,
   type EntryMetadata,
   extractReferences,
   type FieldIssue,
+  isEntryId,
   MAX_ASSET_FOLDER_DEPTH,
   MAX_COLLECTION_ITEMS,
   MAX_MENUS,
@@ -1012,6 +1014,7 @@ const workingDraftOf = (ct: SnapshotContentType): ContentTypeDraft => ({
   ...(ct.group ? { group: ct.group } : {}),
   ...(ct.description ? { description: ct.description } : {}),
   ...(ct.icon ? { icon: ct.icon } : {}),
+  ...(ct.agentInstructions ? { agentInstructions: ct.agentInstructions } : {}),
   ...(ct.layout ? { layout: ct.layout } : {}),
 });
 
@@ -1156,8 +1159,13 @@ function preflight(
   const add = (entryId: string, issue: FieldIssue) =>
     issues.push({ ...issue, message: `Entry ${entryId}: ${issue.message}` });
 
-  for (const entry of snapshot.entries) {
+  for (const [position, entry] of snapshot.entries.entries()) {
     if (issues.length >= MAX_PREFLIGHT_ISSUES) break;
+    // By position: the id is what's wrong, and it could be anything.
+    if (!isEntryId(entry.id)) {
+      issues.push({ field: 'entries', message: `Entry at position ${position}: ${ENTRY_ID_RULE}` });
+      continue;
+    }
     const type = types.get(entry.contentTypeApiId);
     if (!type) {
       add(entry.id, {

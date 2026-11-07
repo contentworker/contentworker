@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -29,6 +29,10 @@ import {
   shellVars,
   toDeployment,
 } from './fleet.ts';
+
+/** A fake registry (fake ids, example.test domains): the public repo ships no real one. */
+const FIXTURES = join(import.meta.dirname, 'fixtures', 'fleet');
+const EXAMPLE = join(import.meta.dirname, '..', 'examples', 'fleet');
 
 const base = (app: string) =>
   parse(readFileSync(join(import.meta.dirname, '..', 'apps', app, 'wrangler.jsonc'), 'utf8'));
@@ -249,9 +253,32 @@ test('FLEET_REGISTRY moves the registry, and an unset one stays in this repo', (
   assert.equal(registryDir({ FLEET_REGISTRY: '/srv/ops/deployments' }), '/srv/ops/deployments');
 });
 
-test('the checked-in registry loads, with distinct slots, domains and suffixes', () => {
-  const list = loadDeployments();
-  assert.ok(list.some((d) => d.id === 'contentworker'));
+test('the fixture registry loads, with distinct slots, domains and suffixes', () => {
+  const list = loadDeployments(FIXTURES);
+  assert.deepEqual(list.map((d) => d.id).sort(), ['fixture-demo', 'fixture-main']);
+});
+
+test('a missing or empty registry is a clear error, not ENOENT', () => {
+  const missing = join(tmpdir(), 'fleet-no-such-registry');
+  assert.throws(() => loadDeployments(missing), /no deployment registry at .*FLEET_REGISTRY/);
+  const empty = mkdtempSync(join(tmpdir(), 'fleet-empty-registry-'));
+  assert.throws(() => loadDeployments(empty), /no deployment registry at .*examples\/fleet/);
+  const r = spawnSync(process.execPath, [join(import.meta.dirname, 'fleet.ts'), 'matrix'], {
+    encoding: 'utf8',
+    env: { ...process.env, FLEET_REGISTRY: missing },
+  });
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /no deployment registry at/);
+  assert.doesNotMatch(r.stderr, /ENOENT/);
+});
+
+test('the example registry entry loads, is held, and renders nothing for CI', () => {
+  const list = loadDeployments(EXAMPLE);
+  assert.deepEqual(
+    list.map((d) => [d.id, d.hold]),
+    [['example', true]],
+  );
+  for (const ring of Object.values(matrix(list))) assert.deepEqual(ring, []);
 });
 
 test('every app has a secrets list and the shared keys must be long', () => {
@@ -332,7 +359,7 @@ test('a registry refuses two deployments on one database or key-value namespace'
 
 test('doctor passes a provisioned deployment rendered from the checked-in configs', () => {
   assert.deepEqual(errors(doctor(acme, bases())), []);
-  for (const d of loadDeployments().filter((x) => x.d1Id && x.kvId))
+  for (const d of loadDeployments(FIXTURES).filter((x) => x.d1Id && x.kvId))
     assert.deepEqual(errors(doctor(d, bases())), [], d.id);
 });
 
@@ -438,11 +465,11 @@ test('doctor reads the scheduler from the api’s /health, without the network',
   assert.equal(healthFinding(200, { status: 'ok' }, 'u').level, 'warn');
 });
 
-test('`doctor --offline` checks the checked-in deployment and asks nothing of the network', () => {
+test('`doctor --offline` checks a registry deployment and asks nothing of the network', () => {
   const out = execFileSync(
     process.execPath,
-    [join(import.meta.dirname, 'fleet.ts'), 'doctor', 'contentworker', '--offline'],
-    { encoding: 'utf8' },
+    [join(import.meta.dirname, 'fleet.ts'), 'doctor', 'fixture-main', '--offline'],
+    { encoding: 'utf8', env: { ...process.env, FLEET_REGISTRY: FIXTURES } },
   );
   assert.match(out, /cron "\* \* \* \* \*"/);
   assert.doesNotMatch(out, /ERROR|scheduler (ticking|stale|unknown)|unreachable/);

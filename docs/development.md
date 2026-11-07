@@ -229,7 +229,7 @@ read paths), 10 GB per database.
 | Tables                                                                                                                                            | Purpose                                                                                   |
 | ------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
 | `spaces`, `environments`, `environment_aliases`                                                                                                   | Spaces, branches, alias → environment                                                     |
-| `content_types`                                                                                                                                   | Content-type definitions (`fields` JSON; group, description, icon, `layout` JSON from 0026) |
+| `content_types`                                                                                                                                   | Content-type definitions (`fields` JSON; group, description, icon, `layout` JSON from 0026; `agent_instructions` from 0032) |
 | `entries`, `entry_versions`, `entry_published`, `entry_metadata`, `entry_unique_values`                                                           | Entry aggregate, version ledger, published read model, tags/concepts, unique-field claims |
 | `assets`, `asset_published`                                                                                                                       | Asset metadata and its published read model                                               |
 | `references`                                                                                                                                      | Link graph (reverse lookups for invalidation and usage)                                   |
@@ -243,7 +243,7 @@ read paths), 10 GB per database.
 | `saved_views` (`0029`)                                                                                                                            | Saved views of the entries list (space-scoped)                                            |
 | `menus` (`0020`)                                                                                                                                  | Navigation menus, each item tree a JSON column                                            |
 | `ai_actions`, `agent_runs`, `agent_reviews`, `agent_schedules`                                                                                    | AI actions and the agent ledger                                                           |
-| `audit_log`                                                                                                                                       | Per-space audit trail                                                                     |
+| `audit_log`                                                                                                                                       | Per-space audit trail; `0031` adds the indexes its filters read through, `0032` the `detail` of changed paths                               |
 | `outbox`                                                                                                                                          | Transactional outbox (`claimed_until` lease, `relayed_at`)                                |
 | `_guard`                                                                                                                                          | Always empty; its `CHECK (ok = 1)` aborts a batch whose compare-and-set lost              |
 
@@ -372,6 +372,11 @@ retry can itself land on a replica past 0030, where it ignores a kept definition
 one response, possibly cached until the next purge or its max-age, and the next read is right. That
 is accepted as rare and self-clearing, with no marker to keep it out of the cache. Remove the retry
 once every deployment is past 0030.
+
+`0032_content_type_agent_instructions.sql` adds the nullable `content_types.agent_instructions`.
+Delivery names its columns and never reads it. Management reads can start on a replica behind the
+migration, where the bare column reads as its own name, so `toContentType` treats that text as
+unset; the check goes once every deployment is past 0032.
 
 `0026_content_type_details.sql` adds four nullable columns to `content_types`: `group_name`,
 `description`, `icon` and `layout` (JSON, the entry form's tabs and field groups; editor-only and

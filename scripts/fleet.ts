@@ -1,5 +1,5 @@
 /**
- * The fleet: one contentworker deployment per customer, each listed in deployments/<id>.jsonc,
+ * The fleet: one contentworker deployment per customer, each a registry entry <id>.jsonc,
  * each with its own D1, KV, R2, Vectorize index, queues, Workflows, AI Gateway and Workers.
  *
  *   node scripts/fleet.ts render <id>          write apps/{web,api,engine,media,delivery}/wrangler.<id>.json
@@ -15,8 +15,9 @@
  *   node scripts/fleet.ts set-kv <id> <kv id>  record the shared KV namespace id
  *   node scripts/fleet.ts demos                the provisioned demo deployments
  *
- * The registry is deployments/ here, or the directory FLEET_REGISTRY names (the private ops repo's
- * checkout, which holds the real fleet).
+ * The registry is the directory FLEET_REGISTRY names (the private fleet repo's `deployments/`
+ * holds the real one). Unset, it is this checkout's own `deployments/`, which a self-hoster creates
+ * from examples/fleet; the public repo ships none.
  *
  * A rendered config is the app's wrangler.jsonc with the deployment's names, ids and hosts put in,
  * written next to it so its relative paths still resolve. Deploy order (CI): engine first (it owns
@@ -24,14 +25,14 @@
  * verifies the URLs the api and delivery hand out before they hand them out), api, delivery, web.
  */
 
-import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { applyEdits, modify, type ParseError, parse, printParseErrorCode } from 'jsonc-parser';
 import { deriveAssistantKey } from './derive-assistant-key.ts';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
-/** Where the registry lives: FLEET_REGISTRY when set, else this repo's deployments/. */
+/** Where the registry lives: FLEET_REGISTRY when set, else this checkout's deployments/. */
 export const registryDir = (env: Record<string, string | undefined> = process.env) =>
   env.FLEET_REGISTRY ? resolve(env.FLEET_REGISTRY) : join(ROOT, 'deployments');
 
@@ -278,10 +279,22 @@ export function toDeployment(raw: Record<string, unknown>, file = 'deployment'):
   };
 }
 
+/** The registry's entry files, or a clear error when there is no registry to read. */
+function registryFiles(dir: string): string[] {
+  const files =
+    existsSync(dir) && statSync(dir).isDirectory()
+      ? readdirSync(dir).filter((f) => f.endsWith('.jsonc'))
+      : [];
+  if (files.length === 0) {
+    throw new Error(
+      `no deployment registry at ${dir} (no <id>.jsonc files). Set FLEET_REGISTRY to the directory that holds them. The public repo ships none; to start your own, copy examples/fleet/example.jsonc to deployments/<id>.jsonc and edit it (docs/deployment.md)`,
+    );
+  }
+  return files;
+}
+
 export function loadDeployments(dir = registryDir()): Deployment[] {
-  const list = readdirSync(dir)
-    .filter((f) => f.endsWith('.jsonc'))
-    .map((f) => toDeployment(readJsonc(join(dir, f)), f));
+  const list = registryFiles(dir).map((f) => toDeployment(readJsonc(join(dir, f)), f));
   const dup = (key: (d: Deployment) => string | number | undefined) => {
     const seen = new Set<string | number>();
     for (const d of list) {

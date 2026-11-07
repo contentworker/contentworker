@@ -8,12 +8,14 @@ import {
   ConflictError,
   deriveStatus,
   EMPTY_METADATA,
+  ENTRY_ID_RULE,
   type Entry,
   type EntryFields,
   type EntryVersion,
   type FieldIssue,
   hasUniqueFields,
   InvalidStateError,
+  isEntryId,
   mimeTypeAllowed,
   NotFoundError,
   nextSlugCandidate,
@@ -29,6 +31,7 @@ import {
   ValidationError,
 } from '@contentworker/domain';
 import { type BlobStore, type EntryRepo, TransactionConflictError } from '@contentworker/ports';
+import { noteEntryChange } from './change-log';
 import { type AppContext, actorOf } from './context';
 import { runHook, runPureHook } from './hooks';
 import { unpublishEntryTx } from './publishing';
@@ -128,6 +131,9 @@ export async function createEntry(
   const vctx = await loadValidationContext(ctx, scope);
   // Defaults fill gaps, then slugs are normalized, and only then is the result
   // validated — so an editor is judged on what will actually be stored.
+  if (input.id !== undefined && !isEntryId(input.id)) {
+    throw new ValidationError([{ field: 'id', message: ENTRY_ID_RULE }]);
+  }
   const withDefaults = applyDefaults(contentType, input.fields, vctx.locales, vctx.defaultLocale);
   const { fields } = await prepareFields(
     ctx,
@@ -164,6 +170,7 @@ export async function createEntry(
   // Claim and write together: the claim is the constraint, so a crash between
   // the two must not leave a value reserved by an entry that does not exist.
   await writeNewEntry(ctx, scope, contentType, entry, version, claims);
+  noteEntryChange(ctx, { entry, contentType, before: {}, after: fields, locales: vctx.locales });
   return { entry, fields };
 }
 
@@ -352,12 +359,14 @@ export async function updateEntry(
     contentType,
     options.copy ? vctx : { ...vctx, previous: found.fields },
     withUnwritable(found.fields, fields, options),
+    found.fields,
   );
 }
 
 /**
  * `updateEntry` once its reads are done: for a use-case that already read the entry, its type and
  * the locales to work out the new fields (a partial edit), so the save doesn't read them again.
+ * `stored` is the fields it read, which what this save changed is measured against.
  */
 export async function saveEntryDraft(
   ctx: AppContext,
@@ -366,6 +375,7 @@ export async function saveEntryDraft(
   contentType: ContentType,
   vctx: ValidationContext,
   fields: EntryFields,
+  stored: EntryFields,
 ): Promise<EntryView> {
   const id = current.id;
   // No defaults on update. The fields passed become the whole new version: an
@@ -395,13 +405,21 @@ export async function saveEntryDraft(
   const claims = uniqueClaims(contentType, normalized);
   if (claims.length === 0 && !hasUniqueFields(contentType)) {
     await ctx.store.entries.saveVersion(scope, synced, stamped);
-    return { entry: synced, fields: normalized };
+  } else {
+    await ctx.store.withTransaction(async (tx) => {
+      await assertClaimsFree(tx.entries, scope, claims, id);
+      await tx.entries.saveVersion(scope, synced, stamped);
+      // Replace rather than add: clearing a unique field has to free its value.
+      await tx.entries.replaceUniqueClaims(scope, id, claims);
+    });
   }
-  await ctx.store.withTransaction(async (tx) => {
-    await assertClaimsFree(tx.entries, scope, claims, id);
-    await tx.entries.saveVersion(scope, synced, stamped);
-    // Replace rather than add: clearing a unique field has to free its value.
-    await tx.entries.replaceUniqueClaims(scope, id, claims);
+  // What is measured is what was stored: after the hook, the slugs and the block keys.
+  noteEntryChange(ctx, {
+    entry: synced,
+    contentType,
+    before: stored,
+    after: normalized,
+    locales: vctx.locales,
   });
   return { entry: synced, fields: normalized };
 }

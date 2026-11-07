@@ -58,6 +58,20 @@ describe('discard guard', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 
+  it('asks before throwing away typed agent instructions', async () => {
+    const onClosed = vi.fn();
+    render(<NewContentType onClosed={onClosed} />);
+    await screen.findByRole('dialog');
+    fireEvent.change(screen.getByLabelText('Agent instructions'), {
+      target: { value: 'Stay factual.' },
+    });
+
+    pressEscape();
+
+    await screen.findByRole('alertdialog', { name: /Discard this content type/ });
+    expect(onClosed).not.toHaveBeenCalled();
+  });
+
   it.each([
     ['Escape', pressEscape],
     ['a press outside', pressOutside],

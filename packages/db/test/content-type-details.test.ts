@@ -45,6 +45,7 @@ const DRAFT = {
   group: 'Editorial',
   description: 'Long reads for the magazine.',
   icon: 'newspaper',
+  agentInstructions: 'Keep titles short.',
   layout: {
     tabs: [
       { apiId: 'main', name: 'Main', groups: [{ fields: ['title'] }] },
@@ -63,10 +64,33 @@ describe('content type details on D1', () => {
       group: 'Editorial',
       description: 'Long reads for the magazine.',
       icon: 'newspaper',
+      agentInstructions: 'Keep titles short.',
       layout: DRAFT.layout,
       status: 'published',
     });
     expect((await listContentTypes(ctx, scope))[0]?.layout).toEqual(DRAFT.layout);
+  });
+
+  it('never serves agent instructions through Delivery', async () => {
+    const { ctx, scope } = await harness();
+    await createContentType(ctx, scope, DRAFT);
+    await publishContentType(ctx, scope, 'article');
+    const { contentTypes = [] } = await ctx.store.delivery.read(scope, { contentTypes: true });
+    const delivered = contentTypes.find((t) => t.apiId === 'article');
+    expect(delivered).toBeDefined();
+    expect(delivered).not.toHaveProperty('agentInstructions');
+  });
+
+  it('reads the column’s own name, as a replica behind 0032 returns it, as no instructions', async () => {
+    const { ctx, scope } = await harness();
+    await createContentType(ctx, scope, DRAFT);
+    await testDb
+      .prepare(
+        'UPDATE content_types SET agent_instructions = ? WHERE space_id = ? AND environment_id = ? AND api_id = ?',
+      )
+      .bind('agent_instructions', scope.spaceId, scope.environmentId, 'article')
+      .run();
+    expect(await getContentType(ctx, scope, 'article')).not.toHaveProperty('agentInstructions');
   });
 
   it('clears them with null', async () => {
@@ -77,10 +101,11 @@ describe('content type details on D1', () => {
       group: null,
       description: null,
       icon: null,
+      agentInstructions: null,
       layout: null,
     });
     const got = await getContentType(ctx, scope, 'article');
-    for (const key of ['group', 'description', 'icon', 'layout']) {
+    for (const key of ['group', 'description', 'icon', 'agentInstructions', 'layout']) {
       expect(got).not.toHaveProperty(key);
     }
   });

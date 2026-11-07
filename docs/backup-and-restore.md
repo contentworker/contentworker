@@ -17,8 +17,8 @@ What holds state, what is derivable, and how to recover a deployment.
 | **Queues**                             | In-flight events                                                                                                                                                                                                                                                                                                                               | Queues persist messages; lost events can be replayed from the outbox                                                                                                    |
 | **Durable workflows**                  | `AgentWorkflow` instances (on-publish and scheduled agent runs, review watchers) and `EditorialWorkflow` instances (one per editorial workflow run, `EDITORIAL_WF`)                                                                                                                                                                            | Agent runs are recorded proposals. Editorial runs have their records in the database (`workflow_runs`), but the instance holds the execution and is not rebuilt from it |
 
-Everything else (worker code, `wrangler.jsonc` templates, `deployments/*.jsonc`, migrations) is
-in git. Secrets live in each deployment's GitHub environment; `DATA_KEY`, `TOKEN_PEPPER` and
+Everything else (worker code, `wrangler.jsonc` templates, the fleet registry, migrations) is
+in git (the registry in the private fleet repo). Secrets live in each deployment's GitHub environment; `DATA_KEY`, `TOKEN_PEPPER` and
 `PASSWORD_PEPPER` must be escrowed, because losing one makes what it protects unreadable
 (sealed secrets, API key hashes, password hashes). See [Escrowing secrets](#escrowing-secrets).
 
@@ -175,7 +175,7 @@ how long the recovery may take. "Met" says whether the target can be reached tod
 | `AssistantAgent`                              | Best effort, 30-day object recovery | 1 day                 | **No**: nothing calls the object's point-in-time recovery                                       |
 | Durable workflows                             | None                                | 1 day, re-run by hand | Not proven: instances are not rebuilt from their rows                                           |
 | Queues                                        | The outbox window (168 hours)       | 1 hour                | Domain events only: messages the outbox doesn't feed can't replay                               |
-| `DATA_KEY`, `TOKEN_PEPPER`, `PASSWORD_PEPPER` | Zero                                | 1 hour                | Once [escrowed](#escrowing-secrets) per deployment; not proven until a copy is decrypted |
+| `DATA_KEY`, `TOKEN_PEPPER`, `PASSWORD_PEPPER` | Zero                                | 1 hour                | Not proven: [escrowed](#escrowing-secrets) and decrypted, but no restore has set the values back |
 
 Workers redeploy or roll back in seconds, so a database restore's RTO is dominated by the restore
 itself.

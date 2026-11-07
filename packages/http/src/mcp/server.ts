@@ -1,9 +1,11 @@
 import {
   actingAs,
+  createChangeLog,
   getEntry,
   getPreviewEntry,
   resolveEnvironment,
   resolveWritableEnvironment,
+  withChanges,
 } from '@contentworker/application';
 import {
   authorize,
@@ -22,6 +24,7 @@ import type { SkillsExtension } from '@modelcontextprotocol/server/ext/skills';
 import { toHttpError } from '../api/http';
 import { auditToolCall, declaredArgs, declaresReadOnly } from './audit';
 import type { McpDeps } from './deps';
+import { toolListedFor } from './tool-scopes';
 import { registerAgentTools } from './tools/agents';
 import { registerAiActionTools } from './tools/ai-actions';
 import { registerAiContentTools } from './tools/ai-content';
@@ -131,13 +134,47 @@ const TOOL_AREAS: readonly ((server: McpServer, t: ToolContext) => void)[] = [
 
 /**
  * 2026-07-28 clients cache list results for `ttlMs`, saving a round trip per
- * call. The tool set only changes on deploy, so a few minutes of staleness is
- * the whole cost. `private`: every request is authenticated.
+ * call. The tool set changes on deploy and with the caller's scopes, so a few
+ * minutes of staleness is the whole cost: handlers authorize on every call.
+ * `private`: every request is authenticated, and the list depends on who asks.
  */
 const CACHE_HINTS = {
   'tools/list': { ttlMs: 5 * 60_000, cacheScope: 'private' },
   'server/discover': { ttlMs: 5 * 60_000, cacheScope: 'private' },
 } as const;
+
+/**
+ * Narrows `tools/list` to the tools `principal` can use. It wraps the SDK's own handler rather than
+ * disabling tools: a disabled tool answers "disabled" where a listed-out one must still give its
+ * scope error, and the SDK's handler owns each protocol era's schema projection. The SDK installs
+ * that handler on the first `registerTool`, so call this before registering any tool; it returns
+ * the function that puts `setRequestHandler` back.
+ */
+function narrowToolList(server: McpServer, principal: Principal): () => void {
+  const protocol = server.server;
+  const setRequestHandler = protocol.setRequestHandler;
+  const wrapped = (method: string, ...rest: unknown[]) => {
+    const handler = rest.at(-1) as (...args: unknown[]) => Promise<{ tools: { name: string }[] }>;
+    const args =
+      method === 'tools/list'
+        ? [
+            ...rest.slice(0, -1),
+            async (...call: unknown[]) => {
+              const listed = await handler(...call);
+              return {
+                ...listed,
+                tools: listed.tools.filter((tool) => toolListedFor(principal, tool.name)),
+              };
+            },
+          ]
+        : rest;
+    return (setRequestHandler as (...a: unknown[]) => unknown).call(protocol, method, ...args);
+  };
+  protocol.setRequestHandler = wrapped as typeof protocol.setRequestHandler;
+  return () => {
+    protocol.setRequestHandler = setRequestHandler;
+  };
+}
 
 /**
  * Builds the MCP server for a resolved principal. Each tool authorizes the
@@ -156,7 +193,18 @@ export function buildServer(
   const { ai, rag, agents } = deps;
   // Every tool writes as this session's principal: entries it creates or changes record it as
   // their author, exactly as the HTTP API's routes do.
-  const ctx = actingAs(deps.ctx, principal);
+  // The server lives for one request (the transport is stateless), and the audit row below reads
+  // what a call's saves noted, as `auditMiddleware` does for a route. A batch is one request with
+  // many calls, running at once: calls that may write take turns (`inTurn`), so a row only ever
+  // holds its own call's changes. Reads note nothing, and don't wait.
+  const changes = createChangeLog();
+  let turns: Promise<unknown> = Promise.resolve();
+  const inTurn = <T>(call: () => Promise<T>): Promise<T> => {
+    const turn = turns.then(call, call);
+    turns = turn.catch(() => {});
+    return turn;
+  };
+  const ctx = withChanges(actingAs(deps.ctx, principal), changes);
   const server = new McpServer(
     { name: 'contentworker', version: '0.1.0' },
     { cacheHints: CACHE_HINTS },
@@ -195,20 +243,25 @@ export function buildServer(
             args = { ...a, environment };
             requestedEnvironment.set(args as object, a.environment);
           }
-          const result = await handler(args, ...rest);
-          if (!(result as { isError?: boolean } | undefined)?.isError) {
-            await auditToolCall(ctx, {
-              tool: name,
-              args: (args ?? {}) as Record<string, unknown>,
-              declared,
-              readOnly,
-              principal,
-              defaultSpace: DEFAULT_SPACE,
-              defaultEnvironment: DEFAULT_ENV,
-              targetId: args && typeof args === 'object' ? auditTarget.get(args) : undefined,
-            });
-          }
-          return result;
+          if (readOnly) return await handler(args, ...rest);
+          return await inTurn(async () => {
+            changes.clear();
+            const result = await handler(args, ...rest);
+            if (!(result as { isError?: boolean } | undefined)?.isError) {
+              await auditToolCall(ctx, {
+                tool: name,
+                args: (args ?? {}) as Record<string, unknown>,
+                declared,
+                readOnly,
+                principal,
+                defaultSpace: DEFAULT_SPACE,
+                defaultEnvironment: DEFAULT_ENV,
+                targetId: args && typeof args === 'object' ? auditTarget.get(args) : undefined,
+                detail: changes.detail(),
+              });
+            }
+            return result;
+          });
         } catch (err) {
           if (err instanceof ValidationError) return validationResult(err);
           throw toolFailure(name, err);
@@ -256,7 +309,9 @@ export function buildServer(
     requestedEnvironment,
     auditTarget,
   };
+  const restoreHandlers = narrowToolList(server, principal);
   for (const registerArea of TOOL_AREAS) registerArea(server, t);
+  restoreHandlers();
 
   skills?.attach(server);
   return server;

@@ -50,6 +50,7 @@ import {
   workflowEventBody,
   workflowSettingsBody,
 } from '../validation';
+import { actingCtx } from './management/shared';
 
 const BASE = '/spaces/:space/environments/:env';
 
@@ -322,7 +323,7 @@ export function workflowRoutes(deps: AuthDeps): Hono<AuthVars> {
       const body = await parseBody(c, cancelWorkflowRunBody);
       return c.json(
         await cancelWorkflowRun(
-          ctx,
+          actingCtx(ctx, c),
           engine(),
           c.get('principal'),
           scopeOf(c),

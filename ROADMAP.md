@@ -7,7 +7,7 @@ split by traffic profile: `apps/web` (admin + human auth), `apps/api` (Managemen
 REST, MCP, OAuth, uploads and signed reads, live), `apps/delivery` (the cached public Delivery
 API), `apps/media` (published asset files at the edge) and `apps/engine` (queues, cron, stateful
 edge objects, durable workflows). Tenancy is one isolated deployment per
-customer (`deployments/*.jsonc`, rendered by `scripts/fleet.ts`). The domain and application
+customer (a registry entry each, rendered by `scripts/fleet.ts`). The domain and application
 layers, and their tests, carried over.
 
 Removed in v2, and not coming back:
@@ -79,7 +79,8 @@ Everything below is built and tested on v2.
   operator settings, secrets sealed), the transactional outbox with lease-claimed relay.
 - **Access.** CMA/CDA/CPA keys, eight scopes, roles with per-type and per-field grants (read,
   write, publish, and delete and unpublish implied unless withheld) and presets, the last-administrator guard, OAuth 2.1 with the device flow for MCP clients, personal
-  access tokens, preview links, rate limits, the audit log, secrets sealed at rest with a daily
+  access tokens, preview links, rate limits, the audit log (filtered by actor, action, target and
+  date, with keyset paging, and a `detail` of the field paths an entry save changed), secrets sealed at rest with a daily
   reseal sweep. Human sign-in in the web app: passwords, passkeys, TOTP, OIDC, SCIM, setup and
   recovery codes, self-service password reset by an emailed code, with the person forwarded to the
   api as a signed `x-cw-principal`.
@@ -171,12 +172,15 @@ Everything below is built and tested on v2.
 
 Recovery targets not met yet (`docs/backup-and-restore.md`) and the move to a private fleet repo.
 
-- [ ] **Secret escrow.** The `Escrow secrets` workflow encrypts a deployment's secrets to a key held
-  outside GitHub and the edge account. Run it for every live deployment, and decrypt one copy.
+- [x] **Secret escrow.** The `Escrow secrets` workflow encrypts a deployment's secrets to a key held
+  outside GitHub and the edge account. Run for the live deployment and decrypted; setting the values
+  back joins the restore drill.
 - [ ] **Off-account object storage copy.** Asset bytes, plugins and `versions/` have no second copy.
+  Deferred until a customer is close; the plan is in the private fleet repo.
 - [ ] **Restore drill.** Time a database restore against its 1-hour target.
 - [ ] **Assistant recovery.** Nothing calls the conversation object's point-in-time recovery.
-- [ ] **Fleet cutover.** Move the registry, rings and production secrets to the private repo, setting
+- [ ] **Fleet cutover.** The registry and rings are in the private repo and this repo only dispatches
+  to it; still to move are the production secrets, set
   the secrets from escrow. The edge account token moves onto the environment there: as a repository
   secret today, any branch can read it, which steps around the environment's `main`-only policy.
   The escrow workflow moves too: it runs here first because only a job in this repository can read
@@ -271,8 +275,7 @@ Found while building and reviewing M1 and M2. None blocks a release.
   path), an unread badge over the live stream, read and archive, a retention prune.
 - [ ] **Anchored comments.** Comments pinned to a field path or rich-text block, with @mentions
   (feeding notifications), a due date and resolve.
-- [ ] **Audit log, finished.** Filters by actor, action, target and date with keyset paging; an
-  activity tab per entry; a structured `detail` of changed field paths (never bodies); rows past a
+- [ ] **Audit log, finished.** An activity tab per entry, reading the rows' `detail`; rows past a
   per-deployment window archived to object storage as NDJSON and pruned, so the log stops growing in
   the database.
 
@@ -350,3 +353,66 @@ Built on Blocks and the frontend runtime. Layouts stay a typed tree; rich text s
 - [ ] **Admin branding.** Title and logo per deployment; accents stay within the design tokens.
 - [ ] **Experiments.** A/B variants of an entry, bucketed at the edge by cookie without varying the
   cache key, with a workflow that graduates the winner.
+
+#### M9. Parity from the second survey
+
+Gaps found by auditing the surveyed CMS against this codebase. Every item is a use-case with an HTTP
+route and an MCP tool unless it says otherwise. Not taken, by design: adapters for other databases,
+storage or email; multi-tenancy inside a deployment; code-defined models and admin overrides; and
+Markdown or HTML in any API response.
+
+Agents:
+
+- [x] **Tools by scope.** `tools/list` shows a caller only what its scopes can use (`tool-scopes.ts`);
+  an unlisted tool stays callable and answers with the scope it needs.
+- [x] **Agent instructions.** Plain-text `agentInstructions` on a content type, read with the model
+  and never delivered.
+- [ ] **MCP prompts and resources.**
+- [ ] **Slim write responses.** Return ids by default and full documents on request, if the current
+  tools don't already.
+
+Editing:
+
+- [ ] **Bulk field edit.** A bulk job action that sets fields across entries, checking validation and
+  field grants on each.
+- [ ] **Autosave.** Debounced drafts buffered in the M3 entry-lock object, not a version per
+  keystroke: the database has one writer and versions are append-only.
+- [ ] **Manual entry ordering.** Drag and drop on fractional index keys, with a sort key Delivery can
+  order by.
+- [ ] **Copy to locale.**
+
+Model and query:
+
+- [ ] **Hierarchical entries.** Parent links with cycle checks, breadcrumbs and full slug paths; a
+  path change cascades through a bulk job and leaves automatic `301`s.
+- [ ] **Per-locale publishing.** A draft or published status per locale. Changes the entry model,
+  Delivery and releases, so settle the design before forms.
+- [ ] **Reverse-reference field.** A declared field returning the entries that link here, without
+  raising Delivery's read counts unless the change says why.
+- [ ] **Geo queries.** `near` and distance on `Location`, over a derived geohash or bounding-box
+  index.
+- [ ] **Compound uniqueness.** Unique across two or more fields, on the existing unique claims.
+- [ ] **Dynamic reference filters.** Limit what a link can pick, enforced on save.
+- [ ] **Timezone on date fields.**
+- [ ] **Per-request fallback override.** `fallback-locale=none`, as a new optional Delivery input.
+
+Forms:
+
+- [ ] **Form builder.** Forms defined in the admin, stored submissions, emails, and a confirmation or
+  redirect. Turnstile against bots, no write on Delivery's read path, and a retention period for
+  personal data. No payment fields.
+
+Assets, admin and hardening:
+
+- [ ] **Asset from a URL.** Paste a URL to upload, through the `url-safety.ts` guard.
+- [ ] **Saved crop rectangle.**
+- [ ] **Entry list export.** A filtered list as CSV or JSON, as a resumable job.
+- [ ] **Search-result preview.** Beside the `Seo` field's length hints.
+- [ ] **Group-by in the entry list.**
+- [ ] **Share a saved view with named people.** After M4 Teams.
+- [ ] **Floating admin bar.** An SDK component for customer sites, over `adminEditUrl`.
+- [ ] **GraphQL cost limit.** Beside the depth limit.
+- [ ] **Admin translations.** Only with non-English customers.
+
+Additions to earlier items: a read-only view for whoever doesn't hold an M3 entry lock, device-size
+breakpoints in the M6 preview channel, and a Recently Viewed and Pinned widget on the M8 dashboard.

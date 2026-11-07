@@ -1,5 +1,5 @@
 import type { AppContext } from '@contentworker/application';
-import { actingAs, getEntry } from '@contentworker/application';
+import { actingAs, getEntry, withChanges } from '@contentworker/application';
 import {
   type ApiKey,
   type Asset,
@@ -27,10 +27,11 @@ export const scopeOf = (c: Context<AuthVars>): Scope => ({
 
 /**
  * The use-cases' context for this request, acting as its principal: what they write (an entry's
- * `createdBy` and `updatedBy`, a version's author, a job's chunks) is recorded as that principal's.
+ * `createdBy` and `updatedBy`, a version's author, a job's chunks) is recorded as that principal's,
+ * and the entries it saves are noted for the request's audit row (`auditMiddleware`).
  */
 export const actingCtx = (ctx: AppContext, c: Context<AuthVars>): AppContext =>
-  actingAs(ctx, c.get('principal'));
+  withChanges(actingAs(ctx, c.get('principal')), c.get('changes'));
 
 // Public projections that strip secrets before they leave the server: API keys
 // never expose their stored hash, webhooks never expose their signing secret.

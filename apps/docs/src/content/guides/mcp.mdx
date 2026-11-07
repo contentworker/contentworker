@@ -48,8 +48,8 @@ environments its token can reach.
 
 ## Tools
 
-There are 198 in all; your client lists every tool with its description and input schema when it
-connects. Each tool checks the token's scopes and role grants before it runs, and writes go
+There are 245 in all; your client lists the ones your token's scopes can use, with their descriptions
+and input schemas, when it connects. Each tool checks the token's scopes and role grants before it runs, and writes go
 through the same validation, versioning and events as a person's.
 
 | Area | Tools |
@@ -73,7 +73,7 @@ through the same validation, versioning and events as a person's.
 | Webhooks | `webhooks_list`, `webhook_create`, `webhook_update`, `webhook_delete`, `webhook_deliveries`, `webhook_test`, `webhook_resend` (`space:admin`; see [Webhooks](/guides/webhooks/#test-and-resend)) |
 | Functions | `functions_list`, `function_create`, `function_delete` |
 | App extensions | `app_extensions_list`, `app_extension_create`, `app_extension_delete` |
-| Audit | `audit_log_list` |
+| Audit | `audit_log_list` (filters by actor, action, target and date; pages by `cursor`; rows carry the changed field paths) |
 | Scheduler | `scheduler_status` (workspace admins: whether the engine's cron is ticking, and each sweep's last success and error), `scheduler_alerts` (who is emailed when a sweep goes stale, and what is stale now), `scheduler_alerts_set_recipients` |
 | Search | `content_search`, `content_semantic_search`, `content_related`, `content_duplicates`, `content_reindex_embeddings`, `search_index_health` |
 | API keys | `api_keys_list`, `api_key_create` (the token is in the result once, never again), `api_key_update` (the key's role), `api_key_revoke` (`space:admin`; see [API keys](/guides/api-keys/)) |
@@ -86,7 +86,8 @@ refuse a personal access token or an OAuth token minting a key or widening one; 
 `space:admin`, which an app connected with OAuth is never granted anyway.
 
 Every tool call that changes something is written to the space's audit log, like a REST write, as
-`MCP <tool>` (`MCP entries_update`) with who made it, the environment and the target id. Reads,
+`MCP <tool>` (`MCP entries_update`) with who made it, the environment and the target id, and for
+a save of an entry its `detail`: the field paths and locales that changed, never a value. Reads,
 and calls that only propose (an AI tool without `apply`, an import or clone `dryRun`), write
 nothing. A call refused for invalid fields returns `isError` with the same body as the REST
 `422`: `{ "error": { "code": "validation_failed", "issues": [...] } }`, each issue naming its

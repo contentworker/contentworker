@@ -325,6 +325,7 @@ function makeContentTypeRepo(x: Exec): ContentTypeRepo {
         group: ct.group ?? null,
         description: ct.description ?? null,
         icon: ct.icon ?? null,
+        agentInstructions: ct.agentInstructions ?? null,
         layout: ct.layout ?? null,
       };
       await x.write(
@@ -353,6 +354,7 @@ function makeContentTypeRepo(x: Exec): ContentTypeRepo {
               group: values.group,
               description: values.description,
               icon: values.icon,
+              agentInstructions: values.agentInstructions,
               layout: values.layout,
             },
           }),
@@ -377,6 +379,7 @@ function makeContentTypeRepo(x: Exec): ContentTypeRepo {
           group: ct.group ?? null,
           description: ct.description ?? null,
           icon: ct.icon ?? null,
+          agentInstructions: ct.agentInstructions ?? null,
           layout: ct.layout ?? null,
         })
         .onConflictDoNothing();
@@ -3410,17 +3413,30 @@ function makeAuditRepo(x: Exec): AuditRepo {
           targetId: entry.targetId ?? null,
           status: entry.status,
           at: new Date(entry.at),
+          detail: entry.detail ?? null,
         }),
       );
     },
     async list(spaceId, query) {
-      const conds = [eq(schema.auditLog.spaceId, spaceId)];
-      if (query.environmentId) conds.push(eq(schema.auditLog.environmentId, query.environmentId));
+      const log = schema.auditLog;
+      const conds = [eq(log.spaceId, spaceId)];
+      if (query.environmentId) conds.push(eq(log.environmentId, query.environmentId));
+      if (query.actor) conds.push(eq(log.actor, query.actor));
+      if (query.action) conds.push(eq(log.action, query.action));
+      if (query.targetType) conds.push(eq(log.targetType, query.targetType));
+      if (query.targetId) conds.push(eq(log.targetId, query.targetId));
+      if (query.from) conds.push(gte(log.at, new Date(query.from)));
+      if (query.to) conds.push(lte(log.at, new Date(query.to)));
+      if (query.after) {
+        conds.push(
+          sql`(${log.at}, ${log.id}) < (${Date.parse(query.after.at)}, ${query.after.id})`,
+        );
+      }
       const rows = await db
         .select()
-        .from(schema.auditLog)
+        .from(log)
         .where(and(...conds))
-        .orderBy(desc(schema.auditLog.at))
+        .orderBy(desc(log.at), desc(log.id))
         .limit(query.limit ?? 100);
       return rows.map((r) => ({
         id: r.id,
@@ -3432,6 +3448,7 @@ function makeAuditRepo(x: Exec): AuditRepo {
         targetId: r.targetId ?? undefined,
         status: r.status,
         at: r.at.toISOString(),
+        ...(r.detail ? { detail: r.detail } : {}),
       }));
     },
   };
@@ -4579,6 +4596,7 @@ function makeSpaceRepo(x: Exec): SpaceRepo {
           targetId: audit.targetId ?? null,
           status: audit.status,
           at: new Date(audit.at),
+          detail: audit.detail ?? null,
         }),
       ]);
     },
@@ -7313,6 +7331,14 @@ type CtRow = Omit<typeof schema.contentTypes.$inferSelect, 'publishedDefinition'
 type EntryRow = typeof schema.entries.$inferSelect;
 type PubRow = typeof schema.entryPublished.$inferSelect;
 
+/**
+ * What `agent_instructions` reads as on a replica behind 0032: Drizzle leaves the column bare, and
+ * SQLite reads a double-quoted name it can't find as a string (see {@link keptDefinition}). Treated
+ * as unset, so the admin can't load the column's name and save it back for agents to read. Remove
+ * this once every deployment is past 0032.
+ */
+const BEHIND_0032 = 'agent_instructions';
+
 const toContentType = (r: CtRow): ContentType => ({
   apiId: r.apiId,
   name: r.name,
@@ -7323,6 +7349,9 @@ const toContentType = (r: CtRow): ContentType => ({
   ...(r.group ? { group: r.group } : {}),
   ...(r.description ? { description: r.description } : {}),
   ...(r.icon ? { icon: r.icon } : {}),
+  ...(r.agentInstructions && r.agentInstructions !== BEHIND_0032
+    ? { agentInstructions: r.agentInstructions }
+    : {}),
   ...(r.layout ? { layout: r.layout } : {}),
   version: r.version,
   status: r.status,

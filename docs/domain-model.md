@@ -536,6 +536,7 @@ interface ContentType {
   group?: string; // the admin's sidebar lists types under their group (≤ 100)
   description?: string; // what the type is for (≤ 2000)
   icon?: string; // a kebab-case icon name the admin draws (≤ 40)
+  agentInstructions?: string; // style guidance for MCP agents; never delivered (≤ 4000)
   layout?: ContentTypeLayout; // editor-only tabs and field groups; never delivered
   version: number; // bumped on each revision
   status: 'draft' | 'published';
@@ -572,9 +573,10 @@ interface ContentType {
   so a menu can be built ahead of a publish; `previewMenu` reports what Delivery does (`no_url`
   until then). A promotion of a published definition is assessed against what the target serves
   too, not only its working draft.
-- `group`, `description`, `icon` and `layout` follow one rule on a draft or revision: left out
-  keeps the stored value, `null` (or blank text) clears it, and a value stored as it stands passes
-  unchecked. They are columns on `content_types` (0026), not part of the `fields` JSON.
+- `group`, `description`, `icon`, `agentInstructions` and `layout` follow one rule on a draft or
+  revision: left out keeps the stored value, `null` (or blank text) clears it, and a value stored as
+  it stands passes unchecked. They are columns on `content_types` (0026, 0032), not part of the
+  `fields` JSON.
 - `layout` arranges the admin's entry form: `{ tabs: [{ apiId, name, groups: [{ name?, fields,
   collapsed? }] }] }` (at most 20 tabs, 50 groups a tab; names at most 100). Each top-level field
   is placed at most once, and a name that is not a field is refused (`checkLayout`), except that a
@@ -627,7 +629,7 @@ interface ContentType {
   `bulk.job_completed`, and records the outcome on the job (`BulkJobRepo.mergeConfig`,
   `config.typeDeletion`: `{ deleted: true }` or `{ deleted: false, reason }`, also when the job is
   stopped). `cloneContentType` defines a copy (fields, display field, singleton, group, description, icon,
-  layout; not `urlPattern`)
+  agent instructions, layout; not `urlPattern`)
   at version 1 under a new `apiId`, inserted by `ContentTypeRepo.create`, which never overwrites.
 - `checkUrlPattern(pattern, fields)` — a pattern is a path starting with `/` (at most
   `MAX_URL_PATTERN_LENGTH`, 512; no space, `?`, `#`, `[`, `]` or `\`) whose `{…}` placeholders are
@@ -714,6 +716,9 @@ clone keeps all three (`ImportOptions.keepCreators`, set only by the clone paths
 snapshot keeps `createdAt` and `firstPublishedAt`, checked by `carriedAuthorshipIssues` (ISO-8601
 UTC instants; a creator at most 320 characters), and credits its importer as the creator: a file
 can name anyone.
+An imported entry keeps its id only if it fits `ENTRY_ID_PATTERN` (1 to 64 ASCII letters, digits,
+underscores or hyphens). The snapshot's preflight refuses one that doesn't, by position, before
+anything is written, and `createEntry` refuses it on every other path that carries an id.
 
 Management and Preview serve all four, filter and sort on them, and resolve `me` in
 `sys.createdBy` and `sys.updatedBy` to the caller's actor id (`principalActorId`: a person's
@@ -753,6 +758,17 @@ in the same stretch is the same block edited (with `beforeNodeType` when it chan
 `target`. The word diff (`diffText`, Myers' algorithm in `entry/sequence-diff.ts`) stops looking for
 the shortest script past `MAX_DIFF_EDITS` edits and reports the text replaced. Every part is typed
 data, never markup: the admin, an API client and an agent each render it for themselves.
+
+`changedPaths` (`packages/domain/src/entry/entry-change.ts`) reads the same diff, with
+`structureOnly` so a save pays for no word diff, down to what an audit row keeps: the model's paths that changed and the space's locales they changed in, never a
+value. It only names what the model declares, so a JSON field, a `Seo` value and rich text stop at
+the field, a block's `_key` and an undeclared nested key are left out, and a locale key the space
+doesn't have is ignored (a localized field stores whatever keys it is sent). A save notes the result
+on `ctx.changes`, a `ChangeLog` each surface sets per request (`packages/application/src/change-log.ts`):
+the row is written in the surface, so every route and tool reaching a save gets the same detail
+without passing it back. A context with no log (a queue consumer, a seed, a plugin's capability
+call) runs no diff. `recordAudit` caps what it stores (`capAuditDetail`). See
+[Audit log](./api-reference.md#audit-log) for the shape.
 
 ### The trash
 

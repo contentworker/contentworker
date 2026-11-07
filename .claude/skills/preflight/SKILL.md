@@ -43,7 +43,7 @@ Uncommitted:
    ```
 
    `apps/web` bundles through `pnpm --filter @contentworker/web build`.
-4. **Fleet.** If anything under `deployments/` or `scripts/` changed, an `apps/*/wrangler.jsonc`,
+4. **Fleet.** If anything under `examples/fleet/` or `scripts/` changed, an `apps/*/wrangler.jsonc`,
    or any `package.json` (the catalog test): `pnpm test:fleet`.
 5. **Toolkit.** If anything under `.claude/` changed: `pnpm test:toolkit`.
 6. **Generated files.** If `docs/*.md`, `packages/http/skills/**` or `packages/design/src/tokens.ts`

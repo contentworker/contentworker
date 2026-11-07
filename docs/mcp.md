@@ -34,7 +34,10 @@ text is REST's 422 body (`toHttpError`): `{ "error": { "code": "validation_faile
 (`body[0].heading`). A successful call that changes something is recorded in the audit trail
 (`auditToolCall`, `packages/http/src/mcp/audit.ts`) with the shape REST's `auditMiddleware` uses:
 the actor (`auditActor`), action `MCP <tool>`, the space, the resolved environment when the tool
-takes one, `targetId` from `id` / `apiId` / `alias`, status 200. A tool is a write unless it
+takes one, `targetId` from `id` / `apiId` / `alias`, `targetType` in REST's words
+(`toolTargetType`), status 200, and the `detail` of what its saves changed
+([Audit log](./api-reference.md#audit-log)); calls of one batch that may write take turns, so a row
+holds only its own. A tool is a write unless it
 declares itself a read, with the annotation `readOnlyHint: true` beside its schema; a
 propose-or-apply tool is audited only when it applies (`apply: true`,
 `createTasks: true`, no `dryRun`). Reads never write (one writer per database), and a failed audit
@@ -45,8 +48,29 @@ has to be cheap. Every tool's Zod input schema, and its JSON Schema conversion, 
 isolate and shared (`toolSchema` in `packages/http/src/mcp/tools/shared.ts`). Building a server takes about
 0.1 ms; without the cache it took about 2 ms, and every `tools/list` added another millisecond. As
 a consequence, **a tool's input schema must never depend on the principal or deps**;
-authorization belongs in the handler. `preloadSchemas()` runs at module scope, so the SDK's own
+authorization belongs in the handler. Who asks changes which tools are listed, never their shape.
+`preloadSchemas()` runs at module scope, so the SDK's own
 schemas are built during isolate warm-up rather than on the first request.
+
+**Which tools a caller sees.** `tools/list` shows a tool when the caller holds any scope in its row of
+`TOOL_SCOPES` (`packages/http/src/mcp/tool-scopes.ts`), and a tool in `UNSCOPED_TOOLS` is shown to any
+caller, unless `DEPLOYMENT_TOOLS` keeps it from a caller bound to one space. A tool that checks several
+scopes shows to a holder of any of them, so a caller can see a tool that needs more than it holds. A
+key bound to one space sees 11 tools with delivery scopes, 79 with preview scopes and 237 with
+management scopes; only a deployment-wide principal with every scope sees all 245. This only saves an agent context: every handler still authorizes,
+and an unlisted tool stays callable and answers with the scope it needs. The admin's assistant lists
+every tool once per isolate and narrows that per person, because `tools/list` itself depends on who
+asks. A new tool adds its row, and `tool-visibility.test.ts` fails until
+the table matches the `SCOPES` in the handler. A client may hold a list for five minutes, so a change
+to a key's scopes can take that long to show.
+
+**Agent instructions.** A content type's optional `agentInstructions` (plain text, at most 4,000
+characters, set through `model_create_content_type` or `POST …/content-types`) are the model author's
+style guidance for agents connected over MCP. `model_get_content_type` returns them;
+`model_list_content_types` leaves them out, and Delivery never serves them. They are data: they can't
+authorize a tool call or a change to keys, webhooks, roles, functions or settings, and the tool's
+description tells agents so. contentworker's own AI (generation, the agents, the assistant's prompt)
+doesn't read them yet.
 
 **Connecting a client.** With `OAUTH_ISSUER` set, the server is installable as a connector in
 Claude, ChatGPT and MCP-capable IDEs: an unauthenticated request answers with

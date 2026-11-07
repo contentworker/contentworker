@@ -62,6 +62,26 @@ describe('content type group, description and icon', () => {
     expect(cleared).not.toHaveProperty('icon');
   });
 
+  it('keeps agent instructions as written, and a revision keeps or clears them', () => {
+    const agentInstructions = '  Keep titles short.\n\nNever invent quotes.';
+    const ct = define({ agentInstructions });
+    expect(ct.agentInstructions).toBe(agentInstructions);
+    expect(reviseContentType(ct, { name: 'Articles' }).agentInstructions).toBe(agentInstructions);
+    expect(reviseContentType(ct, { agentInstructions: null })).not.toHaveProperty(
+      'agentInstructions',
+    );
+    expect(reviseContentType(ct, { agentInstructions: '  ' })).not.toHaveProperty(
+      'agentInstructions',
+    );
+  });
+
+  it('caps agent instructions', () => {
+    const agentInstructions = 'a'.repeat(CONTENT_TYPE_LIMITS.agentInstructions + 1);
+    expect(refusal(() => define({ agentInstructions }))).toMatch(
+      /agentInstructions must be at most 4000/,
+    );
+  });
+
   it('are capped, and an icon is a kebab-case name', () => {
     expect(refusal(() => define({ group: 'g'.repeat(CONTENT_TYPE_LIMITS.group + 1) }))).toMatch(
       /group must be at most 100/,

@@ -31,7 +31,7 @@ Uncommitted:
      `.claude/skills/contentworker-conventions/references/rules-map.tsv`, or touches routes, auth,
      webhooks, outbound fetches, model prompts, secrets, `wrangler.jsonc` or workflows.
    - `workers-reviewer`: when the diff touches an `apps/*/wrangler.jsonc`, `packages/platform`,
-     `apps/{api,delivery,engine}/src`, `deployments/` or `scripts/fleet.ts`.
+     `apps/{api,delivery,engine}/src`, `examples/fleet/` or `scripts/fleet.ts`.
    - `admin-ui-reviewer`: when the diff touches `apps/web/app/**` or `packages/ui`.
    Say which you skipped and why.
 3. **Meanwhile, the mechanical checks yourself:**

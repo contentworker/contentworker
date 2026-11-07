@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ContentType, ContentTypeDraft } from '@contentworker/sdk-management';
 import { describe, expect, it } from 'vitest';
-import { loadModel, normalizeDraft, planModel, renderModel } from '../src/model.js';
+import { loadModel, normalizeDraft, planModel, renderModel, toDrafts } from '../src/model.js';
 import { EXIT } from '../src/output.js';
 import { type Call, harness, status } from './harness.js';
 
@@ -139,6 +139,18 @@ describe('planModel', () => {
     expect(plan.types[0]?.changes.map((c) => c.detail)).toEqual([
       'group "Editorial" → "Magazine"',
       'layout removed',
+    ]);
+  });
+
+  it('compares agent instructions, and exports them', () => {
+    const detailed = { ...article, agentInstructions: 'Stay factual.' };
+    expect(toDrafts([live(detailed)])[0]?.agentInstructions).toBe('Stay factual.');
+    const plan = planModel(
+      [normalizeDraft({ ...detailed, agentInstructions: 'Be brief.' })],
+      [live(detailed)],
+    );
+    expect(plan.types[0]?.changes.map((c) => c.detail)).toEqual([
+      'agentInstructions "Stay factual." → "Be brief."',
     ]);
   });
 

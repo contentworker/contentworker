@@ -8,8 +8,9 @@ allowed-tools: Bash(gh run list *) Bash(gh run view *) Bash(gh pr checks *) Bash
 # Triage a CI failure
 
 Workflows: `.github/workflows/ci.yml` (on every push and PR: `verify` and `devices`; on `main`
-also `plan`, then the rings `staging` → `internal` → `canary` → `general`, each calling
-`deploy.yml` once per deployment). `deploy.yml` runs `scripts/deploy.sh`, whose log groups carry the
+also `release`, which dispatches the commit to the private `contentworker/fleet` repo, where `release.yml`
+runs `plan` and the rings `staging` → `internal` → `canary` → `general`, each calling
+`deploy.yml` once per deployment; read those runs there with `gh run list --repo contentworker/fleet`). `deploy.yml` runs `scripts/deploy.sh`, whose log groups carry the
 `deploy:` names below and whose log ends with "failed at: <group>", repeated after any rollback. It renders the config, collects secrets, records a D1
 bookmark, migrates D1, deploys engine → api → delivery → web, smoke-tests, and rolls back (engine
 first) on a failure; then the docs for the deployment with `"docs": true`. `docs/deployment.md`
@@ -37,7 +38,7 @@ gh run view <run-id> --log-failed | tail -200       # the failing steps' logs
 | verify: Audit dependencies                          | an advisory at high or critical                                                          | **dependency**     | Bump it in the pnpm catalog (`pnpm-workspace.yaml`); say which advisory                                                                                                                        |
 | devices                                             | a Playwright failure; the `device-test-traces` artifact                                  | **code** or flake  | `pnpm --filter @contentworker/web e2e -- <spec>` (`testing` skill). CI retries twice, so a failure here failed three times                                                                    |
 | devices: Install WebKit system dependencies         | apt timeouts, dpkg lock                                                                  | **platform blip**  | Re-run the failed job                                                                                                                                                                           |
-| plan                                                | a registry validation error, "missing d1Id / kvId"                                       | **provisioning**   | The deployment isn't provisioned: the user runs `./scripts/provision.sh <id>`, or sets `"hold": true`                                                                                         |
+| fleet repo: plan                                    | a registry validation error, "missing d1Id / kvId"                                       | **provisioning**   | The deployment isn't provisioned: the user runs `./scripts/provision.sh <id>`, or sets `"hold": true`                                                                                         |
 | deploy: Check deploy credentials / Collect secrets  | missing `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `PRINCIPAL_KEY`, `DATA_KEY`, …  | **secrets**        | The user adds it to the deployment's GitHub environment. Nothing was migrated                                                                                                                  |
 | deploy: any `wrangler` step                         | Cloudflare API codes `7403`, `10013`, 5xx after the `retry` helper's three attempts       | **platform blip**  | Re-run the failed jobs                                                                                                                                                                          |
 | deploy: Migrate D1                                  | a SQL error from a new migration                                                         | **code**           | D1 may be partly migrated; nothing deployed yet. Fix forward with a new migration; never edit the applied one. If data is damaged, point the user at the bookmark and docs/backup-and-restore.md |

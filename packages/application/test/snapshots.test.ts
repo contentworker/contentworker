@@ -135,6 +135,19 @@ describe('importing a snapshot', () => {
     expect(await listPreviewEntries(ctx, target, {})).toHaveLength(0);
   });
 
+  it('carries a type’s agent instructions', async () => {
+    const current = await store.contentTypes.get(source, 'article');
+    await createContentType(ctx, source, {
+      ...(current as NonNullable<typeof current>),
+      agentInstructions: 'Stay factual.',
+    } as Parameters<typeof createContentType>[2]);
+    await publishContentType(ctx, source, 'article');
+    await importSnapshot(ctx, target, await exportSnapshot(ctx, source));
+    expect((await store.contentTypes.get(target, 'article'))?.agentInstructions).toBe(
+      'Stay factual.',
+    );
+  });
+
   it('replays the model and entries into an empty environment', async () => {
     await createEntry(ctx, source, article('One'));
     await createEntry(ctx, source, article('Two'));
@@ -418,6 +431,39 @@ describe('importing a snapshot', () => {
     // Nothing was written: the target is still empty, so a corrected snapshot imports.
     expect(await ctx.store.contentTypes.list(target)).toEqual([]);
     expect(await importSnapshot(ctx, target, snapshot)).toMatchObject({ entries: 1 });
+  });
+
+  it('refuses an entry id that is not an id, naming its position and writing nothing', async () => {
+    await createEntry(ctx, source, article('Kept'));
+    const snapshot = await exportSnapshot(ctx, source);
+    const prose = 'the launch moves to march, tell nobody';
+    const broken = {
+      ...snapshot,
+      entries: [...snapshot.entries, { ...(snapshot.entries[0] as object), id: prose }],
+    };
+
+    const failure = await importSnapshot(ctx, target, broken as never).catch((err) => err);
+
+    expect(failure).toBeInstanceOf(ValidationError);
+    const messages = (failure as ValidationError).issues.map((i) => i.message).join('\n');
+    expect(messages).toContain('Entry at position 1: an entry id is');
+    expect(messages).not.toContain(prose);
+    expect(await store.contentTypes.list(target)).toEqual([]);
+  });
+
+  it('keeps ids of the accepted shape when importing', async () => {
+    await createEntry(ctx, source, { ...article('Kept'), id: 'legacy_Entry-1' });
+
+    const snapshot = await exportSnapshot(ctx, source);
+
+    expect(await importSnapshot(ctx, target, snapshot)).toMatchObject({ entries: 1 });
+    expect(await store.entries.get(target, 'legacy_Entry-1')).toBeTruthy();
+  });
+
+  it('refuses a carried id of the wrong shape at the write itself', async () => {
+    await expect(
+      createEntry(ctx, source, { ...article('Bad'), id: 'not an id' }),
+    ).rejects.toBeInstanceOf(ValidationError);
   });
 
   it('refuses a target that already has a content model', async () => {

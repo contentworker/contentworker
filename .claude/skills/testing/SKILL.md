@@ -27,7 +27,7 @@ you add or run a test. Read the neighbouring tests before writing one, and reuse
 | A route, flow, layout or accessibility in the admin              | `apps/web/e2e/*.spec.ts`                                    | Playwright, WebKit and Chromium  |
 | `packages/design/src/tokens.ts` / `apps/web/app/app.css`          | `packages/design/tests/tokens.test.ts`                      | node                             |
 | `docs/*.md`, `packages/http/skills/**`                           | drift tests in `packages/docs/test`, `packages/http/test`   | node                             |
-| `deployments/`, `scripts/*.ts`, DO migration tags, the catalog    | `scripts/*.test.ts` (`pnpm test:fleet`)                     | `node --test`                    |
+| `examples/fleet/`, `scripts/*.ts`, DO migration tags, the catalog    | `scripts/*.test.ts` (`pnpm test:fleet`)                     | `node --test`                    |
 | `.claude/` hooks and toolkit                                     | `.claude/hooks/tests/*.test.sh` (`pnpm test:toolkit`)       | bash                             |
 
 ## Running a slice

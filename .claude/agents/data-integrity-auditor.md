@@ -31,7 +31,7 @@ evidence.** Trace the code; where it and the docs disagree, that is a finding.
   delivery and media edge caches, published read models and counters inside D1. Expendable:
   `LiveHubDO`, `RateLimiterDO`, `CostGuardDO`. Confirm each really is rebuildable. Once confirmed,
   losing it is an availability matter, not data loss.
-- **Tenancy.** Each customer is an isolated stack (`deployments/*.jsonc`, rendered by
+- **Tenancy.** Each customer is an isolated stack (a registry entry each, in the private fleet repo, rendered by
   `scripts/fleet.ts`, created by `scripts/provision.sh`), with its own D1, bucket, KV and queues.
   Spaces and environments live inside one D1. So restoring one customer is a restore of that
   deployment; restoring one space, environment or entry is the partial-recovery question.
@@ -236,7 +236,7 @@ the side effect; don't assess from naming or docs alone.
 - **Destructive commands reachable from CI or an agent.** Check `.claude/hooks/guard-bash.sh` for
   what it misses (`wrangler kv … delete`, `kv bulk delete`, `r2 object delete`, `queues purge`). It
   guards agent sessions only, so it does nothing for a person at a laptop.
-- **Registry mistakes.** A wrong `d1Id` or `kvId` in `deployments/*.jsonc`, or a reused `suffix`,
+- **Registry mistakes.** A wrong `d1Id` or `kvId` in a registry entry, or a reused `suffix`,
   points one customer's Workers at another's data. What in `scripts/fleet.ts`, its tests or CI
   stops that? What happens to a removed deployment's data?
 - **Rollback of a deploy that shipped a migration:** is the data plan written down, and who decides?

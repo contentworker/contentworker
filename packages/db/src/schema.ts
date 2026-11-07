@@ -8,6 +8,7 @@ import type {
   AssetShareTargetType,
   AssetZipSource,
   AssetZipStatus,
+  AuditDetail,
   ContentTypeGrant,
   ContentTypeLayout,
   DomainEvent,
@@ -197,6 +198,8 @@ export const contentTypes = sqliteTable(
     group: text('group_name'),
     description: text('description'),
     icon: text('icon'),
+    /** How an agent should write this type's entries; never delivered (0032). */
+    agentInstructions: text('agent_instructions'),
     /** The entry form's tabs and field groups; editor-only, never delivered (0026). */
     layout: text('layout', { mode: 'json' }).$type<ContentTypeLayout>(),
   },
@@ -756,8 +759,14 @@ export const auditLog = sqliteTable(
     targetId: text('target_id'),
     status: integer('status').notNull(),
     at: integer('at', { mode: 'timestamp_ms' }).notNull(),
+    detail: text('detail', { mode: 'json' }).$type<AuditDetail>(),
   },
-  (t) => [index('audit_log_by_space').on(t.spaceId, t.at)],
+  (t) => [
+    index('audit_log_by_space').on(t.spaceId, t.at),
+    index('audit_log_by_actor').on(t.spaceId, t.actor, t.at, t.id),
+    index('audit_log_by_action').on(t.spaceId, t.action, t.at, t.id),
+    index('audit_log_by_target').on(t.spaceId, t.targetId, t.at, t.id),
+  ],
 );
 
 /** Persisted, templated AI operations ("AI Actions"), env-scoped. */
