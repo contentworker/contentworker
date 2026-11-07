@@ -5,6 +5,7 @@ import {
   createEntry,
   createSpace,
   decideWorkflowTask,
+  SYSTEM_CALLER,
   startWorkflowRun,
 } from '@contentworker/application';
 import { type Principal, WorkflowBuilder } from '@contentworker/domain';
@@ -51,7 +52,7 @@ describe('EditorialWorkflow on Cloudflare Workflows', () => {
     };
     editorialTestState.ctx = ctx;
     await createSpace(ctx, { spaceId: 'blog', name: 'Blog', defaultLocale: 'en-US' });
-    await createContentType(ctx, scope, {
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
       apiId: 'post',
       name: 'Post',
       displayField: 'title',

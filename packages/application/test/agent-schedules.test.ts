@@ -12,6 +12,7 @@ import {
   listAgentSchedules,
   publishEntry,
   runDueAgentSchedules,
+  SYSTEM_CALLER,
   updateAgentSchedule,
 } from '../src/index';
 
@@ -46,7 +47,7 @@ describe('agent schedules', () => {
       ids: new SequenceIdGenerator('s'),
     };
     await createSpace(ctx, { spaceId: 'sched', name: 'Sched', defaultLocale: 'en-US' });
-    await createContentType(ctx, scope, {
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
       apiId: 'article',
       name: 'Article',
       displayField: 'title',

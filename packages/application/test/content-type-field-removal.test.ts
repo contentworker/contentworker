@@ -9,6 +9,7 @@ import {
   publishEntry,
   purgeEntry,
   removedContentInUse,
+  SYSTEM_CALLER,
   trashEntry,
   updateContentType,
   updateEntry,
@@ -39,7 +40,7 @@ const SEO = f('seo', 'Component', {
 const SEO_SLIM = { ...SEO, fields: [f('noindex', 'Boolean', { position: 1 })] };
 
 async function defineArticle(s = scope) {
-  await createContentType(ctx, s, {
+  await createContentType(ctx, SYSTEM_CALLER, s, {
     apiId: 'article',
     name: 'Article',
     displayField: 'title',
@@ -56,7 +57,8 @@ const article = (title: string, more: Record<string, unknown> = {}) => ({
   },
 });
 
-const dropTeaser = () => updateContentType(ctx, scope, 'article', { fields: [TITLE, SEO] });
+const dropTeaser = () =>
+  updateContentType(ctx, SYSTEM_CALLER, scope, 'article', { fields: [TITLE, SEO] });
 
 beforeEach(async () => {
   store = new InMemoryContentStore();
@@ -90,7 +92,7 @@ describe('removing a field', () => {
       scope,
       article('Home', { seo: { description: 'About', noindex: false } }),
     );
-    const err = await updateContentType(ctx, scope, 'article', {
+    const err = await updateContentType(ctx, SYSTEM_CALLER, scope, 'article', {
       fields: [TITLE, TEASER, SEO_SLIM],
     }).catch((e) => e);
     expect(err).toBeInstanceOf(ConflictError);

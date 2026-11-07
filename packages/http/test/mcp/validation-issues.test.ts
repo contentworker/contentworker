@@ -5,6 +5,7 @@ import {
   createContentType,
   createSpace,
   publishContentType,
+  SYSTEM_CALLER,
 } from '@contentworker/application';
 import { type FieldDefinition, type Principal, SCOPES } from '@contentworker/domain';
 import {
@@ -93,7 +94,7 @@ describe('MCP validation errors carry their field issues', () => {
   beforeEach(async () => {
     deps = makeDeps();
     await createSpace(deps.ctx, { spaceId: SPACE, name: 'Shop', defaultLocale: 'en-US' });
-    await createContentType(deps.ctx, scope, {
+    await createContentType(deps.ctx, SYSTEM_CALLER, scope, {
       apiId: 'landing',
       name: 'Landing',
       displayField: 'title',

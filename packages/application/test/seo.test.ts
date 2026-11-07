@@ -15,6 +15,7 @@ import {
   listDeliveredSitemap,
   publishContentType,
   publishEntry,
+  SYSTEM_CALLER,
   setEntrySeo,
   unpublishEntry,
   updateContentType,
@@ -43,7 +44,7 @@ const defineType = async (
   opts: { urlPattern?: string; seo?: Partial<FieldDefinition> | false; at?: typeof scope } = {},
 ) => {
   const at = opts.at ?? scope;
-  await createContentType(ctx, at, {
+  await createContentType(ctx, SYSTEM_CALLER, at, {
     apiId,
     name: apiId,
     displayField: 'title',
@@ -213,7 +214,7 @@ describe('listDeliveredSitemap', () => {
     await defineType('article');
     await page('article', 'hello');
     expect((await listDeliveredSitemap(ctx, scope)).items).toEqual([]);
-    await updateContentType(ctx, scope, 'article', { urlPattern: '/blog/{slug}' });
+    await updateContentType(ctx, SYSTEM_CALLER, scope, 'article', { urlPattern: '/blog/{slug}' });
     expect((await listDeliveredSitemap(ctx, scope)).items).toEqual([]);
     await publishContentType(ctx, scope, 'article');
     expect((await listDeliveredSitemap(ctx, scope)).items).toHaveLength(1);

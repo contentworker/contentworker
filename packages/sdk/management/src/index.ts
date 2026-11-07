@@ -151,8 +151,31 @@ export interface ContentType {
   readonly agentInstructions?: string;
   /** Editor-only: how the admin's entry form arranges the fields. Never delivered. */
   readonly layout?: ContentTypeLayout;
+  /** Editor-only: where the admin previews entries on your frontend. Never delivered. */
+  readonly preview?: ContentTypePreview;
   readonly version: number;
   readonly status: ContentTypeStatus;
+}
+
+/**
+ * A type's preview URL template: an https URL (http to localhost only on a local stack) with a fixed
+ * host, e.g. `https://site.example/__preview?entry={id}#token={token}`. Placeholders, each filled
+ * URL-encoded: `{id}`, `{token}` (required), `{locale}`, `{space}`, `{environment}` and
+ * `{field:<apiId>}` (a Symbol, Slug, Integer, Number or Date field).
+ */
+export interface ContentTypePreview {
+  readonly urlTemplate: string;
+}
+
+/** A minted preview link: the token reads one entry, drafts included, until `expiresAt`. */
+export interface PreviewLink {
+  /** The entry on the Preview API. */
+  readonly url: string;
+  /** The entry on your frontend, from its type's preview template; absent without one. */
+  readonly frontendUrl?: string;
+  /** Shown once. */
+  readonly token: string;
+  readonly expiresAt: string;
 }
 
 /** The entry form's tabs, each of named or unnamed groups of top-level field apiIds. */
@@ -238,6 +261,7 @@ export interface ContentTypeDraft {
   readonly icon?: string | null;
   readonly agentInstructions?: string | null;
   readonly layout?: ContentTypeLayout | null;
+  readonly preview?: ContentTypePreview | null;
 }
 
 /** A redirect: a front end (or an edge Worker) applies it; contentworker serves no site. */
@@ -1827,6 +1851,18 @@ export function createManagementClient(opts: ManagementClientOptions) {
           `${envBase}/entries/${e(id)}/move`,
           place,
         ),
+      /**
+       * Mints an expiring preview link (default 72 hours). `frontendUrl` is the entry on your
+       * site when its type has a preview template, filled in `locale` (the space's default).
+       */
+      previewLink: (
+        id: string,
+        opts: {
+          readonly ttlHours?: number;
+          readonly previewBaseUrl?: string;
+          readonly locale?: string;
+        } = {},
+      ) => post<PreviewLink>(`${envBase}/entries/${e(id)}/preview-link`, opts),
       /**
        * Publishes the current draft. With `expectedVersion` (the `currentVersion` you read), a
        * draft saved since makes it a 409 that changes nothing.

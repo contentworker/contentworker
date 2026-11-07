@@ -6,6 +6,7 @@ import {
   createEntry,
   publishContentType,
   SUGGEST_MAX_LIMIT,
+  SYSTEM_CALLER,
   suggestEntries,
   trashEntry,
 } from '../src/index';
@@ -15,7 +16,7 @@ const scope = { spaceId: SPACE, environmentId: 'main' };
 let ctx: AppContext;
 
 const defineType = (apiId: string, displayField = 'title') =>
-  createContentType(ctx, scope, {
+  createContentType(ctx, SYSTEM_CALLER, scope, {
     apiId,
     name: apiId,
     displayField,
@@ -29,7 +30,7 @@ const defineType = (apiId: string, displayField = 'title') =>
         position: 0,
       },
     ],
-  } as Parameters<typeof createContentType>[2]);
+  } as Parameters<typeof createContentType>[3]);
 
 const add = (contentTypeApiId: string, title: string, field = 'title') =>
   createEntry(ctx, scope, {
@@ -146,7 +147,7 @@ describe('titles', () => {
   });
 
   it('falls back to the id when the display field is empty', async () => {
-    await createContentType(ctx, scope, {
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
       apiId: 'note',
       name: 'note',
       displayField: 'label',
@@ -160,7 +161,7 @@ describe('titles', () => {
           position: 0,
         },
       ],
-    } as Parameters<typeof createContentType>[2]);
+    } as Parameters<typeof createContentType>[3]);
     await publishContentType(ctx, scope, 'note');
     await createEntry(ctx, scope, { contentTypeApiId: 'note', fields: {} });
     const hits = await suggestEntries(ctx, scope, { contentTypeApiId: 'note' });

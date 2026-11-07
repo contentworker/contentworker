@@ -17,6 +17,7 @@ import {
   listAIActions,
   renderTemplate,
   runAIAction,
+  SYSTEM_CALLER,
   templateVariables,
 } from '../src/index';
 
@@ -70,7 +71,7 @@ describe('runAIAction', () => {
   beforeEach(async () => {
     ({ ctx } = setup());
     await createSpace(ctx, { spaceId: 'blog', name: 'Blog', defaultLocale: 'en-US' });
-    await createContentType(ctx, scope, {
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
       apiId: 'post',
       name: 'Post',
       displayField: 'title',

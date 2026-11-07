@@ -466,7 +466,7 @@ a caller pastes into a file, and wrapping it in a JSON string only makes it some
 | GET    | `…/trash-settings`                 | `preview:read`    | `{ retentionDays }` (null: off, the default)                                                                   |
 | PUT    | `…/trash-settings`                 | `space:admin`     | `{ retentionDays: 1..3650 \| null }`: the hourly `trash-retention` sweep purges entries trashed longer ago, in every environment of the space, never one a published entry links to |
 | POST   | `…/entries/:id/duplicate`          | `content:write`   | Copy fields + taxonomy metadata into a new draft; a role needs read and write on the type, and the response is masked for it |
-| POST   | `…/entries/:id/preview-link`       | `content:write`   | Mint a shareable preview link `{ ttlHours?, previewBaseUrl? }` (default 72 h); `201 { url, token, expiresAt }` |
+| POST   | `…/entries/:id/preview-link`       | `content:write`   | Mint a shareable preview link `{ ttlHours?, previewBaseUrl?, locale? }` (default 72 h); `201 { url, frontendUrl?, token, expiresAt }` (`frontendUrl`: the type's `preview.urlTemplate`, filled) |
 | POST   | `…/embeds/resolve`                 | `content:write`   | Resolve a media URL `{ url }` into a rich-text `embed` node's data; `200 { embed, resolved }`                  |
 
 **Held to a version.** Publish, unpublish and version restore take an optional

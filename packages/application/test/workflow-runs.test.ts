@@ -29,6 +29,7 @@ import {
   publishEntry,
   reportRun,
   SeparationOfDutiesError,
+  SYSTEM_CALLER,
   setWorkflowSeparationDefault,
   startWorkflowRun,
   WORKFLOW_COMPENSATIONS,
@@ -77,7 +78,7 @@ describe('workflow runs', () => {
     ctx = { store: new InMemoryContentStore(), clock, ids: new SequenceIdGenerator('id') };
     engine = new RecordingWorkflowEngine();
     await createSpace(ctx, { spaceId: 'blog', name: 'Blog', defaultLocale: 'en-US' });
-    await createContentType(ctx, scope, {
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
       apiId: 'post',
       name: 'Post',
       displayField: 'title',

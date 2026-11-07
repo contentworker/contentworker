@@ -4,6 +4,7 @@ import {
   createEntry,
   createSpace,
   publishEntry,
+  SYSTEM_CALLER,
 } from '@contentworker/application';
 import type { Clock, EntryQuery, IdGenerator } from '@contentworker/ports';
 import { InMemoryContentStore } from '@contentworker/test-kit';
@@ -195,7 +196,7 @@ describe('D1 ≡ in-memory query equivalence', { timeout: 60_000 }, () => {
         defaultLocale: 'en-US',
         locales: ['en-US', 'de'],
       });
-      await createContentType(ctx, scope, {
+      await createContentType(ctx, SYSTEM_CALLER, scope, {
         apiId: 'doc',
         name: 'Doc',
         displayField: 'title',
@@ -424,7 +425,7 @@ describe('prefilter superset property (adversarial)', { timeout: 120_000 }, () =
     memCtx = { store: new InMemoryContentStore(), clock, ids: seqIds(`a-${runId}`) };
     for (const ctx of [d1Ctx, memCtx]) {
       await createSpace(ctx, { spaceId, name: 'Adv', defaultLocale: 'en-US', locales: ['en-US'] });
-      await createContentType(ctx, scope, {
+      await createContentType(ctx, SYSTEM_CALLER, scope, {
         apiId: 'adv',
         name: 'Adv',
         displayField: 'label',

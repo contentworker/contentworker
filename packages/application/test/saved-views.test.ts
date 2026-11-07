@@ -25,6 +25,7 @@ import {
   listSavedViews,
   publishContentType,
   runSavedView,
+  SYSTEM_CALLER,
   updateSavedView,
 } from '../src/index';
 
@@ -82,7 +83,7 @@ describe('saved views', () => {
     await createSpace(ctx, { spaceId: 'site', name: 'Site', defaultLocale: 'en-US' });
     await createSpace(ctx, { spaceId: 'other', name: 'Other', defaultLocale: 'en-US' });
     await createEnvironment(ctx, 'site', 'staging');
-    await createContentType(ctx, scope, {
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
       apiId: 'article',
       name: 'Article',
       displayField: 'title',
@@ -92,7 +93,7 @@ describe('saved views', () => {
         field({ apiId: 'salary', type: 'Integer', position: 2 }),
       ],
     });
-    await createContentType(ctx, scope, {
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
       apiId: 'page',
       name: 'Page',
       displayField: 'title',
@@ -549,7 +550,7 @@ describe('saved views', () => {
   });
 
   it('says when a view’s content type is missing, and can still be changed and deleted', async () => {
-    await createContentType(ctx, staging, {
+    await createContentType(ctx, SYSTEM_CALLER, staging, {
       apiId: 'promo',
       name: 'Promo',
       displayField: 'title',
@@ -587,8 +588,8 @@ describe('saved views', () => {
       displayField: 'title',
       fields: [field({ apiId: 'title', type: 'Symbol' })],
     };
-    await createContentType(ctx, scope, promo);
-    await createContentType(ctx, staging, promo);
+    await createContentType(ctx, SYSTEM_CALLER, scope, promo);
+    await createContentType(ctx, SYSTEM_CALLER, staging, promo);
     await publishContentType(ctx, staging, 'promo');
     const mine = await createSavedView(ctx, scope, bob, {
       name: 'Promos',
@@ -619,7 +620,7 @@ describe('saved views', () => {
     expect((await runSavedView(ctx, staging, bob, mine.id)).typeMissing).toBeUndefined();
     expect((await runSavedView(ctx, scope, bob, everyType.id)).typeMissing).toBeUndefined();
 
-    await createContentType(ctx, scope, promo);
+    await createContentType(ctx, SYSTEM_CALLER, scope, promo);
     await publishContentType(ctx, scope, 'promo');
     await createEntry(ctx, scope, {
       contentTypeApiId: 'promo',

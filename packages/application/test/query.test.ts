@@ -8,6 +8,7 @@ import {
   listPublishedEntries,
   publishContentType,
   publishEntry,
+  SYSTEM_CALLER,
 } from '../src/index';
 
 const scope = { spaceId: 'space-1', environmentId: 'main' };
@@ -20,7 +21,7 @@ function makeContext(): AppContext {
 
 /** Seeds the article type and a fixed corpus of published entries. */
 async function seedCorpus(ctx: AppContext) {
-  await createContentType(ctx, scope, {
+  await createContentType(ctx, SYSTEM_CALLER, scope, {
     apiId: 'article',
     name: 'Article',
     displayField: 'title',

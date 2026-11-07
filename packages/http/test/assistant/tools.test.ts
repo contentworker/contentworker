@@ -6,6 +6,7 @@ import {
   createEntry,
   createSpace,
   publishContentType,
+  SYSTEM_CALLER,
 } from '@contentworker/application';
 import {
   ASSISTANT_TOOLS,
@@ -56,7 +57,7 @@ function makeDeps(): McpDeps {
 async function seedSpace(ctx: AppContext, spaceId: string, title: string) {
   const scope = { spaceId, environmentId: 'main' };
   await createSpace(ctx, { spaceId, name: spaceId, defaultLocale: 'en-US' });
-  await createContentType(ctx, scope, {
+  await createContentType(ctx, SYSTEM_CALLER, scope, {
     apiId: 'article',
     name: 'Article',
     displayField: 'title',

@@ -34,6 +34,7 @@ import {
   publishContentType,
   publishEntry,
   resolveDeliveredRedirect,
+  SYSTEM_CALLER,
   setEntryMetadata,
   setEntrySeo,
 } from '@contentworker/application';
@@ -109,7 +110,7 @@ async function seed(): Promise<void> {
     defaultLocale: 'en-US',
     locales: ['en-US', 'de'],
   });
-  await createContentType(ctx, scope, {
+  await createContentType(ctx, SYSTEM_CALLER, scope, {
     apiId: 'author',
     name: 'Author',
     displayField: 'name',
@@ -118,7 +119,7 @@ async function seed(): Promise<void> {
       field({ apiId: 'avatar', type: 'Link', linkType: 'Asset', position: 1 }),
     ],
   });
-  await createContentType(ctx, scope, {
+  await createContentType(ctx, SYSTEM_CALLER, scope, {
     apiId: 'article',
     name: 'Article',
     displayField: 'title',
@@ -137,7 +138,7 @@ async function seed(): Promise<void> {
       field({ apiId: 'body', type: 'RichText', position: 6 }),
     ],
   });
-  await createContentType(ctx, scope, {
+  await createContentType(ctx, SYSTEM_CALLER, scope, {
     apiId: 'roundup',
     name: 'Roundup',
     displayField: 'title',
@@ -153,7 +154,7 @@ async function seed(): Promise<void> {
     ],
   });
   // A blocks field: links inside blocks resolve like any other.
-  await createContentType(ctx, scope, {
+  await createContentType(ctx, SYSTEM_CALLER, scope, {
     apiId: 'landing',
     name: 'Landing',
     displayField: 'title',
@@ -187,7 +188,7 @@ async function seed(): Promise<void> {
       }),
     ],
   });
-  await createContentType(ctx, scope, {
+  await createContentType(ctx, SYSTEM_CALLER, scope, {
     apiId: 'page',
     name: 'Page',
     displayField: 'title',
@@ -200,7 +201,7 @@ async function seed(): Promise<void> {
     ],
   });
   // A singleton: Delivery reads it by type, not by id.
-  await createContentType(ctx, scope, {
+  await createContentType(ctx, SYSTEM_CALLER, scope, {
     apiId: 'settings',
     name: 'Settings',
     displayField: 'title',

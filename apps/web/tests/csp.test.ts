@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import {
   ANY_HTTPS_FRAMER,
   contentSecurityPolicy,
+  frameSources,
   parseEmbed,
+  parseFrames,
   withSecurityHeaders,
 } from '../app/lib/csp';
 
@@ -67,8 +69,58 @@ describe('page CSP', () => {
       'https://buyer.example/a%2Cb/it%27s%20here',
     ]);
     const csp = contentSecurityPolicy('n', embed);
-    expect(csp.split('; ')).toHaveLength(10);
+    expect(csp.split('; ')).toHaveLength(11);
     expect(directive(csp, 'form-action')?.split(' ')).toHaveLength(5);
+  });
+
+  it('frames only this origin by default', () => {
+    expect(directive(contentSecurityPolicy('n'), 'frame-src')).toBe("frame-src 'self'");
+  });
+
+  it('frames a customer’s frontend origins, https or a local dev server', () => {
+    const csp = contentSecurityPolicy('n', null, [
+      'https://site.example',
+      'https://site.example/__preview?entry=1',
+      'http://localhost:3000',
+      'http://127.0.0.1:4321/p',
+    ]);
+    expect(directive(csp, 'frame-src')).toBe(
+      "frame-src 'self' https://site.example http://localhost:3000 http://127.0.0.1:4321",
+    );
+  });
+
+  it('drops a framed source that isn’t https, carries credentials or could add a directive', () => {
+    expect(
+      frameSources([
+        'http://site.example',
+        'http://localhost.evil.example',
+        'javascript:alert(1)',
+        'data:text/html,hi',
+        'https://user:pw@site.example',
+        "https://x.example; script-src 'unsafe-inline'",
+        'https://a;b.example',
+        'https://a,b.example',
+        "https://a'b.example",
+        '*',
+        'https://*',
+        'https://*.example',
+        'https://a_b.example',
+        "'unsafe-inline'",
+        42,
+      ]),
+    ).toEqual([]);
+    expect(frameSources('https://site.example')).toEqual([]);
+    const csp = contentSecurityPolicy('n', null, ["https://x.example; script-src 'unsafe-inline'"]);
+    expect(csp.split('; ')).toHaveLength(11);
+    expect(directive(csp, 'script-src')).toBe("script-src 'self' 'nonce-n'");
+  });
+
+  it('reads framed origins back from the route header, and nothing from a bad one', () => {
+    expect(parseFrames(JSON.stringify(['https://site.example/x', 'http://bad.example']))).toEqual([
+      'https://site.example',
+    ]);
+    expect(parseFrames('not json')).toEqual([]);
+    expect(parseFrames(null)).toEqual([]);
   });
 
   it('lets any https page frame a refusal, and nothing else', () => {

@@ -20,6 +20,7 @@ import {
   getEntry,
   getEntryMetadata,
   listTags,
+  SYSTEM_CALLER,
   setEntryMetadata,
   suggestEntryTags,
   summarizeEntry,
@@ -41,7 +42,7 @@ async function seed(ctx: AppContext) {
     defaultLocale: 'en-US',
     locales: ['en-US', 'fr-FR'],
   });
-  await createContentType(ctx, scope, {
+  await createContentType(ctx, SYSTEM_CALLER, scope, {
     apiId: 'post',
     name: 'Post',
     displayField: 'title',

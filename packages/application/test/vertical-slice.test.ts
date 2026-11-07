@@ -9,6 +9,7 @@ import {
   listPublishedEntries,
   publishContentType,
   publishEntry,
+  SYSTEM_CALLER,
   unpublishEntry,
   updateEntry,
 } from '../src/index';
@@ -23,7 +24,7 @@ function makeContext(): { ctx: AppContext; store: InMemoryContentStore } {
 }
 
 async function seedArticleType(ctx: AppContext) {
-  return createContentType(ctx, scope, {
+  return createContentType(ctx, SYSTEM_CALLER, scope, {
     apiId: 'article',
     name: 'Article',
     displayField: 'title',

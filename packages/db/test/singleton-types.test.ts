@@ -8,6 +8,7 @@ import {
   getPreviewSingleton,
   publishContentType,
   publishEntry,
+  SYSTEM_CALLER,
   trashEntry,
   updateContentType,
 } from '@contentworker/application';
@@ -45,7 +46,7 @@ async function harness() {
   const spaceId = `singletons-${uid()}`;
   await createSpace(ctx, { spaceId, name: 'Singletons', defaultLocale: 'en-US' });
   const scope = { spaceId, environmentId: 'main' };
-  await createContentType(ctx, scope, {
+  await createContentType(ctx, SYSTEM_CALLER, scope, {
     apiId: 'settings',
     name: 'Settings',
     displayField: 'title',
@@ -62,12 +63,12 @@ describe('singleton types on D1', () => {
   it('stores the flag in its column and keeps it through a revision', async () => {
     const { ctx, scope } = await harness();
     expect((await getContentType(ctx, scope, 'settings')).singleton).toBe(true);
-    await updateContentType(ctx, scope, 'settings', { name: 'Site settings' });
+    await updateContentType(ctx, SYSTEM_CALLER, scope, 'settings', { name: 'Site settings' });
     expect(await store.contentTypes.get(scope, 'settings')).toMatchObject({
       name: 'Site settings',
       singleton: true,
     });
-    await updateContentType(ctx, scope, 'settings', { singleton: false });
+    await updateContentType(ctx, SYSTEM_CALLER, scope, 'settings', { singleton: false });
     expect('singleton' in ((await store.contentTypes.get(scope, 'settings')) ?? {})).toBe(false);
   });
 
@@ -105,11 +106,11 @@ describe('singleton types on D1', () => {
     await trashEntry(ctx, scope, first.entry.id);
     const second = await create('Two');
 
-    await updateContentType(ctx, scope, 'settings', { singleton: false });
+    await updateContentType(ctx, SYSTEM_CALLER, scope, 'settings', { singleton: false });
     await create('Three');
-    await expect(updateContentType(ctx, scope, 'settings', { singleton: true })).rejects.toThrow(
-      second.entry.id,
-    );
+    await expect(
+      updateContentType(ctx, SYSTEM_CALLER, scope, 'settings', { singleton: true }),
+    ).rejects.toThrow(second.entry.id);
     expect(await store.entries.findUniqueConflicts(scope, [singletonClaim('settings')])).toEqual(
       [],
     );

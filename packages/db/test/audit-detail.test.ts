@@ -7,6 +7,7 @@ import {
   listAuditLog,
   publishContentType,
   recordAudit,
+  SYSTEM_CALLER,
   updateEntry,
   withChanges,
 } from '@contentworker/application';
@@ -65,7 +66,7 @@ describe('audit row detail on D1', { timeout: 60_000 }, () => {
       defaultLocale: 'en-US',
       locales: ['en-US', 'de'],
     });
-    await createContentType(ctx, scope, {
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
       apiId: 'article',
       name: 'Article',
       displayField: 'title',

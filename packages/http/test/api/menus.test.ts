@@ -3,6 +3,7 @@ import {
   createEntry,
   publishContentType,
   publishEntry,
+  SYSTEM_CALLER,
   unpublishEntry,
 } from '@contentworker/application';
 import type { FieldDefinition } from '@contentworker/domain';
@@ -52,7 +53,7 @@ async function makeApp() {
   const wired = wire(config);
   const app = createApp(wired.ctx, config, wired.rag, wired.blob, wired.ai);
   const ctx = wired.ctx;
-  await createContentType(ctx, scope, {
+  await createContentType(ctx, SYSTEM_CALLER, scope, {
     apiId: 'menupage',
     name: 'Menu page',
     displayField: 'title',

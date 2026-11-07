@@ -23,6 +23,12 @@ pnpm dev     # applies packages/db/migrations to the local D1 (db:migrate:local)
 `pnpm db:migrate:local` is also the way to apply a new migration without restarting, and
 `pnpm dev:reset` deletes `apps/web/.wrangler/state` and migrates again, for a fresh database.
 
+`pnpm dev:first-run` starts the stack as a new deployment meets it: a database of its own
+(`apps/web/.wrangler/first-run`, wiped each start), nothing seeded, and the admin closed until set
+up, so `/setup` → `/setup/two-factor` → `/setup/space` can be walked. The setup code is
+`local-first-run`. Plain `pnpm dev` stays open (anyone is "Admin, no sign-in" until a first admin
+exists) and seeded. `CONTENTWORKER_FIRST_RUN` only works under `pnpm dev`: a build refuses it.
+
 `pnpm dev` runs `react-router dev` in `apps/web` (Vite, http://localhost:5173; `PORT=5174 pnpm
 dev` for another port). The port is fixed rather than "the next free one": the local OAuth issuer
 (`OAUTH_ISSUER`, so MCP clients can connect with OAuth as on a deployment), the MCP smoke scripts
@@ -262,7 +268,7 @@ read paths), 10 GB per database.
 | Tables                                                                                                                                            | Purpose                                                                                   |
 | ------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
 | `spaces`, `environments`, `environment_aliases`                                                                                                   | Spaces, branches, alias → environment                                                     |
-| `content_types`                                                                                                                                   | Content-type definitions (`fields` JSON; group, description, icon, `layout` JSON from 0026; `agent_instructions` from 0032) |
+| `content_types`                                                                                                                                   | Content-type definitions (`fields` JSON; group, description, icon, `layout` JSON from 0026; `agent_instructions` from 0032; `preview_url_template` from 0035) |
 | `entries`, `entry_versions`, `entry_published`, `entry_metadata`, `entry_unique_values`                                                           | Entry aggregate, version ledger, published read model, tags/concepts, unique-field claims |
 | `assets`, `asset_published`                                                                                                                       | Asset metadata and its published read model                                               |
 | `references`                                                                                                                                      | Link graph (reverse lookups for invalidation and usage)                                   |
@@ -415,6 +421,11 @@ row, for the reason 0030's triggers give: code that has never heard of the table
 a deploy and after a rollback. A `detail` that isn't valid JSON indexes only its target rather than
 failing the append. The migration backfills the rows already written. Nothing deletes from it, as
 nothing deletes audit history; deleting an environment leaves it.
+
+`0035_content_type_preview.sql` adds the nullable `content_types.preview_url_template`, a type's
+`preview.urlTemplate`, as plain text for the same reason: on a replica behind the migration
+`toContentType` sees the column's own name and treats it as unset, which JSON could not survive.
+Delivery never reads it.
 
 `0032_content_type_agent_instructions.sql` adds the nullable `content_types.agent_instructions`.
 Delivery names its columns and never reads it. Management reads can start on a replica behind the

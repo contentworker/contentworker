@@ -19,6 +19,7 @@ import {
   moderateEntry,
   publishEntry,
   runPublishAgents,
+  SYSTEM_CALLER,
 } from '../src/index';
 
 const scope = { spaceId: 'blog', environmentId: 'main' };
@@ -48,7 +49,7 @@ describe('auditEntry', () => {
   beforeEach(async () => {
     ({ ctx } = setup());
     await createSpace(ctx, { spaceId: 'blog', name: 'Blog', defaultLocale: 'en-US' });
-    await createContentType(ctx, scope, {
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
       apiId: 'post',
       name: 'Post',
       displayField: 'title',
@@ -149,7 +150,7 @@ describe('moderateEntry', () => {
   beforeEach(async () => {
     ({ ctx } = setup());
     await createSpace(ctx, { spaceId: 'blog', name: 'Blog', defaultLocale: 'en-US' });
-    await createContentType(ctx, scope, {
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
       apiId: 'post',
       name: 'Post',
       displayField: 'title',
@@ -207,7 +208,7 @@ describe('runPublishAgents', () => {
   beforeEach(async () => {
     ({ ctx } = setup());
     await createSpace(ctx, { spaceId: 'blog', name: 'Blog', defaultLocale: 'en-US' });
-    await createContentType(ctx, scope, {
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
       apiId: 'post',
       name: 'Post',
       displayField: 'title',

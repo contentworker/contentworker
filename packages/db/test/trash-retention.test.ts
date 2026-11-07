@@ -10,6 +10,7 @@ import {
   getTrashSettings,
   publishContentType,
   publishEntry,
+  SYSTEM_CALLER,
   setTrashRetention,
   startBulkJob,
   sweepExpiredTrash,
@@ -41,7 +42,7 @@ async function harness() {
   const spaceId = `trash-${uid()}`;
   await createSpace(ctx, { spaceId, name: 'Trash', defaultLocale: 'en-US' });
   const scope = { spaceId, environmentId: 'main' };
-  await createContentType(ctx, scope, {
+  await createContentType(ctx, SYSTEM_CALLER, scope, {
     apiId: 'note',
     name: 'Note',
     displayField: 'title',

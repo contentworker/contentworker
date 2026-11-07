@@ -34,6 +34,12 @@ const client = {
     publishedVersion: null,
   })),
   updateEntry: vi.fn(),
+  createPreviewLink:
+    vi.fn<
+      (
+        id: string,
+      ) => Promise<{ url: string; frontendUrl?: string; token: string; expiresAt: string }>
+    >(),
   diffVersions: vi.fn(async (entryId: string) => ({
     entryId,
     contentType: 'article',
@@ -254,5 +260,32 @@ describe('EntryEditor Publish', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Keep as draft' }));
     await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
     expect(client.publishEntry).not.toHaveBeenCalled();
+  });
+
+  it('copies the entry’s page on the site when its type has a preview URL, else the API’s', async () => {
+    const writeText = vi.fn(async (_: string) => {});
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    const link = {
+      url: 'https://admin.example/preview/s/main/entries/e1?preview_token=pw_1',
+      token: 'pw_1',
+      expiresAt: '2026-11-10T00:00:00.000Z',
+    };
+    client.createPreviewLink.mockResolvedValueOnce({
+      ...link,
+      frontendUrl: 'https://site.example/__preview?entry=e1#token=pw_1',
+    });
+    setup('/content/article/e1', saved('draft'));
+    await screen.findByRole('heading', { level: 1, name: 'Pricing page' });
+    const copy = () =>
+      fireEvent.click(
+        screen.getAllByRole('button', { name: 'Copy preview link' })[0] as HTMLElement,
+      );
+    copy();
+    await waitFor(() =>
+      expect(writeText).toHaveBeenCalledWith('https://site.example/__preview?entry=e1#token=pw_1'),
+    );
+    client.createPreviewLink.mockResolvedValueOnce(link);
+    copy();
+    await waitFor(() => expect(writeText).toHaveBeenLastCalledWith(link.url));
   });
 });

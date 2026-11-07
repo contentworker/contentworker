@@ -19,6 +19,7 @@ import {
   importSnapshot,
   listPreviewEntries,
   publishContentType,
+  SYSTEM_CALLER,
   stripDelimiters,
   UNTRUSTED_CONTENT_GUARD,
   updateContentType,
@@ -92,7 +93,7 @@ async function seedLegacy(scope = source) {
 
 describe('guidance in snapshots', () => {
   it('carries labelled options, messages and guidance through export, import and clone', async () => {
-    await createContentType(ctx, source, {
+    await createContentType(ctx, SYSTEM_CALLER, source, {
       apiId: 'listing',
       name: 'Listing',
       displayField: 'title',
@@ -182,17 +183,19 @@ describe('a legacy type stays editable', () => {
     const fields = (await getContentType(ctx, source, 'listing')).fields.map((f) =>
       f.apiId === 'title' ? { ...f, help: 'Now with help.' } : f,
     );
-    const viaCreate = await createContentType(ctx, source, {
+    const viaCreate = await createContentType(ctx, SYSTEM_CALLER, source, {
       apiId: 'listing',
       name: 'Listing',
       displayField: 'title',
       fields: [...fields],
     });
     expect(viaCreate.fields[0]?.help).toBe('Now with help.');
-    const viaUpdate = await updateContentType(ctx, source, 'listing', { name: 'Listings' });
+    const viaUpdate = await updateContentType(ctx, SYSTEM_CALLER, source, 'listing', {
+      name: 'Listings',
+    });
     expect(viaUpdate.fields[1]?.validations?.in).toEqual(['calm', 'calm', 'bold']);
     // A duplicate the revision adds is still refused.
-    const refused = await updateContentType(ctx, source, 'listing', {
+    const refused = await updateContentType(ctx, SYSTEM_CALLER, source, 'listing', {
       fields: [
         field({}),
         field({
@@ -232,7 +235,7 @@ describe('guidance in prompts', () => {
 
   it('reaches autofill as data, with the guard in the system prompt', async () => {
     store.seedSpace({ spaceId: 's1', defaultLocale: 'en-US', locales: ['en-US'] });
-    await createContentType(ctx, source, {
+    await createContentType(ctx, SYSTEM_CALLER, source, {
       apiId: 'listing',
       name: 'Listing',
       displayField: 'title',

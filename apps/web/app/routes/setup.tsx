@@ -8,7 +8,7 @@ import { Button } from '@contentworker/ui/button';
 import { Input } from '@contentworker/ui/input';
 import { data, Form, redirect, useActionData, useLoaderData, useNavigation } from 'react-router';
 import { Mark } from '~/components/mark';
-import { authEnabled, startSession, Throttled } from '~/lib/auth.server';
+import { authEnabled, startSession, Throttled, TWO_FACTOR_STEP_PATH } from '~/lib/auth.server';
 import { redeemSetupCode, setupOpen } from '~/lib/setup.server';
 import { TeamError } from '~/lib/team.server';
 import type { Route } from './+types/setup';
@@ -25,8 +25,9 @@ export async function loader() {
 export async function action({ request }: Route.ActionArgs) {
   const f = await request.formData();
   const str = (k: string) => String(f.get(k) ?? '');
-  // A new deployment's first admin goes on to `/` (its first space, once any two-factor setup is
-  // done); a recovery admin to the team.
+  // A new deployment's first admin goes on to setup's two-factor step (which moves on to `/`, and
+  // so to the first space, at once when two-factor sign-in isn't required); a recovery admin to
+  // the team.
   const first = !(await authEnabled());
   try {
     const id = await redeemSetupCode(request, str('code'), {
@@ -34,7 +35,7 @@ export async function action({ request }: Route.ActionArgs) {
       name: str('name'),
       password: str('password'),
     });
-    return redirect(first ? '/' : '/team', {
+    return redirect(first ? TWO_FACTOR_STEP_PATH : '/team', {
       headers: { 'set-cookie': await startSession(request, id) },
     });
   } catch (err) {

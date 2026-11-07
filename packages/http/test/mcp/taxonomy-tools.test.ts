@@ -7,6 +7,7 @@ import {
   createSpace,
   publishContentType,
   publishEntry,
+  SYSTEM_CALLER,
   setEntryMetadata,
 } from '@contentworker/application';
 import { type Principal, SCOPES } from '@contentworker/domain';
@@ -51,7 +52,7 @@ async function setup() {
     defaultLocale: 'en-US',
     locales: ['en-US', 'de'],
   });
-  await createContentType(ctx, scope, {
+  await createContentType(ctx, SYSTEM_CALLER, scope, {
     apiId: 'story',
     name: 'Story',
     displayField: 'title',

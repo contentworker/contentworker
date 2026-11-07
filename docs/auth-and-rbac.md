@@ -23,7 +23,10 @@ The web app keeps its own accounts in the database (`users`, `sessions`, `passke
   sign-on, SCIM, setup and the admin audit log, and administers every space.
 - **Passwords** are PBKDF2 (`pbkdf2p:` when peppered with `PASSWORD_PEPPER`). **Passkeys** are
   WebAuthn. **TOTP** two-factor has one-time recovery codes. Authenticator secrets are sealed with
-  `DATA_KEY`.
+  `DATA_KEY`. Someone whose role must use it (admins, by default) is held on the two-factor step,
+  `/setup/two-factor`, until it is on: `requireUser` sends every page and its `.data` there
+  (`heldAt`), the gateway refuses to sign for them, and signing out is the only other way off. A
+  temporary password is held on Account first, which has the form for it.
 - **Forgotten passwords** are reset by an emailed code at `/login/forgot` when the deployment
   sends email (see [Password reset](#password-reset)); otherwise an admin resets them on the Team
   page.
@@ -229,9 +232,11 @@ an **Admin** account with a password (`apps/web/app/lib/setup.server.ts`):
    already exist); if creating it fails, the code is given back;
 4. web SSO-only is turned off, so the new admin can sign in with the password.
 
-A first admin then lands on `/setup/space`, setup's second step (a recovery admin lands on
-`/team`): Coworker proposes the first space and creates it once they confirm its card, or they
-fill in the New space form, or skip to the admin.
+A first admin then goes `/setup/two-factor` (when their role must use two-factor sign-in, held
+there until it is on), then `/setup/space` (`/` sends a deployment admin there while there is no
+space); a recovery admin lands on `/team`. On the space step Coworker proposes the first space and
+creates it once they confirm its card, or they fill in the New space form, or skip to the admin.
+`pnpm dev:first-run` walks the same path locally (see [Development](./development.md)).
 
 **Recovery**: `./scripts/setup-code.sh <id>` writes a new code to `.secrets/<id>/setup-code`, sets
 it on the deployment's GitHub environment and on the web worker. Redeeming it creates one more

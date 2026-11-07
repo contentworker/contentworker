@@ -10,6 +10,7 @@ import {
   getPublishedEntry,
   listPreviewEntries,
   publishEntry,
+  SYSTEM_CALLER,
 } from '../src/index';
 
 const scope = { spaceId: 'shop', environmentId: 'main' };
@@ -53,7 +54,7 @@ describe('P2: provisioning, preview, locale fallback', () => {
       locales: ['en-US', 'de-DE'],
       fallbacks: { 'de-DE': 'en-US' },
     });
-    await createContentType(ctx, scope, {
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
       apiId: 'product',
       name: 'Product',
       displayField: 'name',
