@@ -48,8 +48,21 @@ has to be cheap. Every tool's Zod input schema, and its JSON Schema conversion, 
 isolate and shared (`toolSchema` in `packages/http/src/mcp/tools/shared.ts`). Building a server takes about
 0.1 ms; without the cache it took about 2 ms, and every `tools/list` added another millisecond. As
 a consequence, **a tool's input schema must never depend on the principal or deps**;
-authorization belongs in the handler. `preloadSchemas()` runs at module scope, so the SDK's own
+authorization belongs in the handler. Who asks changes which tools are listed, never their shape.
+`preloadSchemas()` runs at module scope, so the SDK's own
 schemas are built during isolate warm-up rather than on the first request.
+
+**Which tools a caller sees.** `tools/list` shows a tool when the caller holds any scope in its row of
+`TOOL_SCOPES` (`packages/http/src/mcp/tool-scopes.ts`); a tool in `UNSCOPED_TOOLS` is always shown. A
+delivery key sees 19 tools and a preview key 87, where a management key sees all of them. This only
+saves an agent context: every handler still authorizes, and an unlisted tool stays callable and
+answers with the scope it needs. A new tool adds its row, and `tool-visibility.test.ts` fails until
+the table matches the `SCOPES` in the handler. A client may hold a list for five minutes, so a change
+to a key's scopes can take that long to show.
+
+**Agent instructions.** A content type's optional `agentInstructions` (plain text, at most 4,000
+characters, set through `model_create_content_type` or `POST …/content-types`) say how to write its
+entries. `model_get_content_type` returns them, and Delivery never does.
 
 **Connecting a client.** With `OAUTH_ISSUER` set, the server is installable as a connector in
 Claude, ChatGPT and MCP-capable IDEs: an unauthenticated request answers with

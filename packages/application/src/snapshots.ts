@@ -1012,6 +1012,7 @@ const workingDraftOf = (ct: SnapshotContentType): ContentTypeDraft => ({
   ...(ct.group ? { group: ct.group } : {}),
   ...(ct.description ? { description: ct.description } : {}),
   ...(ct.icon ? { icon: ct.icon } : {}),
+  ...(ct.agentInstructions ? { agentInstructions: ct.agentInstructions } : {}),
   ...(ct.layout ? { layout: ct.layout } : {}),
 });
 

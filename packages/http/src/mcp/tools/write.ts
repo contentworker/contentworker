@@ -92,6 +92,15 @@ export function registerWriteTools(server: McpServer, t: ToolContext): void {
             .nullable()
             .optional()
             .describe('a kebab-case icon name the admin draws, e.g. newspaper; null clears it'),
+          agentInstructions: z
+            .string()
+            .max(CONTENT_TYPE_LIMITS.agentInstructions)
+            .nullable()
+            .optional()
+            .describe(
+              'how an agent should write entries of this type, in plain text; never delivered; ' +
+                'null clears it',
+            ),
           layout: z
             .record(z.string(), z.any())
             .nullable()
@@ -117,6 +126,9 @@ export function registerWriteTools(server: McpServer, t: ToolContext): void {
           ...(args.group !== undefined ? { group: args.group } : {}),
           ...(args.description !== undefined ? { description: args.description } : {}),
           ...(args.icon !== undefined ? { icon: args.icon } : {}),
+          ...(args.agentInstructions !== undefined
+            ? { agentInstructions: args.agentInstructions }
+            : {}),
           // biome-ignore lint/suspicious/noExplicitAny: zod record → domain ContentTypeLayout, checked there
           ...(args.layout !== undefined ? { layout: args.layout as any } : {}),
           // biome-ignore lint/suspicious/noExplicitAny: zod field shape → domain FieldDefinition

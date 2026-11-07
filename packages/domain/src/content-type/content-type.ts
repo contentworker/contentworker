@@ -54,6 +54,11 @@ export interface ContentType {
   /** A short icon name the admin draws beside the type, in kebab case (`newspaper`). */
   readonly icon?: string;
   /**
+   * How an agent should write this type's entries (tone, what to avoid, which fields go together).
+   * Plain text, returned with the model. Written by whoever may manage the model; never delivered.
+   */
+  readonly agentInstructions?: string;
+  /**
    * How the admin's entry form arranges the fields into tabs and groups. Editor-only: it changes
    * nothing stored or validated, and Delivery never serves it.
    */
@@ -80,7 +85,10 @@ export interface PublishedContentTypeDefinition {
  * A type as Delivery reads it. Only what Delivery needs: the admin-only details are never in it,
  * so nothing delivered can come to depend on them.
  */
-export type DeliveredContentType = Omit<ContentType, 'group' | 'description' | 'icon' | 'layout'>;
+export type DeliveredContentType = Omit<
+  ContentType,
+  'group' | 'description' | 'icon' | 'agentInstructions' | 'layout'
+>;
 
 /**
  * A type as Delivery serves it. A published row is the published definition, whatever else is
@@ -133,11 +141,17 @@ export interface ContentTypeDraft {
   group?: string | null;
   description?: string | null;
   icon?: string | null;
+  agentInstructions?: string | null;
   layout?: ContentTypeLayout | null;
 }
 
-/** The longest group and description, and icon name. */
-export const CONTENT_TYPE_LIMITS = { group: 100, description: 2000, icon: 40 } as const;
+/** The longest group, description, icon name and agent instructions. */
+export const CONTENT_TYPE_LIMITS = {
+  group: 100,
+  description: 2000,
+  icon: 40,
+  agentInstructions: 4000,
+} as const;
 
 const ICON_NAME = /^[a-z][a-z0-9-]*$/;
 
@@ -153,6 +167,7 @@ export type ContentTypeChanges = Partial<
     | 'group'
     | 'description'
     | 'icon'
+    | 'agentInstructions'
     | 'layout'
   >
 >;
@@ -203,6 +218,7 @@ export function reviseContentType(current: ContentType, changes: ContentTypeChan
     group: _g,
     description: _d,
     icon: _i,
+    agentInstructions: _a,
     layout: _l,
     ...rest
   } = current;
@@ -220,7 +236,7 @@ export function reviseContentType(current: ContentType, changes: ContentTypeChan
 }
 
 /**
- * A type's group, description, icon and layout as stored, from a draft or revision: left out
+ * A type's group, description, icon, agent instructions and layout as stored, from a draft or revision: left out
  * keeps the current value, `null` or blank text clears it. A value stored as it stands passes
  * unchecked, so a type saved before a check existed stays editable. The layout is checked against
  * the fields as revised: a field the revision removes leaves the layout quietly (there is nothing
@@ -231,13 +247,18 @@ function typeDetails(
   input: ContentTypeChanges,
   current: ContentType | undefined,
   fields: readonly FieldDefinition[],
-): Pick<ContentType, 'group' | 'description' | 'icon' | 'layout'> {
+): Pick<ContentType, 'group' | 'description' | 'icon' | 'agentInstructions' | 'layout'> {
   const fail = (field: string, message: string): never => {
     throw new ValidationError([{ field, message }]);
   };
-  const out: { group?: string; description?: string; icon?: string; layout?: ContentTypeLayout } =
-    {};
-  const text = (key: 'group' | 'description' | 'icon') => {
+  const out: {
+    group?: string;
+    description?: string;
+    icon?: string;
+    agentInstructions?: string;
+    layout?: ContentTypeLayout;
+  } = {};
+  const text = (key: 'group' | 'description' | 'icon' | 'agentInstructions') => {
     const given: unknown = input[key];
     if (given === undefined) {
       const kept = current?.[key];
@@ -250,7 +271,7 @@ function typeDetails(
       return;
     }
     if (typeof given !== 'string') return fail(key, `${key} must be text`);
-    const value = key === 'description' ? given : given.trim();
+    const value = key === 'description' || key === 'agentInstructions' ? given : given.trim();
     if (value.length > CONTENT_TYPE_LIMITS[key]) {
       fail(key, `${key} must be at most ${CONTENT_TYPE_LIMITS[key]} characters`);
     }
@@ -262,6 +283,7 @@ function typeDetails(
   text('group');
   text('description');
   text('icon');
+  text('agentInstructions');
 
   const known = new Set(fields.map((f) => f.apiId));
   // Names the stored layout carries that no revised field answers: stale already, or removed now.

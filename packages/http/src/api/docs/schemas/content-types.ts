@@ -235,6 +235,10 @@ export const contentTypeDetails = {
     .string()
     .max(CONTENT_TYPE_LIMITS.icon)
     .describe('A kebab-case icon name the admin draws beside the type, e.g. newspaper'),
+  agentInstructions: z
+    .string()
+    .max(CONTENT_TYPE_LIMITS.agentInstructions)
+    .describe('How an agent should write this type’s entries. Plain text, never delivered'),
 };
 
 export const contentType = z.object({
@@ -253,6 +257,7 @@ export const contentType = z.object({
   group: contentTypeDetails.group.optional(),
   description: contentTypeDetails.description.optional(),
   icon: contentTypeDetails.icon.optional(),
+  agentInstructions: contentTypeDetails.agentInstructions.optional(),
   layout: contentTypeLayout.optional(),
   version: z.int(),
   status: z.enum(['draft', 'published']),

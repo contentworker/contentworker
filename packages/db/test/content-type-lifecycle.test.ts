@@ -133,12 +133,18 @@ describe('content type delete on D1', () => {
       group: 'Docs',
       description: 'A short note',
       icon: 'newspaper',
+      agentInstructions: 'Keep titles short.',
       layout: {
         tabs: [{ apiId: 'main', name: 'Main', groups: [{ fields: ['title'] }] }],
       },
     });
     const clone = await cloneContentType(ctx, scope, 'note', 'memo', 'Memo');
-    expect(clone).toMatchObject({ group: 'Docs', description: 'A short note', icon: 'newspaper' });
+    expect(clone).toMatchObject({
+      group: 'Docs',
+      description: 'A short note',
+      icon: 'newspaper',
+      agentInstructions: 'Keep titles short.',
+    });
     expect(clone.layout?.tabs[0]?.groups[0]?.fields).toEqual(['title']);
     expect(await store.contentTypes.get(scope, 'memo')).toEqual(clone);
   });

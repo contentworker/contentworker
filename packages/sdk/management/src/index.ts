@@ -147,6 +147,8 @@ export interface ContentType {
   readonly description?: string;
   /** A kebab-case icon name the admin draws beside the type. */
   readonly icon?: string;
+  /** How an agent should write this type's entries. Plain text, never delivered. */
+  readonly agentInstructions?: string;
   /** Editor-only: how the admin's entry form arranges the fields. Never delivered. */
   readonly layout?: ContentTypeLayout;
   readonly version: number;
@@ -234,6 +236,7 @@ export interface ContentTypeDraft {
   readonly group?: string | null;
   readonly description?: string | null;
   readonly icon?: string | null;
+  readonly agentInstructions?: string | null;
   readonly layout?: ContentTypeLayout | null;
 }
 
