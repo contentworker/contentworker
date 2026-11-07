@@ -13,6 +13,7 @@ import {
   type AppContext,
   BLOCK_PATCH_MAX_OPS,
   type BlockOpInput,
+  checkEntryBlocks,
   createContentType,
   createEntry,
   createEnvironment,
@@ -384,6 +385,69 @@ describe('patching an entry’s blocks', () => {
     expect(err).toBeInstanceOf(NotFoundError);
     expect(await versions(page.id)).toBe(1);
     await expect(outlineEntryBlocks(ctx, staging, page.id)).rejects.toBeInstanceOf(NotFoundError);
+  });
+});
+
+describe('checking a block patch without saving it', () => {
+  it('answers the fields the save would store, the applied ops and the refs’ keys, and writes nothing', async () => {
+    const page = await landing();
+    const checked = await checkEntryBlocks(ctx, scope, page.id, {
+      expectedVersion: page.version,
+      ops: [
+        { op: 'insert', field: 'body', block: { _type: 'cta', label: 'Docs' }, ref: 'docs' },
+        { op: 'move', field: 'body', key: 'docs', to: { index: 0 } },
+      ],
+    });
+    const key = checked.keys.docs as string;
+    expect(checked.fields.body?.['en-US']).toEqual([
+      { _type: 'cta', _key: key, label: 'Docs' },
+      { _type: 'hero', _key: page.hero, heading: 'Welcome' },
+      { _type: 'cta', _key: page.cta, label: 'Sign up' },
+    ]);
+    // Resolved as the save resolves them: the default locale, keys for refs.
+    expect(checked.applied[1]).toEqual({
+      op: 'move',
+      field: 'body',
+      locale: 'en-US',
+      key,
+      to: { index: 0 },
+    });
+    expect(await versions(page.id)).toBe(1);
+  });
+
+  it('refuses what the save refuses: a moved draft, an unwritable field, a bad locale, a model rule', async () => {
+    const page = await landing();
+    const remove: BlockOpInput = { op: 'remove', field: 'body', key: page.cta };
+    expect(
+      await refusal(checkEntryBlocks(ctx, scope, page.id, { expectedVersion: 9, ops: [remove] })),
+    ).toBeInstanceOf(ConflictError);
+    expect(
+      await refusal(
+        checkEntryBlocks(
+          ctx,
+          scope,
+          page.id,
+          { expectedVersion: page.version, ops: [remove] },
+          { unwritable: ['body'] },
+        ),
+      ),
+    ).toBeInstanceOf(ForbiddenError);
+    const locale = await refusal(
+      checkEntryBlocks(ctx, scope, page.id, {
+        expectedVersion: page.version,
+        ops: [{ ...remove, locale: 'fr' }],
+      }),
+    );
+    expect((locale as ValidationError).issues[0]).toMatchObject({ op: 0, locale: 'fr' });
+    // The content model's own rule, judged as a save judges it.
+    const invalid = await refusal(
+      checkEntryBlocks(ctx, scope, page.id, {
+        expectedVersion: page.version,
+        ops: [{ op: 'update', field: 'body', key: page.cta, unset: ['label'] }],
+      }),
+    );
+    expect((invalid as ValidationError).issues[0]).toMatchObject({ field: 'body[1].label' });
+    expect(await versions(page.id)).toBe(1);
   });
 });
 

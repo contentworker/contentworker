@@ -3,6 +3,7 @@ import {
   BLOCK_PATCH_MAX_BYTES,
   BLOCK_PATCH_MAX_OPS,
   type BlockOpInput,
+  checkEntryBlocks,
   outlineEntryBlocks,
   patchEntryBlocks,
 } from '@contentworker/application';
@@ -11,7 +12,7 @@ import { Hono } from 'hono';
 import { type AuthDeps, type AuthVars, requireScope } from '../../auth';
 import { doc } from '../../docs/openapi';
 import * as blockDocs from '../../docs/schemas/blocks';
-import { blockPatchBody, parseBody } from '../../validation';
+import { blockPatchBody, blockPatchCheckBody, parseBody } from '../../validation';
 import { actingCtx, BASE, entryAccess, scopeOf } from './shared';
 
 export function blocksRoutes(deps: AuthDeps): Hono<AuthVars> {
@@ -20,6 +21,40 @@ export function blocksRoutes(deps: AuthDeps): Hono<AuthVars> {
   const app = new Hono<AuthVars>();
 
   // --- key-addressed edits to an entry's blocks fields ------------------------------
+  // A dry run of a patch: the same checks, the same errors, nothing written. Gated like the patch
+  // it stands in for, so it tells a caller nothing a patch wouldn't.
+  app.post(
+    `${BASE}/entries/blocks/validate`,
+    doc('Entries', 'Check a block patch without saving it', {
+      body: blockPatchCheckBody,
+      ok: blockDocs.blockPatchCheck,
+      description:
+        'Runs exactly the checks `PATCH …/entries/:id/blocks` makes, failing with the same ' +
+        'errors (409 for a stale `expectedVersion`, 403 for a field your role may not write, 422 ' +
+        'naming the op that can’t apply or the field the result breaks), and answers the fields ' +
+        'as the save would store them with the patch as it would apply. Nothing is written; the ' +
+        'keys minted for new blocks are this answer’s only.',
+    }),
+    requireScope(SCOPES.contentWrite),
+    async (c) => {
+      const { entryId, ...patch } = await parseBody(c, blockPatchCheckBody);
+      const principal = c.get('principal');
+      const unwritable = await authorizeBlockPatch(ctx, scopeOf(c), principal, entryId);
+      const checked = await checkEntryBlocks(
+        ctx,
+        scopeOf(c),
+        entryId,
+        { expectedVersion: patch.expectedVersion, ops: patch.ops as readonly BlockOpInput[] },
+        { unwritable },
+      );
+      // Judged with the stored values of the fields this writer may not write; answered without
+      // the ones it may not read.
+      return c.json({
+        ...checked,
+        fields: maskDeniedFields(principal, checked.contentTypeApiId, checked.fields),
+      });
+    },
+  );
   app.get(
     `${BASE}/entries/:id/blocks`,
     doc('Entries', 'Outline an entry’s blocks', {

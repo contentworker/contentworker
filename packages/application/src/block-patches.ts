@@ -4,6 +4,9 @@ import {
   type BlockOp,
   type BlockOutline,
   type BlockPatchIssue,
+  type ContentType,
+  type Entry,
+  type EntryFields,
   ForbiddenError,
   invertBlockPatch,
   type LocaleCode,
@@ -15,7 +18,7 @@ import {
   ValidationError,
 } from '@contentworker/domain';
 import type { AppContext } from './context';
-import { type EntryView, getEntry, saveEntryDraft } from './entries';
+import { type EntryView, getEntry, saveEntryDraft, validateEntry } from './entries';
 import { assertExpectedVersion } from './publishing';
 
 /**
@@ -79,19 +82,32 @@ export async function authorizeBlockPatch(
   return unwritableFieldsFor(principal, entry.contentTypeApiId);
 }
 
+/** A patch with every read and check done, ready to save (or to answer as a dry run). */
+interface PreparedPatch {
+  readonly entry: Entry;
+  readonly contentType: ContentType;
+  readonly config: { readonly defaultLocale: string; readonly locales: readonly string[] };
+  /** The fields as the entry holds them, and as the patch leaves them (before the save's hook). */
+  readonly before: EntryFields;
+  readonly after: EntryFields;
+  readonly ops: readonly BlockOp[];
+  readonly applied: readonly BlockOp[];
+  readonly keys: Readonly<Record<string, string>>;
+  readonly inverse: readonly BlockOp[];
+}
+
 /**
- * Applies `ops` to the entry's blocks fields and saves the result as a new draft version. Refused
- * with 409 when the entry is no longer at `expectedVersion` (or another save takes the version
- * first), 403 for an op on a field the caller may not write, and 422 with the failing op's index
- * when an op can't apply; nothing is saved in any of these cases.
+ * Every check a patch makes before its save, in order: the caps, the entry at `expectedVersion`,
+ * the caller's unwritable fields, the locales, then the ops themselves. One path for the save and
+ * its dry run, so a dry run passes exactly when the save's own checks would.
  */
-export async function patchEntryBlocks(
+async function preparePatch(
   ctx: AppContext,
   scope: Scope,
   id: string,
   input: PatchEntryBlocksInput,
-  options: PatchEntryBlocksOptions = {},
-): Promise<BlockPatchView> {
+  options: PatchEntryBlocksOptions,
+): Promise<PreparedPatch> {
   // The caps are judged on the request alone, before anything is read.
   const capped: { field: string; message: string }[] = [];
   if (input.ops.length === 0) capped.push({ field: 'ops', message: 'No ops to apply' });
@@ -137,22 +153,98 @@ export async function patchEntryBlocks(
   // The applied ops carry every key they made, so they replay on the fields they came from; should
   // one not, the patch is refused as its op would have been, before anything is saved.
   if (!inverse.ok) throw new ValidationError(inverse.issues);
+  return {
+    entry,
+    contentType,
+    config,
+    before: fields,
+    after: result.fields,
+    ops,
+    applied: result.applied,
+    keys: result.keys,
+    inverse: inverse.ops,
+  };
+}
 
+/**
+ * Applies `ops` to the entry's blocks fields and saves the result as a new draft version. Refused
+ * with 409 when the entry is no longer at `expectedVersion` (or another save takes the version
+ * first), 403 for an op on a field the caller may not write, and 422 with the failing op's index
+ * when an op can't apply; nothing is saved in any of these cases.
+ */
+export async function patchEntryBlocks(
+  ctx: AppContext,
+  scope: Scope,
+  id: string,
+  input: PatchEntryBlocksInput,
+  options: PatchEntryBlocksOptions = {},
+): Promise<BlockPatchView> {
+  const prepared = await preparePatch(ctx, scope, id, input, options);
+  const { entry, contentType, config, before, after } = prepared;
   const view = await saveEntryDraft(
     ctx,
     scope,
     entry,
     contentType,
-    { defaultLocale: config.defaultLocale, locales: config.locales, previous: fields },
-    result.fields,
-    fields,
+    { defaultLocale: config.defaultLocale, locales: config.locales, previous: before },
+    after,
+    before,
   );
-  // Measured on the fields the patch wrote, as stored: after the hook, the slugs and the block keys.
-  const touched = new Set(ops.map((op) => op.field));
+  return { ...view, keys: prepared.keys, inverse: undoFor(prepared, view.fields) };
+}
+
+/**
+ * The inverse, when the stored fields the patch wrote are the ones it made: after the hook, the
+ * slugs and the block keys. A plugin that rewrote them leaves no undo to offer.
+ */
+function undoFor(prepared: PreparedPatch, stored: EntryFields): readonly BlockOp[] | null {
+  const touched = new Set(prepared.ops.map((op) => op.field));
   const kept = [...touched].every(
-    (apiId) => JSON.stringify(view.fields[apiId]) === JSON.stringify(result.fields[apiId]),
+    (apiId) => JSON.stringify(stored[apiId]) === JSON.stringify(prepared.after[apiId]),
   );
-  return { ...view, keys: result.keys, inverse: kept ? inverse.ops : null };
+  return kept ? prepared.inverse : null;
+}
+
+export interface BlockPatchCheck {
+  readonly valid: true;
+  readonly contentTypeApiId: string;
+  /** The draft's fields as the save would store them (after the hook, slugs and block keys). */
+  readonly fields: EntryFields;
+  /** The patch as it would apply: refs, positions and locales resolved, every key present. */
+  readonly applied: readonly BlockOp[];
+  /** The key each `ref` would be given; minted for this answer only, never stored. */
+  readonly keys: Readonly<Record<string, string>>;
+  /** Plugins on `entry:beforeSave` that hold capabilities and so did not run (`validateEntry`). */
+  readonly skippedHooks: readonly string[];
+}
+
+/**
+ * A dry run of {@link patchEntryBlocks}: the same checks, refused with the same errors (409, 403,
+ * 422 with the op's index), then the result judged exactly as a save judges it (`validateEntry`),
+ * and nothing written. What a confirm card shows before the person agrees to the patch.
+ */
+export async function checkEntryBlocks(
+  ctx: AppContext,
+  scope: Scope,
+  id: string,
+  input: PatchEntryBlocksInput,
+  options: PatchEntryBlocksOptions = {},
+): Promise<BlockPatchCheck> {
+  const prepared = await preparePatch(ctx, scope, id, input, options);
+  const judged = await validateEntry(
+    ctx,
+    scope,
+    { entryId: id, fields: prepared.after },
+    options.unwritable ? { unwritable: options.unwritable } : {},
+  );
+  return {
+    valid: true,
+    contentTypeApiId: prepared.entry.contentTypeApiId,
+    fields: judged.fields,
+    applied: prepared.applied,
+    keys: prepared.keys,
+    skippedHooks: judged.skippedHooks,
+  };
 }
 
 export interface EntryBlocksOutline {

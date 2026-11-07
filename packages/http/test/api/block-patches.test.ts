@@ -215,6 +215,47 @@ describe('patching an entry’s blocks over HTTP', () => {
     expect((await send(`/entries/${id}/blocks`, 'GET', undefined, cpa)).status).toBe(200);
   });
 
+  it('checks a patch without saving it, with the same refusals', async () => {
+    const { send, id, hero } = await setup();
+    const res = await send('/entries/blocks/validate', 'POST', {
+      entryId: id,
+      expectedVersion: 1,
+      ops: [{ op: 'remove', field: 'body', key: hero }],
+    });
+    expect(res.status).toBe(200);
+    const checked = (await res.json()) as {
+      valid: boolean;
+      fields: Saved['fields'];
+      applied: unknown[];
+    };
+    expect(checked.valid).toBe(true);
+    expect(checked.fields.body['en-US'].map((b) => b._type)).toEqual(['section']);
+    expect(checked.applied).toEqual([{ op: 'remove', field: 'body', locale: 'en-US', key: hero }]);
+    // Nothing was written.
+    const now = (await (await send(`/entries/${id}`, 'GET')).json()) as Saved;
+    expect(now.entry.currentVersion).toBe(1);
+
+    const stale = await send('/entries/blocks/validate', 'POST', {
+      entryId: id,
+      expectedVersion: 2,
+      ops: [{ op: 'remove', field: 'body', key: hero }],
+    });
+    expect(stale.status).toBe(409);
+    const broken = await send('/entries/blocks/validate', 'POST', {
+      entryId: id,
+      expectedVersion: 1,
+      ops: [{ op: 'update', field: 'body', key: hero, unset: ['heading'] }],
+    });
+    expect(broken.status).toBe(422);
+    const preview = await send(
+      '/entries/blocks/validate',
+      'POST',
+      { entryId: id, expectedVersion: 1, ops: [{ op: 'remove', field: 'body', key: hero }] },
+      cpa,
+    );
+    expect(preview.status).toBe(403);
+  });
+
   it('is described in the OpenAPI document with the body it parses', async () => {
     const { app } = await setup();
     const spec = (await (await app.request('/openapi.json')).json()) as {

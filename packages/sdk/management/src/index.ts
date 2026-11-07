@@ -529,6 +529,18 @@ export interface BlockPatchResult extends EntryView {
   readonly inverse: readonly BlockOp[] | null;
 }
 
+/** A block patch's dry run (`entries.checkBlocks`): what the save would store, nothing written. */
+export interface BlockPatchCheck {
+  readonly valid: true;
+  readonly contentTypeApiId: string;
+  readonly fields: EntryFields;
+  /** The patch as it would apply: refs, positions and locales resolved, every key present. */
+  readonly applied: readonly BlockOp[];
+  /** The key each `ref` would be given, minted for this answer only. */
+  readonly keys: Readonly<Record<string, string>>;
+  readonly skippedHooks: readonly string[];
+}
+
 /** One block in an entry's outline (`entries.outlineBlocks`). */
 export interface BlockOutline {
   readonly key: string | null;
@@ -1793,6 +1805,12 @@ export function createManagementClient(opts: ManagementClientOptions) {
        */
       patchBlocks: (id: string, change: { expectedVersion: number; ops: readonly BlockOp[] }) =>
         patch<BlockPatchResult>(`${envBase}/entries/${e(id)}/blocks`, change),
+      /**
+       * The same patch's dry run: the checks and errors `patchBlocks` would give, then the fields
+       * as the save would store them and the patch as it would apply. Nothing is written.
+       */
+      checkBlocks: (id: string, change: { expectedVersion: number; ops: readonly BlockOp[] }) =>
+        post<BlockPatchCheck>(`${envBase}/entries/blocks/validate`, { entryId: id, ...change }),
       /** The entry's blocks fields as a tree of keys, types and labels, to build a patch from. */
       outlineBlocks: (id: string, opts: { field?: string; locale?: string } = {}) =>
         get<BlocksOutline>(`${envBase}/entries/${e(id)}/blocks`, {

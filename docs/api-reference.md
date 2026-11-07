@@ -844,6 +844,7 @@ as a new draft through the same save as `PUT …/entries/:id` (`patchEntryBlocks
 | ------ | ---------------------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | GET    | `…/entries/:id/blocks` | `preview:read`  | The current draft's blocks fields as a tree: `field`, `locale` narrow it → `{ entryId, version, fields: { [field]: { [locale]: [{ key, type, name, label?, path, ambiguous?, children? }] } } }`. Fields the role may not read are left out                                                                                 |
 | PATCH  | `…/entries/:id/blocks` | `content:write` | `{ expectedVersion, ops }` (1–100 ops, at most 64 KB) → `{ entry, fields, keys, inverse }`, a new draft. `409` when the entry is past `expectedVersion`; `422` with `op` and `field: ops[i]` on the first op that can't apply (nothing saved); `403` for an op on a field the role denies or makes read-only |
+| POST   | `…/entries/blocks/validate` | `content:write` | `{ entryId, expectedVersion, ops }`: the patch's dry run, with the same checks and errors (`409`, `403`, `422`), then the result judged as a save judges it → `{ valid, contentTypeApiId, fields, applied, keys, skippedHooks }`. Nothing is written; keys minted for new blocks are this answer's only. The entry is named in the body, as `…/entries/validate` names it |
 
 Each op names `field` (a top-level blocks field) and optionally `locale` (default: the default
 locale):
@@ -869,7 +870,7 @@ and the outline marks it `ambiguous`. An op on a block inside a block with no `_
 wrote, since an undo built from the patch would not restore them. The result is validated as any
 save is (field issues at `body[i].heading`).
 
-MCP: `entry_blocks_patch` (audited) and `entry_blocks_outline` (`readOnlyHint`, not audited).
+MCP: `entry_blocks_patch` (audited), `entry_blocks_validate` and `entry_blocks_outline` (`readOnlyHint`, not audited). Coworker offers `entry_blocks_outline` and proposes `entry_blocks_patch`; its card shows the dry run's field diff and holds Confirm while the dry run refuses.
 
 ### Menus
 

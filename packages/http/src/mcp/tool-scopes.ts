@@ -121,6 +121,7 @@ export const TOOL_SCOPES: Readonly<Record<string, readonly PermissionScope[]>> =
   entry_apply_tags: [SCOPES.contentWrite],
   entry_blocks_outline: [SCOPES.previewRead],
   entry_blocks_patch: [SCOPES.contentWrite],
+  entry_blocks_validate: [SCOPES.contentWrite],
   entry_audit: [SCOPES.contentWrite],
   entry_autofill_field: [SCOPES.contentWrite],
   entry_from_canvas: [SCOPES.contentWrite],

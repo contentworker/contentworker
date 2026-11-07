@@ -216,6 +216,29 @@ describe('the blocks tools', () => {
     expect(outline?.annotations?.readOnlyHint).toBe(true);
     expect(patch).toBeDefined();
     expect(patch?.annotations?.readOnlyHint).not.toBe(true);
+    expect(tools.find((t) => t.name === 'entry_blocks_validate')?.annotations?.readOnlyHint).toBe(
+      true,
+    );
+  });
+
+  it('checks a patch without saving it, refusing as the patch would', async () => {
+    const { ctx, id, body, call } = await setup();
+    const ok = await call('entry_blocks_validate', {
+      id,
+      expectedVersion: 1,
+      ops: [{ op: 'update', field: 'body', key: body, set: { label: 'Join' } }],
+    });
+    expect(ok.isError, ok.text).toBe(false);
+    const checked = JSON.parse(ok.text);
+    expect(checked.fields.body['en-US']).toEqual([{ _type: 'cta', _key: body, label: 'Join' }]);
+    expect(checked.applied[0]).toMatchObject({ op: 'update', locale: 'en-US', key: body });
+    const stale = await call('entry_blocks_validate', {
+      id,
+      expectedVersion: 2,
+      ops: [{ op: 'remove', field: 'body', key: body }],
+    });
+    expect(stale.isError).toBe(true);
+    expect((await getEntry(ctx, scope, id)).entry.currentVersion).toBe(1);
   });
 });
 

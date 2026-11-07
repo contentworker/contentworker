@@ -113,6 +113,21 @@ export const blockPatchResult = z.object({
     ),
 });
 
+export const blockPatchCheck = z.object({
+  valid: z.literal(true),
+  contentTypeApiId: z.string(),
+  fields: entryFields.describe('The fields as the save would store them; nothing is written'),
+  applied: z
+    .array(blockOp)
+    .describe('The patch as it would apply: refs, positions and locales resolved, keys present'),
+  keys: z
+    .record(z.string(), z.string())
+    .describe('ref → the _key its block would be given (minted for this answer, never stored)'),
+  skippedHooks: z
+    .array(z.string())
+    .describe('Plugins on entry:beforeSave that hold capabilities and so did not run'),
+});
+
 /**
  * Blocks nest (a block's slots hold blocks), so the children are described as open objects
  * rather than repeating this shape: `z.lazy` would emit a `$ref` cycle the reference renderer

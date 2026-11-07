@@ -339,8 +339,15 @@ layout/nav.ts` is the one source of the pages, their order, names, icons and G-l
   system and never from the model's words (`assistant/proposal.tsx`): a draft save as the field
   diff from what the draft holds now (Now and After saving; a field the save leaves out is
   removed), a new entry by its fields, a batch by its first five entries' titles and "and N more",
-  a tagging by its tags' names, a release by its title, any other one-entry action by the entry's
-  title. It is held like a publish: Confirm stays off until that read is done, and a read that
+  a tagging by its tags' names, a release by its title, a block patch by its steps (each block
+  named by its type's name and label, "Changes Hero “Welcome”", never by its key) and the field
+  diff its dry run answers (`POST …/entries/blocks/validate`: the api's own checks, nothing
+  written), any other one-entry action by the entry's title. A block patch that can't be saved as
+  it stands keeps Confirm off and says why: in a destructive Alert when the draft moved past its
+  version, a step doesn't fit (in the domain's words, the block it is about named), the result
+  would break a rule of the model, or the role can't change a field; in the warning Alert,
+  counted, when it touches a field the person can't read; in a note when it changes nothing or
+  the call doesn't say what to change. It is held like a publish: Confirm stays off until that read is done, and a read that
   fails offers Try again. A page's own cards list nothing more: the person just pressed for them on
   that entry. Every card says who asked for it in a caption under its title ("You asked for this
   on the page", or the mark in `ai` and "Coworker suggests this") and when, in its margin. Any
