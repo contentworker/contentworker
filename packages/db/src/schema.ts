@@ -757,7 +757,12 @@ export const auditLog = sqliteTable(
     status: integer('status').notNull(),
     at: integer('at', { mode: 'timestamp_ms' }).notNull(),
   },
-  (t) => [index('audit_log_by_space').on(t.spaceId, t.at)],
+  (t) => [
+    index('audit_log_by_space').on(t.spaceId, t.at),
+    index('audit_log_by_actor').on(t.spaceId, t.actor, t.at, t.id),
+    index('audit_log_by_action').on(t.spaceId, t.action, t.at, t.id),
+    index('audit_log_by_target').on(t.spaceId, t.targetId, t.at, t.id),
+  ],
 );
 
 /** Persisted, templated AI operations ("AI Actions"), env-scoped. */

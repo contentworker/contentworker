@@ -90,24 +90,24 @@ export async function seedGovernance(run: SeedRun, config: SeedConfig): Promise<
     await setEnvironmentAlias(ctx, spaceId, 'live', config.environmentId);
   }
 
-  if ((await listAuditLog(ctx, spaceId, { limit: 1 })).length === 0) {
+  if ((await listAuditLog(ctx, spaceId, { limit: 1 })).items.length === 0) {
     await seedAuditTrail(run);
   }
 }
 
 const AUDIT_ACTIONS = [
-  { action: 'POST /entries', targetType: 'Entry', status: 201 },
-  { action: 'POST /entries/:id/published', targetType: 'Entry', status: 200 },
-  { action: 'PUT /entries/:id', targetType: 'Entry', status: 200 },
-  { action: 'POST /content-types/:apiId/published', targetType: 'ContentType', status: 200 },
-  { action: 'POST /releases', targetType: 'Release', status: 201 },
-  { action: 'POST /assets/:id/published', targetType: 'Asset', status: 200 },
-  { action: 'DELETE /entries/:id/published', targetType: 'Entry', status: 403 },
-  { action: 'POST /entries/:id/workflow/transition', targetType: 'Entry', status: 200 },
-  { action: 'PUT /entries/:id/metadata', targetType: 'Entry', status: 200 },
-  { action: 'POST /api-keys', targetType: 'ApiKey', status: 201 },
-  { action: 'DELETE /webhooks/:id', targetType: 'Webhook', status: 404 },
-  { action: 'POST /releases/:id/published', targetType: 'Release', status: 200 },
+  { action: 'POST /entries', targetType: 'entry', status: 201 },
+  { action: 'POST /entries/:id/published', targetType: 'entry', status: 200 },
+  { action: 'PUT /entries/:id', targetType: 'entry', status: 200 },
+  { action: 'POST /content-types/:apiId/published', targetType: 'content_type', status: 200 },
+  { action: 'POST /releases', targetType: 'release', status: 201 },
+  { action: 'POST /assets/:id/published', targetType: 'asset', status: 200 },
+  { action: 'DELETE /entries/:id/published', targetType: 'entry', status: 403 },
+  { action: 'POST /entries/:id/workflow/transition', targetType: 'entry', status: 200 },
+  { action: 'PUT /entries/:id/metadata', targetType: 'entry', status: 200 },
+  { action: 'POST /api-keys', targetType: 'api_key', status: 201 },
+  { action: 'DELETE /webhooks/:id', targetType: 'webhook', status: 404 },
+  { action: 'POST /releases/:id/published', targetType: 'release', status: 200 },
 ] as const;
 
 /**
@@ -119,6 +119,8 @@ const AUDIT_ACTIONS = [
 async function seedAuditTrail(run: SeedRun): Promise<void> {
   const { ctx, scope } = run;
   const now = ctx.clock.now();
+  // A few targets, each changed many times, so filtering by one shows a history.
+  const targets = Array.from({ length: 8 }, () => ctx.ids.newId());
   let n = 0;
   for (let day = 29; day >= 0; day--) {
     const count = day % 3 === 0 ? 4 : 1;
@@ -131,7 +133,7 @@ async function seedAuditTrail(run: SeedRun): Promise<void> {
         actor: pick(['dev-cma-key', 'dev-editor', 'admin'] as const, n),
         action: a.action,
         targetType: a.targetType,
-        targetId: ctx.ids.newId(),
+        targetId: pick(targets, n),
         status: a.status,
         at: backdated(now, day, 8 + ((k * 4) % 10)),
       });

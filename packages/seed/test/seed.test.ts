@@ -65,7 +65,7 @@ describe('seedDev', { timeout: 60_000 }, () => {
     expect((await listWebhooks(ctx, scope)).length).toBe(3);
     expect((await listScheduledActions(ctx, scope)).length).toBeGreaterThan(0);
     expect((await listAgentRuns(ctx, scope, {})).length).toBeGreaterThan(0);
-    expect((await listAuditLog(ctx, config.spaceId)).length).toBeGreaterThan(0);
+    expect((await listAuditLog(ctx, config.spaceId)).items.length).toBeGreaterThan(0);
     // The completion marker lands last.
     expect((await listTags(ctx, scope)).map((t) => t.name)).toContain('demo-seed-v3');
     // All three scheduled actions: release publish, entry publish, entry unpublish.

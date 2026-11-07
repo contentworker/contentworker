@@ -3414,13 +3414,25 @@ function makeAuditRepo(x: Exec): AuditRepo {
       );
     },
     async list(spaceId, query) {
-      const conds = [eq(schema.auditLog.spaceId, spaceId)];
-      if (query.environmentId) conds.push(eq(schema.auditLog.environmentId, query.environmentId));
+      const log = schema.auditLog;
+      const conds = [eq(log.spaceId, spaceId)];
+      if (query.environmentId) conds.push(eq(log.environmentId, query.environmentId));
+      if (query.actor) conds.push(eq(log.actor, query.actor));
+      if (query.action) conds.push(eq(log.action, query.action));
+      if (query.targetType) conds.push(eq(log.targetType, query.targetType));
+      if (query.targetId) conds.push(eq(log.targetId, query.targetId));
+      if (query.from) conds.push(gte(log.at, new Date(query.from)));
+      if (query.to) conds.push(lte(log.at, new Date(query.to)));
+      if (query.after) {
+        conds.push(
+          sql`(${log.at}, ${log.id}) < (${Date.parse(query.after.at)}, ${query.after.id})`,
+        );
+      }
       const rows = await db
         .select()
-        .from(schema.auditLog)
+        .from(log)
         .where(and(...conds))
-        .orderBy(desc(schema.auditLog.at))
+        .orderBy(desc(log.at), desc(log.id))
         .limit(query.limit ?? 100);
       return rows.map((r) => ({
         id: r.id,

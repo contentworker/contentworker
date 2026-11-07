@@ -43,6 +43,41 @@ export function toolMutates(tool: string, args: Args, readOnly: boolean): boolea
   return WRITES_WHEN[tool]?.(args) ?? true;
 }
 
+/** A tool's target by its name, first match wins, in the words REST's rows use (`routeTargetType`). */
+const TOOL_TARGET_TYPES: readonly (readonly [RegExp, string])[] = [
+  [/^entr(y|ies)_/, 'entry'],
+  [/_content_type$/, 'content_type'],
+  [/^agent_schedule_/, 'agent_schedule'],
+  [/^agent_review_/, 'agent_review'],
+  [/^ai_action_/, 'ai_action'],
+  [/^bulk_job_/, 'job'],
+  [/^api_key_/, 'api_key'],
+  [/^app_extension_/, 'app_extension'],
+  [/^asset_collections?_/, 'asset_collection'],
+  [/^asset_folders?_/, 'asset_folder'],
+  [/^assets?_/, 'asset'],
+  [/^share_link_/, 'share_link'],
+  [/^tasks?_/, 'task'],
+  [/^environment_alias_/, 'environment_alias'],
+  [/^function_/, 'function'],
+  [/^invite_/, 'invite'],
+  [/^menus?_/, 'menu'],
+  [/^plugin_/, 'plugin'],
+  [/^promotion_/, 'promotion'],
+  [/^redirects?_/, 'redirect'],
+  [/^releases?_/, 'release'],
+  [/^roles?_/, 'role'],
+  [/^views_/, 'saved_view'],
+  [/^taxonomy_\w+_tag$/, 'tag'],
+  [/^taxonomy_\w+_concept$/, 'concept'],
+  [/^webhooks?_/, 'webhook'],
+];
+
+/** What kind of thing a tool acts on, for its audit row; undefined when no table entry names it. */
+export function toolTargetType(tool: string): string | undefined {
+  return TOOL_TARGET_TYPES.find(([name]) => name.test(tool))?.[1];
+}
+
 const str = (v: unknown): string | undefined => (typeof v === 'string' && v ? v : undefined);
 
 /** Which of a tool's arguments its input schema declares (a Zod object's shape). */
@@ -79,6 +114,7 @@ export async function auditToolCall(ctx: AppContext, input: ToolAuditInput): Pro
     ? (str(args.space) ?? input.defaultSpace)
     : str(args.spaceId);
   if (!spaceId) return;
+  const targetId = input.targetId ?? str(args.id) ?? str(args.apiId) ?? str(args.alias);
   try {
     await recordAudit(ctx, {
       spaceId,
@@ -87,7 +123,8 @@ export async function auditToolCall(ctx: AppContext, input: ToolAuditInput): Pro
         : undefined,
       actor: auditActor(input.principal),
       action: `MCP ${tool}`,
-      targetId: input.targetId ?? str(args.id) ?? str(args.apiId) ?? str(args.alias),
+      targetType: targetId ? toolTargetType(tool) : undefined,
+      targetId,
       status: 200,
     });
   } catch {

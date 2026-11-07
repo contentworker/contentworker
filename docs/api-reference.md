@@ -201,7 +201,7 @@ Base paths: `/spaces`, and `…` for `/spaces/:space/environments/:env`. Space-l
 | GET    | `/spaces/:space/environment-aliases`        | `preview:read`                       | List aliases                                                                              |
 | PUT    | `/spaces/:space/environment-aliases/:alias` | `space:admin`                        | Set alias → environment id                                                                |
 | DELETE | `/spaces/:space/environment-aliases/:alias` | `space:admin`                        | Remove alias                                                                              |
-| GET    | `/spaces/:space/audit-log`                  | `space:admin`                        | Space audit log (`?limit`, `?skip`)                                                       |
+| GET    | `/spaces/:space/audit-log`                  | `space:admin`                        | Space audit log, a page at a time ([filters and paging](#audit-log))                      |
 | GET    | `/spaces/:space/compare`                    | `preview:read`                       | Compare two environments (`?from`, `?to`), limited to the types the role can read         |
 | POST   | `/spaces/:space/merge`                      | `content:manage`                     | Merge environment branch (entries need the actions on every content type); `409` (`details.conflicts`) before any write when its entries would take a unique value twice; an entry in the target's trash stays there |
 | POST   | `/spaces/:space/promotions`                 | `content:manage` + `content:publish` | Promote content between environments (`{ source, target, contentTypes?, entries? }`)      |
@@ -253,6 +253,31 @@ check first.
    for a person's edits. Afterwards it checks that the target holds the pinned fields
    (`result.mismatched`) and emits `environment.promoted`. A failure marks it `failed` with the
    error; whatever was applied before it stays.
+
+### Audit log
+
+`GET /spaces/:space/audit-log` returns `{ items, nextCursor? }`, newest first, ordered by `at` and
+then `id`. Every filter is an exact match and they all apply together:
+
+| Parameter     | Keeps                                                                                        |
+| ------------- | -------------------------------------------------------------------------------------------- |
+| `environment` | The environment acted in, as recorded: never resolved, so a deleted one stays readable       |
+| `actor`       | A person's id, `admin-token`, or the kind of key                                             |
+| `action`      | `<METHOD> <route>` for REST, `MCP <tool>` for a tool, or a use-case's own (`invite.created`) |
+| `targetType`  | The kind of thing acted on: `entry`, `release`, `content_type`, `environment_alias`, …       |
+| `targetId`    | The id of the thing acted on                                                                 |
+| `from`, `to`  | A time range, both ends inclusive                                                            |
+
+`from` and `to` take an ISO 8601 date, read as the start of that UTC day for `from` and its end for
+`to`, or a date-time with an offset. `limit` is at most 100 (the default), clamped rather than
+refused. Pass `nextCursor` back as `cursor`, with the same filters, for the next page; it is a keyset
+on (`at`, `id`), so entries appended while walking shift nothing and entries sharing a millisecond
+are neither lost nor repeated. A `from` or `to` it can't read, a `from` after `to` and a `cursor`
+it can't read are each `422`. MCP: `audit_log_list` takes the same filters and returns the
+same page.
+
+Entries written before migration `0031` have no `targetType` when they came from a REST or MCP call:
+their `targetId` still matches.
 
 ### Environment snapshots
 

@@ -19,7 +19,7 @@ import {
 } from '@contentworker/test-kit';
 import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { toolMutates, WRITES_WHEN } from '../../src/mcp/audit';
+import { toolMutates, toolTargetType, WRITES_WHEN } from '../../src/mcp/audit';
 import type { McpDeps } from '../../src/mcp/deps';
 import { buildServer } from '../../src/mcp/server';
 
@@ -118,6 +118,38 @@ describe('MCP tool audit', () => {
       targetId: created.entry.id,
       status: 200,
     });
+  });
+
+  it('names the kind of target, in REST’s words', async () => {
+    const created = payload(
+      await call('entries_create', {
+        contentType: 'article',
+        fields: { title: { 'en-US': 'Hello' } },
+      }),
+    ) as { entry: { id: string } };
+    await call('entries_update', {
+      id: created.entry.id,
+      fields: { title: { 'en-US': 'Hello again' } },
+    });
+    const rows = await trail();
+    expect(rows.find((r) => r.action === 'MCP entries_update')?.targetType).toBe('entry');
+    // No target, no kind: entries_create's id isn't in its arguments.
+    expect(rows.find((r) => r.action === 'MCP entries_create')?.targetType).toBeUndefined();
+  });
+
+  it('knows the kind of target of every write that names one', async () => {
+    const { tools } = await client.listTools();
+    const unnamed = tools
+      .filter((t) => {
+        const args = Object.keys(t.inputSchema.properties ?? {});
+        return (
+          t.annotations?.readOnlyHint !== true &&
+          args.some((a) => a === 'id' || a === 'apiId' || a === 'alias')
+        );
+      })
+      .map((t) => t.name)
+      .filter((name) => !toolTargetType(name));
+    expect(unnamed).toEqual([]);
   });
 
   it('files a call made through an alias under the environment it resolved to', async () => {
