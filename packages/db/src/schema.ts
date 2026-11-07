@@ -197,6 +197,8 @@ export const contentTypes = sqliteTable(
     group: text('group_name'),
     description: text('description'),
     icon: text('icon'),
+    /** How an agent should write this type's entries; never delivered (0032). */
+    agentInstructions: text('agent_instructions'),
     /** The entry form's tabs and field groups; editor-only, never delivered (0026). */
     layout: text('layout', { mode: 'json' }).$type<ContentTypeLayout>(),
   },

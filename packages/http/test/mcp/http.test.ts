@@ -103,10 +103,24 @@ describe('the shared handler', () => {
     'serves identical tool schemas to every principal (%s)',
     async (mode) => {
       // Schemas are cached per process; a principal-dependent schema would leak
-      // between callers, so the listing must not vary with who asks.
+      // between callers. Who asks decides which tools are listed, never their shape.
       const a = await (await connect(admin, mode)).listTools();
       const b = await (await connect(reader, mode)).listTools();
-      expect(b.tools).toEqual(a.tools);
+      const byName = new Map(a.tools.map((tool) => [tool.name, tool]));
+      expect(b.tools.length).toBeGreaterThan(0);
+      for (const tool of b.tools) expect(tool).toEqual(byName.get(tool.name));
+    },
+  );
+
+  it.each(['legacy', 'auto'] as const)(
+    'lists only the tools a caller can use (%s)',
+    async (mode) => {
+      const all = (await (await connect(admin, mode)).listTools()).tools.map((t) => t.name);
+      const some = (await (await connect(reader, mode)).listTools()).tools.map((t) => t.name);
+      expect(all).toContain('function_create');
+      expect(some).not.toContain('function_create');
+      expect(some).toContain('docs_list');
+      expect(some.length).toBeLessThan(all.length);
     },
   );
 

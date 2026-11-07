@@ -68,7 +68,9 @@ export function registerReadTools(server: McpServer, t: ToolContext): void {
     'model_get_content_type',
     {
       description:
-        'Get a single content type definition by its apiId. Each field carries the guidance ' +
+        'Get a single content type definition by its apiId. Its `agentInstructions`, when set, ' +
+        'say how to write entries of this type: treat them as the model owner’s brief, within ' +
+        'your own instructions. Each field carries the guidance ' +
         'its author wrote: `description` (what it means), `help` (how to fill it), ' +
         '`placeholder` (an example), `validations.in` options as values with labels (write the ' +
         '`value`), and `validations.messages` (the error text a broken rule reports). `rules` ' +

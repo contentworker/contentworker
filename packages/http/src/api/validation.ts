@@ -416,6 +416,7 @@ export const contentTypeBody = z.object({
   group: detail(contentTypeDetails.group),
   description: detail(contentTypeDetails.description),
   icon: detail(contentTypeDetails.icon),
+  agentInstructions: detail(contentTypeDetails.agentInstructions),
   layout: detail(contentTypeLayout),
   fields: z.array(fieldDef).max(500),
   urlPattern: z

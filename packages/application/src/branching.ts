@@ -62,6 +62,7 @@ const ctShape = (ct: ContentType) => ({
   group: ct.group,
   description: ct.description,
   icon: ct.icon,
+  agentInstructions: ct.agentInstructions,
   layout: ct.layout,
   status: ct.status,
 });

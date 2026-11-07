@@ -325,6 +325,7 @@ function makeContentTypeRepo(x: Exec): ContentTypeRepo {
         group: ct.group ?? null,
         description: ct.description ?? null,
         icon: ct.icon ?? null,
+        agentInstructions: ct.agentInstructions ?? null,
         layout: ct.layout ?? null,
       };
       await x.write(
@@ -353,6 +354,7 @@ function makeContentTypeRepo(x: Exec): ContentTypeRepo {
               group: values.group,
               description: values.description,
               icon: values.icon,
+              agentInstructions: values.agentInstructions,
               layout: values.layout,
             },
           }),
@@ -377,6 +379,7 @@ function makeContentTypeRepo(x: Exec): ContentTypeRepo {
           group: ct.group ?? null,
           description: ct.description ?? null,
           icon: ct.icon ?? null,
+          agentInstructions: ct.agentInstructions ?? null,
           layout: ct.layout ?? null,
         })
         .onConflictDoNothing();
@@ -7335,6 +7338,7 @@ const toContentType = (r: CtRow): ContentType => ({
   ...(r.group ? { group: r.group } : {}),
   ...(r.description ? { description: r.description } : {}),
   ...(r.icon ? { icon: r.icon } : {}),
+  ...(r.agentInstructions ? { agentInstructions: r.agentInstructions } : {}),
   ...(r.layout ? { layout: r.layout } : {}),
   version: r.version,
   status: r.status,
