@@ -54,7 +54,13 @@ import type { McpDeps } from '../mcp/deps';
 import { readContext } from './context';
 import { assistantCaller, engineKeys } from './gate';
 import { BUDGET_SPENT, meterTurn } from './meter';
-import { assistantModel, type EmittedCall, type ModelSource, recordingCalls } from './model';
+import {
+  assistantModel,
+  DECLINED_REASON,
+  type EmittedCall,
+  type ModelSource,
+  recordingCalls,
+} from './model';
 import {
   callAssistantTool,
   errorLine,
@@ -891,14 +897,21 @@ function logFailure(where: string, err: unknown) {
 /**
  * The conversation as the model reads it: a page's confirm card still waiting has no result yet
  * and isn't the model's to answer (nor a client's to approve through the chat protocol), so it is
- * left out until `resolve` answers it.
+ * left out until `resolve` answers it. A declined call says why it didn't run (`DECLINED_REASON`),
+ * where the SDK would otherwise hand the model a bare "execution denied" that reads as a failure.
  */
 export function answeredOnly(messages: UIMessage[]): UIMessage[] {
   return messages.flatMap((m) => {
-    const parts = m.parts.filter((x) => {
-      const t = x as { toolCallId?: string; state?: string };
-      return !(t.toolCallId?.startsWith(DIRECT_CALL_PREFIX) && !t.state?.startsWith('output-'));
-    });
+    const parts = m.parts
+      .filter((x) => {
+        const t = x as { toolCallId?: string; state?: string };
+        return !(t.toolCallId?.startsWith(DIRECT_CALL_PREFIX) && !t.state?.startsWith('output-'));
+      })
+      .map((x) => {
+        const t = x as { state?: string; approval?: { reason?: string } };
+        if (t.state !== 'output-denied' || !t.approval || t.approval.reason) return x;
+        return { ...x, approval: { ...t.approval, reason: DECLINED_REASON } } as typeof x;
+      });
     return parts.some((x) => x.type !== 'step-start') ? [{ ...m, parts }] : [];
   });
 }

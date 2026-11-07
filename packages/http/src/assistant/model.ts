@@ -265,6 +265,12 @@ export function mockStep(text: string, context: AssistantContext, tools: Set<str
 
 const plain = (v: unknown) => String(v ?? '').replace(/[[\]()<>]/g, '');
 
+/**
+ * Why a call didn't run when the person chose Not now: the reason a declined call carries into the
+ * model's prompt (`answeredOnly`), so a model reads a decision, not a failure.
+ */
+export const DECLINED_REASON = 'The person chose Not now, so nothing was changed.';
+
 /** One plain line per tool result. */
 export function describeResult(tool: string, output: unknown): string {
   const title = isAssistantTool(tool) ? ASSISTANT_TOOLS[tool] : undefined;
@@ -304,7 +310,11 @@ export function mockModel(context: AssistantContext): Model {
         text: results
           .map((r) => {
             const out = r.output;
-            if (out.type === 'execution-denied') return 'Left as it was.';
+            if (
+              out.type === 'execution-denied' ||
+              (out.type === 'error-text' && out.value === DECLINED_REASON)
+            )
+              return 'Left as it was.';
             if (out.type === 'error-text') return `That didn’t go through: ${out.value}`;
             if (out.type === 'error-json') return 'That didn’t go through.';
             return describeResult(
