@@ -880,6 +880,9 @@ message:
 - A `422` field issue from the result's validation also carries `block: { key, type, path }`: the
   innermost keyed block its position falls in and the path inside it (`label`), since positions
   say nothing once blocks move.
+- Field issues in fields the caller's role denies (a stored value someone else left failing a
+  rule) are never listed: they fold into one issue after the others,
+  `{ field: "", code: "hidden", hidden: n, message }`, that counts the fields without naming them.
 - A `403` for a field carries `details`: `{ reason: "read_only", field }` for a field the role can
   read but not write, or `{ reason: "hidden", hidden: n }` counting fields it can't read (never
   named). A `403` with no details is the role refusing the entry itself.

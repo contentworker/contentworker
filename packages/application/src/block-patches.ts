@@ -10,6 +10,7 @@ import {
   deniedFieldsFor,
   type Entry,
   type EntryFields,
+  type FieldIssue,
   ForbiddenError,
   invertBlockPatch,
   type LocaleCode,
@@ -94,8 +95,19 @@ export async function authorizeBlockPatch(
 }
 
 /**
- * A save's field issues with the block each falls in, by key (`blockAtPath`): `body[1].label`
- * says nothing once the patch has moved the blocks, the block's key and type do.
+ * The issue a save's refusal makes of fields the caller can't read: counted, never named. A stored
+ * value it may not see can still fail a rule (a required field left empty by someone else), and
+ * its path and message would say what it holds.
+ */
+export interface HiddenFieldsIssue extends FieldIssue {
+  readonly code: 'hidden';
+  readonly hidden: number;
+}
+
+/**
+ * A save's field issues as the caller may see them: each with the block it falls in, by key
+ * (`blockAtPath`), since `body[1].label` says nothing once the patch has moved the blocks; and
+ * those in fields it can't read folded into one issue that counts the fields.
  */
 function withBlocks(
   err: unknown,
@@ -105,15 +117,25 @@ function withBlocks(
   unreadable: readonly string[] = [],
 ): unknown {
   if (!(err instanceof ValidationError)) return err;
-  return new ValidationError(
-    err.issues.map((issue): BlockFieldIssue => {
-      // A field the caller can't read says no more than its path already did.
-      const top = /^[A-Za-z]\w*/.exec(issue.field)?.[0] ?? '';
-      if (unreadable.includes(top)) return issue;
-      const block = blockAtPath(contentType, fields, issue.locale ?? defaultLocale, issue.field);
-      return block ? { ...issue, block } : issue;
-    }),
-  );
+  const hidden = new Set<string>();
+  const shown = err.issues.flatMap((issue): BlockFieldIssue[] => {
+    const top = /^[A-Za-z]\w*/.exec(issue.field)?.[0] ?? '';
+    if (unreadable.includes(top)) {
+      hidden.add(top);
+      return [];
+    }
+    const block = blockAtPath(contentType, fields, issue.locale ?? defaultLocale, issue.field);
+    return [block ? { ...issue, block } : issue];
+  });
+  if (hidden.size === 0) return new ValidationError(shown);
+  const n = hidden.size;
+  const counted: HiddenFieldsIssue = {
+    field: '',
+    code: 'hidden',
+    hidden: n,
+    message: `${n} ${n === 1 ? 'field' : 'fields'} you can’t read ${n === 1 ? 'isn’t' : 'aren’t'} valid; someone who can read ${n === 1 ? 'it' : 'them'} has to fix ${n === 1 ? 'it' : 'them'} first`,
+  };
+  return new ValidationError([...shown, counted]);
 }
 
 /** A patch with every read and check done, ready to save (or to answer as a dry run). */

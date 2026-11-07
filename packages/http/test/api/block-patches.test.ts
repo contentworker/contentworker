@@ -69,7 +69,13 @@ async function setup() {
     apiId: 'page',
     name: 'Page',
     displayField: 'title',
-    fields: [symbol('title', 0, true), blocks('body', [hero, cta, section], 1)],
+    fields: [
+      symbol('title', 0, true),
+      blocks('body', [hero, cta, section], 1),
+      // For a role that may read but not write one, and may not read the other.
+      blocks('sidebar', [cta], 2),
+      { ...symbol('notes', 3), type: 'Symbol' },
+    ],
   };
   expect((await send('/content-types', 'POST', type)).status).toBe(201);
   await send('/content-types/page/published', 'POST');
@@ -88,9 +94,39 @@ async function setup() {
     })
   ).json()) as Saved;
   const [h, s] = created.fields.body['en-US'];
+  /** A key whose role writes `page` but may only read `sidebar`, and may not read `notes`. */
+  const restricted = async () => {
+    const admin = { Authorization: 'Bearer admin', 'Content-Type': 'application/json' };
+    const role = await app.request('/spaces/s1/roles', {
+      method: 'POST',
+      headers: admin,
+      body: JSON.stringify({
+        name: 'Page editor',
+        scopes: ['content:write', 'preview:read'],
+        contentGrants: [
+          {
+            contentTypeApiId: 'page',
+            actions: ['read', 'write'],
+            readOnlyFields: ['sidebar'],
+            deniedFields: ['notes'],
+          },
+        ],
+      }),
+    });
+    expect(role.status).toBe(201);
+    const { id: roleId } = (await role.json()) as { id: string };
+    const key = await app.request('/spaces/s1/api-keys', {
+      method: 'POST',
+      headers: admin,
+      body: JSON.stringify({ kind: 'cma', roleId }),
+    });
+    const { token } = (await key.json()) as { token: string };
+    return { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+  };
   return {
     app,
     send,
+    restricted,
     id: created.entry.id,
     hero: h?._key as string,
     section: s?._key as string,
@@ -261,6 +297,64 @@ describe('patching an entry’s blocks over HTTP', () => {
       cpa,
     );
     expect(preview.status).toBe(403);
+  });
+
+  it('says what a role refused on both the patch and its dry run, naming no hidden field', async () => {
+    const { send, id, restricted } = await setup();
+    const editor = await restricted();
+    const insert = (field: string) => ({
+      expectedVersion: 1,
+      ops: [{ op: 'insert', field, block: { _type: 'cta', label: 'x' } }],
+    });
+    for (const [path, method, body] of [
+      [`/entries/${id}/blocks`, 'PATCH', (f: string) => insert(f)],
+      ['/entries/blocks/validate', 'POST', (f: string) => ({ entryId: id, ...insert(f) })],
+    ] as const) {
+      const locked = await send(path, method, body('sidebar'), editor);
+      expect(locked.status).toBe(403);
+      expect(((await locked.json()) as { error: { details: unknown } }).error.details).toEqual({
+        reason: 'read_only',
+        field: 'sidebar',
+      });
+      const hidden = await send(path, method, body('notes'), editor);
+      expect(hidden.status).toBe(403);
+      const text = await hidden.text();
+      expect(JSON.parse(text).error.details).toEqual({ reason: 'hidden', hidden: 1 });
+      expect(text).not.toContain('notes');
+    }
+    // Nothing was saved.
+    const now = (await (await send(`/entries/${id}`, 'GET')).json()) as Saved;
+    expect(now.entry.currentVersion).toBe(1);
+  });
+
+  it('counts a stored value it can’t read that fails a rule, never naming it', async () => {
+    const { send, id, hero, restricted } = await setup();
+    // Someone else's rule, tightened after the entry was saved without notes.
+    const type = (await (await send('/content-types/page', 'GET')).json()) as {
+      fields: { apiId: string; required: boolean }[];
+    };
+    const tightened = await send('/content-types', 'POST', {
+      apiId: 'page',
+      name: 'Page',
+      displayField: 'title',
+      fields: type.fields.map((f) => (f.apiId === 'notes' ? { ...f, required: true } : f)),
+    });
+    expect([200, 201], await tightened.text()).toContain(tightened.status);
+    await send('/content-types/page/published', 'POST');
+    const editor = await restricted();
+    const ops = [{ op: 'update', field: 'body', key: hero, set: { heading: 'Hi' } }];
+    for (const [path, method, body] of [
+      [`/entries/${id}/blocks`, 'PATCH', { expectedVersion: 1, ops }],
+      ['/entries/blocks/validate', 'POST', { entryId: id, expectedVersion: 1, ops }],
+    ] as const) {
+      const res = await send(path, method, body, editor);
+      expect(res.status).toBe(422);
+      const text = await res.text();
+      expect(JSON.parse(text).error.issues).toEqual([
+        expect.objectContaining({ field: '', code: 'hidden', hidden: 1 }),
+      ]);
+      expect(text).not.toContain('notes');
+    }
   });
 
   it('is described in the OpenAPI document with the body it parses', async () => {

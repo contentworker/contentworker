@@ -23,6 +23,7 @@ import {
   patchEntryBlocks,
   publishContentType,
   trashEntry,
+  updateContentType,
 } from '../src/index';
 
 const scope = { spaceId: 'site', environmentId: 'main' };
@@ -431,6 +432,78 @@ describe('patching an entry’s blocks', () => {
     expect(err).toBeInstanceOf(NotFoundError);
     expect(await versions(page.id)).toBe(1);
     await expect(outlineEntryBlocks(ctx, staging, page.id)).rejects.toBeInstanceOf(NotFoundError);
+  });
+});
+
+describe('a refusal about fields the caller can’t read', () => {
+  /** A memo whose `notes` the caller's role denies, stored empty, then made required. */
+  const memo = async () => {
+    const def = (required: boolean) => [
+      field({ apiId: 'title', type: 'Symbol' }),
+      field({
+        apiId: 'body',
+        type: 'Array',
+        position: 1,
+        items: { type: 'Component', variants: [hero, cta] },
+      }),
+      field({ apiId: 'notes', type: 'Symbol', position: 2, required }),
+    ];
+    await createContentType(ctx, scope, {
+      apiId: 'memo',
+      name: 'Memo',
+      displayField: 'title',
+      fields: def(false),
+    });
+    await publishContentType(ctx, scope, 'memo');
+    const { entry, fields } = await createEntry(ctx, scope, {
+      contentTypeApiId: 'memo',
+      fields: {
+        title: { 'en-US': 'Memo' },
+        body: { 'en-US': [{ _type: 'cta', label: 'Go' }] },
+      },
+    });
+    // Someone else's rule: the stored entry now fails it in a field this caller can't see.
+    await updateContentType(ctx, scope, 'memo', { fields: def(true) });
+    await publishContentType(ctx, scope, 'memo');
+    const key = ((fields.body?.['en-US'] ?? []) as { _key: string }[])[0]?._key as string;
+    return { id: entry.id, version: entry.currentVersion, key };
+  };
+  const restricted = { unwritable: ['notes'], unreadable: ['notes'] };
+
+  it.each([
+    ['the patch', patchEntryBlocks],
+    ['its dry run', checkEntryBlocks],
+  ] as const)('counts them in %s and never names them', async (_name, run) => {
+    const m = await memo();
+    const err = await refusal(
+      run(
+        ctx,
+        scope,
+        m.id,
+        {
+          expectedVersion: m.version,
+          ops: [{ op: 'update', field: 'body', key: m.key, set: { label: 'Went' } }],
+        },
+        restricted,
+      ),
+    );
+    expect(err).toBeInstanceOf(ValidationError);
+    const issues = (err as ValidationError).issues;
+    expect(issues).toEqual([expect.objectContaining({ field: '', code: 'hidden', hidden: 1 })]);
+    // Neither the field, its path, nor a block in it.
+    expect(JSON.stringify(issues)).not.toContain('notes');
+    expect(issues.some((i) => 'block' in i)).toBe(false);
+  });
+
+  it('names them to a caller who can read them', async () => {
+    const m = await memo();
+    const err = await refusal(
+      checkEntryBlocks(ctx, scope, m.id, {
+        expectedVersion: m.version,
+        ops: [{ op: 'update', field: 'body', key: m.key, set: { label: 'Went' } }],
+      }),
+    );
+    expect((err as ValidationError).issues[0]).toMatchObject({ field: 'notes' });
   });
 });
 

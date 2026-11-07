@@ -37,6 +37,8 @@ export type BlockRefusal =
   | { readonly why: 'invalid'; readonly where: string; readonly message: string }
   /** It edits fields this person can't read (their role can't write them either), counted. */
   | { readonly why: 'hidden'; readonly count: number }
+  /** Fields this person can't read hold values a save refuses, counted: never named. */
+  | { readonly why: 'hiddenInvalid'; readonly count: number }
   /** It edits a field this person can read but whose role makes it read-only. */
   | { readonly why: 'locked'; readonly field: string }
   /** The role can't change this entry at all. */
@@ -455,6 +457,8 @@ interface Issue {
   readonly locale?: string;
   readonly message?: string;
   readonly block?: { readonly key: string; readonly type: string; readonly path: string };
+  /** On the issue that counts fields the caller can't read (`code: 'hidden'`). */
+  readonly hidden?: number;
 }
 
 const issuesOf = (err: ApiError): Issue[] => {
@@ -633,8 +637,12 @@ export async function readBlockPatch(
       return refused({ why: 'denied' });
     }
     if (err.status !== 422) throw err;
-    const issue = issuesOf(err)[0];
+    const issues = issuesOf(err);
+    const issue = issues[0];
     if (!issue) throw err;
+    // Fields this person can't read come counted, after any they can: a rule they can act on first.
+    if (issue.code === 'hidden' && typeof issue.hidden === 'number')
+      return refused({ why: 'hiddenInvalid', count: issue.hidden });
     const code = issue.code;
     if (typeof issue.op === 'number' && isIssueCode(code)) {
       const op = p.ops[issue.op];
@@ -709,6 +717,8 @@ export function refusalHold(refusal: BlockRefusal): string {
       return 'You can’t confirm this: your role can’t change this entry.';
     case 'hidden':
       return 'You can’t confirm this: it changes a field you can’t read.';
+    case 'hiddenInvalid':
+      return 'You can’t confirm this: a field you can’t read isn’t valid.';
     case 'nothing':
       return 'You can’t confirm this: it changes nothing in the draft.';
     case 'unclear':
@@ -773,6 +783,19 @@ export function BlockRefused({ refusal }: { refusal: BlockRefusal }) {
           <AlertDescription>
             {refusal.count} {refusal.count === 1 ? 'field' : 'fields'} you can’t read{' '}
             {refusal.count === 1 ? 'is' : 'are'} in this change, so it can’t be saved.
+          </AlertDescription>
+        </Alert>
+      );
+    case 'hiddenInvalid':
+      // Counted, never named, as the other fields this person can't read.
+      return (
+        <Alert variant="warning">
+          <TriangleAlert />
+          <AlertDescription>
+            {refusal.count} {refusal.count === 1 ? 'field' : 'fields'} you can’t read{' '}
+            {refusal.count === 1 ? 'isn’t' : 'aren’t'} valid, so this change can’t be saved until
+            someone who can read {refusal.count === 1 ? 'it' : 'them'} fixes{' '}
+            {refusal.count === 1 ? 'it' : 'them'}.
           </AlertDescription>
         </Alert>
       );

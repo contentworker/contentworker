@@ -1615,6 +1615,26 @@ describe('a model’s block patch', () => {
     hold('You can’t confirm this: it changes a field you can’t read.');
   });
 
+  it('counts stored values the person can’t read that fail a rule, never naming them', async () => {
+    client.checkBlockPatch.mockRejectedValue(
+      unprocessable([
+        {
+          field: '',
+          code: 'hidden',
+          hidden: 1,
+          message:
+            '1 field you can’t read isn’t valid; someone who can read it has to fix it first',
+        },
+      ]),
+    );
+    show(patch({ ops: [remove] }));
+    await screen.findByText(
+      '1 field you can’t read isn’t valid, so this change can’t be saved until someone who can read it fixes it.',
+    );
+    expect(confirm().disabled).toBe(true);
+    hold('You can’t confirm this: a field you can’t read isn’t valid.');
+  });
+
   it('counts a field missing from the outline without asking the dry run', async () => {
     client.getBlocksOutline.mockResolvedValue(outline(['body']));
     show(patch({ ops: [{ op: 'insert', field: 'notes', block: { _type: 'cta' } }] }));

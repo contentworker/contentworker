@@ -7,6 +7,7 @@ import {
   createSpace,
   getEntry,
   publishContentType,
+  updateContentType,
 } from '@contentworker/application';
 import { type FieldDefinition, type Principal, SCOPES } from '@contentworker/domain';
 import {
@@ -277,6 +278,41 @@ describe('the blocks tools for a restricted role', () => {
     expect(r.isError).toBe(true);
     expect(r.text).toContain('content:write:page');
     expect((await readOnly.call('entry_blocks_outline', { id: readOnly.id })).isError).toBe(false);
+  });
+
+  it('counts a stored value it can’t read that fails a rule, as REST does', async () => {
+    const { ctx, id, body, call } = await setup(writer);
+    // A rule added to the notes' blocks after they were saved: the stored one now fails it.
+    const stricter = {
+      ...cta,
+      fields: [...cta.fields, field({ apiId: 'url', type: 'Symbol', position: 1, required: true })],
+    };
+    await updateContentType(ctx, scope, 'page', {
+      fields: [
+        field({ apiId: 'title', type: 'Symbol' }),
+        blocks('body', 1),
+        blocks('sidebar', 2),
+        field({
+          apiId: 'notes',
+          type: 'Array',
+          position: 3,
+          items: { type: 'Component', variants: [stricter] },
+        }),
+      ],
+    });
+    await publishContentType(ctx, scope, 'page');
+    for (const tool of ['entry_blocks_patch', 'entry_blocks_validate']) {
+      const r = await call(tool, {
+        id,
+        expectedVersion: 1,
+        ops: [{ op: 'update', field: 'body', key: body, set: { label: 'Join' } }],
+      });
+      expect(r.isError).toBe(true);
+      expect(JSON.parse(r.text).error.issues).toEqual([
+        expect.objectContaining({ field: '', code: 'hidden', hidden: 1 }),
+      ]);
+      expect(r.text).not.toContain('notes');
+    }
   });
 
   it('answers a refusal with REST’s 403 body: a read-only field named, a hidden one counted', async () => {
