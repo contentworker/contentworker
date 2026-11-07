@@ -533,6 +533,19 @@ export class InMemoryContentStore implements ContentStore {
     });
   }
 
+  /** Every entry of a type in its manual order, trashed ones included, as D1's index reads it. */
+  private placesOf(scope: Scope, contentTypeApiId: string): { id: string; position: string }[] {
+    const prefix = `${scopeKey(scope)}::`;
+    const out: { id: string; position: string }[] = [];
+    for (const [key, entry] of this.entryData.entries()) {
+      if (!key.startsWith(prefix) || entry.contentTypeApiId !== contentTypeApiId) continue;
+      out.push({ id: entry.id, position: entry.position ?? entry.id });
+    }
+    return out.sort((a, b) =>
+      a.position < b.position ? -1 : a.position > b.position ? 1 : a.id < b.id ? -1 : 1,
+    );
+  }
+
   private setEntry(scope: Scope, entry: Entry, created = false): void {
     const key = `${scopeKey(scope)}::${entry.id}`;
     const before = created ? undefined : this.entryData.get(key);
@@ -559,6 +572,40 @@ export class InMemoryContentStore implements ContentStore {
       const current = versions.find((v) => v.version === entry.currentVersion);
       const result: EntryWithFields = { entry, fields: current?.fields ?? {} };
       return result;
+    },
+    positionNeighbors: async (scope, contentTypeApiId, key, side, limit, excludeId) => {
+      const places = this.placesOf(scope, contentTypeApiId).filter(
+        (p) =>
+          p.id !== excludeId &&
+          (key === null || (side === 'after' ? p.position > key : p.position < key)),
+      );
+      return (side === 'after' ? places : places.reverse()).slice(0, limit);
+    },
+    setPositions: async (scope, contentTypeApiId, writes, guard) => {
+      // As D1: every check against what the caller read, before any key moves.
+      const places = this.placesOf(scope, contentTypeApiId);
+      const at = new Map(places.map((p) => [p.id, p.position]));
+      if (guard.anchor && at.get(guard.anchor.id) !== guard.anchor.position) {
+        throw new TransactionConflictError();
+      }
+      const moved = new Set(writes.map((w) => w.id));
+      const inGap = places.some(
+        (p) =>
+          !moved.has(p.id) &&
+          (guard.lo === null || p.position > guard.lo) &&
+          (guard.hi === null || p.position < guard.hi),
+      );
+      if (inGap || writes.some((w) => at.get(w.id) !== w.expected)) {
+        throw new TransactionConflictError();
+      }
+      for (const w of writes) {
+        const key = `${scopeKey(scope)}::${w.id}`;
+        const entry = this.entryData.get(key);
+        if (entry) this.entryData.set(key, { ...entry, position: w.position });
+        // As 0034's trigger: a published row follows.
+        const published = this.publishedData.get(key);
+        if (published) this.publishedData.set(key, { ...published, position: w.position });
+      }
     },
     getMany: async (scope, ids) =>
       // Dedupe first: the D1 store's inArray returns each matching row once, so

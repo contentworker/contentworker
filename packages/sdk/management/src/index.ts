@@ -1694,6 +1694,16 @@ export function createManagementClient(opts: ManagementClientOptions) {
       setSeo: (id: string, change: EntrySeoChange) =>
         patch<EntryView>(`${envBase}/entries/${e(id)}/seo`, change),
       /**
+       * Moves an entry in its content type's manual order (`order=sys.position`): right after
+       * another entry (`{ after: id }`, `null` for first) or right before one (`{ before: id }`,
+       * `null` for last). Live: no new version, no publish.
+       */
+      move: (id: string, place: { after: string | null } | { before: string | null }) =>
+        post<{ id: string; contentTypeApiId: string; position: string }>(
+          `${envBase}/entries/${e(id)}/move`,
+          place,
+        ),
+      /**
        * Publishes the current draft. With `expectedVersion` (the `currentVersion` you read), a
        * draft saved since makes it a 409 that changes nothing.
        */

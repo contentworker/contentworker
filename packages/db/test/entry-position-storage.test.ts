@@ -4,12 +4,14 @@ import {
   createEntry,
   createSpace,
   listPublishedEntries,
+  moveEntry,
   publishContentType,
   publishEntry,
   unpublishEntry,
   updateEntry,
 } from '@contentworker/application';
 import type { FieldDefinition } from '@contentworker/domain';
+import { TransactionConflictError } from '@contentworker/ports';
 import { FixedClock } from '@contentworker/test-kit';
 import { describe, expect, it } from 'vitest';
 import { createD1Store } from '../src/store';
@@ -162,5 +164,43 @@ describe('entry position storage on D1', () => {
       expect(plan).toMatch(/_by_position/);
       expect(plan).not.toContain('TEMP B-TREE');
     }
+  });
+
+  it('moves through the store with its guards, the published row following', async () => {
+    const h = await harness();
+    await h.note('A');
+    await h.note('B');
+    await h.note('C');
+    const ordered = async () =>
+      (
+        await store.entries.list(h.scope, {
+          contentTypeApiId: 'note',
+          order: [{ field: 'sys.position', direction: 'asc' }],
+        })
+      ).map((e) => e.entry.id);
+    // These ids are random: whatever sorts last moves to the front.
+    const [a, c, b] = (await ordered()) as [string, string, string];
+    await publishEntry(h.ctx, h.scope, b);
+    const moved = await moveEntry(h.ctx, h.scope, b, { after: null });
+    expect((await ordered())[0]).toBe(b);
+    expect(await h.positions('entry_published', b)).toBe(moved.position);
+    expect(moved.position < a).toBe(true);
+    // A write planned against keys that have changed since is refused whole.
+    await expect(
+      store.withTransaction((tx) =>
+        tx.entries.setPositions(h.scope, 'note', [{ id: c, position: '-', expected: c }], {
+          lo: null,
+          hi: a,
+        }),
+      ),
+    ).rejects.toBeInstanceOf(TransactionConflictError);
+    await expect(
+      store.entries.setPositions(h.scope, 'note', [{ id: a, position: 'zz', expected: 'nope' }], {
+        lo: null,
+        hi: null,
+      }),
+    ).rejects.toBeInstanceOf(TransactionConflictError);
+    expect(await h.positions('entries', c)).toBeNull();
+    expect(await h.positions('entries', a)).toBeNull();
   });
 });

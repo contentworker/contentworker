@@ -565,6 +565,12 @@ space export job.
 | GET    | `…/entries/:id/metadata` | `preview:read`  | Tags + concepts on entry |
 | PUT    | `…/entries/:id/metadata` | `content:write` | Set tags/concepts        |
 
+### Manual order
+
+| Method | Path                 | Scope           | Description |
+| ------ | -------------------- | --------------- | ----------- |
+| POST   | `…/entries/:id/move` | `content:write` | Move the entry in its type's manual order: `{ "after": id \| null }` (null: first) or `{ "before": id \| null }` (null: last), exactly one → `{ id, contentTypeApiId, position }`. Live: no version, status or `updatedAt` change, and Delivery serves a published entry's new place at once (`entry.moved`). Moving it where it already is writes nothing. `422` for an anchor that is the entry itself, of another type or in the trash; `400` `invalid_state` for an entry in the trash (it keeps its place for a restore); `409` when the order changed under three attempts. Needs `write` on the type; read the order with `order=sys.position` |
+
 ### Assets
 
 | Method | Path                                     | Scope             | Description                                                                                                                                                                                                                                                                                    |

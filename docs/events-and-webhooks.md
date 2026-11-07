@@ -161,7 +161,8 @@ space:environment touched by any event in `PURGING_EVENTS` (`apps/engine/src/pur
 `asset.unpublished`, `asset.deleted`, `asset.rights_changed`, `asset_collection.changed` (Delivery lists a
 collection's published members), `taxonomy.changed` (Delivery serves tags and concepts),
 `redirects.changed` (Delivery serves the enabled redirects), `menus.changed` (Delivery serves each
-menu resolved), `content_type.published` (Delivery
+menu resolved), `entry.moved` when `published` (Delivery's lists in manual order; a draft's move
+purges nothing), `content_type.published` (Delivery
 serves each published type's `urlPattern` at `…/routes`, the sitemap built from it, and GraphQL's schema), `content_type.deleted` (the same, for a type that is gone), `release.published`,
 `environment_alias.changed`, `environment.deleted`, `space_locales.changed`. The sitemap (`…/sitemap`, `…/sitemap.xml`) has no
 event of its own: it is a delivery read under the scope's tag, so the publishes that change it purge it. It sends them as **one** message on `contentworker-purge`, so a burst
@@ -380,6 +381,7 @@ Domain events (`packages/domain/src/events.ts`):
 | `asset_zip.requested`                                                              | `jobId` (a control event: the engine starts `AssetZipWorkflow`, or fails the job when `ASSET_ZIP_WF` is unbound; no webhooks apply) |
 | `redirects.changed`                                                                | `count` (redirects written or removed by a create, update, delete, import, chain collapse or snapshot import; Delivery's `redirects` reads are purged. A publish whose slug change writes redirects does not send it: its `entry.published` purges the same responses) |
 | `menus.changed`                                                                    | `menuId?`, `handle?` (a menu was created, saved, moved or deleted; both absent when a snapshot import wrote several; Delivery's `menus` reads are purged. A publish or unpublish that changes what a menu resolves to does not send it: its entry event purges the same responses) |
+| `entry.moved` | `entryId`, `contentTypeApiId`, `position`, `published` (an entry moved in its type's manual order, `order=sys.position`; live, no version; Delivery is purged when `published`, and the type's cached lists are invalidated) |
 | `content_type.published`                                                           | `contentTypeApiId`, `version`                                                                                                                                                                                        |
 | `content_type.deleted`                                                             | `contentTypeApiId`, `version` (the type had no entries left, the trash included; Delivery's responses are purged, and cached lists of the type and the scope's renders invalidated; on the live stream for keys that may read the type) |
 | `release.published`                                                                | `releaseId`, `entryIds`                                                                                                                                                                                              |

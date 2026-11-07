@@ -4,6 +4,7 @@ import {
   createPreviewLink,
   draftEntry,
   getEntry,
+  moveEntry,
   resolveEmbed,
   validateEntry,
 } from '@contentworker/application';
@@ -25,6 +26,7 @@ import {
   canvasBody,
   createEntryBody,
   draftEntryBody,
+  moveEntryBody,
   parseBody,
   previewLinkBody,
   resolveEmbedBody,
@@ -113,6 +115,30 @@ export function entriesRoutes(deps: AuthDeps): Hono<AuthVars> {
   );
   // AI-draft an entry's fields. Generated values pass the same validators a
   // human write does, so an agent can't produce an entry a person couldn't.
+  app.post(
+    `${BASE}/entries/:id/move`,
+    doc('Entries', 'Move an entry in its content type’s manual order', {
+      body: moveEntryBody,
+      ok: entryDocs.movedEntry,
+      description:
+        'Puts the entry right after another of the same type (`{ "after": id }`, `null` for ' +
+        'first) or right before one (`{ "before": id }`, `null` for last). The order is what ' +
+        '`order=sys.position` sorts by; an entry never moved sorts by its id, so creation order. ' +
+        'A move is live, like a menu’s order: no new version, no publish, and Delivery serves ' +
+        'a published entry’s new place at once (`entry.moved`). Moving an entry to where it ' +
+        'already is writes nothing. 422 for an anchor that is the entry itself, of another type ' +
+        'or in the trash; 400 `invalid_state` for an entry in the trash; 409 when the order kept ' +
+        'changing under three attempts. Needs write on the type.',
+    }),
+    requireScope(SCOPES.contentWrite),
+    async (c) => {
+      const id = c.req.param('id');
+      await guardEntry(c, id, 'write');
+      const body = await parseBody(c, moveEntryBody);
+      return c.json(await moveEntry(actingCtx(ctx, c), scopeOf(c), id, body));
+    },
+  );
+
   app.post(`${BASE}/entries/generate`, requireScope(SCOPES.contentWrite), async (c) => {
     const body = await parseBody(c, draftEntryBody);
     authorizeContent(c.get('principal'), 'write', body.contentTypeApiId);

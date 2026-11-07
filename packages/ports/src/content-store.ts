@@ -1958,6 +1958,31 @@ export interface ExpiredTrashEntry {
   readonly trashedAt: string;
 }
 
+/** An entry's place in its type's manual order: its effective key (its own, or its id). */
+export interface EntryPlaceKey {
+  readonly id: string;
+  readonly position: string;
+}
+
+/** One key a move writes: only if the entry's effective key is still `expected`. */
+export interface PositionWrite {
+  readonly id: string;
+  readonly position: string;
+  readonly expected: string;
+}
+
+/**
+ * What else must still hold when a move's keys are written. No entry of the type other than the
+ * ones written may sit strictly between `lo` and `hi` (null for no bound), so two moves into one
+ * gap can't both land; and the `anchor` the caller placed the entry beside must still have the key
+ * it read.
+ */
+export interface PositionGuard {
+  readonly lo: string | null;
+  readonly hi: string | null;
+  readonly anchor?: EntryPlaceKey;
+}
+
 export interface EntryRepo {
   get(scope: Scope, id: string): Promise<EntryWithFields | null>;
   /**
@@ -1965,6 +1990,30 @@ export interface EntryRepo {
    * the whole id set (bulk publish). Missing ids are absent; order unspecified.
    */
   getMany(scope: Scope, ids: readonly string[]): Promise<EntryWithFields[]>;
+  /**
+   * Up to `limit` entries of a type next to a place in its manual order, nearest first: those
+   * after `key` ascending, or before it descending (a null `key` starts at the first or the last).
+   * Trashed entries count, so a key never lands on one and a restored entry finds its place free.
+   */
+  positionNeighbors(
+    scope: Scope,
+    contentTypeApiId: string,
+    key: string | null,
+    side: 'after' | 'before',
+    limit: number,
+    excludeId?: string,
+  ): Promise<EntryPlaceKey[]>;
+  /**
+   * Writes manual-order keys, all or none: each only if its entry still has the key it was read
+   * at, and only while `guard` holds. A lost race throws {@link TransactionConflictError} (inside a
+   * unit of work, at commit). The published rows follow (0034's triggers on D1).
+   */
+  setPositions(
+    scope: Scope,
+    contentTypeApiId: string,
+    writes: readonly PositionWrite[],
+    guard: PositionGuard,
+  ): Promise<void>;
   /**
    * Each existing entry's content type, by id: one narrow read with no fields or bodies (it
    * never touches R2), for callers that only need to know what type an entry is. Missing ids
