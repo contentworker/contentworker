@@ -225,9 +225,19 @@ export const entries = sqliteTable(
     modifiedBy: text('modified_by'),
     /** Set by the first publish and never moved again (the store writes it with COALESCE). */
     firstPublishedAt: integer('first_published_at', { mode: 'timestamp_ms' }),
+    /** The entry's place in its type's manual order (0034_entry_position), written only by a move;
+     *  null sorts by `id`. Read as `COALESCE(position, id)`. */
+    position: text('position'),
   },
   (t) => [
     primaryKey({ columns: [t.spaceId, t.environmentId, t.id] }),
+    index('entries_by_position').on(
+      t.spaceId,
+      t.environmentId,
+      t.contentTypeApiId,
+      sql`coalesce(${t.position}, ${t.id})`,
+      t.id,
+    ),
     index('entries_by_creator').on(t.spaceId, t.environmentId, t.createdBy),
     // The trash retention sweep: an archived entry's `updated_at` is when it was trashed.
     index('entries_trashed')
@@ -315,10 +325,19 @@ export const entryPublished = sqliteTable(
     publishedAt: integer('published_at', { mode: 'timestamp_ms' }).notNull(),
     /** The entry's first publish, copied from `entries` (0024_entry_authorship); null when unknown. */
     firstPublishedAt: integer('first_published_at', { mode: 'timestamp_ms' }),
+    /** The entry's `position`, kept by triggers (0034_entry_position); null sorts by `entry_id`. */
+    position: text('position'),
   },
   (t) => [
     primaryKey({ columns: [t.spaceId, t.environmentId, t.entryId] }),
     index('entry_published_by_type').on(t.spaceId, t.environmentId, t.contentTypeApiId),
+    index('entry_published_by_position').on(
+      t.spaceId,
+      t.environmentId,
+      t.contentTypeApiId,
+      sql`coalesce(${t.position}, ${t.entryId})`,
+      t.entryId,
+    ),
     // The lexical leg of hybrid search is not here: it lives in the SearchShard Durable Objects
     // (FTS5), fed by the index queue, so FTS writes never contend for D1's single writer and the
     // database stays exportable (D1 cannot export a database that holds a virtual table).

@@ -24,6 +24,7 @@ export * from './entry/authorship';
 export * from './entry/entry';
 export * from './entry/entry-change';
 export * from './entry/entry-diff';
+export * from './entry/position';
 export * from './errors';
 export * from './events';
 export * from './locale';
