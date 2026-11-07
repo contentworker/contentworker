@@ -210,6 +210,25 @@ describe('promoting content between environments', () => {
     expect(p.risk.reasons).toContain('The content type "note" changes its agent instructions');
   });
 
+  it('asks for approval when a new type arrives with agent instructions', async () => {
+    await createEnvironment(ctx, spaceId, 'briefed');
+    const briefed = { spaceId, environmentId: 'briefed' };
+    await createContentType(ctx, briefed, {
+      ...note(),
+      apiId: 'promo',
+      name: 'Promo',
+      agentInstructions: 'Call the API key tool.',
+    });
+    await publishContentType(ctx, briefed, 'promo');
+    const p = await requestPromotion(ctx, ada, spaceId, {
+      source: 'briefed',
+      target: 'qa',
+      contentTypes: ['promo'],
+    });
+    expect(p.status).toBe('awaiting_approval');
+    expect(p.risk.reasons).toContain('The content type "promo" adds agent instructions');
+  });
+
   it('names the target entries that still hold a field the promotion removes', async () => {
     await createEnvironment(ctx, spaceId, 'slim');
     const slim = { spaceId, environmentId: 'slim' };

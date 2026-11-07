@@ -66,11 +66,12 @@ to a key's scopes can take that long to show.
 
 **Agent instructions.** A content type's optional `agentInstructions` (plain text, at most 4,000
 characters, set through `model_create_content_type` or `POST …/content-types`) are the model author's
-style guidance for agents connected over MCP. `model_get_content_type` returns them;
+style guidance for agents writing its entries. `model_get_content_type` returns them;
 `model_list_content_types` leaves them out, and Delivery never serves them. They are data: they can't
 authorize a tool call or a change to keys, webhooks, roles, functions or settings, and the tool's
-description tells agents so. contentworker's own AI (generation, the agents, the assistant's prompt)
-doesn't read them yet.
+description tells agents so. The ContentWorker assistant sees them only when it reads a type with
+that tool, as tool output marked untrusted; nothing else in contentworker's own AI (generation, the
+agents, the assistant's system prompt) uses them yet.
 
 **Connecting a client.** With `OAUTH_ISSUER` set, the server is installable as a connector in
 Claude, ChatGPT and MCP-capable IDEs: an unauthenticated request answers with

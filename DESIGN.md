@@ -546,7 +546,7 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
 - **The content type dialog** (`cms/components/ContentTypeDialog.tsx`): the type's Group, Icon (a
   select of the icons the admin draws; a stored name it can't draw is kept as "name (not drawn
   here)") and Description beside its name, then Agent instructions: plain text, with a hint saying
-  it guides agents connected over MCP and is never delivered. Each field row has Guidance, Rules and Settings
+  it guides agents reading the type and is never delivered. Each field row has Guidance, Rules and Settings
   buttons; each opens a panel under the row (`bg-secondary/40`, `rounded-xl`, a fieldset with an
   sr-only legend naming the field, "Rules for Price"). Rules are rows of action, sibling, operator
   and value. Settings hold what the type means: a Date's Format (Date and time, Date, Time of
