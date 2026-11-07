@@ -28,6 +28,7 @@ import {
   type LiveFieldBox,
   type LiveFields,
   type LiveGap,
+  type LiveGeometryMessage,
   type LiveGuestMessage,
   type LiveOptionalTarget,
   type LivePreviewMode,
@@ -36,6 +37,7 @@ import {
   type LiveTarget,
   MAX_GEOMETRY_GAPS,
   MAX_GEOMETRY_ITEMS,
+  MAX_MESSAGE_BYTES,
   parseAdminMessage,
 } from './protocol.js';
 
@@ -148,6 +150,12 @@ export function startLivePreview(options: LivePreviewOptions): LivePreview {
   let dirty = false;
   let rendering = false;
   let selected = false;
+  /**
+   * Set when a patch was refused or lost (too large, malformed): the fields no longer match the
+   * admin's, so every later patch would land on the wrong state. Patches are dropped, each with the
+   * error again, until an `init` resets the fields. `seq` is the patch that went missing, when known.
+   */
+  let desync: { readonly seq?: number; readonly message: string } | undefined;
 
   type Outbound = LiveGuestMessage extends infer M
     ? M extends LiveGuestMessage
@@ -158,14 +166,27 @@ export function startLivePreview(options: LivePreviewOptions): LivePreview {
     if (destroyed) return;
     parent.postMessage({ cw: LIVE_PREVIEW_PROTOCOL, session, ...message }, adminOrigin);
   };
-  const fail = (kind: LiveErrorKind, message: string): void =>
-    post({ type: 'error', kind, message: message.slice(0, 1000) || kind });
+  const fail = (kind: LiveErrorKind, message: string, seq?: number): void =>
+    post({
+      type: 'error',
+      kind,
+      message: message.slice(0, 1000) || kind,
+      ...(seq !== undefined ? { seq } : {}),
+    });
+  const lose = (message: string, seq?: number): void => {
+    desync = { ...(seq !== undefined ? { seq } : {}), message };
+    fail('patch', message, seq);
+  };
 
   // --- rendering --------------------------------------------------------------------
 
   /**
    * Renders the latest fields, one `onChange` at a time: edits that land mid-render are folded
    * into the next call, and each settled call is acknowledged with the last seq it included.
+   *
+   * A call that throws acknowledges nothing, and its ops go back on the queue, so the next call
+   * (on the next patch or init, never a retry loop of its own) carries them and its ack covers
+   * them only once they are on screen. `fields` is always the latest, so that call renders them.
    */
   const pump = async (): Promise<void> => {
     if (rendering) return;
@@ -179,7 +200,8 @@ export function startLivePreview(options: LivePreviewOptions): LivePreview {
         try {
           await options.onChange(fields, { ...entry, seq, ops });
         } catch (err) {
-          fail('render', err instanceof Error ? err.message : 'onChange failed');
+          pendingOps = [...ops, ...pendingOps];
+          fail('render', err instanceof Error ? err.message : 'onChange failed', seq);
           continue;
         }
         post({ type: 'rendered', seq });
@@ -201,7 +223,9 @@ export function startLivePreview(options: LivePreviewOptions): LivePreview {
           locale: m.locale,
           version: m.version,
         };
-        if (m.seq !== undefined) lastSeq = m.seq;
+        // The fields are the whole truth again: a new baseline, and nothing owed from before.
+        lastSeq = m.seq ?? 0;
+        desync = undefined;
         pendingOps = [];
         dirty = true;
         void pump();
@@ -209,15 +233,19 @@ export function startLivePreview(options: LivePreviewOptions): LivePreview {
       }
       case 'patch': {
         if (!fields) {
-          fail('patch', 'A patch arrived before the entry');
+          fail('patch', 'A patch arrived before the entry', m.seq);
           return;
         }
         // postMessage keeps order, so a seq at or below the last is a resend: already applied.
         if (m.seq <= lastSeq) return;
+        if (desync) {
+          fail('patch', `Out of step since ${desync.message}; send the entry again`, desync.seq);
+          return;
+        }
         const result = applyLivePatch(fields, m.ops, newKey ? { newKey } : {});
         if (!result.ok) {
-          // Nothing of the patch applies, and the seq stays put: the admin re-sends the entry.
-          fail('patch', `ops[${result.op}]: ${result.message}`);
+          // Nothing of the patch applies, and nothing after it can: the admin re-sends the entry.
+          lose(`patch ${m.seq} ops[${result.op}]: ${result.message}`, m.seq);
           return;
         }
         fields = result.fields;
@@ -256,9 +284,20 @@ export function startLivePreview(options: LivePreviewOptions): LivePreview {
     // source alone admits whatever the parent navigated to.
     if (e.origin !== adminOrigin || e.source !== parent) return;
     const parsed = parseAdminMessage(e.data, session);
-    if (parsed.ok) receive(parsed.message);
-    else if (parsed.reason === 'too-large') fail('invalid', 'Message too large');
-    else if (parsed.reason === 'invalid') fail('invalid', 'Malformed message');
+    if (parsed.ok) {
+      receive(parsed.message);
+      return;
+    }
+    if (parsed.reason !== 'too-large' && parsed.reason !== 'invalid') return;
+    const message = parsed.reason === 'too-large' ? 'Message too large' : 'Malformed message';
+    const data = e.data as { type?: unknown; seq?: unknown };
+    // A lost patch leaves the page a step behind, like a refused one.
+    const seq = Number.isSafeInteger(data.seq) ? (data.seq as number) : undefined;
+    if (data.type === 'patch' && fields && (seq === undefined || seq > lastSeq)) {
+      // Already behind: the first patch that went missing is the one to name.
+      if (desync) fail('patch', `Out of step since ${desync.message}`, desync.seq);
+      else lose(`patch ${seq ?? '?'}: ${message.toLowerCase()}`, seq);
+    } else fail('invalid', message);
   };
 
   // --- geometry ---------------------------------------------------------------------
@@ -295,9 +334,13 @@ export function startLivePreview(options: LivePreviewOptions): LivePreview {
         observed.delete(el);
       }
     }
+    const blockEls = doc.querySelectorAll(`[${BLOCK_ATTRIBUTE}]`);
+    const slotEls = doc.querySelectorAll(`[${SLOT_ATTRIBUTE}]`);
+    const fieldEls = doc.querySelectorAll(`[${REF_ATTRIBUTE}]`);
+    const cut = [blockEls, slotEls, fieldEls].some((list) => list.length > MAX_MEASURED);
     const blocks: LiveBlockBox[] = [];
     const children = new Map<Element, { key: string; rect: LiveRect }[]>();
-    for (const el of take(doc.querySelectorAll(`[${BLOCK_ATTRIBUTE}]`))) {
+    for (const el of take(blockEls)) {
       const key = attr(el, BLOCK_ATTRIBUTE, MAX_ATTRIBUTE);
       if (!key) continue;
       observe(el);
@@ -309,30 +352,33 @@ export function startLivePreview(options: LivePreviewOptions): LivePreview {
       if (slotEl && slot) children.set(slotEl, [...(children.get(slotEl) ?? []), { key, rect }]);
     }
     const slots: LiveSlotBox[] = [];
-    let gapBudget = MAX_GEOMETRY_GAPS;
-    for (const el of take(doc.querySelectorAll(`[${SLOT_ATTRIBUTE}]`))) {
+    for (const el of take(slotEls)) {
       const path = attr(el, SLOT_ATTRIBUTE, MAX_ATTRIBUTE);
       if (!path) continue;
       observe(el);
       const rect = rectOf(el);
       const parentKey = parentKeyOf(el);
-      const gaps = gapsOf(rect, children.get(el) ?? []).slice(0, Math.max(0, gapBudget));
-      gapBudget -= gaps.length;
+      const gaps = gapsOf(rect, children.get(el) ?? []);
       slots.push({ path, rect, gaps, ...(parentKey ? { parentKey } : {}) });
     }
     const fieldBoxes: LiveFieldBox[] = [];
-    for (const el of take(doc.querySelectorAll(`[${REF_ATTRIBUTE}]`))) {
+    for (const el of take(fieldEls)) {
       const ref = attr(el, REF_ATTRIBUTE, MAX_REF);
       if (ref) fieldBoxes.push({ ref, rect: rectOf(el) });
     }
-    return {
-      blocks,
-      slots,
-      fields: fieldBoxes,
-      scroll: { x: round(win.scrollX), y: round(win.scrollY) },
-      viewport: { w: round(win.innerWidth), h: round(win.innerHeight) },
-      docHeight: round(doc.documentElement.scrollHeight),
-    };
+    const envelope = JSON.stringify({ cw: LIVE_PREVIEW_PROTOCOL, session, type: 'geometry' });
+    return fitGeometry(
+      {
+        blocks,
+        slots,
+        fields: fieldBoxes,
+        scroll: { x: round(win.scrollX), y: round(win.scrollY) },
+        viewport: { w: round(win.innerWidth), h: round(win.innerHeight) },
+        docHeight: round(doc.documentElement.scrollHeight),
+      },
+      MAX_MESSAGE_BYTES - new TextEncoder().encode(envelope).byteLength,
+      cut,
+    );
   };
 
   const parentKeyOf = (slotEl: Element): string | undefined => {
@@ -391,6 +437,10 @@ export function startLivePreview(options: LivePreviewOptions): LivePreview {
     });
   };
   const onPointerLeave = (): void => {
+    // A frame still pending would re-send the last target after the pointer has gone.
+    if (hoverFrame !== undefined) win.cancelAnimationFrame(hoverFrame);
+    hoverFrame = undefined;
+    pointer = null;
     if (mode === 'edit' && connected) sendHover(undefined);
   };
   const sendHover = (target: LiveTarget | undefined): void => {
@@ -544,9 +594,66 @@ function navigableUrl(href: string): string | undefined {
   }
 }
 
-/** The first `MAX_GEOMETRY_ITEMS` of a list: a page with more reports what fits. */
+/** The most elements of each kind measured per frame; `fitGeometry` picks what is sent from them. */
+const MAX_MEASURED = 10_000;
+
 function take<T extends Element>(list: NodeListOf<T>): T[] {
-  return Array.from(list).slice(0, MAX_GEOMETRY_ITEMS);
+  return Array.from(list).slice(0, MAX_MEASURED);
+}
+
+type GeometryBody = Omit<LiveGeometryMessage, 'cw' | 'session' | 'type'>;
+
+/**
+ * The geometry as it fits one message: at most `MAX_GEOMETRY_ITEMS` of each list and
+ * `MAX_GEOMETRY_GAPS` seams, in at most `budget` bytes of JSON. What's on screen goes first, then
+ * what's nearest it; each list keeps document order. Anything left out sets `truncated`, so the
+ * admin knows boxes far from the viewport may be missing, rather than silently losing them all.
+ */
+export function fitGeometry(g: GeometryBody, budget: number, cut = false): GeometryBody {
+  const { w, h } = g.viewport;
+  const away = (r: LiveRect): number =>
+    Math.max(0, -(r.x + r.w), r.x - w) + Math.max(0, -(r.y + r.h), r.y - h);
+  const lists = [g.blocks, g.slots, g.fields] as const;
+  const candidates = lists.flatMap((list, kind) =>
+    list.map((item, index) => ({
+      kind,
+      index,
+      away: away(item.rect),
+      size: JSON.stringify(item).length + 1,
+      gaps: kind === 1 ? (item as LiveSlotBox).gaps.length : 0,
+    })),
+  );
+  candidates.sort((a, b) => a.away - b.away || a.kind - b.kind || a.index - b.index);
+  const total = candidates.length;
+  const bytes = (body: GeometryBody) => new TextEncoder().encode(JSON.stringify(body)).byteLength;
+
+  let room = budget - bytes({ ...g, blocks: [], slots: [], fields: [], truncated: true });
+  for (;;) {
+    const kept = [new Set<number>(), new Set<number>(), new Set<number>()];
+    let used = 0;
+    let gaps = 0;
+    for (const c of candidates) {
+      const set = kept[c.kind] as Set<number>;
+      if (set.size >= MAX_GEOMETRY_ITEMS || gaps + c.gaps > MAX_GEOMETRY_GAPS) continue;
+      if (used + c.size > room) continue;
+      set.add(c.index);
+      used += c.size;
+      gaps += c.gaps;
+    }
+    const pick = <T>(list: readonly T[], kind: number) =>
+      list.filter((_, i) => (kept[kind] as Set<number>).has(i));
+    const out: GeometryBody = {
+      ...g,
+      blocks: pick(g.blocks, 0),
+      slots: pick(g.slots, 1),
+      fields: pick(g.fields, 2),
+    };
+    const truncated = cut || out.blocks.length + out.slots.length + out.fields.length < total;
+    const body: GeometryBody = truncated ? { ...out, truncated: true } : out;
+    // Sizes were counted in UTF-16 units; keys outside ASCII take more bytes, so check and shrink.
+    if (bytes(body) <= budget || room <= 0) return body;
+    room = Math.floor(room * 0.75);
+  }
 }
 
 function attr(el: Element, name: string, max: number): string | undefined {

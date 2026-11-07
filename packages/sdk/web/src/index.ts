@@ -229,7 +229,12 @@ export function useLivePreview(
       },
     });
     if (preview.active) setState((s) => ({ ...s, active: true }));
-    return () => preview.destroy();
+    return () => {
+      preview.destroy();
+      // A render that will now never commit: settle its wait, so nothing is left hanging on it.
+      committed.current?.();
+      committed.current = undefined;
+    };
   }, [adminOrigin]);
 
   return state;

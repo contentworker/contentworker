@@ -727,16 +727,35 @@ https://docs.contentworker.app/guides/live-preview/.
   matches. Every message is parsed by `parseAdminMessage` before it is acted on.
 - Patches apply with `applyLivePatch`, a schema-less copy of the domain's `applyBlockPatch`
   (`packages/domain/src/content-type/block-patch.ts`) plus `setField`. A block is any object with
-  a string `_type`, its slots its properties holding blocks. For patches the server accepts, the
-  two give equal fields: `packages/http/test/live-preview-patch-parity.test.ts` runs the same
-  fixtures, and the domain's `applied` ops, through both (http is the one package allowed to import
-  both). Keys a page mints are its own, so the admin should send the applied form.
+  a string `_type`; its slots are its direct properties holding a list of objects, each keyed or
+  typed, at least one typed (so a block missing `_type` doesn't hide its keyed siblings, and a
+  repeater's items are never read as blocks). Plain objects under a block are opaque: the page
+  can't tell a component from a JSON value, so it neither mints keys nor checks collisions in them.
+  For patches the server accepts, in the applied form, the two give equal fields:
+  `packages/http/test/live-preview-patch-parity.test.ts` runs the same fixtures, and the domain's
+  `applied` ops, through both (http is the one package allowed to import both). Keys a page mints
+  are its own, so the admin must send the applied form. Known divergences, pinned in that test: a
+  raw `duplicate` leaves blocks under a plain component with their old keys (the server rekeys
+  them; the applied form carries the server's keys, so the two agree there), and keyed, typed
+  objects in a JSON value that is itself a list, or in a field the variant no longer declares, or
+  under a block of an unknown `_type`, are read as blocks, so a key they share with a real block
+  makes an op ambiguous on the page that the server applies. The admin's way out, so a refusal
+  can't loop: resend `init`, and if the same patch is refused again, send the changed field whole as
+  `setField` with the value the server holds.
 - Rendering is serialized: one `onChange` at a time, later patches folded into the next call,
-  `rendered { seq }` after it settles, then geometry. A refused patch keeps the old fields and the
-  seq, and answers `error { kind: 'patch' }`; the admin re-sends `init` with `seq` to resume.
+  `rendered { seq }` after it settles, then geometry. An `onChange` that throws answers
+  `error { kind: 'render', seq }`, acks nothing, and puts its ops back on the queue; the next call
+  (on the next patch or `init`, never a retry loop) carries them, and its ack covers them.
+- Desync: a refused patch, or a patch the parser rejects as too large or malformed (with `seq` above
+  the last applied), answers `error { kind: 'patch', seq }` and marks the page out of step. Every
+  later patch is dropped with the same error and `seq` (the first that went missing) until an
+  `init` clears it. `init` sets the baseline to its `seq`, or 0 when absent.
 - Geometry is event-driven (MutationObserver on the document, ResizeObserver on every marked
   element, passive scroll and resize listeners), coalesced into one `requestAnimationFrame` and
-  skipped when unchanged. No polling.
+  skipped when unchanged. No polling. Up to 10,000 elements of each kind are measured;
+  `fitGeometry` then keeps what fits `MAX_MESSAGE_BYTES` (with the envelope) and the item caps,
+  on-screen boxes first, then by distance from the viewport, each list in document order, and sets
+  `truncated: true` when anything was left out.
 - Edit mode listens on the window in the capture phase: clicks on marked elements become `pick`,
   link clicks `navigate` (https, http only on loopback; `cw_session` stripped), hover goes out at most once
   a frame, and only `FORWARDED_KEYS` are forwarded, never from a form field. Arrows and

@@ -39,8 +39,10 @@ afterEach(() => {
 
 let states: LivePreviewState[] = [];
 
+let onChange: (() => void) | undefined;
+
 function Page() {
-  const live = useLivePreview({ adminOrigin: ADMIN });
+  const live = useLivePreview({ adminOrigin: ADMIN, onChange: () => onChange?.() });
   states.push(live);
   const title = live.fields?.title?.['en-US'];
   return createElement('h1', null, typeof title === 'string' ? title : 'Delivered');
@@ -83,6 +85,27 @@ describe('useLivePreview', () => {
     });
     expect(document.querySelector('h1')?.textContent).toBe('Edited');
     expect(states.at(-1)?.update?.seq).toBe(1);
+  });
+
+  it('settles a render that never commits because the page unmounted', async () => {
+    mount();
+    const settled = vi.fn();
+    onChange = settled;
+    act(() => {
+      send({
+        type: 'init',
+        fields: { title: { 'en-US': 'Draft' } },
+        locale: 'en-US',
+        version: 1,
+        entryId: 'e1',
+        contentType: 'page',
+      });
+      root?.unmount();
+    });
+    root = undefined;
+    await new Promise((r) => setTimeout(r, 0));
+    expect(settled).toHaveBeenCalledTimes(1);
+    onChange = undefined;
   });
 
   it('stays inert outside a frame, and stops listening when unmounted', async () => {

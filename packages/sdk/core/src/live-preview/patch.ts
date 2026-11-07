@@ -4,13 +4,22 @@
  *
  * Loose on purpose. The admin validated every op against the content type before sending it, and
  * the page has no content type to validate against, so this checks only what it needs to find its
- * way: keys, places, refs. A block is any object with a string `_type`; its slots are its
- * properties holding blocks. For ops the server would accept, the result is the server's (a
- * parity test runs both on the same fixtures); an op it can't place refuses the whole patch, as
- * the server's does, and the page keeps the fields it had.
+ * way: keys, places, refs. A block is any object with a string `_type`; its slots are its direct
+ * properties holding blocks (see `isSlot`), and nothing else under it is read or rekeyed. For ops
+ * the server would accept, in the applied form, the result is the server's (a parity test runs
+ * both on the same fixtures); an op it can't place refuses the whole patch, as the server's does,
+ * and the page keeps the fields it had.
  *
  * The admin should send ops in the applied form `patchBlocks` answers with, every key present: a
  * key minted here is the page's own, and the admin's next op can't name it.
+ *
+ * Without the content type, two things can't be told apart, and the page reads them differently
+ * from the server: a list of keyed, typed objects in a JSON field, or in a field a block's variant
+ * no longer declares, reads here as a slot (the server skips it); and a block whose `_type` names
+ * no variant is still walked here. Either only matters when a key in it is also held elsewhere,
+ * where this refuses an op as ambiguous that the server applies. The admin answers a refusal by
+ * sending the entry again, and a second refusal of the same patch by sending the field whole
+ * (`setField` with the value the server holds), which this applies without reading it.
  */
 import { clean, isRecord, isSafeName, type LiveFields } from './protocol.js';
 
@@ -183,7 +192,7 @@ function indexTree(root: unknown[]): Map<string, Location[]> {
       if (!isBlock(item)) return;
       const below = key !== undefined ? [...ancestors, key] : ancestors;
       for (const [name, value] of Object.entries(item)) {
-        if (!holdsBlocks(value)) continue;
+        if (!isSafeName(name) || !isSlot(value)) continue;
         walk(value, key !== undefined ? { key, slot: name } : undefined, below, key === undefined);
       }
     });
@@ -347,30 +356,24 @@ function checkRef(tree: Tree, ref: string | undefined): void {
 }
 
 /**
- * `block` (already a copy) with itself and every block inside it keyed by `mint`, which is given
- * the key each held. Walks every nested object and list, as the server walks components and
- * repeaters, so a duplicate keeps no key of the original; `mint` runs on a block before the
- * blocks inside it, in property order.
+ * `block` (already a copy) with itself and every block in its slots, all the way down, keyed by
+ * `mint`, which is given the key each held; `mint` runs on a block before the blocks inside it,
+ * in property order. Nothing else is touched: a plain object under a block may be a component or
+ * a JSON value, and only the server, holding the content type, can tell which. So blocks under a
+ * plain component keep their keys in a duplicate here, where the server gives them new ones; in
+ * the applied form the admin sends, every key is already given and the two agree.
  */
 function rekeyBlock(block: Block, mint: (old: string | undefined) => string): Block {
   const key = mint(keyOf(block));
-  return { ...rekeyObject(block, mint), _key: key };
-}
-
-function rekeyObject(value: Block, mint: (old: string | undefined) => string): Block {
-  const out = { ...value };
-  for (const [name, held] of Object.entries(out)) {
-    if (!isSafeName(name)) continue;
-    if (Array.isArray(held)) {
-      out[name] = held.map((item) => {
-        if (!isRecord(item)) return item;
-        return isBlock(item) ? rekeyBlock(item, mint) : rekeyObject(item, mint);
-      });
-    } else if (isRecord(held)) {
-      out[name] = rekeyObject(held, mint);
+  const out = { ...block };
+  if (isBlock(block)) {
+    for (const [name, held] of Object.entries(out)) {
+      if (isSafeName(name) && isSlot(held)) {
+        out[name] = held.map((item) => (isRecord(item) ? rekeyBlock(item, mint) : item));
+      }
     }
   }
-  return out;
+  return { ...out, _key: key };
 }
 
 /** Field values are JSON, so a JSON round trip copies them exactly (as the server copies them). */
@@ -380,9 +383,16 @@ function clone<T>(value: T): T {
 
 const isBlock = (item: Block): boolean => typeof item._type === 'string' && item._type !== '';
 
-/** A non-empty list whose items are all blocks: a slot, as far as the page can tell. */
-const holdsBlocks = (value: unknown): value is unknown[] =>
-  Array.isArray(value) && value.length > 0 && value.every((v) => isRecord(v) && isBlock(v));
+/**
+ * A slot, as far as the page can tell: a list of objects, each keyed or typed, at least one typed.
+ * Stored blocks are always keyed, so one missing `_type` doesn't hide its keyed siblings (the
+ * server indexes them too); a repeater's items, keyed or not, carry no `_type`.
+ */
+const isSlot = (value: unknown): value is unknown[] =>
+  Array.isArray(value) &&
+  value.length > 0 &&
+  value.every((v) => isRecord(v) && (keyOf(v) !== undefined || isBlock(v))) &&
+  value.some((v) => isRecord(v) && isBlock(v));
 
 const keyOf = (item: Block): string | undefined => {
   const key = item._key;
