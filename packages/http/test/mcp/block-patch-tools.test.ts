@@ -7,6 +7,7 @@ import {
   createSpace,
   getEntry,
   publishContentType,
+  SYSTEM_CALLER,
   updateContentType,
 } from '@contentworker/application';
 import { type FieldDefinition, type Principal, SCOPES } from '@contentworker/domain';
@@ -82,7 +83,7 @@ async function setup(principal: Principal = admin) {
     blob: new FakeBlobStore(),
   };
   await createSpace(ctx, { spaceId: SPACE, name: 'Site', defaultLocale: 'en-US' });
-  await createContentType(ctx, scope, {
+  await createContentType(ctx, SYSTEM_CALLER, scope, {
     apiId: 'page',
     name: 'Page',
     displayField: 'title',
@@ -287,7 +288,7 @@ describe('the blocks tools for a restricted role', () => {
       ...cta,
       fields: [...cta.fields, field({ apiId: 'url', type: 'Symbol', position: 1, required: true })],
     };
-    await updateContentType(ctx, scope, 'page', {
+    await updateContentType(ctx, SYSTEM_CALLER, scope, 'page', {
       fields: [
         field({ apiId: 'title', type: 'Symbol' }),
         blocks('body', 1),

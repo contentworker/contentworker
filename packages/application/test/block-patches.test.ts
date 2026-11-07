@@ -22,6 +22,7 @@ import {
   outlineEntryBlocks,
   patchEntryBlocks,
   publishContentType,
+  SYSTEM_CALLER,
   trashEntry,
   updateContentType,
 } from '../src/index';
@@ -49,7 +50,7 @@ let store: InMemoryContentStore;
 let ctx: AppContext;
 
 const defineLanding = async (at = scope) => {
-  await createContentType(ctx, at, {
+  await createContentType(ctx, SYSTEM_CALLER, at, {
     apiId: 'landing',
     name: 'Landing',
     displayField: 'title',
@@ -448,7 +449,7 @@ describe('a refusal about fields the caller can’t read', () => {
       }),
       field({ apiId: 'notes', type: 'Symbol', position: 2, required }),
     ];
-    await createContentType(ctx, scope, {
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
       apiId: 'memo',
       name: 'Memo',
       displayField: 'title',
@@ -463,7 +464,7 @@ describe('a refusal about fields the caller can’t read', () => {
       },
     });
     // Someone else's rule: the stored entry now fails it in a field this caller can't see.
-    await updateContentType(ctx, scope, 'memo', { fields: def(true) });
+    await updateContentType(ctx, SYSTEM_CALLER, scope, 'memo', { fields: def(true) });
     await publishContentType(ctx, scope, 'memo');
     const key = ((fields.body?.['en-US'] ?? []) as { _key: string }[])[0]?._key as string;
     return { id: entry.id, version: entry.currentVersion, key };
