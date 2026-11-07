@@ -687,7 +687,7 @@ export function graphiqlHtml(endpoint: string): string {
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>contentworker GraphiQL</title>
+    <title>ContentWorker GraphiQL</title>
     <style>body,#graphiql{height:100vh;margin:0}</style>
     <link rel="stylesheet" href="${GRAPHIQL_ASSETS.css.href}" integrity="${GRAPHIQL_ASSETS.css.integrity}" crossorigin="anonymous" />
   </head>

@@ -44,7 +44,7 @@ hand-edit it. `packages/design/tests/tokens.test.ts` fails when it is stale.
 - **Page header** (`PageTitle.astro`): the title in Inter 600, the page's `description` muted
   under it.
 - **Top bar**: the mark in brand (`src/assets/mark-{light,dark}.svg`, Starlight's `logo`) and the
-  lowercase wordmark, search as the admin's input pill, **API explorer** as the
+  "ContentWorker" wordmark, search as the admin's input pill, **API explorer** as the
   one primary pill, the theme select.
 - **Sidebar**: group labels 14px 600 ink; links 14px muted; the current page is the admin's active
   nav item (muted fill, ink, a short brand tick at its start), not an inverted pill. The table of

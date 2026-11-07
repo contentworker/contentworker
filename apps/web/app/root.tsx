@@ -33,11 +33,11 @@ export const links: Route.LinksFunction = () => [
 
 /** Added to the Home Screen, it opens as its own app with the system status bar over the paper. */
 export const meta: Route.MetaFunction = () => [
-  { title: 'contentworker' },
+  { title: 'ContentWorker' },
   { name: 'apple-mobile-web-app-capable', content: 'yes' },
   { name: 'mobile-web-app-capable', content: 'yes' },
   { name: 'apple-mobile-web-app-status-bar-style', content: 'default' },
-  { name: 'apple-mobile-web-app-title', content: 'contentworker' },
+  { name: 'apple-mobile-web-app-title', content: 'ContentWorker' },
   { name: 'format-detection', content: 'telephone=no' },
 ];
 

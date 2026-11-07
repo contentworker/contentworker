@@ -262,7 +262,7 @@ export function mountDocs(app: Hono, config: ApiConfig): void {
       {
         documentation: {
           info: {
-            title: 'contentworker API',
+            title: 'ContentWorker API',
             version: '0.1.0',
             description: `API-first, AI-agentic-first headless CMS. Management (CMA), Delivery (CDA), and Preview (CPA) surfaces — this deployment serves role "${config.role}". Every capability is also exposed as an MCP tool at POST /mcp.`,
           },
@@ -305,7 +305,7 @@ export function mountDocs(app: Hono, config: ApiConfig): void {
     '/docs',
     Scalar({
       url: '/openapi.json',
-      pageTitle: 'contentworker API',
+      pageTitle: 'ContentWorker API',
       cdn: scalarBundleUrl(config),
       // No fonts from Scalar's own host either, and no "Ask AI" (it sends the spec to Scalar's
       // service): the page makes no third-party requests.

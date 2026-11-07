@@ -12,7 +12,7 @@ export default defineConfig({
   image: { service: passthroughImageService() },
   integrations: [
     starlight({
-      title: 'contentworker',
+      title: 'ContentWorker',
       // The mark in brand beside the wordmark, as in the admin's header (the dark theme's lighter brand).
       logo: { light: './src/assets/mark-light.svg', dark: './src/assets/mark-dark.svg' },
       description:

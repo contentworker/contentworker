@@ -1,6 +1,6 @@
 {
-  "name": "contentworker",
-  "short_name": "contentworker",
+  "name": "ContentWorker",
+  "short_name": "ContentWorker",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

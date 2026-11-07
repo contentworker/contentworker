@@ -27,7 +27,7 @@ import { TeamError } from './team.server';
 import { throttleKey } from './throttle';
 import { confirmPassword } from './two-factor.server';
 
-const RP_NAME = 'contentworker';
+const RP_NAME = 'ContentWorker';
 const CHALLENGE_MS = 5 * 60_000;
 /** Between asking for a passkey and the browser's answer, on the sign-in page. */
 export const PASSKEY_COOKIE = '__Host-cw_pk';
