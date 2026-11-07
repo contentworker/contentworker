@@ -13,7 +13,9 @@ export const setFieldsJob = z.looseObject({
   config: z
     .looseObject({
       contentTypeApiId: z.string(),
-      fields: z.record(z.string(), z.record(z.string(), z.unknown())),
+      fieldNames: z
+        .array(z.string())
+        .describe('The fields it sets; their values are not read back'),
     })
-    .describe('The type and the values the job sets'),
+    .describe('The type and the fields the job sets'),
 });

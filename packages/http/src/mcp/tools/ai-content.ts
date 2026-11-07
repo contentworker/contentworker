@@ -8,7 +8,6 @@ import {
   BULK_JOB_MAX_ITEMS,
   bulkEntryAction,
   cancelBulkJob,
-  ENTRY_TRASH_MAX_ITEMS,
   getBulkJob,
   getBulkJobReport,
   listBulkJobs,
@@ -22,6 +21,7 @@ import {
 import { SCOPES } from '@contentworker/domain';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
+import { setFieldsJobBody } from '../../api/validation';
 import { ok, scopeArgs, scopeOf, type ToolContext, toolSchema } from './shared';
 
 export function registerAiContentTools(server: McpServer, t: ToolContext): void {
@@ -264,14 +264,8 @@ export function registerAiContentTools(server: McpServer, t: ToolContext): void 
         'another type is a failure in bulk_job_report. Needs write on the type and every field ' +
         'sent. Poll bulk_job_status for progress.',
       inputSchema: toolSchema('bulk_job_set_fields', () =>
-        z.object({
-          contentTypeApiId: z.string(),
-          entryIds: z.array(z.string()).min(1).max(ENTRY_TRASH_MAX_ITEMS),
-          fields: z
-            .record(z.string(), z.record(z.string(), z.unknown()))
-            .describe('Field apiId → locale → value; null clears that locale'),
-          ...scopeArgs,
-        }),
+        // The route's body, so the two surfaces take the same input.
+        z.object({ ...setFieldsJobBody.shape, ...scopeArgs }),
       ),
     },
     async (args) => {

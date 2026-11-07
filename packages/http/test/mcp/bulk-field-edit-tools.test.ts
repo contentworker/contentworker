@@ -107,6 +107,10 @@ describe('bulk field edit through MCP', () => {
     const status = await call('bulk_job_status', { id });
     expect(status.isError).toBe(false);
     expect(JSON.parse(status.text)).toMatchObject({ id, status: 'running' });
+    // The values it sets are field values, read only through entries: never through the job.
+    expect(started.text).not.toContain('reviewed');
+    expect(status.text).not.toContain('reviewed');
+    expect((await call('bulk_job_status', {})).text).not.toContain('reviewed');
   });
 
   it('refuses a field the role may only read, and a field the type lacks', async () => {

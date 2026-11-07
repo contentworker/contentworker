@@ -108,7 +108,7 @@ export function authorizeBulkJobAccess(
       ? canAccessContentType(principal, 'write', type) &&
         (access === 'cancel' || !hasFieldRules(principal, type))
       : holdsOnEveryContentType(principal, ['read', 'write']);
-  if (!allowed) throw new ForbiddenError(`the ${access} of this import job`);
+  if (!allowed) throw new ForbiddenError(`the ${access} of this job`);
 }
 
 export interface StartBulkJobInput {
@@ -553,10 +553,23 @@ export async function resumeStalledBulkJobs(
   return stalled.length + unfinalized.length;
 }
 
+/**
+ * A job as it is read back. A field edit's values stay with the job for its chunks (which read the
+ * store) but are never in what a reader gets: they are field values, which are read only through
+ * an entry and its role's grants, and a job's status is open to any `content:write` caller. The
+ * names of the fields it sets remain, as `config.fieldNames`.
+ */
+export function readableBulkJob(job: BulkJob): BulkJob {
+  if (job.action !== 'set_fields' || job.config?.fields === undefined) return job;
+  const { fields, ...config } = job.config;
+  const fieldNames = fields && typeof fields === 'object' ? Object.keys(fields) : [];
+  return { ...job, config: { ...config, fieldNames } };
+}
+
 export async function getBulkJob(ctx: AppContext, scope: Scope, id: string): Promise<BulkJob> {
   const job = await ctx.store.bulkJobs.getJob(scope, id);
   if (!job) throw new NotFoundError('BulkJob', id);
-  return job;
+  return readableBulkJob(job);
 }
 
 export async function listBulkJobs(
@@ -564,7 +577,7 @@ export async function listBulkJobs(
   scope: Scope,
   opts?: { limit?: number },
 ): Promise<BulkJob[]> {
-  return ctx.store.bulkJobs.listJobs(scope, opts);
+  return (await ctx.store.bulkJobs.listJobs(scope, opts)).map(readableBulkJob);
 }
 
 /** The compliance report: job totals + every per-item failure, per chunk. */
@@ -635,9 +648,9 @@ export async function cancelBulkJob(
       await ctx.store.bulkJobs.mergeConfig(scope, id, { typeDeletion: STOPPED });
       return { ...existing, config: { ...existing.config, typeDeletion: STOPPED } };
     }
-    return existing; // already terminal — cancel is idempotent
+    return readableBulkJob(existing); // already terminal — cancel is idempotent
   }
-  return job;
+  return readableBulkJob(job);
 }
 
 /** A stopped content type delete's outcome: the type stays. */

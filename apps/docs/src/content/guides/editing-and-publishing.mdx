@@ -241,9 +241,10 @@ curl -s -X POST "$API/spaces/$SPACE/environments/main/bulk/jobs/set-fields" \
 
 `fields` maps each field to the locales to set; only those change, and `null` clears a locale.
 Each entry is saved as a new draft with the checks an edit makes, so publish them afterwards. An
-unknown field or locale, or a unique field, is refused before the job starts. An entry that
-refuses its save (a value its field rejects, an entry in the trash) or is of another type is a
-failure in the report. A field edit needs `content:write`, `write` on the type and on every field
+unknown field or locale, or a value for a unique field (clearing one is fine), is refused before
+the job starts. An entry that refuses its save (a value its field rejects, an entry in the trash),
+is missing or is of another type is a failure in the report. The job shows the names of the fields
+it sets, never their values. A field edit needs `content:write`, `write` on the type and on every field
 sent, not a role on every type; its report needs a role with no field rules on the type. The MCP
 tool is `bulk_job_set_fields`, and the SDK's is `cma.bulkJobs.setFields`.
 

@@ -81,20 +81,22 @@ async function makeApp() {
       body: JSON.stringify(body),
     });
   /** A key whose role writes notes, with `readOnlyFields` read-only. */
-  const keyFor = async (readOnlyFields: string[]) => {
+  /** A key in `space` whose role holds `grants`. */
+  const keyWith = async (
+    name: string,
+    grants: Record<string, unknown>[] | undefined,
+    space = 's1',
+    scopes = ['content:write', 'content:publish', 'preview:read'],
+  ) => {
     const role = await json<{ id: string }>(
-      await app.request('/spaces/s1/roles', {
+      await app.request(`/spaces/${space}/roles`, {
         method: 'POST',
         headers: admin,
-        body: JSON.stringify({
-          name: `Notes ${readOnlyFields.join(',') || 'all'}`,
-          scopes: ['content:write', 'preview:read'],
-          contentGrants: [{ contentTypeApiId: 'note', actions: ['read', 'write'], readOnlyFields }],
-        }),
+        body: JSON.stringify({ name, scopes, contentGrants: grants }),
       }),
     );
     const { token } = await json<{ token: string }>(
-      await app.request('/spaces/s1/api-keys', {
+      await app.request(`/spaces/${space}/api-keys`, {
         method: 'POST',
         headers: admin,
         body: JSON.stringify({ kind: 'cma', roleId: role.id }),
@@ -102,7 +104,15 @@ async function makeApp() {
     );
     return { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
   };
-  return { app, store, ids, runChunks, start, keyFor };
+  /** A key whose role writes notes, with `readOnlyFields` read-only. */
+  const keyFor = (readOnlyFields: string[]) =>
+    keyWith(
+      `Notes ${readOnlyFields.join(',') || 'all'}`,
+      [{ contentTypeApiId: 'note', actions: ['read', 'write'], readOnlyFields }],
+      's1',
+      ['content:write', 'preview:read'],
+    );
+  return { app, store, ids, runChunks, start, keyFor, keyWith };
 }
 
 describe('bulk field edit over HTTP', () => {
@@ -161,5 +171,68 @@ describe('bulk field edit over HTTP', () => {
     expect((await h.app.request(`${M}/bulk/jobs/${job.id}/report`, { headers: open })).status).toBe(
       200,
     );
+  });
+
+  it('never shows the values it sets to whoever reads job progress', async () => {
+    const h = await makeApp();
+    const job = await json<{ id: string; config: unknown }>(
+      await h.start({
+        contentTypeApiId: 'note',
+        entryIds: h.ids,
+        fields: { owner: { 'en-US': 'secret-owner' } },
+      }),
+    );
+    expect(job.config).toMatchObject({ contentTypeApiId: 'note', fieldNames: ['owner'] });
+    expect(job.config).not.toHaveProperty('fields');
+    const denied = await h.keyWith('No owner', [
+      { contentTypeApiId: 'note', actions: ['read', 'write'], deniedFields: ['owner'] },
+    ]);
+    const otherType = await h.keyWith('Pages only', [
+      { contentTypeApiId: 'page', actions: ['read', 'write'] },
+    ]);
+    for (const headers of [denied, otherType, cma]) {
+      for (const path of [`${M}/bulk/jobs`, `${M}/bulk/jobs/${job.id}`]) {
+        const res = await h.app.request(path, { headers });
+        expect(res.status, path).toBe(200);
+        expect(await res.text(), path).not.toContain('secret-owner');
+      }
+    }
+  });
+
+  it('refuses a role without write on the type, a key for another space, and cancelling from another type', async () => {
+    const h = await makeApp();
+    const body = {
+      contentTypeApiId: 'note',
+      entryIds: h.ids,
+      fields: { status: { 'en-US': 'x' } },
+    };
+    const reader = await h.keyWith('Read notes', [{ contentTypeApiId: 'note', actions: ['read'] }]);
+    expect((await h.start(body, reader)).status).toBe(403);
+
+    await h.app.request('/spaces', {
+      method: 'POST',
+      headers: admin,
+      body: JSON.stringify({ spaceId: 's2', name: 'Second', defaultLocale: 'en-US' }),
+    });
+    const elsewhere = await h.keyWith('Second writer', undefined, 's2');
+    expect((await h.start(body, elsewhere)).status).toBe(403);
+
+    const job = await json<{ id: string }>(await h.start(body));
+    const otherType = await h.keyWith('Pages only', [
+      { contentTypeApiId: 'page', actions: ['read', 'write', 'publish'] },
+    ]);
+    const cancel = (headers: Record<string, string>) =>
+      h.app.request(`${M}/bulk/jobs/${job.id}/cancel`, { method: 'POST', headers });
+    expect((await cancel(otherType)).status).toBe(403);
+    expect((await cancel(await h.keyFor([]))).status).toBe(403); // content:write alone can't cancel
+    expect(
+      (
+        await cancel(
+          await h.keyWith('Notes publisher', [
+            { contentTypeApiId: 'note', actions: ['read', 'write', 'publish'] },
+          ]),
+        )
+      ).status,
+    ).toBe(200);
   });
 });

@@ -637,7 +637,9 @@ interface Principal {
 - **Bulk field edits** (`POST …/bulk/jobs/set-fields`, MCP `bulk_job_set_fields`) write one
   content type's entries, so `authorizeSetFieldsJob` asks what an edit does: `write` on that type
   and none of the fields sent denied or read-only to the role. Its report and cancel go by that
-  type as a single-type import's do. The grants are checked when the job starts, not again as
+  type as a single-type import's do, and the job as read back (status, list, report) names the
+  fields it sets but never holds their values, which only an entry's reads, masked by the role,
+  return. The grants are checked when the job starts, not again as
   its chunks run; the saves are authored by whoever started it.
 - **Preview links** — `POST …/entries/:id/preview-link` mints an expiring token; CPA
   `GET …/entries/:id?preview_token=…` accepts it without a bearer header.

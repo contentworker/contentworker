@@ -1,17 +1,20 @@
 import {
   assertWritableFields,
   authorizeContent,
+  ConflictError,
   type ContentType,
   DomainError,
+  type Entry,
   type EntryFields,
   NotFoundError,
+  normalizeSlugFields,
   type Principal,
   type Scope,
   type ValidationContext,
   ValidationError,
 } from '@contentworker/domain';
 import type { BulkItemFailure, BulkJob, BulkJobChunk } from '@contentworker/ports';
-import { actingForJob, type BulkChunkOutcome, startBulkJob } from './bulk-jobs';
+import { actingForJob, type BulkChunkOutcome, readableBulkJob, startBulkJob } from './bulk-jobs';
 import type { AppContext } from './context';
 import { saveEntryDraft } from './entries';
 
@@ -80,7 +83,8 @@ export async function startSetFieldsJob(
       issues.push({ field: apiId, message: `"${contentType.apiId}" has no field "${apiId}"` });
       continue;
     }
-    if (field.unique) {
+    // Clearing one frees its claim and can't collide; setting one value on many entries can.
+    if (field.unique && Object.values(input.fields[apiId] ?? {}).some((v) => v !== null)) {
       issues.push({
         field: apiId,
         message: 'A unique field can’t be set to one value on many entries',
@@ -109,11 +113,12 @@ export async function startSetFieldsJob(
   }
   if (issues.length > 0) throw new ValidationError(issues);
 
-  return startBulkJob(ctx, scope, {
+  const job = await startBulkJob(ctx, scope, {
     action: 'set_fields',
     entryIds: input.entryIds,
     config: { contentTypeApiId: contentType.apiId, fields: input.fields },
   });
+  return readableBulkJob(job);
 }
 
 /** `stored` with `set` laid over it, locale by locale; `null` removes a locale. */
@@ -131,12 +136,21 @@ export function withFieldValues(stored: EntryFields, set: FieldValuesToSet): Ent
   return out;
 }
 
-/** Whether `stored` already holds every value of `set` (so saving it again would change nothing). */
-function alreadySet(stored: EntryFields, set: FieldValuesToSet): boolean {
-  return Object.entries(set).every(([apiId, values]) =>
+/** `value` as JSON with every block's `_key` dropped: a save keys blocks, so a sent block has none. */
+const unkeyed = (value: unknown): string =>
+  JSON.stringify(value, (key, v) => (key === '_key' ? undefined : v));
+
+/**
+ * Whether `stored` already holds every value of `set`, as a save would store it: slugs normalized
+ * and block keys ignored. A value an `entry:beforeSave` plugin rewrites can't be foreseen, so such
+ * an entry is saved again on a re-run (an identical draft, never a wrong one).
+ */
+function alreadySet(contentType: ContentType, stored: EntryFields, set: FieldValuesToSet): boolean {
+  const wanted = normalizeSlugFields(contentType, set as EntryFields);
+  return Object.entries(wanted).every(([apiId, values]) =>
     Object.entries(values).every(([locale, value]) => {
       const held = stored[apiId]?.[locale];
-      return value === null ? held === undefined : JSON.stringify(held) === JSON.stringify(value);
+      return value === null ? held === undefined : unkeyed(held) === unkeyed(value);
     }),
   );
 }
@@ -154,7 +168,7 @@ const failureMessage = (err: DomainError): string =>
 /**
  * The chunk runner for `set_fields` jobs. Safe to run twice (a redelivery, the stall sweep): an
  * entry that already holds every value counts as a success and is not saved again, so a re-run
- * leaves no second version and reports the same totals.
+ * reports the same totals (see `alreadySet` for the one case it saves again).
  */
 export function entryFieldsChunkRunner(
   ctx: AppContext,
@@ -182,31 +196,48 @@ export function entryFieldsChunkRunner(
     const found = new Map(
       (await ctx.store.entries.getMany(scope, chunk.entryIds)).map((e) => [e.entry.id, e]),
     );
+    /** Sets the values on one entry: the reason it refused, or undefined once it holds them. */
+    const setOn = async (entry: Entry, stored: EntryFields): Promise<string | undefined> => {
+      // Before the skip below, so an entry in the trash is refused even if it holds the values.
+      if (entry.status === 'archived') return 'The entry is in the trash; restore it first';
+      if (alreadySet(contentType, stored, set)) return undefined;
+      await saveEntryDraft(
+        acting,
+        scope,
+        entry,
+        contentType,
+        { ...vctx, previous: stored },
+        withFieldValues(stored, set),
+        stored,
+      );
+      return undefined;
+    };
+
     const failures: BulkItemFailure[] = [];
     for (const id of chunk.entryIds) {
       const current = found.get(id);
-      if (!current) {
-        failures.push({ id, error: 'Entry not found' });
+      // One message for a missing entry and one of another type: the starter's role may hold
+      // nothing on other types, so the report never says what type an id is, or that it exists.
+      if (current?.entry.contentTypeApiId !== typeApiId) {
+        failures.push({ id, error: `No "${typeApiId}" entry with this id` });
         continue;
       }
-      if (current.entry.contentTypeApiId !== typeApiId) {
-        failures.push({
-          id,
-          error: `Entry is a "${current.entry.contentTypeApiId}", not a "${typeApiId}"`,
-        });
-        continue;
-      }
-      if (alreadySet(current.fields, set)) continue;
       try {
-        await saveEntryDraft(
-          acting,
-          scope,
-          current.entry,
-          contentType,
-          { ...vctx, previous: current.fields },
-          withFieldValues(current.fields, set),
-          current.fields,
-        );
+        let refused: string | undefined;
+        try {
+          refused = await setOn(current.entry, current.fields);
+        } catch (err) {
+          // Someone saved it since the chunk read it, so this save's version was taken: read it
+          // again and set the values on what it holds now. A second conflict is a real one.
+          if (!(err instanceof ConflictError)) throw err;
+          const fresh = await ctx.store.entries.get(scope, id);
+          if (fresh?.entry.contentTypeApiId !== typeApiId) {
+            refused = `No "${typeApiId}" entry with this id`;
+          } else {
+            refused = await setOn(fresh.entry, fresh.fields);
+          }
+        }
+        if (refused) failures.push({ id, error: refused });
       } catch (err) {
         // A rule's refusal is this entry's outcome; anything else (the database) fails the chunk,
         // which is released and retried whole.

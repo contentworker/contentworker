@@ -964,7 +964,8 @@ export interface BulkJobSummary {
     | 'asset_publish'
     | 'asset_unpublish'
     | 'asset_archive'
-    | 'content_type_delete';
+    | 'content_type_delete'
+    | 'set_fields';
   readonly status: 'running' | 'completed' | 'cancelled';
   readonly totalItems: number;
   readonly totalChunks: number;
