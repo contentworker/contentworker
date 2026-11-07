@@ -171,9 +171,11 @@ Everything below is built and tested on v2.
 
 Recovery targets not met yet (`docs/backup-and-restore.md`) and the move to a private fleet repo.
 
-- [ ] **Secret escrow.** The `Escrow secrets` workflow encrypts a deployment's secrets to a key held
-  outside GitHub and the edge account. Run it for every live deployment, and decrypt one copy.
+- [x] **Secret escrow.** The `Escrow secrets` workflow encrypts a deployment's secrets to a key held
+  outside GitHub and the edge account. Run for the live deployment and decrypted; setting the values
+  back joins the restore drill.
 - [ ] **Off-account object storage copy.** Asset bytes, plugins and `versions/` have no second copy.
+  Deferred until a customer is close; the plan is in the private fleet repo.
 - [ ] **Restore drill.** Time a database restore against its 1-hour target.
 - [ ] **Assistant recovery.** Nothing calls the conversation object's point-in-time recovery.
 - [ ] **Fleet cutover.** The registry and rings are in the private repo and this repo only dispatches
