@@ -1086,7 +1086,7 @@ export function ContentTypeDialog(props: {
             <Label htmlFor="ct-url">URL pattern</Label>
             <Input
               id="ct-url"
-              className="max-w-sm font-mono"
+              className="max-w-lg font-mono"
               placeholder="/blog/{slug}"
               autoCapitalize="off"
               autoCorrect="off"
@@ -1107,7 +1107,7 @@ export function ContentTypeDialog(props: {
               ref={previewRef}
               id="ct-preview"
               inputMode="url"
-              className="font-mono"
+              className="max-w-lg font-mono"
               placeholder="https://example.com/__preview?entry={id}#token={token}"
               autoCapitalize="off"
               autoCorrect="off"
@@ -1129,10 +1129,8 @@ export function ContentTypeDialog(props: {
               </p>
             )}
             <p id="ct-preview-hint" className="max-w-measure text-muted-foreground text-ui">
-              Your site’s draft view for these entries: Copy preview link then copies this URL,
-              filled in, instead of the API’s. It needs {'{token}'} (after # keeps it out of your
-              server’s logs) and can use {'{id}'}, {'{locale}'}, {'{space}'}, {'{environment}'} or{' '}
-              {'{field:slug}'}. https only (http://localhost on a local stack). Optional.
+              Your site’s draft view, which Copy preview link fills in. Needs {'{token}'}; can use{' '}
+              {'{id}'}, {'{locale}'} or {'{field:slug}'}. Optional.
             </p>
           </div>
 
