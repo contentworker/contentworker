@@ -6,6 +6,7 @@
  */
 
 import { type UseAgentChatOptions, useAgentChat } from '@cloudflare/ai-chat/react';
+import { ASSISTANT_TOOLS, isAssistantTool } from '@contentworker/domain';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -88,6 +89,7 @@ import { useShortcutLabel } from '../../lib/shortcuts';
 import { Empty } from '../page';
 import {
   ActionCard,
+  aboutOf,
   CopyAction,
   EditLine,
   isWrite,
@@ -706,14 +708,46 @@ function waitingActions(messages: Message[]) {
   };
 }
 
+/** An edit's settled line, as words: what happened, and to what. Null while it hasn't settled. */
+function settledWords(p: Part): string | null {
+  const name = getToolName(p);
+  const info = isAssistantTool(name) ? ASSISTANT_TOOLS[name] : null;
+  const about = aboutOf(p);
+  const tail = about ? ` · ${about}` : '';
+  if (p.state === 'output-available') return `${info?.done ?? name}${tail}`;
+  if (p.state === 'output-error') return `${info?.title ?? name} didn’t go through${tail}`;
+  if (p.state === 'output-denied' || (p.state === 'approval-responded' && !p.approval?.approved))
+    return `${info?.declined ?? name}${tail}`;
+  return null;
+}
+
 /**
- * What a screen reader hears: a reply once it has finished (not each streamed fragment), and a card
- * once it starts waiting for an answer.
+ * What a screen reader hears: a reply once it has finished (not each streamed fragment), a card
+ * once it starts waiting for an answer, and an edit once it has settled (a page's, or a card
+ * answered here or elsewhere), so what changed is never only seen.
  */
 function useAnnouncement(messages: Message[], busy: boolean, pending: Waiting[]) {
   const [said, setSaid] = useState('');
   const wasBusy = useRef(busy);
   const known = useRef<Set<string> | null>(null);
+  const settled = useRef<Set<string> | null>(null);
+  useEffect(() => {
+    // As with cards, the first render only learns what had already happened.
+    const before = settled.current;
+    const now = new Set<string>();
+    const fresh: string[] = [];
+    for (const m of messages)
+      m.parts.forEach((p, i) => {
+        if (!isToolUIPart(p) || !(isWrite(getToolName(p)) || isDirectCall(p))) return;
+        const words = settledWords(p);
+        if (!words) return;
+        const key = actionKey(m.id, i);
+        now.add(key);
+        if (before && !before.has(key)) fresh.push(words);
+      });
+    settled.current = now;
+    if (fresh.length) setSaid(fresh.join('. '));
+  }, [messages]);
   useEffect(() => {
     if (wasBusy.current && !busy) {
       const last = messages.at(-1);
@@ -734,13 +768,40 @@ function useAnnouncement(messages: Message[], busy: boolean, pending: Waiting[])
 }
 
 /**
+ * Whether the card `key` names is in view in the conversation. Starts as in view, so the bar
+ * doesn't flash in and out as a card arrives at the bottom; where nothing can watch (no
+ * IntersectionObserver), never, so the bar always shows.
+ */
+function useCardOnScreen(key: string | undefined) {
+  const canWatch = typeof IntersectionObserver !== 'undefined';
+  const [onScreen, setOnScreen] = useState(canWatch);
+  useEffect(() => {
+    if (!key || !canWatch) return;
+    const card = document.querySelector(`[data-action="${CSS.escape(key)}"]`);
+    if (!card) {
+      setOnScreen(false);
+      return;
+    }
+    const watch = new IntersectionObserver(
+      ([e]) => setOnScreen(Boolean(e && e.intersectionRatio >= 0.5)),
+      { threshold: [0, 0.5, 1] },
+    );
+    watch.observe(card);
+    return () => watch.disconnect();
+  }, [key, canWatch]);
+  return onScreen;
+}
+
+/**
  * Pinned above the composer while a card waits for the person, so it can't scroll out of mind under
  * newer turns. The conversation goes on; pressing it brings the card back, focused on the safe
  * choice.
  */
 function WaitingBar({ pending }: { pending: Waiting[] }) {
   const newest = pending.at(-1);
-  if (!newest) return null;
+  const onScreen = useCardOnScreen(newest?.key);
+  // While its card is in view the bar would only say it twice, and take room the card needs.
+  if (!newest || (onScreen && pending.length === 1)) return null;
   const show = () => {
     const card = document.querySelector<HTMLElement>(`[data-action="${CSS.escape(newest.key)}"]`);
     if (!card) return;
@@ -787,7 +848,10 @@ function AssistantMessage({
 }) {
   const lastText = m.parts.findLastIndex((p) => p.type === 'text');
   const text = textOf(m);
-  const turn = (m.metadata as { scope?: TurnScope } | undefined)?.scope;
+  const meta = m.metadata as { scope?: TurnScope; at?: unknown } | undefined;
+  const turn = meta?.scope;
+  // When the reply (or a page's edit) began: its edits and cards say so in their margin.
+  const at = typeof meta?.at === 'number' ? meta.at : undefined;
   return (
     <MessageFrame from="assistant">
       <MessageContent className="space-y-2">
@@ -809,9 +873,10 @@ function AssistantMessage({
                 direct={isDirectCall(p)}
                 replaced={replaced.has(key)}
                 {...(turn ? { turn } : {})}
+                at={at}
               />
             );
-          if (isWrite(name) || isDirectCall(p)) return <EditLine key={key} part={p} />;
+          if (isWrite(name) || isDirectCall(p)) return <EditLine key={key} part={p} at={at} />;
           return <ReadLine key={key} part={p} streaming={streaming} />;
         })}
       </MessageContent>
@@ -844,7 +909,7 @@ function FirstRun({ onAsk }: { onAsk: (text: string) => void }) {
     <Empty
       className="px-0 py-6"
       icon={<Mark className="text-ai" />}
-      title="Ask about your content, or have it make a change."
+      title="Ask about your content"
       action={
         <Suggestions className="items-center">
           {ideas.map((t) => (
@@ -853,8 +918,8 @@ function FirstRun({ onAsk }: { onAsk: (text: string) => void }) {
         </Suggestions>
       }
     >
-      It works within your role, and asks before it changes anything. Edits you make on the page
-      show here too.
+      Or have it make a change: it can do what your role allows, and shows you each change before it
+      makes it. Edits you make on the page show here too, on every device you’re signed in on.
     </Empty>
   );
 }

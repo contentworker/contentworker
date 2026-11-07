@@ -32,8 +32,13 @@ export interface AssistantContext {
 export interface AssistantToolInfo {
   /** What the tool does, for a confirm card's heading: "Publish this entry". */
   readonly title: string;
-  /** What it did, for its line in the conversation: "Published". */
+  /** What it did, for its line in the conversation: "Published"; a read's, once it has: "Found entries". */
   readonly done: string;
+  /**
+   * What stayed as it was when the person chose Not now, in the past tense so the line still reads
+   * long after: "Not published". Absent for a read, which never asks.
+   */
+  readonly declined?: string;
   /** Changes something. A write the model proposes always waits for the person's confirm. */
   readonly write: boolean;
   /**
@@ -43,21 +48,23 @@ export interface AssistantToolInfo {
   readonly confirm: boolean;
 }
 
-const read = (title: string): AssistantToolInfo => ({
+const read = (title: string, done: string): AssistantToolInfo => ({
   title,
-  done: title,
+  done,
   write: false,
   confirm: false,
 });
-const edit = (title: string, done: string): AssistantToolInfo => ({
+const edit = (title: string, done: string, declined: string): AssistantToolInfo => ({
   title,
   done,
+  declined,
   write: true,
   confirm: false,
 });
-const action = (title: string, done: string): AssistantToolInfo => ({
+const action = (title: string, done: string, declined: string): AssistantToolInfo => ({
   title,
   done,
+  declined,
   write: true,
   confirm: true,
 });
@@ -67,43 +74,55 @@ const action = (title: string, done: string): AssistantToolInfo => ({
  * the order the model is shown them in.
  */
 export const ASSISTANT_TOOLS = {
-  docs_search: read('Search the documentation'),
-  docs_read: read('Read the documentation'),
-  model_list_content_types: read('List content types'),
-  model_get_content_type: read('Read a content type'),
-  entries_query: read('Find entries'),
-  entries_get: read('Read an entry'),
-  entries_suggest: read('Suggest entries'),
-  content_search: read('Search content'),
-  entries_list_versions: read('List an entry’s versions'),
-  entries_diff_versions: read('Compare versions'),
-  entries_list_trashed: read('List trashed entries'),
-  releases_list: read('List releases'),
-  releases_get: read('Read a release'),
-  comments_list: read('Read comments'),
-  tasks_list: read('List tasks'),
-  taxonomy_list_tags: read('List tags'),
-  assets_list: read('List assets'),
-  workflow_task_list: read('List review tasks'),
+  docs_search: read('Search the documentation', 'Searched the documentation'),
+  docs_read: read('Read the documentation', 'Read the documentation'),
+  model_list_content_types: read('List content types', 'Listed content types'),
+  model_get_content_type: read('Read a content type', 'Read a content type'),
+  entries_query: read('Find entries', 'Found entries'),
+  entries_get: read('Read an entry', 'Read an entry'),
+  entries_suggest: read('Suggest entries', 'Suggested entries'),
+  content_search: read('Search content', 'Searched content'),
+  entries_list_versions: read('List an entry’s versions', 'Listed an entry’s versions'),
+  entries_diff_versions: read('Compare versions', 'Compared versions'),
+  entries_list_trashed: read('List trashed entries', 'Listed trashed entries'),
+  releases_list: read('List releases', 'Listed releases'),
+  releases_get: read('Read a release', 'Read a release'),
+  comments_list: read('Read comments', 'Read comments'),
+  tasks_list: read('List tasks', 'Listed tasks'),
+  taxonomy_list_tags: read('List tags', 'Listed tags'),
+  assets_list: read('List assets', 'Listed assets'),
+  workflow_task_list: read('List review tasks', 'Listed review tasks'),
 
-  entries_create: edit('Create an entry', 'Created'),
-  entries_update: edit('Save a draft', 'Saved a draft'),
-  entries_duplicate: edit('Duplicate an entry', 'Duplicated'),
-  entries_restore: edit('Restore from trash', 'Restored from trash'),
-  entries_set_metadata: edit('Set entry details', 'Set details'),
-  entry_apply_tags: edit('Tag an entry', 'Tagged'),
-  comments_add: edit('Comment', 'Commented'),
-  releases_add_entry: edit('Add to a release', 'Added to a release'),
+  entries_create: edit('Create an entry', 'Created', 'Not created'),
+  entries_update: edit('Save a draft', 'Saved a draft', 'Draft not saved'),
+  entries_duplicate: edit('Duplicate an entry', 'Duplicated', 'Not duplicated'),
+  entries_restore: edit('Restore from trash', 'Restored from trash', 'Left in the trash'),
+  entries_set_metadata: edit('Set entry details', 'Set details', 'Details not set'),
+  entry_apply_tags: edit('Tag an entry', 'Tagged', 'Not tagged'),
+  comments_add: edit('Comment', 'Commented', 'Comment not added'),
+  releases_add_entry: edit('Add to a release', 'Added to a release', 'Not added to the release'),
 
-  entries_publish: action('Publish this entry', 'Published'),
-  entries_unpublish: action('Unpublish this entry', 'Unpublished'),
-  entries_trash: action('Move this entry to the trash', 'Moved to the trash'),
-  entries_purge: action('Delete this entry for good', 'Deleted for good'),
-  entries_restore_version: action('Restore this version', 'Restored a version'),
-  entries_bulk_action: action('Change these entries', 'Changed entries'),
-  bulk_job_start: action('Run a job on these entries', 'Started a job'),
-  schedule_action: action('Schedule this change', 'Scheduled'),
-  releases_publish: action('Publish this release', 'Published a release'),
+  entries_publish: action('Publish this entry', 'Published', 'Not published'),
+  entries_unpublish: action('Unpublish this entry', 'Unpublished', 'Kept published'),
+  entries_trash: action(
+    'Move this entry to the trash',
+    'Moved to the trash',
+    'Kept out of the trash',
+  ),
+  entries_purge: action('Delete this entry for good', 'Deleted for good', 'Not deleted'),
+  entries_restore_version: action(
+    'Restore this version',
+    'Restored a version',
+    'Version not restored',
+  ),
+  entries_bulk_action: action(
+    'Change these entries',
+    'Changed entries',
+    'Entries left as they were',
+  ),
+  bulk_job_start: action('Run a job on these entries', 'Started a job', 'Job not started'),
+  schedule_action: action('Schedule this change', 'Scheduled', 'Not scheduled'),
+  releases_publish: action('Publish this release', 'Published a release', 'Release not published'),
 } as const satisfies Record<string, AssistantToolInfo>;
 
 export type AssistantTool = keyof typeof ASSISTANT_TOOLS;

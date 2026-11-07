@@ -52,12 +52,22 @@ the same way: if it can't show what goes live, **Publish entry** stays off until
 
 Ask in plain language: "What changed since it was last published?", "Which of these are still
 drafts?", "Suggest tags for this entry". Reads run without asking and show as a line in the
-conversation.
+conversation, such as **Found entries · 10 results** once done.
 
 Anything the model proposes that changes something stops at a confirm card, the same as a page
-action, and nothing is sent until you confirm. A publish card's list comes from the entry's
-version history, not from the model. A declined card reads "left as it was". A card that nobody
-answers is let go after a day.
+action, and nothing is sent until you confirm. Each card says who asked for it: **You asked for
+this on the page**, or **Coworker suggests this**, with the time it was made.
+
+A proposal's card shows what it would change, read from ContentWorker rather than from anything
+the model wrote. A publish lists the fields that go live, from the entry's version history. A
+draft save lists the fields that change, and **Review changes** shows each one as it is now and
+after saving; a field the save leaves out is removed from the draft. A change to many entries
+names the first five and counts the rest. Tagging names the tags, and adding to a release names
+the release. **Confirm** stays off until the card has read this; if it can't, the card offers
+**Try again**.
+
+A declined card's line says what stayed as it was, such as **Not published · Spring launch
+notes**. A card that nobody answers is let go after a day.
 
 A card that publishes, unpublishes or restores an entry is held to the entry as it was when the
 card was made: the version on your screen for a page's card, the current version when the model
