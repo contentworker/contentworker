@@ -714,6 +714,9 @@ clone keeps all three (`ImportOptions.keepCreators`, set only by the clone paths
 snapshot keeps `createdAt` and `firstPublishedAt`, checked by `carriedAuthorshipIssues` (ISO-8601
 UTC instants; a creator at most 320 characters), and credits its importer as the creator: a file
 can name anyone.
+An imported entry keeps its id only if it fits `ENTRY_ID_PATTERN` (1 to 64 ASCII letters, digits,
+underscores or hyphens). The snapshot's preflight refuses one that doesn't, by position, before
+anything is written, and `createEntry` refuses it on every other path that carries an id.
 
 Management and Preview serve all four, filter and sort on them, and resolve `me` in
 `sys.createdBy` and `sys.updatedBy` to the caller's actor id (`principalActorId`: a person's
