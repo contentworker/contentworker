@@ -4,7 +4,7 @@ import { type FieldIssue, ValidationError } from '../errors';
 import type { EntryFields } from '../types';
 
 /**
- * Redirects: data a front end (or an edge Worker in front of it) applies. contentworker does not
+ * Redirects: data a front end (or an edge Worker in front of it) applies. ContentWorker does not
  * serve the site, so a redirect is never answered here; Delivery hands the set to whoever does.
  *
  * A redirect's `source` is a path: exact (`/old-page`) or a pattern of whole segments, where

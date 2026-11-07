@@ -12,6 +12,16 @@ export interface AssistantScope {
   readonly locale?: string;
 }
 
+/**
+ * The scope of a turn with no space to work in: a deployment admin setting up a space, on a
+ * deployment that has none yet (setup's last step, or the panel before the first space exists).
+ * Only `SETUP_TOOLS` run in it, as the person's deployment-wide principal; nothing else does.
+ */
+export const SETUP_SCOPE: AssistantScope = Object.freeze({ spaceId: '*', environmentId: '*' });
+
+export const isSetupScope = (scope: Pick<AssistantScope, 'spaceId' | 'environmentId'>) =>
+  scope.spaceId === SETUP_SCOPE.spaceId && scope.environmentId === SETUP_SCOPE.environmentId;
+
 /** What "this" means on the page the person is on (the panel's context chip). */
 export type AssistantPage =
   | { readonly kind: 'everything' }
@@ -123,12 +133,31 @@ export const ASSISTANT_TOOLS = {
   bulk_job_start: action('Run a job on these entries', 'Started a job', 'Job not started'),
   schedule_action: action('Schedule this change', 'Scheduled', 'Not scheduled'),
   releases_publish: action('Publish this release', 'Published a release', 'Release not published'),
+
+  // Offered only in `SETUP_SCOPE`, never in a space.
+  space_starters_list: read('List space starters', 'Listed space starters'),
+  space_create: action('Create this space', 'Created a space', 'Space not created'),
 } as const satisfies Record<string, AssistantToolInfo>;
 
 export type AssistantTool = keyof typeof ASSISTANT_TOOLS;
 
 export const isAssistantTool = (name: string): name is AssistantTool =>
   Object.hasOwn(ASSISTANT_TOOLS, name);
+
+/** The tools of a turn with no space (`SETUP_SCOPE`): finding the starters and creating a space. */
+export const SETUP_TOOLS: ReadonlySet<AssistantTool> = new Set<AssistantTool>([
+  'space_starters_list',
+  'space_create',
+]);
+
+/**
+ * Whether `name` may run in `scope`: in setup, the setup tools and nothing else; in a space,
+ * everything but them. Every call the assistant makes (a model's, a page's) is held to this.
+ */
+export const offeredIn = (
+  scope: Pick<AssistantScope, 'spaceId' | 'environmentId'>,
+  name: AssistantTool,
+) => isSetupScope(scope) === SETUP_TOOLS.has(name);
 
 /**
  * The agent's name in the Agents SDK's routing (`/agents/<agent>/<instance>`): the kebab-case of

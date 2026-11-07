@@ -6,7 +6,12 @@
  */
 
 import { type UseAgentChatOptions, useAgentChat } from '@cloudflare/ai-chat/react';
-import { ASSISTANT_TOOLS, isAssistantTool } from '@contentworker/domain';
+import {
+  ASSISTANT_TOOLS,
+  type AssistantContext,
+  isAssistantTool,
+  SETUP_SCOPE,
+} from '@contentworker/domain';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -29,6 +34,7 @@ import {
   DropdownMenuTrigger,
 } from '@contentworker/ui/dropdown-menu';
 import { cn } from '@contentworker/ui/lib/utils';
+import { useQueryClient } from '@tanstack/react-query';
 import { useAgent } from 'agents/react';
 import { getToolName, isToolUIPart, type UIMessage } from 'ai';
 import { ChevronDown, MoreHorizontal, Pencil, RotateCcw, X } from 'lucide-react';
@@ -68,7 +74,7 @@ import {
 import { Shimmer } from '~/components/ai-elements/shimmer';
 import { Suggestion, Suggestions } from '~/components/ai-elements/suggestion';
 import { Mark } from '~/components/mark';
-import { useMe } from '~/lib/use-me';
+import { useCan, useMe } from '~/lib/use-me';
 import {
   type ActResult,
   AssistantUnavailable,
@@ -84,6 +90,7 @@ import {
   sendAct,
   sendAnswer,
 } from '../../lib/assistant-client';
+import { useClient, useScopeState } from '../../lib/client-context';
 import { coarse, useMedia, useVisualViewport, WIDE } from '../../lib/device';
 import { useShortcutLabel } from '../../lib/shortcuts';
 import { Empty } from '../page';
@@ -174,17 +181,34 @@ export function AssistantPanel() {
           open ? 'lg:translate-x-0 lg:opacity-100' : 'lg:translate-x-full lg:opacity-0',
         )}
       >
-        <Connected />
+        <Connected variant="panel" />
       </div>
     </aside>
   );
+}
+
+/** Where the conversation is drawn: the panel beside a page, or a page of its own (setup). */
+type Variant = 'panel' | 'page';
+
+/**
+ * Coworker as a page's whole content, not a panel: setup's last step, where it sets up the
+ * deployment's first space. `onCreated` follows the space it created.
+ */
+export function CoworkerConversation({ onCreated }: { onCreated?: (spaceId: string) => void }) {
+  return <Connected variant="page" {...(onCreated ? { onCreated } : {})} />;
 }
 
 /**
  * The socket, and the edits pages hand over. It never suspends, so an edit is sent (or handed back
  * to its page) while the conversation is still loading, or when it can't load at all.
  */
-function Connected() {
+function Connected({
+  variant,
+  onCreated,
+}: {
+  variant: Variant;
+  onCreated?: (spaceId: string) => void;
+}) {
   const me = useMe();
   const a = useAssistant();
   const [link, setLinkState] = useState<Link>('connecting');
@@ -268,9 +292,14 @@ function Connected() {
   }, [a.acts, a.takeActs, whenOpen]);
 
   return (
-    <ConversationBoundary fallback={<PanelFrame note="unreachable" />}>
-      <Suspense fallback={<PanelFrame note="opening" />}>
-        <ChatView agent={agent} link={link} />
+    <ConversationBoundary fallback={<PanelFrame note="unreachable" variant={variant} />}>
+      <Suspense fallback={<PanelFrame note="opening" variant={variant} />}>
+        <ChatView
+          agent={agent}
+          link={link}
+          variant={variant}
+          {...(onCreated ? { onCreated } : {})}
+        />
       </Suspense>
     </ConversationBoundary>
   );
@@ -290,10 +319,10 @@ class ConversationBoundary extends Component<
   }
 }
 
-function PanelFrame({ note }: { note: 'opening' | 'unreachable' }) {
+function PanelFrame({ note, variant }: { note: 'opening' | 'unreachable'; variant: Variant }) {
   return (
     <div className="flex h-full flex-col">
-      <PanelHeader />
+      {variant === 'panel' ? <PanelHeader /> : null}
       <div className="flex-1 px-4 py-6 text-muted-foreground text-sm">
         {note === 'opening' ? (
           <Shimmer>Opening your conversation</Shimmer>
@@ -404,11 +433,30 @@ function PanelHeader({ onClear, canClear }: { onClear?: () => void; canClear?: b
 
 type Message = UIMessage;
 
-function ChatView({ agent, link }: { agent: Agent; link: Link }) {
+/** A turn with no space to work in: a deployment admin setting up the first one. */
+const SETUP_CONTEXT: AssistantContext = { scope: SETUP_SCOPE, page: { kind: 'everything' } };
+
+function ChatView({
+  agent,
+  link,
+  variant,
+  onCreated,
+}: {
+  agent: Agent;
+  link: Link;
+  variant: Variant;
+  onCreated?: (spaceId: string) => void;
+}) {
   const a = useAssistant();
+  // Every turn runs in one space, so with none yet (a fresh install) a deployment admin's turns set
+  // one up (`SETUP_SCOPE`); anyone else can only wait to be added to one.
+  const noSpace = useScopeState() === 'no-spaces';
+  const admin = useCan('admin');
+  const setup = useRef(false);
+  setup.current = noSpace && admin;
   const chat = useAgentChat<unknown, Message>({
     agent,
-    body: () => chatBody(a.readContext()),
+    body: () => chatBody(setup.current ? SETUP_CONTEXT : a.readContext()),
   });
   const {
     messages,
@@ -501,9 +549,32 @@ function ChatView({ agent, link }: { agent: Agent; link: Link }) {
   const { pending, replaced } = waitingActions(messages);
   const announcement = useAnnouncement(messages, busy, pending);
 
+  // The space this conversation created, once it has: the admin moves into it, and Coworker offers
+  // what to try next there. One created before this view opened is history, not news.
+  const created = createdSpace(messages);
+  const seen = useRef(created?.callId);
+  const { updateConn } = useClient();
+  const queries = useQueryClient();
+  const follow = useRef(onCreated);
+  follow.current = onCreated;
+  useEffect(() => {
+    if (!created || seen.current === created.callId) return;
+    seen.current = created.callId;
+    // The new space must be on the list before switching to it, or the scope falls back to the
+    // first space on the (stale) list.
+    const { spaceId } = created;
+    void queries.invalidateQueries({ queryKey: ['spaces'] }).then(() => {
+      updateConn({ space: spaceId, environment: 'main' });
+      follow.current?.(spaceId);
+    });
+  }, [created, updateConn, queries]);
+  const nextFor = created && !noSpace && !busy && last === createdIn(messages) ? created : null;
+
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <PanelHeader onClear={clearHistory} canClear={messages.length > 0 && !busy} />
+      {variant === 'panel' ? (
+        <PanelHeader onClear={clearHistory} canClear={messages.length > 0 && !busy} />
+      ) : null}
       {down ? (
         // Quiet: the page's own edits don't need the panel, so this is news, not an error.
         <p role="status" className="border-b px-4 py-2 text-muted-foreground text-xs">
@@ -517,7 +588,11 @@ function ChatView({ agent, link }: { agent: Agent; link: Link }) {
       <Conversation aria-label="Conversation" className="cw-scroll min-h-0">
         <ConversationContent aria-live="off" className="gap-4 px-4 py-4">
           {messages.length === 0 ? (
-            <FirstRun onAsk={send} />
+            noSpace ? (
+              <SetUpFirstSpace admin={admin} onAsk={send} mark={variant === 'panel'} />
+            ) : (
+              <FirstRun onAsk={send} />
+            )
           ) : (
             messages.map((m, i) =>
               m.role === 'user' ? (
@@ -548,6 +623,7 @@ function ChatView({ agent, link }: { agent: Agent; link: Link }) {
               ),
             )
           )}
+          {nextFor ? <NextSteps starter={nextFor.starter} onAsk={send} /> : null}
           {thinking ? (
             <div role="status" className="flex items-center gap-2 text-ui">
               <ComposeLoader icon={composeSequences.working} className="size-3.5 text-ai" />
@@ -572,7 +648,8 @@ function ChatView({ agent, link }: { agent: Agent; link: Link }) {
       <p className="sr-only" role="status">
         {announcement}
       </p>
-      {pending.length ? <WaitingBar pending={pending} /> : null}
+      {/* On a page of its own the conversation is all there is, so its cards are in view. */}
+      {pending.length && variant === 'panel' ? <WaitingBar pending={pending} /> : null}
       {held.length ? (
         <HeldMessages
           held={held}
@@ -580,7 +657,14 @@ function ChatView({ agent, link }: { agent: Agent; link: Link }) {
           onRemove={(i) => setHeld((h) => h.filter((_, j) => j !== i))}
         />
       ) : null}
-      <Composer busy={busy} down={down} onSend={send} onStop={() => void stop()} />
+      <Composer
+        variant={variant}
+        busy={busy}
+        down={down}
+        setup={noSpace ? (admin ? 'ask' : 'blocked') : null}
+        onSend={send}
+        onStop={() => void stop()}
+      />
     </div>
   );
 }
@@ -924,6 +1008,102 @@ function FirstRun({ onAsk }: { onAsk: (text: string) => void }) {
   );
 }
 
+/**
+ * First run with no space to work in, as on a fresh install. Coworker can't read or change anything
+ * until there is one, so a deployment admin is asked what the first space will hold: Coworker
+ * proposes a name and a starter, and nothing is created until they confirm the card. Anyone else is
+ * told who can add them to one.
+ */
+function SetUpFirstSpace({
+  admin,
+  onAsk,
+  mark,
+}: {
+  admin: boolean;
+  onAsk: (text: string) => void;
+  /** Its own mark; setup's page already carries one above it. */
+  mark: boolean;
+}) {
+  const icon = mark ? <Mark className="text-ai" /> : undefined;
+  if (!admin)
+    return (
+      <Empty className="px-0 py-6" icon={icon} title="You aren’t on a space yet.">
+        Coworker works inside a space. Ask a deployment admin to add you to one.
+      </Empty>
+    );
+  return (
+    <Empty
+      className="px-0 py-6"
+      icon={icon}
+      title="What will your first space hold?"
+      action={
+        <Suggestions className="items-center">
+          {SETUP_IDEAS.map((t) => (
+            <Suggestion key={t} suggestion={t} onClick={onAsk} />
+          ))}
+        </Suggestions>
+      }
+    >
+      Say it in a few words. Coworker suggests a name and a starter, and nothing is created until
+      you confirm.
+    </Empty>
+  );
+}
+
+const SETUP_IDEAS = ['A marketing site, with sample content', 'An empty space to model my own'];
+
+/** What to try in a space just created, by what it started with. */
+const NEXT_STEPS: Record<string, readonly string[]> = {
+  empty: ['How do I model my first content type?', 'How do locales work?'],
+  sample: ['What’s in this content model?', 'What’s waiting to be published?'],
+};
+
+/** Suggestions under the reply that created the space: never a tour, only a next question. */
+function NextSteps({ starter, onAsk }: { starter: string; onAsk: (text: string) => void }) {
+  const ideas = NEXT_STEPS[starter === 'empty' ? 'empty' : 'sample'] ?? [];
+  return (
+    <div className="space-y-2">
+      <p className="text-muted-foreground text-xs">Try next</p>
+      <Suggestions>
+        {ideas.map((t) => (
+          <Suggestion key={t} suggestion={t} onClick={onAsk} />
+        ))}
+      </Suggestions>
+    </div>
+  );
+}
+
+/** A space this conversation created: the confirmed `space_create` call, by the input it ran with. */
+interface Created {
+  readonly callId: string;
+  readonly spaceId: string;
+  readonly starter: string;
+}
+
+/** The message holding the latest created space, if any. */
+function createdIn(messages: Message[]): Message | undefined {
+  return messages.findLast((m) => m.parts.some(isCreated));
+}
+
+const isCreated = (p: Message['parts'][number]) =>
+  isToolUIPart(p) && getToolName(p) === 'space_create' && p.state === 'output-available';
+
+/**
+ * The latest space this conversation created. Its input is what ran (the agent holds a call to the
+ * input it was proposed with), so the id is read from there, not from the model's words.
+ */
+export function createdSpace(messages: Message[]): Created | null {
+  const part = createdIn(messages)?.parts.findLast(isCreated);
+  if (!part || !isToolUIPart(part)) return null;
+  const input = (part.input ?? {}) as { spaceId?: unknown; starter?: unknown };
+  if (typeof input.spaceId !== 'string') return null;
+  return {
+    callId: part.toolCallId,
+    spaceId: input.spaceId,
+    starter: typeof input.starter === 'string' ? input.starter : 'empty',
+  };
+}
+
 // ── Composer ───────────────────────────────────────────────────────────────
 
 function HeldMessages({
@@ -961,13 +1141,21 @@ function HeldMessages({
 }
 
 function Composer({
+  variant,
   busy,
   down,
+  setup,
   onSend,
   onStop,
 }: {
+  variant: Variant;
   busy: boolean;
   down: boolean;
+  /**
+   * No space to work in yet: a deployment admin is asked what it will hold (`ask`); anyone else
+   * can't ask anything until they are added to one (`blocked`).
+   */
+  setup: 'ask' | 'blocked' | null;
   onSend: (text: string) => void;
   onStop: () => void;
 }) {
@@ -983,7 +1171,7 @@ function Composer({
       <PromptInput
         aria-label="Message Coworker"
         onSubmit={() => {
-          if (!text.trim() || down) return;
+          if (!text.trim() || down || setup === 'blocked') return;
           onSend(text);
           setText('');
         }}
@@ -994,21 +1182,35 @@ function Composer({
           onChange={(e) => setText(e.target.value)}
           // On a touch screen Return is a new line and the button sends; ⌘/Ctrl+Enter always sends.
           sendOnEnter={(e) => !coarse() || e.metaKey || e.ctrlKey}
-          placeholder={busy ? 'Next message, sent after this reply' : 'Ask Coworker'}
+          disabled={setup === 'blocked'}
+          placeholder={
+            setup === 'blocked'
+              ? 'Ask an admin to add you to a space'
+              : setup === 'ask' && !busy
+                ? 'A marketing site, a docs hub, a product catalog…'
+                : busy
+                  ? 'Next message, sent after this reply'
+                  : 'Ask Coworker'
+          }
           aria-label="Message Coworker"
         />
         <PromptInputFooter className="gap-1.5 pt-0">
-          <ScopeChip />
+          {/* With no space, there is nothing on the page to ask about. */}
+          {setup ? null : <ScopeChip />}
           <span className="flex-1" />
           {/* While a reply runs, stop sits beside send, which holds the next message. */}
           {busy ? (
             <PromptInputSubmit status="streaming" onStop={onStop} className="touch:size-9" />
           ) : null}
-          <PromptInputSubmit disabled={!text.trim() || down} className="touch:size-9" />
+          <PromptInputSubmit
+            disabled={!text.trim() || down || setup === 'blocked'}
+            className="touch:size-9"
+          />
         </PromptInputFooter>
       </PromptInput>
       <p className="mt-1.5 hidden px-1 text-muted-foreground text-xs fine:block">
-        Enter sends · Shift+Enter for a new line · {shortcut} opens and closes
+        Enter sends · Shift+Enter for a new line
+        {variant === 'panel' ? ` · ${shortcut} opens and closes` : ''}
       </p>
     </div>
   );

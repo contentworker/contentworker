@@ -12,6 +12,7 @@ import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@contentwo
 import { Collapsible, CollapsibleContent } from '@contentworker/ui/collapsible';
 import { ComposeLoader } from '@contentworker/ui/compose-loader';
 import { cn } from '@contentworker/ui/lib/utils';
+import { useQuery } from '@tanstack/react-query';
 import { type DynamicToolUIPart, getToolName, type ToolUIPart } from 'ai';
 import {
   ArrowUpRight,
@@ -31,7 +32,7 @@ import { Mark } from '~/components/mark';
 import { useAssistantIfAny } from '../../lib/assistant';
 import { metaOf } from '../../lib/assistant-client';
 import { useClient } from '../../lib/client-context';
-import type { Connection } from '../../lib/management';
+import type { Connection, SpaceStarterInfo } from '../../lib/management';
 import {
   ChangedFields,
   type EntryReview,
@@ -46,6 +47,7 @@ import {
   useEntryReview,
   useHandFocus,
 } from '../entries/EntryReview';
+import { DEFAULT_STARTERS } from '../layout/CreateSpaceDialog';
 import { ProposalDetail, proposalOf, useProposalReview } from './proposal';
 
 export type Part = ToolUIPart | DynamicToolUIPart;
@@ -610,9 +612,10 @@ export function ActionCard({
               </CardTitle>
               <Source direct={direct} />
             </CardHeader>
-            {about || target || proposal ? (
+            {about || target || proposal || name === 'space_create' ? (
               <CardContent className="space-y-2">
                 {about ? <p className="break-words text-ui leading-snug">{about}</p> : null}
+                {name === 'space_create' ? <SpaceProposal input={part.input} /> : null}
                 {proposal ? (
                   <ProposalDetail
                     proposal={proposal}
@@ -690,6 +693,54 @@ export function ActionCard({
     </div>
   );
 }
+
+/**
+ * What a new space will be, from the input the call runs with (the agent holds it to that), never
+ * from the model's words: its name, id, default locale and starter.
+ */
+function SpaceProposal({ input }: { input: unknown }) {
+  const v = (input ?? {}) as Record<string, unknown>;
+  // The deployment's own starters, named as the New space form names them.
+  const { client } = useClient();
+  const listed = useQuery({ queryKey: ['starters'], queryFn: () => client.listStarters() });
+  const starters = listed.data?.length ? listed.data : DEFAULT_STARTERS;
+  const text = (x: unknown) => (typeof x === 'string' && x ? x : '—');
+  const starter = typeof v.starter === 'string' ? v.starter : 'empty';
+  const list = (x: unknown) =>
+    Array.isArray(x) && x.length ? x.filter((i) => typeof i === 'string').join(', ') : null;
+  const locales = list(v.locales);
+  const environments = list(v.environments);
+  const rows: [string, string, boolean][] = [
+    ['Name', text(v.name), false],
+    ['Space ID', text(v.spaceId), true],
+    ['Default locale', text(v.defaultLocale), true],
+    ...(locales ? [['Locales', locales, true] as [string, string, boolean]] : []),
+    ['Environments', environments ?? 'main', true],
+    [
+      'Starts with',
+      starterLabel(
+        starters.find((s) => s.id === starter),
+        starter,
+      ),
+      false,
+    ],
+  ];
+  return (
+    <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-ui">
+      {rows.map(([label, value, mono]) => (
+        <div key={label} className="contents">
+          <dt className="text-muted-foreground">{label}</dt>
+          <dd className={cn('min-w-0 break-words', mono && 'font-mono text-xs leading-5')}>
+            {value}
+          </dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+const starterLabel = (s: SpaceStarterInfo | undefined, id: string) =>
+  s ? (s.background ? `${s.title} (installs in the background)` : s.title) : id;
 
 // ── Message actions ────────────────────────────────────────────────────────
 

@@ -11,7 +11,13 @@ import {
   WORKERS_AI_MODEL_BY_TIER,
   workersAiModelsFromEnv,
 } from '@contentworker/adapters/ai-workers';
-import { ASSISTANT_TOOLS, type AssistantContext, isAssistantTool } from '@contentworker/domain';
+import {
+  ASSISTANT_TOOLS,
+  type AssistantContext,
+  isAssistantTool,
+  isSetupScope,
+  normalizeSlug,
+} from '@contentworker/domain';
 import type { EdgeEnv } from '@contentworker/platform/env';
 import { createAI, type WorkersAIModelId } from 'agents/models/ai-sdk';
 import type { LanguageModel } from 'ai';
@@ -232,6 +238,7 @@ function lastUserText(prompt: Prompt) {
 
 /** Picks one tool from the words used, or says what it understands. */
 export function mockStep(text: string, context: AssistantContext, tools: Set<string>): Step {
+  if (isSetupScope(context.scope)) return mockSetupStep(text, tools);
   const t = text.toLowerCase();
   const page = context.page;
   const entryId = page.kind === 'entry' ? page.entryId : undefined;
@@ -263,6 +270,44 @@ export function mockStep(text: string, context: AssistantContext, tools: Set<str
   };
 }
 
+/** What a space is for, as a name: "A marketing site" → "Marketing site". */
+export function spaceNameFrom(text: string): string {
+  const called = /\b(?:called|named)\s+["“']?([^"”'.,!?]+)/i.exec(text)?.[1];
+  const words = (called ?? text.split(/[.,!?\n]/)[0] ?? '')
+    .replace(/^\s*(?:it(?:’|')?s|it is|this is)?\s*(?:for|just)?\s*(?:an?|the|my|our)\s+/i, '')
+    .replace(/\s+with\b.*$/i, '')
+    .trim()
+    .slice(0, 40)
+    .trim();
+  return words ? words[0]!.toUpperCase() + words.slice(1) : 'My first space';
+}
+
+/**
+ * A turn with no space, without the language model: what the person said becomes one proposed
+ * space, with the starter their words point to.
+ */
+function mockSetupStep(text: string, tools: Set<string>): Step {
+  if (!tools.has('space_create')) return { text: 'Only a deployment admin can set up a space.' };
+  if (!/[a-z]/i.test(text))
+    return { text: 'What will this space hold? A marketing site, a docs hub, a product catalog…' };
+  const t = text.toLowerCase();
+  const name = spaceNameFrom(text);
+  const starter = /\b(empty|scratch|my own|blank)\b/.test(t)
+    ? 'empty'
+    : /\b(enterprise|demo brand)\b/.test(t) && tools.has('space_starters_list')
+      ? 'enterprise'
+      : 'sample';
+  return {
+    tool: 'space_create',
+    input: {
+      name,
+      spaceId: normalizeSlug(name).slice(0, 64).replace(/-+$/, '') || 'my-first-space',
+      defaultLocale: 'en-US',
+      starter,
+    },
+  };
+}
+
 const plain = (v: unknown) => String(v ?? '').replace(/[[\]()<>]/g, '');
 
 /**
@@ -279,6 +324,8 @@ export function describeResult(tool: string, output: unknown): string {
     : Array.isArray((output as { items?: unknown })?.items)
       ? (output as { items: unknown[] }).items
       : undefined;
+  if (tool === 'space_create' && (output as { id?: unknown } | null)?.id)
+    return `Created ${plain((output as { id: unknown }).id)}. You’re working in it now.`;
   if (title?.write) return `${title.done}.`;
   if (list) return `${list.length} result${list.length === 1 ? '' : 's'}.`;
   const id = (output as { id?: unknown; entry?: { id?: unknown } } | null)?.id;
