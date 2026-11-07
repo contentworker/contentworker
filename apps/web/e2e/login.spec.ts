@@ -19,7 +19,7 @@ async function scan(page: Page, testInfo: TestInfo) {
  * local development), so it runs in its own project after every device project
  * (playwright.config.ts), once.
  */
-test('the first admin turns sign-in on; signing out and in again lands on two-factor setup', async ({
+test('the first admin turns sign-in on; signing out and in again lands on the two-factor step', async ({
   page,
 }, testInfo) => {
   const email = 'first-admin@example.com';
@@ -29,12 +29,22 @@ test('the first admin turns sign-in on; signing out and in again lands on two-fa
   await page.getByLabel('Email').fill(email);
   await page.getByLabel('Password').fill(password);
   await page.getByRole('button', { name: 'Create account and sign in' }).click();
-  // Admins must use two-factor sign-in until an admin chooses otherwise: Account first.
-  await expect(page).toHaveURL(/\/account$/);
-  await expect(page.getByText('Set up two-factor sign-in to continue.')).toBeVisible();
+  // Admins must use two-factor sign-in until an admin chooses otherwise: the first admin gets
+  // setup's two-factor step, that alone, and nothing else opens meanwhile.
+  await expect(page).toHaveURL(/\/setup\/two-factor$/);
+  await expect(page.getByRole('heading', { name: 'Turn on two-factor sign-in' })).toBeVisible();
+  await expect(page.getByRole('img', { name: 'QR code for your authenticator app' })).toBeVisible();
+  await expect(page.getByLabel('Code from the app')).toBeFocused();
+  await scan(page, testInfo);
+  // Nothing else opens until it is on, Account included.
+  for (const path of ['/dashboard', '/account', '/team']) {
+    await open(page, path);
+    await expect(page).toHaveURL(/\/setup\/two-factor$/);
+  }
 
-  // The account menu isn't there while setup is due; sign out through /logout.
-  await open(page, '/logout');
+  // Signing out is the one other way off it.
+  await page.getByRole('link', { name: 'Sign out' }).click();
+  await expect(page).toHaveURL(/\/logout/);
   await page.getByRole('button', { name: 'Sign out' }).click();
   await expect(page).toHaveURL(/\/login/);
 
@@ -49,7 +59,7 @@ test('the first admin turns sign-in on; signing out and in again lands on two-fa
 
   await page.getByLabel('Password').fill(password);
   await page.getByRole('button', { name: 'Sign in', exact: true }).click();
-  await expect(page).toHaveURL(/\/account$/);
+  await expect(page).toHaveURL(/\/setup\/two-factor$/);
 
   // Forgotten passwords: asking for a code answers the same for any address, and a wrong code
   // reads the same as an expired one. (The code itself goes to the dev server's log, so the rest

@@ -1,7 +1,6 @@
 import { Button } from '@contentworker/ui/button';
 import { Input } from '@contentworker/ui/input';
 import { cn } from '@contentworker/ui/lib/utils';
-import { Download } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import {
   data,
@@ -12,12 +11,11 @@ import {
   useLoaderData,
   useNavigation,
 } from 'react-router';
-import { encode } from 'uqr';
 import { Ago } from '~/components/ago';
-import { CopyButton } from '~/components/copy-button';
 import { InstallHint } from '~/components/install-hint';
 import { PageHeader, Section } from '~/components/page';
 import { Passkeys } from '~/components/passkeys';
+import { groupedKey, QrCode, RecoveryCodes } from '~/components/two-factor';
 import { requireUser, sessionId, Throttled } from '~/lib/auth.server';
 import { listPasskeys } from '~/lib/passkeys.server';
 import { ROLE_LABELS } from '~/lib/roles';
@@ -383,7 +381,6 @@ function TwoFactor({ status }: { status: { enabledAt: number | null; recoveryLef
     ) : null;
 
   if (showCodes) {
-    const text = codes.join('\n');
     return (
       <Section title="Two-factor sign-in" className="mt-6">
         <div className="space-y-3">
@@ -397,43 +394,14 @@ function TwoFactor({ status }: { status: { enabledAt: number | null; recoveryLef
             your phone. They are shown only now
             {lastIntent === 'two-factor-codes' ? '; your older codes no longer work.' : '.'}
           </p>
-          <ul
-            aria-label="Recovery codes"
-            className="grid select-all grid-cols-2 gap-x-6 gap-y-0.5 rounded-sm border bg-card px-3 py-2 font-mono text-sm"
-          >
-            {codes.map((c) => (
-              <li key={c}>{c}</li>
-            ))}
-          </ul>
-          <div className="flex flex-wrap gap-2">
-            <CopyButton text={text} />
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                const url = URL.createObjectURL(new Blob([`${text}\n`], { type: 'text/plain' }));
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = 'contentworker-recovery-codes.txt';
-                a.click();
-                URL.revokeObjectURL(url);
-              }}
-            >
-              <Download /> Download
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              className="ml-auto"
-              onClick={() => {
-                setSavedCodes(codesKey);
-                saved.current = true;
-              }}
-            >
-              I’ve saved them
-            </Button>
-          </div>
+          <RecoveryCodes
+            codes={codes}
+            done="I’ve saved them"
+            onDone={() => {
+              setSavedCodes(codesKey);
+              saved.current = true;
+            }}
+          />
         </div>
       </Section>
     );
@@ -553,7 +521,7 @@ function TwoFactor({ status }: { status: { enabledAt: number | null; recoveryLef
             <div className="min-w-0 text-xs">
               <p className="text-muted-foreground">Can’t scan? Enter this key in the app:</p>
               <code className="mt-1 block select-all break-all font-mono text-sm">
-                {setup.secret.match(/.{1,4}/g)?.join(' ')}
+                {groupedKey(setup.secret)}
               </code>
             </div>
           </div>
@@ -613,28 +581,5 @@ function TwoFactor({ status }: { status: { enabledAt: number | null; recoveryLef
         </tf.Form>
       )}
     </Section>
-  );
-}
-
-/** Dark modules on a white field whatever the theme, which is what scanners expect. */
-function QrCode({ value }: { value: string }) {
-  const { data: rows, size } = encode(value, { ecc: 'M', border: 2 });
-  let path = '';
-  rows.forEach((row, y) => {
-    row.forEach((on, x) => {
-      if (on) path += `M${x} ${y}h1v1h-1z`;
-    });
-  });
-  return (
-    <svg
-      viewBox={`0 0 ${size} ${size}`}
-      className="size-40 shrink-0 rounded-sm"
-      shapeRendering="crispEdges"
-      role="img"
-      aria-label="QR code for your authenticator app"
-    >
-      <rect width={size} height={size} fill="#fff" />
-      <path d={path} fill="#000" />
-    </svg>
   );
 }

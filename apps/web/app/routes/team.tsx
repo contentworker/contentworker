@@ -46,6 +46,7 @@ import {
   startSession,
   stepUp,
   stepUpMethod,
+  TWO_FACTOR_STEP_PATH,
 } from '~/lib/auth.server';
 import { initials } from '~/lib/initials';
 import { openInvites } from '~/lib/invites';
@@ -147,7 +148,10 @@ export async function action({ request }: Route.ActionArgs) {
         name: str('name'),
         password: str('password'),
       });
-      return redirect('/team', { headers: { 'set-cookie': await startSession(request, id) } });
+      // As setup's first admin: two-factor sign-in on its own page, then on to `/`.
+      return redirect(TWO_FACTOR_STEP_PATH, {
+        headers: { 'set-cookie': await startSession(request, id) },
+      });
     }
     if (me.kind === 'user' && (await needsStepUp(str('intent'), f, me))) {
       const failed = await stepUp(request, me, { code: str('code'), password: str('password') });

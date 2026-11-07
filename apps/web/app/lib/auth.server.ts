@@ -16,6 +16,7 @@
  *   SSO-only on, passwords and passkeys are refused, and two-factor sign-in is the provider's job.
  */
 
+import { env } from 'cloudflare:workers';
 import {
   authFailures,
   recoveryCodes,
@@ -96,11 +97,15 @@ export async function authEnabled(): Promise<boolean> {
 /**
  * True while a deployed workspace has no people yet: every caller would be an admin, which only
  * local development may be, so everything but the setup page is refused until its first admin
- * signs up with the setup code.
+ * signs up with the setup code. Local development started for a first run (`pnpm dev:first-run`,
+ * FIRST_RUN) is held to it too, so the setup flow can be walked as a deployment meets it.
  */
 export async function awaitingSetup(url: URL): Promise<boolean> {
-  return !isLocalHost(url) && !(await authEnabled());
+  return (!isLocalHost(url) || firstRun()) && !(await authEnabled());
 }
+
+/** Local development started as a fresh deployment's first run: closed until set up. */
+const firstRun = () => (env as { FIRST_RUN?: string }).FIRST_RUN === 'true';
 
 /**
  * The id of the request's session (the SHA-256 its `sessions` row is keyed by), or undefined.
@@ -317,8 +322,7 @@ export async function reauthenticate(userId: string, given: string, hash: string
 export const forbidden = (min: Role) =>
   `This needs the ${ROLE_LABELS[min]} role. Ask an admin to change your role on the Team page.`;
 
-export const TWO_FACTOR_DUE =
-  'Your role needs two-factor sign-in. Set it up on your Account page first.';
+export const TWO_FACTOR_DUE = 'Your role needs two-factor sign-in. Turn it on first.';
 
 export const PASSWORD_CHANGE_DUE =
   'You are signed in with a temporary password. Choose your own on your Account page first.';
@@ -329,6 +333,27 @@ export const setupDue = (c: Caller): string | null =>
 
 /** The page someone whose two-factor sign-in or own password is due may still use, to set it up. */
 const SETUP_PATH = '/account';
+
+/**
+ * The two-factor step (routes/setup-two-factor.tsx): the same setup as Account's, alone on a page.
+ * Someone whose two-factor sign-in is due reaches it and nothing else until it is on (a new
+ * deployment's first admin meets it straight after setup). A temporary password comes first, on
+ * Account, which has the form for it.
+ */
+export const TWO_FACTOR_STEP_PATH = '/setup/two-factor';
+
+/** Where a caller with something due is held until it is done, or null when nothing is. */
+export const setupPath = (p: Caller): string | null =>
+  p.passwordChangeDue ? SETUP_PATH : p.twoFactorDue ? TWO_FACTOR_STEP_PATH : null;
+
+/**
+ * Where a request for `pathname` is sent instead, while something is due, or null when it may go
+ * on. A client navigation fetches loader data from `<path>.data`, held the same as the page.
+ */
+export const heldAt = (p: Caller, pathname: string): string | null => {
+  const hold = setupPath(p);
+  return hold && pathname.replace(/\.data$/, '') !== hold ? hold : null;
+};
 
 /**
  * Loader/action guard. Not signed in: redirect to sign-in. Two-factor sign-in due: redirect to the
@@ -347,8 +372,8 @@ export async function requireUser(request: Request, min: Role = 'member'): Promi
     throw redirect(withNext('/login', back.pathname + back.search));
   }
   // Client navigations fetch loader data from `<path>.data`.
-  if ((p.twoFactorDue || p.passwordChangeDue) && url.pathname.replace(/\.data$/, '') !== SETUP_PATH)
-    throw redirect(SETUP_PATH);
+  const hold = heldAt(p, url.pathname);
+  if (hold) throw redirect(hold);
   if (!atLeast(p.role, min))
     throw data({ ok: false, error: forbidden(min), need: min }, { status: 403 });
   return p;
