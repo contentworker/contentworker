@@ -15,8 +15,9 @@ const DEVICES = ['iphone', 'iphone-landscape', 'ipad', 'ipad-landscape', 'deskto
 
 /**
  * CI runs the suite in four jobs at once, each on its own server, named by `E2E_PART`:
- * `webkit` (the iPhone, iPad and desktop projects), `axe` (the CMS project's accessibility sweep and
- * modal focus specs), `cms` (every other CMS spec, so a new one lands here) and `sign-in` (the
+ * `webkit` (the iPhone, iPad and desktop projects), `axe` (the accessibility sweep and the modal
+ * focus specs, the desktop project's too), `cms` (every other CMS spec, so a new one lands here) and
+ * `sign-in` (the
  * projects that sign the first admin up, with no device tests to wait for). Each is about a third
  * of the suite's time. Unset, the whole suite runs in order, as it does locally.
  */
@@ -27,7 +28,13 @@ if (PART && !PARTS.includes(PART)) {
 }
 const AXE = /(accessibility|modal-focus)\.spec\.ts/;
 const partOf = (project: string) =>
-  project === 'cms' ? ['axe', 'cms'] : DEVICES.includes(project) ? ['webkit'] : ['sign-in'];
+  project === 'cms'
+    ? ['axe', 'cms']
+    : project === 'desktop'
+      ? ['webkit', 'axe']
+      : DEVICES.includes(project)
+        ? ['webkit']
+        : ['sign-in'];
 
 export default defineConfig({
   testDir: 'e2e',
@@ -74,7 +81,9 @@ export default defineConfig({
     },
     {
       name: 'desktop',
-      testMatch: ['shell.spec.ts', 'modal-focus.spec.ts'],
+      // Its modal focus specs run in the `axe` part, which evens out the parts' time.
+      testMatch: PART === 'axe' ? 'modal-focus.spec.ts' : ['shell.spec.ts', 'modal-focus.spec.ts'],
+      testIgnore: PART === 'webkit' ? 'modal-focus.spec.ts' : undefined,
       use: { ...devices['Desktop Safari'] },
     },
     // The CMS screens (seeded through the same-origin gateway while sign-in is still open), with
