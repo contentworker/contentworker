@@ -9,9 +9,11 @@
 # that holds the deployment's environment. Set both to work against the private ops repo; without
 # them, this repository's deployments/ and its own environments are used.
 #
-# Needs `wrangler login` (or CLOUDFLARE_API_TOKEN) and `gh auth login`. The AI Gateway is created
-# through the API, so it also needs CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID; without them
-# it prints what to create instead.
+# Needs `wrangler login` (or CLOUDFLARE_API_TOKEN) and `gh auth login`. D1 read replication and the
+# AI Gateway go through the API with the same credentials: CLOUDFLARE_API_TOKEN and
+# CLOUDFLARE_ACCOUNT_ID when set, else wrangler's own login (`wrangler auth token`, and the account
+# from `wrangler whoami` when it has exactly one). Nothing to paste; what the API refuses is printed
+# for the dashboard instead.
 set -euo pipefail
 id="${1:?usage: scripts/provision.sh <id>}"
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -23,6 +25,14 @@ wrangler() { pnpm --filter @contentworker/engine exec wrangler "$@"; }
 j=()
 [ -n "$JURISDICTION" ] && j=(--jurisdiction "$JURISDICTION")
 
+# Credentials for the two API calls wrangler has no command for. Kept in shell variables, never
+# exported: wrangler itself keeps using whatever it was signed in with.
+cf_token="${CLOUDFLARE_API_TOKEN:-$(wrangler auth token 2>/dev/null | tail -n 1 || true)}"
+cf_account="${CLOUDFLARE_ACCOUNT_ID:-$(wrangler whoami --json 2>/dev/null | sed -n '/^{/,$p' |
+  jq -r 'if (.accounts | length) == 1 then .accounts[0].id else empty end' 2>/dev/null || true)}"
+[[ "$cf_token" =~ ^[A-Za-z0-9._-]{20,}$ ]] || cf_token=""
+[[ "$cf_account" =~ ^[0-9a-f]{32}$ ]] || cf_account=""
+
 echo "== $id: D1 $D1, KV $KV, R2 $MEDIA, index ${VECTORS:-none}, gateway $AI_GATEWAY"
 echo "   https://$DOMAIN (admin), https://$API_DOMAIN (api), https://$CDN_DOMAIN (delivery), https://$MEDIA_DOMAIN (media); environment $ENVIRONMENT"
 
@@ -33,12 +43,13 @@ wrangler d1 create "$D1" ${j[@]+"${j[@]}"} || echo "D1 database $D1 already exis
 # apps/engine/wrangler.jsonc first, where the binding carries the placeholder id.
 uuid=$(wrangler d1 list --json | jq -er --arg n "$D1" '.[] | select(.name == $n) | .uuid')
 node scripts/fleet.ts set-d1 "$id" "$uuid"
-if [ -n "${CLOUDFLARE_API_TOKEN:-}" ] && [ -n "${CLOUDFLARE_ACCOUNT_ID:-}" ]; then
-  curl -fsS -X PUT "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/d1/database/$uuid" \
-    -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H 'Content-Type: application/json' \
-    --data '{"read_replication":{"mode":"auto"}}' >/dev/null && echo "D1 read replication: auto"
+if [ -n "$cf_token" ] && [ -n "$cf_account" ] &&
+  curl -fsS -X PUT "https://api.cloudflare.com/client/v4/accounts/$cf_account/d1/database/$uuid" \
+    -H "Authorization: Bearer $cf_token" -H 'Content-Type: application/json' \
+    --data '{"read_replication":{"mode":"auto"}}' >/dev/null; then
+  echo "D1 read replication: auto"
 else
-  echo "Turn on read replication for $D1 (dashboard: D1 > $D1 > Settings), or re-run with CLOUDFLARE_API_TOKEN."
+  echo "Turn on read replication for $D1 (dashboard: D1 > $D1 > Settings)."
 fi
 
 # The KV namespace the api, engine, delivery and media share (delivery cache, cached principals,
@@ -95,12 +106,11 @@ else
 fi
 
 # The AI Gateway every model call goes through.
-if [ -n "${CLOUDFLARE_API_TOKEN:-}" ] && [ -n "${CLOUDFLARE_ACCOUNT_ID:-}" ]; then
-  api="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/ai-gateway/gateways"
-  if curl -fsS -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "$api/$AI_GATEWAY" >/dev/null 2>&1; then
+if [ -n "$cf_token" ] && [ -n "$cf_account" ]; then
+  api="https://api.cloudflare.com/client/v4/accounts/$cf_account/ai-gateway/gateways"
+  if curl -fsS -H "Authorization: Bearer $cf_token" "$api/$AI_GATEWAY" >/dev/null 2>&1; then
     echo "AI Gateway $AI_GATEWAY already exists"
-  else
-    curl -fsS -X POST "$api" -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+  elif curl -fsS -X POST "$api" -H "Authorization: Bearer $cf_token" \
       -H 'Content-Type: application/json' \
       --data "$(jq -n --arg id "$AI_GATEWAY" --argjson logs "$AI_GATEWAY_LOGS" '{
         id: $id, authentication: true, collect_logs: $logs,
@@ -108,11 +118,13 @@ if [ -n "${CLOUDFLARE_API_TOKEN:-}" ] && [ -n "${CLOUDFLARE_ACCOUNT_ID:-}" ]; th
         cache_ttl: 0, cache_invalidate_on_update: false,
         rate_limiting_limit: 120, rate_limiting_interval: 60, rate_limiting_technique: "sliding",
         retry_max_attempts: 3, retry_delay: 500, retry_backoff: "exponential"
-      }')" >/dev/null
+      }')" >/dev/null; then
     echo "Created AI Gateway $AI_GATEWAY"
+  else
+    echo "Couldn't create AI Gateway $AI_GATEWAY: create it in the dashboard (AI > AI Gateway)."
   fi
 else
-  echo "Skipped the AI Gateway: set CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID, or create"
+  echo "Skipped the AI Gateway (no Cloudflare login to call the API with): create"
   echo "\"$AI_GATEWAY\" in the dashboard (AI > AI Gateway)."
 fi
 
@@ -168,8 +180,8 @@ else
 fi
 
 echo
-echo "Next: add CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID to $ENVIRONMENT if they aren't"
-echo "repository secrets, commit $id.jsonc in the registry, and merge: CI deploys it in its ring."
+echo "Next: if $repo doesn't hold CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID as repository"
+echo "secrets, add them to $ENVIRONMENT. Then commit $id.jsonc in the registry, and merge: CI deploys it in its ring."
 echo "Then send the customer's first admin https://$DOMAIN/setup and the setup code in $file."
 echo "Escrow its secrets: run the Escrow secrets workflow on $repo for $ENVIRONMENT"
 echo "(docs/backup-and-restore.md, \"Escrowing secrets\")."
