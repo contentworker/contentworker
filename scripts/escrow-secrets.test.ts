@@ -68,7 +68,7 @@ test('every secret a Worker receives is escrowed, except those derived from anot
 
 test('the recipient is pinned in the file, so changing it takes a reviewed change', () => {
   assert.doesNotMatch(workflow, /vars\./);
-  assert.match(workflow, /ESCROW_RECIPIENT: '(age1[a-z0-9]{58})?'\n/);
+  assert.match(workflow, /ESCROW_RECIPIENT: age1[a-z0-9]{58}\n/);
 });
 
 test('nothing from the repository runs beside the secrets', () => {
