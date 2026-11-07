@@ -19,6 +19,21 @@ export function isSpaceId(value: string): boolean {
 }
 
 /**
+ * The shape an entry id brought from elsewhere must have. Minted ids are UUIDv7s, but a snapshot
+ * carries its own, and an id is repeated into audit rows, URLs and object keys, where prose
+ * doesn't belong: ASCII letters, digits, `_` and `-`, at most 64 characters.
+ */
+export const ENTRY_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+
+/** What {@link ENTRY_ID_PATTERN} asks for, in words. Doesn't repeat the refused id. */
+export const ENTRY_ID_RULE = 'an entry id is 1 to 64 ASCII letters, digits, underscores or hyphens';
+
+/** True when `value` can be an entry's id. */
+export function isEntryId(value: unknown): value is string {
+  return typeof value === 'string' && ENTRY_ID_PATTERN.test(value);
+}
+
+/**
  * The media bucket's top-level prefixes that aren't a space: archived entry version bodies
  * (`versions/`), staged import and snapshot chunks (`imports/`), plugin bundles (`plugins/`), dead
  * letters (`dlq/`, with its own lifecycle rule) and zip downloads (`zips/`, with one too). A
