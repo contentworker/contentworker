@@ -293,6 +293,7 @@ function PersonalAccessTokens(props: { client: ManagementClient }) {
                 title={t.name ?? <span className="text-muted-foreground">Unnamed token</span>}
                 meta={
                   <span className="flex flex-wrap gap-x-2">
+                    {!t.name && <span>ID ending {idTail(t.id)}</span>}
                     {t.subject && <span className="min-w-0 break-words">Owned by {t.subject}</span>}
                     <span title={t.scopes.join(', ')}>Access: {scopeText(t.scopes) || 'None'}</span>
                     <span>
@@ -310,7 +311,7 @@ function PersonalAccessTokens(props: { client: ManagementClient }) {
                 actions={
                   t.revoked ? undefined : (
                     <RevokeTokenButton
-                      name={t.name ?? 'this token'}
+                      name={t.name ? `“${t.name}”` : `the unnamed token ending ${idTail(t.id)}`}
                       onConfirm={() => revoke(t.id)}
                     />
                   )
@@ -334,17 +335,23 @@ function tokenStatus(token: PersonalAccessToken): string {
   return 'active';
 }
 
+/** The end of a token's id, which tells unnamed tokens apart (UUIDv7 ends in random bits). */
+function idTail(id: string): string {
+  return id.replace(/-/g, '').slice(-4);
+}
+
+/** `name` is ready to read: a quoted name, or how an unnamed token is told apart. */
 function RevokeTokenButton(props: { name: string; onConfirm: () => void }) {
   return (
     <AlertDialog>
       <AlertDialogTrigger asChild>
-        <Button type="button" variant="ghost" size="xs" aria-label={`Revoke “${props.name}”`}>
+        <Button type="button" variant="ghost" size="xs" aria-label={`Revoke ${props.name}`}>
           Revoke
         </Button>
       </AlertDialogTrigger>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>Revoke “{props.name}”?</AlertDialogTitle>
+          <AlertDialogTitle>Revoke {props.name}?</AlertDialogTitle>
           <AlertDialogDescription>
             Anything using this token stops working immediately. This can&rsquo;t be undone.
           </AlertDialogDescription>

@@ -245,6 +245,23 @@ describe('Personal access tokens', () => {
     expect(screen.queryByRole('button', { name: 'Revoke “gone”' })).toBeNull();
   });
 
+  it('tells unnamed tokens apart by the end of their id, on screen and to a screen reader', async () => {
+    const client = fakeClient({
+      tokens: [
+        { id: '0190-aaaa-1111', scopes: ['delivery:read'], revoked: false },
+        { id: '0190-aaaa-2222', scopes: ['delivery:read'], revoked: false },
+      ],
+    });
+    renderWith(<ConnectedApps client={client as unknown as ManagementClient} />);
+
+    expect(await screen.findByText('ID ending 1111')).toBeTruthy();
+    expect(screen.getByText('ID ending 2222')).toBeTruthy();
+    await confirm('Revoke the unnamed token ending 2222', 'Revoke token');
+    await waitFor(() =>
+      expect(client.revokePersonalAccessToken).toHaveBeenCalledWith('0190-aaaa-2222'),
+    );
+  });
+
   it('revokes a token', async () => {
     const client = fakeClient({
       tokens: [{ id: 'a', name: 'live', scopes: ['delivery:read'], revoked: false }],

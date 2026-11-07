@@ -31,6 +31,7 @@ import { Empty, PageHeader } from '~/cms/components/page';
 import { StatusBadge } from '~/cms/components/status';
 import { contentTypeIcon } from '~/cms/lib/content-type-icons';
 import { count, plural } from '~/cms/lib/format';
+import { typeMark } from '~/lib/initials';
 import { useClient } from '../lib/client-context';
 import { apiErrorMessage, type ContentTypeEntryCounts } from '../lib/management';
 import { useInvalidate, useScopedQuery } from '../lib/queries';
@@ -174,13 +175,14 @@ export function ContentTypesOverview() {
             <Catalog aria-label="Content types" className="pt-0">
               {shown.map((ct) => {
                 const n = countsFor(ct.apiId);
-                const Icon = contentTypeIcon(ct.icon) ?? Shapes;
+                // A type without an icon shows its initials, so such rows still look apart.
+                const Icon = contentTypeIcon(ct.icon);
                 return (
                   <CatalogRow
                     key={ct.apiId}
                     media={
-                      <CatalogTile>
-                        <Icon aria-hidden="true" />
+                      <CatalogTile aria-hidden="true">
+                        {Icon ? <Icon /> : typeMark(ct.name || ct.apiId)}
                       </CatalogTile>
                     }
                     title={

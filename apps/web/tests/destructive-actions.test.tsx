@@ -670,6 +670,25 @@ describe('Release publish confirm', () => {
     expect(client.publishRelease).not.toHaveBeenCalled();
   });
 
+  it('filters to archived releases, which no other status shows', async () => {
+    client.listReleases.mockResolvedValue([
+      { ...release, itemCount: 1 },
+      { ...release, id: 'rel-2', title: 'Old launch', status: 'archived', itemCount: 2 },
+    ]);
+    client.listContentTypes.mockResolvedValue([]);
+    renderWithProviders(
+      <MemoryRouter>
+        <Releases />
+      </MemoryRouter>,
+    );
+    await screen.findByRole('button', { name: 'Old launch' });
+    fireEvent.click(screen.getByRole('radio', { name: 'Open' }));
+    expect(screen.queryByRole('button', { name: 'Old launch' })).toBeNull();
+    fireEvent.click(screen.getByRole('radio', { name: 'Archived' }));
+    expect(screen.getByRole('button', { name: 'Old launch' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Spring campaign' })).toBeNull();
+  });
+
   it('offers no publish inside an empty release', async () => {
     client.listReleases.mockResolvedValue([{ ...release, itemCount: 0 }]);
     client.listContentTypes.mockResolvedValue([]);

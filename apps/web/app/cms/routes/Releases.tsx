@@ -59,7 +59,7 @@ import { useToast } from '../lib/toast';
 type ScheduledFilter = 'all' | 'pending';
 
 /** Which releases the list shows. */
-type ReleaseFilter = 'all' | 'open' | 'published';
+type ReleaseFilter = 'all' | 'open' | 'published' | 'archived';
 
 /** Local datetime → ISO, defaulting to one hour out for the picker initial value. */
 function defaultScheduleLocal(): string {
@@ -191,6 +191,7 @@ export function Releases() {
                   <SegmentedItem value="all">All</SegmentedItem>
                   <SegmentedItem value="open">Open</SegmentedItem>
                   <SegmentedItem value="published">Published</SegmentedItem>
+                  <SegmentedItem value="archived">Archived</SegmentedItem>
                 </Segmented>
               </ListToolbar>
               {shown.length === 0 ? (

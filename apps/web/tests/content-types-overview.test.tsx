@@ -44,6 +44,7 @@ vi.mock('~/cms/lib/client-context', () => ({
 
 const { ToastProvider } = await import('~/cms/lib/toast');
 const { ContentTypesOverview } = await import('~/cms/routes/ContentTypesOverview');
+const { typeMark } = await import('~/lib/initials');
 
 afterEach(() => {
   cleanup();
@@ -190,6 +191,32 @@ describe('the list of content types', () => {
     );
     expect(row.getByRole('button', { name: 'More actions for “Site settings”' })).toBeTruthy();
     await waitFor(() => expect(client.contentTypeEntryCounts).toHaveBeenCalled());
+  });
+
+  it('names a type without an icon by letters that tell one-word names apart', () => {
+    expect(typeMark('Article')).toBe('Ar');
+    expect(typeMark('Author')).toBe('Au');
+    expect(typeMark('landing page')).toBe('LP');
+    expect(typeMark('Blog post archive')).toBe('BP');
+    expect(typeMark('')).toBe('');
+  });
+
+  it('draws a type’s icon in its tile, and its initials when it has none', async () => {
+    setup([
+      { ...type('blogPost', 'Blog post', 'published'), icon: 'newspaper' } as ContentType,
+      type('author', 'Author', 'published'),
+      type('landingPage', 'Landing page', 'published'),
+    ]);
+    const tile = (name: string) =>
+      screen
+        .getByRole('link', { name })
+        .closest('li')
+        ?.querySelector('[data-slot="catalog-tile"]') as HTMLElement;
+    await screen.findByText('Landing page');
+    expect(tile('Blog post').querySelector('svg')).toBeTruthy();
+    expect(tile('Author').textContent).toBe('Au');
+    expect(tile('Landing page').textContent).toBe('LP');
+    expect(tile('Author').getAttribute('aria-hidden')).toBe('true');
   });
 
   it('filters by name, API id and description, and a miss offers the way out', async () => {
