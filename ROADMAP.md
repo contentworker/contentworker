@@ -184,13 +184,12 @@ Recovery targets not met yet (`docs/backup-and-restore.md`) and the move to a pr
   Deferred until a customer is close; the plan is in the private fleet repo.
 - [ ] **Restore drill.** Time a database restore against its 1-hour target.
 - [ ] **Assistant recovery.** Nothing calls the conversation object's point-in-time recovery.
-- [ ] **Fleet cutover.** The registry and rings are in the private repo and this repo only dispatches
-  to it; still to move are the production secrets, set
-  the secrets from escrow. The edge account token moves onto the environment there: as a repository
-  secret today, any branch can read it, which steps around the environment's `main`-only policy.
-  The escrow workflow moves too: it runs here first because only a job in this repository can read
-  these secrets, then lives in the private repo, where its artifacts and environment names aren't
-  public.
+- [ ] **Fleet cutover.** Live since 2026-11-07: the registry, rings and production secrets (set
+  from escrow) are in the private repo, the edge account token is on its `main`-only environment,
+  and this repo only dispatches to it. The escrow workflow stays defined here and the private repo
+  calls it, so its runs and artifacts aren't public. Left: once an escrow run from the private repo
+  succeeds, delete this repo's `production` environment and its repository-level edge account
+  secrets, which any branch can read.
 
 ### Parity milestones
 

@@ -117,9 +117,30 @@ them to a key only the escrow holder has. Nothing from the repository runs besid
 the job fails if a required secret or `PASSWORD_PEPPER` is missing. It reaches only what the
 environment holds: a secret set by hand on a Worker is not escrowed.
 
-The workflow must be in the repository that holds the environment, and only a branch the
-environment allows can read it (`provision.sh` limits each to `main`). Prefer a private repository:
-there the artifact and the environment's name aren't public.
+The job must run in the repository that holds the environment, and only a branch the environment
+allows can read it (`provision.sh` limits each to `main`). Prefer a private repository: there the
+artifact and the environment's name aren't public. A fleet in its own repository doesn't copy the
+workflow; it calls this one, so the job runs there with that repository's environment, and the
+check that every deployed secret is escrowed (`scripts/escrow-secrets.test.ts`) keeps covering it:
+
+```yaml
+# <fleet repo>/.github/workflows/escrow-secrets.yml
+name: Escrow secrets
+on:
+  workflow_dispatch:
+    inputs:
+      environment: { description: The deployment's GitHub environment, required: true, type: string }
+permissions:
+  contents: read
+jobs:
+  escrow:
+    uses: contentworker/contentworker/.github/workflows/escrow-secrets.yml@main
+    with:
+      environment: ${{ inputs.environment }}
+```
+
+contentworker's own fleet runs it from `contentworker/fleet`; add `-R contentworker/fleet` to the
+`gh` commands below.
 
 **Once, make the key** on the holder's machine, outside any checkout. Put the private half in a
 password manager outside GitHub and Cloudflare, delete the file, and pin the public half as
@@ -141,8 +162,8 @@ age --decrypt --identity ~/escrow.key escrow.age | cut -d= -f1    # names only
 gh api --method DELETE repos/<owner>/<repo>/actions/artifacts/<artifact-id>
 ```
 
-The artifact is ciphertext, but this repository's artifacts are public, so delete it as soon as it
-is down; it expires after a day regardless. Keep every generation, named with its date and run id,
+The artifact is ciphertext, but a public repository's artifacts are public, so delete it as soon as
+it is down; it expires after a day regardless. Keep every generation, named with its date and run id,
 for at least the database's recovery window: a restore to before a `DATA_KEY` rotation brings back
 values sealed under the old key. During a rotation, run it before removing `DATA_KEY_PREVIOUS`.
 

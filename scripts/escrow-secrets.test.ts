@@ -66,6 +66,11 @@ test('every secret a Worker receives is escrowed, except those derived from anot
   assert.deepEqual(names(workflow).sort(), [...new Set(deployed)].sort());
 });
 
+test('a fleet in another repository can call it, naming its own environment', () => {
+  assert.match(workflow, /\n {2}workflow_call:\n {4}inputs:\n {6}environment:\n/);
+  assert.match(workflow, /\n {4}environment: \$\{\{ inputs\.environment \}\}\n/);
+});
+
 test('the recipient is pinned in the file, so changing it takes a reviewed change', () => {
   assert.doesNotMatch(workflow, /vars\./);
   assert.match(workflow, /ESCROW_RECIPIENT: age1[a-z0-9]{58}\n/);
