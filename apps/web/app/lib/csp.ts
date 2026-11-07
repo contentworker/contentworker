@@ -71,13 +71,56 @@ export function parseEmbed(raw: string | null): EmbedPolicy | null {
   }
 }
 
+/** Carried from a route's `headers` to entry.server.tsx: a JSON array of origins it frames. */
+export const FRAME_HEADER = 'x-cw-frames';
+
+// A customer's frontend in development runs on the developer's own machine, over plain http.
+const LOOPBACK = new Set(['localhost', '127.0.0.1']);
+
+/**
+ * The origins a page may frame (`frame-src`), from the frontend origins of a space's content types
+ * (`previewOrigin` in the domain): https, or http on localhost and 127.0.0.1, origin only. Anything
+ * else is dropped, so a stored value can never widen the policy or add a directive.
+ */
+export function frameSources(vs: unknown): string[] {
+  const out = new Set<string>();
+  for (const v of Array.isArray(vs) ? vs : []) {
+    let u: URL;
+    try {
+      u = new URL(String(v));
+    } catch {
+      continue;
+    }
+    if (u.username || u.password) continue;
+    const ok = u.protocol === 'https:' || (u.protocol === 'http:' && LOOPBACK.has(u.hostname));
+    if (!ok || /[^\x21-\x7e]|[;,']/.test(u.origin)) continue;
+    out.add(u.origin);
+  }
+  return [...out];
+}
+
+/** Framed origins read back from `FRAME_HEADER`; none for anything unreadable. */
+export function parseFrames(raw: string | null): string[] {
+  if (!raw) return [];
+  try {
+    return frameSources(JSON.parse(raw));
+  } catch {
+    return [];
+  }
+}
+
 /**
  * The Content-Security-Policy for an HTML page. Scripts run only from this origin or with the
  * response's nonce (the theme script and React Router's inline scripts); styles and fonts come
  * from this origin. Pages can't be framed, and forms post only here, unless `embed` (an embeddable
- * page) names the origins that may frame it and where its return form posts.
+ * page) names the origins that may frame it and where its return form posts. Frames load only
+ * from this origin and `frames` (a frontend the admin previews entries on, from `frameSources`).
  */
-export function contentSecurityPolicy(nonce: string, embed?: EmbedPolicy | null): string {
+export function contentSecurityPolicy(
+  nonce: string,
+  embed?: EmbedPolicy | null,
+  frames: readonly string[] = [],
+): string {
   const ancestors = embed?.frameAncestors.length ? embed.frameAncestors.join(' ') : "'none'";
   const actions = ["'self'", ...(embed?.formAction ?? [])].join(' ');
   return [
@@ -91,6 +134,7 @@ export function contentSecurityPolicy(nonce: string, embed?: EmbedPolicy | null)
     "base-uri 'self'",
     `form-action ${actions}`,
     `frame-ancestors ${ancestors}`,
+    ["frame-src 'self'", ...frameSources(frames)].join(' '),
   ].join('; ');
 }
 

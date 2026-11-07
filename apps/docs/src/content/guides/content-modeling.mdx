@@ -17,6 +17,7 @@ A content type has:
 - a **display field**, the field used as each entry's title in lists, pickers and search results;
 - an ordered list of **fields**;
 - optionally a **URL pattern**, where its entries live on your site;
+- optionally a **preview URL**, where your site shows a draft of one of its entries;
 - optionally **singleton**: it holds one entry only.
 - optionally a **group**, **description** and **icon**, and an editor **layout** (see
   [Organizing the model](#organizing-the-model)).
@@ -49,6 +50,21 @@ of the type's own `Slug` fields; anything else is refused. In the content type d
 an entry that was already published, ContentWorker writes a `301` from the old path to the new one;
 see [Redirects](/guides/redirects/#redirect-slug-changes). A revision that removes a slug a kept
 pattern names is refused.
+
+### Preview URL
+
+A preview URL is where your own frontend shows a draft of one of the type's entries, for example
+`https://site.example/__preview?entry={id}&token={token}`. A [preview link](/guides/editing-and-publishing/#preview-drafts)
+fills it for an entry and returns it as `frontendUrl`, beside the Preview API URL. Its placeholders,
+each filled URL-encoded, are `{id}`, `{token}` (required: the frontend reads the draft with it),
+`{locale}`, `{space}`, `{environment}`, and `{field:<apiId>}` for one of the type's own `Symbol`,
+`Slug`, `Integer`, `Number` or `Date` fields; anything else is refused. It is an `https` URL
+(`http` only for `localhost` or `127.0.0.1`) with no placeholder in its host, so the admin knows
+which origin it may frame. While a field it names is empty in the link's locale, the link has no
+`frontendUrl`. In the content type dialog it is the **Preview URL** field; over the API and MCP it
+is `preview: { urlTemplate }` on `POST …/content-types` and `model_create_content_type` (`null`
+clears it). It is editor-only: Delivery never serves it. A promotion that adds or changes it asks
+for approval, since it decides where preview tokens are sent.
 
 ### Singletons
 
@@ -184,8 +200,8 @@ see [Roles](/guides/api-keys/#roles)).
 - **Keep the model in a file.** `contentworker model export` writes it out, and `contentworker
   model apply --dry-run` shows what a changed file would add, change and remove before anything
   does; see the [command-line tool](/guides/cli/#the-content-model-as-code).
-- **Cloning a type** copies its fields, display field, singleton flag, group, description, icon
-  and layout under a new API ID and name, as a draft with no entries; its URL pattern stays behind,
+- **Cloning a type** copies its fields, display field, singleton flag, group, description, icon,
+  agent instructions, layout and preview URL under a new API ID and name, as a draft with no entries; its URL pattern stays behind,
   so two types never route the same paths. In the admin it is **Clone…** in the type's menu on the Content page; over the API
   `POST …/content-types/{apiId}/clone` with `{ apiId, name }`, over MCP `model_clone_content_type`.
 - **Deleting a type** is refused, naming every reason, while anything depends on it: entries (the

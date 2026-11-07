@@ -189,9 +189,12 @@ curl -s -X POST "$API/spaces/$SPACE/environments/main/entries/$ENTRY_ID/preview-
   -d '{ "ttlHours": 24, "previewBaseUrl": "https://preview.example.com" }'
 ```
 
-`ttlHours` defaults to 72 and is at most 8,760; `previewBaseUrl` defaults to the request's origin.
-The response is `{ url, token, expiresAt }`, where `url` is
-`{previewBaseUrl}/preview/{space}/{env}/entries/{id}?preview_token=…`. The token opens only that
+`ttlHours` defaults to 72 and is at most 8,760; `previewBaseUrl` defaults to the request's origin;
+`locale` (the space's default if absent) is the locale `frontendUrl` is filled in.
+The response is `{ url, frontendUrl?, token, expiresAt }`, where `url` is
+`{previewBaseUrl}/preview/{space}/{env}/entries/{id}?preview_token=…` and `frontendUrl`, when the
+entry's type has a [preview URL](/guides/content-modeling/#preview-url), is that template filled
+for the entry and the token. Over MCP it is `entries_preview_link`. The token opens only that
 entry, through `GET /preview/{space}/{env}/entries/{id}?preview_token=…`, until it expires. See
 [Reading content](/guides/reading-content/#preview) for the Preview routes.
 

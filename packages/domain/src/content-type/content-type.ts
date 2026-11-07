@@ -24,6 +24,7 @@ import {
 import { MAX_FIELD_RULES, ruleProblem, ruleTarget } from './field-rules';
 import { type ContentTypeLayout, checkLayout } from './layout';
 import { isPatternPreset, PATTERN_PRESETS, presetRegexp } from './patterns';
+import { type ContentTypePreview, checkPreviewTemplate } from './preview';
 
 /**
  * A content type: the schema for a class of entries. Definitions are versioned
@@ -63,6 +64,11 @@ export interface ContentType {
    * nothing stored or validated, and Delivery never serves it.
    */
   readonly layout?: ContentTypeLayout;
+  /**
+   * Where the admin previews the type's entries on the customer's frontend
+   * ({@link ContentTypePreview}). Editor-only: Delivery never serves it.
+   */
+  readonly preview?: ContentTypePreview;
   readonly version: number;
   readonly status: ContentTypeStatus;
 }
@@ -87,7 +93,7 @@ export interface PublishedContentTypeDefinition {
  */
 export type DeliveredContentType = Omit<
   ContentType,
-  'group' | 'description' | 'icon' | 'agentInstructions' | 'layout'
+  'group' | 'description' | 'icon' | 'agentInstructions' | 'layout' | 'preview'
 >;
 
 /**
@@ -143,6 +149,8 @@ export interface ContentTypeDraft {
   icon?: string | null;
   agentInstructions?: string | null;
   layout?: ContentTypeLayout | null;
+  /** Left out keeps it on a revision; `null` clears it. Checked against the revised fields. */
+  preview?: ContentTypePreview | null;
 }
 
 /** The longest group, description, icon name and agent instructions. */
@@ -169,6 +177,7 @@ export type ContentTypeChanges = Partial<
     | 'icon'
     | 'agentInstructions'
     | 'layout'
+    | 'preview'
   >
 >;
 
@@ -186,6 +195,7 @@ export function defineContentType(draft: ContentTypeDraft): ContentType {
   const fields = compilePatternPresets(draft.fields);
   assertFieldsValid(fields, draft.displayField, undefined);
   const urlPattern = draft.urlPattern ? checkUrlPattern(draft.urlPattern, fields) : undefined;
+  const preview = previewOf(draft.preview, fields);
   return {
     apiId: draft.apiId,
     name: draft.name,
@@ -194,6 +204,7 @@ export function defineContentType(draft: ContentTypeDraft): ContentType {
     ...(urlPattern ? { urlPattern } : {}),
     ...(draft.singleton ? { singleton: true as const } : {}),
     ...typeDetails(draft, undefined, fields),
+    ...(preview ? { preview } : {}),
     version: 1,
     status: 'draft',
   };
@@ -212,6 +223,11 @@ export function reviseContentType(current: ContentType, changes: ContentTypeChan
   const pattern = changes.urlPattern === undefined ? current.urlPattern : changes.urlPattern;
   const urlPattern = pattern ? checkUrlPattern(pattern, fields) : undefined;
   const singleton = changes.singleton ?? current.singleton === true;
+  // Like the URL pattern, checked against the revised fields: a kept template can't lose its field.
+  const preview = previewOf(
+    changes.preview === undefined ? current.preview : changes.preview,
+    fields,
+  );
   const {
     urlPattern: _old,
     singleton: _was,
@@ -220,6 +236,7 @@ export function reviseContentType(current: ContentType, changes: ContentTypeChan
     icon: _i,
     agentInstructions: _a,
     layout: _l,
+    preview: _p,
     ...rest
   } = current;
   return {
@@ -230,9 +247,28 @@ export function reviseContentType(current: ContentType, changes: ContentTypeChan
     ...(urlPattern ? { urlPattern } : {}),
     ...(singleton ? { singleton: true as const } : {}),
     ...typeDetails(changes, current, fields),
+    ...(preview ? { preview } : {}),
     version: current.version + 1,
     status: 'draft',
   };
+}
+
+/** A type's preview setting as stored: null or a blank template clears it. */
+function previewOf(
+  given: ContentTypePreview | null | undefined,
+  fields: readonly FieldDefinition[],
+): ContentTypePreview | undefined {
+  if (!given) return undefined;
+  const raw: unknown = (given as { urlTemplate?: unknown }).urlTemplate;
+  if (raw === undefined || raw === null || (typeof raw === 'string' && raw.trim() === '')) {
+    return undefined;
+  }
+  if (typeof raw !== 'string') {
+    throw new ValidationError([
+      { field: 'preview.urlTemplate', message: 'urlTemplate must be text' },
+    ]);
+  }
+  return { urlTemplate: checkPreviewTemplate(raw, fields) };
 }
 
 /**

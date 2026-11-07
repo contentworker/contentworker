@@ -229,6 +229,22 @@ describe('promoting content between environments', () => {
     expect(p.risk.reasons).toContain('The content type "promo" adds agent instructions');
   });
 
+  it('asks for approval when only a type’s preview URL changes: it is where tokens go', async () => {
+    await createEnvironment(ctx, spaceId, 'framed');
+    const framed = { spaceId, environmentId: 'framed' };
+    await seedModel(framed, {
+      ...note(),
+      preview: { urlTemplate: 'https://elsewhere.example/p?entry={id}&token={token}' },
+    });
+    const p = await requestPromotion(ctx, ada, spaceId, {
+      source: 'framed',
+      target: 'qa',
+      contentTypes: ['note'],
+    });
+    expect(p.status).toBe('awaiting_approval');
+    expect(p.risk.reasons).toContain('The content type "note" changes its preview URL');
+  });
+
   it('names the target entries that still hold a field the promotion removes', async () => {
     await createEnvironment(ctx, spaceId, 'slim');
     const slim = { spaceId, environmentId: 'slim' };

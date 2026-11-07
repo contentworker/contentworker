@@ -224,7 +224,8 @@ export function contentTypesRoutes(deps: AuthDeps): Hono<AuthVars> {
     doc('Content types', 'Clone a content type', {
       description:
         'Copies the definition (fields, display field, singleton, group, description, icon, ' +
-        'agent instructions, layout) under a new apiId and name, as a draft with no entries. Not its URL pattern. ' +
+        'agent instructions, layout, preview URL) under a new apiId and name, as a draft with no ' +
+        'entries. Not its URL pattern. ' +
         '409 when the apiId is taken.',
       body: cloneContentTypeBody,
       ok: contentTypeDocs.contentType,

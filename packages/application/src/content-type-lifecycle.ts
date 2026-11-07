@@ -373,6 +373,7 @@ export async function cloneContentType(
     ...(from.icon ? { icon: from.icon } : {}),
     ...(from.agentInstructions ? { agentInstructions: from.agentInstructions } : {}),
     ...(from.layout ? { layout: from.layout } : {}),
+    ...(from.preview ? { preview: from.preview } : {}),
   });
   // Insert-only: a clone (or create) of the same apiId that landed after the read keeps its type.
   try {

@@ -538,6 +538,7 @@ interface ContentType {
   icon?: string; // a kebab-case icon name the admin draws (≤ 40)
   agentInstructions?: string; // style guidance for agents; never delivered (≤ 4000)
   layout?: ContentTypeLayout; // editor-only tabs and field groups; never delivered
+  preview?: { urlTemplate: string }; // the frontend URL the admin previews entries at; never delivered
   version: number; // bumped on each revision
   status: 'draft' | 'published';
 }
@@ -629,7 +630,7 @@ interface ContentType {
   `bulk.job_completed`, and records the outcome on the job (`BulkJobRepo.mergeConfig`,
   `config.typeDeletion`: `{ deleted: true }` or `{ deleted: false, reason }`, also when the job is
   stopped). `cloneContentType` defines a copy (fields, display field, singleton, group, description, icon,
-  agent instructions, layout; not `urlPattern`)
+  agent instructions, layout, preview; not `urlPattern`)
   at version 1 under a new `apiId`, inserted by `ContentTypeRepo.create`, which never overwrites.
 - `checkUrlPattern(pattern, fields)` — a pattern is a path starting with `/` (at most
   `MAX_URL_PATTERN_LENGTH`, 512; no space, `?`, `#`, `[`, `]` or `\`) whose `{…}` placeholders are
@@ -638,6 +639,18 @@ interface ContentType {
   slug a kept pattern names is refused. `urlPath(pattern, entry, locale)` builds an entry's path (or
   `null` when a named slug has no value in that locale), which is also how a preview or site link
   can be built. A pattern is what makes a slug change write a [redirect](#redirects).
+- `checkPreviewTemplate(template, fields)` (`content-type/preview.ts`) — `preview.urlTemplate` is
+  an absolute URL (at most `MAX_PREVIEW_TEMPLATE_LENGTH`, 1024; no space): `https`, or `http` on
+  `localhost` or `127.0.0.1`, without credentials, with no placeholder in the scheme or authority.
+  Its placeholders are `{id}`, `{token}` (required), `{locale}`, `{space}`, `{environment}` and
+  `{field:<apiId>}` naming one of the type's top-level `PREVIEW_FIELD_TYPES` fields (Symbol, Slug,
+  Integer, Number, Date); anything else is a `ValidationError` on `preview.urlTemplate`. Left out
+  of a revision it is kept, `null` or a blank template clears it, and it is checked against the
+  revised fields like `urlPattern`. `previewOrigin(template)` is its fixed origin (what the admin's
+  `frame-src` may allow), `fillPreviewTemplate(template, values)` fills it URL-encoded, or `null`
+  while a named field has no value. `createPreviewLink` returns it filled as `frontendUrl` (a
+  localized field in the link's locale only; one that isn't, under the default locale). Stored in
+  `content_types.preview_url_template` (0035); a promotion that adds or changes it needs approval.
 
 ## Entry aggregate & state machine
 

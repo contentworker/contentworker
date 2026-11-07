@@ -1016,6 +1016,7 @@ const workingDraftOf = (ct: SnapshotContentType): ContentTypeDraft => ({
   ...(ct.icon ? { icon: ct.icon } : {}),
   ...(ct.agentInstructions ? { agentInstructions: ct.agentInstructions } : {}),
   ...(ct.layout ? { layout: ct.layout } : {}),
+  ...(ct.preview ? { preview: ct.preview } : {}),
 });
 
 /** Shown at most, so a broken snapshot's error stays readable. */

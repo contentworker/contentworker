@@ -202,6 +202,8 @@ export const contentTypes = sqliteTable(
     agentInstructions: text('agent_instructions'),
     /** The entry form's tabs and field groups; editor-only, never delivered (0026). */
     layout: text('layout', { mode: 'json' }).$type<ContentTypeLayout>(),
+    /** The frontend URL the admin previews entries at; editor-only, never delivered (0035). */
+    previewUrlTemplate: text('preview_url_template'),
   },
   (t) => [primaryKey({ columns: [t.spaceId, t.environmentId, t.apiId] })],
 );

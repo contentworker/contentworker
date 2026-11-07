@@ -5,6 +5,7 @@ import {
   type ContentType,
   type ContentTypeDraft,
   type ContentTypeLayout,
+  checkPreviewTemplate,
   DATE_FORMAT_EXAMPLES,
   type DateFormat,
   FIELD_GUIDANCE_LIMITS,
@@ -17,12 +18,14 @@ import {
   isValidApiId,
   LAYOUT_LIMITS,
   MAX_FIELD_RULES,
+  MAX_PREVIEW_TEMPLATE_LENGTH,
   PATTERN_PRESETS,
   type PatternPreset,
   type RuleAction,
   type RuleOperator,
   SCALAR_ITEM_TYPES,
   UNIQUE_FIELD_TYPES,
+  ValidationError,
 } from '@contentworker/domain';
 import { Button } from '@contentworker/ui/button';
 import { Checkbox } from '@contentworker/ui/checkbox';
@@ -47,7 +50,7 @@ import {
 } from '@contentworker/ui/select';
 import { Textarea } from '@contentworker/ui/textarea';
 import { Plus, Trash2 } from 'lucide-react';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { DiscardAsk, GuardCancel, useDiscardGuard } from '~/cms/components/discard-guard';
 import { toApiId } from '../lib/api-id';
 import { CONTENT_TYPE_ICONS, contentTypeIcon } from '../lib/content-type-icons';
@@ -557,6 +560,9 @@ export function ContentTypeDialog(props: {
   const [fields, setFields] = useState<FieldRow[]>(seed.fields);
   const [displayField, setDisplayField] = useState(props.initial?.displayField ?? 'title');
   const [urlPattern, setUrlPattern] = useState(props.initial?.urlPattern ?? '');
+  const [previewTemplate, setPreviewTemplate] = useState(props.initial?.preview?.urlTemplate ?? '');
+  const [previewError, setPreviewError] = useState<string>();
+  const previewRef = useRef<HTMLInputElement>(null);
   const [singleton, setSingleton] = useState(props.initial?.singleton === true);
   const [group, setGroup] = useState(props.initial?.group ?? '');
   const [description, setDescription] = useState(props.initial?.description ?? '');
@@ -580,6 +586,7 @@ export function ContentTypeDialog(props: {
     fields,
     displayField,
     urlPattern,
+    previewTemplate,
     singleton,
     group,
     description,
@@ -608,6 +615,7 @@ export function ContentTypeDialog(props: {
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(undefined);
+    setPreviewError(undefined);
     const finalApiId = apiId || toApiId(name);
     if (!name.trim() || !isValidApiId(finalApiId)) {
       setError('A name and a valid API ID (letter, then letters/numbers/_) are required.');
@@ -633,15 +641,30 @@ export function ContentTypeDialog(props: {
         return;
       }
     }
+    // The domain's own check, so the field says what is wrong before the save is refused for it.
+    const definitions = namedFields.map((f, i) => toDefinition(f, i, namedFields));
+    if (previewTemplate.trim()) {
+      try {
+        checkPreviewTemplate(previewTemplate.trim(), definitions);
+      } catch (err) {
+        if (!(err instanceof ValidationError)) throw err;
+        setPreviewError(err.issues[0]?.message ?? 'This preview URL can’t be used.');
+        // The field is usually off screen under a long field list: focus brings it, and its
+        // error, into view (and is read with the label through aria-describedby).
+        previewRef.current?.focus();
+        return;
+      }
+    }
     setBusy(true);
     try {
       await props.onSave({
         apiId: finalApiId,
         name: name.trim(),
         displayField,
-        fields: namedFields.map((f, i) => toDefinition(f, i, namedFields)),
+        fields: definitions,
         // Cleared with null: left out, a saved pattern would stay.
         urlPattern: urlPattern.trim() || null,
+        preview: previewTemplate.trim() ? { urlTemplate: previewTemplate.trim() } : null,
         singleton,
         group: group.trim() || null,
         description: description.trim() || null,
@@ -1073,6 +1096,40 @@ export function ContentTypeDialog(props: {
             <p id="ct-url-hint" className="max-w-measure text-muted-foreground text-ui">
               Where entries live on your site: {'{id}'}, {'{locale}'} or a Slug field’s API ID.
               Publishing a changed slug then redirects the old path. Optional.
+            </p>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="ct-preview">Preview URL</Label>
+            <Input
+              ref={previewRef}
+              id="ct-preview"
+              inputMode="url"
+              className="font-mono"
+              placeholder="https://example.com/__preview?entry={id}&token={token}"
+              autoCapitalize="off"
+              autoCorrect="off"
+              spellCheck={false}
+              maxLength={MAX_PREVIEW_TEMPLATE_LENGTH}
+              aria-invalid={previewError ? true : undefined}
+              aria-describedby={
+                previewError ? 'ct-preview-error ct-preview-hint' : 'ct-preview-hint'
+              }
+              value={previewTemplate}
+              onChange={(e) => {
+                setPreviewTemplate(e.target.value);
+                setPreviewError(undefined);
+              }}
+            />
+            {previewError && (
+              <p id="ct-preview-error" className="max-w-measure text-destructive text-ui">
+                {previewError}
+              </p>
+            )}
+            <p id="ct-preview-hint" className="max-w-measure text-muted-foreground text-ui">
+              Where your site shows a draft of these entries, with {'{token}'} to read it. Also{' '}
+              {'{id}'}, {'{locale}'}, {'{space}'}, {'{environment}'} or {'{field:slug}'}. Use https
+              (http only for localhost). Optional.
             </p>
           </div>
 

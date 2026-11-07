@@ -5,6 +5,7 @@ import {
   FIELD_GUIDANCE_LIMITS,
   LAYOUT_LIMITS,
   MAX_FIELD_RULES,
+  MAX_PREVIEW_TEMPLATE_LENGTH,
   PATTERN_PRESETS,
   RULE_ACTIONS,
   RULE_OPERATORS,
@@ -241,6 +242,24 @@ export const contentTypeDetails = {
     .describe('How an agent should write this type’s entries. Plain text, never delivered'),
 };
 
+/** Where the admin previews a type's entries on the customer's frontend. Never delivered. */
+export const contentTypePreview = z
+  .object({
+    urlTemplate: z
+      .string()
+      .max(MAX_PREVIEW_TEMPLATE_LENGTH)
+      .describe(
+        'An https URL (http only for localhost or 127.0.0.1), e.g. ' +
+          'https://site.example/__preview?entry={id}&token={token}. Placeholders, each filled ' +
+          'URL-encoded: {id}, {token} (required), {locale}, {space}, {environment} and ' +
+          '{field:<apiId>} (a Symbol, Slug, Integer, Number or Date field), never in the host',
+      ),
+  })
+  .describe(
+    'Where the admin previews the type’s entries on your frontend; a preview link returns it ' +
+      'filled as frontendUrl. Editor-only, never delivered',
+  );
+
 export const contentType = z.object({
   apiId: z.string(),
   name: z.string(),
@@ -259,6 +278,7 @@ export const contentType = z.object({
   icon: contentTypeDetails.icon.optional(),
   agentInstructions: contentTypeDetails.agentInstructions.optional(),
   layout: contentTypeLayout.optional(),
+  preview: contentTypePreview.optional(),
   version: z.int(),
   status: z.enum(['draft', 'published']),
   warnings: z
