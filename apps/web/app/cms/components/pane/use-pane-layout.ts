@@ -96,17 +96,21 @@ export function usePaneLayout(): PaneLayout {
   };
 }
 
-/** What the entry editor's side pane shows: the draft as a document, or the entry's panels. */
-export type PaneView = 'preview' | 'details';
+/**
+ * What the entry editor's side pane shows: the draft as a document, the entry's panels, or its
+ * activity (the audit rows about it, for a space administrator).
+ */
+export type PaneView = 'preview' | 'details' | 'activity';
 
 const VIEW_KEY = 'cw.entry-pane.view';
 
-/** The pane's view, remembered per browser; Details until someone picks Preview. */
+/** The pane's view, remembered per browser; Details until someone picks another. */
 export function usePaneView(): [PaneView, (v: PaneView) => void] {
   const [view, setView] = useState<PaneView>('details');
   useLayoutEffect(() => {
     try {
-      if (localStorage.getItem(VIEW_KEY) === 'preview') setView('preview');
+      const kept = localStorage.getItem(VIEW_KEY);
+      if (kept === 'preview' || kept === 'activity') setView(kept);
     } catch {
       // Storage blocked: Details.
     }

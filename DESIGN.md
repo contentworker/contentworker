@@ -498,7 +498,16 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   A segmented switch shows **Details** (the panels) or **Preview**: the draft as a document, live
   as you type, in the form's locale with delivery's fallbacks (its title and values carry that
   locale's `lang` and `dir`, the captions stay the admin's), references by name, and links shown
-  but never followed. A new entry's pane is its preview alone. Details opens on **who wrote it**, a
+  but never followed. For a space administrator a third segment, **Activity**
+  (`entries/EntryActivity.tsx`), lists the entry's audit rows newest first in one card: what
+  happened in words ("Saved", "Published", "Approved an agent's proposal", an unknown action as
+  recorded, in mono), who and when (`actorLabel`, `Ago`, "through MCP" for a tool call), and under
+  a save the fields it changed by name with their locales in mono. A row that recorded no changes
+  shows no line, never "No field changed"; that is said only when its detail says so. A ghost
+  Refresh in the card's header, a ghost Load more at its foot (focus to the first row it brought),
+  skeleton rows while it reads, `Empty` when there is nothing, a destructive Alert with Try again
+  when it fails. Anyone else never sees the segment, and a remembered Activity opens on Details.
+  A new entry's pane is its preview alone. Details opens on **who wrote it**, a
   card of its own that never folds away (two lines read faster than a toggle; no card inside it):
   "Created by" with the date (`When`) and "Last edited by" with how long ago (`Ago`), each writer
   a teammate's name (the team is read only by administrators), "You", or the kind of writer ("An

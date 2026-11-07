@@ -1,7 +1,10 @@
 import {
   type AuditDetail,
   capAuditDetail,
+  ENTRY_ID_RULE,
+  isEntryId,
   type Principal,
+  type Scope,
   ValidationError,
 } from '@contentworker/domain';
 import type { AuditEntry } from '@contentworker/ports';
@@ -57,6 +60,8 @@ export interface AuditLogQuery {
   readonly action?: string;
   readonly targetType?: string;
   readonly targetId?: string;
+  /** Rows about this entry: as their target, or named in their `detail` (`listEntryActivity`). */
+  readonly entryId?: string;
   /** The earliest time kept, inclusive: an ISO 8601 date (from its start, UTC) or date-time. */
   readonly from?: string;
   /** The latest time kept, inclusive: an ISO 8601 date (to its end, UTC) or date-time. */
@@ -137,6 +142,7 @@ export async function listAuditLog(
     action: query.action || undefined,
     targetType: query.targetType || undefined,
     targetId: query.targetId || undefined,
+    entryId: query.entryId || undefined,
     from,
     to,
     after: query.cursor ? decodeCursor(query.cursor) : undefined,
@@ -149,4 +155,36 @@ export async function listAuditLog(
     items,
     ...(rows.length > limit && last ? { nextCursor: encodeCursor(last) } : {}),
   };
+}
+
+/** A page of an entry's activity: the audit log's own page and cursor. */
+export interface EntryActivityQuery {
+  readonly limit?: number;
+  /** `nextCursor` from the page before. */
+  readonly cursor?: string;
+}
+
+/**
+ * An entry's history, newest first: every audit row about it in its environment. That is the rows
+ * that target it (its saves, publishes, trashing, a version restored, its creation) and the rows
+ * that target something else but saved it (an approved agent review, a duplicate made from
+ * another entry, a cancelled workflow run's undo), each once. It is the audit log read through
+ * its entry index, so the page, cursor and order are the log's. The entry need not exist any
+ * more: a deleted entry's history is still its history. A row from before field paths were
+ * recorded has no `detail`, which says nothing about what it changed.
+ */
+export async function listEntryActivity(
+  ctx: AppContext,
+  scope: Scope,
+  entryId: string,
+  query: EntryActivityQuery = {},
+): Promise<AuditLogPage> {
+  // Not an id at all is a mistake, not an entry with no history.
+  if (!isEntryId(entryId)) throw new ValidationError([{ field: 'id', message: ENTRY_ID_RULE }]);
+  return listAuditLog(ctx, scope.spaceId, {
+    environmentId: scope.environmentId,
+    entryId,
+    limit: query.limit,
+    cursor: query.cursor,
+  });
 }

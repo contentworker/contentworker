@@ -73,7 +73,7 @@ through the same validation, versioning and events as a person's.
 | Webhooks | `webhooks_list`, `webhook_create`, `webhook_update`, `webhook_delete`, `webhook_deliveries`, `webhook_test`, `webhook_resend` (`space:admin`; see [Webhooks](/guides/webhooks/#test-and-resend)) |
 | Functions | `functions_list`, `function_create`, `function_delete` |
 | App extensions | `app_extensions_list`, `app_extension_create`, `app_extension_delete` |
-| Audit | `audit_log_list` (filters by actor, action, target and date; pages by `cursor`; rows carry the changed field paths) |
+| Audit | `audit_log_list` (filters by actor, action, target and date; pages by `cursor`; rows carry the changed field paths), `entries_list_activity` (one entry's rows, including the ones that saved it while acting on something else) |
 | Scheduler | `scheduler_status` (workspace admins: whether the engine's cron is ticking, and each sweep's last success and error), `scheduler_alerts` (who is emailed when a sweep goes stale, and what is stale now), `scheduler_alerts_set_recipients` |
 | Search | `content_search`, `content_semantic_search`, `content_related`, `content_duplicates`, `content_reindex_embeddings`, `search_index_health` |
 | API keys | `api_keys_list`, `api_key_create` (the token is in the result once, never again), `api_key_update` (the key's role), `api_key_revoke` (`space:admin`; see [API keys](/guides/api-keys/)) |

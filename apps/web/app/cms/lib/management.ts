@@ -1561,6 +1561,23 @@ export function createManagementClient(
       const qs = params.toString();
       return req('GET', `${spaceBase}/audit-log${qs ? `?${qs}` : ''}`);
     },
+    /**
+     * A page of one entry's activity, newest first: the audit rows that target it or saved it
+     * (requires space:admin, as the audit log does).
+     */
+    listEntryActivity(
+      entryId: string,
+      query: { limit?: number; cursor?: string } = {},
+    ): Promise<AuditLogPage> {
+      const params = new URLSearchParams();
+      if (query.limit) params.set('limit', String(query.limit));
+      if (query.cursor) params.set('cursor', query.cursor);
+      const qs = params.toString();
+      return req(
+        'GET',
+        `${mgmt}/entries/${encodeURIComponent(entryId)}/activity${qs ? `?${qs}` : ''}`,
+      );
+    },
     async listContentTypes(): Promise<ContentType[]> {
       const r = await req<{ items: ContentType[] }>('GET', `${mgmt}/content-types`);
       return r.items;

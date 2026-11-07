@@ -39,6 +39,7 @@ import { VersionHistory } from '~/cms/components/VersionHistory';
 import { CanvasDialog } from '../components/CanvasDialog';
 import type { Pickers, PickOption } from '../components/EntryForm';
 import { EntryForm } from '../components/EntryForm';
+import { EntryActivity } from '../components/entries/EntryActivity';
 import { EntryAuthorship } from '../components/entries/EntryAuthorship';
 import { PublishConfirm } from '../components/entries/PublishConfirm';
 import { GenerateEntryDialog } from '../components/GenerateEntryDialog';
@@ -175,9 +176,10 @@ export function EntryEditor() {
     silent: true,
     enabled: isEdit,
   });
+  const isAdmin = accessQuery.data?.scopes.includes(SPACE_ADMIN) === true;
   const teamQuery = useScopedQuery(['team'], () => client.getTeam(), {
     silent: true,
-    enabled: isEdit && accessQuery.data?.scopes.includes(SPACE_ADMIN) === true,
+    enabled: isEdit && isAdmin,
   });
   const directory = {
     me: accessQuery.data?.subject,
@@ -455,7 +457,10 @@ export function EntryEditor() {
     [],
   );
   const pane = usePaneLayout();
-  const [paneView, setPaneView] = usePaneView();
+  const [chosenView, setPaneView] = usePaneView();
+  // Activity is the audit log for this entry, so it takes what the log takes (space:admin): anyone
+  // else, or anyone while that is still being read, sees Details in its place.
+  const paneView: PaneView = chosenView === 'activity' && !isAdmin ? 'details' : chosenView;
   const localeConfig = useMemo(
     () => ({ defaultLocale, locales, fallbacks }),
     [defaultLocale, locales, fallbacks],
@@ -757,10 +762,11 @@ export function EntryEditor() {
               aria-label="Side pane"
               value={paneView}
               onValueChange={(v) => setPaneView(v as PaneView)}
-              className="grid w-full grid-cols-2"
+              className={cn('grid w-full', isAdmin ? 'grid-cols-3' : 'grid-cols-2')}
             >
               <SegmentedItem value="details">Details</SegmentedItem>
               <SegmentedItem value="preview">Preview</SegmentedItem>
+              {isAdmin ? <SegmentedItem value="activity">Activity</SegmentedItem> : null}
             </Segmented>
           ) : null}
           {!isEdit || paneView === 'preview' ? (
@@ -771,6 +777,14 @@ export function EntryEditor() {
               localeConfig={localeConfig}
               direction={directions?.[draft?.locale ?? defaultLocale]}
               pickers={pickers}
+            />
+          ) : null}
+          {isEdit && entryId && paneView === 'activity' ? (
+            <EntryActivity
+              key={`activity:${entryId}`}
+              entryId={entryId}
+              contentType={selectedType}
+              directory={directory}
             />
           ) : null}
           {isEdit && entryId && paneView === 'details' && (

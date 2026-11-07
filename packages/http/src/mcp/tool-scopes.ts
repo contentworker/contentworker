@@ -101,6 +101,7 @@ export const TOOL_SCOPES: Readonly<Record<string, readonly PermissionScope[]>> =
   entries_duplicate: [SCOPES.contentWrite],
   entries_field_values: [SCOPES.previewRead],
   entries_get: [SCOPES.previewRead],
+  entries_list_activity: [SCOPES.spaceAdmin],
   entries_list_trashed: [SCOPES.previewRead],
   entries_list_versions: [SCOPES.previewRead],
   entries_publish: [SCOPES.contentPublish],

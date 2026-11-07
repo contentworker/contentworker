@@ -688,8 +688,9 @@ describe('deleting an environment', () => {
         .first<{ n: number }>();
       if ((row?.n ?? 0) > 0) left[table] = row?.n ?? 0;
     }
-    // Its earlier history stays, and the deletion itself is recorded, by whom.
-    expect(left).toEqual({ audit_log: 2 });
+    // Its earlier history stays, with the index of which entries it was about (an entry's
+    // activity), and the deletion itself is recorded, by whom.
+    expect(left).toEqual({ audit_log: 2, audit_log_entries: 1 });
     const recorded = await testDb
       .prepare(
         "SELECT actor, target_id FROM audit_log WHERE environment_id = ? AND action = 'environment.deleted'",

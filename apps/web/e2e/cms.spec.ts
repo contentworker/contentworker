@@ -679,6 +679,32 @@ test('API calls go to the same origin and carry the read-your-writes bookmark', 
   expect(seen.slice(1).some((s) => s.bookmark)).toBe(true);
 });
 
+test('the editor’s Activity view lists the entry’s history with the fields each save changed', async ({
+  page,
+  request,
+}) => {
+  const id = await createDraft(request, `Activity ${Date.now()}`);
+  const update = await api(request, 'PUT', `${MGMT}/entries/${id}`, {
+    fields: { title: { 'en-US': `Activity again ${Date.now()}` } },
+  });
+  expect(update.ok(), await update.text()).toBe(true);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await openCms(page, `/content/article/${id}`);
+  const pane = page.getByRole('complementary', { name: 'Side pane' });
+  await pane.getByRole('radio', { name: 'Activity' }).click();
+  const list = pane.getByRole('list', { name: 'Activity, newest first' });
+  // The save, newest, then the create: both rows that name this entry, and nothing else.
+  await expect(list.getByRole('listitem')).toHaveCount(2);
+  await expect(list.getByRole('listitem').first()).toContainText('Saved');
+  await expect(list.getByRole('listitem').first()).toContainText('Title');
+  await expect(list.getByRole('listitem').last()).toContainText('Created');
+  // Kept per browser, as Preview is: the next entry opens on it.
+  await page.reload();
+  await expect(pane.getByRole('radio', { name: 'Activity' })).toHaveAttribute('aria-checked', 'true');
+  await pane.getByRole('radio', { name: 'Details' }).click();
+  await expect(list).toHaveCount(0);
+});
+
 test('the editor’s side pane sits beside the form, resizes, and previews the draft as typed', async ({
   page,
 }) => {
