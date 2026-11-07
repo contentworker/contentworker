@@ -175,7 +175,7 @@ how long the recovery may take. "Met" says whether the target can be reached tod
 | `AssistantAgent`                              | Best effort, 30-day object recovery | 1 day                 | **No**: nothing calls the object's point-in-time recovery                                       |
 | Durable workflows                             | None                                | 1 day, re-run by hand | Not proven: instances are not rebuilt from their rows                                           |
 | Queues                                        | The outbox window (168 hours)       | 1 hour                | Domain events only: messages the outbox doesn't feed can't replay                               |
-| `DATA_KEY`, `TOKEN_PEPPER`, `PASSWORD_PEPPER` | Zero                                | 1 hour                | Once [escrowed](#escrowing-secrets) per deployment; not proven until a copy is decrypted |
+| `DATA_KEY`, `TOKEN_PEPPER`, `PASSWORD_PEPPER` | Zero                                | 1 hour                | Not proven: [escrowed](#escrowing-secrets) and decrypted, but no restore has set the values back |
 
 Workers redeploy or roll back in seconds, so a database restore's RTO is dominated by the restore
 itself.
