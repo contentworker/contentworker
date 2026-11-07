@@ -137,6 +137,7 @@ jobs:
     uses: contentworker/contentworker/.github/workflows/escrow-secrets.yml@main
     with:
       environment: ${{ inputs.environment }}
+    secrets: inherit # without it, the job sees none of the environment's secrets
 ```
 
 contentworker's own fleet runs it from `contentworker/fleet`; add `-R contentworker/fleet` to the
