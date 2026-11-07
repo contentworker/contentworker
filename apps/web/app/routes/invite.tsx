@@ -36,7 +36,7 @@ import { ssoOnlyInEffect } from '~/lib/settings.server';
 import { ssoConfig } from '~/lib/sso.server';
 import type { Route } from './+types/invite';
 
-export const meta = () => [{ title: 'Accept your invitation · contentworker' }];
+export const meta = () => [{ title: 'Accept your invitation · ContentWorker' }];
 
 /**
  * Out of caches, and no referrer to another origin. `same-origin`, not `no-referrer`: under
@@ -157,7 +157,7 @@ function Open({ invite, me, sso, ssoOnly, error, busy }: OpenProps) {
   ) : null;
   return (
     <>
-      <h1 className="mt-4 font-semibold tracking-title text-2xl">Join contentworker</h1>
+      <h1 className="mt-4 font-semibold tracking-title text-2xl">Join ContentWorker</h1>
       <p className="mt-1 max-w-measure text-muted-foreground text-sm">
         {invite.inviter} invited <span className="text-foreground">{invite.email}</span> as{' '}
         {invite.role === 'admin' ? 'an admin' : 'a member'}. The link works once, until {expires}.

@@ -39,7 +39,7 @@ import {
 import { useDateTime } from '~/lib/use-date-time';
 import type { Route } from './+types/account';
 
-export const meta = () => [{ title: 'Account · contentworker' }];
+export const meta = () => [{ title: 'Account · ContentWorker' }];
 
 export async function loader({ request }: Route.LoaderArgs) {
   const me = await requireUser(request);
@@ -145,26 +145,26 @@ export default function Account() {
           {/* Not alerts: they are there when the page loads, so they're read in order. */}
           {welcome ? (
             <p className="mb-6 rounded-md border bg-muted/40 p-4 text-sm">
-              <span className="font-medium">Welcome to contentworker.</span> You can add a passkey
+              <span className="font-medium">Welcome to ContentWorker.</span> You can add a passkey
               below, to sign in with your fingerprint, face or device PIN instead of your password.
             </p>
           ) : null}
           {me.passwordChangeDue ? (
             <p className="mb-6 rounded-md border border-wait/40 bg-wait/10 p-4 text-sm">
               <span className="font-medium">Choose your own password to continue.</span> You signed
-              in with a temporary password an admin gave you; the rest of contentworker opens once
+              in with a temporary password an admin gave you; the rest of ContentWorker opens once
               you replace it.
             </p>
           ) : null}
           {me.twoFactorDue ? (
             <p className="mb-6 rounded-md border border-wait/40 bg-wait/10 p-4 text-sm">
               <span className="font-medium">Set up two-factor sign-in to continue.</span> Your role
-              needs it in this deployment; the rest of contentworker opens once it is on.
+              needs it in this deployment; the rest of ContentWorker opens once it is on.
             </p>
           ) : null}
           {result && 'ok' in result && result.welcome ? (
             <div role="status" className="mb-6 card p-4">
-              <p className="font-medium">Your password is set. contentworker is open.</p>
+              <p className="font-medium">Your password is set. ContentWorker is open.</p>
               <p className="mt-1 text-muted-foreground text-sm">
                 You’re {/^[aeiou]/i.test(ROLE_LABELS[me.role]) ? 'an' : 'a'} {ROLE_LABELS[me.role]}.
                 Two-factor sign-in, passkeys and where you’re signed in are below.

@@ -75,7 +75,7 @@ const article = (word: string) => (/^[aeiou]/i.test(word) ? 'an' : 'a');
 function Refused({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div className="mx-auto max-w-page px-4 pt-7 pb-10 sm:px-6">
-      <title>{`${title} · contentworker`}</title>
+      <title>{`${title} · ContentWorker`}</title>
       <h1 className="font-semibold tracking-title text-[1.75rem] leading-tight">{title}</h1>
       <div className="max-w-[68ch]">{children}</div>
       <Link to="/" className="mt-6 inline-block font-medium text-link text-sm hover:underline">

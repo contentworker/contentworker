@@ -125,7 +125,7 @@
   --rule: oklch(0.922 0 0);
   --border: var(--rule);
   --input: oklch(0.922 0 0);
-  /* The brand: Ledger's one accent, the purple of contentworker's mark. It marks where you are and
+  /* The brand: Ledger's one accent, the purple of ContentWorker's mark. It marks where you are and
      what you chose (the mark, the current page, focus, checked controls, the selection and the
      caret), and a model's work wears it too (`ai`). Never a status other than `ai`, never a large
      fill: a primary button stays ink. Set so its edge holds 3:1 and its words 4.5:1 on paper and on

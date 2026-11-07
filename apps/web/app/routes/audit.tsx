@@ -7,7 +7,7 @@ import { listAudit } from '~/lib/audit.server';
 import { requireUser } from '~/lib/auth.server';
 import type { Route } from './+types/audit';
 
-export const meta = () => [{ title: 'Audit log · contentworker' }];
+export const meta = () => [{ title: 'Audit log · ContentWorker' }];
 
 const PAGE = 100;
 

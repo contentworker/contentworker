@@ -6,7 +6,7 @@ import { cn } from './lib/utils';
  * marks in a 24-unit box (strokes, and filled blocks), and each mark writes itself in reading
  * order (a stroke draws along its path, a block is revealed from its leading edge), holds, then is
  * taken away in the same order while the icon fades, the way a line of type is set and cleared. Nothing falls,
- * spins or sparkles: the default icon is contentworker's own mark (a page: frame, title block,
+ * spins or sparkles: the default icon is ContentWorker's own mark (a page: frame, title block,
  * two lines of body), so the thing the agent is making is the loader itself.
  *
  * The look and timing are `.cw-compose` in the admin's app.css: one 2.8s cycle, each mark offset
@@ -47,7 +47,7 @@ const block = (x: number, y: number, w: number, h: number, at: number, r = 0.75)
 const frame = (x: number, y: number, w: number, h: number, r = 3) =>
   `M${x + r} ${y}h${w - 2 * r}a${r} ${r} 0 0 1 ${r} ${r}v${h - 2 * r}a${r} ${r} 0 0 1-${r} ${r}h-${w - 2 * r}a${r} ${r} 0 0 1-${r}-${r}v-${h - 2 * r}a${r} ${r} 0 0 1 ${r}-${r}`;
 
-/** contentworker's mark (`apps/web/app/components/mark.tsx`) composing itself: the default. */
+/** ContentWorker's mark (`apps/web/app/components/mark.tsx`) composing itself: the default. */
 export const aiMark: ComposeIcon = [
   stroke(frame(3.5, 3.5, 17, 17), 0),
   block(7.5, 7.5, 9, 3, 220),

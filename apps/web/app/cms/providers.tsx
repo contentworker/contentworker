@@ -66,7 +66,7 @@ export function CmsPage({
     bare && state !== 'no-spaces' && state !== 'error' && (state === 'ready' || skeleton);
   return (
     <>
-      <title>{`${title} · contentworker`}</title>
+      <title>{`${title} · ContentWorker`}</title>
       {fullBleed ? inner : <Body>{inner}</Body>}
     </>
   );

@@ -13,7 +13,7 @@ import {
 import { nextPath, redirectToNext, withNext } from '~/lib/next-path';
 import type { Route } from './+types/login-two-factor';
 
-export const meta = () => [{ title: 'Two-factor sign-in · contentworker' }];
+export const meta = () => [{ title: 'Two-factor sign-in · ContentWorker' }];
 
 /** Lets a throttled attempt's Retry-After reach the response. */
 export const headers: Route.HeadersFunction = ({ actionHeaders }) => actionHeaders;

@@ -155,9 +155,9 @@ export const RESET_LINK_INVALID = 'This reset link isn’t valid any more. Ask f
 export function resetEmail(m: { to: string; code: string; link: string; host: string }) {
   return {
     to: [m.to],
-    subject: 'Your contentworker password reset code',
+    subject: 'Your ContentWorker password reset code',
     text: [
-      `Someone asked to reset the password for ${m.to} on contentworker (${m.host}).`,
+      `Someone asked to reset the password for ${m.to} on ContentWorker (${m.host}).`,
       '',
       `Your code: ${formatResetCode(m.code)}`,
       '',
@@ -174,9 +174,9 @@ export function resetEmail(m: { to: string; code: string; link: string; host: st
 export function resetDoneEmail(m: { to: string; host: string }) {
   return {
     to: [m.to],
-    subject: 'Your contentworker password was changed',
+    subject: 'Your ContentWorker password was changed',
     text: [
-      `The password for ${m.to} on contentworker (${m.host}) was just changed with an emailed reset code, and every session it had was signed out.`,
+      `The password for ${m.to} on ContentWorker (${m.host}) was just changed with an emailed reset code, and every session it had was signed out.`,
       '',
       'Your two-factor sign-in, passkeys, personal access tokens and connected apps were left as they are. Remove any you don’t recognise on your Account page.',
       '',

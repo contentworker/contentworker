@@ -636,7 +636,7 @@ function AppSidebar({
             <Mark className="size-5 text-brand" />
           </SidebarTrigger>
           <span className="truncate font-semibold text-base tracking-title transition-opacity duration-(--motion-instant) @max-[8rem]:opacity-0">
-            contentworker
+            ContentWorker
           </span>
         </div>
       </SidebarHeader>

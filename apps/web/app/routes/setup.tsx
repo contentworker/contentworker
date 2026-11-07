@@ -13,7 +13,7 @@ import { redeemSetupCode, setupOpen } from '~/lib/setup.server';
 import { TeamError } from '~/lib/team.server';
 import type { Route } from './+types/setup';
 
-export const meta = () => [{ title: 'Set up · contentworker' }];
+export const meta = () => [{ title: 'Set up · ContentWorker' }];
 
 /** Lets a throttled attempt's Retry-After reach the response. */
 export const headers: Route.HeadersFunction = ({ actionHeaders }) => actionHeaders;
@@ -52,7 +52,7 @@ export default function Setup() {
       <div className="w-full max-w-sm card p-6">
         <Mark className="size-7 text-brand" />
         <h1 className="mt-4 font-semibold tracking-title text-2xl">
-          {team ? 'Recover admin access' : 'Set up contentworker'}
+          {team ? 'Recover admin access' : 'Set up ContentWorker'}
         </h1>
         {open ? (
           <Form method="post">

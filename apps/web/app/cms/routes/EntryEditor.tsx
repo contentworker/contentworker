@@ -214,7 +214,7 @@ export function EntryEditor() {
   );
   useEffect(() => {
     const prev = document.title;
-    document.title = `${pageTitle} · contentworker admin`;
+    document.title = `${pageTitle} · ContentWorker admin`;
     return () => {
       document.title = prev;
     };

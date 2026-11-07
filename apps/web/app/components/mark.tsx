@@ -1,4 +1,4 @@
-/** The contentworker mark: a page of content, a filled title block over two lines of body. */
+/** The ContentWorker mark: a page of content, a filled title block over two lines of body. */
 export function Mark({ className }: { className?: string }) {
   return (
     <svg
