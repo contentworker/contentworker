@@ -45,16 +45,13 @@ test('an MCP client connects with OAuth: consent, code exchange, use, refresh, r
   expect([200, 201, 409]).toContain(space.status());
 
   // The first admin signs in and turns on two-factor, which their role requires before anything
-  // but Account opens (OAuth consent included).
+  // but the two-factor step opens (OAuth consent included).
   await page.goto('/login');
   await page.getByLabel('Email').fill(ADMIN.email);
   await page.getByLabel('Password').fill(ADMIN.password);
   await page.getByRole('button', { name: 'Sign in', exact: true }).click();
-  await expect(page).toHaveURL(/\/account$/);
-  await page
-    .locator('form:has(input[name=intent][value=two-factor-start]) button[type=submit]')
-    .click();
-  const enable = page.locator('form:has(input[name=intent][value=two-factor-enable])');
+  await expect(page).toHaveURL(/\/setup\/two-factor$/);
+  const enable = page.locator('form:has(input[name=secret])');
   const secret = await enable.locator('input[name=secret]').inputValue();
   await enable.locator('input[name=code]').fill(totp(secret));
   await enable.locator('input[name=password]').fill(ADMIN.password);

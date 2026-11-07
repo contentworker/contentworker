@@ -19,7 +19,8 @@
     "test:fleet": "node --test scripts/*.test.ts",
     "test:toolkit": ".claude/scripts/toolkit-check.sh && .claude/hooks/tests/docs-hooks.test.sh && .claude/hooks/tests/guard-hooks.test.sh",
     "fleet": "node scripts/fleet.ts",
-    "dev:reset": "rm -rf apps/web/.wrangler/state && pnpm db:migrate:local"
+    "dev:reset": "rm -rf apps/web/.wrangler/state && pnpm db:migrate:local",
+    "dev:first-run": "turbo run generate && rm -rf apps/web/.wrangler/first-run && pnpm --filter @contentworker/web exec wrangler d1 migrations apply DB --local --persist-to .wrangler/first-run && CONTENTWORKER_FIRST_RUN=1 pnpm --filter @contentworker/web dev"
   },
   "devDependencies": {
     "@biomejs/biome": "catalog:",
