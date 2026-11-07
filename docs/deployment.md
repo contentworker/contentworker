@@ -126,8 +126,9 @@ To start your own, copy `examples/fleet/example.jsonc` to `deployments/<id>.json
      `DATA_KEY`, `TOKEN_PEPPER` or `PASSWORD_PEPPER` when the api worker already holds one);
    - writes the first administrator's one-time setup code to `.secrets/<id>/setup-code`
      (gitignored) and sets it as `SETUP_TOKEN`.
-3. Add `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` to the environment if they are not
-   repository secrets, commit the registry file, and merge. CI deploys it in its ring.
+3. Add `CLOUDFLARE_API_TOKEN` (with the permissions in [The deploy token](#the-deploy-token))
+   and `CLOUDFLARE_ACCOUNT_ID` to the environment if they are not repository secrets, commit the
+   registry file, and merge. CI deploys it in its ring.
 4. Send the customer's first admin `https://<domain>/setup` and the setup code.
 
 Edge image transforms and the video streaming service are account features; their bindings need
@@ -202,6 +203,27 @@ The api gate and the engine accept only the derived key on `/agents/*`; a princi
 `PRINCIPAL_KEY` is refused there, and one signed with the derived key is refused on every other
 path. A change to how these paths are signed has to roll out in two steps (verifiers accept both,
 then only the new).
+
+### The deploy token
+
+`CLOUDFLARE_API_TOKEN` is an account-owned API token for the deployment's account. It needs
+exactly what `scripts/deploy.sh` does, and nothing `provision.sh` does (provisioning runs by hand
+under `wrangler login`):
+
+| Scope                   | Permission                        | Used by                                                                      |
+| ----------------------- | --------------------------------- | ---------------------------------------------------------------------------- |
+| Account                 | Workers Admin, on **all** Workers | `wrangler deploy`, `--secrets-file` and `wrangler rollback` for every Worker |
+| Account                 | D1: Edit                          | `d1 time-travel info` (the bookmark) and `d1 migrations apply --remote`      |
+| Account                 | Queues: Edit                      | registering the engine's and media worker's queue consumers on deploy        |
+| Account                 | Account Settings: Read            | Wrangler's account lookup                                                    |
+| Zone (the deployment's) | Workers Routes: Edit, Zone: Read  | the custom domains (`<domain>`, `api.`, `cdn.`, `media.`, the docs host)     |
+
+Binding a key-value namespace, bucket, vector index, gateway or other resource needs no permission
+on it, so the token carries none. The Workers permission must cover every Worker in the account,
+not a list of specified ones: Admin, because a deploy that ships a new Worker has to create it, and
+all Workers, because a Worker missing from the list fails its deploy with "No access to the
+specified service". A token that lacks a permission fails at the step that needs it, and the log
+names the request.
 
 ## The pipeline
 
