@@ -46,10 +46,12 @@ in the frame: sticky headers, full-height heroes and lazy loading behave as on t
 
 `fields` is locale-keyed, as the Management API returns an entry (`{ title: { 'en-US': 'Home' } }`).
 `update` says which entry and locale (`entryId`, `contentType`, `locale`, `version`), the last
-patch included (`seq`) and the ops since the last call (`ops`, empty for the first). Patches that
-arrive while `onChange` is still running are folded into the next call, so a slow render never
-queues up a backlog. The admin hears an edit is on screen when the promise `onChange` returns
-settles; if it throws, the admin is told the render failed.
+patch included (`seq`) and the ops since the last call (`ops`). Empty `ops` means the whole entry
+arrived (the first time, and whenever the admin sends it again): render everything, not only what
+changed. Patches that arrive while `onChange` is still running are folded into the next call, so a
+slow render never queues up a backlog. The admin hears an edit is on screen when the promise
+`onChange` returns settles. If it throws, the admin is told the render failed and nothing in that
+call counts as rendered; its ops come again in the next call, made when the next edit arrives.
 
 In React, `useLivePreview` does the same for as long as the component is mounted, and returns the
 fields to render:
@@ -119,7 +121,7 @@ drafts off your preview deployment.
 
 | From admin | Carries                                                       |
 | ---------- | ------------------------------------------------------------- |
-| `init`     | `fields`, `locale`, `version`, `entryId`, `contentType`, and optionally `seq`, the last patch they include |
+| `init`     | `fields`, `locale`, `version`, `entryId`, `contentType`, and optionally `seq`, the last patch they include (0 when absent) |
 | `patch`    | `seq` (only goes up; a patch at or below the last is ignored) and `ops` |
 | `select`   | `key` or `ref`, or neither to clear                           |
 | `hover`    | `key` or `ref`, or neither                                    |
@@ -130,22 +132,30 @@ drafts off your preview deployment.
 | ---------- | ------------------------------------------------------------- |
 | `hello`    | `sdkVersion`, `capabilities`                                  |
 | `rendered` | `seq`: everything up to it is on screen                       |
-| `geometry` | `blocks`, `slots` with their `gaps`, `fields`, `scroll`, `viewport`, `docHeight` |
+| `geometry` | `blocks`, `slots` with their `gaps`, `fields`, `scroll`, `viewport`, `docHeight`, and `truncated: true` when some boxes were left out |
 | `pick`     | `key` or `ref`                                                |
 | `hover`    | `key` or `ref`, or neither                                    |
 | `navigate` | `url`: https (http only on `localhost`), on your site's origin |
 | `key`      | `key`, `meta`, `ctrl`, `shift`, `alt`                         |
-| `error`    | `kind` (`invalid`, `patch`, `render` or `target`) and `message` |
+| `error`    | `kind` (`invalid`, `patch`, `render` or `target`), `message`, and for `patch` and `render` the `seq` it concerns |
 
 A patch's ops are those of the Management API's block patch (`insert`, `update`, `move`, `remove`,
 `duplicate`, addressed by `_key` with a `field` and `locale`), plus `setField { field, locale,
-value }` for an ordinary field. A patch applies whole or not at all: if one op can't apply, the page
-keeps the fields it had, answers `error` with kind `patch`, and the admin sends `init` again.
+value }` for an ordinary field. Send them in the form the block patch answers with (`applied`),
+every key present: a key the page mints for a block sent without one is the page's own.
+
+A patch applies whole or not at all. When one can't apply, or arrives too large or malformed to
+read, the page keeps the fields it had and answers `error` with kind `patch` and that patch's
+`seq`. From then on it is out of step: it drops every later patch, answering the same error again,
+until the admin sends `init`, which resets it. If the same patch is refused again after that, the
+admin sends the fields it changed whole, as `setField`, which always applies.
 
 Geometry is in the frame's viewport, in CSS pixels, and is sent when something moves (a resize, a
 scroll, a change to the page), at most once a frame and only when it changed. Each slot lists its
 gaps: the place before its first block, between each pair and after its last, with the insertion
-`index` and the blocks on either side.
+`index` and the blocks on either side. A page with more boxes than one message holds sends those
+on screen first, then those nearest it, and marks the message `truncated`.
 
 Limits: a message is at most 256 KB (an `init`, which carries the whole entry, 2 MB); a patch has at
-most 100 ops; a geometry message reports at most 2,000 blocks, slots and fields each.
+most 100 ops; a geometry message reports at most 2,000 blocks, slots and fields each, and 4,000
+gaps.

@@ -29,7 +29,7 @@ export const MAX_MESSAGE_BYTES = 256 * 1024;
 export const MAX_INIT_BYTES = 2 * 1024 * 1024;
 /** The most ops one `patch` may carry (as `patchBlocks` allows). */
 export const MAX_PATCH_OPS = 100;
-/** The most blocks, slots or fields one `geometry` reports; a page with more reports the first. */
+/** The most blocks, slots or fields one `geometry` reports; a page with more reports those nearest the viewport. */
 export const MAX_GEOMETRY_ITEMS = 2000;
 /** The most seams one `geometry` reports across all its slots. */
 export const MAX_GEOMETRY_GAPS = 4000;
@@ -186,6 +186,11 @@ export interface LiveGeometryMessage extends LiveEnvelope<'geometry'> {
   readonly scroll: { readonly x: number; readonly y: number };
   readonly viewport: { readonly w: number; readonly h: number };
   readonly docHeight: number;
+  /**
+   * Some boxes were left out to fit the caps and the message size; those on screen and nearest it
+   * are kept first. Absent when everything is reported.
+   */
+  readonly truncated?: true;
 }
 
 export type LivePickMessage = LiveEnvelope<'pick'> & LiveTarget;
@@ -206,9 +211,16 @@ export interface LiveKeyMessage extends LiveEnvelope<'key'> {
 }
 
 export type LiveErrorKind = 'invalid' | 'patch' | 'render' | 'target';
+/**
+ * Something went wrong. For `patch`, `seq` is the patch that was refused or lost; the page is out of
+ * step from it, drops every later patch (answering this again) and waits for an `init`. For
+ * `render`, it is the last seq that call held; nothing from it is acknowledged until a render
+ * that includes it succeeds.
+ */
 export interface LiveErrorMessage extends LiveEnvelope<'error'> {
   readonly kind: LiveErrorKind;
   readonly message: string;
+  readonly seq?: number;
 }
 
 export type LiveGuestMessage =
@@ -410,8 +422,16 @@ function guestBody(
         ? { type: 'key', key: m.key, meta: m.meta, ctrl: m.ctrl, shift: m.shift, alt: m.alt }
         : undefined;
     case 'error':
-      return typeof m.kind === 'string' && ERROR_KINDS.has(m.kind) && isText(m.message, MAX_TEXT)
-        ? { type: 'error', kind: m.kind, message: m.message }
+      return typeof m.kind === 'string' &&
+        ERROR_KINDS.has(m.kind) &&
+        isText(m.message, MAX_TEXT) &&
+        optional(m.seq, isCount)
+        ? {
+            type: 'error',
+            kind: m.kind,
+            message: m.message,
+            ...(m.seq !== undefined ? { seq: m.seq } : {}),
+          }
         : undefined;
     default:
       return undefined;
@@ -469,7 +489,7 @@ function geometryBody(m: Record<string, unknown>): Body | undefined {
   if (!Array.isArray(fields) || fields.length > MAX_GEOMETRY_ITEMS) return undefined;
   if (!isRecord(scroll) || !isNumber(scroll.x) || !isNumber(scroll.y)) return undefined;
   if (!isRecord(viewport) || !isNumber(viewport.w) || !isNumber(viewport.h)) return undefined;
-  if (!isNumber(docHeight)) return undefined;
+  if (!isNumber(docHeight) || (m.truncated !== undefined && m.truncated !== true)) return undefined;
   const outBlocks: LiveBlockBox[] = [];
   for (const b of blocks) {
     if (!isRecord(b) || !isId(b.key) || !isRect(b.rect)) return undefined;
@@ -516,6 +536,7 @@ function geometryBody(m: Record<string, unknown>): Body | undefined {
     scroll: { x: scroll.x, y: scroll.y },
     viewport: { w: viewport.w, h: viewport.h },
     docHeight,
+    ...(m.truncated ? { truncated: true } : {}),
   };
 }
 

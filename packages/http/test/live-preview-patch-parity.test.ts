@@ -62,13 +62,29 @@ const SECTION: ComponentVariant = {
     blocks('items', [HERO, CTA], 1),
     // Blocks under a plain component: carried along, not addressable.
     field({ apiId: 'aside', type: 'Component', position: 2, fields: [blocks('notes', [CTA])] }),
+    // A repeater: components, not blocks, even when its items carry a `_key`.
+    field({
+      apiId: 'links',
+      type: 'Array',
+      position: 3,
+      items: { type: 'Component', fields: [field({ apiId: 'label', type: 'Symbol' })] },
+    }),
   ],
+};
+// A JSON value can hold anything, block-shaped objects included; the server never reads into it.
+const EMBED: ComponentVariant = {
+  apiId: 'embed',
+  name: 'Embed',
+  fields: [field({ apiId: 'data', type: 'JSON' })],
 };
 const LANDING: ContentType = defineContentType({
   apiId: 'landing',
   name: 'Landing',
   displayField: 'title',
-  fields: [field({ apiId: 'title', type: 'Symbol' }), blocks('body', [HERO, CTA, SECTION], 1)],
+  fields: [
+    field({ apiId: 'title', type: 'Symbol' }),
+    blocks('body', [HERO, CTA, SECTION, EMBED], 1),
+  ],
 });
 
 const L = 'en-US';
@@ -90,8 +106,30 @@ const page = (): EntryFields => ({
           { _type: 'cta', _key: 'c1', label: 'Try it' },
         ],
         aside: { notes: [{ _type: 'cta', _key: 'n1', label: 'Note' }] },
+        links: [{ _key: 'r1', label: 'Docs' }],
       },
       { _type: 'cta', _key: 'c2', label: 'Sign up' },
+      {
+        _type: 'embed',
+        _key: 'e1',
+        data: { list: [{ _type: 'cta', _key: 'c1', label: 'not a block' }] },
+      },
+    ],
+  },
+});
+
+/** A slot one of whose blocks lost its `_type`: the server still indexes it by its key. */
+const untyped = (): EntryFields => ({
+  body: {
+    [L]: [
+      {
+        _type: 'section',
+        _key: 's1',
+        items: [
+          { _type: 'hero', _key: 'h2', heading: 'Fast' },
+          { _key: 'odd', label: 'no type' },
+        ],
+      },
     ],
   },
 });
@@ -101,72 +139,143 @@ const minter = () => {
   return () => `k${++n}`;
 };
 
-const ACCEPTED: Record<string, readonly BlockOp[]> = {
-  'an insert at the end, keyed here': [
-    { op: 'insert', ...at, block: { _type: 'cta', label: 'More' } },
-  ],
-  'an insert at an index, keeping its key': [
-    { op: 'insert', ...at, index: 0, block: { _type: 'hero', _key: 'mine', heading: 'Top' } },
-  ],
-  'an insert into a slot, before a sibling': [
-    {
-      op: 'insert',
-      ...at,
-      parent: { key: 's1', slot: 'items' },
-      before: 'c1',
-      block: { _type: 'cta', label: 'Between' },
-    },
-  ],
-  'an insert with blocks inside it, all keyed here': [
-    {
-      op: 'insert',
-      ...at,
-      after: 'h1',
-      block: {
-        _type: 'section',
-        title: 'New',
-        items: [
-          { _type: 'hero', heading: 'A' },
-          { _type: 'cta', label: 'B' },
-        ],
-        aside: { notes: [{ _type: 'cta', label: 'C' }] },
+interface Accepted {
+  readonly ops: readonly BlockOp[];
+  readonly fields?: () => EntryFields;
+  /**
+   * The raw ops mint keys for blocks under a plain component, which the server rekeys and the page
+   * (unable to tell a component from a JSON value) leaves alone. Only the applied form, which
+   * carries every key, is compared; the difference itself is pinned below.
+   */
+  readonly appliedOnly?: true;
+}
+
+const ACCEPTED: Record<string, Accepted> = {
+  'an insert at the end, keyed here': {
+    ops: [{ op: 'insert', ...at, block: { _type: 'cta', label: 'More' } }],
+  },
+  'an insert at an index, keeping its key': {
+    ops: [
+      { op: 'insert', ...at, index: 0, block: { _type: 'hero', _key: 'mine', heading: 'Top' } },
+    ],
+  },
+  'an insert into a slot, before a sibling': {
+    ops: [
+      {
+        op: 'insert',
+        ...at,
+        parent: { key: 's1', slot: 'items' },
+        before: 'c1',
+        block: { _type: 'cta', label: 'Between' },
       },
-    },
-  ],
-  'a ref, used by later ops, into a slot that is not there yet': [
-    { op: 'insert', ...at, ref: 'fresh', block: { _type: 'section', title: 'Empty' } },
-    {
-      op: 'insert',
-      ...at,
-      parent: { key: 'fresh', slot: 'items' },
-      block: { _type: 'hero', heading: 'Inside' },
-    },
-    { op: 'update', ...at, key: 'fresh', set: { title: 'Filled' } },
-    { op: 'move', ...at, key: 'fresh', to: { index: 0 } },
-  ],
-  'an update that sets and unsets': [
-    { op: 'update', ...at, key: 'h2', set: { tagline: 'Really' }, unset: ['heading'] },
-  ],
-  'a move into a slot, and back out after a sibling': [
-    { op: 'move', ...at, key: 'h1', to: { parent: { key: 's1', slot: 'items' }, index: 0 } },
-    { op: 'move', ...at, key: 'c1', to: { after: 'c2' } },
-  ],
-  'a move later in its own slot': [{ op: 'move', ...at, key: 'h1', to: { index: 2 } }],
-  'a remove with everything inside': [{ op: 'remove', ...at, key: 's1' }],
-  'a duplicate, rekeying the copy all the way down': [{ op: 'duplicate', ...at, key: 's1' }],
-  'a duplicate with a ref, inserted into': [
-    { op: 'duplicate', ...at, key: 's1', ref: 'copy' },
-    {
-      op: 'insert',
-      ...at,
-      parent: { key: 'copy', slot: 'items' },
-      index: 0,
-      block: { _type: 'cta', label: 'First' },
-    },
-  ],
-  'a locale the field does not hold yet': [
-    { op: 'insert', field: 'body', locale: 'de-DE', block: { _type: 'cta', label: 'Mehr' } },
-  ],
+    ],
+  },
+  'an insert with blocks in its slots, all keyed here': {
+    ops: [
+      {
+        op: 'insert',
+        ...at,
+        after: 'h1',
+        block: {
+          _type: 'section',
+          title: 'New',
+          items: [
+            { _type: 'hero', heading: 'A' },
+            { _type: 'cta', label: 'B' },
+          ],
+        },
+      },
+    ],
+  },
+  'an insert with blocks under a plain component': {
+    ops: [
+      {
+        op: 'insert',
+        ...at,
+        block: { _type: 'section', title: 'New', aside: { notes: [{ _type: 'cta', label: 'C' }] } },
+      },
+    ],
+    appliedOnly: true,
+  },
+  'a ref, used by later ops, into a slot that is not there yet': {
+    ops: [
+      { op: 'insert', ...at, ref: 'fresh', block: { _type: 'section', title: 'Empty' } },
+      {
+        op: 'insert',
+        ...at,
+        parent: { key: 'fresh', slot: 'items' },
+        block: { _type: 'hero', heading: 'Inside' },
+      },
+      { op: 'update', ...at, key: 'fresh', set: { title: 'Filled' } },
+      { op: 'move', ...at, key: 'fresh', to: { index: 0 } },
+    ],
+  },
+  'an update that sets and unsets': {
+    ops: [{ op: 'update', ...at, key: 'h2', set: { tagline: 'Really' }, unset: ['heading'] }],
+  },
+  'a move into a slot, and back out after a sibling': {
+    ops: [
+      { op: 'move', ...at, key: 'h1', to: { parent: { key: 's1', slot: 'items' }, index: 0 } },
+      { op: 'move', ...at, key: 'c1', to: { after: 'c2' } },
+    ],
+  },
+  'a move later in its own slot': { ops: [{ op: 'move', ...at, key: 'h1', to: { index: 2 } }] },
+  'a remove with everything inside': { ops: [{ op: 'remove', ...at, key: 's1' }] },
+  'a duplicate, rekeying the copy all the way down': {
+    ops: [{ op: 'duplicate', ...at, key: 's1' }],
+    appliedOnly: true,
+  },
+  'a duplicate with a ref, inserted into': {
+    ops: [
+      { op: 'duplicate', ...at, key: 's1', ref: 'copy' },
+      {
+        op: 'insert',
+        ...at,
+        parent: { key: 'copy', slot: 'items' },
+        index: 0,
+        block: { _type: 'cta', label: 'First' },
+      },
+    ],
+    appliedOnly: true,
+  },
+  'a locale the field does not hold yet': {
+    ops: [{ op: 'insert', field: 'body', locale: 'de-DE', block: { _type: 'cta', label: 'Mehr' } }],
+  },
+  // A repeater's keyed items are not blocks: a duplicate copies their keys as they are.
+  'a duplicate of a block holding a repeater': {
+    ops: [
+      { op: 'duplicate', ...at, key: 'h1' },
+      { op: 'remove', ...at, key: 's1' },
+    ],
+  },
+  // A block missing its `_type` still holds its key, and its typed siblings stay addressable.
+  'ops beside, and on, a block with no _type': {
+    ops: [
+      { op: 'update', ...at, key: 'h2', set: { heading: 'Faster' } },
+      { op: 'move', ...at, key: 'h2', to: { parent: { key: 's1', slot: 'items' }, after: 'odd' } },
+      { op: 'remove', ...at, key: 'odd' },
+    ],
+    fields: untyped,
+  },
+  // Keys inside a JSON value are not blocks' keys: nothing is minted there, nothing collides.
+  'an insert whose JSON value holds block-shaped objects': {
+    ops: [
+      {
+        op: 'insert',
+        ...at,
+        block: {
+          _type: 'embed',
+          data: {
+            list: [
+              { _type: 'cta', _key: 'c2' },
+              { _type: 'cta', label: 'no key' },
+            ],
+          },
+        },
+      },
+      { op: 'remove', ...at, key: 'c1' },
+    ],
+  },
 };
 
 const REFUSED: Record<string, { ops: readonly BlockOp[]; fields?: EntryFields }> = {
@@ -205,6 +314,12 @@ const REFUSED: Record<string, { ops: readonly BlockOp[]; fields?: EntryFields }>
   'both set and unset': {
     ops: [{ op: 'update', ...at, key: 'h1', set: { heading: 'x' }, unset: ['heading'] }],
   },
+  'a repeater item’s key': { ops: [{ op: 'remove', ...at, key: 'r1' }] },
+  'a key under a plain component': { ops: [{ op: 'remove', ...at, key: 'n1' }] },
+};
+
+const throwingMinter = () => {
+  throw new Error('an applied patch has nothing to mint');
 };
 
 describe('live preview patches match the server’s', () => {
@@ -213,18 +328,17 @@ describe('live preview patches match the server’s', () => {
     expect(toDomain(toSdk([op]) as readonly SdkBlockOp[])).toEqual([op]);
   });
 
-  for (const [name, ops] of Object.entries(ACCEPTED)) {
+  for (const [name, { ops, fields = page, appliedOnly }] of Object.entries(ACCEPTED)) {
     it(name, () => {
-      const server = applyBlockPatch(LANDING, page(), ops, minter());
+      const server = applyBlockPatch(LANDING, fields(), ops, minter());
       if (!server.ok) throw new Error(JSON.stringify(server.issues));
-      const sdk = applyLivePatch(page() as LiveFields, toSdk(ops), { newKey: minter() });
-      expect(sdk).toEqual({ ok: true, fields: server.fields });
-
+      if (!appliedOnly) {
+        const sdk = applyLivePatch(fields() as LiveFields, toSdk(ops), { newKey: minter() });
+        expect(sdk).toEqual({ ok: true, fields: server.fields });
+      }
       // What the admin sends a page: the applied form, every key present, nothing to mint.
-      const replay = applyLivePatch(page() as LiveFields, toSdk(server.applied), {
-        newKey: () => {
-          throw new Error('an applied patch has nothing to mint');
-        },
+      const replay = applyLivePatch(fields() as LiveFields, toSdk(server.applied), {
+        newKey: throwingMinter,
       });
       expect(replay).toEqual({ ok: true, fields: server.fields });
     });
@@ -241,4 +355,40 @@ describe('live preview patches match the server’s', () => {
       if (!server.ok && !sdk.ok) expect(sdk.op).toBe(server.issues[0]?.op);
     });
   }
+});
+
+describe('where the page, without the content type, reads differently', () => {
+  it('leaves blocks under a plain component keyed as they were in a raw duplicate', () => {
+    const ops: BlockOp[] = [{ op: 'duplicate', ...at, key: 's1' }];
+    const server = applyBlockPatch(LANDING, page(), ops, minter());
+    const sdk = applyLivePatch(page() as LiveFields, toSdk(ops), { newKey: minter() });
+    if (!server.ok || !sdk.ok) throw new Error('expected both to apply');
+    type Copy = { aside?: { notes: { _key: string }[] } };
+    const notes = (fields: EntryFields) => {
+      const copy = ((fields.body?.[L] ?? []) as Copy[])[2];
+      return (copy?.aside?.notes ?? []).map((n) => n._key);
+    };
+    expect(notes(server.fields)).not.toEqual(['n1']);
+    expect(notes(sdk.fields as EntryFields)).toEqual(['n1']);
+  });
+
+  it('reads keyed, typed objects in a JSON list as a slot, so a shared key is ambiguous', () => {
+    // `e1.data` is an object, opaque to both; a JSON field holding a list directly is not.
+    const fields: EntryFields = {
+      body: {
+        [L]: [
+          { _type: 'embed', _key: 'e1', data: [{ _type: 'cta', _key: 'c2' }] },
+          { _type: 'cta', _key: 'c2', label: 'Sign up' },
+        ],
+      },
+    };
+    const ops: BlockOp[] = [{ op: 'remove', ...at, key: 'c2' }];
+    expect(applyBlockPatch(LANDING, fields, ops, minter()).ok).toBe(true);
+    expect(applyLivePatch(fields as LiveFields, toSdk(ops)).ok).toBe(false);
+    // The way out the admin takes after a second refusal: the field whole, which always applies.
+    const whole = applyLivePatch(fields as LiveFields, [
+      { op: 'setField', ...at, value: [{ _type: 'embed', _key: 'e1', data: [] }] },
+    ]);
+    expect(whole.ok).toBe(true);
+  });
 });

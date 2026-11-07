@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { fitGeometry } from '../src/live-preview/guest.js';
 import {
   applyLivePatch,
   blockAttrs,
@@ -213,7 +214,11 @@ describe('who it listens to', () => {
     send(msg('patch', { seq: 2, ops: many }));
     await settle();
     expect(onChange).not.toHaveBeenCalled();
-    expect(posted('error').map((e) => e.kind)).toEqual(['invalid', 'invalid']);
+    // The first is refused unread; the second is dropped, the page being a patch behind.
+    expect(posted('error').map((e) => [e.kind, e.seq])).toEqual([
+      ['patch', 1],
+      ['patch', 1],
+    ]);
   });
 
   it('takes an init larger than a patch may be (a whole entry)', async () => {
@@ -242,7 +247,11 @@ describe('who it listens to', () => {
     );
     await settle();
     expect(onChange).toHaveBeenCalledTimes(1);
-    expect(posted('error').map((e) => e.kind)).toEqual(['invalid', 'invalid']);
+    // The first is refused unread; the second is dropped, the page being a patch behind.
+    expect(posted('error').map((e) => [e.kind, e.seq])).toEqual([
+      ['patch', 1],
+      ['patch', 1],
+    ]);
     expect(({} as Record<string, unknown>).polluted).toBeUndefined();
   });
 });
@@ -379,7 +388,221 @@ function mountPage(): { slot: HTMLElement; a: HTMLElement; b: HTMLElement; h: HT
   return { slot, a, b, h };
 }
 
+describe('staying in step with the admin', () => {
+  const setTitle = (seq: number, value: string) =>
+    msg('patch', { seq, ops: [{ op: 'setField', field: 'title', locale: 'en-US', value }] });
+  const removeMissing = (seq: number) =>
+    msg('patch', { seq, ops: [{ op: 'remove', field: 'body', locale: 'en-US', key: 'missing' }] });
+
+  it('drops every patch after a refused one, naming it, until the entry comes again', async () => {
+    const onChange = vi.fn();
+    const p = start({ onChange });
+    send(init());
+    await settle();
+    send(removeMissing(1));
+    // Already in flight when the admin heard of the refusal: it must not land on stale fields.
+    send(setTitle(2, 'Stale'));
+    await settle();
+    expect(p.fields?.title).toEqual({ 'en-US': 'Home' });
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(posted('rendered').map((m) => m.seq)).toEqual([0]);
+    expect(posted('error').map((e) => [e.kind, e.seq])).toEqual([
+      ['patch', 1],
+      ['patch', 1],
+    ]);
+
+    // An init without a seq starts the count again.
+    send(init());
+    send(setTitle(1, 'Fresh'));
+    await settle();
+    expect(p.fields?.title).toEqual({ 'en-US': 'Fresh' });
+    expect(posted('rendered').map((m) => m.seq)).toEqual([0, 0, 1]);
+  });
+
+  it('treats a patch it could not read as refused', async () => {
+    const p = start();
+    send(init());
+    await settle();
+    send(
+      msg('patch', {
+        seq: 1,
+        ops: [
+          { op: 'setField', field: 'title', locale: 'en-US', value: 'x'.repeat(MAX_MESSAGE_BYTES) },
+        ],
+      }),
+    );
+    send(setTitle(2, 'Stale'));
+    await settle();
+    expect(p.fields?.title).toEqual({ 'en-US': 'Home' });
+    expect(posted('rendered').map((m) => m.seq)).toEqual([0]);
+    expect(posted('error').map((e) => [e.kind, e.seq])).toEqual([
+      ['patch', 1],
+      ['patch', 1],
+    ]);
+    send(init({ seq: 2 }));
+    send(setTitle(3, 'Back'));
+    await settle();
+    expect(p.fields?.title).toEqual({ 'en-US': 'Back' });
+  });
+
+  it('acknowledges nothing a failed render held until a render that includes it succeeds', async () => {
+    const updates: { seq: number; ops: number }[] = [];
+    let fail = false;
+    start({
+      onChange: (_fields, update) => {
+        updates.push({ seq: update.seq, ops: update.ops.length });
+        if (fail) throw new Error('render failed');
+      },
+    });
+    send(init());
+    await settle();
+    fail = true;
+    send(setTitle(1, 'One'));
+    await settle();
+    // No retry of its own: the failed call isn't run again until something new arrives.
+    expect(updates).toHaveLength(2);
+    fail = false;
+    send(setTitle(2, 'Two'));
+    await settle();
+    expect(updates).toEqual([
+      { seq: 0, ops: 0 },
+      { seq: 1, ops: 1 },
+      { seq: 2, ops: 2 },
+    ]);
+    expect(posted('rendered').map((m) => m.seq)).toEqual([0, 2]);
+    expect(posted('error')).toEqual([expect.objectContaining({ kind: 'render', seq: 1 })]);
+  });
+
+  it('resyncs rather than hold an unbounded backlog of edits it could not render', async () => {
+    start({
+      onChange: () => {
+        throw new Error('always');
+      },
+    });
+    send(init());
+    await settle();
+    const hundred = Array.from({ length: 100 }, (_, i) => ({
+      op: 'setField',
+      field: 'title',
+      locale: 'en-US',
+      value: `v${i}`,
+    }));
+    for (let seq = 1; seq <= 11; seq++) send(msg('patch', { seq, ops: hundred }));
+    await settle();
+    expect(posted('error').filter((e) => e.kind === 'patch')).toEqual([
+      expect.objectContaining({ seq: 11 }),
+    ]);
+    expect(posted('rendered')).toEqual([]);
+  });
+
+  it('ignores an unreadable patch from anyone but the admin', async () => {
+    const p = start();
+    send(init());
+    await settle();
+    const big = msg('patch', {
+      seq: 1,
+      ops: [
+        { op: 'setField', field: 'title', locale: 'en-US', value: 'x'.repeat(MAX_MESSAGE_BYTES) },
+      ],
+    });
+    send(big, { origin: 'https://evil.test' });
+    send(big, { source: window });
+    send(setTitle(1, 'Still in step'));
+    await settle();
+    expect(posted('error')).toEqual([]);
+    expect(p.fields?.title).toEqual({ 'en-US': 'Still in step' });
+  });
+
+  it('starts the count again on an init without a seq', async () => {
+    const p = start();
+    send(init());
+    send(setTitle(5, 'Five'));
+    send(init());
+    send(setTitle(1, 'One again'));
+    await settle();
+    expect(p.fields?.title).toEqual({ 'en-US': 'One again' });
+  });
+});
+
 describe('geometry', () => {
+  it('fits a page of more boxes than one message holds, on-screen ones first', () => {
+    const key = (i: number) => `${'k'.repeat(240)}${i}`;
+    const rect = (i: number) => ({ x: 0, y: i * 10 - 20_000, w: 800, h: 10 });
+    const blocks = Array.from({ length: 3000 }, (_, i) => ({ key: key(i), rect: rect(i) }));
+    const slots = Array.from({ length: 3000 }, (_, i) => ({
+      path: key(i),
+      parentKey: key(i),
+      rect: rect(i),
+      gaps: [
+        { index: 0, axis: 'y' as const, before: key(i), rect: rect(i) },
+        { index: 1, axis: 'y' as const, after: key(i), rect: rect(i) },
+      ],
+    }));
+    const fields = Array.from({ length: 3000 }, (_, i) => ({
+      ref: `${key(i)}|ref`,
+      rect: rect(i),
+    }));
+    const body = fitGeometry(
+      {
+        blocks,
+        slots,
+        fields,
+        scroll: { x: 0, y: 0 },
+        viewport: { w: 800, h: 600 },
+        docHeight: 30_000,
+      },
+      MAX_MESSAGE_BYTES - 64,
+    );
+    expect(body.truncated).toBe(true);
+    // Box 2000 is at y = 0, the top of the viewport.
+    expect(body.blocks.map((b) => b.key)).toContain(key(2000));
+    expect(body.blocks.map((b) => b.key)).toContain(key(2059));
+    const parsed = parseGuestMessage(
+      { data: msg('geometry', body), origin: PAGE, source: FRAME },
+      guest,
+    );
+    expect(parsed.ok).toBe(true);
+  });
+
+  it('keeps a slot with more seams than allowed, with the seams that fit', () => {
+    const r = { x: 0, y: 0, w: 1, h: 1 };
+    const gaps = Array.from({ length: 5000 }, (_, index) => ({
+      index,
+      axis: 'y' as const,
+      rect: r,
+    }));
+    const body = fitGeometry(
+      {
+        blocks: [],
+        slots: [{ path: 'body', rect: r, gaps }],
+        fields: [],
+        scroll: { x: 0, y: 0 },
+        viewport: { w: 800, h: 600 },
+        docHeight: 600,
+      },
+      MAX_MESSAGE_BYTES - 64,
+    );
+    expect(body.slots).toHaveLength(1);
+    expect(body.slots[0]?.gaps).toHaveLength(4000);
+    expect(body.truncated).toBe(true);
+  });
+
+  it('flags nothing when everything fits', () => {
+    const body = fitGeometry(
+      {
+        blocks: [{ key: 'a', rect: { x: 0, y: 0, w: 1, h: 1 } }],
+        slots: [],
+        fields: [],
+        scroll: { x: 0, y: 0 },
+        viewport: { w: 800, h: 600 },
+        docHeight: 600,
+      },
+      MAX_MESSAGE_BYTES,
+    );
+    expect(body.truncated).toBeUndefined();
+    expect(body.blocks).toHaveLength(1);
+  });
+
   it('reports blocks, slots with their seams, and fields, once per frame', async () => {
     mountPage();
     start();
@@ -494,6 +717,20 @@ describe('edit mode', () => {
     ]);
     expect(posted('pick')).toEqual([expect.objectContaining({ key: 'c1' })]);
     expect(window.location.pathname).toBe('/page');
+  });
+
+  it('does not hover again once the pointer has left, even with a frame pending', async () => {
+    const { h, b } = mountPage();
+    await editing();
+    h.dispatchEvent(new MouseEvent('pointermove', { bubbles: true }));
+    flushFrames();
+    b.dispatchEvent(new MouseEvent('pointermove', { bubbles: true }));
+    document.documentElement.dispatchEvent(new MouseEvent('pointerleave'));
+    flushFrames();
+    expect(posted('hover')).toEqual([
+      expect.objectContaining({ ref: 's|main|e1|landing|title|en-US' }),
+      expect.not.objectContaining({ key: expect.anything(), ref: expect.anything() }),
+    ]);
   });
 
   it('sends hover at most once a frame, and only when it changes', async () => {
