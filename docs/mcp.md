@@ -56,8 +56,8 @@ schemas are built during isolate warm-up rather than on the first request.
 `TOOL_SCOPES` (`packages/http/src/mcp/tool-scopes.ts`), and a tool in `UNSCOPED_TOOLS` is shown to any
 caller, unless `DEPLOYMENT_TOOLS` keeps it from a caller bound to one space. A tool that checks several
 scopes shows to a holder of any of them, so a caller can see a tool that needs more than it holds. A
-key bound to one space sees 11 tools with delivery scopes, 79 with preview scopes and 238 with
-management scopes; only a deployment-wide principal with every scope sees all 246. This only saves an agent context: every handler still authorizes,
+key bound to one space sees 11 tools with delivery scopes, 79 with preview scopes and 239 with
+management scopes; only a deployment-wide principal with every scope sees all 247. This only saves an agent context: every handler still authorizes,
 and an unlisted tool stays callable and answers with the scope it needs. The admin's assistant lists
 every tool once per isolate and narrows that per person, because `tools/list` itself depends on who
 asks. A new tool adds its row, and `tool-visibility.test.ts` fails until
@@ -85,7 +85,7 @@ an ordinary API key — so an agent can still never exceed the scopes the approv
 See [Auth & RBAC](./auth-and-rbac.md#oauth-21-for-mcp-clients).
 ## Tools
 
-The server exposes **246 tools**, one per major Management/Delivery capability (the canonical list
+The server exposes **247 tools**, one per major Management/Delivery capability (the canonical list
 is the `registerTool` calls in `packages/http/src/mcp/tools/<area>.ts`, registered in `TOOL_AREAS`
 order). Each calls `authorize` before delegating to the same use-case as the HTTP route. Every
 tool that changes nothing carries `readOnlyHint: true`, which is also what keeps it out of the
