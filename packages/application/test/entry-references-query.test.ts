@@ -10,6 +10,7 @@ import {
   parseEntryQuery,
   publishContentType,
   publishEntry,
+  SYSTEM_CALLER,
   updateEntry,
 } from '../src/index';
 
@@ -36,13 +37,13 @@ const doc = (id: string) => ({
 });
 
 async function seed(ctx: AppContext, s = scope) {
-  await createContentType(ctx, s, {
+  await createContentType(ctx, SYSTEM_CALLER, s, {
     apiId: 'person',
     name: 'Person',
     displayField: 'name',
     fields: [sym('name', 0)],
   });
-  await createContentType(ctx, s, {
+  await createContentType(ctx, SYSTEM_CALLER, s, {
     apiId: 'post',
     name: 'Post',
     displayField: 'title',

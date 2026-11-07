@@ -19,6 +19,7 @@ import {
   maskDeliveredFields,
   publishAsset,
   publishEntry,
+  SYSTEM_CALLER,
   unpublishEntry,
   updateEntry,
 } from '../src/index';
@@ -120,7 +121,7 @@ function setup() {
 
 async function seedModel(ctx: AppContext) {
   await createSpace(ctx, { spaceId: 'blog', name: 'Blog', defaultLocale: 'en-US' });
-  await createContentType(ctx, scope, {
+  await createContentType(ctx, SYSTEM_CALLER, scope, {
     apiId: 'author',
     name: 'Author',
     displayField: 'name',
@@ -130,7 +131,7 @@ async function seedModel(ctx: AppContext) {
       field({ apiId: 'email', type: 'Symbol', position: 2 }),
     ],
   });
-  await createContentType(ctx, scope, {
+  await createContentType(ctx, SYSTEM_CALLER, scope, {
     apiId: 'post',
     name: 'Post',
     displayField: 'title',

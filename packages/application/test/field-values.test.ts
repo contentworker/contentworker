@@ -6,6 +6,7 @@ import {
   createContentType,
   createEntry,
   listFieldValues,
+  SYSTEM_CALLER,
   trashEntry,
 } from '../src/index';
 
@@ -26,7 +27,7 @@ const field = (apiId: string, type: FieldDefinition['type'], position: number, e
   }) as FieldDefinition;
 
 async function seed(ctx: AppContext, s = scope) {
-  await createContentType(ctx, s, {
+  await createContentType(ctx, SYSTEM_CALLER, s, {
     apiId: 'post',
     name: 'Post',
     displayField: 'title',

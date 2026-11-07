@@ -21,6 +21,7 @@ import {
   outlineEntryBlocks,
   patchEntryBlocks,
   publishContentType,
+  SYSTEM_CALLER,
   trashEntry,
 } from '../src/index';
 
@@ -47,7 +48,7 @@ let store: InMemoryContentStore;
 let ctx: AppContext;
 
 const defineLanding = async (at = scope) => {
-  await createContentType(ctx, at, {
+  await createContentType(ctx, SYSTEM_CALLER, at, {
     apiId: 'landing',
     name: 'Landing',
     displayField: 'title',

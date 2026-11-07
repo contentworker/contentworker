@@ -17,6 +17,7 @@ A content type has:
 - a **display field**, the field used as each entry's title in lists, pickers and search results;
 - an ordered list of **fields**;
 - optionally a **URL pattern**, where its entries live on your site;
+- optionally a **preview URL**, where your site shows a draft of one of its entries;
 - optionally **singleton**: it holds one entry only.
 - optionally a **group**, **description** and **icon**, and an editor **layout** (see
   [Organizing the model](#organizing-the-model)).
@@ -49,6 +50,31 @@ of the type's own `Slug` fields; anything else is refused. In the content type d
 an entry that was already published, ContentWorker writes a `301` from the old path to the new one;
 see [Redirects](/guides/redirects/#redirect-slug-changes). A revision that removes a slug a kept
 pattern names is refused.
+
+### Preview URL
+
+A preview URL is your own frontend's draft view for the type's entries, for example
+`https://site.example/__preview?entry={id}#token={token}`. A
+[preview link](/guides/editing-and-publishing/#preview-drafts) fills it for an entry and returns it
+as `frontendUrl`, beside the Preview API URL, and the editor's **Copy preview link** copies it.
+Its placeholders, each filled URL-encoded, are `{id}`, `{token}` (required: the frontend reads the
+draft with it), `{locale}`, `{space}`, `{environment}`, and `{field:<apiId>}` for one of the type's
+own `Symbol`, `Slug`, `Integer`, `Number` or `Date` fields; anything else is refused. While a field
+it names is empty in the link's locale, the link has no `frontendUrl`.
+
+Put `{token}` after `#`, as above: a fragment never reaches your server, so the token stays out of
+its access logs and of the `Referer` your page sends. Your page reads it from `location.hash`. The
+token reads that one entry, drafts included, until it expires (72 hours unless the link asks for
+less), so share the link only with whoever should see the draft.
+
+It is an `https` URL with a plain host name (no wildcard, no placeholder in the host, no
+credentials). Plain `http` to `localhost` or `127.0.0.1` is accepted only on a local stack
+(`pnpm dev`), never on a deployment. In the content type dialog it is the **Preview URL** field;
+over the API and MCP it is `preview: { urlTemplate }` on `POST …/content-types` and
+`model_create_content_type` (`null` clears it). Setting or changing it needs read access to the
+type's entries as well as `content:manage`, because it decides where their preview tokens go; a
+promotion that adds or changes it asks for approval for the same reason. It is editor-only:
+Delivery never serves it. The admin doesn't frame your site yet; that comes with live preview.
 
 ### Singletons
 
@@ -184,8 +210,8 @@ see [Roles](/guides/api-keys/#roles)).
 - **Keep the model in a file.** `contentworker model export` writes it out, and `contentworker
   model apply --dry-run` shows what a changed file would add, change and remove before anything
   does; see the [command-line tool](/guides/cli/#the-content-model-as-code).
-- **Cloning a type** copies its fields, display field, singleton flag, group, description, icon
-  and layout under a new API ID and name, as a draft with no entries; its URL pattern stays behind,
+- **Cloning a type** copies its fields, display field, singleton flag, group, description, icon,
+  agent instructions, layout and preview URL under a new API ID and name, as a draft with no entries; its URL pattern stays behind,
   so two types never route the same paths. In the admin it is **Clone…** in the type's menu on the Content page; over the API
   `POST …/content-types/{apiId}/clone` with `{ apiId, name }`, over MCP `model_clone_content_type`.
 - **Deleting a type** is refused, naming every reason, while anything depends on it: entries (the

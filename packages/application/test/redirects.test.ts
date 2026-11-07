@@ -30,6 +30,7 @@ import {
   publishEntry,
   resolveDeliveredRedirect,
   resolveRedirect,
+  SYSTEM_CALLER,
   updateContentType,
   updateEntry,
   updateRedirect,
@@ -303,7 +304,7 @@ describe('redirects', () => {
 
   describe('slug changes', () => {
     beforeEach(async () => {
-      await createContentType(ctx, scope, {
+      await createContentType(ctx, SYSTEM_CALLER, scope, {
         apiId: 'post',
         name: 'Post',
         displayField: 'title',
@@ -366,7 +367,7 @@ describe('redirects', () => {
     });
 
     it('does nothing without a URL pattern, or on a first publish', async () => {
-      await updateContentType(ctx, scope, 'post', { urlPattern: null });
+      await updateContentType(ctx, SYSTEM_CALLER, scope, 'post', { urlPattern: null });
       await publishContentType(ctx, scope, 'post');
       const id = await post('x');
       await reslug(id, 'y');

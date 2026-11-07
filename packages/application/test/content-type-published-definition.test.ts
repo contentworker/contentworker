@@ -28,6 +28,7 @@ import {
   publishContentType,
   publishEntry,
   requestPromotion,
+  SYSTEM_CALLER,
   updateContentType,
   updateEntry,
   writeSnapshotModel,
@@ -72,7 +73,7 @@ beforeEach(async () => {
   store.seedSpace({ spaceId: 's1', defaultLocale: 'en-US', locales: ['en-US'] });
   ctx = { store, clock: new FixedClock(), ids: new SequenceIdGenerator('p') };
   await createEnvironment(ctx, 's1', 'copy');
-  await createContentType(ctx, scope, {
+  await createContentType(ctx, SYSTEM_CALLER, scope, {
     apiId: 'page',
     name: 'Page',
     displayField: 'title',
@@ -85,7 +86,10 @@ beforeEach(async () => {
 describe('a draft revision of a live type', () => {
   it('changes nothing Delivery serves, so it announces nothing', async () => {
     const before = events().length;
-    await updateContentType(ctx, scope, 'page', { fields: subtitle, urlPattern: '/p/{slug}' });
+    await updateContentType(ctx, SYSTEM_CALLER, scope, 'page', {
+      fields: subtitle,
+      urlPattern: '/p/{slug}',
+    });
     expect(events()).toHaveLength(before);
     expect(await delivered()).toMatchObject({
       name: 'Page',
@@ -99,7 +103,7 @@ describe('a draft revision of a live type', () => {
   });
 
   it('reaches Delivery with its publish, which announces it', async () => {
-    await updateContentType(ctx, scope, 'page', { urlPattern: '/p/{slug}' });
+    await updateContentType(ctx, SYSTEM_CALLER, scope, 'page', { urlPattern: '/p/{slug}' });
     const before = events().length;
     await publishContentType(ctx, scope, 'page');
     expect(events()).toHaveLength(before + 1);
@@ -108,7 +112,7 @@ describe('a draft revision of a live type', () => {
   });
 
   it('stays the draft on a Management read', async () => {
-    await updateContentType(ctx, scope, 'page', { urlPattern: '/p/{slug}' });
+    await updateContentType(ctx, SYSTEM_CALLER, scope, 'page', { urlPattern: '/p/{slug}' });
     expect(await getContentType(ctx, scope, 'page')).toMatchObject({
       urlPattern: '/p/{slug}',
       version: 2,
@@ -117,8 +121,8 @@ describe('a draft revision of a live type', () => {
   });
 
   it('keeps the first published definition through later drafts', async () => {
-    await updateContentType(ctx, scope, 'page', { name: 'Two' });
-    await updateContentType(ctx, scope, 'page', { name: 'Three' });
+    await updateContentType(ctx, SYSTEM_CALLER, scope, 'page', { name: 'Two' });
+    await updateContentType(ctx, SYSTEM_CALLER, scope, 'page', { name: 'Three' });
     expect(await delivered()).toMatchObject({ name: 'Page', version: 1 });
   });
 
@@ -134,32 +138,32 @@ describe('a draft revision of a live type', () => {
   });
 
   it('goes with the type', async () => {
-    await createContentType(ctx, scope, {
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
       apiId: 'note',
       name: 'Note',
       displayField: 'title',
       fields,
     });
     await publishContentType(ctx, scope, 'note');
-    await updateContentType(ctx, scope, 'note', { name: 'Two' });
+    await updateContentType(ctx, SYSTEM_CALLER, scope, 'note', { name: 'Two' });
     expect((await store.contentTypes.publishedDefinitions(scope)).has('note')).toBe(true);
     await deleteContentType(ctx, scope, 'note');
     expect((await store.contentTypes.publishedDefinitions(scope)).has('note')).toBe(false);
   });
 
   it('holds a delete back by the URL pattern Delivery serves, though a draft cleared it', async () => {
-    await updateContentType(ctx, scope, 'page', { urlPattern: null });
+    await updateContentType(ctx, SYSTEM_CALLER, scope, 'page', { urlPattern: null });
     expect((await contentTypeDependents(ctx, scope, 'page')).urlPattern).toBe('/{slug}');
     await expect(deleteContentType(ctx, scope, 'page')).rejects.toBeInstanceOf(ConflictError);
   });
 
   it('is kept per environment', async () => {
-    await updateContentType(ctx, scope, 'page', { name: 'Two' });
+    await updateContentType(ctx, SYSTEM_CALLER, scope, 'page', { name: 'Two' });
     expect((await store.contentTypes.publishedDefinitions(copy)).size).toBe(0);
   });
 
   it('survives a merge of a draft, and yields to a merge of a published type', async () => {
-    await createContentType(ctx, copy, {
+    await createContentType(ctx, SYSTEM_CALLER, copy, {
       apiId: 'page',
       name: 'Other',
       displayField: 'title',
@@ -177,7 +181,7 @@ describe('a draft revision of a live type', () => {
 
 describe('a type that was never published', () => {
   it('is delivered as it stands, status draft, out of the routes', async () => {
-    await createContentType(ctx, scope, {
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
       apiId: 'event',
       name: 'Event',
       displayField: 'title',
@@ -204,7 +208,7 @@ describe('Management reads that say what Delivery does', () => {
   }
 
   it('answers a reference filter by the links as last published', async () => {
-    await createContentType(ctx, scope, {
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
       apiId: 'post',
       name: 'Post',
       displayField: 'title',
@@ -226,7 +230,7 @@ describe('Management reads that say what Delivery does', () => {
     };
     const ids = async () => (await listPublishedEntries(ctx, scope, query)).map((e) => e.id);
     expect(await ids()).toEqual([entry.id]);
-    await updateContentType(ctx, scope, 'post', {
+    await updateContentType(ctx, SYSTEM_CALLER, scope, 'post', {
       fields: [field('title', 'Symbol', 0), field('author', 'Symbol', 1)],
     });
     expect(await ids()).toEqual([entry.id]);
@@ -234,7 +238,7 @@ describe('Management reads that say what Delivery does', () => {
 
   it('moves a slug by the published URL pattern while a draft has another', async () => {
     const id = await published('team');
-    await updateContentType(ctx, scope, 'page', { urlPattern: '/p/{slug}' });
+    await updateContentType(ctx, SYSTEM_CALLER, scope, 'page', { urlPattern: '/p/{slug}' });
     await updateEntry(ctx, scope, id, {
       title: { 'en-US': 'team' },
       slug: { 'en-US': 'people' },
@@ -246,7 +250,7 @@ describe('Management reads that say what Delivery does', () => {
   });
 
   it('moves no slug for a type with nothing kept and no pattern', async () => {
-    await createContentType(ctx, scope, {
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
       apiId: 'note',
       name: 'Note',
       displayField: 'title',
@@ -269,7 +273,7 @@ describe('Management reads that say what Delivery does', () => {
       name: 'Main',
       items: [{ id: 'about', link: { type: 'entry', entryId: id } }],
     });
-    await updateContentType(ctx, scope, 'page', { name: 'Two' });
+    await updateContentType(ctx, SYSTEM_CALLER, scope, 'page', { name: 'Two' });
     expect((await previewMenu(ctx, scope, menu.id)).items[0]).toMatchObject({
       status: 'live',
       url: '/about',
@@ -279,7 +283,10 @@ describe('Management reads that say what Delivery does', () => {
 
 describe('copying a live type with a draft', () => {
   beforeEach(async () => {
-    await updateContentType(ctx, scope, 'page', { fields: subtitle, urlPattern: '/p/{slug}' });
+    await updateContentType(ctx, SYSTEM_CALLER, scope, 'page', {
+      fields: subtitle,
+      urlPattern: '/p/{slug}',
+    });
   });
 
   const expectBoth = async () => {
@@ -326,7 +333,7 @@ describe('copying a live type with a draft', () => {
   });
 
   it('restores the published singleton flag', async () => {
-    await createContentType(ctx, scope, {
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
       apiId: 'home',
       name: 'Home',
       displayField: 'title',
@@ -334,7 +341,7 @@ describe('copying a live type with a draft', () => {
       singleton: true,
     });
     await publishContentType(ctx, scope, 'home');
-    await updateContentType(ctx, scope, 'home', { singleton: false });
+    await updateContentType(ctx, SYSTEM_CALLER, scope, 'home', { singleton: false });
     await cloneEnvironment(ctx, scope, copy);
     const { contentTypes = [] } = await deliveryReads(ctx).read(copy, { contentTypes: true });
     expect(contentTypes.find((t) => t.apiId === 'home')?.singleton).toBe(true);
@@ -355,7 +362,7 @@ describe('copying a live type with a draft', () => {
 
 describe('a clone of a draft that cleared the URL pattern', () => {
   it('keeps the draft’s clearing, though the draft dropped the slug too', async () => {
-    await updateContentType(ctx, scope, 'page', {
+    await updateContentType(ctx, SYSTEM_CALLER, scope, 'page', {
       urlPattern: null,
       fields: [field('title', 'Symbol', 0)],
     });
@@ -367,7 +374,7 @@ describe('a clone of a draft that cleared the URL pattern', () => {
   });
 
   it('keeps the draft’s clearing when the slug stays', async () => {
-    await updateContentType(ctx, scope, 'page', { urlPattern: null });
+    await updateContentType(ctx, SYSTEM_CALLER, scope, 'page', { urlPattern: null });
     await cloneEnvironment(ctx, scope, copy);
     expect((await getContentType(ctx, copy, 'page')).urlPattern).toBeUndefined();
   });
@@ -391,7 +398,7 @@ describe('a saved menu’s links', () => {
 
   it('takes an entry of a live type whose draft cleared the pattern Delivery still serves', async () => {
     const id = await published();
-    await updateContentType(ctx, scope, 'page', { urlPattern: null });
+    await updateContentType(ctx, SYSTEM_CALLER, scope, 'page', { urlPattern: null });
     const menu = await menuOf(id);
     expect((await previewMenu(ctx, scope, menu.id)).items[0]).toMatchObject({
       status: 'live',
@@ -400,7 +407,7 @@ describe('a saved menu’s links', () => {
   });
 
   it('takes a pattern only a draft has, and the preview says Delivery has no URL yet', async () => {
-    await createContentType(ctx, scope, {
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
       apiId: 'note',
       name: 'Note',
       displayField: 'title',
@@ -412,13 +419,13 @@ describe('a saved menu’s links', () => {
       fields: { title: { 'en-US': 'n' }, slug: { 'en-US': 'n' } },
     });
     await publishEntry(ctx, scope, entry.id);
-    await updateContentType(ctx, scope, 'note', { urlPattern: '/n/{slug}' });
+    await updateContentType(ctx, SYSTEM_CALLER, scope, 'note', { urlPattern: '/n/{slug}' });
     const menu = await menuOf(entry.id);
     expect((await previewMenu(ctx, scope, menu.id)).items[0]).toMatchObject({ status: 'no_url' });
   });
 
   it('takes an entry of a never-published draft with a pattern', async () => {
-    await createContentType(ctx, scope, {
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
       apiId: 'event',
       name: 'Event',
       displayField: 'title',
@@ -433,7 +440,7 @@ describe('a saved menu’s links', () => {
   });
 
   it('still refuses an entry of a type with no pattern anywhere', async () => {
-    await createContentType(ctx, scope, {
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
       apiId: 'note',
       name: 'Note',
       displayField: 'title',
@@ -449,21 +456,21 @@ describe('a saved menu’s links', () => {
 
 describe('the delete check when the kept definition has no pattern', () => {
   it('ignores a pattern only the draft has: Delivery doesn’t route it', async () => {
-    await createContentType(ctx, scope, {
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
       apiId: 'note',
       name: 'Note',
       displayField: 'title',
       fields,
     });
     await publishContentType(ctx, scope, 'note');
-    await updateContentType(ctx, scope, 'note', { urlPattern: '/n/{slug}' });
+    await updateContentType(ctx, SYSTEM_CALLER, scope, 'note', { urlPattern: '/n/{slug}' });
     expect((await contentTypeDependents(ctx, scope, 'note')).urlPattern).toBeUndefined();
     await deleteContentType(ctx, scope, 'note');
     expect(await store.contentTypes.get(scope, 'note')).toBeNull();
   });
 
   it('still counts a never-published draft’s pattern', async () => {
-    await createContentType(ctx, scope, {
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
       apiId: 'event',
       name: 'Event',
       displayField: 'title',
@@ -476,7 +483,7 @@ describe('the delete check when the kept definition has no pattern', () => {
 
 describe('the published view’s shape', () => {
   it('leaves out the admin-only details, as D1 does', async () => {
-    await updateContentType(ctx, scope, 'page', {
+    await updateContentType(ctx, SYSTEM_CALLER, scope, 'page', {
       group: 'Site',
       description: 'Pages',
       icon: 'file',
@@ -495,10 +502,10 @@ describe('a promotion over a target with a draft', () => {
 
   it('names a field the promotion removes that the target still serves', async () => {
     // The target serves `secret`; its own draft already dropped it, so that draft alone shows no risk.
-    await updateContentType(ctx, scope, 'page', { fields: secret });
+    await updateContentType(ctx, SYSTEM_CALLER, scope, 'page', { fields: secret });
     await publishContentType(ctx, scope, 'page');
-    await updateContentType(ctx, scope, 'page', { fields });
-    await createContentType(ctx, copy, {
+    await updateContentType(ctx, SYSTEM_CALLER, scope, 'page', { fields });
+    await createContentType(ctx, SYSTEM_CALLER, copy, {
       apiId: 'page',
       name: 'Page',
       displayField: 'title',
@@ -515,10 +522,10 @@ describe('a promotion over a target with a draft', () => {
   });
 
   it('says nothing of it when what arrives is a draft, which changes nothing served', async () => {
-    await updateContentType(ctx, scope, 'page', { fields: secret });
+    await updateContentType(ctx, SYSTEM_CALLER, scope, 'page', { fields: secret });
     await publishContentType(ctx, scope, 'page');
-    await updateContentType(ctx, scope, 'page', { fields });
-    await createContentType(ctx, copy, {
+    await updateContentType(ctx, SYSTEM_CALLER, scope, 'page', { fields });
+    await createContentType(ctx, SYSTEM_CALLER, copy, {
       apiId: 'page',
       name: 'Page',
       displayField: 'title',
@@ -545,9 +552,9 @@ describe('a snapshot of a draft the write path would take', () => {
   const retyped = [...fields, field('rating', 'Symbol', 2), tier];
 
   beforeEach(async () => {
-    await updateContentType(ctx, scope, 'page', { fields: ruled });
+    await updateContentType(ctx, SYSTEM_CALLER, scope, 'page', { fields: ruled });
     await publishContentType(ctx, scope, 'page');
-    await updateContentType(ctx, scope, 'page', { fields: retyped });
+    await updateContentType(ctx, SYSTEM_CALLER, scope, 'page', { fields: retyped });
   });
 
   it('passes a dry run, and imports both definitions', async () => {
@@ -606,7 +613,7 @@ describe('a snapshot with a definition that can’t be written', () => {
   });
 
   it('refuses a bad block in the published definition, writing nothing', async () => {
-    await updateContentType(ctx, scope, 'page', { name: 'Two' });
+    await updateContentType(ctx, SYSTEM_CALLER, scope, 'page', { name: 'Two' });
     const snapshot = await exportSnapshot(ctx, scope);
     const bad = {
       ...snapshot,
@@ -619,7 +626,7 @@ describe('a snapshot with a definition that can’t be written', () => {
   });
 
   it('refuses a bad block in the draft over a good published definition', async () => {
-    await updateContentType(ctx, scope, 'page', { name: 'Two' });
+    await updateContentType(ctx, SYSTEM_CALLER, scope, 'page', { name: 'Two' });
     const snapshot = await exportSnapshot(ctx, scope);
     const bad = {
       ...snapshot,

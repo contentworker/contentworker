@@ -8,6 +8,7 @@ import {
   publishContentType,
   publishEntriesTx,
   publishEntry,
+  SYSTEM_CALLER,
   unpublishEntry,
   updateEntry,
   withActor,
@@ -34,7 +35,7 @@ async function harness() {
   const spaceId = `authors-${uid()}`;
   await createSpace(base, { spaceId, name: 'Authors', defaultLocale: 'en-US' });
   const scope = { spaceId, environmentId: 'main' };
-  await createContentType(base, scope, {
+  await createContentType(base, SYSTEM_CALLER, scope, {
     apiId: 'note',
     name: 'Note',
     displayField: 'title',

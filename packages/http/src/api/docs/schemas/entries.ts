@@ -129,3 +129,19 @@ export const movedEntry = z.object({
   contentTypeApiId: z.string(),
   position: z.string().describe('Its key now: what order=sys.position sorts by'),
 });
+
+/** A minted preview link (`POST …/entries/:id/preview-link`): the token is shown once. */
+export const previewLink = z.object({
+  url: z.string().describe('The entry on the Preview API, with ?preview_token='),
+  frontendUrl: z
+    .string()
+    .optional()
+    .describe(
+      'The entry on your frontend: its content type’s preview.urlTemplate, filled. Absent when ' +
+        'the type has none, or a field the template names is empty in the locale',
+    ),
+  token: z
+    .string()
+    .describe('Reads this one entry, drafts included, until expiresAt; shown only once'),
+  expiresAt: z.iso.datetime(),
+});

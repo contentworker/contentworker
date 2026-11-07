@@ -28,6 +28,7 @@ import {
   relayOutbox,
   resumeStalledBulkJobs,
   runBulkChunk,
+  SYSTEM_CALLER,
   startBulkJob,
   unpublishEntry,
 } from '../src/index';
@@ -52,7 +53,7 @@ function setup() {
 
 async function seedEntries(ctx: AppContext, n: number): Promise<string[]> {
   await createSpace(ctx, { spaceId: 'shop', name: 'Shop', defaultLocale: 'en-US' });
-  await createContentType(ctx, scope, {
+  await createContentType(ctx, SYSTEM_CALLER, scope, {
     apiId: 'page',
     name: 'Page',
     displayField: 'title',

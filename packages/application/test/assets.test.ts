@@ -16,6 +16,7 @@ import {
   getPublishedEntry,
   publishAsset,
   publishEntry,
+  SYSTEM_CALLER,
 } from '../src/index';
 
 const scope = { spaceId: 'shop', environmentId: 'main' };
@@ -82,7 +83,7 @@ describe('P3b: assets', () => {
   });
 
   it('refuses to publish an entry linking to a nonexistent asset', async () => {
-    await createContentType(ctx, scope, {
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
       apiId: 'product',
       name: 'Product',
       displayField: 'name',
@@ -124,7 +125,7 @@ describe('P3b: assets', () => {
     });
     await publishAsset(ctx, scope, asset.asset.id);
 
-    await createContentType(ctx, scope, {
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
       apiId: 'product',
       name: 'Product',
       displayField: 'name',

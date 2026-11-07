@@ -8,6 +8,7 @@ import {
   type ListedPreviewEntry,
   listPreviewEntryPage,
   publishContentType,
+  SYSTEM_CALLER,
   updateEntry,
 } from '../src/index';
 
@@ -21,7 +22,7 @@ function makeContext(): AppContext {
 }
 
 async function seedType(ctx: AppContext, at = scope) {
-  await createContentType(ctx, at, {
+  await createContentType(ctx, SYSTEM_CALLER, at, {
     apiId: 'article',
     name: 'Article',
     displayField: 'title',
@@ -149,7 +150,7 @@ describe('preview entry list paging', () => {
   });
 
   it('narrows a restricted caller in the query: no page ends on, no cursor carries, a hidden entry', async () => {
-    await createContentType(ctx, scope, {
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
       apiId: 'secret',
       name: 'Secret',
       displayField: 'title',

@@ -4,6 +4,7 @@ import {
   createEntry,
   createSpace,
   publishContentType,
+  SYSTEM_CALLER,
   updateEntry,
 } from '@contentworker/application';
 import type { Clock, IdGenerator } from '@contentworker/ports';
@@ -40,7 +41,7 @@ describe('entries that mention a text on D1', () => {
   beforeAll(async () => {
     for (const s of [scope, other]) {
       await createSpace(ctx, { spaceId: s.spaceId, name: 'M', defaultLocale: 'en-US' });
-      await createContentType(ctx, s, {
+      await createContentType(ctx, SYSTEM_CALLER, s, {
         apiId: 'page',
         name: 'Page',
         displayField: 'title',

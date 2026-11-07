@@ -10,6 +10,7 @@ import {
   listWorkflows,
   publishContentType,
   publishWorkflowVersion,
+  SYSTEM_CALLER,
   saveWorkflowDraft,
 } from '@contentworker/application';
 import { WorkflowBuilder } from '@contentworker/domain';
@@ -44,7 +45,7 @@ const startsOn = (type: string) =>
 describe('list summaries on D1', () => {
   it('counts each release’s members in one grouped query, past the parameter cap', async () => {
     await createSpace(ctx, { spaceId, name: 'Lists', defaultLocale: 'en-US', locales: ['en-US'] });
-    await createContentType(ctx, scope, {
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
       apiId: 'page',
       name: 'Page',
       displayField: 'title',

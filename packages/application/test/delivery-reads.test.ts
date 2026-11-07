@@ -12,6 +12,7 @@ import {
   getPublishedEntry,
   publishContentType,
   publishEntry,
+  SYSTEM_CALLER,
 } from '../src';
 
 const blog = { spaceId: 'blog', environmentId: 'main' };
@@ -120,7 +121,7 @@ describe('deliveryReads (one request’s reads)', () => {
 
 describe('Delivery reads through one request', () => {
   beforeEach(async () => {
-    await createContentType(ctx, blog, {
+    await createContentType(ctx, SYSTEM_CALLER, blog, {
       apiId: 'post',
       name: 'Post',
       displayField: 'title',

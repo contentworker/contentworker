@@ -232,6 +232,9 @@ export function wireEdge(rawEnv: EdgeEnv, options: EdgeWireOptions = {}): EdgeWi
       : {}),
     costGuard,
     ai: aiContext,
+    // A local stack (no D1, or REQUIRE_SECURE_SECRETS=false, as `pnpm dev` sets) may preview on a
+    // plain-http dev server; a deployment, whose templates require secure secrets, never.
+    ...(!persistent || env.REQUIRE_SECURE_SECRETS === 'false' ? { previewLoopback: true } : {}),
     // Cloudflare Images: signed /media transform URLs over R2 bytes (executed
     // by the IMAGES binding in the /media route), /cdn-cgi/image for others.
     ...(mediaSigner

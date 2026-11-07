@@ -25,6 +25,7 @@ import {
   publishEntry,
   requestPromotion,
   restoreVersion,
+  SYSTEM_CALLER,
   updateEntry,
   validateEntry,
 } from '../src/index';
@@ -62,7 +63,7 @@ beforeEach(async () => {
   const store = new InMemoryContentStore();
   store.seedSpace({ spaceId: 's1', defaultLocale: 'en', locales: ['en'] });
   ctx = { store, clock: new FixedClock(), ids: new SequenceIdGenerator('g') };
-  await createContentType(ctx, scope, {
+  await createContentType(ctx, SYSTEM_CALLER, scope, {
     apiId: 'listing',
     name: 'Listing',
     displayField: 'title',
@@ -202,7 +203,7 @@ describe('conditional field rules on whole-entry copies', () => {
     await createSpace(ctx, { spaceId: 's2', name: 'S2', defaultLocale: 'en' });
     await createEnvironment(ctx, 's2', 'copy');
     for (const scope of [main, copy]) {
-      await createContentType(ctx, scope, {
+      await createContentType(ctx, SYSTEM_CALLER, scope, {
         apiId: 'listing',
         name: 'Listing',
         displayField: 'title',

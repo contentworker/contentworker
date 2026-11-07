@@ -9,6 +9,7 @@ import {
   publishContentType,
   publishEntry,
   purgeEntry,
+  SYSTEM_CALLER,
   trashEntry,
   updateEntry,
 } from '../src/index';
@@ -36,7 +37,7 @@ function ctxWith(hooks?: HookDispatcher): AppContext {
 }
 
 async function seed(ctx: AppContext) {
-  await createContentType(ctx, scope, {
+  await createContentType(ctx, SYSTEM_CALLER, scope, {
     apiId: 'article',
     name: 'Article',
     displayField: 'title',
@@ -51,7 +52,7 @@ async function seed(ctx: AppContext) {
       },
       { apiId: 'slug', name: 'Slug', type: 'Slug', localized: false, required: false, position: 1 },
     ],
-  } as Parameters<typeof createContentType>[2]);
+  } as Parameters<typeof createContentType>[3]);
   await publishContentType(ctx, scope, 'article');
 }
 

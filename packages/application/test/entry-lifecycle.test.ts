@@ -13,6 +13,7 @@ import {
   publishEntry,
   purgeEntry,
   restoreEntry,
+  SYSTEM_CALLER,
   setEntryMetadata,
   trashEntry,
   updateEntry,
@@ -25,7 +26,7 @@ let store: InMemoryContentStore;
 
 /** A content type with a display field and one bounded-length title. */
 async function seed(titleMax?: number) {
-  await createContentType(ctx, scope, {
+  await createContentType(ctx, SYSTEM_CALLER, scope, {
     apiId: 'article',
     name: 'Article',
     displayField: 'title',

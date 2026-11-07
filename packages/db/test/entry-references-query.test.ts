@@ -7,6 +7,7 @@ import {
   listPublishedEntries,
   publishContentType,
   publishEntry,
+  SYSTEM_CALLER,
   updateContentType,
   updateEntry,
 } from '@contentworker/application';
@@ -64,13 +65,13 @@ describe('filter by referenced entry on D1', { timeout: 60_000 }, () => {
 
   async function seed(ctx: AppContext, s: typeof scope): Promise<string[]> {
     await createSpace(ctx, { spaceId: s.spaceId, name: 'R', defaultLocale: 'en-US' });
-    await createContentType(ctx, s, {
+    await createContentType(ctx, SYSTEM_CALLER, s, {
       apiId: 'person',
       name: 'Person',
       displayField: 'name',
       fields: [field({ apiId: 'name', type: 'Symbol' })],
     });
-    await createContentType(ctx, s, {
+    await createContentType(ctx, SYSTEM_CALLER, s, {
       apiId: 'post',
       name: 'Post',
       displayField: 'title',
@@ -341,13 +342,13 @@ describe('filter by referenced entry on D1', { timeout: 60_000 }, () => {
             : field({ apiId: 'person', type: 'JSON', position: 1 }),
         ],
       });
-    await createContentType(ctx, s2, {
+    await createContentType(ctx, SYSTEM_CALLER, s2, {
       apiId: 'person',
       name: 'Person',
       displayField: 'name',
       fields: [field({ apiId: 'name', type: 'Symbol' })],
     });
-    await createContentType(ctx, s2, {
+    await createContentType(ctx, SYSTEM_CALLER, s2, {
       apiId: 'post',
       name: 'Post',
       displayField: 'title',
@@ -369,7 +370,7 @@ describe('filter by referenced entry on D1', { timeout: 60_000 }, () => {
     });
     await publishEntry(ctx, s2, post.entry.id);
     // The nested link field becomes a JSON field; the published snapshot and its edge remain.
-    await updateContentType(ctx, s2, 'post', {
+    await updateContentType(ctx, SYSTEM_CALLER, s2, 'post', {
       fields: [field({ apiId: 'title', type: 'Symbol' }), card(false)],
     });
     await publishContentType(ctx, s2, 'post');

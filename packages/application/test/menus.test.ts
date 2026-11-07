@@ -30,6 +30,7 @@ import {
   previewMenu,
   publishContentType,
   publishEntry,
+  SYSTEM_CALLER,
   unpublishEntry,
   updateEntry,
   updateMenu,
@@ -80,7 +81,7 @@ describe('menus', () => {
       locales: ['en-US', 'de'],
     });
     await createEnvironment(ctx, 'site', 'staging');
-    await createContentType(ctx, scope, {
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
       apiId: 'page',
       name: 'Page',
       displayField: 'title',
@@ -90,7 +91,7 @@ describe('menus', () => {
         field({ apiId: 'slug', type: 'Slug', localized: true, position: 1 }),
       ],
     });
-    await createContentType(ctx, scope, {
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
       apiId: 'note',
       name: 'Note',
       displayField: 'title',

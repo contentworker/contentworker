@@ -12,6 +12,7 @@ import {
   publishAsset,
   publishContentType,
   publishEntry,
+  SYSTEM_CALLER,
   setLocaleSettings,
 } from '@contentworker/application';
 import { type FieldDefinition, NotFoundError, type Principal, SCOPES } from '@contentworker/domain';
@@ -137,7 +138,7 @@ describe('locale settings on D1', () => {
 
   it('serves no undelivered locale through Delivery', async () => {
     const { ctx, scope } = await space();
-    await createContentType(ctx, scope, {
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
       apiId: 'note',
       name: 'Note',
       displayField: 'title',

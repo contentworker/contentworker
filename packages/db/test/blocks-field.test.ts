@@ -6,6 +6,7 @@ import {
   getEntry,
   publishContentType,
   publishEntry,
+  SYSTEM_CALLER,
   updateContentType,
 } from '@contentworker/application';
 import { ConflictError, type FieldDefinition } from '@contentworker/domain';
@@ -64,7 +65,7 @@ describe('blocks fields on D1', () => {
       defaultLocale: 'en-US',
       locales: ['en-US'],
     });
-    await createContentType(ctx, scope, {
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
       apiId: 'landing',
       name: 'Landing',
       displayField: 'title',
@@ -119,7 +120,7 @@ describe('blocks fields on D1', () => {
     });
     await publishEntry(ctx, scope, last.entry.id);
 
-    const err = await updateContentType(ctx, scope, 'landing', {
+    const err = await updateContentType(ctx, SYSTEM_CALLER, scope, 'landing', {
       fields: fieldsWith([hero]),
     }).catch((e) => e);
     expect(err).toBeInstanceOf(ConflictError);

@@ -10,6 +10,7 @@ import {
   publishContentType,
   publishEntry,
   runBulkChunk,
+  SYSTEM_CALLER,
   startEnvironmentClone,
   updateEntry,
 } from '@contentworker/application';
@@ -36,7 +37,7 @@ describe('cloning an environment as a job on D1', () => {
   it('creates every entry, then publishes them with links into later chunks resolved', async () => {
     await createSpace(ctx, { spaceId, name: 'Clone', defaultLocale: 'en-US', locales: ['en-US'] });
     await createEnvironment(ctx, spaceId, 'copy');
-    await createContentType(ctx, source, {
+    await createContentType(ctx, SYSTEM_CALLER, source, {
       apiId: 'page',
       name: 'Page',
       displayField: 'title',
@@ -59,7 +60,7 @@ describe('cloning an environment as a job on D1', () => {
           position: 1,
         },
       ],
-    } as Parameters<typeof createContentType>[2]);
+    } as Parameters<typeof createContentType>[3]);
     await publishContentType(ctx, source, 'page');
     const pageIds: string[] = [];
     for (let i = 0; i < 150; i++) {

@@ -50,7 +50,7 @@ import {
 } from '@contentworker/domain';
 import { startAssetReindex } from './asset-ingest';
 import { allAssets, publishAsset } from './assets';
-import { createContentType, publishContentType } from './content-types';
+import { createContentType, publishContentType, SYSTEM_CALLER } from './content-types';
 import type { AppContext } from './context';
 import { createEntry, updateEntry } from './entries';
 import { allPages } from './paging';
@@ -595,10 +595,10 @@ export async function writeSnapshotModel(
       ct.published &&
       !(await ctx.store.contentTypes.get(target, ct.apiId))
     ) {
-      await createContentType(ctx, target, publishedDraftOf(ct, ct.published));
+      await createContentType(ctx, SYSTEM_CALLER, target, publishedDraftOf(ct, ct.published));
       await publishContentType(ctx, target, ct.apiId);
     }
-    await createContentType(ctx, target, workingDraftOf(ct));
+    await createContentType(ctx, SYSTEM_CALLER, target, workingDraftOf(ct));
     if (ct.status === 'published') await publishContentType(ctx, target, ct.apiId);
   }
 
@@ -1016,6 +1016,7 @@ const workingDraftOf = (ct: SnapshotContentType): ContentTypeDraft => ({
   ...(ct.icon ? { icon: ct.icon } : {}),
   ...(ct.agentInstructions ? { agentInstructions: ct.agentInstructions } : {}),
   ...(ct.layout ? { layout: ct.layout } : {}),
+  ...(ct.preview ? { preview: ct.preview } : {}),
 });
 
 /** Shown at most, so a broken snapshot's error stays readable. */

@@ -13,6 +13,7 @@ import {
   createSpace,
   draftEntry,
   listAgentRuns,
+  SYSTEM_CALLER,
 } from '../src/index';
 
 const scope = { spaceId: 'shop', environmentId: 'main' };
@@ -25,7 +26,7 @@ function makeContext() {
 
 async function seedArticle(ctx: AppContext) {
   await createSpace(ctx, { spaceId: 'shop', name: 'Shop', defaultLocale: 'en-US' });
-  await createContentType(ctx, scope, {
+  await createContentType(ctx, SYSTEM_CALLER, scope, {
     apiId: 'article',
     name: 'Article',
     displayField: 'title',
@@ -59,7 +60,7 @@ describe('P6: AI generation over the content model', () => {
 
   it('tells the model each field’s rules and guidance, and a mock draft keeps them', async () => {
     await createSpace(ctx, { spaceId: 'shop', name: 'Shop', defaultLocale: 'en-US' });
-    await createContentType(ctx, scope, {
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
       apiId: 'post',
       name: 'Post',
       displayField: 'title',

@@ -190,16 +190,30 @@ export function entriesRoutes(deps: AuthDeps): Hono<AuthVars> {
       });
     },
   );
-  app.post(`${BASE}/entries/:id/preview-link`, requireScope(SCOPES.contentWrite), async (c) => {
-    await guardEntry(c, c.req.param('id'), 'read');
-    const body = await parseBody(c, previewLinkBody);
-    const origin = c.req.header('origin') ?? '';
-    const link = await createPreviewLink(ctx, hasher, scopeOf(c), c.req.param('id'), {
-      ttlHours: body.ttlHours,
-      previewBaseUrl: body.previewBaseUrl ?? origin,
-    });
-    return c.json(link, 201);
-  });
+  app.post(
+    `${BASE}/entries/:id/preview-link`,
+    doc('Entries', 'Mint a preview link', {
+      description:
+        'An expiring token that reads this one entry, drafts included (default 72 hours). `url` ' +
+        'is the entry on the Preview API; when its content type has a `preview.urlTemplate`, ' +
+        '`frontendUrl` is that template filled for the entry and the token.',
+      body: previewLinkBody,
+      ok: entryDocs.previewLink,
+      status: 201,
+    }),
+    requireScope(SCOPES.contentWrite),
+    async (c) => {
+      await guardEntry(c, c.req.param('id'), 'read');
+      const body = await parseBody(c, previewLinkBody);
+      const origin = c.req.header('origin') ?? '';
+      const link = await createPreviewLink(ctx, hasher, scopeOf(c), c.req.param('id'), {
+        ttlHours: body.ttlHours,
+        previewBaseUrl: body.previewBaseUrl ?? origin,
+        ...(body.locale !== undefined ? { locale: body.locale } : {}),
+      });
+      return c.json(link, 201);
+    },
+  );
 
   return app;
 }

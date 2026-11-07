@@ -6,6 +6,7 @@ import {
   createEntry,
   createSpace,
   publishContentType,
+  SYSTEM_CALLER,
 } from '@contentworker/application';
 import type { FieldDefinition, Principal } from '@contentworker/domain';
 import { SCOPES } from '@contentworker/domain';
@@ -62,7 +63,7 @@ async function connect(principal: Principal) {
     blob: new FakeBlobStore(),
   };
   await createSpace(ctx, { spaceId: SPACE, name: 'Site', defaultLocale: 'en-US' });
-  await createContentType(ctx, scope, {
+  await createContentType(ctx, SYSTEM_CALLER, scope, {
     apiId: 'note',
     name: 'Note',
     displayField: 'title',

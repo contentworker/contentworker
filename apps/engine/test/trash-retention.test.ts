@@ -6,6 +6,7 @@ import {
   createSpace,
   getSchedulerStatus,
   publishContentType,
+  SYSTEM_CALLER,
   setTrashRetention,
   sweepExpiredTrash,
   trashEntry,
@@ -60,7 +61,7 @@ describe('trash retention sweep', () => {
         name: scope.spaceId,
         defaultLocale: 'en-US',
       });
-      await createContentType(ctx, scope, {
+      await createContentType(ctx, SYSTEM_CALLER, scope, {
         apiId: 'note',
         name: 'Note',
         displayField: 'title',

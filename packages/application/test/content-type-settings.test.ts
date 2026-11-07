@@ -19,6 +19,7 @@ import {
   getContentType,
   importSnapshot,
   mergeEnvironments,
+  SYSTEM_CALLER,
   updateContentType,
   updateEntry,
   validateEntry,
@@ -58,7 +59,7 @@ const issuesOf = async (p: Promise<unknown>): Promise<string[]> => {
 
 describe('asset MIME types on asset links', () => {
   beforeEach(async () => {
-    await createContentType(ctx, scope, {
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
       apiId: 'doc',
       name: 'Document',
       displayField: 'title',
@@ -127,7 +128,7 @@ describe('asset MIME types on asset links', () => {
     const png = await asset('a.png', 'image/png');
     await createEnvironment(ctx, 's1', 'staging');
     const staging = { spaceId: 's1', environmentId: 'staging' };
-    await createContentType(ctx, staging, {
+    await createContentType(ctx, SYSTEM_CALLER, staging, {
       apiId: 'doc',
       name: 'Document',
       displayField: 'title',
@@ -163,7 +164,7 @@ describe('content type details through the use-cases', () => {
   };
 
   it('keeps them on revision, and a clone copies them', async () => {
-    await createContentType(ctx, scope, {
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
       apiId: 'article',
       name: 'Article',
       displayField: 'title',
@@ -171,7 +172,7 @@ describe('content type details through the use-cases', () => {
       ...details,
     });
     // Revised through create (idempotent on apiId) without the details: they stay.
-    await createContentType(ctx, scope, {
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
       apiId: 'article',
       name: 'Articles',
       displayField: 'title',
@@ -191,7 +192,7 @@ describe('content type details through the use-cases', () => {
   });
 
   it('tells a model the written form of a Date field', async () => {
-    await createContentType(ctx, scope, {
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
       apiId: 'event',
       name: 'Event',
       displayField: 'title',
@@ -209,7 +210,7 @@ describe('content type details through the use-cases', () => {
 
 describe('a revision that tightens a rule under values entries hold', () => {
   beforeEach(async () => {
-    await createContentType(ctx, scope, {
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
       apiId: 'event',
       name: 'Event',
       displayField: 'title',
@@ -243,7 +244,7 @@ describe('a revision that tightens a rule under values entries hold', () => {
     await make('2026-11-03T11:00');
     await make('2026-11-04');
 
-    const dated = await updateContentType(ctx, scope, 'event', {
+    const dated = await updateContentType(ctx, SYSTEM_CALLER, scope, 'event', {
       fields: await withField('day', { format: 'date' }),
     });
     expect(dated.version).toBe(2);
@@ -260,7 +261,7 @@ describe('a revision that tightens a rule under values entries hold', () => {
     expect((await fields()).find((f) => f.apiId === 'day')?.format).toBe('date');
     expect(await getContentType(ctx, scope, 'event')).not.toHaveProperty('warnings');
 
-    const images = await updateContentType(ctx, scope, 'event', {
+    const images = await updateContentType(ctx, SYSTEM_CALLER, scope, 'event', {
       fields: await withField('poster', { validations: { assetMimeTypes: ['image/*'] } }),
     });
     expect(images.warnings).toMatchObject([{ field: 'poster', entries: 1 }]);
@@ -277,7 +278,7 @@ describe('a revision that tightens a rule under values entries hold', () => {
       listed += 1;
       return list(s, q);
     };
-    const renamed = await updateContentType(ctx, scope, 'event', {
+    const renamed = await updateContentType(ctx, SYSTEM_CALLER, scope, 'event', {
       name: 'Happening',
       fields: await withField('note', { name: 'Note' }),
     });

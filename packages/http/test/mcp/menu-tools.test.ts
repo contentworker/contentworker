@@ -7,6 +7,7 @@ import {
   createSpace,
   publishContentType,
   publishEntry,
+  SYSTEM_CALLER,
 } from '@contentworker/application';
 import { type Principal, SCOPES } from '@contentworker/domain';
 import {
@@ -88,7 +89,7 @@ describe('menu tools (MCP), on the HTTP routes’ use-cases', () => {
   it('manages a menu end to end and reads it as Delivery serves it', async () => {
     const { ctx, deps } = await setup();
     const scope = { spaceId: SPACE, environmentId: 'main' };
-    await createContentType(ctx, scope, {
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
       apiId: 'page',
       name: 'Page',
       displayField: 'title',
