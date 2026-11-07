@@ -1,6 +1,6 @@
 ---
 title: Team and roles
-description: Workspace accounts, invitations and sign-in, the five built-in space roles (Viewer, Approver, Editor, Manager, Administrator), setting up a new workspace's first admin, recovering admin access, and the last-administrator rule.
+description: Invite people to the workspace, give each a role in every space they work in, and recover admin access when nobody can sign in.
 ---
 
 Access has two layers. A person first needs an **account** on the workspace, which is how they
@@ -120,3 +120,9 @@ The code works once. A wrong code is refused, throttled per address, and recorde
 
 If no admin can sign in, ask the workspace's administrator for a new setup code. It opens `/setup` once more, now titled **Recover admin access**, and
 whoever uses it gets a new Admin account, recorded in the audit log as `team.recovery_admin`.
+
+## Next steps
+
+- [API keys and access](/guides/api-keys/) for the keys your integrations use, and custom roles.
+- [Approvals and reviews](/guides/approvals/) for what the Approver role decides.
+- [Environments](/guides/environments/) to try changes on a copy of live content.

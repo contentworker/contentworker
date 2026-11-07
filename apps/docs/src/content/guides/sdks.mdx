@@ -166,21 +166,19 @@ Embedded images come out sized and lazy, with the delivered `srcset`. `toMarkdow
 `toPlainText` and `excerpt` cover agents, search and meta descriptions. Override any node with
 `nodes: { paragraph: (node, next) => … }`.
 
-### Routes
+### Site features
 
-`client.routes()` returns `{ contentType, urlPattern }` for every published content type with a URL
+The delivery client reads each site feature; each links to the guide that is its home.
+
+**Routes.** `client.routes()` returns `{ contentType, urlPattern }` for every published content type with a URL
 pattern, sorted by content type, so a front end can route pages from the content model (see
 [Routes](/guides/reading-content/#routes)).
 
-### Sitemap
-
-`client.sitemap({ from, limit, base })` returns a page of the sitemap, `{ items, next }`: each
+**Sitemap.** `client.sitemap({ from, limit, base })` returns a page of the sitemap, `{ items, next }`: each
 published page's paths per locale and its `lastmod` (see [SEO and sitemaps](/guides/seo/#the-sitemap)).
 The management client changes an entry's SEO metadata with `cma.entries.setSeo(id, change)`.
 
-### Redirects
-
-`client.redirects()` returns the environment's enabled redirects and
+**Redirects.** `client.redirects()` returns the environment's enabled redirects and
 `client.resolveRedirect(path, { locale })` asks Delivery about one path (`null` when none matches).
 The subpath `@contentworker/sdk/redirects` applies them in a front-door edge function:
 `createRedirectHandler`, `createRedirectMatcher` and `applyRedirects`. See
@@ -188,23 +186,17 @@ The subpath `@contentworker/sdk/redirects` applies them in a front-door edge fun
 `cma.redirects.{list, get, create, update, delete, import, resolve, analyze, collapseChains}`, and a
 content type draft takes `urlPattern`.
 
-### Singletons
-
-`client.getSingleton('settings', { locale, include })` returns a
+**Singletons.** `client.getSingleton('settings', { locale, include })` returns a
 [singleton type's](/guides/content-modeling/#singletons) one entry by the type's API ID (from a
 preview client, as it is now). The management client's content type draft takes `singleton`, and
 `cma.contentTypes.{dependents, delete, clone}` check, delete (`{ purgeEntries: true }` starts the
 job that deletes its entries first) and copy a type.
 
-### Saved views
-
-`cma.savedViews.{list, get, run, create, update, delete}` manages the named entries queries the
+**Saved views.** `cma.savedViews.{list, get, run, create, update, delete}` manages the named entries queries the
 admin's views menu offers; `run(id, { limit, cursor, locale })` returns one page of a view's
 entries with your own grants applied. See [Saved views](/guides/saved-views/).
 
-### Menus
-
-`client.menus()` lists the navigation menus and `client.menu(handle, { locale })` returns one
+**Menus.** `client.menus()` lists the navigation menus and `client.menu(handle, { locale })` returns one
 resolved for rendering, published entries only. The management client has
 `cma.menus.{list, get, preview, resolve, create, update, moveItem, delete}`. See
 [Navigation menus](/guides/menus/#render-a-menu).
