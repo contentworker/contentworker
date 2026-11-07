@@ -17,17 +17,18 @@ export async function loader({ request }: Route.LoaderArgs) {
   const type = q.get('type');
   const group = isAuditGroup(type) ? type : undefined;
   const before = Number(q.get('before')) || undefined;
+  const beforeId = q.get('beforeId') || undefined;
   // Where this page sits, for its label: paging is by time (`before`), so the page number rides
   // along in the URL. Without `before` it's the first page, whatever the URL says.
   const page = before ? Math.max(2, Math.trunc(Number(q.get('page'))) || 2) : 1;
-  const events = await listAudit({ group, before, limit: PAGE });
+  const events = await listAudit({ group, before, beforeId, limit: PAGE });
   return { events, group: group ?? '', before: before ?? null, page, more: events.length === PAGE };
 }
 
 export default function Audit() {
   const { events, group, before, page, more } = useLoaderData<typeof loader>();
   const submit = useSubmit();
-  const older = events.at(-1)?.at;
+  const older = events.at(-1);
   return (
     <>
       <PageHeader
@@ -81,7 +82,7 @@ export default function Audit() {
             </span>
             {more && older ? (
               <Link
-                to={`/audit?${new URLSearchParams({ ...(group ? { type: group } : {}), before: String(older), page: String(page + 1) })}`}
+                to={`/audit?${new URLSearchParams({ ...(group ? { type: group } : {}), before: String(older.at), beforeId: older.id, page: String(page + 1) })}`}
                 className="hit-area text-link hover:underline"
               >
                 Older

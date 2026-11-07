@@ -8,7 +8,7 @@
  */
 
 import { appendAudit, adminAudit as auditEvents } from '@contentworker/db/auth';
-import { and, asc, desc, eq, gt, isNotNull, like, lt } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, isNotNull, like, lt, or } from 'drizzle-orm';
 import type { AuditAction, AuditGroup } from './audit';
 import { type AuditActor, auditRow, sealAuditRow, verifyAuditChain } from './audit-chain';
 import { db } from './env.server';
@@ -37,11 +37,20 @@ export async function audit(
 export type AuditRow = Awaited<ReturnType<typeof listAudit>>[number];
 
 /**
- * Newest first, `limit` at a time; `before` pages back, `group` filters by action prefix. With
- * `after` (a `seq`), sealed events after it, oldest first: the cursor an export or a SIEM pulls by.
+ * Newest first, `limit` at a time; `group` filters by action prefix. `before` and `beforeId` page
+ * back from a row: several events can share a millisecond, so the id settles their order and the
+ * next page starts exactly after that row. `before` alone, from a link made before ids were part
+ * of the cursor, starts at the next older millisecond. With `after` (a `seq`), sealed events after
+ * it, oldest first: the cursor an export or a SIEM pulls by.
  */
 export async function listAudit(
-  f: { group?: AuditGroup; before?: number; after?: number; limit?: number } = {},
+  f: {
+    group?: AuditGroup;
+    before?: number;
+    beforeId?: string;
+    after?: number;
+    limit?: number;
+  } = {},
 ) {
   const forward = f.after !== undefined;
   const rows = await db()
@@ -50,11 +59,18 @@ export async function listAudit(
     .where(
       and(
         f.group ? like(auditEvents.action, `${f.group}.%`) : undefined,
-        f.before ? lt(auditEvents.at, f.before) : undefined,
+        f.before
+          ? f.beforeId
+            ? or(
+                lt(auditEvents.at, f.before),
+                and(eq(auditEvents.at, f.before), lt(auditEvents.id, f.beforeId)),
+              )
+            : lt(auditEvents.at, f.before)
+          : undefined,
         forward ? and(isNotNull(auditEvents.seq), gt(auditEvents.seq, f.after!)) : undefined,
       ),
     )
-    .orderBy(forward ? asc(auditEvents.seq) : desc(auditEvents.at))
+    .orderBy(...(forward ? [asc(auditEvents.seq)] : [desc(auditEvents.at), desc(auditEvents.id)]))
     .limit(Math.min(Math.max(f.limit ?? 100, 1), 500));
   return rows.map((r) => ({
     ...r,
