@@ -167,6 +167,22 @@ Everything below is built and tested on v2.
   first deliberate break from both surfaces), and whether to wait and launch it with apps as
   packages.
 
+### Before the first customer
+
+Recovery targets not met yet (`docs/backup-and-restore.md`) and the move to a private fleet repo.
+
+- [ ] **Secret escrow.** The `Escrow secrets` workflow encrypts a deployment's secrets to a key held
+  outside GitHub and the edge account. Run it for every live deployment, and decrypt one copy.
+- [ ] **Off-account object storage copy.** Asset bytes, plugins and `versions/` have no second copy.
+- [ ] **Restore drill.** Time a database restore against its 1-hour target.
+- [ ] **Assistant recovery.** Nothing calls the conversation object's point-in-time recovery.
+- [ ] **Fleet cutover.** Move the registry, rings and production secrets to the private repo, setting
+  the secrets from escrow. The edge account token moves onto the environment there: as a repository
+  secret today, any branch can read it, which steps around the environment's `main`-only policy.
+  The escrow workflow moves too: it runs here first because only a job in this repository can read
+  these secrets, then lives in the private repo, where its artifacts and environment names aren't
+  public.
+
 ### Parity milestones
 
 Gaps in what a headless CMS is expected to do, checked against this codebase and grouped into

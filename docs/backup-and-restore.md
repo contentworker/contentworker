@@ -20,7 +20,7 @@ What holds state, what is derivable, and how to recover a deployment.
 Everything else (worker code, `wrangler.jsonc` templates, `deployments/*.jsonc`, migrations) is
 in git. Secrets live in each deployment's GitHub environment; `DATA_KEY`, `TOKEN_PEPPER` and
 `PASSWORD_PEPPER` must be escrowed, because losing one makes what it protects unreadable
-(sealed secrets, API key hashes, password hashes).
+(sealed secrets, API key hashes, password hashes). See [Escrowing secrets](#escrowing-secrets).
 
 ## Point-in-time recovery
 
@@ -109,6 +109,57 @@ pipeline.
 7. Replay events from the outbox for the incident window if downstream systems may have missed
    them.
 
+## Escrowing secrets
+
+GitHub and Cloudflare both hold secrets write-only, so nobody needs to have seen a value to escrow
+it: the `Escrow secrets` workflow reads them inside the deployment's GitHub environment and encrypts
+them to a key only the escrow holder has. Nothing from the repository runs beside the secrets, and
+the job fails if a required secret or `PASSWORD_PEPPER` is missing. It reaches only what the
+environment holds: a secret set by hand on a Worker is not escrowed.
+
+The workflow must be in the repository that holds the environment, and only a branch the
+environment allows can read it (`provision.sh` limits each to `main`). Prefer a private repository:
+there the artifact and the environment's name aren't public.
+
+**Once, make the key** on the holder's machine, outside any checkout. Put the private half in a
+password manager outside GitHub and Cloudflare, delete the file, and pin the public half as
+`ESCROW_RECIPIENT` in `.github/workflows/escrow-secrets.yml`, through a pull request:
+
+```sh
+age-keygen -o ~/escrow.key     # prints the public key (age1...)
+```
+
+**After provisioning and after any change to a secret,** run it from `main`, then check where the
+file came from before keeping it. Anyone can encrypt to a public key, so a file that opens isn't
+proof: the run must be this workflow, on `main`, and a success.
+
+```sh
+gh workflow run escrow-secrets.yml --ref main -f environment=production
+gh run view <run-id> --json workflowName,headBranch,event,conclusion
+gh run download <run-id> --name escrow-production
+age --decrypt --identity ~/escrow.key escrow.age | cut -d= -f1    # names only
+gh api --method DELETE repos/<owner>/<repo>/actions/artifacts/<artifact-id>
+```
+
+The artifact is ciphertext, but this repository's artifacts are public, so delete it as soon as it
+is down; it expires after a day regardless. Keep every generation, named with its date and run id,
+for at least the database's recovery window: a restore to before a `DATA_KEY` rotation brings back
+values sealed under the old key. During a rotation, run it before removing `DATA_KEY_PREVIOUS`.
+
+**To recover,** set each value back on the environment. Values can contain `=`, so split on the first
+one only:
+
+```sh
+age --decrypt --identity ~/escrow.key escrow.age | while IFS= read -r line; do
+  printf %s "${line#*=}" | gh secret set "${line%%=*}" --env production
+done
+```
+
+Losing the private key loses the escrow, not the deployment: make a new key and run the workflow
+again while the environment still holds the values. If the private key leaks, make a new one and
+rotate what can rotate (`DATA_KEY`, `PRINCIPAL_KEY`, `MEDIA_SIGNING_SECRET`). `TOKEN_PEPPER` and
+`PASSWORD_PEPPER` can't rotate, so treat them as exposed: hashes alone still need the database too.
+
 ## Recovery objectives
 
 The targets each store is held to. **RPO** is how much recent data a recovery may lose; **RTO** is
@@ -124,7 +175,7 @@ how long the recovery may take. "Met" says whether the target can be reached tod
 | `AssistantAgent`                              | Best effort, 30-day object recovery | 1 day                 | **No**: nothing calls the object's point-in-time recovery                                       |
 | Durable workflows                             | None                                | 1 day, re-run by hand | Not proven: instances are not rebuilt from their rows                                           |
 | Queues                                        | The outbox window (168 hours)       | 1 hour                | Domain events only: messages the outbox doesn't feed can't replay                               |
-| `DATA_KEY`, `TOKEN_PEPPER`, `PASSWORD_PEPPER` | Zero                                | 1 hour                | **No**: `provision.sh` generates them straight into write-only secrets, so nothing escrows them |
+| `DATA_KEY`, `TOKEN_PEPPER`, `PASSWORD_PEPPER` | Zero                                | 1 hour                | Once [escrowed](#escrowing-secrets) per deployment; not proven until a copy is decrypted |
 
 Workers redeploy or roll back in seconds, so a database restore's RTO is dominated by the restore
 itself.
