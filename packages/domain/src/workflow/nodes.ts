@@ -492,7 +492,7 @@ export const NODE_SPECS = [
     category: 'control',
     label: 'Wait for event',
     description:
-      'Waits for an event: one delivered through the API or MCP, or one contentworker emits (entry.saved when the author revises).',
+      'Waits for an event: one delivered through the API or MCP, or one ContentWorker emits (entry.saved when the author revises).',
     icon: 'Hourglass',
     fields: [
       { key: 'event', label: 'Event', kind: 'text', required: true, default: 'entry.saved' },

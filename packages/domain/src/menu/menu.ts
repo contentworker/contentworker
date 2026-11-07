@@ -6,7 +6,7 @@ import type { EntryFields } from '../types';
 
 /**
  * Navigation menus: named, ordered trees of links a front end renders as its header, footer or
- * sidebar navigation. contentworker serves no site, so a menu is delivery data, like redirects.
+ * sidebar navigation. ContentWorker serves no site, so a menu is delivery data, like redirects.
  *
  * A menu is live, not versioned: a saved change is what Delivery serves next. What keeps it from
  * pointing at unpublished work is resolution at delivery time: an item linking to an entry is
