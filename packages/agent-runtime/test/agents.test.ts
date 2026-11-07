@@ -3,6 +3,7 @@ import {
   createContentType,
   createEntry,
   createSpace,
+  SYSTEM_CALLER,
 } from '@contentworker/application';
 import type { GenerateRequest } from '@contentworker/ports';
 import {
@@ -19,7 +20,7 @@ const scope = { spaceId: 'blog', environmentId: 'main' };
 
 async function seed(ctx: AppContext) {
   await createSpace(ctx, { spaceId: 'blog', name: 'Blog', defaultLocale: 'en-US' });
-  await createContentType(ctx, scope, {
+  await createContentType(ctx, SYSTEM_CALLER, scope, {
     apiId: 'post',
     name: 'Post',
     displayField: 'title',
@@ -98,7 +99,7 @@ describe('P8: durable agents (in-process executor)', () => {
 
   it('enrich drops a generated value for a field the other values would hide', async () => {
     await createSpace(ctx, { spaceId: 'blog', name: 'Blog', defaultLocale: 'en-US' });
-    await createContentType(ctx, scope, {
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
       apiId: 'brief',
       name: 'Brief',
       displayField: 'title',

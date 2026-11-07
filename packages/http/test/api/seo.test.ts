@@ -3,6 +3,7 @@ import {
   createEntry,
   publishContentType,
   publishEntry,
+  SYSTEM_CALLER,
 } from '@contentworker/application';
 import type { FieldDefinition } from '@contentworker/domain';
 import type { ApiConfig } from '@contentworker/platform/config';
@@ -45,7 +46,7 @@ async function json<T>(res: Response): Promise<T> {
 async function setup() {
   const wired = wire(config);
   const app = createApp(wired.ctx, config, wired.rag, wired.blob, wired.ai);
-  await createContentType(wired.ctx, scope, {
+  await createContentType(wired.ctx, SYSTEM_CALLER, scope, {
     apiId: 'article',
     name: 'Article',
     displayField: 'title',
@@ -57,7 +58,7 @@ async function setup() {
       field('internalNotes', 'Text', 3),
     ],
   });
-  await createContentType(wired.ctx, scope, {
+  await createContentType(wired.ctx, SYSTEM_CALLER, scope, {
     apiId: 'author',
     name: 'Author',
     displayField: 'title',

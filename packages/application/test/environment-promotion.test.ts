@@ -29,6 +29,7 @@ import {
   publishWorkflowVersion,
   rejectPromotion,
   requestPromotion,
+  SYSTEM_CALLER,
   setEnvironmentAlias,
   updateEntry,
 } from '../src/index';
@@ -70,10 +71,10 @@ const note = (fields: { required?: boolean; extra?: boolean } = {}) =>
             },
           ]),
     ],
-  }) as Parameters<typeof createContentType>[2];
+  }) as Parameters<typeof createContentType>[3];
 
 async function seedModel(scope: typeof staging, def = note()) {
-  await createContentType(ctx, scope, def);
+  await createContentType(ctx, SYSTEM_CALLER, scope, def);
   await publishContentType(ctx, scope, 'note');
 }
 
@@ -213,7 +214,7 @@ describe('promoting content between environments', () => {
   it('asks for approval when a new type arrives with agent instructions', async () => {
     await createEnvironment(ctx, spaceId, 'briefed');
     const briefed = { spaceId, environmentId: 'briefed' };
-    await createContentType(ctx, briefed, {
+    await createContentType(ctx, SYSTEM_CALLER, briefed, {
       ...note(),
       apiId: 'promo',
       name: 'Promo',
@@ -227,6 +228,22 @@ describe('promoting content between environments', () => {
     });
     expect(p.status).toBe('awaiting_approval');
     expect(p.risk.reasons).toContain('The content type "promo" adds agent instructions');
+  });
+
+  it('asks for approval when only a type’s preview URL changes: it is where tokens go', async () => {
+    await createEnvironment(ctx, spaceId, 'framed');
+    const framed = { spaceId, environmentId: 'framed' };
+    await seedModel(framed, {
+      ...note(),
+      preview: { urlTemplate: 'https://elsewhere.example/p?entry={id}&token={token}' },
+    });
+    const p = await requestPromotion(ctx, ada, spaceId, {
+      source: 'framed',
+      target: 'qa',
+      contentTypes: ['note'],
+    });
+    expect(p.status).toBe('awaiting_approval');
+    expect(p.risk.reasons).toContain('The content type "note" changes its preview URL');
   });
 
   it('names the target entries that still hold a field the promotion removes', async () => {
@@ -275,12 +292,17 @@ describe('promoting content between environments', () => {
             items: { type: 'Component', variants },
           },
         ],
-      }) as Parameters<typeof createContentType>[2];
+      }) as Parameters<typeof createContentType>[3];
     const hero = { apiId: 'hero', name: 'Hero', fields: [symbol('heading'), symbol('kicker', 1)] };
     const cta = { apiId: 'cta', name: 'CTA', fields: [symbol('label')] };
-    await createContentType(ctx, qa, page([hero, cta]));
+    await createContentType(ctx, SYSTEM_CALLER, qa, page([hero, cta]));
     await publishContentType(ctx, qa, 'page');
-    await createContentType(ctx, staging, page([{ ...hero, fields: [symbol('heading')] }]));
+    await createContentType(
+      ctx,
+      SYSTEM_CALLER,
+      staging,
+      page([{ ...hero, fields: [symbol('heading')] }]),
+    );
     await publishContentType(ctx, staging, 'page');
     const { entry } = await createEntry(ctx, qa, {
       contentTypeApiId: 'page',
@@ -398,7 +420,7 @@ describe('promoting content between environments', () => {
       contentTypes: ['note'],
     });
     // Edited in the source while the promotion waits.
-    await createContentType(ctx, slim, note({ required: true }));
+    await createContentType(ctx, SYSTEM_CALLER, slim, note({ required: true }));
     const managers = { ...grace, scopes: [SCOPES.contentPublish, SCOPES.contentManage] };
     await expect(approvePromotion(ctx, managers, spaceId, p.id)).rejects.toBeInstanceOf(
       ConflictError,

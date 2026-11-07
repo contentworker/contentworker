@@ -4,6 +4,7 @@ import {
   createEntry,
   createSpace,
   listFieldValues,
+  SYSTEM_CALLER,
   trashEntry,
 } from '@contentworker/application';
 import type { FieldDefinition } from '@contentworker/domain';
@@ -51,7 +52,7 @@ describe('distinct field values on D1', { timeout: 60_000 }, () => {
       defaultLocale: 'en-US',
       locales: ['en-US', 'de'],
     });
-    await createContentType(ctx, s, {
+    await createContentType(ctx, SYSTEM_CALLER, s, {
       apiId: 'item',
       name: 'Item',
       displayField: 'name',
@@ -98,7 +99,7 @@ describe('distinct field values on D1', { timeout: 60_000 }, () => {
     await seed({ store: mem, clock, ids: seqIds(`fv-${runId}`) }, scope);
     // Another space holding other values of the same field.
     await createSpace(d1Ctx, { spaceId: other.spaceId, name: 'O', defaultLocale: 'en-US' });
-    await createContentType(d1Ctx, other, {
+    await createContentType(d1Ctx, SYSTEM_CALLER, other, {
       apiId: 'item',
       name: 'Item',
       displayField: 'kind',

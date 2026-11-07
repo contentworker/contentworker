@@ -29,6 +29,7 @@ import {
   listBulkJobs,
   publishContentType,
   publishEntry,
+  SYSTEM_CALLER,
   startSetFieldsJob,
   trashEntry,
   withFieldValues,
@@ -68,7 +69,7 @@ const symbol = (apiId: string, position: number, extra: Record<string, unknown> 
 });
 
 async function model(h: Harness) {
-  await createContentType(h.ctx, scope, {
+  await createContentType(h.ctx, SYSTEM_CALLER, scope, {
     apiId: 'post',
     name: 'Post',
     displayField: 'title',
@@ -79,14 +80,14 @@ async function model(h: Harness) {
       symbol('slug', 3, { type: 'Slug', unique: true }),
       symbol('handle', 4, { type: 'Slug' }),
     ],
-  } as Parameters<typeof createContentType>[2]);
+  } as Parameters<typeof createContentType>[3]);
   await publishContentType(h.ctx, scope, 'post');
-  await createContentType(h.ctx, scope, {
+  await createContentType(h.ctx, SYSTEM_CALLER, scope, {
     apiId: 'page',
     name: 'Page',
     displayField: 'title',
     fields: [symbol('title', 0)],
-  } as Parameters<typeof createContentType>[2]);
+  } as Parameters<typeof createContentType>[3]);
   await publishContentType(h.ctx, scope, 'page');
 }
 
@@ -291,12 +292,12 @@ describe('bulk field edit', () => {
 
   it('touches only its own environment’s entries', async () => {
     const staging = { spaceId: 'site', environmentId: 'staging' };
-    await createContentType(h.ctx, staging, {
+    await createContentType(h.ctx, SYSTEM_CALLER, staging, {
       apiId: 'post',
       name: 'Post',
       displayField: 'title',
       fields: [symbol('title', 0), symbol('category', 1)],
-    } as Parameters<typeof createContentType>[2]);
+    } as Parameters<typeof createContentType>[3]);
     await publishContentType(h.ctx, staging, 'post');
     const elsewhere = (
       await createEntry(h.ctx, staging, {

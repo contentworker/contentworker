@@ -8,6 +8,7 @@ import {
   createSpace,
   decideAgentReview,
   listAgentReviews,
+  SYSTEM_CALLER,
   settleReviewOutcome,
 } from '../src/index';
 
@@ -24,7 +25,7 @@ describe('agent reviews (HITL)', () => {
       ids: new SequenceIdGenerator('r'),
     };
     await createSpace(ctx, { spaceId: 'hitl', name: 'HITL', defaultLocale: 'en-US' });
-    await createContentType(ctx, scope, {
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
       apiId: 'post',
       name: 'Post',
       displayField: 'title',

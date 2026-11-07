@@ -9,6 +9,7 @@ import {
   getEntry,
   listContentTypes,
   mergeEnvironments,
+  SYSTEM_CALLER,
 } from '../src/index';
 
 const ARTICLE = {
@@ -45,7 +46,7 @@ describe('branch compare/merge', () => {
 
   it('classifies added/changed/unchanged content types and entries', async () => {
     // staging has the type + an entry; main has neither.
-    await createContentType(ctx, staging, ARTICLE);
+    await createContentType(ctx, SYSTEM_CALLER, staging, ARTICLE);
     const a = await createEntry(ctx, staging, {
       contentTypeApiId: 'article',
       fields: { title: { 'en-US': 'Hello' } },
@@ -59,8 +60,11 @@ describe('branch compare/merge', () => {
   });
 
   it('counts a change to a type’s agent instructions as a change', async () => {
-    await createContentType(ctx, main, ARTICLE);
-    await createContentType(ctx, staging, { ...ARTICLE, agentInstructions: 'Stay factual.' });
+    await createContentType(ctx, SYSTEM_CALLER, main, ARTICLE);
+    await createContentType(ctx, SYSTEM_CALLER, staging, {
+      ...ARTICLE,
+      agentInstructions: 'Stay factual.',
+    });
     const diff = await compareEnvironments(ctx, 'shop', 'staging', 'main');
     expect(diff.contentTypes).toEqual([{ apiId: 'article', kind: 'changed' }]);
   });
@@ -71,7 +75,7 @@ describe('branch compare/merge', () => {
     const list = store.entries.list.bind(store.entries);
     store.entries.list = (scope, query = {}) =>
       list(scope, { ...query, limit: query.limit ?? 100 });
-    await createContentType(ctx, staging, ARTICLE);
+    await createContentType(ctx, SYSTEM_CALLER, staging, ARTICLE);
     for (let i = 0; i < 230; i++) {
       await createEntry(ctx, staging, {
         contentTypeApiId: 'article',
@@ -83,7 +87,7 @@ describe('branch compare/merge', () => {
   });
 
   it('merges selected content types and entries source→target (additive)', async () => {
-    await createContentType(ctx, staging, ARTICLE);
+    await createContentType(ctx, SYSTEM_CALLER, staging, ARTICLE);
     const a = await createEntry(ctx, staging, {
       contentTypeApiId: 'article',
       fields: { title: { 'en-US': 'Hello' } },
@@ -107,8 +111,8 @@ describe('branch compare/merge', () => {
   });
 
   it('appends a new version when merging onto an existing target entry', async () => {
-    await createContentType(ctx, main, ARTICLE);
-    await createContentType(ctx, staging, ARTICLE);
+    await createContentType(ctx, SYSTEM_CALLER, main, ARTICLE);
+    await createContentType(ctx, SYSTEM_CALLER, staging, ARTICLE);
     const a = await createEntry(ctx, main, {
       contentTypeApiId: 'article',
       fields: { title: { 'en-US': 'v1' } },
@@ -133,7 +137,7 @@ describe('branch compare/merge', () => {
   });
 
   it('rejects merging an entry whose content type is missing in the target', async () => {
-    await createContentType(ctx, staging, ARTICLE);
+    await createContentType(ctx, SYSTEM_CALLER, staging, ARTICLE);
     const a = await createEntry(ctx, staging, {
       contentTypeApiId: 'article',
       fields: { title: { 'en-US': 'Hello' } },

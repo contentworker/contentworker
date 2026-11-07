@@ -10,6 +10,7 @@ import {
   deliveryReads,
   listDeliveredRoutes,
   publishContentType,
+  SYSTEM_CALLER,
   updateContentType,
 } from '../src/index';
 
@@ -36,7 +37,7 @@ const defineType = async (
   opts: { publish?: boolean; at?: typeof scope } = {},
 ) => {
   const at = opts.at ?? scope;
-  await createContentType(ctx, at, {
+  await createContentType(ctx, SYSTEM_CALLER, at, {
     apiId,
     name: apiId,
     displayField: 'title',
@@ -77,7 +78,7 @@ describe('listDeliveredRoutes', () => {
 
   it('serves a type as last published, and a revision once it is published too', async () => {
     await defineType('article', '/blog/{slug}');
-    await updateContentType(ctx, scope, 'article', { urlPattern: '/news/{slug}' });
+    await updateContentType(ctx, SYSTEM_CALLER, scope, 'article', { urlPattern: '/news/{slug}' });
     expect(await listDeliveredRoutes(ctx, scope)).toEqual([
       { contentType: 'article', urlPattern: '/blog/{slug}' },
     ]);
@@ -85,7 +86,7 @@ describe('listDeliveredRoutes', () => {
     expect(await listDeliveredRoutes(ctx, scope)).toEqual([
       { contentType: 'article', urlPattern: '/news/{slug}' },
     ]);
-    await updateContentType(ctx, scope, 'article', { urlPattern: null });
+    await updateContentType(ctx, SYSTEM_CALLER, scope, 'article', { urlPattern: null });
     await publishContentType(ctx, scope, 'article');
     expect(await listDeliveredRoutes(ctx, scope)).toEqual([]);
   });

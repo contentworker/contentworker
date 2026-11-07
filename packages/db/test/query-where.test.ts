@@ -5,6 +5,7 @@ import {
   createSpace,
   publishContentType,
   publishEntry,
+  SYSTEM_CALLER,
 } from '@contentworker/application';
 import {
   type FieldDefinition,
@@ -157,7 +158,7 @@ describe('richer queries on D1', { timeout: 60_000 }, () => {
     for (const store of [d1, mem]) {
       const ctx: AppContext = { store, clock, ids: seqIds(`w-${runId}`) };
       await createSpace(ctx, { spaceId: scope.spaceId, name: 'W', defaultLocale: 'en-US' });
-      await createContentType(ctx, scope, {
+      await createContentType(ctx, SYSTEM_CALLER, scope, {
         apiId: 'page',
         name: 'Page',
         displayField: 'title',

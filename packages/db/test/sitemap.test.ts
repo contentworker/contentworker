@@ -8,6 +8,7 @@ import {
   listDeliveredSitemap,
   publishContentType,
   publishEntry,
+  SYSTEM_CALLER,
   setEntrySeo,
 } from '@contentworker/application';
 import type { FieldDefinition } from '@contentworker/domain';
@@ -49,7 +50,7 @@ async function harness() {
   });
   const scope = { spaceId, environmentId: 'main' };
   const defineType = async (apiId: string, urlPattern: string, at = scope) => {
-    await createContentType(ctx, at, {
+    await createContentType(ctx, SYSTEM_CALLER, at, {
       apiId,
       name: apiId,
       displayField: 'title',

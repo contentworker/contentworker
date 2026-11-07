@@ -16,6 +16,7 @@ import {
   publishContentType,
   publishEntry,
   repairTaxonomy,
+  SYSTEM_CALLER,
   setEntryMetadata,
   trashEntry,
   unpublishEntry,
@@ -54,7 +55,7 @@ const title = (): FieldDefinition => ({
 
 async function model(s: Scope) {
   for (const apiId of ['article', 'page']) {
-    await createContentType(ctx, s, {
+    await createContentType(ctx, SYSTEM_CALLER, s, {
       apiId,
       name: apiId,
       displayField: 'title',

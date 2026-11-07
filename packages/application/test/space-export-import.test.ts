@@ -22,6 +22,7 @@ import {
   getBulkJobReport,
   importChunkRunner,
   runBulkChunk,
+  SYSTEM_CALLER,
   startSpaceExportImport,
 } from '../src/index';
 
@@ -244,7 +245,7 @@ describe('analyzing a space export', () => {
     });
     expect(german.problems[0]).toMatch(/default locale is de-DE; this space's is en-US/);
 
-    await createContentType(ctx, scope, {
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
       apiId: 'existing',
       name: 'Existing',
       displayField: 'name',

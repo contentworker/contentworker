@@ -13,6 +13,7 @@ import {
   getDeliveredSingleton,
   publishContentType,
   publishEntry,
+  SYSTEM_CALLER,
   trashEntry,
   updateContentType,
 } from '@contentworker/application';
@@ -45,7 +46,7 @@ async function harness() {
   const spaceId = `ct-life-${uid()}`;
   await createSpace(ctx, { spaceId, name: 'Lifecycle', defaultLocale: 'en-US' });
   const scope = { spaceId, environmentId: 'main' };
-  await createContentType(ctx, scope, {
+  await createContentType(ctx, SYSTEM_CALLER, scope, {
     apiId: 'note',
     name: 'Note',
     displayField: 'title',
@@ -110,7 +111,7 @@ describe('content type delete on D1', () => {
     const { ctx, scope } = await harness();
     await createEnvironment(ctx, scope.spaceId, 'staging');
     const staging = { spaceId: scope.spaceId, environmentId: 'staging' };
-    await createContentType(ctx, staging, {
+    await createContentType(ctx, SYSTEM_CALLER, staging, {
       apiId: 'note',
       name: 'Note',
       displayField: 'title',
@@ -122,14 +123,14 @@ describe('content type delete on D1', () => {
 
   it('clones the definition under a new apiId', async () => {
     const { ctx, scope } = await harness();
-    const clone = await cloneContentType(ctx, scope, 'note', 'memo', 'Memo');
+    const clone = await cloneContentType(ctx, SYSTEM_CALLER, scope, 'note', 'memo', 'Memo');
     expect(await store.contentTypes.get(scope, 'memo')).toEqual(clone);
     expect(clone).toMatchObject({ version: 1, status: 'draft', displayField: 'title' });
   });
 
   it('clones the group, description, icon and layout, which the insert stores', async () => {
     const { ctx, scope } = await harness();
-    await updateContentType(ctx, scope, 'note', {
+    await updateContentType(ctx, SYSTEM_CALLER, scope, 'note', {
       group: 'Docs',
       description: 'A short note',
       icon: 'newspaper',
@@ -138,7 +139,7 @@ describe('content type delete on D1', () => {
         tabs: [{ apiId: 'main', name: 'Main', groups: [{ fields: ['title'] }] }],
       },
     });
-    const clone = await cloneContentType(ctx, scope, 'note', 'memo', 'Memo');
+    const clone = await cloneContentType(ctx, SYSTEM_CALLER, scope, 'note', 'memo', 'Memo');
     expect(clone).toMatchObject({
       group: 'Docs',
       description: 'A short note',
@@ -151,7 +152,7 @@ describe('content type delete on D1', () => {
 
   it('refuses a second clone to one apiId at the insert, keeping the first', async () => {
     const { ctx, scope } = await harness();
-    const first = await cloneContentType(ctx, scope, 'note', 'memo', 'Memo');
+    const first = await cloneContentType(ctx, SYSTEM_CALLER, scope, 'note', 'memo', 'Memo');
     const again = { ...first, name: 'Memo 2' };
     await expect(store.contentTypes.create(scope, again)).rejects.toBeInstanceOf(
       TransactionConflictError,
@@ -170,7 +171,7 @@ describe('the content type guard on D1', () => {
     await expect(
       store.contentTypes.guard(scope, 'note', { singleton: true }),
     ).rejects.toBeInstanceOf(TransactionConflictError);
-    await updateContentType(ctx, scope, 'note', { singleton: true });
+    await updateContentType(ctx, SYSTEM_CALLER, scope, 'note', { singleton: true });
     // A create that read the ordinary type: its unit fails and writes nothing.
     const { entry } = await createEntry(ctx, scope, {
       contentTypeApiId: 'note',
@@ -222,7 +223,7 @@ describe('the content type guard on D1', () => {
     store.entries.list = async (s, q) => (await list(s, q)).filter((e) => e.entry.id === ids[0]);
     try {
       await expect(
-        updateContentType(ctx, scope, 'note', { singleton: true }),
+        updateContentType(ctx, SYSTEM_CALLER, scope, 'note', { singleton: true }),
       ).rejects.toBeInstanceOf(ConflictError);
     } finally {
       store.entries.list = list;
@@ -294,7 +295,7 @@ describe('stopping a content type delete on D1', () => {
 describe('a singleton served by its published revision on D1', () => {
   it('reads the flag as last published, not as the draft has it', async () => {
     const { ctx, scope } = await harness();
-    await updateContentType(ctx, scope, 'note', { singleton: true });
+    await updateContentType(ctx, SYSTEM_CALLER, scope, 'note', { singleton: true });
     const { entry } = await createEntry(ctx, scope, {
       contentTypeApiId: 'note',
       fields: { title: { 'en-US': 'one' } },
@@ -305,7 +306,7 @@ describe('a singleton served by its published revision on D1', () => {
     await publishContentType(ctx, scope, 'note');
     expect((await getDeliveredSingleton(ctx, scope, 'note')).id).toBe(entry.id);
     // A draft turning it off keeps it served until that is published.
-    await updateContentType(ctx, scope, 'note', { singleton: false });
+    await updateContentType(ctx, SYSTEM_CALLER, scope, 'note', { singleton: false });
     expect((await getDeliveredSingleton(ctx, scope, 'note')).id).toBe(entry.id);
     // Delivery's list of types (GraphQL's roots) agrees with it.
     const delivered = async () =>

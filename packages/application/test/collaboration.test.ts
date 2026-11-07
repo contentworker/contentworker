@@ -13,6 +13,7 @@ import {
   reassignTask,
   reopenTask,
   resolveTask,
+  SYSTEM_CALLER,
 } from '../src/index';
 
 const scope = { spaceId: 'space-1', environmentId: 'main' };
@@ -24,7 +25,7 @@ function makeContext(): AppContext {
 }
 
 async function seedEntry(ctx: AppContext) {
-  await createContentType(ctx, scope, {
+  await createContentType(ctx, SYSTEM_CALLER, scope, {
     apiId: 'article',
     name: 'Article',
     displayField: 'title',

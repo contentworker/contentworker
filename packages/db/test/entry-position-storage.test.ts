@@ -7,6 +7,7 @@ import {
   moveEntry,
   publishContentType,
   publishEntry,
+  SYSTEM_CALLER,
   unpublishEntry,
   updateEntry,
 } from '@contentworker/application';
@@ -31,7 +32,7 @@ async function harness() {
   const spaceId = `order-${uid()}`;
   await createSpace(ctx, { spaceId, name: 'Order', defaultLocale: 'en-US' });
   const scope = { spaceId, environmentId: 'main' };
-  await createContentType(ctx, scope, {
+  await createContentType(ctx, SYSTEM_CALLER, scope, {
     apiId: 'note',
     name: 'Note',
     displayField: 'title',

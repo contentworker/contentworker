@@ -41,7 +41,11 @@ import {
 import { STARTERS } from '@contentworker/seed';
 import type { Context } from 'hono';
 import { z } from 'zod';
-import { contentTypeDetails, contentTypeLayout } from './docs/schemas/content-types';
+import {
+  contentTypeDetails,
+  contentTypeLayout,
+  contentTypePreview,
+} from './docs/schemas/content-types';
 
 /**
  * Parses a request JSON body against a zod schema, throwing a domain
@@ -421,6 +425,7 @@ export const contentTypeBody = z.object({
   icon: detail(contentTypeDetails.icon),
   agentInstructions: detail(contentTypeDetails.agentInstructions),
   layout: detail(contentTypeLayout),
+  preview: detail(contentTypePreview),
   fields: z.array(fieldDef).max(500),
   urlPattern: z
     .string()
@@ -458,6 +463,12 @@ export const canvasBody = z.object({
 export const previewLinkBody = z.object({
   ttlHours: z.number().positive().max(8760).optional(),
   previewBaseUrl: z.string().url().max(2048).optional(),
+  locale: z
+    .string()
+    .min(1)
+    .max(35)
+    .optional()
+    .describe('The locale frontendUrl is filled in; the space’s default if absent'),
 });
 export const updateEntryBody = z.object({ fields: zFieldValues });
 /**

@@ -5,6 +5,7 @@ import {
   getContentType,
   listContentTypes,
   publishContentType,
+  SYSTEM_CALLER,
 } from '@contentworker/application';
 import type { ContentType, FieldDefinition } from '@contentworker/domain';
 import { FixedClock } from '@contentworker/test-kit';
@@ -57,7 +58,7 @@ const DRAFT = {
 describe('content type details on D1', () => {
   it('stores group, description, icon and layout, and reads them back', async () => {
     const { ctx, scope } = await harness();
-    await createContentType(ctx, scope, DRAFT);
+    await createContentType(ctx, SYSTEM_CALLER, scope, DRAFT);
     await publishContentType(ctx, scope, 'article');
     const got = await getContentType(ctx, scope, 'article');
     expect(got).toMatchObject({
@@ -73,7 +74,7 @@ describe('content type details on D1', () => {
 
   it('never serves agent instructions through Delivery', async () => {
     const { ctx, scope } = await harness();
-    await createContentType(ctx, scope, DRAFT);
+    await createContentType(ctx, SYSTEM_CALLER, scope, DRAFT);
     await publishContentType(ctx, scope, 'article');
     const { contentTypes = [] } = await ctx.store.delivery.read(scope, { contentTypes: true });
     const delivered = contentTypes.find((t) => t.apiId === 'article');
@@ -83,7 +84,7 @@ describe('content type details on D1', () => {
 
   it('reads the column’s own name, as a replica behind 0032 returns it, as no instructions', async () => {
     const { ctx, scope } = await harness();
-    await createContentType(ctx, scope, DRAFT);
+    await createContentType(ctx, SYSTEM_CALLER, scope, DRAFT);
     await testDb
       .prepare(
         'UPDATE content_types SET agent_instructions = ? WHERE space_id = ? AND environment_id = ? AND api_id = ?',
@@ -95,8 +96,8 @@ describe('content type details on D1', () => {
 
   it('clears them with null', async () => {
     const { ctx, scope } = await harness();
-    await createContentType(ctx, scope, DRAFT);
-    await createContentType(ctx, scope, {
+    await createContentType(ctx, SYSTEM_CALLER, scope, DRAFT);
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
       ...DRAFT,
       group: null,
       description: null,
@@ -112,7 +113,7 @@ describe('content type details on D1', () => {
 
   it('a save of a type without them (as an older release writes it) leaves them as they were', async () => {
     const { ctx, scope } = await harness();
-    await createContentType(ctx, scope, DRAFT);
+    await createContentType(ctx, SYSTEM_CALLER, scope, DRAFT);
     const current = await getContentType(ctx, scope, 'article');
     // The older release's upsert names only the columns it knows, which this mirrors: the
     // store's own upsert writes them all, so an older row shape is simulated by raw SQL.

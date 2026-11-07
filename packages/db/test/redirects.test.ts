@@ -11,6 +11,7 @@ import {
   listRedirects,
   publishEntry,
   resolveRedirect,
+  SYSTEM_CALLER,
   updateEntry,
 } from '@contentworker/application';
 import { ConflictError, type FieldDefinition, type Redirect } from '@contentworker/domain';
@@ -158,7 +159,7 @@ describe('redirects on D1', () => {
         position: 0,
         ...over,
       }) as FieldDefinition;
-    await createContentType(ctx, scope, {
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
       apiId: 'page',
       name: 'Page',
       displayField: 'slug',

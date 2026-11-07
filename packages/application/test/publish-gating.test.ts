@@ -35,6 +35,7 @@ import {
   publishWorkflowVersion,
   runBulkChunk,
   runDueScheduledActions,
+  SYSTEM_CALLER,
   saveWorkflowDraft,
   scheduleAction,
   startBulkJob,
@@ -83,7 +84,7 @@ describe('publish gating', () => {
     ctx = { store, clock, ids: new SequenceIdGenerator('id') };
     await createSpace(ctx, { spaceId: 'blog', name: 'Blog', defaultLocale: 'en-US' });
     for (const apiId of ['post', 'page']) {
-      await createContentType(ctx, scope, {
+      await createContentType(ctx, SYSTEM_CALLER, scope, {
         apiId,
         name: apiId,
         displayField: 'title',
@@ -220,7 +221,7 @@ describe('publish gating', () => {
       await workflow('Editorial review');
       await createEnvironment(ctx, 'blog', 'staging');
       const staging = { spaceId: 'blog', environmentId: 'staging' };
-      await createContentType(ctx, staging, {
+      await createContentType(ctx, SYSTEM_CALLER, staging, {
         apiId: 'post',
         name: 'post',
         displayField: 'title',

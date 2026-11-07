@@ -12,6 +12,7 @@ import {
   createContentType,
   createSpace,
   listAgentRuns,
+  SYSTEM_CALLER,
 } from '../src/index';
 
 const scope = { spaceId: 'shop', environmentId: 'main' };
@@ -24,7 +25,7 @@ function makeContext() {
 
 async function seedArticle(ctx: AppContext) {
   await createSpace(ctx, { spaceId: 'shop', name: 'Shop', defaultLocale: 'en-US' });
-  await createContentType(ctx, scope, {
+  await createContentType(ctx, SYSTEM_CALLER, scope, {
     apiId: 'article',
     name: 'Article',
     displayField: 'title',

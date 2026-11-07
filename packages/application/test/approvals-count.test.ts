@@ -9,6 +9,7 @@ import {
   createEntry,
   createSpace,
   listAgentReviews,
+  SYSTEM_CALLER,
 } from '../src/index';
 
 const scope: Scope = { spaceId: 'acme', environmentId: 'main' };
@@ -28,7 +29,7 @@ let store: InMemoryContentStore;
 let seq = 0;
 
 async function type(s: Scope, apiId: string) {
-  await createContentType(ctx, s, {
+  await createContentType(ctx, SYSTEM_CALLER, s, {
     apiId,
     name: apiId,
     displayField: 'title',

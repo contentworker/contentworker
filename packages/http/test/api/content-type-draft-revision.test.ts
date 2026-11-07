@@ -3,6 +3,7 @@ import {
   createEnvironment,
   mergeEnvironments,
   publishContentType,
+  SYSTEM_CALLER,
 } from '@contentworker/application';
 import type { ApiConfig } from '@contentworker/platform/config';
 import type { InMemoryContentStore } from '@contentworker/test-kit';
@@ -259,10 +260,10 @@ describe('GraphQL’s schema cache', () => {
 
     const staging = { spaceId: 's1', environmentId: 'staging' };
     await createEnvironment(wired.ctx, 's1', 'staging');
-    await createContentType(wired.ctx, staging, {
+    await createContentType(wired.ctx, SYSTEM_CALLER, staging, {
       ...definition,
       fields: [...fields, field('subtitle', 'Symbol', 2)],
-    } as Parameters<typeof createContentType>[2]);
+    } as Parameters<typeof createContentType>[3]);
     await publishContentType(wired.ctx, staging, 'page');
     await mergeEnvironments(wired.ctx, 's1', 'staging', 'main', { contentTypes: ['page'] });
     expect((await wired.ctx.store.contentTypes.get(scope, 'page'))?.version).toBe(1);

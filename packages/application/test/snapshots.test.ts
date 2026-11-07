@@ -33,6 +33,7 @@ import {
   publishWorkflowVersion,
   SNAPSHOT_VERSION,
   type SnapshotWorkflowV2,
+  SYSTEM_CALLER,
   saveWorkflowDraft,
   setEntryMetadata,
   updateEntry,
@@ -45,7 +46,7 @@ let ctx: AppContext;
 let store: InMemoryContentStore;
 
 async function seedModel(scope = source) {
-  await createContentType(ctx, scope, {
+  await createContentType(ctx, SYSTEM_CALLER, scope, {
     apiId: 'article',
     name: 'Article',
     displayField: 'title',
@@ -60,7 +61,7 @@ async function seedModel(scope = source) {
       },
       { apiId: 'body', name: 'Body', type: 'Text', localized: false, required: false, position: 1 },
     ],
-  } as Parameters<typeof createContentType>[2]);
+  } as Parameters<typeof createContentType>[3]);
   await publishContentType(ctx, scope, 'article');
 }
 
@@ -137,10 +138,10 @@ describe('importing a snapshot', () => {
 
   it('carries a type’s agent instructions', async () => {
     const current = await store.contentTypes.get(source, 'article');
-    await createContentType(ctx, source, {
+    await createContentType(ctx, SYSTEM_CALLER, source, {
       ...(current as NonNullable<typeof current>),
       agentInstructions: 'Stay factual.',
-    } as Parameters<typeof createContentType>[2]);
+    } as Parameters<typeof createContentType>[3]);
     await publishContentType(ctx, source, 'article');
     await importSnapshot(ctx, target, await exportSnapshot(ctx, source));
     expect((await store.contentTypes.get(target, 'article'))?.agentInstructions).toBe(
@@ -248,7 +249,7 @@ describe('importing a snapshot', () => {
   it('keeps entry and asset ids, so links between them still resolve and publish', async () => {
     // A category whose parent is another category, and an article linking both a category and
     // an asset: new ids on import left every link pointing at the source environment.
-    await createContentType(ctx, source, {
+    await createContentType(ctx, SYSTEM_CALLER, source, {
       apiId: 'category',
       name: 'Category',
       displayField: 'name',
@@ -280,7 +281,7 @@ describe('importing a snapshot', () => {
           position: 2,
         },
       ],
-    } as Parameters<typeof createContentType>[2]);
+    } as Parameters<typeof createContentType>[3]);
     await publishContentType(ctx, source, 'category');
     const { createAsset, publishAsset } = await import('../src/assets');
     const blob = {

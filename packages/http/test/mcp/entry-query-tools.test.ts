@@ -6,6 +6,7 @@ import {
   createEntry,
   createSpace,
   publishContentType,
+  SYSTEM_CALLER,
 } from '@contentworker/application';
 import { type Principal, SCOPES } from '@contentworker/domain';
 import {
@@ -67,7 +68,7 @@ describe('entries_query over MCP', () => {
   beforeEach(async () => {
     deps = makeDeps();
     await createSpace(deps.ctx, { spaceId: SPACE, name: 'One', defaultLocale: 'en-US' });
-    await createContentType(deps.ctx, scope, {
+    await createContentType(deps.ctx, SYSTEM_CALLER, scope, {
       apiId: 'note',
       name: 'Note',
       displayField: 'title',
@@ -241,7 +242,7 @@ describe('entries_query over MCP', () => {
   });
 
   it('serves a preview key no writer ids on singleton_get', async () => {
-    await createContentType(deps.ctx, scope, {
+    await createContentType(deps.ctx, SYSTEM_CALLER, scope, {
       apiId: 'settings',
       name: 'Settings',
       displayField: 'title',

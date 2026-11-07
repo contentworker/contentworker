@@ -9,6 +9,7 @@ import {
   getTrashSettings,
   publishContentType,
   publishEntry,
+  SYSTEM_CALLER,
   setTrashRetention,
   sweepExpiredTrash,
   trashEntry,
@@ -37,7 +38,7 @@ beforeEach(async () => {
   }
   await store.spaces.createEnvironment('s1', 'staging', 'staging');
   for (const scope of [main, staging, otherSpace]) {
-    await createContentType(ctx, scope, {
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
       apiId: 'note',
       name: 'Note',
       displayField: 'title',
@@ -60,7 +61,7 @@ beforeEach(async () => {
           position: 1,
         },
       ],
-    } as Parameters<typeof createContentType>[2]);
+    } as Parameters<typeof createContentType>[3]);
     await publishContentType(ctx, scope, 'note');
   }
 });

@@ -38,6 +38,7 @@ import {
   publishEntry,
   READ_URL_TTL_SECONDS,
   refreshVideoAsset,
+  SYSTEM_CALLER,
   setAssetMetadata,
   withReadUrl,
 } from '../src/index';
@@ -206,7 +207,7 @@ describe('delivered assets', () => {
   it('embeds the same shape in entries, flattened to the entry’s locale', async () => {
     const a = await image(h);
     await publishAsset(h.ctx, scope, a.id);
-    await createContentType(h.ctx, scope, {
+    await createContentType(h.ctx, SYSTEM_CALLER, scope, {
       apiId: 'page',
       name: 'Page',
       displayField: 'title',

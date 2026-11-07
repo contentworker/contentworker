@@ -520,7 +520,8 @@ export function EntryEditor() {
       const link = await client.createPreviewLink(entryId, {
         previewBaseUrl: window.location.origin,
       });
-      await navigator.clipboard.writeText(link.url);
+      // The entry on the customer's site when its type names a preview URL; else the Preview API.
+      await navigator.clipboard.writeText(link.frontendUrl ?? link.url);
       const expires = toMs(link.expiresAt);
       toast.success(
         expires === null

@@ -25,6 +25,7 @@ import {
   publishContentType,
   publishEntry,
   repairTaxonomy,
+  SYSTEM_CALLER,
   setConceptBroader,
   setEntryMetadata,
   trashEntry,
@@ -51,7 +52,7 @@ function makeContext(): AppContext {
 const pending = async (ctx: AppContext) => ctx.store.outbox.readPending(1000);
 
 async function seedArticle(ctx: AppContext, title: string) {
-  await createContentType(ctx, scope, {
+  await createContentType(ctx, SYSTEM_CALLER, scope, {
     apiId: 'article',
     name: 'Article',
     displayField: 'title',

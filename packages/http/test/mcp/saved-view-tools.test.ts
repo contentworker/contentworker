@@ -7,6 +7,7 @@ import {
   createEnvironment,
   createSpace,
   publishContentType,
+  SYSTEM_CALLER,
 } from '@contentworker/application';
 import { type Principal, SCOPES } from '@contentworker/domain';
 import {
@@ -98,7 +99,7 @@ const field = (apiId: string, type: string, position: number) => ({
 async function seeded() {
   const { ctx, deps } = await setup();
   const scope = { spaceId: SPACE, environmentId: 'main' };
-  await createContentType(ctx, scope, {
+  await createContentType(ctx, SYSTEM_CALLER, scope, {
     apiId: 'staff',
     name: 'Staff',
     displayField: 'name',

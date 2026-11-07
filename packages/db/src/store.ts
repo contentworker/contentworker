@@ -343,6 +343,7 @@ function makeContentTypeRepo(x: Exec): ContentTypeRepo {
         icon: ct.icon ?? null,
         agentInstructions: ct.agentInstructions ?? null,
         layout: ct.layout ?? null,
+        previewUrlTemplate: ct.preview?.urlTemplate ?? null,
       };
       await x.write(
         db
@@ -372,6 +373,7 @@ function makeContentTypeRepo(x: Exec): ContentTypeRepo {
               icon: values.icon,
               agentInstructions: values.agentInstructions,
               layout: values.layout,
+              previewUrlTemplate: values.previewUrlTemplate,
             },
           }),
       );
@@ -397,6 +399,7 @@ function makeContentTypeRepo(x: Exec): ContentTypeRepo {
           icon: ct.icon ?? null,
           agentInstructions: ct.agentInstructions ?? null,
           layout: ct.layout ?? null,
+          previewUrlTemplate: ct.preview?.urlTemplate ?? null,
         })
         .onConflictDoNothing();
       if (x.inUnit) {
@@ -7445,6 +7448,9 @@ type PubRow = typeof schema.entryPublished.$inferSelect;
  */
 const BEHIND_0032 = 'agent_instructions';
 
+/** What `preview_url_template` reads as on a replica behind 0035, as {@link BEHIND_0032}. */
+const BEHIND_0035 = 'preview_url_template';
+
 const toContentType = (r: CtRow): ContentType => ({
   apiId: r.apiId,
   name: r.name,
@@ -7459,6 +7465,9 @@ const toContentType = (r: CtRow): ContentType => ({
     ? { agentInstructions: r.agentInstructions }
     : {}),
   ...(r.layout ? { layout: r.layout } : {}),
+  ...(r.previewUrlTemplate && r.previewUrlTemplate !== BEHIND_0035
+    ? { preview: { urlTemplate: r.previewUrlTemplate } }
+    : {}),
   version: r.version,
   status: r.status,
 });

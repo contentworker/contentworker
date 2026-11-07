@@ -652,7 +652,10 @@ export interface RoleSummary {
 }
 
 export interface PreviewLinkResult {
+  /** The entry on the Preview API. */
   readonly url: string;
+  /** The entry on the customer's frontend, from its type's preview URL template; absent without. */
+  readonly frontendUrl?: string;
   readonly token: string;
   readonly expiresAt: string;
 }
@@ -2749,7 +2752,7 @@ export function createManagementClient(
     /** Expiring shareable preview URL for an entry. */
     createPreviewLink(
       entryId: string,
-      input?: { ttlHours?: number; previewBaseUrl?: string },
+      input?: { ttlHours?: number; previewBaseUrl?: string; locale?: string },
     ): Promise<PreviewLinkResult> {
       return req(
         'POST',

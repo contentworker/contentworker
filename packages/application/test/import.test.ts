@@ -20,6 +20,7 @@ import {
   listPreviewEntries,
   planImport,
   publishContentType,
+  SYSTEM_CALLER,
   trashEntry,
 } from '../src/index';
 
@@ -81,7 +82,7 @@ beforeEach(async () => {
   const store = new InMemoryContentStore();
   store.seedSpace({ spaceId: SPACE, defaultLocale: 'en-US', locales: ['en-US', 'de-DE'] });
   ctx = { store, clock: new FixedClock(), ids: new SequenceIdGenerator('e') };
-  await createContentType(ctx, scope, {
+  await createContentType(ctx, SYSTEM_CALLER, scope, {
     apiId: 'article',
     name: 'Article',
     displayField: 'title',
@@ -120,7 +121,7 @@ beforeEach(async () => {
         position: 4,
       },
     ],
-  } as Parameters<typeof createContentType>[2]);
+  } as Parameters<typeof createContentType>[3]);
   await publishContentType(ctx, scope, 'article');
 });
 
@@ -478,7 +479,7 @@ describe('bounds', () => {
 
 describe('defaults', () => {
   beforeEach(async () => {
-    await createContentType(ctx, scope, {
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
       apiId: 'note',
       name: 'Note',
       displayField: 'title',
@@ -501,7 +502,7 @@ describe('defaults', () => {
           position: 1,
         },
       ],
-    } as Parameters<typeof createContentType>[2]);
+    } as Parameters<typeof createContentType>[3]);
     await publishContentType(ctx, scope, 'note');
   });
 

@@ -20,6 +20,7 @@ import {
   importChunkRunner,
   publishContentType,
   runBulkChunk,
+  SYSTEM_CALLER,
 } from '@contentworker/application';
 import type { BulkChunkDueEvent, Scope } from '@contentworker/domain';
 import type { BlobStore } from '@contentworker/ports';
@@ -27,7 +28,7 @@ import type { InMemoryContentStore } from '@contentworker/test-kit';
 
 /** Gives every section of an export at least one item, so a dropped section shows as empty. */
 export async function seedEverySection(ctx: AppContext, blob: BlobStore, scope: Scope) {
-  await createContentType(ctx, scope, {
+  await createContentType(ctx, SYSTEM_CALLER, scope, {
     apiId: 'note',
     name: 'Note',
     displayField: 'title',
@@ -41,7 +42,7 @@ export async function seedEverySection(ctx: AppContext, blob: BlobStore, scope: 
         position: 0,
       },
     ],
-  } as Parameters<typeof createContentType>[2]);
+  } as Parameters<typeof createContentType>[3]);
   await publishContentType(ctx, scope, 'note');
   await createEntry(ctx, scope, {
     contentTypeApiId: 'note',

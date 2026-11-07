@@ -301,6 +301,56 @@ describe('the content type dialog', () => {
     expect(draft.agentInstructions).toBeNull();
   });
 
+  it('keeps the preview URL it was opened with, and clears one left blank', async () => {
+    const urlTemplate = 'https://site.example/__preview?entry={id}&token={token}';
+    const kept = await saveDialog({ ...ARTICLE, preview: { urlTemplate } }, () => {});
+    expect(kept.preview).toEqual({ urlTemplate });
+    cleanup();
+    const cleared = await saveDialog({ ...ARTICLE, preview: { urlTemplate } }, () => {
+      fireEvent.change(screen.getByLabelText('Preview URL'), { target: { value: ' ' } });
+    });
+    expect(cleared.preview).toBeNull();
+  });
+
+  it('says on the field why a preview URL can’t be saved, and saves nothing', async () => {
+    const onSave = vi.fn<(d: ContentTypeDraft) => Promise<void>>(async () => {});
+    render(<ContentTypeDialog open onOpenChange={() => {}} initial={ARTICLE} onSave={onSave} />);
+    const input = screen.getByLabelText('Preview URL');
+    fireEvent.change(input, { target: { value: 'http://site.example/p/{id}' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(input.getAttribute('aria-invalid')).toBe('true'));
+    // The field is usually below the fold: it takes focus, so it and its error come into view.
+    expect(document.activeElement).toBe(input);
+    expect(input.getAttribute('aria-describedby')).toContain('ct-preview-error');
+    expect(document.getElementById('ct-preview-error')?.textContent).toMatch(/https/);
+    expect(onSave).not.toHaveBeenCalled();
+    // Typing withdraws the error.
+    fireEvent.change(input, { target: { value: 'https://site.example/p/{id}?t={token}' } });
+    expect(input.getAttribute('aria-invalid')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(onSave).toHaveBeenCalled());
+    expect(onSave.mock.calls[0]?.[0].preview).toEqual({
+      urlTemplate: 'https://site.example/p/{id}?t={token}',
+    });
+  });
+
+  it('withdraws a preview URL error once the template passes, even when the save then fails', async () => {
+    const onSave = vi.fn<(d: ContentTypeDraft) => Promise<void>>(async () => {
+      throw new Error('offline');
+    });
+    render(<ContentTypeDialog open onOpenChange={() => {}} initial={ARTICLE} onSave={onSave} />);
+    const input = screen.getByLabelText('Preview URL');
+    // Names a field the type doesn't have, then one it does (the field list is ARTICLE's).
+    fireEvent.change(input, { target: { value: 'https://site.example/{field:nope}?t={token}' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(input.getAttribute('aria-invalid')).toBe('true'));
+    fireEvent.change(input, { target: { value: 'https://site.example/p?t={token}' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(onSave).toHaveBeenCalled());
+    expect(input.getAttribute('aria-invalid')).toBeNull();
+    expect(document.getElementById('ct-preview-error')).toBeNull();
+  });
+
   it('saves a group, description and icon', async () => {
     const draft = await saveDialog(ARTICLE, () => {
       fireEvent.change(screen.getByLabelText('Group'), { target: { value: 'Editorial' } });

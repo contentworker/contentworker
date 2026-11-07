@@ -6,6 +6,7 @@ import {
   createEntry,
   createSpace,
   publishContentType,
+  SYSTEM_CALLER,
 } from '@contentworker/application';
 import { type Principal, SCOPES } from '@contentworker/domain';
 import {
@@ -82,7 +83,7 @@ describe('entries_validate (MCP), on the HTTP route’s use-case', () => {
   async function seeded() {
     const { ctx, deps } = await setup();
     const scope = { spaceId: SPACE, environmentId: 'main' };
-    await createContentType(ctx, scope, {
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
       apiId: 'post',
       name: 'Post',
       displayField: 'title',

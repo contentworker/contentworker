@@ -8,6 +8,7 @@ import {
   getEntry,
   publishContentType,
   publishEntry,
+  SYSTEM_CALLER,
   trashEntry,
   updateContentType,
   updateEntry,
@@ -69,7 +70,7 @@ const fieldsWith = (variants: readonly unknown[]) =>
   ] as FieldDefinition[];
 
 async function defineLanding(s = scope) {
-  await createContentType(ctx, s, {
+  await createContentType(ctx, SYSTEM_CALLER, s, {
     apiId: 'landing',
     name: 'Landing',
     displayField: 'title',
@@ -86,7 +87,8 @@ const landing = (title: string, body: unknown[]) => ({
 const bodyOf = (fields: Record<string, Record<string, unknown>>) =>
   fields.body?.['en-US'] as Record<string, unknown>[];
 
-const dropCta = () => updateContentType(ctx, scope, 'landing', { fields: fieldsWith([HERO]) });
+const dropCta = () =>
+  updateContentType(ctx, SYSTEM_CALLER, scope, 'landing', { fields: fieldsWith([HERO]) });
 
 beforeEach(async () => {
   store = new InMemoryContentStore();
@@ -270,7 +272,9 @@ describe('removing a variant', () => {
       ],
     };
     await expect(
-      updateContentType(ctx, scope, 'landing', { fields: fieldsWith([HERO, ctaPlus, quote]) }),
+      updateContentType(ctx, SYSTEM_CALLER, scope, 'landing', {
+        fields: fieldsWith([HERO, ctaPlus, quote]),
+      }),
     ).resolves.toBeDefined();
     const found = await getEntry(ctx, scope, (await store.entries.list(scope, {}))[0]!.entry.id);
     expect(bodyOf(found.fields)[0]?._type).toBe('cta');
