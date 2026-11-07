@@ -12,6 +12,7 @@ import {
   seedAsset,
   seedAssetFolder,
   seedCms,
+  seedBriefedType,
   seedGuidedType,
   seedIngestFindings,
   seedLaidOutType,
@@ -1521,6 +1522,22 @@ test('guidance saved in the content type dialog shows on the entry form', async 
   await expect(subtitle).toHaveAccessibleDescription(/One line under the title\./);
   // Listed values are offered as a select.
   await expect(page.getByLabel('Status').getByRole('option')).toHaveText(['None', 'open', 'let']);
+});
+
+test('agent instructions saved in the content type dialog are there when it reopens', async ({
+  page,
+  request,
+}) => {
+  await seedBriefedType(request);
+  await openCms(page, '/content');
+  await page.getByRole('button', { name: 'Edit “Briefed”' }).click();
+  await page.getByLabel('Agent instructions').fill('Keep titles short.');
+  await page.getByRole('button', { name: 'Save changes' }).click();
+  await expect(page.getByRole('dialog')).toBeHidden();
+
+  await openCms(page, '/content');
+  await page.getByRole('button', { name: 'Edit “Briefed”' }).click();
+  await expect(page.getByLabel('Agent instructions')).toHaveValue('Keep titles short.');
 });
 
 test('the editor names who created and last edited an entry, and Mine lists one’s own', async ({

@@ -7328,6 +7328,14 @@ type CtRow = Omit<typeof schema.contentTypes.$inferSelect, 'publishedDefinition'
 type EntryRow = typeof schema.entries.$inferSelect;
 type PubRow = typeof schema.entryPublished.$inferSelect;
 
+/**
+ * What `agent_instructions` reads as on a replica behind 0032: Drizzle leaves the column bare, and
+ * SQLite reads a double-quoted name it can't find as a string (see {@link keptDefinition}). Treated
+ * as unset, so the admin can't load the column's name and save it back for agents to read. Remove
+ * this once every deployment is past 0032.
+ */
+const BEHIND_0032 = 'agent_instructions';
+
 const toContentType = (r: CtRow): ContentType => ({
   apiId: r.apiId,
   name: r.name,
@@ -7338,7 +7346,9 @@ const toContentType = (r: CtRow): ContentType => ({
   ...(r.group ? { group: r.group } : {}),
   ...(r.description ? { description: r.description } : {}),
   ...(r.icon ? { icon: r.icon } : {}),
-  ...(r.agentInstructions ? { agentInstructions: r.agentInstructions } : {}),
+  ...(r.agentInstructions && r.agentInstructions !== BEHIND_0032
+    ? { agentInstructions: r.agentInstructions }
+    : {}),
   ...(r.layout ? { layout: r.layout } : {}),
   version: r.version,
   status: r.status,

@@ -58,6 +58,13 @@ describe('branch compare/merge', () => {
     ]);
   });
 
+  it('counts a change to a type’s agent instructions as a change', async () => {
+    await createContentType(ctx, main, ARTICLE);
+    await createContentType(ctx, staging, { ...ARTICLE, agentInstructions: 'Stay factual.' });
+    const diff = await compareEnvironments(ctx, 'shop', 'staging', 'main');
+    expect(diff.contentTypes).toEqual([{ apiId: 'article', kind: 'changed' }]);
+  });
+
   it('compares every entry, not the store’s first page', async () => {
     // D1's list answers 100 rows when no limit is given; cap the in-memory store the same way.
     const store = ctx.store as InMemoryContentStore;

@@ -12,12 +12,14 @@ import {
   type AssistantScope,
   type AssistantTool,
   type Principal,
+  SCOPES,
 } from '@contentworker/domain';
 import { redactCredentials } from '@contentworker/redaction';
 import type { JSONSchema7 } from 'ai';
 import type { McpDeps } from '../mcp/deps';
 import { authInfoFor, createHandler } from '../mcp/http';
 import { INTERNAL_TOOL_ERROR } from '../mcp/server';
+import { toolListedFor } from '../mcp/tool-scopes';
 
 /** An MCP tool as `tools/list` describes it. */
 export interface ListedTool {
@@ -51,16 +53,23 @@ const MAX_RESULT_CHARS = 24_000;
 let listing: Promise<Map<AssistantTool, ListedTool>> | undefined;
 
 /**
- * The assistant's tools as MCP lists them, in `ASSISTANT_TOOLS` order. Listed once per isolate:
- * the schemas don't vary with who asks (the MCP suite holds the server to that), only with a
+ * Reads the catalogue and nothing else: `tools/list` narrows to the caller, and the catalogue
+ * outlives any one caller, so it is listed as someone who is shown everything. Never used for a call.
+ */
+const CATALOGUE_READER: Principal = {
+  spaceId: '*',
+  kind: 'admin',
+  scopes: Object.values(SCOPES),
+};
+
+/**
+ * Every assistant tool as MCP lists it, in `ASSISTANT_TOOLS` order. Listed once per isolate: a
+ * tool's schema doesn't vary with who asks (the MCP suite holds the server to that), only with a
  * deploy. A failed listing isn't kept, so the next turn lists again.
  */
-export function listAssistantTools(
-  deps: McpDeps,
-  principal: Principal,
-): Promise<Map<AssistantTool, ListedTool>> {
+function assistantCatalogue(deps: McpDeps): Promise<Map<AssistantTool, ListedTool>> {
   if (!listing) {
-    listing = listAll(deps, principal);
+    listing = listAll(deps);
     listing.catch(() => {
       listing = undefined;
     });
@@ -68,11 +77,20 @@ export function listAssistantTools(
   return listing;
 }
 
-async function listAll(deps: McpDeps, principal: Principal) {
+/** The tools to offer `principal`: the catalogue, narrowed as `tools/list` narrows it for them. */
+export async function listAssistantTools(
+  deps: McpDeps,
+  principal: Principal,
+): Promise<Map<AssistantTool, ListedTool>> {
+  const catalogue = await assistantCatalogue(deps);
+  return new Map([...catalogue].filter(([name]) => toolListedFor(principal, name)));
+}
+
+async function listAll(deps: McpDeps) {
   const all = new Map<string, { description?: string; inputSchema?: JSONSchema7 }>();
   let cursor: string | undefined;
   do {
-    const page = (await rpc(deps, principal, 'tools/list', cursor ? { cursor } : {})) as {
+    const page = (await rpc(deps, CATALOGUE_READER, 'tools/list', cursor ? { cursor } : {})) as {
       tools?: { name: string; description?: string; inputSchema?: JSONSchema7 }[];
       nextCursor?: string;
     };
@@ -132,7 +150,9 @@ export async function callAssistantTool(
   input: unknown,
   scope: AssistantScope,
 ): Promise<unknown> {
-  const tool = (await listAssistantTools(deps, principal)).get(name);
+  // From the catalogue, not the caller's list: a tool they weren't offered still answers for
+  // itself, with the scope it needs.
+  const tool = (await assistantCatalogue(deps)).get(name);
   if (!tool) throw new ToolRefused(`${ASSISTANT_TOOLS[name].title} isn’t available here.`);
   const result = (await rpc(deps, principal, 'tools/call', {
     name,

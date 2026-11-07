@@ -16,7 +16,7 @@ import {
   SequenceIdGenerator,
   StubAIProvider,
 } from '@contentworker/test-kit';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   callAssistantTool,
   errorLine,
@@ -95,6 +95,27 @@ describe('the assistant’s MCP tools', () => {
     expect(Object.keys(get.inputSchema.properties ?? {})).toEqual(['id']);
     // The documentation isn't per space: no scope to fill.
     expect(tools.get('docs_search')!.scoped).toEqual({ space: false, environment: false });
+  });
+
+  it('offers each person their own tools, whoever an isolate listed first', async () => {
+    // The catalogue is module state: a fresh module is a fresh isolate, listed first by a viewer.
+    vi.resetModules();
+    const fresh = await import('../../src/assistant/tools');
+    const scope = { spaceId: 'space-a', environmentId: 'main' };
+    await seedSpace(deps.ctx, 'space-a', 'In A');
+    const viewerOfA: Principal = { ...editorOfA, scopes: [SCOPES.previewRead] };
+
+    const offeredToViewer = await fresh.listAssistantTools(deps, viewerOfA);
+    expect(offeredToViewer.has('entries_get')).toBe(true);
+    expect(offeredToViewer.has('entries_publish')).toBe(false);
+
+    expect((await fresh.listAssistantTools(deps, editorOfA)).has('entries_publish')).toBe(true);
+    // A tool the viewer wasn't offered still answers for itself, with the scope it needs.
+    const refused = await fresh
+      .callAssistantTool(deps, viewerOfA, 'entries_publish', { id: 'e1' }, scope)
+      .catch((e: unknown) => e);
+    expect(String((refused as Error).message)).toMatch(/scope/i);
+    expect(String((refused as Error).message)).not.toMatch(/available here/);
   });
 
   it('runs every call in the page’s scope, whatever the arguments say', async () => {
