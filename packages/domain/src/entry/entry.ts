@@ -24,6 +24,12 @@ export interface Entry {
   readonly createdBy?: string | null;
   readonly updatedBy?: string | null;
   readonly firstPublishedAt?: string | null;
+  /**
+   * The entry's place in its type's manual order (`position.ts`), written only by a move and kept
+   * by the store through every save; null or absent when it was never moved, and it sorts by its
+   * id. Read it as `effectivePosition`.
+   */
+  readonly position?: string | null;
 }
 
 /** An immutable point-in-time snapshot of an entry's field values. */

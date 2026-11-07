@@ -521,9 +521,16 @@ export class InMemoryContentStore implements ContentStore {
   /** As D1: the snapshot's first publish is the entry's, as its aggregate holds it now. */
   private setPublished(scope: Scope, snapshot: PublishedEntry): void {
     const key = `${scopeKey(scope)}::${snapshot.entryId}`;
-    const { firstPublishedAt: _carried, ...rest } = snapshot;
-    const first = this.entryData.get(key)?.firstPublishedAt;
-    this.publishedData.set(key, { ...rest, ...(first ? { firstPublishedAt: first } : {}) });
+    const { firstPublishedAt: _carried, position: _place, ...rest } = snapshot;
+    const entry = this.entryData.get(key);
+    const first = entry?.firstPublishedAt;
+    // As 0034's triggers: the published row is where the entry is in its type's order.
+    const position = entry?.position;
+    this.publishedData.set(key, {
+      ...rest,
+      ...(first ? { firstPublishedAt: first } : {}),
+      ...(position ? { position } : {}),
+    });
   }
 
   private setEntry(scope: Scope, entry: Entry, created = false): void {
@@ -537,6 +544,8 @@ export class InMemoryContentStore implements ContentStore {
       createdBy: before ? (before.createdBy ?? null) : (entry.createdBy ?? null),
       updatedBy: entry.updatedBy ?? null,
       firstPublishedAt: before?.firstPublishedAt ?? entry.firstPublishedAt ?? null,
+      // As D1: no save writes the manual order, so an aggregate read before a move can't undo it.
+      position: before?.position ?? null,
     });
     this.lastEntryTouch = Math.max(this.nowMs(), this.lastEntryTouch + 1);
     this.entryTouched.set(key, new Date(this.lastEntryTouch).toISOString());
@@ -880,6 +889,7 @@ export class InMemoryContentStore implements ContentStore {
           contentType: r.contentTypeApiId,
           publishedAt: r.publishedAt,
           firstPublishedAt: r.firstPublishedAt,
+          position: r.position ?? r.entryId,
           'metadata.tags': r.metadata?.tags ?? [],
           'metadata.concepts': r.metadata?.concepts ?? [],
         }),

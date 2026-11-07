@@ -121,6 +121,43 @@ describe('draft list keyset paging (D1)', () => {
     expect(rest.flat().at(-1)?.id).toBe(firstId);
   });
 
+  it('walks the manual order in SQL, each way, every entry once', async () => {
+    // Five entries moved to the front, in reverse: keys as a move writes them, before any id.
+    const moved = created.slice(0, 5);
+    for (const [i, id] of moved.entries()) {
+      await testDb
+        .prepare(
+          'UPDATE entries SET position = ? WHERE space_id = ? AND environment_id = ? AND id = ?',
+        )
+        .bind(`-${5 - i}`, scope.spaceId, scope.environmentId, id)
+        .run();
+    }
+    const key = (id: string) => {
+      const i = moved.indexOf(id);
+      return i < 0 ? id : `-${5 - i}`;
+    };
+    const expected = [...created].sort((a, b) => (key(a) < key(b) ? -1 : 1));
+    expect(expected.slice(0, 5)).toEqual([...moved].reverse());
+    for (const direction of ['asc', 'desc'] as const) {
+      const pages = await walk({
+        contentTypeApiId: 'article',
+        order: [{ field: 'sys.position', direction }],
+        limit: 40,
+      });
+      expect(pages.map((p) => p.length)).toEqual([40, 40, 40, 10]);
+      const ids = pages.flat().map((e) => e.id);
+      expect(ids).toEqual(direction === 'asc' ? expected : [...expected].reverse());
+    }
+    for (const id of moved) {
+      await testDb
+        .prepare(
+          'UPDATE entries SET position = NULL WHERE space_id = ? AND environment_id = ? AND id = ?',
+        )
+        .bind(scope.spaceId, scope.environmentId, id)
+        .run();
+    }
+  });
+
   it("lists no other space's entries", async () => {
     const pages = await walk({});
     expect(pages.flat().some((e) => titleOf(e) === 'not here')).toBe(false);

@@ -3,6 +3,7 @@ import {
   createContentType,
   createEntry,
   createSpace,
+  listPublishedEntries,
   publishContentType,
   publishEntry,
   unpublishEntry,
@@ -106,6 +107,38 @@ describe('entry position storage on D1', () => {
     await unpublishEntry(h.ctx, h.scope, id);
     await publishEntry(h.ctx, h.scope, id);
     expect(await h.positions('entry_published', id)).toBe('V');
+  });
+
+  it('serves published entries in manual order, each way', async () => {
+    const h = await harness();
+    const ids: string[] = [];
+    for (const t of ['a', 'b', 'c', 'd']) {
+      const id = await h.note(t);
+      await publishEntry(h.ctx, h.scope, id);
+      ids.push(id);
+    }
+    const [a, b, c, d] = ids as [string, string, string, string];
+    await h.move(d, '-');
+    await h.move(b, `${c}V`);
+    const list = async (direction: 'asc' | 'desc') =>
+      (
+        await listPublishedEntries(h.ctx, h.scope, {
+          contentTypeApiId: 'note',
+          order: [{ field: 'sys.position', direction }],
+        })
+      ).map((e) => e.id);
+    // These ids are random, not time-ordered: an entry not moved sorts by its id wherever it falls.
+    const keys = new Map<string, string>([
+      [a, a],
+      [b, `${c}V`],
+      [c, c],
+      [d, '-'],
+    ]);
+    const expected = [...ids].sort((x, y) => ((keys.get(x) ?? x) < (keys.get(y) ?? y) ? -1 : 1));
+    expect(expected[0]).toBe(d);
+    expect(expected.indexOf(b)).toBe(expected.indexOf(c) + 1);
+    expect(await list('asc')).toEqual(expected);
+    expect(await list('desc')).toEqual([...expected].reverse());
   });
 
   it('reads both ordered lists as one index range, with no sort', async () => {

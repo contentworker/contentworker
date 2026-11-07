@@ -731,6 +731,14 @@ or anywhere in a `where` tree (400). Agent-review decisions record
 `decidedBy` with the same actor id. Delivery serves `firstPublishedAt` alone, since the others name
 people and keys a public read has no business seeing.
 
+**Manual order.** Each entry has a place in its content type's one manual order, read as
+`order=sys.position`: `position` (`0034_entry_position`), a key from
+`packages/domain/src/entry/position.ts`, or the entry's id while it has none. Ids use the same
+characters as keys and UUIDv7 ids sort by creation time, so a type starts in creation order and a
+new entry lands at the end without a key being written. No save writes `position`, so a stale
+aggregate can't move an entry back; triggers copy it to `entry_published`, so Delivery orders
+published rows by the same key.
+
 ### Comparing versions
 
 `diffEntryFields(before, after, contentType?)` (`packages/domain/src/entry/entry-diff.ts`) is the

@@ -84,6 +84,7 @@ Filter on any field with `fields.<apiId>`, and on system fields with `sys.<name>
 | `links_to_entry=<entryId>`            | any field links to that entry (`<id>,<id>` for any of several) |
 | `sys.publishedAt[gt]=2026-10-01`      | system fields work the same way         |
 | `order=-sys.firstPublishedAt`         | newest first by first publish, not by the last republish |
+| `content_type=article&order=sys.position` | the type's manual order (creation order until entries are moved) |
 
 Delivery reads the links of the published version, Preview those of the current one, in any
 locale. A link counts where the content type declares one: a Link field, a list of links, a
