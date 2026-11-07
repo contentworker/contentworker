@@ -3,15 +3,18 @@ import {
   auditEntry,
   authorizeBulkJob,
   authorizeBulkJobAccess,
+  authorizeSetFieldsJob,
   autofillField,
   BULK_JOB_MAX_ITEMS,
   bulkEntryAction,
   cancelBulkJob,
+  ENTRY_TRASH_MAX_ITEMS,
   getBulkJob,
   getBulkJobReport,
   listBulkJobs,
   moderateEntry,
   startBulkJob,
+  startSetFieldsJob,
   suggestEntryTags,
   summarizeEntry,
   translateEntry,
@@ -250,6 +253,41 @@ export function registerAiContentTools(server: McpServer, t: ToolContext): void 
   );
 
   server.registerTool(
+    'bulk_job_set_fields',
+    {
+      description:
+        'Start a durable bulk job that sets the same field values on many entries of one ' +
+        'content type, each saved as a new draft with the checks an edit makes (validation, ' +
+        'field rules, plugins). fields is field apiId → locale → value; only the fields and ' +
+        'locales sent change, and null clears a locale. Unknown fields or locales and unique ' +
+        'fields are refused up front; an entry that refuses its save, is missing or is of ' +
+        'another type is a failure in bulk_job_report. Needs write on the type and every field ' +
+        'sent. Poll bulk_job_status for progress.',
+      inputSchema: toolSchema('bulk_job_set_fields', () =>
+        z.object({
+          contentTypeApiId: z.string(),
+          entryIds: z.array(z.string()).min(1).max(ENTRY_TRASH_MAX_ITEMS),
+          fields: z
+            .record(z.string(), z.record(z.string(), z.unknown()))
+            .describe('Field apiId → locale → value; null clears that locale'),
+          ...scopeArgs,
+        }),
+      ),
+    },
+    async (args) => {
+      guard(SCOPES.contentWrite, scopeOf(args));
+      authorizeSetFieldsJob(principal, args.contentTypeApiId, args.fields);
+      return ok(
+        await startSetFieldsJob(ctx, scopeOf(args), {
+          contentTypeApiId: args.contentTypeApiId,
+          entryIds: args.entryIds,
+          fields: args.fields,
+        }),
+      );
+    },
+  );
+
+  server.registerTool(
     'bulk_job_status',
     {
       description:
@@ -260,7 +298,14 @@ export function registerAiContentTools(server: McpServer, t: ToolContext): void 
       annotations: { readOnlyHint: true },
     },
     async (args) => {
-      guard(SCOPES.contentPublish, scopeOf(args));
+      guard(
+        // content:write, as GET …/bulk/jobs, so whoever may start a job (an import, a field edit)
+        // can follow it; or content:publish, which these tools took before.
+        principal.scopes.includes(SCOPES.contentWrite)
+          ? SCOPES.contentWrite
+          : SCOPES.contentPublish,
+        scopeOf(args),
+      );
       return ok(
         args.id
           ? await getBulkJob(ctx, scopeOf(args), args.id)
@@ -278,7 +323,14 @@ export function registerAiContentTools(server: McpServer, t: ToolContext): void 
       annotations: { readOnlyHint: true },
     },
     async (args) => {
-      guard(SCOPES.contentPublish, scopeOf(args));
+      guard(
+        // content:write, as GET …/bulk/jobs, so whoever may start a job (an import, a field edit)
+        // can follow it; or content:publish, which these tools took before.
+        principal.scopes.includes(SCOPES.contentWrite)
+          ? SCOPES.contentWrite
+          : SCOPES.contentPublish,
+        scopeOf(args),
+      );
       await guardJob(args.id, scopeOf(args), 'report');
       return ok(await getBulkJobReport(ctx, scopeOf(args), args.id));
     },

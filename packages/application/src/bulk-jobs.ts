@@ -44,9 +44,13 @@ export const ENTRY_TRASH_CHUNK_SIZE = 50;
  */
 export const ENTRY_TRASH_MAX_ITEMS = 100_000;
 
-/** Trash, restore and purge, and a content type's delete: each entry through its use-cases. */
+/**
+ * Trash, restore and purge, a content type's delete and a bulk field edit: each entry through its
+ * use-cases, so their chunks take the smaller size.
+ */
 const isEntryTrashAction = (action: BulkJobAction): boolean =>
   action === 'content_type_delete' ||
+  action === 'set_fields' ||
   (ENTRY_TRASH_BULK_ACTIONS as readonly string[]).includes(action);
 
 /** How many ids one chunk of `action` takes. */
@@ -80,10 +84,11 @@ export function authorizeBulkJob(principal: Principal, action: BulkJobAction): v
 
 /**
  * Refuses a principal who may not read the report of, or cancel, this job. Beyond
- * {@link authorizeBulkJob} (which goes by action alone, for a job not yet started), an import job
- * says what it touched. One into a single type (`contentTypeApiId`: CSV, JSON, WordPress) needs
- * `write` on that type; any other (a snapshot, clone or space export) reaches every type, so it
- * needs `read` and `write` on all of them alike. The report of a single-type job also stays closed
+ * {@link authorizeBulkJob} (which goes by action alone, for a job not yet started), an import or
+ * a bulk field edit says what it touched. One into a single type (`contentTypeApiId`: a field
+ * edit, a CSV, JSON or WordPress import) needs `write` on that type; any other import (a
+ * snapshot, clone or space export) reaches every type, so it needs `read` and `write` on all of
+ * them alike. The report of a single-type job also stays closed
  * to a role with field rules on the type: a failure's message can quote a stored value (a unique
  * conflict names it; a plugin's refusal says what it likes). Cancelling shows no failure.
  */
@@ -92,7 +97,8 @@ export function authorizeBulkJobAccess(
   job: Pick<BulkJob, 'action' | 'config'>,
   access: 'report' | 'cancel',
 ): void {
-  if (job.action !== 'import') {
+  // A field edit, like an import into one type, says which type it writes (`contentTypeApiId`).
+  if (job.action !== 'import' && job.action !== 'set_fields') {
     authorizeBulkJob(principal, job.action);
     return;
   }
@@ -285,6 +291,15 @@ export interface BulkChunkDeps {
     job: BulkJob,
     chunk: BulkJobChunk,
   ) => Promise<BulkChunkOutcome>;
+  /**
+   * Runs a bulk field edit's chunk (`entry-fields-bulk.ts`), injected because that module starts
+   * its jobs through this one. Absent, the chunk stays claimable.
+   */
+  readonly entryFieldsChunk?: (
+    scope: Scope,
+    job: BulkJob,
+    chunk: BulkJobChunk,
+  ) => Promise<BulkChunkOutcome>;
 }
 
 /** Who started `job` (recorded by `persistJob`), as its chunks' writes are authored; undefined when
@@ -350,6 +365,10 @@ export async function runBulkChunk(
   // A content type's delete: its entries trashed and purged, each through its use-cases.
   if (job.action === 'content_type_delete') {
     return runChunkAndFold(ctx, deps.contentTypePurgeChunk, scope, job, chunk);
+  }
+  // A bulk field edit: each entry saved as a draft through its use-case.
+  if (job.action === 'set_fields') {
+    return runChunkAndFold(ctx, deps.entryFieldsChunk, scope, job, chunk);
   }
   // An asset library action: each asset through its own use-case, failures reported by name.
   if (job.action !== 'publish' && job.action !== 'unpublish') {
@@ -625,7 +644,7 @@ export async function cancelBulkJob(
 const STOPPED = { deleted: false, reason: 'the job was stopped' } as const;
 
 /**
- * Runs an import, asset or entry trash chunk and folds its outcome into the job.
+ * Runs an import, asset, entry trash or field edit chunk and folds its outcome into the job.
  *
  * Mirrors the publish path's bookkeeping exactly — claim, run, complete,
  * finalize — so progress, cancellation, the stall sweep and the per-item

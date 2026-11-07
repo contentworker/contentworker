@@ -40,6 +40,7 @@ export * from './delivery-graphql';
 export * from './delivery-reads';
 export * from './embeds';
 export * from './entries';
+export * from './entry-fields-bulk';
 export * from './entry-query';
 export * from './entry-trash-bulk';
 export * from './environment-purge';

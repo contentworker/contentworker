@@ -415,6 +415,11 @@ describe('@contentworker/sdk-management client', () => {
     await c.bulkJobs.get('j1');
     await c.bulkJobs.report('j1');
     await c.bulkJobs.cancel('j1');
+    await c.bulkJobs.setFields({
+      contentTypeApiId: 'post',
+      entryIds: ['e1'],
+      fields: { category: { 'en-US': 'news' } },
+    });
     await c.webhooks.list();
     await c.webhooks.create({ url: 'https://x.test', topics: ['*'], secret: 's' });
     await c.webhooks.update('w1', { active: false });
@@ -465,6 +470,7 @@ describe('@contentworker/sdk-management client', () => {
       `GET ${env}/bulk/jobs/j1`,
       `GET ${env}/bulk/jobs/j1/report`,
       `POST ${env}/bulk/jobs/j1/cancel`,
+      `POST ${env}/bulk/jobs/set-fields`,
       `GET ${env}/webhooks`,
       `POST ${env}/webhooks`,
       `PUT ${env}/webhooks/w1`,

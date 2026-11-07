@@ -379,7 +379,7 @@ Agents:
 
 Editing:
 
-- [ ] **Bulk field edit.** A bulk job action that sets fields across entries, checking validation and
+- [x] **Bulk field edit.** A bulk job action that sets fields across entries, checking validation and
   field grants on each.
 - [ ] **Autosave.** Debounced drafts buffered in the M3 entry-lock object, not a version per
   keystroke: the database has one writer and versions are append-only.

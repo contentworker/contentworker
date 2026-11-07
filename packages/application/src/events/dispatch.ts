@@ -25,6 +25,7 @@ import { deleteAssetFiles } from '../assets';
 import { runBulkChunk } from '../bulk-jobs';
 import { contentTypePurgeChunkRunner, finishContentTypeDeletion } from '../content-type-lifecycle';
 import type { AppContext } from '../context';
+import { entryFieldsChunkRunner } from '../entry-fields-bulk';
 import { entryTrashChunkRunner } from '../entry-trash-bulk';
 import { runEnvironmentPurge } from '../environment-purge';
 import { invokeFunctionsForEvent } from '../functions';
@@ -141,6 +142,7 @@ export async function dispatchEvent(
     await runBulkChunk(ctx, event, {
       assetBulkChunk: assetBulkChunkRunner(ctx),
       entryTrashChunk: entryTrashChunkRunner(ctx, deps.blob ? { blob: deps.blob } : {}),
+      entryFieldsChunk: entryFieldsChunkRunner(ctx),
       contentTypePurgeChunk: contentTypePurgeChunkRunner(ctx, deps.blob ? { blob: deps.blob } : {}),
       ...(deps.blob ? { importChunk: importChunkRunner(ctx, deps.blob, deps.remoteFetcher) } : {}),
       ...(deps.assetIngest

@@ -1,6 +1,7 @@
 import {
   authorizeBulkJob,
   authorizeBulkJobAccess,
+  authorizeSetFieldsJob,
   bulkCreateEntries,
   bulkEntryAction,
   cancelBulkJob,
@@ -9,11 +10,20 @@ import {
   getBulkJobReport,
   listBulkJobs,
   startBulkJob,
+  startSetFieldsJob,
 } from '@contentworker/application';
 import { assertWritableFields, authorizeContent, SCOPES } from '@contentworker/domain';
 import { type Context, Hono } from 'hono';
 import { type AuthDeps, type AuthVars, requireScope } from '../../auth';
-import { bulkEntriesBody, bulkJobBody, idsBody, parseBody } from '../../validation';
+import { doc } from '../../docs/openapi';
+import * as bulkDocs from '../../docs/schemas/bulk';
+import {
+  bulkEntriesBody,
+  bulkJobBody,
+  idsBody,
+  parseBody,
+  setFieldsJobBody,
+} from '../../validation';
 import { actingCtx, BASE, entryAccess, scopeOf } from './shared';
 
 export function bulkRoutes(deps: AuthDeps): Hono<AuthVars> {
@@ -66,6 +76,31 @@ export function bulkRoutes(deps: AuthDeps): Hono<AuthVars> {
     authorizeBulkJob(c.get('principal'), body.action);
     return c.json(await startBulkJob(actingCtx(ctx, c), scopeOf(c), body), 202);
   });
+  // A field edit writes one type's entries, so it goes by that type and the fields it sets, as an
+  // edit does (`authorizeSetFieldsJob`), not by a role on every type.
+  app.post(
+    `${BASE}/bulk/jobs/set-fields`,
+    doc('Entries', 'Set fields on many entries as a bulk job', {
+      body: setFieldsJobBody,
+      ok: bulkDocs.setFieldsJob,
+      status: 202,
+      description:
+        'A resumable bulk job that sets the same values on entries of one content type, each ' +
+        'saved as a new draft with the checks an edit makes (field validation and rules, ' +
+        'plugins, an entry in the trash refused). Only the fields and locales sent change; null ' +
+        'clears a locale. Unknown fields or locales and unique fields are refused before the ' +
+        'job starts; an entry that refuses its save, is missing or is of another type is a ' +
+        'failure in the report (GET /bulk/jobs/{id}/report), and an entry already holding the ' +
+        'values is left as it is. Needs write on the type and on every field sent; the report ' +
+        'needs a role with no field rules on the type. At most 100,000 entries, 50 per chunk.',
+    }),
+    requireScope(SCOPES.contentWrite),
+    async (c) => {
+      const body = await parseBody(c, setFieldsJobBody);
+      authorizeSetFieldsJob(c.get('principal'), body.contentTypeApiId, body.fields);
+      return c.json(await startSetFieldsJob(actingCtx(ctx, c), scopeOf(c), body), 202);
+    },
+  );
   // Reads are `content:write`, not `content:publish`: an import job is started
   // with content:write, and someone who can start a job must be able to watch
   // it. Progress and per-item errors describe work the caller could have

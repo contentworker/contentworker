@@ -2,6 +2,7 @@ import {
   AGENT_WORKFLOWS,
   ASSET_BULK_ACTION_NAMES,
   BULK_JOB_MAX_ITEMS,
+  ENTRY_TRASH_MAX_ITEMS,
   MAX_ASSET_BULK_TAGS,
   MAX_ASSET_MOVE,
   MAX_PART_URLS,
@@ -553,6 +554,15 @@ export const idsBody = z.object({ ids: zIdList.optional() });
 export const bulkJobBody = z.object({
   action: z.enum(['publish', 'unpublish', 'trash', 'restore', 'purge']),
   entryIds: z.array(zId).min(1).max(BULK_JOB_MAX_ITEMS),
+});
+// A bulk field edit: field apiId → locale → value (null clears that locale), on one type's
+// entries. Each value is validated when its entry is saved, as an edit's is.
+export const setFieldsJobBody = z.object({
+  contentTypeApiId: zId,
+  entryIds: z.array(zId).min(1).max(ENTRY_TRASH_MAX_ITEMS),
+  fields: z
+    .record(zId, z.record(z.string().min(1).max(64), z.unknown()))
+    .describe('Field apiId → locale → value; null clears that locale'),
 });
 export const auditBody = z.object({
   createTasks: z.boolean().optional(),
