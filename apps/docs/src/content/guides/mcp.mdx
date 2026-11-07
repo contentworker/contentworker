@@ -48,7 +48,7 @@ environments its token can reach.
 
 ## Tools
 
-There are 245 in all; your client lists the ones your token's scopes can use, with their descriptions
+There are 247 in all; your client lists the ones your token's scopes can use, with their descriptions
 and input schemas, when it connects. Each tool checks the token's scopes and role grants before it runs, and writes go
 through the same validation, versioning and events as a person's.
 
@@ -65,7 +65,7 @@ through the same validation, versioning and events as a person's.
 | Spaces | `spaces_list`, `space_create` (workspace admins; `starter: "sample"` adds the sample content), `locale_settings_get`, `locale_settings_set` |
 | Environments | `environment_aliases_list`, `environment_alias_set`, `environment_alias_delete`, `environments_compare`, `environments_merge`, `promotion_request`, `promotion_list`, `promotion_get`, `promotion_approve`, `promotion_reject`, `environment_delete` |
 | Import, export and clone | `import_sources`, `import_analyze`, `import_execute`, `space_export_analyze`, `space_export_import`, `environment_export`, `environment_import`, `environment_clone` |
-| Bulk jobs | `bulk_job_start`, `bulk_job_status`, `bulk_job_report`, `bulk_job_cancel` |
+| Bulk jobs | `bulk_job_start`, `bulk_job_set_fields`, `bulk_job_status`, `bulk_job_report`, `bulk_job_cancel` |
 | Workflows | `workflow_list`, `workflow_save_draft`, `workflow_validate`, `workflow_publish`, `workflow_versions`, `workflow_settings_set`, `workflow_copilot`, `workflow_run_start`, `workflow_run_get`, `workflow_run_list`, `workflow_run_cancel`, `workflow_task_list`, `workflow_task_decide`, `workflow_event_deliver` |
 | Releases | `releases_create`, `releases_add_entry`, `releases_get`, `releases_list`, `releases_publish`, `schedule_action` |
 | Team and roles | `team_list`, `role_presets_list`, `role_preset_assign`, `roles_list`, `role_create`, `role_update`, `role_delete`, `invites_list`, `invite_get`, `invite_create`, `invite_resend`, `invite_revoke` |

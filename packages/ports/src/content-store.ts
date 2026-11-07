@@ -2253,7 +2253,12 @@ export type BulkJobAction =
    * Deletes a content type's entries (each trashed, then purged), then the type: `config` names
    * it as `{ contentType }`.
    */
-  | 'content_type_delete';
+  | 'content_type_delete'
+  /**
+   * Sets the same field values on entries of one content type, each saved as a new draft:
+   * `config` names them as `{ contentTypeApiId, fields }` (`entry-fields-bulk.ts`).
+   */
+  | 'set_fields';
 
 /** What an entry trash bulk job does to each entry: each through its single-entry use-case. */
 export type EntryTrashBulkJobAction = 'trash' | 'restore' | 'purge';

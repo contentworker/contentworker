@@ -2080,6 +2080,16 @@ export function createManagementClient(opts: ManagementClientOptions) {
        * finishes, and nothing done is rolled back. Cancelling a finished job returns it unchanged.
        */
       cancel: (id: string) => post<BulkJob>(`${envBase}/bulk/jobs/${e(id)}/cancel`),
+      /**
+       * Sets the same values on entries of one content type, each saved as a new draft with the
+       * checks an edit makes. `fields` is field apiId → locale → value; only those change, and
+       * `null` clears a locale. Entries that refuse their save are named in `report`.
+       */
+      setFields: (input: {
+        contentTypeApiId: string;
+        entryIds: readonly string[];
+        fields: Record<string, Record<string, unknown>>;
+      }) => post<BulkJob>(`${envBase}/bulk/jobs/set-fields`, input),
     },
 
     /**
