@@ -133,16 +133,51 @@ starlight-theme-select select {
   font-size: 0.8125rem;
 }
 
-/* Table of contents: quiet until current, then brand (where you are, as in the admin). */
-starlight-toc a,
+/* Table of contents on a rail (TableOfContents.astro): a hairline down the entries' start, the
+   current entry's stretch of it in brand. Entries are muted until hovered or current, then ink; the
+   rail carries the colour, so the current entry reads as where you are without a second accent. */
+starlight-toc a {
+  padding-block: 0.375rem;
+  padding-inline: calc(1rem * var(--depth) + 1.125rem) 0.5rem;
+  border-radius: 0;
+  font-size: 0.8125rem;
+  line-height: 1.375;
+  color: var(--cw-muted-foreground);
+  text-decoration: none;
+  transition: color 150ms ease-out;
+}
+
+/* Room for the rail's curve where a level starts or ends. */
+starlight-toc ul ul {
+  margin-block: 0.5rem;
+}
+
+starlight-toc a:hover {
+  color: var(--cw-foreground);
+}
+
+starlight-toc a:focus-visible {
+  outline-offset: -2px;
+}
+
+starlight-toc a[aria-current="true"] {
+  color: var(--cw-foreground);
+  font-weight: 500;
+}
+
 mobile-starlight-toc a {
   color: var(--cw-muted-foreground);
 }
 
-starlight-toc a[aria-current="true"],
 mobile-starlight-toc a[aria-current="true"] {
-  color: var(--cw-brand);
+  color: var(--cw-foreground);
   font-weight: 500;
+}
+
+/* Starlight's check mark beside the current entry takes the text accent (the link blue); where
+   you are is brand. */
+mobile-starlight-toc a[aria-current="true"]::after {
+  background-color: var(--cw-brand);
 }
 
 /* ── Sidebar (the admin's: panel ground, ghost items) ───────────────────── */

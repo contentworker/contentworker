@@ -51,6 +51,8 @@ export default defineConfig({
         ThemeSelect: './src/components/ThemeSelect.astro',
         // A page header: the title, the page's description muted under it.
         PageTitle: './src/components/PageTitle.astro',
+        // The table of contents on a rail, the current entry's stretch in brand.
+        TableOfContents: './src/components/TableOfContents.astro',
         // The top bar's one action: the API explorer as a pill.
         SocialIcons: './src/components/SocialIcons.astro',
       },
