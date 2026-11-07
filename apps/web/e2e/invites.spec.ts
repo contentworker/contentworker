@@ -53,13 +53,13 @@ test('someone new joins from a link; then, invited again, signs in with a passwo
   await page.goto(`/invite/${first.token}`);
   // The token left the address for its cookie at once.
   await expect(page).toHaveURL(/\/invite$/);
-  await expect(page.getByRole('heading', { name: 'Join contentworker' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Join ContentWorker' })).toBeVisible();
   await expect(page.getByText(email)).toBeVisible();
   await page.getByLabel('Name').fill('Joiner');
   await page.getByLabel('Password', { exact: true }).fill(password);
   await page.getByRole('button', { name: 'Create account and join' }).click();
   await expect(page).toHaveURL(/\/account\?welcome=1$/);
-  await expect(page.getByText('Welcome to contentworker.')).toBeVisible();
+  await expect(page.getByText('Welcome to ContentWorker.')).toBeVisible();
   // The link worked once.
   await page.goto(`/invite/${first.token}`);
   await expect(page.getByRole('alert')).toContainText('isn’t valid');

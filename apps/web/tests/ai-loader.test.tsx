@@ -1,4 +1,4 @@
-// The AI loader: contentworker's mark composing itself while a model works. Its marks run the
+// The AI loader: ContentWorker's mark composing itself while a model works. Its marks run the
 // `cw-compose` keyframes in reading order, it stays out of the accessibility tree unless it is the
 // status itself, a sequence moves to its next icon once the current one is cleared, and where
 // motion is reduced it is drawn whole and holds still.

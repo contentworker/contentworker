@@ -73,7 +73,7 @@ const ENDED: Partial<Record<Tone, 'failed' | 'undone'>> = { bad: 'failed', undo:
 
 /**
  * An entry's, asset's, release's, key's or run's status: a small tinted stamp in its status
- * colour (`lib/format.ts` maps contentworker's statuses onto the tokens); a bad ending is ruled.
+ * colour (`lib/format.ts` maps ContentWorker's statuses onto the tokens); a bad ending is ruled.
  * `label` overrides the words, never the colour.
  */
 export function StatusBadge({ status, label }: { status: string; label?: string }) {

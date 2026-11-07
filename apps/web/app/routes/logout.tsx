@@ -5,7 +5,7 @@ import { principal, signOut } from '~/lib/auth.server';
 import { nextPath } from '~/lib/next-path';
 import type { Route } from './+types/logout';
 
-export const meta = () => [{ title: 'Sign out · contentworker' }];
+export const meta = () => [{ title: 'Sign out · ContentWorker' }];
 
 /** Where signing out lands: the sign-in page, carrying `next` (the consent page's "Not you?"). */
 function toSignIn(request: Request) {

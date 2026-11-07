@@ -18,7 +18,7 @@ import { ssoOnlyInEffect } from '~/lib/settings.server';
 import { retryText } from '~/lib/throttle';
 import type { Route } from './+types/login-forgot';
 
-export const meta = () => [{ title: 'Reset your password · contentworker' }];
+export const meta = () => [{ title: 'Reset your password · ContentWorker' }];
 
 /** Lets a throttled request's Retry-After reach the response. */
 export const headers: Route.HeadersFunction = ({ actionHeaders }) => actionHeaders;

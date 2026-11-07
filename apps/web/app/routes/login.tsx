@@ -21,7 +21,7 @@ import { ssoOnlyInEffect } from '~/lib/settings.server';
 import { ssoConfig } from '~/lib/sso.server';
 import type { Route } from './+types/login';
 
-export const meta = () => [{ title: 'Sign in · contentworker' }];
+export const meta = () => [{ title: 'Sign in · ContentWorker' }];
 
 /** Lets a throttled sign-in's Retry-After reach the response. */
 export const headers: Route.HeadersFunction = ({ actionHeaders }) => actionHeaders;

@@ -30,7 +30,7 @@ import { openResetLink, ResetError, resetPassword } from '~/lib/password-reset.s
 import { retryText } from '~/lib/throttle';
 import type { Route } from './+types/login-reset';
 
-export const meta = () => [{ title: 'Choose a new password · contentworker' }];
+export const meta = () => [{ title: 'Choose a new password · ContentWorker' }];
 
 /**
  * Out of caches, and no referrer to another origin. `same-origin`, not `no-referrer`: under

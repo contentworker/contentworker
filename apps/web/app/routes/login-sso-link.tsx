@@ -18,7 +18,7 @@ import type { Role } from '~/lib/roles';
 import { clearLinkCookie, finishSsoLink, LINK_PATH, pendingSsoLink } from '~/lib/sso.server';
 import type { Route } from './+types/login-sso-link';
 
-export const meta = () => [{ title: 'Link single sign-on · contentworker' }];
+export const meta = () => [{ title: 'Link single sign-on · ContentWorker' }];
 
 /** Lets a throttled attempt's Retry-After reach the response. */
 export const headers: Route.HeadersFunction = ({ actionHeaders }) => actionHeaders;

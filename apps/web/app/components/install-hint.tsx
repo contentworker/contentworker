@@ -6,7 +6,7 @@ import { isIos, isStandalone } from '~/lib/device';
 const DISMISSED = 'cw-install-dismissed';
 
 /**
- * On an iPhone or iPad in Safari: how to put contentworker on the Home Screen, where it opens as its own
+ * On an iPhone or iPad in Safari: how to put ContentWorker on the Home Screen, where it opens as its own
  * app without Safari's bars. iOS never offers this itself. Only on Account, never over work, and
  * gone for good once waved away.
  */
@@ -27,7 +27,7 @@ export function InstallHint() {
     >
       <Share className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
       <p className="min-w-0 flex-1 text-sm">
-        <span className="font-medium">Put contentworker on your Home Screen.</span> In Safari, tap
+        <span className="font-medium">Put ContentWorker on your Home Screen.</span> In Safari, tap
         Share, then <span className="font-medium">Add to Home Screen</span>. It opens on its own,
         like an app, without Safari’s bars.
       </p>

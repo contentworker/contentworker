@@ -117,7 +117,7 @@ export function Passkeys({ passkeys }: { passkeys: PasskeyRow[] }) {
       <div className="space-y-4">
         <p className="text-muted-foreground text-sm">
           Sign in with your fingerprint, face or device PIN instead of your password and code. A
-          passkey stays on your device or password manager; contentworker keeps only its public key.
+          passkey stays on your device or password manager; ContentWorker keeps only its public key.
         </p>
         {said ? (
           <p ref={statusLine} tabIndex={-1} role="status" className="text-sm outline-none">

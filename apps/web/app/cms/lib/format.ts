@@ -1,5 +1,5 @@
 /**
- * Status vocabulary and number formatting for contentworker's statuses. Every status maps to one Ledger status token (index.css), which
+ * Status vocabulary and number formatting for ContentWorker's statuses. Every status maps to one Ledger status token (index.css), which
  * means one thing everywhere: `ok` succeeded or live, `wait` waits on a person, `run` is work in
  * progress or on a clock, `bad` failed, `undo` was rolled back, `idle` is at rest or ended
  * otherwise, `ai` is a model's work.

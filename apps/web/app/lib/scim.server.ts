@@ -372,7 +372,7 @@ class People {
   private async keepAnAdmin(id: string, what: string) {
     if ((await this.store.role(id)) === 'admin' && !(await this.store.otherAdmins(id)))
       throw new Conflict(
-        `Can't ${what} the last active admin: make someone else an admin in contentworker first`,
+        `Can't ${what} the last active admin: make someone else an admin in ContentWorker first`,
       );
   }
 }

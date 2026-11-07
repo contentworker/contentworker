@@ -93,7 +93,7 @@ import {
 import { resetTwoFactor } from '~/lib/two-factor.server';
 import type { Route } from './+types/team';
 
-export const meta = () => [{ title: 'People and sign-in · contentworker' }];
+export const meta = () => [{ title: 'People and sign-in · ContentWorker' }];
 
 export async function loader({ request }: Route.LoaderArgs) {
   const me = await requireUser(request, 'admin');
