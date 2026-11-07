@@ -710,6 +710,47 @@ navigating.
 **In the admin.** The link opens the entry editor on the referenced field; see
 [Admin UI](./admin-ui.md#inline-edit-links).
 
+## `@contentworker/sdk/live-preview` — the page side of live preview
+
+Preview-only: the admin side (framing the frontend in `apps/web`, drawing overlays) isn't built
+yet, so nothing sends a page `init` today. The page side and the protocol are in
+`packages/sdk/core/src/live-preview/` (`protocol.ts`, `patch.ts`, `guest.ts`), re-exported as
+`@contentworker/sdk/live-preview`; the user guide is
+https://docs.contentworker.app/guides/live-preview/.
+
+- `startLivePreview({ adminOrigin, onChange, onSelect?, onHover?, newKey?, window? })` is inert
+  (returns `active: false`) unless the page is framed (`window.parent !== window`) and its URL
+  carries `cw_session` matching `[A-Za-z0-9_-]{8,128}`. `adminOrigin` must be an exact http(s)
+  origin (it throws otherwise); the page posts to it only, and accepts a message only when
+  `event.origin === adminOrigin`, `event.source === window.parent` and the envelope's `session`
+  matches. Every message is parsed by `parseAdminMessage` before it is acted on.
+- Patches apply with `applyLivePatch`, a schema-less copy of the domain's `applyBlockPatch`
+  (`packages/domain/src/content-type/block-patch.ts`) plus `setField`. A block is any object with
+  a string `_type`, its slots its properties holding blocks. For patches the server accepts, the
+  two give equal fields: `packages/http/test/live-preview-patch-parity.test.ts` runs the same
+  fixtures, and the domain's `applied` ops, through both (http is the one package allowed to import
+  both). Keys a page mints are its own, so the admin should send the applied form.
+- Rendering is serialized: one `onChange` at a time, later patches folded into the next call,
+  `rendered { seq }` after it settles, then geometry. A refused patch keeps the old fields and the
+  seq, and answers `error { kind: 'patch' }`; the admin re-sends `init` with `seq` to resume.
+- Geometry is event-driven (MutationObserver on the document, ResizeObserver on every marked
+  element, passive scroll and resize listeners), coalesced into one `requestAnimationFrame` and
+  skipped when unchanged. No polling.
+- Edit mode listens on the window in the capture phase: clicks on marked elements become `pick`,
+  link clicks `navigate` (http and https only, `cw_session` stripped), hover goes out at most once
+  a frame, and only `FORWARDED_KEYS` are forwarded, never from a form field. Arrows and
+  Delete/Backspace are only `preventDefault`ed while the admin reports a selection.
+- Caps (`protocol.ts`): `MAX_MESSAGE_BYTES` 256 KB, `MAX_INIT_BYTES` 2 MB (a D1 row's limit),
+  `MAX_PATCH_OPS` 100, `MAX_GEOMETRY_ITEMS` 2,000 per list, `MAX_GEOMETRY_GAPS` 4,000. `__proto__`,
+  `constructor` and `prototype` are refused as names anywhere in an admin message, and nesting past
+  64 levels.
+- `parseGuestMessage` is the admin's parser for what a page sends: the frame is untrusted to the
+  admin too, so it caps sizes, checks every rect is finite and every `navigate` URL is http(s).
+- `LIVE_PREVIEW_SDK_VERSION` is sent in `hello`; `packages/sdk/sdk/test/subpaths.test.ts` keeps it
+  equal to `@contentworker/sdk`'s version.
+- React: `useLivePreview(options)` in `@contentworker/sdk/react` returns `{ active, fields, update }`
+  and resolves `onChange` after React commits, so `rendered` means on screen.
+
 ## GraphQL
 
 If you prefer GraphQL over the REST client, the Delivery API also exposes a per-space GraphQL

@@ -10,6 +10,12 @@ import {
   type SearchHit,
 } from '@contentworker/sdk-core';
 import { mountInlineEditor } from '@contentworker/sdk-core/inline-edit';
+import {
+  type LiveFields,
+  type LivePreviewOptions,
+  type LivePreviewUpdate,
+  startLivePreview,
+} from '@contentworker/sdk-core/live-preview';
 /**
  * @contentworker/sdk-web — React hooks over @contentworker/sdk-core. Provide a client via
  * `ContentworkerProvider`, then call `useEntry` / `useEntries` / `useAsset` /
@@ -25,6 +31,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useRef,
   useState,
 } from 'react';
 
@@ -161,6 +168,71 @@ export function InlineEditor(props: {
     return () => editor.destroy();
   }, [adminUrl, onEdit, defaultEnabled, toggle]);
   return null;
+}
+
+/** What {@link useLivePreview} holds: the edited fields, once the admin has sent the entry. */
+export interface LivePreviewState {
+  /** Whether the page is framed in a live preview session; false in production. */
+  readonly active: boolean;
+  /** The entry's fields as edited so far (locale-keyed); undefined until the admin sends them. */
+  readonly fields: LiveFields | undefined;
+  /** Which entry and edit they are. */
+  readonly update: LivePreviewUpdate | undefined;
+}
+
+/**
+ * Joins the admin's live preview for as long as it is rendered, returning the edited fields to
+ * render instead of the delivered ones. Each edit re-renders the component; the admin hears it is on
+ * screen once React has committed it. Inert during SSR and when the page isn't framed by the admin,
+ * so `fields` stays undefined and the delivered entry renders as usual.
+ *
+ * ```tsx
+ * const live = useLivePreview({ adminOrigin: 'https://admin.example.com' });
+ * const fields = live.fields ?? entry.fields;
+ * ```
+ */
+export function useLivePreview(
+  options: Omit<LivePreviewOptions, 'onChange' | 'window'> & {
+    readonly onChange?: LivePreviewOptions['onChange'];
+  },
+): LivePreviewState {
+  const [state, setState] = useState<LivePreviewState>({
+    active: false,
+    fields: undefined,
+    update: undefined,
+  });
+  // The latest callbacks, so a new closure each render doesn't restart the session.
+  const latest = useRef(options);
+  latest.current = options;
+  // Resolved once the render a change caused has committed.
+  const committed = useRef<(() => void) | undefined>(undefined);
+
+  useEffect(() => {
+    committed.current?.();
+    committed.current = undefined;
+  });
+
+  const { adminOrigin } = options;
+  useEffect(() => {
+    const preview = startLivePreview({
+      adminOrigin,
+      newKey: latest.current.newKey,
+      onSelect: (target) => latest.current.onSelect?.(target),
+      onHover: (target) => latest.current.onHover?.(target),
+      onChange: async (fields, update) => {
+        const rendered = new Promise<void>((resolve) => {
+          committed.current = resolve;
+        });
+        setState({ active: true, fields, update });
+        await rendered;
+        await latest.current.onChange?.(fields, update);
+      },
+    });
+    if (preview.active) setState((s) => ({ ...s, active: true }));
+    return () => preview.destroy();
+  }, [adminOrigin]);
+
+  return state;
 }
 
 export function useSemanticSearch(

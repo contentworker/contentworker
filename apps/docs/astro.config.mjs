@@ -137,6 +137,7 @@ export default defineConfig({
           label: 'Developer tools',
           items: [
             { label: 'SDKs', slug: 'guides/sdks' },
+            { label: 'Live preview', slug: 'guides/live-preview' },
             { label: 'MCP server', slug: 'guides/mcp' },
             { label: 'Command-line tool', slug: 'guides/cli' },
             { label: 'Agent skills', slug: 'guides/agent-skills' },

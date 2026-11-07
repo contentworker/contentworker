@@ -9,6 +9,7 @@ import { defineConfig } from 'tsup';
 const entries = [
   'index',
   'inline-edit',
+  'live-preview',
   'redirects',
   'webhooks',
   'rich-text',

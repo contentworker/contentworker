@@ -1,0 +1,145 @@
+---
+title: Live preview
+description: Let the admin frame your frontend and re-render each unsaved edit in it, with the page side of the live preview channel.
+---
+
+Live preview shows an editor their edits on your real site before they save. The admin frames
+your frontend, sends it the entry being edited and then each edit as a patch; your page applies the
+patch to its copy of the fields and re-renders. The admin draws selection, hover and the seams
+between blocks itself, outside the frame, from where your page says things are. Nothing unsaved
+reaches the API from your page.
+
+:::caution[Preview]
+This page describes the page side, `@contentworker/sdk/live-preview`, which you can add to your
+frontend now. The admin's side of the channel isn't released yet; until it is, the runtime stays
+inert on every page.
+:::
+
+## Start it
+
+```ts
+import { startLivePreview } from '@contentworker/sdk/live-preview';
+
+const preview = startLivePreview({
+  adminOrigin: 'https://your-workspace.contentworker.app',
+  onChange: async (fields, update) => {
+    // Re-render with `fields`: the whole page, or just the blocks `update.ops` touched.
+    await render(fields);
+  },
+});
+
+// Later, on teardown:
+preview.destroy();
+```
+
+It does nothing (and `preview.active` is `false`) unless the page is in a frame and its URL carries
+a `cw_session` parameter, so the same build ships to production. Your page keeps its own scrolling
+in the frame: sticky headers, full-height heroes and lazy loading behave as on the live site.
+
+| Option        | Meaning                                                                                                  |
+| ------------- | -------------------------------------------------------------------------------------------------------- |
+| `adminOrigin` | Required. The admin's exact origin. Messages from any other origin are ignored; the page posts only to it. |
+| `onChange`    | Called with the edited fields once the entry arrives, then after each patch. May return a promise.       |
+| `onSelect`    | The editor selected a block or field in the admin (`{ key }` or `{ ref }`), or cleared it.               |
+| `onHover`     | The editor's pointer is over a block or field in the admin's outline, or none.                          |
+| `newKey`      | Mints a `_key` for a block a patch brings without one. Default: a random UUID.                           |
+
+`fields` is locale-keyed, as the Management API returns an entry (`{ title: { 'en-US': 'Home' } }`).
+`update` says which entry and locale (`entryId`, `contentType`, `locale`, `version`), the last
+patch included (`seq`) and the ops since the last call (`ops`, empty for the first). Patches that
+arrive while `onChange` is still running are folded into the next call, so a slow render never
+queues up a backlog. The admin hears an edit is on screen when the promise `onChange` returns
+settles; if it throws, the admin is told the render failed.
+
+In React, `useLivePreview` does the same for as long as the component is mounted, and returns the
+fields to render:
+
+```tsx
+import { useLivePreview } from '@contentworker/sdk/react';
+
+function Landing({ entry }) {
+  const live = useLivePreview({ adminOrigin: 'https://your-workspace.contentworker.app' });
+  const fields = live.fields ?? entry.fields;
+  // …render from fields
+}
+```
+
+It returns `{ active, fields, update }`; `fields` is `undefined` until the admin sends the entry,
+and always outside a session.
+
+## Mark up your page
+
+The admin finds things on your page by three attributes:
+
+| Attribute       | On                                              | Holds                                                    |
+| --------------- | ----------------------------------------------- | -------------------------------------------------------- |
+| `data-cw-block` | A block's root element                          | The block's `_key`                                       |
+| `data-cw-slot`  | The element directly holding a list of blocks   | The blocks field's apiId, or the slot's apiId on its block |
+| `data-cw-ref`   | An element rendering one field                  | The field's ref, as [inline editing](/guides/sdks/#inline-editing) marks it |
+
+```tsx
+import { blockAttrs, slotAttrs } from '@contentworker/sdk/live-preview';
+
+<main {...slotAttrs('body')}>
+  {body.map((block) => (
+    <section key={block._key} {...blockAttrs(block._key)}>
+      <h2>{block.title}</h2>
+      <div {...slotAttrs('items')}>{/* the section's own blocks */}</div>
+    </section>
+  ))}
+</main>
+```
+
+A slot inside a block belongs to the nearest `data-cw-block` around it.
+
+## Edit and view modes
+
+The admin switches the page between two modes. In view mode, your page behaves exactly as it does
+on its own. In edit mode:
+
+- A click on a marked element selects it in the admin instead of reaching your page's handlers. A
+  field's ref wins over the block it sits in.
+- A click on a link outside any marked element, or a ⌘-click or Ctrl-click on any link, asks the
+  admin to navigate the frame; the page never follows a link itself.
+- Hovering reports the marked element under the pointer, at most once a frame.
+- Undo (⌘Z or Ctrl+Z), redo (with Shift), Escape, `/`, Delete, Backspace and the arrow keys go to
+  the admin, except while typing in a form field. Other keys stay with your page.
+
+## The protocol
+
+Every message is an object `{ cw: 1, session, type, … }`, where `session` is the `cw_session`
+value; anything else is ignored. The page accepts a message only from the admin origin, from its
+parent window, for its own session, and never evaluates anything in one.
+
+| From admin | Carries                                                       |
+| ---------- | ------------------------------------------------------------- |
+| `init`     | `fields`, `locale`, `version`, `entryId`, `contentType`, and optionally `seq`, the last patch they include |
+| `patch`    | `seq` (only goes up; a patch at or below the last is ignored) and `ops` |
+| `select`   | `key` or `ref`, or neither to clear                           |
+| `hover`    | `key` or `ref`, or neither                                    |
+| `scrollTo` | `key` or `ref`                                                |
+| `mode`     | `edit` or `view`                                              |
+
+| From page  | Carries                                                       |
+| ---------- | ------------------------------------------------------------- |
+| `hello`    | `sdkVersion`, `capabilities`                                  |
+| `rendered` | `seq`: everything up to it is on screen                       |
+| `geometry` | `blocks`, `slots` with their `gaps`, `fields`, `scroll`, `viewport`, `docHeight` |
+| `pick`     | `key` or `ref`                                                |
+| `hover`    | `key` or `ref`, or neither                                    |
+| `navigate` | `url` (http or https only)                                    |
+| `key`      | `key`, `meta`, `ctrl`, `shift`, `alt`                         |
+| `error`    | `kind` (`invalid`, `patch`, `render` or `target`) and `message` |
+
+A patch's ops are those of the Management API's block patch (`insert`, `update`, `move`, `remove`,
+`duplicate`, addressed by `_key` with a `field` and `locale`), plus `setField { field, locale,
+value }` for an ordinary field. A patch applies whole or not at all: if one op can't apply, the page
+keeps the fields it had, answers `error` with kind `patch`, and the admin sends `init` again.
+
+Geometry is in the frame's viewport, in CSS pixels, and is sent when something moves (a resize, a
+scroll, a change to the page), at most once a frame and only when it changed. Each slot lists its
+gaps: the place before its first block, between each pair and after its last, with the insertion
+`index` and the blocks on either side.
+
+Limits: a message is at most 256 KB (an `init`, which carries the whole entry, 2 MB); a patch has at
+most 100 ops; a geometry message reports at most 2,000 blocks, slots and fields each.
