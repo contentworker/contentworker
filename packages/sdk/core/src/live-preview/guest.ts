@@ -19,6 +19,7 @@ import {
   FORWARDED_KEYS,
   type ForwardedKey,
   isLivePreviewSession,
+  isPreviewUrl,
   LIVE_PREVIEW_PROTOCOL,
   LIVE_PREVIEW_SESSION_PARAM,
   type LiveAdminMessage,
@@ -126,13 +127,14 @@ const INERT: LivePreview = {
  * in one (not framed, or no `cw_session`, or no DOM). Call `destroy()` to stop.
  */
 export function startLivePreview(options: LivePreviewOptions): LivePreview {
-  const adminOrigin = checkOrigin(options.adminOrigin);
   const win = options.window ?? (globalThis.window as Window | undefined);
   if (!win?.document) return INERT;
   const parent = win.parent;
   if (!parent || parent === win) return INERT;
   const session = new URL(win.location.href).searchParams.get(LIVE_PREVIEW_SESSION_PARAM);
   if (!isLivePreviewSession(session)) return INERT;
+  // Checked only once in a session, so a mistyped origin breaks previews, not every page view.
+  const adminOrigin = checkOrigin(options.adminOrigin);
 
   const doc = win.document;
   const newKey = options.newKey;
@@ -399,7 +401,9 @@ export function startLivePreview(options: LivePreviewOptions): LivePreview {
   };
 
   const onKeyDown = (e: KeyboardEvent): void => {
-    if (mode !== 'edit' || !connected || e.isComposing || editable(e.target)) return;
+    // The innermost target: a window listener sees a shadow root's input as its host element.
+    const origin = e.composedPath?.()[0] ?? e.target;
+    if (mode !== 'edit' || !connected || e.isComposing || editable(origin)) return;
     const key = forwarded(e);
     if (!key) return;
     // Undo, redo, Escape and `/` are the admin's; arrows and Delete only while something is
@@ -493,9 +497,10 @@ function checkOrigin(origin: string): string {
   }
   // An exact origin, never `*` or `null`: posting the entry to any other window would hand it the
   // draft, and accepting from any would let any page edit what the editor sees.
-  if (!parsed || parsed.origin !== origin || !/^https?:$/.test(parsed.protocol)) {
+  if (!parsed || parsed.origin !== origin || !isPreviewUrl(origin)) {
     throw new Error(
-      'startLivePreview needs adminOrigin as an exact origin, e.g. https://admin.example.com',
+      'startLivePreview needs adminOrigin as an exact https origin (http only on localhost), ' +
+        'e.g. https://admin.example.com',
     );
   }
   return origin;
@@ -523,11 +528,14 @@ function stop(e: Event): void {
   e.stopPropagation();
 }
 
-/** An http(s) link as an absolute URL without the session parameter; anything else is dropped. */
+/**
+ * An https link (http on localhost) as an absolute URL without the session parameter; anything
+ * else is dropped.
+ */
 function navigableUrl(href: string): string | undefined {
+  if (!isPreviewUrl(href)) return undefined;
   try {
     const url = new URL(href);
-    if (url.protocol !== 'https:' && url.protocol !== 'http:') return undefined;
     url.searchParams.delete(LIVE_PREVIEW_SESSION_PARAM);
     const out = url.toString();
     return out.length <= 8192 ? out : undefined;

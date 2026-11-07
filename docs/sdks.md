@@ -720,8 +720,9 @@ https://docs.contentworker.app/guides/live-preview/.
 
 - `startLivePreview({ adminOrigin, onChange, onSelect?, onHover?, newKey?, window? })` is inert
   (returns `active: false`) unless the page is framed (`window.parent !== window`) and its URL
-  carries `cw_session` matching `[A-Za-z0-9_-]{8,128}`. `adminOrigin` must be an exact http(s)
-  origin (it throws otherwise); the page posts to it only, and accepts a message only when
+  carries `cw_session` matching `[A-Za-z0-9_-]{8,128}`. Only then is `adminOrigin` checked: an
+  exact https origin, http only on a loopback host (it throws otherwise, so a typo breaks previews,
+  never production page views). The page posts to it only, and accepts a message only when
   `event.origin === adminOrigin`, `event.source === window.parent` and the envelope's `session`
   matches. Every message is parsed by `parseAdminMessage` before it is acted on.
 - Patches apply with `applyLivePatch`, a schema-less copy of the domain's `applyBlockPatch`
@@ -737,15 +738,26 @@ https://docs.contentworker.app/guides/live-preview/.
   element, passive scroll and resize listeners), coalesced into one `requestAnimationFrame` and
   skipped when unchanged. No polling.
 - Edit mode listens on the window in the capture phase: clicks on marked elements become `pick`,
-  link clicks `navigate` (http and https only, `cw_session` stripped), hover goes out at most once
+  link clicks `navigate` (https, http only on loopback; `cw_session` stripped), hover goes out at most once
   a frame, and only `FORWARDED_KEYS` are forwarded, never from a form field. Arrows and
   Delete/Backspace are only `preventDefault`ed while the admin reports a selection.
 - Caps (`protocol.ts`): `MAX_MESSAGE_BYTES` 256 KB, `MAX_INIT_BYTES` 2 MB (a D1 row's limit),
   `MAX_PATCH_OPS` 100, `MAX_GEOMETRY_ITEMS` 2,000 per list, `MAX_GEOMETRY_GAPS` 4,000. `__proto__`,
   `constructor` and `prototype` are refused as names anywhere in an admin message, and nesting past
   64 levels.
-- `parseGuestMessage` is the admin's parser for what a page sends: the frame is untrusted to the
-  admin too, so it caps sizes, checks every rect is finite and every `navigate` URL is http(s).
+- `parseGuestMessage({ data, origin, source }, { session, origin, source, navigateOrigins? })` is
+  the admin's parser for what a page sends; the frame is untrusted to the admin too. The session is
+  a bearer value in the frame URL (any script on the page, and any page the frame navigates to,
+  can read it), so the parser checks the event's origin against the frame's and its source against
+  `iframe.contentWindow` before the session. The admin must mint a fresh random session per
+  framing and post with `targetOrigin` set to the frame's origin, never `'*'`. The parser runs the
+  same `clean()` as the page (no `__proto__`/`constructor`/`prototype` names, plain objects only,
+  depth 64), refuses those names as keys and refs, accepts `navigate` only to `navigateOrigins`
+  (default: the frame's origin) over https (http only on loopback), and returns a freshly built
+  message holding only the validated fields.
+- `applyLivePatch` runs `clean()` on each op too, for callers that didn't parse them.
+- Key forwarding judges the event's innermost target (`composedPath()[0]`), so typing in an input
+  inside a shadow root stays with the page.
 - `LIVE_PREVIEW_SDK_VERSION` is sent in `hello`; `packages/sdk/sdk/test/subpaths.test.ts` keeps it
   equal to `@contentworker/sdk`'s version.
 - React: `useLivePreview(options)` in `@contentworker/sdk/react` returns `{ active, fields, update }`

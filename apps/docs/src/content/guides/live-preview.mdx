@@ -38,7 +38,7 @@ in the frame: sticky headers, full-height heroes and lazy loading behave as on t
 
 | Option        | Meaning                                                                                                  |
 | ------------- | -------------------------------------------------------------------------------------------------------- |
-| `adminOrigin` | Required. The admin's exact origin. Messages from any other origin are ignored; the page posts only to it. |
+| `adminOrigin` | Required. The admin's exact origin (https; http only on `localhost`). Messages from any other origin are ignored; the page posts only to it. |
 | `onChange`    | Called with the edited fields once the entry arrives, then after each patch. May return a promise.       |
 | `onSelect`    | The editor selected a block or field in the admin (`{ key }` or `{ ref }`), or cleared it.               |
 | `onHover`     | The editor's pointer is over a block or field in the admin's outline, or none.                          |
@@ -109,7 +109,13 @@ on its own. In edit mode:
 
 Every message is an object `{ cw: 1, session, type, … }`, where `session` is the `cw_session`
 value; anything else is ignored. The page accepts a message only from the admin origin, from its
-parent window, for its own session, and never evaluates anything in one.
+parent window, for its own session, and never evaluates anything in one. The session tells one
+framing from another; it isn't a secret, since it is in the page's URL. Each side checks the
+other's origin and window before reading a message.
+
+Unsaved edits are rendered into your page, so any script your page runs (analytics, tag managers,
+third-party widgets) can read them while the editor works. Keep scripts you wouldn't trust with
+drafts off your preview deployment.
 
 | From admin | Carries                                                       |
 | ---------- | ------------------------------------------------------------- |
@@ -127,7 +133,7 @@ parent window, for its own session, and never evaluates anything in one.
 | `geometry` | `blocks`, `slots` with their `gaps`, `fields`, `scroll`, `viewport`, `docHeight` |
 | `pick`     | `key` or `ref`                                                |
 | `hover`    | `key` or `ref`, or neither                                    |
-| `navigate` | `url` (http or https only)                                    |
+| `navigate` | `url`: https (http only on `localhost`), on your site's origin |
 | `key`      | `key`, `meta`, `ctrl`, `shift`, `alt`                         |
 | `error`    | `kind` (`invalid`, `patch`, `render` or `target`) and `message` |
 

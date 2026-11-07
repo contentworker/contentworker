@@ -16,6 +16,10 @@ import {
 
 const ADMIN = 'https://admin.test';
 const SESSION = 'sess_0123456789';
+// The admin's view of the frame, for the page-message parser.
+const PAGE = 'https://site.test';
+const FRAME = { frame: true };
+const guest = { session: SESSION, origin: PAGE, source: FRAME };
 
 type Posted = { type: string; [k: string]: unknown };
 
@@ -128,9 +132,24 @@ describe('activation', () => {
   });
 
   it('refuses an admin origin that is not exact', () => {
-    for (const adminOrigin of ['*', 'null', 'https://admin.test/', 'admin.test', 'javascript:x']) {
-      expect(() => startLivePreview({ adminOrigin, onChange: () => {} })).toThrow(/exact origin/);
+    for (const adminOrigin of [
+      '*',
+      'null',
+      'https://admin.test/',
+      'admin.test',
+      'javascript:x',
+      'http://admin.test',
+    ]) {
+      expect(() => startLivePreview({ adminOrigin, onChange: () => {} })).toThrow(
+        /exact https origin/,
+      );
     }
+    expect(start({ adminOrigin: 'http://localhost:5173' }).active).toBe(true);
+  });
+
+  it('leaves pages outside a session alone even when misconfigured', () => {
+    window.history.replaceState(null, '', '/page');
+    expect(startLivePreview({ adminOrigin: '*', onChange: () => {} }).active).toBe(false);
   });
 
   it('says hello to the admin origin only', () => {
@@ -383,7 +402,7 @@ describe('geometry', () => {
       { index: 1, axis: 'y', after: 'h1', before: 'c1', rect: { x: 0, y: 110, w: 800, h: 20 } },
       { index: 2, axis: 'y', after: 'c1', rect: { x: 0, y: 230, w: 800, h: 170 } },
     ]);
-    expect(parseGuestMessage(first, SESSION).ok).toBe(true);
+    expect(parseGuestMessage({ data: first, origin: PAGE, source: FRAME }, guest).ok).toBe(true);
   });
 
   it('folds scrolls, resizes and mutations into one message per frame, and skips no-ops', async () => {
@@ -496,6 +515,11 @@ describe('edit mode', () => {
     mountPage();
     const input = document.createElement('input');
     document.body.appendChild(input);
+    // An input inside a web component: a window listener sees only its host.
+    const host = document.createElement('site-search');
+    const shadowInput = document.createElement('input');
+    host.attachShadow({ mode: 'open' }).appendChild(shadowInput);
+    document.body.appendChild(host);
     await editing();
     const press = (
       key: string,
@@ -516,6 +540,8 @@ describe('edit mode', () => {
     press('z');
     press('/', {}, input);
     press('Backspace', {}, input);
+    const typed = press('/', { composed: true }, shadowInput);
+    expect(typed.defaultPrevented).toBe(false);
     expect(undo.defaultPrevented).toBe(true);
     expect(redo.defaultPrevented).toBe(true);
     // Nothing is selected, so the arrow still scrolls the page.
@@ -629,10 +655,22 @@ describe('the protocol parsers', () => {
       expect(parseAdminMessage(m, SESSION)).toEqual({ ok: false, reason: 'invalid' });
   });
 
+  const from = (data: unknown, origin = PAGE, source: unknown = FRAME) =>
+    parseGuestMessage({ data, origin, source }, guest);
+
   it('refuses page messages the admin should not act on', () => {
     const bad = [
       msg('navigate', { url: 'javascript:alert(1)' }),
       msg('navigate', { url: 'data:text/html,hi' }),
+      // Off the page's origin, or http on the open internet.
+      msg('navigate', { url: 'https://attacker.test/' }),
+      msg('navigate', { url: 'http://site.test/next' }),
+      msg('pick', { key: 'constructor' }),
+      msg('hover', { ref: '__proto__' }),
+      JSON.parse(
+        `{"cw":1,"session":"${SESSION}","type":"hello","sdkVersion":"1","capabilities":[],"__proto__":{"x":1}}`,
+      ),
+      msg('rendered', { seq: 1, extra: new Map() }),
       msg('key', { key: 'q', meta: false, ctrl: false, shift: false, alt: false }),
       msg('geometry', {
         blocks: [{ key: 'a', rect: { x: Number.NaN, y: 0, w: 0, h: 0 } }],
@@ -644,11 +682,27 @@ describe('the protocol parsers', () => {
       }),
       msg('error', { kind: 'other', message: 'x' }),
     ];
-    for (const m of bad)
-      expect(parseGuestMessage(m, SESSION)).toEqual({ ok: false, reason: 'invalid' });
-    expect(parseGuestMessage(msg('pick', { key: 'h1' }), 'sess_another0000')).toEqual({
+    for (const m of bad) expect(from(m)).toEqual({ ok: false, reason: 'invalid' });
+    expect(from(msg('navigate', { url: 'https://site.test/next' })).ok).toBe(true);
+  });
+
+  it('takes nothing on the session alone: origin and window come first', () => {
+    const pick = msg('pick', { key: 'h1' });
+    expect(from(pick).ok).toBe(true);
+    // The session is in the frame's URL, so anything that read it can send it.
+    expect(from(pick, 'https://attacker.test')).toEqual({ ok: false, reason: 'foreign' });
+    expect(from(pick, PAGE, window)).toEqual({ ok: false, reason: 'foreign' });
+    expect(from({ ...pick, session: 'sess_another0000' })).toEqual({
       ok: false,
       reason: 'foreign',
+    });
+  });
+
+  it('hands the admin only the fields it validated', () => {
+    const parsed = from({ ...msg('pick', { key: 'h1' }), onclick: 'alert(1)', nested: { a: 1 } });
+    expect(parsed).toEqual({
+      ok: true,
+      message: { cw: 1, session: SESSION, type: 'pick', key: 'h1' },
     });
   });
 });
@@ -670,5 +724,12 @@ describe('applyLivePatch', () => {
       { op: 'update', field: 'body', locale: 'en-US', key: 'h1', set: { heading: 'x' } },
     ]);
     expect(result).toMatchObject({ ok: false, op: 1 });
+  });
+
+  it('refuses ops carrying prototype names, for callers that did not parse them', () => {
+    const op = JSON.parse(
+      '{"op":"insert","field":"body","locale":"en-US","block":{"_type":"cta","__proto__":{"x":1}}}',
+    );
+    expect(applyLivePatch(page(), [op])).toMatchObject({ ok: false, op: 0 });
   });
 });

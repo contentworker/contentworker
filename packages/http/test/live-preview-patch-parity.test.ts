@@ -6,7 +6,8 @@
  * and the domain's applied form (what the admin sends a page) through the SDK once more.
  *
  * It lives here because this package is the one that may import both: the SDK never imports the
- * domain, and the domain imports nothing.
+ * domain, and the domain imports nothing. It imports the applier's own module, not the
+ * `live-preview` entry, whose page runtime needs the DOM this package doesn't compile against.
  */
 import {
   applyBlockPatch,
@@ -17,18 +18,17 @@ import {
   type EntryFields,
   type FieldDefinition,
 } from '@contentworker/domain';
+import { describe, expect, it } from 'vitest';
 import {
   applyLivePatch,
-  type LiveFields,
   type LivePatchOp,
   type BlockOp as SdkBlockOp,
-} from '@contentworker/sdk-core/live-preview';
-import { describe, expect, it } from 'vitest';
+} from '../../sdk/core/src/live-preview/patch';
+import type { LiveFields } from '../../sdk/core/src/live-preview/protocol';
 
 // The two op vocabularies are one: each side's ops are the other's.
 const toSdk = (ops: readonly BlockOp[]): readonly LivePatchOp[] => ops;
 const toDomain = (ops: readonly SdkBlockOp[]): readonly BlockOp[] => ops;
-void toDomain;
 
 const field = (over: Partial<FieldDefinition> & Pick<FieldDefinition, 'apiId' | 'type'>) =>
   ({
@@ -208,6 +208,11 @@ const REFUSED: Record<string, { ops: readonly BlockOp[]; fields?: EntryFields }>
 };
 
 describe('live preview patches match the server’s', () => {
+  it('speak one op vocabulary', () => {
+    const op = { op: 'remove', ...at, key: 'h1' } as const;
+    expect(toDomain(toSdk([op]) as readonly SdkBlockOp[])).toEqual([op]);
+  });
+
   for (const [name, ops] of Object.entries(ACCEPTED)) {
     it(name, () => {
       const server = applyBlockPatch(LANDING, page(), ops, minter());

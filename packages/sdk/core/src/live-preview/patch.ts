@@ -12,7 +12,7 @@
  * The admin should send ops in the applied form `patchBlocks` answers with, every key present: a
  * key minted here is the page's own, and the admin's next op can't name it.
  */
-import { isRecord, isSafeName, type LiveFields } from './protocol.js';
+import { clean, isRecord, isSafeName, type LiveFields } from './protocol.js';
 
 /** Where a block goes: into a parent block's slot, or the field itself when `parent` is absent. */
 export interface BlockParent {
@@ -90,7 +90,7 @@ export function applyLivePatch(
   ops: readonly LivePatchOp[],
   opts: { readonly newKey?: () => string } = {},
 ): LivePatchResult {
-  const newKey = opts.newKey ?? (() => globalThis.crypto.randomUUID());
+  const newKey = opts.newKey ?? (() => crypto.randomUUID());
   const out: LiveFields = { ...fields };
   const copied = new Set<string>();
   const refs = new Map<string, PatchRef>();
@@ -98,6 +98,9 @@ export function applyLivePatch(
   for (const [i, op] of ops.entries()) {
     try {
       if (!isRecord(op) || typeof op.op !== 'string') throw new Refused('Unknown op');
+      // As the parser checks a message, for callers that apply ops they didn't parse: a value with
+      // its own `__proto__` survives the copy and would reach whatever merges the fields next.
+      if (!clean(op)) throw new Refused('An op may hold only plain data, with no prototype names');
       if (!isName(op.field) || !isName(op.locale)) {
         throw new Refused('field and locale must be names');
       }

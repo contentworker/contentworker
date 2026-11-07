@@ -44,6 +44,7 @@ export {
   type LiveFields,
   type LiveGap,
   type LiveGeometryMessage,
+  type LiveGuestExpectation,
   type LiveGuestHoverMessage,
   type LiveGuestMessage,
   type LiveHelloMessage,

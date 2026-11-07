@@ -252,17 +252,49 @@ export function parseAdminMessage(data: unknown, session: string): LiveParse<Liv
   const m = data as Record<string, unknown>;
   const cap = m.type === 'init' ? MAX_INIT_BYTES : MAX_MESSAGE_BYTES;
   if (!withinBytes(m, cap)) return { ok: false, reason: 'too-large' };
-  if (!clean(m, 0)) return { ok: false, reason: 'invalid' };
+  if (!clean(m)) return { ok: false, reason: 'invalid' };
   return checked(m, adminValid(m));
 }
 
-/** Parses what a page sent the admin. `session` is the one the admin gave the frame. */
-export function parseGuestMessage(data: unknown, session: string): LiveParse<LiveGuestMessage> {
-  const head = envelope(data, session, GUEST_TYPES);
+/** What the admin expects of a message from the page it framed. */
+export interface LiveGuestExpectation {
+  /** The session id the admin minted for this framing (fresh and random, per frame load). */
+  readonly session: string;
+  /** The framed page's origin: the frame's `src` origin. */
+  readonly origin: string;
+  /** The frame's window (`iframe.contentWindow`). */
+  readonly source: unknown;
+  /**
+   * The origins a `navigate` may name; others are refused. Default: the page's own origin, so a
+   * page can't send the editor (or, framed again with a session, the session) anywhere else.
+   */
+  readonly navigateOrigins?: readonly string[];
+}
+
+/**
+ * Parses what a page sent the admin. The session alone is no proof: it sits in the frame's URL,
+ * readable by every script on the page and wherever the frame navigates, so the event's origin
+ * and source are checked first, as the page checks the admin's. A message that parses is rebuilt
+ * from its validated fields, so nothing else the page put in it reaches the admin.
+ */
+export function parseGuestMessage(
+  event: { readonly data: unknown; readonly origin: string; readonly source: unknown },
+  expected: LiveGuestExpectation,
+): LiveParse<LiveGuestMessage> {
+  if (event.origin !== expected.origin || event.source !== expected.source) {
+    return { ok: false, reason: 'foreign' };
+  }
+  const head = envelope(event.data, expected.session, GUEST_TYPES);
   if (!head.ok) return head;
-  const m = data as Record<string, unknown>;
+  const m = event.data as Record<string, unknown>;
   if (!withinBytes(m, MAX_MESSAGE_BYTES)) return { ok: false, reason: 'too-large' };
-  return checked(m, guestValid(m));
+  if (!clean(m)) return { ok: false, reason: 'invalid' };
+  const body = guestBody(m, expected.navigateOrigins ?? [expected.origin]);
+  if (!body) return { ok: false, reason: 'invalid' };
+  return {
+    ok: true,
+    message: { cw: LIVE_PREVIEW_PROTOCOL, session: expected.session, ...body } as LiveGuestMessage,
+  };
 }
 
 function checked<M>(m: Record<string, unknown>, valid: boolean): LiveParse<M> {
@@ -298,11 +330,17 @@ function withinBytes(value: unknown, cap: number): boolean {
   return new TextEncoder().encode(json).byteLength <= cap;
 }
 
-/** No prototype-reaching names and no absurd nesting, anywhere in the message. */
-function clean(value: unknown, depth: number): boolean {
+/**
+ * Plain data only, anywhere in `value`: no prototype-reaching names, no absurd nesting, and no
+ * object that isn't a plain one (structured clone carries Maps, Dates and ArrayBuffers, which JSON
+ * measures as `{}`).
+ */
+export function clean(value: unknown, depth = 0): boolean {
   if (depth > MAX_DEPTH) return false;
   if (Array.isArray(value)) return value.every((v) => clean(v, depth + 1));
-  if (!isRecord(value)) return true;
+  if (typeof value !== 'object' || value === null) return true;
+  const proto = Object.getPrototypeOf(value);
+  if (proto !== Object.prototype && proto !== null) return false;
   for (const [name, held] of Object.entries(value)) {
     if (FORBIDDEN_NAMES.has(name) || !clean(held, depth + 1)) return false;
   }
@@ -336,34 +374,47 @@ function adminValid(m: Record<string, unknown>): boolean {
   }
 }
 
-function guestValid(m: Record<string, unknown>): boolean {
+type Body = Record<string, unknown>;
+
+/** A page message's validated fields, freshly built; undefined when any is malformed. */
+function guestBody(
+  m: Record<string, unknown>,
+  navigateOrigins: readonly string[],
+): Body | undefined {
   switch (m.type) {
     case 'hello':
-      return (
-        isText(m.sdkVersion, 64) &&
+      return isText(m.sdkVersion, 64) &&
         Array.isArray(m.capabilities) &&
         m.capabilities.length <= 32 &&
         m.capabilities.every((c) => isText(c, 64))
-      );
+        ? { type: 'hello', sdkVersion: m.sdkVersion, capabilities: [...m.capabilities] }
+        : undefined;
     case 'rendered':
-      return isCount(m.seq);
+      return isCount(m.seq) ? { type: 'rendered', seq: m.seq } : undefined;
     case 'geometry':
-      return isGeometry(m);
-    case 'pick':
-      return isTarget(m);
-    case 'hover':
-      return isOptionalTarget(m);
+      return geometryBody(m);
+    case 'pick': {
+      const target = targetBody(m);
+      return target ? { type: 'pick', ...target } : undefined;
+    }
+    case 'hover': {
+      if (m.key === undefined && m.ref === undefined) return { type: 'hover' };
+      const target = targetBody(m);
+      return target ? { type: 'hover', ...target } : undefined;
+    }
     case 'navigate':
-      return isHttpUrl(m.url);
+      return isNavigable(m.url, navigateOrigins) ? { type: 'navigate', url: m.url } : undefined;
     case 'key':
-      return (
-        (FORWARDED_KEYS as readonly unknown[]).includes(m.key) &&
+      return (FORWARDED_KEYS as readonly unknown[]).includes(m.key) &&
         [m.meta, m.ctrl, m.shift, m.alt].every((b) => typeof b === 'boolean')
-      );
+        ? { type: 'key', key: m.key, meta: m.meta, ctrl: m.ctrl, shift: m.shift, alt: m.alt }
+        : undefined;
     case 'error':
-      return typeof m.kind === 'string' && ERROR_KINDS.has(m.kind) && isText(m.message, MAX_TEXT);
+      return typeof m.kind === 'string' && ERROR_KINDS.has(m.kind) && isText(m.message, MAX_TEXT)
+        ? { type: 'error', kind: m.kind, message: m.message }
+        : undefined;
     default:
-      return false;
+      return undefined;
   }
 }
 
@@ -411,82 +462,123 @@ function isFields(value: unknown): boolean {
 
 // --- geometry -----------------------------------------------------------------------
 
-function isGeometry(m: Record<string, unknown>): boolean {
-  const { blocks, slots, fields, scroll, viewport } = m;
-  if (!Array.isArray(blocks) || blocks.length > MAX_GEOMETRY_ITEMS) return false;
-  if (!Array.isArray(slots) || slots.length > MAX_GEOMETRY_ITEMS) return false;
-  if (!Array.isArray(fields) || fields.length > MAX_GEOMETRY_ITEMS) return false;
-  let gaps = 0;
-  for (const s of slots) {
-    if (!isRecord(s) || !isName(s.path) || !optional(s.parentKey, isId) || !isRect(s.rect)) {
-      return false;
-    }
-    if (!Array.isArray(s.gaps)) return false;
-    gaps += s.gaps.length;
-    if (gaps > MAX_GEOMETRY_GAPS || !s.gaps.every(isGap)) return false;
+function geometryBody(m: Record<string, unknown>): Body | undefined {
+  const { blocks, slots, fields, scroll, viewport, docHeight } = m;
+  if (!Array.isArray(blocks) || blocks.length > MAX_GEOMETRY_ITEMS) return undefined;
+  if (!Array.isArray(slots) || slots.length > MAX_GEOMETRY_ITEMS) return undefined;
+  if (!Array.isArray(fields) || fields.length > MAX_GEOMETRY_ITEMS) return undefined;
+  if (!isRecord(scroll) || !isNumber(scroll.x) || !isNumber(scroll.y)) return undefined;
+  if (!isRecord(viewport) || !isNumber(viewport.w) || !isNumber(viewport.h)) return undefined;
+  if (!isNumber(docHeight)) return undefined;
+  const outBlocks: LiveBlockBox[] = [];
+  for (const b of blocks) {
+    if (!isRecord(b) || !isId(b.key) || !isRect(b.rect)) return undefined;
+    if (!optional(b.slot, isId) || !optional(b.parentKey, isId)) return undefined;
+    outBlocks.push({
+      key: b.key,
+      rect: rectBody(b.rect),
+      ...(b.slot !== undefined ? { slot: b.slot as string } : {}),
+      ...(b.parentKey !== undefined ? { parentKey: b.parentKey as string } : {}),
+    });
   }
-  return (
-    blocks.every(
-      (b) =>
-        isRecord(b) &&
-        isId(b.key) &&
-        isRect(b.rect) &&
-        optional(b.slot, isName) &&
-        optional(b.parentKey, isId),
-    ) &&
-    fields.every((f) => isRecord(f) && isText(f.ref, MAX_ID * 4) && isRect(f.rect)) &&
-    isRecord(scroll) &&
-    isNumber(scroll.x) &&
-    isNumber(scroll.y) &&
-    isRecord(viewport) &&
-    isNumber(viewport.w) &&
-    isNumber(viewport.h) &&
-    isNumber(m.docHeight)
-  );
+  const outSlots: LiveSlotBox[] = [];
+  let gapCount = 0;
+  for (const s of slots) {
+    if (!isRecord(s) || !isId(s.path) || !optional(s.parentKey, isId) || !isRect(s.rect)) {
+      return undefined;
+    }
+    if (!Array.isArray(s.gaps)) return undefined;
+    gapCount += s.gaps.length;
+    if (gapCount > MAX_GEOMETRY_GAPS) return undefined;
+    const gaps: LiveGap[] = [];
+    for (const g of s.gaps) {
+      const gap = gapBody(g);
+      if (!gap) return undefined;
+      gaps.push(gap);
+    }
+    outSlots.push({
+      path: s.path,
+      rect: rectBody(s.rect),
+      gaps,
+      ...(s.parentKey !== undefined ? { parentKey: s.parentKey as string } : {}),
+    });
+  }
+  const outFields: LiveFieldBox[] = [];
+  for (const f of fields) {
+    if (!isRecord(f) || !isRef(f.ref) || !isRect(f.rect)) return undefined;
+    outFields.push({ ref: f.ref, rect: rectBody(f.rect) });
+  }
+  return {
+    type: 'geometry',
+    blocks: outBlocks,
+    slots: outSlots,
+    fields: outFields,
+    scroll: { x: scroll.x, y: scroll.y },
+    viewport: { w: viewport.w, h: viewport.h },
+    docHeight,
+  };
 }
 
-function isGap(g: unknown): boolean {
-  return (
-    isRecord(g) &&
-    isCount(g.index) &&
-    isRect(g.rect) &&
-    (g.axis === 'x' || g.axis === 'y') &&
-    optional(g.after, isId) &&
-    optional(g.before, isId)
-  );
+function gapBody(g: unknown): LiveGap | undefined {
+  if (!isRecord(g) || !isCount(g.index) || (g.axis !== 'x' && g.axis !== 'y')) return undefined;
+  if (!isRect(g.rect) || !optional(g.after, isId) || !optional(g.before, isId)) return undefined;
+  return {
+    index: g.index as number,
+    rect: rectBody(g.rect),
+    axis: g.axis,
+    ...(g.after !== undefined ? { after: g.after as string } : {}),
+    ...(g.before !== undefined ? { before: g.before as string } : {}),
+  };
 }
 
-function isRect(r: unknown): boolean {
+const rectBody = (r: LiveRect): LiveRect => ({ x: r.x, y: r.y, w: r.w, h: r.h });
+
+function targetBody(m: Record<string, unknown>): LiveTarget | undefined {
+  if (!isTarget(m)) return undefined;
+  return m.key !== undefined ? { key: m.key as string } : { ref: m.ref as string };
+}
+
+function isRect(r: unknown): r is LiveRect {
   return isRecord(r) && isNumber(r.x) && isNumber(r.y) && isNumber(r.w) && isNumber(r.h);
 }
 
 // --- primitives -----------------------------------------------------------------------
 
 function isTarget(m: Record<string, unknown>): boolean {
-  return m.key !== undefined ? m.ref === undefined && isId(m.key) : isText(m.ref, MAX_ID * 4);
+  return m.key !== undefined ? m.ref === undefined && isId(m.key) : isRef(m.ref);
 }
 
 function isOptionalTarget(m: Record<string, unknown>): boolean {
   return (m.key === undefined && m.ref === undefined) || isTarget(m);
 }
 
-function isHttpUrl(value: unknown): boolean {
-  if (!isText(value, MAX_URL)) return false;
+/** An https URL, or http on this machine (a frontend in development). */
+export function isPreviewUrl(value: string): boolean {
   try {
-    const { protocol } = new URL(value);
-    return protocol === 'https:' || protocol === 'http:';
+    const url = new URL(value);
+    return url.protocol === 'https:' || (url.protocol === 'http:' && LOOPBACK.has(url.hostname));
   } catch {
     return false;
   }
+}
+
+const LOOPBACK = new Set(['localhost', '127.0.0.1', '[::1]']);
+
+function isNavigable(value: unknown, origins: readonly string[]): value is string {
+  return isText(value, MAX_URL) && isPreviewUrl(value) && origins.includes(new URL(value).origin);
 }
 
 const isNumber = (n: unknown): boolean => typeof n === 'number' && Number.isFinite(n);
 const isCount = (n: unknown): boolean => Number.isSafeInteger(n) && (n as number) >= 0;
 const isText = (s: unknown, max: number): s is string =>
   typeof s === 'string' && s.length > 0 && s.length <= max;
-const isId = (s: unknown): boolean => isText(s, MAX_ID);
-/** A field, slot or locale name: an id that can't reach a prototype when assigned. */
-const isName = (s: unknown): boolean => isId(s) && !FORBIDDEN_NAMES.has(s as string);
+/**
+ * A key, name or id: bounded, and never one that reaches a prototype when used as a property
+ * name, since either side may index by it.
+ */
+const isId = (s: unknown): s is string => isText(s, MAX_ID) && !FORBIDDEN_NAMES.has(s);
+const isName = isId;
+const isRef = (s: unknown): s is string => isText(s, MAX_ID * 4) && !FORBIDDEN_NAMES.has(s);
 const optional = (v: unknown, test: (v: unknown) => boolean): boolean => v === undefined || test(v);
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
