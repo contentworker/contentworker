@@ -107,7 +107,7 @@ export function ContentLayout() {
                           className={cn(
                             'relative flex items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-sm transition-[background-color,color] touch:min-h-11',
                             active
-                              ? 'bg-accent font-medium text-accent-foreground tick-current'
+                              ? 'bg-accent font-medium text-accent-foreground current-item'
                               : 'text-muted-foreground hover:bg-accent/60 hover:text-foreground',
                           )}
                         >

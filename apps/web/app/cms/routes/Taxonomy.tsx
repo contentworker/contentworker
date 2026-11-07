@@ -226,8 +226,9 @@ function ConceptsTab() {
                 <li key={s.id} className="group flex flex-wrap items-center justify-between gap-2">
                   <button
                     type="button"
-                    className={`flex-1 truncate rounded-md px-2 py-1 text-left text-sm ${
-                      s.id === schemeId ? 'bg-muted font-medium' : 'hover:bg-muted/60'
+                    aria-current={s.id === schemeId ? 'true' : undefined}
+                    className={`flex-1 truncate rounded-lg px-2.5 py-1 text-left text-sm ${
+                      s.id === schemeId ? 'current-item bg-muted font-medium' : 'hover:bg-muted/60'
                     }`}
                     onClick={() => setPickedSchemeId(s.id)}
                   >

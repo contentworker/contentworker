@@ -235,6 +235,46 @@ test('the audit log’s missed filter and backwards range have no accessibility 
   await scan(page, testInfo);
 });
 
+// Windows High Contrast (forced colours) overrides the current item's fill, so the item takes a
+// hairline outline (DESIGN.md, Brand): where you are never rests on weight alone. Checked in each nav that marks a current item, and that a
+// hovered current row keeps its own fill when colours aren't forced.
+test('the current item stays marked under forced colours, and hover never looks current', async ({
+  page,
+}) => {
+  const outline = (locator: ReturnType<Page['locator']>) =>
+    locator.evaluate((el) => getComputedStyle(el).outlineStyle);
+
+  await page.emulateMedia({ forcedColors: 'active' });
+  await openCms(page, '/settings/audit-log');
+  const sidebar = page.locator('[data-sidebar="menu-button"][data-active]');
+  const section = page
+    .getByRole('navigation', { name: 'Settings sections' })
+    .locator('[aria-current="page"]');
+  await expect(sidebar).toHaveCount(1);
+  await expect(section).toHaveCount(1);
+  expect(await outline(sidebar)).toBe('solid');
+  expect(await outline(section)).toBe('solid');
+
+  await openCms(page, '/assets');
+  const folder = page.getByRole('navigation', { name: 'Folders' }).locator('[aria-current="true"]');
+  await expect(folder).toHaveCount(1);
+  expect(await outline(folder)).toBe('solid');
+
+  // Colours not forced: no outline, and the pointer on the current row leaves its fill alone,
+  // while a row that isn't current takes a lighter one.
+  await page.emulateMedia({ forcedColors: 'none' });
+  await openCms(page, '/settings/audit-log');
+  const fill = (locator: ReturnType<Page['locator']>) =>
+    locator.evaluate((el) => getComputedStyle(el).backgroundColor);
+  expect(await outline(sidebar)).toBe('none');
+  const current = await fill(sidebar);
+  await sidebar.hover();
+  expect(await fill(sidebar)).toBe(current);
+  const other = page.locator('[data-sidebar="menu-button"]:not([data-active])').first();
+  await other.hover();
+  expect(await fill(other)).not.toBe(current);
+});
+
 test.describe('on a phone', () => {
   test.use({ viewport: { width: 393, height: 852 }, isMobile: true, hasTouch: true });
 
