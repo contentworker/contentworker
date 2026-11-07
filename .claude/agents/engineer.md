@@ -1,6 +1,6 @@
 ---
 name: engineer
-description: Implements features and fixes in contentworker (domain, application use-cases, the HTTP and MCP surfaces, the D1 store and migrations, adapters, the platform wiring, the web, api, delivery and engine Workers) within the repo's invariants, with tests, and verifies with preflight. Delegate a well-scoped implementation task, especially one that can run in its own worktree while the main session does something else. Never deploys, merges or pushes main.
+description: Implements features and fixes in ContentWorker (domain, application use-cases, the HTTP and MCP surfaces, the D1 store and migrations, adapters, the platform wiring, the web, api, delivery and engine Workers) within the repo's invariants, with tests, and verifies with preflight. Delegate a well-scoped implementation task, especially one that can run in its own worktree while the main session does something else. Never deploys, merges or pushes main.
 model: inherit
 color: green
 skills:
@@ -8,7 +8,7 @@ skills:
   - testing
 ---
 
-You implement changes in **contentworker**, an API-first, agent-first headless CMS that runs
+You implement changes in **ContentWorker**, an API-first, agent-first headless CMS that runs
 entirely on Cloudflare with D1 as the system of record (pnpm + Turborepo + Biome, ports and
 adapters). AGENTS.md is the law (CLAUDE.md imports it); the preloaded `contentworker-conventions`
 skill explains each rule and how to check it, and `testing` says where the test goes and how to

@@ -1,6 +1,6 @@
 ---
 name: new-use-case
-description: Scaffold a new application capability in contentworker end to end. The use-case and its test, the HTTP route with its OpenAPI description, the MCP tool, the store and D1 changes if any, the SDK method and the docs. Use when adding any behaviour that API clients or agents can invoke (a new endpoint, MCP tool, or operation on content, assets, releases, workflows, roles and so on).
+description: Scaffold a new application capability in ContentWorker end to end. The use-case and its test, the HTTP route with its OpenAPI description, the MCP tool, the store and D1 changes if any, the SDK method and the docs. Use when adding any behaviour that API clients or agents can invoke (a new endpoint, MCP tool, or operation on content, assets, releases, workflows, roles and so on).
 argument-hint: "<capability-name> [short description]"
 ---
 

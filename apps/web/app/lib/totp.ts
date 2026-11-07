@@ -55,7 +55,7 @@ export function fromBase32(s: string): Uint8Array<ArrayBuffer> | null {
 /** A new secret, base32. */
 export const newTotpSecret = () => base32(crypto.getRandomValues(new Uint8Array(SECRET_BYTES)));
 
-/** What an authenticator app scans: `otpauth://totp/contentworker:ann@example.com?secret=…`. */
+/** What an authenticator app scans: `otpauth://totp/ContentWorker:ann@example.com?secret=…&issuer=ContentWorker`. */
 export function otpauthUri(secret: string, account: string): string {
   const label = encodeURIComponent(`${ISSUER}:${account}`);
   return `otpauth://totp/${label}?secret=${secret}&issuer=${ISSUER}&algorithm=SHA1&digits=${TOTP_DIGITS}&period=${TOTP_PERIOD_S}`;

@@ -46,7 +46,7 @@ example `/blog/{slug}`. Its placeholders are `{id}` (the entry id), `{locale}`, 
 of the type's own `Slug` fields; anything else is refused. In the content type dialog it is the
 **URL pattern** field; over the API and MCP it is `urlPattern` on `POST …/content-types` and
 `model_create_content_type` (`null` clears it). When a publish changes a slug the pattern names on
-an entry that was already published, contentworker writes a `301` from the old path to the new one;
+an entry that was already published, ContentWorker writes a `301` from the old path to the new one;
 see [Redirects](/guides/redirects/#redirect-slug-changes). A revision that removes a slug a kept
 pattern names is refused.
 

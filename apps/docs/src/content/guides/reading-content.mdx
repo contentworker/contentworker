@@ -270,7 +270,7 @@ also when a revoked key or a changed role takes effect. Use it to refresh a page
 `GET /delivery/{space}/{env}/redirects` returns the environment's enabled redirects as `{ items,
 total }`, each with `id`, `source`, `destination`, `status` and an optional `locale`; `GET
 …/redirects/resolve?path=&locale=` answers one path with `{ redirect, status, location }`, or `404`.
-contentworker serves no site, so your front end or an edge function applies them. See
+ContentWorker serves no site, so your front end or an edge function applies them. See
 [Redirects](/guides/redirects/).
 
 ## Menus

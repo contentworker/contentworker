@@ -108,7 +108,7 @@ rounded: "{rounded.full}"
 padding: "0.125rem 0.5rem"
 ---
 
-# Design System: contentworker admin
+# Design System: ContentWorker admin
 
 ## Overview
 
@@ -135,7 +135,7 @@ status.
 
 ### Accent
 
-- **Brand** (`brand`, purple): contentworker's accent, the colour of its mark. It marks where you
+- **Brand** (`brand`, purple): ContentWorker's accent, the colour of its mark. It marks where you
   are and what you chose: the mark (sidebar, top bar, sign-in); the current item, in one rule
   everywhere (the sidebar, a page's own list such as Settings sections, content types and asset
   folders): a 2px tick 1rem long on its leading edge (`tick-current`), and its icon in brand when
@@ -143,7 +143,7 @@ status.
   focus (`ring` and the page-wide outline); checked checkboxes, switches and radio items and the
   chosen option card; the text selection and the caret. A model's work wears it too: `ai`
   is the brand, so the AI loader (`ComposeLoader`), the AI stamp and agent proposals read as
-  contentworker at work. Never a button fill, never a background wash. Its edge holds 3:1 and its
+  ContentWorker at work. Never a button fill, never a background wash. Its edge holds 3:1 and its
   words 4.5:1 on paper and muted fills in both themes; on a brand fill, words are
   `brand-foreground`.
 
@@ -175,10 +175,10 @@ status.
 
 ### Status
 
-Each contentworker status maps to one token (`cms/lib/format.ts` `statusTone`), and every badge, dot
+Each ContentWorker status maps to one token (`cms/lib/format.ts` `statusTone`), and every badge, dot
 and chart series for a status reads it through `var()`, so it switches with the theme:
 
-| Token             | Means                       | contentworker statuses                                                            |
+| Token             | Means                       | ContentWorker statuses                                                            |
 | ----------------- | --------------------------- | --------------------------------------------------------------------------------- |
 | `ok`              | succeeded, live             | published, active, completed, delivered, enabled, merged                          |
 | `wait`            | waits on a person           | changed (edited since publish), pending, in review, paused, unsaved changes       |
@@ -194,8 +194,8 @@ and chart series for a status reads it through `var()`, so it switches with the 
 brand, no green button, no green decoration.
 
 **The One Meaning Rule.** A status colour is never used decoratively. If it isn't a status, it is
-grey. The one shared hue is deliberate: `ai` is the brand, because a model's work is contentworker
-at work. Purple means "contentworker: here, chosen, or the model", and a status never relies on it
+grey. The one shared hue is deliberate: `ai` is the brand, because a model's work is ContentWorker
+at work. Purple means "ContentWorker: here, chosen, or the model", and a status never relies on it
 alone (an AI badge says so in words).
 
 ## Typography
@@ -269,7 +269,7 @@ layout/nav.ts` is the one source of the pages, their order, names, icons and G-l
   md it starts with the mark (a link to Overview). From md it holds the breadcrumbs (where you are:
   an entry reads as its title, never its id), then what acts on the page: the scope, Search (⌘K),
   Coworker (the assistant, when on) and New entry.
-- **Scope (contentworker's):** every page works in a space, an environment (a branch) and a locale.
+- **Scope (ContentWorker's):** every page works in a space, an environment (a branch) and a locale.
   From xl the three switchers sit in the header; below xl a pill names the environment (the space
   and locale in its accessible name and `title`) and opens them in a sheet; the phone's More sheet
   holds them too. It is never more than one press away.

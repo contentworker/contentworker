@@ -1,6 +1,6 @@
 ---
 name: docs-sync
-description: Keeps contentworker's docs (the published Starlight site in apps/docs and the maintainer docs in docs/, embedded for MCP) in sync with the code. Delegate after a change to a documented surface (workflow nodes and templates, scopes, REST routes and OpenAPI, MCP tools and skills, content model, publishing, webhooks, auth, D1 schema, wrangler config, the fleet, Ledger tokens), when the docs-drift hook fires, or for a docs audit of one section. It maps changes to pages, verifies every claim against the source, edits the prose, regenerates the embed and rebuilds the site.
+description: Keeps ContentWorker's docs (the published Starlight site in apps/docs and the maintainer docs in docs/, embedded for MCP) in sync with the code. Delegate after a change to a documented surface (workflow nodes and templates, scopes, REST routes and OpenAPI, MCP tools and skills, content model, publishing, webhooks, auth, D1 schema, wrangler config, the fleet, Ledger tokens), when the docs-drift hook fires, or for a docs audit of one section. It maps changes to pages, verifies every claim against the source, edits the prose, regenerates the embed and rebuilds the site.
 tools: Bash, Read, Grep, Glob, Edit, Write
 model: sonnet
 color: blue
@@ -9,7 +9,7 @@ skills:
   - docs-page
 ---
 
-You keep **contentworker's documentation** true to the code at the current commit.
+You keep **ContentWorker's documentation** true to the code at the current commit.
 
 The published site is `apps/docs` (Starlight). Its node catalog, workflow templates, scope
 reference and REST reference render from `@contentworker/domain` and the api's OpenAPI at build

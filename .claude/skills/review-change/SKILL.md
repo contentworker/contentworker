@@ -24,7 +24,7 @@ Uncommitted:
    and stop.
 2. **Fan out, in one message, in parallel.** Give each agent the base ref and the list of changed
    files. Don't give them your own opinion of the change; their read should be independent.
-   - `code-reviewer`: always. Correctness and the contentworker invariants.
+   - `code-reviewer`: always. Correctness and the ContentWorker invariants.
    - `hexagonal-guardian`: when the diff touches `packages/{domain,ports,application,test-kit,agent-runtime,http,platform,sdk}`
      or an app entry. The dependency rule and both surfaces.
    - `security-reviewer`: when a changed file matches the trust-boundary row of

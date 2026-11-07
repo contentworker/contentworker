@@ -174,7 +174,7 @@ URLs again.
 
 An asset whose rights carry an expiry (`rights.expiresAt`, set in Management) answers
 `410 Gone` from that moment: its files are cached only until then, never immutably. Within a
-minute contentworker unpublishes it (webhooks get `asset.unpublished` and `asset.expired`), and its
+minute ContentWorker unpublishes it (webhooks get `asset.unpublished` and `asset.expired`), and its
 URLs answer `404` once purged. An asset under embargo can't be published before
 `rights.embargoUntil`.
 

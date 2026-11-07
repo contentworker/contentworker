@@ -1,9 +1,9 @@
 ---
 name: modeling-content-with-contentworker
-description: Design and change a contentworker content model - content types, the field types, components and repeaters, blocks fields with variants, references, validations and localization - and keep it as code in a repository, applied with the contentworker CLI (model export, model apply with a dry-run diff). Use when creating or editing content types, planning a model change that may affect existing entries, or reviewing a model file.
+description: Design and change a ContentWorker content model - content types, the field types, components and repeaters, blocks fields with variants, references, validations and localization - and keep it as code in a repository, applied with the ContentWorker CLI (model export, model apply with a dry-run diff). Use when creating or editing content types, planning a model change that may affect existing entries, or reviewing a model file.
 ---
 
-# Modeling content with contentworker
+# Modeling content with ContentWorker
 
 A content model is the set of content types in one environment of a space. Model content by what
 it *is* (an article, an author, a promo), not where it appears, so one entry can feed a site, an

@@ -1,6 +1,6 @@
-# contentworker roadmap
+# ContentWorker roadmap
 
-**v2: edge-only (2026-10-31).** contentworker was rebuilt on edge workers end to end. An edge
+**v2: edge-only (2026-10-31).** ContentWorker was rebuilt on edge workers end to end. An edge
 SQL database replaced Postgres as the system of record, and the single platform worker became five
 edge workers
 split by traffic profile: `apps/web` (admin + human auth), `apps/api` (Management and Preview

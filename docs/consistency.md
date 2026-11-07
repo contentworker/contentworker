@@ -1,6 +1,6 @@
 # Consistency & guarantees
 
-contentworker keeps its system of record in the edge SQL database and serves public reads from
+ContentWorker keeps its system of record in the edge SQL database and serves public reads from
 cache. The **invariants** below hold everywhere; the **timing and staleness envelopes** come from
 the database's read replicas, the edge cache, the key-value store, queues and the one-minute cron.
 This page is the honest list.

@@ -1,10 +1,10 @@
 ---
 name: testing
-description: How contentworker is tested, where a new test goes, and how to run one package, one file or one test. Covers each package's vitest environment (packages/db and apps/engine in workerd via @cloudflare/vitest-plugin; packages/http, application, domain and adapters in node; apps/web's node and jsdom projects), the D1 contract tests, the engine's real Durable Objects and Workflows, the Playwright device and axe tests in apps/web/e2e (WebKit and Chromium projects), the fleet and DO-migration golden tests and the toolkit tests. Preloaded by the test-engineer agent; use it when writing, fixing, de-flaking or choosing where to put a test, or to run a narrow slice of the suite.
+description: How ContentWorker is tested, where a new test goes, and how to run one package, one file or one test. Covers each package's vitest environment (packages/db and apps/engine in workerd via @cloudflare/vitest-plugin; packages/http, application, domain and adapters in node; apps/web's node and jsdom projects), the D1 contract tests, the engine's real Durable Objects and Workflows, the Playwright device and axe tests in apps/web/e2e (WebKit and Chromium projects), the fleet and DO-migration golden tests and the toolkit tests. Preloaded by the test-engineer agent; use it when writing, fixing, de-flaking or choosing where to put a test, or to run a narrow slice of the suite.
 argument-hint: "[package] [file.test.ts | -t 'test name']"
 ---
 
-# Testing contentworker
+# Testing ContentWorker
 
 `docs/development.md` describes the workspace commands; this page is the part you need every time
 you add or run a test. Read the neighbouring tests before writing one, and reuse their helpers.

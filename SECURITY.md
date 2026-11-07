@@ -48,5 +48,5 @@ treat it as authorized if anyone asks.
 
 ## Supported versions
 
-contentworker is deployed from `main`; fixes ship to the latest release only. There are no older
+ContentWorker is deployed from `main`; fixes ship to the latest release only. There are no older
 versions to patch.

@@ -1,6 +1,6 @@
 ---
 name: run-stack
-description: Boot contentworker's whole local stack (web, api, engine and delivery in one Vite session on a local D1) and smoke-test it with the dev tokens. Use to see a change working against a real running stack rather than only tests.
+description: Boot ContentWorker's whole local stack (web, api, engine and delivery in one Vite session on a local D1) and smoke-test it with the dev tokens. Use to see a change working against a real running stack rather than only tests.
 disable-model-invocation: true
 ---
 

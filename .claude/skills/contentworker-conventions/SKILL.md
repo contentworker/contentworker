@@ -1,10 +1,10 @@
 ---
 name: contentworker-conventions
-description: The invariants contentworker's code must keep, each with why it holds and how to check it. Background knowledge for any change to the domain, ports, application use-cases, the HTTP and MCP surfaces, the D1 store and its migrations, adapters, the platform wiring, the Workers (web, api, delivery, engine) or CI; preloaded by the engineer, test-engineer, code-reviewer, hexagonal-guardian and ai-reviewer agents. Use when writing or reviewing code here and you need the rule behind an AGENTS.md line, or the grep or test that proves a change keeps it.
+description: The invariants ContentWorker's code must keep, each with why it holds and how to check it. Background knowledge for any change to the domain, ports, application use-cases, the HTTP and MCP surfaces, the D1 store and its migrations, adapters, the platform wiring, the Workers (web, api, delivery, engine) or CI; preloaded by the engineer, test-engineer, code-reviewer, hexagonal-guardian and ai-reviewer agents. Use when writing or reviewing code here and you need the rule behind an AGENTS.md line, or the grep or test that proves a change keeps it.
 user-invocable: false
 ---
 
-# contentworker conventions
+# ContentWorker conventions
 
 AGENTS.md (imported by CLAUDE.md) states the rules in one line each. This skill is the working
 version: what each rule protects, where it lives in the code, and how to tell whether a change

@@ -1,6 +1,6 @@
 ---
 name: d1-migration
-description: Add a D1 schema change to contentworker safely. Picks the next migration number, writes a hand-written expand-only SQL migration in packages/db/migrations that works with the code already deployed, mirrors it in packages/db/src/schema.ts (or auth-schema.ts), applies it to the local D1 and tests it in workerd. Use for any new table, column, index or backfill, and when planning a rename or drop as expand-then-contract.
+description: Add a D1 schema change to ContentWorker safely. Picks the next migration number, writes a hand-written expand-only SQL migration in packages/db/migrations that works with the code already deployed, mirrors it in packages/db/src/schema.ts (or auth-schema.ts), applies it to the local D1 and tests it in workerd. Use for any new table, column, index or backfill, and when planning a rename or drop as expand-then-contract.
 argument-hint: "[short_snake_name]"
 ---
 

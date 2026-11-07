@@ -1,7 +1,7 @@
 ---
 
 name: model-content
-description: Design or change a contentworker content model — create content types, choose field types, publish them, and get TypeScript types for the live model. Use before creating entries against a type that does not exist yet.
+description: Design or change a ContentWorker content model — create content types, choose field types, publish them, and get TypeScript types for the live model. Use before creating entries against a type that does not exist yet.
 ---
 
 # Model content
@@ -44,7 +44,7 @@ still served over REST and GraphQL.
      `assetMimeTypes: ['image/*']` on an asset Link, checked against the asset on write.
    - `urlPattern` (optional) — where the type's entries live on the site, e.g. `/blog/{slug}`;
      placeholders are `{id}`, `{locale}` or the apiId of one of the type's own `Slug` fields
-     (`null` clears it). When a publish changes a slug it names, contentworker writes a `301` from
+     (`null` clears it). When a publish changes a slug it names, ContentWorker writes a `301` from
      the old path to the new one, so you rarely need to create that redirect yourself.
 3. **Publish it** with `model_publish_content_type`. Until then a live type keeps serving its last
    published definition. Two exceptions: a type never published is in GraphQL as it stands, and an

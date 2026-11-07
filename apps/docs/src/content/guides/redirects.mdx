@@ -3,7 +3,7 @@ title: Redirects
 description: Manage redirects in the admin, write patterns, redirect old paths automatically when a slug changes, import them in bulk, and apply them from Delivery in your front end or an edge function.
 ---
 
-A redirect sends a reader from one path on your site to another. contentworker serves no site, so
+A redirect sends a reader from one path on your site to another. ContentWorker serves no site, so
 a redirect is data: you keep the set here, Delivery hands it out, and your front end (or an edge
 function in front of it) answers the request. Each environment has its own set, and it travels with
 [snapshots, exports and clones](/guides/environments/#export-and-import-a-snapshot).
@@ -76,7 +76,7 @@ the destination has its own.
 ## Redirect slug changes
 
 When a content type has a [URL pattern](/guides/content-modeling/#url-pattern) such as
-`/blog/{slug}`, contentworker keeps your old links working. If you publish an entry that was
+`/blog/{slug}`, ContentWorker keeps your old links working. If you publish an entry that was
 already live and its slug changed, the publish also writes a `301` from the old path to the new
 one, in the same step:
 

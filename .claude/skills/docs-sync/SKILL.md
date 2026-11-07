@@ -1,17 +1,17 @@
 ---
 name: docs-sync
-description: Keep the published Starlight docs in apps/docs and the maintainer docs in docs/ true to contentworker's code after a change. Use when a change touches a documented surface (workflow nodes and templates, permission scopes, REST routes and OpenAPI, MCP tools and skills, content model, publishing, webhooks, auth, D1 schema, wrangler config, the fleet, Ledger tokens), when the docs-drift hook fires, or when docs look stale. Maps changed files to pages, separates generated reference pages from hand-written prose, regenerates the docs embed and verifies with the docs build.
+description: Keep the published Starlight docs in apps/docs and the maintainer docs in docs/ true to ContentWorker's code after a change. Use when a change touches a documented surface (workflow nodes and templates, permission scopes, REST routes and OpenAPI, MCP tools and skills, content model, publishing, webhooks, auth, D1 schema, wrangler config, the fleet, Ledger tokens), when the docs-drift hook fires, or when docs look stale. Maps changed files to pages, separates generated reference pages from hand-written prose, regenerates the docs embed and verifies with the docs build.
 ---
 
 # Syncing the docs
 
-Two doc sets describe contentworker as it is at this commit:
+Two doc sets describe ContentWorker as it is at this commit:
 
 - **`apps/docs`** (`@contentworker/docs-site`): Starlight on Astro, static assets, served by the
   `contentworker-docs` Worker at `docs.contentworker.app`. For people who work in a space and
   developers who integrate with one (Start, Working with content, Integrating, Reference).
 - **`docs/*.md`**: the maintainer docs, plain Markdown, unpublished but embedded into
-  `packages/docs/src/generated.ts` and served to agents over MCP and HTTP. How contentworker is
+  `packages/docs/src/generated.ts` and served to agents over MCP and HTTP. How ContentWorker is
   built, configured, deployed and tested; indexed by `docs/README.md`.
 
 The `docs-page` skill says which material goes where.

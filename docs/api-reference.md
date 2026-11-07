@@ -791,7 +791,7 @@ the engine runs the same repair daily (`taxonomy-repair`).
 
 ### Redirects
 
-Redirects are delivery data: contentworker serves no site, so a front end (or an edge worker in
+Redirects are delivery data: ContentWorker serves no site, so a front end (or an edge worker in
 front of it) applies them. Reads need `preview:read`, writes `content:manage`; every write checks
 the whole set and answers `422` for a loop or a duplicate source (a chain is allowed). Model in
 [Domain model](./domain-model.md#redirects).

@@ -1,6 +1,6 @@
 # Deployment
 
-contentworker deploys to the edge platform as **one isolated stack per customer**: each deployment
+ContentWorker deploys to the edge platform as **one isolated stack per customer**: each deployment
 has its own database, object storage bucket, key-value namespace, vector index, queues, AI gateway
 and five edge workers (engine, media, api, delivery, web). Spaces and environments live inside a
 deployment's database. Merging to `main` is releasing: CI migrates the database and deploys every

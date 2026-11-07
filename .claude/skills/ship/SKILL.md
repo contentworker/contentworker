@@ -1,6 +1,6 @@
 ---
 name: ship
-description: Take finished work in contentworker from a working tree to an open pull request. Checks the branch and worktree, runs preflight, commits with the attribution trailer, confirms an existing PR is still open before pushing to it, pushes the branch and opens the PR. Never merges or deploys. Use when the user says ship it, open a PR, or push this.
+description: Take finished work in ContentWorker from a working tree to an open pull request. Checks the branch and worktree, runs preflight, commits with the attribution trailer, confirms an existing PR is still open before pushing to it, pushes the branch and opens the PR. Never merges or deploys. Use when the user says ship it, open a PR, or push this.
 argument-hint: "[branch-name]"
 disable-model-invocation: true
 allowed-tools: Bash(git status *) Bash(git diff *) Bash(git log *) Bash(git branch *) Bash(git worktree list) Bash(gh pr view *) Bash(gh pr list *)

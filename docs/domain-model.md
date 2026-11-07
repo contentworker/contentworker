@@ -999,7 +999,7 @@ edges are materialized so the platform can:
 
 ## Redirects
 
-`packages/domain/src/redirect/redirect.ts`. contentworker serves no site, so a redirect is
+`packages/domain/src/redirect/redirect.ts`. ContentWorker serves no site, so a redirect is
 **delivery data**: Delivery hands the set (or one path's match) to the front end, or an edge worker
 in front of it, that answers the request. A redirect belongs to a space and environment:
 

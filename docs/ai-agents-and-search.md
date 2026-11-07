@@ -1,6 +1,6 @@
 # AI, agents & search
 
-contentworker treats AI as a first-class client. Everything here ultimately calls the **same
+ContentWorker treats AI as a first-class client. Everything here ultimately calls the **same
 application use-cases** as the HTTP API, so generated and agent-authored content is validated and
 authorized identically to human writes.
 

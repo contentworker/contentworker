@@ -1,6 +1,6 @@
 # Reference architecture
 
-contentworker is a headless CMS that runs entirely at the edge. Each customer gets an isolated
+ContentWorker is a headless CMS that runs entirely at the edge. Each customer gets an isolated
 deployment: five edge workers split by traffic profile, one edge SQL database as the system of
 record, and object storage, a key-value cache, queues, stateful edge objects, durable workflows, a
 vector index, edge inference through the AI gateway, edge image transforms and video streaming
@@ -10,7 +10,7 @@ queue the outbox feeds. Reads never touch the primary: the Delivery and media wo
 the edge cache, keyed so that readers with equal permissions share one cached body, and fall back
 to read replicas.
 
-This page is for engineers who operate, extend or review contentworker, and for agents reading
+This page is for engineers who operate, extend or review ContentWorker, and for agents reading
 these docs over MCP. It shows the whole deployment in one reference diagram, then develops the
 three paths that matter most: publishing, public reads and assets. Each diagram has numbered
 callouts explained in the text, and the text is a complete equivalent of the picture. For how
@@ -18,9 +18,9 @@ the code is layered, see [Architecture](./architecture.md); this page is about t
 
 Shapes and line weights mean the same thing in every diagram. The diagrams are grey, with one
 purple accent, and follow the reader's light or dark setting. A rectangle is an edge worker or
-entrypoint contentworker owns. A cylinder is durable state (the database, the key-value store,
+entrypoint ContentWorker owns. A cylinder is durable state (the database, the key-value store,
 object storage, a queue, a stateful object's storage, an index). A stadium with a dashed border is
-a client or a platform service contentworker calls but does not run (edge inference, image
+a client or a platform service ContentWorker calls but does not run (edge inference, image
 transforms, video streaming). A double-bordered box is a step detailed elsewhere. Purple, with a
 bold label, marks the one or two nodes each diagram is about. A subgraph is a boundary: the
 customer deployment, or the line between what is publicly routed and what is reachable only from
@@ -30,12 +30,12 @@ inside the worker.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="./diagrams/reference-architecture/overview.dark.svg">
-  <img alt="A contentworker deployment, with numbered callouts" src="./diagrams/reference-architecture/overview.light.svg">
+  <img alt="A ContentWorker deployment, with numbered callouts" src="./diagrams/reference-architecture/overview.light.svg">
 </picture>
 
-_Figure: A contentworker deployment, with numbered callouts. Source: [`overview.mmd`](./diagrams/reference-architecture/overview.mmd)._
+_Figure: A ContentWorker deployment, with numbered callouts. Source: [`overview.mmd`](./diagrams/reference-architecture/overview.mmd)._
 
-**Question:** How do requests and data move through a contentworker deployment?
+**Question:** How do requests and data move through a ContentWorker deployment?
 **Detail:** faithful (22 labeled nodes, budget 24). **Focus:** the primary database and the
 `contentworker-events` queue, where every write lands and from which everything downstream
 follows.

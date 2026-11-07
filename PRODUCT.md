@@ -24,7 +24,7 @@ reader picks light or dark.
 
 ## Product Purpose
 
-The admin UI for contentworker, an API-first, AI-agentic-first headless CMS. It is
+The admin UI for ContentWorker, an API-first, AI-agentic-first headless CMS. It is
 the human surface over the same application use-cases the HTTP API and MCP tools
 call: content modeling, entry editing (rich text via TipTap), publishing and
 releases, assets, taxonomy, workflows, webhooks, functions, AI generation and
