@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import type { ContentType } from '@contentworker/domain';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Outlet, Route, Routes } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { EntryListQuery, EntryPage, PreviewEntry } from '~/cms/lib/management';
@@ -302,6 +302,10 @@ describe('EntriesList unpublish and Undo', () => {
     const unpublish = screen.getByRole('button', { name: 'Unpublish selected' });
     fireEvent.click(unpublish);
     const ask = await screen.findByRole('alertdialog', { name: 'Unpublish 2 entries?' });
+    // The ask opens from a settled promise, outside act: it takes focus as it is drawn, but its
+    // Escape handler attaches in an effect after. Let that run, as it has by the time anyone can
+    // press a key, so Escape never lands before it (it did on a loaded CI runner).
+    await act(async () => {});
     fireEvent.keyDown(document.activeElement as Element, { key: 'Escape' });
     await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
     expect(ask.isConnected).toBe(false);
