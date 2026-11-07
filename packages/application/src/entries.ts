@@ -8,12 +8,14 @@ import {
   ConflictError,
   deriveStatus,
   EMPTY_METADATA,
+  ENTRY_ID_RULE,
   type Entry,
   type EntryFields,
   type EntryVersion,
   type FieldIssue,
   hasUniqueFields,
   InvalidStateError,
+  isEntryId,
   mimeTypeAllowed,
   NotFoundError,
   nextSlugCandidate,
@@ -129,6 +131,9 @@ export async function createEntry(
   const vctx = await loadValidationContext(ctx, scope);
   // Defaults fill gaps, then slugs are normalized, and only then is the result
   // validated — so an editor is judged on what will actually be stored.
+  if (input.id !== undefined && !isEntryId(input.id)) {
+    throw new ValidationError([{ field: 'id', message: ENTRY_ID_RULE }]);
+  }
   const withDefaults = applyDefaults(contentType, input.fields, vctx.locales, vctx.defaultLocale);
   const { fields } = await prepareFields(
     ctx,
