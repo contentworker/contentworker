@@ -97,6 +97,10 @@ It offers a fixed set of [MCP tools](/guides/mcp/), by their MCP names.
 | Edits, run at once from a page | `entries_create`, `entries_update`, `entries_duplicate`, `entries_restore`, `entries_set_metadata`, `entry_apply_tags`, `comments_add`, `releases_add_entry` |
 | Actions, always ask first | `entries_publish`, `entries_unpublish`, `entries_trash`, `entries_purge`, `entries_restore_version`, `entries_bulk_action`, `bulk_job_start`, `schedule_action`, `releases_publish` |
 
+Before the workspace has a space, it offers only `space_starters_list` and `space_create`, and
+only to a workspace admin: it asks what the first space will hold and proposes one, which you
+confirm on its card. Those two never run inside a space, and nothing else runs without one.
+
 A write the model proposes always waits for your confirm, whichever row it is in. Every other MCP
 tool stays MCP's alone. Whatever arguments it is given, a call runs in the space and environment
 you are working in, with your role's [scopes](/reference/scopes/): without permission to

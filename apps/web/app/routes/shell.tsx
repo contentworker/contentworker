@@ -51,6 +51,7 @@ import {
   type ShouldRevalidateFunctionArgs,
   useLoaderData,
   useLocation,
+  useMatches,
   useNavigate,
   useNavigation,
 } from 'react-router';
@@ -378,12 +379,12 @@ function PendingBar() {
 }
 
 export default function Shell() {
+  // A page that draws itself whole (setup's last step) gets the providers, not the frame.
+  const bare = useMatches().some((m) => (m.handle as { bare?: boolean } | undefined)?.bare);
   return (
     <CmsProviders>
       <AssistantProvider>
-        <TooltipProvider>
-          <ShellFrame />
-        </TooltipProvider>
+        <TooltipProvider>{bare ? <Outlet /> : <ShellFrame />}</TooltipProvider>
       </AssistantProvider>
     </CmsProviders>
   );

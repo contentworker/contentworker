@@ -342,6 +342,17 @@ layout/nav.ts` is the one source of the pages, their order, names, icons and G-l
   content-type list follows the page's width (it shows from 40rem of page), not the breakpoint.
   In that list a singleton links to its one entry (`/content/:typeId/entry`), not a list of one,
   and stays marked current anywhere under the type.
+- **Coworker with no space yet:** a deployment admin's Coworker asks what the first space will hold
+  ("What will your first space hold?", two suggestions) and proposes one on a `Create this space`
+  card that lists what will be made from the call's own input (name, space ID and locales in mono,
+  environments, the starter by the deployment's own title); confirmed, it switches into the space
+  and offers two questions to try there by starter, never a tour. Anyone else gets a disabled
+  composer and who to ask. Its page form is setup's last step (`routes/setup-space.tsx`, a route
+  under the shell with `handle.bare`: providers, no sidebar or header): the mark, an h1, then the
+  conversation in a card, named by a visually hidden h2; no panel header, no WaitingBar (the card
+  is the whole page, so the card is in view) and no ⌘J hint. Below `sm` the card grows with the
+  page instead of holding its own scroll, so the composer stays clear of the keyboard. Skip for now
+  and Fill in a form instead sit under it as link buttons.
 - **Slow pages:** a navigation that takes over 400ms draws a link-blue rule sweeping under the
   header and marks main `aria-busy`. Quicker ones show nothing.
 - **Route announcer:** after a client-side navigation, the new page's h1 is read out in a polite

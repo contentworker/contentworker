@@ -25,13 +25,18 @@ export async function loader() {
 export async function action({ request }: Route.ActionArgs) {
   const f = await request.formData();
   const str = (k: string) => String(f.get(k) ?? '');
+  // A new deployment's first admin goes on to `/` (its first space, once any two-factor setup is
+  // done); a recovery admin to the team.
+  const first = !(await authEnabled());
   try {
     const id = await redeemSetupCode(request, str('code'), {
       email: str('email'),
       name: str('name'),
       password: str('password'),
     });
-    return redirect('/team', { headers: { 'set-cookie': await startSession(request, id) } });
+    return redirect(first ? '/' : '/team', {
+      headers: { 'set-cookie': await startSession(request, id) },
+    });
   } catch (err) {
     if (err instanceof Throttled)
       return data(
