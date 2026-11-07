@@ -79,7 +79,8 @@ Everything below is built and tested on v2.
   operator settings, secrets sealed), the transactional outbox with lease-claimed relay.
 - **Access.** CMA/CDA/CPA keys, eight scopes, roles with per-type and per-field grants (read,
   write, publish, and delete and unpublish implied unless withheld) and presets, the last-administrator guard, OAuth 2.1 with the device flow for MCP clients, personal
-  access tokens, preview links, rate limits, the audit log, secrets sealed at rest with a daily
+  access tokens, preview links, rate limits, the audit log (filtered by actor, action, target and
+  date, with keyset paging), secrets sealed at rest with a daily
   reseal sweep. Human sign-in in the web app: passwords, passkeys, TOTP, OIDC, SCIM, setup and
   recovery codes, self-service password reset by an emailed code, with the person forwarded to the
   api as a signed `x-cw-principal`.
@@ -274,8 +275,7 @@ Found while building and reviewing M1 and M2. None blocks a release.
   path), an unread badge over the live stream, read and archive, a retention prune.
 - [ ] **Anchored comments.** Comments pinned to a field path or rich-text block, with @mentions
   (feeding notifications), a due date and resolve.
-- [ ] **Audit log, finished.** Filters by actor, action, target and date with keyset paging; an
-  activity tab per entry; a structured `detail` of changed field paths (never bodies); rows past a
+- [ ] **Audit log, finished.** An activity tab per entry; a structured `detail` of changed field paths (never bodies); rows past a
   per-deployment window archived to object storage as NDJSON and pruned, so the log stops growing in
   the database.
 

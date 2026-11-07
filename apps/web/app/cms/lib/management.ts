@@ -826,6 +826,22 @@ export interface AuditEntry {
   readonly at: string;
 }
 
+/** What the audit log can be narrowed by; `from` and `to` are exact times, both inclusive. */
+export interface AuditLogFilters {
+  readonly environment?: string;
+  readonly actor?: string;
+  readonly action?: string;
+  readonly targetType?: string;
+  readonly targetId?: string;
+  readonly from?: string;
+  readonly to?: string;
+}
+
+export interface AuditLogPage {
+  readonly items: AuditEntry[];
+  readonly nextCursor?: string;
+}
+
 /** A persisted, templated AI Action. */
 export interface AIAction {
   readonly id: string;
@@ -1531,19 +1547,16 @@ export function createManagementClient(
     }): Promise<MergeResult> {
       return req('POST', `${spaceBase}/merge`, input, undefined, LARGE_LIMIT);
     },
-    /** Reads the space's append-only audit trail, newest first (requires space:admin). */
-    async listAuditLog(
-      query: { environment?: string; limit?: number } = {},
-    ): Promise<AuditEntry[]> {
+    /** A page of the space's append-only audit trail, newest first (requires space:admin). */
+    listAuditLog(
+      query: AuditLogFilters & { limit?: number; cursor?: string } = {},
+    ): Promise<AuditLogPage> {
       const params = new URLSearchParams();
-      if (query.environment) params.set('environment', query.environment);
-      if (query.limit) params.set('limit', String(query.limit));
+      for (const [key, value] of Object.entries(query)) {
+        if (value) params.set(key, String(value));
+      }
       const qs = params.toString();
-      const r = await req<{ items: AuditEntry[] }>(
-        'GET',
-        `${spaceBase}/audit-log${qs ? `?${qs}` : ''}`,
-      );
-      return r.items;
+      return req('GET', `${spaceBase}/audit-log${qs ? `?${qs}` : ''}`);
     },
     async listContentTypes(): Promise<ContentType[]> {
       const r = await req<{ items: ContentType[] }>('GET', `${mgmt}/content-types`);

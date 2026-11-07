@@ -315,6 +315,21 @@ export function environmentMiddleware(deps: AuthDeps): MiddlewareHandler<AuthVar
 
 const MUTATING = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
+/** The route parameters that name an audit row's target, the first one present winning. */
+const TARGET_PARAMS = ['id', 'apiId', 'alias'] as const;
+
+/**
+ * What kind of thing a route's parameter names: the collection before it, singular, in the words
+ * the use-cases' own rows use (`/content-types/:apiId` is `content_type`).
+ */
+export function routeTargetType(route: string, param: string): string | undefined {
+  const segments = route.split('/');
+  const collection = segments[segments.indexOf(`:${param}`) - 1];
+  if (!collection || collection.startsWith(':')) return undefined;
+  const noun = collection.replace(/-/g, '_');
+  return noun.endsWith('aliases') ? noun.slice(0, -2) : noun.replace(/ies$/, 'y').replace(/s$/, '');
+}
+
 /**
  * Records successful mutating requests to the append-only audit trail. Runs
  * after the handler so it can capture the response status; a failed audit write
@@ -327,12 +342,14 @@ export function auditMiddleware(deps: AuthDeps): MiddlewareHandler<AuthVars> {
     if (!MUTATING.has(c.req.method) || !space || c.res.status >= 400) return;
     try {
       const principal = c.get('principal');
+      const target = TARGET_PARAMS.find((name) => c.req.param(name) !== undefined);
       await recordAudit(deps.ctx, {
         spaceId: space,
         environmentId: c.get('environmentId') ?? c.req.param('env'),
         actor: auditActor(principal),
         action: `${c.req.method} ${c.req.routePath}`,
-        targetId: c.req.param('id') ?? c.req.param('apiId') ?? c.req.param('alias'),
+        targetType: target && routeTargetType(c.req.routePath, target),
+        targetId: target && c.req.param(target),
         status: c.res.status,
       });
     } catch {

@@ -370,7 +370,7 @@ describe('auditing a denied capability call', () => {
       spaceId: SPACE,
       environmentId: 'main',
     });
-    const [entry] = await listAuditLog(ctx, SPACE);
+    const [entry] = (await listAuditLog(ctx, SPACE)).items;
     expect(entry).toMatchObject({
       actor: 'plugin:com.example.one',
       targetType: 'plugin',
@@ -389,6 +389,6 @@ describe('auditing a denied capability call', () => {
       method: 'kv.get',
       reason: 'not-provided',
     });
-    expect(await listAuditLog(ctx, SPACE)).toEqual([]);
+    expect((await listAuditLog(ctx, SPACE)).items).toEqual([]);
   });
 });

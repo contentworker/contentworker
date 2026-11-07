@@ -6,7 +6,7 @@ import {
 } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useClient } from './client-context';
-import type { EntryListQuery } from './management';
+import type { AuditLogFilters, EntryListQuery } from './management';
 
 /**
  * Query keys and typed hooks for server state, backed by TanStack Query.
@@ -38,6 +38,9 @@ export function useQueryKeys() {
       assetLibrary: (query: object) => [...scope, 'assets', 'library', query] as const,
       appExtensions: [...scope, 'app-extensions'] as const,
       agentRuns: [...scope, 'agent-runs'] as const,
+      /** The audit log, a page at a time (`useAuditLogPagesQuery`). */
+      auditLogPages: (filters: AuditLogFilters) =>
+        [...scope, 'audit-log', filters, 'pages'] as const,
     };
   }, [space, environment]);
 }
@@ -125,6 +128,31 @@ export function useEntryPagesQuery(typeId: string | undefined, query: EntryListQ
     // header. Index 3 is the key's typeId slot.
     placeholderData: (prev, prevQuery) =>
       prevQuery?.queryKey[3] === (typeId ?? 'all') ? prev : undefined,
+  });
+}
+
+/** How many audit entries a page reads. */
+const AUDIT_LOG_PAGE = 50;
+
+/** The audit log under `filters`, a page at a time; another set of filters starts from the first. */
+export function useAuditLogPagesQuery(filters: AuditLogFilters) {
+  const { client, conn } = useClient();
+  const keys = useQueryKeys();
+  return useInfiniteQuery({
+    queryKey: keys.auditLogPages(filters),
+    queryFn: ({ pageParam }) =>
+      client.listAuditLog({ ...filters, limit: AUDIT_LOG_PAGE, cursor: pageParam }),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (last) => last.nextCursor,
+    // The log grows on every mutation, so always revalidate on mount.
+    staleTime: 0,
+    // Silent: a failed read is said on the screen, in place, with Retry.
+    meta: { silent: true },
+    // Another filter keeps the rows up until its own arrive, but never another space's rows.
+    placeholderData: (prev, prevQuery) =>
+      prevQuery?.queryKey[0] === conn.space && prevQuery.queryKey[1] === conn.environment
+        ? prev
+        : undefined,
   });
 }
 

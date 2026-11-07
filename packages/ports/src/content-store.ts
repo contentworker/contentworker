@@ -593,7 +593,7 @@ export interface AuditEntry {
   readonly actor: string;
   /** What happened, e.g. `POST /spaces/:space/environments/:env/entries/:id/published`. */
   readonly action: string;
-  /** The kind of entity affected (e.g. `entry`, `release`, `environment-alias`). */
+  /** The kind of entity affected (e.g. `entry`, `release`, `environment_alias`). */
   readonly targetType?: string;
   readonly targetId?: string;
   /** Result status code of the action. */
@@ -601,11 +601,27 @@ export interface AuditEntry {
   readonly at: string;
 }
 
+/** What an audit listing keeps. Every filter narrows; omitted ones don't apply. */
+export interface AuditQuery {
+  readonly environmentId?: string;
+  readonly actor?: string;
+  readonly action?: string;
+  readonly targetType?: string;
+  readonly targetId?: string;
+  /** The earliest `at` kept, inclusive. */
+  readonly from?: string;
+  /** The latest `at` kept, inclusive. */
+  readonly to?: string;
+  /** Keyset: only entries older than this one in the listing's (`at`, `id`) order. */
+  readonly after?: { readonly at: string; readonly id: string };
+  readonly limit?: number;
+}
+
 /** Append-only audit trail. Entries are never updated or deleted. */
 export interface AuditRepo {
   append(entry: AuditEntry): Promise<void>;
-  /** Lists a space's audit entries, newest first. */
-  list(spaceId: string, query: { environmentId?: string; limit?: number }): Promise<AuditEntry[]>;
+  /** Lists a space's audit entries, newest first: by `at`, then `id`, both descending. */
+  list(spaceId: string, query: AuditQuery): Promise<AuditEntry[]>;
 }
 
 /**

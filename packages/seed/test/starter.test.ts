@@ -111,7 +111,7 @@ describe('installing the starter', { timeout: 30_000 }, () => {
     expect(await listAgentRuns(ctx, scope, {})).toEqual([]);
     expect(await listAgentSchedules(ctx, scope)).toEqual([]);
     expect(await listAgentReviews(ctx, scope)).toEqual([]);
-    expect(await listAuditLog(ctx, 'acme')).toEqual([]);
+    expect((await listAuditLog(ctx, 'acme')).items).toEqual([]);
     const entries = await listPreviewEntries(ctx, scope, { locale: 'en-US', limit: 1000 });
     for (const e of entries) {
       expect(await listComments(ctx, scope, e.id)).toEqual([]);
