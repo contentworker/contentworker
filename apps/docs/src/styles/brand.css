@@ -74,7 +74,7 @@ header.header {
   border-bottom: 1px solid var(--cw-border);
 }
 
-/* The admin's wordmark: the mark in brand, then lowercase "contentworker", semibold, tight. */
+/* The admin's wordmark: the mark in brand, then "ContentWorker", semibold, tight. */
 .site-title img {
   width: 1.25rem;
   height: 1.25rem;

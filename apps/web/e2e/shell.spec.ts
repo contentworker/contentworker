@@ -152,7 +152,7 @@ test('phones get the tab bar, clear of the status bar and home indicator', async
   expect(tab!.y + tab!.height, 'a tab sits above the 34px home indicator').toBeLessThanOrEqual(
     page.viewportSize()!.height - 34,
   );
-  const mark = await page.getByRole('link', { name: 'contentworker overview' }).boundingBox();
+  const mark = await page.getByRole('link', { name: 'ContentWorker overview' }).boundingBox();
   expect(mark!.y, 'the top bar sits below the 47px status bar').toBeGreaterThanOrEqual(47);
 });
 

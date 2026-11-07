@@ -528,10 +528,10 @@ function ShellFrame() {
                 'hit-area -mx-1.5 flex shrink-0 items-center gap-2 rounded-md px-1.5 py-1 font-semibold tracking-title text-base',
                 showNav && 'md:hidden',
               )}
-              aria-label="contentworker overview"
+              aria-label="ContentWorker overview"
             >
               <Mark className="size-5 text-brand" />
-              <span>contentworker</span>
+              <span>ContentWorker</span>
             </Link>
             {/* Where you are, from md (below it the page's own title says so). */}
             {showNav ? <ShellCrumbs /> : null}

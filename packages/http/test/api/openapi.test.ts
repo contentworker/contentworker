@@ -37,7 +37,7 @@ describe('OpenAPI spec + docs UI', () => {
       components: { securitySchemes?: Record<string, unknown> };
     };
     expect(spec.openapi).toMatch(/^3\./);
-    expect(spec.info.title).toBe('contentworker API');
+    expect(spec.info.title).toBe('ContentWorker API');
     expect(spec.components.securitySchemes).toHaveProperty('bearerAuth');
 
     const paths = Object.keys(spec.paths);

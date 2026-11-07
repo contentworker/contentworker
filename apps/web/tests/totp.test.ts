@@ -68,7 +68,7 @@ describe('totp', () => {
 
   it('builds the otpauth URI apps scan', () => {
     expect(otpauthUri('ABCD', 'ann@example.com')).toBe(
-      'otpauth://totp/contentworker%3Aann%40example.com?secret=ABCD&issuer=contentworker&algorithm=SHA1&digits=6&period=30',
+      'otpauth://totp/ContentWorker%3Aann%40example.com?secret=ABCD&issuer=ContentWorker&algorithm=SHA1&digits=6&period=30',
     );
   });
 });

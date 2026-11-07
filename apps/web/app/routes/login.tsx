@@ -100,10 +100,10 @@ export default function Login() {
           </p>
         ) : null}
         <Mark className="size-7 text-brand" />
-        <h1 className="mt-4 font-semibold tracking-title text-2xl">contentworker</h1>
+        <h1 className="mt-4 font-semibold tracking-title text-2xl">ContentWorker</h1>
         <p className="mt-1 text-muted-foreground text-sm">
           {connecting
-            ? 'Sign in to connect an app to contentworker.'
+            ? 'Sign in to connect an app to ContentWorker.'
             : ssoOnly
               ? 'Sign in with your organization’s account.'
               : 'Sign in with your work email.'}

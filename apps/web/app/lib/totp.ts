@@ -14,7 +14,7 @@ export const TOTP_DIGITS = 6;
 /** Steps either side of now that still count, for a phone clock that is a little off. */
 const DRIFT = 1;
 const SECRET_BYTES = 20;
-export const ISSUER = 'contentworker';
+export const ISSUER = 'ContentWorker';
 
 const BASE32 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
 
