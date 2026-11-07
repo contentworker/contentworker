@@ -13,6 +13,22 @@ const state = '.wrangler/e2e';
  */
 const DEVICES = ['iphone', 'iphone-landscape', 'ipad', 'ipad-landscape', 'desktop', 'cms'];
 
+/**
+ * CI runs the suite in four jobs at once, each on its own server, named by `E2E_PART`:
+ * `webkit` (the iPhone, iPad and desktop projects), `axe` (the CMS project's accessibility sweep and
+ * modal focus specs), `cms` (every other CMS spec, so a new one lands here) and `sign-in` (the
+ * projects that sign the first admin up, with no device tests to wait for). Each is about a third
+ * of the suite's time. Unset, the whole suite runs in order, as it does locally.
+ */
+const PARTS = ['webkit', 'axe', 'cms', 'sign-in'] as const;
+const PART = process.env.E2E_PART as (typeof PARTS)[number] | undefined;
+if (PART && !PARTS.includes(PART)) {
+  throw new Error(`E2E_PART is "${PART}"; use ${PARTS.join(', ')} or leave it unset`);
+}
+const AXE = /(accessibility|modal-focus)\.spec\.ts/;
+const partOf = (project: string) =>
+  project === 'cms' ? ['axe', 'cms'] : DEVICES.includes(project) ? ['webkit'] : ['sign-in'];
+
 export default defineConfig({
   testDir: 'e2e',
   globalSetup: './e2e/warm.ts',
@@ -66,13 +82,16 @@ export default defineConfig({
     {
       name: 'cms',
       testMatch:
-        /(cms|workflows|space-access|first-space|accessibility|contrast-settle|modal-focus)\.spec\.ts/,
+        PART === 'axe'
+          ? AXE
+          : /(cms|workflows|space-access|first-space|accessibility|contrast-settle|modal-focus)\.spec\.ts/,
+      testIgnore: PART === 'cms' ? AXE : undefined,
       use: { ...devices['Desktop Chrome'] },
     },
     {
       name: 'auth',
       testMatch: 'login.spec.ts',
-      dependencies: DEVICES,
+      dependencies: PART === 'sign-in' ? [] : DEVICES,
       // Chromium: it keeps the `Secure` session cookie on http://localhost, which WebKit drops.
       use: { ...devices['Desktop Chrome'] },
     },
@@ -91,7 +110,7 @@ export default defineConfig({
       dependencies: ['auth'],
       use: { ...devices['Desktop Chrome'] },
     },
-  ],
+  ].filter((project) => !PART || partOf(project.name).includes(PART)),
   webServer: {
     command: [
       `rm -rf ${state}`,
