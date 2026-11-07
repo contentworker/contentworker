@@ -1,7 +1,7 @@
 ---
 
 name: author-and-publish
-description: Find, create, edit and publish contentworker entries — including versions, releases for atomic multi-entry launches, scheduled publishing and editorial workflow runs and approvals. Use for any content change that should reach the Delivery API.
+description: Find, create, edit and publish ContentWorker entries — including versions, releases for atomic multi-entry launches, scheduled publishing and editorial workflow runs and approvals. Use for any content change that should reach the Delivery API.
 ---
 
 # Author and publish

@@ -1,11 +1,11 @@
 ---
 name: security-model
-description: contentworker's trust boundaries and what to check at each, for security review of a diff or a design. Covers the signed x-cw-principal header from the web Worker to the api, the delivery gateway and its unroutable Delivery entrypoint, API keys and scopes per space, the admin and MCP tokens, OAuth for MCP, human sign-in (passwords, passkeys, TOTP, OIDC, SCIM, setup), preview tokens and signed media URLs, outbound webhooks and fetches, plugins on Worker Loader, secrets at rest under DATA_KEY, untrusted content in model prompts, and CI's supply chain. Preloaded by the security-reviewer agent; use it directly when a change touches auth, roles, scopes, signing, secrets, webhooks, external fetches, plugins or model prompts.
+description: ContentWorker's trust boundaries and what to check at each, for security review of a diff or a design. Covers the signed x-cw-principal header from the web Worker to the api, the delivery gateway and its unroutable Delivery entrypoint, API keys and scopes per space, the admin and MCP tokens, OAuth for MCP, human sign-in (passwords, passkeys, TOTP, OIDC, SCIM, setup), preview tokens and signed media URLs, outbound webhooks and fetches, plugins on Worker Loader, secrets at rest under DATA_KEY, untrusted content in model prompts, and CI's supply chain. Preloaded by the security-reviewer agent; use it directly when a change touches auth, roles, scopes, signing, secrets, webhooks, external fetches, plugins or model prompts.
 ---
 
-# contentworker security model
+# ContentWorker security model
 
-contentworker is one dedicated deployment per customer (no sharing across customers), so the
+ContentWorker is one dedicated deployment per customer (no sharing across customers), so the
 boundaries that matter are _inside_ a deployment: the public internet → the Workers, between the
 web Worker and the api, between spaces and environments, between API keys of different kinds and
 scopes, and between the platform and the code it runs for a customer (plugins, functions, models).

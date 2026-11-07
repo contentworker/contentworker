@@ -189,7 +189,7 @@ without progress (`PURGE_STALE_SECONDS`). The pending purges are the `environmen
 
 ## Importing from other formats
 
-Snapshots move content between contentworker environments. This moves it _in_, from a format
+Snapshots move content between ContentWorker environments. This moves it _in_, from a format
 someone else produced. The routes are `GET …/imports/sources`, `POST …/imports/analyze`,
 `POST …/imports` and `POST …/imports/job` (all `content:write`). A role's grants apply too (below).
 

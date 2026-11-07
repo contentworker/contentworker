@@ -1,4 +1,4 @@
-# Design System: contentworker docs
+# Design System: ContentWorker docs
 
 This file describes `apps/docs`: the Starlight site at docs.contentworker.app and the Scalar page at
 `/api/`. The system is the admin's, Ledger (`DESIGN.md` at the repo root; tokens as data in
@@ -12,7 +12,7 @@ When the code and this file disagree, fix whichever is wrong and say which in th
 The admin is neutral paper and ink, with colour kept for the brand accent, links and status. The docs are the same
 material for the moments you're not in the admin: modeling a type, wiring a webhook, looking up a node or a route.
 Most of the chrome is Starlight's, recoloured and re-set from the admin's tokens rather than
-redrawn. What is contentworker's own is small: the page header, ruled sections, the top bar's
+redrawn. What is ContentWorker's own is small: the page header, ruled sections, the top bar's
 pill, state badges, node cards, and the endpoint index.
 
 - **Match system by default**, as the admin; Light and Dark are one select away. The choice is

@@ -1,6 +1,6 @@
 # Architecture
 
-contentworker is a **ports & adapters (hexagonal)** monorepo that runs entirely at the edge.
+ContentWorker is a **ports & adapters (hexagonal)** monorepo that runs entirely at the edge.
 An edge SQL database is the system of record; edge workers, queues, a key-value cache, object
 storage, stateful edge objects, durable workflows, a vector index, edge inference (through an AI
 gateway), edge image transforms, video streaming, edge email and plugin isolates do the rest.
@@ -29,7 +29,7 @@ and infrastructure is bound only at the edges.
 
 ## Edge workers, split by traffic profile
 
-Each deployment runs five edge workers (plus the docs site on contentworker's own deployment). They
+Each deployment runs five edge workers (plus the docs site on ContentWorker's own deployment). They
 are split by how their traffic behaves, so each has its own CPU limit, placement, sampling rate
 and failure blast radius. `AGENTS.md` lists each worker's role; this table adds where it is
 served and how it is configured. Routes are rendered per deployment by `scripts/fleet.ts`

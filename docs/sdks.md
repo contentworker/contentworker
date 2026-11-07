@@ -145,7 +145,7 @@ client.bookmark: string | undefined     // read-your-writes position (preview); 
   for videos, other kinds and assets processed before it existed. Codegen's `DeliveredAsset`
   prelude declares it.
 
-- **Redirects.** contentworker serves no site, so redirects are data a front end applies.
+- **Redirects.** ContentWorker serves no site, so redirects are data a front end applies.
   `client.redirects()` fetches the enabled set once; `resolveRedirect(path, { locale? })` asks
   Delivery about one path (one request each, so prefer the set). The subpath
   `@contentworker/sdk/redirects` (`packages/sdk/core/src/redirects.ts`, zero dependencies)

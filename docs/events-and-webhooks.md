@@ -1,6 +1,6 @@
 # Events, async backbone & webhooks
 
-contentworker uses a **transactional outbox** so that domain events are emitted exactly when (and
+ContentWorker uses a **transactional outbox** so that domain events are emitted exactly when (and
 only when) their state change commits. The api worker relays new events onto queues right after
 each write; the engine worker consumes them, sweeps the outbox every minute, keeps the media
 worker's gate in line with what is published, and tells the delivery and media workers which cache

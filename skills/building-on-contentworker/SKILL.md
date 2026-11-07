@@ -1,11 +1,11 @@
 ---
 name: building-on-contentworker
-description: Build a website, app or service that reads and writes content in contentworker, a headless CMS. Use when choosing a contentworker SDK, reading published content (Delivery) or drafts (Preview), writing through the Management API, keeping reads consistent after a write, generating TypeScript types from the content model, rendering rich text (including embeds), or deciding how to cache.
+description: Build a website, app or service that reads and writes content in ContentWorker, a headless CMS. Use when choosing a ContentWorker SDK, reading published content (Delivery) or drafts (Preview), writing through the Management API, keeping reads consistent after a write, generating TypeScript types from the content model, rendering rich text (including embeds), or deciding how to cache.
 ---
 
-# Building on contentworker
+# Building on ContentWorker
 
-contentworker serves content as typed JSON, never HTML. Your code picks an API by what it needs,
+ContentWorker serves content as typed JSON, never HTML. Your code picks an API by what it needs,
 types itself from the content model, and renders rich text from a node tree.
 
 ## Pick the API and the key

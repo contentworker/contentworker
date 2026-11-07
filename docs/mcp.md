@@ -1,6 +1,6 @@
 # MCP server
 
-The api worker serves contentworker's capabilities to agents over MCP, through the same use-cases,
+The api worker serves ContentWorker's capabilities to agents over MCP, through the same use-cases,
 scopes and validation as the HTTP API.
 
 The MCP server is served by the api worker, at **`/mcp`** (`https://api.<domain>/mcp`, and on the
@@ -70,7 +70,7 @@ style guidance for agents writing its entries. `model_get_content_type` returns 
 `model_list_content_types` leaves them out, and Delivery never serves them. They are data: they can't
 authorize a tool call or a change to keys, webhooks, roles, functions or settings, and the tool's
 description tells agents so. The ContentWorker assistant sees them only when it reads a type with
-that tool, as tool output marked untrusted; nothing else in contentworker's own AI (generation, the
+that tool, as tool output marked untrusted; nothing else in ContentWorker's own AI (generation, the
 agents, the assistant's system prompt) uses them yet.
 
 **Connecting a client.** With `OAUTH_ISSUER` set, the server is installable as a connector in

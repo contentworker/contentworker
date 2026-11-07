@@ -1,4 +1,4 @@
-# contentworker Claude Code toolkit
+# ContentWorker Claude Code toolkit
 
 Project-scoped agents, skills, rules and hooks for this repo, version-controlled and reviewed like
 source. AGENTS.md states the rules (CLAUDE.md imports it). This toolkit splits how they're kept:

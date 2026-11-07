@@ -1,6 +1,6 @@
 ---
 name: infra-change
-description: Change contentworker's Cloudflare configuration safely across the fleet, and validate that it still deploys. Covers adding or changing a binding, var, queue, bucket, KV namespace, Vectorize index, Durable Object, Workflow, route or compatibility flag in an app's wrangler.jsonc (web, api, delivery, engine, docs); typing it in EdgeEnv; rendering it per deployment in scripts/fleet.ts; creating it in scripts/provision.sh; registry fields (the format in docs/deployment.md); secrets; dry-run bundles and env parity; and ordering the rollout so CI's deploy never needs a resource that doesn't exist yet. Use for any edit to wrangler.jsonc, examples/fleet/, scripts/fleet.ts, scripts/provision.sh or packages/platform/src/env.ts.
+description: Change ContentWorker's Cloudflare configuration safely across the fleet, and validate that it still deploys. Covers adding or changing a binding, var, queue, bucket, KV namespace, Vectorize index, Durable Object, Workflow, route or compatibility flag in an app's wrangler.jsonc (web, api, delivery, engine, docs); typing it in EdgeEnv; rendering it per deployment in scripts/fleet.ts; creating it in scripts/provision.sh; registry fields (the format in docs/deployment.md); secrets; dry-run bundles and env parity; and ordering the rollout so CI's deploy never needs a resource that doesn't exist yet. Use for any edit to wrangler.jsonc, examples/fleet/, scripts/fleet.ts, scripts/provision.sh or packages/platform/src/env.ts.
 ---
 
 # Changing infrastructure

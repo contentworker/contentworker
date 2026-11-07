@@ -1,9 +1,9 @@
 ---
 name: migrating-to-contentworker
-description: Move existing content into contentworker from a WordPress export (WXR), a CSV spreadsheet or a JSON export - model the target types, map source fields, convert HTML to structured rich text, dry-run, import as drafts, publish and verify. Use when migrating a site or catalog into contentworker, re-running an import to pick up changes, or checking that a migration landed completely.
+description: Move existing content into ContentWorker from a WordPress export (WXR), a CSV spreadsheet or a JSON export - model the target types, map source fields, convert HTML to structured rich text, dry-run, import as drafts, publish and verify. Use when migrating a site or catalog into ContentWorker, re-running an import to pick up changes, or checking that a migration landed completely.
 ---
 
-# Migrating to contentworker
+# Migrating to ContentWorker
 
 An import maps records from one file onto one content type and creates **drafts** through the same
 validation as any write. It is planned before it runs: the analysis is the run without the commit.

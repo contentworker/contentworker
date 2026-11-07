@@ -1,6 +1,6 @@
 # Development
 
-How to run contentworker locally, test it, and extend it: setup, suites, adding a use-case, changing
+How to run ContentWorker locally, test it, and extend it: setup, suites, adding a use-case, changing
 the database schema and the schema reference.
 
 ## Prerequisites

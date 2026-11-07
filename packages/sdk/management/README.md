@@ -2,7 +2,7 @@
 
 > A private workspace package. It ships on npm inside [`@contentworker/sdk`](../sdk/README.md) as `@contentworker/sdk/management`; the examples below use that name.
 
-The client for contentworker's Management API: content types, entries and their versions, the
+The client for ContentWorker's Management API: content types, entries and their versions, the
 asset library, bulk jobs, releases, scheduled actions, webhooks, environments and keys. No
 dependencies; it runs on `fetch`. Keep it on a server: a Management token never belongs in a
 browser or app bundle.

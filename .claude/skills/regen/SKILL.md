@@ -1,7 +1,7 @@
 ---
 
 name: regen
-description: Rerun every code generator in contentworker (the docs embed, the MCP skills embed and the docs and diagram themes, which are gitignored build outputs, plus the committed web Worker's types) and show what drifted. Use before committing edits to docs/*.md, packages/http/skills/**, packages/design/src/tokens.ts or apps/web/wrangler.jsonc, or when a drift test (docs, http, design) fails in CI.
+description: Rerun every code generator in ContentWorker (the docs embed, the MCP skills embed and the docs and diagram themes, which are gitignored build outputs, plus the committed web Worker's types) and show what drifted. Use before committing edits to docs/*.md, packages/http/skills/**, packages/design/src/tokens.ts or apps/web/wrangler.jsonc, or when a drift test (docs, http, design) fails in CI.
 ---
 
 # Regenerate generated files

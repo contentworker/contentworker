@@ -10,7 +10,7 @@ https://docs.contentworker.app/guides/cli/ and https://docs.contentworker.app/gu
 | ----------------------- | ------------------------------------------------------ | ------------------------------------------------------- |
 | `packages/http/skills/` | An agent working _in_ a workspace through MCP tools    | Embedded and served by the MCP server ([MCP](./mcp.md)) |
 | `skills/`               | A coding agent building _on_ a workspace: SDKs and CLI | Installed by developers from this repo                  |
-| `.claude/skills/`       | Agents changing contentworker itself                   | This repo's Claude Code toolkit                         |
+| `.claude/skills/`       | Agents changing ContentWorker itself                   | This repo's Claude Code toolkit                         |
 
 The `skills/` ones follow the open `SKILL.md` format: frontmatter with only `name` (the folder
 name) and `description` (what it covers and "Use when …"), a body under 500 lines, and detail in

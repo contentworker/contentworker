@@ -1,7 +1,7 @@
 ---
 
 name: import-content
-description: Bring content from an external file (CSV, JSON and the other formats import_sources lists) into contentworker entries safely — map fields, dry-run the import, run it, then publish. Use for migrations and bulk loads.
+description: Bring content from an external file (CSV, JSON and the other formats import_sources lists) into ContentWorker entries safely — map fields, dry-run the import, run it, then publish. Use for migrations and bulk loads.
 ---
 
 # Import content

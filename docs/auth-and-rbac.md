@@ -1,6 +1,6 @@
 # Authentication & RBAC
 
-contentworker has two kinds of caller and one authorization model:
+ContentWorker has two kinds of caller and one authorization model:
 
 - **People** sign in to the admin web app (`apps/web`) with a password, a passkey, TOTP two-factor
   or OIDC single sign-on. The web worker forwards their API calls to the api with a signed

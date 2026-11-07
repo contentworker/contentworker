@@ -1,4 +1,4 @@
-# contentworker
+# ContentWorker
 
 A composable, **API-first, AI-agentic-first** headless CMS: the AI surface is a first-class
 client rather than a bolt-on. Model structured content once and deliver it anywhere (web, mobile,

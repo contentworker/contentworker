@@ -1,6 +1,6 @@
 ---
 name: ci-triage
-description: Diagnose a failed contentworker GitHub Actions run (CI's verify or devices job, the fleet plan, or one deployment's deploy job), classify it as a code failure, a flake, a Cloudflare API blip, missing provisioning or secrets, or a smoke-test rollback, and take the one safe next step. Use when a PR's checks are red, a merge to main didn't reach a deployment, or the user asks why CI failed.
+description: Diagnose a failed ContentWorker GitHub Actions run (CI's verify or devices job, the fleet plan, or one deployment's deploy job), classify it as a code failure, a flake, a Cloudflare API blip, missing provisioning or secrets, or a smoke-test rollback, and take the one safe next step. Use when a PR's checks are red, a merge to main didn't reach a deployment, or the user asks why CI failed.
 argument-hint: "[run-id | PR number | branch]"
 allowed-tools: Bash(gh run list *) Bash(gh run view *) Bash(gh pr checks *) Bash(gh pr view *)
 ---

@@ -1,6 +1,6 @@
 ---
 name: docs-page
-description: Add or restructure a page in the contentworker docs (the published apps/docs site, or the maintainer docs in docs/ that are embedded for MCP). Use when a new feature, API surface or integration needs its own page, or when a page should split or move. Covers where the page goes, frontmatter, sidebar and index registration, the generated components, the surface map, the writing voice and the checks.
+description: Add or restructure a page in the ContentWorker docs (the published apps/docs site, or the maintainer docs in docs/ that are embedded for MCP). Use when a new feature, API surface or integration needs its own page, or when a page should split or move. Covers where the page goes, frontmatter, sidebar and index registration, the generated components, the surface map, the writing voice and the checks.
 ---
 
 # Adding a docs page
@@ -10,7 +10,7 @@ description: Add or restructure a page in the contentworker docs (the published 
 The published site (`docs.contentworker.app`) is for two readers: people who work in a space
 (model content, edit and publish, run workflows and approvals, manage the team) and developers
 who integrate with one (API keys, the Delivery, Management and Preview APIs, webhooks, SDKs,
-MCP). It is not for people who deploy, configure or develop contentworker.
+MCP). It is not for people who deploy, configure or develop ContentWorker.
 
 Material only someone with the source or a Cloudflare account needs goes in the repo-root `docs/`
 folder instead: plain Markdown, indexed by `docs/README.md`, embedded into

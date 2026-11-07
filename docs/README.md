@@ -1,7 +1,7 @@
-# contentworker documentation
+# ContentWorker documentation
 
-These are the maintainer docs: how contentworker is built and how to run, extend and integrate
-with it. They are not published; the public site is `apps/docs`. contentworker runs entirely at
+These are the maintainer docs: how ContentWorker is built and how to run, extend and integrate
+with it. They are not published; the public site is `apps/docs`. ContentWorker runs entirely at
 the edge, one isolated stack per customer: five edge workers (`apps/web`, `apps/api`,
 `apps/delivery`, `apps/media`, `apps/engine`) on an edge SQL database, with object storage, a
 key-value cache, queues, stateful edge objects, durable workflows, a vector index, edge inference

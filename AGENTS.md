@@ -1,11 +1,11 @@
 # AGENTS.md
 
-The rules every change to contentworker keeps, for people and for every coding agent.
+The rules every change to ContentWorker keeps, for people and for every coding agent.
 `CLAUDE.md` imports this file for Claude Code; change the rules here, not there.
 
 ## What this is
 
-`contentworker` is an API-first, AI-agentic-first headless CMS that runs **entirely on
+ContentWorker is an API-first, AI-agentic-first headless CMS that runs **entirely on
 Cloudflare**: D1 is the system of record, with Workers, Queues, KV, R2, Durable Objects,
 Workflows, Vectorize, Workers AI (through AI Gateway), Images, Stream, Email Sending and Worker
 Loader. Content is **structured, not serialized HTML**: rich text is a typed document tree

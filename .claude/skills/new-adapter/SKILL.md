@@ -1,6 +1,6 @@
 ---
 name: new-adapter
-description: Add a Cloudflare adapter to contentworker. A new subpath of @contentworker/adapters implementing a port, its tests, the test-kit fake, the binding and env wiring in packages/platform, every wrangler.jsonc and the fleet, and the docs. Use when adding a new backing service for an existing port (vector store, queue, blob store, AI or embeddings provider, email, images, video), or a new port with its first adapter.
+description: Add a Cloudflare adapter to ContentWorker. A new subpath of @contentworker/adapters implementing a port, its tests, the test-kit fake, the binding and env wiring in packages/platform, every wrangler.jsonc and the fleet, and the docs. Use when adding a new backing service for an existing port (vector store, queue, blob store, AI or embeddings provider, email, images, video), or a new port with its first adapter.
 argument-hint: "<port> <adapter-name>"
 ---
 
