@@ -65,9 +65,14 @@ function ActivityItem(props: {
   const { row, entryId } = props;
   const { words, viaMcp } = activityAction(row, entryId);
   return (
-    <li className="space-y-1 border-t py-2.5 first:border-t-0 first:pt-0 last:pb-0">
-      {/* Focusable, so Load more can hand the keyboard on to the first row it brought. */}
-      <p tabIndex={-1} data-activity-row="" className="font-medium text-sm outline-none">
+    // Focusable, so Load more can hand the keyboard on to the first row it brought, read whole:
+    // what, who and when. The ring is the buttons' own, as focus must always show.
+    <li
+      tabIndex={-1}
+      data-activity-row=""
+      className="space-y-1 rounded-sm border-t py-2.5 outline-none first:border-t-0 first:pt-0 last:pb-0 focus-visible:ring-3 focus-visible:ring-ring/30"
+    >
+      <p className="font-medium text-sm">
         {words ?? <span className="break-all font-mono font-normal text-xs">{row.action}</span>}
       </p>
       <p className="break-words text-muted-foreground text-xs">
@@ -192,10 +197,13 @@ export function EntryActivity(props: {
             </Button>
           </div>
         ) : null}
-        {/* A failed next page keeps the rows already read, and says so beside them. */}
-        {pages.isFetchNextPageError ? (
+        {/* A failed next page or refresh keeps the rows already read, and says so beside them. */}
+        {pages.isFetchNextPageError || (pages.isRefetchError && !failed) ? (
           <p role="alert" className="text-destructive text-xs">
-            More activity didn’t load. {apiErrorMessage(pages.error)}
+            {pages.isFetchNextPageError
+              ? 'More activity didn’t load.'
+              : 'The activity didn’t refresh; these rows may be out of date.'}{' '}
+            {apiErrorMessage(pages.error)}
           </p>
         ) : null}
         <LoadingStatus>
@@ -203,7 +211,7 @@ export function EntryActivity(props: {
             ? 'Loading the entry’s activity…'
             : failed
               ? ''
-              : `${rows.length}${moreToRead ? '+' : ''} activity rows shown`}
+              : `${rows.length}${moreToRead ? '+' : ''} ${rows.length === 1 && !moreToRead ? 'activity row' : 'activity rows'} shown`}
         </LoadingStatus>
       </CardContent>
     </Card>

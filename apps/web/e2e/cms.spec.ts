@@ -698,9 +698,17 @@ test('the editor’s Activity view lists the entry’s history with the fields e
   await expect(list.getByRole('listitem').first()).toContainText('Saved');
   await expect(list.getByRole('listitem').first()).toContainText('Title');
   await expect(list.getByRole('listitem').last()).toContainText('Created');
+  // A save from the editor shows up beside it, without a Refresh.
+  await page.getByRole('textbox', { name: /Title/ }).fill(`Activity edited ${Date.now()}`);
+  await page.getByRole('button', { name: 'Save draft' }).click();
+  await expect(page.getByText('Draft updated')).toBeVisible();
+  await expect(list.getByRole('listitem')).toHaveCount(3);
   // Kept per browser, as Preview is: the next entry opens on it.
   await page.reload();
-  await expect(pane.getByRole('radio', { name: 'Activity' })).toHaveAttribute('aria-checked', 'true');
+  await expect(pane.getByRole('radio', { name: 'Activity' })).toHaveAttribute(
+    'aria-checked',
+    'true',
+  );
   await pane.getByRole('radio', { name: 'Details' }).click();
   await expect(list).toHaveCount(0);
 });

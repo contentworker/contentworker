@@ -4,7 +4,7 @@
 // paging; and the view offered only to a space administrator, as the audit log is.
 import type { ContentType, EntryChange } from '@contentworker/domain';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { createMemoryRouter, Outlet, RouterProvider } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AuditEntry, AuditLogPage, PreviewEntry } from '~/cms/lib/management';
@@ -216,8 +216,52 @@ describe('the entry’s activity', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Load more' }));
     await waitFor(() => expect(within(list()).getAllByRole('listitem')).toHaveLength(3));
     expect(client.listEntryActivity).toHaveBeenLastCalledWith('e1', { limit: 20, cursor: 'c1' });
-    await waitFor(() => expect(document.activeElement?.textContent).toBe('Unpublished'));
+    // The row itself takes focus, so it is read whole: what, who and when.
+    await waitFor(() => expect(document.activeElement?.textContent).toContain('Unpublished'));
+    expect(document.activeElement?.tagName).toBe('LI');
     expect(screen.queryByRole('button', { name: 'Load more' })).toBeNull();
+  });
+
+  it('keeps the rows it has when the next page fails, and says so beside them', async () => {
+    client.listEntryActivity.mockImplementation(async (_id, q) => {
+      if (q.cursor) throw new Error('The api is down');
+      return { items: [row(1), row(2)], nextCursor: 'c1' };
+    });
+    show();
+    fireEvent.click(await screen.findByRole('button', { name: 'Load more' }));
+    expect((await screen.findByRole('alert')).textContent).toContain('More activity didn’t load.');
+    expect(within(list()).getAllByRole('listitem')).toHaveLength(2);
+  });
+
+  it('keeps the rows it has when a refresh fails, and says they may be out of date', async () => {
+    client.listEntryActivity.mockResolvedValueOnce({ items: [row(1)] });
+    client.listEntryActivity.mockRejectedValueOnce(new Error('The api is down'));
+    show();
+    await screen.findByRole('list', { name: 'Activity, newest first' });
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    expect((await screen.findByRole('alert')).textContent).toContain('may be out of date');
+    expect(within(list()).getAllByRole('listitem')).toHaveLength(1);
+    expect(screen.queryByText('The activity didn’t load')).toBeNull();
+  });
+
+  it('says when a row saved this entry but its part of the detail didn’t fit', async () => {
+    client.listEntryActivity.mockResolvedValue({
+      items: [
+        row(2, {
+          targetType: 'job',
+          targetId: 'j1',
+          detail: { entries: [change({ entryId: 'e9' })], truncated: true },
+        }),
+        row(1, { detail: { entries: [change({ paths: ['fields.title'] })], truncated: true } }),
+      ],
+    });
+    show();
+    const items = within(
+      await screen.findByRole('list', { name: 'Activity, newest first' }),
+    ).getAllByRole('listitem');
+    expect(items[0]?.textContent).toContain('Its changes to this entry aren’t listed');
+    expect(items[1]?.textContent).toContain('Title in de');
+    expect(items[1]?.textContent).toContain('Other changes not listed');
   });
 
   it('calls a duplicate’s row on the copy where it came from', () => {
@@ -273,6 +317,10 @@ describe('the Activity view in the editor', () => {
     editor();
     await screen.findByRole('radio', { name: 'Details' });
     await waitFor(() => expect(client.getSpaceAccess).toHaveBeenCalled());
+    // Its answer, not just its asking: until then nobody is offered Activity.
+    await act(async () => {
+      await client.getSpaceAccess.mock.results[0]?.value;
+    });
     expect(screen.queryByRole('radio', { name: 'Activity' })).toBeNull();
     expect(screen.getByRole('radio', { name: 'Details' }).getAttribute('aria-checked')).toBe(
       'true',

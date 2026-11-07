@@ -181,6 +181,10 @@ export async function listEntryActivity(
 ): Promise<AuditLogPage> {
   // Not an id at all is a mistake, not an entry with no history.
   if (!isEntryId(entryId)) throw new ValidationError([{ field: 'id', message: ENTRY_ID_RULE }]);
+  // An entry id is unique only within its environment, and an empty one would be no filter at all.
+  if (!scope.environmentId) {
+    throw new ValidationError([{ field: 'environment', message: 'an environment is required' }]);
+  }
   return listAuditLog(ctx, scope.spaceId, {
     environmentId: scope.environmentId,
     entryId,

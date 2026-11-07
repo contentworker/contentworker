@@ -159,6 +159,10 @@ describe('an entry’s activity', () => {
       ValidationError,
     );
     await expect(listEntryActivity(ctx, scope, '')).rejects.toBeInstanceOf(ValidationError);
+    // No environment would be every environment's rows for that id: refused, not widened.
+    await expect(
+      listEntryActivity(ctx, { ...scope, environmentId: '' }, ENTRY),
+    ).rejects.toBeInstanceOf(ValidationError);
     await expect(
       listEntryActivity(ctx, scope, ENTRY, { cursor: 'garbage!' }),
     ).rejects.toBeInstanceOf(ValidationError);

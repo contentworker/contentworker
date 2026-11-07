@@ -30,18 +30,23 @@ CREATE INDEX IF NOT EXISTS `audit_log_entries_by_entry`
   ON `audit_log_entries` (`space_id`, `environment_id`, `entry_id`, `at`, `audit_id`);
 
 -- The target, then each entry `detail` names that isn't the target. `detail` is JSON the store
--- wrote; one that isn't (a hand-written row) is read as naming nothing rather than failing the
--- append. OR IGNORE: a row's entries are distinct already, so it only ever ignores a re-run.
+-- wrote; one that isn't, or an element that isn't an object with a text `entryId` (a hand-written
+-- row), names nothing rather than failing the append. An element is read through its path in the
+-- whole document (`fullkey`), never as JSON of its own: a string element's value is bare text, and
+-- reading that as JSON throws. OR IGNORE: a row's entries are distinct already, so it only ever
+-- ignores a re-run.
 CREATE TRIGGER IF NOT EXISTS audit_log_index_entries AFTER INSERT ON audit_log
 BEGIN
   INSERT OR IGNORE INTO audit_log_entries (audit_id, space_id, environment_id, entry_id, at)
   SELECT new.id, new.space_id, new.environment_id, new.target_id, new.at
   WHERE new.target_type = 'entry' AND new.target_id IS NOT NULL;
   INSERT OR IGNORE INTO audit_log_entries (audit_id, space_id, environment_id, entry_id, at)
-  SELECT DISTINCT new.id, new.space_id, new.environment_id, json_extract(e.value, '$.entryId'), new.at
+  SELECT DISTINCT new.id, new.space_id, new.environment_id,
+    json_extract(new.detail, e.fullkey || '.entryId'), new.at
   FROM json_each(CASE WHEN json_valid(new.detail) THEN new.detail ELSE '{}' END, '$.entries') AS e
-  WHERE json_type(e.value, '$.entryId') = 'text'
-    AND NOT (new.target_type IS 'entry' AND new.target_id IS json_extract(e.value, '$.entryId'));
+  WHERE json_type(new.detail, e.fullkey || '.entryId') = 'text'
+    AND NOT (new.target_type IS 'entry'
+      AND new.target_id IS json_extract(new.detail, e.fullkey || '.entryId'));
 END;
 
 INSERT OR IGNORE INTO audit_log_entries (audit_id, space_id, environment_id, entry_id, at)
@@ -50,7 +55,8 @@ FROM audit_log
 WHERE target_type = 'entry' AND target_id IS NOT NULL;
 
 INSERT OR IGNORE INTO audit_log_entries (audit_id, space_id, environment_id, entry_id, at)
-SELECT DISTINCT a.id, a.space_id, a.environment_id, json_extract(e.value, '$.entryId'), a.at
+SELECT DISTINCT a.id, a.space_id, a.environment_id,
+  json_extract(a.detail, e.fullkey || '.entryId'), a.at
 FROM audit_log AS a,
   json_each(CASE WHEN json_valid(a.detail) THEN a.detail ELSE '{}' END, '$.entries') AS e
-WHERE a.detail IS NOT NULL AND json_type(e.value, '$.entryId') = 'text';
+WHERE json_type(a.detail, e.fullkey || '.entryId') = 'text';

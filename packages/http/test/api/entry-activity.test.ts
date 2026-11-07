@@ -207,6 +207,19 @@ describe('an entry’s activity, over REST and MCP', () => {
     expect(refused.text).not.toContain('POST');
   });
 
+  it('refuses an administrator of another space, on both surfaces', async () => {
+    const id = await newEntry();
+    await rest('POST', '/spaces', { spaceId: 's2', name: 'Second', defaultLocale: 'en-US' });
+    const minted = await rest('POST', '/spaces/s2/api-keys', { kind: 'cma', name: 's2 admin' });
+    const token = minted.body.token as string;
+    expect((await rest('GET', '/spaces/s2/audit-log', undefined, token)).status).toBe(200);
+    expect((await rest('GET', `/entries/${id}/activity`, undefined, token)).status).toBe(403);
+    const tool = await connect({ spaceId: 's2', kind: 'cma', scopes: Object.values(SCOPES) });
+    const refused = await tool('entries_list_activity', { id });
+    expect(refused.isError).toBe(true);
+    expect(refused.text).not.toContain('PUT');
+  });
+
   it('refuses an id that cannot be an entry id and an unreadable cursor, on both surfaces', async () => {
     const tool = await connect(admin);
     expect((await rest('GET', '/entries/not%20an%20id/activity')).status).toBe(422);

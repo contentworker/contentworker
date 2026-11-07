@@ -185,21 +185,32 @@ describe('an entry’s activity on D1', { timeout: 60_000 }, () => {
     expect(theirs?.id).toBe(id);
   });
 
-  it('never fails an append over a detail it cannot read, and indexes its target', async () => {
-    const id = `bad-${runId}`;
-    const fresh = `f-${runId}`;
-    await testDb
-      .prepare(
-        'INSERT INTO audit_log (id, space_id, environment_id, actor, action, target_type, target_id, status, at, detail) VALUES (?,?,?,?,?,?,?,?,?,?)',
-      )
-      .bind(id, spaceId, 'main', 'usr_ada', 'PUT', 'entry', fresh, 200, T0, 'not json')
-      .run();
-    const { results } = await testDb
-      .prepare('SELECT entry_id FROM audit_log_entries WHERE audit_id = ?')
-      .bind(id)
-      .all<{ entry_id: string }>();
-    expect(results.map((r) => r.entry_id)).toEqual([fresh]);
-  });
+  it.each([
+    ['not JSON', 'not json', []],
+    [
+      'entries of the wrong shape',
+      '{"entries":["x",1,null,{"entryId":5},{"entryId":"named"}]}',
+      ['named'],
+    ],
+    ['no entries', '{"entries":"x"}', []],
+  ])(
+    'never fails an append over a detail that is %s, and indexes what it can',
+    async (_name, detail, named) => {
+      const id = `bad-${crypto.randomUUID()}`;
+      const fresh = `f-${runId}`;
+      await testDb
+        .prepare(
+          'INSERT INTO audit_log (id, space_id, environment_id, actor, action, target_type, target_id, status, at, detail) VALUES (?,?,?,?,?,?,?,?,?,?)',
+        )
+        .bind(id, spaceId, 'main', 'usr_ada', 'PUT', 'entry', fresh, 200, T0, detail)
+        .run();
+      const { results } = await testDb
+        .prepare('SELECT entry_id FROM audit_log_entries WHERE audit_id = ? ORDER BY entry_id')
+        .bind(id)
+        .all<{ entry_id: string }>();
+      expect(results.map((r) => r.entry_id)).toEqual([fresh, ...named].sort());
+    },
+  );
 
   it('backfills the rows written before it, once', async () => {
     const space = `backfill-${runId}`;

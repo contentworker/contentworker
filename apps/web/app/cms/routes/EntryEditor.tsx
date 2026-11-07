@@ -280,7 +280,10 @@ export function EntryEditor() {
 
   // Re-seed the form from the server after a restore (server state changed).
   const reseedFromServer = async () => {
-    if (entryId) await queryClient.invalidateQueries({ queryKey: keys.entry(entryId) });
+    if (entryId) {
+      void queryClient.invalidateQueries({ queryKey: keys.entryActivityPages(entryId) });
+      await queryClient.invalidateQueries({ queryKey: keys.entry(entryId) });
+    }
     markDirty(false);
     // The aggregate predates the restore; a publish diff based on it would
     // compare the wrong versions.
@@ -355,7 +358,11 @@ export function EntryEditor() {
         // clears unconditionally: the form was removed while it saved, and the URL
         // swap below remounts it from the server state.
         if (!isEdit || dirtyGen.current === genAtSubmit) markDirty(false);
-        if (entryId) void queryClient.invalidateQueries({ queryKey: keys.entry(entryId) });
+        if (entryId) {
+          void queryClient.invalidateQueries({ queryKey: keys.entry(entryId) });
+          // The save's audit row is written before the response: the Activity view can show it.
+          void queryClient.invalidateQueries({ queryKey: keys.entryActivityPages(entryId) });
+        }
         void queryClient.invalidateQueries({ queryKey: keys.entriesRoot });
         if (!isEdit) {
           // Stay in the editor: swap /new for the created entry's edit URL. The swap remounts the
@@ -403,6 +410,7 @@ export function EntryEditor() {
     if (!entryId) return;
     setLastAggregate(agg);
     void queryClient.invalidateQueries({ queryKey: keys.entry(entryId) });
+    void queryClient.invalidateQueries({ queryKey: keys.entryActivityPages(entryId) });
     void queryClient.invalidateQueries({ queryKey: keys.entriesRoot });
     toast.success(
       `Published v${agg.publishedVersion ?? agg.currentVersion}`,
@@ -418,6 +426,7 @@ export function EntryEditor() {
       const agg = await client.unpublishEntry(id);
       if (id === entryId) setLastAggregate(agg);
       void queryClient.invalidateQueries({ queryKey: keys.entry(id) });
+      void queryClient.invalidateQueries({ queryKey: keys.entryActivityPages(id) });
       void queryClient.invalidateQueries({ queryKey: keys.entriesRoot });
       toast.success(`“${about}” is back to draft`);
     });

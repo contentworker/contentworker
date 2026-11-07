@@ -503,10 +503,12 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   happened in words ("Saved", "Published", "Approved an agent's proposal", an unknown action as
   recorded, in mono), who and when (`actorLabel`, `Ago`, "through MCP" for a tool call), and under
   a save the fields it changed by name with their locales in mono. A row that recorded no changes
-  shows no line, never "No field changed"; that is said only when its detail says so. A ghost
-  Refresh in the card's header, a ghost Load more at its foot (focus to the first row it brought),
-  skeleton rows while it reads, `Empty` when there is nothing, a destructive Alert with Try again
-  when it fails. Anyone else never sees the segment, and a remembered Activity opens on Details.
+  shows no line, never "No field changed"; that is said only when its detail says so. It reads
+  again after the editor's own saves, publishes and restores; a ghost Refresh in the card's header
+  covers anyone else's. A ghost Load more at its foot (focus to the first row it brought, which
+  shows the ring), skeleton rows while it reads, `Empty` when there is nothing, a destructive Alert
+  with Try again when the first read fails, and an inline line under the rows kept when a later
+  page or a refresh fails. Anyone else never sees the segment, and a remembered Activity opens on Details.
   A new entry's pane is its preview alone. Details opens on **who wrote it**, a
   card of its own that never folds away (two lines read faster than a toggle; no card inside it):
   "Created by" with the date (`When`) and "Last edited by" with how long ago (`Ago`), each writer
