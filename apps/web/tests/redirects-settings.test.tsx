@@ -112,12 +112,12 @@ describe('Settings → Redirects', () => {
         }),
       ]),
     );
-    const row = (await screen.findByText('/blog/a')).closest('tr') as HTMLElement;
+    const row = (await screen.findByText('/blog/a')).closest('li') as HTMLElement;
     expect(within(row).getByText('From a slug change')).toBeTruthy();
-    expect(within(row).getByText('de')).toBeTruthy();
+    expect(within(row).getByText('Locale de')).toBeTruthy();
     expect(within(row).getByText('308')).toBeTruthy();
-    const plain = screen.getByText('/old').closest('tr') as HTMLElement;
-    expect(within(plain).getByText('All')).toBeTruthy();
+    const plain = screen.getByText('/old').closest('li') as HTMLElement;
+    expect(within(plain).getByText('All locales')).toBeTruthy();
   });
 
   it('says how to start when there are none', async () => {

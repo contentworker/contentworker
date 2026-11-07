@@ -8,10 +8,9 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-  AlertDialogTrigger,
 } from '@contentworker/ui/alert-dialog';
 import { Button } from '@contentworker/ui/button';
-import { Card, CardContent, CardHeader } from '@contentworker/ui/card';
+import { Catalog, CatalogRow, CatalogTile } from '@contentworker/ui/catalog';
 import { Checkbox } from '@contentworker/ui/checkbox';
 import {
   Dialog,
@@ -22,22 +21,21 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@contentworker/ui/dialog';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@contentworker/ui/dropdown-menu';
 import { Input } from '@contentworker/ui/input';
 import { Label } from '@contentworker/ui/label';
-import {
-  Table,
-  TableBody,
-  Td as TableCell,
-  Th as TableHead,
-  TableHead as TableHeader,
-  Tr as TableRow,
-} from '@contentworker/ui/table';
-import { Puzzle } from 'lucide-react';
+import { MoreHorizontalIcon, Puzzle } from 'lucide-react';
 import { Fragment, useState } from 'react';
 import { Confirmation } from '~/cms/components/ai/Confirmation';
 import { DiscardAsk, GuardCancel, useDiscardGuard } from '~/cms/components/discard-guard';
 import { PluginSettingsSheet } from '~/cms/components/PluginSettingsSheet';
-import { EmptyState } from '~/cms/components/page';
+import { EmptyState, Section } from '~/cms/components/page';
 import { ToneBadge } from '~/cms/components/status';
 import {
   type InspectedPluginPackage,
@@ -101,21 +99,17 @@ export function Plugins(props: { client: ManagementClient }) {
   };
 
   return (
-    <Card>
-      <CardHeader className="flex flex-row items-start justify-between gap-4">
-        <div>
-          <h2 className="font-heading text-base font-medium">Plugins</h2>
-          <p className="text-sm text-muted-foreground">
-            Code that runs inside a write, before it lands — it can change an entry, add validation
-            errors, or refuse the operation. Each plugin runs in its own sandbox with no network
-            access, and can only do what someone approved here.
-          </p>
-        </div>
-        <Button type="button" onClick={() => setInstalling(true)}>
-          Install plugin
-        </Button>
-      </CardHeader>
-      <CardContent>
+    <>
+      <Section
+        title="Plugins"
+        description="Code that runs inside a write, before it lands — it can change an entry, add validation errors, or refuse the operation. Each plugin runs in its own sandbox with no network access, and can only do what someone approved here."
+        flush={plugins.length > 0}
+        actions={
+          <Button type="button" onClick={() => setInstalling(true)}>
+            Install plugin
+          </Button>
+        }
+      >
         {plugins.length === 0 ? (
           <EmptyState
             icon={Puzzle}
@@ -123,42 +117,29 @@ export function Plugins(props: { client: ManagementClient }) {
             description="A plugin is a manifest and a bundle. Installing one shows you exactly what it is asking to do before anything runs."
           />
         ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Plugin</TableHead>
-                <TableHead>Runs on</TableHead>
-                <TableHead>Can</TableHead>
-                <TableHead className="w-28">Status</TableHead>
-                <TableHead className="w-56" />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {plugins.map((p) => (
-                <PluginRow
-                  key={p.id}
-                  plugin={p}
-                  onToggle={(enabled) =>
-                    act(enabled ? `${p.name} enabled` : `${p.name} disabled`, () =>
-                      client.setPluginEnabled(p.id, enabled),
-                    )
-                  }
-                  onUninstall={() =>
-                    act(`${p.name} uninstalled`, () => client.uninstallPlugin(p.id))
-                  }
-                  onApprove={(approved) =>
-                    act(`${p.name}: capabilities approved`, () =>
-                      client.approvePluginCapabilities(p.id, approved),
-                    )
-                  }
-                  onUpgrade={() => setUpgrading(p)}
-                  onSettings={() => setConfiguring(p)}
-                />
-              ))}
-            </TableBody>
-          </Table>
+          <Catalog aria-label="Plugins">
+            {plugins.map((p) => (
+              <PluginRow
+                key={p.id}
+                plugin={p}
+                onToggle={(enabled) =>
+                  act(enabled ? `${p.name} enabled` : `${p.name} disabled`, () =>
+                    client.setPluginEnabled(p.id, enabled),
+                  )
+                }
+                onUninstall={() => act(`${p.name} uninstalled`, () => client.uninstallPlugin(p.id))}
+                onApprove={(approved) =>
+                  act(`${p.name}: capabilities approved`, () =>
+                    client.approvePluginCapabilities(p.id, approved),
+                  )
+                }
+                onUpgrade={() => setUpgrading(p)}
+                onSettings={() => setConfiguring(p)}
+              />
+            ))}
+          </Catalog>
         )}
-      </CardContent>
+      </Section>
 
       <InstallPluginDialog
         open={installing}
@@ -203,7 +184,7 @@ export function Plugins(props: { client: ManagementClient }) {
           }}
         />
       )}
-    </Card>
+    </>
   );
 }
 
@@ -218,6 +199,7 @@ function PluginRow(props: {
   const { plugin } = props;
   const granted = grantOf(plugin);
   const [reviewing, setReviewing] = useState(false);
+  const [uninstalling, setUninstalling] = useState(false);
   const [approved, setApproved] = useState<string[]>([]);
   // What it asked for and did not get. Shown because a plugin behaving oddly is
   // usually a plugin doing without something, and that is invisible otherwise.
@@ -233,105 +215,140 @@ function PluginRow(props: {
 
   return (
     <Fragment>
-      <TableRow>
-        <TableCell>
-          <div className="font-medium">{plugin.name}</div>
-          <div className="text-xs text-muted-foreground">
-            {plugin.id} · v{plugin.version}
-          </div>
-        </TableCell>
-        <TableCell className="text-muted-foreground">{hookText(plugin.hooks)}</TableCell>
-        <TableCell className="text-muted-foreground">
-          <div className="max-w-[280px]" title={granted.join(', ')}>
-            {granted.length === 0
-              ? 'Nothing — it can only inspect what it is given'
-              : granted.map(capabilityLabel).join(', ')}
-          </div>
-          {declined.length > 0 && (
-            <div className="mt-1 text-xs text-muted-foreground">
-              Asked for, not granted: {declined.map(capabilityLabel).join(', ')}
-            </div>
-          )}
-        </TableCell>
-        <TableCell>
-          {/* Text, not color alone. A disabled plugin is a normal resting state,
-              not a fault, so it reads as neutral; one waiting on a capability
-              review is the one that needs attention. */}
-          {plugin.needsReapproval ? (
+      <CatalogRow
+        media={
+          <CatalogTile>
+            <Puzzle aria-hidden="true" />
+          </CatalogTile>
+        }
+        title={plugin.name}
+        meta={
+          <span className="flex flex-wrap gap-x-2">
+            <span className="break-all font-mono">{plugin.id}</span>
+            <span>v{plugin.version}</span>
+            <span>
+              {plugin.hooks.length === 0 ? 'Runs on nothing' : `Runs on ${hookText(plugin.hooks)}`}
+            </span>
+            <span title={granted.join(', ')}>
+              {granted.length === 0
+                ? 'Can only inspect what it is given'
+                : `Can: ${granted.map(capabilityLabel).join(', ')}`}
+            </span>
+            {declined.length > 0 && (
+              <span>Asked for, not granted: {declined.map(capabilityLabel).join(', ')}</span>
+            )}
+          </span>
+        }
+        aside={
+          // Text, not color alone. A disabled plugin is a normal resting state, not a fault, so it
+          // reads as neutral; one waiting on a capability review is the one that needs attention.
+          plugin.needsReapproval ? (
             <ToneBadge tone="wait" label="Needs review" />
           ) : (
             <ToneBadge
               tone={plugin.enabled ? 'ok' : 'idle'}
               label={plugin.enabled ? 'Running' : 'Disabled'}
             />
-          )}
-        </TableCell>
-        <TableCell className="text-right">
-          {blocked ? (
-            <Button type="button" variant="ghost" size="sm" onClick={review}>
-              Review access
-            </Button>
-          ) : (
-            <>
+          )
+        }
+        actions={
+          <span className="flex justify-end gap-1">
+            {/* Access stays out of the ⋯: this screen is a consent surface first. */}
+            {blocked ? (
               <Button
                 type="button"
                 variant="ghost"
-                size="sm"
-                onClick={() => props.onToggle(!plugin.enabled)}
+                size="xs"
+                aria-label={`Review access for “${plugin.name}”`}
+                onClick={review}
               >
-                {plugin.enabled ? 'Disable' : 'Enable'}
+                Review access
               </Button>
-              <Button type="button" variant="ghost" size="sm" onClick={review}>
-                Access
-              </Button>
-            </>
-          )}
-          {/* Named per plugin: a column of identical "Settings" buttons says nothing to a
-              screen reader listing the page's buttons. */}
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            aria-label={`${plugin.name} settings`}
-            onClick={props.onSettings}
-          >
-            Settings
-          </Button>
-          <Button type="button" variant="ghost" size="sm" onClick={props.onUpgrade}>
-            Upgrade
-          </Button>
-          <UninstallButton name={plugin.name} onConfirm={props.onUninstall} />
-        </TableCell>
-      </TableRow>
+            ) : (
+              <>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="xs"
+                  aria-label={`${plugin.enabled ? 'Disable' : 'Enable'} “${plugin.name}”`}
+                  onClick={() => props.onToggle(!plugin.enabled)}
+                >
+                  {plugin.enabled ? 'Disable' : 'Enable'}
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="xs"
+                  aria-label={`Access for “${plugin.name}”`}
+                  onClick={review}
+                >
+                  Access
+                </Button>
+              </>
+            )}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-xs"
+                  aria-label={`More actions for “${plugin.name}”`}
+                >
+                  <MoreHorizontalIcon aria-hidden="true" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-auto min-w-40">
+                {/* Named per plugin: a list of identical "Settings" says nothing to a screen reader
+                    going through the page's controls. */}
+                <DropdownMenuItem
+                  aria-label={`${plugin.name} settings`}
+                  onSelect={props.onSettings}
+                >
+                  Settings…
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={props.onUpgrade}>Upgrade…</DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem variant="destructive" onSelect={() => setUninstalling(true)}>
+                  Uninstall…
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </span>
+        }
+      />
+      <UninstallDialog
+        name={plugin.name}
+        open={uninstalling}
+        onOpenChange={setUninstalling}
+        onConfirm={props.onUninstall}
+      />
       {reviewing && (
-        <TableRow>
-          <TableCell colSpan={5} className="whitespace-normal">
-            <Confirmation
-              title={`Approve what “${plugin.name}” can do?`}
-              note={
-                plugin.needsReapproval
-                  ? 'It was installed before plugins declared capabilities, so it is shown asking for exactly what it already has. Keep it or narrow it.'
-                  : widens
-                    ? 'Granting more stops the plugin until you enable it again.'
-                    : 'It keeps its current state; the change applies from its next run.'
-              }
-              applyLabel={widens ? 'Approve and disable' : 'Approve'}
-              dismissLabel="Cancel"
-              onDismiss={() => setReviewing(false)}
-              onApply={() => {
-                setReviewing(false);
-                void props.onApprove(approved);
-              }}
-            >
-              <CapabilityChoices
-                requested={plugin.requestedCapabilities}
-                approved={approved}
-                onChange={setApproved}
-                idPrefix={`review-${plugin.id}`}
-              />
-            </Confirmation>
-          </TableCell>
-        </TableRow>
+        <li>
+          <Confirmation
+            title={`Approve what “${plugin.name}” can do?`}
+            note={
+              plugin.needsReapproval
+                ? 'It was installed before plugins declared capabilities, so it is shown asking for exactly what it already has. Keep it or narrow it.'
+                : widens
+                  ? 'Granting more stops the plugin until you enable it again.'
+                  : 'It keeps its current state; the change applies from its next run.'
+            }
+            applyLabel={widens ? 'Approve and disable' : 'Approve'}
+            dismissLabel="Cancel"
+            onDismiss={() => setReviewing(false)}
+            onApply={() => {
+              setReviewing(false);
+              void props.onApprove(approved);
+            }}
+          >
+            <CapabilityChoices
+              requested={plugin.requestedCapabilities}
+              approved={approved}
+              onChange={setApproved}
+              idPrefix={`review-${plugin.id}`}
+            />
+          </Confirmation>
+        </li>
       )}
     </Fragment>
   );
@@ -405,14 +422,15 @@ function CapabilityChoices(props: {
   );
 }
 
-function UninstallButton(props: { name: string; onConfirm: () => void }) {
+/** Asks before uninstalling. Opened from the row's ⋯, and closing goes back to it. */
+function UninstallDialog(props: {
+  name: string;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onConfirm: () => void;
+}) {
   return (
-    <AlertDialog>
-      <AlertDialogTrigger asChild>
-        <Button type="button" variant="ghost" size="sm" className="text-destructive">
-          Uninstall
-        </Button>
-      </AlertDialogTrigger>
+    <AlertDialog open={props.open} onOpenChange={props.onOpenChange}>
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>Uninstall “{props.name}”?</AlertDialogTitle>

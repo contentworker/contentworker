@@ -13,9 +13,25 @@ import {
 import { Badge } from '@contentworker/ui/badge';
 import { Button } from '@contentworker/ui/button';
 import { Card, CardContent, CardHeader } from '@contentworker/ui/card';
+import {
+  Catalog,
+  CatalogEmpty,
+  CatalogRow,
+  CatalogTile,
+  ListSearch,
+  ListToolbar,
+} from '@contentworker/ui/catalog';
 import { Checkbox } from '@contentworker/ui/checkbox';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@contentworker/ui/dropdown-menu';
 import { Input } from '@contentworker/ui/input';
 import { Label } from '@contentworker/ui/label';
+import { Segmented, SegmentedItem } from '@contentworker/ui/segmented';
 import {
   Select,
   SelectContent,
@@ -23,15 +39,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@contentworker/ui/select';
-import {
-  Table,
-  TableBody,
-  Td as TableCell,
-  Th as TableHead,
-  TableHead as TableHeader,
-  Tr as TableRow,
-} from '@contentworker/ui/table';
-import { KeyRound } from 'lucide-react';
+import { KeyRound, MoreHorizontalIcon, ShieldCheck, Signpost, Webhook } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { AiActions } from '~/cms/components/AiActions';
 import { AppExtensions } from '~/cms/components/AppExtensions';
@@ -44,7 +52,7 @@ import { ConfirmButton } from '~/cms/components/InlineConfirm';
 import { LocaleSettings } from '~/cms/components/LocaleSettings';
 import { Menus } from '~/cms/components/Menus';
 import { Plugins } from '~/cms/components/Plugins';
-import { PageHeader } from '~/cms/components/page';
+import { PageHeader, Section } from '~/cms/components/page';
 import { Redirects } from '~/cms/components/Redirects';
 import { RoleAccessSheet } from '~/cms/components/RoleAccessSheet';
 import { StatusBadge } from '~/cms/components/status';
@@ -68,6 +76,11 @@ import { describeGrants, saveRoleGrants } from '../lib/role-grants';
 import { useToast } from '../lib/toast';
 import { DEFAULT_SETTINGS_SECTION } from './layout/nav';
 import { SettingsNav } from './layout/SettingsNav';
+
+/** Why a filtered list shows nothing, and the way out. */
+function NoMatches(props: { what: string; onClear: () => void }) {
+  return <CatalogEmpty onClear={props.onClear}>No {props.what} match.</CatalogEmpty>;
+}
 
 /** What each `/settings/:section` renders. Ids and grouping live in layout/nav.ts. */
 const SECTION_BODY: Record<string, (client: ManagementClient) => React.ReactNode> = {
@@ -189,103 +202,102 @@ function Environments(props: { client: ManagementClient }) {
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <h2 className="font-heading font-medium text-base">Aliases</h2>
-          <p className="text-muted-foreground text-sm">
-            A repointable pointer to an environment. Use it as the environment in any API call;
-            repoint it for an atomic blue/green cutover.
-          </p>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <form onSubmit={save} className="flex flex-wrap items-end gap-2">
-            <div className="space-y-1.5">
-              <Label htmlFor="alias-name">Alias</Label>
-              <Input
-                id="alias-name"
-                value={alias}
-                onChange={(e) => setAlias(e.target.value)}
-                placeholder="production"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label>Target environment</Label>
-              <Select value={target} onValueChange={setPickedTarget}>
-                <SelectTrigger aria-label="Target environment" className="w-[200px]">
-                  <SelectValue placeholder="Environment" />
-                </SelectTrigger>
-                <SelectContent>
-                  {environments.map((e) => (
-                    <SelectItem key={e.id} value={e.id}>
-                      {e.id}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <Button type="submit" disabled={!alias.trim() || !target || busy}>
-              Save alias
-            </Button>
-          </form>
-
-          {aliases.length === 0 ? (
-            <p className="text-muted-foreground text-sm">No aliases yet.</p>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Alias</TableHead>
-                  <TableHead>Target</TableHead>
-                  <TableHead className="w-40">
-                    <span className="sr-only">Actions</span>
-                  </TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {aliases.map((a) => (
-                  <TableRow key={a.alias}>
-                    <TableCell className="font-medium">{a.alias}</TableCell>
-                    <TableCell>
-                      <Select
-                        value={a.targetEnvironmentId}
-                        onValueChange={(v) => repoint(a.alias, v)}
-                      >
-                        <SelectTrigger
-                          aria-label={`Target environment for ${a.alias}`}
-                          className="h-8 w-[180px]"
-                        >
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {environments.map((e) => (
-                            <SelectItem key={e.id} value={e.id}>
-                              {e.id}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </TableCell>
-                    <TableCell>
-                      <ConfirmButton
-                        message={`Delete the alias “${a.alias}”?`}
-                        note="Clients addressing it stop resolving. This can’t be undone."
-                        confirmLabel="Delete alias"
-                        onConfirm={() => void remove(a.alias)}
-                      >
-                        {(ask) => (
-                          <Button type="button" variant="ghost" size="sm" onClick={ask}>
-                            Delete
-                          </Button>
-                        )}
-                      </ConfirmButton>
-                    </TableCell>
-                  </TableRow>
+      <Section
+        title="Aliases"
+        description="A repointable pointer to an environment. Use it as the environment in any API call; repoint it for an atomic blue/green cutover."
+        flush
+      >
+        <form onSubmit={save} className="flex flex-wrap items-end gap-2 px-5 py-4">
+          <div className="space-y-1.5">
+            <Label htmlFor="alias-name">Alias</Label>
+            <Input
+              id="alias-name"
+              value={alias}
+              onChange={(e) => setAlias(e.target.value)}
+              placeholder="production"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Target environment</Label>
+            <Select value={target} onValueChange={setPickedTarget}>
+              <SelectTrigger aria-label="Target environment" className="w-[200px]">
+                <SelectValue placeholder="Environment" />
+              </SelectTrigger>
+              <SelectContent>
+                {environments.map((e) => (
+                  <SelectItem key={e.id} value={e.id}>
+                    {e.id}
+                  </SelectItem>
                 ))}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
+              </SelectContent>
+            </Select>
+          </div>
+          <Button type="submit" disabled={!alias.trim() || !target || busy}>
+            Save alias
+          </Button>
+        </form>
+
+        {aliases.length === 0 ? (
+          <p className="border-t px-5 py-4 text-muted-foreground text-sm">No aliases yet.</p>
+        ) : (
+          <Catalog aria-label="Aliases" className="border-t">
+            {aliases.map((a) => (
+              <CatalogRow
+                key={a.alias}
+                media={
+                  <CatalogTile>
+                    <Signpost aria-hidden="true" />
+                  </CatalogTile>
+                }
+                title={a.alias}
+                aside={
+                  <span className="flex items-center gap-2">
+                    <span className="caption">Target</span>
+                    <Select
+                      value={a.targetEnvironmentId}
+                      onValueChange={(v) => repoint(a.alias, v)}
+                    >
+                      <SelectTrigger
+                        aria-label={`Target environment for ${a.alias}`}
+                        className="h-8 w-[180px]"
+                      >
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {environments.map((e) => (
+                          <SelectItem key={e.id} value={e.id}>
+                            {e.id}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </span>
+                }
+                actions={
+                  <ConfirmButton
+                    message={`Delete the alias “${a.alias}”?`}
+                    note="Clients addressing it stop resolving. This can’t be undone."
+                    confirmLabel="Delete alias"
+                    onConfirm={() => void remove(a.alias)}
+                  >
+                    {(ask) => (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="xs"
+                        aria-label={`Delete the alias “${a.alias}”`}
+                        onClick={ask}
+                      >
+                        Delete
+                      </Button>
+                    )}
+                  </ConfirmButton>
+                }
+              />
+            ))}
+          </Catalog>
+        )}
+      </Section>
 
       <BranchMerge client={client} environments={environments} />
     </div>
@@ -352,101 +364,113 @@ function RolesSettings(props: { client: ManagementClient }) {
   };
 
   return (
-    <Card>
-      <CardHeader>
-        <h2 className="font-heading text-base font-medium">Roles</h2>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <form className="flex flex-wrap items-center gap-2" onSubmit={create}>
-          <Input
-            className="w-64"
-            placeholder="Role name"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-          />
-          <Button type="submit" disabled={busy}>
-            Create role
-          </Button>
-        </form>
-        <Table stack="cards" caption="Roles, their scopes and content access">
-          <TableHeader>
-            <TableRow>
-              <TableHead>Name</TableHead>
-              <TableHead>Scopes</TableHead>
-              <TableHead>Content</TableHead>
-              <TableHead className="w-24">
-                <span className="sr-only">Actions</span>
-              </TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {roles.map((role) => (
-              <TableRow key={role.id}>
-                <TableCell>
-                  <span className="flex flex-wrap items-center gap-2">
-                    {role.name}
-                    {role.preset ? <Badge variant="outline">Built-in</Badge> : null}
-                  </span>
-                </TableCell>
-                <TableCell label="Scopes" className="text-muted-foreground text-sm">
-                  {role.scopes.join(', ')}
-                </TableCell>
-                <TableCell label="Content" className="text-muted-foreground text-sm">
-                  {describeGrants(role.contentGrants, typeNames)}
-                </TableCell>
-                <TableCell>
-                  <div className="flex justify-end gap-1">
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      aria-label={`Content access for ${role.name}`}
-                      onClick={() => setAccessFor(role)}
-                    >
-                      Access
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => void clone(role.id, role.name)}
-                    >
-                      Clone
-                    </Button>
-                    {role.preset ? null : (
-                      <ConfirmDialog
-                        message={`Delete the role “${role.name}”?`}
-                        note="This can’t be undone."
-                        confirmLabel="Delete role"
-                        onConfirm={() => remove(role.id)}
-                      >
-                        {(ask) => (
-                          <Button type="button" variant="ghost" size="sm" onClick={ask}>
-                            Delete
+    <Section title="Roles" flush>
+      <form className="flex flex-wrap items-center gap-2 px-5 py-4" onSubmit={create}>
+        <Input
+          className="w-64"
+          placeholder="Role name"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+        />
+        <Button type="submit" disabled={busy}>
+          Create role
+        </Button>
+      </form>
+      <Catalog aria-label="Roles, their scopes and content access" className="border-t">
+        {roles.map((role) => (
+          <CatalogRow
+            key={role.id}
+            media={
+              <CatalogTile>
+                <ShieldCheck aria-hidden="true" />
+              </CatalogTile>
+            }
+            title={
+              <span className="flex flex-wrap items-center gap-2">
+                {role.name}
+                {role.preset ? <Badge variant="outline">Built-in</Badge> : null}
+              </span>
+            }
+            meta={
+              <span className="flex flex-wrap gap-x-2">
+                <span>Scopes: {role.scopes.join(', ') || 'None'}</span>
+                <span>Content: {describeGrants(role.contentGrants, typeNames)}</span>
+              </span>
+            }
+            actions={
+              <span className="flex items-center gap-1">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="xs"
+                  aria-label={`Content access for ${role.name}`}
+                  onClick={() => setAccessFor(role)}
+                >
+                  Access
+                </Button>
+                {role.preset ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="xs"
+                    aria-label={`Clone “${role.name}”`}
+                    onClick={() => void clone(role.id, role.name)}
+                  >
+                    Clone
+                  </Button>
+                ) : (
+                  <ConfirmDialog
+                    message={`Delete the role “${role.name}”?`}
+                    note="This can’t be undone."
+                    confirmLabel="Delete role"
+                    onConfirm={() => remove(role.id)}
+                  >
+                    {(ask) => (
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon-xs"
+                            aria-label={`More actions for ${role.name}`}
+                          >
+                            <MoreHorizontalIcon aria-hidden="true" />
                           </Button>
-                        )}
-                      </ConfirmDialog>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="w-auto min-w-40">
+                          <DropdownMenuItem onSelect={() => void clone(role.id, role.name)}>
+                            Clone
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem variant="destructive" onSelect={ask}>
+                            Delete…
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     )}
-                  </div>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-        {accessFor ? (
-          <RoleAccessSheet
-            key={accessFor.id}
-            role={accessFor}
-            contentTypes={contentTypes}
-            open
-            onOpenChange={(o) => !o && setAccessFor(null)}
-            onSave={(grants) => saveAccess(accessFor, grants)}
+                  </ConfirmDialog>
+                )}
+              </span>
+            }
           />
-        ) : null}
-      </CardContent>
-    </Card>
+        ))}
+      </Catalog>
+      {accessFor ? (
+        <RoleAccessSheet
+          key={accessFor.id}
+          role={accessFor}
+          contentTypes={contentTypes}
+          open
+          onOpenChange={(o) => !o && setAccessFor(null)}
+          onSave={(grants) => saveAccess(accessFor, grants)}
+        />
+      ) : null}
+    </Section>
   );
 }
+
+/** Which keys the list shows. */
+type KeyFilter = 'all' | 'active' | 'revoked';
 
 function ApiKeys(props: { client: ManagementClient }) {
   const { client } = props;
@@ -458,7 +482,10 @@ function ApiKeys(props: { client: ManagementClient }) {
   const [busy, setBusy] = useState(false);
   // The raw token is shown exactly once, right after minting.
   const [minted, setMinted] = useState<CreatedApiKey>();
+  const [query, setQuery] = useState('');
+  const [show, setShow] = useState<KeyFilter>('all');
 
+  // The api lists every key of the space, so filtering here can't miss one.
   const keys = useScopedQuery(['api-keys'], () => client.listApiKeys()).data ?? [];
   const roles = useScopedQuery(['roles'], () => client.listRoles()).data ?? [];
 
@@ -466,6 +493,16 @@ function ApiKeys(props: { client: ManagementClient }) {
     const byId = new Map(roles.map((r) => [r.id, r.name]));
     return (id?: string) => (id ? (byId.get(id) ?? id) : undefined);
   }, [roles]);
+
+  const needle = query.trim().toLowerCase();
+  const shown = keys.filter(
+    (k) =>
+      (show === 'all' || k.revoked === (show === 'revoked')) &&
+      (!needle ||
+        `${k.name ?? ''} ${keyKindLabel(k.kind)} ${roleName(k.roleId) ?? ''} ${k.scopes.join(' ')}`
+          .toLowerCase()
+          .includes(needle)),
+  );
 
   const create = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -499,12 +536,9 @@ function ApiKeys(props: { client: ManagementClient }) {
   };
 
   return (
-    <Card>
-      <CardHeader>
-        {/* Explicit heading element — the e2e asserts getByRole('heading', { name: 'API keys' }). */}
-        <h2 className="font-heading text-base font-medium">API keys</h2>
-      </CardHeader>
-      <CardContent className="space-y-4">
+    // Section's title is an <h2>: the e2e asserts getByRole('heading', { name: 'API keys' }).
+    <Section title="API keys" flush>
+      <div className="space-y-4 px-5 py-4">
         {minted && (
           <Alert>
             <KeyRound />
@@ -565,63 +599,82 @@ function ApiKeys(props: { client: ManagementClient }) {
             {busy ? 'Creating…' : 'Create key'}
           </Button>
         </form>
+      </div>
 
-        <Table edge="flush" stack="cards" caption="API keys">
-          <TableHeader>
-            <TableRow>
-              <TableHead className="w-20">Kind</TableHead>
-              <TableHead>Name</TableHead>
-              <TableHead>Role</TableHead>
-              <TableHead>Scopes</TableHead>
-              <TableHead className="w-24">Status</TableHead>
-              <TableHead className="w-24">
-                <span className="sr-only">Actions</span>
-              </TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {keys.map((k) => (
-              <TableRow key={k.id}>
-                <TableCell>
-                  <Badge variant="outline" title={keyKindApi(k.kind)}>
-                    {keyKindLabel(k.kind)}
-                  </Badge>
-                </TableCell>
-                <TableCell label="Name" className="font-mono text-xs">
-                  {k.name ?? <span className="text-muted-foreground">—</span>}
-                </TableCell>
-                <TableCell label="Role" className="text-muted-foreground">
-                  {k.roleId ? roleName(k.roleId) : '—'}
-                </TableCell>
-                <TableCell label="Scopes" className="text-muted-foreground">
-                  <div className="max-w-[360px] truncate" title={k.scopes.join(', ')}>
-                    {k.scopes.join(', ')}
-                  </div>
-                </TableCell>
-                <TableCell label="Status">
-                  <StatusBadge status={k.revoked ? 'revoked' : 'active'} />
-                </TableCell>
-                <TableCell className="text-right">
-                  {!k.revoked && (
-                    <RevokeKeyButton
-                      name={k.name ?? `${keyKindLabel(k.kind)} key`}
-                      onConfirm={() => revoke(k.id)}
-                    />
-                  )}
-                </TableCell>
-              </TableRow>
-            ))}
-            {keys.length === 0 && (
-              <TableRow>
-                <TableCell colSpan={6} className="text-muted-foreground">
-                  No API keys yet.
-                </TableCell>
-              </TableRow>
-            )}
-          </TableBody>
-        </Table>
-      </CardContent>
-    </Card>
+      {keys.length === 0 ? (
+        <p className="border-t px-5 py-4 text-muted-foreground text-sm">No API keys yet.</p>
+      ) : (
+        <>
+          <ListToolbar className="border-t" summary={`${shown.length} shown`}>
+            <ListSearch
+              label="Search API keys"
+              placeholder="Search names, roles and scopes"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onClear={() => setQuery('')}
+            />
+            <Segmented
+              aria-label="Show API keys"
+              value={show}
+              onValueChange={(v) => setShow(v as KeyFilter)}
+            >
+              <SegmentedItem value="all">All</SegmentedItem>
+              <SegmentedItem value="active">Active</SegmentedItem>
+              <SegmentedItem value="revoked">Revoked</SegmentedItem>
+            </Segmented>
+          </ListToolbar>
+          {shown.length === 0 ? (
+            <NoMatches
+              what="API keys"
+              onClear={() => {
+                setQuery('');
+                setShow('all');
+              }}
+            />
+          ) : (
+            <Catalog aria-label="API keys" className="pt-0">
+              {shown.map((k) => (
+                <CatalogRow
+                  key={k.id}
+                  media={
+                    <CatalogTile>
+                      <KeyRound aria-hidden="true" />
+                    </CatalogTile>
+                  }
+                  title={
+                    <span className="flex flex-wrap items-center gap-2">
+                      {k.name ? (
+                        <span className="break-all font-mono text-xs">{k.name}</span>
+                      ) : (
+                        `${keyKindLabel(k.kind)} key`
+                      )}
+                      <Badge variant="outline" title={keyKindApi(k.kind)}>
+                        {keyKindLabel(k.kind)}
+                      </Badge>
+                    </span>
+                  }
+                  meta={
+                    <span className="flex flex-wrap gap-x-2">
+                      <span>{k.roleId ? `Role: ${roleName(k.roleId)}` : 'No custom role'}</span>
+                      <span>Scopes: {k.scopes.join(', ') || 'None'}</span>
+                    </span>
+                  }
+                  aside={<StatusBadge status={k.revoked ? 'revoked' : 'active'} />}
+                  actions={
+                    k.revoked ? undefined : (
+                      <RevokeKeyButton
+                        name={k.name ?? `${keyKindLabel(k.kind)} key`}
+                        onConfirm={() => revoke(k.id)}
+                      />
+                    )
+                  }
+                />
+              ))}
+            </Catalog>
+          )}
+        </>
+      )}
+    </Section>
   );
 }
 
@@ -630,7 +683,7 @@ function RevokeKeyButton(props: { name: string; onConfirm: () => void }) {
   return (
     <AlertDialog>
       <AlertDialogTrigger asChild>
-        <Button type="button" variant="ghost" size="sm" className="text-destructive">
+        <Button type="button" variant="ghost" size="xs" aria-label={`Revoke “${props.name}”`}>
           Revoke
         </Button>
       </AlertDialogTrigger>
@@ -653,6 +706,9 @@ function RevokeKeyButton(props: { name: string; onConfirm: () => void }) {
   );
 }
 
+/** Which webhooks the list shows. */
+type HookFilter = 'all' | 'active' | 'paused';
+
 export function Webhooks(props: { client: ManagementClient }) {
   const { client } = props;
   const toast = useToast();
@@ -669,9 +725,21 @@ export function Webhooks(props: { client: ManagementClient }) {
     awaitEventId?: string;
   } | null>(null);
   const [testing, setTesting] = useState<string | null>(null);
+  const [query, setQuery] = useState('');
+  const [show, setShow] = useState<HookFilter>('all');
 
+  // The api lists every hook this environment hears, so filtering here can't miss one.
   const hooks = useScopedQuery(['webhooks'], () => client.listWebhooks()).data ?? [];
   const reload = () => invalidate(['webhooks']);
+  const needle = query.trim().toLowerCase();
+  const shown = hooks.filter(
+    (h) =>
+      (show === 'all' || h.active === (show === 'active')) &&
+      (!needle ||
+        `${h.url} ${h.topics.join(' ')} ${h.environmentId ?? 'All environments'}`
+          .toLowerCase()
+          .includes(needle)),
+  );
 
   const toggleActive = async (h: WebhookSummary) => {
     try {
@@ -750,128 +818,175 @@ export function Webhooks(props: { client: ManagementClient }) {
   };
 
   return (
-    <Card>
-      <CardHeader>
-        <h2 className="font-heading text-base font-medium">Webhooks</h2>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <form onSubmit={create} className="space-y-3">
-          <div className="flex flex-wrap items-center gap-2">
-            <Input
-              className="flex-2 min-w-56"
-              placeholder="https://example.com/hooks/cms"
-              value={url}
-              onChange={(e) => setUrl(e.target.value)}
-            />
-            <Input
-              className="flex-1 min-w-40"
-              placeholder="Signing secret"
-              value={secret}
-              onChange={(e) => setSecret(e.target.value)}
-            />
-            <Button type="submit" disabled={busy}>
-              {busy ? 'Adding…' : 'Add webhook'}
-            </Button>
-          </div>
-          <div className="flex flex-wrap gap-4">
-            {WEBHOOK_TOPICS.map((t) => (
-              <Label key={t} className="flex items-center gap-2 font-normal">
-                {/* Radix renders <button role="checkbox">. An *implicit*
-                    (wrapping) label does not name it — verified in Chrome's
-                    accessibility tree — so the name is set explicitly. An
-                    explicit htmlFor/id pair would work too; aria-label is what
-                    the rest of the admin uses. */}
-                <Checkbox
-                  aria-label={t}
-                  checked={topics.includes(t)}
-                  onCheckedChange={() => toggleTopic(t)}
-                />
-                <span>{t}</span>
-              </Label>
-            ))}
-          </div>
-          <Label className="flex items-center gap-2 font-normal">
-            <Checkbox
-              aria-label="Send events from every environment"
-              checked={everywhere}
-              onCheckedChange={(c) => setEverywhere(c === true)}
-            />
-            <span>Send events from every environment</span>
-          </Label>
-        </form>
+    <Section title="Webhooks" flush>
+      <form onSubmit={create} className="space-y-3 px-5 py-4">
+        <div className="flex flex-wrap items-center gap-2">
+          <Input
+            className="flex-2 min-w-56"
+            placeholder="https://example.com/hooks/cms"
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+          />
+          <Input
+            className="flex-1 min-w-40"
+            placeholder="Signing secret"
+            value={secret}
+            onChange={(e) => setSecret(e.target.value)}
+          />
+          <Button type="submit" disabled={busy}>
+            {busy ? 'Adding…' : 'Add webhook'}
+          </Button>
+        </div>
+        <div className="flex flex-wrap gap-4">
+          {WEBHOOK_TOPICS.map((t) => (
+            <Label key={t} className="flex items-center gap-2 font-normal">
+              {/* Radix renders <button role="checkbox">. An *implicit*
+                  (wrapping) label does not name it — verified in Chrome's
+                  accessibility tree — so the name is set explicitly. An
+                  explicit htmlFor/id pair would work too; aria-label is what
+                  the rest of the admin uses. */}
+              <Checkbox
+                aria-label={t}
+                checked={topics.includes(t)}
+                onCheckedChange={() => toggleTopic(t)}
+              />
+              <span>{t}</span>
+            </Label>
+          ))}
+        </div>
+        <Label className="flex items-center gap-2 font-normal">
+          <Checkbox
+            aria-label="Send events from every environment"
+            checked={everywhere}
+            onCheckedChange={(c) => setEverywhere(c === true)}
+          />
+          <span>Send events from every environment</span>
+        </Label>
+      </form>
 
-        <Table edge="flush" stack="cards" caption="Webhooks">
-          <TableHeader>
-            <TableRow>
-              <TableHead>Endpoint</TableHead>
-              <TableHead>Topics</TableHead>
-              <TableHead>Environments</TableHead>
-              <TableHead className="w-24">Status</TableHead>
-              <TableHead className="w-80">
-                <span className="sr-only">Actions</span>
-              </TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {hooks.map((h) => (
-              <TableRow key={h.id}>
-                <TableCell className="break-all font-mono text-xs">{h.url}</TableCell>
-                <TableCell label="Topics" className="text-muted-foreground">
-                  {h.topics.join(', ')}
-                </TableCell>
-                <TableCell label="Environments">
-                  {h.environmentId === null ? (
-                    <Badge variant="outline">All environments</Badge>
-                  ) : (
-                    <Badge variant="outline" className="font-mono">
-                      {h.environmentId}
-                    </Badge>
-                  )}
-                </TableCell>
-                <TableCell label="Status">
-                  <StatusBadge status={h.active ? 'active' : 'paused'} />
-                </TableCell>
-                <TableCell>
-                  <div className="flex flex-wrap items-center justify-end gap-1">
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setDeliveriesFor({ webhook: h })}
+      {hooks.length === 0 ? (
+        <p className="border-t px-5 py-4 text-muted-foreground text-sm">No webhooks yet.</p>
+      ) : (
+        <>
+          <ListToolbar className="border-t" summary={`${shown.length} shown`}>
+            <ListSearch
+              label="Search webhooks"
+              placeholder="Search addresses and topics"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onClear={() => setQuery('')}
+            />
+            <Segmented
+              aria-label="Show webhooks"
+              value={show}
+              onValueChange={(v) => setShow(v as HookFilter)}
+            >
+              <SegmentedItem value="all">All</SegmentedItem>
+              <SegmentedItem value="active">Active</SegmentedItem>
+              <SegmentedItem value="paused">Paused</SegmentedItem>
+            </Segmented>
+          </ListToolbar>
+          {shown.length === 0 ? (
+            <NoMatches
+              what="webhooks"
+              onClear={() => {
+                setQuery('');
+                setShow('all');
+              }}
+            />
+          ) : (
+            <Catalog aria-label="Webhooks" className="pt-0">
+              {shown.map((h) => (
+                <CatalogRow
+                  key={h.id}
+                  media={
+                    <CatalogTile>
+                      <Webhook aria-hidden="true" />
+                    </CatalogTile>
+                  }
+                  title={<span className="break-all font-mono text-xs">{h.url}</span>}
+                  meta={
+                    <span className="flex flex-wrap gap-x-2">
+                      <span>Topics: {h.topics.join(', ')}</span>
+                      {h.environmentId === null ? (
+                        <span>All environments</span>
+                      ) : (
+                        <span>
+                          Environment <span className="font-mono">{h.environmentId}</span>
+                        </span>
+                      )}
+                    </span>
+                  }
+                  aside={<StatusBadge status={h.active ? 'active' : 'paused'} />}
+                  actions={
+                    <ConfirmDialog
+                      message="Delete webhook?"
+                      note={
+                        <>
+                          Stop delivering events to{' '}
+                          <span className="break-all font-mono">{h.url}</span> and remove this
+                          subscription. This can’t be undone.
+                        </>
+                      }
+                      confirmLabel="Delete"
+                      onConfirm={() => remove(h.id)}
                     >
-                      Deliveries
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      disabled={testing === h.id}
-                      aria-label={`${testing === h.id ? 'Sending test' : 'Send test'} to ${h.url}`}
-                      onClick={() => sendTest(h)}
-                    >
-                      {testing === h.id ? 'Sending test…' : 'Send test'}
-                    </Button>
-                    <Button type="button" variant="ghost" size="sm" onClick={() => toggleActive(h)}>
-                      {h.active ? 'Pause' : 'Resume'}
-                    </Button>
-                    <Button type="button" variant="ghost" size="sm" onClick={() => setEditing(h)}>
-                      Edit
-                    </Button>
-                    <DeleteWebhookButton url={h.url} onConfirm={() => remove(h.id)} />
-                  </div>
-                </TableCell>
-              </TableRow>
-            ))}
-            {hooks.length === 0 && (
-              <TableRow>
-                <TableCell colSpan={5} className="text-muted-foreground">
-                  No webhooks yet.
-                </TableCell>
-              </TableRow>
-            )}
-          </TableBody>
-        </Table>
-      </CardContent>
+                      {(ask) => (
+                        <span className="flex items-center gap-1">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="xs"
+                            aria-label={`Deliveries for ${h.url}`}
+                            onClick={() => setDeliveriesFor({ webhook: h })}
+                          >
+                            Deliveries
+                          </Button>
+                          {/* Beside the row, not in its menu: it says so while the test queues. */}
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="xs"
+                            disabled={testing === h.id}
+                            aria-label={`${testing === h.id ? 'Sending test' : 'Send test'} to ${h.url}`}
+                            onClick={() => sendTest(h)}
+                          >
+                            {testing === h.id ? 'Sending test…' : 'Send test'}
+                          </Button>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon-xs"
+                                aria-label={`More actions for ${h.url}`}
+                              >
+                                <MoreHorizontalIcon aria-hidden="true" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end" className="w-auto min-w-40">
+                              <DropdownMenuItem onSelect={() => void toggleActive(h)}>
+                                {h.active ? 'Pause' : 'Resume'}
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onSelect={() => setEditing(h)}>
+                                Edit…
+                              </DropdownMenuItem>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem variant="destructive" onSelect={ask}>
+                                Delete…
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </span>
+                      )}
+                    </ConfirmDialog>
+                  }
+                />
+              ))}
+            </Catalog>
+          )}
+        </>
+      )}
       {editing && (
         <WebhookDialog
           key={editing.id}
@@ -890,34 +1005,6 @@ export function Webhooks(props: { client: ManagementClient }) {
           {...(deliveriesFor.awaitEventId ? { awaitEventId: deliveriesFor.awaitEventId } : {})}
         />
       )}
-    </Card>
-  );
-}
-
-/** Destructive "Delete" action behind a confirm dialog. */
-function DeleteWebhookButton(props: { url: string; onConfirm: () => void }) {
-  return (
-    <AlertDialog>
-      <AlertDialogTrigger asChild>
-        <Button type="button" variant="ghost" size="sm" className="text-destructive">
-          Delete
-        </Button>
-      </AlertDialogTrigger>
-      <AlertDialogContent>
-        <AlertDialogHeader>
-          <AlertDialogTitle>Delete webhook?</AlertDialogTitle>
-          <AlertDialogDescription>
-            Stop delivering events to <span className="break-all font-mono">{props.url}</span> and
-            remove this subscription. This can’t be undone.
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel>Cancel</AlertDialogCancel>
-          <AlertDialogAction variant="destructive" onClick={props.onConfirm}>
-            Delete
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
+    </Section>
   );
 }

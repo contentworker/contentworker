@@ -1,6 +1,15 @@
 import type { Concept, Tag } from '@contentworker/domain';
 import { Button } from '@contentworker/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@contentworker/ui/card';
+import {
+  Catalog,
+  CatalogEmpty,
+  CatalogFigure,
+  CatalogRow,
+  CatalogTile,
+  ListSearch,
+  ListToolbar,
+} from '@contentworker/ui/catalog';
 import { Input } from '@contentworker/ui/input';
 import { Label } from '@contentworker/ui/label';
 import {
@@ -10,16 +19,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@contentworker/ui/select';
-import {
-  Table,
-  TableBody,
-  Td as TableCell,
-  Th as TableHead,
-  TableHead as TableHeader,
-  Tr as TableRow,
-} from '@contentworker/ui/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@contentworker/ui/tabs';
-import { Hash, Pencil, Tags, Trash2 } from 'lucide-react';
+import { Hash, Pencil, Tag as TagIcon, Tags, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import { ConfirmDialog } from '~/cms/components/ConfirmDialog';
 import { EmptyState, PageHeader } from '~/cms/components/page';
@@ -385,11 +386,19 @@ function TagsTab() {
   const toast = useToast();
   const invalidate = useInvalidate();
   const [name, setName] = useState('');
+  const [query, setQuery] = useState('');
   // The tag open in the editor sheet.
   const [editing, setEditing] = useState<string | null>(null);
   const { locales, defaultLocale } = useLocales();
 
   const tags = useScopedQuery(['tags'], () => client.listTags()).data ?? [];
+  // The API returns every tag, so the filter is safe to run here.
+  const needle = query.trim().toLowerCase();
+  const shown = [...tags]
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .filter(
+      (t) => !needle || `${t.name} ${t.slug} ${t.description ?? ''}`.toLowerCase().includes(needle),
+    );
 
   const add = () =>
     run(async () => {
@@ -443,48 +452,50 @@ function TagsTab() {
         {tags.length === 0 ? (
           <EmptyState icon={Tags} title="No tags yet" description="Add a tag to label entries." />
         ) : (
-          <Table stack="cards" caption="Tags">
-            <TableHeader>
-              <TableRow>
-                <TableHead>Tag</TableHead>
-                <TableHead>Slug</TableHead>
-                <TableHead numeric>Published</TableHead>
-                <TableHead className="w-24">
-                  <span className="sr-only">Actions</span>
-                </TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {[...tags]
-                .sort((a, b) => a.name.localeCompare(b.name))
-                .map((t) => (
-                  <TableRow key={t.id}>
-                    <TableCell>
-                      <span className="font-medium">{t.name}</span>
-                      {t.description ? (
-                        <div className="max-w-measure text-muted-foreground text-xs">
-                          {t.description}
-                        </div>
-                      ) : null}
-                    </TableCell>
-                    <TableCell label="Slug" className="font-mono text-xs">
-                      {t.slug}
-                    </TableCell>
-                    <TableCell label="Published entries" numeric>
-                      {t.usage.count}
-                    </TableCell>
-                    <TableCell>
+          <>
+            {/* The card's content is padded already, so these line up with the form above. */}
+            <ListToolbar className="p-0" summary={`${shown.length} shown`}>
+              <ListSearch
+                label="Search tags"
+                placeholder="Search tags"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onClear={() => setQuery('')}
+              />
+            </ListToolbar>
+            {shown.length === 0 ? (
+              <CatalogEmpty className="p-0" onClear={() => setQuery('')}>
+                No tags match “{query.trim()}”.
+              </CatalogEmpty>
+            ) : (
+              <Catalog aria-label="Tags" className="p-0">
+                {shown.map((t) => (
+                  <CatalogRow
+                    key={t.id}
+                    media={
+                      <CatalogTile>
+                        <TagIcon aria-hidden="true" />
+                      </CatalogTile>
+                    }
+                    title={t.name}
+                    meta={
+                      <span className="flex flex-wrap gap-x-2">
+                        <span className="break-all font-mono">{t.slug}</span>
+                        {t.description ? <span>{t.description}</span> : null}
+                      </span>
+                    }
+                    aside={<CatalogFigure label="Published entries">{t.usage.count}</CatalogFigure>}
+                    actions={
                       <div className="flex justify-end gap-1">
                         <Button
                           type="button"
                           variant="ghost"
-                          size="icon"
-                          className="size-7"
+                          size="xs"
                           aria-label={`Edit “${t.name}”`}
                           onClick={() => setEditing(t.id)}
                           disabled={busy}
                         >
-                          <Pencil className="size-4" />
+                          Edit
                         </Button>
                         <ConfirmDialog
                           message={`Delete the tag “${t.name}”?`}
@@ -497,22 +508,22 @@ function TagsTab() {
                             <Button
                               type="button"
                               variant="ghost"
-                              size="icon"
-                              className="size-7"
+                              size="xs"
                               aria-label={`Delete ${t.name}`}
                               onClick={ask}
                               disabled={busy}
                             >
-                              <Trash2 className="size-4" />
+                              Delete
                             </Button>
                           )}
                         </ConfirmDialog>
                       </div>
-                    </TableCell>
-                  </TableRow>
+                    }
+                  />
                 ))}
-            </TableBody>
-          </Table>
+              </Catalog>
+            )}
+          </>
         )}
       </CardContent>
       <TermEditor

@@ -1,4 +1,5 @@
 import type { AssetCollection, AssetFolder } from '@contentworker/domain';
+import { BulkBar } from '@contentworker/ui/bulk-bar';
 import { Button } from '@contentworker/ui/button';
 import { NativeSelect, NativeSelectOption } from '@contentworker/ui/native-select';
 import {
@@ -9,7 +10,6 @@ import {
   GalleryVerticalEnd,
   Send,
   Tag as TagIcon,
-  X,
 } from 'lucide-react';
 import { useState } from 'react';
 import { ConfirmButton } from '~/cms/components/InlineConfirm';
@@ -48,13 +48,7 @@ export function AssetBulkBar(props: {
   if (props.count === 0) return null;
   const noun = plural(props.count, 'asset');
   return (
-    // biome-ignore lint/a11y/useSemanticElements: a group of buttons, not a form fieldset
-    <div
-      role="group"
-      aria-label="Selected assets"
-      className="flex flex-wrap items-center gap-2 rounded-2xl bg-muted px-3 py-2 animate-arrive"
-    >
-      <span className="text-muted-foreground text-sm">{props.count} selected</span>
+    <BulkBar label="Selected assets" count={props.count} onClear={props.onClear}>
       <Button type="button" size="sm" disabled={props.busy} onClick={props.onPublish}>
         <Send aria-hidden="true" />
         Publish selected
@@ -188,17 +182,6 @@ export function AssetBulkBar(props: {
           Download as zip
         </Button>
       )}
-      <Button
-        type="button"
-        size="sm"
-        variant="ghost"
-        className="ml-auto"
-        aria-label="Clear selection"
-        onClick={props.onClear}
-      >
-        <X aria-hidden="true" />
-        Clear
-      </Button>
-    </div>
+    </BulkBar>
   );
 }

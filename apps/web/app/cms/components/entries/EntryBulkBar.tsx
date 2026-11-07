@@ -1,5 +1,6 @@
+import { BulkBar } from '@contentworker/ui/bulk-bar';
 import { Button } from '@contentworker/ui/button';
-import { ArchiveRestore, CircleSlash, Send, Trash2, X } from 'lucide-react';
+import { ArchiveRestore, CircleSlash, Send, Trash2 } from 'lucide-react';
 import { useId } from 'react';
 
 /** The entry actions that run as bulk jobs. */
@@ -50,13 +51,18 @@ export function EntryBulkBar(props: {
   ];
   const refused = offered.some(denied);
   return (
-    // biome-ignore lint/a11y/useSemanticElements: a group of buttons, not a form fieldset
-    <div
-      role="group"
-      aria-label="Selected entries"
-      className="flex min-h-12 flex-wrap items-center gap-2 rounded-2xl bg-muted px-3 py-2 animate-arrive"
+    <BulkBar
+      label="Selected entries"
+      count={props.count}
+      onClear={props.onClear}
+      note={
+        props.jobsRefusal && refused ? (
+          <p id={reasonId} className="basis-full text-muted-foreground text-xs">
+            {props.jobsRefusal}
+          </p>
+        ) : null
+      }
     >
-      <span className="text-muted-foreground text-sm">{props.count} selected</span>
       {props.onPublish && (props.publishable ?? 0) > 0 ? (
         <Button type="button" size="sm" disabled={props.busy} onClick={props.onPublish}>
           <Send aria-hidden="true" />
@@ -114,22 +120,6 @@ export function EntryBulkBar(props: {
           Delete permanently…
         </Button>
       ) : null}
-      <Button
-        type="button"
-        size="sm"
-        variant="ghost"
-        className="ml-auto"
-        onClick={props.onClear}
-        aria-label="Clear selection"
-      >
-        <X aria-hidden="true" />
-        Clear
-      </Button>
-      {props.jobsRefusal && refused ? (
-        <p id={reasonId} className="basis-full text-muted-foreground text-xs">
-          {props.jobsRefusal}
-        </p>
-      ) : null}
-    </div>
+    </BulkBar>
   );
 }

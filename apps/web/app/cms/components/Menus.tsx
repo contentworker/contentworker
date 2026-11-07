@@ -2,6 +2,15 @@ import type { Menu, MenuItem, MenuItemInput, MenuLink } from '@contentworker/dom
 import { Alert, AlertAction, AlertDescription, AlertTitle } from '@contentworker/ui/alert';
 import { Button } from '@contentworker/ui/button';
 import {
+  Catalog,
+  CatalogEmpty,
+  CatalogFigure,
+  CatalogRow,
+  CatalogTile,
+  ListSearch,
+  ListToolbar,
+} from '@contentworker/ui/catalog';
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -21,14 +30,6 @@ import {
   SelectValue,
 } from '@contentworker/ui/select';
 import { Switch } from '@contentworker/ui/switch';
-import {
-  Table,
-  TableBody,
-  Td as TableCell,
-  Th as TableHead,
-  TableHead as TableHeader,
-  Tr as TableRow,
-} from '@contentworker/ui/table';
 import {
   ArrowDown,
   ArrowLeft,
@@ -171,8 +172,14 @@ function MenuList(props: { client: ManagementClient; onOpen: (id: string) => voi
   const invalidate = useInvalidate();
   const [creating, setCreating] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [q, setQ] = useState('');
   const list = useScopedQuery(['menus'], () => client.listMenus());
   const menus = list.data ?? [];
+  // The API answers every menu at once, so the filter can run here.
+  const needle = q.trim().toLowerCase();
+  const shown = menus.filter(
+    (m) => !needle || `${m.name} ${m.handle} ${m.description ?? ''}`.toLowerCase().includes(needle),
+  );
 
   const remove = async (m: MenuSummary) => {
     setBusy(true);
@@ -213,41 +220,48 @@ function MenuList(props: { client: ManagementClient; onOpen: (id: string) => voi
           flush
           actions={newButton}
         >
-          <Table edge="card" stack="cards" caption="Menus">
-            <TableHeader>
-              <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead className="w-48">Handle</TableHead>
-                <TableHead numeric className="w-20">
-                  Items
-                </TableHead>
-                <TableHead className="w-36">
-                  <span className="sr-only">Actions</span>
-                </TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {menus.map((m) => (
-                <TableRow key={m.id}>
-                  <TableCell>
+          <ListToolbar summary={`${shown.length} shown`}>
+            <ListSearch
+              label="Search menus"
+              placeholder="Search names and handles"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              onClear={() => setQ('')}
+            />
+          </ListToolbar>
+          {needle && shown.length === 0 ? (
+            <CatalogEmpty onClear={() => setQ('')}>No menus match “{q}”.</CatalogEmpty>
+          ) : (
+            <Catalog
+              aria-label="Menus"
+              aria-busy={list.data === undefined || undefined}
+              className="pt-0"
+            >
+              {shown.map((m) => (
+                <CatalogRow
+                  key={m.id}
+                  media={
+                    <CatalogTile>
+                      <ListTree aria-hidden="true" />
+                    </CatalogTile>
+                  }
+                  title={
                     <button
                       type="button"
-                      className="rounded-full text-left font-medium outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring"
+                      className="hit-area break-words text-left font-medium hover:underline"
                       onClick={() => props.onOpen(m.id)}
                     >
                       {m.name}
                     </button>
-                    {m.description && (
-                      <span className="block text-2xs text-muted-foreground">{m.description}</span>
-                    )}
-                  </TableCell>
-                  <TableCell label="Handle" className="font-mono text-xs">
-                    {m.handle}
-                  </TableCell>
-                  <TableCell label="Items" numeric>
-                    {m.itemCount}
-                  </TableCell>
-                  <TableCell className="text-right">
+                  }
+                  meta={
+                    <span className="flex flex-wrap gap-x-2">
+                      <span className="break-all font-mono">{m.handle}</span>
+                      {m.description && <span>{m.description}</span>}
+                    </span>
+                  }
+                  aside={<CatalogFigure label="Items">{m.itemCount}</CatalogFigure>}
+                  actions={
                     <ConfirmDialog
                       message={`Delete the menu “${m.name}”?`}
                       note={`Delivery stops serving “${m.handle}”: a site that renders it shows no navigation there.`}
@@ -259,7 +273,7 @@ function MenuList(props: { client: ManagementClient; onOpen: (id: string) => voi
                         <span className="flex justify-end gap-1">
                           <Button
                             variant="ghost"
-                            size="sm"
+                            size="xs"
                             aria-label={`Edit the menu ${m.name}`}
                             onClick={() => props.onOpen(m.id)}
                           >
@@ -267,7 +281,7 @@ function MenuList(props: { client: ManagementClient; onOpen: (id: string) => voi
                           </Button>
                           <Button
                             variant="ghost"
-                            size="sm"
+                            size="xs"
                             aria-label={`Delete the menu ${m.name}`}
                             onClick={ask}
                           >
@@ -276,11 +290,11 @@ function MenuList(props: { client: ManagementClient; onOpen: (id: string) => voi
                         </span>
                       )}
                     </ConfirmDialog>
-                  </TableCell>
-                </TableRow>
+                  }
+                />
               ))}
-            </TableBody>
-          </Table>
+            </Catalog>
+          )}
         </Section>
       )}
       {creating && (

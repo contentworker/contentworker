@@ -70,7 +70,7 @@ async function toArticles(page: Page) {
   // The seeded space has one content type: Article.
   await page
     .getByRole('main')
-    .getByRole('table')
+    .getByRole('list', { name: 'Content types' })
     .getByRole('link', { name: 'Article', exact: true })
     .click();
   await expect(page).toHaveURL(/\/content\/article$/);
@@ -1493,7 +1493,8 @@ test('a role’s content access: withhold unpublish, save, and read it back', as
   });
   await expect(
     page
-      .getByRole('row', { name: new RegExp(name) })
+      .getByRole('listitem')
+      .filter({ hasText: name })
       .getByText('Every type: read, write, publish, delete'),
   ).toBeVisible();
 
@@ -1589,9 +1590,10 @@ test('a singleton type opens its one entry, and refuses a second', async ({ page
   ).toHaveCount(1);
   const row = page
     .getByRole('main')
-    .getByRole('table')
-    .getByRole('row', { name: new RegExp(name) });
-  await expect(row.getByText('one entry only')).toBeVisible();
+    .getByRole('list', { name: 'Content types' })
+    .getByRole('listitem')
+    .filter({ hasText: name });
+  await expect(row.getByText('One entry only')).toBeVisible();
   await row.getByRole('link', { name, exact: true }).click();
   await expect(page).toHaveURL(new RegExp(`/content/${apiId}/new$`));
   await expect(page.getByRole('button', { name: 'Save draft' })).toBeVisible(EDITOR_READY);
@@ -1830,4 +1832,37 @@ test('a list of whole numbers is edited row by row, saved as numbers, beside a t
   await expect(page.getByLabel('Sizes item 1', { exact: true })).toHaveValue('12');
   await expect(page.getByLabel('Sizes item 2', { exact: true })).toHaveValue('16');
   await expect(page.getByLabel('Opens')).toHaveValue('09:30');
+});
+
+test('a list’s search filters, clears and keeps focus, and its rows fit a phone', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 375, height: 800 });
+  await openCms(page, '/content');
+  const list = page.getByRole('list', { name: 'Content types' });
+  const search = page.getByRole('searchbox', { name: 'Search content types' });
+  await expect(list.getByRole('listitem').first()).toBeVisible();
+
+  // Nothing in a row runs past it: the card clips, so the page's own width wouldn't show it.
+  const spilled = await list.getByRole('listitem').evaluateAll(
+    (rows) =>
+      rows.filter((row) => {
+        const edge = row.getBoundingClientRect().right;
+        return Array.from(row.querySelectorAll('*')).some(
+          (el) => el.getBoundingClientRect().right > edge + 1,
+        );
+      }).length,
+  );
+  expect(spilled).toBe(0);
+
+  await search.fill('no-such-type');
+  await expect(page.getByText(/No content types match/)).toBeVisible();
+  await page.getByRole('button', { name: 'Clear filters' }).click();
+  await expect(search).toBeFocused();
+  await expect(list.getByRole('link', { name: 'Article', exact: true })).toBeVisible();
+
+  await search.fill('article');
+  await page.getByRole('button', { name: 'Clear search' }).click();
+  await expect(search).toBeFocused();
+  await expect(search).toHaveValue('');
 });

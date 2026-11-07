@@ -3,7 +3,7 @@ import type { ContentType } from '@contentworker/domain';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Outlet, Route, Routes } from 'react-router';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError, type ContentTypeEntryCounts, RequestTimeoutError } from '~/cms/lib/management';
 
 const client = {
@@ -11,6 +11,24 @@ const client = {
   saveContentType: vi.fn(),
   publishContentType: vi.fn(),
 };
+// The dialogs have tests of their own: here only what the list does when one closes.
+vi.mock('~/cms/components/ContentTypeActions', () => ({
+  CloneContentTypeDialog: () => null,
+  DeleteContentTypeDialog: (props: {
+    onDeleted: (job: null) => void;
+    onCloseAutoFocus: (event: Event) => void;
+  }) => (
+    <button
+      type="button"
+      onClick={() => {
+        props.onDeleted(null);
+        props.onCloseAutoFocus(new Event('close'));
+      }}
+    >
+      Deleted at once
+    </button>
+  ),
+}));
 vi.mock('~/cms/lib/client-context', () => ({
   useClient: () => ({
     client,
@@ -26,6 +44,7 @@ vi.mock('~/cms/lib/client-context', () => ({
 
 const { ToastProvider } = await import('~/cms/lib/toast');
 const { ContentTypesOverview } = await import('~/cms/routes/ContentTypesOverview');
+const { typeMark } = await import('~/lib/initials');
 
 afterEach(() => {
   cleanup();
@@ -62,7 +81,7 @@ function setup(types: ContentType[], typesPending = false) {
 }
 
 const rowOf = (name: string) => {
-  const row = screen.getByRole('link', { name }).closest('tr');
+  const row = screen.getByRole('link', { name }).closest('li');
   if (!row) throw new Error(`no row for ${name}`);
   return within(row);
 };
@@ -135,7 +154,7 @@ describe('content types overview', () => {
 
     const author = rowOf('Author');
     expect(author.getByText('Draft')).toBeTruthy();
-    expect(author.getByRole('button', { name: 'Publish' })).toBeTruthy();
+    expect(author.getByRole('button', { name: /^Publish “/ })).toBeTruthy();
   });
 
   it('still lists the types when the counts can’t be read', async () => {
@@ -144,6 +163,108 @@ describe('content types overview', () => {
     const article = rowOf('Article');
     expect((await article.findAllByText('—')).length).toBe(3);
     expect(article.getByRole('button', { name: 'Edit “Article”' })).toBeTruthy();
+  });
+});
+
+describe('the list of content types', () => {
+  beforeEach(() => {
+    client.contentTypeEntryCounts.mockResolvedValue([]);
+  });
+
+  it('keeps every fact a row used to hold', async () => {
+    setup([
+      {
+        ...type('siteSettings', 'Site settings', 'published'),
+        singleton: true,
+        description: 'One place for the footer',
+        fields: [{ apiId: 'title', name: 'Title', type: 'Symbol' }],
+      } as unknown as ContentType,
+    ]);
+    const row = rowOf('Site settings');
+    expect(row.getByText('siteSettings').className).toContain('font-mono');
+    expect(row.getByText('One entry only')).toBeTruthy();
+    expect(row.getByText('1 field')).toBeTruthy();
+    expect(row.getByText('One place for the footer')).toBeTruthy();
+    for (const label of ['Entries', 'Drafts', 'Changed']) expect(row.getByText(label)).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Site settings' }).getAttribute('href')).toBe(
+      '/content/siteSettings/entry',
+    );
+    expect(row.getByRole('button', { name: 'More actions for “Site settings”' })).toBeTruthy();
+    await waitFor(() => expect(client.contentTypeEntryCounts).toHaveBeenCalled());
+  });
+
+  it('names a type without an icon by letters that tell one-word names apart', () => {
+    expect(typeMark('Article')).toBe('Ar');
+    expect(typeMark('Author')).toBe('Au');
+    expect(typeMark('landing page')).toBe('LP');
+    expect(typeMark('Blog post archive')).toBe('BP');
+    expect(typeMark('')).toBe('');
+  });
+
+  it('draws a type’s icon in its tile, and its initials when it has none', async () => {
+    setup([
+      { ...type('blogPost', 'Blog post', 'published'), icon: 'newspaper' } as ContentType,
+      type('author', 'Author', 'published'),
+      type('landingPage', 'Landing page', 'published'),
+    ]);
+    const tile = (name: string) =>
+      screen
+        .getByRole('link', { name })
+        .closest('li')
+        ?.querySelector('[data-slot="catalog-tile"]') as HTMLElement;
+    await screen.findByText('Landing page');
+    expect(tile('Blog post').querySelector('svg')).toBeTruthy();
+    expect(tile('Author').textContent).toBe('Au');
+    expect(tile('Landing page').textContent).toBe('LP');
+    expect(tile('Author').getAttribute('aria-hidden')).toBe('true');
+  });
+
+  it('filters by name, API id and description, and a miss offers the way out', async () => {
+    setup([
+      { ...type('article', 'Article', 'published'), description: 'Long reads' } as ContentType,
+      type('author', 'Author', 'published'),
+    ]);
+    const search = screen.getByRole('searchbox', { name: 'Search content types' });
+    const showing = () =>
+      within(screen.getByRole('list', { name: 'Content types' }))
+        .getAllByRole('link')
+        .map((a) => a.textContent);
+
+    fireEvent.change(search, { target: { value: 'AUTHOR' } });
+    expect(showing()).toEqual(['Author']);
+    fireEvent.change(search, { target: { value: 'long reads' } });
+    expect(showing()).toEqual(['Article']);
+
+    fireEvent.change(search, { target: { value: 'zebra' } });
+    expect(screen.getByText(/No content types match “zebra”/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }));
+    expect(showing()).toEqual(['Article', 'Author']);
+    await waitFor(() => expect(client.contentTypeEntryCounts).toHaveBeenCalled());
+  });
+});
+
+describe('focus after deleting a type from a filtered list', () => {
+  it('moves to the next row showing, past one the filter hides', async () => {
+    client.contentTypeEntryCounts.mockResolvedValue([]);
+    setup([
+      type('aardvark', 'Aardvark', 'published'),
+      type('bison', 'Bison', 'published'),
+      type('antelope', 'Antelope', 'published'),
+    ]);
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search content types' }), {
+      target: { value: 'a' },
+    });
+    expect(screen.queryByRole('link', { name: 'Bison' })).toBeNull();
+
+    fireEvent.keyDown(screen.getByRole('button', { name: 'More actions for “Aardvark”' }), {
+      key: 'Enter',
+    });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Delete…' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Deleted at once', hidden: true }));
+
+    expect(document.activeElement).toBe(
+      screen.getByRole('button', { name: 'More actions for “Antelope”', hidden: true }),
+    );
   });
 });
 

@@ -191,7 +191,7 @@ the only direction consent can move without a second look is _narrower_), and wh
 deployment cannot enforce. The plugin lands disabled regardless; the button says so.
 
 The list then shows, per plugin, what it runs on, what it can do (its effective grant), and what it
-asked for and did not get. That last column exists because a plugin behaving oddly is usually a
+asked for and did not get. That last fact exists because a plugin behaving oddly is usually a
 plugin doing without something, and nothing else on the screen would say so.
 
 **Access** opens the same checkboxes in place, as a confirmation under the row. If ticking a box

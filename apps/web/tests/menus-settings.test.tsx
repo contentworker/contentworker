@@ -124,10 +124,40 @@ async function openEditor(client: ReturnType<typeof fakeClient>) {
 describe('Settings → Menus', () => {
   it('lists menus by name, handle and item count', async () => {
     mount(fakeClient(menuOf([url('a', 'A')])));
-    const table = await screen.findByRole('table', { name: 'Menus' });
-    expect(await within(table).findByText('Main')).toBeTruthy();
-    expect(within(table).getByText('main')).toBeTruthy();
-    expect(within(table).getByText('3')).toBeTruthy();
+    const list = await screen.findByRole('list', { name: 'Menus' });
+    expect(await within(list).findByText('Main')).toBeTruthy();
+    expect(within(list).getByText('main')).toBeTruthy();
+    expect(within(list).getByText('3')).toBeTruthy();
+  });
+
+  it('searches the menus it holds, by name and handle, with a way out of a miss', async () => {
+    const client = fakeClient(menuOf([]));
+    client.listMenus.mockResolvedValue([
+      { id: 'm1', handle: 'main', name: 'Main', itemCount: 3, revision: 1, updatedAt: AT },
+      { id: 'm2', handle: 'legal-links', name: 'Footer', itemCount: 1, revision: 1, updatedAt: AT },
+    ]);
+    mount(client);
+    const search = await screen.findByRole('searchbox', { name: 'Search menus' });
+    await screen.findByText('Footer');
+
+    fireEvent.change(search, { target: { value: 'FOOT' } });
+    expect(screen.queryByText('Main')).toBeNull();
+    expect(screen.getByText('Footer')).toBeTruthy();
+
+    fireEvent.change(search, { target: { value: 'legal' } });
+    expect(screen.getByText('Footer')).toBeTruthy();
+
+    fireEvent.change(search, { target: { value: 'nothing here' } });
+    expect(screen.queryByRole('list', { name: 'Menus' })).toBeNull();
+    expect(screen.getByText(/No menus match/).textContent).toContain('nothing here');
+    // Asked of the server once: the filter is the screen's, over the whole list it holds.
+    expect(client.listMenus).toHaveBeenCalledTimes(1);
+
+    const miss = screen.getByText(/No menus match/);
+    fireEvent.click(within(miss).getByRole('button', { name: 'Clear filters' }));
+    expect((search as HTMLInputElement).value).toBe('');
+    expect(screen.getByText('Main')).toBeTruthy();
+    expect(screen.getByText('Footer')).toBeTruthy();
   });
 
   it('creates a menu, suggesting the handle from its name, then opens it', async () => {

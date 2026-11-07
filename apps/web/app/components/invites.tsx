@@ -1,4 +1,5 @@
 import { Button } from '@contentworker/ui/button';
+import { Catalog, CatalogFigure, CatalogRow, CatalogTile } from '@contentworker/ui/catalog';
 import {
   Dialog,
   DialogContent,
@@ -10,7 +11,7 @@ import {
 } from '@contentworker/ui/dialog';
 import { Input } from '@contentworker/ui/input';
 import { NativeSelect, NativeSelectOption } from '@contentworker/ui/native-select';
-import { Table, TableBody, TableHead, Td, Th, Tr } from '@contentworker/ui/table';
+import { Mail } from 'lucide-react';
 import { Fragment, useEffect, useRef, useState } from 'react';
 import { useFetcher } from 'react-router';
 import { Confirm } from '~/components/confirm';
@@ -242,98 +243,98 @@ export function InvitesSection({
           Invitations couldn’t be loaded. Reload the page to try again.
         </p>
       ) : invites.length ? (
-        <Table stack="rows" caption="Invitations">
-          <TableHead>
-            <Tr>
-              <Th>Person</Th>
-              <Th>Status</Th>
-              <Th>Expires</Th>
-              <Th className="text-right">
-                <span className="sr-only">Actions</span>
-              </Th>
-            </Tr>
-          </TableHead>
-          <TableBody>
-            {invites.map((i) => (
-              <Fragment key={i.id}>
-                <Tr className="block space-y-2 px-4 py-3 md:table-row md:space-y-0 md:p-0">
-                  <Td className="block md:table-cell">
-                    {i.email}
-                    <div className="text-muted-foreground text-xs">
-                      {ROLE_LABELS[i.role]}
-                      {i.grants.map((g) => ` · ${spaceName(g.spaceId)}`).join('')}
-                      {i.emailedAt ? ' · emailed' : ''}
-                    </div>
-                  </Td>
-                  <Td className="block md:table-cell">
+        <Catalog aria-label="Invitations">
+          {invites.map((i) => (
+            <Fragment key={i.id}>
+              <CatalogRow
+                media={
+                  <CatalogTile>
+                    <Mail aria-hidden="true" />
+                  </CatalogTile>
+                }
+                title={i.email}
+                meta={
+                  <span className="flex flex-wrap gap-x-2">
+                    <span>{ROLE_LABELS[i.role]}</span>
+                    {i.grants.map((g) => (
+                      <span key={g.spaceId}>{spaceName(g.spaceId)}</span>
+                    ))}
+                    {i.emailedAt ? <span>Emailed</span> : null}
+                  </span>
+                }
+                aside={
+                  <>
                     <ToneBadge tone={INVITE_TONE[i.status]} label={INVITE_LABEL[i.status]} />
-                  </Td>
-                  <Td className="block text-muted-foreground text-xs md:table-cell">
-                    {until(i.expiresAt)}
-                  </Td>
-                  <Td className="block md:table-cell">
-                    <div className="-ml-3 flex flex-wrap gap-1.5 md:ml-0 md:justify-end">
-                      {(['resend', 'revoke'] as const).map((intent) => (
-                        <Button
-                          key={intent}
-                          size="sm"
-                          variant="ghost"
-                          type="button"
-                          data-ask={`${i.id}:${intent}`}
-                          aria-expanded={asking?.id === i.id && asking.intent === intent}
-                          onClick={() => setAsking({ id: i.id, intent })}
-                        >
-                          {intent === 'revoke'
-                            ? 'Revoke…'
+                    <CatalogFigure label="Expires">{until(i.expiresAt)}</CatalogFigure>
+                  </>
+                }
+                actions={
+                  <span className="flex flex-wrap items-center justify-end gap-1">
+                    {(['resend', 'revoke'] as const).map((intent) => (
+                      <Button
+                        key={intent}
+                        size="xs"
+                        variant="ghost"
+                        type="button"
+                        data-ask={`${i.id}:${intent}`}
+                        aria-label={`${
+                          intent === 'revoke'
+                            ? 'Revoke'
                             : i.status === 'expired'
-                              ? 'Send a new link…'
-                              : 'Resend…'}
-                        </Button>
-                      ))}
-                    </div>
-                  </Td>
-                </Tr>
-                {asking?.id === i.id ? (
-                  <Tr className="block md:table-row">
-                    <Td colSpan={4} className="block px-4 pt-0 pb-3 md:table-cell">
-                      <fetcher.Form
-                        method="post"
-                        className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/40 px-3 py-2"
-                        onSubmit={() => setAsking(null)}
+                              ? 'Send a new link'
+                              : 'Resend'
+                        } for ${i.email}`}
+                        aria-expanded={asking?.id === i.id && asking.intent === intent}
+                        onClick={() => setAsking({ id: i.id, intent })}
                       >
-                        <input type="hidden" name="intent" value={`invite-${asking.intent}`} />
-                        <input type="hidden" name="id" value={i.id} />
-                        <Confirm
-                          message={
-                            asking.intent === 'revoke'
-                              ? `Revoke the invitation for ${i.email}? Its links stop working.`
-                              : `Send ${i.email} a new link? The old one stops working.`
-                          }
-                          cancelLabel="Keep"
-                          onCancel={() => setAsking(null)}
-                          className="flex-1"
-                        >
-                          {/* A new link to an admin's seat asks who you are first, as inviting one does. */}
-                          {asking.intent === 'resend' && i.role === 'admin' ? (
-                            <StepUpField method={stepUp} next="/team" />
-                          ) : null}
-                          <Button
-                            size="sm"
-                            variant={asking.intent === 'revoke' ? 'destructive' : 'default'}
-                            type="submit"
-                            disabled={busy}
-                          >
-                            {asking.intent === 'revoke' ? 'Revoke' : 'Send new link'}
-                          </Button>
-                        </Confirm>
-                      </fetcher.Form>
-                    </Td>
-                  </Tr>
-                ) : null}
-              </Fragment>
-            ))}
-          </TableBody>
-        </Table>
+                        {intent === 'revoke'
+                          ? 'Revoke…'
+                          : i.status === 'expired'
+                            ? 'Send a new link…'
+                            : 'Resend…'}
+                      </Button>
+                    ))}
+                  </span>
+                }
+              />
+              {asking?.id === i.id ? (
+                <li>
+                  <fetcher.Form
+                    method="post"
+                    className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/40 px-3 py-2"
+                    onSubmit={() => setAsking(null)}
+                  >
+                    <input type="hidden" name="intent" value={`invite-${asking.intent}`} />
+                    <input type="hidden" name="id" value={i.id} />
+                    <Confirm
+                      message={
+                        asking.intent === 'revoke'
+                          ? `Revoke the invitation for ${i.email}? Its links stop working.`
+                          : `Send ${i.email} a new link? The old one stops working.`
+                      }
+                      cancelLabel="Keep"
+                      onCancel={() => setAsking(null)}
+                      className="flex-1"
+                    >
+                      {/* A new link to an admin's seat asks who you are first, as inviting one does. */}
+                      {asking.intent === 'resend' && i.role === 'admin' ? (
+                        <StepUpField method={stepUp} next="/team" />
+                      ) : null}
+                      <Button
+                        size="sm"
+                        variant={asking.intent === 'revoke' ? 'destructive' : 'default'}
+                        type="submit"
+                        disabled={busy}
+                      >
+                        {asking.intent === 'revoke' ? 'Revoke' : 'Send new link'}
+                      </Button>
+                    </Confirm>
+                  </fetcher.Form>
+                </li>
+              ) : null}
+            </Fragment>
+          ))}
+        </Catalog>
       ) : (
         <Empty>No open invitations. Invite someone to send them a link that works once.</Empty>
       )}

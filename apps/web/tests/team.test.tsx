@@ -162,19 +162,68 @@ describe('Team', () => {
       ],
     };
     renderTeam(fakeClient(team));
-    const ada = (await screen.findByText('Ada')).closest('tr') as HTMLElement;
-    const bo = screen.getByText('Bo').closest('tr') as HTMLElement;
+    const ada = (await screen.findByText('Ada')).closest('li') as HTMLElement;
+    const bo = screen.getByText('Bo').closest('li') as HTMLElement;
     expect(within(bo).getByText('Disabled')).toBeTruthy();
     expect(within(ada).queryByText('Disabled')).toBeNull();
     expect(within(ada).getByText('Active').className).toContain('sr-only');
   });
 
-  it('says there is no one yet in place of the table, not as a row of it', async () => {
+  it('finds people by name, email or role and by status; a miss says how to get them back', async () => {
+    const team: TeamSummary = {
+      ...oneAdminKey,
+      people: [
+        ...oneAdminKey.people,
+        {
+          id: 'p-2',
+          email: 'bo@example.com',
+          name: 'Bo',
+          linked: true,
+          disabled: true,
+          role: role('viewer'),
+          admin: false,
+          createdAt: '2026-10-01T00:00:00.000Z',
+        },
+      ],
+    };
+    renderTeam(fakeClient(team));
+    await screen.findByText('Ada');
+    const search = screen.getByRole('searchbox', { name: 'Search people' });
+
+    fireEvent.change(search, { target: { value: 'viewer' } });
+    expect(screen.queryByText('Ada')).toBeNull();
+    expect(screen.getByText('Bo')).toBeTruthy();
+
+    fireEvent.change(search, { target: { value: '' } });
+    fireEvent.click(screen.getByRole('radio', { name: 'Disabled' }));
+    expect(screen.queryByText('Ada')).toBeNull();
+
+    fireEvent.change(search, { target: { value: 'ada' } });
+    expect(screen.queryByRole('list', { name: 'People' })).toBeNull();
+    expect(screen.getByText(/No people match/)).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }));
+    expect(screen.getByText('Ada')).toBeTruthy();
+    expect(screen.getByText('Bo')).toBeTruthy();
+  });
+
+  it('finds keys by name, and a miss clears from where it is said', async () => {
+    renderTeam(fakeClient(oneAdminKey));
+    await screen.findByText('Deploy key');
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search API keys' }), {
+      target: { value: 'nothing like it' },
+    });
+    expect(screen.queryByRole('list', { name: 'API keys and their roles' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }));
+    expect(screen.getByText('Deploy key')).toBeTruthy();
+  });
+
+  it('says there is no one yet in place of the list, not as a row of it', async () => {
     renderTeam(fakeClient({ ...oneAdminKey, people: [], keys: [] }));
     expect(await screen.findByText(/No one on the team yet/)).toBeTruthy();
-    expect(screen.queryByRole('table', { name: 'People' })).toBeNull();
+    expect(screen.queryByRole('list', { name: 'People' })).toBeNull();
     expect(screen.getByText('No API keys.')).toBeTruthy();
-    expect(screen.queryByRole('table', { name: 'API keys and their roles' })).toBeNull();
+    expect(screen.queryByRole('list', { name: 'API keys and their roles' })).toBeNull();
   });
 
   it('changes a role only after an inline confirm', async () => {
@@ -186,6 +235,9 @@ describe('Team', () => {
     fireEvent.change(select, { target: { value: 'role-approver' } });
     const confirm = await screen.findByRole('alertdialog');
     expect(within(confirm).getByText('Change Ada (ada@example.com) to Approver?')).toBeTruthy();
+    // Under the row, on a line of its own, and still a member of the list.
+    expect(confirm.closest('li')?.parentElement).toBe(select.closest('li')?.parentElement);
+    expect(confirm.closest('li')).not.toBe(select.closest('li'));
     expect(client.updateMember).not.toHaveBeenCalled();
     fireEvent.click(within(confirm).getByRole('button', { name: 'Change role' }));
     await waitFor(() =>

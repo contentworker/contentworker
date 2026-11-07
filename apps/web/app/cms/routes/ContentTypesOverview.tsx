@@ -1,6 +1,15 @@
 import type { ContentType, ContentTypeDraft } from '@contentworker/domain';
 import { Button } from '@contentworker/ui/button';
 import {
+  Catalog,
+  CatalogEmpty,
+  CatalogFigure,
+  CatalogRow,
+  CatalogTile,
+  ListSearch,
+  ListToolbar,
+} from '@contentworker/ui/catalog';
+import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -8,7 +17,6 @@ import {
   DropdownMenuTrigger,
 } from '@contentworker/ui/dropdown-menu';
 import { Skeleton, SkeletonText } from '@contentworker/ui/skeleton';
-import { Table, TableBody, TableHead, Td, Th, Tr } from '@contentworker/ui/table';
 import { MoreHorizontalIcon, Plus, Shapes } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { Link } from 'react-router';
@@ -21,7 +29,9 @@ import { ContentTypeDialog } from '~/cms/components/ContentTypeDialog';
 import { LoadingStatus } from '~/cms/components/loading';
 import { Empty, PageHeader } from '~/cms/components/page';
 import { StatusBadge } from '~/cms/components/status';
+import { contentTypeIcon } from '~/cms/lib/content-type-icons';
 import { count, plural } from '~/cms/lib/format';
+import { typeMark } from '~/lib/initials';
 import { useClient } from '../lib/client-context';
 import { apiErrorMessage, type ContentTypeEntryCounts } from '../lib/management';
 import { useInvalidate, useScopedQuery } from '../lib/queries';
@@ -42,6 +52,13 @@ export function ContentTypesOverview() {
   // A type's menu: Clone and Delete, each in its own dialog.
   const [cloning, setCloning] = useState<ContentType | null>(null);
   const [deleting, setDeleting] = useState<ContentType | null>(null);
+  const [query, setQuery] = useState('');
+  // The API returns every type, so the filter is safe to run here.
+  const needle = query.trim().toLowerCase();
+  const shown = types.filter(
+    (ct) =>
+      !needle || `${ct.name} ${ct.apiId} ${ct.description ?? ''}`.toLowerCase().includes(needle),
+  );
   const invalidate = useInvalidate();
   // Each row's ⋯ button: after a delete, focus goes on to the next row's.
   const triggers = useRef(new Map<string, HTMLButtonElement>());
@@ -52,7 +69,7 @@ export function ContentTypesOverview() {
     if (!deletedNow.current) return;
     event.preventDefault();
     deletedNow.current = false;
-    const next = types[types.findIndex((t) => t.apiId === apiId) + 1];
+    const next = shown[shown.findIndex((t) => t.apiId === apiId) + 1];
     const to = next ? triggers.current.get(next.apiId) : undefined;
     if (to) return to.focus();
     const heading = document.querySelector<HTMLElement>('h1');
@@ -95,10 +112,10 @@ export function ContentTypesOverview() {
       toast.success(`Published “${ct.name}”`);
     });
 
-  /** A count cell: a skeleton while loading, a dash when the counts couldn't be read. */
+  /** A count figure: a skeleton while loading, a dash when the counts couldn't be read. */
   const figure = (n: number | undefined) =>
     countsQuery.isPending ? (
-      <Skeleton className="ml-auto h-4 w-8" />
+      <Skeleton className="inline-block h-4 w-8 align-middle" />
     ) : n === undefined ? (
       <span className="text-muted-foreground">—</span>
     ) : (
@@ -141,67 +158,78 @@ export function ContentTypesOverview() {
         </Empty>
       ) : (
         <div className="card overflow-clip">
-          <Table stack="cards" caption="Content types">
-            <TableHead>
-              <Tr>
-                <Th>Content type</Th>
-                <Th numeric>Entries</Th>
-                <Th numeric>Drafts</Th>
-                <Th numeric>Changed</Th>
-                <Th numeric>Fields</Th>
-                <Th>
-                  <span className="sr-only">Actions</span>
-                </Th>
-              </Tr>
-            </TableHead>
-            <TableBody>
-              {types.map((ct) => {
+          <ListToolbar summary={`${shown.length} shown`}>
+            <ListSearch
+              label="Search content types"
+              placeholder="Search content types"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onClear={() => setQuery('')}
+            />
+          </ListToolbar>
+          {shown.length === 0 ? (
+            <CatalogEmpty onClear={() => setQuery('')}>
+              No content types match “{query.trim()}”.
+            </CatalogEmpty>
+          ) : (
+            <Catalog aria-label="Content types" className="pt-0">
+              {shown.map((ct) => {
                 const n = countsFor(ct.apiId);
+                // A type without an icon shows its initials, so such rows still look apart.
+                const Icon = contentTypeIcon(ct.icon);
                 return (
-                  <Tr key={ct.apiId}>
-                    <Td>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <Link
-                          // A singleton opens its one entry, as the sidebar does.
-                          to={ct.singleton ? `/content/${ct.apiId}/entry` : `/content/${ct.apiId}`}
-                          className="font-medium text-foreground hover:underline"
-                        >
-                          {ct.name}
-                        </Link>
+                  <CatalogRow
+                    key={ct.apiId}
+                    media={
+                      <CatalogTile aria-hidden="true">
+                        {Icon ? <Icon /> : typeMark(ct.name || ct.apiId)}
+                      </CatalogTile>
+                    }
+                    title={
+                      <Link
+                        // A singleton opens its one entry, as the sidebar does.
+                        to={ct.singleton ? `/content/${ct.apiId}/entry` : `/content/${ct.apiId}`}
+                        className="hit-area font-medium text-foreground hover:underline"
+                      >
+                        {ct.name}
+                      </Link>
+                    }
+                    meta={
+                      <span className="flex flex-wrap gap-x-2">
+                        <span className="break-all font-mono">{ct.apiId}</span>
+                        {ct.singleton ? <span>One entry only</span> : null}
+                        {/* The schema's size, not the editor's work: the aside keeps to that. */}
+                        <span>{plural(ct.fields.length, 'field')}</span>
+                        {ct.description ? (
+                          <span className="line-clamp-2 w-full max-w-measure">
+                            {ct.description}
+                          </span>
+                        ) : null}
+                      </span>
+                    }
+                    aside={
+                      <>
                         {ct.status === 'draft' ? <StatusBadge status="draft" /> : null}
-                      </div>
-                      <div className="text-muted-foreground text-xs">
-                        <span className="font-mono">{ct.apiId}</span>
-                        {ct.singleton ? ' · one entry only' : null}
-                      </div>
-                      {ct.description && (
-                        <p className="line-clamp-2 max-w-measure text-muted-foreground text-xs">
-                          {ct.description}
-                        </p>
-                      )}
-                    </Td>
-                    <Td numeric label="Entries">
-                      {figure(n?.total)}
-                    </Td>
-                    <Td numeric label="Drafts">
-                      {figure(n?.draft)}
-                    </Td>
-                    <Td numeric label="Changed">
-                      {figure(n?.changed)}
-                    </Td>
-                    <Td numeric label="Fields">
-                      <span title={plural(ct.fields.length, 'field')}>{ct.fields.length}</span>
-                    </Td>
-                    <Td className="text-right">
+                        <CatalogFigure label="Entries">{figure(n?.total)}</CatalogFigure>
+                        <CatalogFigure label="Drafts">{figure(n?.draft)}</CatalogFigure>
+                        <CatalogFigure label="Changed">{figure(n?.changed)}</CatalogFigure>
+                      </>
+                    }
+                    actions={
                       <div className="flex justify-end gap-1">
                         {ct.status === 'draft' ? (
-                          <Button size="sm" variant="outline" onClick={() => publish(ct)}>
+                          <Button
+                            size="xs"
+                            variant="ghost"
+                            aria-label={`Publish “${ct.name}”`}
+                            onClick={() => publish(ct)}
+                          >
                             Publish
                           </Button>
                         ) : null}
                         <Button
                           variant="ghost"
-                          size="sm"
+                          size="xs"
                           aria-label={`Edit “${ct.name}”`}
                           onClick={() => setDialog({ open: true, initial: ct })}
                         >
@@ -216,7 +244,7 @@ export function ContentTypesOverview() {
                               }}
                               type="button"
                               variant="ghost"
-                              size="icon-sm"
+                              size="icon-xs"
                               aria-label={`More actions for “${ct.name}”`}
                             >
                               <MoreHorizontalIcon aria-hidden="true" />
@@ -236,12 +264,12 @@ export function ContentTypesOverview() {
                           </DropdownMenuContent>
                         </DropdownMenu>
                       </div>
-                    </Td>
-                  </Tr>
+                    }
+                  />
                 );
               })}
-            </TableBody>
-          </Table>
+            </Catalog>
+          )}
         </div>
       )}
 

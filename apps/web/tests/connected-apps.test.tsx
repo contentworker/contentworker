@@ -106,16 +106,20 @@ describe('Connected applications', () => {
     expect(await screen.findByText('Claude')).toBeTruthy();
     expect(screen.getByText('editor@example.com')).toBeTruthy();
     // Scopes are shown in plain language, not as raw scope strings.
-    expect(screen.getByText('Read published content, Read drafts')).toBeTruthy();
+    expect(screen.getByText('Access: Read published content, Read drafts')).toBeTruthy();
     // Several tokens behind one connection is surfaced, not hidden.
     expect(screen.getByText('2 active tokens')).toBeTruthy();
+    // With no column headers, each fact says what it is.
+    const row = screen.getByText('Claude').closest('li') as HTMLElement;
+    expect(row.textContent).toContain('Authorized by editor@example.com');
+    expect(row.textContent).toContain('Last used');
   });
 
   it('confirms a disconnect in red: it removes the access for good', async () => {
     const client = fakeClient({ apps: [claude] });
     renderWith(<ConnectedApps client={client as unknown as ManagementClient} />);
     await screen.findByText('Claude');
-    fireEvent.click(screen.getByRole('button', { name: 'Disconnect' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Disconnect “Claude”' }));
     const dialog = await screen.findByRole('alertdialog');
     const action = within(dialog).getByRole('button', { name: 'Disconnect' });
     expect(action.className).toContain('text-destructive');
@@ -126,7 +130,7 @@ describe('Connected applications', () => {
     renderWith(<ConnectedApps client={client as unknown as ManagementClient} />);
     await screen.findByText('Claude');
 
-    await confirm('Disconnect', 'Disconnect');
+    await confirm('Disconnect “Claude”', 'Disconnect');
     await waitFor(() =>
       expect(client.revokeConnectedApp).toHaveBeenCalledWith('client-1', 'editor@example.com'),
     );
@@ -230,11 +234,32 @@ describe('Personal access tokens', () => {
     expect(await screen.findByText('Active')).toBeTruthy();
     expect(screen.getByText('Expired')).toBeTruthy();
     expect(screen.getByText('Revoked')).toBeTruthy();
-    // A never-expiring token says so rather than showing an empty cell
+    // A never-expiring token says so rather than leaving a gap
     // ('live' and 'gone' both lack an expiry).
-    expect(screen.getAllByText('Never')).toHaveLength(2);
+    expect(screen.getAllByText('Never expires')).toHaveLength(2);
+    expect((screen.getByText('lapsed').closest('li') as HTMLElement).textContent).toContain(
+      'Expires',
+    );
     // Revoked rows offer no revoke action.
-    expect(screen.getAllByRole('button', { name: 'Revoke' })).toHaveLength(2);
+    expect(screen.getAllByRole('button', { name: /^Revoke / })).toHaveLength(2);
+    expect(screen.queryByRole('button', { name: 'Revoke “gone”' })).toBeNull();
+  });
+
+  it('tells unnamed tokens apart by the end of their id, on screen and to a screen reader', async () => {
+    const client = fakeClient({
+      tokens: [
+        { id: '0190-aaaa-1111', scopes: ['delivery:read'], revoked: false },
+        { id: '0190-aaaa-2222', scopes: ['delivery:read'], revoked: false },
+      ],
+    });
+    renderWith(<ConnectedApps client={client as unknown as ManagementClient} />);
+
+    expect(await screen.findByText('ID ending 1111')).toBeTruthy();
+    expect(screen.getByText('ID ending 2222')).toBeTruthy();
+    await confirm('Revoke the unnamed token ending 2222', 'Revoke token');
+    await waitFor(() =>
+      expect(client.revokePersonalAccessToken).toHaveBeenCalledWith('0190-aaaa-2222'),
+    );
   });
 
   it('revokes a token', async () => {
@@ -244,7 +269,7 @@ describe('Personal access tokens', () => {
     renderWith(<ConnectedApps client={client as unknown as ManagementClient} />);
     await screen.findByText('live');
 
-    await confirm('Revoke', 'Revoke token');
+    await confirm('Revoke “live”', 'Revoke token');
     await waitFor(() => expect(client.revokePersonalAccessToken).toHaveBeenCalledWith('a'));
     await waitFor(() => expect(screen.getByText('Revoked')).toBeTruthy());
   });

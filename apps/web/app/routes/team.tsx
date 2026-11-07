@@ -1,8 +1,25 @@
 import { Button } from '@contentworker/ui/button';
+import {
+  Catalog,
+  CatalogEmpty,
+  CatalogFigure,
+  CatalogRow,
+  CatalogTile,
+  ListSearch,
+  ListToolbar,
+} from '@contentworker/ui/catalog';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@contentworker/ui/dropdown-menu';
 import { Input } from '@contentworker/ui/input';
 import { cn } from '@contentworker/ui/lib/utils';
 import { NativeSelect, NativeSelectOption } from '@contentworker/ui/native-select';
-import { Table, TableBody, TableHead, Td, Th, Tr } from '@contentworker/ui/table';
+import { Segmented, SegmentedItem } from '@contentworker/ui/segmented';
+import { MoreHorizontalIcon } from 'lucide-react';
 import { Fragment, useEffect, useRef, useState } from 'react';
 import {
   data,
@@ -20,6 +37,7 @@ import { CopyButton } from '~/components/copy-button';
 import { Field } from '~/components/field';
 import { InvitesSection } from '~/components/invites';
 import { Empty, PageHeader, Section } from '~/components/page';
+import { StatusBadge } from '~/components/status';
 import { StepUpField } from '~/components/step-up-field';
 import { audit } from '~/lib/audit.server';
 import {
@@ -29,6 +47,7 @@ import {
   stepUp,
   stepUpMethod,
 } from '~/lib/auth.server';
+import { initials } from '~/lib/initials';
 import { openInvites } from '~/lib/invites';
 import {
   createInvite,
@@ -307,12 +326,18 @@ function RoleForm({
 }) {
   const [chosen, setChosen] = useState<Role>(role);
   return (
-    <fetcher.Form method="post" className="flex flex-wrap items-center gap-1.5">
+    <fetcher.Form method="post" className="flex min-w-0 flex-wrap items-center gap-1.5">
       <input type="hidden" name="intent" value="role" />
       <input type="hidden" name="id" value={id} />
       <input type="hidden" name="who" value={name} />
       <RoleSelect value={role} label={`Role for ${name}`} compact onChange={setChosen} />
-      <Button size="sm" variant="outline" type="submit" disabled={fetcher.state !== 'idle'}>
+      <Button
+        size="xs"
+        variant="outline"
+        type="submit"
+        aria-label={`Save the role for ${name}`}
+        disabled={fetcher.state !== 'idle'}
+      >
         Save
       </Button>
       {chosen === 'admin' && role !== 'admin' ? <StepUpField method={stepUp} next="/team" /> : null}
@@ -330,9 +355,9 @@ function RoleSelect({
   name?: string;
   value?: string;
   onChange?: (role: Role) => void;
-  /** For a select with no visible label of its own, such as one per table row. */
+  /** For a select with no visible label of its own, such as one per person's row. */
   label?: string;
-  /** Beside a small button (a table row); in a form it matches the text fields' height. */
+  /** Beside a small button (a person's row); in a form it matches the text fields' height. */
   compact?: boolean;
 }) {
   return (
@@ -367,6 +392,20 @@ export default function Team() {
   const done = shown && 'done' in shown ? shown.done : null;
   const [asking, setAsking] = useState<{ id: string; intent: Asked } | null>(null);
   const ask = (id: string, intent: Asked) => setAsking({ id, intent });
+  const [query, setQuery] = useState('');
+  const [show, setShow] = useState<PersonFilter>('all');
+  // A question open on someone the filter hides would come back, taking focus, when they do.
+  const filterBy = (next: () => void) => {
+    next();
+    setAsking(null);
+  };
+  // The loader reads the whole team, so filtering here can't miss anyone.
+  const needle = query.trim().toLowerCase();
+  const shownPeople = people.filter(
+    (p) =>
+      (show === 'all' || !!p.disabledAt === (show === 'disabled')) &&
+      (!needle || `${p.name} ${p.email}`.toLowerCase().includes(needle)),
+  );
   // Keep returns to the button that asked; nothing is lost if the person changes their mind.
   const keep = () => {
     const was = asking;
@@ -447,92 +486,117 @@ export default function Team() {
 
           <Section title="People" flush>
             {people.length ? (
-              <div>
-                {/* A table on wide screens; on a phone each person stacks into a block, so the
-                    role select keeps its width and nothing pushes the page sideways. */}
-                <Table stack="rows" caption="People">
-                  <TableHead>
-                    <Tr>
-                      <Th>Person</Th>
-                      <Th>Role</Th>
-                      <Th>Last sign-in</Th>
-                      <Th className="text-right">
-                        <span className="sr-only">Actions</span>
-                      </Th>
-                    </Tr>
-                  </TableHead>
-                  <TableBody>
-                    {people.map((p) => (
-                      <Fragment key={p.id}>
-                        <Tr
-                          className={cn(
-                            'block space-y-2 px-4 py-3 md:table-row md:space-y-0 md:p-0',
-                            p.disabledAt && 'text-muted-foreground',
-                          )}
-                        >
-                          <Td className="block md:table-cell">
-                            {p.name}
-                            {p.id === me.id ? (
-                              <span className="ml-1.5 text-muted-foreground text-xs">you</span>
-                            ) : null}
-                            <div className="text-muted-foreground text-xs">
-                              {p.email}
-                              {p.twoFactorAt ? ' · two-factor' : ''}
-                              {p.passwordChangeDue ? ' · temporary password' : ''}
-                              {p.disabledAt ? ' · disabled' : ''}
-                            </div>
-                          </Td>
-                          <Td className="block md:table-cell">
-                            <RoleForm
-                              id={p.id}
-                              name={p.name}
-                              role={p.role as Role}
-                              stepUp={stepUp}
-                              fetcher={fetcher}
-                            />
-                          </Td>
-                          <Td className="block text-muted-foreground text-xs md:table-cell">
-                            <span aria-hidden="true" className="md:hidden">
-                              Last sign-in:{' '}
-                            </span>
-                            {p.lastLoginAt ? <Ago ms={p.lastLoginAt} /> : 'Never'}
-                          </Td>
-                          <Td className="block md:table-cell">
-                            {/* Disabling sits apart from the resets, so a thumb aimed at one
-                                doesn't land on the other. */}
-                            <div className="-ml-3 flex flex-wrap gap-x-5 gap-y-1.5 md:ml-0 md:justify-end md:gap-x-3">
-                              <div className="flex flex-wrap gap-1.5">
-                                <AskButton id={p.id} intent="reset" asking={asking} ask={ask}>
+              <>
+                <ListToolbar summary={`${shownPeople.length} shown`}>
+                  <ListSearch
+                    label="Search people"
+                    placeholder="Search names and emails"
+                    value={query}
+                    onChange={(e) => filterBy(() => setQuery(e.target.value))}
+                    onClear={() => filterBy(() => setQuery(''))}
+                  />
+                  <Segmented
+                    aria-label="Show people"
+                    value={show}
+                    onValueChange={(v) => filterBy(() => setShow(v as PersonFilter))}
+                  >
+                    <SegmentedItem value="all">All</SegmentedItem>
+                    <SegmentedItem value="active">Active</SegmentedItem>
+                    <SegmentedItem value="disabled">Disabled</SegmentedItem>
+                  </Segmented>
+                </ListToolbar>
+                {shownPeople.length === 0 ? (
+                  <CatalogEmpty
+                    onClear={() => {
+                      setQuery('');
+                      setShow('all');
+                    }}
+                  >
+                    No people match.
+                  </CatalogEmpty>
+                ) : (
+                  <Catalog aria-label="People" className="pt-0">
+                    {shownPeople.map((p) => {
+                      const resetsTwoFactor = !!p.twoFactorAt && p.id !== me.id;
+                      const toggle = p.disabledAt ? 'enable' : 'disable';
+                      return (
+                        <Fragment key={p.id}>
+                          <CatalogRow
+                            // The role's step-up field wraps inside the row, not past its edge.
+                            className={cn(
+                              '[&>*]:max-w-full',
+                              p.disabledAt && 'text-muted-foreground',
+                            )}
+                            media={
+                              <CatalogTile aria-hidden="true">
+                                {initials(p.name, p.email)}
+                              </CatalogTile>
+                            }
+                            title={
+                              <>
+                                {p.name}
+                                {p.id === me.id ? (
+                                  <span className="ml-1.5 font-normal text-muted-foreground text-xs">
+                                    you
+                                  </span>
+                                ) : null}
+                              </>
+                            }
+                            meta={
+                              <span className="flex flex-wrap gap-x-2">
+                                <span>{p.email}</span>
+                                {p.twoFactorAt ? <span>Two-factor</span> : null}
+                                {p.passwordChangeDue ? <span>Temporary password</span> : null}
+                              </span>
+                            }
+                            aside={
+                              <>
+                                {p.disabledAt ? <StatusBadge status="disabled" /> : null}
+                                <CatalogFigure label="Last sign-in">
+                                  {p.lastLoginAt ? <Ago ms={p.lastLoginAt} /> : 'Never'}
+                                </CatalogFigure>
+                                <RoleForm
+                                  id={p.id}
+                                  name={p.name}
+                                  role={p.role as Role}
+                                  stepUp={stepUp}
+                                  fetcher={fetcher}
+                                />
+                              </>
+                            }
+                            actions={
+                              // Disabling sits apart from the resets, so a thumb aimed at one
+                              // doesn't land on the other.
+                              <span className="flex flex-wrap items-center justify-end gap-x-3 gap-y-1">
+                                <AskButton
+                                  id={p.id}
+                                  who={p.name}
+                                  intent="reset"
+                                  asking={asking}
+                                  ask={ask}
+                                >
                                   Reset password…
                                 </AskButton>
-                                {p.twoFactorAt && p.id !== me.id ? (
+                                {p.id === me.id ? null : resetsTwoFactor ? (
+                                  <MoreAsks id={p.id} name={p.name} toggle={toggle} ask={ask} />
+                                ) : (
                                   <AskButton
                                     id={p.id}
-                                    intent="reset-two-factor"
+                                    who={p.name}
+                                    intent={toggle}
                                     asking={asking}
                                     ask={ask}
                                   >
-                                    Reset two-factor…
+                                    {toggle === 'enable' ? 'Enable…' : 'Disable…'}
                                   </AskButton>
-                                ) : null}
-                              </div>
-                              {p.id === me.id ? null : p.disabledAt ? (
-                                <AskButton id={p.id} intent="enable" asking={asking} ask={ask}>
-                                  Enable…
-                                </AskButton>
-                              ) : (
-                                <AskButton id={p.id} intent="disable" asking={asking} ask={ask}>
-                                  Disable…
-                                </AskButton>
-                              )}
-                            </div>
-                          </Td>
-                        </Tr>
-                        {/* The question gets its own line under the person, so their row keeps its
-                          shape and the name stays beside what's being asked. */}
-                        {asking?.id === p.id ? (
-                          <Tr className="block md:table-row">
-                            <Td colSpan={4} className="block px-4 pt-0 pb-3 md:table-cell">
+                                )}
+                              </span>
+                            }
+                          />
+                          {/* The question gets its own line under the person, so their row keeps its
+                              shape and the name stays beside what's being asked. */}
+                          {asking?.id === p.id ? (
+                            <li>
                               <fetcher.Form
                                 method="post"
                                 className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/40 px-3 py-2"
@@ -561,14 +625,14 @@ export default function Team() {
                                   </Button>
                                 </Confirm>
                               </fetcher.Form>
-                            </Td>
-                          </Tr>
-                        ) : null}
-                      </Fragment>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
+                            </li>
+                          ) : null}
+                        </Fragment>
+                      );
+                    })}
+                  </Catalog>
+                )}
+              </>
             ) : (
               <Empty>Nobody is on the team yet. Add the first person below.</Empty>
             )}
@@ -631,6 +695,9 @@ export default function Team() {
 
 type Asked = 'reset' | 'reset-two-factor' | 'disable' | 'enable';
 
+/** Which people the list shows. */
+type PersonFilter = 'all' | 'active' | 'disabled';
+
 const QUESTIONS: Record<Asked, (name: string) => string> = {
   reset: (n) => `Give ${n} a temporary password and sign them out everywhere?`,
   'reset-two-factor': (n) => `Turn off ${n}’s two-factor sign-in so they can set it up again?`,
@@ -648,12 +715,14 @@ const ACTIONS: Record<Asked, string> = {
 /** Opens the confirmation for an action that can't be taken back. */
 function AskButton({
   id,
+  who,
   intent,
   asking,
   ask,
   children,
 }: {
   id: string;
+  who: string;
   intent: Asked;
   asking: { id: string; intent: Asked } | null;
   ask: (id: string, intent: Asked) => void;
@@ -662,7 +731,8 @@ function AskButton({
   const open = asking?.id === id && asking.intent === intent;
   return (
     <Button
-      size="sm"
+      aria-label={`${ACTIONS[intent]} for ${who}`}
+      size="xs"
       variant="ghost"
       type="button"
       data-ask={`${id}:${intent}`}
@@ -671,6 +741,56 @@ function AskButton({
     >
       {children}
     </Button>
+  );
+}
+
+/** The third action and on, behind ⋯: each opens the same question under the person. */
+function MoreAsks({
+  id,
+  name,
+  toggle,
+  ask,
+}: {
+  id: string;
+  name: string;
+  toggle: 'enable' | 'disable';
+  ask: (id: string, intent: Asked) => void;
+}) {
+  const picked = useRef<Asked | null>(null);
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          aria-label={`More actions for ${name}`}
+        >
+          <MoreHorizontalIcon aria-hidden="true" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent
+        align="end"
+        className="w-auto min-w-40"
+        // The question waits for the menu to close: the menu hands focus back to ⋯ as it goes, which
+        // would take it from Keep. Asked from there, it is ⋯ that Keep goes back to.
+        onCloseAutoFocus={() => {
+          if (picked.current) ask(id, picked.current);
+          picked.current = null;
+        }}
+      >
+        <DropdownMenuItem onSelect={() => (picked.current = 'reset-two-factor')}>
+          Reset two-factor…
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem
+          variant={toggle === 'disable' ? 'destructive' : 'default'}
+          onSelect={() => (picked.current = toggle)}
+        >
+          {toggle === 'enable' ? 'Enable…' : 'Disable…'}
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 

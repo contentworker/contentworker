@@ -1,6 +1,7 @@
 import type { ContentType, FieldType, FilterOp } from '@contentworker/domain';
 import { Badge } from '@contentworker/ui/badge';
 import { Button } from '@contentworker/ui/button';
+import { ListSearch } from '@contentworker/ui/catalog';
 import { Input } from '@contentworker/ui/input';
 import {
   Select,
@@ -9,7 +10,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@contentworker/ui/select';
-import { ListFilter, Plus, Search, UserRound, X } from 'lucide-react';
+import { ListFilter, Plus, UserRound, X } from 'lucide-react';
 import { type ReactNode, useEffect, useId, useRef, useState } from 'react';
 import { statusLabel } from '../lib/format';
 import type { EntryFilter, EntryListQuery } from '../lib/management';
@@ -198,17 +199,13 @@ function SearchField(props: { value: string; onChange(text: string): void }) {
     return () => clearTimeout(timer);
   }, [text]);
   return (
-    <Input
-      type="search"
-      aria-label="Search entries"
-      enterKeyHint="search"
-      autoCorrect="off"
-      autoCapitalize="off"
-      spellCheck={false}
-      className="h-9 pl-8"
+    <ListSearch
+      label="Search entries"
+      className="max-w-none"
       placeholder="Search text fields…"
       value={text}
       onChange={(e) => setText(e.target.value)}
+      onClear={() => setText('')}
     />
   );
 }
@@ -265,11 +262,7 @@ export function EntryFilterBar(props: {
       <div className="flex flex-wrap items-center gap-2">
         {props.leading}
         {/* On a phone the buttons share a row and the search has its own, wide enough to use. */}
-        <div className="relative flex-1 max-sm:order-first max-sm:basis-full sm:max-w-xs">
-          <Search
-            aria-hidden="true"
-            className="-translate-y-1/2 absolute top-1/2 left-2.5 size-4 text-muted-foreground"
-          />
+        <div className="flex-1 max-sm:order-first max-sm:basis-full sm:max-w-xs">
           <SearchField
             value={value.search ?? ''}
             onChange={(text) => onChange({ ...value, search: text || undefined })}

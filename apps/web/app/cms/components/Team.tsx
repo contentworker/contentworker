@@ -9,6 +9,15 @@
 
 import { Badge } from '@contentworker/ui/badge';
 import { Button } from '@contentworker/ui/button';
+import {
+  Catalog,
+  CatalogEmpty,
+  CatalogFigure,
+  CatalogRow,
+  CatalogTile,
+  ListSearch,
+  ListToolbar,
+} from '@contentworker/ui/catalog';
 import { Input } from '@contentworker/ui/input';
 import { Label } from '@contentworker/ui/label';
 import {
@@ -16,15 +25,9 @@ import {
   NativeSelectOptGroup,
   NativeSelectOption,
 } from '@contentworker/ui/native-select';
+import { Segmented, SegmentedItem } from '@contentworker/ui/segmented';
 import { Switch } from '@contentworker/ui/switch';
-import {
-  Table,
-  TableBody,
-  Td as TableCell,
-  Th as TableHead,
-  TableHead as TableHeader,
-  Tr as TableRow,
-} from '@contentworker/ui/table';
+import { KeyRound } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router';
 import { Ago } from '~/cms/components/ago';
@@ -32,6 +35,7 @@ import { ConfirmDialog } from '~/cms/components/ConfirmDialog';
 import { ConfirmButton, InlineConfirm } from '~/cms/components/InlineConfirm';
 import { Empty, Section } from '~/cms/components/page';
 import { StatusBadge } from '~/cms/components/status';
+import { initials } from '~/lib/initials';
 import { keyKindApi, keyKindLabel } from '../lib/key-kinds';
 import {
   apiErrorMessage,
@@ -120,6 +124,9 @@ export function Team(props: { client: ManagementClient }) {
 type Act = (fn: () => Promise<unknown>, done: string) => Promise<void>;
 type Options = ReturnType<typeof roleOptions>;
 
+/** Which people the list shows. */
+type PersonFilter = 'all' | 'active' | 'disabled';
+
 /** The last admin: one administrator left, and this is it. */
 const isLastAdmin = (team: TeamSummary | undefined, admin: boolean) =>
   !!team && admin && team.adminCount <= 1;
@@ -135,7 +142,17 @@ function People(props: {
   const [email, setEmail] = useState('');
   const [name, setName] = useState('');
   const [role, setRole] = useState('viewer');
+  const [query, setQuery] = useState('');
+  const [show, setShow] = useState<PersonFilter>('all');
+  // The api lists everyone in the space, so filtering here can't miss anyone.
   const people = team?.people ?? [];
+  const needle = query.trim().toLowerCase();
+  const shown = people.filter(
+    (p) =>
+      (show === 'all' || p.disabled === (show === 'disabled')) &&
+      (!needle ||
+        `${p.name ?? ''} ${p.email} ${p.role?.name ?? ''}`.toLowerCase().includes(needle)),
+  );
 
   const add = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -202,35 +219,54 @@ function People(props: {
         </div>
         <Button type="submit">Add person</Button>
       </form>
-      {/* No one at all is the news, so it is `Empty` in place of the table. */}
-      {team && people.length === 0 ? (
+      {/* No one at all is the news, so it is `Empty` in place of the list. */}
+      {!team ? null : people.length === 0 ? (
         <Empty>No one on the team yet. Add someone by email above.</Empty>
       ) : (
-        <Table stack="cards" caption="People">
-          <TableHeader>
-            <TableRow>
-              <TableHead>Person</TableHead>
-              <TableHead>Role</TableHead>
-              <TableHead className="w-28">Status</TableHead>
-              <TableHead className="w-40">
-                <span className="sr-only">Actions</span>
-              </TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {people.map((p) => (
-              <PersonRow
-                key={p.id}
-                person={p}
-                team={team}
-                options={options}
-                act={act}
-                attempt={props.attempt}
-                client={client}
-              />
-            ))}
-          </TableBody>
-        </Table>
+        <>
+          <ListToolbar className="border-t" summary={`${shown.length} shown`}>
+            <ListSearch
+              label="Search people"
+              placeholder="Search names, emails and roles"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onClear={() => setQuery('')}
+            />
+            <Segmented
+              aria-label="Show people"
+              value={show}
+              onValueChange={(v) => setShow(v as PersonFilter)}
+            >
+              <SegmentedItem value="all">All</SegmentedItem>
+              <SegmentedItem value="active">Active</SegmentedItem>
+              <SegmentedItem value="disabled">Disabled</SegmentedItem>
+            </Segmented>
+          </ListToolbar>
+          {shown.length === 0 ? (
+            <CatalogEmpty
+              onClear={() => {
+                setQuery('');
+                setShow('all');
+              }}
+            >
+              No people match.
+            </CatalogEmpty>
+          ) : (
+            <Catalog aria-label="People" className="pt-0">
+              {shown.map((p) => (
+                <PersonRow
+                  key={p.id}
+                  person={p}
+                  team={team}
+                  options={options}
+                  act={act}
+                  attempt={props.attempt}
+                  client={client}
+                />
+              ))}
+            </Catalog>
+          )}
+        </>
       )}
     </Section>
   );
@@ -248,80 +284,98 @@ function PersonRow(props: {
   // People are administrators only where they can sign in (SSO).
   const last = isLastAdmin(team, p.admin && !!team?.sso && !p.disabled);
   const who = p.name ? `${p.name} (${p.email})` : p.email;
+  const role = useRoleChange({
+    subject: who,
+    current: p.role,
+    options,
+    lastAdmin: last,
+    onChange: (roleId, roleName) =>
+      act(
+        () => client.updateMember(p.id, { role: roleId ?? undefined }),
+        `${who} is now ${roleName}`,
+      ),
+  });
   return (
-    <TableRow>
-      <TableCell>
-        <div className="font-medium">{p.name ?? p.email}</div>
-        {p.name ? <div className="text-muted-foreground text-xs">{p.email}</div> : null}
-        {!p.linked ? (
-          <div className="text-muted-foreground text-xs">Hasn’t signed in yet</div>
-        ) : null}
-      </TableCell>
-      <TableCell label="Role">
-        <RoleChange
-          subject={who}
-          current={p.role}
-          options={options}
-          lastAdmin={last}
-          onChange={(roleId, roleName) =>
-            act(
-              () => client.updateMember(p.id, { role: roleId ?? undefined }),
-              `${who} is now ${roleName}`,
-            )
-          }
-        />
-      </TableCell>
-      <TableCell label={p.disabled ? 'Status' : undefined}>
-        {/* Only the exception is stamped: a row of "Active" on everyone says nothing. */}
-        {p.disabled ? <StatusBadge status="disabled" /> : <span className="sr-only">Active</span>}
-      </TableCell>
-      <TableCell className="text-right">
-        {last ? (
-          <span className="text-muted-foreground text-xs">Last administrator</span>
-        ) : (
-          <div className="flex flex-wrap justify-end gap-1">
-            <ConfirmButton
-              message={p.disabled ? `Let ${who} sign in again?` : `Turn off ${who}’s access?`}
-              note={
-                p.disabled ? undefined : 'Their SSO sign-in is refused until you turn it back on.'
-              }
-              confirmLabel={p.disabled ? 'Turn on' : 'Turn off'}
-              tone={p.disabled ? 'default' : 'destructive'}
-              onConfirm={() =>
-                void act(
-                  () => client.updateMember(p.id, { disabled: !p.disabled }),
-                  p.disabled ? `${who} can sign in` : `${who}’s access is off`,
-                )
-              }
-            >
-              {(ask) => (
-                <Button type="button" variant="ghost" size="sm" onClick={ask}>
-                  {p.disabled ? 'Turn on' : 'Turn off'}
-                </Button>
-              )}
-            </ConfirmButton>
-            <ConfirmDialog
-              message={`Remove ${who} from the team?`}
-              note="They lose their role here; adding them again starts over."
-              confirmLabel="Remove"
-              onConfirm={() => props.attempt(() => client.removeMember(p.id), `${who} removed`)}
-            >
-              {(ask) => (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="text-destructive"
-                  onClick={ask}
-                >
-                  Remove
-                </Button>
-              )}
-            </ConfirmDialog>
-          </div>
-        )}
-      </TableCell>
-    </TableRow>
+    <>
+      <CatalogRow
+        // Turning someone off asks in place: the question wraps in the row, not past its edge.
+        className="[&>*]:max-w-full"
+        media={<CatalogTile aria-hidden="true">{initials(p.name, p.email)}</CatalogTile>}
+        title={p.name ?? p.email}
+        meta={
+          p.name || !p.linked ? (
+            <span className="flex flex-wrap gap-x-2">
+              {p.name ? <span>{p.email}</span> : null}
+              {!p.linked ? <span>Hasn’t signed in yet</span> : null}
+            </span>
+          ) : undefined
+        }
+        aside={
+          <>
+            {/* Only the exception is stamped: a row of "Active" on everyone says nothing. */}
+            {p.disabled ? (
+              <StatusBadge status="disabled" />
+            ) : (
+              <span className="sr-only">Active</span>
+            )}
+            {role.select}
+          </>
+        }
+        actions={
+          last ? (
+            <span className="text-muted-foreground text-xs">Last administrator</span>
+          ) : (
+            <span className="flex flex-wrap items-center justify-end gap-1">
+              <ConfirmButton
+                message={p.disabled ? `Let ${who} sign in again?` : `Turn off ${who}’s access?`}
+                note={
+                  p.disabled ? undefined : 'Their SSO sign-in is refused until you turn it back on.'
+                }
+                confirmLabel={p.disabled ? 'Turn on' : 'Turn off'}
+                tone={p.disabled ? 'default' : 'destructive'}
+                onConfirm={() =>
+                  void act(
+                    () => client.updateMember(p.id, { disabled: !p.disabled }),
+                    p.disabled ? `${who} can sign in` : `${who}’s access is off`,
+                  )
+                }
+              >
+                {(ask) => (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="xs"
+                    aria-label={`${p.disabled ? 'Turn on' : 'Turn off'} ${who}`}
+                    onClick={ask}
+                  >
+                    {p.disabled ? 'Turn on' : 'Turn off'}
+                  </Button>
+                )}
+              </ConfirmButton>
+              <ConfirmDialog
+                message={`Remove ${who} from the team?`}
+                note="They lose their role here; adding them again starts over."
+                confirmLabel="Remove"
+                onConfirm={() => props.attempt(() => client.removeMember(p.id), `${who} removed`)}
+              >
+                {(ask) => (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="xs"
+                    aria-label={`Remove ${who}`}
+                    onClick={ask}
+                  >
+                    Remove
+                  </Button>
+                )}
+              </ConfirmDialog>
+            </span>
+          )
+        }
+      />
+      {role.confirm ? <li>{role.confirm}</li> : null}
+    </>
   );
 }
 
@@ -332,63 +386,109 @@ function Keys(props: {
   act: Act;
 }) {
   const { client, team, options, act } = props;
+  const [query, setQuery] = useState('');
+  // The api lists every long-lived key, so filtering here can't miss one.
   const keys = team?.keys ?? [];
+  const needle = query.trim().toLowerCase();
+  const shown = keys.filter(
+    (k) =>
+      !needle ||
+      `${k.name ?? ''} ${keyKindLabel(k.kind)} ${ISSUANCE[k.issuance]} ${k.subject ?? ''} ${k.role?.name ?? ''}`
+        .toLowerCase()
+        .includes(needle),
+  );
   return (
     <Section
       title="API keys"
       description="Long-lived keys and the role each acts with. Mint and revoke them under API keys."
       flush
     >
-      {team && keys.length === 0 ? (
+      {!team ? null : keys.length === 0 ? (
         <Empty>No API keys.</Empty>
       ) : (
-        <Table stack="cards" caption="API keys and their roles">
-          <TableHeader>
-            <TableRow>
-              <TableHead>Key</TableHead>
-              <TableHead>Role</TableHead>
-              <TableHead className="w-32">Last used</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {keys.map((k) => {
-              const label = k.name ?? `${keyKindLabel(k.kind)} key`;
-              return (
-                <TableRow key={k.id}>
-                  <TableCell>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-medium">{label}</span>
-                      <Badge variant="outline" title={keyKindApi(k.kind)}>
-                        {keyKindLabel(k.kind)}
-                      </Badge>
-                    </div>
-                    <div className="text-muted-foreground text-xs">
-                      {ISSUANCE[k.issuance]}
-                      {k.subject ? ` · ${k.subject}` : ''}
-                    </div>
-                  </TableCell>
-                  <TableCell label="Role">
-                    <RoleChange
-                      subject={label}
-                      current={k.role}
-                      options={options}
-                      lastAdmin={isLastAdmin(team, k.admin)}
-                      allowNone
-                      onChange={(roleId, roleName) =>
-                        act(() => client.setApiKeyRole(k.id, roleId), `${label} is now ${roleName}`)
-                      }
-                    />
-                  </TableCell>
-                  <TableCell label="Last used" className="text-muted-foreground">
-                    {k.lastUsedAt ? <Ago at={k.lastUsedAt} /> : 'Never'}
-                  </TableCell>
-                </TableRow>
-              );
-            })}
-          </TableBody>
-        </Table>
+        <>
+          <ListToolbar summary={`${shown.length} shown`}>
+            <ListSearch
+              label="Search API keys"
+              placeholder="Search names, roles and owners"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onClear={() => setQuery('')}
+            />
+          </ListToolbar>
+          {shown.length === 0 ? (
+            <CatalogEmpty onClear={() => setQuery('')}>No API keys match “{query}”.</CatalogEmpty>
+          ) : (
+            <Catalog aria-label="API keys and their roles" className="pt-0">
+              {shown.map((k) => (
+                <KeyRow
+                  key={k.id}
+                  teamKey={k}
+                  team={team}
+                  options={options}
+                  act={act}
+                  client={client}
+                />
+              ))}
+            </Catalog>
+          )}
+        </>
       )}
     </Section>
+  );
+}
+
+function KeyRow(props: {
+  teamKey: TeamKey;
+  team: TeamSummary;
+  options: Options;
+  act: Act;
+  client: ManagementClient;
+}) {
+  const { teamKey: k, team, options, act, client } = props;
+  const label = k.name ?? `${keyKindLabel(k.kind)} key`;
+  const role = useRoleChange({
+    subject: label,
+    current: k.role,
+    options,
+    lastAdmin: isLastAdmin(team, k.admin),
+    allowNone: true,
+    onChange: (roleId, roleName) =>
+      act(() => client.setApiKeyRole(k.id, roleId), `${label} is now ${roleName}`),
+  });
+  return (
+    <>
+      <CatalogRow
+        media={
+          <CatalogTile>
+            <KeyRound aria-hidden="true" />
+          </CatalogTile>
+        }
+        title={
+          <span className="flex flex-wrap items-center gap-2">
+            {label}
+            <Badge variant="outline" title={keyKindApi(k.kind)}>
+              {keyKindLabel(k.kind)}
+            </Badge>
+          </span>
+        }
+        meta={
+          <span className="flex flex-wrap gap-x-2">
+            <span>{ISSUANCE[k.issuance]}</span>
+            {k.subject ? <span>{k.subject}</span> : null}
+          </span>
+        }
+        aside={
+          <>
+            <CatalogFigure label="Last used">
+              {k.lastUsedAt ? <Ago at={k.lastUsedAt} /> : 'Never'}
+            </CatalogFigure>
+            {role.select}
+          </>
+        }
+      />
+      {role.confirm ? <li>{role.confirm}</li> : null}
+    </>
   );
 }
 
@@ -396,9 +496,10 @@ const NONE = '__none__';
 
 /**
  * The role, as a select; picking another asks in place before changing it. On the last
- * administrator, picking a role that isn't an administrator's says why it can't instead.
+ * administrator, picking a role that isn't an administrator's says why it can't instead. The select
+ * sits in the row and the question on its own line under it, too long for the row's narrow side.
  */
-function RoleChange(props: {
+function useRoleChange(props: {
   subject: string;
   current: TeamRole | null;
   options: Options;
@@ -414,74 +515,75 @@ function RoleChange(props: {
   const targetName = pending === NONE ? 'No role (key defaults)' : (target?.name ?? '');
   const blocked = lastAdmin && pending !== null && !target?.admin;
 
-  return (
-    <div className="min-w-0 space-y-2">
-      <NativeSelect
-        aria-label={`Role for ${subject}`}
-        value={pending ?? value}
-        onChange={(e) => setPending(e.target.value === value ? null : e.target.value)}
-        disabled={busy}
-      >
-        {allowNone ? (
-          <NativeSelectOption value={NONE}>No role (key defaults)</NativeSelectOption>
-        ) : null}
-        {!current && !allowNone ? (
-          <NativeSelectOption value={NONE}>No role</NativeSelectOption>
-        ) : null}
-        <NativeSelectOptGroup label="Presets">
-          {options.preset.map((o) => (
+  const select = (
+    <NativeSelect
+      aria-label={`Role for ${subject}`}
+      wrapperClassName="max-w-full"
+      value={pending ?? value}
+      onChange={(e) => setPending(e.target.value === value ? null : e.target.value)}
+      disabled={busy}
+    >
+      {allowNone ? (
+        <NativeSelectOption value={NONE}>No role (key defaults)</NativeSelectOption>
+      ) : null}
+      {!current && !allowNone ? (
+        <NativeSelectOption value={NONE}>No role</NativeSelectOption>
+      ) : null}
+      <NativeSelectOptGroup label="Presets">
+        {options.preset.map((o) => (
+          <NativeSelectOption key={o.id} value={o.id}>
+            {o.name}
+          </NativeSelectOption>
+        ))}
+      </NativeSelectOptGroup>
+      {options.custom.length ? (
+        <NativeSelectOptGroup label="Custom roles">
+          {options.custom.map((o) => (
             <NativeSelectOption key={o.id} value={o.id}>
               {o.name}
             </NativeSelectOption>
           ))}
         </NativeSelectOptGroup>
-        {options.custom.length ? (
-          <NativeSelectOptGroup label="Custom roles">
-            {options.custom.map((o) => (
-              <NativeSelectOption key={o.id} value={o.id}>
-                {o.name}
-              </NativeSelectOption>
-            ))}
-          </NativeSelectOptGroup>
-        ) : null}
-      </NativeSelect>
-      {pending !== null ? (
-        blocked ? (
-          <InlineConfirm
-            message={`${subject} is the last administrator.`}
-            note={LAST_ADMIN_MESSAGE}
-            cancelLabel="OK"
-            onCancel={() => setPending(null)}
-          >
-            {null}
-          </InlineConfirm>
-        ) : (
-          <InlineConfirm
-            message={`Change ${subject} to ${targetName}?`}
-            note={target?.description ?? 'They act with their kind’s default scopes.'}
-            onCancel={() => setPending(null)}
-          >
-            <Button
-              type="button"
-              size="sm"
-              disabled={busy}
-              onClick={async () => {
-                setBusy(true);
-                try {
-                  await onChange(pending === NONE ? null : pending, targetName);
-                } finally {
-                  setBusy(false);
-                  setPending(null);
-                }
-              }}
-            >
-              Change role
-            </Button>
-          </InlineConfirm>
-        )
       ) : null}
-    </div>
+    </NativeSelect>
   );
+
+  const confirm =
+    pending === null ? null : blocked ? (
+      <InlineConfirm
+        message={`${subject} is the last administrator.`}
+        note={LAST_ADMIN_MESSAGE}
+        cancelLabel="OK"
+        onCancel={() => setPending(null)}
+      >
+        {null}
+      </InlineConfirm>
+    ) : (
+      <InlineConfirm
+        message={`Change ${subject} to ${targetName}?`}
+        note={target?.description ?? 'They act with their kind’s default scopes.'}
+        onCancel={() => setPending(null)}
+      >
+        <Button
+          type="button"
+          size="sm"
+          disabled={busy}
+          onClick={async () => {
+            setBusy(true);
+            try {
+              await onChange(pending === NONE ? null : pending, targetName);
+            } finally {
+              setBusy(false);
+              setPending(null);
+            }
+          }}
+        >
+          Change role
+        </Button>
+      </InlineConfirm>
+    );
+
+  return { select, confirm };
 }
 
 function SignIn(props: { client: ManagementClient; team: TeamSummary; act: Act }) {

@@ -1,16 +1,8 @@
-import { Badge } from '@contentworker/ui/badge';
 import { Button } from '@contentworker/ui/button';
 import { Card, CardContent, CardHeader } from '@contentworker/ui/card';
+import { Catalog, CatalogRow, CatalogTile } from '@contentworker/ui/catalog';
 import { Input } from '@contentworker/ui/input';
 import { Label } from '@contentworker/ui/label';
-import {
-  Table,
-  TableBody,
-  Td as TableCell,
-  Th as TableHead,
-  TableHead as TableHeader,
-  Tr as TableRow,
-} from '@contentworker/ui/table';
 import { Zap } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { ConfirmButton } from '~/cms/components/InlineConfirm';
@@ -119,31 +111,26 @@ export function Functions(props: { client: ManagementClient }) {
       {fns.length === 0 ? (
         <p className="text-muted-foreground text-sm">No functions registered.</p>
       ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Name</TableHead>
-              <TableHead>Event</TableHead>
-              <TableHead>URL</TableHead>
-              <TableHead className="w-20" />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
+        <div className="card overflow-clip">
+          <Catalog aria-label="Functions">
             {fns.map((f) => (
-              <TableRow key={f.id}>
-                <TableCell className="font-medium">
-                  <span className="flex items-center gap-1.5">
-                    <Zap className="size-3.5 text-primary" />
-                    {f.name}
+              <CatalogRow
+                key={f.id}
+                media={
+                  <CatalogTile>
+                    <Zap aria-hidden="true" />
+                  </CatalogTile>
+                }
+                title={f.name}
+                meta={
+                  <span className="flex flex-wrap gap-x-2">
+                    <span>
+                      On <span className="font-mono">{f.eventPattern}</span>
+                    </span>
+                    <span className="break-all font-mono">{f.url}</span>
                   </span>
-                </TableCell>
-                <TableCell>
-                  <Badge variant="outline">{f.eventPattern}</Badge>
-                </TableCell>
-                <TableCell className="max-w-64 truncate font-mono text-muted-foreground text-xs">
-                  {f.url}
-                </TableCell>
-                <TableCell>
+                }
+                actions={
                   <ConfirmButton
                     message={`Delete “${f.name}”?`}
                     note="It stops receiving events. This can’t be undone."
@@ -151,16 +138,22 @@ export function Functions(props: { client: ManagementClient }) {
                     onConfirm={() => void remove(f.id)}
                   >
                     {(ask) => (
-                      <Button type="button" variant="ghost" size="sm" onClick={ask}>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="xs"
+                        aria-label={`Delete “${f.name}”`}
+                        onClick={ask}
+                      >
                         Delete
                       </Button>
                     )}
                   </ConfirmButton>
-                </TableCell>
-              </TableRow>
+                }
+              />
             ))}
-          </TableBody>
-        </Table>
+          </Catalog>
+        </div>
       )}
     </div>
   );

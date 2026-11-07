@@ -426,7 +426,7 @@ describe('Releases destructive actions', () => {
 
   it('lists each release with its entry count, and publishes only from inside it', async () => {
     setup();
-    const row = (await screen.findByRole('button', { name: 'Spring campaign' })).closest('tr');
+    const row = (await screen.findByRole('button', { name: 'Spring campaign' })).closest('li');
     if (!row) throw new Error('no row');
     expect(await within(row).findByText('3')).toBeTruthy();
     // The count rides on the list; no release is fetched just to count its members.
@@ -448,7 +448,7 @@ describe('Releases destructive actions', () => {
       },
     ] as never);
     setup();
-    const row = (await screen.findByRole('button', { name: 'Spring campaign' })).closest('tr');
+    const row = (await screen.findByRole('button', { name: 'Spring campaign' })).closest('li');
     if (!row) throw new Error('no row');
     const when = within(row).getByText(/Nov 7, 2026/);
     expect(when.closest('time')?.getAttribute('dateTime')).toBe('2026-11-07T14:00:00.000Z');
@@ -493,7 +493,7 @@ describe('Releases destructive actions', () => {
     const tab = await screen.findByRole('tab', { name: /Scheduled/ });
     fireEvent.mouseDown(tab);
     fireEvent.click(tab);
-    const table = await screen.findByRole('table', { name: 'Scheduled publishes' });
+    const table = await screen.findByRole('list', { name: 'Scheduled publishes' });
     const hello = await within(table).findByRole('link', { name: 'Hello world' });
     expect(hello.getAttribute('href')).toBe('/content/article/e-1');
     expect(await within(table).findByText('Entry no longer available')).toBeTruthy();
@@ -668,6 +668,25 @@ describe('Release publish confirm', () => {
     expect((publish() as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(publish());
     expect(client.publishRelease).not.toHaveBeenCalled();
+  });
+
+  it('filters to archived releases, which no other status shows', async () => {
+    client.listReleases.mockResolvedValue([
+      { ...release, itemCount: 1 },
+      { ...release, id: 'rel-2', title: 'Old launch', status: 'archived', itemCount: 2 },
+    ]);
+    client.listContentTypes.mockResolvedValue([]);
+    renderWithProviders(
+      <MemoryRouter>
+        <Releases />
+      </MemoryRouter>,
+    );
+    await screen.findByRole('button', { name: 'Old launch' });
+    fireEvent.click(screen.getByRole('radio', { name: 'Open' }));
+    expect(screen.queryByRole('button', { name: 'Old launch' })).toBeNull();
+    fireEvent.click(screen.getByRole('radio', { name: 'Archived' }));
+    expect(screen.getByRole('button', { name: 'Old launch' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Spring campaign' })).toBeNull();
   });
 
   it('offers no publish inside an empty release', async () => {
