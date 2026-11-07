@@ -5,6 +5,7 @@ import {
   frameSources,
   parseEmbed,
   parseFrames,
+  SELF_FRAMER,
   withSecurityHeaders,
 } from '../app/lib/csp';
 
@@ -130,6 +131,21 @@ describe('page CSP', () => {
       'frame-ancestors https:',
     );
     expect(parseEmbed(JSON.stringify({ frameAncestors: 'https:' }))?.frameAncestors).toEqual([]);
+  });
+
+  it('lets this origin alone frame a page that names itself, and says so to older browsers', () => {
+    const embed = parseEmbed(
+      JSON.stringify({ frameAncestors: [SELF_FRAMER, "'unsafe-inline'", '*'], formAction: [] }),
+    );
+    expect(embed?.frameAncestors).toEqual(["'self'"]);
+    const csp = contentSecurityPolicy('n', embed, ['https://site.example']);
+    expect(directive(csp, 'frame-ancestors')).toBe("frame-ancestors 'self'");
+    expect(directive(csp, 'frame-src')).toBe("frame-src 'self' https://site.example");
+    const res = withSecurityHeaders(
+      new Response('', { headers: { 'content-security-policy': csp } }),
+      new URL('https://app.example/'),
+    );
+    expect(res.headers.get('x-frame-options')).toBe('SAMEORIGIN');
   });
 
   it('sends X-Frame-Options only when the page can’t be framed', () => {

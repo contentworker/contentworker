@@ -1,6 +1,6 @@
 ---
 title: Live preview
-description: Let the admin frame your frontend and re-render each unsaved edit in it, with the page side of the live preview channel.
+description: Let the admin frame your frontend and re-render each unsaved edit in it, from the entry editor's Site view and the page side of the live preview channel.
 ---
 
 Live preview shows an editor their edits on your real site before they save. The admin frames
@@ -9,11 +9,31 @@ patch to its copy of the fields and re-renders. The admin draws selection, hover
 between blocks itself, outside the frame, from where your page says things are. Nothing unsaved
 reaches the API from your page.
 
-:::caution[Preview]
-This page describes the page side, `@contentworker/sdk/live-preview`, which you can add to your
-frontend now. The admin's side of the channel isn't released yet; until it is, the runtime stays
-inert on every page.
-:::
+## In the editor
+
+Give the content type a [preview URL](/guides/content-modeling/#preview-url), and the entry
+editor's side pane gains a **Site** view beside Details and Preview. It shows the entry's page on
+your site, framed, and re-renders it as the editor types; saving works exactly as it does without
+it. A type with no preview URL has no Site view.
+
+- **Edit** and **View**: in edit mode a click on a marked element selects it and focuses that field
+  (or that block, in its blocks field) in the form, and your page's links go nowhere. In view mode
+  your page behaves as it does on its own, links and all.
+- **Desktop**, **Tablet** and **Phone** render your page at 1280, 768 or 390 pixels wide, scaled
+  down to fit the pane, so a layout never depends on how wide the editor's window is.
+- Undo, redo and the other forwarded keys act in the editor; Escape clears the selection.
+
+The page the admin frames is your preview URL, filled for the entry with a preview token that lasts
+an hour, plus a `cw_session` parameter minted fresh for each load. Your page must allow the admin
+to frame it: if it sends `Content-Security-Policy: frame-ancestors` or `X-Frame-Options`, name the
+admin's origin (`frame-ancestors https://your-workspace.contentworker.app`). The admin frames it
+sandboxed (scripts, forms and its own origin; no popups, downloads or navigating the editor's
+window) and sends no `Referer`.
+
+If your page loads but never answers, the pane says it doesn't speak live preview yet and shows it
+as saved. If it navigates elsewhere (a link followed in view mode), the pane offers the way back
+to the entry's page. If it answers from another origin than the preview URL names (a redirect to
+`www.`, say), the pane says so: set the preview URL to the address the page is served from.
 
 ## Start it
 

@@ -86,12 +86,33 @@ describe('editing a blocks field', () => {
     expect(screen.getByText('No blocks yet.')).toBeTruthy();
   });
 
-  it('adds a block of the type picked, starting from its defaults', async () => {
+  it('adds a block of the type picked, starting from its defaults, keyed as it is added', async () => {
     const onSave = renderForm(PAGE);
     await addBlock('Call to action');
     fireEvent.change(screen.getByLabelText(/^Label/), { target: { value: 'Go' } });
     save();
-    expect(savedBody(onSave)).toEqual([{ _type: 'cta', style: 'primary', label: 'Go' }]);
+    // The key is minted in the form, so live preview can address the block before it is saved.
+    expect(savedBody(onSave)).toEqual([
+      {
+        _type: 'cta',
+        _key: expect.stringMatching(/^[0-9a-f-]{36}$/),
+        style: 'primary',
+        label: 'Go',
+      },
+    ]);
+  });
+
+  it('keys each block it adds apart, and names each item by its block', async () => {
+    const onSave = renderForm(PAGE);
+    await addBlock('Call to action');
+    await addBlock('Call to action');
+    for (const label of screen.getAllByLabelText(/^Label/)) {
+      fireEvent.change(label, { target: { value: 'Go' } });
+    }
+    save();
+    const keys = savedBody(onSave).map((b: { _key: string }) => b._key);
+    expect(new Set(keys).size).toBe(2);
+    expect(screen.getByRole('group', { name: 'Call to action block 2' })).toBeTruthy();
   });
 
   it("edits each block with its own type's fields and keeps _type and _key", () => {

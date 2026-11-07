@@ -14,7 +14,8 @@
     "test": "vitest run",
     "lint": "biome check .",
     "check-types": "react-router typegen && tsc --noEmit",
-    "e2e": "playwright test"
+    "e2e": "playwright test",
+    "live-guest": "vite --config e2e/live-guest/vite.config.ts"
   },
   "dependencies": {
     "@ai-sdk/react": "catalog:",
@@ -22,6 +23,7 @@
     "@contentworker/adapters": "workspace:*",
     "@contentworker/db": "workspace:*",
     "@contentworker/domain": "workspace:*",
+    "@contentworker/sdk-core": "workspace:*",
     "@contentworker/security": "workspace:*",
     "@contentworker/ui": "workspace:*",
     "@fontsource-variable/inter": "catalog:",

@@ -89,3 +89,4 @@
 ^packages/sdk/(core/src/webhooks\.ts|rich-text/src/)	guides/your-own-frontend guides/webhooks guides/sdks docs/sdks.md	prose
 ^(scripts/sdk-packages\.ts|\.github/workflows/sdk-(packages|release)\.yml)$	docs/deployment.md docs/development.md	prose
 ^packages/(sdk/core/src/live-preview(\.ts|/)|domain/src/content-type/block-patch\.ts$)	guides/live-preview guides/sdks docs/sdks.md	prose
+^apps/web/app/(cms/components/pane/SitePane\.tsx|cms/lib/live-preview/|routes/preview-frame\.tsx|lib/preview-frame\.server\.ts)	guides/live-preview guides/editing-and-publishing docs/admin-ui.md	prose

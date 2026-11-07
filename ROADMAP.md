@@ -317,9 +317,10 @@ Found while building and reviewing M1 and M2. None blocks a release.
 Built on Blocks and the frontend runtime. Layouts stay a typed tree; rich text stays a
 `RichTextDocument`; styling is design tokens and enum props, never raw CSS.
 
-- [ ] **Live preview channel.** `@contentworker/sdk/live-preview`: the admin frames the customer's
-  frontend and pushes unsaved form state as patches; clicks select fields back. The page side and
-  the protocol are in place (`startLivePreview`, `useLivePreview`); the admin side is next.
+- [x] **Live preview channel.** `@contentworker/sdk/live-preview`: the admin frames the customer's
+  frontend and pushes unsaved form state as patches; clicks select fields back. The page side is
+  `startLivePreview` and `useLivePreview`; the admin side is the entry editor's Site view, framing
+  the type's preview URL through a frame page of its own origin.
 - [ ] **Blocks renderers.** `<Blocks components={…} />` for React, Vue and the frontend runtime, typed
   by codegen.
 - [ ] **Layout patches.** `patchBlocks` with key-addressed create, update, move and remove, for

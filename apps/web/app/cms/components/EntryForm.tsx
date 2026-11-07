@@ -386,6 +386,11 @@ export function EntryForm(props: {
    */
   focusField?: { apiId: string; locale?: string };
   /**
+   * A field to bring into view and focus now, whenever `seq` changes (a click in the Site pane's
+   * page): its locale, tab and group are opened for it, and with `blockKey`, the block in it.
+   */
+  focusRequest?: FocusRequest | null;
+  /**
    * The form's live values (as a save would send them) and the locale tab it is on, after every
    * change: the side pane's preview draws the draft from these.
    */
@@ -476,6 +481,39 @@ export function EntryForm(props: {
     const group = groupOf.get(apiId);
     if (group) toggleGroup(group, true);
   };
+
+  // A field asked for from outside the form (a pick in the Site pane): opened, then focused once
+  // the render that opens it has landed.
+  const [pendingFocus, setPendingFocus] = useState<FocusRequest | null>(null);
+  const handledFocus = useRef(0);
+  // Runs per request (its seq), not per render of the form.
+  useEffect(() => {
+    const req = props.focusRequest;
+    if (!req || req.seq === handledFocus.current) return;
+    handledFocus.current = req.seq;
+    const def = contentType.fields.find((f) => f.apiId === req.apiId);
+    if (!def) return;
+    // A field that isn't localized is on the default locale's tab only.
+    const locale = !def.localized
+      ? defaultLocale
+      : req.locale && locales.includes(req.locale)
+        ? req.locale
+        : activeLocale;
+    if (locale !== activeLocale) setActiveLocale(locale);
+    showField(req.apiId);
+    setPendingFocus(req);
+  }, [props.focusRequest]);
+  useEffect(() => {
+    if (!pendingFocus) return;
+    setPendingFocus(null);
+    const el =
+      (pendingFocus.blockKey ? blockElement(pendingFocus.blockKey) : undefined) ??
+      document.getElementById(`field-${pendingFocus.apiId}`);
+    if (!el) return;
+    const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    el.scrollIntoView?.({ block: 'center', behavior: reduce ? 'auto' : 'smooth' });
+    el.focus({ preventScroll: true });
+  }, [pendingFocus]);
 
   const localeConfig = useMemo<LocaleConfig>(
     () => ({ defaultLocale, locales, fallbacks }),
@@ -1570,9 +1608,31 @@ function RepeaterInput(props: NestedProps & { label: string }) {
   );
 }
 
-/** A new block of a variant, starting from its fields' defaults. */
+/** What `focusRequest` asks for: a field, its locale, and the block in it to focus. */
+export interface FocusRequest {
+  readonly seq: number;
+  readonly apiId: string;
+  readonly locale?: string;
+  readonly blockKey?: string;
+}
+
+/** A block's item in a blocks field editor, by its `_key` (compared, never put in a selector). */
+function blockElement(key: string): HTMLElement | undefined {
+  for (const el of document.querySelectorAll<HTMLElement>('[data-block-key]')) {
+    if (el.dataset.blockKey === key) return el;
+  }
+  return undefined;
+}
+
+/**
+ * A new block of a variant, starting from its fields' defaults, with its `_key` minted here: the
+ * Site pane addresses it by key before it is saved, and a save keeps a key it is given.
+ */
 function newBlock(variant: ComponentVariant): Record<string, unknown> {
-  const block: Record<string, unknown> = { [BLOCK_TYPE_KEY]: variant.apiId };
+  const block: Record<string, unknown> = {
+    [BLOCK_TYPE_KEY]: variant.apiId,
+    [BLOCK_KEY]: crypto.randomUUID(),
+  };
   for (const f of variant.fields) {
     if (f.defaultValue !== undefined) block[f.apiId] = f.defaultValue;
   }
@@ -1585,8 +1645,8 @@ function newBlock(variant: ComponentVariant): Record<string, unknown> {
  *
  * Like the repeater, every control names the block it acts on ("Remove Hero
  * block 1"). A block keeps its `_type` and `_key` through edits because the
- * nested editor spreads the value it was given; a new block has no key until
- * the server assigns one on save. Blocks are keyed by `_key` where they have
+ * nested editor spreads the value it was given; a new block is keyed when it is
+ * added (`newBlock`), and a save keeps that key. Blocks are keyed by `_key` where they have
  * one, so a reorder moves an editor's state (a rich-text editor's undo history)
  * with its block.
  */
@@ -1625,9 +1685,13 @@ function BlocksInput(
         const noun = `${variant?.name ?? 'Unknown'} block ${index + 1}`;
         const err = errorFor?.(at);
         return (
-          <div
+          <fieldset
             key={typeof key === 'string' ? key : `${path}-${index}`}
-            className="space-y-2 rounded-xl bg-secondary/40 p-3"
+            // A group named for its block, focusable by a pick in the Site pane (by its key).
+            data-block-key={typeof key === 'string' ? key : undefined}
+            aria-label={noun}
+            tabIndex={-1}
+            className="space-y-2 rounded-xl bg-secondary/40 p-3 outline-none focus:shadow-[0_0_0_2px_var(--ring)]"
           >
             <div className="flex items-center justify-between gap-2">
               <span className="font-medium text-sm">
@@ -1692,7 +1756,7 @@ function BlocksInput(
               </p>
             )}
             {err && <p className="text-xs text-destructive">{err}</p>}
-          </div>
+          </fieldset>
         );
       })}
       {variants.length === 1 && variants[0] ? (

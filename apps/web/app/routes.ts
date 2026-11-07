@@ -60,4 +60,7 @@ export default [
     ]),
   ]),
   route('account/passkeys', 'routes/account-passkeys.ts'),
+  // The entry editor's Site pane frames this page, which frames the customer's page for the entry
+  // (live preview): signed in, outside the shell, and frameable by this origin alone.
+  route('preview-frame/:spaceId/:environmentId/:entryId', 'routes/preview-frame.tsx'),
 ] satisfies RouteConfig;

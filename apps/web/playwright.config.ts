@@ -1,4 +1,5 @@
 import { defineConfig, devices } from '@playwright/test';
+import { guestPort } from './e2e/live-guest/port';
 
 // E2E_PORT runs a second suite beside one already on 5390 (another worktree's), with its own server.
 const PORT = Number(process.env.E2E_PORT) || 5390;
@@ -93,7 +94,7 @@ export default defineConfig({
       testMatch:
         PART === 'axe'
           ? AXE
-          : /(cms|workflows|space-access|first-space|accessibility|contrast-settle|modal-focus)\.spec\.ts/,
+          : /(cms|workflows|space-access|first-space|accessibility|contrast-settle|modal-focus|live-preview)\.spec\.ts/,
       testIgnore: PART === 'cms' ? AXE : undefined,
       use: { ...devices['Desktop Chrome'] },
     },
@@ -120,15 +121,25 @@ export default defineConfig({
       use: { ...devices['Desktop Chrome'] },
     },
   ].filter((project) => !PART || partOf(project.name).includes(PART)),
-  webServer: {
-    command: [
-      `rm -rf ${state}`,
-      `wrangler d1 migrations apply contentworker --local --persist-to ${state}`,
-      `CONTENTWORKER_E2E=1 PORT=${PORT} react-router dev`,
-    ].join(' && '),
-    url: `http://localhost:${PORT}/health`,
-    reuseExistingServer: !process.env.CI,
-    timeout: 180_000,
-    stdout: 'ignore',
-  },
+  webServer: [
+    {
+      command: [
+        `rm -rf ${state}`,
+        `wrangler d1 migrations apply contentworker --local --persist-to ${state}`,
+        `CONTENTWORKER_E2E=1 PORT=${PORT} react-router dev`,
+      ].join(' && '),
+      url: `http://localhost:${PORT}/health`,
+      reuseExistingServer: !process.env.CI,
+      timeout: 180_000,
+      stdout: 'ignore',
+    },
+    // A customer's frontend for live preview (e2e/live-guest), listening to this admin only.
+    {
+      command: `LIVE_GUEST_ADMIN=http://localhost:${PORT} LIVE_GUEST_PORT=${guestPort()} vite --config e2e/live-guest/vite.config.ts`,
+      url: `http://localhost:${guestPort()}/`,
+      reuseExistingServer: !process.env.CI,
+      timeout: 60_000,
+      stdout: 'ignore',
+    },
+  ],
 });

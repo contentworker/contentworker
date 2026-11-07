@@ -9,8 +9,8 @@ export function newNonce(): string {
 }
 
 /**
- * What an embeddable page adds to its policy: the https origins that may frame it and where its
- * form may post. No page uses one yet; the CMS's embedded editors may.
+ * What an embeddable page adds to its policy: who may frame it (https origins, or this origin
+ * alone with `SELF_FRAMER`, as the live preview's frame does) and where its form may post.
  */
 export type EmbedPolicy = { frameAncestors: string[]; formAction: string[] };
 
@@ -23,6 +23,12 @@ export const EMBED_HEADER = 'x-cw-embed';
  * the reason.
  */
 export const ANY_HTTPS_FRAMER = 'https:';
+
+/**
+ * Only this origin's own pages may frame this one: the live preview's frame, which the entry
+ * editor holds and nothing else may.
+ */
+export const SELF_FRAMER = "'self'";
 
 /**
  * `v` as a CSP source: an https URL's origin and path. CSP ignores the query, and matches paths
@@ -60,10 +66,13 @@ export function parseEmbed(raw: string | null): EmbedPolicy | null {
   if (!raw) return null;
   try {
     const e = JSON.parse(raw) as Partial<EmbedPolicy>;
-    const anyFramer =
-      Array.isArray(e.frameAncestors) && e.frameAncestors.includes(ANY_HTTPS_FRAMER);
+    const named = Array.isArray(e.frameAncestors) ? e.frameAncestors : [];
+    const anyFramer = named.includes(ANY_HTTPS_FRAMER);
+    const self = named.includes(SELF_FRAMER) ? [SELF_FRAMER] : [];
     return {
-      frameAncestors: anyFramer ? [ANY_HTTPS_FRAMER] : sources(e.frameAncestors, false),
+      frameAncestors: anyFramer
+        ? [ANY_HTTPS_FRAMER]
+        : [...self, ...sources(e.frameAncestors, false)],
       formAction: sources(e.formAction, true),
     };
   } catch {
@@ -156,9 +165,13 @@ export function withSecurityHeaders(res: Response, url: URL): Response {
   };
   set('x-content-type-options', 'nosniff');
   set('referrer-policy', 'strict-origin-when-cross-origin');
-  // A page that allows framers says so in its CSP (frame-ancestors), which X-Frame-Options can't.
-  if (!/frame-ancestors (?!'none')/.test(out.headers.get('content-security-policy') ?? ''))
-    set('x-frame-options', 'DENY');
+  // A page that allows framers says so in its CSP (frame-ancestors), which X-Frame-Options can't;
+  // one this origin alone may frame says so to browsers that read only the older header too.
+  const ancestors = /frame-ancestors ([^;]*)/.exec(
+    out.headers.get('content-security-policy') ?? '',
+  )?.[1];
+  if (ancestors === SELF_FRAMER) set('x-frame-options', 'SAMEORIGIN');
+  else if (!ancestors || ancestors === "'none'") set('x-frame-options', 'DENY');
   set('permissions-policy', 'camera=(), microphone=(), geolocation=(), payment=()');
   // Always this origin's own policy, never a forwarded Worker's (the delivery Worker's omits
   // includeSubDomains): a browser keeps the last HSTS header it saw for the host, and the api and

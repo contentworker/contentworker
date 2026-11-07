@@ -1,4 +1,5 @@
 import type { EntryFields, FieldDiff } from '@contentworker/domain';
+import type { LiveTarget } from '@contentworker/sdk-core/live-preview';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -31,13 +32,19 @@ import { EntryMetadataPanel } from '~/cms/components/EntryMetadataPanel';
 import { EntryPreview } from '~/cms/components/EntryPreview';
 import { ExtensionFrame } from '~/cms/components/ExtensionFrame';
 import { PaneDivider } from '~/cms/components/pane/PaneDivider';
-import { type PaneView, usePaneLayout, usePaneView } from '~/cms/components/pane/use-pane-layout';
+import { SitePane } from '~/cms/components/pane/SitePane';
+import {
+  type PaneView,
+  paneViews,
+  usePaneLayout,
+  usePaneView,
+} from '~/cms/components/pane/use-pane-layout';
 import { ReferencedBy } from '~/cms/components/ReferencedBy';
 import { SemanticPanel } from '~/cms/components/SemanticPanel';
 import { StatusBadge, ToneBadge } from '~/cms/components/status';
 import { VersionHistory } from '~/cms/components/VersionHistory';
 import { CanvasDialog } from '../components/CanvasDialog';
-import type { Pickers, PickOption } from '../components/EntryForm';
+import type { FocusRequest, Pickers, PickOption } from '../components/EntryForm';
 import { EntryForm } from '../components/EntryForm';
 import { EntryActivity } from '../components/entries/EntryActivity';
 import { EntryAuthorship } from '../components/entries/EntryAuthorship';
@@ -46,6 +53,8 @@ import { GenerateEntryDialog } from '../components/GenerateEntryDialog';
 import { orDirect, useAssistantEdit, usePageContext } from '../lib/assistant';
 import { useClient } from '../lib/client-context';
 import { dateTime, toMs } from '../lib/format';
+import { replayKey } from '../lib/live-preview/keys';
+import { focusForPick } from '../lib/live-preview/pick';
 import type { EntryAggregate, EntryView, ModelTier } from '../lib/management';
 import {
   useAllEntriesQuery,
@@ -57,6 +66,14 @@ import {
 } from '../lib/queries';
 import { useToast } from '../lib/toast';
 import { useContentOutlet } from './content-context';
+
+/** The side pane's segments, by view. */
+const PANE_LABELS: Record<PaneView, string> = {
+  details: 'Details',
+  preview: 'Preview',
+  site: 'Site',
+  activity: 'Activity',
+};
 
 /** The scope that reads the team (`GET …/team`), and with it teammates' names. */
 const SPACE_ADMIN = 'space:admin';
@@ -468,8 +485,46 @@ export function EntryEditor() {
   const pane = usePaneLayout();
   const [chosenView, setPaneView] = usePaneView();
   // Activity is the audit log for this entry, so it takes what the log takes (space:admin): anyone
-  // else, or anyone while that is still being read, sees Details in its place.
-  const paneView: PaneView = chosenView === 'activity' && !isAdmin ? 'details' : chosenView;
+  // else, or anyone while that is still being read, sees Details in its place. Site frames the
+  // customer's page for the entry, so it needs a preview URL on the type.
+  const views = paneViews({
+    isEdit,
+    hasSite: Boolean(selectedType?.preview?.urlTemplate),
+    isAdmin,
+  });
+  const paneView: PaneView = views.includes(chosenView) ? chosenView : 'details';
+
+  // A click in the Site pane's page focuses that field (or block) in the form.
+  const [focusRequest, setFocusRequest] = useState<FocusRequest | null>(null);
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
+  const onSitePick = useCallback(
+    (target: LiveTarget) => {
+      if (!selectedType || !entryId) return;
+      const at = focusForPick(target, {
+        contentType: selectedType,
+        entryId,
+        fields: draftRef.current?.fields ?? initial ?? {},
+        locales,
+        locale: draftRef.current?.locale ?? defaultLocale,
+      });
+      if (at) setFocusRequest((r) => ({ seq: (r?.seq ?? 0) + 1, ...at }));
+    },
+    [selectedType, entryId, initial, locales, defaultLocale],
+  );
+  // The form field last in use: a key pressed in the page acts on it.
+  const lastFocus = useRef<Element | null>(null);
+  const formBox = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const box = formBox.current;
+    if (!box) return;
+    const onFocusIn = (e: FocusEvent) => {
+      lastFocus.current = e.target as Element;
+    };
+    box.addEventListener('focusin', onFocusIn);
+    return () => box.removeEventListener('focusin', onFocusIn);
+    // The form's box is there once the type is.
+  }, [selectedType !== undefined]);
   const localeConfig = useMemo(
     () => ({ defaultLocale, locales, fallbacks }),
     [defaultLocale, locales, fallbacks],
@@ -689,6 +744,7 @@ export function EntryEditor() {
         <div
           className={cn('min-w-0 flex-1', pane.split && 'pr-5')}
           aria-busy={swapping || undefined}
+          ref={formBox}
         >
           {initial === null || swapping ? (
             <div className="max-w-2xl space-y-3">
@@ -730,6 +786,7 @@ export function EntryEditor() {
                 const goal = publishAfterSaveRef.current ? 'publish' : 'save';
                 toast.error(`Fix ${count} field ${count === 1 ? 'error' : 'errors'} to ${goal}`);
               }}
+              focusRequest={focusRequest}
               mergePatch={patchState.patch}
               onValuesChange={onValuesChange}
               onSave={save}
@@ -772,11 +829,13 @@ export function EntryEditor() {
               aria-label="Side pane"
               value={paneView}
               onValueChange={(v) => setPaneView(v as PaneView)}
-              className={cn('grid w-full', isAdmin ? 'grid-cols-3' : 'grid-cols-2')}
+              className="grid w-full"
             >
-              <SegmentedItem value="details">Details</SegmentedItem>
-              <SegmentedItem value="preview">Preview</SegmentedItem>
-              {isAdmin ? <SegmentedItem value="activity">Activity</SegmentedItem> : null}
+              {views.map((v) => (
+                <SegmentedItem key={v} value={v}>
+                  {PANE_LABELS[v]}
+                </SegmentedItem>
+              ))}
             </Segmented>
           ) : null}
           {!isEdit || paneView === 'preview' ? (
@@ -787,6 +846,21 @@ export function EntryEditor() {
               localeConfig={localeConfig}
               direction={directions?.[draft?.locale ?? defaultLocale]}
               pickers={pickers}
+            />
+          ) : null}
+          {isEdit && entryId && paneView === 'site' ? (
+            <SitePane
+              key={`site:${entryId}`}
+              spaceId={conn.space}
+              environmentId={conn.environment}
+              entryId={entryId}
+              contentType={selectedType}
+              version={meta?.version ?? 0}
+              fields={draft?.fields ?? initial ?? {}}
+              locale={draft?.locale ?? defaultLocale}
+              split={pane.split}
+              onPick={onSitePick}
+              onKey={(k) => replayKey(k, lastFocus.current)}
             />
           ) : null}
           {isEdit && entryId && paneView === 'activity' ? (
