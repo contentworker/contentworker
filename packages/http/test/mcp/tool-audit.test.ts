@@ -133,8 +133,11 @@ describe('MCP tool audit', () => {
     });
     const rows = await trail();
     expect(rows.find((r) => r.action === 'MCP entries_update')?.targetType).toBe('entry');
-    // No target, no kind: entries_create's id isn't in its arguments.
-    expect(rows.find((r) => r.action === 'MCP entries_create')?.targetType).toBeUndefined();
+    // entries_create's id isn't in its arguments; what it saved names it, as REST's row does.
+    expect(rows.find((r) => r.action === 'MCP entries_create')).toMatchObject({
+      targetType: 'entry',
+      targetId: created.entry.id,
+    });
   });
 
   it('knows the kind of target of every write that names one', async () => {

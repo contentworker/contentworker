@@ -279,6 +279,41 @@ same page.
 Entries written before migration `0031` have no `targetType` when they came from a REST or MCP call:
 their `targetId` still matches.
 
+A row whose action saved entries carries `detail`, and any other row has no such key (nor do rows
+written before migration `0032`):
+
+```json
+{
+  "entries": [
+    {
+      "entryId": "0198…",
+      "contentType": "article",
+      "kind": "updated",
+      "version": 7,
+      "paths": ["fields.title", "fields.hero.alt", "fields.sections[].heading"],
+      "locales": ["de"]
+    }
+  ]
+}
+```
+
+`paths` are the content model's: rich text, JSON, `Seo` values and scalar lists stop at the field,
+`[]` is an element of a list (an element added, removed or moved reports the list), and a nested key
+the model doesn't declare reports its parent. A created entry lists each field it was given, and
+its row names the entry as its target. `locales` are the space's locales the change touched, among
+localized fields. `undeclaredFields` counts changed fields the type no longer declares, which are
+not named. An empty `paths` is a save that changed nothing. `detail` never holds a value. It is
+capped at 4096 characters and 20 entries; a row past either has `truncated: true` and lists what
+fit. `audit_log_list` serves it unchanged, and a REST write and a tool call that made the same edit
+carry the same detail.
+
+Field edits are what `detail` covers: an entry's save made within the request, through any route or
+tool (creating, updating, SEO, restoring a version, duplicating, an AI `apply`, an approved agent
+review, the undo of a cancelled workflow run, an import that runs in the request). A promotion's
+entries are in its target environment, which `detail` doesn't name. Publishing, trashing, tags,
+every other kind of target, environment merges and work a job does later (bulk jobs, job-run
+imports) write their rows without it.
+
 ### Environment snapshots
 
 | Method | Path       | Scope            | Description                                                                                                      |

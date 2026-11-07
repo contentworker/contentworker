@@ -1,4 +1,9 @@
-import { type Principal, ValidationError } from '@contentworker/domain';
+import {
+  type AuditDetail,
+  capAuditDetail,
+  type Principal,
+  ValidationError,
+} from '@contentworker/domain';
 import type { AuditEntry } from '@contentworker/ports';
 import type { AppContext } from './context';
 import { clampCount, MAX_PAGE_LIMIT } from './entry-query';
@@ -19,6 +24,8 @@ export interface RecordAuditInput {
   readonly targetType?: string;
   readonly targetId?: string;
   readonly status: number;
+  /** What the action changed (`ChangeLog`), capped here so no row outgrows the limit. */
+  readonly detail?: AuditDetail;
 }
 
 /**
@@ -37,6 +44,7 @@ export async function recordAudit(ctx: AppContext, input: RecordAuditInput): Pro
     targetId: input.targetId,
     status: input.status,
     at: ctx.clock.now().toISOString(),
+    ...(input.detail ? { detail: capAuditDetail(input.detail) } : {}),
   };
   await ctx.store.audit.append(entry);
   return entry;

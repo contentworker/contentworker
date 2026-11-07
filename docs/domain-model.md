@@ -754,6 +754,17 @@ in the same stretch is the same block edited (with `beforeNodeType` when it chan
 the shortest script past `MAX_DIFF_EDITS` edits and reports the text replaced. Every part is typed
 data, never markup: the admin, an API client and an agent each render it for themselves.
 
+`changedPaths` (`packages/domain/src/entry/entry-change.ts`) reads the same diff, with
+`structureOnly` so a save pays for no word diff, down to what an audit row keeps: the model's paths that changed and the space's locales they changed in, never a
+value. It only names what the model declares, so a JSON field, a `Seo` value and rich text stop at
+the field, a block's `_key` and an undeclared nested key are left out, and a locale key the space
+doesn't have is ignored (a localized field stores whatever keys it is sent). A save notes the result
+on `ctx.changes`, a `ChangeLog` each surface sets per request (`packages/application/src/change-log.ts`):
+the row is written in the surface, so every route and tool reaching a save gets the same detail
+without passing it back. A context with no log (a queue consumer, a seed, a plugin's capability
+call) runs no diff. `recordAudit` caps what it stores (`capAuditDetail`). See
+[Audit log](./api-reference.md#audit-log) for the shape.
+
 ### The trash
 
 `archive` moves an entry out of circulation and `restore` brings it back as a _draft_, never

@@ -110,6 +110,7 @@ export async function setEntrySeo(
       previous: fields,
     },
     next,
+    fields,
   );
 }
 

@@ -124,11 +124,16 @@ function kindOf(before: unknown, after: unknown): DiffKind {
  * going from `before` to `after`. Fields follow the content type's order, then any field the type
  * no longer declares (diffed by the shape of its values) by name. Pass the content type as it is
  * now: its names label the result and its types pick the detail.
+ *
+ * `structureOnly` says what changed and where without working out how: text and rich text get no
+ * word diff and a list with no identity no alignment, each a plain `value` detail. It costs a
+ * comparison per value, so a save can afford it whatever a writer sends; the full diff can't be.
  */
 export function diffEntryFields(
   before: EntryFields,
   after: EntryFields,
   contentType?: ContentType,
+  { structureOnly = false }: { readonly structureOnly?: boolean } = {},
 ): FieldDiff[] {
   const declared = [...(contentType?.fields ?? [])].sort((x, y) => x.position - y.position);
   const known = new Set(declared.map((f) => f.apiId));
@@ -138,9 +143,11 @@ export function diffEntryFields(
   const out: FieldDiff[] = [];
   for (const def of declared) {
     if (before[def.apiId] === undefined && after[def.apiId] === undefined) continue;
-    out.push(fieldDiff(def.apiId, before[def.apiId], after[def.apiId], def));
+    out.push(fieldDiff(def.apiId, before[def.apiId], after[def.apiId], def, structureOnly));
   }
-  for (const apiId of extra) out.push(fieldDiff(apiId, before[apiId], after[apiId]));
+  for (const apiId of extra) {
+    out.push(fieldDiff(apiId, before[apiId], after[apiId], undefined, structureOnly));
+  }
   return out;
 }
 
@@ -148,7 +155,8 @@ function fieldDiff(
   field: string,
   before: LocalizedValue | undefined,
   after: LocalizedValue | undefined,
-  def?: FieldDefinition,
+  def: FieldDefinition | undefined,
+  structureOnly: boolean,
 ): FieldDiff {
   const locales = [...new Set([...Object.keys(before ?? {}), ...Object.keys(after ?? {})])].sort();
   const perLocale = locales.map((locale): LocaleDiff => {
@@ -160,7 +168,7 @@ function fieldDiff(
       kind,
       ...(b === undefined ? {} : { before: b }),
       ...(a === undefined ? {} : { after: a }),
-      ...(kind === 'unchanged' ? {} : { detail: diffValue(b, a, def) }),
+      ...(kind === 'unchanged' ? {} : { detail: diffValue(b, a, def, structureOnly) }),
     };
   });
   const kind: DiffKind =
@@ -185,17 +193,22 @@ function fieldDiff(
  * The detail of one value's change, picked by its field definition, or by the shape of the values
  * when there is none (a field the content type no longer declares). Either side may be absent.
  */
-export function diffValue(before: unknown, after: unknown, def?: FieldDefinition): ValueDiff {
+export function diffValue(
+  before: unknown,
+  after: unknown,
+  def?: FieldDefinition,
+  structureOnly = false,
+): ValueDiff {
   switch (def?.type ?? inferType(before ?? after)) {
     case 'Symbol':
     case 'Slug':
     case 'Text':
-      if (isText(before) && isText(after)) {
+      if (!structureOnly && isText(before) && isText(after)) {
         return { type: 'text', segments: diffText(before ?? '', after ?? '') };
       }
       break;
     case 'RichText':
-      if (isDocOrNothing(before) && isDocOrNothing(after)) {
+      if (!structureOnly && isDocOrNothing(before) && isDocOrNothing(after)) {
         return { type: 'richText', blocks: diffRichText(before, after) };
       }
       break;
@@ -203,12 +216,17 @@ export function diffValue(before: unknown, after: unknown, def?: FieldDefinition
       return { type: 'link', before: asLink(before), after: asLink(after) };
     case 'Component':
       if (isRecordOrNothing(before) && isRecordOrNothing(after)) {
-        return { type: 'component', fields: diffComponent(before, after, def?.fields) };
+        const fields = diffComponent(before, after, def?.fields, structureOnly);
+        return { type: 'component', fields };
       }
       break;
     case 'Array':
       if (isListOrNothing(before) && isListOrNothing(after)) {
-        return { type: 'list', items: diffList(before ?? [], after ?? [], def) };
+        const b = before ?? [];
+        const a = after ?? [];
+        if (!structureOnly || identityOf(def, b, a).by === 'key') {
+          return { type: 'list', items: diffList(b, a, def, structureOnly) };
+        }
       }
       break;
   }
@@ -245,6 +263,7 @@ function diffComponent(
   before: Record<string, unknown> | null | undefined,
   after: Record<string, unknown> | null | undefined,
   defs: readonly FieldDefinition[] = [],
+  structureOnly = false,
 ): NestedFieldDiff[] {
   const b = before ?? {};
   const a = after ?? {};
@@ -268,7 +287,7 @@ function diffComponent(
       kind,
       ...(was === undefined ? {} : { before: was }),
       ...(now === undefined ? {} : { after: now }),
-      ...(kind === 'unchanged' ? {} : { detail: diffValue(was, now, def) }),
+      ...(kind === 'unchanged' ? {} : { detail: diffValue(was, now, def, structureOnly) }),
     });
   }
   return out;
@@ -307,7 +326,12 @@ function identityOf(
 
 const linkKey = (l: LinkRef | null) => (l ? `${l.linkType}:${l.id}` : undefined);
 
-function diffList(before: unknown[], after: unknown[], def?: FieldDefinition): ListItemDiff[] {
+function diffList(
+  before: unknown[],
+  after: unknown[],
+  def: FieldDefinition | undefined,
+  structureOnly: boolean,
+): ListItemDiff[] {
   const identity = identityOf(def, before, after);
   const aligned: Aligned[] =
     identity.by === 'key'
@@ -341,7 +365,9 @@ function diffList(before: unknown[], after: unknown[], def?: FieldDefinition): L
       ...(link ? { link } : {}),
       ...(was === undefined ? {} : { before: was }),
       ...(now === undefined ? {} : { after: now }),
-      ...(kind === 'changed' ? { detail: diffValue(was, now, elementDef(item)) } : {}),
+      ...(kind === 'changed'
+        ? { detail: diffValue(was, now, elementDef(item), structureOnly) }
+        : {}),
     };
   });
 }

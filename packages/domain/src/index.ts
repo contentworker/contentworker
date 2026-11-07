@@ -22,6 +22,7 @@ export * from './content-type/patterns';
 export * from './content-type/slug';
 export * from './entry/authorship';
 export * from './entry/entry';
+export * from './entry/entry-change';
 export * from './entry/entry-diff';
 export * from './errors';
 export * from './events';

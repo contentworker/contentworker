@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+
+import type { EntryChange } from '@contentworker/domain';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -176,6 +178,91 @@ describe('the audit log screen', () => {
     expect(screen.queryByText('No audit entries yet.')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
     await screen.findByRole('button', { name: 'Filter by target e1' });
+  });
+
+  describe('what a row changed', () => {
+    const change = (over: Partial<EntryChange> = {}): EntryChange => ({
+      entryId: 'e1',
+      contentType: 'article',
+      kind: 'updated',
+      version: 3,
+      paths: ['fields.title', 'fields.hero.alt', 'fields.sections[].heading'],
+      locales: ['de', 'en-US'],
+      ...over,
+    });
+    const showing = async (detail: AuditEntry['detail']) => {
+      listAuditLog.mockResolvedValue({ items: [row(1, { detail })] });
+      show();
+      await screen.findByRole('button', { name: 'Filter by target e1' });
+    };
+
+    it('reads the paths and the locales in the model’s words, whole in the title', async () => {
+      await showing({ entries: [change()] });
+      const paths = screen.getByText('title, hero.alt, sections[].heading');
+      expect(paths.closest('p')?.title).toBe('title, hero.alt, sections[].heading in de, en-US');
+      expect(screen.getByText('de, en-US')).toBeTruthy();
+    });
+
+    it('has a column for it, with a dash on a row that doesn’t say', async () => {
+      listAuditLog.mockResolvedValue({ items: [row(1)] });
+      show();
+      await screen.findByRole('button', { name: 'Filter by target e1' });
+      expect(screen.getByRole('columnheader', { name: 'Changed' })).toBeTruthy();
+      expect(screen.getByText('—', { selector: 'span' })).toBeTruthy();
+    });
+
+    it('draws its skeleton with a cell for every column', async () => {
+      listAuditLog.mockImplementation(() => new Promise(() => {}));
+      show();
+      const skeleton = document.querySelector('tbody tr[aria-hidden="true"]');
+      expect(skeleton?.querySelectorAll('td')).toHaveLength(6);
+    });
+
+    it('shortens a long list of locales to a count, keeping them in the title', async () => {
+      await showing({ entries: [change({ locales: ['de', 'en-US', 'fr'] })] });
+      expect(screen.getByText('3 locales')).toBeTruthy();
+      expect(screen.getByText(/^title/).closest('p')?.title).toContain('de, en-US, fr');
+    });
+
+    it('says a cut-short row is one, in words that cover other entries too', async () => {
+      await showing({ entries: [change()], truncated: true });
+      expect(screen.getByText('Other changes not listed')).toBeTruthy();
+    });
+
+    it('never says nothing changed on a row that was cut short', async () => {
+      await showing({ entries: [change({ paths: [], locales: [] })], truncated: true });
+      expect(screen.queryByText('No field changed')).toBeNull();
+      expect(screen.getByText('Other changes not listed')).toBeTruthy();
+    });
+
+    it('says a row whose change couldn’t be read wasn’t recorded', async () => {
+      await showing({ entries: [], truncated: true });
+      expect(screen.getByText('Not recorded')).toBeTruthy();
+    });
+
+    it('says a save that changed nothing changed nothing', async () => {
+      await showing({ entries: [change({ paths: [], locales: [] })] });
+      expect(screen.getByText('No field changed')).toBeTruthy();
+    });
+
+    it('doesn’t call a create with no fields a save', async () => {
+      await showing({ entries: [change({ kind: 'created', paths: [], locales: [] })] });
+      expect(screen.getByText('Created with no fields')).toBeTruthy();
+    });
+
+    it('counts a field the type no longer declares', async () => {
+      await showing({ entries: [change({ paths: [], locales: [], undeclaredFields: 1 })] });
+      expect(screen.getByText('1 field no longer in the model')).toBeTruthy();
+      expect(screen.queryByText('No field changed')).toBeNull();
+    });
+
+    it('counts the entries of a row that changed several', async () => {
+      await showing({ entries: [change(), change({ entryId: 'e2' })] });
+      expect(screen.getByText('2 entries')).toBeTruthy();
+      cleanup();
+      await showing({ entries: [change(), change({ entryId: 'e2' })], truncated: true });
+      expect(screen.getByText('More than 2 entries')).toBeTruthy();
+    });
   });
 
   it('reads out what the filters found', async () => {

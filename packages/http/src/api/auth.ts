@@ -10,6 +10,9 @@ import type {
 import {
   auditActor,
   authenticate,
+  type ChangeLog,
+  createChangeLog,
+  createdEntryOf,
   createHasher,
   principalForWebUser,
   recordAudit,
@@ -66,7 +69,14 @@ export function createApiHasher(pepper?: string): Hasher {
  * concrete environment a request targets after alias resolution (set by
  * {@link environmentMiddleware}; `scopeOf` reads it, falling back to the raw param).
  */
-export type AuthVars = { Variables: { principal: Principal; environmentId?: string } };
+export type AuthVars = {
+  Variables: {
+    principal: Principal;
+    environmentId?: string;
+    /** Where this request's entry saves note what they changed (`auditMiddleware`). */
+    changes?: ChangeLog;
+  };
+};
 
 export interface AuthDeps {
   readonly ctx: AppContext;
@@ -333,24 +343,31 @@ export function routeTargetType(route: string, param: string): string | undefine
 /**
  * Records successful mutating requests to the append-only audit trail. Runs
  * after the handler so it can capture the response status; a failed audit write
- * never fails the request.
+ * never fails the request. The handler's use-cases note what they changed on the
+ * log set here (`actingCtx` hands it to them), and the row carries it as `detail`.
  */
 export function auditMiddleware(deps: AuthDeps): MiddlewareHandler<AuthVars> {
   return async (c, next) => {
+    const changes = createChangeLog();
+    c.set('changes', changes);
     await next();
     const space = c.req.param('space');
     if (!MUTATING.has(c.req.method) || !space || c.res.status >= 400) return;
     try {
       const principal = c.get('principal');
       const target = TARGET_PARAMS.find((name) => c.req.param(name) !== undefined);
+      const detail = changes.detail();
+      // A create's route can't name what it made; what it saved can.
+      const created = target ? undefined : createdEntryOf(detail);
       await recordAudit(deps.ctx, {
         spaceId: space,
         environmentId: c.get('environmentId') ?? c.req.param('env'),
         actor: auditActor(principal),
         action: `${c.req.method} ${c.req.routePath}`,
-        targetType: target && routeTargetType(c.req.routePath, target),
-        targetId: target && c.req.param(target),
+        targetType: target ? routeTargetType(c.req.routePath, target) : created && 'entry',
+        targetId: target ? c.req.param(target) : created?.entryId,
         status: c.res.status,
+        detail,
       });
     } catch {
       /* auditing must never break the request path */

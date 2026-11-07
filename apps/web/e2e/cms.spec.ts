@@ -617,7 +617,9 @@ test('Settings → Audit log: pressing a target filters the log, and Clear bring
   await expect(page.getByLabel('Target ID')).toHaveValue(id);
   await expect(page.getByLabel('Target type')).toHaveValue('entry');
   const rows = page.getByRole('button', { name: /^Filter by actor / });
-  await expect(rows).toHaveCount(1);
+  // The save, and the create: a create's row names the entry it made.
+  await expect(rows).toHaveCount(2);
+  await expect(page.getByRole('cell', { name: /^title/ }).first()).toBeVisible();
   await page.getByRole('button', { name: 'Clear filters' }).click();
   await expect(page.getByLabel('Target ID')).toHaveValue('');
   await expect.poll(() => rows.count()).toBeGreaterThan(1);

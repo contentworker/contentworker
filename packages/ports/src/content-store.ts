@@ -13,6 +13,7 @@ import type {
   AssetShareTargetType,
   AssetStatus,
   AssetZipJob,
+  AuditDetail,
   Comment,
   Concept,
   ConceptScheme,
@@ -599,6 +600,8 @@ export interface AuditEntry {
   /** Result status code of the action. */
   readonly status: number;
   readonly at: string;
+  /** What the action changed, in paths and never values. Absent on rows that don't say. */
+  readonly detail?: AuditDetail;
 }
 
 /** What an audit listing keeps. Every filter narrows; omitted ones don't apply. */

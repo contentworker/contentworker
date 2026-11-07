@@ -8,6 +8,7 @@ import type {
   AssetShareTargetType,
   AssetZipSource,
   AssetZipStatus,
+  AuditDetail,
   ContentTypeGrant,
   ContentTypeLayout,
   DomainEvent,
@@ -756,6 +757,7 @@ export const auditLog = sqliteTable(
     targetId: text('target_id'),
     status: integer('status').notNull(),
     at: integer('at', { mode: 'timestamp_ms' }).notNull(),
+    detail: text('detail', { mode: 'json' }).$type<AuditDetail>(),
   },
   (t) => [
     index('audit_log_by_space').on(t.spaceId, t.at),
