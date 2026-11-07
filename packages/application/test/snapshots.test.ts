@@ -135,6 +135,19 @@ describe('importing a snapshot', () => {
     expect(await listPreviewEntries(ctx, target, {})).toHaveLength(0);
   });
 
+  it('carries a type’s agent instructions', async () => {
+    const current = await store.contentTypes.get(source, 'article');
+    await createContentType(ctx, source, {
+      ...(current as NonNullable<typeof current>),
+      agentInstructions: 'Stay factual.',
+    } as Parameters<typeof createContentType>[2]);
+    await publishContentType(ctx, source, 'article');
+    await importSnapshot(ctx, target, await exportSnapshot(ctx, source));
+    expect((await store.contentTypes.get(target, 'article'))?.agentInstructions).toBe(
+      'Stay factual.',
+    );
+  });
+
   it('replays the model and entries into an empty environment', async () => {
     await createEntry(ctx, source, article('One'));
     await createEntry(ctx, source, article('Two'));

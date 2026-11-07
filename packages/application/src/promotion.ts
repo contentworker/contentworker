@@ -556,6 +556,10 @@ async function assessPromotion(
         );
       }
     }
+    // Agents read these as guidance, so an approver sees a change to them even with no field moved.
+    if ((ct.agentInstructions ?? '') !== (current.agentInstructions ?? '')) {
+      changes.add('changes its agent instructions');
+    }
     if (changes.size) {
       typeChanges[ct.apiId] = [...changes];
       for (const c of changes) reasons.push(`The content type "${ct.apiId}" ${c}`);

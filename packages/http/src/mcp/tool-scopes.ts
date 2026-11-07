@@ -2,13 +2,14 @@ import { type PermissionScope, type Principal, SCOPES } from '@contentworker/dom
 
 /**
  * Which tools `tools/list` shows a caller. This is a courtesy, not a control: 245 tool definitions
- * cost an agent real context, so a caller sees only the tools its scopes can use. Every handler
- * still authorizes for itself, and a tool left off the list stays callable and answers with the
- * scope it needs, so a mistake here can only show or hide a tool, never grant anything.
+ * cost an agent real context, so a caller is spared the tools it can't use. Every handler still
+ * authorizes for itself, and a tool left off the list stays callable and answers with the scope it
+ * needs, so a mistake here can only show or hide a tool, never grant anything.
  *
- * A tool is listed when the caller holds ANY scope named here. A tool whose handler needs one scope
- * or another by argument (`assets_search`, `assets_bulk`) names them all, so nothing a caller could
- * use is hidden. `tool-visibility.test.ts` holds this table to the `SCOPES` in each handler.
+ * A tool is listed when the caller holds ANY scope named here. A tool whose handler checks several
+ * (`assets_search` by argument, `model_delete_content_type` all at once) names them all, so nothing
+ * a caller could use is hidden, at the price of showing some tools that need more than the caller
+ * holds. `tool-visibility.test.ts` holds this table to the `SCOPES` in each handler's own body.
  */
 export const TOOL_SCOPES: Readonly<Record<string, readonly PermissionScope[]>> = {
   agent_review_approve: [SCOPES.contentWrite],
@@ -262,8 +263,21 @@ export const UNSCOPED_TOOLS: readonly string[] = [
   'spaces_list',
 ];
 
+/** Unscoped tools that refuse anyone bound to one space: deployment administrators only. */
+export const DEPLOYMENT_TOOLS: readonly string[] = [
+  'invite_create',
+  'invite_get',
+  'invite_resend',
+  'invite_revoke',
+  'invites_list',
+  'scheduler_alerts',
+  'scheduler_alerts_set_recipients',
+  'scheduler_status',
+];
+
 /** Whether `tools/list` shows `tool` to `principal`. A tool not in the table is shown. */
 export function toolListedFor(principal: Principal, tool: string): boolean {
+  if (principal.spaceId !== '*' && DEPLOYMENT_TOOLS.includes(tool)) return false;
   const scopes = TOOL_SCOPES[tool];
   return !scopes || scopes.some((scope) => principal.scopes.includes(scope));
 }

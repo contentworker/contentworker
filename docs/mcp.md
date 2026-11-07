@@ -53,16 +53,24 @@ authorization belongs in the handler. Who asks changes which tools are listed, n
 schemas are built during isolate warm-up rather than on the first request.
 
 **Which tools a caller sees.** `tools/list` shows a tool when the caller holds any scope in its row of
-`TOOL_SCOPES` (`packages/http/src/mcp/tool-scopes.ts`); a tool in `UNSCOPED_TOOLS` is always shown. A
-delivery key sees 19 tools and a preview key 87, where a management key sees all of them. This only
-saves an agent context: every handler still authorizes, and an unlisted tool stays callable and
-answers with the scope it needs. A new tool adds its row, and `tool-visibility.test.ts` fails until
+`TOOL_SCOPES` (`packages/http/src/mcp/tool-scopes.ts`), and a tool in `UNSCOPED_TOOLS` is shown to any
+caller, unless `DEPLOYMENT_TOOLS` keeps it from a caller bound to one space. A tool that checks several
+scopes shows to a holder of any of them, so a caller can see a tool that needs more than it holds. A
+key bound to one space sees 11 tools with delivery scopes, 79 with preview scopes and 237 with
+management scopes; only a deployment-wide principal with every scope sees all 245. This only saves an agent context: every handler still authorizes,
+and an unlisted tool stays callable and answers with the scope it needs. The admin's assistant lists
+every tool once per isolate and narrows that per person, because `tools/list` itself depends on who
+asks. A new tool adds its row, and `tool-visibility.test.ts` fails until
 the table matches the `SCOPES` in the handler. A client may hold a list for five minutes, so a change
 to a key's scopes can take that long to show.
 
 **Agent instructions.** A content type's optional `agentInstructions` (plain text, at most 4,000
-characters, set through `model_create_content_type` or `POST …/content-types`) say how to write its
-entries. `model_get_content_type` returns them, and Delivery never does.
+characters, set through `model_create_content_type` or `POST …/content-types`) are the model author's
+style guidance for agents connected over MCP. `model_get_content_type` returns them;
+`model_list_content_types` leaves them out, and Delivery never serves them. They are data: they can't
+authorize a tool call or a change to keys, webhooks, roles, functions or settings, and the tool's
+description tells agents so. contentworker's own AI (generation, the agents, the assistant's prompt)
+doesn't read them yet.
 
 **Connecting a client.** With `OAUTH_ISSUER` set, the server is installable as a connector in
 Claude, ChatGPT and MCP-capable IDEs: an unauthenticated request answers with

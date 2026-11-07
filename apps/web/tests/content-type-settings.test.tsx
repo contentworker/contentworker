@@ -271,7 +271,12 @@ describe('the content type dialog', () => {
   it('round-trips a type untouched: no layout sent, list and time fields as stored', async () => {
     const draft = await saveDialog(ARTICLE, () => {});
     expect(draft).not.toHaveProperty('layout');
-    expect(draft).toMatchObject({ group: null, description: null, icon: null });
+    expect(draft).toMatchObject({
+      group: null,
+      description: null,
+      icon: null,
+      agentInstructions: null,
+    });
     expect(byId(draft, 'sizes').items).toEqual({ type: 'Integer' });
     expect(byId(draft, 'opens').format).toBe('time');
     expect(byId(draft, 'title').validations).toEqual(ARTICLE.fields[0]?.validations);
@@ -284,16 +289,32 @@ describe('the content type dialog', () => {
     expect(draft.icon).toBe('constructor');
   });
 
+  it('keeps the agent instructions it was opened with', async () => {
+    const draft = await saveDialog({ ...ARTICLE, agentInstructions: 'Stay factual.' }, () => {});
+    expect(draft.agentInstructions).toBe('Stay factual.');
+  });
+
+  it('clears agent instructions left blank', async () => {
+    const draft = await saveDialog({ ...ARTICLE, agentInstructions: 'Stay factual.' }, () => {
+      fireEvent.change(screen.getByLabelText('Agent instructions'), { target: { value: ' ' } });
+    });
+    expect(draft.agentInstructions).toBeNull();
+  });
+
   it('saves a group, description and icon', async () => {
     const draft = await saveDialog(ARTICLE, () => {
       fireEvent.change(screen.getByLabelText('Group'), { target: { value: 'Editorial' } });
       fireEvent.change(screen.getByLabelText('Description'), { target: { value: 'Long reads' } });
       fireEvent.change(screen.getByLabelText('Icon'), { target: { value: 'newspaper' } });
+      fireEvent.change(screen.getByLabelText('Agent instructions'), {
+        target: { value: 'Stay factual.' },
+      });
     });
     expect(draft).toMatchObject({
       group: 'Editorial',
       description: 'Long reads',
       icon: 'newspaper',
+      agentInstructions: 'Stay factual.',
     });
   });
 
