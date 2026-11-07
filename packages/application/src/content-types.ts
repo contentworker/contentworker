@@ -1,5 +1,6 @@
 import {
   assetMimeChecks,
+  authorizeContent,
   ConflictError,
   type ContentType,
   type ContentTypeChanges,
@@ -9,6 +10,7 @@ import {
   type FieldDefinition,
   mimeTypeAllowed,
   NotFoundError,
+  type Principal,
   removedFields,
   removedFieldUses,
   removedVariants,
@@ -37,19 +39,42 @@ export interface ContentTypeWarning {
 /** A saved content type, with what its revision means for the entries that hold it. */
 export type SavedContentType = ContentType & { readonly warnings?: readonly ContentTypeWarning[] };
 
-/** Creates a new content type definition (status "draft", version 1). */
+/**
+ * A caller setting a type's preview URL decides where every preview link minted for its entries
+ * sends its token, so it must be able to read those entries itself: `content:manage` alone isn't
+ * enough when its grant leaves the type out. Clearing it, or sending back the stored one, needs
+ * nothing more. No `principal` (seeding, imports already authorized as a whole) skips the check.
+ */
+export function authorizePreviewChange(
+  principal: Principal | undefined,
+  apiId: string,
+  stored: ContentType['preview'],
+  given: ContentTypeDraft['preview'],
+): void {
+  if (!principal || !given) return;
+  const template = typeof given.urlTemplate === 'string' ? given.urlTemplate.trim() : given;
+  if (!template || template === stored?.urlTemplate) return;
+  authorizeContent(principal, 'read', apiId);
+}
+
+/**
+ * Creates a new content type definition (status "draft", version 1). `principal`, the caller,
+ * is held to `authorizePreviewChange`: the HTTP route and the MCP tool both pass theirs.
+ */
 export async function createContentType(
   ctx: AppContext,
   scope: Scope,
   draft: ContentTypeDraft,
+  principal?: Principal,
 ): Promise<SavedContentType> {
   // An existing type is revised, not defined afresh: a revision is checked against what is
   // stored, so a definition saved before a check existed can still be edited.
   const existing = await ctx.store.contentTypes.get(scope, draft.apiId);
   if (existing) {
-    return updateContentType(ctx, scope, draft.apiId, draft);
+    return updateContentType(ctx, scope, draft.apiId, draft, principal);
   }
-  const contentType = defineContentType(draft);
+  authorizePreviewChange(principal, draft.apiId, undefined, draft.preview);
+  const contentType = defineContentType(draft, { previewLoopback: ctx.previewLoopback === true });
   await ctx.store.contentTypes.save(scope, contentType);
   return contentType;
 }
@@ -60,10 +85,14 @@ export async function updateContentType(
   scope: Scope,
   apiId: string,
   changes: ContentTypeChanges,
+  principal?: Principal,
 ): Promise<SavedContentType> {
   const current = await ctx.store.contentTypes.get(scope, apiId);
   if (!current) throw new NotFoundError('ContentType', apiId);
-  const revised = reviseContentType(current, changes);
+  authorizePreviewChange(principal, apiId, current.preview, changes.preview);
+  const revised = reviseContentType(current, changes, {
+    previewLoopback: ctx.previewLoopback === true,
+  });
   await assertNoRemovedContentInUse(ctx, scope, current, revised);
   const warnings = await tightenedRulesInUse(ctx, scope, current, revised);
   await saveContentTypeOver(ctx, scope, current, revised);

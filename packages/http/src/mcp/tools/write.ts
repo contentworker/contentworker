@@ -120,8 +120,8 @@ export function registerWriteTools(server: McpServer, t: ToolContext): void {
             .optional()
             .describe(
               'editor-only, never delivered: where the admin previews entries on the frontend. ' +
-                'urlTemplate is an https URL (http only for localhost or 127.0.0.1) with a fixed ' +
-                'host, e.g. https://site.example/__preview?entry={id}&token={token}; ' +
+                'urlTemplate is an https URL (http to localhost on a local stack only) with a fixed ' +
+                'host, e.g. https://site.example/__preview?entry={id}#token={token}; ' +
                 'placeholders {id}, {token} (required), {locale}, {space}, {environment}, ' +
                 '{field:<apiId>} (a Symbol, Slug, Integer, Number or Date field), filled ' +
                 'URL-encoded; null clears it',
@@ -133,24 +133,29 @@ export function registerWriteTools(server: McpServer, t: ToolContext): void {
     async (args) => {
       guard(SCOPES.contentManage, scopeOf(args));
       return ok(
-        await createContentType(ctx, scopeOf(args), {
-          apiId: args.apiId,
-          name: args.name,
-          displayField: args.displayField,
-          ...(args.urlPattern !== undefined ? { urlPattern: args.urlPattern } : {}),
-          ...(args.singleton !== undefined ? { singleton: args.singleton } : {}),
-          ...(args.group !== undefined ? { group: args.group } : {}),
-          ...(args.description !== undefined ? { description: args.description } : {}),
-          ...(args.icon !== undefined ? { icon: args.icon } : {}),
-          ...(args.agentInstructions !== undefined
-            ? { agentInstructions: args.agentInstructions }
-            : {}),
-          // biome-ignore lint/suspicious/noExplicitAny: zod record → domain ContentTypeLayout, checked there
-          ...(args.layout !== undefined ? { layout: args.layout as any } : {}),
-          ...(args.preview !== undefined ? { preview: args.preview } : {}),
-          // biome-ignore lint/suspicious/noExplicitAny: zod field shape → domain FieldDefinition
-          fields: args.fields as any,
-        }),
+        await createContentType(
+          ctx,
+          scopeOf(args),
+          {
+            apiId: args.apiId,
+            name: args.name,
+            displayField: args.displayField,
+            ...(args.urlPattern !== undefined ? { urlPattern: args.urlPattern } : {}),
+            ...(args.singleton !== undefined ? { singleton: args.singleton } : {}),
+            ...(args.group !== undefined ? { group: args.group } : {}),
+            ...(args.description !== undefined ? { description: args.description } : {}),
+            ...(args.icon !== undefined ? { icon: args.icon } : {}),
+            ...(args.agentInstructions !== undefined
+              ? { agentInstructions: args.agentInstructions }
+              : {}),
+            // biome-ignore lint/suspicious/noExplicitAny: zod record → domain ContentTypeLayout, checked there
+            ...(args.layout !== undefined ? { layout: args.layout as any } : {}),
+            ...(args.preview !== undefined ? { preview: args.preview } : {}),
+            // biome-ignore lint/suspicious/noExplicitAny: zod field shape → domain FieldDefinition
+            fields: args.fields as any,
+          },
+          principal,
+        ),
       );
     },
   );
@@ -245,7 +250,9 @@ export function registerWriteTools(server: McpServer, t: ToolContext): void {
     },
     async (args) => {
       guard(SCOPES.contentManage, scopeOf(args));
-      return ok(await cloneContentType(ctx, scopeOf(args), args.apiId, args.newApiId, args.name));
+      return ok(
+        await cloneContentType(ctx, scopeOf(args), args.apiId, args.newApiId, args.name, principal),
+      );
     },
   );
 
@@ -387,7 +394,8 @@ export function registerWriteTools(server: McpServer, t: ToolContext): void {
     {
       description:
         'Mint an expiring preview link for one entry (default 72 hours): a token that reads ' +
-        'that entry, drafts included, returned once. `url` is the entry on the Preview API; ' +
+        'that entry, drafts included, returned once. `url` is the entry on the Preview API ' +
+        '(`previewPath` instead, a path, when the deployment has no public origin); ' +
         'when its content type has a preview URL template, `frontendUrl` is the entry on the ' +
         'site, in `locale` (the space default if absent). Share it only with whoever should see ' +
         'the draft. Needs content:write and read on the entry.',
@@ -395,7 +403,7 @@ export function registerWriteTools(server: McpServer, t: ToolContext): void {
         z.object({
           id: z.string(),
           ttlHours: z.number().positive().max(8760).optional(),
-          locale: z.string().max(35).optional(),
+          locale: z.string().min(1).max(35).optional(),
           ...scopeArgs,
         }),
       ),
@@ -403,14 +411,17 @@ export function registerWriteTools(server: McpServer, t: ToolContext): void {
     async (args) => {
       guard(SCOPES.contentWrite, scopeOf(args));
       await guardEntry(scopeOf(args), args.id, 'read');
-      return ok(
-        await createPreviewLink(ctx, deps.hasher, scopeOf(args), args.id, {
-          ...(args.ttlHours !== undefined ? { ttlHours: args.ttlHours } : {}),
-          ...(args.locale !== undefined ? { locale: args.locale } : {}),
-          // The admin fronts the Preview API, as the HTTP route's caller (its Origin) does.
-          previewBaseUrl: deps.inviteOrigin ?? '',
-        }),
-      );
+      const link = await createPreviewLink(ctx, deps.hasher, scopeOf(args), args.id, {
+        ...(args.ttlHours !== undefined ? { ttlHours: args.ttlHours } : {}),
+        ...(args.locale !== undefined ? { locale: args.locale } : {}),
+        // The admin fronts the Preview API, as the HTTP route's caller (its Origin) does.
+        previewBaseUrl: deps.inviteOrigin ?? '',
+      });
+      if (deps.inviteOrigin) return ok(link);
+      // No public origin is configured (OAUTH_ISSUER unset): a relative URL would read as a link
+      // to nowhere, so only the path is returned, named as one.
+      const { url, ...rest } = link;
+      return ok({ ...rest, previewPath: url });
     },
   );
 

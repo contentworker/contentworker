@@ -1,4 +1,4 @@
-import { NotFoundError, ValidationError } from '@contentworker/domain';
+import { ForbiddenError, NotFoundError, SCOPES, ValidationError } from '@contentworker/domain';
 import { FixedClock, InMemoryContentStore, SequenceIdGenerator } from '@contentworker/test-kit';
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
@@ -123,5 +123,57 @@ describe('preview links', () => {
     expect(await principalFromPreviewToken(ctx, hasher, scope, id, link.token)).not.toBeNull();
     clock.advance(60 * 60 * 1000 + 1);
     expect(await principalFromPreviewToken(ctx, hasher, scope, id, link.token)).toBeNull();
+  });
+});
+
+describe('who may set a type’s preview URL', () => {
+  const modeller = {
+    spaceId: 'site',
+    kind: 'cma' as const,
+    scopes: [SCOPES.contentManage],
+    contentGrants: [{ contentTypeApiId: 'page', actions: ['read' as const] }],
+  };
+  const draft = (urlTemplate?: string | null) => ({
+    apiId: 'article',
+    name: 'Article',
+    displayField: 'title',
+    fields: [field('title', 'Symbol', false, 0)],
+    ...(urlTemplate !== undefined
+      ? { preview: urlTemplate === null ? null : { urlTemplate } }
+      : {}),
+  });
+  const T = 'https://site.example/p?entry={id}&token={token}';
+
+  it('holds a caller without read on the type to the stored value', async () => {
+    await expect(createContentType(ctx, scope, draft(T), modeller)).rejects.toBeInstanceOf(
+      ForbiddenError,
+    );
+    await createContentType(ctx, scope, draft(T));
+    await expect(
+      createContentType(ctx, scope, draft('https://elsewhere.example/?t={token}'), modeller),
+    ).rejects.toBeInstanceOf(ForbiddenError);
+    // Unchanged (trimmed), left out, or cleared: nothing more to authorize.
+    await createContentType(ctx, scope, draft(` ${T}`), modeller);
+    await createContentType(ctx, scope, draft(), modeller);
+    expect((await createContentType(ctx, scope, draft(null), modeller)).preview).toBeUndefined();
+    // Read on the type is enough.
+    const reader = {
+      ...modeller,
+      contentGrants: [{ contentTypeApiId: 'article', actions: ['read' as const] }],
+    };
+    expect((await createContentType(ctx, scope, draft(T), reader)).preview).toEqual({
+      urlTemplate: T,
+    });
+  });
+
+  it('takes a plain-http dev server only on a local stack', async () => {
+    const local = 'http://localhost:3000/p?token={token}';
+    await expect(createContentType(ctx, scope, draft(local))).rejects.toBeInstanceOf(
+      ValidationError,
+    );
+    const dev = { ...ctx, previewLoopback: true };
+    expect((await createContentType(dev, scope, draft(local))).preview).toEqual({
+      urlTemplate: local,
+    });
   });
 });

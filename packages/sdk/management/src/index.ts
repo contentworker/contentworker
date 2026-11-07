@@ -158,8 +158,8 @@ export interface ContentType {
 }
 
 /**
- * A type's preview URL template: an https URL (http only for localhost or 127.0.0.1) with a fixed
- * host, e.g. `https://site.example/__preview?entry={id}&token={token}`. Placeholders, each filled
+ * A type's preview URL template: an https URL (http to localhost only on a local stack) with a fixed
+ * host, e.g. `https://site.example/__preview?entry={id}#token={token}`. Placeholders, each filled
  * URL-encoded: `{id}`, `{token}` (required), `{locale}`, `{space}`, `{environment}` and
  * `{field:<apiId>}` (a Symbol, Slug, Integer, Number or Date field).
  */

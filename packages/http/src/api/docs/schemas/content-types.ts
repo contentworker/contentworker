@@ -249,8 +249,8 @@ export const contentTypePreview = z
       .string()
       .max(MAX_PREVIEW_TEMPLATE_LENGTH)
       .describe(
-        'An https URL (http only for localhost or 127.0.0.1), e.g. ' +
-          'https://site.example/__preview?entry={id}&token={token}. Placeholders, each filled ' +
+        'An https URL on a plain host (http to localhost or 127.0.0.1 on a local stack only), e.g. ' +
+          'https://site.example/__preview?entry={id}#token={token}. Placeholders, each filled ' +
           'URL-encoded: {id}, {token} (required), {locale}, {space}, {environment} and ' +
           '{field:<apiId>} (a Symbol, Slug, Integer, Number or Date field), never in the host',
       ),

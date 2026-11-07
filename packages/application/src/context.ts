@@ -53,6 +53,12 @@ export interface AppContext {
    * backstop for the cases those tags over- or under-cover. Default 3600.
    */
   readonly deliveryListTtlSeconds?: number;
+  /**
+   * Whether a content type's preview URL may be plain http to localhost or 127.0.0.1: a local
+   * stack only (no D1 bound, or REQUIRE_SECURE_SECRETS=false). Absent, https only, so a deployed
+   * space never sends preview tokens over cleartext.
+   */
+  readonly previewLoopback?: boolean;
   /** Optional per-space AI budget governor; when absent, AI calls are unmetered. */
   readonly costGuard?: CostGuard;
   /**

@@ -645,7 +645,9 @@ export function ContentTypeDialog(props: {
     const definitions = namedFields.map((f, i) => toDefinition(f, i, namedFields));
     if (previewTemplate.trim()) {
       try {
-        checkPreviewTemplate(previewTemplate.trim(), definitions);
+        // Loopback is the deployment's call (https only, unless it is a local stack): the server
+        // decides, and says so if it refuses one.
+        checkPreviewTemplate(previewTemplate.trim(), definitions, { allowLoopback: true });
       } catch (err) {
         if (!(err instanceof ValidationError)) throw err;
         setPreviewError(err.issues[0]?.message ?? 'This preview URL can’t be used.');
@@ -1106,7 +1108,7 @@ export function ContentTypeDialog(props: {
               id="ct-preview"
               inputMode="url"
               className="font-mono"
-              placeholder="https://example.com/__preview?entry={id}&token={token}"
+              placeholder="https://example.com/__preview?entry={id}#token={token}"
               autoCapitalize="off"
               autoCorrect="off"
               spellCheck={false}
@@ -1127,9 +1129,10 @@ export function ContentTypeDialog(props: {
               </p>
             )}
             <p id="ct-preview-hint" className="max-w-measure text-muted-foreground text-ui">
-              Where your site shows a draft of these entries, with {'{token}'} to read it. Also{' '}
-              {'{id}'}, {'{locale}'}, {'{space}'}, {'{environment}'} or {'{field:slug}'}. Use https
-              (http only for localhost). Optional.
+              Your site’s draft view for these entries: Copy preview link then copies this URL,
+              filled in, instead of the API’s. It needs {'{token}'} (after # keeps it out of your
+              server’s logs) and can use {'{id}'}, {'{locale}'}, {'{space}'}, {'{environment}'} or{' '}
+              {'{field:slug}'}. https only (http://localhost on a local stack). Optional.
             </p>
           </div>
 

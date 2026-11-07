@@ -465,6 +465,7 @@ export const previewLinkBody = z.object({
   previewBaseUrl: z.string().url().max(2048).optional(),
   locale: z
     .string()
+    .min(1)
     .max(35)
     .optional()
     .describe('The locale frontendUrl is filled in; the space’s default if absent'),

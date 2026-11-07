@@ -111,6 +111,69 @@ describe('content type preview URL template over HTTP', () => {
     expect(bad.status).toBe(422);
   });
 
+  it('needs read on the type to point its preview links somewhere, on create, save and clone', async () => {
+    const { send, app } = setup();
+    const admin = { Authorization: 'Bearer admin', 'Content-Type': 'application/json' };
+    const role = (await (
+      await app.request('/spaces/s1/roles', {
+        method: 'POST',
+        headers: admin,
+        body: JSON.stringify({
+          name: 'model-not-posts',
+          scopes: ['content:manage', 'preview:read'],
+          contentGrants: [{ contentTypeApiId: 'page', actions: ['read', 'write'] }],
+        }),
+      })
+    ).json()) as { id: string };
+    const key = (await (
+      await app.request('/spaces/s1/api-keys', {
+        method: 'POST',
+        headers: admin,
+        body: JSON.stringify({ kind: 'cma', roleId: role.id, name: 'modeller' }),
+      })
+    ).json()) as { token: string };
+    const modeller = { Authorization: `Bearer ${key.token}`, 'Content-Type': 'application/json' };
+    const path = `${M}/content-types`;
+    const elsewhere = { urlTemplate: 'https://elsewhere.example/p?entry={id}&token={token}' };
+
+    // Creating a type it can't read, with a preview URL: refused.
+    const created = await send(path, 'POST', post, modeller);
+    expect(created.status, await created.clone().text()).toBe(403);
+    // Without one, the model change itself is content:manage's to make.
+    const { preview: _p, ...bare } = post;
+    expect((await send(path, 'POST', bare, modeller)).status).toBe(201);
+    // Set by someone who can read it, then moved elsewhere by the modeller: refused.
+    expect((await send(path, 'POST', post)).status).toBe(201);
+    expect((await send(path, 'POST', { ...post, preview: elsewhere }, modeller)).status).toBe(403);
+    // Sent back unchanged, left out, or cleared: allowed.
+    expect((await send(path, 'POST', { ...post, name: 'Posts' }, modeller)).status).toBe(201);
+    expect((await send(path, 'POST', { ...bare, name: 'Posts 2' }, modeller)).status).toBe(201);
+    // A clone carries the preview URL onto a type the modeller can't read either.
+    const clone = await send(
+      `${path}/post/clone`,
+      'POST',
+      { apiId: 'story', name: 'Story' },
+      modeller,
+    );
+    expect(clone.status, await clone.clone().text()).toBe(403);
+    expect((await send(path, 'POST', { ...post, preview: null }, modeller)).status).toBe(201);
+    const read = (await (await send(`${path}/post`, 'GET')).json()) as Record<string, unknown>;
+    expect(read).not.toHaveProperty('preview');
+  });
+
+  it('refuses an empty locale at the schema, as MCP does', async () => {
+    const { send } = setup();
+    await send(`${M}/content-types`, 'POST', post);
+    const created = await send(`${M}/entries`, 'POST', {
+      contentTypeApiId: 'post',
+      fields: { title: { 'en-US': 'Hello' } },
+    });
+    const { entry } = (await created.json()) as { entry: { id: string } };
+    const res = await send(`${M}/entries/${entry.id}/preview-link`, 'POST', { locale: '' });
+    expect(res.status).toBe(422);
+    expect(await res.text()).not.toContain('Unknown locale');
+  });
+
   it('documents the setting and the preview link’s frontendUrl in the OpenAPI spec', async () => {
     const { app } = setup();
     const spec = JSON.stringify(await (await app.request('/openapi.json')).json());

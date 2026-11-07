@@ -209,7 +209,7 @@ export function entriesRoutes(deps: AuthDeps): Hono<AuthVars> {
       const link = await createPreviewLink(ctx, hasher, scopeOf(c), c.req.param('id'), {
         ttlHours: body.ttlHours,
         previewBaseUrl: body.previewBaseUrl ?? origin,
-        ...(body.locale ? { locale: body.locale } : {}),
+        ...(body.locale !== undefined ? { locale: body.locale } : {}),
       });
       return c.json(link, 201);
     },

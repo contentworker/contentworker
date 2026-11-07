@@ -46,11 +46,50 @@ describe('preview URL template', () => {
     expect(check(`  ${t} `)).toBe(t);
   });
 
-  it('takes plain http only on localhost and 127.0.0.1', () => {
-    expect(check('http://localhost:3000/__preview?token={token}')).toBeTruthy();
-    expect(check('http://127.0.0.1:4321/p/{id}?token={token}')).toBeTruthy();
-    expect(refusal(() => check('http://site.example/?token={token}'))).toMatch(/https/);
-    expect(refusal(() => check('http://localhost.evil.example/?token={token}'))).toMatch(/https/);
+  it('takes plain http only on localhost and 127.0.0.1, and only on a local stack', () => {
+    const local = (t: string) => checkPreviewTemplate(t, FIELDS, { allowLoopback: true });
+    expect(local('http://localhost:3000/__preview?token={token}')).toBeTruthy();
+    expect(local('http://127.0.0.1:4321/p/{id}?token={token}')).toBeTruthy();
+    expect(refusal(() => local('http://site.example/?token={token}'))).toMatch(/https/);
+    expect(refusal(() => local('http://localhost.evil.example/?token={token}'))).toMatch(/https/);
+    // A deployment, the default: no cleartext, not even to loopback.
+    expect(refusal(() => check('http://localhost:3000/__preview?token={token}'))).toMatch(/https/);
+    expect(check('https://localhost:3000/__preview?token={token}')).toBeTruthy();
+  });
+
+  it('refuses a wildcard or any host that isn’t a plain name or address', () => {
+    for (const t of [
+      'https://*/?token={token}',
+      'https://*.example/?token={token}',
+      'https://a%2a.example/?token={token}',
+      'https://a_b.example/?token={token}',
+      'https://-a.example/?token={token}',
+    ]) {
+      expect(
+        refusal(() => check(t)),
+        t,
+      ).toMatch(/https URL with a fixed host/);
+    }
+    expect(previewOrigin('https://*/x')).toBeNull();
+    expect(check('https://10.0.0.2/p?token={token}')).toBeTruthy();
+    expect(check('https://[::1]:8443/p?token={token}')).toBeTruthy();
+    expect(previewOrigin('https://xn--bcher-kva.example/p')).toBe('https://xn--bcher-kva.example');
+    expect(previewOrigin('https://bücher.example/p')).toBe('https://xn--bcher-kva.example');
+  });
+
+  it('keeps the token out of the request line with a fragment', () => {
+    const t = 'https://site.example/__preview?entry={id}#token={token}';
+    expect(check(t)).toBe(t);
+    expect(
+      fillPreviewTemplate(t, {
+        id: 'e1',
+        token: 'pw_x',
+        locale: 'en',
+        space: 's',
+        environment: 'e',
+        fields: {},
+      }),
+    ).toBe('https://site.example/__preview?entry=e1#token=pw_x');
   });
 
   it('refuses other schemes, relative URLs and credentials', () => {
@@ -96,7 +135,10 @@ describe('preview URL template', () => {
     expect(previewOrigin('https://Site.Example:8443/x/{id}?t={token}')).toBe(
       'https://site.example:8443',
     );
-    expect(previewOrigin('http://localhost:3000/?t={token}')).toBe('http://localhost:3000');
+    expect(previewOrigin('http://localhost:3000/?t={token}', { allowLoopback: true })).toBe(
+      'http://localhost:3000',
+    );
+    expect(previewOrigin('http://localhost:3000/?t={token}')).toBeNull();
     expect(previewOrigin('https://{space}.site.example/')).toBeNull();
     expect(previewOrigin('http://site.example/')).toBeNull();
     expect(previewOrigin('ftp://site.example/')).toBeNull();
@@ -167,14 +209,54 @@ describe('a content type’s preview setting', () => {
     expect(define(null).preview).toBeUndefined();
   });
 
-  it('refuses a bad template, and a revision that removes the field a kept one names', () => {
+  it('refuses a bad template, and one sent with a revision that removes its field', () => {
     expect(() => define({ urlTemplate: 'http://site.example/?t={token}' })).toThrow(
       ValidationError,
     );
     expect(() => define({ urlTemplate: 42 })).toThrow(ValidationError);
-    const ct = define({ urlTemplate: 'https://site.example/{field:slug}?t={token}' });
+    const urlTemplate = 'https://site.example/{field:slug}?t={token}';
+    const ct = define({ urlTemplate });
+    const noSlug = FIELDS.filter((f) => f.apiId !== 'slug');
     expect(
-      refusal(() => reviseContentType(ct, { fields: FIELDS.filter((f) => f.apiId !== 'slug') })),
+      refusal(() => reviseContentType(ct, { fields: noSlug, preview: { urlTemplate } })),
     ).toMatch(/names no field/);
+  });
+
+  it('drops a kept template that no longer checks, rather than refusing a save that left it out', () => {
+    // As code that never heard of the setting leaves it: the field it names gone.
+    const stale = {
+      ...define(null),
+      fields: FIELDS.filter((f) => f.apiId !== 'slug'),
+      preview: { urlTemplate: 'https://site.example/{field:slug}?t={token}' },
+    };
+    const revised = reviseContentType(stale, { name: 'Post' });
+    expect(revised.name).toBe('Post');
+    expect(revised).not.toHaveProperty('preview');
+    // A kept template that still checks stays.
+    const kept = define({ urlTemplate: TEMPLATE });
+    expect(reviseContentType(kept, { name: 'Post' }).preview).toEqual({ urlTemplate: TEMPLATE });
+  });
+
+  it('allows loopback http on a local stack only, and keeps a stored one editable', () => {
+    const local = 'http://localhost:3000/p?t={token}';
+    expect(() => define({ urlTemplate: local })).toThrow(ValidationError);
+    const ct = defineContentType(
+      {
+        apiId: 'article',
+        name: 'Article',
+        displayField: 'title',
+        fields: FIELDS,
+        preview: { urlTemplate: local },
+      },
+      { previewLoopback: true },
+    );
+    expect(ct.preview).toEqual({ urlTemplate: local });
+    // Sent back as stored on a deployment, it passes as it stands; a new one doesn't.
+    expect(reviseContentType(ct, { preview: { urlTemplate: local } }).preview).toEqual({
+      urlTemplate: local,
+    });
+    expect(() =>
+      reviseContentType(ct, { preview: { urlTemplate: 'http://127.0.0.1/p?t={token}' } }),
+    ).toThrow(ValidationError);
   });
 });

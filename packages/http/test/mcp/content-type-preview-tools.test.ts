@@ -26,7 +26,10 @@ const admin: Principal = { spaceId: '*', kind: 'admin', scopes: Object.values(SC
 const TEMPLATE = 'https://site.example/blog/{field:slug}?entry={id}&token={token}';
 const hasher = { hash: (v: string) => createHash('sha256').update(v).digest('hex') };
 
-async function connect(principal: Principal = admin) {
+async function connect(
+  principal: Principal = admin,
+  origin: string | null = 'https://admin.example',
+) {
   const ctx: AppContext = {
     store: new InMemoryContentStore(),
     clock: new FixedClock(),
@@ -41,7 +44,7 @@ async function connect(principal: Principal = admin) {
     adminToken: 'admin',
     agents: new InProcessAgentRuntime(makeActivities({ ctx, ai: new StubAIProvider(() => ({})) })),
     blob: new FakeBlobStore(),
-    inviteOrigin: 'https://admin.example',
+    ...(origin ? { inviteOrigin: origin } : {}),
   };
   await createSpace(ctx, { spaceId: SPACE, name: 'Site', defaultLocale: 'en-US' });
   const connectAs = async (p: Principal) => {
@@ -150,5 +153,65 @@ describe('content type preview URL template through MCP', () => {
     });
     const res = await reader('entries_preview_link', { id: created.entry.id });
     expect(res.isError).toBe(true);
+  });
+
+  it('needs read on the type to point its preview links somewhere, as the route does', async () => {
+    const { call, connectAs } = await connect();
+    const modeller = await connectAs({
+      spaceId: SPACE,
+      kind: 'cma',
+      scopes: [SCOPES.contentManage, SCOPES.previewRead],
+      contentGrants: [{ contentTypeApiId: 'page', actions: ['read', 'write'] }],
+    });
+    const preview = { urlTemplate: TEMPLATE };
+    const refused = await modeller('model_create_content_type', { ...post, preview });
+    expect(refused.isError).toBe(true);
+    expect(refused.text).toContain('content:read:post');
+    expect((await modeller('model_create_content_type', post)).isError).toBe(false);
+    expect((await call('model_create_content_type', { ...post, preview })).isError).toBe(false);
+    const moved = await modeller('model_create_content_type', {
+      ...post,
+      preview: { urlTemplate: 'https://elsewhere.example/p?token={token}' },
+    });
+    expect(moved.isError).toBe(true);
+    // Unchanged or left out: allowed.
+    const same = await modeller('model_create_content_type', { ...post, name: 'Posts', preview });
+    expect(same.isError, same.text).toBe(false);
+    expect((await modeller('model_create_content_type', { ...post, name: 'P' })).isError).toBe(
+      false,
+    );
+    const clone = await modeller('model_clone_content_type', {
+      apiId: 'post',
+      newApiId: 'story',
+      name: 'Story',
+    });
+    expect(clone.isError).toBe(true);
+  });
+
+  it('refuses an empty locale at the schema, as the route does', async () => {
+    const { call } = await connect();
+    await call('model_create_content_type', post);
+    const created = JSON.parse(
+      (await call('entries_create', { contentType: 'post', fields: { title: { 'en-US': 'Hi' } } }))
+        .text,
+    ) as { entry: { id: string } };
+    const res = await call('entries_preview_link', { id: created.entry.id, locale: '' });
+    expect(res.isError).toBe(true);
+    expect(res.text).not.toContain('Unknown locale');
+  });
+
+  it('returns the Preview API path, named as one, when the deployment has no public origin', async () => {
+    const { call } = await connect(admin, null);
+    await call('model_create_content_type', post);
+    const created = JSON.parse(
+      (await call('entries_create', { contentType: 'post', fields: { title: { 'en-US': 'Hi' } } }))
+        .text,
+    ) as { entry: { id: string } };
+    const res = await call('entries_preview_link', { id: created.entry.id });
+    const link = JSON.parse(res.text) as Record<string, string>;
+    expect(link).not.toHaveProperty('url');
+    expect(link.previewPath).toBe(
+      `/preview/${SPACE}/main/entries/${created.entry.id}?preview_token=${link.token}`,
+    );
   });
 });

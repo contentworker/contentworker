@@ -106,6 +106,8 @@ export function contentTypesRoutes(deps: AuthDeps): Hono<AuthVars> {
         ctx,
         scopeOf(c),
         (await parseBody(c, contentTypeBody)) as unknown as Parameters<typeof createContentType>[2],
+        // A preview URL decides where the type's preview tokens go: read on the type is needed too.
+        c.get('principal'),
       );
       return c.json(ct, 201);
     },
@@ -235,7 +237,14 @@ export function contentTypesRoutes(deps: AuthDeps): Hono<AuthVars> {
     async (c) => {
       const body = await parseBody(c, cloneContentTypeBody);
       return c.json(
-        await cloneContentType(ctx, scopeOf(c), c.req.param('apiId'), body.apiId, body.name),
+        await cloneContentType(
+          ctx,
+          scopeOf(c),
+          c.req.param('apiId'),
+          body.apiId,
+          body.name,
+          c.get('principal'),
+        ),
         201,
       );
     },

@@ -3,15 +3,17 @@ import { parseAbsoluteUrl } from '../rich-text/embed';
 import type { FieldDefinition, FieldType } from './field';
 
 /**
- * Where a type's entries are previewed on the customer's own frontend: a URL template the admin
- * frames, filled per entry when a preview link is minted. Editor-only: Delivery never serves it.
+ * Where a type's entries are previewed on the customer's own frontend: a URL template filled per
+ * entry when a preview link is minted (and, with live preview, the page the admin frames).
+ * Editor-only: Delivery never serves it.
  */
 export interface ContentTypePreview {
   /**
-   * An absolute URL, e.g. `https://site.example/__preview?entry={id}&token={token}`. Placeholders:
+   * An absolute URL, e.g. `https://site.example/__preview?entry={id}#token={token}`. Placeholders:
    * `{id}`, `{token}` (required), `{locale}`, `{space}`, `{environment}` and `{field:<apiId>}`,
    * each filled URL-encoded. Only in the path, query or fragment: the origin is fixed, so the
-   * admin can allow exactly that origin to be framed.
+   * admin can allow exactly that origin to be framed. `#token={token}` keeps the token out of the
+   * frontend's request line, its logs and the Referer it sends.
    */
   readonly urlTemplate: string;
 }
@@ -31,16 +33,34 @@ export const PREVIEW_FIELD_TYPES: readonly FieldType[] = [
 const PLACEHOLDER = /\{([^{}]*)\}/g;
 const NAMED = new Set(['id', 'token', 'locale', 'space', 'environment']);
 const FIELD = /^field:([A-Za-z][A-Za-z0-9_]*)$/;
-// Plain-http frontends are allowed only on the developer's own machine.
+// Plain-http frontends are allowed only on the developer's own machine, on a local stack.
 const LOOPBACK = new Set(['localhost', '127.0.0.1']);
+// A host the parser has normalized: DNS labels (an IPv4 address among them) or a bracketed IPv6
+// address. Never `*`, `%` or other punctuation, which the parser lets through and a CSP source
+// would read as a wildcard or worse.
+const LABEL = '[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?';
+const HOSTNAME = new RegExp(`^(?:${LABEL}\\.)*${LABEL}$|^\\[[0-9a-f:.]+\\]$`);
+
+/** How strict a template check is, by deployment. */
+export interface PreviewTemplateOptions {
+  /**
+   * Plain http on localhost and 127.0.0.1: a local stack only (`AppContext.previewLoopback`), so a
+   * deployed space can never send preview tokens over cleartext.
+   */
+  readonly allowLoopback?: boolean;
+}
 
 /**
  * Checks a preview URL template against the type's fields, or throws `ValidationError` on
- * `preview.urlTemplate`. https only (http for localhost and 127.0.0.1), no credentials, no
- * placeholder in the scheme or host, only known placeholders, and `{token}` present: without it
- * the frontend can't read the draft it is asked to show.
+ * `preview.urlTemplate`. https only (http for localhost and 127.0.0.1 with `allowLoopback`), a
+ * plain host name, no credentials, no placeholder in the scheme or host, only known placeholders,
+ * and `{token}` present: without it the frontend can't read the draft it is asked to show.
  */
-export function checkPreviewTemplate(input: string, fields: readonly FieldDefinition[]): string {
+export function checkPreviewTemplate(
+  input: string,
+  fields: readonly FieldDefinition[],
+  options: PreviewTemplateOptions = {},
+): string {
   const refuse = (message: string): never => {
     throw new ValidationError([{ field: 'preview.urlTemplate', message }]);
   };
@@ -51,11 +71,11 @@ export function checkPreviewTemplate(input: string, fields: readonly FieldDefini
   if (/\s/.test(template)) refuse('A preview URL cannot hold spaces.');
   const bare = template.replace(PLACEHOLDER, '');
   if (bare.includes('{') || bare.includes('}')) refuse('A placeholder is written {name}.');
-  const origin = previewOrigin(template);
+  const origin = previewOrigin(template, options);
   if (!origin) {
     refuse(
       'A preview URL is an https URL with a fixed host, e.g. ' +
-        'https://site.example/__preview?entry={id}&token={token}.',
+        'https://site.example/__preview?entry={id}#token={token}.',
     );
   }
   const byApiId = new Map(fields.map((f) => [f.apiId, f]));
@@ -80,16 +100,23 @@ export function checkPreviewTemplate(input: string, fields: readonly FieldDefini
 
 /**
  * The origin a preview URL template points at (`https://site.example`), or null when it isn't an
- * allowed absolute URL: not https (or http on localhost / 127.0.0.1), credentials in it, or a
- * placeholder in the scheme, host or port. What the admin's `frame-src` allows.
+ * allowed absolute URL: not https (or http on localhost / 127.0.0.1 with `allowLoopback`), a host
+ * that isn't a plain name or address (`*`), credentials in it, or a placeholder in the scheme,
+ * host or port. What the admin's `frame-src` allows.
  */
-export function previewOrigin(template: string): string | null {
+export function previewOrigin(
+  template: string,
+  options: PreviewTemplateOptions = {},
+): string | null {
   // Everything up to the first path, query or fragment is the authority: no placeholder there.
   const authority = /^[^/?#]*\/\/[^/?#]*/.exec(template)?.[0];
   if (!authority || authority.includes('{') || authority.includes('}')) return null;
   const url = parseAbsoluteUrl(template.replace(PLACEHOLDER, 'x'));
   if (!url || url.username || url.password) return null;
-  if (url.protocol === 'http:' && !LOOPBACK.has(url.hostname)) return null;
+  if (!HOSTNAME.test(url.hostname)) return null;
+  if (url.protocol === 'http:' && !(options.allowLoopback && LOOPBACK.has(url.hostname))) {
+    return null;
+  }
   if (url.protocol !== 'https:' && url.protocol !== 'http:') return null;
   // The parser has lowercased the host and dropped a default port.
   const origin = `${url.protocol}//${url.hostname}${url.port ? `:${url.port}` : ''}`;

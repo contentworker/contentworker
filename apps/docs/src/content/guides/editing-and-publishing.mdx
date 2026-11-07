@@ -181,7 +181,8 @@ Drafts are readable through the Preview API with a Preview (CPA) key, so a stagi
 unpublished changes exactly as the live site will.
 
 To show a draft to someone without a key, create a **preview link**. In the editor, press **Copy
-preview link**; over the API:
+preview link** (it copies your site's draft view when the type has a
+[preview URL](/guides/content-modeling/#preview-url), else the Preview API URL); over the API:
 
 ```sh
 curl -s -X POST "$API/spaces/$SPACE/environments/main/entries/$ENTRY_ID/preview-link" \
@@ -194,7 +195,8 @@ curl -s -X POST "$API/spaces/$SPACE/environments/main/entries/$ENTRY_ID/preview-
 The response is `{ url, frontendUrl?, token, expiresAt }`, where `url` is
 `{previewBaseUrl}/preview/{space}/{env}/entries/{id}?preview_token=…` and `frontendUrl`, when the
 entry's type has a [preview URL](/guides/content-modeling/#preview-url), is that template filled
-for the entry and the token. Over MCP it is `entries_preview_link`. The token opens only that
+for the entry and the token. Over MCP it is `entries_preview_link`, which returns the path as
+`previewPath` instead of `url` when the deployment has no public admin origin (`OAUTH_ISSUER`). The token opens only that
 entry, through `GET /preview/{space}/{env}/entries/{id}?preview_token=…`, until it expires. See
 [Reading content](/guides/reading-content/#preview) for the Preview routes.
 

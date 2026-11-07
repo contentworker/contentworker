@@ -76,11 +76,16 @@ export const FRAME_HEADER = 'x-cw-frames';
 
 // A customer's frontend in development runs on the developer's own machine, over plain http.
 const LOOPBACK = new Set(['localhost', '127.0.0.1']);
+// A host as the parser normalizes it: DNS labels (an IPv4 address among them) or a bracketed IPv6
+// address. The parser lets `*` and other punctuation through, and `https://*` is a CSP wildcard.
+const LABEL = '[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?';
+const HOSTNAME = new RegExp(`^(?:${LABEL}\\.)*${LABEL}$|^\\[[0-9a-f:.]+\\]$`);
 
 /**
  * The origins a page may frame (`frame-src`), from the frontend origins of a space's content types
- * (`previewOrigin` in the domain): https, or http on localhost and 127.0.0.1, origin only. Anything
- * else is dropped, so a stored value can never widen the policy or add a directive.
+ * (`previewOrigin` in the domain): https, or http on localhost and 127.0.0.1, origin only, on a
+ * plain host name or address. Anything else is dropped, so a stored value can never widen the
+ * policy (`https://*`) or add a directive.
  */
 export function frameSources(vs: unknown): string[] {
   const out = new Set<string>();
@@ -91,7 +96,7 @@ export function frameSources(vs: unknown): string[] {
     } catch {
       continue;
     }
-    if (u.username || u.password) continue;
+    if (u.username || u.password || !HOSTNAME.test(u.hostname)) continue;
     const ok = u.protocol === 'https:' || (u.protocol === 'http:' && LOOPBACK.has(u.hostname));
     if (!ok || /[^\x21-\x7e]|[;,']/.test(u.origin)) continue;
     out.add(u.origin);
