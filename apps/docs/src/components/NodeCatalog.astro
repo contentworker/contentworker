@@ -12,6 +12,8 @@ import {
   type NodeSpec,
 } from '@contentworker/domain';
 // biome-ignore lint/correctness/noUnusedImports: rendered below
+import CardHeading from './CardHeading.astro';
+// biome-ignore lint/correctness/noUnusedImports: rendered below
 import NodeIcon from './NodeIcon.astro';
 
 interface Props {
@@ -29,15 +31,15 @@ const show = (v: unknown) =>
 const label = CATEGORY_LABELS[category];
 ---
 
-<div class="cw-catalog" data-category={category} aria-label={label}>
+<div class="cw-catalog" data-category={category}>
   {
     specs.map((s) => (
-      <section class="cw-node" id={s.type}>
+      <section class="cw-node">
         <div class="cw-node-head">
           <span class="cw-node-icon" title={label}>
             <NodeIcon name={s.icon} size={16} />
           </span>
-          <h3>{s.label}</h3>
+          <CardHeading id={s.type} level={3} text={s.label} />
           <code class="cw-node-type">{s.type}</code>
           {(s.rollback || s.waits) && (
             <span class="cw-node-tags">

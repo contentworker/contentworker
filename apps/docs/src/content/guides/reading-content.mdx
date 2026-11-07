@@ -200,7 +200,7 @@ them as given; an edited one is a `404`): `url` is the original,
 Unpublishing an asset stops its URLs, and so does its rights' expiry (they answer `410 Gone`). Preview's `…/assets` routes return drafts in the same shape
 with short-lived signed URLs. See [Delivering assets](/guides/delivering-assets/).
 
-`…/assets/{id}/transform` is deprecated: see [the transform endpoint](/guides/delivering-assets/#the-transform-endpoint).
+`…/assets/{id}/transform` is deprecated: see [the transform endpoint](/guides/delivering-assets/#the-transform-endpoint-deprecated).
 
 A key bound to a [role](/guides/api-keys/#roles) with content grants gets an empty asset list
 (`{ "items": [], "total": 0 }`, plus empty `facets` for a search) and a **403** on a single asset: assets aren't covered by

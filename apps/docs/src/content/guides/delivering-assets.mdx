@@ -1,6 +1,6 @@
 ---
 title: Delivering assets
-description: Published images and files at stable, cacheable URLs - renditions, the width ladder for srcset, format negotiation, byte ranges, downloads, placeholders, revocation, Preview's signed URLs, GraphQL, the SDK helpers and building an image component.
+description: Serve published images and files from stable, cacheable URLs, with responsive renditions your front end can drop into an image component.
 ---
 
 A published asset is served from the workspace's `media.` address at a URL that never changes
@@ -118,6 +118,12 @@ environment can't be reached through another environment's copy of it.
   alt="A runner on a mountain trail at dawn"
 />
 ```
+
+### The transform endpoint (deprecated)
+
+`GET /delivery/{space}/{env}/assets/{id}/transform?w=800` is deprecated. It answers a permanent,
+cacheable `301` to the matching media URL: the ladder width at or above `w`, or the rendition
+named by `?rendition=`. Use `srcset` and `renditions` instead.
 
 ## Renditions
 
@@ -343,8 +349,8 @@ same. `imageProps` and the components degrade to that one `src`,
 so the same code renders locally, just without responsive widths. Don't store the URLs you see
 locally; they expire.
 
-## The transform endpoint
+## Next steps
 
-`GET /delivery/{space}/{env}/assets/{id}/transform?w=800` is deprecated. It answers a permanent,
-cacheable `301` to the matching media URL: the ladder width at or above `w`, or the rendition
-named by `?rendition=`. Use `srcset` and `renditions` instead.
+- [Media and assets](/guides/media/) to upload files and set alt text and a focal point.
+- [Reading content](/guides/reading-content/) for the entries that reference these assets.
+- [SDKs](/guides/sdks/) for the image helpers in every client.

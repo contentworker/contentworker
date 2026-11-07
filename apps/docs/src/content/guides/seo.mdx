@@ -1,6 +1,6 @@
 ---
 title: SEO and sitemaps
-description: Give entries a search title, description, canonical URL, noindex flag and social image with a Seo field, and serve a sitemap of your published pages from Delivery.
+description: Give entries search and social metadata with a Seo field, and serve a sitemap of your published pages.
 ---
 
 Search engine metadata is part of an entry: a field of type `Seo` holds the page's search title,
@@ -157,3 +157,9 @@ The sitemap is cached in Delivery like every read, and purged with the rest of t
 when an entry is published or unpublished, a release is published, or a content type (and so its
 URL pattern) is published. A draft change to SEO metadata reaches the sitemap when it is
 published.
+
+## Next steps
+
+- [Content modeling](/guides/content-modeling/#url-pattern) for the URL patterns the sitemap is built from.
+- [Redirects](/guides/redirects/) to keep old URLs working when a slug changes.
+- [Build your own frontend](/guides/your-own-frontend/) to render the metadata.

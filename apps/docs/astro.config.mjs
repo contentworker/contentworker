@@ -16,7 +16,7 @@ export default defineConfig({
       // The mark in brand beside the wordmark, as in the admin's header (the dark theme's lighter brand).
       logo: { light: './src/assets/mark-light.svg', dark: './src/assets/mark-dark.svg' },
       description:
-        'contentworker is an API-first, AI-agentic headless CMS. Guides for the people who write and approve content, and reference for the developers who integrate with it.',
+        'ContentWorker is an API-first, AI-agentic headless CMS. Guides for the people who write and approve content, and reference for the developers who integrate with it.',
       // Prose lives at src/content/ (see content.config.ts). Without this Starlight skips its
       // Markdown transforms (asides, heading anchors) for files outside src/content/docs/.
       markdown: { processedDirs: ['./src/content'] },
@@ -65,6 +65,8 @@ export default defineConfig({
         './src/styles/brand.css',
       ],
       head: [{ tag: 'link', attrs: { rel: 'icon', href: '/favicon.svg', type: 'image/svg+xml' } }],
+      // Entries for the generated reference pages' cards (src/route-data.ts).
+      routeMiddleware: './src/route-data.ts',
       // Explicit sidebar: autogenerate expects src/content/docs/. A new page is invisible until it
       // is listed here. Start reads as a sequence (Starlight's prev/next follows this order).
       // The site is for people who use a workspace and developers who integrate with one;
@@ -78,33 +80,62 @@ export default defineConfig({
           ],
         },
         {
-          label: 'Working with content',
+          // Model, write, review and ship: the editor's day, in the order it happens.
+          label: 'Content',
           items: [
             { label: 'Content modeling', slug: 'guides/content-modeling' },
             { label: 'Editing and publishing', slug: 'guides/editing-and-publishing' },
             { label: 'Saved views', slug: 'guides/saved-views' },
+            { label: 'Releases and scheduling', slug: 'guides/releases-and-scheduling' },
+            { label: 'Workflows', slug: 'guides/workflows' },
+            { label: 'Approvals and reviews', slug: 'guides/approvals' },
+          ],
+        },
+        {
+          label: 'Media',
+          items: [
             { label: 'Media and assets', slug: 'guides/media' },
             { label: 'Share assets with a link', slug: 'guides/share-links' },
-            { label: 'Releases and scheduling', slug: 'guides/releases-and-scheduling' },
-            { label: 'Environments', slug: 'guides/environments' },
+          ],
+        },
+        {
+          // What a website needs besides entries. Each page is the one home for its feature,
+          // Delivery reads included.
+          label: 'Site features',
+          items: [
             { label: 'Redirects', slug: 'guides/redirects' },
             { label: 'SEO and sitemaps', slug: 'guides/seo' },
             { label: 'Navigation menus', slug: 'guides/menus' },
-            { label: 'Workflows', slug: 'guides/workflows' },
-            { label: 'Approvals and reviews', slug: 'guides/approvals' },
+          ],
+        },
+        {
+          label: 'AI',
+          items: [
             { label: 'AI features', slug: 'guides/ai' },
             { label: 'Coworker', slug: 'guides/coworker' },
+          ],
+        },
+        {
+          label: 'Workspace',
+          items: [
+            { label: 'Team and roles', slug: 'guides/team-and-roles' },
+            { label: 'Environments', slug: 'guides/environments' },
           ],
         },
         {
           label: 'Integrating',
           items: [
             { label: 'API keys and access', slug: 'guides/api-keys' },
-            { label: 'Team and roles', slug: 'guides/team-and-roles' },
             { label: 'Build your own frontend', slug: 'guides/your-own-frontend' },
             { label: 'Reading content', slug: 'guides/reading-content' },
             { label: 'Delivering assets', slug: 'guides/delivering-assets' },
             { label: 'Webhooks', slug: 'guides/webhooks' },
+            { label: 'Functions, plugins and extensions', slug: 'guides/extending' },
+          ],
+        },
+        {
+          label: 'Developer tools',
+          items: [
             { label: 'SDKs', slug: 'guides/sdks' },
             { label: 'MCP server', slug: 'guides/mcp' },
             { label: 'Command-line tool', slug: 'guides/cli' },

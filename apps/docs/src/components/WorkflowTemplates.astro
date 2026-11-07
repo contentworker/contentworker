@@ -6,6 +6,8 @@
 // biome-ignore lint/correctness/noUnusedImports: nodeSpec is used in the markup
 import { nodeSpec, WORKFLOW_TEMPLATES } from '@contentworker/domain';
 // biome-ignore lint/correctness/noUnusedImports: rendered below
+import CardHeading from './CardHeading.astro';
+// biome-ignore lint/correctness/noUnusedImports: rendered below
 import NodeIcon from './NodeIcon.astro';
 
 // biome-ignore lint/correctness/noUnusedVariables: used in the markup
@@ -14,9 +16,9 @@ const workflows = Object.values(WORKFLOW_TEMPLATES).map((t) => t());
 
 {
   workflows.map((w) => (
-    <section class="cw-node" id={w.id}>
+    <section class="cw-node">
       <div class="cw-node-head">
-        <h3>{w.name}</h3>
+        <CardHeading id={w.id} level={2} text={w.name} />
         <code class="cw-node-type">{w.id}</code>
         {w.gatesPublish && <span class="cw-node-tags">gates publish</span>}
       </div>
