@@ -1,0 +1,179 @@
+---
+// The table of contents on a rail: one hairline down the entries' start, stepping in on a curve
+// where a heading nests, with the current entry's stretch drawn over it in brand. Starlight's
+// `starlight-toc` still decides which entry is current (it sets `aria-current`); this only draws
+// the line and slides the brand segment to wherever that attribute lands.
+// biome-ignore lint/correctness/noUnusedImports: rendered below
+import Default from '@astrojs/starlight/components/TableOfContents.astro';
+---
+
+<cw-toc-rail>
+  <svg class="cw-toc-rail" aria-hidden="true" fill="none">
+    <path class="cw-toc-rail-track"></path>
+    <path class="cw-toc-rail-active"></path>
+  </svg>
+  <Default />
+</cw-toc-rail>
+
+<script>
+  /** A rail point: where an entry's stretch of the line sits, relative to the rail's box. */
+  interface Stretch {
+    x: number;
+    top: number;
+    bottom: number;
+  }
+
+  class TocRail extends HTMLElement {
+    #track = this.querySelector<SVGPathElement>('.cw-toc-rail-track');
+    #active = this.querySelector<SVGPathElement>('.cw-toc-rail-active');
+    #links: HTMLAnchorElement[] = [];
+    /** Each entry's [start, length] along the drawn path, in px. */
+    #segments: Array<[number, number]> = [];
+    #total = 0;
+    #shown = false;
+    #observers: Array<{ disconnect(): void }> = [];
+
+    connectedCallback() {
+      const list = this.querySelector('starlight-toc nav > ul');
+      if (!list || !this.#track || !this.#active) return;
+      this.#links = [...list.querySelectorAll<HTMLAnchorElement>('a')];
+      if (this.#links.length === 0) return;
+      this.dataset.ready = '';
+
+      const resize = new ResizeObserver(() => this.#draw());
+      resize.observe(this);
+      const current = new MutationObserver(() => this.#follow());
+      current.observe(list, { subtree: true, attributeFilter: ['aria-current'] });
+      this.#observers = [resize, current];
+    }
+
+    disconnectedCallback() {
+      for (const observer of this.#observers) observer.disconnect();
+    }
+
+    /** One stretch per entry: the line runs at the entry's indent, top to bottom of its row. */
+    #stretches(): Stretch[] {
+      const box = this.getBoundingClientRect();
+      const rem = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+      return this.#links.map((link) => {
+        const row = link.getBoundingClientRect();
+        const depth = Number(getComputedStyle(link).getPropertyValue('--depth')) || 0;
+        // +1 centres the 2px stroke on the entry's start edge at its depth.
+        return { x: depth * rem + 1, top: row.top - box.top, bottom: row.bottom - box.top };
+      });
+    }
+
+    #draw() {
+      const track = this.#track;
+      const active = this.#active;
+      if (!track || !active || this.offsetParent === null) return;
+      const stretches = this.#stretches();
+      const length = (d: string) => {
+        active.setAttribute('d', d);
+        return active.getTotalLength();
+      };
+
+      let d = '';
+      let total = 0;
+      const segments: Array<[number, number]> = [];
+      stretches.forEach((s, i) => {
+        const prev = stretches[i - 1];
+        if (!prev) {
+          d += `M ${s.x} ${s.top} `;
+        } else {
+          // A level change steps in or out on an S-curve through the gap between the rows.
+          const mid = (prev.bottom + s.top) / 2;
+          const join =
+            Math.abs(s.x - prev.x) < 0.5
+              ? `L ${s.x} ${s.top} `
+              : `C ${prev.x} ${mid}, ${s.x} ${mid}, ${s.x} ${s.top} `;
+          d += join;
+          total += length(`M ${prev.x} ${prev.bottom} ${join}`);
+        }
+        const start = total;
+        const run = `L ${s.x} ${s.bottom} `;
+        d += run;
+        total += length(`M ${s.x} ${s.top} ${run}`);
+        segments.push([start, total - start]);
+      });
+
+      track.setAttribute('d', d);
+      active.setAttribute('d', d);
+      this.#segments = segments;
+      this.#total = total;
+      this.#follow(true);
+    }
+
+    /** Slide the brand stretch to the current entry; place it without motion the first time. */
+    #follow(immediate = false) {
+      const active = this.#active;
+      if (!active) return;
+      const index = this.#links.findIndex((link) => link.getAttribute('aria-current') === 'true');
+      const segment = this.#segments[index];
+      if (!segment) {
+        active.removeAttribute('data-on');
+        return;
+      }
+      const still = immediate || !this.#shown;
+      if (still) active.setAttribute('data-still', '');
+      active.style.strokeDasharray = `${segment[1]} ${this.#total + 1}`;
+      active.style.strokeDashoffset = `${-segment[0]}`;
+      active.setAttribute('data-on', '');
+      if (still) {
+        active.getBoundingClientRect();
+        requestAnimationFrame(() => active.removeAttribute('data-still'));
+      }
+      this.#shown = true;
+    }
+  }
+
+  customElements.define('cw-toc-rail', TocRail);
+</script>
+
+<style>
+  cw-toc-rail {
+    position: relative;
+    display: block;
+  }
+
+  .cw-toc-rail {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    overflow: visible;
+    pointer-events: none;
+  }
+
+  .cw-toc-rail path {
+    stroke-width: 2;
+    stroke-linecap: round;
+  }
+
+  .cw-toc-rail-track {
+    stroke: var(--cw-border);
+  }
+
+  .cw-toc-rail-active {
+    stroke: var(--cw-brand);
+    opacity: 0;
+    transition:
+      stroke-dasharray 300ms cubic-bezier(0.32, 0.72, 0, 1),
+      stroke-dashoffset 300ms cubic-bezier(0.32, 0.72, 0, 1),
+      opacity 150ms ease-out;
+  }
+
+  .cw-toc-rail-active[data-on] {
+    opacity: 1;
+  }
+
+  .cw-toc-rail-active[data-still] {
+    transition: opacity 150ms ease-out;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .cw-toc-rail-active {
+      transition: opacity 150ms ease-out;
+    }
+  }
+</style>
