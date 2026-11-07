@@ -3419,25 +3419,42 @@ function makeAuditRepo(x: Exec): AuditRepo {
     },
     async list(spaceId, query) {
       const log = schema.auditLog;
-      const conds = [eq(log.spaceId, spaceId)];
-      if (query.environmentId) conds.push(eq(log.environmentId, query.environmentId));
+      const about = schema.auditLogEntries;
+      // An entry's activity walks the entry index (its space, environment and keyset columns),
+      // joining each row it keeps; any other listing walks the log itself.
+      const entryId = query.entryId;
+      const at = entryId ? about.at : log.at;
+      const id = entryId ? about.auditId : log.id;
+      const conds = entryId
+        ? [eq(about.spaceId, spaceId), eq(about.entryId, entryId)]
+        : [eq(log.spaceId, spaceId)];
+      if (query.environmentId) {
+        conds.push(eq(entryId ? about.environmentId : log.environmentId, query.environmentId));
+      }
       if (query.actor) conds.push(eq(log.actor, query.actor));
       if (query.action) conds.push(eq(log.action, query.action));
       if (query.targetType) conds.push(eq(log.targetType, query.targetType));
       if (query.targetId) conds.push(eq(log.targetId, query.targetId));
-      if (query.from) conds.push(gte(log.at, new Date(query.from)));
-      if (query.to) conds.push(lte(log.at, new Date(query.to)));
+      if (query.from) conds.push(gte(at, new Date(query.from)));
+      if (query.to) conds.push(lte(at, new Date(query.to)));
       if (query.after) {
-        conds.push(
-          sql`(${log.at}, ${log.id}) < (${Date.parse(query.after.at)}, ${query.after.id})`,
-        );
+        conds.push(sql`(${at}, ${id}) < (${Date.parse(query.after.at)}, ${query.after.id})`);
       }
-      const rows = await db
-        .select()
-        .from(log)
-        .where(and(...conds))
-        .orderBy(desc(log.at), desc(log.id))
-        .limit(query.limit ?? 100);
+      const limit = query.limit ?? 100;
+      const rows = entryId
+        ? await db
+            .select(getTableColumns(log))
+            .from(about)
+            .innerJoin(log, eq(log.id, about.auditId))
+            .where(and(...conds))
+            .orderBy(desc(at), desc(id))
+            .limit(limit)
+        : await db
+            .select()
+            .from(log)
+            .where(and(...conds))
+            .orderBy(desc(at), desc(id))
+            .limit(limit);
       return rows.map((r) => ({
         id: r.id,
         spaceId: r.spaceId,

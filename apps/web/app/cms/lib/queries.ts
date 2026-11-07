@@ -41,6 +41,10 @@ export function useQueryKeys() {
       /** The audit log, a page at a time (`useAuditLogPagesQuery`). */
       auditLogPages: (filters: AuditLogFilters) =>
         [...scope, 'audit-log', filters, 'pages'] as const,
+      /** One entry's activity, a page at a time (`useEntryActivityPagesQuery`). Under
+       * `audit-log`, so refreshing the log refreshes it too. */
+      entryActivityPages: (entryId: string) =>
+        [...scope, 'audit-log', 'entry', entryId, 'pages'] as const,
     };
   }, [space, environment]);
 }
@@ -153,6 +157,26 @@ export function useAuditLogPagesQuery(filters: AuditLogFilters) {
       prevQuery?.queryKey[0] === conn.space && prevQuery.queryKey[1] === conn.environment
         ? prev
         : undefined,
+  });
+}
+
+/** How many rows a page of an entry's activity reads: a pane is short. */
+const ENTRY_ACTIVITY_PAGE = 20;
+
+/** One entry's activity, newest first, a page at a time (space:admin, as the audit log). */
+export function useEntryActivityPagesQuery(entryId: string) {
+  const { client } = useClient();
+  const keys = useQueryKeys();
+  return useInfiniteQuery({
+    queryKey: keys.entryActivityPages(entryId),
+    queryFn: ({ pageParam }) =>
+      client.listEntryActivity(entryId, { limit: ENTRY_ACTIVITY_PAGE, cursor: pageParam }),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (last) => last.nextCursor,
+    // Every save adds a row, so revalidate whenever the tab opens.
+    staleTime: 0,
+    // Silent: a failed read is said in the pane, in place, with Try again.
+    meta: { silent: true },
   });
 }
 

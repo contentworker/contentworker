@@ -1,9 +1,15 @@
-import { clampCount, listAuditLog, MAX_PAGE_LIMIT } from '@contentworker/application';
+import {
+  clampCount,
+  listAuditLog,
+  listEntryActivity,
+  MAX_PAGE_LIMIT,
+} from '@contentworker/application';
 import { SCOPES } from '@contentworker/domain';
 import { Hono } from 'hono';
 import { type AuthDeps, type AuthVars, requireScope } from '../../auth';
 import { doc } from '../../docs/openapi';
 import * as auditLogDocs from '../../docs/schemas/audit-log';
+import { BASE, scopeOf } from './shared';
 
 export function auditLogRoutes(deps: AuthDeps): Hono<AuthVars> {
   const { ctx } = deps;
@@ -50,6 +56,37 @@ export function auditLogRoutes(deps: AuthDeps): Hono<AuthVars> {
         }),
       );
     },
+  );
+
+  // --- an entry's activity (the audit log through its entry index) --------
+  // Who did what to one entry. The audit log's rule, not the entry's: a row names who acted and
+  // through which route or tool, which reading the entry doesn't show.
+  app.get(
+    `${BASE}/entries/:id/activity`,
+    doc('Entries', 'List an entry’s activity (cursor-paged)', {
+      ok: auditLogDocs.entryActivityPage,
+      description:
+        'The audit rows about one entry in this environment, newest first: those that target ' +
+        'it, and those that target something else but saved it (an approved agent review, a ' +
+        'duplicate made from another entry, a cancelled workflow run’s undo). The rows and ' +
+        'paging are the audit log’s, and need the same permission. A row whose action saved ' +
+        'the entry carries `detail` with its changed field paths and locales; older rows have ' +
+        'none, which says nothing about what they changed. An id that cannot be an entry id ' +
+        'and a cursor it cannot read are each a 422; an entry with no rows, or none any more, ' +
+        'is an empty page.',
+      query: {
+        limit: `Page size, at most ${MAX_PAGE_LIMIT}`,
+        cursor: 'nextCursor from the previous page',
+      },
+    }),
+    requireScope(SCOPES.spaceAdmin),
+    async (c) =>
+      c.json(
+        await listEntryActivity(ctx, scopeOf(c), c.req.param('id'), {
+          limit: clampCount(c.req.query('limit'), MAX_PAGE_LIMIT, { min: 1 }),
+          cursor: c.req.query('cursor'),
+        }),
+      ),
   );
 
   return app;

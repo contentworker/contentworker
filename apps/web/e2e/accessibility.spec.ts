@@ -244,6 +244,24 @@ test.describe('on a phone', () => {
     await scan(page, testInfo);
   });
 
+  test('an entry’s Activity view has no accessibility violations', async ({
+    page,
+    request,
+  }, testInfo) => {
+    const id = await createDraft(request, `A11y activity ${Date.now()}`);
+    await openCms(page, `/content/article/${id}`);
+    const pane = page.getByRole('complementary', { name: 'Side pane' });
+    await pane.getByRole('radio', { name: 'Activity' }).click();
+    const list = pane.getByRole('list', { name: 'Activity, newest first' });
+    await expect(list.getByRole('listitem')).toHaveCount(1);
+    // At phone width the pane is under the form and the page never scrolls sideways.
+    const overflow = await page.evaluate(
+      () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    );
+    expect(overflow).toBeLessThanOrEqual(0);
+    await scan(page, testInfo);
+  });
+
   test('an asset collection has no accessibility violations', async ({
     page,
     request,

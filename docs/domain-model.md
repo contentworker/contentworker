@@ -768,7 +768,10 @@ on `ctx.changes`, a `ChangeLog` each surface sets per request (`packages/applica
 the row is written in the surface, so every route and tool reaching a save gets the same detail
 without passing it back. A context with no log (a queue consumer, a seed, a plugin's capability
 call) runs no diff. `recordAudit` caps what it stores (`capAuditDetail`). See
-[Audit log](./api-reference.md#audit-log) for the shape.
+[Audit log](./api-reference.md#audit-log) for the shape. An entry's activity
+(`listEntryActivity`, the editor's Activity view) is the log read for one entry: the rows that
+target it and the rows whose `detail` names it, through `audit_log_entries` (see
+[An entry's activity](./api-reference.md#an-entrys-activity)).
 
 ### The trash
 

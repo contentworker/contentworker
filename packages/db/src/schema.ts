@@ -769,6 +769,26 @@ export const auditLog = sqliteTable(
   ],
 );
 
+/**
+ * Which entries each audit row is about: its target when that is an entry, and every entry its
+ * `detail` names. Written only by the `audit_log_index_entries` trigger (0033) as a row is
+ * appended, so every writer's rows are indexed; the store reads it, never writes it.
+ */
+export const auditLogEntries = sqliteTable(
+  'audit_log_entries',
+  {
+    auditId: text('audit_id').notNull(),
+    spaceId: text('space_id').notNull(),
+    environmentId: text('environment_id'),
+    entryId: text('entry_id').notNull(),
+    at: integer('at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.auditId, t.entryId] }),
+    index('audit_log_entries_by_entry').on(t.spaceId, t.environmentId, t.entryId, t.at, t.auditId),
+  ],
+);
+
 /** Persisted, templated AI operations ("AI Actions"), env-scoped. */
 export const aiActions = sqliteTable(
   'ai_actions',

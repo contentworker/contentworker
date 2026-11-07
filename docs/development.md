@@ -243,7 +243,7 @@ read paths), 10 GB per database.
 | `saved_views` (`0029`)                                                                                                                            | Saved views of the entries list (space-scoped)                                            |
 | `menus` (`0020`)                                                                                                                                  | Navigation menus, each item tree a JSON column                                            |
 | `ai_actions`, `agent_runs`, `agent_reviews`, `agent_schedules`                                                                                    | AI actions and the agent ledger                                                           |
-| `audit_log`                                                                                                                                       | Per-space audit trail; `0031` adds the indexes its filters read through, `0032` the `detail` of changed paths                               |
+| `audit_log`, `audit_log_entries` (`0033`)                                                                                                         | Per-space audit trail; `0031` adds the indexes its filters read through, `0032` the `detail` of changed paths, `0033` which entries each row is about |
 | `outbox`                                                                                                                                          | Transactional outbox (`claimed_until` lease, `relayed_at`)                                |
 | `_guard`                                                                                                                                          | Always empty; its `CHECK (ok = 1)` aborts a batch whose compare-and-set lost              |
 
@@ -372,6 +372,16 @@ retry can itself land on a replica past 0030, where it ignores a kept definition
 one response, possibly cached until the next purge or its max-age, and the next read is right. That
 is accepted as rare and self-clearing, with no marker to keep it out of the cache. Remove the retry
 once every deployment is past 0030.
+
+`0033_audit_log_entries.sql` adds `audit_log_entries` (`audit_id`, `space_id`, `environment_id`,
+`entry_id`, `at`), which entries each audit row is about: its target when that is an entry, and each
+entry its `detail` names. An entry's activity reads it as one range of
+`audit_log_entries_by_entry` (`space_id`, `environment_id`, `entry_id`, `at`, `audit_id`) instead of
+every row's JSON. The trigger `audit_log_index_entries` fills it in the statement that appends a
+row, for the reason 0030's triggers give: code that has never heard of the table appends rows during
+a deploy and after a rollback. A `detail` that isn't valid JSON indexes only its target rather than
+failing the append. The migration backfills the rows already written. Nothing deletes from it, as
+nothing deletes audit history; deleting an environment leaves it.
 
 `0032_content_type_agent_instructions.sql` adds the nullable `content_types.agent_instructions`.
 Delivery names its columns and never reads it. Management reads can start on a replica behind the

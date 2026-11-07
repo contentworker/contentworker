@@ -1,8 +1,16 @@
-import { listAuditLog } from '@contentworker/application';
+import { listAuditLog, listEntryActivity } from '@contentworker/application';
 import { SCOPES } from '@contentworker/domain';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import { DEFAULT_ENV, DEFAULT_SPACE, ok, type ToolContext, toolSchema } from './shared';
+import {
+  DEFAULT_ENV,
+  DEFAULT_SPACE,
+  ok,
+  scopeArgs,
+  scopeOf,
+  type ToolContext,
+  toolSchema,
+} from './shared';
 
 export function registerAuditLogTools(server: McpServer, t: ToolContext): void {
   const { ctx, guard } = t;
@@ -48,6 +56,39 @@ export function registerAuditLogTools(server: McpServer, t: ToolContext): void {
       guard(SCOPES.spaceAdmin, { spaceId, environmentId: DEFAULT_ENV });
       const { space: _space, environment, ...query } = args;
       return ok(await listAuditLog(ctx, spaceId, { ...query, environmentId: environment }));
+    },
+  );
+
+  // --- an entry's activity (the audit log through its entry index) --------
+  // REST's GET /entries/:id/activity, with the audit log's rule: a row names who acted and how.
+  server.registerTool(
+    'entries_list_activity',
+    {
+      description:
+        'List one entry’s history in an environment, newest first: the audit rows that target ' +
+        'it, and those that target something else but saved it (an approved agent review, a ' +
+        'duplicate made from another entry, a cancelled workflow run’s undo). Same rows and ' +
+        'paging as audit_log_list, and the same permission. A row that saved the entry carries ' +
+        '`detail` with its changed field paths and locales; older rows have none, which says ' +
+        'nothing about what they changed. Returns one page; pass nextCursor back as cursor.',
+      inputSchema: toolSchema('entries_list_activity', () =>
+        z.object({
+          id: z.string().describe('The entry’s id'),
+          limit: z.number().int().positive().optional(),
+          cursor: z.string().optional().describe('nextCursor from the previous page'),
+          ...scopeArgs,
+        }),
+      ),
+      annotations: { readOnlyHint: true },
+    },
+    async (args) => {
+      guard(SCOPES.spaceAdmin, scopeOf(args));
+      return ok(
+        await listEntryActivity(ctx, scopeOf(args), args.id, {
+          limit: args.limit,
+          cursor: args.cursor,
+        }),
+      );
     },
   );
 }

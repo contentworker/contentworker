@@ -2955,6 +2955,10 @@ export class InMemoryContentStore implements ContentStore {
       const { after, from, to } = query;
       const newerThan = (a: { at: string; id: string }, b: { at: string; id: string }) =>
         Date.parse(a.at) - Date.parse(b.at) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+      // What D1's `audit_log_entries` holds for a row: its entry target, and the entries it saved.
+      const isAbout = (e: AuditEntry, entryId: string) =>
+        (e.targetType === 'entry' && e.targetId === entryId) ||
+        (e.detail?.entries.some((c) => c.entryId === entryId) ?? false);
       return this.auditData
         .filter(
           (e) =>
@@ -2964,6 +2968,7 @@ export class InMemoryContentStore implements ContentStore {
             (!query.action || e.action === query.action) &&
             (!query.targetType || e.targetType === query.targetType) &&
             (!query.targetId || e.targetId === query.targetId) &&
+            (!query.entryId || isAbout(e, query.entryId)) &&
             (!from || Date.parse(e.at) >= Date.parse(from)) &&
             (!to || Date.parse(e.at) <= Date.parse(to)) &&
             (!after || newerThan(e, after) < 0),

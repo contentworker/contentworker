@@ -307,6 +307,27 @@ capped at 4096 characters and 20 entries; a row past either has `truncated: true
 fit. `audit_log_list` serves it unchanged, and a REST write and a tool call that made the same edit
 carry the same detail.
 
+#### An entry's activity
+
+`GET …/entries/:id/activity` (MCP: `entries_list_activity`) is the audit log read for one entry in
+the environment: the rows about it, as `{ items, nextCursor? }`, in the log's order and with its
+`limit` and `cursor`. A row is about the entry when it targets it (`targetType` `entry`: its saves,
+publishes, trashing, a version restored, its creation, a duplicate made from it) or when its
+`detail` names it while targeting something else (an approved agent review, the copy a duplicate
+made, a cancelled workflow run's undo). Each row comes once, as the log serves it, so a row that
+saved several entries still lists them all. It takes `space:admin`, as the log does: rows name who
+acted and through which route or tool. The id must have the shape of an entry id (`422`
+otherwise), and the entry need not exist any more: a deleted entry's history stays readable. An
+entry with no rows is an empty page. A row with no `detail` says nothing about what changed.
+
+It reads `audit_log_entries` (migration `0033`), one row per entry an audit row is about, which a
+trigger on `audit_log` fills as each row is appended, so rows from code that has never heard of the
+table are indexed too; the migration indexes the rows already there. A page is one statement, a
+range of that index joined to the rows it keeps. Not in it: a row past `detail`'s 20-entry cap
+for the entries left out, a promotion's (its rows name no environment), and a row from before
+`0031` that came through REST or MCP (it has no `targetType`); `targetId` on the log still finds
+the last.
+
 Field edits are what `detail` covers: an entry's save made within the request, through any route or
 tool (creating, updating, SEO, restoring a version, duplicating, an AI `apply`, an approved agent
 review, the undo of a cancelled workflow run, an import that runs in the request). A promotion's
@@ -517,6 +538,7 @@ which is valid to store. See [Rich text](./domain-model.md#rich-text).
 | GET    | `…/entries/:id/versions`                  | `preview:read`    | Version list                                                                |
 | GET    | `…/entries/:id/versions/diff`             | `preview:read`    | Readable diff (`hiddenChanges` counts changed fields the caller can't read; `?from`, `?to`: a version, `draft` or `published`)           |
 | GET    | `…/entries/:id/versions/:version`         | `preview:read`    | Get specific version                                                        |
+| GET    | `…/entries/:id/activity`                  | `space:admin`     | The entry's audit rows, newest first (`?limit`, `?cursor`): see [Audit log](#an-entrys-activity) |
 | POST   | `…/entries/:id/versions/:version/restore` | `content:write`   | Restore version as new draft                                                |
 | POST   | `…/bulk/entries`                          | `content:write`   | Bulk create/update                                                          |
 | POST   | `…/bulk/entries/publish`                  | `content:publish` | Bulk publish                                                                |

@@ -26,6 +26,7 @@ import {
   listDeliveredRoutes,
   listDeliveredSitemap,
   listDeliveredTags,
+  listEntryActivity,
   listPreviewEntries,
   listPreviewEntryPage,
   listPublishedEntries,
@@ -536,6 +537,8 @@ const REQUESTS: readonly (readonly [string, () => Promise<unknown>])[] = [
     'management: PATCH /entries/:id/seo',
     () => setEntrySeo(ctx, scope, ids.pages[0] as string, { description: 'About us' }),
   ],
+  // The editor's Activity tab: one range of the entry index, joined to the rows it keeps.
+  ['management: GET /entries/:id/activity', () => listEntryActivity(ctx, scope, article(5))],
 ];
 
 /** The snapshot as written: one line per request, so a diff names the request. */

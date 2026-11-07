@@ -54,3 +54,6 @@ export const auditLogPage = z.object({
     .optional()
     .describe('Pass back as cursor for the next page; absent on the last one'),
 });
+
+/** An entry's activity: the audit log's page, its rows the ones about that entry. */
+export const entryActivityPage = auditLogPage;

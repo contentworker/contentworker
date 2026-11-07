@@ -611,6 +611,12 @@ export interface AuditQuery {
   readonly action?: string;
   readonly targetType?: string;
   readonly targetId?: string;
+  /**
+   * Only rows about this entry: those that target it, and those whose `detail` names it (an
+   * approved review, a duplicate's new entry). With `environmentId`, as an entry's id is only
+   * unique within its environment.
+   */
+  readonly entryId?: string;
   /** The earliest `at` kept, inclusive. */
   readonly from?: string;
   /** The latest `at` kept, inclusive. */
