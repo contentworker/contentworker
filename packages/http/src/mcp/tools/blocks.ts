@@ -1,15 +1,11 @@
 import {
+  authorizeBlockPatch,
   type BlockOpInput,
   getEntry,
   outlineEntryBlocks,
   patchEntryBlocks,
 } from '@contentworker/application';
-import {
-  authorizeContent,
-  maskDeniedFields,
-  SCOPES,
-  unwritableFieldsFor,
-} from '@contentworker/domain';
+import { authorizeContent, maskDeniedFields, SCOPES } from '@contentworker/domain';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { blockPatchShape } from '../../api/docs/schemas/blocks';
@@ -64,19 +60,14 @@ export function registerBlockTools(server: McpServer, t: ToolContext): void {
         'duplicate {field, key, ref?}. Ops apply in order, all or none; a later op can address ' +
         'a new block by its ref. Pass the version entry_blocks_outline or entries_get gave as ' +
         'expectedVersion (refused if the entry changed since). Answers the saved entry, keys ' +
-        '(ref → _key) and inverse: the ops that undo it.',
+        '(ref → _key) and inverse: the ops that undo it (null when a plugin rewrote the blocks).',
       inputSchema: toolSchema('entry_blocks_patch', () =>
         z.object({ id: z.string(), ...blockPatchShape, ...scopeArgs }),
       ),
     },
     async (args) => {
       guard(SCOPES.contentWrite, scopeOf(args));
-      let unwritable: readonly string[] = [];
-      if (principal.contentGrants) {
-        const { entry } = await getEntry(ctx, scopeOf(args), args.id);
-        authorizeContent(principal, 'write', entry.contentTypeApiId);
-        unwritable = unwritableFieldsFor(principal, entry.contentTypeApiId);
-      }
+      const unwritable = await authorizeBlockPatch(ctx, scopeOf(args), principal, args.id);
       const saved = await patchEntryBlocks(
         ctx,
         scopeOf(args),

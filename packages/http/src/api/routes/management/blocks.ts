@@ -1,15 +1,12 @@
 import {
+  authorizeBlockPatch,
+  BLOCK_PATCH_MAX_BYTES,
+  BLOCK_PATCH_MAX_OPS,
   type BlockOpInput,
-  getEntry,
   outlineEntryBlocks,
   patchEntryBlocks,
 } from '@contentworker/application';
-import {
-  authorizeContent,
-  maskDeniedFields,
-  SCOPES,
-  unwritableFieldsFor,
-} from '@contentworker/domain';
+import { maskDeniedFields, SCOPES } from '@contentworker/domain';
 import { Hono } from 'hono';
 import { type AuthDeps, type AuthVars, requireScope } from '../../auth';
 import { doc } from '../../docs/openapi';
@@ -65,20 +62,17 @@ export function blocksRoutes(deps: AuthDeps): Hono<AuthVars> {
         'apply refuses the whole patch with 422, its issue naming the op (`op`, and ' +
         '`field: ops[i]`). A key two blocks of the field share is refused as ambiguous. 409 ' +
         'when the entry is no longer at `expectedVersion`; 403 for an op on a field your role ' +
-        'may not write. At most 100 ops and 64 KB of them. The answer maps each `ref` to the ' +
-        '_key it was given and carries the `inverse` ops that undo the patch.',
+        `may not write. At most ${BLOCK_PATCH_MAX_OPS} ops and ${BLOCK_PATCH_MAX_BYTES / 1024} ` +
+        'KB of them. The answer maps each `ref` to the _key it was given and carries the ' +
+        '`inverse` ops that undo the patch (null when an entry:beforeSave plugin changed the ' +
+        'blocks it wrote).',
     }),
     requireScope(SCOPES.contentWrite),
     async (c) => {
       const body = await parseBody(c, blockPatchBody);
       const id = c.req.param('id');
       const principal = c.get('principal');
-      let unwritable: readonly string[] = [];
-      if (principal.contentGrants) {
-        const { entry } = await getEntry(ctx, scopeOf(c), id);
-        authorizeContent(principal, 'write', entry.contentTypeApiId);
-        unwritable = unwritableFieldsFor(principal, entry.contentTypeApiId);
-      }
+      const unwritable = await authorizeBlockPatch(ctx, scopeOf(c), principal, id);
       const saved = await patchEntryBlocks(
         actingCtx(ctx, c),
         scopeOf(c),

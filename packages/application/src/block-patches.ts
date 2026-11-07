@@ -1,5 +1,6 @@
 import {
   applyBlockPatch,
+  authorizeContent,
   type BlockOp,
   type BlockOutline,
   type BlockPatchIssue,
@@ -8,7 +9,9 @@ import {
   type LocaleCode,
   NotFoundError,
   outlineBlocks,
+  type Principal,
   type Scope,
+  unwritableFieldsFor,
   ValidationError,
 } from '@contentworker/domain';
 import type { AppContext } from './context';
@@ -51,8 +54,29 @@ export interface PatchEntryBlocksOptions {
 export interface BlockPatchView extends EntryView {
   /** The key each `ref` in the patch was given. */
   readonly keys: Readonly<Record<string, string>>;
-  /** The ops that undo this patch, applied to the version it saved (`invertBlockPatch`). */
-  readonly inverse: readonly BlockOp[];
+  /**
+   * The ops that undo this patch, applied to the version it saved (`invertBlockPatch`). Null when
+   * the save stored other blocks than the patch made (an `entry:beforeSave` plugin rewrote them):
+   * an undo built from the patch would not restore what was there, so none is offered.
+   */
+  readonly inverse: readonly BlockOp[] | null;
+}
+
+/**
+ * Refuses a principal who may not write the entry's type, and answers the fields its role denies or
+ * makes read-only, which `patchEntryBlocks` refuses ops on. One rule for both surfaces. Reads the
+ * entry only for a principal with content grants; an unrestricted one writes every field.
+ */
+export async function authorizeBlockPatch(
+  ctx: AppContext,
+  scope: Scope,
+  principal: Principal,
+  id: string,
+): Promise<readonly string[]> {
+  if (!principal.contentGrants) return [];
+  const { entry } = await getEntry(ctx, scope, id);
+  authorizeContent(principal, 'write', entry.contentTypeApiId);
+  return unwritableFieldsFor(principal, entry.contentTypeApiId);
 }
 
 /**
@@ -110,9 +134,9 @@ export async function patchEntryBlocks(
   const result = applyBlockPatch(contentType, fields, ops, () => ctx.ids.newId());
   if (!result.ok) throw new ValidationError(result.issues);
   const inverse = invertBlockPatch(contentType, fields, result.applied);
-  // The applied ops carry every key they made, so they always replay on the fields they came
-  // from: a refusal here is a bug in the patch engine, not the caller's mistake.
-  if (!inverse.ok) throw new Error(`Block patch did not invert: ${inverse.issues[0]?.message}`);
+  // The applied ops carry every key they made, so they replay on the fields they came from; should
+  // one not, the patch is refused as its op would have been, before anything is saved.
+  if (!inverse.ok) throw new ValidationError(inverse.issues);
 
   const view = await saveEntryDraft(
     ctx,
@@ -123,7 +147,12 @@ export async function patchEntryBlocks(
     result.fields,
     fields,
   );
-  return { ...view, keys: result.keys, inverse: inverse.ops };
+  // Measured on the fields the patch wrote, as stored: after the hook, the slugs and the block keys.
+  const touched = new Set(ops.map((op) => op.field));
+  const kept = [...touched].every(
+    (apiId) => JSON.stringify(view.fields[apiId]) === JSON.stringify(result.fields[apiId]),
+  );
+  return { ...view, keys: result.keys, inverse: kept ? inverse.ops : null };
 }
 
 export interface EntryBlocksOutline {

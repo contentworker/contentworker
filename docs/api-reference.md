@@ -858,12 +858,16 @@ locale):
 - `remove { key }` with its children; `duplicate { key, ref? }` right after itself, fresh keys
   throughout.
 
-Ops apply in order, each to the result of the ones before; a later op addresses a new block by its
-`ref`, and `keys` maps each ref to its key. A slot's admitted types are checked on insert and move.
-A `_key` held by two blocks of the field's tree (validation only refuses a duplicate within one
-list, so a key can repeat at two depths) is refused as ambiguous, and the outline marks it
-`ambiguous`. `inverse` is the ops that undo the patch: send them with the new `currentVersion`.
-The result is validated as any save is (field issues at `body[i].heading`).
+Ops apply in order, each to the result of the ones before; a later op on the same field and locale
+addresses a new block by its `ref`, and `keys` maps each ref to its key. Ref names are unique in a
+patch, and an inserted block may not carry a `_key` equal to one. A slot's admitted types are
+checked on insert and move. A `_key` held by two blocks of the field's tree (validation only
+refuses a duplicate within one list, so a key can repeat at two depths) is refused as ambiguous,
+and the outline marks it `ambiguous`. An op on a block inside a block with no `_key` is refused
+(save the entry once to key it). `inverse` is the ops that undo the patch: send them with the new
+`currentVersion`. It is `null` when an `entry:beforeSave` plugin changed the blocks the patch
+wrote, since an undo built from the patch would not restore them. The result is validated as any
+save is (field issues at `body[i].heading`).
 
 MCP: `entry_blocks_patch` (audited) and `entry_blocks_outline` (`readOnlyHint`, not audited).
 

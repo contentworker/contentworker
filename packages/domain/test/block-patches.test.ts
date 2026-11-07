@@ -420,6 +420,71 @@ describe('removing and duplicating a block', () => {
 });
 
 describe('addressing blocks by key', () => {
+  it('refuses a block whose parent has no _key, whose place an undo couldn’t name', () => {
+    // Stored before keys were assigned on write, or imported raw: the section has no key.
+    const keyless = page();
+    delete (body(keyless)[1] as Node)._key;
+    const message = 'Block "h2" sits in a block with no _key; save the entry once to key it';
+    for (const op of [
+      { op: 'remove', ...at, key: 'h2' },
+      { op: 'duplicate', ...at, key: 'h2' },
+      { op: 'move', ...at, key: 'h2', to: { index: 0 } },
+      { op: 'update', ...at, key: 'h2', set: { heading: 'x' } },
+    ] as const) {
+      expect(refused([op], keyless)[0]?.message).toBe(message);
+    }
+    // Blocks elsewhere in the field are still patched.
+    expect(apply([{ op: 'remove', ...at, key: 'c2' }], keyless).ok).toBe(true);
+  });
+
+  it('resolves a ref only in its own field and locale', () => {
+    const fields: EntryFields = {
+      body: {
+        [L]: [{ _type: 'cta', _key: 'a' }],
+        de: [{ _type: 'cta', _key: 'x' }],
+      },
+    };
+    const r = applied(
+      [
+        { op: 'insert', ...at, block: { _type: 'cta', label: 'new' }, ref: 'x' },
+        // In de, "x" is that locale's own block, not the en-US insert.
+        { op: 'remove', field: 'body', locale: 'de', key: 'x' },
+      ],
+      fields,
+    );
+    expect(r.fields.body?.de).toEqual([]);
+    expect(r.fields.body?.[L]).toEqual([
+      { _type: 'cta', _key: 'a' },
+      { _type: 'cta', _key: 'k1', label: 'new' },
+    ]);
+    // Ref names stay unique across the patch: `keys` answers them by name alone.
+    expect(
+      refused(
+        [
+          { op: 'insert', ...at, block: { _type: 'cta' }, ref: 'r' },
+          { op: 'insert', field: 'body', locale: 'de', block: { _type: 'cta' }, ref: 'r' },
+        ],
+        fields,
+      )[0],
+    ).toMatchObject({ op: 1, message: 'ref "r" is already used in this patch' });
+  });
+
+  it('refuses an inserted block keyed like a ref, which a later op would mistake for it', () => {
+    const issues = refused([
+      { op: 'insert', ...at, block: { _type: 'cta' }, ref: 'x' },
+      { op: 'insert', ...at, block: { _type: 'cta', _key: 'x' } },
+      { op: 'remove', ...at, key: 'x' },
+    ]);
+    expect(issues).toEqual([
+      {
+        op: 1,
+        field: 'ops[1]',
+        locale: L,
+        message: '_key "x" is a ref in this patch; give the block another key',
+      },
+    ]);
+  });
+
   it('refuses an unknown key', () => {
     expect(refused([{ op: 'remove', ...at, key: 'nope' }])[0]?.message).toBe(
       'No block with _key "nope" in body (en-US)',

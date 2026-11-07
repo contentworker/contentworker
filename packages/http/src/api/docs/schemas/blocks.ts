@@ -106,7 +106,11 @@ export const blockPatchResult = z.object({
   keys: z.record(z.string(), z.string()).describe('ref → the _key its block was given'),
   inverse: z
     .array(blockOp)
-    .describe('The ops that undo this patch: send them with the new currentVersion to undo it'),
+    .nullable()
+    .describe(
+      'The ops that undo this patch: send them with the new currentVersion to undo it. Null when ' +
+        'an entry:beforeSave plugin changed the blocks the patch wrote, so no undo is offered',
+    ),
 });
 
 /**

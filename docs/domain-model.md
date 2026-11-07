@@ -123,12 +123,16 @@ repeater is unchanged: its elements carry neither key.
   one that holds blocks), `move` (never into itself or a block inside it), `remove` and
   `duplicate` (fresh keys throughout). A block's slots are the blocks fields its variant declares
   directly; blocks under a plain component or repeater inside a block are carried along but not
-  addressable. A key two blocks of the tree hold is refused as ambiguous rather than guessed at.
-  Ops apply in order, all or none, and the first that can't apply is reported with its index.
-  `invertBlockPatch` takes the `applied` ops (refs and positions resolved, every key present) and
-  returns the ops that undo them; `outlineBlocks` is the tree of keys, types and labels to build a
-  patch from. The use-case (`patchEntryBlocks`) holds the patch to `expectedVersion` and saves
-  through `saveEntryDraft`, so the result is validated as any save is.
+  addressable. A key two blocks of the tree hold is refused as ambiguous rather than guessed at,
+  and so is an op on a block whose parent has no `_key` (its place couldn't be written into an
+  undo). A `ref` resolves only on its own field and locale. Ops apply in order, all or none, and
+  the first that can't apply is reported with its index. `invertBlockPatch` takes the `applied`
+  ops (refs and positions resolved, every key present) and returns the ops that undo them;
+  `outlineBlocks` is the tree of keys, types and labels to build a patch from. The use-case
+  (`patchEntryBlocks`) holds the patch to `expectedVersion` and saves through `saveEntryDraft`, so
+  the result is validated as any save is. It answers the inverse only when the save stored the
+  blocks the patch made (`null` when an `entry:beforeSave` plugin rewrote them).
+  `authorizeBlockPatch` is the role check both surfaces run before it.
 - **Validation** looks up each element's variant by `_type`; a missing or unknown `_type` is one
   issue at `body[i]`, and the element is then checked as that variant's component (`body[i].heading`).
 - **References, defaults and search** read each element with its own variant's fields, so links in

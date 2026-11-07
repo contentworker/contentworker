@@ -525,7 +525,8 @@ export type BlockOp = { readonly field: string; readonly locale?: string } & (
 /** What a block patch saved: the new draft, the key each ref was given and the ops that undo it. */
 export interface BlockPatchResult extends EntryView {
   readonly keys: Readonly<Record<string, string>>;
-  readonly inverse: readonly BlockOp[];
+  /** Null when a server plugin rewrote the blocks the patch wrote: no undo is offered then. */
+  readonly inverse: readonly BlockOp[] | null;
 }
 
 /** One block in an entry's outline (`entries.outlineBlocks`). */

@@ -272,6 +272,13 @@ describe('the entry’s activity', () => {
     expect(activityAction(duplicated, 'e-copy').words).toBe('Created as a copy');
     expect(activityAction(duplicated, 'e-source').words).toBe('Duplicated');
   });
+
+  it('names a block patch the same through the API and a tool', () => {
+    const viaApi = row(1, { action: 'PATCH /spaces/:space/environments/:env/entries/:id/blocks' });
+    const viaTool = row(2, { action: 'MCP entry_blocks_patch' });
+    expect(activityAction(viaApi, 'e1')).toEqual({ words: 'Changed blocks', viaMcp: false });
+    expect(activityAction(viaTool, 'e1')).toEqual({ words: 'Changed blocks', viaMcp: true });
+  });
 });
 
 describe('the Activity view in the editor', () => {

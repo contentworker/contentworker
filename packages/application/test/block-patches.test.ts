@@ -6,6 +6,7 @@ import {
   NotFoundError,
   ValidationError,
 } from '@contentworker/domain';
+import type { HookResult } from '@contentworker/ports';
 import { FixedClock, InMemoryContentStore, SequenceIdGenerator } from '@contentworker/test-kit';
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
@@ -151,11 +152,63 @@ describe('patching an entry’s blocks', () => {
         { op: 'remove', field: 'body', key: page.cta },
       ],
     });
+    expect(saved.inverse).not.toBeNull();
     const undone = await patchEntryBlocks(ctx, scope, page.id, {
       expectedVersion: saved.entry.currentVersion,
-      ops: saved.inverse,
+      ops: saved.inverse ?? [],
     });
     expect(undone.fields).toEqual(before);
+  });
+
+  it('offers no undo when a beforeSave plugin rewrote the blocks it saved', async () => {
+    const page = await landing();
+    type Saving = { fields: Record<string, Record<string, unknown>> };
+    const relabel = (fields: Saving['fields']) => ({
+      ...fields,
+      body: {
+        'en-US': ((fields.body?.['en-US'] ?? []) as Record<string, unknown>[]).map((b) =>
+          b._type === 'cta' ? { ...b, label: 'Rewritten' } : b,
+        ),
+      },
+    });
+    const hooked: AppContext = {
+      ...ctx,
+      hooks: {
+        async dispatch<T>(hook: string, payload: T): Promise<HookResult<T>> {
+          if (hook !== 'entry:beforeSave') return { payload };
+          const saving = payload as unknown as Saving;
+          return { payload: { ...saving, fields: relabel(saving.fields) } as unknown as T };
+        },
+      },
+    };
+    const saved = await patchEntryBlocks(hooked, scope, page.id, {
+      expectedVersion: page.version,
+      ops: [{ op: 'insert', field: 'body', block: { _type: 'cta', label: 'More' } }],
+    });
+    // The plugin's labels are what was stored; an undo built from the patch would not restore them.
+    expect(
+      ((saved.fields.body?.['en-US'] ?? []) as { label?: string }[]).map((b) => b.label),
+    ).toEqual([undefined, 'Rewritten', 'Rewritten']);
+    expect(saved.inverse).toBeNull();
+    // A plugin that leaves the blocks alone keeps the undo.
+    const plain = await patchEntryBlocks(
+      { ...ctx, hooks: { dispatch: async <T>(_h: string, payload: T) => ({ payload }) } },
+      scope,
+      page.id,
+      {
+        expectedVersion: saved.entry.currentVersion,
+        ops: [{ op: 'update', field: 'body', key: page.hero, set: { heading: 'Hi' } }],
+      },
+    );
+    expect(plain.inverse).toEqual([
+      {
+        op: 'update',
+        field: 'body',
+        locale: 'en-US',
+        key: page.hero,
+        set: { heading: 'Welcome' },
+      },
+    ]);
   });
 
   it('refuses a patch built on a version that is no longer current, saving nothing', async () => {

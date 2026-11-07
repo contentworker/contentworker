@@ -57,8 +57,9 @@ interface BlockOpTarget {
 
 /**
  * Inserts a new block. Keys the block (and any blocks inside it) holds are kept, provided no
- * block in the field holds them already; missing ones are minted. `ref` names the new block for
- * later ops in the same patch and in the answer's key map.
+ * block in the field holds them already, and none is a ref of the patch; missing ones are minted.
+ * `ref` names the new block for later ops on the same field and locale, and in the answer's key
+ * map; ref names are unique across the patch.
  */
 export interface InsertBlockOp extends BlockOpTarget, BlockPlace {
   readonly op: 'insert';
@@ -276,6 +277,11 @@ interface Location {
   readonly parent?: BlockParent;
   /** Keys of every block above it. */
   readonly ancestors: readonly string[];
+  /**
+   * It sits in a slot of a block with no `_key`. Such a block's place can't be written down (an
+   * inverse or a replay would name the field's top instead), so ops on it are refused.
+   */
+  readonly orphan?: true;
 }
 
 /** Every keyed block reachable through slots, by key; a key held twice has two locations. */
@@ -289,6 +295,7 @@ function indexTree(
     admitted: readonly ComponentVariant[],
     parent: BlockParent | undefined,
     ancestors: readonly string[],
+    orphan: boolean,
   ): void => {
     slot.forEach((item, i) => {
       if (!isRecord(item)) return;
@@ -301,6 +308,7 @@ function indexTree(
           variants: admitted,
           ...(parent ? { parent } : {}),
           ancestors,
+          ...(orphan ? { orphan: true as const } : {}),
         };
         index.set(key, [...(index.get(key) ?? []), at]);
       }
@@ -311,12 +319,19 @@ function indexTree(
         const child = blockVariants(f);
         const value = item[f.apiId];
         if (!child || !Array.isArray(value)) continue;
-        // A keyless parent can't be named in `parent`; its children are still indexed.
-        walk(value, child, key !== undefined ? { key, slot: f.apiId } : undefined, below);
+        // A keyless parent can't be named in `parent`; its children are indexed (their keys still
+        // count for ambiguity) but marked, so an op on one is refused.
+        walk(
+          value,
+          child,
+          key !== undefined ? { key, slot: f.apiId } : undefined,
+          below,
+          key === undefined,
+        );
       }
     });
   };
-  walk(root, variants, undefined, []);
+  walk(root, variants, undefined, [], false);
   return index;
 }
 
@@ -345,7 +360,7 @@ function runPatch(
     Record<LocaleCode, unknown>
   >;
   const copied = new Set<string>();
-  const refs = new Map<string, string>();
+  const refs = new Map<string, PatchRef>();
   const keys: Record<string, string> = {};
   const applied: BlockOp[] = [];
   const inverse: BlockOp[] = [];
@@ -381,7 +396,7 @@ function runPatch(
       applied.push(step.applied);
       if (step.inverse) inverse.unshift(step.inverse);
       if (step.minted && (op.op === 'insert' || op.op === 'duplicate') && op.ref !== undefined) {
-        refs.set(op.ref, step.minted);
+        refs.set(op.ref, { tree: tree.id, key: step.minted });
         keys[op.ref] = step.minted;
       }
     } catch (err) {
@@ -400,22 +415,36 @@ function runPatch(
 
 const where = (op: BlockOpTarget): string => `${op.field} (${op.locale})`;
 
+/**
+ * A ref an earlier op named, and the tree (field and locale) its block is in. A ref resolves only
+ * in its own tree: in another, the same string is taken as a key, so it can never reach a block in
+ * a field or locale the op doesn't name. Ref names are unique across the patch, since `keys`
+ * answers them by name alone.
+ */
+interface PatchRef {
+  readonly tree: string;
+  readonly key: string;
+}
+
 /** One op's view of the field it edits: lookups by key and places in slots. */
 class Tree {
   readonly index: Map<string, Location[]>;
+  readonly id: string;
   constructor(
     readonly op: BlockOp,
     readonly variants: readonly ComponentVariant[],
     readonly localized: Record<LocaleCode, unknown>,
-    readonly refs: ReadonlyMap<string, string>,
+    readonly refs: ReadonlyMap<string, PatchRef>,
   ) {
     const root = localized[op.locale];
     this.index = indexTree(Array.isArray(root) ? root : [], variants);
+    this.id = `${op.field}\u0000${op.locale}`;
   }
 
-  /** A key as given, or the key minted for it when it names a ref of an earlier op. */
+  /** A key as given, or the key minted for it when it names a ref an earlier op gave in this tree. */
   resolve(key: string): string {
-    return this.refs.get(key) ?? key;
+    const ref = this.refs.get(key);
+    return ref?.tree === this.id ? ref.key : key;
   }
 
   /** The one block holding `key`; refused when none or several do. */
@@ -429,7 +458,13 @@ class Tree {
           'which one: give one of them a new _key with a full save first',
       );
     }
-    return found[0] as Location;
+    const at = found[0] as Location;
+    if (at.orphan) {
+      throw new OpRefused(
+        `Block "${key}" sits in a block with no _key; save the entry once to key it`,
+      );
+    }
+    return at;
   }
 
   /** The array a place names, and the variants it admits; created empty when absent. */
@@ -483,9 +518,12 @@ class Tree {
     return place.before !== undefined ? index : index + 1;
   }
 
-  /** Every key the tree holds, for an insert's own keys to avoid. */
+  /**
+   * What an insert's own keys must avoid: every key the tree holds, and every ref of the patch (a
+   * block keyed like a ref would be found by the ref's name and mistaken for the ref's block).
+   */
   taken(): Set<string> {
-    return new Set(this.index.keys());
+    return new Set([...this.index.keys(), ...this.refs.keys()]);
   }
 }
 
@@ -509,6 +547,9 @@ function applyOne(tree: Tree, op: BlockOp, newKey: () => string): Step {
       const taken = tree.taken();
       const copy = rekeyBlock(variants, clone(block), (old) => {
         if (old === undefined) return newKey();
+        if (tree.refs.has(old)) {
+          throw new OpRefused(`_key "${old}" is a ref in this patch; give the block another key`);
+        }
         if (taken.has(old)) {
           throw new OpRefused(`_key "${old}" is already held by a block in ${where(op)}`);
         }
