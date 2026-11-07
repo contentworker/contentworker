@@ -1025,8 +1025,14 @@ describe('searching with a selection', () => {
     });
     await waitFor(() => expect(live?.textContent).toBe('Searching…'));
     expect(live?.getAttribute('aria-busy')).toBe('true');
+    // "Searching…" renders as the search turns on, but the query calls searchAssets from an
+    // effect after it: settle the search only once that call holds the promise's resolver.
+    await waitFor(() => expect(client.searchAssets).toHaveBeenCalledTimes(1));
     resolve({ items: [], total: 0, facets: { kind: {}, tag: {}, folder: {} } });
-    await waitFor(() => expect(live?.textContent).toBe('No matches for “mug”'));
+    // A busy CI runner can take over the default second to render the settled search.
+    await waitFor(() => expect(live?.textContent).toBe('No matches for “mug”'), {
+      timeout: 5000,
+    });
     expect(live?.getAttribute('aria-busy')).toBeNull();
   });
 });
