@@ -1016,7 +1016,8 @@ test('a block patch card, ready and refused, has no accessibility violations', a
   const { id } = await createBlocksPage(request, title);
   await openCms(page, `/content/landing/${id}`);
   const panel = await askCoworker(page, 'Move the first block to the end');
-  const card = panel.getByRole('region', { name: 'Change blocks' });
+  // The conversation is shared with tests running beside this one: this entry's card only.
+  const card = panel.getByRole('region', { name: 'Change blocks' }).filter({ hasText: title });
   await expect(card.getByRole('button', { name: 'Confirm' })).toBeEnabled();
   await card.getByRole('button', { name: 'Review changes' }).click();
   await expect(card.getByRole('list', { name: 'Changes' })).toBeVisible();
@@ -1027,7 +1028,8 @@ test('a block patch card, ready and refused, has no accessibility violations', a
   await openCms(page, `/content/landing/${id}`);
   const stale = page
     .getByRole('complementary', { name: 'Coworker' })
-    .getByRole('region', { name: 'Change blocks' });
+    .getByRole('region', { name: 'Change blocks' })
+    .filter({ hasText: title });
   await expect(stale.getByText('The entry changed after this was proposed')).toBeVisible();
   await expect(stale.getByRole('button', { name: 'Confirm' })).toBeDisabled();
   await scan(page, testInfo);
