@@ -49,7 +49,7 @@ Things about this repo that change what a generic recommendation would say:
 - **Versions live in the pnpm catalog** (`catalogMode: strict`, `scripts/catalog.test.ts`). An
   upgrade is a one-line catalog diff, never a `package.json` version.
 - **Deploys are CI-only, one isolated stack per customer**, ring by ring
-  (`deployments/*.jsonc` → `scripts/fleet.ts` → `deploy.yml`). Per-branch preview URLs or Workers
+  (registry in the private fleet repo → `scripts/fleet.ts` → `deploy.yml`). Per-branch preview URLs or Workers
   Builds must fit that model (a preview needs its own D1, KV, queues and DO namespaces); say what
   it would take, don't assume a single shared Worker.
 - **Durable Object migration tags only append** (`apps/engine/wrangler.jsonc`,

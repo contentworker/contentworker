@@ -6,7 +6,8 @@ paths:
   - apps/media/**
   - packages/platform/**
   - packages/adapters/**
-  - deployments/**
+  - examples/fleet/**
+  - scripts/fixtures/fleet/**
   - scripts/fleet.ts
   - scripts/provision.sh
 ---
@@ -22,7 +23,7 @@ paths:
   no route and owns every queue consumer, the cron, and every Durable Object and Workflow class,
   which api and delivery bind by `script_name: "contentworker-engine"`.
 - Each `wrangler.jsonc` is the template `scripts/fleet.ts` renders per deployment
-  (`deployments/*.jsonc`); never deploy it by hand. A new resource must be provisioned
+  (one registry entry each, in the private `contentworker/fleet` repo); never deploy it by hand. A new resource must be provisioned
   (`scripts/provision.sh`) in every deployment before the merge that binds it (`infra-change`).
 - CI deploys engine → api → delivery → web and rolls back engine first; the engine can't roll back
   past a Durable Object migration. DO migration tags only append (`apps/engine/wrangler.jsonc` and

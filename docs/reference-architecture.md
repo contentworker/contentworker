@@ -40,7 +40,7 @@ _Figure: A contentworker deployment, with numbered callouts. Source: [`overview.
 `contentworker-events` queue, where every write lands and from which everything downstream
 follows.
 
-Each customer gets its own deployment (`deployments/<id>.jsonc`, rendered by `scripts/fleet.ts`)
+Each customer gets its own deployment (a registry entry, rendered by `scripts/fleet.ts`)
 with its own database, object storage, key-value store, vector index, queues, AI gateway and
 edge workers. Inside it, the workers are split by traffic profile. Four are publicly routed and
 verify every credential they receive: `web` at `<domain>`, `api` at `api.<domain>`, `delivery` at
@@ -301,7 +301,7 @@ services, and serving branches on the gate. A sequence diagram would have to pic
 
 - [Architecture](./architecture.md): the workers, the layers and the request flow in depth.
 - [Configuration](./configuration.md): every binding, var and secret.
-- [Deployment](./deployment.md): the fleet registry, provisioning and the CI rings.
+- [Deployment](./deployment.md): the fleet registry, provisioning and the release rings.
 - [Consistency & guarantees](./consistency.md): the unit of work, replicas and bookmarks.
 - [Events & webhooks](./events-and-webhooks.md): the outbox, the queues and cache purges.
 - [Auth & RBAC](./auth-and-rbac.md): the signed web principal, API keys and scopes.

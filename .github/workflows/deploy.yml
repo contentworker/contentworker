@@ -1,6 +1,6 @@
 name: Deploy
 
-# Ships main to one deployment of the fleet (deployments/<id>.jsonc). CI calls this once per
+# Ships main to one deployment of the fleet (its registry entry, <id>.jsonc). CI calls this once per
 # deployment, ring by ring; see docs/deployment.md.
 on:
   workflow_call:

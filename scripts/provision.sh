@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Creates the Cloudflare resources and the GitHub environment for one deployment in
-# deployments/<id>.jsonc, and records its D1 and KV ids there. Safe to re-run: existing resources,
+# its registry entry (<id>.jsonc), and records its D1 and KV ids there. Safe to re-run: existing resources,
 # and secrets already set, are kept. See docs/deployment.md.
 #
 #   ./scripts/provision.sh <id>

@@ -60,7 +60,7 @@ maintainer docs live in [`docs/`](./docs) (start at [the index](./docs/README.md
 | [Events & webhooks](./docs/events-and-webhooks.md)    | Outbox → relay → queue consumers, functions, scheduled actions, live updates      |
 | [Consistency](./docs/consistency.md)                  | The unit of work, read replicas and bookmarks, delivery staleness bounds          |
 | [SDKs](./docs/sdks.md)                                | Delivery clients (core, web, vue, edge, react-native), Management client, codegen |
-| [Deployment](./docs/deployment.md)                    | The fleet registry, provisioning, CI's ring deploys, rollback                     |
+| [Deployment](./docs/deployment.md)                    | The fleet registry format, provisioning, ring deploys, rollback                     |
 | [Configuration](./docs/configuration.md)              | Every var, secret and binding, and which worker uses it                           |
 | [Backup & restore](./docs/backup-and-restore.md)      | Point-in-time recovery, environment snapshots, outbox replay                      |
 | [Development](./docs/development.md)                  | Workspace commands, local stack, testing, adding a use-case                       |
@@ -105,7 +105,7 @@ packages/
   sdk/            core, web, vue, edge, react-native, management, codegen
   cli/            the `contentworker` command (login, model as code, entries, import, types)
 skills/           agent skills for developers building on contentworker (SKILL.md format)
-deployments/      one registry file per customer deployment
+examples/fleet/   a held example registry entry to start a self-hosted fleet from
 scripts/          fleet.ts (render configs, CI matrix, secrets), provision.sh, setup-code.sh
 ```
 
@@ -172,7 +172,8 @@ drives the CMS through the identical use-cases. See
 Merging to `main` is releasing: CI migrates each deployment's database (after recording a
 point-in-time recovery bookmark) and deploys engine → api → delivery → web, ring by ring, rolling back in order on a
 failed smoke test. A deployment answers at `<domain>` (admin), `api.<domain>` and `cdn.<domain>`.
-Add one with a `deployments/<id>.jsonc` file and `./scripts/provision.sh <id>`; see
+Add one with a registry file (start from `examples/fleet/example.jsonc`) and
+`./scripts/provision.sh <id>`; see
 [Deployment](./docs/deployment.md).
 
 ---

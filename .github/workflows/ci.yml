@@ -6,7 +6,7 @@ on:
   pull_request:
   # The merge queue tests each queued PR on top of main and the PRs ahead of it, then merges it;
   # nobody has to bring a branch up to date by hand. Like a push, it runs every job (`changes`
-  # only skips the device tests for a pull_request); the rings still run only on a push to main.
+  # only skips the device tests for a pull_request); `release` still runs only on a push to main.
   merge_group:
 
 # A new push to a pull request supersedes its last run; a push to main never cancels one that
@@ -51,7 +51,7 @@ jobs:
         if: ${{ !cancelled() }}
         run: pnpm test
 
-      # The registry in deployments/ and the configs rendered from it.
+      # The fleet renderer, deploy script and Durable Object migrations, against a fixture registry.
       - name: Test fleet
         if: ${{ !cancelled() }}
         run: pnpm test:fleet
@@ -68,8 +68,8 @@ jobs:
         run: pnpm audit --prod --audit-level high
 
   # Whether a pull request can change what the device tests see. Only paths the admin and its dev
-  # server never read are skipped: the docs and docs site, the fleet registry, the .claude toolkit
-  # and top-level Markdown. Anything else, a push to main, or a pull request too big for the files
+  # server never read are skipped: the docs and docs site, the .claude toolkit and top-level
+  # Markdown. Anything else, a push to main, or a pull request too big for the files
   # API (3000 files) runs them. A skipped `devices` counts as passed for a required check.
   changes:
     runs-on: ubuntu-latest
@@ -93,10 +93,10 @@ jobs:
           fi
           files=$(gh api "repos/$REPO/pulls/$PR/files" --paginate --jq '.[].filename')
           if [ "$(wc -l <<<"$files")" -ge 3000 ] \
-            || grep -qvE '^(docs/|apps/docs/|deployments/|\.claude/|[^/]+\.md$)' <<<"$files"; then
+            || grep -qvE '^(docs/|apps/docs/|\.claude/|[^/]+\.md$)' <<<"$files"; then
             echo "devices=true" >> "$GITHUB_OUTPUT"
           else
-            echo "Only docs, fleet registry or toolkit files changed: skipping the device tests"
+            echo "Only docs or toolkit files changed: skipping the device tests"
             echo "devices=false" >> "$GITHUB_OUTPUT"
           fi
 
@@ -160,89 +160,26 @@ jobs:
           path: apps/web/test-results/
           retention-days: 7
 
-  # The fleet: every deployment in deployments/, grouped by ring. Each ring waits for the one
-  # before it to finish cleanly; an empty ring is skipped. See docs/deployment.md. A ring after
-  # staging runs past a skipped one (`!failure()`), so it also needs plan to have run: on a pull
-  # request plan is skipped, its outputs are empty, and the ring's matrix couldn't be built.
-  plan:
+  # Hands a commit that passed verify on main to the fleet. The deployment registry and the rings
+  # live in the private contentworker/fleet repo, whose release.yml refuses any commit not on this
+  # repo's main and deploys it ring by ring (workflow_dispatch, input `sha`). The token needs Actions
+  # write on that repo only. While FLEET_DISPATCH_TOKEN is unset (a fork, or before the fleet's
+  # cutover) the job succeeds without dispatching; secrets can't be tested in a job `if`, so the
+  # steps test the copy in env. See docs/deployment.md.
+  release:
     needs: verify
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    outputs:
-      staging: ${{ steps.rings.outputs.staging }}
-      internal: ${{ steps.rings.outputs.internal }}
-      canary: ${{ steps.rings.outputs.canary }}
-      general: ${{ steps.rings.outputs.general }}
-      deployments: ${{ steps.rings.outputs.deployments }}
+    env:
+      FLEET_DISPATCH_TOKEN: ${{ secrets.FLEET_DISPATCH_TOKEN }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: 24
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - id: rings
-        run: |
-          rings=$(node scripts/fleet.ts matrix)
-          # Each ring is a list of ids (so its jobs are named by id); `deployments` maps an id to
-          # its entry.
-          for ring in staging internal canary general; do
-            echo "$ring=$(jq -c --arg r "$ring" '[.[$r][].id]' <<<"$rings")" >> "$GITHUB_OUTPUT"
-          done
-          echo "deployments=$(jq -c '[.[][]] | map({key: .id, value: .}) | from_entries' <<<"$rings")" >> "$GITHUB_OUTPUT"
-
-  staging:
-    needs: plan
-    if: needs.plan.outputs.staging != '[]'
-    strategy:
-      fail-fast: false
-      matrix:
-        id: ${{ fromJSON(needs.plan.outputs.staging) }}
-    name: staging
-    uses: ./.github/workflows/deploy.yml
-    with:
-      deployment: ${{ toJSON(fromJSON(needs.plan.outputs.deployments)[matrix.id]) }}
-    secrets: inherit
-
-  internal:
-    needs: [plan, staging]
-    if: ${{ !failure() && !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.internal != '[]' }}
-    strategy:
-      fail-fast: false
-      matrix:
-        id: ${{ fromJSON(needs.plan.outputs.internal) }}
-    name: internal
-    uses: ./.github/workflows/deploy.yml
-    with:
-      deployment: ${{ toJSON(fromJSON(needs.plan.outputs.deployments)[matrix.id]) }}
-    secrets: inherit
-
-  canary:
-    needs: [plan, internal]
-    if: ${{ !failure() && !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.canary != '[]' }}
-    strategy:
-      fail-fast: false
-      matrix:
-        id: ${{ fromJSON(needs.plan.outputs.canary) }}
-    name: canary
-    uses: ./.github/workflows/deploy.yml
-    with:
-      deployment: ${{ toJSON(fromJSON(needs.plan.outputs.deployments)[matrix.id]) }}
-    secrets: inherit
-
-  general:
-    needs: [plan, canary]
-    if: ${{ !failure() && !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.general != '[]' }}
-    strategy:
-      fail-fast: false
-      # Customers in the general ring deploy a few at a time.
-      max-parallel: 4
-      matrix:
-        id: ${{ fromJSON(needs.plan.outputs.general) }}
-    name: general
-    uses: ./.github/workflows/deploy.yml
-    with:
-      deployment: ${{ toJSON(fromJSON(needs.plan.outputs.deployments)[matrix.id]) }}
-    secrets: inherit
+      - name: Note that no fleet dispatch token is set
+        if: ${{ env.FLEET_DISPATCH_TOKEN == '' }}
+        run: echo "::notice::FLEET_DISPATCH_TOKEN is not set; not dispatching a release to the fleet"
+      - name: Dispatch the release
+        if: ${{ env.FLEET_DISPATCH_TOKEN != '' }}
+        env:
+          GH_TOKEN: ${{ env.FLEET_DISPATCH_TOKEN }}
+          SHA: ${{ github.sha }}
+        run: gh workflow run release.yml --repo contentworker/fleet --ref main -f sha="$SHA"

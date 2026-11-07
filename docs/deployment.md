@@ -6,13 +6,20 @@ and five edge workers (engine, media, api, delivery, web). Spaces and environmen
 deployment's database. Merging to `main` is releasing: CI migrates the database and deploys every
 deployment, ring by ring. Nobody deploys from a workstation or an agent session.
 
+The code, `scripts/fleet.ts`, `scripts/deploy.sh`, `scripts/provision.sh` and `deploy.yml` are in
+this repository. The registry of real deployments, the rings and each deployment's secrets are not:
+they live in the maintainers' private `contentworker/fleet` repository, which this repository's CI
+calls after `verify` (see [The pipeline](#the-pipeline)). To run your own fleet, keep your registry
+as described under [Provisioning](#provisioning-a-deployment).
+
 For bindings and vars, see [Configuration](./configuration.md); for what each worker does, see
 [Architecture](./architecture.md); for restore points, see
 [Backup & restore](./backup-and-restore.md).
 
-## The registry: `deployments/*.jsonc`
+## The registry: `<id>.jsonc` files
 
-One file per deployment, parsed by `toDeployment` in `scripts/fleet.ts`:
+One file per deployment, in the directory `FLEET_REGISTRY` names (this repository ships none; a
+fork's own is `deployments/`, and `examples/fleet/example.jsonc` is a held starting point), parsed by `toDeployment` in `scripts/fleet.ts`:
 
 | Field           | Meaning                                                                                                                                                                        |
 | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -20,7 +27,7 @@ One file per deployment, parsed by `toDeployment` in `scripts/fleet.ts`:
 | `ring`          | `staging`, `internal`, `canary` or `general`                                                                                                                                   |
 | `slot`          | 1–999, unique; keeps each deployment's rate-limit namespaces apart (`slot × 1000 + n`)                                                                                         |
 | `domain`        | The admin host; default `<id>.contentworker.app`. The api is `api.<domain>`, delivery `cdn.<domain>`, media `media.<domain>`                                                   |
-| `suffix`        | Appended to every account-wide resource name; default `-<id>` (contentworker's own is `""`)                                                                                    |
+| `suffix`        | Appended to every account-wide resource name; default `-<id>` (`""` keeps the base names in `apps/*/wrangler.jsonc`)                                                                                    |
 | `environment`   | The GitHub environment holding its secrets; default `deploy-<id>`                                                                                                              |
 | `d1Id`, `kvId`  | Recorded by `scripts/provision.sh`; required to render                                                                                                                         |
 | `jurisdiction`  | `eu` or `fedramp`, for the database, object storage and stateful objects (set at creation)                                                                                     |
@@ -87,12 +94,18 @@ scheduled actions, asset expiry, retention, the reseal and the rest. Two things 
 
 ## Provisioning a deployment
 
-The registry defaults to `deployments/` in this repository. `FLEET_REGISTRY` points `scripts/fleet.ts`
-and `scripts/provision.sh` at another directory, and `FLEET_REPO` (`owner/name`) sets the GitHub
-repository `provision.sh` creates the environment and secrets on. Set both to work against a private
-ops repository, so a customer's entry and secrets never land in a public one.
+`FLEET_REGISTRY` names the registry directory for `scripts/fleet.ts`, `scripts/deploy.sh` and
+`scripts/provision.sh`; unset, they read `deployments/` in the checkout, and with neither they stop
+with "no deployment registry at ...". `FLEET_REPO` (`owner/name`) sets the GitHub repository
+`provision.sh` creates the environment and secrets on. The maintainers set both to their private
+fleet repository, so a customer's entry and secrets never land in a public one:
 
-1. Add `deployments/<id>.jsonc` (`id`, `ring`, `slot`, optionally `domain`, `sso`, `email`).
+    FLEET_REGISTRY=../fleet/deployments FLEET_REPO=contentworker/fleet ./scripts/provision.sh <id>
+
+To start your own, copy `examples/fleet/example.jsonc` to `deployments/<id>.jsonc` (or into your
+`FLEET_REGISTRY` directory) and edit it; it is held (`hold: true`) until you remove that.
+
+1. Add `<id>.jsonc` to the registry (`id`, `ring`, `slot`, optionally `domain`, `sso`, `email`).
 2. Run `./scripts/provision.sh <id>` (needs `wrangler login` or `CLOUDFLARE_API_TOKEN`, and
    `gh auth login`). It is safe to re-run; it:
    - creates the database, records its id, and turns on read replication (`mode: auto`;
@@ -201,11 +214,18 @@ then only the new).
   `pnpm test:fleet`, `pnpm test:toolkit`, and `pnpm audit --prod --audit-level high`.
 - **devices**: the web app's Playwright suite in WebKit (iPhone, iPad, desktop) and Chromium
   against an offline dev server (`apps/web/e2e`). The `changes` job skips it for a pull request
-  that only touches `docs/`, `apps/docs/`, `deployments/`, `.claude/` or top-level Markdown.
-- **plan → staging → internal → canary → general** (push to `main` only): `plan` needs only
-  `verify`, so deploys do not wait for `devices`. `fleet.ts matrix` groups deployments by ring;
-  each ring waits for the previous one to finish cleanly and calls `deploy.yml` once per
-  deployment (`general` four at a time).
+  that only touches `docs/`, `apps/docs/`, `.claude/` or top-level Markdown.
+- **release** (push to `main` only): needs only `verify`, so deploys do not wait for `devices`. It
+  dispatches `release.yml` in the private `contentworker/fleet` repository with the commit sha, using
+  the repository secret `FLEET_DISPATCH_TOKEN` (a fine-grained token with Actions write on that
+  repository only). While the secret is unset the job succeeds and dispatches nothing, so a fork's
+  CI stays green and deploys nothing. In the fleet repository, `release.yml` refuses any commit
+  that is not on this repository's `main`, runs `fleet.ts matrix` against the registry, and calls
+  its `deploy.yml` ring by ring (staging → internal → canary → general, each waiting for the
+  previous to finish cleanly, `general` four at a time).
+
+A fork that runs its own fleet adds a `release` of its own (or ring jobs that call `deploy.yml` once
+per deployment from `fleet.ts matrix`, with `FLEET_REGISTRY` set).
 
 `.github/workflows/deploy.yml` checks out the commit and runs `scripts/deploy.sh <id>`, so the steps
 always come from the commit being shipped. Each step below is a titled group in the job's log, and a

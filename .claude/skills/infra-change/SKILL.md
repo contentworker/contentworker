@@ -1,11 +1,12 @@
 ---
 name: infra-change
-description: Change contentworker's Cloudflare configuration safely across the fleet, and validate that it still deploys. Covers adding or changing a binding, var, queue, bucket, KV namespace, Vectorize index, Durable Object, Workflow, route or compatibility flag in an app's wrangler.jsonc (web, api, delivery, engine, docs); typing it in EdgeEnv; rendering it per deployment in scripts/fleet.ts; creating it in scripts/provision.sh; registry fields in deployments/*.jsonc; secrets; dry-run bundles and env parity; and ordering the rollout so CI's deploy never needs a resource that doesn't exist yet. Use for any edit to wrangler.jsonc, deployments/, scripts/fleet.ts, scripts/provision.sh or packages/platform/src/env.ts.
+description: Change contentworker's Cloudflare configuration safely across the fleet, and validate that it still deploys. Covers adding or changing a binding, var, queue, bucket, KV namespace, Vectorize index, Durable Object, Workflow, route or compatibility flag in an app's wrangler.jsonc (web, api, delivery, engine, docs); typing it in EdgeEnv; rendering it per deployment in scripts/fleet.ts; creating it in scripts/provision.sh; registry fields (the format in docs/deployment.md); secrets; dry-run bundles and env parity; and ordering the rollout so CI's deploy never needs a resource that doesn't exist yet. Use for any edit to wrangler.jsonc, examples/fleet/, scripts/fleet.ts, scripts/provision.sh or packages/platform/src/env.ts.
 ---
 
 # Changing infrastructure
 
-Every customer is its own deployment (`deployments/<id>.jsonc`: `id`, `ring`, `slot`, `domain`,
+Every customer is its own deployment (a registry entry `<id>.jsonc`, kept in the private
+`contentworker/fleet` repo: `id`, `ring`, `slot`, `domain`,
 `suffix`, `environment`, `d1Id`, `kvId`, `hold`, `demo`, `docs`, …), with its own D1, KV, R2,
 Vectorize index, queues, Workflows, AI Gateway and Workers, named with the deployment's suffix.
 The base config is each app's `wrangler.jsonc` (its names are the `contentworker` deployment's,
@@ -53,7 +54,7 @@ secrets, bindings) are the references; read the relevant section first.
 
 ## Rollout order
 
-CI deploys every deployment from `main` in ring order (`staging` → `internal` → `canary` →
+After `verify`, CI hands the commit to the private fleet repo, which deploys every deployment in ring order (`staging` → `internal` → `canary` →
 `general`), and within one deployment engine → media → api → delivery → web. Nothing provisions during CI.
 
 - **A new resource a deploy needs** (a queue the engine consumes, a KV id a render needs) must
@@ -61,7 +62,7 @@ CI deploys every deployment from `main` in ring order (`staging` → `internal` 
   `./scripts/provision.sh <id>` for each existing deployment (the `guard-bash` hook asks before
   you do), or the deployment is merged with `"hold": true`. Say this in the PR description, listing
   the deployments.
-- A deployment missing `d1Id` or `kvId` stops CI's plan.
+- A deployment missing `d1Id` or `kvId` stops the fleet repo's plan.
 - **A renamed binding or resource** is expand/contract like a migration: add the new one, deploy,
   move reads and writes, then remove the old one in a later change.
 - **Durable Object classes** live in the engine: a new class gets a `migrations` entry with a new

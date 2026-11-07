@@ -1,0 +1,14 @@
+// Test fixture: a fake provisioned deployment with the base names (suffix ""). Not a real one.
+{
+  "id": "fixture-main",
+  "ring": "internal",
+  "slot": 1,
+  "domain": "fixture.example.test",
+  "suffix": "",
+  "environment": "production",
+  "d1Id": "00000000-0000-4000-8000-000000000001",
+  "docs": true,
+  "aiGatewayLogs": true,
+  "email": { "from": "noreply@mail.fixture.example.test", "fromName": "Fixture" },
+  "kvId": "00000000000040008000000000000001"
+}

@@ -681,7 +681,7 @@ a human API client can't**, and the reverse.
 
 ## Multi-tenancy
 
-Each customer gets its own deployment (`deployments/<id>.jsonc`): its own database, object storage,
+Each customer gets its own deployment (one registry entry, `<id>.jsonc`): its own database, object storage,
 key-value store, vector index, queues, AI gateway and workers. Inside a deployment, every store and
 use-case operation carries a `Scope` of `{ spaceId, environmentId }`; `(space_id, environment_id)`
 leads the primary key or a unique index on every content table.
