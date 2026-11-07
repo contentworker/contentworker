@@ -302,6 +302,25 @@ describe('audit row detail, over REST and MCP', () => {
     ]);
   });
 
+  it('keeps calls of one batch, running at once, off each other’s rows', async () => {
+    const [a, b, c] = [await newEntry(), await newEntry(), await newEntry()];
+    await Promise.all([
+      tool('entries_update', { id: a, fields: fields({ title: { 'en-US': 'One' } }) }),
+      tool('entries_get', { id: a }),
+      tool('entries_update', { id: b, fields: fields({ hero: { 'en-US': { alt: 'Two' } } }) }),
+      tool('entries_update', { id: c, fields: fields({ data: { 'en-US': { a: 1 } } }) }),
+    ]);
+    const rows = await wired.ctx.store.audit.list('s1', { action: 'MCP entries_update' });
+    const byTarget = Object.fromEntries(
+      rows.map((r) => [r.targetId, r.detail?.entries.map((e) => [e.entryId, e.paths])]),
+    );
+    expect(byTarget).toEqual({
+      [a]: [[a, ['fields.title']]],
+      [b]: [[b, ['fields.hero.alt']]],
+      [c]: [[c, ['fields.data']]],
+    });
+  });
+
   it('puts what cancelling a run undid on the surface’s row, on both surfaces', async () => {
     const graph = {
       nodes: [
@@ -336,6 +355,8 @@ describe('audit row detail, over REST and MCP', () => {
         startedAt: t,
         endedAt: t + 1,
         durationMs: 1,
+        model: null,
+        ranBy: null,
       });
       return runId;
     };

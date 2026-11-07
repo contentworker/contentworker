@@ -4,6 +4,7 @@ import {
   type ContentType,
   capAuditDetail,
   changedPaths,
+  diffEntryFields,
   type EntryChange,
   type EntryFields,
   type FieldDefinition,
@@ -177,6 +178,43 @@ describe('changedPaths', () => {
       LOCALES,
     );
     expect(change).toEqual({ paths: ['fields.title'], locales: [] });
+  });
+});
+
+describe('the diff a save runs', () => {
+  const quick = (before: EntryFields, after: EntryFields) =>
+    diffEntryFields(before, after, model, { structureOnly: true });
+  const detailOf = (diffs: ReturnType<typeof quick>, field: string) =>
+    diffs.find((d) => d.field === field)?.locales[0]?.detail;
+
+  it('does no word diff of text or rich text, whatever a writer rewrites', () => {
+    const diffs = quick(
+      { title: en('a b c'), body: en(paragraph('old words')) },
+      { title: en('x y z'), body: en(paragraph('new words')) },
+    );
+    expect(detailOf(diffs, 'title')?.type).toBe('value');
+    expect(detailOf(diffs, 'body')?.type).toBe('value');
+  });
+
+  it('aligns no list that has no identity to align by', () => {
+    const numbers: ContentType = {
+      ...model,
+      fields: [field({ apiId: 'n', type: 'Array', items: { type: 'Integer' } })],
+    };
+    const [diff] = diffEntryFields({ n: en([1, 2]) }, { n: en([3, 4]) }, numbers, {
+      structureOnly: true,
+    });
+    expect(diff?.locales[0]?.detail?.type).toBe('value');
+    expect(changedPaths({ n: en([1, 2]) }, { n: en([3, 4]) }, numbers, LOCALES).paths).toEqual([
+      'fields.n',
+    ]);
+  });
+
+  it('agrees with the full diff on what changed', () => {
+    const before = { title: en('a'), slug: en('s'), hero: en({ alt: 'x' }), tags: en(['a']) };
+    const after = { title: en('b'), slug: en('s'), hero: en({ alt: 'y' }), tags: en(['b']) };
+    const kinds = (diffs: ReturnType<typeof quick>) => diffs.map((d) => [d.field, d.kind]);
+    expect(kinds(quick(before, after))).toEqual(kinds(diffEntryFields(before, after, model)));
   });
 });
 

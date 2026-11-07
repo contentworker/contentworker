@@ -1,6 +1,7 @@
 /**
  * What a write changed in an entry, as an audit row keeps it: where, never what. It is read off the
- * deterministic diff (`diffEntryFields`) by walking the content model, so a path can only ever be
+ * deterministic diff (`diffEntryFields`, structure only: this runs on every save) by walking the
+ * content model, so a path can only ever be
  * made of model api ids. Nothing a writer typed reaches it: a JSON field, a `Seo` value and rich
  * text stop at the field, a block's `_key` is left out (a save keeps the key it was sent), a nested
  * key the model doesn't declare reports its parent, and a locale key counts only if the space has
@@ -87,7 +88,7 @@ export function changedPaths(
   const locales = new Set<string>();
   let undeclaredFields = 0;
   const localized = new Set(contentType.fields.filter((f) => f.localized).map((f) => f.apiId));
-  for (const diff of diffEntryFields(before, after, contentType)) {
+  for (const diff of diffEntryFields(before, after, contentType, { structureOnly: true })) {
     const changed = diff.locales.filter((l) => l.kind !== 'unchanged');
     if (changed.length === 0) continue;
     if (!diff.fieldType) {

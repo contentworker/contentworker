@@ -36,7 +36,8 @@ text is REST's 422 body (`toHttpError`): `{ "error": { "code": "validation_faile
 the actor (`auditActor`), action `MCP <tool>`, the space, the resolved environment when the tool
 takes one, `targetId` from `id` / `apiId` / `alias`, `targetType` in REST's words
 (`toolTargetType`), status 200, and the `detail` of what its saves changed
-([Audit log](./api-reference.md#audit-log)). A tool is a write unless it
+([Audit log](./api-reference.md#audit-log)); calls of one batch that may write take turns, so a row
+holds only its own. A tool is a write unless it
 declares itself a read, with the annotation `readOnlyHint: true` beside its schema; a
 propose-or-apply tool is audited only when it applies (`apply: true`,
 `createTasks: true`, no `dryRun`). Reads never write (one writer per database), and a failed audit

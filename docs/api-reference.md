@@ -307,10 +307,12 @@ capped at 4096 characters and 20 entries; a row past either has `truncated: true
 fit. `audit_log_list` serves it unchanged, and a REST write and a tool call that made the same edit
 carry the same detail.
 
-Field edits are what `detail` covers: an entry's save through any route or tool (creating, updating,
-SEO, restoring a version, duplicating, an AI `apply`, an approved agent review, the undo of a
-cancelled workflow run, an import). Publishing, trashing, tags and every other kind of target write
-their rows without it.
+Field edits are what `detail` covers: an entry's save made within the request, through any route or
+tool (creating, updating, SEO, restoring a version, duplicating, an AI `apply`, an approved agent
+review, the undo of a cancelled workflow run, an import that runs in the request). A promotion's
+entries are in its target environment, which `detail` doesn't name. Publishing, trashing, tags,
+every other kind of target, environment merges and work a job does later (bulk jobs, job-run
+imports) write their rows without it.
 
 ### Environment snapshots
 

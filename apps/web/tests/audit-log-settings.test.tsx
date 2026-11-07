@@ -196,14 +196,10 @@ describe('the audit log screen', () => {
       await screen.findByRole('button', { name: 'Filter by target e1' });
     };
 
-    it('lists the paths and the locales, in the model’s words', async () => {
+    it('reads the paths and the locales in the model’s words, whole in the title', async () => {
       await showing({ entries: [change()] });
-      const list = screen.getByRole('list', { name: 'Changed fields' });
-      expect(
-        within(list)
-          .getAllByRole('listitem')
-          .map((li) => li.textContent),
-      ).toEqual(['title', 'hero.alt', 'sections[].heading']);
+      const paths = screen.getByText('title, hero.alt, sections[].heading');
+      expect(paths.closest('p')?.title).toBe('title, hero.alt, sections[].heading in de, en-US');
       expect(screen.getByText('de, en-US')).toBeTruthy();
     });
 
@@ -212,21 +208,36 @@ describe('the audit log screen', () => {
       show();
       await screen.findByRole('button', { name: 'Filter by target e1' });
       expect(screen.getByRole('columnheader', { name: 'Changed' })).toBeTruthy();
-      expect(screen.queryByRole('list', { name: 'Changed fields' })).toBeNull();
       expect(screen.getByText('—', { selector: 'span' })).toBeTruthy();
     });
 
-    it('stops a long list and says how many more', async () => {
-      const paths = Array.from({ length: 9 }, (_, i) => `fields.f${i}`);
-      await showing({ entries: [change({ paths, locales: [] })] });
-      const list = screen.getByRole('list', { name: 'Changed fields' });
-      expect(within(list).getAllByRole('listitem')).toHaveLength(6);
-      expect(screen.getByText('and 3 more')).toBeTruthy();
+    it('draws its skeleton with a cell for every column', async () => {
+      listAuditLog.mockImplementation(() => new Promise(() => {}));
+      show();
+      const skeleton = document.querySelector('tbody tr[aria-hidden="true"]');
+      expect(skeleton?.querySelectorAll('td')).toHaveLength(6);
     });
 
-    it('says when the row itself was cut short', async () => {
+    it('shortens a long list of locales to a count, keeping them in the title', async () => {
+      await showing({ entries: [change({ locales: ['de', 'en-US', 'fr'] })] });
+      expect(screen.getByText('3 locales')).toBeTruthy();
+      expect(screen.getByText(/^title/).closest('p')?.title).toContain('de, en-US, fr');
+    });
+
+    it('says a cut-short row is one, in words that cover other entries too', async () => {
       await showing({ entries: [change()], truncated: true });
-      expect(screen.getByText('List cut short')).toBeTruthy();
+      expect(screen.getByText('Other changes not listed')).toBeTruthy();
+    });
+
+    it('never says nothing changed on a row that was cut short', async () => {
+      await showing({ entries: [change({ paths: [], locales: [] })], truncated: true });
+      expect(screen.queryByText('No field changed')).toBeNull();
+      expect(screen.getByText('Other changes not listed')).toBeTruthy();
+    });
+
+    it('says a row whose change couldn’t be read wasn’t recorded', async () => {
+      await showing({ entries: [], truncated: true });
+      expect(screen.getByText('Not recorded')).toBeTruthy();
     });
 
     it('says a save that changed nothing changed nothing', async () => {
@@ -234,16 +245,23 @@ describe('the audit log screen', () => {
       expect(screen.getByText('No field changed')).toBeTruthy();
     });
 
+    it('doesn’t call a create with no fields a save', async () => {
+      await showing({ entries: [change({ kind: 'created', paths: [], locales: [] })] });
+      expect(screen.getByText('Created with no fields')).toBeTruthy();
+    });
+
     it('counts a field the type no longer declares', async () => {
-      await showing({ entries: [change({ paths: [], locales: [], undeclaredFields: 2 })] });
-      expect(screen.getByText('2 fields no longer in the model')).toBeTruthy();
+      await showing({ entries: [change({ paths: [], locales: [], undeclaredFields: 1 })] });
+      expect(screen.getByText('1 field no longer in the model')).toBeTruthy();
       expect(screen.queryByText('No field changed')).toBeNull();
     });
 
     it('counts the entries of a row that changed several', async () => {
+      await showing({ entries: [change(), change({ entryId: 'e2' })] });
+      expect(screen.getByText('2 entries')).toBeTruthy();
+      cleanup();
       await showing({ entries: [change(), change({ entryId: 'e2' })], truncated: true });
       expect(screen.getByText('More than 2 entries')).toBeTruthy();
-      expect(screen.queryByRole('list', { name: 'Changed fields' })).toBeNull();
     });
   });
 

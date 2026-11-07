@@ -158,9 +158,17 @@ export function buildServer(
   const { ai, rag, agents } = deps;
   // Every tool writes as this session's principal: entries it creates or changes record it as
   // their author, exactly as the HTTP API's routes do.
-  // The server lives for one request (the transport is stateless), so its log is that call's, and
-  // the audit row below reads what the call's saves noted, as `auditMiddleware` does for a route.
+  // The server lives for one request (the transport is stateless), and the audit row below reads
+  // what a call's saves noted, as `auditMiddleware` does for a route. A batch is one request with
+  // many calls, running at once: calls that may write take turns (`inTurn`), so a row only ever
+  // holds its own call's changes. Reads note nothing, and don't wait.
   const changes = createChangeLog();
+  let turns: Promise<unknown> = Promise.resolve();
+  const inTurn = <T>(call: () => Promise<T>): Promise<T> => {
+    const turn = turns.then(call, call);
+    turns = turn.catch(() => {});
+    return turn;
+  };
   const ctx = withChanges(actingAs(deps.ctx, principal), changes);
   const server = new McpServer(
     { name: 'contentworker', version: '0.1.0' },
@@ -200,22 +208,25 @@ export function buildServer(
             args = { ...a, environment };
             requestedEnvironment.set(args as object, a.environment);
           }
-          changes.clear();
-          const result = await handler(args, ...rest);
-          if (!(result as { isError?: boolean } | undefined)?.isError) {
-            await auditToolCall(ctx, {
-              tool: name,
-              args: (args ?? {}) as Record<string, unknown>,
-              declared,
-              readOnly,
-              principal,
-              defaultSpace: DEFAULT_SPACE,
-              defaultEnvironment: DEFAULT_ENV,
-              targetId: args && typeof args === 'object' ? auditTarget.get(args) : undefined,
-              detail: changes.detail(),
-            });
-          }
-          return result;
+          if (readOnly) return await handler(args, ...rest);
+          return await inTurn(async () => {
+            changes.clear();
+            const result = await handler(args, ...rest);
+            if (!(result as { isError?: boolean } | undefined)?.isError) {
+              await auditToolCall(ctx, {
+                tool: name,
+                args: (args ?? {}) as Record<string, unknown>,
+                declared,
+                readOnly,
+                principal,
+                defaultSpace: DEFAULT_SPACE,
+                defaultEnvironment: DEFAULT_ENV,
+                targetId: args && typeof args === 'object' ? auditTarget.get(args) : undefined,
+                detail: changes.detail(),
+              });
+            }
+            return result;
+          });
         } catch (err) {
           if (err instanceof ValidationError) return validationResult(err);
           throw toolFailure(name, err);
