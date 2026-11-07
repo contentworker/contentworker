@@ -38,6 +38,7 @@ import {
   MAX_GEOMETRY_GAPS,
   MAX_GEOMETRY_ITEMS,
   MAX_MESSAGE_BYTES,
+  MAX_PATCH_OPS,
   parseAdminMessage,
 } from './protocol.js';
 
@@ -242,6 +243,12 @@ export function startLivePreview(options: LivePreviewOptions): LivePreview {
           fail('patch', `Out of step since ${desync.message}; send the entry again`, desync.seq);
           return;
         }
+        // Only failing renders let the queue grow past a patch or two; past this, stop and resync.
+        if (pendingOps.length + m.ops.length > MAX_PENDING_OPS) {
+          pendingOps = [];
+          lose(`patch ${m.seq}: more edits than the page has rendered`, m.seq);
+          return;
+        }
         const result = applyLivePatch(fields, m.ops, newKey ? { newKey } : {});
         if (!result.ok) {
           // Nothing of the patch applies, and nothing after it can: the admin re-sends the entry.
@@ -349,7 +356,11 @@ export function startLivePreview(options: LivePreviewOptions): LivePreview {
       const slot = slotEl ? attr(slotEl, SLOT_ATTRIBUTE, MAX_ATTRIBUTE) : undefined;
       const parentKey = slotEl ? parentKeyOf(slotEl) : undefined;
       blocks.push({ key, rect, ...(slot ? { slot } : {}), ...(parentKey ? { parentKey } : {}) });
-      if (slotEl && slot) children.set(slotEl, [...(children.get(slotEl) ?? []), { key, rect }]);
+      if (slotEl && slot) {
+        const siblings = children.get(slotEl);
+        if (siblings) siblings.push({ key, rect });
+        else children.set(slotEl, [{ key, rect }]);
+      }
     }
     const slots: LiveSlotBox[] = [];
     for (const el of take(slotEls)) {
@@ -594,6 +605,9 @@ function navigableUrl(href: string): string | undefined {
   }
 }
 
+/** The most ops waiting on a render (failed renders requeue theirs) before the page resyncs. */
+const MAX_PENDING_OPS = 10 * MAX_PATCH_OPS;
+
 /** The most elements of each kind measured per frame; `fitGeometry` picks what is sent from them. */
 const MAX_MEASURED = 10_000;
 
@@ -615,13 +629,21 @@ export function fitGeometry(g: GeometryBody, budget: number, cut = false): Geome
     Math.max(0, -(r.x + r.w), r.x - w) + Math.max(0, -(r.y + r.h), r.y - h);
   const lists = [g.blocks, g.slots, g.fields] as const;
   const candidates = lists.flatMap((list, kind) =>
-    list.map((item, index) => ({
-      kind,
-      index,
-      away: away(item.rect),
-      size: JSON.stringify(item).length + 1,
-      gaps: kind === 1 ? (item as LiveSlotBox).gaps.length : 0,
-    })),
+    list.map((item, index) => {
+      const size = JSON.stringify(item).length + 1;
+      const gaps = kind === 1 ? (item as LiveSlotBox).gaps.length : 0;
+      // A slot's size without its seams, and a seam's on average, so a slot can be cut to fit.
+      const bare = gaps > 0 ? JSON.stringify({ ...item, gaps: [] }).length + 1 : size;
+      return {
+        kind,
+        index,
+        away: away(item.rect),
+        size,
+        gaps,
+        bare,
+        perGap: gaps ? (size - bare) / gaps : 0,
+      };
+    }),
   );
   candidates.sort((a, b) => a.away - b.away || a.kind - b.kind || a.index - b.index);
   const total = candidates.length;
@@ -630,25 +652,41 @@ export function fitGeometry(g: GeometryBody, budget: number, cut = false): Geome
   let room = budget - bytes({ ...g, blocks: [], slots: [], fields: [], truncated: true });
   for (;;) {
     const kept = [new Set<number>(), new Set<number>(), new Set<number>()];
+    // A slot with more seams than are left keeps the ones that fit, rather than vanishing.
+    const seams = new Map<number, number>();
     let used = 0;
     let gaps = 0;
     for (const c of candidates) {
       const set = kept[c.kind] as Set<number>;
-      if (set.size >= MAX_GEOMETRY_ITEMS || gaps + c.gaps > MAX_GEOMETRY_GAPS) continue;
-      if (used + c.size > room) continue;
+      if (set.size >= MAX_GEOMETRY_ITEMS) continue;
+      if (c.gaps === 0) {
+        if (used + c.size > room) continue;
+        set.add(c.index);
+        used += c.size;
+        continue;
+      }
+      if (used + c.bare > room) continue;
+      const bySize = Math.floor((room - used - c.bare) / c.perGap);
+      const fit = Math.min(c.gaps, MAX_GEOMETRY_GAPS - gaps, bySize);
       set.add(c.index);
-      used += c.size;
-      gaps += c.gaps;
+      used += c.bare + Math.ceil(fit * c.perGap);
+      if (fit < c.gaps) seams.set(c.index, fit);
+      gaps += fit;
     }
     const pick = <T>(list: readonly T[], kind: number) =>
       list.filter((_, i) => (kept[kind] as Set<number>).has(i));
     const out: GeometryBody = {
       ...g,
       blocks: pick(g.blocks, 0),
-      slots: pick(g.slots, 1),
+      slots: g.slots.flatMap((slot, i) => {
+        if (!kept[1]?.has(i)) return [];
+        const fit = seams.get(i);
+        return [fit === undefined ? slot : { ...slot, gaps: slot.gaps.slice(0, fit) }];
+      }),
       fields: pick(g.fields, 2),
     };
-    const truncated = cut || out.blocks.length + out.slots.length + out.fields.length < total;
+    const truncated =
+      cut || seams.size > 0 || out.blocks.length + out.slots.length + out.fields.length < total;
     const body: GeometryBody = truncated ? { ...out, truncated: true } : out;
     // Sizes were counted in UTF-16 units; keys outside ASCII take more bytes, so check and shrink.
     if (bytes(body) <= budget || room <= 0) return body;

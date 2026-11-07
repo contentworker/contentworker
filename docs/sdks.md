@@ -749,7 +749,10 @@ https://docs.contentworker.app/guides/live-preview/.
 - Desync: a refused patch, or a patch the parser rejects as too large or malformed (with `seq` above
   the last applied), answers `error { kind: 'patch', seq }` and marks the page out of step. Every
   later patch is dropped with the same error and `seq` (the first that went missing) until an
-  `init` clears it. `init` sets the baseline to its `seq`, or 0 when absent.
+  `init` clears it. `init` sets the baseline to its `seq`, or 0 when absent. The queue of ops
+  waiting on a render (failed renders requeue theirs) is capped at 1,000 ops; a patch that would
+  pass it is refused the same way, so a page whose `onChange` keeps throwing resyncs instead of
+  growing without bound. A slot with more seams than fit (count or bytes) keeps those that do.
 - Geometry is event-driven (MutationObserver on the document, ResizeObserver on every marked
   element, passive scroll and resize listeners), coalesced into one `requestAnimationFrame` and
   skipped when unchanged. No polling. Up to 10,000 elements of each kind are measured;

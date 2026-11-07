@@ -473,6 +473,46 @@ describe('staying in step with the admin', () => {
     expect(posted('error')).toEqual([expect.objectContaining({ kind: 'render', seq: 1 })]);
   });
 
+  it('resyncs rather than hold an unbounded backlog of edits it could not render', async () => {
+    start({
+      onChange: () => {
+        throw new Error('always');
+      },
+    });
+    send(init());
+    await settle();
+    const hundred = Array.from({ length: 100 }, (_, i) => ({
+      op: 'setField',
+      field: 'title',
+      locale: 'en-US',
+      value: `v${i}`,
+    }));
+    for (let seq = 1; seq <= 11; seq++) send(msg('patch', { seq, ops: hundred }));
+    await settle();
+    expect(posted('error').filter((e) => e.kind === 'patch')).toEqual([
+      expect.objectContaining({ seq: 11 }),
+    ]);
+    expect(posted('rendered')).toEqual([]);
+  });
+
+  it('ignores an unreadable patch from anyone but the admin', async () => {
+    const p = start();
+    send(init());
+    await settle();
+    const big = msg('patch', {
+      seq: 1,
+      ops: [
+        { op: 'setField', field: 'title', locale: 'en-US', value: 'x'.repeat(MAX_MESSAGE_BYTES) },
+      ],
+    });
+    send(big, { origin: 'https://evil.test' });
+    send(big, { source: window });
+    send(setTitle(1, 'Still in step'));
+    await settle();
+    expect(posted('error')).toEqual([]);
+    expect(p.fields?.title).toEqual({ 'en-US': 'Still in step' });
+  });
+
   it('starts the count again on an init without a seq', async () => {
     const p = start();
     send(init());
@@ -522,6 +562,29 @@ describe('geometry', () => {
       guest,
     );
     expect(parsed.ok).toBe(true);
+  });
+
+  it('keeps a slot with more seams than allowed, with the seams that fit', () => {
+    const r = { x: 0, y: 0, w: 1, h: 1 };
+    const gaps = Array.from({ length: 5000 }, (_, index) => ({
+      index,
+      axis: 'y' as const,
+      rect: r,
+    }));
+    const body = fitGeometry(
+      {
+        blocks: [],
+        slots: [{ path: 'body', rect: r, gaps }],
+        fields: [],
+        scroll: { x: 0, y: 0 },
+        viewport: { w: 800, h: 600 },
+        docHeight: 600,
+      },
+      MAX_MESSAGE_BYTES - 64,
+    );
+    expect(body.slots).toHaveLength(1);
+    expect(body.slots[0]?.gaps).toHaveLength(4000);
+    expect(body.truncated).toBe(true);
   });
 
   it('flags nothing when everything fits', () => {
