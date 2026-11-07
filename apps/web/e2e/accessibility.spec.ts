@@ -573,6 +573,102 @@ test('the first-space notice and its dialog have no accessibility violations', a
   await scan(page, testInfo);
 });
 
+// The enterprise starter is off under the device tests (DEMO_STARTERS), so the browser is told it
+// is offered, the create goes through as an empty space, and the install's progress is stubbed:
+// what is scanned is the dialog's starter list and its progress view, running and failed.
+test('the enterprise starter and its install progress have no accessibility violations', async ({
+  page,
+}, testInfo) => {
+  const stamp = Date.now().toString(36);
+  const id = `enterprise-${stamp}`;
+  await asFreshDeployment(page, (spaceId) => spaceId === id);
+  await page.route(
+    (url) => url.pathname === '/starters',
+    (route) =>
+      route.fulfill({
+        json: {
+          items: [
+            {
+              id: 'sample',
+              title: 'Start with sample content',
+              description: 'Sample content.',
+              background: false,
+            },
+            { id: 'empty', title: 'Start empty', description: 'Nothing in it.', background: false },
+            {
+              id: 'enterprise',
+              title: 'Enterprise demo (Aldermoor)',
+              description: 'A global professional-services firm in 13 locales.',
+              background: true,
+            },
+          ],
+        },
+      }),
+  );
+  await page.route(
+    (url) => url.pathname === '/spaces',
+    async (route) => {
+      if (route.request().method() !== 'POST') return route.fallback();
+      const body = { ...(route.request().postDataJSON() as object), starter: 'empty' };
+      const res = await route.fetch({ postData: JSON.stringify(body) });
+      const created = (await res.json()) as Record<string, unknown>;
+      await route.fulfill({
+        response: res,
+        json: {
+          ...created,
+          starter: 'enterprise',
+          installing: { install: 'ins-a11y', jobId: 'job-a11y', steps: 25 },
+        },
+      });
+    },
+  );
+  let failed = false;
+  await page.route(
+    (url) => url.pathname.endsWith('/starter-installs/ins-a11y'),
+    (route) =>
+      route.fulfill({
+        json: {
+          install: 'ins-a11y',
+          starter: 'enterprise',
+          jobId: 'job-a11y',
+          steps: 25,
+          ...(failed
+            ? {
+                step: 12,
+                phase: 'newsroom',
+                title: 'Newsroom',
+                status: 'failed',
+                failures: [{ id: 'c00000', error: 'Chunk failed after 5 attempts' }],
+              }
+            : {
+                step: 7,
+                phase: 'people-2',
+                title: 'People: EMEIA and Asia-Pacific',
+                status: 'running',
+              }),
+        },
+      }),
+  );
+
+  await openCms(page, '/dashboard');
+  await page.getByRole('button', { name: 'Create a space' }).click();
+  const dialog = page.getByRole('dialog', { name: 'New space' });
+  await dialog.getByRole('radio', { name: /Enterprise demo/ }).check();
+  await scan(page, testInfo);
+
+  await dialog.getByLabel('Name').fill(`Enterprise ${stamp}`);
+  await expect(dialog.getByLabel('Space ID')).toHaveValue(id);
+  await dialog.getByRole('button', { name: 'Create space' }).click();
+  await expect(dialog.getByRole('status').filter({ hasText: 'step 7 of 25' })).toBeVisible();
+  await scan(page, testInfo);
+
+  failed = true;
+  await expect(dialog.getByText('The rest of the content wasn’t installed')).toBeVisible({
+    timeout: 10_000,
+  });
+  await scan(page, testInfo);
+});
+
 test('the webhook dialog has no accessibility violations', async ({ page }, testInfo) => {
   await openCms(page, '/settings/webhooks');
   await page.getByPlaceholder('https://example.com/hooks/cms').fill('https://example.com/a11y');
