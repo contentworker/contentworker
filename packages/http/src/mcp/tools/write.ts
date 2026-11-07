@@ -214,7 +214,7 @@ export function registerWriteTools(server: McpServer, t: ToolContext): void {
     {
       description:
         'Copy a content type’s definition (fields, display field, singleton, group, description, ' +
-        'icon, layout) under a new apiId and name, as a draft with no entries. Not its URL ' +
+        'icon, agent instructions, layout) under a new apiId and name, as a draft with no entries. Not its URL ' +
         'pattern.',
       inputSchema: toolSchema('model_clone_content_type', () =>
         z.object({

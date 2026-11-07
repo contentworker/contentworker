@@ -81,6 +81,18 @@ describe('content type details on D1', () => {
     expect(delivered).not.toHaveProperty('agentInstructions');
   });
 
+  it('reads the column’s own name, as a replica behind 0032 returns it, as no instructions', async () => {
+    const { ctx, scope } = await harness();
+    await createContentType(ctx, scope, DRAFT);
+    await testDb
+      .prepare(
+        'UPDATE content_types SET agent_instructions = ? WHERE space_id = ? AND environment_id = ? AND api_id = ?',
+      )
+      .bind('agent_instructions', scope.spaceId, scope.environmentId, 'article')
+      .run();
+    expect(await getContentType(ctx, scope, 'article')).not.toHaveProperty('agentInstructions');
+  });
+
   it('clears them with null', async () => {
     const { ctx, scope } = await harness();
     await createContentType(ctx, scope, DRAFT);

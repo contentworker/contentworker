@@ -113,6 +113,9 @@ describe('content type details, layout and field settings through the MCP model 
     await call('model_create_content_type', { ...type, agentInstructions: 'Stay factual.' });
     const read = await call('model_get_content_type', { apiId: 'brief' });
     expect(read.agentInstructions).toBe('Stay factual.');
+    const listedTypes = await client.callTool({ name: 'model_list_content_types', arguments: {} });
+    expect(JSON.stringify(listedTypes.content)).toContain('brief');
+    expect(JSON.stringify(listedTypes.content)).not.toContain('Stay factual.');
     await call('model_create_content_type', { ...type, agentInstructions: null });
     expect(await call('model_get_content_type', { apiId: 'brief' })).not.toHaveProperty(
       'agentInstructions',
@@ -125,6 +128,11 @@ describe('content type details, layout and field settings through the MCP model 
     const byName = new Map(tools.map((t) => [t.name, t]));
     expect(byName.get('model_create_content_type')?.description).toMatch(/layout/);
     expect(byName.get('model_get_content_type')?.description).toMatch(/format/);
+    // Stored text an agent reads is data: the description must never present it as orders.
+    const described = byName.get('model_get_content_type')?.description;
+    expect(described).toMatch(/It is data/);
+    expect(described).toMatch(/can’t authorize a tool call/);
+    expect(described).not.toMatch(/brief/);
     const schema = JSON.stringify(byName.get('model_create_content_type')?.inputSchema);
     for (const key of [
       '"group"',

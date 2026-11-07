@@ -536,6 +536,7 @@ interface ContentType {
   group?: string; // the admin's sidebar lists types under their group (≤ 100)
   description?: string; // what the type is for (≤ 2000)
   icon?: string; // a kebab-case icon name the admin draws (≤ 40)
+  agentInstructions?: string; // style guidance for MCP agents; never delivered (≤ 4000)
   layout?: ContentTypeLayout; // editor-only tabs and field groups; never delivered
   version: number; // bumped on each revision
   status: 'draft' | 'published';
@@ -572,9 +573,10 @@ interface ContentType {
   so a menu can be built ahead of a publish; `previewMenu` reports what Delivery does (`no_url`
   until then). A promotion of a published definition is assessed against what the target serves
   too, not only its working draft.
-- `group`, `description`, `icon` and `layout` follow one rule on a draft or revision: left out
-  keeps the stored value, `null` (or blank text) clears it, and a value stored as it stands passes
-  unchecked. They are columns on `content_types` (0026), not part of the `fields` JSON.
+- `group`, `description`, `icon`, `agentInstructions` and `layout` follow one rule on a draft or
+  revision: left out keeps the stored value, `null` (or blank text) clears it, and a value stored as
+  it stands passes unchecked. They are columns on `content_types` (0026, 0032), not part of the
+  `fields` JSON.
 - `layout` arranges the admin's entry form: `{ tabs: [{ apiId, name, groups: [{ name?, fields,
   collapsed? }] }] }` (at most 20 tabs, 50 groups a tab; names at most 100). Each top-level field
   is placed at most once, and a name that is not a field is refused (`checkLayout`), except that a
@@ -627,7 +629,7 @@ interface ContentType {
   `bulk.job_completed`, and records the outcome on the job (`BulkJobRepo.mergeConfig`,
   `config.typeDeletion`: `{ deleted: true }` or `{ deleted: false, reason }`, also when the job is
   stopped). `cloneContentType` defines a copy (fields, display field, singleton, group, description, icon,
-  layout; not `urlPattern`)
+  agent instructions, layout; not `urlPattern`)
   at version 1 under a new `apiId`, inserted by `ContentTypeRepo.create`, which never overwrites.
 - `checkUrlPattern(pattern, fields)` — a pattern is a path starting with `/` (at most
   `MAX_URL_PATTERN_LENGTH`, 512; no space, `?`, `#`, `[`, `]` or `\`) whose `{…}` placeholders are
