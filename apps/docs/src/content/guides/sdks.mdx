@@ -89,7 +89,7 @@ provider's HTML, so your front end decides how it looks. `embedCard(node)` retur
 a link card: `{ href, title, provider, providerName, kind, authorName?, thumbnail? }`, with an
 https `href` and a lazy, referrer-free thumbnail, or `undefined` for any other node. For a player,
 build it yourself from `provider` and `url` (an `<iframe>` of the provider's player, sized by
-`aspectRatio`). See [rich text](/guides/content-modeling/#rich-text).
+`aspectRatio`). See [rich text](/reference/field-types/#rich-text).
 
 The client takes the same filters, ordering and projection as the
 [Delivery API](/guides/reading-content/), throws `DeliveryError` on a failed request (with the

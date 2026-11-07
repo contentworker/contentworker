@@ -1,7 +1,7 @@
 # Field shapes, in full
 
 Field definitions as `model apply` and `POST /spaces/{space}/environments/{env}/content-types`
-take them. Docs: https://docs.contentworker.app/guides/content-modeling/#blocks
+take them. Docs: https://docs.contentworker.app/reference/field-types/#blocks
 
 ## A landing page with blocks
 

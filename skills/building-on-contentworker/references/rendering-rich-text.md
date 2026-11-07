@@ -4,7 +4,7 @@ A `RichText` value is a tree, `{ nodeType: 'document', content: [...] }`. Every 
 `nodeType`; containers have `content`; `text` nodes have `value` and `marks`; links and references
 keep their target in `data`. The API refuses any other node type on write, so a renderer that
 covers this list covers everything stored. Docs:
-https://docs.contentworker.app/guides/content-modeling/#rich-text
+https://docs.contentworker.app/reference/field-types/#rich-text
 
 ## Node types
 

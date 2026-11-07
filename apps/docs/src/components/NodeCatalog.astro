@@ -86,25 +86,25 @@ const label = CATEGORY_LABELS[category];
           )}
         </ul>
         {s.fields.length > 0 && (
-          <table>
-            <thead>
-              <tr>
-                <th>Field</th>
-                <th>Kind</th>
-                <th>Default</th>
-                <th>Notes</th>
+          <table class="cw-fields" role="table">
+            <thead role="rowgroup">
+              <tr role="row">
+                <th role="columnheader">Field</th>
+                <th role="columnheader">Kind</th>
+                <th role="columnheader">Default</th>
+                <th role="columnheader">Notes</th>
               </tr>
             </thead>
-            <tbody>
+            <tbody role="rowgroup">
               {s.fields.map((f) => (
-                <tr>
-                  <td>
+                <tr role="row">
+                  <td role="cell">
                     <code>{f.key}</code>
                     {f.required && ' (required)'}
                   </td>
-                  <td>{f.kind}</td>
-                  <td>{f.default !== undefined && <code>{show(f.default)}</code>}</td>
-                  <td>
+                  <td role="cell">{f.kind}</td>
+                  <td role="cell">{f.default !== undefined && <code>{show(f.default)}</code>}</td>
+                  <td role="cell">
                     {f.label}
                     {f.options && (
                       <>

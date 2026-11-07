@@ -19,7 +19,7 @@
 ^apps/web/app/app\.css$	packages/design/src/tokens.ts apps/docs/src/styles/brand.css DESIGN.md	prose
 #
 # Content model, editing and publishing:
-^packages/domain/src/(content-type|validation|locale|reference|rich-text)/	guides/content-modeling docs/domain-model.md	prose
+^packages/domain/src/(content-type|validation|locale|reference|rich-text)/	guides/content-modeling reference/field-types docs/domain-model.md	prose
 ^packages/domain/src/(entry|release|scheduling)/	guides/editing-and-publishing guides/releases-and-scheduling docs/domain-model.md	prose
 ^packages/application/src/(entries|content-types|versioning|branching)\.ts$	guides/content-modeling guides/editing-and-publishing docs/domain-model.md	prose
 ^packages/application/src/(publishing|releases|scheduling)\.ts$	guides/editing-and-publishing guides/releases-and-scheduling docs/events-and-webhooks.md docs/consistency.md	prose

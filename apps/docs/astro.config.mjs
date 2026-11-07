@@ -146,6 +146,7 @@ export default defineConfig({
           label: 'Reference',
           items: [
             { label: 'REST API', slug: 'reference/rest-api' },
+            { label: 'Field types', slug: 'reference/field-types' },
             { label: 'Node catalog', slug: 'reference/nodes' },
             { label: 'Workflow templates', slug: 'reference/workflow-templates' },
             { label: 'Permission scopes', slug: 'reference/scopes' },

@@ -624,6 +624,61 @@ mobile-starlight-toc a[aria-current="true"]::after {
   font-size: 0.8125rem;
 }
 
+/* On a phone a node's field table stacks: field, kind and default on one line, the notes under
+   them at full width. Four columns at 390px squeezed the notes a word wide and pushed them out of
+   view. The markup carries explicit table roles, so the change of display keeps its semantics. */
+@media (max-width: 40rem) {
+  .sl-markdown-content .cw-node table.cw-fields {
+    display: block;
+    overflow: visible;
+  }
+
+  .cw-fields thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .cw-fields tbody {
+    display: block;
+  }
+
+  .sl-markdown-content .cw-fields tr {
+    display: grid;
+    grid-template-columns: auto auto minmax(0, 1fr);
+    gap: 0.25rem 0.75rem;
+    align-items: baseline;
+    padding-block: 0.5rem;
+    border-bottom: 1px solid var(--cw-border);
+  }
+
+  .sl-markdown-content .cw-fields td {
+    display: block;
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+
+  .sl-markdown-content .cw-fields td:nth-child(2) {
+    color: var(--cw-muted-foreground);
+  }
+
+  .sl-markdown-content .cw-fields td:last-child {
+    grid-column: 1 / -1;
+  }
+
+  .sl-markdown-content .cw-fields td:last-child:empty {
+    display: none;
+  }
+
+  .sl-markdown-content .cw-fields tbody tr:hover {
+    background: none;
+  }
+}
+
 .sl-markdown-content :is(.cw-node, .cw-endpoint-group) details {
   margin-top: 0.75rem;
 }

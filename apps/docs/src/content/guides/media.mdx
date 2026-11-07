@@ -304,16 +304,14 @@ At its expiry the asset's files answer `410 Gone`, and within a minute it is unp
 it before its embargo lifts, or after it expired, is refused with `409` (`asset_embargoed` or
 `asset_expired`) and a message naming the date.
 
-## See where an asset is used
+## Use an asset in entries
+
+An entry points at an asset with a `Link` field with `linkType` `Asset`. Publishing the entry
+checks that the asset exists. See [References](/reference/field-types/#references).
 
 `GET …/assets/{id}/usage` lists the entries that link to the asset, and the details sheet shows the
 same as **Referenced by** (or "Not referenced by any entry."). The MCP tool is `asset_usage`.
 Check it before you unpublish something a live page depends on.
-
-## Reference an asset from an entry
-
-An entry points at an asset with a `Link` field with `linkType` `Asset`. Publishing the entry
-checks that the asset exists. See [Content modeling](/guides/content-modeling/#references).
 
 ## Serve resized images
 
@@ -343,6 +341,6 @@ tool or admin screen to change a space's locales afterwards.
 
 - [Delivering assets](/guides/delivering-assets/): media URLs, renditions and `srcset`.
 - [Reading content](/guides/reading-content/#assets): list and fetch published assets.
-- [Content modeling](/guides/content-modeling/#references): link assets from entries.
+- [References](/reference/field-types/#references): link assets from entries.
 - [Editing and publishing](/guides/editing-and-publishing/): publish entries that use them.
 - [AI features](/guides/ai/): the other AI helpers and their budget.
