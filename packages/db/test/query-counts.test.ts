@@ -375,6 +375,14 @@ const REQUESTS: readonly (readonly [string, () => Promise<unknown>])[] = [
     () => listPublishedEntries(ctx, scope, { contentTypeApiId: 'article' }),
   ],
   [
+    'delivery: GET /entries?order=sys.position',
+    () =>
+      listPublishedEntries(ctx, scope, {
+        contentTypeApiId: 'article',
+        order: [{ field: 'sys.position', direction: 'asc' }],
+      }),
+  ],
+  [
     'delivery: GET /entries filtered, ordered, limited',
     () =>
       listPublishedEntries(ctx, scope, {

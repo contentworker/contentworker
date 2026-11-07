@@ -103,6 +103,24 @@ describe('query language parity across REST, GraphQL and SDK', () => {
     app = await seed();
   });
 
+  it('REST: orders by the manual order, an entry never moved by its id', async () => {
+    // Production ids are UUIDv7, so this is creation order; this app's ids aren't time-ordered.
+    const ids = async (qs: string) => {
+      const res = await app.request(`${D}/entries?${qs}`, {
+        headers: { Authorization: 'Bearer cda' },
+      });
+      return ((await res.json()) as { items: { id: string }[] }).items.map((i) => i.id);
+    };
+    const all = await ids('content_type=article&order=sys.position');
+    expect(all).toHaveLength(3);
+    expect(all).toEqual([...all].sort());
+    expect(await ids('content_type=article&order=-sys.position')).toEqual([...all].reverse());
+    // With a filter it is sorted over the matches, by the same key.
+    const cats = await ids('fields.body[match]=cats&order=sys.position');
+    expect(cats).toHaveLength(2);
+    expect(cats).toEqual([...cats].sort());
+  });
+
   it('REST: field filter via field-level params', async () => {
     expect(await restTitles(app, 'fields.views[gt]=40&order=fields.views')).toEqual([
       'Bravo',

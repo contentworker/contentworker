@@ -5,6 +5,7 @@
   "delivery: GET /entries/:id?include=2": { "statements": 6, "roundTrips": 3 },
   "delivery: GET /entries/:id?include=1 (120 links)": { "statements": 4, "roundTrips": 2 },
   "delivery: GET /entries?content_type=article": { "statements": 2, "roundTrips": 2 },
+  "delivery: GET /entries?order=sys.position": { "statements": 2, "roundTrips": 2 },
   "delivery: GET /entries filtered, ordered, limited": { "statements": 2, "roundTrips": 2 },
   "delivery: GET /entries?query=guide": { "statements": 2, "roundTrips": 2 },
   "delivery: GET /entries?content_type=article&include=1": { "statements": 5, "roundTrips": 3 },

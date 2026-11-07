@@ -33,6 +33,14 @@ const authorship = {
     .datetime()
     .nullable()
     .describe('When it was first published (sys.firstPublishedAt); kept through unpublish'),
+  position: z
+    .string()
+    .nullable()
+    .optional()
+    .describe(
+      'Its own key in its content type’s manual order (order=sys.position); null until it is ' +
+        'moved, when it sorts by its id',
+    ),
 };
 
 export const entry = z.object({

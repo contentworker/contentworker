@@ -150,6 +150,7 @@ Delivery and Preview entry list endpoints, and GraphQL resolvers, share the quer
 | Authorship        | `sys.createdBy=me`                    | Preview and Management: `sys.createdBy`/`sys.updatedBy` (`me` is the caller), `sys.createdAt`, `sys.firstPublishedAt`; Delivery has `sys.firstPublishedAt` only |
 | Taxonomy          | `metadata.tags.slug=news`             | Delivery only: entries carrying a tag (`metadata.tags` by id; `metadata.concepts[.slug]` for concepts) |
 | Sort              | `order=fields.title,-sys.publishedAt` | Comma-separated; `-` prefix = descending                              |
+| Manual order      | `order=sys.position`                  | A content type's manual order on every surface (`-sys.position` reversed); an entry never moved sorts by its id, so creation order. Alone, it is answered in SQL from an index and pages like a plain list; with filters, search or other keys it sorts over the matches. Meaningful within one `content_type` |
 | Projection        | `select=fields.title,fields.body`     | Return only listed field apiIds                                       |
 | Full-text         | `query=foo`                           | FTS over string fields (published model on Delivery)                  |
 

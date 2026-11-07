@@ -1859,6 +1859,9 @@ export interface PublishedEntry {
   readonly firstPublishedAt?: string;
   /** Taxonomy associations captured at publish time (tags + concepts). */
   readonly metadata?: EntryMetadata;
+  /** The entry's place in its type's manual order, copied from the entry; absent when it was
+   *  never moved (it sorts by `entryId`). Live, not part of the published snapshot. */
+  readonly position?: string;
 }
 
 /** A unique value already taken, and by whom. */

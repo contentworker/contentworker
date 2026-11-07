@@ -495,6 +495,8 @@ export function entrySysOf(entry: Entry, updatedAt: string | undefined): Record<
     createdBy: entry.createdBy ?? undefined,
     updatedBy: entry.updatedBy ?? undefined,
     firstPublishedAt: entry.firstPublishedAt ?? undefined,
+    // The manual order: the entry's own key, or its id until it is moved.
+    position: entry.position ?? entry.id,
   };
 }
 

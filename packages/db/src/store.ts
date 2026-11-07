@@ -270,8 +270,24 @@ const RESERVED = 6;
 /** Default ceiling on candidate rows loaded for exact query evaluation. */
 export const DEFAULT_QUERY_SCAN_LIMIT = 5000;
 
+/**
+ * The direction of a query ordered by manual position alone, which SQL answers from the
+ * `*_by_position` indexes (0034_entry_position) like a plain list; undefined for any other order,
+ * or when an id cursor already fixes the order. Ties can't happen between keys a move writes
+ * (each lies strictly between two others), so the id after it runs the same way, and the index is
+ * read in one direction.
+ */
+const positionOrder = (q: EntryQuery): 'asc' | 'desc' | undefined => {
+  const [o, ...rest] = q.order ?? [];
+  if (!o || rest.length > 0 || o.field !== 'sys.position') return undefined;
+  if (q.afterEntryId !== undefined || q.after !== undefined) return undefined;
+  return o.direction;
+};
+
 const isAdvancedQuery = (q: EntryQuery) =>
-  Boolean(q.filters?.length || q.where || q.order?.length || q.search || q.select);
+  Boolean(
+    q.filters?.length || q.where || (q.order?.length && !positionOrder(q)) || q.search || q.select,
+  );
 
 function makeContentTypeRepo(x: Exec): ContentTypeRepo {
   const db = x.db;
@@ -659,6 +675,16 @@ function makeEntryRepo(
       // Keyset paging in the list's own order. Without an `order` that is (updatedAt, id),
       // which SQL walks itself; an `order` is sorted in JS over the scan, which applies the
       // cursor there.
+      const byPosition = positionOrder(query);
+      const position = sql`coalesce(${schema.entries.position}, ${schema.entries.id})`;
+      if (byPosition && query.afterRow && query.afterRow !== 'start') {
+        const at = String(query.afterRow.values[0] ?? '');
+        conditions.push(
+          byPosition === 'asc'
+            ? sql`(${position}, ${schema.entries.id}) > (${at}, ${query.afterRow.id})`
+            : sql`(${position}, ${schema.entries.id}) < (${at}, ${query.afterRow.id})`,
+        );
+      }
       const rowKeyset = query.afterRow !== undefined && !query.order?.length;
       if (rowKeyset && query.afterRow !== 'start' && query.afterRow) {
         const at = Date.parse(String(query.afterRow.values[0] ?? ''));
@@ -686,11 +712,15 @@ function makeEntryRepo(
       let select = withFields()
         .where(and(...conditions))
         .orderBy(
-          ...(keyset
-            ? [asc(schema.entries.id)]
-            : rowKeyset
-              ? [asc(schema.entries.updatedAt), asc(schema.entries.id)]
-              : [asc(schema.entries.updatedAt)]),
+          ...(byPosition
+            ? byPosition === 'asc'
+              ? [asc(position), asc(schema.entries.id)]
+              : [desc(position), desc(schema.entries.id)]
+            : keyset
+              ? [asc(schema.entries.id)]
+              : rowKeyset
+                ? [asc(schema.entries.updatedAt), asc(schema.entries.id)]
+                : [asc(schema.entries.updatedAt)]),
         )
         .$dynamic();
       // SQL pagination is only valid when there are no JS-side field predicates;
@@ -1172,6 +1202,14 @@ function makeEntryRepo(
           if (pre) conditions.push(pre);
         }
       }
+      // A list in manual order, read from `entry_published_by_position` (see `positionOrder`).
+      const byPosition = positionOrder(query);
+      const publishedPosition = sql`coalesce(${schema.entryPublished.position}, ${schema.entryPublished.entryId})`;
+      const publishedOrder = byPosition
+        ? byPosition === 'asc'
+          ? [asc(publishedPosition), asc(schema.entryPublished.entryId)]
+          : [desc(publishedPosition), desc(schema.entryPublished.entryId)]
+        : undefined;
       let select = db
         .select()
         .from(schema.entryPublished)
@@ -1181,9 +1219,10 @@ function makeEntryRepo(
         // with an entryId tie-break (same-transaction publishes share
         // publishedAt), which keeps offset paging reliable.
         .orderBy(
-          ...(query.afterEntryId !== undefined
-            ? [asc(schema.entryPublished.entryId)]
-            : [asc(schema.entryPublished.publishedAt), asc(schema.entryPublished.entryId)]),
+          ...(publishedOrder ??
+            (query.afterEntryId !== undefined
+              ? [asc(schema.entryPublished.entryId)]
+              : [asc(schema.entryPublished.publishedAt), asc(schema.entryPublished.entryId)])),
         )
         .$dynamic();
       if (!advanced) {
@@ -1209,6 +1248,7 @@ function makeEntryRepo(
           contentType: r.contentTypeApiId,
           publishedAt: r.publishedAt,
           firstPublishedAt: r.firstPublishedAt,
+          position: r.position ?? r.entryId,
           'metadata.tags': r.metadata?.tags ?? [],
           'metadata.concepts': r.metadata?.concepts ?? [],
         }),
@@ -7420,6 +7460,7 @@ const toEntry = (r: EntryRow): Entry => ({
   createdBy: r.createdBy,
   updatedBy: r.modifiedBy,
   firstPublishedAt: r.firstPublishedAt?.toISOString() ?? null,
+  position: r.position,
 });
 
 type AgentRunRow = typeof schema.agentRuns.$inferSelect;
@@ -7581,6 +7622,7 @@ const toPublished = (r: PubRow): PublishedEntry => ({
   publishedAt: r.publishedAt.toISOString(),
   ...(r.firstPublishedAt ? { firstPublishedAt: r.firstPublishedAt.toISOString() } : {}),
   ...(r.metadata ? { metadata: r.metadata } : {}),
+  ...(r.position ? { position: r.position } : {}),
 });
 
 const publishedRow = (scope: Scope, snapshot: PublishedEntry) => ({
