@@ -235,22 +235,14 @@ test('the audit log’s missed filter and backwards range have no accessibility 
   await scan(page, testInfo);
 });
 
-// Windows High Contrast (forced colours) overrides the current item's fill and its brand tick, so
-// the tick is kept as Highlight and the item takes a hairline outline (DESIGN.md, Brand): where
-// you are never rests on weight alone. Checked in each nav that marks a current item, and that a
+// Windows High Contrast (forced colours) overrides the current item's fill, so the item takes a
+// hairline outline (DESIGN.md, Brand): where you are never rests on weight alone. Checked in each nav that marks a current item, and that a
 // hovered current row keeps its own fill when colours aren't forced.
 test('the current item stays marked under forced colours, and hover never looks current', async ({
   page,
 }) => {
-  const marked = (locator: ReturnType<Page['locator']>) =>
-    locator.evaluate((el) => {
-      const own = getComputedStyle(el);
-      const tick = getComputedStyle(el, '::before');
-      return {
-        outline: own.outlineStyle,
-        tick: tick.content !== 'none' && tick.backgroundColor !== 'rgba(0, 0, 0, 0)',
-      };
-    });
+  const outline = (locator: ReturnType<Page['locator']>) =>
+    locator.evaluate((el) => getComputedStyle(el).outlineStyle);
 
   await page.emulateMedia({ forcedColors: 'active' });
   await openCms(page, '/settings/audit-log');
@@ -260,13 +252,13 @@ test('the current item stays marked under forced colours, and hover never looks 
     .locator('[aria-current="page"]');
   await expect(sidebar).toHaveCount(1);
   await expect(section).toHaveCount(1);
-  expect(await marked(sidebar)).toEqual({ outline: 'solid', tick: true });
-  expect(await marked(section)).toEqual({ outline: 'solid', tick: true });
+  expect(await outline(sidebar)).toBe('solid');
+  expect(await outline(section)).toBe('solid');
 
   await openCms(page, '/assets');
   const folder = page.getByRole('navigation', { name: 'Folders' }).locator('[aria-current="true"]');
   await expect(folder).toHaveCount(1);
-  expect(await marked(folder)).toEqual({ outline: 'solid', tick: true });
+  expect(await outline(folder)).toBe('solid');
 
   // Colours not forced: no outline, and the pointer on the current row leaves its fill alone,
   // while a row that isn't current takes a lighter one.
@@ -274,7 +266,7 @@ test('the current item stays marked under forced colours, and hover never looks 
   await openCms(page, '/settings/audit-log');
   const fill = (locator: ReturnType<Page['locator']>) =>
     locator.evaluate((el) => getComputedStyle(el).backgroundColor);
-  expect(await marked(sidebar)).toEqual({ outline: 'none', tick: true });
+  expect(await outline(sidebar)).toBe('none');
   const current = await fill(sidebar);
   await sidebar.hover();
   expect(await fill(sidebar)).toBe(current);

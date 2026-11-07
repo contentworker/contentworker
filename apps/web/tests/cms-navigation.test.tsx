@@ -237,10 +237,10 @@ describe('settings nav', () => {
     expect(within(nav).getByRole('link', { name: 'Webhooks' }).getAttribute('aria-current')).toBe(
       'page',
     );
-    // The current section wears the shared tick; the others don't.
-    expect(within(nav).getByRole('link', { name: 'Webhooks' }).className).toContain('tick-current');
+    // The current section is the shared current item; the others aren't.
+    expect(within(nav).getByRole('link', { name: 'Webhooks' }).className).toContain('current-item');
     expect(within(nav).getByRole('link', { name: 'Audit log' }).className).not.toContain(
-      'tick-current',
+      'current-item',
     );
   });
 });

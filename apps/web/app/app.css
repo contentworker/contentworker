@@ -442,57 +442,14 @@
   padding-left: max(--spacing(--value(integer)), var(--safe-left));
 }
 
-/* The current item's tick (DESIGN.md, Brand): a 2px brand rule 1rem long, centred on the item's
-   leading edge, so it is one length on every row height. The item is `relative`. Under forced
-   colours the fill and the brand are overridden, so the tick turns Highlight (kept by
-   `forced-color-adjust`) and the item takes a hairline outline (left to the focus outline while
-   focused): where you are never rests on weight alone. */
-@utility tick-current {
-  &::before {
-    content: "";
-    position: absolute;
-    inset-inline-start: 0;
-    top: 50%;
-    height: 1rem;
-    width: 2px;
-    translate: 0 -50%;
-    border-radius: 9999px;
-    background: var(--brand);
-  }
+/* The current item (DESIGN.md, Brand): its fill, 500 and ink say where you are. Under forced
+   colours the fill is overridden, so the item takes a hairline outline (left to the focus outline
+   while focused): where you are never rests on weight alone. */
+@utility current-item {
   @media (forced-colors: active) {
     &:not(:focus-visible) {
       outline: 1px solid CanvasText;
       outline-offset: -1px;
-    }
-    &::before {
-      forced-color-adjust: none;
-      background: Highlight;
-    }
-  }
-}
-
-/* The same tick turned to run along an item's top: the phone's tab bar, where tabs sit side by
-   side. */
-@utility tick-current-top {
-  &::before {
-    content: "";
-    position: absolute;
-    top: 0;
-    left: 50%;
-    width: 1rem;
-    height: 2px;
-    translate: -50% 0;
-    border-radius: 9999px;
-    background: var(--brand);
-  }
-  @media (forced-colors: active) {
-    &:not(:focus-visible) {
-      outline: 1px solid CanvasText;
-      outline-offset: -1px;
-    }
-    &::before {
-      forced-color-adjust: none;
-      background: Highlight;
     }
   }
 }

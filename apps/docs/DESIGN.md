@@ -18,8 +18,9 @@ pill, state badges, node cards, and the endpoint index.
 - **Match system by default**, as the admin; Light and Dark are one select away. The choice is
   stored as `starlight-theme` and read by the explorer too.
 - **Achromatic neutrals, one accent.** Every neutral is chroma 0. The accent is Ledger's `brand`
-  purple, the colour of the mark: the mark in the top bar, the current page's tick, the current
-  table-of-contents entry's stretch of the rail, keyboard focus (`--cw-ring`) and the text selection, as in the admin.
+  purple, the colour of the mark: the mark in the top bar, keyboard focus (`--cw-ring`) and the
+  text selection, as in the admin. Where you are (the current page, the current table-of-contents
+  entry) is ink, never brand.
   Primary buttons stay ink. Links are Ledger's work blue (`link`), underlined.
 - **Colour means status** (Ledger's One Meaning Rule), in state badges and callouts: `ok`
   (published, tip), `wait` (changed, caution), `bad` (danger), `idle` (draft, archived).
@@ -52,8 +53,10 @@ hand-edit it. `packages/design/tests/tokens.test.ts` fails when it is stale.
   hairline outline.
 - **Table of contents** (`TableOfContents.astro` over Starlight's): entries 13px muted on a 2px
   hairline rail that steps in on an S-curve where a heading nests. The current entry is ink 500
-  and its stretch of the rail is brand, sliding along the rail (curves included) as you read;
-  still under reduced motion. Starlight's `starlight-toc` still decides which entry is current.
+  and its stretch of the rail is ink, sliding along the rail (curves included) as you read;
+  still under reduced motion; on a phone, Starlight's check mark is ink too. The rail is the
+  column's edge, so no rule stands between it and the content. Starlight's `starlight-toc` still
+  decides which entry is current.
 - **Sections and tables**: an h2 opens on a hairline; table column labels are the admin's label
   style (12px 500 muted, sentence case, never uppercase).
 - **Callouts**: a 1px border at 30% of the hue and a 6% tint; never a coloured side stripe.

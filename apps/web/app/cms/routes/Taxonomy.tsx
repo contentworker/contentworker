@@ -227,8 +227,8 @@ function ConceptsTab() {
                   <button
                     type="button"
                     aria-current={s.id === schemeId ? 'true' : undefined}
-                    className={`relative flex-1 truncate rounded-lg px-2.5 py-1 text-left text-sm ${
-                      s.id === schemeId ? 'tick-current bg-muted font-medium' : 'hover:bg-muted/60'
+                    className={`flex-1 truncate rounded-lg px-2.5 py-1 text-left text-sm ${
+                      s.id === schemeId ? 'current-item bg-muted font-medium' : 'hover:bg-muted/60'
                     }`}
                     onClick={() => setPickedSchemeId(s.id)}
                   >

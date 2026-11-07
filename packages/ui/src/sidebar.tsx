@@ -376,8 +376,8 @@ function SidebarMenuItem({ className, ...props }: React.ComponentProps<'li'>) {
 }
 
 /*
- * The current page is the accent fill, 500, and a short brand tick at the row's start (the tab bar
- * marks its tab the same way, along its top), so it reads at a glance on the rail too. Hover is a
+ * The current page is the accent fill, 500 and its icon in brand, so it reads at a glance on the
+ * rail too. Hover is a
  * step lighter and never lands on the current row, so a resting pointer can't look like a second
  * current page.
  *
@@ -386,7 +386,7 @@ function SidebarMenuItem({ className, ...props }: React.ComponentProps<'li'>) {
  * screen readers.
  */
 const sidebarMenuButtonVariants = cva(
-  'peer/menu-button group/menu-button relative flex w-full items-center gap-2.5 overflow-hidden whitespace-nowrap rounded-lg px-2.5 py-2 text-left text-sm focus-visible:outline-hidden ring-sidebar-ring transition-[color,background-color] not-data-active:hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground focus-visible:ring-2 not-data-active:active:bg-sidebar-accent/60 active:text-sidebar-accent-foreground disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 group-has-data-[sidebar=menu-action]/menu-item:pr-8 group-has-data-[sidebar=menu-badge]/menu-item:pr-11 not-data-active:data-open:bg-sidebar-accent/60 data-active:bg-sidebar-accent data-active:font-medium data-active:text-sidebar-accent-foreground data-active:tick-current @max-[8rem]:pr-2.5! @max-[8rem]:[&>span:last-child]:sr-only [&>span:last-child]:min-w-0 [&>span:last-child]:flex-1 [&>span:last-child]:truncate [&_svg]:size-4 [&_svg]:shrink-0',
+  'peer/menu-button group/menu-button relative flex w-full items-center gap-2.5 overflow-hidden whitespace-nowrap rounded-lg px-2.5 py-2 text-left text-sm focus-visible:outline-hidden ring-sidebar-ring transition-[color,background-color] not-data-active:hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground focus-visible:ring-2 not-data-active:active:bg-sidebar-accent/60 active:text-sidebar-accent-foreground disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 group-has-data-[sidebar=menu-action]/menu-item:pr-8 group-has-data-[sidebar=menu-badge]/menu-item:pr-11 not-data-active:data-open:bg-sidebar-accent/60 data-active:bg-sidebar-accent data-active:font-medium data-active:text-sidebar-accent-foreground data-active:current-item @max-[8rem]:pr-2.5! @max-[8rem]:[&>span:last-child]:sr-only [&>span:last-child]:min-w-0 [&>span:last-child]:flex-1 [&>span:last-child]:truncate [&_svg]:size-4 [&_svg]:shrink-0',
   {
     variants: {
       variant: {

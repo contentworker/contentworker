@@ -1,8 +1,8 @@
 ---
 // The table of contents on a rail: one hairline down the entries' start, stepping in on a curve
-// where a heading nests, with the current entry's stretch drawn over it in brand. Starlight's
+// where a heading nests, with the current entry's stretch drawn over it in ink. Starlight's
 // `starlight-toc` still decides which entry is current (it sets `aria-current`); this only draws
-// the line and slides the brand segment to wherever that attribute lands.
+// the line and slides the ink segment to wherever that attribute lands.
 // biome-ignore lint/correctness/noUnusedImports: rendered below
 import Default from '@astrojs/starlight/components/TableOfContents.astro';
 ---
@@ -104,7 +104,7 @@ import Default from '@astrojs/starlight/components/TableOfContents.astro';
       this.#follow(true);
     }
 
-    /** Slide the brand stretch to the current entry; place it without motion the first time. */
+    /** Slide the ink stretch to the current entry; place it without motion the first time. */
     #follow(immediate = false) {
       const active = this.#active;
       if (!active) return;
@@ -155,7 +155,7 @@ import Default from '@astrojs/starlight/components/TableOfContents.astro';
   }
 
   .cw-toc-rail-active {
-    stroke: var(--cw-brand);
+    stroke: var(--cw-foreground);
     opacity: 0;
     transition:
       stroke-dasharray 300ms cubic-bezier(0.32, 0.72, 0, 1),

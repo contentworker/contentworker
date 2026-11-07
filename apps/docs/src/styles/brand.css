@@ -134,8 +134,7 @@ starlight-theme-select select {
 }
 
 /* Table of contents on a rail (TableOfContents.astro): a hairline down the entries' start, the
-   current entry's stretch of it in brand. Entries are muted until hovered or current, then ink; the
-   rail carries the colour, so the current entry reads as where you are without a second accent. */
+   current entry's stretch of it in ink. Entries are muted until hovered or current, then ink 500. */
 starlight-toc a {
   padding-block: 0.375rem;
   padding-inline: calc(1rem * var(--depth) + 1.125rem) 0.5rem;
@@ -175,9 +174,14 @@ mobile-starlight-toc a[aria-current="true"] {
 }
 
 /* Starlight's check mark beside the current entry takes the text accent (the link blue); where
-   you are is brand. */
+   you are is ink, never a colour. */
 mobile-starlight-toc a[aria-current="true"]::after {
-  background-color: var(--cw-brand);
+  background-color: var(--cw-foreground);
+}
+
+/* The right column sits on the page without a rule between it and the content. */
+.right-sidebar {
+  border-inline-start: 0;
 }
 
 /* ── Sidebar (the admin's: panel ground, ghost items) ───────────────────── */
@@ -202,45 +206,20 @@ mobile-starlight-toc a[aria-current="true"]::after {
   color: var(--cw-foreground);
 }
 
-/* A nested group is indented, not ruled: the admin draws no guide lines, and Starlight's hairline
-   stood 9px from the current item's tick, two vertical lines where there should be one. */
-.sidebar-content ul ul li {
-  border-inline-start: 0;
-}
-
-/* Where you are is the admin's active nav item: the raised fill, 500, and a short brand tick at the
-   row's start, set in from the pill's round end so the whole tick sits on the fill. */
+/* Where you are is the admin's active nav item: the raised fill, ink and 500. */
 .sidebar-content a[aria-current="page"],
 .sidebar-content a[aria-current="page"]:hover,
 .sidebar-content a[aria-current="page"]:focus {
-  position: relative;
   background: var(--cw-muted);
   color: var(--cw-foreground);
   font-weight: 500;
 }
 
-.sidebar-content a[aria-current="page"]::before {
-  content: "";
-  position: absolute;
-  top: 50%;
-  height: 1rem;
-  translate: 0 -50%;
-  inset-inline-start: 0.25rem;
-  width: 2px;
-  border-radius: 999px;
-  background: var(--cw-brand);
-}
-
-/* Under forced colours the fill and the brand are overridden: the tick turns Highlight and the item
-   takes a hairline outline, as in the admin. */
+/* Under forced colours the fill is overridden: the item takes a hairline outline, as in the admin. */
 @media (forced-colors: active) {
   .sidebar-content a[aria-current="page"]:not(:focus-visible) {
     outline: 1px solid CanvasText;
     outline-offset: -1px;
-  }
-  .sidebar-content a[aria-current="page"]::before {
-    forced-color-adjust: none;
-    background: Highlight;
   }
 }
 
