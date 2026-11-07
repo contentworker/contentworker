@@ -8,6 +8,7 @@ import {
   deleteContentTypeWithEntries,
   getPreviewEntry,
   moderateEntry,
+  moveEntry,
   publishContentType,
   publishEntry,
   unpublishEntry,
@@ -329,6 +330,38 @@ export function registerWriteTools(server: McpServer, t: ToolContext): void {
       authorizeContent(principal, 'write', contentTypeApiId);
       assertWritableFields(principal, contentTypeApiId, fields);
       return ok(await validateEntry(ctx, scopeOf(args), { contentTypeApiId, fields }));
+    },
+  );
+
+  server.registerTool(
+    'entries_move',
+    {
+      description:
+        "Move an entry in its content type's manual order (what order=sys.position sorts by): " +
+        'right after another entry of the same type (after: id, or null for first) or right ' +
+        'before one (before: id, or null for last); send exactly one. Live, like a menu: no new ' +
+        "version and no publish, and Delivery serves a published entry's new place at once. " +
+        'Needs write on the type.',
+      inputSchema: toolSchema('entries_move', () =>
+        z.object({
+          id: z.string(),
+          after: z.string().nullable().optional().describe('Place it right after this entry'),
+          before: z.string().nullable().optional().describe('Place it right before this entry'),
+          ...scopeArgs,
+        }),
+      ),
+    },
+    async (args) => {
+      guard(SCOPES.contentWrite, scopeOf(args));
+      await guardEntry(scopeOf(args), args.id, 'write');
+      if ((args.after === undefined) === (args.before === undefined)) {
+        throw new ValidationError([
+          { field: 'after', message: 'Send exactly one of after and before' },
+        ]);
+      }
+      const place =
+        args.after !== undefined ? { after: args.after } : { before: args.before ?? null };
+      return ok(await moveEntry(ctx, scopeOf(args), args.id, place));
     },
   );
 

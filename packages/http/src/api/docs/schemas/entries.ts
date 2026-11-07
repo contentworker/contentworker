@@ -123,3 +123,9 @@ export const searchHits = z.object({
     }),
   ),
 });
+
+export const movedEntry = z.object({
+  id: z.string(),
+  contentTypeApiId: z.string(),
+  position: z.string().describe('Its key now: what order=sys.position sorts by'),
+});

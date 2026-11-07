@@ -462,6 +462,12 @@ export const updateEntryBody = z.object({ fields: zFieldValues });
  * A dry run of a save: `contentTypeApiId` judges the fields as a new entry, `entryId` as a new
  * version of that entry.
  */
+// A move in a type's manual order: right after one entry (null: first), or right before one
+// (null: last). Exactly one of the two.
+export const moveEntryBody = z.union([
+  z.strictObject({ after: zId.nullable() }),
+  z.strictObject({ before: zId.nullable() }),
+]);
 export const validateEntryBody = z
   .object({
     contentTypeApiId: zId.optional().describe('Validate as a new entry of this content type'),

@@ -89,6 +89,11 @@ export async function planPurges(
   if (event.type === 'asset.ingested' && event.published) {
     plan.delivery.add(deliveryScopeTag(spaceId, environmentId));
   }
+  // A move changes the manual order Delivery serves (`order=sys.position`) only for a published
+  // entry: a draft's place is in no delivery response yet.
+  if (event.type === 'entry.moved' && event.published) {
+    plan.delivery.add(deliveryScopeTag(spaceId, environmentId));
+  }
   // A share page of a collection lists its members' published files: a member published or
   // unpublished makes every such page stale. (A deleted asset has left its collections by now;
   // its delete announced each one with `asset_collection.changed`.)

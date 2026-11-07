@@ -739,6 +739,15 @@ new entry lands at the end without a key being written. No save writes `position
 aggregate can't move an entry back; triggers copy it to `entry_published`, so Delivery orders
 published rows by the same key.
 
+A move (`moveEntry`, `packages/application/src/entry-order.ts`; `POST …/entries/:id/move`, MCP
+`entries_move`) is live, like a menu's order: no version, no status or `updatedAt` change. It
+writes one key between its new neighbours, each write only if every key it read is unchanged and
+nothing else has landed in the gap since, so two moves into one gap can't both land; a lost race
+is read again and retried, up to three times. When a gap runs out (or a key would pass 96
+characters) it re-keys up to 16 neighbours on each side with it. Trashed entries keep their keys
+and count as neighbours, so a restored entry returns to its place. The move and an `entry.moved`
+event commit together; a published entry's move purges Delivery.
+
 ### Comparing versions
 
 `diffEntryFields(before, after, contentType?)` (`packages/domain/src/entry/entry-diff.ts`) is the

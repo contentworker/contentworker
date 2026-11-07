@@ -204,6 +204,16 @@ export async function dispatchEvent(
     await deliverWebhook(ctx, deps, webhook, event, 1);
   }
 
+  // A published entry's move reorders the type's lists, so their cached results go; no entry's
+  // own content changed, so no entry tag does.
+  if (deps.cache && event.type === 'entry.moved' && event.published) {
+    const tag = contentTypeTag(scope, event.contentTypeApiId);
+    if (!deps.invalidatedTags?.has(tag)) {
+      await deps.cache.invalidateTags([tag]);
+      deps.invalidatedTags?.add(tag);
+    }
+  }
+
   // 2. Cache invalidation for entry events: the entry itself plus every entry
   // that transitively embeds it (A embeds B embeds C → publishing C refreshes
   // A and B). One bounded reverse-closure query, one batched invalidation.

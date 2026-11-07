@@ -608,6 +608,55 @@ function makeEntryRepo(
       );
       return row ? ((await toEntriesWithFields([row]))[0] ?? null) : null;
     },
+    async positionNeighbors(scope, contentTypeApiId, key, side, limit, excludeId) {
+      const e = schema.entries;
+      const position = sql<string>`coalesce(${e.position}, ${e.id})`;
+      const conditions = [scopeFilter(e, scope), eq(e.contentTypeApiId, contentTypeApiId)];
+      if (key !== null) {
+        conditions.push(side === 'after' ? sql`${position} > ${key}` : sql`${position} < ${key}`);
+      }
+      if (excludeId !== undefined) conditions.push(ne(e.id, excludeId));
+      return db
+        .select({ id: e.id, position })
+        .from(e)
+        .where(and(...conditions))
+        .orderBy(...(side === 'after' ? [asc(position), asc(e.id)] : [desc(position), desc(e.id)]))
+        .limit(limit);
+    },
+    async setPositions(scope, contentTypeApiId, writes, guard) {
+      const e = schema.entries;
+      const position = sql`coalesce(${e.position}, ${e.id})`;
+      const ok = (predicate: SQL) =>
+        x.db.insert(schema.guard).select(sql`SELECT ${predicate} AS ok`);
+      const queries: Query[] = [];
+      // The anchor and the gap are checked before any key moves, against what the caller read.
+      if (guard.anchor) {
+        queries.push(
+          ok(
+            sql`EXISTS (SELECT 1 FROM ${e} WHERE ${scopeFilter(e, scope)} AND ${e.id} = ${guard.anchor.id} AND ${position} = ${guard.anchor.position})`,
+          ),
+        );
+      }
+      const lo = guard.lo === null ? sql`1` : sql`${position} > ${guard.lo}`;
+      const hi = guard.hi === null ? sql`1` : sql`${position} < ${guard.hi}`;
+      const moved = JSON.stringify(writes.map((w) => w.id));
+      queries.push(
+        ok(
+          sql`NOT EXISTS (SELECT 1 FROM ${e} WHERE ${scopeFilter(e, scope)} AND ${e.contentTypeApiId} = ${contentTypeApiId} AND ${lo} AND ${hi} AND ${e.id} NOT IN (SELECT value FROM json_each(${moved})))`,
+        ),
+      );
+      for (const w of writes) {
+        queries.push(
+          x.db
+            .update(e)
+            .set({ position: w.position })
+            .where(and(scopeFilter(e, scope), eq(e.id, w.id), sql`${position} = ${w.expected}`)),
+          ok(sql`changes() = 1`),
+        );
+      }
+      queries.push(x.db.delete(schema.guard));
+      await writeAll(x, queries);
+    },
     async getMany(scope, ids) {
       const rows = await selectChunked(
         ids,

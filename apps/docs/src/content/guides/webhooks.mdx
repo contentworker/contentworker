@@ -91,6 +91,7 @@ Every event has an `id` (stable, so you can deduplicate), a `type`, the `scope`
 | ------------------------ | ----------------------------------------------------- | --------------------------------------- |
 | `entry.published`        | `entryId`, `contentTypeApiId`, `version`, `fields`    | An entry is published                   |
 | `entry.unpublished`      | `entryId`, `contentTypeApiId`                         | An entry is unpublished, or trashed while live |
+| `entry.moved`            | `entryId`, `contentTypeApiId`, `position`, `published` | An entry moved in its type's manual order (live; no publish) |
 | `asset.published`        | `assetId`, `replacedVersion` (when it delivered a new file in that version's place) | An asset is published                   |
 | `asset.unpublished`      | `assetId`                                             | An asset is unpublished, or archived, deleted or expired while live |
 | `asset.deleted`          | `assetId`, `r2Key` or `videoId`                       | An asset is deleted permanently         |

@@ -8,6 +8,7 @@ import type { EntryFields, Scope } from './types';
 export type DomainEvent =
   | EntryPublishedEvent
   | EntryUnpublishedEvent
+  | EntryMovedEvent
   | ContentTypePublishedEvent
   | ContentTypeDeletedEvent
   | ReleasePublishedEvent
@@ -59,6 +60,21 @@ export interface EntryUnpublishedEvent extends BaseEvent {
   readonly type: 'entry.unpublished';
   readonly entryId: string;
   readonly contentTypeApiId: string;
+}
+
+/**
+ * An entry moved in its content type's manual order (`order=sys.position`). Live, like a menu's
+ * change: no version, no publish. When it is published, the Delivery lists ordered by position are
+ * stale, so `published` decides the purge. A move that re-keyed its neighbours is still one event.
+ */
+export interface EntryMovedEvent extends BaseEvent {
+  readonly type: 'entry.moved';
+  readonly entryId: string;
+  readonly contentTypeApiId: string;
+  /** Its new key. */
+  readonly position: string;
+  /** Whether it is published, so what Delivery serves changed. */
+  readonly published: boolean;
 }
 
 /**
