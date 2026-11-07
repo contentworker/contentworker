@@ -22,7 +22,7 @@ import { syncAssetGate } from '../asset-gate';
 import { assetReindexChunkRunner, startAssetReindex } from '../asset-ingest';
 import { type AssetSearchDeps, clearAssetSearch, indexAssetForSearch } from '../asset-search';
 import { deleteAssetFiles } from '../assets';
-import { runBulkChunk } from '../bulk-jobs';
+import { type BulkChunkDeps, runBulkChunk } from '../bulk-jobs';
 import { contentTypePurgeChunkRunner, finishContentTypeDeletion } from '../content-type-lifecycle';
 import type { AppContext } from '../context';
 import { entryFieldsChunkRunner } from '../entry-fields-bulk';
@@ -108,6 +108,12 @@ export interface DispatchDeps {
    * email), the event is dropped: the inviter shares the link they were shown.
    */
   readonly inviteMail?: InviteMailDeps;
+  /**
+   * Runs one phase of a space starter's background install (`starter_install` bulk chunks): the
+   * engine binds `@contentworker/seed`'s runner, which this layer can't import. Absent, those
+   * chunks stay claimable for a consumer that has it.
+   */
+  readonly starterChunk?: BulkChunkDeps['starterChunk'];
 }
 
 /**
@@ -148,6 +154,7 @@ export async function dispatchEvent(
       ...(deps.assetIngest
         ? { assetReindexChunk: assetReindexChunkRunner(ctx, deps.assetIngest) }
         : {}),
+      ...(deps.starterChunk ? { starterChunk: deps.starterChunk } : {}),
     });
     return;
   }

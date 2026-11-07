@@ -23,6 +23,11 @@ export interface SeedConfig {
    * pagination benchmarks (e.g. 100 → ~44k entries).
    */
   readonly scale?: number;
+  /**
+   * Also install the enterprise starter's brand into its own space (`aldermoor`). Default true:
+   * local dev always has it; tests of the demo dataset alone turn it off.
+   */
+  readonly enterprise?: boolean;
 }
 
 /**

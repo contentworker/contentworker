@@ -60,4 +60,6 @@ export interface McpDeps {
   readonly accessPolicy?: AccessPolicy;
   /** The admin's origin, where invitation links open (as AuthDeps' `inviteOrigin`). */
   readonly inviteOrigin?: string;
+  /** Whether space_create offers the demo starters (as AuthDeps' `demoStarters`). */
+  readonly demoStarters?: boolean;
 }

@@ -14,6 +14,7 @@ import { seedAutomation } from './automation';
 import { seedCollaboration } from './collaboration';
 import { seedContentModel } from './content-model';
 import { seedCorpus } from './corpus';
+import { enterpriseSpaceInput, installEnterpriseNow } from './enterprise/install';
 import { seedGovernance } from './governance';
 import { seedReleases } from './releases';
 import { seedTaxonomy } from './taxonomy';
@@ -21,12 +22,27 @@ import type { SeedConfig, SeedDeps, SeedRun } from './types';
 
 export { volumes } from './corpus';
 export {
+  ENTERPRISE_STARTER_INFO,
+  type EnterpriseInstallStarted,
+  enterpriseSpaceInput,
+  installEnterpriseNow,
+  runEnterprisePhase,
+  STARTER_INSTALL_ACTION,
+  type StarterInstallConfig,
+  startEnterpriseInstall,
+  starterChunkRunner,
+} from './enterprise/install';
+export { ENTERPRISE_PHASES, type EnterprisePhase } from './enterprise/phases';
+export {
+  availableStarters,
   type CreatedSpace,
+  type CreateSpaceWithStarterOptions,
   createSpaceWithStarter,
   installStarter,
   STARTER_VOLUMES,
   STARTERS,
   type Starter,
+  type StarterInfo,
   type StarterSummary,
 } from './starter';
 export type { SeedConfig, SeedDeps } from './types';
@@ -38,6 +54,10 @@ export { seedConfigFrom } from './types';
  * seed (it is created last).
  */
 const MARKER_TAG = 'demo-seed-v3';
+
+/** The local dev space the enterprise starter installs into, and its completion marker. */
+export const ENTERPRISE_DEV_SPACE = 'aldermoor';
+const ENTERPRISE_MARKER_TAG = 'enterprise-starter-v1';
 
 /**
  * Idempotently bootstraps a fully-populated dev environment: the seed space,
@@ -102,7 +122,10 @@ export async function seedDev(
     }
   }
 
-  // 3. Rich demo dataset, short-circuited by the marker tag once complete.
+  // 3. The enterprise brand in its own space (local dev only: off when `enterprise` is false).
+  if (config.enterprise !== false) await seedEnterpriseSpace(ctx, config, deps);
+
+  // 4. Rich demo dataset, short-circuited by the marker tag once complete.
   const tags = await listTags(ctx, scope);
   if (tags.some((t) => t.name === MARKER_TAG)) return;
 
@@ -125,6 +148,26 @@ export async function seedDev(
 
   await createTag(ctx, scope, { name: MARKER_TAG });
   logger.info({ scale: run.scale }, 'seed: demo dataset complete');
+}
+
+/**
+ * The enterprise starter's brand in its own space beside the demo dataset, for local dev: installed
+ * in process (a local request has no D1 call limit), once; the marker tag, written last, makes
+ * every later boot one query.
+ */
+async function seedEnterpriseSpace(ctx: AppContext, config: SeedConfig, deps: SeedDeps) {
+  const scope = { spaceId: ENTERPRISE_DEV_SPACE, environmentId: 'main' };
+  if (await spaceExists(ctx, scope)) {
+    if ((await listTags(ctx, scope)).some((t) => t.name === ENTERPRISE_MARKER_TAG)) return;
+  } else {
+    await createSpace(
+      ctx,
+      enterpriseSpaceInput({ spaceId: scope.spaceId, name: 'Aldermoor', defaultLocale: 'en-US' }),
+    );
+  }
+  await installEnterpriseNow(ctx, scope, deps);
+  await createTag(ctx, scope, { name: ENTERPRISE_MARKER_TAG });
+  logger.info({ space: scope.spaceId, from: config.spaceId }, 'seed: enterprise space complete');
 }
 
 async function spaceExists(ctx: AppContext, scope: { spaceId: string; environmentId: string }) {

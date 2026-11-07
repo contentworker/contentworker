@@ -90,6 +90,7 @@ export * from './snapshot-jobs';
 export * from './snapshots';
 export * from './space-export-import';
 export * from './spaces';
+export * from './starter-installs';
 export * from './tasks';
 export * from './taxonomy';
 export * from './taxonomy-delivery';

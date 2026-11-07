@@ -24,6 +24,7 @@
     "@contentworker/ports": "workspace:*",
     "@contentworker/redaction": "workspace:*",
     "@contentworker/security": "workspace:*",
+    "@contentworker/seed": "workspace:*",
     "@contentworker/test-kit": "workspace:*",
     "agents": "catalog:"
   },

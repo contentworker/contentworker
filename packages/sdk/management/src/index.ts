@@ -1143,8 +1143,37 @@ export interface SpaceLocales {
   readonly localeSettings: Readonly<Record<string, Required<LocaleSettings>>>;
 }
 
-/** `sample` installs sample content into the new space's first environment; `empty` doesn't. */
-export type SpaceStarter = 'empty' | 'sample';
+/**
+ * `sample` installs sample content into the new space's first environment; `empty` doesn't.
+ * `enterprise`, where the deployment offers it (`spaces.starters()`), installs a large demo brand
+ * in the background: follow it with `spaces.starterInstall`.
+ */
+export type SpaceStarter = 'empty' | 'sample' | 'enterprise';
+
+/** A starter as the deployment offers it, in the order a picker lists them. */
+export interface SpaceStarterInfo {
+  readonly id: SpaceStarter;
+  readonly title: string;
+  readonly description: string;
+  /** Installs after the space is created, in the background, rather than before it returns. */
+  readonly background: boolean;
+}
+
+/** Where a background starter install has got to. */
+export interface StarterInstall {
+  readonly install: string;
+  readonly starter: string;
+  /** The phase running now, or the last to run (1-based), of `steps`. */
+  readonly step: number;
+  readonly steps: number;
+  readonly phase: string;
+  readonly title: string;
+  /** That phase's bulk job. */
+  readonly jobId: string;
+  readonly status: 'running' | 'completed' | 'failed';
+  /** What failed in the phase that stopped the install. */
+  readonly failures?: readonly { readonly id: string; readonly error: string }[];
+}
 
 export interface CreateSpaceInput {
   /** 1–64 letters, digits, `.`, `_` or `-`, starting with a letter or digit; never `versions`,
@@ -1169,6 +1198,12 @@ export interface CreatedSpace extends SpaceRef {
     readonly tags: number;
     readonly concepts: number;
     readonly releases: number;
+  };
+  /** A background install that has started (the `enterprise` starter only). */
+  readonly installing?: {
+    readonly install: string;
+    readonly jobId: string;
+    readonly steps: number;
   };
 }
 
@@ -2158,8 +2193,15 @@ export function createManagementClient(opts: ManagementClientOptions) {
     spaces: {
       /** The spaces this token can reach (all of them for a deployment admin, else its own). */
       list: () => items(get<{ items: SpaceRef[] }>(`${root}/spaces`)),
-      /** Creates a space, optionally with sample content. Deployment administrators only. */
+      /** Creates a space, optionally with a starter. Deployment administrators only. */
       create: (input: CreateSpaceInput) => post<CreatedSpace>(`${root}/spaces`, input),
+      /** The starters `create` accepts on this deployment. Deployment administrators only. */
+      starters: () => items(get<{ items: SpaceStarterInfo[] }>(`${root}/starters`)),
+      /** A background starter install's progress (`create`'s `installing.install`). */
+      starterInstall: (spaceId: string, environmentId: string, install: string) =>
+        get<StarterInstall>(
+          `${root}/spaces/${encodeURIComponent(spaceId)}/environments/${encodeURIComponent(environmentId)}/starter-installs/${encodeURIComponent(install)}`,
+        ),
     },
 
     /** The space's locales and what is set per locale (the client's space and environment). */

@@ -366,7 +366,8 @@ export interface BulkJobCompletedEvent extends BaseEvent {
    * Which kind of job finished. An import creates drafts; it publishes nothing. An asset reindex
    * sent assets through ingest again. Trash, restore and purge moved entries into, out of, or
    * permanently out of the trash. A content type delete removed a type's entries; the type itself
-   * goes on this event. A field edit saved new drafts of one type's entries.
+   * goes on this event. A field edit saved new drafts of one type's entries. A starter install
+   * ran one phase of a space starter's background install (`config.install` names the install).
    */
   readonly action:
     | 'publish'
@@ -382,7 +383,8 @@ export interface BulkJobCompletedEvent extends BaseEvent {
     | 'asset_unpublish'
     | 'asset_archive'
     | 'content_type_delete'
-    | 'set_fields';
+    | 'set_fields'
+    | 'starter_install';
   readonly total: number;
   readonly succeeded: number;
   readonly failed: number;

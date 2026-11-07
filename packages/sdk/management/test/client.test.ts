@@ -82,6 +82,22 @@ describe('@contentworker/sdk-management client', () => {
     });
   });
 
+  it('lists the starters and follows a background install at the deployment root', async () => {
+    const fetchImpl = fakeFetch((url, init) => {
+      calls.push({ url, init });
+      return url.endsWith('/starters')
+        ? { items: [{ id: 'enterprise', title: 'E', description: 'd', background: true }] }
+        : { install: 'i1', status: 'running', step: 1, steps: 9 };
+    });
+    const client = createManagementClient({ ...base, fetch: fetchImpl });
+    expect((await client.spaces.starters()).map((s) => s.id)).toEqual(['enterprise']);
+    expect((await client.spaces.starterInstall('acme', 'main', 'i1')).status).toBe('running');
+    expect(calls.map((c) => c.url)).toEqual([
+      'https://cms.test/starters',
+      'https://cms.test/spaces/acme/environments/main/starter-installs/i1',
+    ]);
+  });
+
   it('publishes and unpublishes via POST/DELETE on /published, returning the bare entry', async () => {
     const fetchImpl = fakeFetch((url, init) => {
       calls.push({ url, init });

@@ -40,6 +40,11 @@ locale, and choose what it starts with:
   entries in each state (draft, changed and published), tags and two concept schemes, sample
   images and documents, and one open release. It is ordinary content: edit or delete any of it.
 - **Empty space**: no content types and no entries, to model your own from scratch.
+- **Enterprise demo (Aldermoor)**, on demo workspaces only: a fictional global professional-services
+  firm in 13 locales, with its content model, teams, workflows and releases. It is too big to
+  install while you wait, so the space opens at once and the dialog follows the install step by
+  step; closing it doesn't stop it. If a step fails, the dialog says which, and creating the space
+  again with the same id and starter finishes the install without adding anything twice.
 
 The admin switches to the new space when it's created. Later spaces come from the space menu in
 the header (**New space…**), with the same choice. Creating a space takes a workspace admin;
@@ -47,7 +52,8 @@ someone who signs in before being added to a space is asked to have an admin add
 
 Over the API, `POST /spaces` does the same. It takes a credential that spans the workspace (its
 admin token, held by whoever runs the workspace), never a space's own keys. `starter` is
-`"sample"` or `"empty"` (the default):
+`"sample"` or `"empty"` (the default), or `"enterprise"` where `GET /starters` lists it; that one
+answers with `installing.install`, followed at `GET /spaces/:space/environments/main/starter-installs/:install`:
 
 ```sh
 curl -s "$API/spaces" \

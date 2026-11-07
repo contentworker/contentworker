@@ -10,18 +10,65 @@ import {
   listPreviewEntries,
   listReleases,
 } from '@contentworker/application';
-import type { Scope } from '@contentworker/domain';
+import { type Scope, ValidationError } from '@contentworker/domain';
 import type { SpaceConfig } from '@contentworker/ports';
 import { logger } from '@contentworker/telemetry';
 import { FILES, seedAssets } from './assets';
 import { seedContentModel } from './content-model';
 import { type CorpusVolumes, seedCorpus } from './corpus';
+import {
+  ENTERPRISE_STARTER_INFO,
+  type EnterpriseInstallStarted,
+  enterpriseSpaceInput,
+  startEnterpriseInstall,
+} from './enterprise/install';
 import { seedTaxonomy } from './taxonomy';
 import type { SeedDeps, SeedRun } from './types';
 
-/** What a new space starts with: nothing, or the sample content below. */
-export const STARTERS = ['empty', 'sample'] as const;
+/**
+ * What a new space starts with: nothing, the sample content below, or the enterprise demo (a brand
+ * too big for one request, installed in the background as a chain of bulk jobs; offered only
+ * where the deployment allows it, `DEMO_STARTERS`).
+ */
+export const STARTERS = ['empty', 'sample', 'enterprise'] as const;
 export type Starter = (typeof STARTERS)[number];
+
+/** A starter as a picker shows it (the admin's dialog, `GET /starters`, `space_starters_list`). */
+export interface StarterInfo {
+  readonly id: Starter;
+  readonly title: string;
+  readonly description: string;
+  /** Installs after the space is created, in the background, rather than before it returns. */
+  readonly background: boolean;
+}
+
+const EMPTY_INFO: StarterInfo = {
+  id: 'empty',
+  title: 'Empty space',
+  description: 'No content types and no entries: model your content from scratch.',
+  background: false,
+};
+
+const SAMPLE_INFO: StarterInfo = {
+  id: 'sample',
+  title: 'Start with sample content',
+  description:
+    'A content model covering every field type, a few dozen entries in each state, ' +
+    'taxonomy, sample media and one open release. Edit or delete any of it.',
+  background: false,
+};
+
+const ENTERPRISE_INFO: StarterInfo = {
+  id: 'enterprise',
+  title: ENTERPRISE_STARTER_INFO.title,
+  description: ENTERPRISE_STARTER_INFO.description,
+  background: true,
+};
+
+/** The starters this deployment offers, in the order a picker lists them. */
+export function availableStarters(allowEnterprise: boolean): readonly StarterInfo[] {
+  return allowEnterprise ? [SAMPLE_INFO, EMPTY_INFO, ENTERPRISE_INFO] : [SAMPLE_INFO, EMPTY_INFO];
+}
 
 /**
  * The sample corpus: every content type gets a handful of entries, enough to see lists, links,
@@ -121,6 +168,13 @@ export interface CreatedSpace {
   readonly starter: Starter;
   /** Present when the sample content was installed. */
   readonly installed?: StarterSummary;
+  /** Present when a background install started (the enterprise starter): follow it by `install`. */
+  readonly installing?: EnterpriseInstallStarted;
+}
+
+export interface CreateSpaceWithStarterOptions {
+  /** Whether this deployment offers the enterprise starter (`DEMO_STARTERS`). */
+  readonly allowEnterprise?: boolean;
 }
 
 /**
@@ -128,16 +182,35 @@ export interface CreatedSpace {
  * into its first environment. The one entry point the HTTP route and the MCP tool share, so both
  * surfaces create the same space. Creating a space is an upsert, so repeating the call after a
  * failed install finishes the install rather than failing on the existing space.
+ *
+ * The `enterprise` starter is refused (before anything is written) unless the deployment allows
+ * it. It creates the space with the brand's locales and fallbacks added to the caller's, then
+ * starts the install into the first environment as a chain of bulk jobs and returns at once:
+ * `installing.install` is what `getStarterInstall` follows. Repeating it starts a new install,
+ * whose idempotent phases add only what the first left out.
  */
 export async function createSpaceWithStarter(
   ctx: AppContext,
   input: CreateSpaceInput & { readonly starter?: Starter },
   deps: SeedDeps = {},
+  opts: CreateSpaceWithStarterOptions = {},
 ): Promise<CreatedSpace> {
   const { starter = 'empty', ...spaceInput } = input;
-  const space = await createSpace(ctx, spaceInput);
+  if (starter === 'enterprise' && !opts.allowEnterprise) {
+    throw new ValidationError([
+      { field: 'starter', message: 'The enterprise starter is not available on this deployment' },
+    ]);
+  }
+  const space = await createSpace(
+    ctx,
+    starter === 'enterprise' ? enterpriseSpaceInput(spaceInput) : spaceInput,
+  );
   if (starter === 'empty') return { space, starter };
   const environmentId = spaceInput.environments?.[0] ?? 'main';
-  const installed = await installStarter(ctx, { spaceId: space.spaceId, environmentId }, deps);
+  const scope = { spaceId: space.spaceId, environmentId };
+  if (starter === 'enterprise') {
+    return { space, starter, installing: await startEnterpriseInstall(ctx, scope) };
+  }
+  const installed = await installStarter(ctx, scope, deps);
   return { space, starter, installed };
 }

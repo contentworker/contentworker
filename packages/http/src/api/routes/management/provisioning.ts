@@ -1,20 +1,22 @@
 import {
   createEnvironment,
   deleteEnvironment,
+  getStarterInstall,
   listEnvironments,
   listSpacesFor,
 } from '@contentworker/application';
 import { SCOPES } from '@contentworker/domain';
-import { createSpaceWithStarter } from '@contentworker/seed';
+import { availableStarters, createSpaceWithStarter } from '@contentworker/seed';
 import { Hono } from 'hono';
 import { type AuthDeps, type AuthVars, requireScope } from '../../auth';
 import { doc } from '../../docs/openapi';
 import * as spaceDocs from '../../docs/schemas/spaces';
 import { createEnvironmentBody, createSpaceBody, parseBody } from '../../validation';
-import { actingCtx } from './shared';
+import { actingCtx, BASE, scopeOf } from './shared';
 
 export function provisioningRoutes(deps: AuthDeps): Hono<AuthVars> {
   const { ctx, blob } = deps;
+  const allowEnterprise = deps.demoStarters === true;
   const app = new Hono<AuthVars>();
 
   // --- provisioning (admin) ----------------------------------------------
@@ -29,11 +31,15 @@ export function provisioningRoutes(deps: AuthDeps): Hono<AuthVars> {
     doc('Spaces & environments', 'Create a space', {
       description:
         'Creates a space with its locales and environments (`main` by default), optionally with ' +
-        'sample content (`starter: "sample"`), installed before the response returns. Deployment ' +
-        'administrators only: the admin token, or a person signed in to the admin as a ' +
-        "deployment admin. A space's own API keys can't create spaces. Creating a space whose id " +
-        'exists updates its name and locales; repeating a `sample` create finishes an install ' +
-        'that failed part-way without duplicating anything.',
+        'sample content (`starter: "sample"`), installed before the response returns. Where the ' +
+        'deployment offers it (GET /starters), `starter: "enterprise"` adds a large demo brand: ' +
+        'its locales and fallbacks join the space, and its content installs in the background, ' +
+        'so the response carries `installing` (follow it at GET …/starter-installs/{install}); ' +
+        'elsewhere it is a 422. Deployment administrators only: the admin token, or a person ' +
+        "signed in to the admin as a deployment admin. A space's own API keys can't create " +
+        'spaces. Creating a space whose id exists updates its name and locales; repeating a ' +
+        '`sample` or `enterprise` create finishes an install that failed part-way without ' +
+        'duplicating anything.',
       body: createSpaceBody,
       ok: spaceDocs.createdSpace,
       status: 201,
@@ -42,17 +48,54 @@ export function provisioningRoutes(deps: AuthDeps): Hono<AuthVars> {
     async (c) => {
       const body = await parseBody(c, createSpaceBody);
       // Acting as the caller, so the starter content is credited to them, as on MCP.
-      const created = await createSpaceWithStarter(actingCtx(ctx, c), body, { blob });
+      const created = await createSpaceWithStarter(
+        actingCtx(ctx, c),
+        body,
+        { blob },
+        { allowEnterprise },
+      );
       return c.json(
         {
           id: created.space.spaceId,
           name: created.space.name,
           starter: created.starter,
           ...(created.installed ? { installed: created.installed } : {}),
+          ...(created.installing ? { installing: created.installing } : {}),
         },
         201,
       );
     },
+  );
+  // What a new space can start with here: the same check as creating one, since only a
+  // deployment administrator is ever offered the choice.
+  app.get(
+    '/starters',
+    doc('Spaces & environments', 'List the starters a new space can use', {
+      ok: spaceDocs.starterList,
+      description:
+        'The starters `POST /spaces` accepts on this deployment, in the order a picker lists ' +
+        'them: `sample` and `empty` everywhere, and `enterprise` (a large demo brand that ' +
+        'installs in the background, `background: true`) where the deployment offers it. ' +
+        'Deployment administrators only, as creating a space is.',
+    }),
+    requireScope(SCOPES.spaceAdmin),
+    (c) => c.json({ items: availableStarters(allowEnterprise) }),
+  );
+  // A background starter's progress, read from the environment's bulk jobs (one per phase).
+  app.get(
+    `${BASE}/starter-installs/:install`,
+    doc('Spaces & environments', 'Follow a starter install', {
+      ok: spaceDocs.starterInstall,
+      description:
+        'Where a background starter install (the `installing.install` of `POST /spaces`) has ' +
+        'got to: the phase running now (`step` of `steps`), and `status`: `running`, ' +
+        '`completed` once the last phase finished cleanly, or `failed` when a phase finished ' +
+        'with a failure or was stopped (the phases after it never start; `failures` says what ' +
+        'went wrong, and creating the space again with the same starter finishes the install). ' +
+        'Readable by any `content:write` caller, as bulk jobs are.',
+    }),
+    requireScope(SCOPES.contentWrite),
+    async (c) => c.json(await getStarterInstall(ctx, scopeOf(c), c.req.param('install'))),
   );
 
   app.get('/spaces/:space/environments', requireScope(SCOPES.previewRead), async (c) =>

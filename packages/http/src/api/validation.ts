@@ -112,7 +112,9 @@ export const createSpaceBody = z.object({
     .describe(
       '`sample` installs sample content into the first environment: a content model covering ' +
         'every field type, a few dozen entries, taxonomy, sample images and documents, and one ' +
-        'open release. `empty` (the default) creates the space with nothing in it.',
+        'open release. `empty` (the default) creates the space with nothing in it. ' +
+        '`enterprise`, where the deployment offers it (GET /starters), adds a large demo ' +
+        "brand's locales and installs its content in the background (`installing`).",
     ),
 });
 export const createEnvironmentBody = z.object({ id: zId, name: zShort.optional() });

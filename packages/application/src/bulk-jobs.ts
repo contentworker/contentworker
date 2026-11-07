@@ -300,6 +300,15 @@ export interface BulkChunkDeps {
     job: BulkJob,
     chunk: BulkJobChunk,
   ) => Promise<BulkChunkOutcome>;
+  /**
+   * Runs one phase of a space starter's background install (`@contentworker/seed`), injected
+   * because the starter's content lives above this layer. Absent, the chunk stays claimable.
+   */
+  readonly starterChunk?: (
+    scope: Scope,
+    job: BulkJob,
+    chunk: BulkJobChunk,
+  ) => Promise<BulkChunkOutcome>;
 }
 
 /** Who started `job` (recorded by `persistJob`), as its chunks' writes are authored; undefined when
@@ -332,9 +341,12 @@ export async function runBulkChunk(
 
   // A chunk that keeps crashing is terminal-failed rather than retried
   // forever: its items count as failures in the report and the job still
-  // completes. (attempts was already incremented by this claim.)
+  // completes. (attempts was already incremented by this claim.) A chunk whose work is staged or
+  // is a phase (an import, a starter install) lists no ids: it fails as itself, so the job counts
+  // a failure and a chained job after it never starts on work that didn't happen.
   if (chunk.attempts > BULK_CHUNK_MAX_ATTEMPTS) {
-    const failures = chunk.entryIds.map((id) => ({
+    const failed = chunk.entryIds.length > 0 ? chunk.entryIds : [chunk.chunkId];
+    const failures = failed.map((id) => ({
       id,
       error: `Chunk failed after ${BULK_CHUNK_MAX_ATTEMPTS} attempts`,
     }));
@@ -369,6 +381,10 @@ export async function runBulkChunk(
   // A bulk field edit: each entry saved as a draft through its use-case.
   if (job.action === 'set_fields') {
     return runChunkAndFold(ctx, deps.entryFieldsChunk, scope, job, chunk);
+  }
+  // A starter install's phase: the starter writes through the use-cases; the chunk is the phase.
+  if (job.action === 'starter_install') {
+    return runChunkAndFold(ctx, deps.starterChunk, scope, job, chunk);
   }
   // An asset library action: each asset through its own use-case, failures reported by name.
   if (job.action !== 'publish' && job.action !== 'unpublish') {
@@ -560,10 +576,23 @@ export async function resumeStalledBulkJobs(
  * names of the fields it sets remain, as `config.fieldNames`.
  */
 export function readableBulkJob(job: BulkJob): BulkJob {
+  job = withoutChain(job);
   if (job.action !== 'set_fields' || job.config?.fields === undefined) return job;
   const { fields, ...config } = job.config;
   const fieldNames = fields && typeof fields === 'object' ? Object.keys(fields) : [];
   return { ...job, config: { ...config, fieldNames } };
+}
+
+/**
+ * A chained job's `config.next` is the machinery's plan for what starts next, nested once per job
+ * still to come (a starter install's first job carries every later phase). A reader gets the id
+ * of the job it starts, as `config.nextJobId`, and none of the plan.
+ */
+function withoutChain(job: BulkJob): BulkJob {
+  const next = chainedJobOf(job);
+  if (next === undefined || !job.config) return job;
+  const { next: _plan, ...config } = job.config;
+  return { ...job, config: { ...config, nextJobId: next.id } };
 }
 
 export async function getBulkJob(ctx: AppContext, scope: Scope, id: string): Promise<BulkJob> {
@@ -657,7 +686,8 @@ export async function cancelBulkJob(
 const STOPPED = { deleted: false, reason: 'the job was stopped' } as const;
 
 /**
- * Runs an import, asset, entry trash or field edit chunk and folds its outcome into the job.
+ * Runs an import, asset, entry trash, field edit or starter chunk and folds its outcome into the
+ * job.
  *
  * Mirrors the publish path's bookkeeping exactly — claim, run, complete,
  * finalize — so progress, cancellation, the stall sweep and the per-item

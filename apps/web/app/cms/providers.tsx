@@ -49,11 +49,15 @@ export function CmsPage({
   skeleton?: React.ReactNode;
 }) {
   const state = useScopeState();
+  const { updateConn } = useClient();
+  // Here, not in the notice: creating the first space replaces the notice with the page, and a
+  // starter that installs in the background keeps the dialog open on its progress meanwhile.
+  const [creating, setCreating] = useState(false);
   const inner =
     state === 'ready' ? (
       children
     ) : state === 'no-spaces' ? (
-      <NoSpaces page={title} />
+      <NoSpaces page={title} onCreate={() => setCreating(true)} />
     ) : state === 'error' ? (
       <ScopeNotice page={title} title="Couldn’t load your spaces">
         The API didn’t answer. Reload the page to try again.
@@ -68,6 +72,11 @@ export function CmsPage({
     <>
       <title>{`${title} · contentworker`}</title>
       {fullBleed ? inner : <Body>{inner}</Body>}
+      <CreateSpaceDialog
+        open={creating}
+        onOpenChange={setCreating}
+        onCreated={(id) => updateConn({ space: id, environment: 'main' })}
+      />
     </>
   );
 }
@@ -76,10 +85,8 @@ export function CmsPage({
  * No space to work in. A deployment admin creates the first one here (with the sample content,
  * or empty), and lands in it; anyone else is told who can let them in.
  */
-function NoSpaces({ page }: { page: string }) {
+function NoSpaces({ page, onCreate }: { page: string; onCreate: () => void }) {
   const admin = useCan('admin');
-  const { updateConn } = useClient();
-  const [open, setOpen] = useState(false);
   if (!admin) {
     return (
       <ScopeNotice page={page} title="No spaces yet">
@@ -92,16 +99,9 @@ function NoSpaces({ page }: { page: string }) {
       page={page}
       title="Create your first space"
       action={
-        <>
-          <Button className="mt-4" onClick={() => setOpen(true)}>
-            <Plus aria-hidden="true" /> Create a space
-          </Button>
-          <CreateSpaceDialog
-            open={open}
-            onOpenChange={setOpen}
-            onCreated={(id) => updateConn({ space: id, environment: 'main' })}
-          />
-        </>
+        <Button className="mt-4" onClick={onCreate}>
+          <Plus aria-hidden="true" /> Create a space
+        </Button>
       }
     >
       A space holds a content model, its entries and media, and the team that works on them. Start

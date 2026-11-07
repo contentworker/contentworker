@@ -2261,7 +2261,12 @@ export type BulkJobAction =
    * Sets the same field values on entries of one content type, each saved as a new draft:
    * `config` names them as `{ contentTypeApiId, fields }` (`entry-fields-bulk.ts`).
    */
-  | 'set_fields';
+  | 'set_fields'
+  /**
+   * One phase of a starter's background install (`@contentworker/seed`): `config` names the
+   * starter, the install and the phase, and the next phase's job as `next`.
+   */
+  | 'starter_install';
 
 /** What an entry trash bulk job does to each entry: each through its single-entry use-case. */
 export type EntryTrashBulkJobAction = 'trash' | 'restore' | 'purge';

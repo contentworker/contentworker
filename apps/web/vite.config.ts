@@ -50,6 +50,9 @@ const LOCAL_STACK_VARS = {
   // SEED_SCALE=10 pnpm dev seeds ~10× the demo corpus (with CONTENTWORKER_STATE so it doesn't
   // land in the everyday database).
   SEED_SCALE: process.env.SEED_SCALE ?? '1',
+  // The enterprise starter (installed in the background by the engine) is offered locally; the
+  // device tests keep to the starters every deployment has.
+  DEMO_STARTERS: e2e ? 'false' : 'true',
   // OAuth for MCP clients, served on the admin origin like a deployment's (OAUTH_ISSUER).
   OAUTH_ISSUER: `http://localhost:${port}`,
 };

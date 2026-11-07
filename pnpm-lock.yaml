@@ -407,6 +407,9 @@ importers:
       '@contentworker/security':
         specifier: workspace:*
         version: link:../../packages/security
+      '@contentworker/seed':
+        specifier: workspace:*
+        version: link:../../packages/seed
       '@contentworker/test-kit':
         specifier: workspace:*
         version: link:../../packages/test-kit

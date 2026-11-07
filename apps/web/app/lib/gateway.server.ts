@@ -22,7 +22,15 @@ import { crossOrigin } from './origin';
 import type { SignedPrincipal } from './principal.server';
 
 /** Exact paths the api serves. */
-const EXACT = new Set(['/spaces', '/mcp', '/openapi.json', '/docs', '/health/api', '/auth/me']);
+const EXACT = new Set([
+  '/spaces',
+  '/starters',
+  '/mcp',
+  '/openapi.json',
+  '/docs',
+  '/health/api',
+  '/auth/me',
+]);
 
 /** Path prefixes the api serves (each already ends in `/` or names a family, like `/guides`). */
 const PREFIXES = [

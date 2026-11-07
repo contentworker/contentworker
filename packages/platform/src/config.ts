@@ -45,6 +45,11 @@ export interface ApiConfig {
    * of the box. Never enable in production.
    */
   readonly seedDev: boolean;
+  /**
+   * Whether creating a space offers the demo starters (DEMO_STARTERS=true): the enterprise starter,
+   * a large fictional brand installed in the background. Demo deployments and local dev only.
+   */
+  readonly demoStarters: boolean;
   /** Default space/env + locales used to seed the in-memory store. */
   readonly seed: {
     spaceId: string;
@@ -136,6 +141,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
     adminToken: dev(env.ADMIN_TOKEN, 'dev-admin-token'),
     tokenPepper: env.TOKEN_PEPPER,
     seedDev: env.SEED_DEV === 'true',
+    demoStarters: env.DEMO_STARTERS === 'true',
     seed: {
       spaceId: env.SEED_SPACE_ID ?? 'space-1',
       environmentId: env.SEED_ENV_ID ?? 'main',
