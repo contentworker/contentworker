@@ -13,6 +13,7 @@ import type {
   AssetUsage,
   AssetVersion,
   AssetZipJob,
+  AuditDetail,
   Comment,
   Concept,
   ConceptScheme,
@@ -824,6 +825,8 @@ export interface AuditEntry {
   readonly targetId?: string;
   readonly status: number;
   readonly at: string;
+  /** What the action changed: paths, never values. Older rows have none. */
+  readonly detail?: AuditDetail;
 }
 
 /** What the audit log can be narrowed by; `from` and `to` are exact times, both inclusive. */

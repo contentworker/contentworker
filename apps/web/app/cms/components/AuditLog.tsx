@@ -20,7 +20,7 @@ import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Ago } from '~/cms/components/ago';
 import { LoadingStatus, Refreshing } from '~/cms/components/loading';
 import { Empty } from '~/cms/components/page';
-import { type AuditLogFilters, apiErrorMessage } from '~/cms/lib/management';
+import { type AuditEntry, type AuditLogFilters, apiErrorMessage } from '~/cms/lib/management';
 import { useAuditLogPagesQuery, useDebouncedValue, useInvalidate } from '~/cms/lib/queries';
 
 /** The filter bar as typed: words, and `YYYY-MM-DD` days on the reader's clock. */
@@ -42,7 +42,10 @@ const NO_FILTERS: AuditFilterState = {
   to: '',
 };
 
-const COLUMNS = 5;
+const COLUMNS = 6;
+
+/** Past this many a row's paths stop and say how many more: the API has them all. */
+const PATHS_SHOWN = 6;
 
 /** A day and time on the reader's clock as an exact time; a field mid-typing may be no date yet. */
 function instant(local: string): string | undefined {
@@ -83,6 +86,45 @@ function FilterBy(props: {
     >
       {props.children}
     </Button>
+  );
+}
+
+/** What a row's action changed: where, in the content model's words. Rows that don't say get a dash. */
+function ChangedPaths({ detail }: { detail: AuditEntry['detail'] }) {
+  const [entry, ...others] = detail?.entries ?? [];
+  if (!detail || !entry) return detail?.truncated ? <span>Not recorded</span> : <span>—</span>;
+  if (others.length > 0) {
+    return (
+      <span>
+        {detail.truncated ? 'More than ' : ''}
+        {others.length + 1} entries
+      </span>
+    );
+  }
+  const undeclared = entry.undeclaredFields ?? 0;
+  const more = entry.paths.length - PATHS_SHOWN;
+  return (
+    <div className="space-y-0.5">
+      {entry.paths.length > 0 ? (
+        <ul aria-label="Changed fields" className="flex flex-wrap gap-x-2 font-mono">
+          {entry.paths.slice(0, PATHS_SHOWN).map((path) => (
+            <li key={path} className="min-w-0 break-all">
+              {path.replace(/^fields\./, '')}
+            </li>
+          ))}
+        </ul>
+      ) : undeclared === 0 ? (
+        <p>No field changed</p>
+      ) : null}
+      {entry.locales.length > 0 ? <p className="font-mono">{entry.locales.join(', ')}</p> : null}
+      {more > 0 ? <p>and {more} more</p> : null}
+      {undeclared > 0 ? (
+        <p>
+          {undeclared} {undeclared === 1 ? 'field' : 'fields'} no longer in the model
+        </p>
+      ) : null}
+      {detail.truncated ? <p>List cut short</p> : null}
+    </div>
   );
 }
 
@@ -171,8 +213,8 @@ export function AuditLog() {
         <div>
           <h2 className="font-heading font-medium text-base">Audit log</h2>
           <p className="max-w-measure text-muted-foreground text-sm">
-            Every mutating API action in this space, newest first. Press an actor, action or target
-            to filter by it.
+            Every mutating API action in this space, newest first, with the fields it changed. Press
+            an actor, action or target to filter by it.
           </p>
         </div>
         <Button type="button" variant="outline" size="sm" onClick={load} disabled={refreshing}>
@@ -246,6 +288,7 @@ export function AuditLog() {
                   <TableHead>Actor</TableHead>
                   <TableHead>Action</TableHead>
                   <TableHead>Target</TableHead>
+                  <TableHead>Changed</TableHead>
                   <TableHead numeric className="w-16">
                     Status
                   </TableHead>
@@ -290,6 +333,9 @@ export function AuditLog() {
                       ) : (
                         '—'
                       )}
+                    </TableCell>
+                    <TableCell label="Changed" className="text-muted-foreground text-xs">
+                      <ChangedPaths detail={e.detail} />
                     </TableCell>
                     <TableCell label="Status" numeric>
                       {e.status}

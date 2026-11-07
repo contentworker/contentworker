@@ -146,7 +146,9 @@ menu at the sidebar's foot (the More sheet on a phone). Settings sections are ad
 - **Audit log** (`/settings/audit-log`, `app/cms/components/AuditLog.tsx`): the space's trail, with
   fields for actor, action, target type, target id and a range of days on the reader's clock.
   Filters match exactly, so pressing a row's actor, action or target fills its field. Pages of 50
-  read in through Load more; a new filter starts from the first page.
+  read in through Load more; a new filter starts from the first page. The Changed column shows a
+  row's `detail`: its paths without the `fields.` prefix, six before "and N more", then the locales,
+  or how many entries when the row changed several.
 - **Redirects** (`/settings/redirects`, `app/cms/components/Redirects.tsx`): the environment's
   redirect set ([Domain model](./domain-model.md#redirects)) as a list with search over source,
   destination and note, an enable switch per row, and an add/edit dialog (source, destination,
