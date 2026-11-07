@@ -364,9 +364,45 @@ through the variables, never `env()` directly.
 - **No** tap highlight, double-tap delay, text inflation or rubber-band at the page's edges.
 - **Keyboard hints** (⌘K, J/K, ?) show only with `fine:`.
 
+## Lists
+
+A list is one of two things, and the way it's read decides which. **A catalog** is read a row at a
+time: releases, redirects, people, keys, webhooks, content types, workflows, tags. **A table** is
+worked across its columns (sorted, ticked, moved through with the keyboard) or compared down them:
+the entries list, the asset list, the audit logs, agent runs, a diff, a delivery log, an import's
+report.
+
+- **Finding:** every list that grows with the work (not a few configured things, such as roles,
+  plugins or locales) has one toolbar: `ListToolbar` holds `ListSearch` at its
+  start and any `Segmented` filter at its end, inside the card on a catalog. `ListSearch` is the only
+  search field a list uses; with `onClear` it offers Clear and Escape clears it. The entries list and
+  the asset library keep theirs over the card, where the bulk bar takes its place. A filter runs in
+  the browser only over a list the screen holds whole: a capped or paged list searches on the server
+  and offers no client filter, since it would answer wrongly.
+- **Results** are said to screen readers as they change (`ListToolbar`'s `summary`). A row an action
+  takes out of a filtered list hands focus to the row that took its place, or to the search.
+- **A filter that misses** says so with the way out in it (`CatalogEmpty`, or `TableEmpty` in a
+  table). No rows at all is `Empty` in place of the list.
+- **Row actions** are ghost `xs` text buttons, the main verb first and the destructive one last,
+  and they name their row for screen readers. At most two stay beside the row's ⋯; the rest go in it.
+- **Bulk actions** are `BulkBar`: the count, the actions, then Clear at the end.
+
+## Catalogs
+
+`Catalog` and `CatalogRow` from `packages/ui/src/catalog.tsx`: a `<ul>` of raised rows (`Item`'s
+muted variant), named by `aria-label`.
+
+- **A row** leads with `media`, a `CatalogTile` that identifies it (an icon, an avatar, or a short
+  code such as a redirect's status), then its `title`, the path into it, and a `meta` line of
+  secondary facts, each in its own element.
+- **State** sits in the `aside`: a badge, never coloured text alone, and any `CatalogFigure` (a
+  caption over a tabular value). A fact whose column header used to explain it says so in words:
+  "All locales", not "All".
+- **Phones:** what the row is fills the first line; its state and actions share the second.
+
 ## Tables
 
-Every data table is `Table` from `packages/ui/src/table.tsx` (with shadcn's part names
+Every table is `Table` from `packages/ui/src/table.tsx` (with shadcn's part names
 kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `TableCell`,
 `TableEmpty`; `Th`/`Td`/`Tr` are aliases).
 
@@ -385,8 +421,7 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
 - **Figures** (`numeric`) are right-aligned, tabular and unbroken. Ids, API ids and keys are mono.
 - **Status** in a cell is a badge (`StatusBadge`, or `ToneBadge` for another vocabulary), never
   coloured text alone.
-- **Empty:** no rows at all is `Empty` in place of the table; a search that missed is a
-  `TableEmpty` row, under the headers, with the way out (Clear filters) in it.
+- **Hover:** a row takes a quiet muted fill under the pointer; a ticked row keeps its tint.
 - **More rows** come in from the foot: a `TableFoot` row with a ghost Load more, which appends the
   next page (cursor paging) and hands focus to the first row it brought. The ticks and the
   keyboard's place survive it; a new filter, search or sort starts again from the first page.
@@ -406,10 +441,10 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
 
 - **Overview** (`cms/components/Dashboard.tsx`): what needs attention as cards (not yet published,
   coming up, agent proposals, live activity), then search, AI usage and recent agent runs.
-- **Content:** the content types as a table (`PageHeader` with New content type): each type's
-  name linked to its entries (a singleton's to its one entry, `/entry`, as the sidebar's link is)
-  with its API id in mono under it ("· one entry only" after it for a singleton), then its
-  entries, drafts, changed entries and fields as figures, Edit, and a ghost ⋯ menu ("More actions
+- **Content:** the content types as a catalog (`PageHeader` with New content type): each type's
+  icon as its tile, its name linked to its entries (a singleton's to its one entry, `/entry`, as the
+  sidebar's link is), its API id in mono and its field count under it ("One entry only" beside them
+  for a singleton), then its entries, drafts and changed entries as figures, Edit, and a ghost ⋯ menu ("More actions
   for ‹type›") with Clone… and, after a separator, a destructive Delete…; a Draft badge only on a
   type whose schema isn't published. Clone… opens a dialog with the copy's name and API ID. Closed
   either way, focus goes back to the row's ⋯. **Deleting a type** can't be undone, so it confirms
@@ -555,7 +590,7 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   is, its title beside Add tab; each tab a row (its name, a ghost Remove), and each field row gains
   Tab and Group selects once a tab exists.
 - **Releases, Workflows, Taxonomy:** `PageHeader` with the page's one "New …" (a `Plus` and the
-  noun), then cards or a stacked table. Publishing a release confirms in an alert dialog, naming
+  noun), then a catalog. Publishing a release confirms in an alert dialog, naming
   what goes live and what to look at first (never-published entries, members in the trash).
 - **Assets** (`cms/components/AssetLibrary.tsx`, `cms/components/assets/`): `PageHeader` with
   Upload, which names the open folder ("Upload to “Brand”"); the library section is the drop
@@ -709,7 +744,7 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   loads as Skeleton cards or rows. **On a phone** the tree becomes a select of folder paths
   ("Brand / Logos") with a Folder actions button that opens the folder actions in a bottom sheet.
 - **Settings:** one page, its section nav beside the section (a grouped select on a phone); each
-  section is cards and stacked tables. The install hint sits at the top of Connection. A plugin's
+  section is cards and catalogs. The install hint sits at the top of Connection. A plugin's
   **Settings** is a sheet (from the side; the bottom on a phone) whose form is drawn from its
   manifest's fields: a secret shows an `idle` Set or Not set stamp with Set/Replace and Clear,
   never a value; a refusal sits beside its field and takes focus.
@@ -722,11 +757,11 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   that old goes at the next sweep; turning it off saves at once. While it loads it is a skeleton
   line with a sr-only status, `aria-busy`; a failed load is a destructive Alert with Retry, never
   a setting that looks off.
-  **Locales** (Workspace) is one section, a table flush in its card (stacking into cards below
-  md), one row per locale: its code in mono with an outline "Default" badge on the default, what
-  it falls back to (mono; "None" for the default, the end of every chain), a **Delivered**
+  **Locales** (Workspace) is one section, a catalog flush in its card, one row per locale: its
+  language subtag as the tile, its code in mono with an outline "Default" badge on the default, what
+  it falls back to ("Falls back to fr"; "No fallback" for the default, the end of every chain), a **Delivered**
   `Switch` named "Deliver fr", and **Direction**, a `Segmented` of Left to right and Right to left
-  named "Text direction of fr". The default locale's switch is disabled, its reason under it and
+  named "Text direction of fr". The default locale's switch is disabled, its reason in the row's meta line and
   tied to it by `aria-describedby` ("Always delivered: every fallback ends here."). A change saves
   at once, with a toast, except turning Delivered off, which asks in place in a row beneath ("Stop
   delivering fr?", saying Delivery stops serving it in every environment at once and that editors
@@ -736,8 +771,8 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   skeleton rows, `aria-busy` with a sr-only status; a failed load is a destructive Alert with
   Retry, never locales that look turned off. Without space:admin it reads only: every control
   disabled under a warning Alert saying changing locales takes space:admin.
-- **Workflows list:** a table, flush in one section (stacking into cards below md): each
-  workflow's name linked to its editor with its description and steps under it; what starts its
+- **Workflows list:** a catalog, flush in one section under its search: each
+  workflow's trigger as its tile, its name linked to its editor with its description and steps under it; what starts its
   published version (from the API's `publishedTrigger`, with "Draft starts on …" when the draft
   starts differently, and the other workflows that start alongside it, from `startsAlongside`);
   what it covers; whether it gates publishing; its live version; then Duplicate and Delete

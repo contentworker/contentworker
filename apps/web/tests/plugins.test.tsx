@@ -128,6 +128,15 @@ const upload = (labelText: RegExp, file: File) => {
   fireEvent.change(input, { target: { files: [file] } });
 };
 
+/** Opens a row's ⋯ (Radix menus open on pointerdown) and picks an item from it. */
+const fromMore = async (item: string | RegExp, name = 'SEO helper') => {
+  fireEvent.pointerDown(await screen.findByRole('button', { name: `More actions for “${name}”` }), {
+    button: 0,
+    ctrlKey: false,
+  });
+  fireEvent.click(await screen.findByRole('menuitem', { name: item }));
+};
+
 const openInstall = async (manifest: unknown = MANIFEST) => {
   fireEvent.click(screen.getByRole('button', { name: /install plugin/i }));
   upload(/manifest/i, fileOf('plugin.json', JSON.stringify(manifest), 'application/json'));
@@ -139,7 +148,7 @@ describe('plugin settings', () => {
   it('opens a plugin’s settings from its row, named for that plugin', async () => {
     const client = fakeClient([plugin()]);
     renderWith(<Plugins client={client} />);
-    fireEvent.click(await screen.findByRole('button', { name: 'SEO helper settings' }));
+    await fromMore('SEO helper settings');
     const sheet = await screen.findByRole('dialog', { name: 'SEO helper settings' });
     expect(await within(sheet).findByRole('button', { name: 'Replace API key' })).toBeTruthy();
     expect(within(sheet).getByText('Set')).toBeTruthy();
@@ -196,6 +205,15 @@ describe('what the list tells an operator', () => {
     );
     // A plugin behaving oddly is usually one doing without something.
     expect(await screen.findByText(/asked for, not granted.*publish/i)).toBeTruthy();
+  });
+
+  it('says what each fact is, with no column header left to say it', async () => {
+    renderWith(<Plugins client={fakeClient([plugin()])} />);
+    const row = (await screen.findByText('SEO helper')).closest('li') as HTMLElement;
+    expect(within(row).getByText('com.example.seo')).toBeTruthy();
+    expect(within(row).getByText('v1.2.0')).toBeTruthy();
+    expect(within(row).getByText('Runs on every entry save')).toBeTruthy();
+    expect(within(row).getByText(/^Can: /)).toBeTruthy();
   });
 
   it('distinguishes running from installed-but-disabled', async () => {
@@ -341,7 +359,7 @@ describe('lifecycle', () => {
   it('enables a plugin and reflects it', async () => {
     const client = fakeClient([plugin()]);
     renderWith(<Plugins client={client} />);
-    fireEvent.click(await screen.findByRole('button', { name: 'Enable' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Enable “SEO helper”' }));
 
     await waitFor(() =>
       expect(client.setPluginEnabled).toHaveBeenCalledWith('com.example.seo', true),
@@ -352,7 +370,7 @@ describe('lifecycle', () => {
   it('confirms before uninstalling, and says what survives', async () => {
     const client = fakeClient([plugin()]);
     renderWith(<Plugins client={client} />);
-    fireEvent.click(await screen.findByRole('button', { name: /uninstall/i }));
+    await fromMore(/uninstall/i);
 
     const dialog = await screen.findByRole('alertdialog');
     expect(within(dialog).getByText(/content it already changed stays/i)).toBeTruthy();
@@ -360,6 +378,22 @@ describe('lifecycle', () => {
 
     fireEvent.click(within(dialog).getByRole('button', { name: /^uninstall$/i }));
     await waitFor(() => expect(client.uninstallPlugin).toHaveBeenCalledWith('com.example.seo'));
+  });
+
+  it('goes back to the row’s ⋯ when the uninstall question is declined', async () => {
+    const client = fakeClient([plugin()]);
+    renderWith(<Plugins client={client} />);
+    await fromMore(/uninstall/i);
+
+    const dialog = await screen.findByRole('alertdialog');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    await waitFor(() =>
+      expect(document.activeElement?.getAttribute('aria-label')).toBe(
+        'More actions for “SEO helper”',
+      ),
+    );
+    expect(client.uninstallPlugin).not.toHaveBeenCalled();
   });
 
   it('invites the first install rather than showing an empty table', async () => {
@@ -495,7 +529,7 @@ describe('approving capabilities on an installed plugin', () => {
       <Plugins client={withApproval([plugin({ needsReapproval: true, enabled: false })])} />,
     );
     expect(await screen.findByText('Needs review')).toBeTruthy();
-    expect(screen.queryByRole('button', { name: /^enable$/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^enable/i })).toBeNull();
     expect(screen.getByRole('button', { name: /review access/i })).toBeTruthy();
   });
 
@@ -536,7 +570,7 @@ describe('approving capabilities on an installed plugin', () => {
         ])}
       />,
     );
-    fireEvent.click(await screen.findByRole('button', { name: /^access$/i }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Access for “SEO helper”' }));
     const confirm = screen.getByRole('alertdialog');
     const publish = within(confirm).getByRole('checkbox', { name: /publish content/i });
     expect(publish.getAttribute('data-state')).toBe('unchecked');
@@ -553,7 +587,7 @@ describe('approving capabilities on an installed plugin', () => {
       }),
     ]);
     renderWith(<Plugins client={client} />);
-    fireEvent.click(await screen.findByRole('button', { name: /upgrade/i }));
+    await fromMore(/upgrade/i);
     upload(
       /new manifest/i,
       fileOf(
@@ -589,7 +623,7 @@ describe('approving capabilities on an installed plugin', () => {
 
   it('refuses a manifest for a different plugin', async () => {
     renderWith(<Plugins client={withApproval([plugin()])} />);
-    fireEvent.click(await screen.findByRole('button', { name: /upgrade/i }));
+    await fromMore(/upgrade/i);
     upload(
       /new manifest/i,
       fileOf('plugin.json', JSON.stringify({ ...MANIFEST, id: 'com.other' }), 'application/json'),

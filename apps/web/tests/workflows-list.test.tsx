@@ -84,7 +84,7 @@ function setup(workflows: WorkflowListItem[]) {
 }
 
 const rowOf = async (name: string) => {
-  const row = (await screen.findByRole('link', { name })).closest('tr');
+  const row = (await screen.findByRole('link', { name })).closest('li');
   if (!row) throw new Error(`no row for ${name}`);
   return within(row);
 };
@@ -123,12 +123,14 @@ describe('workflows list', () => {
       }),
     ]);
     const row = await rowOf('Editorial review');
-    expect(row.getByText('Submit for review')).toBeTruthy();
-    expect(row.getByText('Article')).toBeTruthy();
-    expect(row.getByText('Only through this workflow')).toBeTruthy();
+    expect(row.getByText('Starts on Submit for review')).toBeTruthy();
+    expect(row.getByText('Covers Article')).toBeTruthy();
+    expect(row.getByText('Publishing: Only through this workflow')).toBeTruthy();
     expect(row.getByText('Published v1')).toBeTruthy();
-    // No nested cards: the workflows are rows of one table.
-    expect(screen.queryByRole('listitem')).toBeNull();
+    // No nested cards: the workflows are the rows of one list.
+    const list = screen.getByRole('list', { name: 'All workflows' });
+    expect(within(list).getAllByRole('listitem')).toHaveLength(1);
+    expect(within(list).queryByRole('list')).toBeNull();
   });
 
   it('names the other published workflows the API says start the same way', async () => {
@@ -175,10 +177,56 @@ describe('workflows list', () => {
       workflow('wf-3', 'Second review', 'trigger.manual'),
     ]);
     const announce = await rowOf('Announce');
-    expect(announce.getByText('Entry published')).toBeTruthy();
+    expect(announce.getByText('Starts on Entry published')).toBeTruthy();
     expect(announce.getByText('Draft starts on Submit for review')).toBeTruthy();
     const review = await rowOf('Review');
-    expect(review.getByText('Submit for review')).toBeTruthy();
+    expect(review.getByText('Starts on Submit for review')).toBeTruthy();
     expect(review.queryByText(/Draft starts on|choose between|Also starts/)).toBeNull();
+  });
+
+  it('says in words what each column used to say by its header', async () => {
+    setup([
+      workflow('wf-1', 'Broad', 'trigger.manual', {
+        description: 'For everything',
+        updatedAt: '2026-01-01T00:00:00.000Z',
+      }),
+      workflow('wf-2', 'Unfinished', 'trigger.manual', UNPUBLISHED),
+    ]);
+    const broad = await rowOf('Broad');
+    expect(broad.getByText('For everything')).toBeTruthy();
+    expect(broad.getByText('Covers every content type')).toBeTruthy();
+    expect(broad.getByText('Publishing: Not gated')).toBeTruthy();
+    expect(broad.getByText(/^Edited/)).toBeTruthy();
+    expect(broad.getByText('Steps').nextElementSibling?.textContent).toBe('1');
+    const unfinished = await rowOf('Unfinished');
+    expect(unfinished.getByText('No description yet.')).toBeTruthy();
+    expect(unfinished.getByText('Draft, never published')).toBeTruthy();
+  });
+
+  it('filters in the card, and a miss offers the way out', async () => {
+    setup([
+      workflow('wf-1', 'Editorial review', 'trigger.manual', { description: 'Two editors' }),
+      workflow('wf-2', 'Legal review', 'trigger.manual'),
+    ]);
+    await rowOf('Editorial review');
+    const search = screen.getByRole('searchbox', { name: 'Filter workflows' });
+
+    fireEvent.change(search, { target: { value: 'two EDITORS' } });
+    expect(screen.getByRole('link', { name: 'Editorial review' })).toBeTruthy();
+    expect(screen.queryByRole('link', { name: 'Legal review' })).toBeNull();
+
+    fireEvent.change(search, { target: { value: 'nothing like it' } });
+    expect(screen.getByText(/No workflow matches “nothing like it”/)).toBeTruthy();
+    expect(screen.queryByRole('list', { name: 'All workflows' })).toBeNull();
+    // The field's own Clear and the miss's: the search stays, so it can still be changed.
+    fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }));
+    expect(await rowOf('Legal review')).toBeTruthy();
+    expect((search as HTMLInputElement).value).toBe('');
+  });
+
+  it('offers no filter when there are no workflows at all', async () => {
+    setup([]);
+    expect(await screen.findByText(/No workflows yet/)).toBeTruthy();
+    expect(screen.queryByRole('searchbox')).toBeNull();
   });
 });

@@ -426,7 +426,7 @@ describe('Releases destructive actions', () => {
 
   it('lists each release with its entry count, and publishes only from inside it', async () => {
     setup();
-    const row = (await screen.findByRole('button', { name: 'Spring campaign' })).closest('tr');
+    const row = (await screen.findByRole('button', { name: 'Spring campaign' })).closest('li');
     if (!row) throw new Error('no row');
     expect(await within(row).findByText('3')).toBeTruthy();
     // The count rides on the list; no release is fetched just to count its members.
@@ -448,7 +448,7 @@ describe('Releases destructive actions', () => {
       },
     ] as never);
     setup();
-    const row = (await screen.findByRole('button', { name: 'Spring campaign' })).closest('tr');
+    const row = (await screen.findByRole('button', { name: 'Spring campaign' })).closest('li');
     if (!row) throw new Error('no row');
     const when = within(row).getByText(/Nov 7, 2026/);
     expect(when.closest('time')?.getAttribute('dateTime')).toBe('2026-11-07T14:00:00.000Z');
@@ -493,7 +493,7 @@ describe('Releases destructive actions', () => {
     const tab = await screen.findByRole('tab', { name: /Scheduled/ });
     fireEvent.mouseDown(tab);
     fireEvent.click(tab);
-    const table = await screen.findByRole('table', { name: 'Scheduled publishes' });
+    const table = await screen.findByRole('list', { name: 'Scheduled publishes' });
     const hello = await within(table).findByRole('link', { name: 'Hello world' });
     expect(hello.getAttribute('href')).toBe('/content/article/e-1');
     expect(await within(table).findByText('Entry no longer available')).toBeTruthy();

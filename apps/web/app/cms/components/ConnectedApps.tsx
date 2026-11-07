@@ -11,21 +11,14 @@ import {
   AlertDialogTrigger,
 } from '@contentworker/ui/alert-dialog';
 import { Button } from '@contentworker/ui/button';
-import { Card, CardContent, CardHeader } from '@contentworker/ui/card';
+import { Catalog, CatalogRow, CatalogTile } from '@contentworker/ui/catalog';
 import { Checkbox } from '@contentworker/ui/checkbox';
 import { Input } from '@contentworker/ui/input';
 import { Label } from '@contentworker/ui/label';
-import {
-  Table,
-  TableBody,
-  Td as TableCell,
-  Th as TableHead,
-  TableHead as TableHeader,
-  Tr as TableRow,
-} from '@contentworker/ui/table';
-import { KeyRound } from 'lucide-react';
+import { KeyRound, Plug } from 'lucide-react';
 import { useState } from 'react';
 import { Ago } from '~/cms/components/ago';
+import { Section } from '~/cms/components/page';
 import { StatusBadge } from '~/cms/components/status';
 import { When } from '~/cms/components/when';
 import {
@@ -47,7 +40,7 @@ const scopeText = (scopes: readonly string[]) =>
 
 /**
  * Who and what can reach this space through OAuth, plus the personal access
- * tokens issued in it. Two sibling cards rather than one nested surface —
+ * tokens issued in it. Two sibling sections rather than one nested surface —
  * connections are granted by a human clicking approve in another application,
  * tokens are minted here, and they are revoked differently.
  */
@@ -82,62 +75,50 @@ function Connections(props: { client: ManagementClient }) {
   };
 
   return (
-    <Card>
-      <CardHeader>
-        <h2 className="font-heading text-base font-medium">Connected applications</h2>
-        <p className="text-sm text-muted-foreground">
-          Applications a person approved through OAuth — MCP clients, assistants, editors.
-          Disconnecting revokes their tokens and the grants behind them, so they can&rsquo;t refresh
-          back in.
-        </p>
-      </CardHeader>
-      <CardContent>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Application</TableHead>
-              <TableHead>Authorized by</TableHead>
-              <TableHead>Access</TableHead>
-              <TableHead className="w-40">Last used</TableHead>
-              <TableHead className="w-24" />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {apps.map((app) => (
-              <TableRow key={`${app.clientId}:${app.subject}`}>
-                <TableCell>
-                  <div className="font-medium">{app.clientName}</div>
-                  {app.tokenCount > 1 && (
-                    <div className="text-xs text-muted-foreground">
-                      {app.tokenCount} active tokens
-                    </div>
-                  )}
-                </TableCell>
-                <TableCell className="text-muted-foreground">{app.subject}</TableCell>
-                <TableCell className="text-muted-foreground">
-                  <div className="max-w-[320px] truncate" title={app.scopes.join(', ')}>
-                    {scopeText(app.scopes)}
-                  </div>
-                </TableCell>
-                <TableCell className="text-muted-foreground text-xs">
-                  <Ago at={app.lastUsedAt} />
-                </TableCell>
-                <TableCell className="text-right">
-                  <DisconnectButton name={app.clientName} onConfirm={() => disconnect(app)} />
-                </TableCell>
-              </TableRow>
-            ))}
-            {apps.length === 0 && (
-              <TableRow>
-                <TableCell colSpan={5} className="text-muted-foreground">
-                  No applications are connected.
-                </TableCell>
-              </TableRow>
-            )}
-          </TableBody>
-        </Table>
-      </CardContent>
-    </Card>
+    <Section
+      title="Connected applications"
+      description="Applications a person approved through OAuth — MCP clients, assistants, editors. Disconnecting revokes their tokens and the grants behind them, so they can’t refresh back in."
+      flush
+    >
+      {apps.length === 0 ? (
+        <p className="px-5 py-4 text-muted-foreground text-sm">No applications are connected.</p>
+      ) : (
+        <Catalog aria-label="Connected applications">
+          {apps.map((app) => (
+            <CatalogRow
+              key={`${app.clientId}:${app.subject}`}
+              media={
+                <CatalogTile>
+                  <Plug aria-hidden="true" />
+                </CatalogTile>
+              }
+              title={app.clientName}
+              meta={
+                <span className="flex flex-wrap gap-x-2">
+                  <span className="min-w-0 break-words">
+                    Authorized by <span>{app.subject}</span>
+                  </span>
+                  <span title={app.scopes.join(', ')}>
+                    Access: {scopeText(app.scopes) || 'None'}
+                  </span>
+                  {app.tokenCount > 1 && <span>{app.tokenCount} active tokens</span>}
+                  <span>
+                    {app.lastUsedAt ? (
+                      <>
+                        Last used <Ago at={app.lastUsedAt} />
+                      </>
+                    ) : (
+                      'Never used'
+                    )}
+                  </span>
+                </span>
+              }
+              actions={<DisconnectButton name={app.clientName} onConfirm={() => disconnect(app)} />}
+            />
+          ))}
+        </Catalog>
+      )}
+    </Section>
   );
 }
 
@@ -145,7 +126,7 @@ function DisconnectButton(props: { name: string; onConfirm: () => void }) {
   return (
     <AlertDialog>
       <AlertDialogTrigger asChild>
-        <Button type="button" variant="ghost" size="sm" className="text-destructive">
+        <Button type="button" variant="ghost" size="xs" aria-label={`Disconnect “${props.name}”`}>
           Disconnect
         </Button>
       </AlertDialogTrigger>
@@ -224,15 +205,12 @@ function PersonalAccessTokens(props: { client: ManagementClient }) {
   };
 
   return (
-    <Card>
-      <CardHeader>
-        <h2 className="font-heading text-base font-medium">Personal access tokens</h2>
-        <p className="text-sm text-muted-foreground">
-          For CLI and CI clients that can&rsquo;t run a browser sign-in. A token can only carry
-          permissions you hold yourself.
-        </p>
-      </CardHeader>
-      <CardContent className="space-y-4">
+    <Section
+      title="Personal access tokens"
+      description="For CLI and CI clients that can’t run a browser sign-in. A token can only carry permissions you hold yourself."
+      flush
+    >
+      <div className="space-y-4 p-5">
         {minted && (
           <Alert>
             <KeyRound />
@@ -297,55 +275,52 @@ function PersonalAccessTokens(props: { client: ManagementClient }) {
             dropped.
           </p>
         </form>
+      </div>
 
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Name</TableHead>
-              <TableHead>Owner</TableHead>
-              <TableHead>Access</TableHead>
-              <TableHead className="w-40">Expires</TableHead>
-              <TableHead className="w-24">Status</TableHead>
-              <TableHead className="w-24" />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
+      <div className="border-t">
+        {tokens.length === 0 ? (
+          <p className="px-5 py-4 text-muted-foreground text-sm">No personal access tokens yet.</p>
+        ) : (
+          <Catalog aria-label="Personal access tokens">
             {tokens.map((t) => (
-              <TableRow key={t.id}>
-                <TableCell>{t.name ?? <span className="text-muted-foreground">—</span>}</TableCell>
-                <TableCell className="text-muted-foreground">{t.subject ?? '—'}</TableCell>
-                <TableCell className="text-muted-foreground">
-                  <div className="max-w-[280px] truncate" title={t.scopes.join(', ')}>
-                    {scopeText(t.scopes)}
-                  </div>
-                </TableCell>
-                <TableCell className="text-muted-foreground text-xs">
-                  {t.expiresAt ? <When at={t.expiresAt} /> : 'Never'}
-                </TableCell>
-                <TableCell>
-                  <StatusBadge status={tokenStatus(t)} />
-                </TableCell>
-                <TableCell className="text-right">
-                  {!t.revoked && (
+              <CatalogRow
+                key={t.id}
+                media={
+                  <CatalogTile>
+                    <KeyRound aria-hidden="true" />
+                  </CatalogTile>
+                }
+                title={t.name ?? <span className="text-muted-foreground">Unnamed token</span>}
+                meta={
+                  <span className="flex flex-wrap gap-x-2">
+                    {t.subject && <span className="min-w-0 break-words">Owned by {t.subject}</span>}
+                    <span title={t.scopes.join(', ')}>Access: {scopeText(t.scopes) || 'None'}</span>
+                    <span>
+                      {t.expiresAt ? (
+                        <>
+                          Expires <When at={t.expiresAt} />
+                        </>
+                      ) : (
+                        'Never expires'
+                      )}
+                    </span>
+                  </span>
+                }
+                aside={<StatusBadge status={tokenStatus(t)} />}
+                actions={
+                  t.revoked ? undefined : (
                     <RevokeTokenButton
                       name={t.name ?? 'this token'}
                       onConfirm={() => revoke(t.id)}
                     />
-                  )}
-                </TableCell>
-              </TableRow>
+                  )
+                }
+              />
             ))}
-            {tokens.length === 0 && (
-              <TableRow>
-                <TableCell colSpan={6} className="text-muted-foreground">
-                  No personal access tokens yet.
-                </TableCell>
-              </TableRow>
-            )}
-          </TableBody>
-        </Table>
-      </CardContent>
-    </Card>
+          </Catalog>
+        )}
+      </div>
+    </Section>
   );
 }
 
@@ -363,7 +338,7 @@ function RevokeTokenButton(props: { name: string; onConfirm: () => void }) {
   return (
     <AlertDialog>
       <AlertDialogTrigger asChild>
-        <Button type="button" variant="ghost" size="sm" className="text-destructive">
+        <Button type="button" variant="ghost" size="xs" aria-label={`Revoke “${props.name}”`}>
           Revoke
         </Button>
       </AlertDialogTrigger>

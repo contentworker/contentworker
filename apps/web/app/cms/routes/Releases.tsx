@@ -1,6 +1,15 @@
 import { Badge } from '@contentworker/ui/badge';
 import { Button } from '@contentworker/ui/button';
 import {
+  Catalog,
+  CatalogEmpty,
+  CatalogFigure,
+  CatalogRow,
+  CatalogTile,
+  ListSearch,
+  ListToolbar,
+} from '@contentworker/ui/catalog';
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -11,6 +20,7 @@ import {
 } from '@contentworker/ui/dialog';
 import { Input } from '@contentworker/ui/input';
 import { Label } from '@contentworker/ui/label';
+import { Segmented, SegmentedItem } from '@contentworker/ui/segmented';
 import {
   Select,
   SelectContent,
@@ -20,22 +30,8 @@ import {
 } from '@contentworker/ui/select';
 import { Sheet, SheetDescription, SheetHeader, SheetTitle } from '@contentworker/ui/sheet';
 import { Skeleton } from '@contentworker/ui/skeleton';
-import {
-  Table,
-  TableBody,
-  Td as TableCell,
-  Th as TableHead,
-  TableHead as TableHeader,
-  Tr as TableRow,
-} from '@contentworker/ui/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@contentworker/ui/tabs';
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from '@contentworker/ui/tooltip';
-import { CalendarClock, PackageOpen, Plus, Rocket, Trash2, X } from 'lucide-react';
+import { CalendarClock, PackageOpen, Plus, Rocket, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router';
 import { Ago } from '~/cms/components/ago';
@@ -59,6 +55,12 @@ import {
 } from '../lib/queries';
 import { useToast } from '../lib/toast';
 
+/** Which scheduled publishes the list shows. */
+type ScheduledFilter = 'all' | 'pending';
+
+/** Which releases the list shows. */
+type ReleaseFilter = 'all' | 'open' | 'published';
+
 /** Local datetime → ISO, defaulting to one hour out for the picker initial value. */
 function defaultScheduleLocal(): string {
   const d = new Date(Date.now() + 60 * 60 * 1000);
@@ -78,11 +80,21 @@ export function Releases() {
   const invalidate = useInvalidate();
   const [creating, setCreating] = useState(false);
   const [openId, setOpenId] = useState<string | null>(null);
+  const [query, setQuery] = useState('');
+  const [show, setShow] = useState<ReleaseFilter>('all');
+  const [scheduledShow, setScheduledShow] = useState<ScheduledFilter>('all');
   const releasesQuery = useScopedQuery(['releases'], () => client.listReleases());
   const scheduledQuery = useScopedQuery(['scheduled-actions'], () => client.listScheduledActions());
   const releases = releasesQuery.data ?? [];
   const scheduled = scheduledQuery.data ?? [];
   const loading = releasesQuery.isPending || scheduledQuery.isPending;
+  const scheduledShown = scheduled.filter((a) => scheduledShow === 'all' || a.status === 'pending');
+  const needle = query.trim().toLowerCase();
+  const shown = releases.filter(
+    (r) =>
+      (show === 'all' || r.status === show) &&
+      (!needle || `${r.title} ${r.description ?? ''}`.toLowerCase().includes(needle)),
+  );
   // Scheduled entries are named by one batched lookup, never by their ids.
   const scheduledEntries = useEntriesById(
     scheduled.filter((a) => a.entityType === 'Entry').map((a) => a.entityId),
@@ -108,6 +120,12 @@ export function Releases() {
     await reload();
   };
 
+  /** What a scheduled action acts on, for naming its row. */
+  const targetOf = (a: (typeof scheduled)[number]) =>
+    (a.entityType === 'Release'
+      ? releases.find((r) => r.id === a.entityId)?.title
+      : scheduledEntries.refs.get(a.entityId)?.title) ?? 'a deleted item';
+
   const cancel = (id: string) =>
     run(async () => {
       await client.cancelScheduledAction(id);
@@ -118,83 +136,98 @@ export function Releases() {
   const pendingCount = scheduled.filter((a) => a.status === 'pending').length;
 
   return (
-    <TooltipProvider>
-      <div className="space-y-4">
-        <PageHeader title="Releases" subtitle="Bundle entries and ship them atomically.">
-          <Button type="button" size="sm" onClick={() => setCreating(true)} disabled={busy}>
-            <Plus aria-hidden="true" /> New release
-          </Button>
-        </PageHeader>
+    <div className="space-y-4">
+      <PageHeader title="Releases" subtitle="Bundle entries and ship them atomically.">
+        <Button type="button" size="sm" onClick={() => setCreating(true)} disabled={busy}>
+          <Plus aria-hidden="true" /> New release
+        </Button>
+      </PageHeader>
 
-        <Tabs defaultValue="releases">
-          <TabsList>
-            <TabsTrigger value="releases">Releases</TabsTrigger>
-            <TabsTrigger value="scheduled">
-              Scheduled
-              {pendingCount > 0 && (
-                <Badge variant="secondary" className="ml-2">
-                  {pendingCount}
-                </Badge>
-              )}
-            </TabsTrigger>
-          </TabsList>
+      <Tabs defaultValue="releases">
+        <TabsList>
+          <TabsTrigger value="releases">Releases</TabsTrigger>
+          <TabsTrigger value="scheduled">
+            Scheduled
+            {pendingCount > 0 && (
+              <Badge variant="secondary" className="ml-2">
+                {pendingCount}
+              </Badge>
+            )}
+          </TabsTrigger>
+        </TabsList>
 
-          <TabsContent value="releases" className="mt-4">
-            {loading ? (
-              <div className="card space-y-3 p-5">
-                {[0, 1, 2].map((i) => (
-                  <Skeleton key={i} className="h-10 w-full" />
-                ))}
-              </div>
-            ) : releases.length === 0 ? (
-              <EmptyState
-                icon={PackageOpen}
-                title="No releases yet"
-                description="Group entries into a release to publish them together at one moment."
-              >
-                <Button type="button" onClick={() => setCreating(true)}>
-                  Create release
-                </Button>
-              </EmptyState>
-            ) : (
-              <div className="card overflow-clip">
-                <Table stack="cards" caption="Releases">
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Release</TableHead>
-                      <TableHead numeric>Entries</TableHead>
-                      <TableHead>When</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>
-                        <span className="sr-only">Actions</span>
-                      </TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {releases.map((r) => {
-                      const at = scheduledFor(r.id);
-                      return (
-                        <TableRow key={r.id}>
-                          <TableCell className="max-w-md">
-                            {/* Opening is the row's main path; publishing waits inside, with its
-                                members in view. */}
-                            <button
-                              type="button"
-                              className="hit-area break-words text-left font-medium hover:underline"
-                              onClick={() => setOpenId(r.id)}
-                            >
-                              {r.title}
-                            </button>
-                            {r.description ? (
-                              <p className="line-clamp-2 text-muted-foreground text-xs">
-                                {r.description}
-                              </p>
-                            ) : null}
-                          </TableCell>
-                          <TableCell numeric label="Entries">
-                            {r.itemCount}
-                          </TableCell>
-                          <TableCell label="When" className="text-muted-foreground">
+        <TabsContent value="releases" className="mt-4">
+          {loading ? (
+            <div className="card space-y-3 p-5">
+              {[0, 1, 2].map((i) => (
+                <Skeleton key={i} className="h-10 w-full" />
+              ))}
+            </div>
+          ) : releases.length === 0 ? (
+            <EmptyState
+              icon={PackageOpen}
+              title="No releases yet"
+              description="Group entries into a release to publish them together at one moment."
+            >
+              <Button type="button" onClick={() => setCreating(true)}>
+                Create release
+              </Button>
+            </EmptyState>
+          ) : (
+            <div className="card overflow-clip">
+              <ListToolbar summary={`${shown.length} shown`}>
+                <ListSearch
+                  label="Search releases"
+                  placeholder="Search releases"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  onClear={() => setQuery('')}
+                />
+                <Segmented
+                  aria-label="Show releases"
+                  value={show}
+                  onValueChange={(v) => setShow(v as ReleaseFilter)}
+                >
+                  <SegmentedItem value="all">All</SegmentedItem>
+                  <SegmentedItem value="open">Open</SegmentedItem>
+                  <SegmentedItem value="published">Published</SegmentedItem>
+                </Segmented>
+              </ListToolbar>
+              {shown.length === 0 ? (
+                <CatalogEmpty
+                  onClear={() => {
+                    setQuery('');
+                    setShow('all');
+                  }}
+                >
+                  No releases match.
+                </CatalogEmpty>
+              ) : (
+                <Catalog aria-label="Releases" className="pt-0">
+                  {shown.map((r) => {
+                    const at = scheduledFor(r.id);
+                    return (
+                      <CatalogRow
+                        key={r.id}
+                        className="[&_[data-slot=item-description]]:line-clamp-2"
+                        media={
+                          <CatalogTile>
+                            <PackageOpen aria-hidden="true" />
+                          </CatalogTile>
+                        }
+                        title={
+                          // Opening is the row's main path; publishing waits inside, with its
+                          // members in view.
+                          <button
+                            type="button"
+                            className="hit-area break-words text-left font-medium hover:underline"
+                            onClick={() => setOpenId(r.id)}
+                          >
+                            {r.title}
+                          </button>
+                        }
+                        meta={
+                          <>
                             {r.publishedAt ? (
                               <>
                                 Published <Ago at={r.publishedAt} />
@@ -208,150 +241,151 @@ export function Releases() {
                                 Created <Ago at={r.createdAt} />
                               </>
                             )}
-                          </TableCell>
-                          <TableCell label="Status">
+                            {r.description ? ` · ${r.description}` : ''}
+                          </>
+                        }
+                        aside={
+                          <>
                             <StatusBadge
                               status={r.status === 'open' && at ? 'scheduled' : r.status}
                             />
-                          </TableCell>
-                          <TableCell className="text-right">
-                            {r.status !== 'published' ? (
-                              <ConfirmDialog
-                                message={`Delete “${r.title}”?`}
-                                note="Its entries stay as they are; the release itself can’t be recovered."
-                                confirmLabel="Delete release"
-                                busy={busy}
-                                onConfirm={() => remove(r.id)}
-                              >
-                                {(ask) => (
-                                  <Tooltip>
-                                    <TooltipTrigger asChild>
-                                      <Button
-                                        type="button"
-                                        variant="ghost"
-                                        size="icon"
-                                        className="hit-area size-8"
-                                        aria-label={`Delete “${r.title}”`}
-                                        onClick={ask}
-                                        disabled={busy}
-                                      >
-                                        <Trash2 className="size-4" aria-hidden="true" />
-                                      </Button>
-                                    </TooltipTrigger>
-                                    <TooltipContent>Delete release</TooltipContent>
-                                  </Tooltip>
-                                )}
-                              </ConfirmDialog>
-                            ) : null}
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })}
-                  </TableBody>
-                </Table>
-              </div>
-            )}
-          </TabsContent>
-
-          <TabsContent value="scheduled" className="mt-4">
-            {loading ? (
-              <Skeleton className="h-40 w-full" />
-            ) : scheduled.length === 0 ? (
-              <EmptyState
-                icon={CalendarClock}
-                title="Nothing scheduled"
-                description="Schedule a release or entry to publish automatically at a future time."
-              />
-            ) : (
-              <div className="card overflow-clip">
-                <Table stack="cards" caption="Scheduled publishes">
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Action</TableHead>
-                      <TableHead>Target</TableHead>
-                      <TableHead>When</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead className="w-20">
-                        <span className="sr-only">Actions</span>
-                      </TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {scheduled.map((a) => (
-                      <TableRow key={a.id}>
-                        <TableCell className="font-medium">{humanize(a.action)}</TableCell>
-                        <TableCell label="Target">
-                          {a.entityType === 'Release' ? (
-                            (releases.find((r) => r.id === a.entityId)?.title ?? (
-                              <span className="text-muted-foreground">A deleted release</span>
-                            ))
-                          ) : (
-                            <EntryLink
-                              entry={scheduledEntries.refs.get(a.entityId)}
-                              resolving={scheduledEntries.resolving(a.entityId)}
-                            />
-                          )}
-                        </TableCell>
-                        <TableCell label="When">
-                          <When at={a.scheduledFor} />
-                        </TableCell>
-                        <TableCell label="Status">
-                          <StatusBadge status={a.status} />
-                        </TableCell>
-                        <TableCell className="text-right">
-                          {a.status === 'pending' && (
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => cancel(a.id)}
-                              disabled={busy}
+                            <CatalogFigure label="Entries">{r.itemCount}</CatalogFigure>
+                          </>
+                        }
+                        actions={
+                          r.status !== 'published' ? (
+                            <ConfirmDialog
+                              message={`Delete “${r.title}”?`}
+                              note="Its entries stay as they are; the release itself can’t be recovered."
+                              confirmLabel="Delete release"
+                              busy={busy}
+                              onConfirm={() => remove(r.id)}
                             >
-                              <X className="size-4" />
-                              Cancel
-                            </Button>
-                          )}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-            )}
-          </TabsContent>
-        </Tabs>
+                              {(ask) => (
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="xs"
+                                  aria-label={`Delete “${r.title}”`}
+                                  onClick={ask}
+                                  disabled={busy}
+                                >
+                                  Delete
+                                </Button>
+                              )}
+                            </ConfirmDialog>
+                          ) : undefined
+                        }
+                      />
+                    );
+                  })}
+                </Catalog>
+              )}
+            </div>
+          )}
+        </TabsContent>
 
-        <CreateReleaseDialog
-          open={creating}
-          onOpenChange={setCreating}
-          onCreate={async (input) => {
-            let failed: unknown;
-            await run(async () => {
-              try {
-                const created = await client.createRelease(input);
-                setCreating(false);
-                toast.success('Release created');
-                await reload();
-                setOpenId(created.id);
-              } catch (err) {
-                failed = err;
-              }
-            });
-            if (failed === undefined) return;
-            // It may have landed: the list behind the dialog is where to check.
-            if (!refusedSave(failed)) await reload();
-            throw failed;
-          }}
-          busy={busy}
-        />
+        <TabsContent value="scheduled" className="mt-4">
+          {loading ? (
+            <Skeleton className="h-40 w-full" />
+          ) : scheduled.length === 0 ? (
+            <EmptyState
+              icon={CalendarClock}
+              title="Nothing scheduled"
+              description="Schedule a release or entry to publish automatically at a future time."
+            />
+          ) : (
+            <div className="card overflow-clip">
+              <ListToolbar summary={`${scheduledShown.length} shown`}>
+                <Segmented
+                  aria-label="Show scheduled publishes"
+                  className="ml-auto"
+                  value={scheduledShow}
+                  onValueChange={(v) => setScheduledShow(v as ScheduledFilter)}
+                >
+                  <SegmentedItem value="all">All</SegmentedItem>
+                  <SegmentedItem value="pending">Pending</SegmentedItem>
+                </Segmented>
+              </ListToolbar>
+              <Catalog aria-label="Scheduled publishes" className="pt-0">
+                {scheduledShown.map((a) => (
+                  <CatalogRow
+                    key={a.id}
+                    media={
+                      <CatalogTile>
+                        <CalendarClock aria-hidden="true" />
+                      </CatalogTile>
+                    }
+                    title={
+                      a.entityType === 'Release' ? (
+                        (releases.find((r) => r.id === a.entityId)?.title ?? (
+                          <span className="text-muted-foreground">A deleted release</span>
+                        ))
+                      ) : (
+                        <EntryLink
+                          entry={scheduledEntries.refs.get(a.entityId)}
+                          resolving={scheduledEntries.resolving(a.entityId)}
+                        />
+                      )
+                    }
+                    meta={
+                      <>
+                        {humanize(a.action)} · <When at={a.scheduledFor} />
+                      </>
+                    }
+                    aside={<StatusBadge status={a.status} />}
+                    actions={
+                      a.status === 'pending' ? (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="xs"
+                          aria-label={`Cancel ${humanize(a.action)} of ${targetOf(a)}`}
+                          onClick={() => cancel(a.id)}
+                          disabled={busy}
+                        >
+                          Cancel
+                        </Button>
+                      ) : undefined
+                    }
+                  />
+                ))}
+              </Catalog>
+            </div>
+          )}
+        </TabsContent>
+      </Tabs>
 
-        <ReleaseDetailSheet
-          releaseId={openId}
-          onClose={() => setOpenId(null)}
-          onChanged={() => void reload()}
-        />
-      </div>
-    </TooltipProvider>
+      <CreateReleaseDialog
+        open={creating}
+        onOpenChange={setCreating}
+        onCreate={async (input) => {
+          let failed: unknown;
+          await run(async () => {
+            try {
+              const created = await client.createRelease(input);
+              setCreating(false);
+              toast.success('Release created');
+              await reload();
+              setOpenId(created.id);
+            } catch (err) {
+              failed = err;
+            }
+          });
+          if (failed === undefined) return;
+          // It may have landed: the list behind the dialog is where to check.
+          if (!refusedSave(failed)) await reload();
+          throw failed;
+        }}
+        busy={busy}
+      />
+
+      <ReleaseDetailSheet
+        releaseId={openId}
+        onClose={() => setOpenId(null)}
+        onChanged={() => void reload()}
+      />
+    </div>
   );
 }
 

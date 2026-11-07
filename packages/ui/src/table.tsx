@@ -85,7 +85,10 @@ function TableBody({ className, ...props }: React.ComponentProps<'tbody'>) {
     <tbody
       data-slot="table-body"
       role={stack ? 'rowgroup' : undefined}
-      className={cn('divide-y', className)}
+      className={cn(
+        'divide-y [&>tr:not([data-state=selected]):hover]:bg-muted/40 [&>tr]:transition-colors',
+        className,
+      )}
       {...props}
     />
   );

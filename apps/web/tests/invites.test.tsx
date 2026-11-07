@@ -64,12 +64,13 @@ function renderSection(invites: Invite[] | null, stepUp: 'password' | null = 'pa
 describe('the Team page’s invitations', () => {
   it('lists open invitations with their status in words', () => {
     renderSection([invite(), invite({ id: 'inv-2', email: 'old@example.com', status: 'expired' })]);
-    const table = screen.getByRole('table', { name: 'Invitations' });
-    expect(within(table).getByText('grace@example.com')).toBeTruthy();
-    expect(within(table).getByText('Pending')).toBeTruthy();
-    expect(within(table).getByText('Expired')).toBeTruthy();
-    expect(within(table).getAllByText(/Member · Blog/)).toHaveLength(2);
-    expect(screen.getByRole('button', { name: 'Send a new link…' })).toBeTruthy();
+    const list = screen.getByRole('list', { name: 'Invitations' });
+    expect(within(list).getByText('grace@example.com')).toBeTruthy();
+    expect(within(list).getByText('Pending')).toBeTruthy();
+    expect(within(list).getByText('Expired')).toBeTruthy();
+    expect(within(list).getAllByText('Member')).toHaveLength(2);
+    expect(within(list).getAllByText('Blog')).toHaveLength(2);
+    expect(screen.getByRole('button', { name: /^Send a new link for / })).toBeTruthy();
   });
 
   it('says so when there are none, or they couldn’t be loaded', () => {
@@ -118,10 +119,10 @@ describe('the Team page’s invitations', () => {
 
   it('confirms a revoke in place, and a resend of an admin’s invitation asks for step-up', async () => {
     const sent = renderSection([invite({ role: 'admin' })]);
-    fireEvent.click(screen.getByRole('button', { name: 'Resend…' }));
+    fireEvent.click(screen.getByRole('button', { name: /^Resend for / }));
     expect(screen.getByLabelText('Your password')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Keep' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Revoke…' }));
+    fireEvent.click(screen.getByRole('button', { name: /^Revoke for / }));
     expect(screen.getByText(/Revoke the invitation for grace@example.com\?/)).toBeTruthy();
     expect(screen.queryByLabelText('Your password')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Revoke' }));

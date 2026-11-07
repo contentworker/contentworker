@@ -2,6 +2,15 @@ import type { Redirect, RedirectChain } from '@contentworker/domain';
 import { Alert, AlertAction, AlertDescription, AlertTitle } from '@contentworker/ui/alert';
 import { Button } from '@contentworker/ui/button';
 import {
+  Catalog,
+  CatalogEmpty,
+  CatalogFigure,
+  CatalogRow,
+  CatalogTile,
+  ListSearch,
+  ListToolbar,
+} from '@contentworker/ui/catalog';
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -21,21 +30,13 @@ import {
   SelectValue,
 } from '@contentworker/ui/select';
 import { Switch } from '@contentworker/ui/switch';
-import {
-  Table,
-  TableBody,
-  Td as TableCell,
-  TableEmpty,
-  Th as TableHead,
-  TableHead as TableHeader,
-  Tr as TableRow,
-} from '@contentworker/ui/table';
 import { Textarea } from '@contentworker/ui/textarea';
-import { ArrowRightLeft, Plus, Upload } from 'lucide-react';
+import { ArrowRight, ArrowRightLeft, Plus, Upload } from 'lucide-react';
 import { useId, useState } from 'react';
 import { DiscardAsk, GuardCancel, useDiscardGuard } from '~/cms/components/discard-guard';
 import { ConfirmButton } from '~/cms/components/InlineConfirm';
 import { EmptyState, Section } from '~/cms/components/page';
+import { ToneBadge } from '~/cms/components/status';
 import {
   apiErrorMessage,
   apiFieldIssues,
@@ -172,75 +173,56 @@ export function Redirects(props: { client: ManagementClient }) {
             </div>
           }
         >
-          <div className="px-4 pt-3 pb-1">
-            <Input
-              type="search"
-              aria-label="Search redirects"
+          <ListToolbar summary={`${items.length} shown`}>
+            <ListSearch
+              label="Search redirects"
               placeholder="Search paths and notes"
-              autoCorrect="off"
-              autoCapitalize="off"
-              spellCheck={false}
-              enterKeyHint="search"
-              className="max-w-sm"
               value={q}
               onChange={(e) => setQ(e.target.value)}
+              onClear={() => setQ('')}
             />
-          </div>
-          <Table edge="card" stack="cards" caption="Redirects" aria-busy={page.isFetching}>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Source</TableHead>
-                <TableHead>Destination</TableHead>
-                <TableHead numeric className="w-16">
-                  Status
-                </TableHead>
-                <TableHead className="w-28">Locale</TableHead>
-                <TableHead className="w-24">Enabled</TableHead>
-                <TableHead className="w-44">
-                  <span className="sr-only">Actions</span>
-                </TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {items.length === 0 && page.data !== undefined && (
-                <TableEmpty colSpan={6}>No redirects match “{q}”.</TableEmpty>
-              )}
+          </ListToolbar>
+          {items.length === 0 && page.data !== undefined ? (
+            <CatalogEmpty onClear={() => setQ('')}>No redirects match “{q}”.</CatalogEmpty>
+          ) : (
+            <Catalog aria-label="Redirects" aria-busy={page.isFetching} className="pt-0">
               {items.map((r) => (
-                <TableRow key={r.id}>
-                  <TableCell className="break-all">
-                    <span className="font-mono text-xs">{r.source}</span>
-                    {r.origin === 'slug' && (
-                      <span className="block text-2xs text-muted-foreground">
-                        From a slug change
+                <CatalogRow
+                  key={r.id}
+                  media={<CatalogTile title={`Status ${r.status}`}>{r.status}</CatalogTile>}
+                  title={<span className="break-all font-mono text-xs">{r.source}</span>}
+                  meta={
+                    <span className="flex flex-wrap gap-x-2">
+                      <span className="break-all font-mono">
+                        <ArrowRight aria-hidden="true" className="mr-1 inline size-3" />
+                        <span className="sr-only">To </span>
+                        {r.destination}
                       </span>
-                    )}
-                    {r.note && (
-                      <span className="block text-2xs text-muted-foreground">{r.note}</span>
-                    )}
-                  </TableCell>
-                  <TableCell label="Destination" className="break-all font-mono text-xs">
-                    {r.destination}
-                  </TableCell>
-                  <TableCell label="Status" numeric>
-                    {r.status}
-                  </TableCell>
-                  <TableCell label="Locale" className="text-muted-foreground">
-                    {r.locale ?? 'All'}
-                  </TableCell>
-                  <TableCell label="Enabled">
-                    <Switch
-                      aria-label={`Enabled: ${r.source}`}
-                      checked={r.enabled}
-                      disabled={busy}
-                      onCheckedChange={(enabled) =>
-                        void act(
-                          () => client.updateRedirect(r.id, { enabled }),
-                          enabled ? 'Redirect on' : 'Redirect off',
-                        )
-                      }
-                    />
-                  </TableCell>
-                  <TableCell className="text-right">
+                      <span>{[301, 308].includes(r.status) ? 'Permanent' : 'Temporary'}</span>
+                      <span>{r.locale ? `Locale ${r.locale}` : 'All locales'}</span>
+                      {r.origin === 'slug' && <span>From a slug change</span>}
+                      {r.note && <span>{r.note}</span>}
+                    </span>
+                  }
+                  aside={
+                    <>
+                      {r.enabled ? null : <ToneBadge tone="idle" label="Off" />}
+                      <CatalogFigure label="Enabled">
+                        <Switch
+                          aria-label={`Enabled: ${r.source}`}
+                          checked={r.enabled}
+                          disabled={busy}
+                          onCheckedChange={(enabled) =>
+                            void act(
+                              () => client.updateRedirect(r.id, { enabled }),
+                              enabled ? 'Redirect on' : 'Redirect off',
+                            )
+                          }
+                        />
+                      </CatalogFigure>
+                    </>
+                  }
+                  actions={
                     <ConfirmButton
                       message={`Delete the redirect from ${r.source}?`}
                       note="Readers on the old path get your site's not-found page."
@@ -254,7 +236,7 @@ export function Redirects(props: { client: ManagementClient }) {
                         <span className="flex justify-end gap-1">
                           <Button
                             variant="ghost"
-                            size="sm"
+                            size="xs"
                             aria-label={`Edit the redirect from ${r.source}`}
                             onClick={() => setEditing(r)}
                           >
@@ -262,7 +244,7 @@ export function Redirects(props: { client: ManagementClient }) {
                           </Button>
                           <Button
                             variant="ghost"
-                            size="sm"
+                            size="xs"
                             aria-label={`Delete the redirect from ${r.source}`}
                             onClick={ask}
                           >
@@ -271,11 +253,11 @@ export function Redirects(props: { client: ManagementClient }) {
                         </span>
                       )}
                     </ConfirmButton>
-                  </TableCell>
-                </TableRow>
+                  }
+                />
               ))}
-            </TableBody>
-          </Table>
+            </Catalog>
+          )}
           {page.data?.nextCursor && (
             <p className="px-4 py-3 text-muted-foreground text-ui">
               Showing the first {items.length}. Search to narrow the list.

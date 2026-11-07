@@ -1,8 +1,6 @@
 import { Badge } from '@contentworker/ui/badge';
-import { Button } from '@contentworker/ui/button';
-import { Input } from '@contentworker/ui/input';
+import { ListSearch } from '@contentworker/ui/catalog';
 import { cn } from '@contentworker/ui/lib/utils';
-import { Search, X } from 'lucide-react';
 import { BADGE_BUTTON_FOCUS } from '~/cms/components/assets/AssetIngestBadges';
 import type { FacetChip } from '~/cms/lib/assets';
 
@@ -13,43 +11,15 @@ import type { FacetChip } from '~/cms/lib/assets';
 export function AssetSearchBox(props: { value: string; onChange: (next: string) => void }) {
   const { value, onChange } = props;
   return (
-    <div className="relative w-full sm:max-w-xs">
-      <Search
-        aria-hidden="true"
-        className="-translate-y-1/2 absolute top-1/2 left-2.5 size-4 text-muted-foreground"
-      />
-      <Input
-        type="search"
-        aria-label="Search assets"
-        className="h-9 pr-8 pl-8"
-        placeholder="Search names, alt text, tags, text…"
-        enterKeyHint="search"
-        autoCorrect="off"
-        autoCapitalize="off"
-        spellCheck={false}
-        value={value}
-        maxLength={256}
-        onChange={(e) => onChange(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === 'Escape' && value) {
-            e.preventDefault();
-            onChange('');
-          }
-        }}
-      />
-      {value && (
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-xs"
-          aria-label="Clear search"
-          className="-translate-y-1/2 absolute top-1/2 right-1.5"
-          onClick={() => onChange('')}
-        >
-          <X aria-hidden="true" />
-        </Button>
-      )}
-    </div>
+    <ListSearch
+      label="Search assets"
+      className="sm:max-w-xs"
+      placeholder="Search names, alt text, tags, text…"
+      value={value}
+      maxLength={256}
+      onChange={(e) => onChange(e.target.value)}
+      onClear={() => onChange('')}
+    />
   );
 }
 

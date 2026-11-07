@@ -78,21 +78,23 @@ const renderLocales = (client: ReturnType<typeof fakeClient>) =>
   );
 
 const rowOf = (locale: string) =>
-  screen.getByText(locale, { selector: 'span.font-medium' }).closest('tr') as HTMLElement;
+  screen.getByText(locale, { selector: 'span.font-medium' }).closest('li') as HTMLElement;
 
 describe('Settings → Locales', () => {
-  it('draws the table while it loads, then a row per locale with its fallback', async () => {
+  it('draws the list while it loads, then a row per locale with its fallback', async () => {
     const client = fakeClient();
     const { container } = renderLocales(client);
-    // Drawn Page: the headers are real while the rows load, and the region says it is loading.
-    expect(screen.getByRole('columnheader', { name: 'Delivered' })).toBeTruthy();
+    // Drawn Page: the list and its captions are real while the rows load, and the region says it
+    // is loading.
+    expect(screen.getByRole('list', { name: 'Locales' })).toBeTruthy();
+    expect(screen.getAllByText('Delivered').length).toBe(2);
     expect(container.querySelector('[aria-busy="true"]')).not.toBeNull();
     expect(screen.getByRole('status').textContent).toBe('Loading the locale settings…');
 
     await screen.findByRole('switch', { name: 'Deliver fr' });
     expect(container.querySelector('[aria-busy="true"]')).toBeNull();
     expect(within(rowOf('en')).getByText('Default')).toBeTruthy();
-    expect(within(rowOf('en')).getByText('None')).toBeTruthy();
+    expect(within(rowOf('en')).getByText('No fallback')).toBeTruthy();
     expect(within(rowOf('fr')).getAllByText('en').length).toBe(1);
     // No fallback set: the chain ends at the default locale.
     expect(within(rowOf('ar')).getByText('en')).toBeTruthy();

@@ -1,6 +1,6 @@
-import { Badge } from '@contentworker/ui/badge';
 import { Button } from '@contentworker/ui/button';
 import { Card, CardContent, CardHeader } from '@contentworker/ui/card';
+import { Catalog, CatalogRow, CatalogTile } from '@contentworker/ui/catalog';
 import { Input } from '@contentworker/ui/input';
 import { Label } from '@contentworker/ui/label';
 import {
@@ -10,14 +10,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@contentworker/ui/select';
-import {
-  Table,
-  TableBody,
-  Td as TableCell,
-  Th as TableHead,
-  TableHead as TableHeader,
-  Tr as TableRow,
-} from '@contentworker/ui/table';
 import { PanelRight, Puzzle } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { ConfirmButton } from '~/cms/components/InlineConfirm';
@@ -150,39 +142,32 @@ export function AppExtensions(props: { client: ManagementClient }) {
       {apps.length === 0 ? (
         <p className="text-muted-foreground text-sm">No extensions installed.</p>
       ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Name</TableHead>
-              <TableHead>Target</TableHead>
-              <TableHead>URL</TableHead>
-              <TableHead className="w-20" />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
+        <div className="card overflow-clip">
+          <Catalog aria-label="Extensions">
             {apps.map((a) => (
-              <TableRow key={a.id}>
-                <TableCell className="font-medium">
-                  <span className="flex items-center gap-1.5">
+              <CatalogRow
+                key={a.id}
+                media={
+                  <CatalogTile>
                     {a.target === 'sidebar' ? (
-                      <PanelRight className="size-3.5 text-primary" />
+                      <PanelRight aria-hidden="true" />
                     ) : (
-                      <Puzzle className="size-3.5 text-primary" />
+                      <Puzzle aria-hidden="true" />
                     )}
-                    {a.name}
+                  </CatalogTile>
+                }
+                title={a.name}
+                meta={
+                  <span className="flex flex-wrap gap-x-2">
+                    <span>
+                      {a.target === 'sidebar'
+                        ? 'Sidebar widget'
+                        : `Field editor for ${a.fieldTypes?.join(', ') || 'any field type'}`}
+                    </span>
+                    <span className="break-all font-mono">{a.entryUrl}</span>
                   </span>
-                </TableCell>
-                <TableCell>
-                  <Badge variant="outline">
-                    {a.target === 'sidebar'
-                      ? 'Sidebar'
-                      : `Field: ${a.fieldTypes?.join(', ') || 'any'}`}
-                  </Badge>
-                </TableCell>
-                <TableCell className="max-w-64 truncate font-mono text-muted-foreground text-xs">
-                  {a.entryUrl}
-                </TableCell>
-                <TableCell>
+                }
+                actions={
                   <ConfirmButton
                     message={`Remove “${a.name}”?`}
                     note="Editors stop seeing it. This can’t be undone."
@@ -190,16 +175,22 @@ export function AppExtensions(props: { client: ManagementClient }) {
                     onConfirm={() => void remove(a.id)}
                   >
                     {(ask) => (
-                      <Button type="button" variant="ghost" size="sm" onClick={ask}>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="xs"
+                        aria-label={`Remove “${a.name}”`}
+                        onClick={ask}
+                      >
                         Remove
                       </Button>
                     )}
                   </ConfirmButton>
-                </TableCell>
-              </TableRow>
+                }
+              />
             ))}
-          </TableBody>
-        </Table>
+          </Catalog>
+        </div>
       )}
     </div>
   );

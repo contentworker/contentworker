@@ -5,6 +5,15 @@ import {
   type WorkflowTemplateId,
 } from '@contentworker/domain';
 import { Button } from '@contentworker/ui/button';
+import {
+  Catalog,
+  CatalogEmpty,
+  CatalogFigure,
+  CatalogRow,
+  CatalogTile,
+  ListSearch,
+  ListToolbar,
+} from '@contentworker/ui/catalog';
 import { DialogError } from '@contentworker/ui/dialog';
 import {
   Field,
@@ -19,8 +28,7 @@ import { NativeSelect, NativeSelectOption } from '@contentworker/ui/native-selec
 import { Segmented, SegmentedItem } from '@contentworker/ui/segmented';
 import { SheetFooter } from '@contentworker/ui/sheet';
 import { Skeleton } from '@contentworker/ui/skeleton';
-import { Table, TableBody, TableHead, Td, Th, Tr } from '@contentworker/ui/table';
-import { Search, Trash2, Workflow } from 'lucide-react';
+import { Workflow } from 'lucide-react';
 import { useEffect, useId, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router';
 import { Ago } from '~/cms/components/ago';
@@ -33,7 +41,9 @@ import {
 } from '~/cms/components/discard-guard';
 import { FormSheet } from '~/cms/components/form-sheet';
 import { Empty, PageHeader, Section } from '~/cms/components/page';
+import { StatusBadge } from '~/cms/components/status';
 import { CopilotDialog } from '~/cms/components/workflow/CopilotDialog';
+import { NodeIcon } from '~/cms/components/workflow/NodeIcon';
 import { plural } from '~/cms/lib/format';
 import { useClient } from '../lib/client-context';
 import { refusedSave, type WorkflowListItem } from '../lib/management';
@@ -41,7 +51,7 @@ import { useContentTypesQuery, useInvalidate, useScopedQuery } from '../lib/quer
 import { useToast } from '../lib/toast';
 
 /*
- * The workflows list: one table row per workflow (its name as the link, what starts it, what it
+ * The workflows list: one catalog row per workflow (its name as the link, what starts it, what it
  * covers, whether it gates publishing and its live version), a filter, and one "New workflow" sheet
  * (template or blank) beside "Draft with AI". Two workflows that start on the same thing for the same
  * content types both run, so each row names the others; creating, duplicating and drafting call
@@ -123,30 +133,19 @@ export function Workflows() {
         }
       />
 
-      <div className="mb-4 flex flex-wrap items-center gap-x-4 gap-y-2">
-        <div className="relative w-full sm:w-80">
-          <Search
-            aria-hidden="true"
-            className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground"
-          />
-          <Input
-            type="search"
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-            placeholder="Filter by name or description"
-            aria-label="Filter workflows"
-            className="h-8 w-full pl-9"
-          />
-        </div>
-      </div>
-
       {workflowsQuery.isPending ? (
         <div className="card space-y-3 p-5">
           {[0, 1, 2].map((i) => (
             <Skeleton key={i} className="h-12 w-full" />
           ))}
         </div>
-      ) : shown.length ? (
+      ) : workflows.length === 0 ? (
+        <Section title="All workflows">
+          <Empty icon={<Workflow aria-hidden="true" />}>
+            No workflows yet. Start from a template, or draft one with AI.
+          </Empty>
+        </Section>
+      ) : (
         <Section
           title="All workflows"
           flush
@@ -156,33 +155,26 @@ export function Workflows() {
             </span>
           }
         >
-          <Table stack="cards" caption="All workflows">
-            <TableHead>
-              <Tr>
-                <Th>Workflow</Th>
-                <Th>Starts</Th>
-                <Th>Covers</Th>
-                <Th>Publishing</Th>
-                <Th>Version</Th>
-                <Th>
-                  <span className="sr-only">Actions</span>
-                </Th>
-              </Tr>
-            </TableHead>
-            <TableBody>
+          <ListToolbar summary={`${shown.length} shown`}>
+            <ListSearch
+              label="Filter workflows"
+              placeholder="Filter by name or description"
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+              onClear={() => setFilter('')}
+            />
+          </ListToolbar>
+          {shown.length === 0 ? (
+            <CatalogEmpty onClear={() => setFilter('')}>
+              No workflow matches “{filter.trim()}”.
+            </CatalogEmpty>
+          ) : (
+            <Catalog aria-label="All workflows" className="pt-0">
               {shown.map((w) => (
                 <WorkflowRow key={w.id} w={w} all={workflows} typeName={typeName} onOpen={open} />
               ))}
-            </TableBody>
-          </Table>
-        </Section>
-      ) : (
-        <Section title="All workflows">
-          <Empty icon={q ? undefined : <Workflow aria-hidden="true" />}>
-            {q
-              ? `No workflow matches “${filter.trim()}”.`
-              : 'No workflows yet. Start from a template, or draft one with AI.'}
-          </Empty>
+            </Catalog>
+          )}
         </Section>
       )}
 
@@ -367,10 +359,10 @@ const draftTriggerOf = (w: WorkflowListItem) => {
 };
 
 /**
- * One workflow as a table row: its name (the link) over its description, what starts its published
- * version (and which other published workflows start on the same thing, as the API reports it),
- * what it covers, whether it gates publishing, its live version, and Duplicate and Delete. Delete
- * asks in a row of its own beneath.
+ * One workflow as a catalog row: its trigger's icon, its name (the link) over its description, what
+ * starts its published version (and which other published workflows start on the same thing, as the
+ * API reports it), what it covers and whether it gates publishing, then its live version, its steps,
+ * and Duplicate and Delete.
  */
 function WorkflowRow({
   w,
@@ -428,76 +420,74 @@ function WorkflowRow({
   const manual = published?.type === 'trigger.manual';
   const steps = w.graph.nodes.length;
   const approvals = w.graph.nodes.filter((n) => n.type === 'control.approval').length;
+  const trigger = published?.type ?? draft?.type;
+  const icon = trigger ? nodeSpec(trigger)?.icon : undefined;
   return (
-    <Tr>
-      <Td className="min-w-0 max-w-md">
+    <CatalogRow
+      media={
+        <CatalogTile>
+          {icon ? <NodeIcon name={icon} /> : <Workflow aria-hidden="true" />}
+        </CatalogTile>
+      }
+      title={
         <Link
           to={`/workflows/${encodeURIComponent(w.id)}`}
-          className="font-medium text-foreground hover:underline"
+          className="hit-area font-medium text-foreground hover:underline"
         >
           {w.name}
         </Link>
-        <p className="line-clamp-2 text-muted-foreground text-xs leading-relaxed">
-          {w.description || 'No description yet.'}
-        </p>
-        <p className="text-muted-foreground text-xs tabular">
-          {[
-            plural(steps, 'step'),
-            approvals ? (approvals === 1 ? 'a person approves' : `${approvals} approvals`) : null,
-          ]
-            .filter(Boolean)
-            .join(' · ')}
-        </p>
-      </Td>
-      <Td label="Starts">
-        {published ? (
-          published.label
-        ) : (
-          <span className="text-muted-foreground">
-            {w.latestVersion ? 'No trigger' : 'Not published'}
+      }
+      meta={
+        <span className="flex flex-wrap gap-x-2">
+          <span className="line-clamp-2 w-full">{w.description || 'No description yet.'}</span>
+          <span>
+            {published
+              ? `Starts on ${published.label}`
+              : w.latestVersion
+                ? 'No trigger'
+                : 'Not published'}
           </span>
-        )}
-        {draftDiffers ? (
-          <p className="text-muted-foreground text-xs">Draft starts on {draft.label}</p>
-        ) : null}
-        {alongside.length ? (
-          <p className="text-muted-foreground text-xs">
-            {manual ? 'Editors choose between this and ' : 'Also starts: '}
-            {alongside.join(', ')}
-          </p>
-        ) : null}
-      </Td>
-      <Td label="Covers">
-        {w.contentTypes.length ? (
-          w.contentTypes.map(typeName).join(', ')
-        ) : (
-          <span className="text-muted-foreground">Every content type</span>
-        )}
-      </Td>
-      <Td label="Publishing">
-        <span className={w.publishGated ? undefined : 'text-muted-foreground'}>
-          {gatingLabel(w)}
+          {draftDiffers ? <span>Draft starts on {draft.label}</span> : null}
+          {alongside.length ? (
+            <span>
+              {manual ? 'Editors choose between this and ' : 'Also starts: '}
+              {alongside.join(', ')}
+            </span>
+          ) : null}
+          <span>
+            {w.contentTypes.length
+              ? `Covers ${w.contentTypes.map(typeName).join(', ')}`
+              : 'Covers every content type'}
+          </span>
+          <span className={w.publishGated ? 'text-foreground' : undefined}>
+            Publishing: {gatingLabel(w)}
+          </span>
+          {approvals ? (
+            <span>{approvals === 1 ? 'A person approves' : `${approvals} approvals`}</span>
+          ) : null}
+          {w.updatedAt ? (
+            <span>
+              Edited <Ago at={w.updatedAt} />
+            </span>
+          ) : null}
         </span>
-      </Td>
-      <Td label="Version" className="whitespace-nowrap">
-        {w.latestVersion ? (
-          <span className="font-medium">Published v{w.latestVersion}</span>
-        ) : (
-          <span className="text-muted-foreground">Draft, never published</span>
-        )}
-        {w.updatedAt ? (
-          <p className="text-muted-foreground text-xs">
-            Edited <Ago at={w.updatedAt} />
-          </p>
-        ) : null}
-      </Td>
-      <Td className="text-right">
+      }
+      aside={
+        <>
+          {w.latestVersion ? (
+            <StatusBadge status="published" label={`Published v${w.latestVersion}`} />
+          ) : (
+            <StatusBadge status="draft" label="Draft, never published" />
+          )}
+          <CatalogFigure label="Steps">{steps}</CatalogFigure>
+        </>
+      }
+      actions={
         <div className="flex justify-end gap-1">
           <Button
             type="button"
             size="xs"
             variant="ghost"
-            className="hit-area"
             disabled={busy}
             aria-label={`Duplicate “${w.name}”`}
             onClick={() => void duplicate()}
@@ -516,17 +506,16 @@ function WorkflowRow({
                 type="button"
                 size="xs"
                 variant="ghost"
-                className="hit-area"
                 disabled={busy}
                 aria-label={`Delete “${w.name}”`}
                 onClick={ask}
               >
-                <Trash2 aria-hidden="true" /> Delete
+                Delete
               </Button>
             )}
           </ConfirmDialog>
         </div>
-      </Td>
-    </Tr>
+      }
+    />
   );
 }

@@ -91,10 +91,56 @@ const renderWebhooks = (client: ReturnType<typeof fakeClient>) =>
 describe('Settings → Webhooks', () => {
   it("shows each hook's environments: its own, or all of them", async () => {
     renderWebhooks(fakeClient([scoped, everywhere]));
-    const scopedRow = (await screen.findByText(scoped.url)).closest('tr') as HTMLElement;
+    const scopedRow = (await screen.findByText(scoped.url)).closest('li') as HTMLElement;
     expect(within(scopedRow).getByText('staging')).toBeTruthy();
-    const wideRow = screen.getByText(everywhere.url).closest('tr') as HTMLElement;
+    const wideRow = screen.getByText(everywhere.url).closest('li') as HTMLElement;
     expect(within(wideRow).getByText('All environments')).toBeTruthy();
+  });
+
+  it('finds hooks by address and status, and a miss says how to get them back', async () => {
+    const paused = {
+      ...everywhere,
+      id: 'w3',
+      url: 'https://hooks.example.com/paused',
+      active: false,
+    };
+    renderWebhooks(fakeClient([scoped, paused]));
+    await screen.findByText(scoped.url);
+
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search webhooks' }), {
+      target: { value: 'STAGING' },
+    });
+    expect(screen.getByText(scoped.url)).toBeTruthy();
+    expect(screen.queryByText(paused.url)).toBeNull();
+
+    fireEvent.click(screen.getByRole('radio', { name: 'Paused' }));
+    expect(screen.queryByRole('list', { name: 'Webhooks' })).toBeNull();
+    expect(screen.getByText(/No webhooks match/)).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }));
+    expect(screen.getByText(scoped.url)).toBeTruthy();
+    expect(screen.getByText(paused.url)).toBeTruthy();
+    expect(screen.getByRole('radio', { name: 'All' }).getAttribute('aria-checked')).toBe('true');
+  });
+
+  it('keeps Pause, Edit and Delete behind ⋯, and Delete still asks first', async () => {
+    const client = fakeClient([scoped]);
+    renderWebhooks(client);
+    const more = await screen.findByRole('button', { name: `More actions for ${scoped.url}` });
+    const open = () => fireEvent.pointerDown(more, { button: 0, ctrlKey: false });
+
+    open();
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Pause' }));
+    await waitFor(() =>
+      expect(client.updateWebhook).toHaveBeenCalledWith(scoped.id, { active: false }),
+    );
+
+    open();
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Delete…' }));
+    const ask = await screen.findByRole('alertdialog', { name: 'Delete webhook?' });
+    expect(client.deleteWebhook).not.toHaveBeenCalled();
+    fireEvent.click(within(ask).getByRole('button', { name: 'Delete' }));
+    await waitFor(() => expect(client.deleteWebhook).toHaveBeenCalledWith(scoped.id));
   });
 
   it('creates a hook for the current environment unless every environment is ticked', async () => {

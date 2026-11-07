@@ -90,15 +90,53 @@ describe('taxonomy screen', () => {
     );
   });
 
+  it('filters tags by name, slug and description, and a miss offers the way out', async () => {
+    client.listTags.mockResolvedValueOnce([
+      tag,
+      { ...tag, id: 't-2', name: 'Food', slug: 'eats', description: 'Recipes' },
+    ]);
+    renderTaxonomy();
+    fireEvent.mouseDown(await screen.findByRole('tab', { name: 'Tags' }));
+    fireEvent.click(await screen.findByRole('tab', { name: 'Tags' }));
+    const list = await screen.findByRole('list', { name: 'Tags' });
+    await within(list).findByText('Food');
+    // Sorted by name, as the table was.
+    const names = () =>
+      within(screen.getByRole('list', { name: 'Tags' }))
+        .getAllByRole('listitem')
+        .map((li) => li.querySelector('[data-slot="item-title"]')?.textContent);
+    expect(names()).toEqual(['Food', 'Travel']);
+
+    const search = screen.getByRole('searchbox', { name: 'Search tags' });
+    fireEvent.change(search, { target: { value: 'EATS' } });
+    expect(names()).toEqual(['Food']);
+    fireEvent.change(search, { target: { value: 'trips' } });
+    expect(names()).toEqual(['Travel']);
+
+    fireEvent.change(search, { target: { value: 'zebra' } });
+    expect(screen.getByText(/No tags match “zebra”/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }));
+    expect(names()).toEqual(['Food', 'Travel']);
+  });
+
+  it('offers no filter before there are any tags', async () => {
+    client.listTags.mockResolvedValueOnce([]);
+    renderTaxonomy();
+    fireEvent.mouseDown(await screen.findByRole('tab', { name: 'Tags' }));
+    fireEvent.click(await screen.findByRole('tab', { name: 'Tags' }));
+    expect(await screen.findByText('No tags yet')).toBeTruthy();
+    expect(screen.queryByRole('searchbox')).toBeNull();
+  });
+
   it('lists tags with slug and count, and saves only what changed', async () => {
     renderTaxonomy();
     fireEvent.mouseDown(await screen.findByRole('tab', { name: 'Tags' }));
     fireEvent.click(await screen.findByRole('tab', { name: 'Tags' }));
-    const table = await screen.findByRole('table', { name: 'Tags' });
-    expect(await within(table).findByText('travel')).toBeTruthy();
-    expect(within(table).getByText('3')).toBeTruthy();
+    const list = await screen.findByRole('list', { name: 'Tags' });
+    expect(await within(list).findByText('travel')).toBeTruthy();
+    expect(within(list).getByText('3')).toBeTruthy();
 
-    fireEvent.click(within(table).getByRole('button', { name: 'Edit “Travel”' }));
+    fireEvent.click(within(list).getByRole('button', { name: 'Edit “Travel”' }));
     const sheet = await screen.findByRole('dialog');
     expect(within(sheet).getByText(/Carried by 3 published entries/)).toBeTruthy();
     // One field per other locale; the default's label is the name.

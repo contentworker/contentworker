@@ -542,9 +542,12 @@ test('the webhook dialog has no accessibility violations', async ({ page }, test
   await page.getByPlaceholder('https://example.com/hooks/cms').fill('https://example.com/a11y');
   await page.getByPlaceholder('Signing secret').fill('a11y-secret');
   await page.getByRole('button', { name: 'Add webhook' }).click();
-  const edit = page.getByRole('button', { name: 'Edit' }).first();
-  await edit.waitFor();
-  await edit.click();
+  const more = page
+    .getByRole('button', { name: 'More actions for https://example.com/a11y' })
+    .first();
+  await more.waitFor();
+  await more.click();
+  await page.getByRole('menuitem', { name: 'Edit…' }).click();
   await expect(page.getByRole('dialog')).toBeVisible();
   await scan(page, testInfo);
 });
@@ -729,7 +732,8 @@ test('the plugin settings sheet has no accessibility violations', async ({
   expect([201, 409], await installed.text()).toContain(installed.status());
 
   await openCms(page, '/settings/plugins');
-  await page.getByRole('button', { name: 'Settings probe settings' }).click();
+  await page.getByRole('button', { name: 'More actions for “Settings probe”' }).click();
+  await page.getByRole('menuitem', { name: 'Settings probe settings' }).click();
   const sheet = page.getByRole('dialog', { name: 'Settings probe settings' });
   await expect(sheet.getByLabel('Max length')).toBeVisible();
   await expect(sheet.getByRole('switch', { name: 'Strict mode' })).toBeVisible();
@@ -936,7 +940,7 @@ test('the taxonomy tag table and its term editor have no accessibility violation
   expect(created.ok()).toBe(true);
   await openCms(page, '/taxonomy');
   await page.getByRole('tab', { name: 'Tags' }).click();
-  const table = page.getByRole('table', { name: 'Tags' });
+  const table = page.getByRole('list', { name: 'Tags' });
   await expect(table.getByText(`a11y-${stamp}`)).toBeVisible();
   await scan(page, testInfo);
   await table.getByRole('button', { name: `Edit “A11y ${stamp}”` }).click();

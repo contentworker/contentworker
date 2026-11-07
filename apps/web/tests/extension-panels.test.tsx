@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppExtensions } from '~/cms/components/AppExtensions';
 import { Functions } from '~/cms/components/Functions';
@@ -52,8 +52,12 @@ describe('Functions panel', () => {
       }),
     );
     expect(await screen.findByText('reindex')).toBeTruthy();
+    // Each fact says what it is, with no column header left to say it.
+    const row = screen.getByText('reindex').closest('li') as HTMLElement;
+    expect(row.textContent).toContain('On entry.*');
+    expect(within(row).getByText('https://example.com/hook')).toBeTruthy();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Delete “reindex”' }));
     // Deleting is permanent, so it asks inline first; nothing is sent yet.
     expect(screen.getByRole('alertdialog', { name: 'Delete “reindex”?' })).toBeTruthy();
     expect(client.deleteFunction).not.toHaveBeenCalled();
@@ -107,5 +111,8 @@ describe('AppExtensions panel', () => {
       }),
     );
     expect(await screen.findByText('word-count')).toBeTruthy();
+    const row = screen.getByText('word-count').closest('li') as HTMLElement;
+    expect(within(row).getByText('Sidebar widget')).toBeTruthy();
+    expect(within(row).getByText('https://example.com/widget')).toBeTruthy();
   });
 });
