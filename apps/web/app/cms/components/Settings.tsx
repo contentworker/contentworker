@@ -23,7 +23,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@contentworker/ui/select';
-import { SkeletonPill, SkeletonText } from '@contentworker/ui/skeleton';
 import {
   Table,
   TableBody,
@@ -36,14 +35,13 @@ import { KeyRound } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { AiActions } from '~/cms/components/AiActions';
 import { AppExtensions } from '~/cms/components/AppExtensions';
-import { Ago } from '~/cms/components/ago';
+import { AuditLog } from '~/cms/components/AuditLog';
 import { BranchMerge } from '~/cms/components/BranchMerge';
 import { ConfirmDialog } from '~/cms/components/ConfirmDialog';
 import { ConnectedApps } from '~/cms/components/ConnectedApps';
 import { Functions } from '~/cms/components/Functions';
 import { ConfirmButton } from '~/cms/components/InlineConfirm';
 import { LocaleSettings } from '~/cms/components/LocaleSettings';
-import { LoadingStatus } from '~/cms/components/loading';
 import { Menus } from '~/cms/components/Menus';
 import { Plugins } from '~/cms/components/Plugins';
 import { PageHeader } from '~/cms/components/page';
@@ -87,7 +85,7 @@ const SECTION_BODY: Record<string, (client: ManagementClient) => React.ReactNode
   menus: (client) => <Menus client={client} />,
   trash: (client) => <TrashSettings client={client} />,
   environments: (client) => <Environments client={client} />,
-  'audit-log': (client) => <AuditLog client={client} />,
+  'audit-log': () => <AuditLog />,
 };
 
 /**
@@ -291,108 +289,6 @@ function Environments(props: { client: ManagementClient }) {
 
       <BranchMerge client={client} environments={environments} />
     </div>
-  );
-}
-
-/** Append-only audit trail of mutating API actions (governance; space:admin). */
-function AuditLog(props: { client: ManagementClient }) {
-  const { client } = props;
-  const invalidate = useInvalidate();
-
-  // The audit log grows on every mutation, so always revalidate on mount.
-  const auditQuery = useScopedQuery(['audit-log'], () => client.listAuditLog({ limit: 200 }), {
-    staleTime: 0,
-  });
-  const entries = auditQuery.data ?? [];
-  const loading = auditQuery.isPending;
-  // isFetching (not isPending) so the Refresh button also disables during
-  // button-triggered refetches, not just the first load.
-  const refreshing = auditQuery.isFetching;
-  const load = () => void invalidate(['audit-log']);
-
-  return (
-    // Clipped, not hidden: a long log keeps its header under the shell's as it scrolls.
-    <Card className="overflow-clip">
-      <CardHeader className="flex-row items-center justify-between gap-2">
-        <div>
-          <h2 className="font-heading font-medium text-base">Audit log</h2>
-          <p className="text-muted-foreground text-sm">
-            Every mutating API action in this space, newest first.
-          </p>
-        </div>
-        <Button type="button" variant="outline" size="sm" onClick={load} disabled={refreshing}>
-          Refresh
-        </Button>
-      </CardHeader>
-      <CardContent>
-        {!loading && entries.length === 0 ? (
-          <p className="text-muted-foreground text-sm">No audit entries yet.</p>
-        ) : (
-          <Table
-            edge="flush"
-            stack="cards"
-            sticky
-            caption="Audit log"
-            aria-busy={loading || undefined}
-          >
-            <TableHeader>
-              <TableRow>
-                <TableHead>When</TableHead>
-                <TableHead>Actor</TableHead>
-                <TableHead>Action</TableHead>
-                <TableHead>Target</TableHead>
-                <TableHead numeric className="w-16">
-                  Status
-                </TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {entries.map((e) => (
-                <TableRow key={e.id}>
-                  <TableCell className="whitespace-nowrap text-muted-foreground text-xs">
-                    <Ago at={e.at} />
-                  </TableCell>
-                  <TableCell label="Actor">
-                    <Badge variant="outline">{e.actor}</Badge>
-                  </TableCell>
-                  <TableCell label="Action" className="font-mono text-xs">
-                    {e.action}
-                  </TableCell>
-                  <TableCell label="Target" className="font-mono text-muted-foreground text-xs">
-                    {e.targetId ?? '—'}
-                  </TableCell>
-                  <TableCell label="Status" numeric>
-                    {e.status}
-                  </TableCell>
-                </TableRow>
-              ))}
-              {loading
-                ? ['48%', '62%', '40%', '55%', '44%'].map((w) => (
-                    <TableRow key={w} aria-hidden="true">
-                      <TableCell className="text-xs">
-                        <SkeletonText width="4.5rem" />
-                      </TableCell>
-                      <TableCell label="Actor">
-                        <SkeletonPill className="w-20" />
-                      </TableCell>
-                      <TableCell label="Action" className="text-xs">
-                        <SkeletonText width="7.5rem" />
-                      </TableCell>
-                      <TableCell label="Target" className="text-xs">
-                        <SkeletonText width={w} />
-                      </TableCell>
-                      <TableCell label="Status" numeric className="text-sm">
-                        <SkeletonText width="1.75rem" className="items-end" />
-                      </TableCell>
-                    </TableRow>
-                  ))
-                : null}
-            </TableBody>
-          </Table>
-        )}
-        {loading ? <LoadingStatus>Loading the audit log…</LoadingStatus> : null}
-      </CardContent>
-    </Card>
   );
 }
 

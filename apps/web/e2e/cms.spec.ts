@@ -600,6 +600,29 @@ test('settings lists the space’s API keys, and the space access section', asyn
   await expect(page.getByText(name)).toBeVisible();
 });
 
+test('Settings → Audit log: pressing a target filters the log, and Clear brings it back', async ({
+  page,
+  request,
+}) => {
+  const id = await createDraft(request, `Audited ${Date.now()}`);
+  const update = await api(request, 'PUT', `${MGMT}/entries/${id}`, {
+    fields: { title: { 'en-US': `Audited again ${Date.now()}` } },
+  });
+  expect(update.ok(), await update.text()).toBe(true);
+  await openCms(page, '/settings/audit-log');
+  await page
+    .getByRole('button', { name: `Filter by target ${id}` })
+    .first()
+    .click();
+  await expect(page.getByLabel('Target ID')).toHaveValue(id);
+  await expect(page.getByLabel('Target type')).toHaveValue('entry');
+  const rows = page.getByRole('button', { name: /^Filter by actor / });
+  await expect(rows).toHaveCount(1);
+  await page.getByRole('button', { name: 'Clear filters' }).click();
+  await expect(page.getByLabel('Target ID')).toHaveValue('');
+  await expect.poll(() => rows.count()).toBeGreaterThan(1);
+});
+
 test('a webhook is sent a test, and its delivery is resent from the log', async ({ page }) => {
   await openCms(page, '/settings/webhooks');
   // A public address: the engine sends to it for real, so the attempt may succeed or fail (offline);
