@@ -48,6 +48,8 @@ export default [
       route('releases', 'routes/releases.tsx', { id: 'releases' }),
       route('workflows', 'routes/workflows.tsx', { id: 'workflows' }),
       route('workflows/:id', 'routes/workflow.tsx', { id: 'workflow' }),
+      // The block catalog pushed from code (`contentworker blocks push`): read-only here.
+      route('blocks', 'routes/blocks.tsx', { id: 'blocks' }),
       route('taxonomy', 'routes/taxonomy.tsx', { id: 'taxonomy' }),
       route('assets', 'routes/assets.tsx', { id: 'assets' }),
       // The screen's old address: bookmarks and links keep working.

@@ -1,0 +1,207 @@
+---
+title: Blocks from code
+description: Describe the components your site renders as JSON manifests, and push them as the block types of your pages' blocks fields with contentworker blocks push.
+---
+
+A page is an entry with a [blocks field](/reference/field-types/#blocks): an ordered list of blocks,
+each one of the field's block types. With blocks from code, the block types come from your site's
+code rather than the content model editor. You describe each component your front end renders in a
+**manifest**, push the set of them (the **block catalog**) with the CLI, and ContentWorker makes
+them the block types of the fields you name. Editors then compose pages from exactly what your
+code can render.
+
+A manifest is data: JSON, never a function. Nothing you push runs on the server or in the admin,
+so a catalog can be checked, compared with the last one, versioned and shown without running
+anyone's code. Placement rules are declarative too.
+
+## Before you start
+
+- Pushing a catalog changes the content model, so it needs `content:manage`. Reading the catalog,
+  its versions and its usage needs `preview:read`. See [API keys and access](/guides/api-keys/).
+- Each target field must already exist: a top-level blocks field (an Array of Component with block
+  types) on a content type. Create it once in the content model, or with
+  [`contentworker model apply`](/guides/cli/#the-content-model-as-code), with any block type;
+  the push replaces its block types with the catalog's.
+- Each environment has its own catalog. Push to `staging` first with `-e staging`.
+
+## The blocks file
+
+`contentworker blocks push` reads `contentworker.blocks.json` from the working directory, or the
+file you name. It is JSON, or a TypeScript or JavaScript module whose default export is the same
+object.
+
+```json
+{
+  "targets": [{ "contentTypeApiId": "page", "field": "body" }],
+  "blocks": [
+    {
+      "id": "hero",
+      "name": "Hero",
+      "group": "Headers",
+      "thumbnail": { "url": "https://cdn.example.com/blocks/hero.png" },
+      "fields": [
+        { "apiId": "heading", "name": "Heading", "type": "Symbol", "required": true },
+        {
+          "apiId": "tone",
+          "name": "Tone",
+          "type": "Symbol",
+          "validations": { "in": ["light", "dark"] }
+        }
+      ]
+    },
+    {
+      "id": "grid",
+      "name": "Card grid",
+      "fields": [{ "apiId": "title", "name": "Title", "type": "Symbol" }],
+      "slots": [{ "apiId": "cards", "name": "Cards", "allowedChildren": ["card"], "min": 1, "max": 6 }]
+    },
+    {
+      "id": "card",
+      "name": "Card",
+      "allowedParents": ["grid"],
+      "fields": [{ "apiId": "title", "name": "Title", "type": "Symbol" }]
+    }
+  ]
+}
+```
+
+Each target names a content type and one of its top-level blocks fields. Its top level takes every
+block without `allowedParents`, or only the blocks a target lists in `blocks`. The catalog owns the
+whole field: a block type the field had that the catalog doesn't provide is removed.
+
+## A block's manifest
+
+| Key              | Meaning                                                                                                   |
+| ---------------- | --------------------------------------------------------------------------------------------------------- |
+| `id`             | Stable identity, stored on each block as `_type`. A letter, then letters, digits or `_`. Never reused      |
+| `name`           | What editors see. Change it freely: content never depends on it                                           |
+| `group`          | The heading the block is listed under                                                                     |
+| `description`    | Up to 1,000 characters                                                                                    |
+| `thumbnail`      | `{ "assetId": "…" }` for an asset in the environment, or `{ "url": "https://…" }`                          |
+| `aliases`        | Ids the block had before (see [Renaming a block](#renaming-a-block))                                      |
+| `fields`         | The block's props, as [field definitions](/reference/field-types/)                                         |
+| `slots`          | Named places that hold other blocks                                                                       |
+| `allowedParents` | The only blocks whose slots may hold this one; such a block never goes at a target's top level            |
+
+A catalog holds at most 200 blocks, a block at most 10 slots, and the catalog at most 1,000,000
+characters as JSON. A thumbnail URL must be `https` without credentials; data URLs and inline
+markup are refused, and an `assetId` must name an asset in the environment.
+
+### Props
+
+Props use the content model's field vocabulary, with the rules any field inside a block follows
+(no localized, unique or Slug fields; at most three levels of nesting). `localized`, `required`
+and `position` may be left out: they default to `false`, `false` and the field's place in the list.
+
+Styling is design tokens, never raw CSS. A style prop is a Symbol with `validations.in`, such as
+`tone: light | dark` or `size: sm | md | lg`. A JSON prop is refused, and so is a prop named
+`style`, `styles`, `css`, `class`, `className`, `classes` or `inlineStyle` unless it is such an
+enumeration.
+
+### Slots and placement
+
+A slot becomes a nested blocks field of the block, with the slot's `apiId`, holding the blocks its
+`allowedChildren` names. `min` above 0 makes the slot required, and `min` and `max` bound how many
+blocks it holds.
+
+- Every block a slot or `allowedParents` names must be in the catalog.
+- The two sides agree: when a block lists `allowedParents`, each parent must have a slot that
+  allows it, and no slot may allow it from a parent the list leaves out.
+- A block can't end up inside itself, directly or through other blocks.
+- Slots nest at most two deep below the page (a section's columns' cards), as components do. A
+  deeper chain is refused, naming its path (`page.body[a].s[b].s[c].s`).
+
+The push answers `422` naming each problem by its place in the file (`blocks[hero].fields.tone`,
+`blocks[grid].slots.cards.allowedChildren`), all of them at once.
+
+## Renaming a block
+
+A block's `name` can change at any time. To change its `id`, give the new block the old id in
+`aliases`:
+
+```json
+{ "id": "banner", "name": "Banner", "aliases": ["hero"], "fields": [...] }
+```
+
+The push reports it as renamed rather than removed and added, and nothing is stranded: blocks
+stored as `"_type": "hero"` keep validating and reading as `banner` in the editor, and each takes
+`banner` on its entry's next save. GraphQL serves them as `banner` right away. The REST Delivery and
+Preview APIs return each block as stored, so until an entry is saved again a block can still
+carry the old id: have your renderer map aliases too, from the catalog (`GET …/block-catalog`).
+
+A former id is never reused: a push that brings `hero` back as a different block while the catalog
+in force lists it as an alias is refused. Removing a block outright and later pushing a new one
+under its id isn't detected, so pick a new id.
+
+## Push the catalog
+
+```sh
+contentworker blocks push --dry-run -e staging
+contentworker blocks push --yes -e staging
+```
+
+The CLI asks the server for a dry run and prints what would change: blocks added (`+`), changed and
+renamed (`~`) and removed (`!`), then each content type and field it changes. Then it pushes,
+against the version it showed: if someone else pushed in between, the push is refused rather than
+overwriting theirs.
+
+| Flag                  | Does                                                                         |
+| --------------------- | ---------------------------------------------------------------------------- |
+| `--dry-run`           | Show the change and push nothing                                             |
+| `--allow-destructive` | Push a catalog that removes blocks or block props                            |
+| `--no-publish`        | Leave each changed content type as a draft revision instead of publishing it |
+| `--yes`               | Don't ask (required when not on a terminal)                                   |
+
+A push that removes a block type or a prop is refused with exit code 4 unless you pass
+`--allow-destructive`. A push that removes something an entry still holds (its current version,
+a version in the trash, or its published version) is refused whatever the flags, naming the
+entries: change those entries first, or keep the old id in `aliases` if it is a rename.
+
+Each changed content type is revised with the content model's own checks and, unless
+`--no-publish`, published. Every changed type and the new catalog version are written together, so
+a push lands whole or not at all.
+
+## Versions
+
+Every push that changes something stores a new version: version 1 first, then one more each time,
+with who pushed it, when, and which blocks it added, changed, removed and renamed. A version also
+carries a hash of its blocks and targets, so pushing the catalog in force again changes nothing
+and writes nothing: it is safe to run `blocks push` on every deploy.
+
+## Block usage
+
+`GET …/block-catalog/usage` (and the MCP tool `blocks_usage`) counts how many entries use each
+block, in all and per content type: the current version of each entry outside the trash, once per
+entry however often it uses the block, a block stored under a former id counting as its block.
+Content types you can't read are left out. The count reads up to 2,000 entries per type; past that
+`complete` is `false` and the counts are a lower bound.
+
+## The API and MCP
+
+| Method | Path                                 | Scope            | Does                                           |
+| ------ | ------------------------------------ | ---------------- | ---------------------------------------------- |
+| GET    | `…/block-catalog`                    | `preview:read`   | The catalog in force; `404` before the first push |
+| POST   | `…/block-catalog`                    | `content:manage` | Push `{ blocks, targets, dryRun?, expectedVersion?, allowDestructive?, publish? }` |
+| GET    | `…/block-catalog/versions`           | `preview:read`   | Versions newest first, without their blocks (`?limit`, `?before`) |
+| GET    | `…/block-catalog/versions/:version`  | `preview:read`   | One version                                    |
+| GET    | `…/block-catalog/usage`              | `preview:read`   | Entries using each block, per content type     |
+
+`…` is `/spaces/:space/environments/:env`. A push answers what it did, or would do with `dryRun`:
+`previousVersion`, `version`, `changes`, `contentTypes`, `destructive`, `inUse` (what it would
+remove that entries hold) and `warnings`. Send the dry run's `previousVersion` as
+`expectedVersion` to be refused (`409`) if another push lands first. A refused push carries the
+same result in the error's `details`. From code, the management SDK has
+`cma.blockCatalog.{get, version, versions, push, usage}` ([SDKs](/guides/sdks/)).
+
+Agents get the same through MCP: `blocks_catalog_get`, `blocks_catalog_versions`, `blocks_usage`
+and `blocks_catalog_push` (with `dryRun`), under the same scopes ([MCP](/guides/mcp/)).
+
+The admin's Build → Blocks screen lists the catalog in force, read-only.
+
+## Not yet
+
+- Per-breakpoint overrides of token props.
+- Slots nested deeper than the content model's component depth.
+- Narrowing in the admin, per slot, what the code allows.
+- The catalog isn't carried by snapshots, exports or environment clones: the content types (and so
+  their block types) are, so push the catalog to a new environment once.

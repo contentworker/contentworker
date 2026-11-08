@@ -257,7 +257,7 @@ layout/nav.ts` is the one source of the pages, their order, names, icons and G-l
   `packages/ui/src/sidebar.tsx`. Full height on its own ground, with a rule. From the top: the brand
   row on the header's line, whose mark is the `SidebarTrigger` (named "Sidebar", ⌘\ or Ctrl+\);
   the day's work (Overview, Content, Approvals when on, Releases) with no label; then groups
-  labelled as captions: **Build** (Workflows), **Library** (Assets, Taxonomy) and **Settings**
+  labelled as captions: **Build** (Workflows, Blocks), **Library** (Assets, Taxonomy) and **Settings**
   (Access, Automation, Extensions, Workspace: Settings' own section groups, each opening its first
   section and reading as current on any of its sections); the account at its foot; `SidebarRail`
   on its edge (for a mouse; on touch the mark is the toggle). The page you're on is
@@ -289,9 +289,9 @@ layout/nav.ts` is the one source of the pages, their order, names, icons and G-l
   key), Connection, Keyboard shortcuts (with a fine pointer), the theme (Light, Dark, Match system)
   and Sign out. Its accessible name is that name plus "account menu".
 - **Shortcuts** are written for the device (⌘ on Apple, Ctrl elsewhere). G then a letter goes to a
-  page (H Overview, C Content, A Approvals, R Releases, W Workflows, M Assets, T Taxonomy, S
-  Settings); ? opens the list of every shortcut (a sheet, with whatever the page registers); ⌘K is
-  the command palette; ⌘J Coworker when it is on; ⌘\ the sidebar. Single keys go through
+  page (H Overview, C Content, A Approvals, R Releases, W Workflows, B Blocks, M Assets, T
+  Taxonomy, S Settings); ? opens the list of every shortcut (a sheet, with whatever the page
+  registers); ⌘K is the command palette; ⌘J Coworker when it is on; ⌘\ the sidebar. Single keys go through
   `plainKeyAllowed` (not with a modifier, while typing, or with a dialog, menu or inline confirm
   open) and run before a page's own keys.
 - **Transitions** in the bars name their properties (`tint`), never `transition-colors`. The
@@ -818,6 +818,15 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   what it covers; whether it gates publishing; its live version; then Duplicate and Delete
   (confirmed in an alert dialog). "New workflow" is a form sheet (template or blank) and "Draft
   with AI" a dialog whose proposal is reviewed in a Confirmation before a draft is created.
+
+- **Blocks** (`cms/routes/Blocks.tsx`): the block catalog pushed from code, read-only (a change is
+  `contentworker blocks push` from the site's repository, so code and admin never disagree).
+  `PageHeader` with no action; a Catalog card of facts (version, pushed when and by whom, the
+  blocks fields it fills, by name); then every block as a catalog row under its dock group's
+  caption (an h3 naming its list): its name and mono id, its props (a token prop shows its
+  choices), each slot and the blocks it takes, where it may go, its former ids, and an Entries
+  figure ("at least" when the count stopped short). No catalog yet is `Empty` with a minimal
+  `contentworker.blocks.json` in a `CodeBlock` and the dry-run command, both to copy. Thumbnails aren't drawn: the admin's `img-src` takes no other origin.
 
 ## Screens that change shape
 

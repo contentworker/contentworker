@@ -14,6 +14,7 @@ import type {
   AssetVersion,
   AssetZipJob,
   AuditDetail,
+  BlockCatalog,
   Comment,
   Concept,
   ConceptScheme,
@@ -62,6 +63,22 @@ import type {
   WorkflowTimelineRecord,
   WorkflowVersion,
 } from '@contentworker/domain';
+
+/** How many entries use each block of the catalog in force (`GET …/block-catalog/usage`). */
+export interface BlockCatalogUsage {
+  readonly version: number | null;
+  readonly blocks: readonly {
+    readonly id: string;
+    readonly entries: number;
+    readonly contentTypes: readonly {
+      readonly contentTypeApiId: string;
+      readonly entries: number;
+    }[];
+  }[];
+  readonly scanned: number;
+  /** False when a type had more entries than the count reads: the counts are a lower bound. */
+  readonly complete: boolean;
+}
 
 // ---- editorial workflow (graph) shapes, as the Management API returns them ----
 
@@ -2831,6 +2848,20 @@ export function createManagementClient(
     },
     deleteSavedView(id: string): Promise<void> {
       return req('DELETE', `${mgmt}/saved-views/${encodeURIComponent(id)}`);
+    },
+    // --- block catalog (blocks from code; read-only here) -----------------
+    /** The catalog in force, or null before the first `contentworker blocks push`. */
+    async getBlockCatalog(): Promise<BlockCatalog | null> {
+      try {
+        return await req<BlockCatalog>('GET', `${mgmt}/block-catalog`);
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 404) return null;
+        throw err;
+      }
+    },
+    /** Entries using each block of the catalog in force, per content type. */
+    getBlockUsage(): Promise<BlockCatalogUsage> {
+      return req('GET', `${mgmt}/block-catalog/usage`);
     },
     // --- settings: menus (environment-scoped) ----------------------------
     async listMenus(): Promise<MenuSummary[]> {

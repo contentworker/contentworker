@@ -60,6 +60,7 @@ test('wider screens get the sidebar, grouped, with the deployment pages for admi
     'Content',
     'Releases',
     'Workflows',
+    'Blocks',
     'Assets',
     'Access',
     'Workspace',

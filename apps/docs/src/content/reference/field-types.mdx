@@ -124,6 +124,13 @@ holds at most one block, set `validations: { size: { max: 1 } }` on the field. L
 blocks resolve with `include` like any other, GraphQL types the field as a union with one type per
 variant, and the generated TypeScript types narrow on `_type`.
 
+To rename a variant's `apiId` without stranding stored blocks, list the old one in the variant's
+`aliases`: `{ "apiId": "banner", "name": "Banner", "aliases": ["hero"], "fields": [...] }`. Blocks
+stored as `hero` validate and edit as `banner`, GraphQL serves them as `banner`, and each takes
+`banner` on its entry's next save (the REST APIs return a block as stored until then). An alias is
+used once in the field and is never another variant's `apiId`. To keep a field's block types in
+your site's code, see [Blocks from code](/guides/blocks-from-code/).
+
 ## References
 
 A `Link` field points at an entry or an asset; an `Array` of links holds several. Restrict which

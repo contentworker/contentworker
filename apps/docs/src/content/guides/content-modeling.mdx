@@ -195,7 +195,10 @@ see [Roles](/guides/api-keys/#roles)).
   [AI features](/guides/ai/)) before making it required.
 - **Adding a block type**, or an optional field to one, is safe. **Removing a block type** is
   refused while any entry (a draft, the trash or a published version) still has a block of it;
-  the error lists those entries, so change or remove their blocks first.
+  the error lists those entries, so change or remove their blocks first. **Renaming** one is not a
+  removal when the new block type keeps the old API ID in its `aliases`
+  ([Blocks](/reference/field-types/#blocks)). To keep block types in your site's code and push
+  them with the CLI, see [Blocks from code](/guides/blocks-from-code/).
 - **Removing a field**, at any depth (a component's field, a block type's field), is refused the
   same way while any entry still holds a value for it: the `409` lists each field and its entries
   (`details.fieldsInUse`). There is no override. Clear the value in those entries (save them

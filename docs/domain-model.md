@@ -1205,6 +1205,79 @@ cover is `hidden` (dropped on delivery) and, on a write, doesn't exist; a denied
 never becomes a label and a denied slug field drops the item, as `maskDeliveredFields` hides them
 on an entry read.
 
+## Block catalogs
+
+`packages/domain/src/content-type/block-catalog.ts`. Blocks from code: the components a
+developer's site renders, as JSON manifests (`BlockManifest`), pushed as an environment's block
+catalog and mapped onto the variants of the content types' blocks fields. A manifest is data,
+never a function: nothing pushed is evaluated by the api or the admin.
+
+```ts
+interface BlockManifest {
+  id: string; // stored on each block as _type; never reused
+  name: string;
+  group?: string;
+  description?: string;
+  thumbnail?: { assetId: string } | { url: string }; // https only
+  aliases?: string[]; // former ids
+  fields: FieldDefinition[]; // props, the content model's vocabulary
+  slots?: { apiId: string; name: string; help?: string; allowedChildren: string[]; min?: number; max?: number }[];
+  allowedParents?: string[];
+}
+
+interface BlockCatalog {
+  version: number; // 1, then one more per push that changes something
+  hash: string; // SHA-256 of the canonical { blocks, targets }
+  blocks: BlockManifest[];
+  targets: { contentTypeApiId: string; field: string; blocks?: string[] }[];
+  changes: { added: string[]; changed: string[]; removed: string[]; renamed: { from: string; to: string }[] };
+  pushedAt: string;
+  pushedBy: string | null; // auditActor of the caller; null for SYSTEM_CALLER
+}
+```
+
+- **Checks** (`checkBlockCatalog`) normalize fields (`localized`, `required` false, `position` the
+  index) and collect every problem into one `ValidationError` named by path (`blocks[hero].tone`):
+  ids, names and limits (`BLOCK_CATALOG_LIMITS`: 200 blocks, 10 slots, 20 targets, 1,000,000
+  characters of JSON); slots and `allowedParents` naming known blocks and agreeing; no cycle; no
+  JSON prop, and a style-named prop (`style`, `css`, `className`, …) only with `validations.in`;
+  thumbnails `https` without credentials; aliases never a current id nor shared. Each block's props
+  then go through `defineContentType` as a variant (slots holding stand-in children).
+- **Mapping** (`catalogVariants`, `planCatalogTypes`). A target's top level takes its `blocks`, or
+  every block without `allowedParents`; a slot becomes a nested blocks field (`size` from `min`
+  and `max`, `required` when `min > 0`) of its `allowedChildren`, expanded recursively. Slots below
+  `MAX_COMPONENT_DEPTH` are refused by path; a target expanding past 1,000 variants is refused.
+  The catalog owns the whole field: a variant it doesn't provide is removed. A plan is per type,
+  with the changed fields' added, changed, removed and renamed variants and whether it is
+  destructive (`removedVariants` or `removedFields` non-empty).
+- **Versions** (`diffBlockCatalogs`) compare by id against the version in force; a block whose
+  `aliases` name an old id is a rename. An id the version in force lists as an alias, back as
+  another block, is refused.
+- **Usage** (`blocksUsed`) is the set of block ids an entry's values use at any depth and locale,
+  an aliased `_type` counting as its variant.
+
+The use-cases (`packages/application/src/block-catalog.ts`): `pushBlockCatalog(ctx, caller, scope,
+input)` checks the catalog, refuses a stale `expectedVersion` (`409`, `details.version`), checks
+thumbnail assets exist, plans the target types, revises each with `reviseContentType` (published
+unless `publish: false`), finds what entries still hold through `removedContentInUse` (current
+versions, the trash, published snapshots) and returns the plan for `dryRun`. Applied, it refuses
+any `inUse` (no override) and any removal without `allowDestructive`, then writes every type
+(`prepareContentTypeSave`, the same guards and `content_type.published` events as
+`saveContentTypeOver`) and the version (`blockCatalogs.save`, inserted at its version: a lost race
+is a `TransactionConflictError` at commit, surfaced as `409`) in one unit. A concurrent hand edit of
+a target type between the read and the commit is not guarded, as for any content type save.
+`getBlockCatalog`, `listBlockCatalogVersions` and `getBlockUsage` (a keyset scan of up to
+`MAX_BLOCK_USAGE_SCAN` entries per type, `complete: false` past it) read only.
+
+Variant **aliases** (`ComponentVariant.aliases`) belong to the content model, not only the
+catalog: `variantOf` and validation resolve a former apiId to its variant, `assignBlockKeys`
+rewrites `_type` to the current apiId on write, `removedVariants` and `removedFields` treat an
+aliased variant as surviving, and GraphQL serves the current apiId. REST Delivery and Preview
+serve `_type` as stored until the entry's next save.
+
+The catalog isn't in snapshots, exports or environment clones (the content types, and so their
+variants, are).
+
 ## Saved views
 
 ```ts
