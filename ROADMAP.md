@@ -391,9 +391,14 @@ From the live preview spec and a review of a second implementation of its channe
   and the entry form honour it (no seams; no move, duplicate or remove; Layers shows the lock).
 - [ ] **Token values checked everywhere.** The frontend runtime runs `isSafeTokenValue` on every
   value it writes into a CSS custom property, not only on live preview patches.
-- [ ] **Block config as code.** A read-only code view of a block's admin config next to its code
-  defaults, with a diff of what the admin narrowed. Needs a code editor in the admin (CodeMirror 6,
-  a new catalog dependency).
+- [x] **Block config as code.** Build → Blocks' Rules card switches between Rules, **Code** and
+  **Narrowed from code**. Code is the config as `PUT …/block-config` takes it (`{ targets, blocks }`,
+  normalized, in the catalog's order), read-only JSON with line numbers, folding and Copy. Narrowed
+  from code diffs each place's code rule against the one in force (side by side from md, one
+  column on a phone; − and + beside changed lines), only the places that differ unless Show all
+  is on, ignored parts listed where they lie. With unsaved edits both show the draft, marked
+  Unsaved: the exact request before Save. CodeMirror 6 (`@codemirror/*`, `@lezer/highlight`) is a
+  lazy chunk fetched when a code view opens; no route ships it.
 
 Checked against the merged channel and not needed:
 - **An admin-started reconnect.** The frame route creates its host before it gives the iframe a

@@ -875,7 +875,16 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   A 409 is an Alert ("Someone else changed the rules") over their rules read again; a 422 lands
   on the controls it names and opens their panels. Parts a push left stale are a default Alert
   listing each, with "Remove ignored parts" (a save). Without content:manage it reads only, saying
-  so. Then every block as a catalog row under its dock group's
+  so. A toolbar row at the card's top says how many places are narrowed ("1 of 4 places narrowed",
+  "(unsaved)" with a draft) and holds a `Segmented` "Show the rules as": **Rules** (the rows),
+  **Code** and **Narrowed from code** ("Narrowed" on a phone, named in full), opening on Rules
+  every visit. Code is the config as `PUT …/block-config` takes it, read-only JSON ("Block config
+  as JSON") with a muted line saying whose rules it is and an outline Copy JSON; Narrowed from code
+  is each place that differs (Show all, a `Switch`, adds the rest) under an h3 of its name, its
+  key in mono and what changed in the controls' words ("Narrowed: the most, locked"), over the
+  code's rule against the one in force. With unsaved edits both show the draft under a `wait`
+  "Unsaved" badge; a refused save goes back to Rules, where its controls are. Both are code views
+  (Components). Then every block as a catalog row under its dock group's
   caption (an h3 naming its list): its name and mono id, its props (a token prop shows its
   choices), each slot and the blocks it takes, where it may go, its former ids, and an Entries
   figure ("at least" when the count stopped short). No catalog yet is `Empty` with a minimal
@@ -1124,6 +1133,17 @@ for code and data blocks only.
   button, in a sheet from the side (from the bottom on a phone, as every sheet with a form or a
   detail is: `ResponsiveSheetContent`).
 - **Relative time** (`components/ago.tsx`): "3m ago" that stays true, the full time in its tooltip.
+- **Code view** (`cms/components/block-config/codemirror.tsx`): read-only code in CodeMirror 6,
+  for code a developer reads, folds and copies (the block config as code); a short snippet to copy
+  stays a `CodeBlock`. Fetched when it first opens, never in a route's chunk, with a skeleton in its
+  shape meanwhile and a destructive Alert with Try again if the fetch fails. Ledger's look from the
+  tokens, so it follows the theme: Plex Mono on the code block's muted fill (the block ringed while
+  the editor has focus), line numbers in muted ink, syntax in greys and weight only (keys 500,
+  punctuation muted: colour means status). A diff tints the code's side `bad` and the new side `ok`,
+  as the revision diff does, strikes and underlines the changed text, and signs every changed line
+  − or + in a gutter, so a change never rests on colour; side by side from md (two captions, Code
+  and In force, over it), one column below. Each editor is focusable, `aria-readonly`, and named
+  for what it holds.
 - **Copy and share** (`components/copy-button.tsx`, `cms/components/share-button.tsx`): copy says so
   for a moment; share uses the system sheet where there is one.
 - **Install hint** (`components/install-hint.tsx`): on an iPhone or iPad in Safari, in More and on

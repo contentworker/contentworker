@@ -62,6 +62,8 @@ export default defineConfig({
         'entry-tabs.spec.ts',
         'entries-list-phone.spec.ts',
         'modals-phone.spec.ts',
+        // The rules' diff is one column on a phone.
+        'block-config-code.spec.ts',
       ],
       use: { ...devices['iPhone 15'] },
     },
@@ -72,7 +74,8 @@ export default defineConfig({
     },
     {
       name: 'ipad',
-      testMatch: ['shell.spec.ts', 'entry-tabs.spec.ts'],
+      // The rules' diff turns side by side at md: an iPad upright.
+      testMatch: ['shell.spec.ts', 'entry-tabs.spec.ts', 'block-config-code.spec.ts'],
       use: { ...devices['iPad (gen 7)'] },
     },
     {
@@ -94,7 +97,7 @@ export default defineConfig({
       testMatch:
         PART === 'axe'
           ? AXE
-          : /(cms|workflows|space-access|first-space|block-patch-card|accessibility|contrast-settle|modal-focus|live-preview|canvas-editor|entry-save-conflict)\.spec\.ts/,
+          : /(cms|workflows|space-access|first-space|block-patch-card|accessibility|contrast-settle|modal-focus|live-preview|canvas-editor|entry-save-conflict|block-config-code)\.spec\.ts/,
       testIgnore: PART === 'cms' ? AXE : undefined,
       use: { ...devices['Desktop Chrome'] },
     },
