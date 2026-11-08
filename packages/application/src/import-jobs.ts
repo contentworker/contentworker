@@ -214,7 +214,12 @@ export async function runImportChunk(
           staged.blockedFields ?? [],
         );
       } else {
-        await createEntry(ctx, scope, { contentTypeApiId, fields: record.fields }, { copy: true });
+        await createEntry(
+          ctx,
+          scope,
+          { contentTypeApiId, fields: record.fields },
+          { copy: true, imported: true },
+        );
       }
       succeeded += 1;
     } catch (err) {

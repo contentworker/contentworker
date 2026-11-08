@@ -14,6 +14,7 @@ import {
   ValidationError,
 } from '@contentworker/domain';
 import type { BulkItemFailure, BulkJob, BulkJobChunk } from '@contentworker/ports';
+import { loadBlockRules } from './block-config';
 import { actingForJob, type BulkChunkOutcome, readableBulkJob, startBulkJob } from './bulk-jobs';
 import type { AppContext } from './context';
 import { saveEntryDraft } from './entries';
@@ -192,6 +193,8 @@ export function entryFieldsChunkRunner(
       defaultLocale: config.defaultLocale,
       locales: config.locales,
     };
+    // The block config every save of the chunk is held to, read once rather than per entry.
+    const blockRules = await loadBlockRules(ctx, scope, contentType);
 
     const found = new Map(
       (await ctx.store.entries.getMany(scope, chunk.entryIds)).map((e) => [e.entry.id, e]),
@@ -209,6 +212,7 @@ export function entryFieldsChunkRunner(
         { ...vctx, previous: stored },
         withFieldValues(stored, set),
         stored,
+        { blockRules },
       );
       return undefined;
     };

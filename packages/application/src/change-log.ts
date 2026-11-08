@@ -1,5 +1,6 @@
 import {
   type AuditDetail,
+  type BlockConfigChange,
   type ContentType,
   changedPaths,
   type Entry,
@@ -19,6 +20,8 @@ import type { AppContext } from './context';
 export interface ChangeLog {
   /** Records a committed change; `summarize` only runs while the log has room for the entry. */
   note(entryId: string, summarize: () => EntryChange): void;
+  /** Records a committed set of the block config: what it changed, part by part. */
+  noteBlockConfig(change: BlockConfigChange): void;
   /** What has been noted, or undefined when nothing was. */
   detail(): AuditDetail | undefined;
   clear(): void;
@@ -38,6 +41,7 @@ function merged(first: EntryChange, next: EntryChange): EntryChange {
 
 export function createChangeLog(): ChangeLog {
   const entries = new Map<string, EntryChange>();
+  let blockConfig: BlockConfigChange | undefined;
   let incomplete = false;
   return {
     note(entryId, summarize) {
@@ -54,12 +58,20 @@ export function createChangeLog(): ChangeLog {
         incomplete = true;
       }
     },
+    noteBlockConfig(change) {
+      blockConfig = change;
+    },
     detail() {
-      if (entries.size === 0 && !incomplete) return undefined;
-      return { entries: [...entries.values()], ...(incomplete ? { truncated: true } : {}) };
+      if (entries.size === 0 && !blockConfig && !incomplete) return undefined;
+      return {
+        entries: [...entries.values()],
+        ...(blockConfig ? { blockConfig } : {}),
+        ...(incomplete ? { truncated: true } : {}),
+      };
     },
     clear() {
       entries.clear();
+      blockConfig = undefined;
       incomplete = false;
     },
   };

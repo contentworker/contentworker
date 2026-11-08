@@ -3,6 +3,7 @@ import {
   assertQueryRespectsFieldRules,
   authorize,
   authorizeContent,
+  blockConfigIssues,
   type ContentType,
   type EntryFields,
   NotFoundError,
@@ -16,6 +17,7 @@ import {
   validateEntryFields,
 } from '@contentworker/domain';
 import type { ImportSource, SourceRecord } from '@contentworker/ports';
+import { loadBlockRules } from './block-config';
 import type { AppContext } from './context';
 import { createEntry, updateEntry } from './entries';
 
@@ -215,7 +217,7 @@ export async function executeImport(
           ctx,
           scope,
           { contentTypeApiId: contentType.apiId, fields: record.fields },
-          { copy: true },
+          { copy: true, imported: true },
         );
         created += 1;
       }
@@ -254,7 +256,7 @@ export async function updateImportedEntry(
   blockedFields: readonly string[],
 ): Promise<void> {
   if (blockedFields.length === 0) {
-    await updateEntry(ctx, scope, entryId, fields, { copy: true });
+    await updateEntry(ctx, scope, entryId, fields, { copy: true, imported: true });
     return;
   }
   const found = await ctx.store.entries.get(scope, entryId);
@@ -268,7 +270,7 @@ export async function updateImportedEntry(
       ...Object.entries(fields).filter(([apiId]) => !blockedFields.includes(apiId)),
       ...blockedFields.filter((f) => Object.hasOwn(stored, f)).map((f) => [f, stored[f]] as const),
     ]) as EntryFields,
-    { copy: true },
+    { copy: true, imported: true },
   );
 }
 
@@ -425,6 +427,7 @@ async function plan(
       issues,
     });
   }
+  await planBlockConfig(ctx, scope, contentType, planned, config.locales);
 
   const invalid = planned.filter((p) => p.issues.length > 0);
   const analysis: ImportAnalysis = {
@@ -449,6 +452,51 @@ async function plan(
   };
 
   return { analysis, planned, contentType, blockedFields };
+}
+
+/** Entries read per statement while the plan reads what its updates would replace. */
+const STORED_PAGE = 100;
+
+/**
+ * Adds to each record's issues what the block config refuses in it, so the analysis shows what the
+ * run would refuse: an import is new content from the caller, judged as the create or update it
+ * is (`EntryWriteOptions.imported`). A skipped record is judged as the create it would have been,
+ * as validation judges it. Reads nothing for a type the config doesn't touch, and for updates the
+ * fields they replace, a page of entries per statement.
+ */
+async function planBlockConfig(
+  ctx: AppContext,
+  scope: Scope,
+  contentType: ContentType,
+  planned: PlannedRecord[],
+  locales: readonly string[],
+): Promise<void> {
+  const rules = await loadBlockRules(ctx, scope, contentType);
+  if (!rules) return;
+  const updates = planned.flatMap((p) =>
+    p.action === 'update' && p.entryId && p.issues.length === 0 ? [p.entryId] : [],
+  );
+  const stored = new Map<string, EntryFields>();
+  for (let i = 0; i < updates.length; i += STORED_PAGE) {
+    for (const e of await ctx.store.entries.getMany(scope, updates.slice(i, i + STORED_PAGE))) {
+      stored.set(e.entry.id, e.fields);
+    }
+  }
+  planned.forEach((p, i) => {
+    if (p.issues.length > 0) return;
+    const before = p.action === 'update' && p.entryId ? stored.get(p.entryId) : undefined;
+    const found = blockConfigIssues(
+      contentType,
+      rules.catalog,
+      rules.config,
+      before,
+      p.fields,
+      locales,
+    );
+    if (found.length > 0) {
+      planned[i] = { ...p, issues: found.map((f) => `${f.field}: ${f.message}`) };
+    }
+  });
 }
 
 /**

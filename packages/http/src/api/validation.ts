@@ -11,6 +11,7 @@ import {
 } from '@contentworker/application';
 import {
   BLOCK_CATALOG_LIMITS,
+  BLOCK_CONFIG_LIMITS,
   FIELD_GUIDANCE_LIMITS,
   MAX_ASSET_RIGHTS_TEXT,
   MAX_CANONICAL_URL_LENGTH,
@@ -43,6 +44,7 @@ import { STARTERS } from '@contentworker/seed';
 import type { Context } from 'hono';
 import { z } from 'zod';
 import * as blockCatalogDocs from './docs/schemas/block-catalog';
+import * as blockConfigDocs from './docs/schemas/block-config';
 import { blockPatchShape } from './docs/schemas/blocks';
 import {
   contentTypeDetails,
@@ -998,4 +1000,23 @@ export const blockCatalogPushBody = z.object({
     .boolean()
     .optional()
     .describe('Publish each changed type (default true); false leaves draft revisions'),
+});
+
+/**
+ * A block config set. Whether each name is in the catalog, and whether each narrowing stays inside
+ * what the code allows, is the domain's check (`blocks[grid].slots.items.max`); here the outline.
+ */
+export const blockConfigSetBody = z.object({
+  expectedVersion: z
+    .int()
+    .min(0)
+    .describe('The version the config was edited from (0 before the first set); another is a 409'),
+  targets: z
+    .array(blockConfigDocs.targetNarrowing)
+    .max(BLOCK_CONFIG_LIMITS.targets)
+    .describe('Narrowings of catalog targets: the top level of a blocks field'),
+  blocks: z
+    .array(blockConfigDocs.blockNarrowing)
+    .max(BLOCK_CONFIG_LIMITS.blocks)
+    .describe('Narrowings of blocks’ slots, wherever the block is placed'),
 });

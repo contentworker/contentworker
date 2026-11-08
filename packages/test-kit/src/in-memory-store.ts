@@ -9,6 +9,7 @@ import {
   type AssetZipJob,
   assetKind,
   type BlockCatalog,
+  type BlockConfig,
   type Comment,
   type Concept,
   type ConceptScheme,
@@ -88,6 +89,7 @@ import type {
   AuthRepo,
   BlobStore,
   BlockCatalogRepo,
+  BlockConfigRepo,
   BulkJob,
   BulkJobChunk,
   BulkJobRepo,
@@ -368,6 +370,7 @@ export class InMemoryContentStore implements ContentStore {
         this.redirectRevisionData,
         this.menuData,
         this.blockCatalogData,
+        this.blockConfigData,
         this.aiActionData,
         this.functionData,
         this.appExtensionData,
@@ -2929,6 +2932,23 @@ export class InMemoryContentStore implements ContentStore {
     },
   };
 
+  /** `space::env` → the environment's block config. */
+  private readonly blockConfigData = new JournaledMap<string, BlockConfig>();
+
+  readonly blockConfigs: BlockConfigRepo = {
+    get: async (scope) => this.blockConfigData.get(scopeKey(scope)) ?? null,
+    inForce: async (scope) => {
+      const config = this.blockConfigData.get(scopeKey(scope));
+      return config ? { config, catalog: this.catalogsOf(scope)[0] ?? null } : null;
+    },
+    save: async (scope, config) => {
+      // As the D1 store's compare-and-set: the row must be at the version before this one.
+      const held = this.blockConfigData.get(scopeKey(scope))?.version ?? 0;
+      if (held !== config.version - 1) throw new TransactionConflictError();
+      this.blockConfigData.set(scopeKey(scope), config);
+    },
+  };
+
   /** `space::id` → view: saved views are the space's, whatever environment asks. */
   private readonly savedViewData = new Map<string, SavedView>();
 
@@ -3464,6 +3484,7 @@ export class InMemoryContentStore implements ContentStore {
       this.redirectRevisionData,
       this.menuData,
       this.blockCatalogData,
+      this.blockConfigData,
     ] as JournaledMap<string, unknown>[];
   }
 
@@ -3497,6 +3518,7 @@ export class InMemoryContentStore implements ContentStore {
         redirects: this.redirects,
         menus: this.menus,
         blockCatalogs: this.blockCatalogs,
+        blockConfigs: this.blockConfigs,
         bulkJobs: this.bulkJobs,
         workflowRuns: this.workflowRuns,
         workflowTasks: this.workflowTasks,

@@ -57,6 +57,7 @@ const TOOL_TARGET_TYPES: readonly (readonly [RegExp, string])[] = [
   [/^ai_action_/, 'ai_action'],
   [/^bulk_job_/, 'job'],
   [/^blocks_catalog_/, 'block_catalog'],
+  [/^blocks_config_/, 'block_config'],
   [/^api_key_/, 'api_key'],
   [/^app_extension_/, 'app_extension'],
   [/^asset_collections?_/, 'asset_collection'],
@@ -133,8 +134,15 @@ export async function auditToolCall(ctx: AppContext, input: ToolAuditInput): Pro
         : undefined,
       actor: auditActor(input.principal),
       action: `MCP ${tool}`,
-      targetType: named ? toolTargetType(tool) : created && 'entry',
-      targetId: named ?? created?.entryId,
+      targetType: named
+        ? toolTargetType(tool)
+        : created
+          ? 'entry'
+          : input.detail?.blockConfig && toolTargetType(tool),
+      targetId:
+        named ??
+        created?.entryId ??
+        (input.detail?.blockConfig && String(input.detail.blockConfig.to)),
       status: 200,
       detail: input.detail,
     });

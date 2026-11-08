@@ -355,9 +355,13 @@ Built on Blocks and the frontend runtime. Layouts stay a typed tree; rich text s
 - [x] **Blocks from code.** `contentworker blocks push` maps component manifests (JSON data:
   token and enum props, slots with `allowedChildren`, `allowedParents`, aliases for renamed ids,
   thumbnails) to Blocks variants, versioned per environment, over REST, MCP and the management
-  SDK, with block usage counts and a read-only catalog screen in Build → Blocks. Still to come:
-  admin config that narrows (never widens) what code allows per slot, the canvas dock listing a
-  slot's allowed blocks, and carrying the catalog in snapshots and environment clones.
+  SDK, with block usage counts and a read-only catalog screen in Build → Blocks. The block config
+  that narrows (never widens) what code allows per target and per slot (fewer blocks, tighter
+  counts, locked slots) is in place at the API: REST `/block-config`, MCP `blocks_config_*` and
+  the management SDK, with every entry save and block patch held to it. Still to come: the admin
+  screen for it in Build → Blocks, the canvas dock listing a slot's allowed blocks from
+  `/block-config/effective`, and carrying the catalog and its config in snapshots and environment
+  clones.
 - [ ] **Canvas editor.** A toolbox, selection overlay and undo in `apps/web` over the preview channel.
   The canvas (`/content/:typeId/:entryId/canvas`) is in place: seams from the page's `layout`, a
   dock offering exactly what a slot takes, an inspector (Content, Data, Look), Layers as the
@@ -380,7 +384,9 @@ From the live preview spec and a review of a second implementation of its channe
   `packages/http/test/live-preview-patch-parity.test.ts` runs the same patches through it and the
   domain's `applyBlockPatch`.
 - [ ] **Locked regions on the canvas.** Admin config can lock a slot or region (no add, move or
-  remove), narrowing what code allows and never widening it, beside the slot allow-lists.
+  remove), narrowing what code allows and never widening it, beside the slot allow-lists. Enforced
+  at the API: the block config's `locked` refuses a save that changes a locked slot's blocks.
+  Still to come: the canvas honouring it (no insert, move or remove offered in a locked slot).
 - [ ] **Token values checked everywhere.** The frontend runtime runs `isSafeTokenValue` on every
   value it writes into a CSS custom property, not only on live preview patches.
 - [ ] **Block config as code.** A read-only code view of a block's admin config next to its code

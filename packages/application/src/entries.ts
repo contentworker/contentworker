@@ -31,6 +31,7 @@ import {
   ValidationError,
 } from '@contentworker/domain';
 import { type BlobStore, type EntryRepo, TransactionConflictError } from '@contentworker/ports';
+import { assertBlockConfigAllows, type BlockRulesInForce } from './block-config';
 import { noteEntryChange } from './change-log';
 import { type AppContext, actorOf } from './context';
 import { runHook, runPureHook } from './hooks';
@@ -86,6 +87,11 @@ export interface EntryWriteOptions {
    * an interactive write (the API, MCP, AI, plugins) leaves this unset. Not accepted over the API.
    */
   readonly copy?: boolean;
+  /**
+   * A CSV or JSON import: a copy as far as field rules go (`copy`), but new content from the
+   * caller, so the block config judges it as the edit or create it is. Not accepted over the API.
+   */
+  readonly imported?: boolean;
   /**
    * Top-level fields the caller's role denies or makes read-only (`unwritableFieldsFor`). The
    * caller can neither send nor read them all, so an update keeps their stored values: what is
@@ -148,6 +154,7 @@ export async function createEntry(
     options.copy ? vctx : asCreate(contentType, vctx),
     { contentTypeApiId: input.contentTypeApiId, fields: withDefaults },
     'save',
+    options.copy && !options.imported ? { kind: 'copy' } : { kind: 'create' },
   );
 
   const id = input.id ?? ctx.ids.newId();
@@ -214,9 +221,25 @@ export async function writeNewEntry(
 }
 
 /**
+ * What a save is, for the block config: an edit of the stored fields, a create, or a copy.
+ *
+ * A copy moves data the environment (or its space) already held: a snapshot restore, an
+ * environment clone or promotion, a branch merge, a duplicate, a restored version. The block
+ * config doesn't judge it: refusing it would strand content the config only now disallows (so a
+ * version restore can bring back blocks from before a lock). A CSV or JSON import is new content
+ * from the caller, so it is judged like any edit (`EntryWriteOptions.imported`), though its field
+ * rules are a copy's. `rules` is the config and catalog when the caller already read them.
+ */
+type SaveKind = (
+  | { readonly kind: 'create' }
+  | { readonly kind: 'update'; readonly before: EntryFields }
+  | { readonly kind: 'copy' }
+) & { readonly rules?: BlockRulesInForce | null };
+
+/**
  * What a save does to the fields it was given before it writes them: the `entry:beforeSave` hook,
- * slug normalization, block keys, then validation. One function, so a dry run
- * ({@link validateEntry}) judges exactly what a save would.
+ * slug normalization, block keys, then validation, then the block config's rules for the edit
+ * (`save`). One function, so a dry run ({@link validateEntry}) judges exactly what a save would.
  *
  * `'dry-run'` runs the hook through its effect-free handlers only (`runPureHook`) and names the
  * ones it left out.
@@ -228,6 +251,7 @@ async function prepareFields(
   vctx: ValidationContext,
   payload: { readonly contentTypeApiId: string; readonly entryId?: string; fields: EntryFields },
   mode: 'save' | 'dry-run',
+  save: SaveKind,
 ): Promise<{ readonly fields: EntryFields; readonly skippedHooks: readonly string[] }> {
   // Hook before normalization and validation, so a hook that writes
   // `slug: "Hello World"` still gets normalized, and nothing a hook produces
@@ -243,6 +267,18 @@ async function prepareFields(
     () => ctx.ids.newId(),
   );
   assertEntryFieldsValid(contentType, fields, vctx);
+  if (save.kind !== 'copy') {
+    const before = save.kind === 'update' ? save.before : undefined;
+    await assertBlockConfigAllows(
+      ctx,
+      scope,
+      contentType,
+      before,
+      fields,
+      vctx.locales,
+      save.rules,
+    );
+  }
   await assertAssetMimeTypes(ctx, scope, contentType, fields);
   return { fields, skippedHooks: hooked.skipped };
 }
@@ -370,7 +406,16 @@ export async function updateEntry(
     options.copy ? vctx : { ...vctx, previous: found.fields },
     withUnwritable(found.fields, fields, options),
     found.fields,
+    { judgeBlocks: !options.copy || options.imported === true },
   );
+}
+
+/** How `saveEntryDraft` holds a save to the block config. */
+export interface SaveDraftOptions {
+  /** Judge it by the block config: by default unless it is a copy (`vctx.previous` unset). */
+  readonly judgeBlocks?: boolean;
+  /** The config and catalog, when the caller read them for many saves (`loadBlockRules`). */
+  readonly blockRules?: BlockRulesInForce | null;
 }
 
 /**
@@ -386,6 +431,7 @@ export async function saveEntryDraft(
   vctx: ValidationContext,
   fields: EntryFields,
   stored: EntryFields,
+  opts: SaveDraftOptions = {},
 ): Promise<EntryView> {
   const id = current.id;
   // No defaults on update. The fields passed become the whole new version: an
@@ -398,6 +444,10 @@ export async function saveEntryDraft(
     vctx,
     { contentTypeApiId: current.contentTypeApiId, entryId: id, fields },
     'save',
+    // A copy is judged without previous values (`EntryWriteOptions.copy`), and so is not an edit.
+    (opts.judgeBlocks ?? vctx.previous !== undefined)
+      ? { kind: 'update', before: stored, rules: opts.blockRules }
+      : { kind: 'copy' },
   );
 
   const { entry, version } = saveDraft(current, normalized);
@@ -490,6 +540,7 @@ export async function validateEntry(
         fields: withUnwritable(found.fields, input.fields, options),
       },
       'dry-run',
+      { kind: 'update', before: found.fields },
     );
     // The domain's own refusal (an archived entry can't take a new version), at the point a save
     // meets it.
@@ -511,6 +562,7 @@ export async function validateEntry(
     asCreate(contentType, vctx),
     { contentTypeApiId: input.contentTypeApiId, fields: withDefaults },
     'dry-run',
+    { kind: 'create' },
   );
   const claims = uniqueClaims(contentType, fields);
   if (claims.length > 0) await assertClaimsFree(ctx.store.entries, scope, claims);
