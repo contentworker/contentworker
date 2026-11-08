@@ -24,18 +24,22 @@ import { Skeleton } from '@contentworker/ui/skeleton';
 import { Boxes } from 'lucide-react';
 import { useEffect, useId, useMemo, useState } from 'react';
 import { Ago } from '~/cms/components/ago';
+import { BlockRules } from '~/cms/components/BlockRules';
 import { Empty, PageHeader, Section } from '~/cms/components/page';
 import { actorLabel } from '~/cms/lib/authorship';
+import type { Place } from '~/cms/lib/block-config-draft';
 import { count, plural } from '~/cms/lib/format';
 import type { BlockCatalogUsage, TeamPerson } from '~/cms/lib/management';
 import { useClient } from '../lib/client-context';
 import { useContentTypesQuery, useScopedQuery } from '../lib/queries';
 
 /*
- * The block catalog, read-only: the components the site's code pushed (`contentworker blocks
- * push`), each with its props, its slots and what they take, where it may go, and how many entries
- * use it. Nothing here changes the catalog: it lives in the developer's repository, and a change
- * is a push from there, so the code and the admin can't disagree.
+ * The block catalog: the components the site's code pushed (`contentworker blocks push`), each
+ * with its props, its slots and what they take, where it may go, and how many entries use it.
+ * Nothing here changes the catalog: it lives in the developer's repository, and a change is a push
+ * from there, so the code and the admin can't disagree. What the admin can change is the rules
+ * (`BlockRules`, the block config): which of those blocks editors may place where, how many, and
+ * what is locked, only ever narrower than the code.
  */
 
 /** Where the empty state's example points when the space has no blocks field to fill in. */
@@ -137,6 +141,13 @@ export function Blocks() {
     const m = new Map((catalog?.blocks ?? []).map((b) => [b.id, b.name]));
     return (id: string) => m.get(id) ?? id;
   }, [catalog]);
+  const placeName = (p: Place) =>
+    p.kind === 'target'
+      ? `${typeName(p.contentTypeApiId)} › ${fieldName(p.contentTypeApiId, p.field)}`
+      : `${blockName(p.block)} › ${
+          catalog?.blocks.find((b) => b.id === p.block)?.slots?.find((s) => s.apiId === p.slot)
+            ?.name ?? p.slot
+        }`;
 
   const q = filter.trim().toLowerCase();
   const shown = (catalog?.blocks ?? []).filter(
@@ -158,7 +169,7 @@ export function Blocks() {
     <>
       <PageHeader
         title="Blocks"
-        subtitle="The components your site renders, pushed from its code. Editors compose pages from these blocks; to change one, change the code and push again."
+        subtitle="The components your site renders, pushed from its code. Editors compose pages from these blocks; to change one, change the code and push again. The rules narrow where editors may place them."
       />
       {catalogQuery.isPending ? (
         <div className="card space-y-3 p-5" aria-busy="true">
@@ -257,6 +268,12 @@ export function Blocks() {
               </div>
             </dl>
           </Section>
+          <BlockRules
+            catalog={catalog}
+            placeName={placeName}
+            blockName={blockName}
+            people={people}
+          />
           <Section
             title="All blocks"
             flush
