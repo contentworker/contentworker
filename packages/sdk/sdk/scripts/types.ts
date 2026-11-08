@@ -38,6 +38,7 @@ const PACKAGES: Record<string, string> = {
 const ENTRIES: Record<string, string> = {
   index: '@contentworker/sdk-core',
   'inline-edit': '@contentworker/sdk-core/inline-edit',
+  'live-preview': '@contentworker/sdk-core/live-preview',
   redirects: '@contentworker/sdk-core/redirects',
   webhooks: '@contentworker/sdk-core/webhooks',
   'rich-text': '@contentworker/sdk-rich-text',

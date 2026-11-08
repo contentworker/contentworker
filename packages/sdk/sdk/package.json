@@ -28,6 +28,10 @@
       "types": "./src/inline-edit.ts",
       "default": "./src/inline-edit.ts"
     },
+    "./live-preview": {
+      "types": "./src/live-preview.ts",
+      "default": "./src/live-preview.ts"
+    },
     "./redirects": {
       "types": "./src/redirects.ts",
       "default": "./src/redirects.ts"
@@ -121,6 +125,11 @@
         "types": "./dist/inline-edit.d.ts",
         "import": "./dist/inline-edit.js",
         "require": "./dist/inline-edit.cjs"
+      },
+      "./live-preview": {
+        "types": "./dist/live-preview.d.ts",
+        "import": "./dist/live-preview.js",
+        "require": "./dist/live-preview.cjs"
       },
       "./redirects": {
         "types": "./dist/redirects.d.ts",

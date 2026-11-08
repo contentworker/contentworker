@@ -89,3 +89,4 @@
 ^(packages/(domain/src/saved-view/|application/src/saved-views\.ts$|http/src/mcp/tools/saved-views\.ts$|http/src/api/routes/management/saved-views\.ts$|db/migrations/0029_saved_views\.sql$)|apps/web/app/cms/(components/entries/(SavedViewsMenu|ColumnPicker)\.tsx|lib/entry-url\.ts)$)	guides/saved-views docs/domain-model.md docs/api-reference.md docs/mcp.md docs/admin-ui.md	prose
 ^packages/sdk/(core/src/webhooks\.ts|rich-text/src/)	guides/your-own-frontend guides/webhooks guides/sdks docs/sdks.md	prose
 ^(scripts/sdk-packages\.ts|\.github/workflows/sdk-(packages|release)\.yml)$	docs/deployment.md docs/development.md	prose
+^packages/(sdk/core/src/live-preview(\.ts|/)|domain/src/content-type/block-patch\.ts$)	guides/live-preview guides/sdks docs/sdks.md	prose

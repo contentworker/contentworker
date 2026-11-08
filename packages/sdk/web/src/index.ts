@@ -10,6 +10,15 @@ import {
   type SearchHit,
 } from '@contentworker/sdk-core';
 import { mountInlineEditor } from '@contentworker/sdk-core/inline-edit';
+import {
+  type Capability,
+  type ConnectPreviewOptions,
+  connectPreview,
+  type LiveFields,
+  type LiveView,
+  type PageMessage,
+  type PreviewConnection,
+} from '@contentworker/sdk-core/live-preview';
 /**
  * @contentworker/sdk-web — React hooks over @contentworker/sdk-core. Provide a client via
  * `ContentworkerProvider`, then call `useEntry` / `useEntries` / `useAsset` /
@@ -25,6 +34,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useRef,
   useState,
 } from 'react';
 
@@ -161,6 +171,129 @@ export function InlineEditor(props: {
     return () => editor.destroy();
   }, [adminUrl, onEdit, defaultEnabled, toggle]);
   return null;
+}
+
+/** One entry as the admin's unsaved state has it, in the locale it sent. */
+export interface LiveEntry {
+  readonly locale: string;
+  /** The unsaved values: what saving would save. */
+  readonly fields: LiveFields;
+  /** Coworker's proposals on top, and which blocks to draw as ghosts. Render `view.withProposals`. */
+  readonly view: LiveView;
+}
+
+/** What {@link useLivePreview} holds. */
+export interface LivePreviewState {
+  /** Framed and configured: false in production, so the delivered content renders as usual. */
+  readonly active: boolean;
+  readonly connected: boolean;
+  /** Each entry the admin has sent state for, by id. */
+  readonly entries: Readonly<Record<string, LiveEntry>>;
+  /** The connection, for `on('select', …)` and `emit`; undefined until mounted. */
+  readonly preview: PreviewConnection | undefined;
+}
+
+const ALL_CAPABILITIES: readonly Capability[] = [
+  'select',
+  'patch.fields',
+  'patch.blocks',
+  'proposals',
+  'scroll',
+  'layout',
+];
+
+/**
+ * Connects to the admin's live preview for as long as it is rendered, returning each entry's
+ * unsaved state to render instead of the delivered one. Each edit re-renders; the admin hears it
+ * is on screen once React has committed it. Inert during SSR and when the page isn't framed, so
+ * `entries` stays empty.
+ *
+ * ```tsx
+ * const live = useLivePreview({
+ *   adminOrigin: 'https://admin.example.com',
+ *   page: { entries: [{ entryId: entry.id, contentType: entry.contentType, locale: 'en-US' }] },
+ * });
+ * const fields = live.entries[entry.id]?.view.withProposals ?? entry.fields;
+ * ```
+ */
+export function useLivePreview(
+  options: Omit<ConnectPreviewOptions, 'onState' | 'window' | 'capabilities'> & {
+    /** What the page allows; every capability by default. */
+    readonly capabilities?: readonly Capability[];
+    /** What the page renders, reported to the admin with this page's URL once it connects. */
+    readonly page?: { readonly entries: PageMessage['entries'] };
+    readonly onState?: ConnectPreviewOptions['onState'];
+  },
+): LivePreviewState {
+  const [state, setState] = useState<LivePreviewState>({
+    active: false,
+    connected: false,
+    entries: {},
+    preview: undefined,
+  });
+  // The latest callbacks and page, so a new closure each render doesn't restart the session.
+  const latest = useRef(options);
+  latest.current = options;
+  // Resolved once the render a state caused has committed.
+  const committed = useRef<(() => void)[]>([]);
+
+  useEffect(() => {
+    for (const resolve of committed.current.splice(0)) resolve();
+  });
+
+  const { adminOrigin } = options;
+  const capabilities = (options.capabilities ?? ALL_CAPABILITIES).join(' ');
+  useEffect(() => {
+    const preview = connectPreview({
+      adminOrigin,
+      capabilities: capabilities.split(' ') as Capability[],
+      ...(latest.current.newKey ? { newKey: latest.current.newKey } : {}),
+      onState: async (entryId, locale, fields, view) => {
+        const rendered = new Promise<void>((resolve) => {
+          committed.current.push(resolve);
+        });
+        setState((s) => ({ ...s, entries: { ...s.entries, [entryId]: { locale, fields, view } } }));
+        await rendered;
+        await latest.current.onState?.(entryId, locale, fields, view);
+      },
+    });
+    // Every session (the first, and each after a client-side navigation) hears what the page
+    // renders: `connectPreview` holds the last report and sends it once a session connects.
+    const report = () => {
+      const page = latest.current.page;
+      if (page) preview.emit('page', { url: window.location.href, entries: page.entries });
+    };
+    report();
+    const offConnect = preview.on('connect', () => {
+      setState((s) => ({ ...s, connected: true }));
+    });
+    // A session that ended took its unsaved state with it.
+    const offDisconnect = preview.on('disconnect', () => {
+      setState((s) => ({ ...s, connected: false, entries: {} }));
+      report();
+    });
+    setState((s) => ({ ...s, active: preview.active, preview }));
+    return () => {
+      offConnect();
+      offDisconnect();
+      preview.close();
+      // Renders that will now never commit: settle their waits, so nothing is left hanging.
+      for (const resolve of committed.current.splice(0)) resolve();
+      setState({ active: false, connected: false, entries: {}, preview: undefined });
+    };
+  }, [adminOrigin, capabilities]);
+
+  // The page's entries changed (a route reused the component for another entry): tell the admin.
+  const pageKey = JSON.stringify(options.page?.entries ?? null);
+  const reported = useRef(pageKey);
+  useEffect(() => {
+    if (reported.current === pageKey) return;
+    reported.current = pageKey;
+    const page = latest.current.page;
+    if (page) state.preview?.emit('page', { url: window.location.href, entries: page.entries });
+  }, [pageKey, state.preview]);
+
+  return state;
 }
 
 export function useSemanticSearch(

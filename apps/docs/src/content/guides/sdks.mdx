@@ -386,6 +386,14 @@ A built-in toggle switches it on; pass `defaultEnabled` to start with it on, `to
 drive it from your own control, or `onEdit` to handle the click yourself (open a side panel, say)
 instead of navigating to the admin.
 
+## Live preview
+
+`@contentworker/sdk/live-preview` is the frontend half of live preview: the admin frames your frontend
+and your page renders each unsaved edit. `connectPreview({ adminOrigin, capabilities, onState })`
+connects it in any framework, and `useLivePreview({ adminOrigin })` from `@contentworker/sdk/react`
+returns each entry's unsaved state to render. The admin's side isn't released yet. See
+[Live preview](/guides/live-preview/).
+
 ## Next steps
 
 - [Command-line tool](/guides/cli/) for the same operations from a terminal or CI, and the
