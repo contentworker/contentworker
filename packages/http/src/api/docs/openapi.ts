@@ -120,6 +120,11 @@ export const TAGS: { name: string; description: string }[] = [
     description:
       'Blocks from code: component manifests pushed as the variants of blocks fields, versioned.',
   },
+  {
+    name: 'Block config',
+    description:
+      'What admins allow of the block catalog, per target and per slot: only ever narrower.',
+  },
   { name: 'Taxonomy', description: 'Tags, concepts, and concept schemes (SKOS-style).' },
   { name: 'Entries', description: 'Authoring: drafts, publishing, bulk operations, metadata.' },
   { name: 'Versions', description: 'Append-only entry version history, diff, and restore.' },
@@ -173,7 +178,7 @@ const TAG_GROUPS = [
     name: 'Platform',
     tags: ['System', 'Auth', 'Spaces & environments', 'Roles & permissions', 'Audit'],
   },
-  { name: 'Content model', tags: ['Content types', 'Block catalog', 'Taxonomy'] },
+  { name: 'Content model', tags: ['Content types', 'Block catalog', 'Block config', 'Taxonomy'] },
   {
     name: 'Authoring',
     tags: ['Entries', 'Saved views', 'Versions', 'Assets', 'Comments & tasks', 'Workflows'],
@@ -196,6 +201,7 @@ const TAG_RULES: [RegExp, string][] = [
   [/^\/preview\//, 'Preview'],
   [/\/content-types/, 'Content types'],
   [/\/block-catalog/, 'Block catalog'],
+  [/\/block-config/, 'Block config'],
   [/\/taxonomy\//, 'Taxonomy'],
   [/\/assets\/\{id\}\/(alt-text|auto-tag)/, 'AI & agents'],
   [/\/assets/, 'Assets'],

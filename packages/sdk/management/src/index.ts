@@ -448,6 +448,81 @@ export interface BlockCatalogUsage {
   readonly complete: boolean;
 }
 
+/** How the block config narrows a slot: each key only ever tighter than the code. */
+export interface SlotNarrowing {
+  /** A non-empty subset of the slot's `allowedChildren`. */
+  readonly allowedChildren?: readonly string[];
+  readonly min?: number;
+  readonly max?: number;
+  /** Editors can't add, remove, move or reorder its blocks; edits inside them are fine. */
+  readonly locked?: boolean;
+}
+
+/** How the block config narrows a catalog target: the top level of a blocks field. */
+export interface TargetNarrowing {
+  readonly contentTypeApiId: string;
+  readonly field: string;
+  /** A non-empty subset of the blocks the target takes. */
+  readonly blocks?: readonly string[];
+  readonly min?: number;
+  readonly max?: number;
+  readonly locked?: boolean;
+}
+
+/** How the block config narrows one block's slots, wherever it is placed. */
+export interface BlockNarrowing {
+  readonly block: string;
+  readonly slots: Readonly<Record<string, SlotNarrowing>>;
+}
+
+/** What admins allow of the block catalog. Version 0, empty, before the first set. */
+export interface BlockConfig {
+  readonly version: number;
+  readonly targets: readonly TargetNarrowing[];
+  readonly blocks: readonly BlockNarrowing[];
+  readonly updatedAt: string | null;
+  readonly updatedBy: string | null;
+}
+
+export interface BlockConfigSetInput {
+  /** The version you edited from (0 before the first set): another one is a 409. */
+  readonly expectedVersion: number;
+  readonly targets: readonly TargetNarrowing[];
+  readonly blocks: readonly BlockNarrowing[];
+}
+
+export interface BlockConfigSet {
+  readonly config: BlockConfig;
+  /** The config was already this: nothing written. */
+  readonly unchanged: boolean;
+}
+
+/** A slot's rules once the config is laid over the code. */
+export interface EffectiveSlotRules {
+  readonly allowedChildren: readonly string[];
+  readonly min?: number;
+  readonly max?: number;
+  readonly locked: boolean;
+  readonly narrowed: boolean;
+}
+
+/** The rules every catalog target and block slot follows, for a canvas or dock to offer. */
+export interface EffectiveBlockRules {
+  readonly catalogVersion: number | null;
+  readonly configVersion: number;
+  readonly targets: readonly (Omit<EffectiveSlotRules, 'allowedChildren'> & {
+    readonly contentTypeApiId: string;
+    readonly field: string;
+    readonly blocks: readonly string[];
+  })[];
+  readonly blocks: readonly {
+    readonly block: string;
+    readonly slots: Readonly<Record<string, EffectiveSlotRules>>;
+  }[];
+  /** Config parts the catalog no longer has: ignored, never an error. */
+  readonly stale: readonly { readonly at: string; readonly message: string }[];
+}
+
 /** A navigation menu: a named tree of links, served resolved by Delivery. */
 export interface Menu {
   readonly id: string;
@@ -1818,6 +1893,19 @@ export function createManagementClient(opts: ManagementClientOptions) {
         post<BlockCatalogPush>(`${envBase}/block-catalog`, input),
       /** Entries using each block, per content type. */
       usage: () => get<BlockCatalogUsage>(`${envBase}/block-catalog/usage`),
+    },
+
+    /**
+     * What admins allow of the block catalog, per target and per slot: only ever narrower than
+     * the code. Every entry save is held to it. Setting it needs content:manage.
+     */
+    blockConfig: {
+      /** The config in force; version 0 and empty before the first set. */
+      get: () => get<BlockConfig>(`${envBase}/block-config`),
+      /** Replaces the whole config. 422 for a widening or an unknown name; 409 for a stale version. */
+      set: (input: BlockConfigSetInput) => put<BlockConfigSet>(`${envBase}/block-config`, input),
+      /** The rules every target and slot follows once the config is laid over the code. */
+      effective: () => get<EffectiveBlockRules>(`${envBase}/block-config/effective`),
     },
 
     /** Navigation menus: delivery data a front end renders (content:manage to change them). */

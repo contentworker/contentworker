@@ -16,6 +16,7 @@ import type {
   AuditDetail,
   BlockCatalog,
   BlockCatalogSummary,
+  BlockConfig,
   Comment,
   Concept,
   ConceptScheme,
@@ -148,6 +149,7 @@ export interface ContentStore {
   readonly redirects: RedirectRepo;
   readonly menus: MenuRepo;
   readonly blockCatalogs: BlockCatalogRepo;
+  readonly blockConfigs: BlockConfigRepo;
   readonly savedViews: SavedViewRepo;
   readonly audit: AuditRepo;
   readonly aiActions: AIActionRepo;
@@ -383,6 +385,22 @@ export interface BlockCatalogRepo {
    * won the race) is a `TransactionConflictError` (at commit, inside a unit; thrown outside one).
    */
   save(scope: Scope, catalog: BlockCatalog): Promise<void>;
+}
+
+/**
+ * An environment's block config: one row, rewritten whole at each set, its `version` the
+ * compare-and-set a set rides with. Version 0 is the config of an environment never configured,
+ * which has no row.
+ */
+export interface BlockConfigRepo {
+  /** The config, or null before the first set. */
+  get(scope: Scope): Promise<BlockConfig | null>;
+  /**
+   * Writes `config` at its version while the stored one is at the version before it (no row, for
+   * version 1). A config another set wrote first is a `TransactionConflictError` (at commit,
+   * inside a unit; thrown outside one).
+   */
+  save(scope: Scope, config: BlockConfig): Promise<void>;
 }
 
 /**
@@ -1365,6 +1383,8 @@ export interface ContentStoreTx {
   readonly menus: MenuRepo;
   /** A catalog version is written with the content types it changes. */
   readonly blockCatalogs: BlockCatalogRepo;
+  /** A config is written at its version's compare-and-set. */
+  readonly blockConfigs: BlockConfigRepo;
   readonly bulkJobs: BulkJobRepo;
   /** Run and task rows change in the same transaction as the outbox events they announce. */
   readonly workflowRuns: WorkflowRunRepo;

@@ -57,6 +57,7 @@ const TOOL_TARGET_TYPES: readonly (readonly [RegExp, string])[] = [
   [/^ai_action_/, 'ai_action'],
   [/^bulk_job_/, 'job'],
   [/^blocks_catalog_/, 'block_catalog'],
+  [/^blocks_config_/, 'block_config'],
   [/^api_key_/, 'api_key'],
   [/^app_extension_/, 'app_extension'],
   [/^asset_collections?_/, 'asset_collection'],

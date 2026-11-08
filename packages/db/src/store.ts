@@ -11,6 +11,7 @@ import {
   assetKind,
   type BlockCatalog,
   type BlockCatalogSummary,
+  type BlockConfig,
   type Comment,
   type Concept,
   ConflictError,
@@ -93,6 +94,7 @@ import type {
   AuthRepo,
   BlobStore,
   BlockCatalogRepo,
+  BlockConfigRepo,
   BulkJob,
   BulkJobChunk,
   BulkJobRepo,
@@ -4826,6 +4828,7 @@ const ENVIRONMENT_SCOPED_TABLES = [
   schema.redirectSets,
   schema.menus,
   schema.blockCatalogs,
+  schema.blockConfigs,
   schema.previewTokens,
   schema.bulkJobs,
   schema.bulkJobChunks,
@@ -6683,6 +6686,62 @@ function makeBlockCatalogRepo(x: Exec): BlockCatalogRepo {
   };
 }
 
+/** An environment's block config: one row, its version the compare-and-set every set rides with. */
+function makeBlockConfigRepo(x: Exec): BlockConfigRepo {
+  const db = x.db;
+  const t = schema.blockConfigs;
+  return {
+    async get(scope) {
+      const [row] = await db.select().from(t).where(scopeFilter(t, scope));
+      if (!row) return null;
+      return {
+        version: row.version,
+        targets: row.document.targets,
+        blocks: row.document.blocks,
+        updatedAt: row.updatedAt.toISOString(),
+        updatedBy: row.updatedBy,
+      } satisfies BlockConfig;
+    },
+    async save(scope, config) {
+      const document = { targets: [...config.targets], blocks: [...config.blocks] };
+      const updatedAt = new Date(config.updatedAt ?? 0);
+      // The first set inserts, and loses to another first set on the primary key; each later one
+      // updates only while the row is at the version it read. Either way a lost race changes no
+      // row, which fails the unit.
+      if (config.version === 1) {
+        const insert = db
+          .insert(t)
+          .values({
+            spaceId: scope.spaceId,
+            environmentId: scope.environmentId,
+            version: 1,
+            document,
+            updatedBy: config.updatedBy,
+            updatedAt,
+          })
+          .onConflictDoNothing();
+        if (x.inUnit) {
+          await x.write(insert);
+          x.expectChanged(1);
+        } else if ((await insert.returning({ version: t.version })).length === 0) {
+          throw new TransactionConflictError();
+        }
+        return;
+      }
+      const update = db
+        .update(t)
+        .set({ version: config.version, document, updatedBy: config.updatedBy, updatedAt })
+        .where(and(scopeFilter(t, scope), eq(t.version, config.version - 1)));
+      if (x.inUnit) {
+        await x.write(update);
+        x.expectChanged(1);
+      } else if ((await update.returning({ version: t.version })).length === 0) {
+        throw new TransactionConflictError();
+      }
+    },
+  };
+}
+
 /** Saved views are the space's: every read and write keys on `scope.spaceId` alone. */
 function makeSavedViewRepo(x: Exec): SavedViewRepo {
   const db = x.db;
@@ -7442,6 +7501,7 @@ function makeTx(x: Exec, scanLimit: number, versionBodies?: BlobStore): ContentS
     redirects: makeRedirectRepo(x),
     menus: makeMenuRepo(x),
     blockCatalogs: makeBlockCatalogRepo(x),
+    blockConfigs: makeBlockConfigRepo(x),
     bulkJobs: makeBulkJobRepo(x),
     workflowRuns: makeWorkflowRunRepo(x),
     workflowTasks: makeWorkflowTaskRepo(x),
@@ -7505,6 +7565,7 @@ export function createD1Store(d1: D1Like, options: D1StoreOptions = {}): Content
     redirects: makeRedirectRepo(x),
     menus: makeMenuRepo(x),
     blockCatalogs: makeBlockCatalogRepo(x),
+    blockConfigs: makeBlockConfigRepo(x),
     savedViews: makeSavedViewRepo(x),
     bulkJobs: makeBulkJobRepo(x),
     outbox: makeOutboxRepo(x),

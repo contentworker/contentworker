@@ -12,6 +12,7 @@ import type {
   BlockCatalogChanges,
   BlockCatalogTarget,
   BlockManifest,
+  BlockNarrowing,
   ContentTypeGrant,
   ContentTypeLayout,
   DomainEvent,
@@ -37,6 +38,7 @@ import type {
   SavedViewQuery,
   SavedViewVisibility,
   StoredInviteStatus,
+  TargetNarrowing,
   WorkflowGraph,
   WorkflowGraphDefinition,
   WorkflowRun,
@@ -1369,6 +1371,26 @@ export const blockCatalogs = sqliteTable(
     pushedAt: integer('pushed_at', { mode: 'timestamp_ms' }).notNull(),
   },
   (t) => [primaryKey({ columns: [t.spaceId, t.environmentId, t.version] })],
+);
+
+/**
+ * An environment's block config (0037_block_configs): the narrowings its admins lay over the block
+ * catalog, as one JSON document rewritten whole at each set. `version` is the compare-and-set a
+ * set rides with; no row is version 0.
+ */
+export const blockConfigs = sqliteTable(
+  'block_configs',
+  {
+    spaceId: text('space_id').notNull(),
+    environmentId: text('environment_id').notNull(),
+    version: integer('version').notNull(),
+    document: text('document', { mode: 'json' })
+      .$type<{ targets: TargetNarrowing[]; blocks: BlockNarrowing[] }>()
+      .notNull(),
+    updatedBy: text('updated_by'),
+    updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.spaceId, t.environmentId] })],
 );
 
 /** Navigation menus, each a JSON tree of items written whole at its revision (0020_menus). */
