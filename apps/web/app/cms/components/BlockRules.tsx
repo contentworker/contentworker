@@ -381,7 +381,7 @@ export function BlockRules({ catalog, placeName, blockName, people }: BlockRules
                           size="xs"
                           aria-expanded={isOpen}
                           aria-controls={isOpen ? panelId : undefined}
-                          aria-label={`${isOpen ? 'Close' : 'Edit'} the rules for ${name}${
+                          aria-label={`${isOpen ? 'Done editing' : 'Edit'} the rules for ${name}${
                             invalid ? ' (needs fixing)' : ''
                           }`}
                           className={invalid ? 'text-destructive' : undefined}

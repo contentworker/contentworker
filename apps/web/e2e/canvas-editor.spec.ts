@@ -9,7 +9,8 @@ import { settle } from './settle';
  * (`e2e/live-guest`, which marks every blocks field and slot, so it reports seams in its layout),
  * an entry of it opened on the canvas. Choosing a seam opens the dock with only what that slot
  * takes; a block put in shows in the page before anything is saved; undo takes it back; Save draft
- * keeps it. Below md the canvas is review-only and says so.
+ * keeps it. Below md the canvas is review-only and says so. Under a block config set in Build →
+ * Blocks, the dock offers only the narrowed blocks and a locked slot draws no seams.
  */
 const GUEST = `http://localhost:${guestPort()}`;
 const WCAG = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'];
@@ -214,4 +215,125 @@ test('below md the canvas is review-only, and says so', async ({ page, request }
   await expect(page.getByRole('button', { name: 'Save draft' })).toHaveCount(0);
   await expect(page.locator('[data-seam]')).toHaveCount(0);
   await scan(page, testInfo, 'narrow');
+});
+
+/**
+ * The block config, end to end, in an environment of its own (the config and the catalog are an
+ * environment's, and the other specs share `main`): a catalog pushed for the page type, a
+ * narrowing and a lock set in Build → Blocks, then the canvas honouring both.
+ */
+test('the rules set in Build → Blocks narrow the dock and lock a slot on the canvas', async ({
+  page,
+  request,
+}, testInfo) => {
+  const env = `rules${testInfo.workerIndex}${Date.now().toString(36)}`;
+  const mgmt = `/spaces/${SPACE}/environments/${env}`;
+  const made = await api(request, 'POST', `/spaces/${SPACE}/environments`, { id: env });
+  expect(made.status(), await made.text()).toBe(201);
+  const type = await api(request, 'POST', `${mgmt}/content-types`, {
+    apiId: 'rulesPage',
+    name: 'Rules page',
+    displayField: 'title',
+    fields: [
+      field('title', 'Title'),
+      {
+        apiId: 'body',
+        name: 'Main',
+        type: 'Array',
+        localized: false,
+        required: false,
+        position: 1,
+        items: {
+          type: 'Component',
+          variants: [{ apiId: 'hero', name: 'Hero', fields: [field('heading', 'Heading')] }],
+        },
+      },
+    ],
+    preview: {
+      urlTemplate: `${GUEST}/?entry={id}&type=rulesPage&space={space}&env={environment}#token={token}`,
+    },
+  });
+  expect([200, 201], await type.text()).toContain(type.status());
+  const pushed = await api(request, 'POST', `${mgmt}/block-catalog`, {
+    targets: [{ contentTypeApiId: 'rulesPage', field: 'body' }],
+    allowDestructive: true,
+    blocks: [
+      { id: 'hero', name: 'Hero', fields: [field('heading', 'Heading')] },
+      { id: 'cta', name: 'Call to action', fields: [field('label', 'Label')] },
+      {
+        id: 'section',
+        name: 'Section',
+        fields: [field('heading', 'Heading')],
+        slots: [{ apiId: 'items', name: 'Cards', allowedChildren: ['card'], max: 2 }],
+      },
+      { id: 'card', name: 'Card', allowedParents: ['section'], fields: [field('title', 'Title')] },
+    ],
+  });
+  expect(pushed.status(), await pushed.text()).toBe(200);
+  const entry = await api(request, 'POST', `${mgmt}/entries`, {
+    contentTypeApiId: 'rulesPage',
+    fields: {
+      title: { 'en-US': 'Ruled page' },
+      body: {
+        'en-US': [
+          { _type: 'hero', _key: 'h1', heading: 'Welcome' },
+          {
+            _type: 'section',
+            _key: 's1',
+            heading: 'Features',
+            items: [{ _type: 'card', _key: 'c1', title: 'Fast' }],
+          },
+          { _type: 'cta', _key: 'a1', label: 'Start' },
+        ],
+      },
+    },
+  });
+  expect(entry.ok(), await entry.text()).toBe(true);
+  const id = ((await entry.json()) as { entry: { id: string } }).entry.id;
+  await page.addInitScript(
+    ([space, environment]) =>
+      localStorage.setItem(
+        'contentworker-scope',
+        JSON.stringify({ space, environment, locale: 'en-US' }),
+      ),
+    [SPACE, env],
+  );
+
+  // Build → Blocks: the top level takes no calls to action any more, and the cards are locked.
+  await openCms(page, '/blocks');
+  const rules = page.getByRole('list', { name: 'Rules by place' });
+  await expect(rules.getByText('Rules page › Main')).toBeVisible();
+  await page.getByRole('button', { name: 'Edit the rules for Rules page › Main' }).click();
+  const top = page.getByRole('group', { name: 'Rules for Rules page › Main' });
+  await top.getByLabel('Call to action').click();
+  await page.getByRole('switch', { name: 'Lock Section › Cards' }).click();
+  await page.getByRole('button', { name: 'Save rules' }).click();
+  await expect(page.getByText('Rules saved as v1')).toBeVisible();
+  await expect(rules.getByText('Editors may place Hero, Section · any number')).toBeVisible();
+  await expect(rules.getByText(/^Editors may place Card · up to 2 · locked$/)).toBeVisible();
+
+  // The canvas: the dock offers what the rule takes; the locked cards draw no seam.
+  await openCms(page, `/content/rulesPage/${id}/canvas`);
+  const site = page
+    .frameLocator('iframe[title="Site preview"]')
+    .frameLocator('iframe[title="The entry on your site"]');
+  await expect(site.getByRole('heading', { level: 1 })).toHaveText('Ruled page', {
+    timeout: 15_000,
+  });
+  const seam = page.locator('[data-seam="body#1"]');
+  await expect(seam).toHaveCount(1);
+  await expect(page.locator('[data-seam^="body[s1].items"]')).toHaveCount(0);
+  await seam.click();
+  const dock = page.getByRole('region', { name: 'Add to Main' });
+  await expect(dock.locator('[data-dock-item]')).toHaveText(['Hero', 'Section']);
+  // The call to action stored before the rules stays on the page.
+  await expect(site.locator('#app > [data-cw-slot] > section')).toHaveText([
+    'Welcome',
+    /^Features/,
+    'Start',
+  ]);
+  await page.keyboard.press('Escape');
+  await page.getByRole('button', { name: 'Layers' }).click();
+  await expect(page.getByRole('group', { name: 'Cards · 1 of 2 · locked' })).toBeAttached();
+  await scan(page, testInfo, 'rules');
 });
