@@ -9,11 +9,32 @@ shows, and re-renders. The admin draws selection and hover outlines itself, outs
 from the boxes your page reports. Nothing reaches the API from your page: saving is the editor's
 ordinary save.
 
-:::caution[Preview]
-This is the page side, `@contentworker/sdk/live-preview`, which you can add to your frontend now.
-The admin's side of the channel isn't released yet; until it is, `connectPreview` connects to
-nothing and your page behaves as it always does.
-:::
+## In the editor
+
+Give the content type a [preview URL](/guides/content-modeling/#preview-url), and the entry
+editor's side pane gains a **Site** view beside Details and Preview: the entry's page on your site,
+framed, re-rendered as the editor types. Saving works exactly as it does without it. A type with
+no preview URL has no Site view.
+
+- **Edit** and **View**: in edit mode a click on a marked element focuses that field (or that
+  block, in its blocks field) in the form, and the field focused in the form is outlined on the
+  page and scrolled into view. In view mode your page behaves as it does on its own.
+- **Desktop**, **Tablet** and **Phone** render your page at 1280, 768 or 390 pixels wide, scaled
+  down to fit the pane, so a layout never depends on how wide the editor's window is.
+- A person whose role can't edit the entry gets clicks only: the admin accepts `select` (and
+  `scroll`, `layout`) and never sends their unsaved values.
+
+The admin frames your preview URL as it is, filled for the entry with a preview token that lasts
+an hour; your page connects to it. Your page must allow the admin to frame it: if it sends
+`Content-Security-Policy: frame-ancestors` or `X-Frame-Options`, name the admin's origin. The
+admin frames it sandboxed (`allow-scripts allow-same-origin allow-forms allow-popups`: no
+navigating the editor's window, no downloads) and sends no `Referer`. A link your page follows
+stays connected if it goes to an address one of the space's preview URLs names; anywhere else,
+the pane says the page moved away and offers the way back.
+
+If your page never offers to connect, the pane says it isn't connected and shows it as saved. If
+its SDK shares no protocol version with the admin, the pane says whether it is too old or too
+new. If it doesn't report the entry in `page`, the pane says the page doesn't show it.
 
 ## Connect
 

@@ -79,10 +79,12 @@ LIVE_GUEST_ADMIN=http://localhost:5173 pnpm --filter @contentworker/web live-gue
 ```
 
 Then give a type the preview URL
-`http://localhost:5401/?entry={id}&space={space}&env={environment}#token={token}` (Content model,
-the type's settings; the seeded Landing page type has a `title` and a `blocks` field) and open one
-of its entries: the page renders the `title` and, for each blocks field, each block's `label` or
-`heading`. `LIVE_GUEST_ADMIN` is the admin's origin, the only
+`http://localhost:5401/?entry={id}&type=landingPage&space={space}&env={environment}#token={token}`
+(Content model, the seeded Landing page type's settings; `type` names the type, since the page
+reports which entry it renders) and open one of its entries: the page connects
+(`connectPreview`) and renders the `title` and, for each blocks field, each block's `label` or
+`heading`. `silent.html` in place of `/` is a page that never connects, and `old-sdk.html` one
+whose SDK the admin refuses. `LIVE_GUEST_ADMIN` is the admin's origin, the only
 one the page listens to; `LIVE_GUEST_PORT` moves it off 5401.
 
 The same package holds the **sample starter** a real space can start with (`installStarter` and

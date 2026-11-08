@@ -22,7 +22,16 @@ import { setPrincipalHeader } from './principal.server';
 export const FRAME_TOKEN_HOURS = 1;
 
 export type PreviewFrame =
-  | { readonly ok: true; readonly frontendUrl: string; readonly origin: string }
+  | {
+      readonly ok: true;
+      readonly frontendUrl: string;
+      readonly origin: string;
+      /**
+       * Every origin the space's preview URLs name (this one among them): where the page may
+       * navigate and stay connected, and so what the frame's document may frame.
+       */
+      readonly origins: readonly string[];
+    }
   | {
       readonly ok: false;
       /**
@@ -88,5 +97,44 @@ export async function previewFrame(
   if (!frontendUrl || !origin || origin === adminOrigin) {
     return { frame: { ok: false, reason: 'incomplete' }, status: 200 };
   }
-  return { frame: { ok: true, frontendUrl, origin }, status: 200 };
+  const origins = await spaceOrigins(me, spaceId, environmentId, adminOrigin);
+  return {
+    frame: { ok: true, frontendUrl, origin, origins: [...new Set([origin, ...origins])] },
+    status: 200,
+  };
+}
+
+/**
+ * The origins of the space's preview URL templates, as the person reads the content types. Best
+ * effort: unread, the frame keeps to the entry's own origin.
+ */
+async function spaceOrigins(
+  me: Caller,
+  spaceId: string,
+  environmentId: string,
+  adminOrigin: string,
+): Promise<string[]> {
+  const path = `/spaces/${spaceId}/environments/${environmentId}/content-types`;
+  try {
+    const headers = new Headers();
+    await setPrincipalHeader(
+      headers,
+      { ...me, email: me.email ?? '' },
+      principalTarget('GET', path),
+    );
+    const res = await api().fetch(`https://api${path}`, { headers });
+    if (!res.ok) {
+      await res.body?.cancel();
+      return [];
+    }
+    const body = (await res.json()) as { items?: { preview?: { urlTemplate?: unknown } }[] };
+    return (body.items ?? []).flatMap((t) => {
+      const template = t.preview?.urlTemplate;
+      const o =
+        typeof template === 'string' ? previewOrigin(template, { allowLoopback: true }) : null;
+      return o && o !== adminOrigin ? [o] : [];
+    });
+  } catch {
+    return [];
+  }
 }

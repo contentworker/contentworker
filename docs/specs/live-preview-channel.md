@@ -1,7 +1,9 @@
 # Live preview channel
 
 Status: **proposed** (M6, "Live preview channel" in `ROADMAP.md`). The frontend half is built
-(`@contentworker/sdk/live-preview`, see Extensions); the admin half is not yet.
+(`@contentworker/sdk/live-preview`, see Extensions); so is the admin half (the entry editor's
+Site view, `apps/web/app/cms/lib/live-preview/host.ts`), except Coworker's proposals, which it
+doesn't accept yet.
 This file sits in `docs/specs/`, which the docs embed does not read (it takes `docs/*.md` only),
 so MCP clients never mistake it for a description of shipped behaviour.
 

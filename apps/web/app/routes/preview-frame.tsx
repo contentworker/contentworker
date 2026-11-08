@@ -1,27 +1,22 @@
 /**
  * The Site frame: the page the entry editor's Site pane frames, which frames the customer's own
- * page for the entry and runs live preview with it.
+ * page for the entry and runs the live preview channel with it (docs/specs/live-preview-channel.md).
  *
  * The admin's own document can't frame the customer's site: its policy is fixed when it loads,
  * and the space is chosen in the browser after that. So the editor frames this page (same origin),
- * whose policy, set per response, allows framing exactly the one origin the entry's type previews
- * on (`frame-src 'self' <origin>`), and which only this origin may frame (`frame-ancestors
- * 'self'`). Its loader mints the preview link as the signed-in person; the link (a token for this
- * one entry) is the only credential the customer's page ever sees.
+ * whose policy, set per response, allows framing only the origins the space's preview URLs name
+ * (`frame-src 'self' <origins>`), and which only this origin may frame (`frame-ancestors 'self'`).
+ * Its loader mints the preview link as the signed-in person; the link (a token for this one entry)
+ * is the only credential the customer's page ever sees. The page connects to us: nothing is added
+ * to its URL.
  *
- * It owns the inner frame and draws the hover and selection outlines over it, from the geometry
- * the page reports, scaled with the frame to the device width the editor chose. Unsaved edits come
+ * It owns the inner frame and draws the hover and selection outlines over it, from the boxes the
+ * page reports, scaled with the frame to the device width the editor chose. Unsaved edits come
  * from the editor over a same-origin channel (`cms/lib/live-preview/frame-channel.ts`) and go to the
- * page as patches (`cms/lib/live-preview/host.ts`); picks and keys go back the same way.
+ * page over the live preview channel (`cms/lib/live-preview/host.ts`); clicks go back the same way.
  */
 
-import {
-  LIVE_PREVIEW_SESSION_PARAM,
-  type LiveGeometryMessage,
-  type LivePreviewMode,
-  type LiveRect,
-  type LiveTarget,
-} from '@contentworker/sdk-core/live-preview';
+import type { LayoutMessage, LiveRect } from '@contentworker/sdk-core/live-preview';
 import { cn } from '@contentworker/ui/lib/utils';
 import { useEffect, useRef, useState } from 'react';
 import { data, useLoaderData } from 'react-router';
@@ -64,7 +59,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
 
 /**
  * The frame's policy, for entry.server.tsx to fold into its CSP: framed by this origin alone, and
- * framing the entry's site alone. Never stored: the answer carries a preview token.
+ * framing only the space's preview origins. Never stored: the answer carries a preview token.
  */
 export function frameHeaders(frame: PreviewFrame): Headers {
   const headers = new Headers({
@@ -72,7 +67,7 @@ export function frameHeaders(frame: PreviewFrame): Headers {
     'x-frame-options': 'SAMEORIGIN',
     'cache-control': 'no-store',
   });
-  if (frame.ok) headers.set(FRAME_HEADER, JSON.stringify([frame.origin]));
+  if (frame.ok) headers.set(FRAME_HEADER, JSON.stringify(frame.origins));
   return headers;
 }
 
@@ -82,21 +77,6 @@ export function headers({ loaderHeaders }: Route.HeadersArgs) {
 
 /** Loaded once per frame: the editor reloads the frame itself when it wants another link. */
 export const shouldRevalidate = () => false;
-
-/** A fresh session id for one load of the page (what `cw_session` carries). */
-function newSession(): string {
-  const bytes = crypto.getRandomValues(new Uint8Array(16));
-  return btoa(String.fromCharCode(...bytes))
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=+$/, '');
-}
-
-function withSession(url: string, session: string): string {
-  const u = new URL(url);
-  u.searchParams.set(LIVE_PREVIEW_SESSION_PARAM, session);
-  return u.toString();
-}
 
 export default function PreviewFrameRoute() {
   const frame = useLoaderData<typeof loader>() as PreviewFrame;
@@ -116,51 +96,58 @@ export default function PreviewFrameRoute() {
       </main>
     );
   }
-  return <SiteFrame frontendUrl={frame.frontendUrl} origin={frame.origin} />;
+  return (
+    <SiteFrame frontendUrl={frame.frontendUrl} origin={frame.origin} origins={frame.origins} />
+  );
 }
 
-function SiteFrame({ frontendUrl, origin }: { frontendUrl: string; origin: string }) {
+function SiteFrame({
+  frontendUrl,
+  origin,
+  origins,
+}: {
+  frontendUrl: string;
+  origin: string;
+  origins: readonly string[];
+}) {
   const iframe = useRef<HTMLIFrameElement>(null);
   const box = useRef<HTMLElement>(null);
   const [src, setSrc] = useState<string | null>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [device, setDevice] = useState<Device>('desktop');
-  const [mode, setMode] = useState<LivePreviewMode>('view');
-  const [geometry, setGeometry] = useState<LiveGeometryMessage | null>(null);
-  const [hover, setHover] = useState<LiveTarget | undefined>();
-  const [selected, setSelected] = useState<LiveTarget | undefined>();
+  const [editing, setEditing] = useState(true);
+  const [layout, setLayout] = useState<LayoutMessage | null>(null);
+  // What the pointer is over and what is selected, by ref, with the box the page last gave.
+  const [hover, setHover] = useState<{ ref: string; rect: LiveRect } | null>(null);
+  const [selected, setSelected] = useState<{ ref: string; rect: LiveRect | null } | null>(null);
   const host = useRef<LivePreviewHost | null>(null);
 
-  // The session is minted in the browser, per load of this page: never in the server's answer.
   useEffect(() => {
-    const session = newSession();
     const parent = window.parent;
     const h = new LivePreviewHost({
       origin,
-      session,
+      origins,
       frame: () => iframe.current?.contentWindow,
-      focused: () => document.activeElement === iframe.current,
       onStatus: (status, detail) => {
         if (status !== 'live') {
-          setGeometry(null);
-          setHover(undefined);
+          setLayout(null);
+          setHover(null);
         }
         postFrame(parent, { type: 'status', status, ...(detail ? { detail } : {}) });
       },
-      onGeometry: setGeometry,
-      onHover: setHover,
-      onPick: (target) => {
-        setSelected(target);
-        postFrame(parent, { type: 'pick', target });
+      onSession: (entries, capabilities) =>
+        postFrame(parent, { type: 'session', entries, capabilities }),
+      onPointer: (pointer, ref, rect) => {
+        if (pointer === 'hover') {
+          setHover(ref && rect ? { ref, rect } : null);
+          return;
+        }
+        if (!ref) return;
+        setSelected({ ref, rect });
+        // The editor checks the ref names its entry before it moves focus.
+        postFrame(parent, { type: 'pick', ref });
       },
-      onKey: ({ key, meta, ctrl, shift, alt }) =>
-        postFrame(parent, { type: 'key', key, meta, ctrl, shift, alt }),
-      // A link followed in edit mode: the frame goes there, on the site's own origin (the parser
-      // refuses any other), keeping the session in case that page shows the entry too.
-      onNavigate: (url) => {
-        h.start();
-        setSrc(withSession(url, session));
-      },
+      onLayout: setLayout,
       onNote: (kind) => postFrame(parent, { type: 'note', kind }),
     });
     host.current = h;
@@ -171,29 +158,30 @@ function SiteFrame({ frontendUrl, origin }: { frontendUrl: string; origin: strin
         return;
       }
       switch (m.type) {
-        case 'entry':
-          h.setEntry(m.entry, m.ops);
-          return;
         case 'view':
           setDevice(m.device in DEVICE_WIDTHS ? m.device : 'desktop');
-          setMode(m.mode === 'edit' ? 'edit' : 'view');
-          h.setMode(m.mode === 'edit' ? 'edit' : 'view');
+          setEditing(m.editing === true);
+          h.setAllowed(Array.isArray(m.allowed) ? m.allowed : []);
+          h.setEditing(m.editing === true);
+          return;
+        case 'entry':
+          h.setEntry(m.entry, m.edits);
           return;
         case 'select':
-          setSelected(m.target);
-          h.select(m.target);
+          setSelected(m.ref ? { ref: m.ref, rect: null } : null);
+          h.select(m.ref, true);
           return;
       }
     };
     window.addEventListener('message', onMessage);
     h.start();
-    setSrc(withSession(frontendUrl, session));
+    setSrc(frontendUrl);
     return () => {
       window.removeEventListener('message', onMessage);
       h.dispose();
       host.current = null;
     };
-  }, [frontendUrl, origin]);
+  }, [frontendUrl, origin, origins]);
 
   useEffect(() => {
     const el = box.current;
@@ -209,15 +197,17 @@ function SiteFrame({ frontendUrl, origin }: { frontendUrl: string; origin: strin
   const left = Math.max(0, (size.w - width * scale) / 2);
   const height = size.h / scale;
 
-  const rectOf = (t: LiveTarget | undefined): LiveRect | undefined => {
-    if (!t || !geometry) return undefined;
-    // Geometry may be partial on a very large page: a target it leaves out isn't drawn.
-    if (t.key !== undefined) return geometry.blocks.find((b) => b.key === t.key)?.rect;
-    return geometry.fields.find((f) => f.ref === t.ref)?.rect;
+  // The box to draw for a ref: the latest layout's when the page reports one (it follows scrolling),
+  // else the box the page gave with the pointer. Geometry may be partial on a very large page.
+  const rectOf = (ref: string, given: LiveRect | null): LiveRect | null => {
+    const found =
+      layout?.fields.find((f) => f.ref === ref)?.rect ??
+      layout?.blocks.find((b) => b.ref === ref)?.rect;
+    return found ?? given;
   };
-  const same = (a?: LiveTarget, b?: LiveTarget) => !!a && !!b && a.key === b.key && a.ref === b.ref;
-  const picked = mode === 'edit' ? rectOf(selected) : undefined;
-  const hovered = mode === 'edit' && !same(hover, selected) ? rectOf(hover) : undefined;
+  const picked = editing && selected ? rectOf(selected.ref, selected.rect) : null;
+  const hovered =
+    editing && hover && hover.ref !== selected?.ref ? rectOf(hover.ref, hover.rect) : null;
 
   return (
     <main
@@ -234,9 +224,10 @@ function SiteFrame({ frontendUrl, origin }: { frontendUrl: string; origin: strin
             ref={iframe}
             src={src}
             title="The entry on your site"
-            // Scripts and forms, and its own origin so it can post as itself; never the top window,
-            // popups or downloads. The token stays out of the page's Referer.
-            sandbox="allow-scripts allow-same-origin allow-forms"
+            // As the spec has it: scripts, forms, popups and its own origin (its cookies and storage;
+            // safe because that origin is never this one). Never the top window or downloads. The
+            // token stays out of the page's Referer.
+            sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
             referrerPolicy="no-referrer"
             onLoad={() => host.current?.frameLoaded()}
             className="block size-full border-0 bg-background"

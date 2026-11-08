@@ -1,5 +1,6 @@
 import type { EntryFields, FieldDiff } from '@contentworker/domain';
-import type { LiveTarget } from '@contentworker/sdk-core/live-preview';
+import { topLevelField } from '@contentworker/sdk-core';
+import type { Capability } from '@contentworker/sdk-core/live-preview';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -53,8 +54,9 @@ import { GenerateEntryDialog } from '../components/GenerateEntryDialog';
 import { orDirect, useAssistantEdit, usePageContext } from '../lib/assistant';
 import { useClient } from '../lib/client-context';
 import { dateTime, toMs } from '../lib/format';
-import { replayKey } from '../lib/live-preview/keys';
-import { focusForPick } from '../lib/live-preview/pick';
+import { ADMIN_CAPABILITIES } from '../lib/live-preview/host';
+import { liveFields } from '../lib/live-preview/ops';
+import { focusForRef, refForField } from '../lib/live-preview/pick';
 import type { EntryAggregate, EntryView, ModelTier } from '../lib/management';
 import {
   useAllEntriesQuery,
@@ -77,6 +79,9 @@ const PANE_LABELS: Record<PaneView, string> = {
 
 /** The scope that reads the team (`GET …/team`), and with it teammates' names. */
 const SPACE_ADMIN = 'space:admin';
+/** The scope that edits entries: without it the Site pane only selects, never sends values. */
+const CONTENT_WRITE = 'content:write';
+const SELECT_ONLY: readonly Capability[] = ['select', 'scroll', 'layout'];
 
 const FORM_ID = 'entry-form';
 
@@ -110,7 +115,9 @@ export function EntryEditor() {
   // An inline-edit deep link from a previewed page: which field it came from,
   // and which space it was rendered against. A ref inside blocks names a path
   // (`body[<key>].heading`); the form opens the top-level field it is in.
-  const linkedField = searchParams.get('field')?.split('[')[0] || null;
+  // A ref's field is a path (`body[k1].heading`): the form opens its top-level field.
+  const linkedFieldParam = searchParams.get('field');
+  const linkedField = linkedFieldParam ? topLevelField(linkedFieldParam) || null : null;
   const linkedSpace = searchParams.get('space');
   const linkedEnv = searchParams.get('env');
   const wrongScope =
@@ -497,35 +504,57 @@ export function EntryEditor() {
 
   // A click in the Site pane's page focuses that field (or block) in the form.
   const [focusRequest, setFocusRequest] = useState<FocusRequest | null>(null);
-  const draftRef = useRef(draft);
-  draftRef.current = draft;
   const onSitePick = useCallback(
-    (target: LiveTarget) => {
+    (ref: string, pageEntries: readonly string[]) => {
       if (!selectedType || !entryId) return;
-      const at = focusForPick(target, {
-        contentType: selectedType,
+      const at = focusForRef(ref, {
+        space: conn.space,
+        environment: conn.environment,
         entryId,
-        fields: draftRef.current?.fields ?? initial ?? {},
+        contentType: selectedType,
         locales,
-        locale: draftRef.current?.locale ?? defaultLocale,
+        pageEntries,
       });
       if (at) setFocusRequest((r) => ({ seq: (r?.seq ?? 0) + 1, ...at }));
     },
-    [selectedType, entryId, initial, locales, defaultLocale],
+    [selectedType, entryId, conn.space, conn.environment, locales],
   );
-  // The form field last in use: a key pressed in the page acts on it.
-  const lastFocus = useRef<Element | null>(null);
+  // The form's focused field (or block) as the page names it: outlined there and scrolled to.
+  const [siteSelected, setSiteSelected] = useState<string | null>(null);
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
   const formBox = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const box = formBox.current;
-    if (!box) return;
+    if (!box || !selectedType || !entryId) return;
     const onFocusIn = (e: FocusEvent) => {
-      lastFocus.current = e.target as Element;
+      const el = e.target as Element;
+      const apiId = el.closest('[data-field]')?.getAttribute('data-field');
+      if (!apiId) return;
+      const blockKey = el.closest('[data-block-key]')?.getAttribute('data-block-key') ?? undefined;
+      const locale = draftRef.current?.locale ?? defaultLocale;
+      const values = liveFields(
+        selectedType,
+        draftRef.current?.fields ?? initial ?? {},
+        locale,
+        defaultLocale,
+      );
+      setSiteSelected(
+        refForField(
+          { space: conn.space, environment: conn.environment, entryId, contentType: selectedType },
+          locale,
+          apiId,
+          blockKey,
+          values[apiId],
+        ),
+      );
     };
     box.addEventListener('focusin', onFocusIn);
     return () => box.removeEventListener('focusin', onFocusIn);
-    // The form's box is there once the type is.
-  }, [selectedType !== undefined]);
+  }, [selectedType, entryId, conn.space, conn.environment, defaultLocale, initial]);
+  // What the page may do for this person: a role that can't write content only selects.
+  const canWrite = accessQuery.data?.scopes.includes(CONTENT_WRITE) === true;
+  const siteAllowed: readonly Capability[] = canWrite ? ADMIN_CAPABILITIES : SELECT_ONLY;
   const localeConfig = useMemo(
     () => ({ defaultLocale, locales, fallbacks }),
     [defaultLocale, locales, fallbacks],
@@ -856,12 +885,13 @@ export function EntryEditor() {
               environmentId={conn.environment}
               entryId={entryId}
               contentType={selectedType}
-              version={meta?.version ?? 0}
               fields={draft?.fields ?? initial ?? {}}
               locale={draft?.locale ?? defaultLocale}
+              defaultLocale={defaultLocale}
+              allowed={siteAllowed}
+              selected={siteSelected}
               split={pane.split}
               onPick={onSitePick}
-              onKey={(k) => replayKey(k, lastFocus.current)}
             />
           ) : null}
           {isEdit && entryId && paneView === 'activity' ? (

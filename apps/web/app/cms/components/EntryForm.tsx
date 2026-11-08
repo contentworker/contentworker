@@ -722,7 +722,8 @@ export function EntryForm(props: {
     const helpId = f.help ? `${id}-help` : undefined;
     const ruleId = state?.disabled ? `${id}-rule` : undefined;
     return (
-      <div className="space-y-1.5" key={f.apiId}>
+      // `data-field`: the Site pane outlines the field focused here on the page.
+      <div className="space-y-1.5" key={f.apiId} data-field={f.apiId}>
         <Label id={`${id}-label`} htmlFor={id} className="gap-1">
           {f.name}
           {f.required && <RequiredMark />}

@@ -1,13 +1,14 @@
 /**
- * The edits between two states of the entry form, as live preview ops: what the Site pane sends
- * the framed page after every change, so it re-renders the edit before anything is saved.
+ * What the Site pane sends the framed page after every change of the entry form, so it re-renders
+ * the edit before anything is saved (docs/specs/live-preview-channel.md): one locale's values, as
+ * the page renders them, and the edits between two of them.
  *
- * An ordinary field is one `setField` per locale that changed. A blocks field is key-addressed, in
- * the applied form `patchBlocks` answers with (every `_key` present, inserts carrying their own
- * keys), so the page re-renders the block that changed and its next pick names a key the form
- * holds. Where that can't be said exactly (a block with no key yet, a key held twice, a reshuffle
- * that would take more ops than blocks) the field goes as one `setField`, which the page applies
- * the same way.
+ * An ordinary field that changed goes in `entry.patch` (its new value, `null` when cleared). A
+ * blocks field goes as `blocks.patch` ops, key-addressed in the applied form `patchBlocks` answers
+ * with (every `_key` present, inserts carrying their own keys), so the page re-renders the block
+ * that changed and its next click names a key the form holds. Where that can't be said exactly (a
+ * block with no key yet, a key held twice, a reshuffle that would take more ops than blocks, more
+ * ops than one patch carries) the field goes whole in `entry.patch` instead.
  */
 import {
   BLOCK_KEY,
@@ -16,42 +17,67 @@ import {
   type EntryFields,
   type FieldDefinition,
 } from '@contentworker/domain';
-import { type LivePatchOp, MAX_PATCH_OPS } from '@contentworker/sdk-core/live-preview';
+import {
+  contentValueIssue,
+  type LiveFields,
+  type LivePatchOp,
+  MAX_PATCH_OPS,
+} from '@contentworker/sdk-core/live-preview';
 
 type Block = Record<string, unknown>;
 
+/** The edits between two states of one entry in one locale. */
+export interface LiveEdits {
+  /** Changed top-level values; `null` clears one. */
+  readonly fields: Record<string, unknown>;
+  /** Key-addressed ops, one list per blocks field. */
+  readonly blocks: readonly { readonly field: string; readonly ops: readonly LivePatchOp[] }[];
+}
+
 /**
- * The ops that turn `before` into `after`, in order, or null when they'd be more than one patch
- * may carry: the caller sends the whole entry again instead.
+ * The form's values in one locale, as the page renders them: a localized field's value in that
+ * locale, any other field's from the default locale (where the form keeps it). A value that can't
+ * cross the channel as it is typed (`contentValueIssue`: rich text that isn't a document) is left
+ * out, never sent as markup.
  */
-export function liveOps(
+export function liveFields(
   contentType: Pick<ContentType, 'fields'>,
-  before: EntryFields,
-  after: EntryFields,
-): LivePatchOp[] | null {
-  const ops: LivePatchOp[] = [];
-  for (const field of contentType.fields) {
-    const was = asLocales(before[field.apiId]);
-    const now = asLocales(after[field.apiId]);
-    for (const locale of new Set([...Object.keys(was), ...Object.keys(now)])) {
-      const a = was[locale];
-      const b = now[locale];
-      if (equal(a, b)) continue;
-      const blockOps = isBlocksField(field) ? blocksOps(field.apiId, locale, a, b) : undefined;
-      if (blockOps) ops.push(...blockOps);
-      else ops.push(setField(field.apiId, locale, b));
-      if (ops.length > MAX_PATCH_OPS) return null;
-    }
+  fields: EntryFields,
+  locale: string,
+  defaultLocale: string,
+): LiveFields {
+  const out: LiveFields = {};
+  for (const f of contentType.fields) {
+    const byLocale = fields[f.apiId] as Record<string, unknown> | undefined;
+    const value = byLocale?.[f.localized ? locale : defaultLocale];
+    if (value === undefined || contentValueIssue(f.type, value) !== undefined) continue;
+    out[f.apiId] = value;
   }
-  return ops;
+  return out;
+}
+
+/** The edits that turn `before` into `after`, both one locale's values (`liveFields`). */
+export function liveEdits(
+  contentType: Pick<ContentType, 'fields'>,
+  locale: string,
+  before: LiveFields,
+  after: LiveFields,
+): LiveEdits {
+  const fields: Record<string, unknown> = {};
+  const blocks: { field: string; ops: LivePatchOp[] }[] = [];
+  for (const field of contentType.fields) {
+    const a = before[field.apiId];
+    const b = after[field.apiId];
+    if (equal(a, b)) continue;
+    const ops = isBlocksField(field) ? blocksOps(field.apiId, locale, a, b) : undefined;
+    if (ops && ops.length > 0 && ops.length <= MAX_PATCH_OPS)
+      blocks.push({ field: field.apiId, ops });
+    else fields[field.apiId] = b === undefined ? null : b;
+  }
+  return { fields, blocks };
 }
 
 const isBlocksField = (field: FieldDefinition): boolean => blockVariants(field) !== undefined;
-
-const setField = (field: string, locale: string, value: unknown): LivePatchOp =>
-  value === undefined
-    ? { op: 'setField', field, locale }
-    : { op: 'setField', field, locale, value };
 
 /**
  * One blocks field in one locale, by key: removes, then each block put where it now stands
@@ -139,10 +165,6 @@ function nestedKeyed(value: unknown, seen: Set<string>): boolean {
   if (!isRecord(value)) return true;
   if (typeof value._type === 'string' && value._type !== '') return keyedBlock(value, seen);
   return Object.values(value).every((v) => nestedKeyed(v, seen));
-}
-
-function asLocales(value: unknown): Record<string, unknown> {
-  return isRecord(value) ? value : {};
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

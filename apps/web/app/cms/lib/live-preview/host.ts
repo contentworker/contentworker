@@ -1,280 +1,436 @@
 /**
- * The admin's half of live preview: what the Site frame runs with the customer's page it frames.
+ * The admin's half of the live preview channel (docs/specs/live-preview-channel.md), as the Site
+ * frame runs it with the customer's page it frames.
  *
- * It waits for the page's `hello`, sends the entry (`init`) and then each edit as a numbered
- * `patch`, and hands the page's geometry, picks, hovers and keys to the frame. Every message from
- * the page goes through `parseGuestMessage` with the event's real origin and window, so a message
- * from anywhere else, or from the page after it navigated to another origin, is never read; and it
- * posts only to the page's exact origin.
+ * The page connects: it offers a channel, its protocol versions and capabilities, and the host
+ * answers `connect.accept` (the highest shared version, the capabilities narrowed to what the
+ * person may let it do) or `connect.reject` with both version lists. Every message goes through
+ * the protocol's `acceptMessage` (origin: the framed URL's; sender: the iframe's window; channel:
+ * the pinned one, or on an offer a new well-formed one) and then its schema, and the host posts
+ * only to that origin. A fresh offer from the same window replaces the session.
  *
- * The page acknowledges what it has rendered (`rendered {seq}`), not necessarily every seq: a
- * failed render is never acknowledged, and edits that land mid-render are folded together. After
- * a refused patch the page drops the patches that follow until the whole entry comes again, and
- * says so with `error {kind: 'patch'}`; the host answers with one `init` carrying the current
- * fields and the seq they include, which puts both sides back in step.
+ * Once the page reports in `page` that it renders the entry, the host sends its whole unsaved
+ * state (`entry.state`), then each edit as `entry.patch` or `blocks.patch`, numbered by `rev` per
+ * entry. The page answers `applied` or `failed`; a failure is answered with a fresh state, except
+ * a state the page refused as invalid, which would fail again: then the entry can't be previewed.
+ * Nothing it says saves, publishes or calls a use-case: clicks only move focus in the form.
  */
 import {
-  LIVE_PREVIEW_PROTOCOL,
-  type LiveAdminMessage,
-  type LiveGeometryMessage,
-  type LiveKeyMessage,
+  type AdminMessage,
+  acceptMessage,
+  type Capability,
+  type ConnectOfferMessage,
+  capabilityAllows,
+  type FrontendMessage,
+  type LayoutMessage,
   type LivePatchOp,
-  type LivePreviewMode,
-  type LiveTarget,
+  type LiveRect,
   MAX_MESSAGE_BYTES,
-  MAX_PATCH_OPS,
-  parseGuestMessage,
+  MAX_STATE_BYTES,
+  narrowCapabilities,
+  negotiateVersion,
+  parseFrontendMessage,
+  SUPPORTED_VERSIONS,
 } from '@contentworker/sdk-core/live-preview';
 import type { FrameEntry, SiteStatus } from './frame-channel';
+import type { LiveEdits } from './ops';
 
-/** How long a loaded page has to say hello before the pane says it doesn't speak live preview. */
-export const HANDSHAKE_MS = 5_000;
+/**
+ * How long a loaded page has to offer before the pane says it isn't connected: the frontend
+ * offers four times, a second apart, so this outlasts its last try.
+ */
+export const CONNECT_MS = 5_000;
 /** How long the frame has to load at all before the pane says the page didn't load. */
 export const LOAD_MS = 20_000;
+
+/** The capabilities the admin uses. Proposals wait for Coworker's side (`propose`). */
+export const ADMIN_CAPABILITIES: readonly Capability[] = [
+  'select',
+  'patch.fields',
+  'patch.blocks',
+  'scroll',
+  'layout',
+];
 
 /** Anything with a `postMessage(message, targetOrigin)`: the framed page's window. */
 interface Postable {
   postMessage(message: unknown, targetOrigin: string): void;
 }
 
+type HostStatus = Exclude<SiteStatus, 'unavailable'>;
+
 export interface HostOptions {
-  /** The framed page's origin, exactly (the preview URL template's). */
+  /** The framed page's origin, exactly: the preview URL's. */
   readonly origin: string;
-  /** This framing's session id (`cw_session` on the page's URL). */
-  readonly session: string;
-  /** The framed page's window, read when needed (an iframe's `contentWindow` changes per load). */
+  /** Every origin the space's preview URLs name: where a `navigated` may take the session. */
+  readonly origins: readonly string[];
+  /** The framed page's window, read when needed (an iframe's `contentWindow`). */
   readonly frame: () => Postable | null | undefined;
-  readonly onStatus: (status: Exclude<SiteStatus, 'unavailable'>, detail?: string) => void;
-  readonly onGeometry?: (geometry: LiveGeometryMessage) => void;
-  readonly onHover?: (target: LiveTarget | undefined) => void;
-  readonly onPick?: (target: LiveTarget) => void;
-  readonly onKey?: (key: LiveKeyMessage) => void;
-  /** An edit-mode link the page asked to follow, on its own origin. */
-  readonly onNavigate?: (url: string) => void;
-  /** Whether the framed page has focus (the frame's document's active element is its frame). */
-  readonly focused?: () => boolean;
-  /** The page refused a patch or failed a render. */
-  readonly onNote?: (kind: string) => void;
-  readonly handshakeMs?: number;
+  readonly onStatus: (status: HostStatus, detail?: string) => void;
+  /** Connected (or reconnected): the entries the page renders and what was accepted. */
+  readonly onSession?: (entries: readonly string[], capabilities: readonly Capability[]) => void;
+  readonly onPointer?: (
+    pointer: 'hover' | 'click',
+    ref: string | null,
+    rect: LiveRect | null,
+  ) => void;
+  readonly onLayout?: (layout: LayoutMessage) => void;
+  /** The page couldn't take an edit and was sent the whole entry (`failed` reason). */
+  readonly onNote?: (reason: string) => void;
+  readonly connectMs?: number;
   readonly loadMs?: number;
 }
 
-type Outbound = LiveAdminMessage extends infer M
-  ? M extends LiveAdminMessage
-    ? Omit<M, 'cw' | 'session'>
+type Outbound = AdminMessage extends infer M
+  ? M extends AdminMessage
+    ? Omit<M, 'v' | 'channel'>
     : never
   : never;
 
 export class LivePreviewHost {
-  /** The last patch seq sent (an `init` says the fields include it). */
-  seq = 0;
-  /** The highest seq the page says is on screen. */
+  status: HostStatus = 'loading';
+  /** The last rev sent for the entry, and the rev of the last whole state. */
+  rev = 0;
+  stateRev = 0;
+  /** The highest rev the page says is on screen. */
   rendered = 0;
-  status: Exclude<SiteStatus, 'unavailable'> = 'loading';
-  private connected = false;
-  /** Whether a page has ever said hello in this framing: a later load without one navigated away. */
-  private greeted = false;
-  private entry: FrameEntry | undefined;
-  private mode: LivePreviewMode = 'view';
-  /** The seq the last `init` carried: a refusal of a patch it already covers needs no other. */
-  private initSeq = -1;
-  /** The last init answered a refused patch, and no patch since has rendered. */
-  private recovering = false;
-  /** Send each changed blocks field whole (`setField`), not by key: the page refused both ways. */
+  /** Send blocks fields whole (`entry.patch`): the page refused key-addressed ops twice running. */
   wholeFields = false;
+  private origin: string;
+  private channel: string | undefined;
+  private version: number | undefined;
+  private accepted: Capability[] = [];
+  private allowed: readonly Capability[] | undefined;
+  /** An offer that came before the editor said what it allows: answered once it does. */
+  private pending: ConnectOfferMessage | undefined;
+  private pageEntries: string[] = [];
+  private entry: FrameEntry | undefined;
+  private editing = true;
+  private selected: string | null = null;
+  /** The page refused the entry's whole state: nothing more is sent this session. */
+  private blocked = false;
+  /** The last state answered a failure, and nothing since has rendered. */
+  private recovering = false;
+  /** Whether a page ever connected in this frame: a later load that never does navigated away. */
+  private connectedOnce = false;
+  private phase: 'loading' | 'waiting' | 'idle' = 'idle';
+  private offeredBeforeLoad = false;
   private timer: ReturnType<typeof setTimeout> | undefined;
-  /** Where the frame is: loading a page, waiting on a loaded page's hello, or neither. */
-  private phase: 'loading' | 'handshake' | 'idle' = 'idle';
-  private helloBeforeLoad = false;
   private readonly o: HostOptions;
 
   constructor(options: HostOptions) {
     this.o = options;
+    this.origin = options.origin;
   }
+
+  // --- the frame's loads ------------------------------------------------------------
 
   /** The frame is about to load the page: starts the clock on it loading at all. */
   start(): void {
-    this.connected = false;
-    this.helloBeforeLoad = false;
+    this.endSession();
+    this.offeredBeforeLoad = false;
     this.phase = 'loading';
     this.wait(this.o.loadMs ?? LOAD_MS, () => this.setStatus('failed'));
   }
 
   /**
-   * The frame finished a load. A page usually says hello before its load event, and then this is
-   * that page's load; otherwise the frame went somewhere (a link followed in view mode, a redirect)
-   * and that page has the handshake's time to say hello, or it navigated away.
+   * The frame finished a load. A page usually offers before its load event, and then this is that
+   * page's load; otherwise the frame went somewhere and that page has its time to offer.
    */
   frameLoaded(): void {
-    if (this.helloBeforeLoad) {
-      this.helloBeforeLoad = false;
+    if (this.offeredBeforeLoad) {
+      this.offeredBeforeLoad = false;
       this.phase = 'idle';
       return;
     }
-    this.connected = false;
-    this.phase = 'handshake';
-    this.wait(this.o.handshakeMs ?? HANDSHAKE_MS, () => {
+    this.endSession();
+    this.phase = 'waiting';
+    this.wait(this.o.connectMs ?? CONNECT_MS, () => {
       this.phase = 'idle';
-      this.setStatus(this.greeted ? 'navigated' : 'timeout');
+      this.setStatus(this.connectedOnce ? 'navigated' : 'not-connected');
     });
   }
+
+  // --- receiving ----------------------------------------------------------------------
 
   /** Every `message` event the frame's window sees; only the framed page's are read. */
   receive(event: { readonly data: unknown; readonly origin: string; readonly source: unknown }) {
     const source = this.o.frame();
     if (!source || event.source !== source) return;
-    if (event.origin !== this.o.origin) {
-      // Ours by its envelope, but from another origin: the page redirected (www, or another host)
-      // and runs the SDK there. Said, never read.
-      if (this.oursByEnvelope(event.data)) this.setStatus('origin', event.origin);
+    const data = acceptMessage(event, {
+      origin: this.origin,
+      source,
+      // Before connect, and for a fresh offer from the same window, any well-formed channel.
+      ...(this.channel && !isOffer(event.data) ? { channel: this.channel } : {}),
+      ...(this.version !== undefined && !isOffer(event.data) ? { version: this.version } : {}),
+    });
+    if (!data) {
+      // Ours by its shape, from the frame's own window, but another origin: the page redirected
+      // (www, another host) and offers from there. Said, never read.
+      if (event.origin !== this.origin && isOffer(event.data)) {
+        this.setStatus('origin', event.origin);
+      }
       return;
     }
-    const parsed = parseGuestMessage(event, {
-      session: this.o.session,
-      origin: this.o.origin,
-      source,
-    });
+    const parsed = parseFrontendMessage(data);
     if (!parsed.ok) return;
     const m = parsed.message;
-    switch (m.type) {
-      case 'hello':
-        // Said while the page was still loading, it belongs to the load event still to come.
-        this.helloBeforeLoad = this.phase === 'loading';
-        if (this.phase === 'handshake') this.phase = 'idle';
-        this.clearTimer();
-        this.connected = true;
-        this.greeted = true;
-        this.setStatus('live');
-        this.sendInit();
-        this.post({ type: 'mode', mode: this.mode });
-        return;
-      case 'rendered':
-        // Not necessarily every seq: the highest one said is what's on screen.
-        if (m.seq > this.rendered && m.seq <= this.seq) this.rendered = m.seq;
-        // A patch after the recovery init rendered: back in step.
-        if (m.seq > this.initSeq) this.recovering = false;
-        return;
-      case 'geometry':
-        this.o.onGeometry?.(m);
-        return;
-      case 'hover':
-        this.o.onHover?.(m.key !== undefined || m.ref !== undefined ? target(m) : undefined);
-        return;
-      case 'pick': {
-        const picked = target(m) as LiveTarget;
-        this.post({ type: 'select', ...picked });
-        this.o.onPick?.(picked);
+    if (m.kind === 'connect.offer') {
+      this.offer(m);
+      return;
+    }
+    if (!this.channel || m.channel !== this.channel) return;
+    if (!capabilityAllows(m, this.accepted)) return;
+    this.handle(m);
+  }
+
+  private offer(m: ConnectOfferMessage): void {
+    if (this.phase === 'loading') this.offeredBeforeLoad = true;
+    if (this.phase === 'waiting') this.phase = 'idle';
+    this.clearTimer();
+    if (this.allowed === undefined) {
+      this.pending = m;
+      return;
+    }
+    const version = negotiateVersion(m.versions, SUPPORTED_VERSIONS);
+    if (version === undefined) {
+      // Stamped with the newest it offered: the only version it can read before connect.
+      this.postOn(m.channel, m.versions[0] as number, {
+        kind: 'connect.reject',
+        reason: 'unsupported-version',
+        versions: [...SUPPORTED_VERSIONS],
+      });
+      const newest = Math.max(...m.versions);
+      this.setStatus('unsupported', newest < Math.min(...SUPPORTED_VERSIONS) ? 'old' : 'new');
+      return;
+    }
+    // A fresh offer (a remount, a new page) replaces whatever session was here.
+    this.endSession();
+    this.channel = m.channel;
+    this.version = version;
+    this.accepted = narrowCapabilities(m.capabilities, this.allowed);
+    this.post({ kind: 'connect.accept', version, capabilities: this.accepted });
+    this.connectedOnce = true;
+    this.setStatus('live');
+    this.o.onSession?.([], this.accepted);
+    if (this.has('select')) {
+      if (!this.editing) this.post({ kind: 'editing', on: false });
+      if (this.selected) this.post({ kind: 'select', ref: this.selected });
+    }
+  }
+
+  private handle(m: FrontendMessage): void {
+    switch (m.kind) {
+      case 'page': {
+        const had = this.pageEntries.includes(this.entry?.entryId ?? '');
+        this.pageEntries = m.entries.map((e) => e.entryId);
+        this.o.onSession?.(this.pageEntries, this.accepted);
+        const shows = this.shows();
+        this.setStatus(shows ? 'live' : 'elsewhere');
+        if (shows && !had) this.sendState();
         return;
       }
-      case 'key':
-        // Only a key the person plausibly pressed: in edit mode, with focus in the page. A page
-        // can post keys whenever it likes, and they act on the editor's form.
-        if (this.mode === 'edit' && (this.o.focused?.() ?? true)) this.o.onKey?.(m);
+      case 'navigated': {
+        // The session ends; the next page offers again. Only to an address this space previews on.
+        let to: string | undefined;
+        try {
+          to = new URL(m.url).origin;
+        } catch {
+          to = undefined;
+        }
+        this.endSession();
+        if (to && this.o.origins.includes(to)) {
+          this.origin = to;
+          this.phase = 'loading';
+          this.wait(this.o.loadMs ?? LOAD_MS, () => this.setStatus('navigated'));
+        } else {
+          this.phase = 'idle';
+          this.clearTimer();
+          this.setStatus('navigated');
+        }
         return;
-      case 'navigate':
-        if (this.mode === 'edit') this.o.onNavigate?.(m.url);
+      }
+      case 'pointer':
+        this.o.onPointer?.(m.pointer, m.ref, m.rect);
         return;
-      case 'error':
-        if (m.kind !== 'patch') {
-          this.o.onNote?.(m.kind);
+      case 'layout':
+        this.o.onLayout?.(m);
+        return;
+      case 'applied':
+        if (m.entryId !== undefined && m.entryId !== this.entry?.entryId) return;
+        if (m.rev > this.rendered && m.rev <= this.rev) this.rendered = m.rev;
+        if (m.rev > this.stateRev) this.recovering = false;
+        return;
+      case 'failed': {
+        if (m.entryId !== undefined && m.entryId !== this.entry?.entryId) return;
+        // Something the last whole state already replaced: that state puts it right.
+        if (m.rev < this.stateRev || this.blocked) return;
+        if (m.reason === 'invalid' && m.rev === this.stateRev) {
+          // The page can't read the entry itself; sending it again would fail the same way.
+          this.blocked = true;
+          this.setStatus('unpreviewable');
           return;
         }
-        // A patch the last init already covers was dropped while the page was out of step: the
-        // init puts it right. (A page without `seq` on its errors: once per init.)
-        if (m.seq !== undefined ? m.seq <= this.initSeq : this.initSeq === this.seq) return;
-        this.o.onNote?.(m.kind);
-        // Refused again right after a recovery: this page can't take those ops by key, so blocks
-        // fields go whole from here on.
-        if (this.recovering) this.wholeFields = true;
+        this.o.onNote?.(m.reason);
+        // Ops refused again right after a recovery: this page takes blocks fields whole from here.
+        if (m.reason === 'conflict' && this.recovering) this.wholeFields = true;
         this.recovering = true;
-        this.sendInit();
+        this.sendState();
         return;
+      }
     }
+  }
+
+  // --- from the editor --------------------------------------------------------------------
+
+  /** What the person may let the page do. An offer waiting on it is answered now. */
+  setAllowed(allowed: readonly Capability[]): void {
+    this.allowed = allowed;
+    const pending = this.pending;
+    this.pending = undefined;
+    if (pending) this.offer(pending);
   }
 
   /**
-   * The entry as the form holds it now, and the ops since the last call: a patch when there are
-   * some, the whole entry when `ops` is null, the locale or version moved, or the patch is too big.
+   * The entry as the form holds it now, and the edits since the last call: patches when there are
+   * some, the whole state when `edits` is null, the entry or locale moved, or a patch is too big.
    */
-  setEntry(entry: FrameEntry, ops: readonly LivePatchOp[] | null): void {
+  setEntry(entry: FrameEntry, edits: LiveEdits | null): void {
     const prev = this.entry;
     this.entry = entry;
-    if (!this.connected) return;
-    const whole =
-      ops === null ||
-      !prev ||
-      prev.locale !== entry.locale ||
-      prev.version !== entry.version ||
-      prev.entryId !== entry.entryId;
-    if (whole) {
-      this.sendInit();
+    if (!this.shows() || this.blocked) return;
+    if (edits === null || !prev || prev.entryId !== entry.entryId || prev.locale !== entry.locale) {
+      this.sendState();
       return;
     }
-    if (ops.length === 0) return;
-    if (ops.length > MAX_PATCH_OPS || !fits(ops)) {
-      this.sendInit();
-      return;
+    const fields: Record<string, unknown> = { ...edits.fields };
+    const blocks = [];
+    for (const group of edits.blocks) {
+      if (this.wholeFields || !this.has('patch.blocks')) {
+        fields[group.field] = entry.fields[group.field] ?? null;
+      } else blocks.push(group);
     }
-    this.seq += 1;
+    if (Object.keys(fields).length > 0) {
+      if (!this.has('patch.fields')) {
+        this.sendState();
+        return;
+      }
+      const patch = { kind: 'entry.patch', ...this.address(1), fields } as const;
+      if (!withinBytes(patch, MAX_MESSAGE_BYTES - 1024)) {
+        this.sendState();
+        return;
+      }
+      this.rev += 1;
+      this.post({ ...patch, rev: this.rev });
+    }
+    for (const group of blocks) {
+      const patch = {
+        kind: 'blocks.patch',
+        ...this.address(1),
+        field: group.field,
+        ops: group.ops,
+      } as const;
+      if (!withinBytes(patch, MAX_MESSAGE_BYTES - 1024)) {
+        this.sendState();
+        return;
+      }
+      this.rev += 1;
+      this.post({ ...patch, rev: this.rev });
+    }
+  }
+
+  /** Turns in-page editing (picking) on or off: off, the page is the site, links followed. */
+  setEditing(on: boolean): void {
+    this.editing = on;
+    if (this.has('select')) this.post({ kind: 'editing', on });
+  }
+
+  /** Outlines a ref on the page and scrolls it into view (`scroll`), or clears the selection. */
+  select(ref: string | null, scroll = false): void {
+    this.selected = ref;
+    if (this.has('select')) this.post({ kind: 'select', ref });
+    if (ref && scroll && this.has('scroll')) this.post({ kind: 'scroll', ref });
+  }
+
+  /**
+   * The seam for Coworker's proposed blocks (rendered as ghosts, never saved), once Coworker's
+   * proposals reach the editor: sent only when the session accepted `proposals`, which the admin
+   * offers to accept only once the editor passes it in `setAllowed`.
+   */
+  propose(field: string, ops: readonly LivePatchOp[]): boolean {
+    if (!this.has('proposals') || !this.shows() || this.blocked || ops.length === 0) return false;
+    this.rev += 1;
     this.post({
-      type: 'patch',
-      seq: this.seq,
-      ops: this.wholeFields ? asWholeFields(ops, entry) : ops,
+      kind: 'blocks.patch',
+      ...this.address(0),
+      field,
+      ops: ops.map((op) => ({ ...op, proposed: true as const })),
     });
+    return true;
   }
 
-  setMode(mode: LivePreviewMode): void {
-    this.mode = mode;
-    if (this.connected) this.post({ type: 'mode', mode });
-  }
-
-  /** Selects a target on the page, or clears the selection. */
-  select(t: LiveTarget | undefined): void {
-    if (this.connected) this.post({ type: 'select', ...(t ?? {}) } as Outbound);
+  /** The capabilities the session was accepted with (empty before connect). */
+  get capabilities(): readonly Capability[] {
+    return this.accepted;
   }
 
   dispose(): void {
     this.clearTimer();
-    this.connected = false;
+    this.endSession();
   }
 
-  private sendInit(): void {
+  // --- helpers ----------------------------------------------------------------------------
+
+  private shows(): boolean {
+    return !!this.channel && !!this.entry && this.pageEntries.includes(this.entry.entryId);
+  }
+
+  private has(c: Capability): boolean {
+    return !!this.channel && this.accepted.includes(c);
+  }
+
+  private address(ahead: number) {
+    const e = this.entry as FrameEntry;
+    return { rev: this.rev + ahead, entryId: e.entryId, locale: e.locale };
+  }
+
+  private sendState(): void {
     const e = this.entry;
-    if (!e) return;
-    // Always with the seq: an init without one would reset the page's to 0.
-    this.initSeq = this.seq;
-    this.post({
-      type: 'init',
-      fields: e.fields,
-      locale: e.locale,
-      version: e.version,
-      entryId: e.entryId,
-      contentType: e.contentType,
-      seq: this.seq,
-    });
+    if (!e || !this.shows() || this.blocked) return;
+    if (!this.has('patch.fields') && !this.has('patch.blocks')) return;
+    const state = { kind: 'entry.state', ...this.address(1), fields: e.fields } as const;
+    if (!withinBytes(state, MAX_STATE_BYTES - 1024)) {
+      this.blocked = true;
+      this.setStatus('unpreviewable');
+      return;
+    }
+    this.rev += 1;
+    this.stateRev = this.rev;
+    this.post({ ...state, rev: this.rev });
+  }
+
+  private endSession(): void {
+    this.channel = undefined;
+    this.version = undefined;
+    this.accepted = [];
+    this.pageEntries = [];
+    this.blocked = false;
+    this.recovering = false;
   }
 
   private post(message: Outbound): void {
-    this.o
-      .frame()
-      ?.postMessage(
-        { cw: LIVE_PREVIEW_PROTOCOL, session: this.o.session, ...message },
-        this.o.origin,
-      );
+    if (!this.channel || this.version === undefined) return;
+    this.postOn(this.channel, this.version, message);
   }
 
-  private oursByEnvelope(data: unknown): boolean {
-    const m = data as { cw?: unknown; session?: unknown } | null;
-    return (
-      typeof m === 'object' &&
-      m !== null &&
-      m.cw === LIVE_PREVIEW_PROTOCOL &&
-      m.session === this.o.session
-    );
+  private postOn(channel: string, v: number, message: Outbound): void {
+    this.o.frame()?.postMessage({ v, channel, ...message }, this.origin);
   }
 
-  private setStatus(status: Exclude<SiteStatus, 'unavailable'>, detail?: string): void {
-    if (status !== 'live') this.connected = false;
+  private setStatus(status: HostStatus, detail?: string): void {
+    // Still connected while the page shows other entries, or can't take this one's state.
+    if (status !== 'live' && status !== 'elsewhere' && status !== 'unpreviewable')
+      this.endSession();
     this.status = status;
     this.o.onStatus(status, detail);
   }
@@ -293,33 +449,16 @@ export class LivePreviewHost {
   }
 }
 
-/** `ops` with every block op replaced by its field's value, whole, once per field and locale. */
-function asWholeFields(ops: readonly LivePatchOp[], entry: FrameEntry): LivePatchOp[] {
-  const out: LivePatchOp[] = [];
-  const done = new Set<string>();
-  for (const op of ops) {
-    if (op.op === 'setField') {
-      out.push(op);
-      continue;
-    }
-    const id = `${op.field}\u0000${op.locale}`;
-    if (done.has(id)) continue;
-    done.add(id);
-    const value = entry.fields[op.field]?.[op.locale];
-    out.push(
-      value === undefined
-        ? { op: 'setField', field: op.field, locale: op.locale }
-        : { op: 'setField', field: op.field, locale: op.locale, value },
-    );
-  }
-  return out;
+/** Whether `value` is at most `cap` bytes of UTF-8 JSON (the page's own cap on what it reads). */
+function withinBytes(value: unknown, cap: number): boolean {
+  const json = JSON.stringify(value);
+  return json.length <= cap && new TextEncoder().encode(json).byteLength <= cap;
 }
 
-function target(m: { key?: string; ref?: string }): LiveTarget {
-  return m.key !== undefined ? { key: m.key } : { ref: m.ref as string };
-}
-
-/** Whether a patch of these ops is within the page's message cap (with room for the envelope). */
-function fits(ops: readonly LivePatchOp[]): boolean {
-  return new TextEncoder().encode(JSON.stringify(ops)).byteLength < MAX_MESSAGE_BYTES - 1024;
+function isOffer(data: unknown): boolean {
+  return (
+    typeof data === 'object' &&
+    data !== null &&
+    (data as { kind?: unknown }).kind === 'connect.offer'
+  );
 }

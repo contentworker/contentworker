@@ -1,14 +1,15 @@
-// The ops the Site pane sends the framed page after each edit: `setField` for ordinary fields,
-// key-addressed block ops (every key present) for blocks fields, and each set of ops applied by the
-// page's own engine gives exactly the form's new values.
-import type { ContentType, EntryFields, FieldDefinition } from '@contentworker/domain';
+// What the Site pane sends the framed page after each edit: one locale's values, the changed
+// ordinary fields as `entry.patch` values (null clears), blocks fields as key-addressed ops in
+// applied form (every key present), and the page's own engine turning them into exactly the
+// form's new values. Rich text that isn't a document never crosses.
+import type { ContentType, FieldDefinition } from '@contentworker/domain';
 import {
   applyLivePatch,
   type LiveFields,
   MAX_PATCH_OPS,
 } from '@contentworker/sdk-core/live-preview';
 import { describe, expect, it } from 'vitest';
-import { equal, liveOps } from '~/cms/lib/live-preview/ops';
+import { equal, liveEdits, liveFields } from '~/cms/lib/live-preview/ops';
 
 const field = (apiId: string, extra: Partial<FieldDefinition> = {}): FieldDefinition =>
   ({
@@ -21,10 +22,12 @@ const field = (apiId: string, extra: Partial<FieldDefinition> = {}): FieldDefini
     ...extra,
   }) as FieldDefinition;
 
+const cta = { apiId: 'cta', name: 'CTA', fields: [field('label', { localized: false })] };
 const page: Pick<ContentType, 'fields'> = {
   fields: [
     field('title'),
     field('views', { type: 'Integer', localized: false }),
+    field('content', { type: 'RichText', localized: false }),
     field('body', {
       type: 'Array',
       localized: false,
@@ -32,7 +35,7 @@ const page: Pick<ContentType, 'fields'> = {
         type: 'Component',
         variants: [
           { apiId: 'hero', name: 'Hero', fields: [field('heading', { localized: false })] },
-          { apiId: 'cta', name: 'Call to action', fields: [field('label', { localized: false })] },
+          cta,
           {
             apiId: 'columns',
             name: 'Columns',
@@ -40,13 +43,8 @@ const page: Pick<ContentType, 'fields'> = {
               field('items', {
                 type: 'Array',
                 localized: false,
-                items: {
-                  type: 'Component',
-                  variants: [
-                    { apiId: 'cta', name: 'CTA', fields: [field('label', { localized: false })] },
-                  ],
-                },
-              }),
+                items: { type: 'Component', variants: [cta] },
+              } as Partial<FieldDefinition>),
             ],
           },
         ],
@@ -55,71 +53,96 @@ const page: Pick<ContentType, 'fields'> = {
   ],
 };
 
-const blocks = (...items: Record<string, unknown>[]): EntryFields => ({ body: { 'en-US': items } });
 const hero = (key: string, heading = 'Hi') => ({ _type: 'hero', _key: key, heading });
-const cta = (key: string, label = 'Go') => ({ _type: 'cta', _key: key, label });
+const ctaBlock = (key: string, label = 'Go') => ({ _type: 'cta', _key: key, label });
+const blocks = (...items: Record<string, unknown>[]): LiveFields => ({ body: items });
 
-/** What the page holds after applying the ops to `before`, which must be the form's `after`. */
-function roundTrip(before: EntryFields, after: EntryFields) {
-  const ops = liveOps(page, before, after);
-  expect(ops).not.toBeNull();
-  const applied = applyLivePatch(before as LiveFields, ops ?? [], {
-    newKey: () => {
-      throw new Error('the page had to mint a key: an op left one out');
-    },
-  });
-  if (!applied.ok) throw new Error(applied.message);
-  // A cleared field's last locale leaves `{}` on the page: the same as no value.
-  const held = Object.fromEntries(
-    Object.entries(applied.fields).filter(([, byLocale]) => Object.keys(byLocale).length > 0),
-  );
+/** The page's values after applying the edits to `before`, which must be the form's `after`. */
+function roundTrip(before: LiveFields, after: LiveFields) {
+  const edits = liveEdits(page, 'en-US', before, after);
+  let held: LiveFields = { ...before };
+  for (const [name, value] of Object.entries(edits.fields)) {
+    if (value === null) delete held[name];
+    else held[name] = value;
+  }
+  for (const { field: name, ops } of edits.blocks) {
+    const result = applyLivePatch({ [name]: { 'en-US': held[name] } }, ops, {
+      newKey: () => {
+        throw new Error('the page had to mint a key: an op left one out');
+      },
+    });
+    if (!result.ok) throw new Error(result.message);
+    held = { ...held, [name]: result.fields[name]?.['en-US'] };
+  }
   expect(equal(held, after)).toBe(true);
-  return ops ?? [];
+  return edits;
 }
 
-describe('live preview ops from the form', () => {
-  it('sends nothing when nothing changed, whatever order the properties were written in', () => {
+describe('live preview values from the form', () => {
+  it('takes one locale: a localized field’s own value, any other from the default locale', () => {
     expect(
-      liveOps(page, blocks({ _key: 'a', _type: 'hero' }), blocks({ _type: 'hero', _key: 'a' })),
-    ).toEqual([]);
+      liveFields(
+        page,
+        { title: { 'en-US': 'Home', de: 'Start' }, views: { 'en-US': 3 } },
+        'de',
+        'en-US',
+      ),
+    ).toEqual({ title: 'Start', views: 3 });
   });
 
-  it('sets an ordinary field per locale that changed, and clears one emptied', () => {
-    const ops = roundTrip(
-      { title: { 'en-US': 'Home', de: 'Start' }, views: { 'en-US': 3 } },
-      { title: { 'en-US': 'Homepage', de: 'Start' } },
+  it('never sends rich text that isn’t a document', () => {
+    const doc = { nodeType: 'document', content: [] };
+    expect(liveFields(page, { content: { 'en-US': doc } }, 'en-US', 'en-US')).toEqual({
+      content: doc,
+    });
+    expect(liveFields(page, { content: { 'en-US': '<p>Hi</p>' } }, 'en-US', 'en-US')).toEqual({});
+  });
+});
+
+describe('live preview edits', () => {
+  it('sends nothing when nothing changed, whatever order the properties were written in', () => {
+    const edits = liveEdits(
+      page,
+      'en-US',
+      blocks({ _key: 'a', _type: 'hero' }),
+      blocks({ _type: 'hero', _key: 'a' }),
     );
-    expect(ops).toEqual([
-      { op: 'setField', field: 'title', locale: 'en-US', value: 'Homepage' },
-      { op: 'setField', field: 'views', locale: 'en-US' },
-    ]);
+    expect(edits).toEqual({ fields: {}, blocks: [] });
+  });
+
+  it('sends a changed ordinary field’s new value, and null for one cleared', () => {
+    expect(roundTrip({ title: 'Home', views: 3 }, { title: 'Homepage' }).fields).toEqual({
+      title: 'Homepage',
+      views: null,
+    });
   });
 
   it('updates the one block whose property changed, by its key', () => {
-    const ops = roundTrip(blocks(hero('a'), cta('b')), blocks(hero('a', 'Hello'), cta('b')));
-    expect(ops).toEqual([
-      { op: 'update', field: 'body', locale: 'en-US', key: 'a', set: { heading: 'Hello' } },
+    expect(
+      roundTrip(blocks(hero('a'), ctaBlock('b')), blocks(hero('a', 'Hello'), ctaBlock('b'))).blocks,
+    ).toEqual([
+      {
+        field: 'body',
+        ops: [
+          { op: 'update', field: 'body', locale: 'en-US', key: 'a', set: { heading: 'Hello' } },
+        ],
+      },
     ]);
   });
 
-  it('inserts a new block with its own key, after its neighbour', () => {
-    const ops = roundTrip(blocks(hero('a')), blocks(hero('a'), cta('n')));
-    expect(ops).toEqual([
-      { op: 'insert', field: 'body', locale: 'en-US', block: cta('n'), after: 'a' },
-    ]);
-    // Every insert carries its key: the page mints none of its own.
-    expect(ops.every((op) => op.op !== 'insert' || typeof op.block._key === 'string')).toBe(true);
-  });
-
-  it('inserts at the start by index, removes by key and moves by key', () => {
-    expect(roundTrip(blocks(hero('a')), blocks(cta('n'), hero('a')))).toEqual([
-      { op: 'insert', field: 'body', locale: 'en-US', block: cta('n'), index: 0 },
-    ]);
-    expect(roundTrip(blocks(hero('a'), cta('b')), blocks(cta('b')))).toEqual([
-      { op: 'remove', field: 'body', locale: 'en-US', key: 'a' },
+  it('inserts a new block with its own key, removes and moves by key', () => {
+    const insert = roundTrip(blocks(hero('a')), blocks(hero('a'), ctaBlock('n'))).blocks[0]?.ops;
+    expect(insert).toEqual([
+      { op: 'insert', field: 'body', locale: 'en-US', block: ctaBlock('n'), after: 'a' },
     ]);
     expect(
-      roundTrip(blocks(hero('a'), cta('b'), cta('c')), blocks(cta('c'), hero('a'), cta('b'))),
+      roundTrip(blocks(hero('a'), ctaBlock('b')), blocks(ctaBlock('b'))).blocks[0]?.ops,
+    ).toEqual([{ op: 'remove', field: 'body', locale: 'en-US', key: 'a' }]);
+    expect(
+      roundTrip(
+        blocks(hero('a'), ctaBlock('b'), ctaBlock('c')),
+        blocks(ctaBlock('c'), hero('a'), ctaBlock('b')),
+      ).blocks[0]?.ops,
     ).toEqual([{ op: 'move', field: 'body', locale: 'en-US', key: 'c', to: { index: 0 } }]);
   });
 
@@ -129,54 +152,45 @@ describe('live preview ops from the form', () => {
       _key: 'col',
       items,
     });
-    const ops = roundTrip(blocks(cols(cta('x'))), blocks(cols(cta('x'), cta('y', 'More'))));
-    expect(ops).toEqual([
+    expect(
+      roundTrip(blocks(cols(ctaBlock('x'))), blocks(cols(ctaBlock('x'), ctaBlock('y', 'More'))))
+        .blocks[0]?.ops,
+    ).toEqual([
       {
         op: 'update',
         field: 'body',
         locale: 'en-US',
         key: 'col',
-        set: { items: [cta('x'), cta('y', 'More')] },
+        set: { items: [ctaBlock('x'), ctaBlock('y', 'More')] },
       },
     ]);
   });
 
-  it('unsets a property the block no longer has', () => {
-    const ops = roundTrip(blocks(hero('a')), blocks({ _type: 'hero', _key: 'a' }));
-    expect(ops).toEqual([
-      { op: 'update', field: 'body', locale: 'en-US', key: 'a', unset: ['heading'] },
-    ]);
-  });
-
-  it('sends the field whole when a block has no key, or a key is held twice', () => {
+  it('sends the field whole when a block has no key, a key is held twice, or a reshuffle is costly', () => {
     const keyless = blocks(hero('a'), { _type: 'cta', label: 'Go' });
-    expect(roundTrip(blocks(hero('a')), keyless)).toEqual([
-      { op: 'setField', field: 'body', locale: 'en-US', value: keyless.body?.['en-US'] },
-    ]);
-    const twice = blocks(hero('a'), cta('a'));
-    expect(liveOps(page, blocks(hero('a')), twice)).toEqual([
-      { op: 'setField', field: 'body', locale: 'en-US', value: twice.body?.['en-US'] },
-    ]);
-    const nestedKeyless = blocks({
-      _type: 'columns',
-      _key: 'c',
-      items: [{ _type: 'cta', label: 'x' }],
+    expect(roundTrip(blocks(hero('a')), keyless)).toEqual({
+      fields: { body: keyless.body },
+      blocks: [],
     });
-    expect(liveOps(page, blocks(), nestedKeyless)?.[0]?.op).toBe('setField');
-  });
-
-  it('sends a reshuffle that would take more ops than blocks as the field whole', () => {
-    const ops = roundTrip(
-      blocks(hero('a'), cta('b'), cta('c')),
-      blocks(cta('c', '1'), cta('b', '2'), hero('a', '3')),
+    const twice = blocks(hero('a'), ctaBlock('a'));
+    expect(liveEdits(page, 'en-US', blocks(hero('a')), twice).fields).toEqual({ body: twice.body });
+    const shuffled = roundTrip(
+      blocks(hero('a'), ctaBlock('b'), ctaBlock('c')),
+      blocks(ctaBlock('c', '1'), ctaBlock('b', '2'), hero('a', '3')),
     );
-    expect(ops).toHaveLength(1);
-    expect(ops[0]?.op).toBe('setField');
+    expect(shuffled.blocks).toEqual([]);
+    expect(Object.keys(shuffled.fields)).toEqual(['body']);
   });
 
-  it('gives up on a patch when the edits are more than one patch may carry', () => {
-    const many = { fields: Array.from({ length: MAX_PATCH_OPS + 1 }, (_, i) => field(`f${i}`)) };
-    const after = Object.fromEntries(many.fields.map((f) => [f.apiId, { 'en-US': 'x' }]));
-    expect(liveOps(many, {}, after)).toBeNull();
+  it('sends a blocks field whole when its ops would be more than one patch carries', () => {
+    const many = Array.from({ length: MAX_PATCH_OPS + 1 }, (_, i) => hero(`k${i}`));
+    const edits = liveEdits(
+      page,
+      'en-US',
+      blocks(...many),
+      blocks(...many.map((b) => ({ ...b, heading: 'x' }))),
+    );
+    expect(edits.blocks).toEqual([]);
+    expect(Object.keys(edits.fields)).toEqual(['body']);
   });
 });

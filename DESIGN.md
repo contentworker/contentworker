@@ -587,15 +587,18 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   sets the framed page's own width and scales it to fit, never the admin's width; and Edit or
   View, where Edit makes a click in the page select that field or block and focus it in the form,
   and View lets the page be the site, links followed (the control reads View, off, until the page
-  answers). A block a pick focused in the form carries the focus ring until focus moves on.
+  connects). A block a pick focused in the form carries the focus ring until focus moves on, and
+  the field or block focused in the form is outlined on the page and scrolled into view.
   Over the page the frame draws the selection as the workflow canvas does, an ink edge with the
   focus ring, and the hover a lighter ink edge, neither animated. While it loads the frame is a
-  skeleton; a page that never answers says "This site doesn't speak live preview yet" in an Alert
-  with the guide's link and still shows the page; a page that moved away offers Back to the entry;
-  one that answered from another origin, never loaded, or can't be shown for the entry says so in
-  a destructive Alert, with Try again where trying again can help; an entry that only lacks a
-  value its preview URL needs (a slug) says so in a plain Alert. A refused edit is a quiet caption
-  under the frame for a few seconds, the whole entry sent again. The frame's address is in mono
+  skeleton. A page that never offers to connect says "This site isn't connected for live preview"
+  in an Alert with the guide's link and still shows the page; one connected that doesn't show the
+  entry, or that moved away, offers Back to the entry. An SDK that shares no protocol version says
+  whether it is too old or too new, a page that answered from another origin or refused the
+  entry says so, and a frame that never loaded or a link that can't be made says so with Try again
+  where trying again can help, each in a destructive Alert; an entry that only lacks a value its
+  preview URL needs (a slug) says so in a plain Alert. A refused edit is a quiet caption under the
+  frame for a few seconds, the whole entry sent again. The frame's address is in mono
   under it, its line held while the frame loads. For a space
   administrator a last segment, **Activity**
   (`entries/EntryActivity.tsx`), lists the entry's audit rows newest first in one card: what

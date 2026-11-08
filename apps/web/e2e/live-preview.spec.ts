@@ -57,7 +57,7 @@ test.beforeAll(async ({ request }) => {
       },
     ],
     preview: {
-      urlTemplate: `${GUEST}/?entry={id}&space={space}&env={environment}#token={token}`,
+      urlTemplate: `${GUEST}/?entry={id}&type=landing&space={space}&env={environment}#token={token}`,
     },
   });
   expect([200, 201], await type.text()).toContain(type.status());
@@ -81,7 +81,44 @@ test.beforeAll(async ({ request }) => {
   });
   expect([200, 201], await silent.text()).toContain(silent.status());
   await api(request, 'POST', `${MGMT}/content-types/silentPage/published`);
+  // A frontend on an SDK release that shares no protocol version with this admin.
+  const old = await api(request, 'POST', `${MGMT}/content-types`, {
+    apiId: 'oldSdkPage',
+    name: 'Old SDK page',
+    displayField: 'title',
+    fields: [
+      {
+        apiId: 'title',
+        name: 'Title',
+        type: 'Symbol',
+        localized: false,
+        required: false,
+        position: 0,
+      },
+    ],
+    preview: { urlTemplate: `${GUEST}/old-sdk.html?entry={id}#token={token}` },
+  });
+  expect([200, 201], await old.text()).toContain(old.status());
+  await api(request, 'POST', `${MGMT}/content-types/oldSdkPage/published`);
 });
+
+/** An entry of a one-title type, opened on its Site pane. */
+async function openSite(
+  page: Page,
+  request: Parameters<typeof api>[0],
+  type: string,
+  title: string,
+) {
+  const res = await api(request, 'POST', `${MGMT}/entries`, {
+    contentTypeApiId: type,
+    fields: { title: { 'en-US': title } },
+  });
+  expect(res.ok(), await res.text()).toBe(true);
+  const { entry } = (await res.json()) as { entry: { id: string } };
+  await openCms(page, `/content/${type}/${entry.id}`);
+  await expect(page.getByRole('button', { name: 'Save draft' })).toBeVisible(EDITOR_READY);
+  await page.getByRole('radio', { name: 'Site' }).click();
+}
 
 /** axe over the side pane (and the frames in it), WCAG 2.1 A/AA. */
 async function scanPane(page: Page, testInfo: TestInfo) {
@@ -135,10 +172,11 @@ test('the Site pane re-renders the framed page as you type, and a click there fo
   await expect(page.getByText('Unsaved changes')).toBeVisible();
 
   await page.getByRole('textbox', { name: /^Label/ }).fill('Start here');
-  await expect(site.locator('[data-cw-block="k1"]')).toHaveText('Start here');
+  const block = site.locator('section[data-cw-ref*="body%5Bk1%5D"]');
+  await expect(block).toHaveText('Start here');
 
   // A click on the block selects it: its item in the blocks field takes focus.
-  await site.locator('[data-cw-block="k1"]').click();
+  await block.click();
   await expect(page.getByRole('group', { name: 'Call to action block 1' })).toBeFocused();
   // A click on the title focuses the title field.
   await site.getByRole('heading', { level: 1 }).click();
@@ -152,23 +190,16 @@ test('the Site pane re-renders the framed page as you type, and a click there fo
   await scanPane(page, testInfo);
 });
 
-test('a site that never answers is shown as saved, with the guide to set it up', async ({
+test('a site that never connects is shown as saved, with the guide to set it up', async ({
   page,
   request,
 }, testInfo) => {
-  const res = await api(request, 'POST', `${MGMT}/entries`, {
-    contentTypeApiId: 'silentPage',
-    fields: { title: { 'en-US': `Silent ${testInfo.workerIndex}` } },
-  });
-  expect(res.ok(), await res.text()).toBe(true);
-  const { entry } = (await res.json()) as { entry: { id: string } };
-  await openCms(page, `/content/silentPage/${entry.id}`);
-  await expect(page.getByRole('button', { name: 'Save draft' })).toBeVisible(EDITOR_READY);
-  await page.getByRole('radio', { name: 'Site' }).click();
-  // The handshake's five seconds, then the plain state; the page itself still shows.
-  await expect(page.getByRole('alert')).toContainText('This site doesn’t speak live preview yet', {
-    timeout: 15_000,
-  });
+  await openSite(page, request, 'silentPage', `Silent ${testInfo.workerIndex}`);
+  // The page's offers would have come within its three tries: then the plain state, the page shown.
+  await expect(page.getByRole('alert')).toContainText(
+    'This site isn’t connected for live preview',
+    { timeout: 15_000 },
+  );
   await expect(page.getByRole('link', { name: 'Set up live preview' })).toBeVisible();
   const site = page
     .frameLocator('iframe[title="Site preview"]')
@@ -181,5 +212,16 @@ test('a site that never answers is shown as saved, with the guide to set it up',
       .getByRole('radiogroup', { name: 'Clicks in the page' })
       .getByRole('radio', { name: 'View' }),
   ).toBeChecked();
+  await scanPane(page, testInfo);
+});
+
+test('a site whose SDK shares no protocol version is refused, and says so at once', async ({
+  page,
+  request,
+}, testInfo) => {
+  await openSite(page, request, 'oldSdkPage', `Old ${testInfo.workerIndex}`);
+  await expect(page.getByRole('alert')).toContainText(
+    'This site’s ContentWorker SDK is too new for live preview',
+  );
   await scanPane(page, testInfo);
 });

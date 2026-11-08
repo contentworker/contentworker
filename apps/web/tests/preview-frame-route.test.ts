@@ -17,7 +17,11 @@ vi.mock('~/lib/principal.server', () => ({
   },
 }));
 let answer: () => Response = () => new Response(null, { status: 500 });
-const fetch = vi.fn(async (_url: string, _init: RequestInit) => answer());
+/** The space's content types, as `GET …/content-types` answers. */
+let types: () => Response = () => new Response(null, { status: 500 });
+const fetch = vi.fn(async (url: string, _init?: RequestInit) =>
+  url.endsWith('/content-types') ? types() : answer(),
+);
 vi.mock('~/lib/env.server', () => ({ api: () => ({ fetch }) }));
 
 const route = await import('~/routes/preview-frame');
@@ -39,7 +43,7 @@ const args = (path = PATH, headers: Record<string, string> = { 'sec-fetch-dest':
   }) as never;
 
 type Answered = {
-  data: { ok: boolean; origin?: string; frontendUrl?: string; reason?: string };
+  data: { ok: boolean; origin?: string; origins?: string[]; frontendUrl?: string; reason?: string };
   init: { status: number; headers: Headers };
 };
 const load = async (a = args()) => (await route.loader(a)) as unknown as Answered;
@@ -73,7 +77,18 @@ beforeEach(() => {
 });
 
 describe('the Site frame route', () => {
-  it('mints a short preview link as the person, and frames exactly its origin', async () => {
+  it('mints a short preview link as the person, and frames exactly the space’s preview origins', async () => {
+    types = () =>
+      Response.json({
+        items: [
+          { preview: { urlTemplate: 'https://site.example/{id}?t={token}' } },
+          { preview: { urlTemplate: 'https://shop.example/p/{id}#token={token}' } },
+          // The admin itself is never framed, nor a template the policy can't carry.
+          { preview: { urlTemplate: 'https://acme.contentworker.app/x?t={token}' } },
+          { preview: { urlTemplate: 'https://*.example/{id}?t={token}' } },
+          {},
+        ],
+      });
     answer = () =>
       Response.json(
         {
@@ -89,8 +104,11 @@ describe('the Site frame route', () => {
     expect(res.data).toEqual({
       ok: true,
       origin: 'https://site.example',
+      origins: ['https://site.example', 'https://shop.example'],
       frontendUrl: 'https://site.example/blog/hello?entry=e1#token=pw_x',
     });
+    // Framed as it is: the page mints its own channel, nothing is added to its URL.
+    expect(res.data.frontendUrl).not.toContain('cw_session');
     const [url, init] = fetch.mock.calls[0] as [string, RequestInit];
     expect(url).toBe('https://api/spaces/s1/environments/main/entries/e1/preview-link');
     expect(init.method).toBe('POST');
@@ -99,12 +117,18 @@ describe('the Site frame route', () => {
       ttlHours: 1,
       locale: 'de',
     });
-    expect(signed).toEqual(['POST /spaces/s1/environments/main/entries/e1/preview-link']);
+    expect(signed).toEqual([
+      'POST /spaces/s1/environments/main/entries/e1/preview-link',
+      'GET /spaces/s1/environments/main/content-types',
+    ]);
 
     const { directives, doc } = policy(res.init.headers);
-    expect(directives['frame-src']).toBe("frame-src 'self' https://site.example");
+    expect(directives['frame-src']).toBe(
+      "frame-src 'self' https://site.example https://shop.example",
+    );
     expect(directives['frame-ancestors']).toBe("frame-ancestors 'self'");
     expect(doc.headers.get('x-frame-options')).toBe('SAMEORIGIN');
+    types = () => new Response(null, { status: 500 });
     expect(res.init.headers.get('cache-control')).toBe('no-store');
   });
 

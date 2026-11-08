@@ -1,46 +1,37 @@
-// A click in the Site pane's page names a field (its content ref) or a block (its key); the form is
-// asked to show the field, in its locale, or the block in the blocks field holding it. And the side
-// pane offers Site only for an entry whose type has a preview URL.
+// A click in the framed page names what it hit by its content ref, whose field is a path
+// (`body[k1].items[k2].label`). The form opens the top-level field, focuses the innermost block
+// the path passes through, in the ref's locale; and only for this entry, in this space and
+// environment, of this type, which the page said it renders. The form names its focused field
+// back the same way, the path found through every block that holds it. And the side pane offers
+// Site only for a type with a preview URL.
 import type { ContentType, FieldDefinition } from '@contentworker/domain';
-import { formatContentRef } from '@contentworker/sdk-core';
+import { formatContentRef, parseContentRef, topLevelField } from '@contentworker/sdk-core';
 import { describe, expect, it } from 'vitest';
 import { paneViews } from '~/cms/components/pane/use-pane-layout';
-import { focusForPick, type PickContext } from '~/cms/lib/live-preview/pick';
+import { focusForRef, type PickContext, refForField } from '~/cms/lib/live-preview/pick';
 
-const field = (apiId: string, extra: Partial<FieldDefinition> = {}) =>
-  ({
-    apiId,
-    name: apiId,
-    type: 'Symbol',
-    localized: true,
-    required: false,
-    position: 0,
-    ...extra,
-  }) as FieldDefinition;
-
-const type: Pick<ContentType, 'fields'> = {
+const type: Pick<ContentType, 'apiId' | 'fields'> = {
+  apiId: 'page',
   fields: [
-    field('title'),
-    field('body', {
-      type: 'Array',
+    {
+      apiId: 'title',
+      name: 'Title',
+      type: 'Symbol',
       localized: true,
-      items: { type: 'Component', variants: [{ apiId: 'cta', name: 'CTA', fields: [] }] },
-    } as Partial<FieldDefinition>),
-  ],
+      required: false,
+      position: 0,
+    },
+    { apiId: 'body', name: 'Body', type: 'Array', localized: false, required: false, position: 1 },
+  ] as FieldDefinition[],
 };
 
 const ctx: PickContext = {
-  contentType: type,
+  space: 's',
+  environment: 'main',
   entryId: 'e1',
+  contentType: type,
   locales: ['en-US', 'de'],
-  locale: 'en-US',
-  fields: {
-    title: { 'en-US': 'Home' },
-    body: {
-      'en-US': [{ _type: 'cta', _key: 'a' }],
-      de: [{ _type: 'cta', _key: 'b', items: [{ _type: 'cta', _key: 'deep' }] }],
-    },
-  },
+  pageEntries: ['e1', 'e2'],
 };
 
 const ref = (over: Partial<Parameters<typeof formatContentRef>[0]> = {}) =>
@@ -54,30 +45,51 @@ const ref = (over: Partial<Parameters<typeof formatContentRef>[0]> = {}) =>
     ...over,
   });
 
-describe('a pick in the framed page', () => {
+describe('a click in the framed page', () => {
   it('focuses the field a ref names, in its locale', () => {
-    expect(focusForPick({ ref: ref() }, ctx)).toEqual({ apiId: 'title', locale: 'de' });
-    expect(focusForPick({ ref: ref({ locale: 'fr' }) }, ctx)).toEqual({ apiId: 'title' });
+    expect(focusForRef(ref(), ctx)).toEqual({ apiId: 'title', locale: 'de' });
+    expect(focusForRef(ref({ locale: 'fr' }), ctx)).toEqual({ apiId: 'title' });
   });
 
-  it('ignores a ref to another entry, a field the type lacks, or no ref at all', () => {
-    expect(focusForPick({ ref: ref({ entryId: 'other' }) }, ctx)).toBeUndefined();
-    expect(focusForPick({ ref: ref({ field: 'nope' }) }, ctx)).toBeUndefined();
-    expect(focusForPick({ ref: 'not a ref' }, ctx)).toBeUndefined();
-  });
-
-  it('focuses the block a key names, in the blocks field and locale holding it, however deep', () => {
-    expect(focusForPick({ key: 'a' }, ctx)).toEqual({
-      apiId: 'body',
-      locale: 'en-US',
-      blockKey: 'a',
-    });
-    expect(focusForPick({ key: 'deep' }, ctx)).toEqual({
+  it('focuses the innermost block a path passes through, in its top-level field', () => {
+    expect(focusForRef(ref({ field: 'body[k1]' }), ctx)).toEqual({
       apiId: 'body',
       locale: 'de',
-      blockKey: 'deep',
+      blockKey: 'k1',
     });
-    expect(focusForPick({ key: 'missing' }, ctx)).toBeUndefined();
+    expect(focusForRef(ref({ field: 'body[k1].items[k2].label' }), ctx)).toMatchObject({
+      apiId: 'body',
+      blockKey: 'k2',
+    });
+  });
+
+  it('ignores a ref the page didn’t report, to another entry, space or type, or no ref at all', () => {
+    expect(focusForRef(ref(), { ...ctx, pageEntries: ['e2'] })).toBeUndefined();
+    expect(focusForRef(ref({ entryId: 'e2' }), ctx)).toBeUndefined();
+    expect(focusForRef(ref({ space: 'other' }), ctx)).toBeUndefined();
+    expect(focusForRef(ref({ environment: 'staging' }), ctx)).toBeUndefined();
+    expect(focusForRef(ref({ contentType: 'post' }), ctx)).toBeUndefined();
+    expect(focusForRef(ref({ field: 'nope' }), ctx)).toBeUndefined();
+    expect(focusForRef(ref({ field: 'body[' }), ctx)).toBeUndefined();
+    expect(focusForRef('not a ref', ctx)).toBeUndefined();
+  });
+});
+
+describe('the form’s focused field on the page', () => {
+  it('names a field, and a block by every block and slot holding it', () => {
+    const at = { space: 's', environment: 'main', entryId: 'e1', contentType: type };
+    expect(parseContentRef(refForField(at, 'en-US', 'title'))?.field).toBe('title');
+    const body = [{ _type: 'cols', _key: 'k1', items: [{ _type: 'cta', _key: 'k2' }] }];
+    expect(parseContentRef(refForField(at, 'en-US', 'body', 'k2', body))?.field).toBe(
+      'body[k1].items[k2]',
+    );
+    // A key the value doesn't hold names the field alone.
+    expect(parseContentRef(refForField(at, 'en-US', 'body', 'gone', body))?.field).toBe('body');
+  });
+
+  it('opens an inline-edit deep link’s top-level field from its path', () => {
+    expect(topLevelField('body[k1].heading')).toBe('body');
+    expect(topLevelField('title')).toBe('title');
   });
 });
 

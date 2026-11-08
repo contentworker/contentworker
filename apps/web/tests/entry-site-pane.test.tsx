@@ -133,18 +133,32 @@ function setup(type: ContentType) {
 
 const TEMPLATE = 'https://site.example/p?entry={id}#token={token}';
 
-function pick(target: Record<string, string>) {
+/** The frame says the page renders `entries`, then that `ref` was clicked in it. */
+function pick(ref: string, entries: string[] = ['e1']) {
   const frame = screen.getByTitle('Site preview') as HTMLIFrameElement;
-  act(() => {
-    window.dispatchEvent(
-      new MessageEvent('message', {
-        data: { channel: FRAME_CHANNEL, type: 'pick', target },
-        origin: window.location.origin,
-        source: frame.contentWindow,
-      }),
-    );
-  });
+  const say = (data: Record<string, unknown>) =>
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: { channel: FRAME_CHANNEL, ...data },
+          origin: window.location.origin,
+          source: frame.contentWindow,
+        }),
+      );
+    });
+  say({ type: 'session', entries, capabilities: ['select'] });
+  say({ type: 'pick', ref });
 }
+
+const refTo = (field: string, locale = 'en-US') =>
+  formatContentRef({
+    space: 's',
+    environment: 'main',
+    entryId: 'e1',
+    contentType: 'page',
+    field,
+    locale,
+  });
 
 describe('the entry editor’s Site segment', () => {
   it('is absent when the type has no preview URL', async () => {
@@ -186,7 +200,7 @@ describe('the entry editor’s Site segment', () => {
       field: 'title',
       locale: 'de',
     });
-    pick({ ref });
+    pick(ref);
     await waitFor(() => expect(document.activeElement?.id).toBe('field-title'));
     expect((document.activeElement as HTMLInputElement).value).toBe('Start');
   });
@@ -195,12 +209,51 @@ describe('the entry editor’s Site segment', () => {
     setup(page(TEMPLATE));
     await screen.findByRole('heading', { level: 1, name: 'Home' });
     act(() => screen.getByRole('radio', { name: 'Site' }).click());
-    pick({ key: 'k1' });
+    pick(refTo('body[k1].label'));
     const block = screen.getByRole('group', { name: 'Call to action block 1' });
     await waitFor(() => expect(document.activeElement).toBe(block));
     // Ringed for the pick, until focus moves on.
     expect(block.hasAttribute('data-picked')).toBe(true);
     act(() => screen.getByRole('textbox', { name: /^Label/ }).focus());
     expect(block.hasAttribute('data-picked')).toBe(false);
+  });
+
+  it('ignores a click on an entry the page didn’t report', async () => {
+    setup(page(TEMPLATE));
+    await screen.findByRole('heading', { level: 1, name: 'Home' });
+    act(() => screen.getByRole('radio', { name: 'Site' }).click());
+    const before = document.activeElement;
+    pick(refTo('title'), ['someone-else']);
+    // Nothing to wait for: the pick is dropped as it arrives.
+    await act(async () => {});
+    expect(document.activeElement).toBe(before);
+  });
+
+  it('names the focused field to the frame, so the page outlines it', async () => {
+    setup(page(TEMPLATE));
+    await screen.findByRole('heading', { level: 1, name: 'Home' });
+    act(() => screen.getByRole('radio', { name: 'Site' }).click());
+    const frame = screen.getByTitle('Site preview') as HTMLIFrameElement;
+    const spy = vi.spyOn(frame.contentWindow as Window, 'postMessage').mockImplementation(() => {});
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: { channel: FRAME_CHANNEL, type: 'ready', origin: 'https://site.example' },
+          origin: window.location.origin,
+          source: frame.contentWindow,
+        }),
+      );
+    });
+    act(() => (document.getElementById('field-title') as HTMLElement).focus());
+    await waitFor(() =>
+      expect(
+        spy.mock.calls
+          .map(([m]) => m)
+          .filter((m) => (m as { type: string }).type === 'select')
+          .at(-1),
+      ).toMatchObject({
+        ref: refTo('title'),
+      }),
+    );
   });
 });

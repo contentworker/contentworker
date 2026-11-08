@@ -4,16 +4,12 @@
  * is a same-origin `postMessage`, but each side still checks the other's origin and window: the
  * framed site sits one window further in and could post to its parent's parent.
  *
- * The editor sends the entry as the form holds it, with the ops since its last send; the frame
- * runs the live preview protocol with the site and reports back what the editor shows.
+ * The editor sends the entry as the form holds it (one locale's values) with the edits since its
+ * last send, and what the person may let the page do; the frame runs the live preview channel with
+ * the site (`host.ts`) and reports back where things stand and what was clicked.
  */
-import type {
-  ForwardedKey,
-  LiveFields,
-  LivePatchOp,
-  LivePreviewMode,
-  LiveTarget,
-} from '@contentworker/sdk-core/live-preview';
+import type { Capability, LiveFields } from '@contentworker/sdk-core/live-preview';
+import type { LiveEdits } from './ops';
 
 /** Marks this channel's messages; anything without it is someone else's. */
 export const FRAME_CHANNEL = 'cw-site-frame';
@@ -22,57 +18,65 @@ export const FRAME_CHANNEL = 'cw-site-frame';
 export const DEVICE_WIDTHS = { desktop: 1280, tablet: 768, phone: 390 } as const;
 export type Device = keyof typeof DEVICE_WIDTHS;
 
-/** The entry as the form holds it: what the frame sends the site as `init`. */
+/** One entry in one locale, as the form holds it: what the frame sends the site as `entry.state`. */
 export interface FrameEntry {
-  readonly fields: LiveFields;
-  readonly locale: string;
-  readonly version: number;
   readonly entryId: string;
-  readonly contentType: string;
+  readonly locale: string;
+  readonly fields: LiveFields;
 }
 
 /**
- * Where the Site pane stands: framing (`loading`), talking to the site (`live`), or why not.
- * `timeout`: the page loaded but never said hello; `navigated`: it did once, then a load came
- * without one; `origin`: it answered from another origin than its preview URL names; `failed`:
- * the page never loaded; `unavailable`: the frame couldn't make a preview link for the entry.
+ * Where the Site pane stands: framing (`loading`), connected (`live`), or why not.
+ * - `not-connected`: the page loaded but never offered to connect.
+ * - `unsupported`: it offered only protocol versions this admin doesn't speak (`detail`: `old` or
+ *   `new`, which way its SDK is off).
+ * - `elsewhere`: connected, but the page doesn't render this entry (`page` doesn't list it).
+ * - `navigated`: it went to an address none of the space's preview URLs name, or a page that never
+ *   connects after one that did.
+ * - `origin`: it offered from another origin than the framed URL's.
+ * - `unpreviewable`: the page refused the entry's whole state, so it can't show it.
+ * - `failed`: the frame never loaded; `unavailable`: no preview link could be made (`detail`).
  */
 export type SiteStatus =
   | 'loading'
   | 'live'
-  | 'timeout'
+  | 'not-connected'
+  | 'unsupported'
+  | 'elsewhere'
   | 'navigated'
   | 'origin'
+  | 'unpreviewable'
   | 'failed'
   | 'unavailable';
 
 export type EditorMessage =
-  /** `ops` null: send the whole entry (first, after a refusal, or when a patch can't say it). */
+  /** `edits` null: send the whole state (first, a new locale, or when edits can't say it). */
+  | { readonly type: 'entry'; readonly entry: FrameEntry; readonly edits: LiveEdits | null }
   | {
-      readonly type: 'entry';
-      readonly entry: FrameEntry;
-      readonly ops: readonly LivePatchOp[] | null;
+      readonly type: 'view';
+      /** Editing on: clicks in the page select (`editing { on }`); off, the page is the site. */
+      readonly editing: boolean;
+      readonly device: Device;
+      /** What the person may let the page do; the frame accepts no more than this of the offer. */
+      readonly allowed: readonly Capability[];
     }
-  | { readonly type: 'view'; readonly mode: LivePreviewMode; readonly device: Device }
-  | { readonly type: 'select'; readonly target?: LiveTarget };
+  /** The form's focused field or block on the page, or none. */
+  | { readonly type: 'select'; readonly ref: string | null };
 
 export type FrameMessage =
   /** The frame is up and wants the entry; `origin` is the site it frames. */
   | { readonly type: 'ready'; readonly origin?: string }
   | { readonly type: 'status'; readonly status: SiteStatus; readonly detail?: string }
-  /** The site refused a patch or failed a render: a quiet note, not a state. */
+  /** The page couldn't take an edit, so it was sent the whole entry: a quiet note, not a state. */
   | { readonly type: 'note'; readonly kind: string }
-  | { readonly type: 'pick'; readonly target: LiveTarget }
-  | ({ readonly type: 'key' } & FrameKey);
-
-/** A shortcut pressed in the page (one of the protocol's forwarded keys) and its modifiers. */
-export interface FrameKey {
-  readonly key: ForwardedKey;
-  readonly meta: boolean;
-  readonly ctrl: boolean;
-  readonly shift: boolean;
-  readonly alt: boolean;
-}
+  /** A marked element clicked in the page: its ref, already checked by the frame. */
+  | { readonly type: 'pick'; readonly ref: string }
+  /** The entries the page renders, and the capabilities the session was accepted with. */
+  | {
+      readonly type: 'session';
+      readonly entries: readonly string[];
+      readonly capabilities: readonly Capability[];
+    };
 
 /** Posts on the channel to `target`, which is this origin's window, never `*`. */
 export function postFrame(

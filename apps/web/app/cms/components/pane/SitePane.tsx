@@ -1,11 +1,12 @@
 /**
  * The side pane's Site view: the entry on the customer's own frontend, re-rendered with every
- * unsaved edit (live preview).
+ * unsaved edit (live preview, docs/specs/live-preview-channel.md).
  *
  * It frames the Site frame (`routes/preview-frame.tsx`, this origin), which frames the site and
- * speaks live preview with it. This side sends the entry as the form holds it, with the ops since
- * the last send (`liveOps`), and hears back where things stand, what was clicked and which
- * shortcut keys were pressed in the page. Saving stays the editor's: nothing here writes.
+ * runs the live preview channel with it. This side sends the entry as the form holds it (one
+ * locale's values, `liveFields`) with the edits since the last send (`liveEdits`), and what the
+ * person may let the page do; it hears back where things stand, which entries the page renders
+ * and what was clicked. Saving stays the editor's: nothing here writes.
  */
 
 import {
@@ -13,7 +14,7 @@ import {
   type EntryFields,
   previewTemplateVariesByLocale,
 } from '@contentworker/domain';
-import type { LiveTarget } from '@contentworker/sdk-core/live-preview';
+import type { Capability } from '@contentworker/sdk-core/live-preview';
 import { Alert, AlertDescription, AlertTitle } from '@contentworker/ui/alert';
 import { Button } from '@contentworker/ui/button';
 import { cn } from '@contentworker/ui/lib/utils';
@@ -25,17 +26,15 @@ import { LoadingStatus } from '~/cms/components/loading';
 import {
   DEVICE_WIDTHS,
   type Device,
-  type FrameEntry,
-  type FrameKey,
   type FrameMessage,
   postFrame,
   readFrame,
   type SiteStatus,
 } from '~/cms/lib/live-preview/frame-channel';
 import { LOAD_MS } from '~/cms/lib/live-preview/host';
-import { liveOps } from '~/cms/lib/live-preview/ops';
+import { type LiveEdits, liveEdits, liveFields } from '~/cms/lib/live-preview/ops';
 
-/** The published guide to the page side, linked where a site doesn't answer. */
+/** The published guide to the page side, linked where a site doesn't connect. */
 export const LIVE_PREVIEW_GUIDE = 'https://docs.contentworker.app/guides/live-preview/';
 
 const DEVICE_KEY = 'cw.entry-pane.device';
@@ -45,7 +44,7 @@ const DEVICES: readonly { value: Device; label: string; icon: typeof Monitor }[]
   { value: 'phone', label: 'Phone', icon: Smartphone },
 ];
 
-/** How long a quiet note (a refused patch) stays under the frame. */
+/** How long a quiet note (a refused edit) stays under the frame. */
 const NOTE_MS = 6_000;
 
 export interface SitePaneProps {
@@ -53,21 +52,25 @@ export interface SitePaneProps {
   readonly environmentId: string;
   readonly entryId: string;
   readonly contentType: Pick<ContentType, 'apiId' | 'fields' | 'preview'>;
-  /** The entry's saved version, sent with the entry. */
-  readonly version: number;
   /** The form's values, as a save would send them, and the locale tab it is on. */
   readonly fields: EntryFields;
   readonly locale: string;
+  readonly defaultLocale: string;
+  /**
+   * What the person may let the page do: a role that can't edit the entry only selects (its clicks
+   * still focus fields); its unsaved values are never sent.
+   */
+  readonly allowed: readonly Capability[];
+  /** The form's focused field or block on the page, or none: outlined and scrolled into view. */
+  readonly selected: string | null;
   /** Beside the form (the pane's own height) rather than stacked under it. */
   readonly split: boolean;
-  /** A block or field clicked in the page, in edit mode. */
-  readonly onPick: (target: LiveTarget) => void;
-  /** A shortcut pressed in the page, to act on as if pressed in the editor. */
-  readonly onKey: (key: FrameKey) => void;
+  /** A marked element clicked in the page, and the entries the page said it renders. */
+  readonly onPick: (ref: string, pageEntries: readonly string[]) => void;
 }
 
 export function SitePane(props: SitePaneProps) {
-  const { spaceId, environmentId, entryId, contentType, version, fields, locale } = props;
+  const { spaceId, environmentId, entryId, contentType, fields, locale, defaultLocale } = props;
   const outer = useRef<HTMLIFrameElement>(null);
   const [frameKey, setFrameKey] = useState(0);
   const [status, setStatus] = useState<{ status: SiteStatus; detail?: string }>({
@@ -78,26 +81,20 @@ export function SitePane(props: SitePaneProps) {
   const [device, setDevice] = useDevice();
   const [mode, setMode] = useState<'edit' | 'view'>('edit');
   const ready = useRef(false);
-  // What the frame was last sent: the next edit is the ops from here.
-  const sent = useRef<EntryFields | null>(null);
-  const latest = useRef<FrameEntry>({
-    fields,
-    locale,
-    version,
-    entryId,
-    contentType: contentType.apiId,
-  });
-  latest.current = { fields, locale, version, entryId, contentType: contentType.apiId };
+  const pageEntries = useRef<readonly string[]>([]);
+  // One locale's values, as the page renders them; what was last sent is where the next edits start.
+  const now = liveFields(contentType, fields, locale, defaultLocale);
+  const latest = useRef(now);
+  latest.current = now;
+  const sent = useRef<{ fields: typeof now; locale: string } | null>(null);
   const handlers = useRef(props);
   handlers.current = props;
 
   // Clicks select while editing; in view mode the page is the site, its links followed.
-  const live = status.status === 'live';
+  const live = status.status === 'live' || status.status === 'elsewhere';
   const effectiveMode = live ? mode : 'view';
-  const modeRef = useRef(effectiveMode);
-  modeRef.current = effectiveMode;
-  const deviceRef = useRef(device);
-  deviceRef.current = device;
+  const view = useRef({ editing: effectiveMode === 'edit', device, allowed: props.allowed });
+  view.current = { editing: effectiveMode === 'edit', device, allowed: props.allowed };
   // A template that fills to another URL per locale is another page per locale: the frame loads
   // that page. Otherwise the same page gets the entry in the new locale.
   const perLocale = previewTemplateVariesByLocale(
@@ -109,12 +106,16 @@ export function SitePane(props: SitePaneProps) {
     `${encodeURIComponent(entryId)}${perLocale ? `?locale=${encodeURIComponent(locale)}` : ''}`;
 
   const reload = () => setFrameKey((k) => k + 1);
+  const toFrame = (m: Parameters<typeof postFrame>[1]) =>
+    postFrame(outer.current?.contentWindow, m);
 
   // The frame's messages, from the frame's own window only. Each load of the frame (Try again, or
   // another locale's page) starts over: loading, nothing sent, until it says it's ready.
+  // Listened for again per frame load (its key and src).
   useEffect(() => {
     ready.current = false;
     sent.current = null;
+    pageEntries.current = [];
     setStatus({ status: 'loading' });
     setNote(undefined);
     let noteTimer: ReturnType<typeof setTimeout> | undefined;
@@ -130,22 +131,25 @@ export function SitePane(props: SitePaneProps) {
           ready.current = true;
           clearTimeout(loadTimer);
           setOrigin(m.origin);
-          sent.current = latest.current.fields;
-          postFrame(outer.current?.contentWindow, {
+          // What the page may do first, so its offer is answered with it; then the entry.
+          toFrame({ type: 'view', ...view.current });
+          sent.current = { fields: latest.current, locale };
+          toFrame({
             type: 'entry',
-            entry: latest.current,
-            ops: null,
+            entry: { entryId, locale, fields: latest.current },
+            edits: null,
           });
-          postFrame(outer.current?.contentWindow, {
-            type: 'view',
-            mode: modeRef.current,
-            device: deviceRef.current,
-          });
+          if (handlers.current.selected) {
+            toFrame({ type: 'select', ref: handlers.current.selected });
+          }
           return;
         case 'status':
           if (m.status === 'unavailable') clearTimeout(loadTimer);
           setStatus({ status: m.status, ...(m.detail ? { detail: m.detail } : {}) });
           if (m.status === 'live') setNote(undefined);
+          return;
+        case 'session':
+          pageEntries.current = Array.isArray(m.entries) ? m.entries : [];
           return;
         case 'note':
           setNote(m.kind);
@@ -153,18 +157,7 @@ export function SitePane(props: SitePaneProps) {
           noteTimer = setTimeout(() => setNote(undefined), NOTE_MS);
           return;
         case 'pick':
-          handlers.current.onPick(m.target);
-          return;
-        case 'key':
-          // Escape clears the selection, here and on the page; the rest act in the editor.
-          if (m.key === 'Escape') postFrame(outer.current?.contentWindow, { type: 'select' });
-          handlers.current.onKey({
-            key: m.key,
-            meta: m.meta,
-            ctrl: m.ctrl,
-            shift: m.shift,
-            alt: m.alt,
-          });
+          if (typeof m.ref === 'string') handlers.current.onPick(m.ref, pageEntries.current);
           return;
       }
     };
@@ -176,41 +169,37 @@ export function SitePane(props: SitePaneProps) {
     };
   }, [frameKey, src]);
 
-  // Every edit: the ops since the last send, or the whole entry when they can't be a patch.
+  // Every edit: the changes since the last send, or the whole state for a new locale.
+  const nowJson = JSON.stringify(now);
+  // Keyed on the values by content (nowJson).
   useEffect(() => {
     if (!ready.current) return;
-    const ops = sent.current ? liveOps(contentType, sent.current, fields) : null;
-    sent.current = fields;
-    postFrame(outer.current?.contentWindow, {
-      type: 'entry',
-      entry: { fields, locale, version, entryId, contentType: contentType.apiId },
-      ops,
-    });
-  }, [fields, locale, version, entryId, contentType]);
+    const before = sent.current;
+    const edits: LiveEdits | null =
+      before && before.locale === locale
+        ? liveEdits(contentType, locale, before.fields, now)
+        : null;
+    if (edits && Object.keys(edits.fields).length === 0 && edits.blocks.length === 0) return;
+    sent.current = { fields: now, locale };
+    toFrame({ type: 'entry', entry: { entryId, locale, fields: now }, edits });
+  }, [nowJson, locale, entryId, contentType]);
 
+  const allowedKey = props.allowed.join(',');
+  // `allowed` by content (allowedKey).
   useEffect(() => {
-    if (ready.current) {
-      postFrame(outer.current?.contentWindow, { type: 'view', mode: effectiveMode, device });
-    }
-  }, [effectiveMode, device]);
+    if (ready.current) toFrame({ type: 'view', ...view.current });
+  }, [effectiveMode, device, allowedKey]);
 
-  // Escape in the pane clears the selection, as it does pressed in the page.
-  const region = useRef<HTMLElement>(null);
+  // Per selection.
   useEffect(() => {
-    const el = region.current;
-    if (!el) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') postFrame(outer.current?.contentWindow, { type: 'select' });
-    };
-    el.addEventListener('keydown', onKey);
-    return () => el.removeEventListener('keydown', onKey);
-  }, []);
+    if (ready.current) toFrame({ type: 'select', ref: props.selected });
+  }, [props.selected]);
 
   const loading = status.status === 'loading';
   const showFrame = status.status !== 'unavailable';
 
   return (
-    <section ref={region} aria-label="Site" className="space-y-3">
+    <section aria-label="Site" className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <Segmented
           aria-label="Device width"
@@ -277,10 +266,10 @@ export function SitePane(props: SitePaneProps) {
 
       {/* Always there, so a screen reader hears the note when its words arrive. */}
       <p role="status" className="text-muted-foreground text-xs empty:hidden">
-        {note === 'patch'
-          ? 'The page couldn’t apply an edit, so it was sent the whole entry again.'
-          : note === 'render'
-            ? 'The page couldn’t render the last edit.'
+        {note === 'render'
+          ? 'The page couldn’t render the last edit, so it was sent the whole entry again.'
+          : note
+            ? 'The page couldn’t apply an edit, so it was sent the whole entry again.'
             : ''}
       </p>
       {/* Its line is held while the frame loads, so the address arriving moves nothing. */}
@@ -294,6 +283,19 @@ export function SitePane(props: SitePaneProps) {
         </p>
       ) : null}
     </section>
+  );
+}
+
+function GuideLink() {
+  return (
+    <a
+      href={LIVE_PREVIEW_GUIDE}
+      target="_blank"
+      rel="noreferrer"
+      className="font-medium text-link hover:underline"
+    >
+      Set up live preview
+    </a>
   );
 }
 
@@ -311,23 +313,58 @@ function SiteNotice({
     case 'loading':
     case 'live':
       return null;
-    case 'timeout':
+    case 'not-connected':
       return (
         <Alert>
-          <AlertTitle>This site doesn’t speak live preview yet</AlertTitle>
+          <AlertTitle>This site isn’t connected for live preview</AlertTitle>
           <AlertDescription>
             <p>
-              The page loaded but didn’t answer, so it shows the entry as saved. Edits appear here
-              as you type once the page runs the live preview runtime.
+              The page loaded but didn’t offer to connect, so it shows the entry as saved. Edits
+              appear here as you type once the page calls connectPreview.
             </p>
-            <a
-              href={LIVE_PREVIEW_GUIDE}
-              target="_blank"
-              rel="noreferrer"
-              className="font-medium text-link hover:underline"
-            >
-              Set up live preview
-            </a>
+            <GuideLink />
+          </AlertDescription>
+        </Alert>
+      );
+    case 'unsupported':
+      return (
+        <Alert variant="destructive">
+          <AlertTitle>
+            {status.detail === 'new'
+              ? 'This site’s ContentWorker SDK is too new for live preview'
+              : 'This site’s ContentWorker SDK is too old for live preview'}
+          </AlertTitle>
+          <AlertDescription>
+            <p>
+              {status.detail === 'new'
+                ? 'It speaks only protocol versions this admin doesn’t know yet. The page shows the entry as saved.'
+                : 'Update @contentworker/sdk on the site to a release this admin supports. Until then the page shows the entry as saved.'}
+            </p>
+            <GuideLink />
+          </AlertDescription>
+        </Alert>
+      );
+    case 'elsewhere':
+      return (
+        <Alert>
+          <AlertTitle>This page doesn’t show this entry</AlertTitle>
+          <AlertDescription>
+            <p>It’s connected, but your edits go to the page that renders the entry.</p>
+            <Button type="button" variant="outline" size="sm" onClick={onReload}>
+              Back to the entry
+            </Button>
+          </AlertDescription>
+        </Alert>
+      );
+    case 'unpreviewable':
+      return (
+        <Alert variant="destructive">
+          <AlertTitle>This entry can’t be previewed on this page</AlertTitle>
+          <AlertDescription>
+            <p>
+              The page refused the entry as the form holds it, so your edits aren’t shown. Clicks in
+              the page still find their fields.
+            </p>
           </AlertDescription>
         </Alert>
       );

@@ -1,315 +1,445 @@
-// The admin's half of live preview, as the Site frame runs it: it reads only the framed page's own
-// messages (origin, window and session), says when the page never answers or has navigated away,
-// and keeps the page in step: an init after hello with an explicit seq, numbered patches, and one
-// re-init per refusal, falling back to whole fields when a page refuses again.
-import { LIVE_PREVIEW_PROTOCOL, type LivePatchOp } from '@contentworker/sdk-core/live-preview';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+// The admin's half of the live preview channel (docs/specs/live-preview-channel.md), as the Site
+// frame runs it. It answers only the framed page's own offers (origin, sender, channel), picks a
+// shared version or rejects with both lists, narrows what the page may be sent to what the person
+// may do, sends the entry once the page says it renders it, numbers each edit per entry, and
+// answers every failure with a fresh state, except a state the page refused, which it never resends.
+// The first test wires it to the real frontend half (`connectPreview`) in a window of another origin.
+import {
+  type Capability,
+  connectPreview,
+  type LiveFields,
+  newChannel,
+} from '@contentworker/sdk-core/live-preview';
+import { JSDOM } from 'jsdom';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { FrameEntry } from '~/cms/lib/live-preview/frame-channel';
-import { HANDSHAKE_MS, LivePreviewHost, LOAD_MS } from '~/cms/lib/live-preview/host';
+import {
+  ADMIN_CAPABILITIES,
+  CONNECT_MS,
+  LivePreviewHost,
+  LOAD_MS,
+} from '~/cms/lib/live-preview/host';
 
-const ORIGIN = 'https://site.example';
-const SESSION = 'session_0123456789';
+const ADMIN = 'https://admin.example';
+const SITE = 'https://site.example';
 
 const entry = (title = 'Home', extra: Partial<FrameEntry> = {}): FrameEntry => ({
-  fields: { title: { 'en-US': title }, body: { 'en-US': [{ _type: 'hero', _key: 'a' }] } },
-  locale: 'en-US',
-  version: 3,
   entryId: 'e1',
-  contentType: 'page',
+  locale: 'en-US',
+  fields: { title, body: [{ _type: 'cta', _key: 'k1', label: 'Go' }] },
   ...extra,
 });
-const setTitle = (value: string): LivePatchOp[] => [
-  { op: 'setField', field: 'title', locale: 'en-US', value },
-];
+const titled = (title: string) => ({ fields: { title }, blocks: [] });
 
-function setup() {
-  const frame = { postMessage: vi.fn() };
-  const status = vi.fn();
-  const onPick = vi.fn();
-  const onKey = vi.fn();
-  const onNote = vi.fn();
-  const onGeometry = vi.fn();
-  const onNavigate = vi.fn();
-  const host = new LivePreviewHost({
-    origin: ORIGIN,
-    session: SESSION,
-    frame: () => frame,
-    onStatus: status,
-    onPick,
-    onKey,
-    onNote,
-    onGeometry,
-    onNavigate,
-  });
-  /** A message from the framed page, as its window posts it. */
-  const say = (
-    type: string,
-    body: Record<string, unknown> = {},
-    from: Partial<{ origin: string; source: unknown; session: string }> = {},
-  ) =>
-    host.receive({
-      data: { cw: LIVE_PREVIEW_PROTOCOL, session: from.session ?? SESSION, type, ...body },
-      origin: from.origin ?? ORIGIN,
-      source: 'source' in from ? from.source : frame,
-    });
-  const hello = () => say('hello', { sdkVersion: '0.2.0', capabilities: ['patch'] });
-  /** What the host posted, by type, and that it always named the page's exact origin. */
-  const sent = (type?: string) => {
-    for (const [, target] of frame.postMessage.mock.calls) expect(target).toBe(ORIGIN);
-    return frame.postMessage.mock.calls
-      .map(([m]) => m as { type: string; seq?: number; ops?: LivePatchOp[]; session: string })
-      .filter((m) => !type || m.type === type);
-  };
-  return { host, frame, status, onPick, onKey, onNote, onGeometry, onNavigate, say, hello, sent };
-}
-
-beforeEach(() => vi.useFakeTimers());
 afterEach(() => vi.useRealTimers());
 
+describe('the live preview host with the real frontend half', () => {
+  it('connects, sends the state once the page reports the entry, then each edit, and hears it applied', async () => {
+    const dom = new JSDOM('<main id="app"></main>', { url: `${SITE}/p`, pretendToBeVisual: true });
+    const guest = dom.window as unknown as Window;
+    // The guest's parent is the admin's frame: its posts arrive as the frame's message events.
+    let host: LivePreviewHost | undefined;
+    // What the host holds as the iframe's window: the guest, as the admin sees it.
+    const framed = {
+      postMessage(data: unknown, target: string) {
+        expect(target).toBe(SITE);
+        const ev = new dom.window.Event('message');
+        Object.assign(ev, { data: structuredClone(data), origin: ADMIN, source: parent });
+        guest.dispatchEvent(ev);
+      },
+    };
+    const parent = {
+      postMessage(data: unknown, target: string) {
+        expect(target).toBe(ADMIN);
+        host?.receive({ data: structuredClone(data), origin: SITE, source: framed });
+      },
+    };
+    Object.defineProperty(guest, 'parent', { value: parent });
+    host = new LivePreviewHost({
+      origin: SITE,
+      origins: [SITE],
+      frame: () => framed,
+      onStatus: () => {},
+    });
+    host.setAllowed(ADMIN_CAPABILITIES);
+    host.setEntry(entry(), null);
+    const rendered: LiveFields[] = [];
+    const preview = connectPreview({
+      adminOrigin: ADMIN,
+      capabilities: ['select', 'patch.fields', 'patch.blocks', 'scroll'],
+      window: guest,
+      onState: (_id, _locale, fields) => {
+        rendered.push(fields);
+      },
+    });
+    expect(preview.connected).toBe(true);
+    expect(preview.capabilities).toEqual(['select', 'patch.fields', 'patch.blocks', 'scroll']);
+    preview.emit('page', {
+      url: `${SITE}/p`,
+      entries: [{ entryId: 'e1', contentType: 'page', locale: 'en-US' }],
+    });
+    await vi.waitFor(() => expect(rendered.at(-1)?.title).toBe('Home'));
+    host.setEntry(entry('Homepage'), titled('Homepage'));
+    await vi.waitFor(() => expect(rendered.at(-1)?.title).toBe('Homepage'));
+    host.setEntry(
+      entry('Homepage', {
+        fields: { title: 'Homepage', body: [{ _type: 'cta', _key: 'k1', label: 'Start' }] },
+      }),
+      {
+        fields: {},
+        blocks: [
+          {
+            field: 'body',
+            ops: [
+              { op: 'update', field: 'body', locale: 'en-US', key: 'k1', set: { label: 'Start' } },
+            ],
+          },
+        ],
+      },
+    );
+    await vi.waitFor(() =>
+      expect(((rendered.at(-1)?.body ?? []) as { label: string }[])[0]?.label).toBe('Start'),
+    );
+    await vi.waitFor(() => expect(host?.rendered).toBe(3));
+    preview.close();
+  });
+});
+
+/** A host and a scripted page: what the page says, and what the host posted it. */
+function setup(allowed: readonly Capability[] = ADMIN_CAPABILITIES) {
+  const frame = { postMessage: vi.fn() };
+  const onStatus = vi.fn();
+  const onPointer = vi.fn();
+  const onNote = vi.fn();
+  const onSession = vi.fn();
+  const host = new LivePreviewHost({
+    origin: SITE,
+    origins: [SITE, 'https://shop.example'],
+    frame: () => frame,
+    onStatus,
+    onPointer,
+    onNote,
+    onSession,
+  });
+  const channel = newChannel();
+  const say = (
+    kind: string,
+    body: Record<string, unknown> = {},
+    from: Partial<{ origin: string; source: unknown; channel: string; v: number }> = {},
+  ) =>
+    host.receive({
+      data: { v: from.v ?? 1, channel: from.channel ?? channel, kind, ...body },
+      origin: from.origin ?? SITE,
+      source: 'source' in from ? from.source : frame,
+    });
+  const offer = (
+    versions = [1],
+    caps: string[] = ['select', 'patch.fields', 'patch.blocks', 'scroll', 'layout', 'proposals'],
+    ch = channel,
+  ) =>
+    say(
+      'connect.offer',
+      { versions, capabilities: caps, sdk: { name: '@contentworker/sdk', version: '0.2.0' } },
+      { channel: ch, v: versions[0] },
+    );
+  const page = (entries = ['e1']) =>
+    say('page', {
+      url: `${SITE}/p`,
+      entries: entries.map((entryId) => ({ entryId, contentType: 'page', locale: 'en-US' })),
+    });
+  const sent = (kind?: string) => {
+    for (const [, target] of frame.postMessage.mock.calls)
+      expect([SITE, 'https://shop.example']).toContain(target);
+    return frame.postMessage.mock.calls
+      .map(([m]) => m as Record<string, unknown> & { kind: string; rev?: number })
+      .filter((m) => !kind || m.kind === kind);
+  };
+  host.setAllowed(allowed);
+  return { host, frame, onStatus, onPointer, onNote, onSession, channel, say, offer, page, sent };
+}
+
 describe('the live preview host', () => {
-  it('sends the entry after hello, with an explicit seq, and the mode', () => {
+  it('drops an offer from another window, and says so for one from another origin', () => {
     const t = setup();
-    t.host.start();
-    t.host.setEntry(entry(), null);
+    t.say(
+      'connect.offer',
+      { versions: [1], capabilities: [], sdk: { name: 'x', version: '1' } },
+      { source: {} },
+    );
+    t.say(
+      'connect.offer',
+      { versions: [1], capabilities: [], sdk: { name: 'x', version: '1' } },
+      { source: null },
+    );
     expect(t.sent()).toEqual([]);
-    t.hello();
-    expect(t.status).toHaveBeenLastCalledWith('live', undefined);
-    const [init, mode] = t.sent();
-    expect(init).toMatchObject({
-      type: 'init',
-      session: SESSION,
+    t.say(
+      'connect.offer',
+      { versions: [1], capabilities: [], sdk: { name: 'x', version: '1' } },
+      { origin: 'https://www.site.example' },
+    );
+    expect(t.sent()).toEqual([]);
+    expect(t.onStatus).toHaveBeenLastCalledWith('origin', 'https://www.site.example');
+  });
+
+  it('drops a malformed channel, and after connect anything on another channel or version', () => {
+    const t = setup();
+    t.offer([1], ['select'], 'short');
+    expect(t.sent()).toEqual([]);
+    t.offer();
+    expect(t.sent('connect.accept')).toHaveLength(1);
+    t.say(
+      'pointer',
+      { pointer: 'click', ref: 'r', rect: { x: 0, y: 0, w: 1, h: 1 } },
+      { channel: newChannel() },
+    );
+    t.say('pointer', { pointer: 'click', ref: 'r', rect: { x: 0, y: 0, w: 1, h: 1 } }, { v: 2 });
+    expect(t.onPointer).not.toHaveBeenCalled();
+    t.say('pointer', { pointer: 'click', ref: 'r', rect: { x: 0, y: 0, w: 1, h: 1 } });
+    expect(t.onPointer).toHaveBeenCalledWith('click', 'r', { x: 0, y: 0, w: 1, h: 1 });
+  });
+
+  it('accepts the highest shared version, narrowed to what the admin uses; rejects with both lists', () => {
+    const t = setup();
+    t.offer([3, 1]);
+    const accept = t.sent('connect.accept')[0];
+    expect(accept).toMatchObject({ v: 1, channel: t.channel, version: 1 });
+    // Proposals wait for Coworker's side: offered, but not accepted.
+    expect(accept?.capabilities).toEqual([
+      'select',
+      'patch.fields',
+      'patch.blocks',
+      'scroll',
+      'layout',
+    ]);
+    expect(t.onStatus).toHaveBeenLastCalledWith('live', undefined);
+
+    const u = setup();
+    u.offer([99]);
+    expect(u.sent('connect.reject')[0]).toMatchObject({
+      v: 99,
+      reason: 'unsupported-version',
+      versions: [1],
+    });
+    expect(u.sent('connect.accept')).toEqual([]);
+    expect(u.onStatus).toHaveBeenLastCalledWith('unsupported', 'new');
+  });
+
+  it('holds an offer until the editor says what the person may allow, then answers it', () => {
+    const frame = { postMessage: vi.fn() };
+    const host = new LivePreviewHost({
+      origin: SITE,
+      origins: [SITE],
+      frame: () => frame,
+      onStatus: () => {},
+    });
+    const channel = newChannel();
+    host.receive({
+      data: {
+        v: 1,
+        channel,
+        kind: 'connect.offer',
+        versions: [1],
+        capabilities: ['select', 'patch.fields'],
+        sdk: { name: 'x', version: '1' },
+      },
+      origin: SITE,
+      source: frame,
+    });
+    expect(frame.postMessage).not.toHaveBeenCalled();
+    host.setAllowed(['select']);
+    expect(frame.postMessage.mock.calls[0]?.[0]).toMatchObject({
+      kind: 'connect.accept',
+      capabilities: ['select'],
+    });
+  });
+
+  it('a role that may only select gets clicks, and the page is never sent its values', () => {
+    const t = setup(['select', 'scroll']);
+    t.offer();
+    t.host.setEntry(entry(), null);
+    t.page();
+    t.host.setEntry(entry('Typed'), titled('Typed'));
+    expect(t.sent('entry.state')).toEqual([]);
+    expect(t.sent('entry.patch')).toEqual([]);
+    t.host.select('ref', true);
+    expect(t.sent('select')).toHaveLength(1);
+    expect(t.sent('scroll')).toHaveLength(1);
+  });
+
+  it('sends the state only once the page reports the entry, then numbered patches per entry', () => {
+    const t = setup();
+    t.offer();
+    t.host.setEntry(entry(), null);
+    expect(t.sent('entry.state')).toEqual([]);
+    t.page(['other']);
+    expect(t.onStatus).toHaveBeenLastCalledWith('elsewhere', undefined);
+    expect(t.sent('entry.state')).toEqual([]);
+    t.page(['other', 'e1']);
+    expect(t.sent('entry.state')[0]).toMatchObject({
+      rev: 1,
       entryId: 'e1',
       locale: 'en-US',
-      version: 3,
-      seq: 0,
+      fields: { title: 'Home' },
     });
-    expect(mode).toMatchObject({ type: 'mode', mode: 'view' });
+    t.host.setEntry(entry('A'), titled('A'));
+    t.host.setEntry(entry('A'), {
+      fields: {},
+      blocks: [
+        { field: 'body', ops: [{ op: 'remove', field: 'body', locale: 'en-US', key: 'k1' }] },
+      ],
+    });
+    expect(t.sent('entry.patch')[0]).toMatchObject({ rev: 2, fields: { title: 'A' } });
+    expect(t.sent('blocks.patch')[0]).toMatchObject({ rev: 3, field: 'body' });
+    // A new locale is a whole state.
+    t.host.setEntry(entry('A', { locale: 'de' }), titled('A'));
+    expect(t.sent('entry.state').at(-1)).toMatchObject({ rev: 4, locale: 'de' });
   });
 
-  it('ignores messages from another window, another origin or another session', () => {
+  it('answers a gap with a fresh state, ignores failures that state covers, counts acks that skip', () => {
     const t = setup();
-    t.host.start();
+    t.offer();
     t.host.setEntry(entry(), null);
-    t.say('hello', { sdkVersion: '1', capabilities: [] }, { source: {} });
-    t.say('hello', { sdkVersion: '1', capabilities: [] }, { session: 'someone_elses_session' });
-    expect(t.sent()).toEqual([]);
-    expect(t.status).not.toHaveBeenCalled();
-    t.hello();
-    t.say('pick', { key: 'a' }, { source: null });
-    expect(t.onPick).not.toHaveBeenCalled();
+    t.page();
+    t.host.setEntry(entry('A'), titled('A'));
+    t.host.setEntry(entry('B'), titled('B'));
+    t.say('failed', { rev: 2, reason: 'gap', entryId: 'e1' });
+    expect(t.onNote).toHaveBeenCalledWith('gap');
+    expect(t.sent('entry.state').at(-1)).toMatchObject({ rev: 4, fields: { title: 'B' } });
+    t.say('failed', { rev: 3, reason: 'gap', entryId: 'e1' });
+    expect(t.sent('entry.state')).toHaveLength(2);
+    t.say('applied', { rev: 4, entryId: 'e1' });
+    expect(t.host.rendered).toBe(4);
+    t.say('applied', { rev: 9, entryId: 'e1' });
+    expect(t.host.rendered).toBe(4);
+    // Another entry's acknowledgements aren't this one's.
+    t.say('failed', { rev: 5, reason: 'gap', entryId: 'other' });
+    expect(t.sent('entry.state')).toHaveLength(2);
   });
 
-  it('says so when the page answers from another origin, and never reads it', () => {
+  it('never resends a state the page refused as invalid: the entry can’t be previewed', () => {
     const t = setup();
-    t.host.start();
-    t.say('hello', { sdkVersion: '1', capabilities: [] }, { origin: 'https://www.site.example' });
-    expect(t.status).toHaveBeenLastCalledWith('origin', 'https://www.site.example');
-    expect(t.sent()).toEqual([]);
+    t.offer();
+    t.host.setEntry(entry(), null);
+    t.page();
+    t.say('failed', { rev: 1, reason: 'invalid', entryId: 'e1' });
+    expect(t.onStatus).toHaveBeenLastCalledWith('unpreviewable', undefined);
+    t.host.setEntry(entry('A'), titled('A'));
+    expect(t.sent('entry.state')).toHaveLength(1);
+    expect(t.sent('entry.patch')).toEqual([]);
   });
 
-  it('times out a loaded page that never says hello, and fails a frame that never loads', () => {
+  it('sends blocks fields whole once the page refuses block ops again right after a recovery', () => {
+    const t = setup();
+    t.offer();
+    t.host.setEntry(entry(), null);
+    t.page();
+    const edit = {
+      fields: {},
+      blocks: [
+        {
+          field: 'body',
+          ops: [{ op: 'remove' as const, field: 'body', locale: 'en-US', key: 'k1' }],
+        },
+      ],
+    };
+    t.host.setEntry(entry('Home', { fields: { title: 'Home', body: [] } }), edit);
+    t.say('failed', { rev: 2, reason: 'conflict', entryId: 'e1' });
+    expect(t.host.wholeFields).toBe(false);
+    t.host.setEntry(entry('Home', { fields: { title: 'Home', body: [] } }), edit);
+    t.say('failed', { rev: 4, reason: 'conflict', entryId: 'e1' });
+    expect(t.host.wholeFields).toBe(true);
+    t.host.setEntry(entry('Home', { fields: { title: 'Home', body: [] } }), edit);
+    expect(t.sent('entry.patch').at(-1)).toMatchObject({ fields: { body: [] } });
+  });
+
+  it('a fresh offer from the same window replaces the session; the state goes again on its page', () => {
+    const t = setup();
+    t.offer();
+    t.host.setEntry(entry(), null);
+    t.page();
+    const second = newChannel();
+    t.offer([1], ['select', 'patch.fields'], second);
+    expect(t.sent('connect.accept').at(-1)).toMatchObject({ channel: second });
+    t.say(
+      'page',
+      { url: `${SITE}/p`, entries: [{ entryId: 'e1', contentType: 'page', locale: 'en-US' }] },
+      { channel: second },
+    );
+    expect(t.sent('entry.state').at(-1)).toMatchObject({ channel: second });
+    // The old channel is gone.
+    t.say('pointer', { pointer: 'click', ref: 'r', rect: { x: 0, y: 0, w: 1, h: 1 } });
+    expect(t.onPointer).not.toHaveBeenCalled();
+  });
+
+  it('follows a navigation only to an origin the space previews on, else says it moved away', () => {
+    const t = setup();
+    t.offer();
+    t.say('navigated', { url: 'https://shop.example/cart' });
+    const next = newChannel();
+    t.say(
+      'connect.offer',
+      { versions: [1], capabilities: ['select'], sdk: { name: 'x', version: '1' } },
+      { origin: 'https://shop.example', channel: next },
+    );
+    expect(t.sent('connect.accept').at(-1)).toMatchObject({ channel: next });
+
+    const u = setup();
+    u.offer();
+    u.say('navigated', { url: 'https://elsewhere.example/' });
+    expect(u.onStatus).toHaveBeenLastCalledWith('navigated', undefined);
+    u.say(
+      'connect.offer',
+      { versions: [1], capabilities: ['select'], sdk: { name: 'x', version: '1' } },
+      { origin: 'https://elsewhere.example', channel: newChannel() },
+    );
+    expect(u.sent('connect.accept')).toHaveLength(1);
+  });
+
+  it('says a loaded page that never offers isn’t connected, and a frame that never loads failed', () => {
+    vi.useFakeTimers();
     const t = setup();
     t.host.start();
     t.host.frameLoaded();
-    vi.advanceTimersByTime(HANDSHAKE_MS - 1);
-    expect(t.status).not.toHaveBeenCalled();
-    vi.advanceTimersByTime(1);
-    expect(t.status).toHaveBeenLastCalledWith('timeout', undefined);
+    vi.advanceTimersByTime(CONNECT_MS);
+    expect(t.onStatus).toHaveBeenLastCalledWith('not-connected', undefined);
 
     const u = setup();
     u.host.start();
     vi.advanceTimersByTime(LOAD_MS);
-    expect(u.status).toHaveBeenLastCalledWith('failed', undefined);
+    expect(u.onStatus).toHaveBeenLastCalledWith('failed', undefined);
   });
 
-  it('takes a hello before the load event as that page’s, and a load without one as navigating away', () => {
+  it('takes an offer before the load event as that page’s, and a later load without one as moving away', () => {
+    vi.useFakeTimers();
     const t = setup();
     t.host.start();
-    t.host.setEntry(entry(), null);
-    t.hello();
+    t.offer();
     t.host.frameLoaded();
-    vi.advanceTimersByTime(HANDSHAKE_MS);
-    expect(t.status).toHaveBeenLastCalledWith('live', undefined);
-    // A link followed in view mode: the frame loads another page, which never says hello.
+    vi.advanceTimersByTime(CONNECT_MS);
+    expect(t.onStatus).toHaveBeenLastCalledWith('live', undefined);
     t.host.frameLoaded();
-    t.host.setEntry(entry('Other'), setTitle('Other'));
-    expect(t.sent('patch')).toEqual([]);
-    vi.advanceTimersByTime(HANDSHAKE_MS);
-    expect(t.status).toHaveBeenLastCalledWith('navigated', undefined);
+    vi.advanceTimersByTime(CONNECT_MS);
+    expect(t.onStatus).toHaveBeenLastCalledWith('navigated', undefined);
   });
 
-  it('re-sends the whole entry when a page says hello again, keeping the seq', () => {
+  it('turns editing off and on, and sends proposals only on a session that accepted them', () => {
     const t = setup();
-    t.host.start();
+    t.offer();
+    t.host.setEditing(false);
+    expect(t.sent('editing').at(-1)).toMatchObject({ on: false });
     t.host.setEntry(entry(), null);
-    t.hello();
-    t.host.setEntry(entry('A'), setTitle('A'));
-    t.host.setEntry(entry('B'), setTitle('B'));
-    t.host.frameLoaded();
-    t.hello();
-    const inits = t.sent('init');
-    expect(inits).toHaveLength(2);
-    expect(inits[1]).toMatchObject({ seq: 2, fields: { title: { 'en-US': 'B' } } });
-  });
+    t.page();
+    expect(
+      t.host.propose('body', [{ op: 'remove', field: 'body', locale: 'en-US', key: 'k1' }]),
+    ).toBe(false);
 
-  it('numbers patches, and counts what the page acknowledges even when acks skip seqs', () => {
-    const t = setup();
-    t.host.start();
-    t.host.setEntry(entry(), null);
-    t.hello();
-    t.host.setEntry(entry('A'), setTitle('A'));
-    t.host.setEntry(entry('B'), setTitle('B'));
-    t.host.setEntry(entry('C'), setTitle('C'));
-    expect(t.sent('patch').map((m) => m.seq)).toEqual([1, 2, 3]);
-    t.say('rendered', { seq: 3 });
-    expect(t.host.rendered).toBe(3);
-    // An ack for a seq never sent is not believed.
-    t.say('rendered', { seq: 9 });
-    expect(t.host.rendered).toBe(3);
-    // No ops, no patch.
-    t.host.setEntry(entry('C'), []);
-    expect(t.sent('patch')).toHaveLength(3);
-  });
-
-  it('sends the whole entry for a new locale or version, or a patch too big to send', () => {
-    const t = setup();
-    t.host.start();
-    t.host.setEntry(entry(), null);
-    t.hello();
-    t.host.setEntry(entry('Home', { locale: 'de' }), setTitle('x'));
-    t.host.setEntry(entry('Home', { locale: 'de', version: 4 }), []);
-    const big = Array.from({ length: 101 }, () => setTitle('x')[0] as LivePatchOp);
-    t.host.setEntry(entry('Home', { locale: 'de', version: 4 }), big);
-    expect(t.sent('init')).toHaveLength(4);
-    expect(t.sent('patch')).toEqual([]);
-  });
-
-  it('answers a refused patch with one init, and ignores refusals that init already covers', () => {
-    const t = setup();
-    t.host.start();
-    t.host.setEntry(entry(), null);
-    t.hello();
-    t.host.setEntry(entry('A'), setTitle('A'));
-    t.host.setEntry(entry('B'), setTitle('B'));
-    t.say('error', { kind: 'patch', message: 'ops[0]: nope', seq: 1 });
-    expect(t.onNote).toHaveBeenCalledWith('patch');
-    expect(t.sent('init').at(-1)).toMatchObject({ seq: 2, fields: { title: { 'en-US': 'B' } } });
-    // The page dropped seq 2 while out of step and says so: the init covers it.
-    t.say('error', { kind: 'patch', message: 'out of step', seq: 2 });
-    expect(t.sent('init')).toHaveLength(2);
-  });
-
-  it('sends blocks fields whole once a page refuses again right after a recovery', () => {
-    const t = setup();
-    t.host.start();
-    t.host.setEntry(entry(), null);
-    t.hello();
-    const update: LivePatchOp[] = [
-      { op: 'update', field: 'body', locale: 'en-US', key: 'a', set: { heading: 'x' } },
-    ];
-    const withHeading = entry('Home');
-    const body = [{ _type: 'hero', _key: 'a', heading: 'x' }];
-    t.host.setEntry(
-      { ...withHeading, fields: { ...withHeading.fields, body: { 'en-US': body } } },
-      update,
-    );
-    t.say('error', { kind: 'patch', message: 'no', seq: 1 });
-    expect(t.host.wholeFields).toBe(false);
-    t.host.setEntry(
-      { ...withHeading, fields: { ...withHeading.fields, body: { 'en-US': body } } },
-      update,
-    );
-    t.say('error', { kind: 'patch', message: 'no', seq: 2 });
-    expect(t.host.wholeFields).toBe(true);
-    t.host.setEntry(
-      { ...withHeading, fields: { ...withHeading.fields, body: { 'en-US': body } } },
-      update,
-    );
-    expect(t.sent('patch').at(-1)?.ops).toEqual([
-      { op: 'setField', field: 'body', locale: 'en-US', value: body },
-    ]);
-  });
-
-  it('a render error is a note, not a re-init', () => {
-    const t = setup();
-    t.host.start();
-    t.host.setEntry(entry(), null);
-    t.hello();
-    t.say('error', { kind: 'render', message: 'boom', seq: 0 });
-    expect(t.onNote).toHaveBeenCalledWith('render');
-    expect(t.sent('init')).toHaveLength(1);
-  });
-
-  it('selects what the page picked, there and in the form, and hands on keys and geometry', () => {
-    const t = setup();
-    t.host.start();
-    t.host.setEntry(entry(), null);
-    t.hello();
-    t.say('pick', { key: 'a' });
-    expect(t.onPick).toHaveBeenCalledWith({ key: 'a' });
-    expect(t.sent('select').at(-1)).toMatchObject({ key: 'a' });
-    const z = { key: 'z', meta: true, ctrl: false, shift: false, alt: false };
-    // A key in view mode isn't the editor's: the page is the site.
-    t.say('key', z);
-    expect(t.onKey).not.toHaveBeenCalled();
-    t.host.setMode('edit');
-    t.say('key', z);
-    expect(t.onKey).toHaveBeenCalledWith(expect.objectContaining({ key: 'z', meta: true }));
-    t.say('geometry', {
-      blocks: [{ key: 'a', rect: { x: 0, y: 0, w: 10, h: 10 } }],
-      slots: [],
-      fields: [],
-      scroll: { x: 0, y: 0 },
-      viewport: { w: 100, h: 100 },
-      docHeight: 100,
-      truncated: true,
-    });
-    expect(t.onGeometry).toHaveBeenCalledWith(expect.objectContaining({ truncated: true }));
-    t.host.select(undefined);
-    expect(t.sent('select').at(-1)).not.toHaveProperty('key');
-  });
-
-  it('takes no key while focus is outside the page, whatever the page posts', () => {
-    const frame = { postMessage: vi.fn() };
-    const onKey = vi.fn();
-    let focused = false;
-    const host = new LivePreviewHost({
-      origin: ORIGIN,
-      session: SESSION,
-      frame: () => frame,
-      onStatus: () => {},
-      onKey,
-      focused: () => focused,
-    });
-    host.start();
-    host.setMode('edit');
-    const say = (type: string, body: Record<string, unknown>) =>
-      host.receive({
-        data: { cw: LIVE_PREVIEW_PROTOCOL, session: SESSION, type, ...body },
-        origin: ORIGIN,
-        source: frame,
-      });
-    say('hello', { sdkVersion: '1', capabilities: [] });
-    const backspace = { key: 'Backspace', meta: false, ctrl: false, shift: false, alt: false };
-    say('key', backspace);
-    expect(onKey).not.toHaveBeenCalled();
-    focused = true;
-    say('key', backspace);
-    expect(onKey).toHaveBeenCalledTimes(1);
-  });
-
-  it('follows a page’s link only in edit mode, and only on its own origin', () => {
-    const t = setup();
-    t.host.start();
-    t.host.setEntry(entry(), null);
-    t.hello();
-    t.say('navigate', { url: `${ORIGIN}/about` });
-    expect(t.onNavigate).not.toHaveBeenCalled();
-    t.host.setMode('edit');
-    expect(t.sent('mode').at(-1)).toMatchObject({ mode: 'edit' });
-    t.say('navigate', { url: 'https://elsewhere.example/' });
-    t.say('navigate', { url: `${ORIGIN}/about` });
-    expect(t.onNavigate).toHaveBeenCalledTimes(1);
-    expect(t.onNavigate).toHaveBeenCalledWith(`${ORIGIN}/about`);
+    const u = setup([...ADMIN_CAPABILITIES, 'proposals']);
+    u.offer();
+    u.host.setEntry(entry(), null);
+    u.page();
+    expect(
+      u.host.propose('body', [{ op: 'remove', field: 'body', locale: 'en-US', key: 'k1' }]),
+    ).toBe(true);
+    expect(u.sent('blocks.patch').at(-1)).toMatchObject({ ops: [{ proposed: true }] });
   });
 });
