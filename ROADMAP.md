@@ -363,6 +363,46 @@ Built on Blocks and the frontend runtime. Layouts stay a typed tree; rich text s
   preview URL template per content type, and a "connect a frontend" screen that mints a delivery key
   and prints its config.
 
+#### Follow-ups for M6
+
+From the live preview spec and a review of a second implementation of its channel. Most touch the
+admin's live preview host and the preview frame, so they wait for the canvas editor to land; none
+needs a new protocol version while v1 is unreleased.
+
+- [ ] **Page report cap.** The owner chose at most 50 entries per `page` report; the code allows
+  200 (`MAX_PAGE_ENTRIES`). Settle one number and match the other to it. The other channel
+  decisions are recorded in the spec.
+- [ ] **Admin-started reconnect.** A `connect.request` from the admin on mount and on demand, so an
+  admin that hydrates late or is rebuilt reaches a page that already loaded. Also: a late
+  `connect.accept` on the page's channel still counts, and a page restored from the back/forward
+  cache connects again.
+- [ ] **JSON-only values on the wire.** The admin drops `undefined` (a top-level field cleared in a
+  patch goes as `null`) and refuses dates, maps and other non-JSON values before sending, so a value
+  the page would drop can't freeze its preview with nothing reported.
+- [ ] **Steady sessions.** A retried offer on the live channel is answered without a reset; new
+  offers faster than one per 200 ms over a live session are dropped; `applied` and `failed` carry
+  the locale, and a gap resends that locale once.
+- [ ] **No popups from the preview frame.** Drop `allow-popups` from the frame's sandbox
+  (`apps/web/app/routes/preview-frame.tsx`), so a framed page can't open windows that keep a
+  reference back to it. Click refs are already checked against the edited space, environment,
+  entry, type and locale where they are used (the canvas's `ownPath`, the entry editor's
+  `focusForRef`).
+- [x] **One block patch engine.** The page keeps its own engine (`applyLivePatch`), and
+  `packages/http/test/live-preview-patch-parity.test.ts` runs the same patches through it and the
+  domain's `applyBlockPatch`.
+- [ ] **Locked regions on the canvas.** Admin config can lock a slot or region (no add, move or
+  remove), narrowing what code allows and never widening it, beside the slot allow-lists.
+- [ ] **Token values checked everywhere.** The frontend runtime runs `isSafeTokenValue` on every
+  value it writes into a CSS custom property, not only on live preview patches.
+- [ ] **Block config as code.** A read-only code view of a block's admin config next to its code
+  defaults, with a diff of what the admin narrowed. Needs a code editor in the admin (CodeMirror 6,
+  a new catalog dependency).
+
+Considered and left out for now: letting an agent drive the customer's page (scripts, clicks,
+screenshots; Coworker changes the page only as proposals a person accepts), a block playground
+compiled in the browser, and media preparation in the browser (Images and Stream transform on the
+server).
+
 #### M7. Organization and assets
 
 - [ ] **Entry folders.** Generalize asset folders with a `kind` and give entries a folder.
