@@ -50,6 +50,7 @@ import { EntryForm } from '../components/EntryForm';
 import { EntryActivity } from '../components/entries/EntryActivity';
 import { EntryAuthorship } from '../components/entries/EntryAuthorship';
 import { PublishConfirm } from '../components/entries/PublishConfirm';
+import { SaveConflictDialog } from '../components/entries/SaveConflictDialog';
 import { GenerateEntryDialog } from '../components/GenerateEntryDialog';
 import { orDirect, useAssistantEdit, usePageContext } from '../lib/assistant';
 import { canvasAvailable } from '../lib/canvas/model';
@@ -61,6 +62,7 @@ import { focusForRef, refForField } from '../lib/live-preview/pick';
 import type { EntryAggregate, EntryView, ModelTier } from '../lib/management';
 import { useEntryPickers } from '../lib/pickers';
 import { useAppExtensionsQuery, useEntryQuery, useQueryKeys, useScopedQuery } from '../lib/queries';
+import { staleSave } from '../lib/stale-save';
 import { useToast } from '../lib/toast';
 import { useContentOutlet } from './content-context';
 
@@ -184,6 +186,16 @@ export function EntryEditor() {
   const meta = entryQuery.data
     ? { version: entryQuery.data.version, status: entryQuery.data.status }
     : null;
+  // The version the form was filled from, and then the version of its last save: what a save is
+  // held to. A refetch of the entry (someone else's save) never moves it.
+  const [baseVersion, setBaseVersion] = useState<number | null>(null);
+  if (baseVersion === null && meta) setBaseVersion(meta.version);
+  /** A save refused as stale: the dialog's question, with the fields it would have saved. */
+  const [conflict, setConflict] = useState<{
+    theirs: number | null;
+    fields: EntryFields;
+    publish: boolean;
+  } | null>(null);
   const baseFields = isEdit ? ((entryQuery.data?.fields as EntryFields) ?? null) : {};
   // Who wrote it: the freshest aggregate (a save names its author) over the loaded entry. Names
   // come from the team, which only an administrator may read; anyone else sees "You" and kinds.
@@ -252,6 +264,9 @@ export function EntryEditor() {
     if (entryId) {
       void queryClient.invalidateQueries({ queryKey: keys.entryActivityPages(entryId) });
       await queryClient.invalidateQueries({ queryKey: keys.entry(entryId) });
+      // The form starts again from the entry as it is now: later saves are held to that version.
+      const now = queryClient.getQueryData<{ version: number }>(keys.entry(entryId));
+      setBaseVersion(now?.version ?? null);
     }
     markDirty(false);
     // The aggregate predates the restore; a publish diff based on it would
@@ -295,9 +310,13 @@ export function EntryEditor() {
   // failed validation can't leak the flag into a later plain save.
   const publishAfterSaveRef = useRef(false);
 
-  const save = (fields: EntryFields) => {
+  const save = (fields: EntryFields, over?: number) => {
     const chainPublish = publishAfterSaveRef.current;
     publishAfterSaveRef.current = false;
+    // Held to the version the form was filled from (or the newer one being saved over): a save
+    // someone made meanwhile is never overwritten unseen.
+    const expected = over ?? baseVersion ?? undefined;
+    const held = expected !== undefined ? { expectedVersion: expected } : {};
     return run(async () => {
       if (!selectedType) return;
       if (!isEdit) setSwapping(true);
@@ -307,8 +326,8 @@ export function EntryEditor() {
         const r =
           isEdit && entryId
             ? await orDirect(
-                await edit<EntryView>('entries_update', { id: entryId, fields }, about),
-                () => client.updateEntry(entryId, fields),
+                await edit<EntryView>('entries_update', { id: entryId, fields, ...held }, about),
+                () => client.updateEntry(entryId, fields, held),
               )
             : await orDirect(
                 await edit<EntryView>(
@@ -322,6 +341,7 @@ export function EntryEditor() {
         if (!('output' in r)) return;
         const view = r.output;
         setLastAggregate(view.entry);
+        setBaseVersion(view.entry.currentVersion);
         // Edit mode: only clear dirty if nothing was typed while the request was
         // in flight — those keystrokes are NOT in the saved payload. Create mode
         // clears unconditionally: the form was removed while it saved, and the URL
@@ -344,6 +364,11 @@ export function EntryEditor() {
         toast.success('Draft updated');
         // Named as just saved: this render's title is from before the save.
         if (chainPublish) await publish(view.entry, titleOf(fields) ?? about);
+      } catch (err) {
+        const stale = isEdit ? staleSave(err) : undefined;
+        if (!stale) throw err;
+        // Publish waits on the answer: saving over theirs goes on to publish, as was asked.
+        setConflict({ ...stale, fields, publish: chainPublish });
       } finally {
         // A create that failed or wasn't saved hands the form back.
         if (!isEdit && !swapped) setSwapping(false);
@@ -965,6 +990,36 @@ export function EntryEditor() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <SaveConflictDialog
+        open={conflict !== null}
+        theirs={conflict?.theirs ?? null}
+        mine={baseVersion ?? meta?.version ?? 0}
+        where="the form"
+        onOpenChange={(open) => !open && setConflict(null)}
+        onLoadTheirs={() => {
+          setConflict(null);
+          void reseedFromServer();
+        }}
+        onSaveOver={() => {
+          const c = conflict;
+          setConflict(null);
+          if (!c || !entryId) return;
+          if (c.theirs !== null) {
+            publishAfterSaveRef.current = c.publish;
+            void save(c.fields, c.theirs);
+            return;
+          }
+          // The refusal didn't say which version is current: read it, then save over it.
+          client.getEntry(entryId).then(
+            (now) => {
+              publishAfterSaveRef.current = c.publish;
+              void save(c.fields, now.version);
+            },
+            () => toast.error('The entry couldn’t be read again. Try saving once more.'),
+          );
+        }}
+      />
 
       <PublishConfirm
         open={publishConfirm !== null}

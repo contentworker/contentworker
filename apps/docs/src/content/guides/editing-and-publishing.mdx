@@ -32,13 +32,19 @@ teammate (by name when you administer the space), **You**, or the kind of writer
 agent, a workflow, a schedule). An entry from before this was recorded reads **Unknown**. In the
 entries list, **Mine** shows only the entries you created (`sys.createdBy=me` on the API).
 
+A save is held to the version you opened. If someone saved the entry while you worked, the
+editor says so instead of saving, and you choose: keep editing, load their version (what you typed
+is discarded), or save yours over it (theirs stays in the history). Over the API, send the
+`currentVersion` you read as `expectedVersion`, and a save made since is a `409` that changes
+nothing.
+
 The entry's **History** lists every version. **Compare** one with the current draft, or with the
 live version when the entry is published, and **restore** an old version: it is copied forward as a
 new draft, so history is never rewritten.
 
 | Do this             | API                                                     | Scope             |
 | ------------------- | ------------------------------------------------------- | ----------------- |
-| Save a draft        | `PUT …/entries/{id}` with `{ "fields": … }`             | `content:write`   |
+| Save a draft        | `PUT …/entries/{id}` with `{ "fields": …, "expectedVersion"?: n }` | `content:write`   |
 | Change SEO metadata | `PATCH …/entries/{id}/seo` ([SEO](/guides/seo/))        | `content:write`   |
 | List versions       | `GET …/entries/{id}/versions`                           | `preview:read`    |
 | Compare two         | `GET …/entries/{id}/versions/diff?from=3&to=draft`      | `preview:read`    |
