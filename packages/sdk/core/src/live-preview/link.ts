@@ -23,7 +23,8 @@ interface Link {
   readonly listeners: Set<Listener>;
 }
 
-const KEY = Symbol.for('contentworker.live-preview.link');
+// Versioned: a page loading two SDK releases must not hand one the other's shape of link.
+const KEY = Symbol.for('contentworker.live-preview.link.v2');
 
 function link(): Link {
   const holder = globalThis as { [KEY]?: Link };

@@ -735,7 +735,8 @@ versions, capabilities, caps), `frontend.ts` (`connectPreview`), `patch.ts` (the
   channel and takes any well-formed one) and version. Then `parseAdminMessage` /
   `parseFrontendMessage` validate the kind's schema (after `clean()`, a bounded walk that runs
   before anything else reads the message: no `__proto__`/`constructor`/`prototype`, plain objects
-  and lists only, depth 64, no list over 10,000, at most 200,000 values; then `withinBytes`) and
+  and lists only, depth 64, no list over 10,000 or with holes, at most 200,000 values; then
+  `withinBytes`) and
   return a freshly built message. Unknown kinds are `unknown` and ignored; `invalid` and `too-large` are dropped whole and
   counted (`preview.dropped`). Then `capabilityAllows(message, accepted)`.
 - **Versions.** `OFFERED_VERSIONS` (this SDK's frontend) and `SUPPORTED_VERSIONS` (the admin's,
@@ -743,7 +744,7 @@ versions, capabilities, caps), `frontend.ts` (`connectPreview`), `patch.ts` (the
   highest shared one. Additive changes don't bump the version.
 - **Entries and revs.** Each entry has its own record (`locale`, `rev`, one locale's `fields`,
   proposals). `entry.state` replaces it and sets `rev`; `entry.patch` and `blocks.patch` apply only
-  at `rev + 1`, else `failed { reason: 'gap' }`. A patch that fails its schema but has a readable
+  at `rev + 1`, else `failed { reason: 'gap' }`. A patch (or state; the admin doesn't resend a state that failed) that fails its schema but has a readable
   `entryId` and `rev` answers `failed { reason: 'invalid' }`; a rich text document turned into
   anything else is `invalid` (`contentValueIssue(type, value)` is the admin's check before
   sending); block ops that can't be placed are `conflict`. None advances the rev, so the admin
@@ -758,7 +759,7 @@ versions, capabilities, caps), `frontend.ts` (`connectPreview`), `patch.ts` (the
   fields, so nothing queues.)
 - **Blocks and proposals.** `blocks.patch` ops are `patchBlocks` ops; their `field` and `locale`
   come from the message. Real ops apply through `applyLivePatch` (below). Proposed ops are kept in
-  a list per entry (at most 1,000, else `conflict`), never in `fields`; `viewOf` lays them over the
+  a list per entry (at most 200, else `conflict`: each render lays every one over the fields), never in `fields`; `viewOf` lays them over the
   fields for `view.withProposals` and lists `view.ghosts` (`inserted`, `changed`, `removed`;
   removed blocks stay in view, and a removal of a block already gone isn't listed). `resolveRefs`
   replaces one message's proposal `ref`s with the keys they named; a proposed insert with a keyless

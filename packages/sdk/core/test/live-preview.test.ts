@@ -899,7 +899,7 @@ describe('found in review', () => {
   it('caps the proposals one entry holds', async () => {
     await connected();
     host.send(state(0, { body: body() }));
-    for (let rev = 1; rev <= 11; rev++) {
+    for (let rev = 1; rev <= 3; rev++) {
       const ops = Array.from({ length: 100 }, (_, i) => ({
         op: 'update',
         key: 'h1',
@@ -909,7 +909,15 @@ describe('found in review', () => {
       host.send({ kind: 'blocks.patch', rev, ...at, field: 'body', ops });
     }
     await settle();
-    expect(host.of('failed')).toEqual([expect.objectContaining({ rev: 11, reason: 'conflict' })]);
+    expect(host.of('failed')).toEqual([expect.objectContaining({ rev: 3, reason: 'conflict' })]);
+  });
+
+  it('answers a state it could not read, so the admin needn’t wait on it', async () => {
+    await connected();
+    host.send(state(0, { numbers: Array.from({ length: 20_000 }, (_, i) => i) }));
+    await settle();
+    expect(host.of('failed')).toEqual([expect.objectContaining({ rev: 0, reason: 'invalid' })]);
+    expect(states).toEqual([]);
   });
 
   it('puts a block in a slot’s seams only when its path names that slot', async () => {

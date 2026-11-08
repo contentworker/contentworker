@@ -54,8 +54,11 @@ const MAX_ATTRIBUTE = 2048;
 /** How often, and how far apart, the offer is sent before the page stops waiting. */
 const OFFER_ATTEMPTS = 4;
 const OFFER_INTERVAL_MS = 1000;
-/** The most proposed ops one entry holds; past it, the admin sends the state again. */
-const MAX_PROPOSALS = 1000;
+/**
+ * The most proposed ops one entry holds; past it, the admin sends the state again. Each render lays
+ * every proposal over the fields one by one, so this bounds the cost of a render, not just memory.
+ */
+const MAX_PROPOSALS = 200;
 /** The most elements of each kind measured per frame for `layout`; what is sent is fitted from them. */
 const MAX_MEASURED = 10_000;
 
@@ -324,9 +327,15 @@ export function connectPreview(options: ConnectPreviewOptions): PreviewConnectio
     receive(m);
   };
 
-  /** A patch dropped unread still gets an answer, so the admin resends the state at once. */
+  /**
+   * A patch dropped unread still gets an answer, so the admin resends the state at once. A state
+   * dropped unread is answered too, so the admin can say the entry can't be previewed rather than
+   * wait; it must not resend that same state, which would fail the same way.
+   */
   const refuseUnread = (data: Record<string, unknown>): void => {
-    if (!connected || (data.kind !== 'entry.patch' && data.kind !== 'blocks.patch')) return;
+    const patchLike =
+      data.kind === 'entry.state' || data.kind === 'entry.patch' || data.kind === 'blocks.patch';
+    if (!connected || !patchLike) return;
     const { rev, entryId } = data;
     if (!Number.isSafeInteger(rev) || typeof entryId !== 'string' || entryId.length > 256) return;
     fail(entryId, rev as number, 'invalid');

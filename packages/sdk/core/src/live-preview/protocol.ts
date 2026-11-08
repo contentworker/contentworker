@@ -678,8 +678,10 @@ export function clean(value: unknown): boolean {
     const proto = Object.getPrototypeOf(v);
     if (Array.isArray(v)) {
       if (proto !== Array.prototype || v.length > MAX_LIST) return false;
-      // Holes are read as undefined here and dropped by JSON: harmless, and bounded by length.
-      for (let i = 0; i < v.length; i++) if (!walk(v[i], depth + 1)) return false;
+      // A hole would be skipped by every `every()` check and then reach the page as `null`.
+      for (let i = 0; i < v.length; i++) {
+        if (!Object.hasOwn(v, i) || !walk(v[i], depth + 1)) return false;
+      }
       return true;
     }
     if (proto !== Object.prototype && proto !== null) return false;

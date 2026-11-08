@@ -376,7 +376,26 @@ describe('schemas', () => {
     expect(performance.now() - started).toBeLessThan(200);
   });
 
+  it('refuses a list with holes, which every() checks would skip', () => {
+    // biome-ignore lint/suspicious/noSparseArray: the hole is the point
+    const holey = [, { nodeType: 'text', value: 'x' }];
+    const at = { rev: 0, entryId: 'e1', locale: 'en-US' };
+    const doc = { nodeType: 'document', content: holey };
+    expect(
+      parseAdminMessage({ ...env, kind: 'entry.state', ...at, fields: { body: doc } }).ok,
+    ).toBe(false);
+    expect(
+      parseAdminMessage({ ...env, kind: 'select', ref: 'r', deep: { a: [[new Array(1e8)]] } }).ok,
+    ).toBe(false);
+  });
+
   it('types values: rich text is a document, never a string of HTML', () => {
+    expect(
+      contentValueIssue('RichText', {
+        nodeType: 'document',
+        content: [{ nodeType: 'paragraph', content: ['<b>x</b>'] }],
+      }),
+    ).toMatch(/never as HTML/);
     expect(contentValueIssue('RichText', { nodeType: 'document', content: ['<b>x</b>'] })).toMatch(
       /never as HTML/,
     );

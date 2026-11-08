@@ -267,9 +267,9 @@ them; an admin that doesn't simply never sends or reads them.
 | `editing { on }` | Admin → frontend, needs `select`: turns in-page editing (and the inline editor) on or off. On when a session connects with `select`. |
 | `pointer` with `ref` and `rect` `null` | A hover that left every marked element, so the admin can clear its outline. |
 | `entryId` on `applied` and `failed` | `rev` counts per entry, so the acknowledgement names the entry. |
-| `failed` reasons `invalid`, `conflict`, `render` | Beside `gap`: a patch that failed its schema (answered when its `entryId` and `rev` are readable), block ops the page couldn't place, and an `onState` that threw. Each is answered, like `gap`, with a fresh `entry.state`. `invalid` and `conflict` leave the entry's `rev` where it was, so no later patch lands on stale fields; after `render` the patch stays applied (its `rev` counts) and nothing is acknowledged until a later render succeeds, whose `applied { rev }` covers every rev up to it. |
+| `failed` reasons `invalid`, `conflict`, `render` | Beside `gap`: a patch or state that failed its schema (answered when its `entryId` and `rev` are readable; a state that fails is not resent, since it would fail again: the admin says the entry can't be previewed), block ops the page couldn't place, and an `onState` that threw. Each is answered, like `gap`, with a fresh `entry.state`. `invalid` and `conflict` leave the entry's `rev` where it was, so no later patch lands on stale fields; after `render` the patch stays applied (its `rev` counts) and nothing is acknowledged until a later render succeeds, whose `applied { rev }` covers every rev up to it. |
 | `disconnect` event | `preview.on('disconnect')`: the session ended (client-side navigation) and the page is offering again on a new channel; every entry's unsaved state is gone. The page reports `page` again to the new session. |
-| `view` argument to `onState` | `(entryId, locale, fields, view)`: `fields` stays the unsaved state without proposals; `view.withProposals` is what to render and `view.ghosts` (`inserted`, `changed`, `removed`) names the ghost blocks by `_key`. A proposed op must name every block it brings by `_key` (a proposed insert with a keyless block anywhere in its slots, or a proposed `duplicate`, is `invalid`), so the admin can always name a ghost; `ref`s among one message's proposals resolve to those keys. A proposed `remove` of a proposed block takes it back, with everything proposed in or beside it; a fresh `entry.state` clears all proposals. An entry holds at most 1,000 (past that, `conflict`). `proposals` is offered only with `patch.blocks`. |
+| `view` argument to `onState` | `(entryId, locale, fields, view)`: `fields` stays the unsaved state without proposals; `view.withProposals` is what to render and `view.ghosts` (`inserted`, `changed`, `removed`) names the ghost blocks by `_key`. A proposed op must name every block it brings by `_key` (a proposed insert with a keyless block anywhere in its slots, or a proposed `duplicate`, is `invalid`), so the admin can always name a ghost; `ref`s among one message's proposals resolve to those keys. A proposed `remove` of a proposed block takes it back, with everything proposed in or beside it; a fresh `entry.state` clears all proposals. An entry holds at most 200, since each render lays every one over the fields (past that, `conflict`). `proposals` is offered only with `patch.blocks`. |
 
 Behaviour the spec leaves open, as the frontend implements it:
 
@@ -286,8 +286,9 @@ Behaviour the spec leaves open, as the frontend implements it:
   framework's style object.
 - **`isRichTextDocument` checks the whole tree**: every node an object with a `nodeType`, every
   `content` a list of nodes, every text node's `value` a string.
-- **Parsing is bounded before anything is measured**: no list longer than 10,000, at most 200,000
-  values, plain objects and lists only, then the byte cap. A 100-byte message holding a list of a
+- **Parsing is bounded before anything is measured**: no list longer than 10,000 and no holes in
+  one, at most 200,000 values, plain objects and lists only, then the byte cap. An entry beyond
+  those can't be previewed. A 100-byte message holding a list of a
   hundred million holes, or a typed array, is refused at once.
 
 Two wire details differ from the text above, because it can't be written as stated: `pointer`'s
