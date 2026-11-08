@@ -5,6 +5,7 @@ import manifest from '../package.json' with { type: 'json' };
 const SOURCES: Record<string, () => Promise<Record<string, unknown>>> = {
   '.': () => import('@contentworker/sdk-core'),
   './inline-edit': () => import('@contentworker/sdk-core/inline-edit'),
+  './live-preview': () => import('@contentworker/sdk-core/live-preview'),
   './redirects': () => import('@contentworker/sdk-core/redirects'),
   './webhooks': () => import('@contentworker/sdk-core/webhooks'),
   './rich-text': () => import('@contentworker/sdk-rich-text'),
@@ -19,6 +20,7 @@ const SOURCES: Record<string, () => Promise<Record<string, unknown>>> = {
 const FACADES: Record<string, () => Promise<Record<string, unknown>>> = {
   '.': () => import('../src/index'),
   './inline-edit': () => import('../src/inline-edit'),
+  './live-preview': () => import('../src/live-preview'),
   './redirects': () => import('../src/redirects'),
   './webhooks': () => import('../src/webhooks'),
   './rich-text': () => import('../src/rich-text'),
@@ -44,4 +46,9 @@ describe('@contentworker/sdk', () => {
       for (const key of Object.keys(want)) expect(got?.[key]).toBe(want[key]);
     });
   }
+
+  it('tells the admin its own version in a live preview hello', async () => {
+    const { LIVE_PREVIEW_SDK_VERSION } = await import('../src/live-preview');
+    expect(LIVE_PREVIEW_SDK_VERSION).toBe(manifest.version);
+  });
 });

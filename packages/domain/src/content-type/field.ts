@@ -340,6 +340,15 @@ export interface ComponentVariant {
   /** Human-facing name, shown in the editor's "Add block" menu. */
   readonly name: string;
   readonly fields: readonly FieldDefinition[];
+  /**
+   * Former apiIds of this variant: a block stored as `{ "_type": "hero" }` before the variant was
+   * renamed `heroBanner` still reads and validates as a `heroBanner` (GraphQL serves it under the
+   * new apiId), and takes the new apiId on its next save. REST serves the stored `_type` until
+   * then. So a rename never strands content, and a removed apiId listed here is not a removal;
+   * dropping the alias later is. Each alias is used once in the field, and never as another
+   * variant's apiId.
+   */
+  readonly aliases?: readonly string[];
 }
 
 /** The key a blocks element names its variant under. */
@@ -359,14 +368,28 @@ export function blockVariants(field: FieldDefinition): readonly ComponentVariant
     : undefined;
 }
 
-/** The variant a stored blocks element names in `_type`, if it names one that exists. */
+/** The variant a stored blocks element names in `_type`, by its apiId or a former one. */
 export function variantOf(
   variants: readonly ComponentVariant[],
   item: unknown,
 ): ComponentVariant | undefined {
   if (typeof item !== 'object' || item === null || Array.isArray(item)) return undefined;
   const type = (item as Record<string, unknown>)[BLOCK_TYPE_KEY];
-  return typeof type === 'string' ? variants.find((v) => v.apiId === type) : undefined;
+  return typeof type === 'string' ? variantNamed(variants, type) : undefined;
+}
+
+/**
+ * The variant `type` names: the one with that apiId, else the one that lists it among its
+ * `aliases` (an apiId it was renamed from).
+ */
+export function variantNamed(
+  variants: readonly ComponentVariant[],
+  type: string,
+): ComponentVariant | undefined {
+  return (
+    variants.find((v) => v.apiId === type) ??
+    variants.find((v) => Array.isArray(v.aliases) && v.aliases.includes(type))
+  );
 }
 
 /**

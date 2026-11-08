@@ -49,6 +49,7 @@ In CI, skip the file: set `CONTENTWORKER_TOKEN` and `CONTENTWORKER_URL` (and
 | `spaces`                             | The spaces the token can reach                                         | any                 |
 | `model export [--out file]`          | The content types, as JSON or TypeScript                               | `preview:read`      |
 | `model apply <file>`                 | Diff a model file against the space, then apply it                     | `content:manage`    |
+| `blocks push [file]`                 | Diff a blocks file (default `contentworker.blocks.json`) against the block catalog, then push it | `content:manage` |
 | `entries list`                       | Entries as they are now, drafts included (`--content-type`, `--limit`, `--skip`, `--order`, `--query`, `--locale`) | `preview:read` |
 | `entries get <id>`                   | One entry and its draft fields                                         | `preview:read`      |
 | `entries create`                     | A draft (`--content-type`, `--fields`)                                 | `content:write`     |
@@ -75,10 +76,14 @@ API's when it refused.
 | `1`       | The API refused, the network failed, or a check failed               |
 | `2`       | A bad command line, or a confirmation was needed and nothing could ask |
 | `3`       | Not signed in, or the token was refused                              |
-| `4`       | `model apply` found a destructive change and `--allow-destructive` wasn't passed |
+| `4`       | `model apply` or `blocks push` found a destructive change and `--allow-destructive` wasn't passed, or `blocks push` would remove what entries still hold |
+
+When the API refuses a request, the CLI prints the API's message on stderr, and for a `422` each
+field it refused on its own line (`targets[0]: page has no field "blocks"`). With `--json` the
+same text is in `error.message`, and the API's whole answer in `error.details`.
 
 The CLI only asks a question when both stdin and stdout are a terminal. Elsewhere, a command that
-writes after a plan (`model apply`, `import`) needs `--yes`, and fails with exit code 2 without it.
+writes after a plan (`model apply`, `blocks push`, `import`) needs `--yes`, and fails with exit code 2 without it.
 
 ## The content model as code
 
@@ -109,6 +114,19 @@ localization or item type, are destructive: `model apply` refuses them unless yo
 holds (see [Changing a model](/guides/content-modeling/#changing-a-model)). Types that are in the
 space but not in the file are left alone. Each type that changes is published as it is saved;
 `--no-publish` leaves it a draft.
+
+## Blocks from code
+
+```sh
+contentworker blocks push --dry-run
+contentworker blocks push --yes -e staging
+```
+
+`blocks push` sends the component manifests in `contentworker.blocks.json` (or the file you name)
+as the block catalog, which becomes the block types of the blocks fields it targets. It prints the
+change first and pushes against the version it showed. `--allow-destructive` lets it remove blocks
+or props, `--no-publish` leaves the changed types as drafts. See
+[Blocks from code](/guides/blocks-from-code/).
 
 ## Import a file
 

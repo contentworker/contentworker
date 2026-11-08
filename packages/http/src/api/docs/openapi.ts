@@ -115,6 +115,11 @@ export const TAGS: { name: string; description: string }[] = [
   { name: 'Roles & permissions', description: 'Custom roles with content-type + field grants.' },
   { name: 'Audit', description: 'Append-only audit trail of mutating actions.' },
   { name: 'Content types', description: 'The content model: types, fields, publishing.' },
+  {
+    name: 'Block catalog',
+    description:
+      'Blocks from code: component manifests pushed as the variants of blocks fields, versioned.',
+  },
   { name: 'Taxonomy', description: 'Tags, concepts, and concept schemes (SKOS-style).' },
   { name: 'Entries', description: 'Authoring: drafts, publishing, bulk operations, metadata.' },
   { name: 'Versions', description: 'Append-only entry version history, diff, and restore.' },
@@ -168,7 +173,7 @@ const TAG_GROUPS = [
     name: 'Platform',
     tags: ['System', 'Auth', 'Spaces & environments', 'Roles & permissions', 'Audit'],
   },
-  { name: 'Content model', tags: ['Content types', 'Taxonomy'] },
+  { name: 'Content model', tags: ['Content types', 'Block catalog', 'Taxonomy'] },
   {
     name: 'Authoring',
     tags: ['Entries', 'Saved views', 'Versions', 'Assets', 'Comments & tasks', 'Workflows'],
@@ -190,6 +195,7 @@ const TAG_RULES: [RegExp, string][] = [
   [/^\/delivery\//, 'Delivery'],
   [/^\/preview\//, 'Preview'],
   [/\/content-types/, 'Content types'],
+  [/\/block-catalog/, 'Block catalog'],
   [/\/taxonomy\//, 'Taxonomy'],
   [/\/assets\/\{id\}\/(alt-text|auto-tag)/, 'AI & agents'],
   [/\/assets/, 'Assets'],

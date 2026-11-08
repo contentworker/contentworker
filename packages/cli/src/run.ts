@@ -8,7 +8,7 @@ import {
   type OptionSpec,
 } from './commands.js';
 import type { Io } from './io.js';
-import { CliError, EXIT, usageError } from './output.js';
+import { apiErrorText, CliError, EXIT, usageError } from './output.js';
 import { clientFor, resolveSession, type Session } from './session.js';
 
 export const VERSION = '0.1.0';
@@ -129,17 +129,16 @@ function describe(err: unknown): Failure {
   }
   if (err instanceof ManagementError) {
     const status = err.status;
-    const apiError = (err.body as { code?: string; message?: string } | undefined) ?? {};
     return {
       exitCode: status === 401 ? EXIT.auth : EXIT.failure,
       error: {
-        code: apiError.code ?? `http_${status}`,
+        code: err.code ?? `http_${status}`,
         message:
           status === 401
             ? 'The token was refused (401). Run `contentworker login` again.'
             : status === 403
-              ? `Forbidden (403): the token lacks the scope this needs. ${apiError.message ?? ''}`.trim()
-              : (apiError.message ?? err.message),
+              ? `Forbidden (403): the token lacks the scope this needs. ${err.error?.message ?? ''}`.trim()
+              : apiErrorText(err),
         status,
         ...(err.body === undefined ? {} : { details: err.body }),
       },

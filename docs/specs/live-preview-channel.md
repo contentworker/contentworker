@@ -1,6 +1,9 @@
 # Live preview channel
 
-Status: **proposed** (M6, "Live preview channel" in `ROADMAP.md`). Nothing here is built yet.
+Status: **proposed** (M6, "Live preview channel" in `ROADMAP.md`). The frontend half is built
+(`@contentworker/sdk/live-preview`, see Extensions); so is the admin half (the entry editor's
+Site view, `apps/web/app/cms/lib/live-preview/host.ts`), except Coworker's proposals, which it
+doesn't accept yet.
 This file sits in `docs/specs/`, which the docs embed does not read (it takes `docs/*.md` only),
 so MCP clients never mistake it for a description of shipped behaviour.
 
@@ -254,13 +257,58 @@ The canvas UI (toolbox, seams, dock, inspector, undo), the `patchBlocks` use-cas
 renderers, and per-breakpoint overrides each have their own M6 item. This spec only fixes the
 channel they use.
 
+## Extensions
+
+Additive, so they need no version bump (see "Version negotiation"): optional fields and message
+kinds either side may ignore. The frontend half in `@contentworker/sdk/live-preview` speaks all of
+them; an admin that doesn't simply never sends or reads them.
+
+| Extension | What it adds |
+| --- | --- |
+| `layout` capability and `layout` message | Frontend → admin: `{ blocks: [{ ref, rect }], slots: [{ ref, rect, gaps }], fields: [{ ref, rect }], scroll, viewport, docHeight, truncated? }`, the geometry the canvas editor draws seams (insertion points) from. A slot is the element marked `data-cw-slot` with the slot's ref (`body`, `body[<key>].items`); each gap is `{ index, rect, axis, after?, before? }`, naming the blocks on either side by `_key`. Sent on change, at most once an animation frame. Fitted to the message limit, on-screen boxes first; `truncated: true` when some were left out. At most 2,000 of each list and 4,000 gaps. |
+| `editing { on }` | Admin → frontend, needs `select`: turns in-page editing (and the inline editor) on or off. On when a session connects with `select`. |
+| `pointer` with `ref` and `rect` `null` | A hover that left every marked element, so the admin can clear its outline. |
+| `entryId` on `applied` and `failed` | `rev` counts per entry, so the acknowledgement names the entry. |
+| `failed` reasons `invalid`, `conflict`, `render` | Beside `gap`: a patch or state that failed its schema (answered when its `entryId` and `rev` are readable; a state that fails is not resent, since it would fail again: the admin says the entry can't be previewed), block ops the page couldn't place, and an `onState` that threw. Each is answered, like `gap`, with a fresh `entry.state`. `invalid` and `conflict` leave the entry's `rev` where it was, so no later patch lands on stale fields; after `render` the patch stays applied (its `rev` counts) and nothing is acknowledged until a later render succeeds, whose `applied { rev }` covers every rev up to it. |
+| `disconnect` event | `preview.on('disconnect')`: the session ended (client-side navigation) and the page is offering again on a new channel; every entry's unsaved state is gone. The page reports `page` again to the new session. |
+| `view` argument to `onState` | `(entryId, locale, fields, view)`: `fields` stays the unsaved state without proposals; `view.withProposals` is what to render and `view.ghosts` (`inserted`, `changed`, `removed`) names the ghost blocks by `_key`. A proposed op must name every block it brings by `_key` (a proposed insert with a keyless block anywhere in its slots, or a proposed `duplicate`, is `invalid`), so the admin can always name a ghost; `ref`s among one message's proposals resolve to those keys. A proposed `remove` of a proposed block takes it back, with everything proposed in or beside it; a fresh `entry.state` clears all proposals. An entry holds at most 200, since each render lays every one over the fields (past that, `conflict`). `proposals` is offered only with `patch.blocks`. |
+
+Behaviour the spec leaves open, as the frontend implements it:
+
+- **A fresh offer replaces the session.** A page that calls `connectPreview` again in one load (a
+  remount, React's development double effect) offers a new channel from the same window. The admin
+  should take a well-formed offer from the pinned `contentWindow` as replacing the session, as it
+  does after `navigated`. Pages should keep one connection: the frontend reports each connection
+  to the inline editor separately, so one closing doesn't wake the overlay while another is live.
+- **Ref paths escape keys.** A block `_key` may be any stored string, so a path writes its `[`, `]`
+  and `%` as `%5B`, `%5D` and `%25`; any key round-trips, and keys without them read as before.
+- **`isSafeTokenValue` also refuses `&`, `"`, `'`, a backtick, `;`, `{`, `}`, comments and control
+  characters**, so a value can't end or rewrite an HTML attribute when a renderer builds `style`
+  as text (`ur&#108(` would decode to `url(`). Write values through `style.setProperty` or a
+  framework's style object.
+- **`isRichTextDocument` checks the whole tree**: every node an object with a `nodeType`, every
+  `content` a list of nodes, every text node's `value` a string.
+- **Parsing is bounded before anything is measured**: no list longer than 10,000 and no holes in
+  one, at most 200,000 values, plain objects and lists only, then the byte cap. An entry beyond
+  those can't be previewed. A 100-byte message holding a list of a
+  hundred million holes, or a typed array, is refused at once.
+
+Two wire details differ from the text above, because it can't be written as stated: `pointer`'s
+hover/click field travels as `pointer`, since the envelope's `kind` already holds `'pointer'`; and
+`entry.state` and `entry.patch` carry one locale's values (not locale-keyed), as the message names
+the locale.
+
 ## Open questions
+
+Each has a default the first implementation follows until decided otherwise.
 
 1. Does the admin pin the frontend's origin from the framed URL alone, or also from an origin
    list the space configures on the "connect a frontend" screen? The list is stricter, but it's
-   one more setting.
+   one more setting. **Default:** pinned from the origin of the framed preview URL's template, and
+   updated on `navigated` only to a URL that matches one of the space's templates.
 2. Should `page` report entries from every block reference on the page, or only the entry being
    edited and its direct references? More entries means the page can show more edits, at the
-   cost of larger state messages.
+   cost of larger state messages. **Default:** the edited entry and its direct references.
 3. Do we want a `resize` message (frame height follows the page), or does the canvas always
-   scroll inside a fixed-height frame?
+   scroll inside a fixed-height frame? **Default:** a fixed-height frame that scrolls inside; no
+   `resize`.

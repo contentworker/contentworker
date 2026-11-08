@@ -914,6 +914,25 @@ field never becomes a label, and a denied slug field drops the item. Every write
 `menus.changed`. MCP: `menus_list`, `menus_get`, `menus_preview`, `menus_resolve` (`preview:read`),
 `menus_create`, `menus_update`, `menus_move_item`, `menus_delete` (`content:manage`).
 
+### Block catalog
+
+Blocks from code: the component manifests a developer pushes (`contentworker blocks push`) become
+the variants of the target content types' blocks fields. One environment-scoped version per push
+that changes something, kept as history. See [Domain model](./domain-model.md#block-catalogs).
+
+| Method | Path                                | Scope            | Notes                                                                                                                                                                                                                                                                                  |
+| ------ | ----------------------------------- | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| GET    | `…/block-catalog`                   | `preview:read`   | The catalog in force `{ version, hash, blocks, targets, changes, pushedAt, pushedBy }`; `404` before the first push                                                                                                                                                                    |
+| POST   | `…/block-catalog`                   | `content:manage` (+ `content:publish` unless `publish: false`) | Push `{ blocks, targets, dryRun?, expectedVersion?, allowDestructive?, publish? }` → `{ dryRun, applied, unchanged, previousVersion, version, hash, changes, contentTypes, destructive, inUse, warnings }`. `422` naming each manifest problem (`blocks[hero].slots.items`); `409` for a stale `expectedVersion` (a push that changes nothing is a no-op whatever it expected), a removal an entry still holds (`inUse`, no override), any removal without `allowDestructive`, or a push that lost the race to another push or a revision of a target type; the result rides in `details` |
+| GET    | `…/block-catalog/versions`          | `preview:read`   | `?limit=` (default 20, at most 100), `?before=` → `{ items }`, newest first, without `blocks` (`blockCount` instead)                                                                                                                                                                    |
+| GET    | `…/block-catalog/versions/:version` | `preview:read`   | One version; `404` when there is none                                                                                                                                                                                                                                                  |
+| GET    | `…/block-catalog/usage`             | `preview:read`   | `{ version, blocks: [{ id, entries, contentTypes }], scanned, complete }`: entries (current versions, out of the trash) using each block per target type, up to `MAX_BLOCK_USAGE_SCAN` (2,000) per type; types the caller can't read left out                                           |
+
+A push revises each changed target type with `reviseContentType` and publishes it (unless
+`publish: false`), then writes the revisions and the version in one unit. Pushing the catalog in
+force (same hash, no type to change) writes nothing. MCP: `blocks_catalog_get`,
+`blocks_catalog_versions`, `blocks_usage` (`preview:read`), `blocks_catalog_push` (`content:manage`).
+
 ### Saved views
 
 A saved view is a named entries-list query (`filters`, a `where` tree, `order`, `search`) and the

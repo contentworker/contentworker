@@ -168,3 +168,17 @@ export const previewTemplateFields = (template: string): string[] =>
     const field = FIELD.exec(m[1] ?? '')?.[1];
     return field ? [field] : [];
   });
+
+/**
+ * Whether a template fills to another URL per locale: it names `{locale}`, or a localized field
+ * (whose value differs by locale). The editor's Site view loads the page again for each locale of
+ * such a type, and sends the same page the entry in the new locale otherwise.
+ */
+export function previewTemplateVariesByLocale(
+  template: string,
+  fields: readonly Pick<FieldDefinition, 'apiId' | 'localized'>[],
+): boolean {
+  if (/\{locale\}/.test(template)) return true;
+  const named = new Set(previewTemplateFields(template));
+  return fields.some((f) => named.has(f.apiId) && f.localized);
+}

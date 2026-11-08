@@ -712,6 +712,118 @@ navigating.
 **In the admin.** The link opens the entry editor on the referenced field; see
 [Admin UI](./admin-ui.md#inline-edit-links).
 
+## `@contentworker/sdk/live-preview` — the live preview channel
+
+The frontend half of the channel in [`specs/live-preview-channel.md`](./specs/live-preview-channel.md),
+which governs it (including its Extensions section). Preview-only: the admin half (`apps/web`,
+framing the frontend, drawing overlays) isn't built yet. The code is in
+`packages/sdk/core/src/live-preview/`: `protocol.ts` (messages, `acceptMessage`, parsers,
+versions, capabilities, caps), `frontend.ts` (`connectPreview`), `patch.ts` (the block applier),
+`layout.ts` (the `layout` extension's geometry), `tokens.ts` (`isSafeTokenValue`) and `link.ts`
+(the inline editor's hand-off). The user guide is https://docs.contentworker.app/guides/live-preview/.
+
+- **Connect.** `connectPreview({ adminOrigin, capabilities, onState, newKey?, window? })` is a
+  no-op handle unless the page is framed (`window.parent !== window`) and `adminOrigin` is set.
+  Only then is `adminOrigin` checked: an exact https origin (http only on loopback), and never the
+  page's own origin (it throws otherwise, so a mistake breaks previews, never page views). It mints
+  a 128-bit base64url `channel` per page load (`newChannel`, `crypto.getRandomValues`) and posts
+  `connect.offer` to `window.parent` targeted at `adminOrigin`, resending up to three times, 1 s
+  apart. `connect.accept` must carry a version the page offered and stamp it as `v`; the accepted
+  capabilities are intersected with the offer. `connect.reject` logs one console error naming
+  both version lists. There is no `cw_session` in URLs any more.
+- **Checks.** `acceptMessage(event, { origin, source, channel?, version? })` is the one check
+  function both sides use: origin, sender, channel (an admin waiting for an offer passes no
+  channel and takes any well-formed one) and version. Then `parseAdminMessage` /
+  `parseFrontendMessage` validate the kind's schema (after `clean()`, a bounded walk that runs
+  before anything else reads the message: no `__proto__`/`constructor`/`prototype`, plain objects
+  and lists only, depth 64, no list over 10,000 or with holes, at most 200,000 values; then
+  `withinBytes`) and
+  return a freshly built message. Unknown kinds are `unknown` and ignored; `invalid` and `too-large` are dropped whole and
+  counted (`preview.dropped`). Then `capabilityAllows(message, accepted)`.
+- **Versions.** `OFFERED_VERSIONS` (this SDK's frontend) and `SUPPORTED_VERSIONS` (the admin's,
+  each entry commented with the last SDK release that needs it); `negotiateVersion` picks the
+  highest shared one. Additive changes don't bump the version.
+- **Entries and revs.** Each entry has its own record (`locale`, `rev`, one locale's `fields`,
+  proposals). `entry.state` replaces it and sets `rev`; `entry.patch` and `blocks.patch` apply only
+  at `rev + 1`, else `failed { reason: 'gap' }`. A patch (or state; the admin doesn't resend a state that failed) that fails its schema but has a readable
+  `entryId` and `rev` answers `failed { reason: 'invalid' }`; a rich text document turned into
+  anything else is `invalid` (`contentValueIssue(type, value)` is the admin's check before
+  sending); block ops that can't be placed are `conflict`. None advances the rev, so the admin
+  sends `entry.state` and nothing lands on stale fields.
+- **Rendering.** One `onState` per entry at a time (a `rendering` set keyed by entry id, so a
+  fresh `entry.state` waits for the running call rather than starting beside it), later edits folded
+  into the next call,
+  `applied { rev, entryId }` after it settles, `failed { reason: 'render' }` when it throws. A
+  failed render acks nothing; the fields stay applied, so the next call renders them and its
+  `applied` covers every rev before it. A render superseded by a new `entry.state` acks nothing.
+  (The ops queue and its 1,000-op cap from the earlier design are gone: `onState` gets whole
+  fields, so nothing queues.)
+- **Blocks and proposals.** `blocks.patch` ops are `patchBlocks` ops; their `field` and `locale`
+  come from the message. Real ops apply through `applyLivePatch` (below). Proposed ops are kept in
+  a list per entry (at most 200, else `conflict`: each render lays every one over the fields), never in `fields`; `viewOf` lays them over the
+  fields for `view.withProposals` and lists `view.ghosts` (`inserted`, `changed`, `removed`;
+  removed blocks stay in view, and a removal of a block already gone isn't listed). `resolveRefs`
+  replaces one message's proposal `ref`s with the keys they named; a proposed insert with a keyless
+  block anywhere in its slots (`everyBlockKeyed`), or a proposed `duplicate`, is `invalid`, since a
+  key minted on the page would change every render and the admin could never name the ghost. A
+  proposed `remove` of a proposed block retracts every proposal naming that key (as its own, its
+  parent or a sibling); a proposal that no longer applies (its block gone, or its key now real
+  because the admin accepted it as a real insert) drops out. `entry.state` clears the list.
+  `narrowCapabilities` drops `proposals` without `patch.blocks`.
+- **The applier.** `applyLivePatch` is a schema-less copy of the domain's `applyBlockPatch`
+  (`packages/domain/src/content-type/block-patch.ts`) plus `setField`, on locale-keyed fields. A
+  block is any object with a string `_type`; its slots are its direct properties holding a list of
+  objects, each keyed or typed, at least one typed. Plain objects under a block are opaque (a
+  component or a JSON value, which the page can't tell apart). For patches the server accepts, in
+  the applied form, the two give equal fields: `packages/http/test/live-preview-patch-parity.test.ts`
+  runs the same fixtures, and the domain's `applied` ops, through both, and pins the divergences
+  (a raw `duplicate` with blocks under a plain component; block-shaped objects in a JSON list, a
+  field the variant no longer declares, or under an unknown `_type`). The admin's way out of a
+  repeated refusal: `entry.state`.
+- **Pointer.** With `select` and editing on (the default once connected; the `editing` extension
+  turns it off), a capture-phase click on the nearest `[data-cw-ref]` posts
+  `pointer { pointer: 'click', ref, rect }` and is `preventDefault`ed; hover goes out at most once
+  a frame, and `{ ref: null, rect: null }` on leave. The spec calls the hover/click field `kind`,
+  which the envelope's `kind` already holds, so it is `pointer` on the wire.
+- **Navigation.** Links outside marked elements navigate the page itself. `pagehide` posts a
+  final `navigated` with the clicked link's URL (forgotten when the page's own router
+  `preventDefault`s the click), or the current one. `popstate` and `emit('navigated', { url })`
+  (for client-side routers; resolved against the page's URL) post `navigated`, fire `disconnect`
+  and connect again on a new channel, resetting the last `layout` and hover so the new session
+  hears them; a hash-only change doesn't. A second reject logs nothing more.
+- **Refs.** A ref's `field` is a path (`content-ref.ts`: `formatFieldPath`, `parseFieldPath`,
+  `topLevelField`, `blockKeyOf`), still six parts, so old refs parse and old parsers read a path
+  as a field name. A key's `[`, `]` and `%` are escaped (`%5B`, `%5D`, `%25`); `parseContentRef`
+  returns undefined for a malformed `%` escape instead of throwing. `apps/web`'s entry editor opens the top-level field before the first `[` of a
+  `?field=` path. Blocks are marked by `data-cw-ref` with a path ending in `[<key>]`; `data-cw-block`
+  is gone.
+- **`layout` extension.** With the capability, MutationObserver, ResizeObserver and passive
+  scroll and resize listeners schedule one measure per animation frame (no polling), skipped when
+  unchanged. Up to 10,000 elements of each kind are measured; `fitGeometry` keeps what fits
+  `MAX_MESSAGE_BYTES` with the envelope and the caps, on-screen first, then by distance from the
+  viewport, trimming a slot's gaps rather than dropping it, and sets `truncated: true`. Slots are
+  `data-cw-slot` elements holding the slot's ref; gaps name the blocks on either side by key. A
+  block counts in a slot's gaps only when its ref is the slot's (same entry and locale, path one
+  block up); a ref or key the admin's parser would refuse (`isWireRef`, `isWireId`) is skipped
+  rather than costing the whole report. `page` entries are checked the same way, at most 200.
+- **The inline editor.** `mountInlineEditor` subscribes to `link.ts`, held on `globalThis` under
+  `Symbol.for('contentworker.live-preview.link')` so the separately bundled `inline-edit` and
+  `live-preview` entries share it. Each connection reports for itself; the link is connected while
+  any is. While connected, its toggle is hidden, its overlay draws nothing and handles no click
+  (the channel posts `pointer`), and `enabled` follows the admin's editing switch; the page's own
+  setting (and any `setEnabled` meanwhile) comes back when the session ends.
+- **Tokens.** `isSafeTokenValue` refuses `url(`, `@import`, `expression(`, `javascript:`, `<`,
+  `>`, `\`, `&`, `"`, `'`, a backtick, comments, `;`, `{`, `}` and control characters anywhere,
+  case-insensitively, and any function call but `var`, `calc`, `clamp`, `min`, `max`, `rgb`,
+  `hsl`, `oklch`; whole values only. Values are for `style.setProperty` or a framework style object.
+- `LIVE_PREVIEW_SDK_VERSION` is sent in the offer's `sdk`; `packages/sdk/sdk/test/subpaths.test.ts`
+  keeps it equal to `@contentworker/sdk`'s version.
+- **React.** `useLivePreview(options)` in `@contentworker/sdk/react` returns
+  `{ active, connected, entries, preview }`, reports `page` from `options.page` to each session
+  (handing it over on `disconnect`, so `connectPreview` sends it once the next one connects) and
+  again when the entries change, empties `entries` on `disconnect`, and resolves each `onState`
+  after React commits (and on unmount), so `applied` means on screen.
+
 ## GraphQL
 
 If you prefer GraphQL over the REST client, the Delivery API also exposes a per-space GraphQL

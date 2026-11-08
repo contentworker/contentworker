@@ -332,6 +332,122 @@ export interface MenuItemInput {
   readonly children?: readonly MenuItemInput[];
 }
 
+/** A named place inside a block that holds other blocks: a nested blocks field. */
+export interface BlockSlot {
+  readonly apiId: string;
+  readonly name: string;
+  readonly help?: string;
+  /** The block ids the slot takes. */
+  readonly allowedChildren: readonly string[];
+  readonly min?: number;
+  readonly max?: number;
+}
+
+/**
+ * One component your site renders, as data: what `contentworker blocks push` sends. `id` is
+ * stored on each block as `_type` and is never reused; renaming it keeps the old one in `aliases`.
+ * Props are field definitions; a style prop is a token (a Symbol with `validations.in`).
+ */
+export interface BlockManifest {
+  readonly id: string;
+  readonly name: string;
+  readonly group?: string;
+  readonly description?: string;
+  readonly thumbnail?: { readonly assetId: string } | { readonly url: string };
+  readonly aliases?: readonly string[];
+  readonly fields: readonly FieldDefinition[];
+  readonly slots?: readonly BlockSlot[];
+  /** Only these blocks' slots may hold it, and never the top level. */
+  readonly allowedParents?: readonly string[];
+}
+
+/** A content type's top-level blocks field the catalog provides the variants of. */
+export interface BlockCatalogTarget {
+  readonly contentTypeApiId: string;
+  readonly field: string;
+  /** The blocks its top level takes; default every block without `allowedParents`. */
+  readonly blocks?: readonly string[];
+}
+
+export interface BlockCatalogChanges {
+  readonly added: readonly string[];
+  readonly changed: readonly string[];
+  readonly removed: readonly string[];
+  readonly renamed: readonly { readonly from: string; readonly to: string }[];
+}
+
+/** One pushed version of the environment's block catalog. */
+export interface BlockCatalog {
+  readonly version: number;
+  readonly hash: string;
+  readonly blocks: readonly BlockManifest[];
+  readonly targets: readonly BlockCatalogTarget[];
+  readonly changes: BlockCatalogChanges;
+  readonly pushedAt: string;
+  readonly pushedBy: string | null;
+}
+
+export type BlockCatalogSummary = Omit<BlockCatalog, 'blocks'> & { readonly blockCount: number };
+
+export interface BlockCatalogPushInput {
+  readonly blocks: readonly BlockManifest[];
+  readonly targets: readonly BlockCatalogTarget[];
+  /** Answer what the push would do; change nothing. */
+  readonly dryRun?: boolean;
+  /** The version you reviewed (a dry run's `previousVersion`): another one is a 409. */
+  readonly expectedVersion?: number;
+  /** Apply a push that removes blocks or block props (none an entry still holds). */
+  readonly allowDestructive?: boolean;
+  /** Publish each changed type (default true). */
+  readonly publish?: boolean;
+}
+
+/** What a push did, or would do. */
+export interface BlockCatalogPush {
+  readonly dryRun: boolean;
+  readonly applied: boolean;
+  readonly unchanged: boolean;
+  readonly previousVersion: number;
+  readonly version: number;
+  readonly hash: string;
+  readonly changes: BlockCatalogChanges;
+  readonly contentTypes: readonly {
+    readonly contentTypeApiId: string;
+    readonly fields: readonly ({ readonly field: string } & BlockCatalogChanges)[];
+    readonly destructive: boolean;
+    readonly version: number;
+    readonly published: boolean;
+  }[];
+  readonly destructive: boolean;
+  /** What it would remove that entries still hold: a push with any is refused. */
+  readonly inUse: readonly {
+    readonly contentTypeApiId: string;
+    readonly at: string;
+    readonly kind: 'variant' | 'field';
+    readonly entries: readonly string[];
+  }[];
+  readonly warnings: readonly {
+    readonly field: string;
+    readonly entries: number;
+    readonly message: string;
+  }[];
+}
+
+export interface BlockCatalogUsage {
+  readonly version: number | null;
+  readonly blocks: readonly {
+    readonly id: string;
+    readonly entries: number;
+    readonly contentTypes: readonly {
+      readonly contentTypeApiId: string;
+      readonly entries: number;
+    }[];
+  }[];
+  readonly scanned: number;
+  /** False when a type had more entries than the count reads: a lower bound. */
+  readonly complete: boolean;
+}
+
 /** A navigation menu: a named tree of links, served resolved by Delivery. */
 export interface Menu {
   readonly id: string;
@@ -1681,6 +1797,27 @@ export function createManagementClient(opts: ManagementClientOptions) {
       /** Copies the definition under a new apiId and name, as a draft with no entries. */
       clone: (apiId: string, to: { readonly apiId: string; readonly name: string }) =>
         post<ContentType>(`${envBase}/content-types/${e(apiId)}/clone`, to),
+    },
+
+    /**
+     * Blocks from code: the component manifests pages are composed from. Pushing needs
+     * content:manage; dry-run first, then push with the dry run's `previousVersion`.
+     */
+    blockCatalog: {
+      /** The catalog in force; 404 before the first push. */
+      get: () => get<BlockCatalog>(`${envBase}/block-catalog`),
+      /** One past version. */
+      version: (version: number) =>
+        get<BlockCatalog>(`${envBase}/block-catalog/versions/${e(String(version))}`),
+      /** Versions newest first, without their blocks. */
+      versions: async (o: { readonly limit?: number; readonly before?: number } = {}) =>
+        (await get<{ items: BlockCatalogSummary[] }>(`${envBase}/block-catalog/versions`, { ...o }))
+          .items,
+      /** 422 naming each manifest problem; 409 for a stale version or a block entries still use. */
+      push: (input: BlockCatalogPushInput) =>
+        post<BlockCatalogPush>(`${envBase}/block-catalog`, input),
+      /** Entries using each block, per content type. */
+      usage: () => get<BlockCatalogUsage>(`${envBase}/block-catalog/usage`),
     },
 
     /** Navigation menus: delivery data a front end renders (content:manage to change them). */

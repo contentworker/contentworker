@@ -134,6 +134,14 @@ to action), declare one `Array` field whose `items` lists the shapes as `variant
 - One optional block slot is the same field with `validations: { size: { max: 1 } }`.
 - Adding a variant or an optional field is always safe. Removing a variant is refused while any
   entry still has a block of it; the error lists those entries.
+- To rename a variant's apiId, keep the old one in the variant's `aliases`: stored blocks keep
+  reading as it and take the new apiId on their next save.
+- When the space has a block catalog (`blocks_catalog_get`), its blocks come from the site's code:
+  change them with `blocks_catalog_push`, never by editing the field's variants by hand. Run it
+  with `dryRun: true`, show the user the result (added, changed, removed, renamed, and `inUse`,
+  which refuses the push), then push with `expectedVersion` set to the dry run's
+  `previousVersion`. Check `blocks_usage` before removing a block. Style props are tokens (a
+  `Symbol` with `validations.in`), never CSS.
 
 ## Rules worth knowing
 

@@ -56,7 +56,8 @@ pattern names is refused.
 A preview URL is your own frontend's draft view for the type's entries, for example
 `https://site.example/__preview?entry={id}#token={token}`. A
 [preview link](/guides/editing-and-publishing/#preview-drafts) fills it for an entry and returns it
-as `frontendUrl`, beside the Preview API URL, and the editor's **Copy preview link** copies it.
+as `frontendUrl`, beside the Preview API URL, and the editor's **Copy preview link** copies it. It
+is also the page the editor's [Site view](/guides/live-preview/#in-the-editor) frames.
 Its placeholders, each filled URL-encoded, are `{id}`, `{token}` (required: the frontend reads the
 draft with it), `{locale}`, `{space}`, `{environment}`, and `{field:<apiId>}` for one of the type's
 own `Symbol`, `Slug`, `Integer`, `Number` or `Date` fields; anything else is refused. While a field
@@ -195,7 +196,10 @@ see [Roles](/guides/api-keys/#roles)).
   [AI features](/guides/ai/)) before making it required.
 - **Adding a block type**, or an optional field to one, is safe. **Removing a block type** is
   refused while any entry (a draft, the trash or a published version) still has a block of it;
-  the error lists those entries, so change or remove their blocks first.
+  the error lists those entries, so change or remove their blocks first. **Renaming** one is not a
+  removal when the new block type keeps the old API ID in its `aliases`
+  ([Blocks](/reference/field-types/#blocks)). To keep block types in your site's code and push
+  them with the CLI, see [Blocks from code](/guides/blocks-from-code/).
 - **Removing a field**, at any depth (a component's field, a block type's field), is refused the
   same way while any entry still holds a value for it: the `409` lists each field and its entries
   (`details.fieldsInUse`). There is no override. Clear the value in those entries (save them

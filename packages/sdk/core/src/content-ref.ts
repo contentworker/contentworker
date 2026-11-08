@@ -19,9 +19,99 @@ export interface ContentRef {
   readonly environment: string;
   readonly entryId: string;
   readonly contentType: string;
-  /** apiId of the field, e.g. `title`. */
+  /**
+   * The field's path: its apiId (`title`), or inside blocks, the blocks field with each block's
+   * `_key` in brackets (`body[0192f…].heading`, `body[0192f…]` for the block itself). See
+   * {@link formatFieldPath}. A key, not an index, names each block, so a path still points at the
+   * same block after a reorder.
+   */
   readonly field: string;
   readonly locale: string;
+}
+
+/** One step of a field path below its top-level field: into a block by key, or a field by name. */
+export type FieldPathStep = { readonly key: string } | { readonly field: string };
+
+/** A field path, parsed: the entry's top-level field, then each step down. */
+export interface FieldPath {
+  readonly field: string;
+  readonly steps: readonly FieldPathStep[];
+}
+
+const NAME = /^[^.[\]]+$/;
+
+/**
+ * A key as a path holds it. Keys are any string the server stored, so the three characters that
+ * would end or confuse a bracket are escaped (`%` first, so an escape can't be forged).
+ */
+const escapeKey = (key: string): string =>
+  key.replace(/%/g, '%25').replace(/\[/g, '%5B').replace(/\]/g, '%5D');
+const unescapeKey = (key: string): string =>
+  key.replace(/%5B/gi, '[').replace(/%5D/gi, ']').replace(/%25/g, '%');
+
+/**
+ * A field path as a ref carries it, in the notation of `patchBlocks`'s paths with keys in place of
+ * indexes: `body`, `body[k1]`, `body[k1].heading`, `body[k1].items[k2].label`. A key's `[`, `]` and
+ * `%` are escaped, so any stored key round-trips. Throws on an empty key, or on a field name holding
+ * `.`, `[` or `]` (an apiId never does), which would make a path that parses as a different one.
+ */
+export function formatFieldPath(path: FieldPath): string {
+  if (!NAME.test(path.field)) throw new Error(`Not a field name: ${path.field}`);
+  let out = path.field;
+  for (const step of path.steps) {
+    if ('key' in step) {
+      if (step.key === '') throw new Error('A block key is never empty');
+      out += `[${escapeKey(step.key)}]`;
+    } else {
+      if (!NAME.test(step.field)) throw new Error(`Not a field name: ${step.field}`);
+      out += `.${step.field}`;
+    }
+  }
+  return out;
+}
+
+/**
+ * Parses a ref's field part. A plain apiId (every ref written before paths) parses as a path with
+ * no steps. Undefined when it isn't a path: a field step must follow a block, and a block a field.
+ */
+export function parseFieldPath(value: string): FieldPath | undefined {
+  const head = /^[^.[\]]+/.exec(value);
+  if (!head) return undefined;
+  const steps: FieldPathStep[] = [];
+  let rest = value.slice(head[0].length);
+  let last: 'field' | 'key' = 'field';
+  while (rest !== '') {
+    const block = /^\[([^[\]]+)\]/.exec(rest);
+    const field = /^\.([^.[\]]+)/.exec(rest);
+    if (block && last === 'field') {
+      steps.push({ key: unescapeKey(block[1] as string) });
+      last = 'key';
+      rest = rest.slice(block[0].length);
+    } else if (field && last === 'key') {
+      steps.push({ field: field[1] as string });
+      last = 'field';
+      rest = rest.slice(field[0].length);
+    } else {
+      return undefined;
+    }
+  }
+  return { field: head[0], steps };
+}
+
+/**
+ * The top-level field a path is in: everything before the first `[`. What the entry form opens
+ * when it is given a path it can't follow further.
+ */
+export function topLevelField(path: string): string {
+  const bracket = path.indexOf('[');
+  return bracket < 0 ? path : path.slice(0, bracket);
+}
+
+/** The `_key` of the block a path names, when it names a block itself (`body[k1]`). */
+export function blockKeyOf(path: string): string | undefined {
+  const parsed = parseFieldPath(path);
+  const last = parsed?.steps.at(-1);
+  return last && 'key' in last ? last.key : undefined;
 }
 
 /** The attribute name carrying a serialized ref. */
@@ -48,7 +138,13 @@ export function formatContentRef(ref: ContentRef): string {
 /** Parses a serialized ref, or returns undefined if it is not one. */
 export function parseContentRef(value: string | null | undefined): ContentRef | undefined {
   if (!value) return undefined;
-  const parts = value.split(SEPARATOR).map(decodeURIComponent);
+  let parts: string[];
+  try {
+    parts = value.split(SEPARATOR).map(decodeURIComponent);
+  } catch {
+    // A malformed escape: not a ref, rather than an exception in whoever reads the page.
+    return undefined;
+  }
   if (parts.length !== 6 || parts.some((p) => p === '')) return undefined;
   const [space, environment, entryId, contentType, field, locale] = parts as [
     string,
@@ -61,7 +157,10 @@ export function parseContentRef(value: string | null | undefined): ContentRef | 
   return { space, environment, entryId, contentType, field, locale };
 }
 
-/** The admin URL that opens a ref for editing. */
+/**
+ * The admin URL that opens a ref for editing. A path passes through whole as `?field=`; the entry
+ * form opens the top-level field before its first `[` when it can't follow the path further.
+ */
 export function adminEditUrl(adminUrl: string, ref: ContentRef): string {
   const base = adminUrl.replace(/\/$/, '');
   const params = new URLSearchParams({

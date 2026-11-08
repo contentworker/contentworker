@@ -314,6 +314,8 @@ interface Variant {
   readonly apiId: string;
   readonly name: string;
   readonly fields: readonly Field[];
+  /** Former apiIds: a variant renamed from one of these is not a removal. */
+  readonly aliases?: readonly string[];
 }
 
 function diffVariants(
@@ -324,19 +326,35 @@ function diffVariants(
 ): void {
   const next = new Map(after.map((v) => [v.apiId, v]));
   const old = new Map(before.map((v) => [v.apiId, v]));
+  // A variant that lists an old apiId in its aliases is that variant renamed.
+  const renamedFrom = new Map<string, Variant>();
+  for (const v of after) {
+    for (const a of v.aliases ?? []) if (old.has(a) && !next.has(a)) renamedFrom.set(a, v);
+  }
   for (const v of before) {
-    if (!next.has(v.apiId)) {
+    if (next.has(v.apiId)) continue;
+    const to = renamedFrom.get(v.apiId);
+    if (to) {
       out.push({
         path: `${at}[${v.apiId}]`,
-        kind: 'remove-variant',
-        destructive: true,
-        detail: 'remove block type (blocks of it are lost)',
+        kind: 'change-field',
+        destructive: false,
+        detail: `renamed to ${to.apiId} (blocks stored as ${v.apiId} keep reading)`,
       });
+      diffFields(`${at}[${to.apiId}]`, v.fields, to.fields, out);
+      continue;
     }
+    out.push({
+      path: `${at}[${v.apiId}]`,
+      kind: 'remove-variant',
+      destructive: true,
+      detail: 'remove block type (blocks of it are lost)',
+    });
   }
   for (const v of after) {
     const was = old.get(v.apiId);
     if (!was) {
+      if ((v.aliases ?? []).some((a) => renamedFrom.get(a) === v)) continue;
       out.push({
         path: `${at}[${v.apiId}]`,
         kind: 'add-variant',

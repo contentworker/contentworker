@@ -9,6 +9,8 @@ import {
   type AssetRendition,
   type AssetZipJob,
   assetKind,
+  type BlockCatalog,
+  type BlockCatalogSummary,
   type Comment,
   type Concept,
   ConflictError,
@@ -90,6 +92,7 @@ import type {
   AuditRepo,
   AuthRepo,
   BlobStore,
+  BlockCatalogRepo,
   BulkJob,
   BulkJobChunk,
   BulkJobRepo,
@@ -428,6 +431,7 @@ function makeContentTypeRepo(x: Exec): ContentTypeRepo {
             scopeFilter(t, scope),
             eq(t.apiId, apiId),
             eq(t.singleton, expected.singleton),
+            expected.version !== undefined ? eq(t.version, expected.version) : undefined,
             others,
           ),
         );
@@ -4821,6 +4825,7 @@ const ENVIRONMENT_SCOPED_TABLES = [
   schema.redirects,
   schema.redirectSets,
   schema.menus,
+  schema.blockCatalogs,
   schema.previewTokens,
   schema.bulkJobs,
   schema.bulkJobChunks,
@@ -6596,6 +6601,88 @@ const toSavedView = (r: SavedViewRow): SavedView => ({
   updatedAt: r.updatedAt.toISOString(),
 });
 
+type BlockCatalogRow = typeof schema.blockCatalogs.$inferSelect;
+const toBlockCatalogSummary = (r: Omit<BlockCatalogRow, 'blocks'>): BlockCatalogSummary => ({
+  version: r.version,
+  hash: r.hash,
+  blockCount: r.blockCount,
+  targets: r.targets,
+  changes: r.changes,
+  pushedAt: r.pushedAt.toISOString(),
+  pushedBy: r.pushedBy,
+});
+const toBlockCatalog = (r: BlockCatalogRow): BlockCatalog => {
+  const { blockCount: _n, ...summary } = toBlockCatalogSummary(r);
+  return { ...summary, blocks: r.blocks };
+};
+
+/** An environment's block catalog versions: one row each, the version's key its compare-and-set. */
+function makeBlockCatalogRepo(x: Exec): BlockCatalogRepo {
+  const db = x.db;
+  const t = schema.blockCatalogs;
+  // Everything but the document, for the history.
+  const { blocks: _blocks, ...summaryColumns } = getTableColumns(t);
+  return {
+    async latest(scope) {
+      const [row] = await db
+        .select()
+        .from(t)
+        .where(scopeFilter(t, scope))
+        .orderBy(desc(t.version))
+        .limit(1);
+      return row ? toBlockCatalog(row) : null;
+    },
+    async get(scope, version) {
+      const [row] = await db
+        .select()
+        .from(t)
+        .where(and(scopeFilter(t, scope), eq(t.version, version)));
+      return row ? toBlockCatalog(row) : null;
+    },
+    async list(scope, opts) {
+      const rows = await db
+        .select(summaryColumns)
+        .from(t)
+        .where(
+          and(
+            scopeFilter(t, scope),
+            opts.before !== undefined ? lt(t.version, opts.before) : undefined,
+          ),
+        )
+        .orderBy(desc(t.version))
+        .limit(opts.limit);
+      return rows.map(toBlockCatalogSummary);
+    },
+    async save(scope, catalog) {
+      // The primary key is the compare-and-set: a version another push wrote first inserts
+      // nothing, and that lost race fails the unit.
+      const insert = db
+        .insert(t)
+        .values({
+          spaceId: scope.spaceId,
+          environmentId: scope.environmentId,
+          version: catalog.version,
+          hash: catalog.hash,
+          blocks: [...catalog.blocks],
+          blockCount: catalog.blocks.length,
+          targets: [...catalog.targets],
+          changes: catalog.changes,
+          pushedBy: catalog.pushedBy,
+          pushedAt: new Date(catalog.pushedAt),
+        })
+        .onConflictDoNothing();
+      if (x.inUnit) {
+        await x.write(insert);
+        x.expectChanged(1);
+        return;
+      }
+      if ((await insert.returning({ version: t.version })).length === 0) {
+        throw new TransactionConflictError();
+      }
+    },
+  };
+}
+
 /** Saved views are the space's: every read and write keys on `scope.spaceId` alone. */
 function makeSavedViewRepo(x: Exec): SavedViewRepo {
   const db = x.db;
@@ -7354,6 +7441,7 @@ function makeTx(x: Exec, scanLimit: number, versionBodies?: BlobStore): ContentS
     taxonomy: makeTaxonomyRepo(x),
     redirects: makeRedirectRepo(x),
     menus: makeMenuRepo(x),
+    blockCatalogs: makeBlockCatalogRepo(x),
     bulkJobs: makeBulkJobRepo(x),
     workflowRuns: makeWorkflowRunRepo(x),
     workflowTasks: makeWorkflowTaskRepo(x),
@@ -7416,6 +7504,7 @@ export function createD1Store(d1: D1Like, options: D1StoreOptions = {}): Content
     taxonomy: makeTaxonomyRepo(x),
     redirects: makeRedirectRepo(x),
     menus: makeMenuRepo(x),
+    blockCatalogs: makeBlockCatalogRepo(x),
     savedViews: makeSavedViewRepo(x),
     bulkJobs: makeBulkJobRepo(x),
     outbox: makeOutboxRepo(x),

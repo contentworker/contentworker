@@ -110,6 +110,90 @@ for (const [name, path] of ROUTES) {
   });
 }
 
+// Before any push: the catalog route answers 404, stubbed so the scan is the empty state whatever
+// another test has pushed into the shared space.
+test('the block catalog before any push has no accessibility violations', async ({
+  page,
+}, testInfo) => {
+  await page.route('**/block-catalog', (route) =>
+    route.request().method() === 'GET'
+      ? route.fulfill({
+          status: 404,
+          contentType: 'application/json',
+          body: JSON.stringify({ error: { code: 'not_found', message: 'BlockCatalog not found' } }),
+        })
+      : route.continue(),
+  );
+  await openCms(page, '/blocks');
+  await expect(page.getByText('No blocks pushed yet')).toBeVisible();
+  await scan(page, testInfo);
+});
+
+// A pushed catalog: groups, a slot and its allowed children, a token prop, a former id.
+test('the block catalog with blocks in it has no accessibility violations', async ({
+  page,
+  request,
+}, testInfo) => {
+  const sym = (apiId: string, position: number, extra: object = {}) => ({
+    apiId,
+    name: apiId,
+    type: 'Symbol',
+    localized: false,
+    required: false,
+    position,
+    ...extra,
+  });
+  const type = await api(request, 'POST', `${MGMT}/content-types`, {
+    apiId: 'blockpage',
+    name: 'Block page',
+    displayField: 'title',
+    fields: [
+      sym('title', 0),
+      {
+        ...sym('body', 1),
+        type: 'Array',
+        items: {
+          type: 'Component',
+          variants: [{ apiId: 'hero', name: 'Hero', fields: [sym('heading', 0)] }],
+        },
+      },
+    ],
+  });
+  expect([200, 201], await type.text()).toContain(type.status());
+  const pushed = await api(request, 'POST', `${MGMT}/block-catalog`, {
+    targets: [{ contentTypeApiId: 'blockpage', field: 'body' }],
+    allowDestructive: true,
+    blocks: [
+      {
+        id: 'banner',
+        name: 'Banner',
+        group: 'Headers',
+        aliases: ['hero'],
+        fields: [sym('heading', 0), sym('tone', 1, { validations: { in: ['light', 'dark'] } })],
+      },
+      {
+        id: 'grid',
+        name: 'Grid',
+        group: 'Layout',
+        fields: [],
+        slots: [{ apiId: 'items', name: 'Items', allowedChildren: ['card'], max: 6 }],
+      },
+      {
+        id: 'card',
+        name: 'Card',
+        group: 'Layout',
+        fields: [sym('title', 0)],
+        allowedParents: ['grid'],
+      },
+    ],
+  });
+  expect(pushed.status(), await pushed.text()).toBe(200);
+  await openCms(page, '/blocks');
+  await expect(page.getByRole('list', { name: 'Layout' })).toBeVisible();
+  await expect(page.getByText('Slot Items takes Card (up to 6)')).toBeVisible();
+  await scan(page, testInfo);
+});
+
 // With assets and a folder in it, so the scan sees cards, the tree's nesting, the list's rows and
 // the bulk bar, not an empty library.
 test('the asset library, its list view and its bulk bar have no accessibility violations', async ({

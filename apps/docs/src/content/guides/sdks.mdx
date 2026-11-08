@@ -202,6 +202,10 @@ job that deletes its entries first) and copy a type.
 admin's views menu offers; `run(id, { limit, cursor, locale })` returns one page of a view's
 entries with your own grants applied. See [Saved views](/guides/saved-views/).
 
+**Block catalog.** `cma.blockCatalog.{get, version, versions, push, usage}` reads and pushes the
+component manifests pages are composed from; `push({ ...catalog, dryRun: true })` answers what a
+push would change. See [Blocks from code](/guides/blocks-from-code/).
+
 **Menus.** `client.menus()` lists the navigation menus and `client.menu(handle, { locale })` returns one
 resolved for rendering, published entries only. The management client has
 `cma.menus.{list, get, preview, resolve, create, update, moveItem, delete}`. See
@@ -381,6 +385,14 @@ Editing starts off, because intercepting every click would stop you following li
 A built-in toggle switches it on; pass `defaultEnabled` to start with it on, `toggle={false}` to
 drive it from your own control, or `onEdit` to handle the click yourself (open a side panel, say)
 instead of navigating to the admin.
+
+## Live preview
+
+`@contentworker/sdk/live-preview` is the frontend half of live preview: the admin frames your frontend
+and your page renders each unsaved edit. `connectPreview({ adminOrigin, capabilities, onState })`
+connects it in any framework, and `useLivePreview({ adminOrigin })` from `@contentworker/sdk/react`
+returns each entry's unsaved state to render. The admin's side isn't released yet. See
+[Live preview](/guides/live-preview/).
 
 ## Next steps
 

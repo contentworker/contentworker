@@ -257,7 +257,7 @@ layout/nav.ts` is the one source of the pages, their order, names, icons and G-l
   `packages/ui/src/sidebar.tsx`. Full height on its own ground, with a rule. From the top: the brand
   row on the header's line, whose mark is the `SidebarTrigger` (named "Sidebar", ⌘\ or Ctrl+\);
   the day's work (Overview, Content, Approvals when on, Releases) with no label; then groups
-  labelled as captions: **Build** (Workflows), **Library** (Assets, Taxonomy) and **Settings**
+  labelled as captions: **Build** (Workflows, Blocks), **Library** (Assets, Taxonomy) and **Settings**
   (Access, Automation, Extensions, Workspace: Settings' own section groups, each opening its first
   section and reading as current on any of its sections); the account at its foot; `SidebarRail`
   on its edge (for a mouse; on touch the mark is the toggle). The page you're on is
@@ -289,9 +289,9 @@ layout/nav.ts` is the one source of the pages, their order, names, icons and G-l
   key), Connection, Keyboard shortcuts (with a fine pointer), the theme (Light, Dark, Match system)
   and Sign out. Its accessible name is that name plus "account menu".
 - **Shortcuts** are written for the device (⌘ on Apple, Ctrl elsewhere). G then a letter goes to a
-  page (H Overview, C Content, A Approvals, R Releases, W Workflows, M Assets, T Taxonomy, S
-  Settings); ? opens the list of every shortcut (a sheet, with whatever the page registers); ⌘K is
-  the command palette; ⌘J Coworker when it is on; ⌘\ the sidebar. Single keys go through
+  page (H Overview, C Content, A Approvals, R Releases, W Workflows, B Blocks, M Assets, T
+  Taxonomy, S Settings); ? opens the list of every shortcut (a sheet, with whatever the page
+  registers); ⌘K is the command palette; ⌘J Coworker when it is on; ⌘\ the sidebar. Single keys go through
   `plainKeyAllowed` (not with a modifier, while typing, or with a dialog, menu or inline confirm
   open) and run before a page's own keys.
 - **Transitions** in the bars name their properties (`tint`), never `transition-colors`. The
@@ -578,7 +578,29 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   A segmented switch shows **Details** (the panels) or **Preview**: the draft as a document, live
   as you type, in the form's locale with delivery's fallbacks (its title and values carry that
   locale's `lang` and `dir`, the captions stay the admin's), references by name, and links shown
-  but never followed. For a space administrator a third segment, **Activity**
+  but never followed. Where the entry's type has a preview URL, **Site** (`pane/SitePane.tsx`)
+  shows the entry on the customer's own site, re-rendered as you type (live preview); a type
+  without one has no Site segment. Site is never remembered (it sends the site the unsaved draft,
+  so it is picked for the entry in front of you); the pane opens on the view kept before. Its
+  header holds two
+  segmented controls: the device width (Desktop, Tablet, Phone as icons, named in words), which
+  sets the framed page's own width and scales it to fit, never the admin's width; and Edit or
+  View, where Edit makes a click in the page select that field or block and focus it in the form,
+  and View lets the page be the site, links followed (the control reads View, off, until the page
+  connects). A block a pick focused in the form carries the focus ring until focus moves on, and
+  the field or block focused in the form is outlined on the page and scrolled into view.
+  Over the page the frame draws the selection as the workflow canvas does, an ink edge with the
+  focus ring, and the hover a lighter ink edge, neither animated. While it loads the frame is a
+  skeleton. A page that never offers to connect says "This site isn't connected for live preview"
+  in an Alert with the guide's link and still shows the page; one connected that doesn't show the
+  entry, or that moved away, offers Back to the entry. An SDK that shares no protocol version says
+  whether it is too old or too new, a page that answered from another origin or refused the
+  entry says so, and a frame that never loaded or a link that can't be made says so with Try again
+  where trying again can help, each in a destructive Alert; an entry that only lacks a value its
+  preview URL needs (a slug) says so in a plain Alert. A refused edit is a quiet caption under the
+  frame for a few seconds, the whole entry sent again. The frame's address is in mono
+  under it, its line held while the frame loads. For a space
+  administrator a last segment, **Activity**
   (`entries/EntryActivity.tsx`), lists the entry's audit rows newest first in one card: what
   happened in words ("Saved", "Published", "Approved an agent's proposal", an unknown action as
   recorded, in mono), who and when (`actorLabel`, `Ago`, "through MCP" for a tool call), and under
@@ -835,6 +857,15 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   what it covers; whether it gates publishing; its live version; then Duplicate and Delete
   (confirmed in an alert dialog). "New workflow" is a form sheet (template or blank) and "Draft
   with AI" a dialog whose proposal is reviewed in a Confirmation before a draft is created.
+
+- **Blocks** (`cms/routes/Blocks.tsx`): the block catalog pushed from code, read-only (a change is
+  `contentworker blocks push` from the site's repository, so code and admin never disagree).
+  `PageHeader` with no action; a Catalog card of facts (version, pushed when and by whom, the
+  blocks fields it fills, by name); then every block as a catalog row under its dock group's
+  caption (an h3 naming its list): its name and mono id, its props (a token prop shows its
+  choices), each slot and the blocks it takes, where it may go, its former ids, and an Entries
+  figure ("at least" when the count stopped short). No catalog yet is `Empty` with a minimal
+  `contentworker.blocks.json` in a `CodeBlock` and the dry-run command, both to copy. Thumbnails aren't drawn: the admin's `img-src` takes no other origin.
 
 ## Screens that change shape
 

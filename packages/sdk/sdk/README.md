@@ -30,6 +30,7 @@ const html = toHtml(article.fields.body, { entryHref: (t) => `/${t.fields?.slug}
 | `@contentworker/sdk/webhooks`     | `verifyWebhookSignature` for signed webhook deliveries                                             |
 | `@contentworker/sdk/redirects`    | Resolve the space's redirects                                                                      |
 | `@contentworker/sdk/inline-edit`  | Inline editing on previews                                                                         |
+| `@contentworker/sdk/live-preview` | The live preview channel: `connectPreview`, `refAttrs`, `isSafeTokenValue` and the protocol        |
 | `@contentworker/sdk/edge`         | A tiny Delivery client for edge functions and devices: one locale, flat fields                     |
 | `@contentworker/sdk/management`   | The Management API client. Server only: a Management token never belongs in a bundle               |
 | `@contentworker/sdk/react`        | React hooks (`useEntry`, `useEntries`, `useAsset`, …) and `<Image>`. Needs `react`                 |

@@ -276,6 +276,28 @@ Found while building and reviewing M1 and M2. None blocks a release.
 - [ ] **Unused api email config.** Drop `EMAIL_FROM`, `EMAIL_FROM_NAME` and the `send_email` comment
   from `apps/api/wrangler.jsonc`; nothing on the api sends email.
 
+#### Follow-ups from first-run onboarding
+
+Found while building and reviewing the setup flow (`/setup` → `/setup/two-factor` → `/setup/space`).
+None blocks a release.
+
+- [ ] **A setup step for a due password change.** A person whose password change is due is held on
+  the whole `/account` page inside the shell; give it a bare step like `/setup/two-factor`.
+- [ ] **Back to Coworker after skipping.** "Skip for now" leaves the New space dialog as the only
+  way to a first space; offer setting up with Coworker from the no-spaces notice too.
+- [ ] **No space to reach.** A person whose role covers no space sees the no-spaces notice with
+  nothing to do; say who can give them access.
+- [ ] **Setup without a model.** Where the assistant has no model, open `/setup/space` on the New
+  space form rather than a conversation that can't answer. Check it on a deployment.
+- [ ] **Background installs in the conversation.** After Coworker creates a space with a starter
+  that installs in the background, follow the install on its card, as the New space dialog does.
+- [ ] **Keep recovery codes.** Copy all and download on the recovery codes shown after turning on
+  two-factor, the one time they're shown.
+- [ ] **Setup at phone width.** Walk the three setup pages on a phone and add them to the device
+  tests.
+- [ ] **One landing after setup.** Skipping lands on `/dashboard` and finishing lands on `/`; pick
+  one.
+
 #### M3. Collaboration
 
 - [ ] **Entry locks.** A stateful edge object per entry: a heartbeat lease, request-unlock, admin
@@ -319,16 +341,23 @@ Built on Blocks and the frontend runtime. Layouts stay a typed tree; rich text s
 
 - [ ] **Live preview channel.** `@contentworker/sdk/live-preview`: the admin frames the customer's
   frontend and pushes unsaved form state as patches; clicks select fields back. Spec (proposed):
-  [`docs/specs/live-preview-channel.md`](docs/specs/live-preview-channel.md).
+  [`docs/specs/live-preview-channel.md`](docs/specs/live-preview-channel.md). The page side
+  (`connectPreview`) and the admin side (the entry editor's Site view) are in place; Coworker's
+  proposals as ghost blocks are next.
 - [ ] **Blocks renderers.** `<Blocks components={…} />` for React, Vue and the frontend runtime, typed
   by codegen.
 - [ ] **Layout patches.** `patchBlocks` with key-addressed create, update, move and remove, for
   agents and the editor alike.
 - [ ] **Layout-aware generation.** Generation that knows a field's block catalog and resolves images
   through asset search.
-- [ ] **Layout model.** Slots, deeper nesting than three levels, `allowedParents` and
-  `allowedChildren`, and per-breakpoint overrides of token props.
-- [ ] **Blocks from code.** `contentworker blocks push` maps component manifests to Blocks variants.
+- [ ] **Layout model.** Deeper nesting than three levels, and per-breakpoint overrides of token
+  props. (Slots, `allowedChildren` and `allowedParents` shipped with blocks from code.)
+- [x] **Blocks from code.** `contentworker blocks push` maps component manifests (JSON data:
+  token and enum props, slots with `allowedChildren`, `allowedParents`, aliases for renamed ids,
+  thumbnails) to Blocks variants, versioned per environment, over REST, MCP and the management
+  SDK, with block usage counts and a read-only catalog screen in Build → Blocks. Still to come:
+  admin config that narrows (never widens) what code allows per slot, the canvas dock listing a
+  slot's allowed blocks, and carrying the catalog in snapshots and environment clones.
 - [ ] **Canvas editor.** A toolbox, selection overlay and undo in `apps/web` over the preview channel.
 - [ ] **Frontend SDK extras.** `client.live()` and `useLiveEntry`, a Next.js draft-mode helper, a
   preview URL template per content type, and a "connect a frontend" screen that mints a delivery key

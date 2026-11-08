@@ -7,6 +7,7 @@ import {
   MAX_PREVIEW_TEMPLATE_LENGTH,
   previewOrigin,
   previewTemplateFields,
+  previewTemplateVariesByLocale,
   reviseContentType,
   ValidationError,
 } from '../src/index';
@@ -182,6 +183,25 @@ describe('preview URL template', () => {
     expect(fillPreviewTemplate(t, { ...values, fields: { slug: '' } })).toBeNull();
     expect(fillPreviewTemplate(t, { ...values, fields: { slug: { not: 'text' } } })).toBeNull();
     expect(previewTemplateFields(t)).toEqual(['slug']);
+  });
+
+  it('varies by locale when it names {locale} or a localized field, and not otherwise', () => {
+    const fields = [
+      { apiId: 'slug', localized: true },
+      { apiId: 'sku', localized: false },
+    ];
+    expect(previewTemplateVariesByLocale('https://s.example/{locale}?t={token}', fields)).toBe(
+      true,
+    );
+    expect(previewTemplateVariesByLocale('https://s.example/{field:slug}?t={token}', fields)).toBe(
+      true,
+    );
+    expect(previewTemplateVariesByLocale('https://s.example/{field:sku}?t={token}', fields)).toBe(
+      false,
+    );
+    expect(previewTemplateVariesByLocale('https://s.example/p?e={id}#t={token}', fields)).toBe(
+      false,
+    );
   });
 });
 
