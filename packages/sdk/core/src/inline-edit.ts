@@ -4,8 +4,14 @@
  * Framework-free on purpose — it reads `data-cw-ref` out of the DOM, so it works
  * against markup rendered by anything, and the React wrapper in
  * `@contentworker/sdk-web` is a thin mount/unmount around it.
+ *
+ * Inside a connected live preview the channel drives it instead: the toggle is
+ * hidden, the admin turns editing on and off, clicks go to the admin as `pointer`
+ * (the channel's runtime sends them), and nothing is drawn in the page, since the
+ * admin draws the outline outside the frame.
  */
 import { adminEditUrl, type ContentRef, parseContentRef } from './content-ref.js';
+import { onPreviewLink } from './live-preview/link.js';
 
 export interface InlineEditorOptions {
   /** Admin base URL, e.g. `https://admin.example.com`. Required unless `onEdit` handles the click. */
@@ -138,8 +144,11 @@ export function mountInlineEditor(options: InlineEditorOptions = {}): InlineEdit
     outline.hidden = false;
   };
 
+  // A connected live preview owns the page's editing: this overlay stands down.
+  let channel = false;
+
   const onPointerOver = (e: Event) => {
-    if (!enabled) return;
+    if (!enabled || channel) return;
     const found = refOf(e.target);
     hovered = found?.el;
     if (found) draw(found.el, found.ref);
@@ -147,7 +156,7 @@ export function mountInlineEditor(options: InlineEditorOptions = {}): InlineEdit
   };
 
   const onClick = (e: MouseEvent) => {
-    if (!enabled) return;
+    if (!enabled || channel) return;
     const found = refOf(e.target);
     if (!found) return;
     // The page's own handlers must not also run: on a previewed site the marked
@@ -160,7 +169,7 @@ export function mountInlineEditor(options: InlineEditorOptions = {}): InlineEdit
 
   const reposition = () => {
     const found = hovered ? refOf(hovered) : undefined;
-    if (enabled && found) draw(found.el, found.ref);
+    if (enabled && !channel && found) draw(found.el, found.ref);
     else outline.hidden = true;
   };
 
@@ -176,6 +185,15 @@ export function mountInlineEditor(options: InlineEditorOptions = {}): InlineEdit
   doc.addEventListener('click', onClick, true);
   doc.defaultView?.addEventListener('scroll', reposition, true);
   doc.defaultView?.addEventListener('resize', reposition);
+  const unlink = onPreviewLink((state) => {
+    channel = state.connected;
+    if (channel) {
+      enabled = state.editing;
+      outline.hidden = true;
+    }
+    toggle.hidden = channel;
+    toggle.setAttribute('aria-pressed', String(enabled));
+  });
 
   return {
     setEnabled,
@@ -187,6 +205,7 @@ export function mountInlineEditor(options: InlineEditorOptions = {}): InlineEdit
       doc.removeEventListener('click', onClick, true);
       doc.defaultView?.removeEventListener('scroll', reposition, true);
       doc.defaultView?.removeEventListener('resize', reposition);
+      unlink();
       outline.remove();
       toggle.remove();
     },

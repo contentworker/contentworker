@@ -384,10 +384,11 @@ instead of navigating to the admin.
 
 ## Live preview
 
-`@contentworker/sdk/live-preview` is the page side of live preview: the admin frames your frontend
-and your page re-renders each unsaved edit. `startLivePreview({ adminOrigin, onChange })` runs it
-anywhere, and `useLivePreview({ adminOrigin })` from `@contentworker/sdk/react` returns the edited
-fields to render. The admin's side isn't released yet. See [Live preview](/guides/live-preview/).
+`@contentworker/sdk/live-preview` is the frontend half of live preview: the admin frames your frontend
+and your page renders each unsaved edit. `connectPreview({ adminOrigin, capabilities, onState })`
+connects it in any framework, and `useLivePreview({ adminOrigin })` from `@contentworker/sdk/react`
+returns each entry's unsaved state to render. The admin's side isn't released yet. See
+[Live preview](/guides/live-preview/).
 
 ## Next steps
 

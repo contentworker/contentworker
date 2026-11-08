@@ -11,10 +11,13 @@ import {
 } from '@contentworker/sdk-core';
 import { mountInlineEditor } from '@contentworker/sdk-core/inline-edit';
 import {
+  type Capability,
+  type ConnectPreviewOptions,
+  connectPreview,
   type LiveFields,
-  type LivePreviewOptions,
-  type LivePreviewUpdate,
-  startLivePreview,
+  type LiveView,
+  type PageMessage,
+  type PreviewConnection,
 } from '@contentworker/sdk-core/live-preview';
 /**
  * @contentworker/sdk-web — React hooks over @contentworker/sdk-core. Provide a client via
@@ -170,72 +173,104 @@ export function InlineEditor(props: {
   return null;
 }
 
-/** What {@link useLivePreview} holds: the edited fields, once the admin has sent the entry. */
-export interface LivePreviewState {
-  /** Whether the page is framed in a live preview session; false in production. */
-  readonly active: boolean;
-  /** The entry's fields as edited so far (locale-keyed); undefined until the admin sends them. */
-  readonly fields: LiveFields | undefined;
-  /** Which entry and edit they are. */
-  readonly update: LivePreviewUpdate | undefined;
+/** One entry as the admin's unsaved state has it, in the locale it sent. */
+export interface LiveEntry {
+  readonly locale: string;
+  /** The unsaved values: what saving would save. */
+  readonly fields: LiveFields;
+  /** Coworker's proposals on top, and which blocks to draw as ghosts. Render `view.withProposals`. */
+  readonly view: LiveView;
 }
 
+/** What {@link useLivePreview} holds. */
+export interface LivePreviewState {
+  /** Framed and configured: false in production, so the delivered content renders as usual. */
+  readonly active: boolean;
+  readonly connected: boolean;
+  /** Each entry the admin has sent state for, by id. */
+  readonly entries: Readonly<Record<string, LiveEntry>>;
+  /** The connection, for `on('select', …)` and `emit`; undefined until mounted. */
+  readonly preview: PreviewConnection | undefined;
+}
+
+const ALL_CAPABILITIES: readonly Capability[] = [
+  'select',
+  'patch.fields',
+  'patch.blocks',
+  'proposals',
+  'scroll',
+  'layout',
+];
+
 /**
- * Joins the admin's live preview for as long as it is rendered, returning the edited fields to
- * render instead of the delivered ones. Each edit re-renders the component; the admin hears it is on
- * screen once React has committed it. Inert during SSR and when the page isn't framed by the admin,
- * so `fields` stays undefined and the delivered entry renders as usual.
+ * Connects to the admin's live preview for as long as it is rendered, returning each entry's
+ * unsaved state to render instead of the delivered one. Each edit re-renders; the admin hears it
+ * is on screen once React has committed it. Inert during SSR and when the page isn't framed, so
+ * `entries` stays empty.
  *
  * ```tsx
- * const live = useLivePreview({ adminOrigin: 'https://admin.example.com' });
- * const fields = live.fields ?? entry.fields;
+ * const live = useLivePreview({
+ *   adminOrigin: 'https://admin.example.com',
+ *   page: { entries: [{ entryId: entry.id, contentType: entry.contentType, locale: 'en-US' }] },
+ * });
+ * const fields = live.entries[entry.id]?.view.withProposals ?? entry.fields;
  * ```
  */
 export function useLivePreview(
-  options: Omit<LivePreviewOptions, 'onChange' | 'window'> & {
-    readonly onChange?: LivePreviewOptions['onChange'];
+  options: Omit<ConnectPreviewOptions, 'onState' | 'window' | 'capabilities'> & {
+    /** What the page allows; every capability by default. */
+    readonly capabilities?: readonly Capability[];
+    /** What the page renders, reported to the admin with this page's URL once it connects. */
+    readonly page?: { readonly entries: PageMessage['entries'] };
+    readonly onState?: ConnectPreviewOptions['onState'];
   },
 ): LivePreviewState {
   const [state, setState] = useState<LivePreviewState>({
     active: false,
-    fields: undefined,
-    update: undefined,
+    connected: false,
+    entries: {},
+    preview: undefined,
   });
-  // The latest callbacks, so a new closure each render doesn't restart the session.
+  // The latest callbacks and page, so a new closure each render doesn't restart the session.
   const latest = useRef(options);
   latest.current = options;
-  // Resolved once the render a change caused has committed.
-  const committed = useRef<(() => void) | undefined>(undefined);
+  // Resolved once the render a state caused has committed.
+  const committed = useRef<(() => void)[]>([]);
 
   useEffect(() => {
-    committed.current?.();
-    committed.current = undefined;
+    for (const resolve of committed.current.splice(0)) resolve();
   });
 
   const { adminOrigin } = options;
+  const capabilities = (options.capabilities ?? ALL_CAPABILITIES).join(' ');
   useEffect(() => {
-    const preview = startLivePreview({
+    const preview = connectPreview({
       adminOrigin,
-      newKey: latest.current.newKey,
-      onSelect: (target) => latest.current.onSelect?.(target),
-      onHover: (target) => latest.current.onHover?.(target),
-      onChange: async (fields, update) => {
+      capabilities: capabilities.split(' ') as Capability[],
+      ...(latest.current.newKey ? { newKey: latest.current.newKey } : {}),
+      onState: async (entryId, locale, fields, view) => {
         const rendered = new Promise<void>((resolve) => {
-          committed.current = resolve;
+          committed.current.push(resolve);
         });
-        setState({ active: true, fields, update });
+        setState((s) => ({ ...s, entries: { ...s.entries, [entryId]: { locale, fields, view } } }));
         await rendered;
-        await latest.current.onChange?.(fields, update);
+        await latest.current.onState?.(entryId, locale, fields, view);
       },
     });
-    if (preview.active) setState((s) => ({ ...s, active: true }));
+    const page = latest.current.page;
+    if (page) preview.emit('page', { url: window.location.href, entries: page.entries });
+    const offConnect = preview.on('connect', () => {
+      setState((s) => ({ ...s, connected: true }));
+    });
+    setState((s) => ({ ...s, active: preview.active, preview }));
     return () => {
-      preview.destroy();
-      // A render that will now never commit: settle its wait, so nothing is left hanging on it.
-      committed.current?.();
-      committed.current = undefined;
+      offConnect();
+      preview.close();
+      // Renders that will now never commit: settle their waits, so nothing is left hanging.
+      for (const resolve of committed.current.splice(0)) resolve();
+      setState({ active: false, connected: false, entries: {}, preview: undefined });
     };
-  }, [adminOrigin]);
+  }, [adminOrigin, capabilities]);
 
   return state;
 }

@@ -21,7 +21,10 @@
  * sending the entry again, and a second refusal of the same patch by sending the field whole
  * (`setField` with the value the server holds), which this applies without reading it.
  */
-import { clean, isRecord, isSafeName, type LiveFields } from './protocol.js';
+import { clean, isRecord, isSafeName } from './protocol.js';
+
+/** Locale-keyed field values, as the Management API returns an entry's fields. */
+export type LocalizedFields = Record<string, Record<string, unknown>>;
 
 /** Where a block goes: into a parent block's slot, or the field itself when `parent` is absent. */
 export interface BlockParent {
@@ -86,7 +89,7 @@ export interface SetFieldOp extends OpTarget {
 export type LivePatchOp = BlockOp | SetFieldOp;
 
 export type LivePatchResult =
-  | { readonly ok: true; readonly fields: LiveFields }
+  | { readonly ok: true; readonly fields: LocalizedFields }
   | { readonly ok: false; readonly op: number; readonly message: string };
 
 /**
@@ -95,12 +98,12 @@ export type LivePatchResult =
  * that arrives without one (a random UUID by default).
  */
 export function applyLivePatch(
-  fields: LiveFields,
+  fields: LocalizedFields,
   ops: readonly LivePatchOp[],
   opts: { readonly newKey?: () => string } = {},
 ): LivePatchResult {
   const newKey = opts.newKey ?? (() => crypto.randomUUID());
-  const out: LiveFields = { ...fields };
+  const out: LocalizedFields = { ...fields };
   const copied = new Set<string>();
   const refs = new Map<string, PatchRef>();
 

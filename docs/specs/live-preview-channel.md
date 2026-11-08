@@ -1,6 +1,7 @@
 # Live preview channel
 
-Status: **proposed** (M6, "Live preview channel" in `ROADMAP.md`). Nothing here is built yet.
+Status: **proposed** (M6, "Live preview channel" in `ROADMAP.md`). The frontend half is built
+(`@contentworker/sdk/live-preview`, see Extensions); the admin half is not yet.
 This file sits in `docs/specs/`, which the docs embed does not read (it takes `docs/*.md` only),
 so MCP clients never mistake it for a description of shipped behaviour.
 
@@ -254,13 +255,37 @@ The canvas UI (toolbox, seams, dock, inspector, undo), the `patchBlocks` use-cas
 renderers, and per-breakpoint overrides each have their own M6 item. This spec only fixes the
 channel they use.
 
+## Extensions
+
+Additive, so they need no version bump (see "Version negotiation"): optional fields and message
+kinds either side may ignore. The frontend half in `@contentworker/sdk/live-preview` speaks all of
+them; an admin that doesn't simply never sends or reads them.
+
+| Extension | What it adds |
+| --- | --- |
+| `layout` capability and `layout` message | Frontend → admin: `{ blocks: [{ ref, rect }], slots: [{ ref, rect, gaps }], fields: [{ ref, rect }], scroll, viewport, docHeight, truncated? }`, the geometry the canvas editor draws seams (insertion points) from. A slot is the element marked `data-cw-slot` with the slot's ref (`body`, `body[<key>].items`); each gap is `{ index, rect, axis, after?, before? }`, naming the blocks on either side by `_key`. Sent on change, at most once an animation frame. Fitted to the message limit, on-screen boxes first; `truncated: true` when some were left out. At most 2,000 of each list and 4,000 gaps. |
+| `editing { on }` | Admin → frontend, needs `select`: turns in-page editing (and the inline editor) on or off. On when a session connects with `select`. |
+| `pointer` with `ref` and `rect` `null` | A hover that left every marked element, so the admin can clear its outline. |
+| `entryId` on `applied` and `failed` | `rev` counts per entry, so the acknowledgement names the entry. |
+| `failed` reasons `invalid`, `conflict`, `render` | Beside `gap`: a patch that failed its schema (answered when its `entryId` and `rev` are readable), block ops the page couldn't place, and an `onState` that threw. Each is answered, like `gap`, with a fresh `entry.state`; none advances the entry's `rev`, so no later patch lands on stale fields. `applied { rev }` covers every rev up to it, so a failed render is covered by the next one that succeeds. |
+| `view` argument to `onState` | `(entryId, locale, fields, view)`: `fields` stays the unsaved state without proposals; `view.withProposals` is what to render and `view.ghosts` (`inserted`, `changed`, `removed`) names the ghost blocks by `_key`. A proposed `remove` of a proposed block takes it back; a fresh `entry.state` clears all proposals. |
+
+Two wire details differ from the text above, because it can't be written as stated: `pointer`'s
+hover/click field travels as `pointer`, since the envelope's `kind` already holds `'pointer'`; and
+`entry.state` and `entry.patch` carry one locale's values (not locale-keyed), as the message names
+the locale.
+
 ## Open questions
+
+Each has a default the first implementation follows until decided otherwise.
 
 1. Does the admin pin the frontend's origin from the framed URL alone, or also from an origin
    list the space configures on the "connect a frontend" screen? The list is stricter, but it's
-   one more setting.
+   one more setting. **Default:** pinned from the origin of the framed preview URL's template, and
+   updated on `navigated` only to a URL that matches one of the space's templates.
 2. Should `page` report entries from every block reference on the page, or only the entry being
    edited and its direct references? More entries means the page can show more edits, at the
-   cost of larger state messages.
+   cost of larger state messages. **Default:** the edited entry and its direct references.
 3. Do we want a `resize` message (frame height follows the page), or does the canvas always
-   scroll inside a fixed-height frame?
+   scroll inside a fixed-height frame? **Default:** a fixed-height frame that scrolls inside; no
+   `resize`.
