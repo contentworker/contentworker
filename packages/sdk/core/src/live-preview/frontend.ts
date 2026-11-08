@@ -45,7 +45,7 @@ import {
 } from './protocol.js';
 
 /** The SDK release this runtime ships in, sent in `connect.offer`. Kept equal to @contentworker/sdk's. */
-export const LIVE_PREVIEW_SDK_VERSION = '0.2.0';
+export const LIVE_PREVIEW_SDK_VERSION = '0.3.0';
 
 const REF_ATTRIBUTE = 'data-cw-ref';
 /** The attribute on the element directly holding a slot's blocks; it holds the slot's ref. */
