@@ -11,6 +11,7 @@ import {
 import { describe, expect, it } from 'vitest';
 import {
   configFromDraft,
+  controlMessage,
   draftErrors,
   issuesByControl,
   placesOf,
@@ -112,10 +113,10 @@ describe('a draft’s problems', () => {
 
   it('refuses bounds wider than the code’s, never narrower ones, as the domain does', () => {
     expect(errorsOf({ min: '0' })).toEqual({
-      [`${ITEMS}.min`]: "cannot be below the code's min of 1",
+      [`${ITEMS}.min`]: 'At least 1: the code’s limit.',
     });
     expect(errorsOf({ max: '7' })).toEqual({
-      [`${ITEMS}.max`]: "cannot be above the code's max of 6",
+      [`${ITEMS}.max`]: 'At most 6: the code’s limit.',
     });
     expect(errorsOf({ min: '2', max: '5' })).toEqual({});
     expect(draftErrors(places, base, catalog)).toEqual({});
@@ -124,18 +125,18 @@ describe('a draft’s problems', () => {
   it('says what isn’t a count, a most of none, and a fewest over the most', () => {
     expect(errorsOf({ min: '1.5', max: '0' })).toEqual({
       [`${ITEMS}.min`]: 'A whole number, or blank for the code’s.',
-      [`${ITEMS}.max`]: 'must be at least 1',
+      [`${ITEMS}.max`]: 'Must be at least 1.',
       // Under the code's least of 1, as the server says it too.
-      [ITEMS]: 'min (1) is more than max (0)',
+      [ITEMS]: 'Fewest (1) is more than Most (0).',
     });
     expect(errorsOf({ min: '4', max: '3' })).toEqual({
-      [ITEMS]: 'min (4) is more than max (3)',
+      [ITEMS]: 'Fewest (4) is more than Most (3).',
     });
   });
 
   it('wants at least one block', () => {
     expect(errorsOf({ allowed: [] })).toEqual({
-      [`${ITEMS}.allowedChildren`]: 'names at least one block id, or is left out',
+      [`${ITEMS}.allowedChildren`]: 'Choose at least one block.',
     });
   });
 });
@@ -149,9 +150,25 @@ describe('a refusal', () => {
         { field: 'blocks[gone]', message: 'No block "gone" in the catalog' },
       ]),
     ).toEqual({
-      [`${ITEMS}.max`]: 'cannot be above the code’s max of 6',
-      [TOP]: 'min (3) is more than max (2)',
-      '': 'No block "gone" in the catalog',
+      [`${ITEMS}.max`]: 'At most 6: the code’s limit.',
+      [TOP]: 'Fewest (3) is more than Most (2).',
+      '': 'No block "gone" in the catalog.',
     });
+  });
+});
+
+describe('controlMessage', () => {
+  it('says a bound as the limit it names, and the rest as a sentence', () => {
+    expect(controlMessage("cannot be above the code's max of 4")).toBe(
+      'At most 4: the code’s limit.',
+    );
+    expect(controlMessage('cannot be below the code’s min of 2')).toBe(
+      'At least 2: the code’s limit.',
+    );
+    expect(controlMessage('must be a whole number')).toBe('Must be a whole number.');
+    expect(controlMessage('min (3) is more than max (2)')).toBe(
+      'Fewest (3) is more than Most (2).',
+    );
+    expect(controlMessage('Already a sentence.')).toBe('Already a sentence.');
   });
 });

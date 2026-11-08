@@ -277,7 +277,7 @@ test('the block rules, edited, stale and read-only, have no accessibility violat
   await page.getByRole('button', { name: 'Edit the rules for Grid › Items' }).click();
   const panel = page.getByRole('group', { name: 'Rules for Grid › Items' });
   await panel.getByLabel('Most').fill('9');
-  await expect(panel.getByText("cannot be above the code's max of 6")).toBeVisible();
+  await expect(panel.getByText('At most 6: the code’s limit.')).toBeVisible();
   await scan(page, testInfo);
 
   // Read-only: the same rows, no controls.

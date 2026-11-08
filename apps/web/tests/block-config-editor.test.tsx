@@ -155,11 +155,11 @@ describe('the rules', () => {
     const most = panel.getByLabelText('Most');
     expect(most.getAttribute('max')).toBe('6');
     fireEvent.change(most, { target: { value: '7' } });
-    expect(panel.getByText("cannot be above the code's max of 6")).toBeTruthy();
+    expect(panel.getByText('At most 6: the code’s limit.')).toBeTruthy();
     expect(most.getAttribute('aria-invalid')).toBe('true');
     expect(saveButton().disabled).toBe(true);
     fireEvent.change(panel.getByLabelText('Fewest'), { target: { value: '0' } });
-    expect(panel.getByText("cannot be below the code's min of 1")).toBeTruthy();
+    expect(panel.getByText('At least 1: the code’s limit.')).toBeTruthy();
     fireEvent.change(panel.getByLabelText('Fewest'), { target: { value: '' } });
     fireEvent.change(most, { target: { value: '3' } });
     expect(saveButton().disabled).toBe(false);
@@ -244,11 +244,11 @@ describe('the rules', () => {
       }),
     );
     fireEvent.click(saveButton());
-    expect(await panel.findByText("cannot be above the code's max of 4")).toBeTruthy();
+    expect(await panel.findByText('At most 4: the code’s limit.')).toBeTruthy();
     expect(panel.getByLabelText('Most').getAttribute('aria-invalid')).toBe('true');
     // The next edit clears it.
     fireEvent.change(panel.getByLabelText('Most'), { target: { value: '4' } });
-    expect(panel.queryByText("cannot be above the code's max of 4")).toBeNull();
+    expect(panel.queryByText('At most 4: the code’s limit.')).toBeNull();
   });
 
   it('lists the parts a newer catalog ignores, and a save removes them', async () => {

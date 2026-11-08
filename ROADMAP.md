@@ -385,11 +385,10 @@ From the live preview spec and a review of a second implementation of its channe
 - [x] **One block patch engine.** The page keeps its own engine (`applyLivePatch`), and
   `packages/http/test/live-preview-patch-parity.test.ts` runs the same patches through it and the
   domain's `applyBlockPatch`.
-- [x] **Locked regions on the canvas.** Admin config can lock a slot or region (no add, move or
-  remove), narrowing what code allows and never widening it, beside the slot allow-lists. Enforced
-  at the API: the block config's `locked` refuses a save that changes a locked slot's blocks. The
-  admin sets it in Build → Blocks, and the canvas honours it: a locked slot draws no seams, its
-  blocks can't be moved, duplicated or removed, and Layers shows the lock (the entry form too).
+- [ ] **Locked regions on the canvas.** Lock a region larger than one slot (a run of blocks, or a
+  block and everything inside it) as one unit. Locking one slot is in place: the block config's
+  `locked`, set in Build → Blocks, refuses a save that changes that slot's blocks, and the canvas
+  and the entry form honour it (no seams; no move, duplicate or remove; Layers shows the lock).
 - [ ] **Token values checked everywhere.** The frontend runtime runs `isSafeTokenValue` on every
   value it writes into a CSS custom property, not only on live preview patches.
 - [ ] **Block config as code.** A read-only code view of a block's admin config next to its code

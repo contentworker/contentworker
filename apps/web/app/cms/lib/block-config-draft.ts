@@ -213,8 +213,27 @@ export function sameConfig(places: readonly Place[], a: Draft, b: Draft): boolea
 }
 
 /**
+ * A domain issue's message as a control shows it. The domain writes fragments that follow a field
+ * path in an API error (`…items.max: cannot be above the code's max of 4`); beside the control the
+ * path is already said, so the bounds read as the limit they name and the rest as a sentence.
+ */
+export function controlMessage(message: string): string {
+  const max = /^cannot be above the code[’']s max of (\d+)$/.exec(message);
+  if (max) return `At most ${max[1]}: the code’s limit.`;
+  const min = /^cannot be below the code[’']s min of (\d+)$/.exec(message);
+  if (min) return `At least ${min[1]}: the code’s limit.`;
+  if (/^names at least one block id/.test(message)) return 'Choose at least one block.';
+  // The controls are labelled Fewest and Most.
+  const crossed = /^min \((\d+)\) is more than max \((\d+)\)$/.exec(message);
+  if (crossed) return `Fewest (${crossed[1]}) is more than Most (${crossed[2]}).`;
+  const sentence = message.charAt(0).toUpperCase() + message.slice(1);
+  return /[.!?]$/.test(sentence) ? sentence : `${sentence}.`;
+}
+
+/**
  * A refusal's issues (`{ field, message }`, fields named as the draft's parts are) by the control
- * they name, as `draftErrors` keys them; an issue naming no place of the draft is under `''`.
+ * they name, as `draftErrors` keys them, worded for the control ({@link controlMessage}); an issue
+ * naming no place of the draft is under `''`.
  */
 export function issuesByControl(
   places: readonly Place[],
@@ -224,7 +243,8 @@ export function issuesByControl(
   for (const issue of issues) {
     const place = places.find((p) => issue.field === p.key || issue.field.startsWith(`${p.key}.`));
     const key = place ? issue.field : '';
-    out[key] = out[key] ? `${out[key]} ${issue.message}` : issue.message;
+    const message = controlMessage(issue.message);
+    out[key] = out[key] ? `${out[key]} ${message}` : message;
   }
   return out;
 }
