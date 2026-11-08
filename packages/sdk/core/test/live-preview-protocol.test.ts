@@ -9,11 +9,13 @@ import {
   isChannel,
   isSafeTokenValue,
   MAX_MESSAGE_BYTES,
+  MAX_PAGE_ENTRIES,
   MAX_PATCH_OPS,
   narrowCapabilities,
   negotiateVersion,
   newChannel,
   OFFERED_VERSIONS,
+  PAGE_REPORT_LIMIT,
   parseAdminMessage,
   parseFrontendMessage,
   SUPPORTED_VERSIONS,
@@ -335,6 +337,21 @@ describe('schemas', () => {
         }
       }
     }
+  });
+
+  it('accepts a page of up to MAX_PAGE_ENTRIES, as sites on SDK 0.3.0 send', () => {
+    const entries = (n: number) =>
+      Array.from({ length: n }, (_, i) => ({ entryId: `e${i}`, contentType: 't', locale: 'en' }));
+    const page = (n: number) =>
+      parseFrontendMessage({
+        ...env,
+        kind: 'page',
+        url: 'https://site.test/',
+        entries: entries(n),
+      });
+    expect(PAGE_REPORT_LIMIT).toBeLessThan(MAX_PAGE_ENTRIES);
+    expect(page(MAX_PAGE_ENTRIES).ok).toBe(true);
+    expect(page(MAX_PAGE_ENTRIES + 1)).toEqual({ ok: false, reason: 'invalid' });
   });
 
   it('refuses a page message the admin should not act on', () => {

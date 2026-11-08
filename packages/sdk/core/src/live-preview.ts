@@ -71,6 +71,7 @@ export {
   negotiateVersion,
   newChannel,
   OFFERED_VERSIONS,
+  PAGE_REPORT_LIMIT,
   type PageMessage,
   type PointerMessage,
   parseAdminMessage,

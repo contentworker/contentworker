@@ -379,9 +379,9 @@ Built on Blocks and the frontend runtime. Layouts stay a typed tree; rich text s
 
 From the live preview spec and a review of a second implementation of its channel.
 
-- [ ] **Page report cap.** The owner chose at most 50 entries per `page` report; the code allows
-  200 (`MAX_PAGE_ENTRIES`). Settle one number and match the other to it. The other channel
-  decisions are recorded in the spec.
+- [x] **Page report cap.** A page reports at most 50 entries (`PAGE_REPORT_LIMIT`), as the owner
+  chose; the admin still accepts up to 200 (`MAX_PAGE_ENTRIES`) from sites on SDK 0.3.0. Ships to
+  sites in the next SDK release. The other channel decisions are recorded in the spec.
 - [x] **One block patch engine.** The page keeps its own engine (`applyLivePatch`), and
   `packages/http/test/live-preview-patch-parity.test.ts` runs the same patches through it and the
   domain's `applyBlockPatch`.

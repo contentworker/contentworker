@@ -14,6 +14,7 @@ import {
   narrowCapabilities,
   negotiateVersion,
   OFFERED_VERSIONS,
+  PAGE_REPORT_LIMIT,
   type PreviewConnection,
   parseFrontendMessage,
   refAttrs,
@@ -252,6 +253,20 @@ describe('connecting', () => {
     host.send(state(0), 2);
     await settle();
     expect(states).toEqual([]);
+  });
+
+  it('reports at most PAGE_REPORT_LIMIT entries, the first the site lists', async () => {
+    const p = start();
+    host.answer();
+    const entries = Array.from({ length: PAGE_REPORT_LIMIT + 10 }, (_, i) => ({
+      entryId: `e${i}`,
+      contentType: 'landing',
+      locale: 'en-US',
+    }));
+    p.emit('page', { url: `${SITE}/page`, entries });
+    const [sent] = host.of('page') as { entries: { entryId: string }[] }[];
+    expect(sent?.entries).toHaveLength(PAGE_REPORT_LIMIT);
+    expect(sent?.entries[0]?.entryId).toBe('e0');
   });
 
   it('reports the page once connected, if the app said what it renders first', async () => {

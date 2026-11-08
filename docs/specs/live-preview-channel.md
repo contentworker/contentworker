@@ -307,7 +307,9 @@ The owner settled these on 2026-11-07; the first implementation already follows 
    pins the frontend's origin from the framed preview URL's template, and follows `navigated`
    only to a URL that matches one of the space's templates. There is no separate origin list on
    the "connect a frontend" screen.
-2. **What the page reports** is the entry being edited and its direct references, capped at
-   `MAX_PAGE_ENTRIES`. A wider set can come later without a version bump.
+2. **What the page reports** is the entry being edited and its direct references, at most 50
+   (`PAGE_REPORT_LIMIT`), the first the site lists. The admin accepts up to 200
+   (`MAX_PAGE_ENTRIES`), because sites on `@contentworker/sdk` 0.3.0 send that many; a wider set
+   can come later without a version bump.
 3. **Frame height is fixed:** the canvas scrolls inside the frame and offers viewport-width
    presets for breakpoints. There is no `resize` message.
