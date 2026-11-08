@@ -194,6 +194,110 @@ test('the block catalog with blocks in it has no accessibility violations', asyn
   await scan(page, testInfo);
 });
 
+// The rules beside the catalog, in an environment of their own (a config is an environment's, and
+// this one is left stale on purpose): a narrowing and a lock, the ignored parts a newer push left,
+// a place's controls open with a bound out of range, and the read-only view without content:manage.
+test('the block rules, edited, stale and read-only, have no accessibility violations', async ({
+  page,
+  request,
+}, testInfo) => {
+  const env = `a11yrules${testInfo.workerIndex}${Date.now().toString(36)}`;
+  const mgmt = `/spaces/${SPACE}/environments/${env}`;
+  const made = await api(request, 'POST', `/spaces/${SPACE}/environments`, { id: env });
+  expect(made.status(), await made.text()).toBe(201);
+  const sym = (apiId: string, position = 0) => ({
+    apiId,
+    name: apiId,
+    type: 'Symbol',
+    localized: false,
+    required: false,
+    position,
+  });
+  const type = await api(request, 'POST', `${mgmt}/content-types`, {
+    apiId: 'rulespage',
+    name: 'Rules page',
+    displayField: 'title',
+    fields: [
+      sym('title'),
+      {
+        ...sym('body', 1),
+        name: 'Main',
+        type: 'Array',
+        items: {
+          type: 'Component',
+          variants: [{ apiId: 'hero', name: 'Hero', fields: [sym('heading')] }],
+        },
+      },
+    ],
+  });
+  expect([200, 201], await type.text()).toContain(type.status());
+  const push = (blocks: unknown[]) =>
+    api(request, 'POST', `${mgmt}/block-catalog`, {
+      targets: [{ contentTypeApiId: 'rulespage', field: 'body' }],
+      allowDestructive: true,
+      blocks,
+    });
+  const hero = { id: 'hero', name: 'Hero', fields: [sym('heading')] };
+  const grid = {
+    id: 'grid',
+    name: 'Grid',
+    fields: [],
+    slots: [{ apiId: 'items', name: 'Items', allowedChildren: ['card', 'quote'], max: 6 }],
+  };
+  const card = { id: 'card', name: 'Card', fields: [sym('title')], allowedParents: ['grid'] };
+  const quote = { id: 'quote', name: 'Quote', fields: [sym('text')], allowedParents: ['grid'] };
+  const promo = { id: 'promo', name: 'Promo', fields: [sym('label')] };
+  const first = await push([hero, grid, card, quote, promo]);
+  expect(first.status(), await first.text()).toBe(200);
+  const set = await api(request, 'PUT', `${mgmt}/block-config`, {
+    expectedVersion: 0,
+    targets: [{ contentTypeApiId: 'rulespage', field: 'body', blocks: ['hero', 'promo'] }],
+    blocks: [
+      { block: 'grid', slots: { items: { allowedChildren: ['card'], max: 3, locked: true } } },
+    ],
+  });
+  expect(set.status(), await set.text()).toBe(200);
+  // A push without the promo leaves the config naming it: stale, and ignored.
+  const second = await push([hero, grid, card, quote]);
+  expect(second.status(), await second.text()).toBe(200);
+  await page.addInitScript(
+    ([space, environment]) =>
+      localStorage.setItem(
+        'contentworker-scope',
+        JSON.stringify({ space, environment, locale: 'en-US' }),
+      ),
+    [SPACE, env],
+  );
+
+  await openCms(page, '/blocks');
+  await expect(page.getByText('1 part of the rules is ignored')).toBeVisible();
+  await expect(page.getByText(/^Editors may place Card · up to 3 · locked$/)).toBeVisible();
+  await scan(page, testInfo);
+
+  await page.getByRole('button', { name: 'Edit the rules for Grid › Items' }).click();
+  const panel = page.getByRole('group', { name: 'Rules for Grid › Items' });
+  await panel.getByLabel('Most').fill('9');
+  await expect(panel.getByText('At most 6: the code’s limit.')).toBeVisible();
+  await scan(page, testInfo);
+
+  // Read-only: the same rows, no controls.
+  await page.route('**/auth/me', async (route) => {
+    const res = await route.fetch();
+    const me = (await res.json()) as { scopes: string[] };
+    await route.fulfill({
+      response: res,
+      json: {
+        ...me,
+        scopes: me.scopes.filter((s) => s !== 'content:manage' && s !== 'space:admin'),
+      },
+    });
+  });
+  await openCms(page, '/blocks');
+  await expect(page.getByText('Changing the rules takes content:manage.')).toBeVisible();
+  await expect(page.getByRole('switch')).toHaveCount(0);
+  await scan(page, testInfo);
+});
+
 // With assets and a folder in it, so the scan sees cards, the tree's nesting, the list's rows and
 // the bulk bar, not an empty library.
 test('the asset library, its list view and its bulk bar have no accessibility violations', async ({

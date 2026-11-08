@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
-import type { BlockCatalog } from '@contentworker/domain';
+import { type BlockCatalog, EMPTY_BLOCK_CONFIG, effectiveBlockRules } from '@contentworker/domain';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
-import { MemoryRouter } from 'react-router';
+import { createMemoryRouter, RouterProvider } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { BlockCatalogUsage } from '~/cms/lib/management';
 
@@ -72,6 +72,10 @@ const client = {
   getTeam: vi.fn(async () => ({
     people: [{ id: 'dev@example.com', name: 'Dev Person', email: 'dev@example.com' }],
   })),
+  // The rules section beside the catalog: unset, and read by someone who can't change them.
+  getBlockConfig: vi.fn(async () => EMPTY_BLOCK_CONFIG),
+  getEffectiveBlockRules: vi.fn(async () => effectiveBlockRules(CATALOG, EMPTY_BLOCK_CONFIG)),
+  getSpaceAccess: vi.fn(async () => ({ subject: 'me', scopes: ['preview:read'] })),
 };
 vi.mock('~/cms/lib/client-context', () => ({
   useClient: () => ({
@@ -83,6 +87,7 @@ vi.mock('~/cms/lib/client-context', () => ({
 }));
 
 const { Blocks, propSummary } = await import('~/cms/routes/Blocks');
+const { ToastProvider } = await import('~/cms/lib/toast');
 
 afterEach(() => {
   cleanup();
@@ -97,9 +102,9 @@ function setup(catalog: BlockCatalog | null | Error, usage: BlockCatalogUsage | 
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={queryClient}>
-      <MemoryRouter>
-        <Blocks />
-      </MemoryRouter>
+      <ToastProvider>
+        <RouterProvider router={createMemoryRouter([{ path: '/', element: <Blocks /> }])} />
+      </ToastProvider>
     </QueryClientProvider>,
   );
 }
@@ -207,7 +212,7 @@ describe('the block catalog screen', () => {
     // The catalog's version, who pushed it and where its blocks go.
     expect(screen.getByText('v4')).toBeTruthy();
     expect(await screen.findByText(/by Dev Person/)).toBeTruthy();
-    expect(screen.getByText('Page › Page body')).toBeTruthy();
+    expect(screen.getByText('Page › Page body', { selector: 'dd' })).toBeTruthy();
     // Grouped as the dock will group them.
     expect(screen.getByRole('list', { name: 'Headers' })).toBeTruthy();
     expect(

@@ -861,7 +861,21 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
 - **Blocks** (`cms/routes/Blocks.tsx`): the block catalog pushed from code, read-only (a change is
   `contentworker blocks push` from the site's repository, so code and admin never disagree).
   `PageHeader` with no action; a Catalog card of facts (version, pushed when and by whom, the
-  blocks fields it fills, by name); then every block as a catalog row under its dock group's
+  blocks fields it fills, by name); then **Rules** (`cms/components/BlockRules.tsx`, the block
+  config, which only narrows the code): a catalog flush in its card, one row per place blocks go
+  ("Page › Main", "Grid › Items"), its meta two lines, what the code allows and what editors may
+  place now, a `Lock` tile when locked; with content:manage a **Locked** `Switch` named "Lock
+  ‹place›" in a `CatalogFigure` and a ghost `xs` Edit ("Edit the rules for ‹place›",
+  `aria-expanded`) that opens the place's panel under its row, as a field row's Rules does
+  (`bg-secondary/40`, `rounded-xl`, a fieldset with an sr-only legend "Rules for ‹place›"): Takes,
+  the code's blocks as checkboxes (the last ticked can't be unticked), and Fewest and Most, number
+  fields whose hint says what blank means and how far each may go, a value past the code's said
+  under it and tied by `aria-describedby`. One Save rules and Discard changes at the card's foot
+  (a draft, sent whole with `expectedVersion`); the header names the version and who set it when.
+  A 409 is an Alert ("Someone else changed the rules") over their rules read again; a 422 lands
+  on the controls it names and opens their panels. Parts a push left stale are a default Alert
+  listing each, with "Remove ignored parts" (a save). Without content:manage it reads only, saying
+  so. Then every block as a catalog row under its dock group's
   caption (an h3 naming its list): its name and mono id, its props (a token prop shows its
   choices), each slot and the blocks it takes, where it may go, its former ids, and an Entries
   figure ("at least" when the count stopped short). No catalog yet is `Empty` with a minimal
@@ -903,7 +917,10 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   (name and one line of description, no thumbnails: `img-src`) under the catalog's group captions,
   scrolling sideways; ← → move across the cards, one tab stop for the row. When the dock would
   cover the chosen seam, the page brings the block beside it to the middle of its view (`scroll`).
-  A full slot says so and offers nothing. Its first block takes focus, and the block put in hands
+  A full slot says so and offers nothing. The block config narrows what the dock offers; a slot
+  it locks draws no seams, its name reads "· locked" with a `Lock` icon in Layers and the
+  inspector, and its blocks show no move, duplicate or remove (a muted line says the block keeps
+  its place); the config's refusals are checks on the block or slot, as validation's are. Its first block takes focus, and the block put in hands
   focus to the inspector's heading; closing it hands focus back to what opened it. The inspector's tabs are Content (the
   block's own fields, the entry form's editors), Data (references) and Look (props limited to
   listed values, four or fewer as a segmented control, more as a select; never free CSS); a block

@@ -1,10 +1,13 @@
 import type {
   ArrayItemType,
+  BlockCatalog,
   ComponentVariant,
   ContentType,
   DateFormat,
+  EffectiveBlockRules,
   EntryFields,
   FieldDefinition,
+  FieldIssue,
   FieldOption,
   LocaleConfig,
   ResolvedTab,
@@ -52,8 +55,16 @@ import { cn } from '@contentworker/ui/lib/utils';
 import { NativeSelect, NativeSelectOption } from '@contentworker/ui/native-select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@contentworker/ui/tabs';
 import { Textarea } from '@contentworker/ui/textarea';
-import { ChevronRight, Plus } from 'lucide-react';
+import { ChevronRight, Lock, Plus } from 'lucide-react';
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  configIssues,
+  ruleFor,
+  type StoredSlots,
+  slotPolicy,
+  storedSlots,
+  wasStored,
+} from '../lib/block-rules';
 import type { AppExtension, TextDirection } from '../lib/management';
 import { EntityPicker } from './EntityPicker';
 import { ExtensionFrame } from './ExtensionFrame';
@@ -93,6 +104,26 @@ function useWritingIn(locale: string): { readonly lang: string; readonly dir?: T
   const dir = useContext(DirectionsContext)?.[locale];
   return dir ? { lang: locale, dir } : { lang: locale };
 }
+
+/**
+ * The block config the form's blocks fields follow (`cms/lib/block-rules.ts`): the rules in force,
+ * the type they are judged for, and the stored entry's slots per locale, which a lock holds.
+ * Absent, every blocks field takes what its field does.
+ */
+interface FormBlockRules {
+  readonly contentType: string;
+  readonly rules: EffectiveBlockRules | null | undefined;
+  readonly stored: (locale: string) => StoredSlots;
+}
+const BlockRulesContext = createContext<FormBlockRules | undefined>(undefined);
+
+/**
+ * The block a nested blocks field (a slot) belongs to: its catalog id (its variant's apiId) and its
+ * key. Undefined at a field's top level.
+ */
+const BlockParentContext = createContext<
+  { readonly type: string; readonly key?: string } | undefined
+>(undefined);
 
 /** Per-field, per-locale working state: `{ apiId: { locale: value } }`. */
 type Values = Record<string, Record<string, unknown>>;
@@ -395,6 +426,20 @@ export function EntryForm(props: {
    * change: the side pane's preview draws the draft from these.
    */
   onValuesChange?: (fields: EntryFields, locale: string) => void;
+  /**
+   * The block config in force: what each blocks field offers and locks, and what a save is
+   * judged by before it is sent. `stored` is the entry as saved, undefined for a new one.
+   */
+  blockRules?: {
+    readonly rules: EffectiveBlockRules | null | undefined;
+    readonly catalog: BlockCatalog | null | undefined;
+    readonly stored: EntryFields | undefined;
+  };
+  /**
+   * Issues the server refused a save for (the block config's, set since the form read it), shown
+   * on the fields they name, as the form's own are, whenever `seq` changes.
+   */
+  serverIssues?: { readonly seq: number; readonly issues: readonly FieldIssue[] } | null;
   onSave: (fields: EntryFields) => void;
   onCancel: () => void;
 }) {
@@ -582,42 +627,88 @@ export function EntryForm(props: {
     // would duplicate the entry.
     if (props.busy) return;
     const out = fieldsFromValues(contentType, shown, locales, defaultLocale);
-    // Judged as the server will: against the stored values, which a disabled field keeps.
-    const issues = validateEntryFields(contentType, out, {
+    // Judged as the server will: against the stored values, which a disabled field keeps, then
+    // the block config, against what the save changes.
+    const invalid = validateEntryFields(contentType, out, {
       defaultLocale,
       locales,
       previous: props.initial,
     });
+    const blocks = props.blockRules;
+    const issues =
+      invalid.length > 0 || !blocks
+        ? invalid
+        : configIssues(
+            contentType,
+            blocks.catalog,
+            blocks.rules,
+            blocks.stored,
+            out,
+            locales,
+          ).filter((i) => i.field !== '');
     if (issues.length > 0) {
-      const errors = issuesToErrors(issues, defaultLocale);
-      setFieldErrors(errors);
-      // If the active locale is clean, jump to the first locale that isn't, so
-      // the failure is never invisible (errors on unmounted tabs).
-      const errorLocales = new Set(Object.keys(errors).map((k) => k.split(':')[1] ?? ''));
-      const errorLocale = errorLocales.has(activeLocale)
-        ? activeLocale
-        : locales.find((l) => errorLocales.has(l));
-      if (errorLocale && errorLocale !== activeLocale) setActiveLocale(errorLocale);
-      // The same for tabs: unless the tab on screen holds an error, go to the first that does,
-      // and open every collapsed group that holds one.
-      const failing = Object.keys(errors)
-        .filter((k) => k.split(':')[1] === errorLocale)
-        .map((k) => topLevel(k.split(':')[0] ?? ''));
-      if (!failing.some((apiId) => tabOf.get(apiId) === activeTab)) {
-        const first = tabs.find((t) => failing.some((apiId) => tabOf.get(apiId) === t.apiId));
-        if (first) setActiveTab(first.apiId);
-      }
-      for (const apiId of failing) {
-        const group = groupOf.get(apiId);
-        if (group) toggleGroup(group, true);
-      }
-      setFailedSubmits((n) => n + 1);
+      reveal(issuesToErrors(issues, defaultLocale));
       props.onValidationFailed?.(issues.length);
       return;
     }
     setFieldErrors({});
     props.onSave(out);
   };
+
+  /** Shows `errors` on their fields: their locale, tab and collapsed group opened for them. */
+  const reveal = (errors: FieldErrors) => {
+    setFieldErrors(errors);
+    // If the active locale is clean, jump to the first locale that isn't, so
+    // the failure is never invisible (errors on unmounted tabs).
+    const errorLocales = new Set(Object.keys(errors).map((k) => k.split(':')[1] ?? ''));
+    const errorLocale = errorLocales.has(activeLocale)
+      ? activeLocale
+      : locales.find((l) => errorLocales.has(l));
+    if (errorLocale && errorLocale !== activeLocale) setActiveLocale(errorLocale);
+    // The same for tabs: unless the tab on screen holds an error, go to the first that does,
+    // and open every collapsed group that holds one.
+    const failing = Object.keys(errors)
+      .filter((k) => k.split(':')[1] === errorLocale)
+      .map((k) => topLevel(k.split(':')[0] ?? ''));
+    if (!failing.some((apiId) => tabOf.get(apiId) === activeTab)) {
+      const first = tabs.find((t) => failing.some((apiId) => tabOf.get(apiId) === t.apiId));
+      if (first) setActiveTab(first.apiId);
+    }
+    for (const apiId of failing) {
+      const group = groupOf.get(apiId);
+      if (group) toggleGroup(group, true);
+    }
+    setFailedSubmits((n) => n + 1);
+  };
+
+  // A save the server refused: its issues land on their fields like the form's own.
+  const handledIssues = useRef(0);
+  // Runs per refusal (its seq), not per render of the form.
+  useEffect(() => {
+    const refusal = props.serverIssues;
+    if (!refusal || refusal.seq === handledIssues.current) return;
+    handledIssues.current = refusal.seq;
+    const named = refusal.issues.filter((i) => i.field !== '');
+    if (named.length > 0) reveal(issuesToErrors(named, defaultLocale));
+  }, [props.serverIssues]);
+
+  const formBlockRules = useMemo<FormBlockRules | undefined>(() => {
+    const blocks = props.blockRules;
+    if (!blocks?.rules) return undefined;
+    const byLocale = new Map<string, StoredSlots>();
+    return {
+      contentType: contentType.apiId,
+      rules: blocks.rules,
+      stored: (locale) => {
+        let held = byLocale.get(locale);
+        if (!held) {
+          held = storedSlots(contentType, blocks.stored, locale, defaultLocale);
+          byLocale.set(locale, held);
+        }
+        return held;
+      },
+    };
+  }, [props.blockRules, contentType, defaultLocale]);
 
   // Per-locale error counts back the locale-tab badges and the summary list.
   const errorsByLocale = useMemo(() => {
@@ -840,126 +931,134 @@ export function EntryForm(props: {
   return (
     <form id={props.formId} onSubmit={submit} className="max-w-2xl space-y-4">
       <DirectionsContext.Provider value={props.directions}>
-        <p role="status" aria-live="polite" className="sr-only">
-          {ruleNews}
-        </p>
-        {hasLocalized && locales.length > 1 && (
-          // Locale switcher: a segmented row of <button>s (role=button) — component
-          // tests select a locale via getByRole('button', { name: 'de-DE' }).
-          <div className="inline-flex flex-wrap gap-1 rounded-lg border bg-muted/40 p-1">
-            {locales.map((loc) => {
-              const errCount = errorsByLocale.get(loc) ?? 0;
-              return (
-                <Button
-                  type="button"
-                  key={loc}
-                  size="sm"
-                  variant={loc === activeLocale ? 'default' : 'ghost'}
-                  onClick={() => setActiveLocale(loc)}
-                >
-                  {loc}
-                  {loc === defaultLocale ? ' (default)' : ''}
-                  {props.delivered?.[loc] === false && (
-                    <>
-                      {' '}
-                      {/* In words and ruled in the button's own colour, so it reads on the ink of
+        <BlockRulesContext.Provider value={formBlockRules}>
+          <p role="status" aria-live="polite" className="sr-only">
+            {ruleNews}
+          </p>
+          {hasLocalized && locales.length > 1 && (
+            // Locale switcher: a segmented row of <button>s (role=button) — component
+            // tests select a locale via getByRole('button', { name: 'de-DE' }).
+            <div className="inline-flex flex-wrap gap-1 rounded-lg border bg-muted/40 p-1">
+              {locales.map((loc) => {
+                const errCount = errorsByLocale.get(loc) ?? 0;
+                return (
+                  <Button
+                    type="button"
+                    key={loc}
+                    size="sm"
+                    variant={loc === activeLocale ? 'default' : 'ghost'}
+                    onClick={() => setActiveLocale(loc)}
+                  >
+                    {loc}
+                    {loc === defaultLocale ? ' (default)' : ''}
+                    {props.delivered?.[loc] === false && (
+                      <>
+                        {' '}
+                        {/* In words and ruled in the button's own colour, so it reads on the ink of
                         the chosen tab and the muted row alike. */}
-                      <span className="rounded-full border border-current px-1.5 font-normal text-2xs leading-4">
-                        Not delivered
-                      </span>
-                    </>
-                  )}
-                  <ErrorCount count={errCount} />
-                </Button>
-              );
-            })}
-          </div>
-        )}
-
-        {tabs.length > 1 ? (
-          <Tabs value={activeTab} onValueChange={setActiveTab}>
-            {/* Start-aligned: centred tabs that overflow push the first out of reach of the scroll. */}
-            <TabsList
-              aria-label="Sections of the entry"
-              className="w-full justify-start overflow-x-auto"
-            >
-              {tabs.map((t) => {
-                const count = errorsByTab.get(t.apiId) ?? 0;
-                return (
-                  // As wide as its label at least: the touch minimum would otherwise let the tabs
-                  // shrink to fit, overlapping their labels instead of scrolling the bar.
-                  <TabsTrigger key={t.apiId} value={t.apiId} className="shrink-0 basis-auto px-3">
-                    {t.name}
-                    <ErrorCount count={count} />
-                  </TabsTrigger>
-                );
-              })}
-            </TabsList>
-            {tabs.map((t) => (
-              <TabsContent key={t.apiId} value={t.apiId}>
-                {renderTab(t)}
-              </TabsContent>
-            ))}
-          </Tabs>
-        ) : (
-          tabs[0] && renderTab(tabs[0])
-        )}
-
-        {Object.keys(fieldErrors).length > 0 && (
-          <div
-            ref={summaryRef}
-            role="alert"
-            className="space-y-1 rounded-2xl border border-destructive/30 bg-destructive/10 p-3 text-sm"
-          >
-            <p className="font-medium text-destructive">
-              Can’t save yet: {Object.keys(fieldErrors).length}{' '}
-              {Object.keys(fieldErrors).length === 1 ? 'field needs' : 'fields need'} attention.
-            </p>
-            <ul className="space-y-0.5">
-              {Object.entries(fieldErrors).map(([key, message]) => {
-                const [apiId = '', loc = defaultLocale] = key.split(':');
-                const tab = tabOf.get(topLevel(apiId));
-                // In view: this locale and tab, and not inside a group that is closed.
-                const group = groupOf.get(topLevel(apiId));
-                const here =
-                  loc === activeLocale &&
-                  (tab === undefined || tab === activeTab) &&
-                  (group === undefined || openGroups.has(group));
-                return (
-                  <li key={key} className="text-destructive">
-                    {here ? (
-                      <span>
-                        {fieldName(apiId, loc)} ({loc}): {message}
-                      </span>
-                    ) : (
-                      <button
-                        type="button"
-                        className="underline underline-offset-2"
-                        onClick={() => {
-                          setActiveLocale(loc);
-                          if (tab !== undefined || group !== undefined) showField(topLevel(apiId));
-                        }}
-                      >
-                        {fieldName(apiId, loc)} ({loc}): {message}
-                      </button>
+                        <span className="rounded-full border border-current px-1.5 font-normal text-2xs leading-4">
+                          Not delivered
+                        </span>
+                      </>
                     )}
-                  </li>
+                    <ErrorCount count={errCount} />
+                  </Button>
                 );
               })}
-            </ul>
-          </div>
-        )}
+            </div>
+          )}
 
-        {!props.hideActions && (
-          <div className="flex items-center gap-2">
-            <Button type="submit" disabled={props.busy}>
-              Save draft
-            </Button>
-            <Button type="button" variant="outline" onClick={props.onCancel} disabled={props.busy}>
-              Cancel
-            </Button>
-          </div>
-        )}
+          {tabs.length > 1 ? (
+            <Tabs value={activeTab} onValueChange={setActiveTab}>
+              {/* Start-aligned: centred tabs that overflow push the first out of reach of the scroll. */}
+              <TabsList
+                aria-label="Sections of the entry"
+                className="w-full justify-start overflow-x-auto"
+              >
+                {tabs.map((t) => {
+                  const count = errorsByTab.get(t.apiId) ?? 0;
+                  return (
+                    // As wide as its label at least: the touch minimum would otherwise let the tabs
+                    // shrink to fit, overlapping their labels instead of scrolling the bar.
+                    <TabsTrigger key={t.apiId} value={t.apiId} className="shrink-0 basis-auto px-3">
+                      {t.name}
+                      <ErrorCount count={count} />
+                    </TabsTrigger>
+                  );
+                })}
+              </TabsList>
+              {tabs.map((t) => (
+                <TabsContent key={t.apiId} value={t.apiId}>
+                  {renderTab(t)}
+                </TabsContent>
+              ))}
+            </Tabs>
+          ) : (
+            tabs[0] && renderTab(tabs[0])
+          )}
+
+          {Object.keys(fieldErrors).length > 0 && (
+            <div
+              ref={summaryRef}
+              role="alert"
+              className="space-y-1 rounded-2xl border border-destructive/30 bg-destructive/10 p-3 text-sm"
+            >
+              <p className="font-medium text-destructive">
+                Can’t save yet: {Object.keys(fieldErrors).length}{' '}
+                {Object.keys(fieldErrors).length === 1 ? 'field needs' : 'fields need'} attention.
+              </p>
+              <ul className="space-y-0.5">
+                {Object.entries(fieldErrors).map(([key, message]) => {
+                  const [apiId = '', loc = defaultLocale] = key.split(':');
+                  const tab = tabOf.get(topLevel(apiId));
+                  // In view: this locale and tab, and not inside a group that is closed.
+                  const group = groupOf.get(topLevel(apiId));
+                  const here =
+                    loc === activeLocale &&
+                    (tab === undefined || tab === activeTab) &&
+                    (group === undefined || openGroups.has(group));
+                  return (
+                    <li key={key} className="text-destructive">
+                      {here ? (
+                        <span>
+                          {fieldName(apiId, loc)} ({loc}): {message}
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          className="underline underline-offset-2"
+                          onClick={() => {
+                            setActiveLocale(loc);
+                            if (tab !== undefined || group !== undefined)
+                              showField(topLevel(apiId));
+                          }}
+                        >
+                          {fieldName(apiId, loc)} ({loc}): {message}
+                        </button>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          )}
+
+          {!props.hideActions && (
+            <div className="flex items-center gap-2">
+              <Button type="submit" disabled={props.busy}>
+                Save draft
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={props.onCancel}
+                disabled={props.busy}
+              >
+                Cancel
+              </Button>
+            </div>
+          )}
+        </BlockRulesContext.Provider>
       </DirectionsContext.Provider>
     </form>
   );
@@ -1085,8 +1184,9 @@ export function FieldInput(props: {
       <BlocksInput
         id={id}
         label={field.name}
+        apiId={field.apiId}
         variants={variants}
-        max={field.validations?.size?.max}
+        size={field.validations?.size}
         value={value}
         path={props.path ?? field.apiId}
         errorFor={props.errorFor}
@@ -1657,18 +1757,47 @@ function newBlock(variant: ComponentVariant): Record<string, unknown> {
  * added (`newBlock`), and a save keeps that key. Blocks are keyed by `_key` where they have
  * one, so a reorder moves an editor's state (a rich-text editor's undo history)
  * with its block.
+ *
+ * The block config narrows it (`cms/lib/block-rules.ts`): Add offers only the blocks the field's
+ * (or the slot's) narrowed rule takes, the config's max caps it too, and a locked one keeps its
+ * blocks where they are (no Add, move or Remove; what's inside them still edits). Blocks already
+ * in it stay, whatever the config says now.
  */
 function BlocksInput(
   props: Omit<NestedProps, 'fields'> & {
     label: string;
+    /** The field's apiId: a top-level field's, or the slot's in the block holding it. */
+    apiId: string;
     variants: readonly ComponentVariant[];
-    /** `validations.size.max`: at the cap, adding is turned off rather than refused on save. */
-    max?: number;
+    /** `validations.size`: at the cap, adding is turned off rather than refused on save. */
+    size?: { readonly min?: number; readonly max?: number };
   },
 ) {
-  const { variants, path, errorFor, onEdited, pickers, locale, onChange, label, max } = props;
+  const { variants, path, errorFor, onEdited, pickers, locale, onChange, label } = props;
   const items = Array.isArray(props.value) ? (props.value as unknown[]) : [];
+  const config = useContext(BlockRulesContext);
+  const parent = useContext(BlockParentContext);
+  const policy = slotPolicy(
+    variants,
+    props.size,
+    config
+      ? ruleFor(
+          config.rules,
+          parent
+            ? { block: parent.type, slot: props.apiId }
+            : { contentType: config.contentType, field: props.apiId },
+        )
+      : undefined,
+    config
+      ? wasStored(config.stored(locale), {
+          field: props.apiId,
+          ...(parent ? { parentKey: parent.key ?? '' } : {}),
+        })
+      : false,
+  );
+  const { max, locked } = policy;
   const full = max !== undefined && items.length >= max;
+  const adds = policy.offers;
 
   const replace = (index: number, item: unknown) =>
     onChange(items.map((existing, i) => (i === index ? item : existing)));
@@ -1707,54 +1836,62 @@ function BlocksInput(
                 {variant?.name ?? 'Unknown block'}
                 <span className="ml-1.5 font-normal text-muted-foreground">{index + 1}</span>
               </span>
-              <div className="flex items-center gap-1">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  aria-label={`Move ${noun} up`}
-                  disabled={index === 0}
-                  onClick={() => move(index, -1)}
-                >
-                  ↑
-                </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  aria-label={`Move ${noun} down`}
-                  disabled={index === items.length - 1}
-                  onClick={() => move(index, 1)}
-                >
-                  ↓
-                </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="text-destructive"
-                  aria-label={`Remove ${noun}`}
-                  onClick={() => {
-                    onEdited?.(at);
-                    onChange(items.filter((_, i) => i !== index));
-                  }}
-                >
-                  Remove
-                </Button>
-              </div>
+              {/* A locked field keeps its blocks in place: no move, no Remove. */}
+              {locked ? null : (
+                <div className="flex items-center gap-1">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    aria-label={`Move ${noun} up`}
+                    disabled={index === 0}
+                    onClick={() => move(index, -1)}
+                  >
+                    ↑
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    aria-label={`Move ${noun} down`}
+                    disabled={index === items.length - 1}
+                    onClick={() => move(index, 1)}
+                  >
+                    ↓
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="text-destructive"
+                    aria-label={`Remove ${noun}`}
+                    onClick={() => {
+                      onEdited?.(at);
+                      onChange(items.filter((_, i) => i !== index));
+                    }}
+                  >
+                    Remove
+                  </Button>
+                </div>
+              )}
             </div>
             {variant ? (
-              <ComponentInput
-                id={`${props.id}-${index}`}
-                fields={variant.fields}
-                value={item}
-                path={at}
-                errorFor={errorFor}
-                onEdited={onEdited}
-                pickers={pickers}
-                locale={locale}
-                onChange={(v) => replace(index, v)}
-              />
+              // Its own blocks fields are its slots: the config names them by this block.
+              <BlockParentContext.Provider
+                value={{ type: variant.apiId, ...(typeof key === 'string' ? { key } : {}) }}
+              >
+                <ComponentInput
+                  id={`${props.id}-${index}`}
+                  fields={variant.fields}
+                  value={item}
+                  path={at}
+                  errorFor={errorFor}
+                  onEdited={onEdited}
+                  pickers={pickers}
+                  locale={locale}
+                  onChange={(v) => replace(index, v)}
+                />
+              </BlockParentContext.Provider>
             ) : (
               // A block whose type the model no longer declares: there is no
               // shape to edit it by, so it is said plainly and can be removed.
@@ -1762,21 +1899,30 @@ function BlocksInput(
                 {typeof type === 'string'
                   ? `This block’s type “${type}” is not in the content model, so it can’t be edited here.`
                   : 'This block has no type, so it can’t be edited here.'}
+                {locked
+                  ? ` ${label} is locked, so it can’t be removed here: an admin can unlock it in Build → Blocks.`
+                  : ''}
               </p>
             )}
             {err && <p className="text-xs text-destructive">{err}</p>}
           </fieldset>
         );
       })}
-      {variants.length === 1 && variants[0] ? (
+      {locked ? (
+        <p className="flex max-w-measure items-start gap-1.5 text-muted-foreground text-xs">
+          <Lock className="mt-0.5 size-3 shrink-0" aria-hidden="true" />
+          {label} is locked: its blocks stay as they are, in their order. What’s inside them can
+          still be edited.
+        </p>
+      ) : adds.length === 0 ? null : adds.length === 1 && adds[0] ? (
         <Button
           type="button"
           variant="outline"
           size="sm"
           disabled={full}
-          onClick={() => onChange([...items, newBlock(variants[0] as ComponentVariant)])}
+          onClick={() => onChange([...items, newBlock(adds[0] as ComponentVariant)])}
         >
-          <Plus className="size-4" aria-hidden="true" /> Add {variants[0].name.toLowerCase()}
+          <Plus className="size-4" aria-hidden="true" /> Add {adds[0].name.toLowerCase()}
         </Button>
       ) : (
         <DropdownMenu>
@@ -1787,7 +1933,7 @@ function BlocksInput(
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start" className="w-56">
             <DropdownMenuLabel className="caption">Add to {label}</DropdownMenuLabel>
-            {variants.map((v) => (
+            {adds.map((v) => (
               <DropdownMenuItem key={v.apiId} onSelect={() => onChange([...items, newBlock(v)])}>
                 {v.name}
               </DropdownMenuItem>
@@ -1795,7 +1941,7 @@ function BlocksInput(
           </DropdownMenuContent>
         </DropdownMenu>
       )}
-      {full && (
+      {full && !locked && (
         <p className="text-muted-foreground text-xs">
           {max === 1 ? 'Holds one block.' : `Holds up to ${max} blocks.`}
         </p>

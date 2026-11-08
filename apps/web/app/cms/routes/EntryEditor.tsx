@@ -1,4 +1,9 @@
-import type { EntryFields, FieldDiff } from '@contentworker/domain';
+import {
+  type BlockConfigIssue,
+  blockVariants,
+  type EntryFields,
+  type FieldDiff,
+} from '@contentworker/domain';
 import { topLevelField } from '@contentworker/sdk-core';
 import type { Capability } from '@contentworker/sdk-core/live-preview';
 import {
@@ -53,6 +58,7 @@ import { PublishConfirm } from '../components/entries/PublishConfirm';
 import { SaveConflictDialog } from '../components/entries/SaveConflictDialog';
 import { GenerateEntryDialog } from '../components/GenerateEntryDialog';
 import { orDirect, useAssistantEdit, usePageContext } from '../lib/assistant';
+import { configRefusal, rulesOver } from '../lib/block-rules';
 import { canvasAvailable } from '../lib/canvas/model';
 import { useClient } from '../lib/client-context';
 import { dateTime, toMs } from '../lib/format';
@@ -216,6 +222,38 @@ export function EntryEditor() {
   };
   const initial: EntryFields | null = baseFields;
 
+  // The block config the blocks fields follow, with the catalog it is judged over: read only for
+  // a type that has a blocks field, as the editor opens (a config set since is the server's to
+  // refuse, and lands on the field it names).
+  const hasBlocks = !!selectedType?.fields.some((f) => blockVariants(f) !== undefined);
+  const blockCatalog = useScopedQuery(['block-catalog'], () => client.getBlockCatalog(), {
+    silent: true,
+    enabled: hasBlocks,
+  }).data;
+  const blockRules = useScopedQuery(
+    ['block-config', 'effective'],
+    () => client.getEffectiveBlockRules(),
+    { silent: true, enabled: hasBlocks, staleTime: 0 },
+  ).data;
+  // A new entry has nothing stored: nothing is locked until its first save.
+  const storedFields = isEdit ? (baseFields ?? undefined) : undefined;
+  const formBlockRules = useMemo(
+    () =>
+      blockRules
+        ? {
+            rules: rulesOver(blockRules, blockCatalog),
+            catalog: blockCatalog,
+            stored: storedFields,
+          }
+        : undefined,
+    [blockRules, blockCatalog, storedFields],
+  );
+  /** What the server's block config refused of the last save, for the form to show in place. */
+  const [refused, setRefused] = useState<{
+    seq: number;
+    issues: readonly BlockConfigIssue[];
+  } | null>(null);
+
   // A failed load already toasts via the query cache; leave the broken editor.
   useEffect(() => {
     if (entryQuery.isError) navigate(backTo);
@@ -365,6 +403,15 @@ export function EntryEditor() {
         // Named as just saved: this render's title is from before the save.
         if (chainPublish) await publish(view.entry, titleOf(fields) ?? about);
       } catch (err) {
+        // The config changed since the form read it: its issues land on the fields they name.
+        const issues = configRefusal(err);
+        if (issues.length > 0) {
+          setRefused((r) => ({ seq: (r?.seq ?? 0) + 1, issues }));
+          toast.error(
+            `The block config refused ${issues.length === 1 ? 'a change' : `${issues.length} changes`}: see the fields marked`,
+          );
+          return;
+        }
         const stale = isEdit ? staleSave(err) : undefined;
         if (!stale) throw err;
         // Publish waits on the answer: saving over theirs goes on to publish, as was asked.
@@ -815,6 +862,8 @@ export function EntryEditor() {
               focusRequest={focusRequest}
               mergePatch={patchState.patch}
               onValuesChange={onValuesChange}
+              blockRules={formBlockRules}
+              serverIssues={refused}
               onSave={save}
               onCancel={() => navigate(backTo)}
             />

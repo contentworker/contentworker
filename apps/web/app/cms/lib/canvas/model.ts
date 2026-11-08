@@ -3,8 +3,10 @@
  * locale as a tree of slots and blocks, and the block-patch ops (`block-patch.ts` in the domain)
  * that change it. A slot is a place blocks go: a top-level blocks field, or a blocks field a
  * block's variant declares (a slot from the block catalog). What a slot takes is its field's
- * variants, and how many its `validations.size`, exactly as validation reads them, so the canvas
- * never offers a block a save would refuse.
+ * variants, and how many its `validations.size`, exactly as validation reads them, narrowed by the
+ * environment's block config (`cms/lib/block-rules.ts`) when it is given, so the canvas never
+ * offers a block a save would refuse. A block already in a slot stays on it, whatever the config
+ * says now: the config judges new placements, not stored content.
  *
  * Pure: the screen holds the fields and the history; this reads them and builds ops.
  */
@@ -16,11 +18,13 @@ import {
   blockVariants,
   type ComponentVariant,
   type ContentType,
+  type EffectiveBlockRules,
   type EntryFields,
   type FieldDefinition,
   variantOf,
 } from '@contentworker/domain';
 import { type FieldPathStep, formatFieldPath } from '@contentworker/sdk-core';
+import { ruleFor, type StoredSlots, slotPolicy, storedSlots, wasStored } from '../block-rules';
 
 /** Where a slot is: a top-level blocks field, or a slot of the block keyed `parent.key`. */
 export interface SlotAddress {
@@ -37,13 +41,20 @@ export interface CanvasSlot {
   readonly help?: string;
   /** The locale its ops address: the edited one when the top-level field is localized. */
   readonly locale: string;
-  /** The blocks it takes. */
+  /** The blocks it holds by: every block the code lets the slot take, stored ones included. */
   readonly variants: readonly ComponentVariant[];
+  /** The blocks a new one may be (the dock, a duplicate): `variants`, narrowed by the config. */
+  readonly offers: readonly ComponentVariant[];
+  /** Fewest and most, the field's own and the config's, whichever is tighter. */
   readonly min?: number;
   readonly max?: number;
+  /** The field's own least, which validation holds every save to (the config's only edits). */
+  readonly fieldMin?: number;
   readonly blocks: readonly CanvasBlock[];
   /** Holds as many as it may: nothing more goes in. */
   readonly full: boolean;
+  /** The config locks it: no block goes in or out, and none moves (inside them is editable). */
+  readonly locked: boolean;
 }
 
 export interface CanvasBlock {
@@ -66,23 +77,44 @@ export interface CanvasBlock {
 
 const LABEL_LENGTH = 48;
 
+/** The block config a tree is drawn under: the rules in force, and the entry as it is stored. */
+export interface CanvasRules {
+  readonly rules: EffectiveBlockRules | null | undefined;
+  /** The stored fields (undefined for an entry not yet saved): a lock holds only what's stored. */
+  readonly stored: EntryFields | undefined;
+}
+
+/** What a slot is built under: the type, the config, and the stored slots in the locale. */
+interface Under {
+  readonly contentType: string;
+  readonly rules: EffectiveBlockRules | null | undefined;
+  readonly stored: StoredSlots;
+}
+
 /**
  * Every top-level blocks field of `contentType` as a slot tree, from `fields` in `locale` (a field
  * that isn't localized is read, and addressed, in `defaultLocale`). A block without a string `_key`
- * can't be addressed by an op, so it isn't on the canvas; a save keys it.
+ * can't be addressed by an op, so it isn't on the canvas; a save keys it. Without `config`, every
+ * slot takes what its field does and none is locked.
  */
 export function canvasTree(
-  contentType: Pick<ContentType, 'fields'>,
+  contentType: Pick<ContentType, 'apiId' | 'fields'>,
   fields: EntryFields,
   locale: string,
   defaultLocale: string,
+  config?: CanvasRules,
 ): CanvasSlot[] {
+  const under: Under = {
+    contentType: contentType.apiId,
+    rules: config?.rules,
+    stored: storedSlots(contentType, config?.stored, locale, defaultLocale),
+  };
   return contentType.fields.flatMap((def) => {
     const variants = blockVariants(def);
     if (!variants) return [];
     const at = def.localized ? locale : defaultLocale;
     const value = (fields[def.apiId] as Record<string, unknown> | undefined)?.[at];
-    return [buildSlot(def, variants, value, { field: def.apiId }, def.apiId, [], at, 0)];
+    return [buildSlot(def, variants, value, { field: def.apiId }, def.apiId, [], at, 0, under)];
   });
 }
 
@@ -95,9 +127,28 @@ function buildSlot(
   steps: readonly FieldPathStep[],
   locale: string,
   depth: number,
+  under: Under,
+  /** The catalog block holding this slot: its variant's apiId. */
+  holder?: string,
 ): CanvasSlot {
   const items = Array.isArray(value) ? value : [];
   const size = def.validations?.size;
+  const rule = ruleFor(
+    under.rules,
+    address.parent && holder
+      ? { block: holder, slot: address.parent.slot }
+      : { contentType: under.contentType, field: address.field },
+  );
+  const policy = slotPolicy(
+    variants,
+    size,
+    // A slot of a block the catalog doesn't place (a field modelled by hand) has no rule.
+    address.parent && !holder ? undefined : rule,
+    wasStored(under.stored, {
+      field: address.field,
+      ...(address.parent ? { parentKey: address.parent.key } : {}),
+    }),
+  );
   const blocks: CanvasBlock[] = [];
   const slot: CanvasSlot = {
     address,
@@ -106,10 +157,13 @@ function buildSlot(
     ...(def.help ? { help: def.help } : {}),
     locale,
     variants,
-    ...(size?.min !== undefined ? { min: size.min } : {}),
-    ...(size?.max !== undefined ? { max: size.max } : {}),
+    offers: policy.offers,
+    ...(policy.min !== undefined ? { min: policy.min } : {}),
+    ...(policy.max !== undefined ? { max: policy.max } : {}),
+    ...(size?.min !== undefined ? { fieldMin: size.min } : {}),
     blocks,
-    full: size?.max !== undefined && items.length >= size.max,
+    full: policy.max !== undefined && items.length >= policy.max,
+    locked: policy.locked,
   };
   items.forEach((item) => {
     if (typeof item !== 'object' || item === null || Array.isArray(item)) return;
@@ -132,6 +186,8 @@ function buildSlot(
           [...own, { field: f.apiId }],
           locale,
           depth + 1,
+          under,
+          variant?.apiId,
         ),
       ];
     });
@@ -219,9 +275,33 @@ export function slotCount(slot: CanvasSlot): string {
   return min !== undefined && n < min ? `${blocks}, needs ${min}` : blocks;
 }
 
-/** A seam's (and a slot's) words: the slot's name and how full it is ("Main · 3 of 8"). */
+/**
+ * A seam's (and a slot's) words: the slot's name and how full it is ("Main · 3 of 8"), and
+ * "locked" when the config locks it ("Main · 3 of 8 · locked").
+ */
 export function slotFill(slot: CanvasSlot): string {
-  return `${slot.name} · ${slotCount(slot)}`;
+  return `${slot.name} · ${slotCount(slot)}${slot.locked ? ' · locked' : ''}`;
+}
+
+/** Whether `block` can move by one place in its slot: not at that end, and not in a locked slot. */
+export function canMove(block: CanvasBlock, by: -1 | 1): boolean {
+  return !block.slot.locked && block.slot.blocks[block.index + by] !== undefined;
+}
+
+/** Whether `block` can leave its slot (a remove): not from a locked slot. */
+export function canRemove(block: CanvasBlock): boolean {
+  return !block.slot.locked;
+}
+
+/**
+ * Whether `block` can be duplicated: its slot isn't locked or full, and a new block of its kind
+ * may go there (a copy is placed, so the config judges it as an insert).
+ */
+export function canDuplicate(block: CanvasBlock): boolean {
+  const { slot, variant } = block;
+  return (
+    !!variant && !slot.locked && !slot.full && slot.offers.some((v) => v.apiId === variant.apiId)
+  );
 }
 
 /** A place in a slot: where a seam is (before or after a block by key, or an index). */

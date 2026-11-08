@@ -3,8 +3,9 @@
  * takes (`dockGroups`) as one compact row of cards along the bottom edge, under the catalog's group
  * captions, each its name and a line of its description, scrolling sideways when they don't fit,
  * so the page above (and the chosen seam) stays in view. Picking one puts it in the page at once
- * (unsaved). A full slot says so and offers nothing. Thumbnails aren't drawn: the admin's `img-src`
- * takes no other origin, so each block is its name.
+ * (unsaved). A full slot says so and offers nothing, as does a locked one (the canvas draws no seam
+ * there, but Add in Layers or the inspector can still ask). Thumbnails aren't drawn: the admin's
+ * `img-src` takes no other origin, so each block is its name.
  *
  * One tab stop: ← → (and ↑ ↓) move across the cards, Home and End go to either end, Enter or Space
  * puts the block in, Escape closes the dock.
@@ -119,7 +120,12 @@ export function Dock({ place, catalog, onInsert, onClose, inSheet }: DockProps) 
           </Button>
         )}
       </div>
-      {slot.full ? (
+      {slot.locked ? (
+        <p className="max-w-measure px-4 pb-3 text-sm">
+          {slot.name} is locked: its blocks stay as they are, in their order. What’s inside them can
+          still be edited.
+        </p>
+      ) : slot.full ? (
         <p className="max-w-measure px-4 pb-3 text-sm">
           {slot.name} is full: it holds {slot.max} of {slot.max}. Remove a block from it to add
           another.

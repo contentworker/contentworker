@@ -3,11 +3,12 @@
  * keyboard and screen-reader path to the page (whose own document isn't navigable from the admin):
  * every block is a tree item, arrows move the selection (↑ ↓ through the page, ← to the block
  * holding it, → into its first slot), Enter opens its settings, and each slot of the page's top
- * level has its own Add button, which opens the dock at its end.
+ * level has its own Add button, which opens the dock at its end. A slot the block config locks
+ * says so beside its name, with a lock, and offers no Add.
  */
 import { Button } from '@contentworker/ui/button';
 import { cn } from '@contentworker/ui/lib/utils';
-import { Plus } from 'lucide-react';
+import { Lock, Plus } from 'lucide-react';
 import { useEffect, useRef } from 'react';
 import { ToneBadge } from '~/cms/components/status';
 import {
@@ -91,8 +92,11 @@ export function Layers({ slots, selected, onSelect, onOpen, onAdd }: LayersProps
       {slots.map((slot) => (
         <section key={slot.path} aria-label={slotFill(slot)} className="flex flex-col gap-1">
           <div className="flex items-center justify-between gap-2 px-2">
-            <h3 className="caption">{slotFill(slot)}</h3>
-            {onAdd ? (
+            <h3 className="caption inline-flex items-center gap-1">
+              {slot.locked ? <Lock aria-hidden="true" className="size-3" /> : null}
+              {slotFill(slot)}
+            </h3>
+            {onAdd && !slot.locked ? (
               <Button
                 type="button"
                 variant="ghost"
@@ -182,10 +186,11 @@ function LayerItem(props: {
           {filled.map((slot) => (
             <div key={slot.path} role="none">
               <div
-                className="caption py-1"
+                className="caption flex items-center gap-1 py-1"
                 style={{ paddingLeft: `${0.5 + level * 1}rem` }}
                 aria-hidden="true"
               >
+                {slot.locked ? <Lock className="size-3" /> : null}
                 {slotFill(slot)}
               </div>
               {/* biome-ignore lint/a11y/useSemanticElements: one slot's tree items, not a fieldset. */}
