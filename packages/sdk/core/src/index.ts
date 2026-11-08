@@ -850,10 +850,16 @@ export type DeliveryClient = ReturnType<typeof createDeliveryClient>;
 
 export {
   adminEditUrl,
+  blockKeyOf,
   CONTENT_REF_ATTRIBUTE,
   type ContentRef,
+  type FieldPath,
+  type FieldPathStep,
   formatContentRef,
+  formatFieldPath,
   parseContentRef,
+  parseFieldPath,
+  topLevelField,
 } from './content-ref.js';
 export { type EmbedCard, type EmbedData, type EmbedKind, embedCard } from './embed.js';
 export {

@@ -1,972 +1,966 @@
 // @vitest-environment jsdom
+// @vitest-environment-options {"url": "https://site.test/page"}
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fitGeometry } from '../src/live-preview/guest.js';
+import { formatContentRef } from '../src/content-ref.js';
+import { mountInlineEditor } from '../src/inline-edit.js';
 import {
-  applyLivePatch,
-  blockAttrs,
+  acceptMessage,
+  type Capability,
+  type ConnectPreviewOptions,
+  connectPreview,
   LIVE_PREVIEW_SDK_VERSION,
   type LiveFields,
-  type LivePreview,
-  type LivePreviewOptions,
-  MAX_MESSAGE_BYTES,
-  parseAdminMessage,
-  parseGuestMessage,
+  type LiveView,
+  narrowCapabilities,
+  negotiateVersion,
+  OFFERED_VERSIONS,
+  type PreviewConnection,
+  parseFrontendMessage,
+  refAttrs,
   slotAttrs,
-  startLivePreview,
 } from '../src/live-preview.js';
 
 const ADMIN = 'https://admin.test';
-const SESSION = 'sess_0123456789';
-// The admin's view of the frame, for the page-message parser.
-const PAGE = 'https://site.test';
-const FRAME = { frame: true };
-const guest = { session: SESSION, origin: PAGE, source: FRAME };
+const SITE = 'https://site.test';
+const ALL: Capability[] = [
+  'select',
+  'patch.fields',
+  'patch.blocks',
+  'proposals',
+  'scroll',
+  'layout',
+];
 
-type Posted = { type: string; [k: string]: unknown };
+type Posted = { kind: string; [k: string]: unknown };
 
-let parent: { postMessage: ReturnType<typeof vi.fn> };
+/**
+ * The admin's window, as far as the page can see it: what the page posts arrives as a real
+ * MessageEvent, checked and parsed with the same exports the admin imports.
+ */
+class Host {
+  readonly received: Posted[] = [];
+  readonly raw: unknown[] = [];
+  readonly target = new EventTarget();
+  channel: string | undefined;
+  version: number | undefined;
+  supported = [1];
+  allowed: readonly string[] = ALL;
+
+  constructor() {
+    this.target.addEventListener('message', (e) => this.onMessage(e as MessageEvent));
+  }
+
+  postMessage(data: unknown, targetOrigin: string): void {
+    expect(targetOrigin).toBe(ADMIN);
+    this.raw.push(data);
+    const event = new MessageEvent('message', { data: structuredClone(data), origin: SITE });
+    Object.defineProperty(event, 'source', { value: window });
+    this.target.dispatchEvent(event);
+  }
+
+  private onMessage(e: MessageEvent): void {
+    const data = acceptMessage(e, {
+      origin: SITE,
+      source: window,
+      ...(this.channel ? { channel: this.channel } : {}),
+      ...(this.version ? { version: this.version } : {}),
+    });
+    if (!data) return;
+    const parsed = parseFrontendMessage(data);
+    if (!parsed.ok) return;
+    this.received.push(parsed.message as unknown as Posted);
+  }
+
+  of(kind: string): Posted[] {
+    return this.received.filter((m) => m.kind === kind);
+  }
+
+  /** Answers the last offer as the admin would. */
+  answer(): void {
+    const offer = this.of('connect.offer').at(-1) as Posted & {
+      channel: string;
+      versions: number[];
+      capabilities: string[];
+    };
+    const version = negotiateVersion(offer.versions, this.supported);
+    this.channel = offer.channel;
+    if (version === undefined) {
+      this.send(
+        { kind: 'connect.reject', reason: 'unsupported-version', versions: this.supported },
+        1,
+      );
+      return;
+    }
+    this.version = version;
+    this.send({
+      kind: 'connect.accept',
+      version,
+      capabilities: narrowCapabilities(offer.capabilities, this.allowed),
+    });
+  }
+
+  send(
+    body: Record<string, unknown>,
+    v = this.version,
+    from: { origin?: string; source?: unknown; channel?: string } = {},
+  ): void {
+    const event = new MessageEvent('message', {
+      data: { v, channel: from.channel ?? this.channel, ...body },
+      origin: from.origin ?? ADMIN,
+    });
+    Object.defineProperty(event, 'source', { value: 'source' in from ? from.source : host });
+    window.dispatchEvent(event);
+  }
+}
+
+let host: Host;
 let frames: Map<number, FrameRequestCallback>;
-let nextFrame: number;
-let preview: LivePreview | undefined;
+let preview: PreviewConnection | undefined;
+const states: { entryId: string; locale: string; fields: LiveFields; view: LiveView }[] = [];
 
-/** Runs every queued animation frame, as the browser would on its next paint. */
 function flushFrames(): void {
   const due = [...frames.values()];
   frames.clear();
   for (const cb of due) cb(0);
 }
+const settle = () => new Promise((r) => setTimeout(r, 0));
 
-/** Lets the MutationObserver deliver, then paints. */
-async function paint(): Promise<void> {
-  await Promise.resolve();
-  await Promise.resolve();
-  flushFrames();
-}
-
-function posted(type?: string): Posted[] {
-  const all = parent.postMessage.mock.calls.map(([m]) => m as Posted);
-  return type ? all.filter((m) => m.type === type) : all;
-}
-
-function send(data: unknown, from: { origin?: string; source?: unknown } = {}): void {
-  const event = new MessageEvent('message', { data, origin: from.origin ?? ADMIN });
-  Object.defineProperty(event, 'source', { value: 'source' in from ? from.source : parent });
-  window.dispatchEvent(event);
-}
-
-const msg = (type: string, body: Record<string, unknown> = {}) => ({
-  cw: 1,
-  session: SESSION,
-  type,
-  ...body,
-});
-
-const page = (): LiveFields => ({
-  title: { 'en-US': 'Home' },
-  body: {
-    'en-US': [
-      { _type: 'hero', _key: 'h1', heading: 'Welcome' },
-      { _type: 'cta', _key: 'c1', label: 'Sign up' },
-    ],
-  },
-});
-
-const init = (extra: Record<string, unknown> = {}) =>
-  msg('init', {
-    fields: page(),
-    locale: 'en-US',
-    version: 3,
-    entryId: 'e1',
-    contentType: 'landing',
-    ...extra,
+function start(over: Partial<ConnectPreviewOptions> = {}): PreviewConnection {
+  preview = connectPreview({
+    adminOrigin: ADMIN,
+    capabilities: ALL,
+    onState: (entryId, locale, fields, view) => {
+      states.push({ entryId, locale, fields, view });
+    },
+    ...over,
   });
-
-function start(over: Partial<LivePreviewOptions> = {}): LivePreview {
-  preview = startLivePreview({ adminOrigin: ADMIN, onChange: () => {}, ...over });
   return preview;
 }
 
-function rect(el: Element, x: number, y: number, w: number, h: number): void {
-  (el as HTMLElement).getBoundingClientRect = () =>
-    ({ left: x, top: y, width: w, height: h, x, y, right: x + w, bottom: y + h }) as DOMRect;
+async function connected(over: Partial<ConnectPreviewOptions> = {}): Promise<PreviewConnection> {
+  const p = start(over);
+  host.answer();
+  await settle();
+  return p;
 }
 
-const settle = () => new Promise((r) => setTimeout(r, 0));
+const at = { entryId: 'e1', locale: 'en-US' };
+const state = (rev: number, fields: LiveFields = { title: 'Home' }) => ({
+  kind: 'entry.state',
+  rev,
+  ...at,
+  fields,
+});
 
 beforeEach(() => {
-  parent = { postMessage: vi.fn() };
-  Object.defineProperty(window, 'parent', { value: parent, configurable: true });
+  host = new Host();
+  Object.defineProperty(window, 'parent', { value: host, configurable: true });
   frames = new Map();
-  nextFrame = 1;
+  let next = 1;
   window.requestAnimationFrame = (cb) => {
-    const id = nextFrame++;
-    frames.set(id, cb);
-    return id;
+    frames.set(next, cb);
+    return next++;
   };
   window.cancelAnimationFrame = (id) => {
     frames.delete(id);
   };
-  window.history.replaceState(null, '', `/page?cw_session=${SESSION}`);
+  window.history.replaceState(null, '', '/page');
   document.body.innerHTML = '';
+  states.length = 0;
 });
 
 afterEach(() => {
-  preview?.destroy();
+  preview?.close();
   preview = undefined;
+  vi.useRealTimers();
   Object.defineProperty(window, 'parent', { value: window, configurable: true });
 });
 
-describe('activation', () => {
-  it('is inert outside a frame', () => {
+describe('connecting', () => {
+  it('does nothing when the page is not framed, or not configured', () => {
     Object.defineProperty(window, 'parent', { value: window, configurable: true });
-    const onChange = vi.fn();
-    expect(start({ onChange }).active).toBe(false);
-    expect(parent.postMessage).not.toHaveBeenCalled();
+    expect(start().active).toBe(false);
+    Object.defineProperty(window, 'parent', { value: host, configurable: true });
+    expect(start({ adminOrigin: undefined }).active).toBe(false);
+    expect(host.raw).toEqual([]);
   });
 
-  it('is inert without a session on the URL, or with a malformed one', () => {
-    window.history.replaceState(null, '', '/page');
-    expect(start().active).toBe(false);
-    window.history.replaceState(null, '', '/page?cw_session=<script>');
-    expect(start().active).toBe(false);
-    expect(parent.postMessage).not.toHaveBeenCalled();
-  });
-
-  it('refuses an admin origin that is not exact', () => {
-    for (const adminOrigin of [
-      '*',
-      'null',
-      'https://admin.test/',
-      'admin.test',
-      'javascript:x',
-      'http://admin.test',
-    ]) {
-      expect(() => startLivePreview({ adminOrigin, onChange: () => {} })).toThrow(
-        /exact https origin/,
-      );
+  it('refuses an admin origin that is not exact, or is the page’s own', () => {
+    for (const adminOrigin of ['*', 'null', `${ADMIN}/`, 'http://admin.test']) {
+      expect(() => start({ adminOrigin })).toThrow(/exact https origin/);
     }
-    expect(start({ adminOrigin: 'http://localhost:5173' }).active).toBe(true);
+    expect(() => start({ adminOrigin: SITE })).toThrow(/must differ/);
   });
 
-  it('leaves pages outside a session alone even when misconfigured', () => {
-    window.history.replaceState(null, '', '/page');
-    expect(startLivePreview({ adminOrigin: '*', onChange: () => {} }).active).toBe(false);
-  });
-
-  it('says hello to the admin origin only', () => {
-    expect(start().active).toBe(true);
-    expect(parent.postMessage).toHaveBeenCalledTimes(1);
-    const [hello, origin] = parent.postMessage.mock.calls[0] as [Posted, string];
-    expect(origin).toBe(ADMIN);
-    expect(hello).toMatchObject({
-      cw: 1,
-      session: SESSION,
-      type: 'hello',
-      sdkVersion: LIVE_PREVIEW_SDK_VERSION,
+  it('offers its versions, capabilities, a fresh channel and its SDK, to the admin origin only', () => {
+    start({ capabilities: ['select', 'scroll'] });
+    const [offer] = host.of('connect.offer');
+    expect(offer).toMatchObject({
+      v: OFFERED_VERSIONS[0],
+      versions: OFFERED_VERSIONS,
+      capabilities: ['select', 'scroll'],
+      sdk: { name: '@contentworker/sdk', version: LIVE_PREVIEW_SDK_VERSION },
     });
-    expect(hello.capabilities).toContain('patch');
-  });
-});
-
-describe('who it listens to', () => {
-  it('ignores another origin, another window and another session', async () => {
-    const onChange = vi.fn();
-    start({ onChange });
-    send(init(), { origin: 'https://evil.test' });
-    send(init(), { source: window });
-    send(init(), { source: null });
-    send({ ...init(), session: 'sess_somebodyelse' });
-    send({ ...init(), cw: 2 });
-    await settle();
-    expect(onChange).not.toHaveBeenCalled();
-    // Quietly: a stranger hears nothing back.
-    expect(posted('error')).toEqual([]);
+    expect(offer?.channel).toMatch(/^[A-Za-z0-9_-]{22}$/);
   });
 
-  it('ignores a type it does not speak', async () => {
-    const onChange = vi.fn();
-    start({ onChange });
-    send(msg('eval', { code: 'alert(1)' }));
-    await settle();
-    expect(onChange).not.toHaveBeenCalled();
-    expect(posted('error')).toEqual([]);
-  });
-
-  it('refuses a message over the cap, and a patch of more than 100 ops', async () => {
-    const onChange = vi.fn();
-    start({ onChange });
-    send(init());
-    await settle();
-    onChange.mockClear();
-    const big = 'x'.repeat(MAX_MESSAGE_BYTES);
-    send(
-      msg('patch', {
-        seq: 1,
-        ops: [{ op: 'setField', field: 'title', locale: 'en-US', value: big }],
-      }),
-    );
-    const many = Array.from({ length: 101 }, () => ({
-      op: 'setField',
-      field: 'title',
-      locale: 'en-US',
-      value: 'x',
-    }));
-    send(msg('patch', { seq: 2, ops: many }));
-    await settle();
-    expect(onChange).not.toHaveBeenCalled();
-    // The first is refused unread; the second is dropped, the page being a patch behind.
-    expect(posted('error').map((e) => [e.kind, e.seq])).toEqual([
-      ['patch', 1],
-      ['patch', 1],
-    ]);
-  });
-
-  it('takes an init larger than a patch may be (a whole entry)', async () => {
-    const onChange = vi.fn();
-    start({ onChange });
-    send(init({ fields: { body: { 'en-US': 'y'.repeat(MAX_MESSAGE_BYTES * 2) } } }));
-    await settle();
-    expect(onChange).toHaveBeenCalledTimes(1);
-  });
-
-  it('refuses a name that reaches a prototype, anywhere in the message', async () => {
-    const onChange = vi.fn();
-    start({ onChange });
-    send(init());
-    await settle();
-    send(
-      msg('patch', {
-        seq: 1,
-        ops: [{ op: 'setField', field: '__proto__', locale: 'en-US', value: { polluted: 1 } }],
-      }),
-    );
-    send(
-      JSON.parse(
-        `{"cw":1,"session":"${SESSION}","type":"patch","seq":2,"ops":[{"op":"insert","field":"body","locale":"en-US","block":{"_type":"cta","__proto__":{"polluted":1}}}]}`,
-      ),
-    );
-    await settle();
-    expect(onChange).toHaveBeenCalledTimes(1);
-    // The first is refused unread; the second is dropped, the page being a patch behind.
-    expect(posted('error').map((e) => [e.kind, e.seq])).toEqual([
-      ['patch', 1],
-      ['patch', 1],
-    ]);
-    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
-  });
-});
-
-describe('edits', () => {
-  it('renders the entry, then each patch, acknowledging after onChange settles', async () => {
-    const calls: { fields: LiveFields; seq: number; ops: number }[] = [];
-    let release: (() => void) | undefined;
-    start({
-      onChange: (fields, update) => {
-        calls.push({ fields, seq: update.seq, ops: update.ops.length });
-        return new Promise<void>((r) => {
-          release = r;
-        });
-      },
-    });
-    send(init());
-    expect(calls).toHaveLength(1);
-    expect(calls[0]?.fields).toEqual(page());
-    expect(posted('rendered')).toEqual([]);
-
-    // Two patches land while the init is still rendering: one call takes both.
-    send(
-      msg('patch', {
-        seq: 1,
-        ops: [{ op: 'setField', field: 'title', locale: 'en-US', value: 'Hello' }],
-      }),
-    );
-    send(
-      msg('patch', {
-        seq: 2,
-        ops: [{ op: 'move', field: 'body', locale: 'en-US', key: 'c1', to: { index: 0 } }],
-      }),
-    );
-    expect(calls).toHaveLength(1);
-    release?.();
-    await settle();
-    expect(posted('rendered').map((m) => m.seq)).toEqual([0]);
-    expect(calls).toHaveLength(2);
-    expect(calls[1]).toMatchObject({ seq: 2, ops: 2 });
-    expect(calls[1]?.fields.title).toEqual({ 'en-US': 'Hello' });
-    expect(
-      ((calls[1]?.fields.body?.['en-US'] ?? []) as { _key: string }[]).map((b) => b._key),
-    ).toEqual(['c1', 'h1']);
-    release?.();
-    await settle();
-    expect(posted('rendered').map((m) => m.seq)).toEqual([0, 2]);
-  });
-
-  it('ignores a patch it has already applied (a resend)', async () => {
-    const onChange = vi.fn();
-    const p = start({ onChange });
-    send(init());
-    const patch = msg('patch', {
-      seq: 1,
-      ops: [{ op: 'remove', field: 'body', locale: 'en-US', key: 'h1' }],
-    });
-    send(patch);
-    await settle();
-    send(patch);
-    await settle();
-    expect(onChange).toHaveBeenCalledTimes(2);
-    expect(p.fields?.body?.['en-US']).toHaveLength(1);
-  });
-
-  it('refuses a patch it cannot place whole, keeping the fields it had', async () => {
-    const onChange = vi.fn();
-    const p = start({ onChange });
-    send(init());
-    await settle();
-    send(
-      msg('patch', {
-        seq: 1,
-        ops: [
-          { op: 'setField', field: 'title', locale: 'en-US', value: 'Changed' },
-          { op: 'remove', field: 'body', locale: 'en-US', key: 'missing' },
-        ],
-      }),
-    );
-    await settle();
-    expect(onChange).toHaveBeenCalledTimes(1);
-    expect(p.fields).toEqual(page());
-    expect(posted('error')).toEqual([expect.objectContaining({ kind: 'patch' })]);
-    // A re-sent entry with the admin's seq resumes the session.
-    send(init({ seq: 1 }));
-    send(
-      msg('patch', {
-        seq: 2,
-        ops: [{ op: 'setField', field: 'title', locale: 'en-US', value: 'Again' }],
-      }),
-    );
-    await settle();
-    expect(p.fields?.title).toEqual({ 'en-US': 'Again' });
-  });
-
-  it('reports a render that throws instead of acknowledging it', async () => {
-    start({
-      onChange: () => {
-        throw new Error('boom');
-      },
-    });
-    send(init());
-    await settle();
-    expect(posted('rendered')).toEqual([]);
-    expect(posted('error')).toEqual([expect.objectContaining({ kind: 'render', message: 'boom' })]);
-  });
-
-  it('never posts the entry to anyone but the admin', async () => {
+  it('resends the offer up to three times, a second apart, then stops', () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     start();
-    send(init());
+    vi.advanceTimersByTime(10_000);
+    expect(host.of('connect.offer')).toHaveLength(4);
+  });
+
+  it('stops offering once accepted, and takes only what it offered', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const p = start({ capabilities: ['select'] });
+    host.allowed = ALL;
+    host.answer();
+    vi.advanceTimersByTime(10_000);
+    expect(host.of('connect.offer')).toHaveLength(1);
+    expect(p.connected).toBe(true);
+    expect(p.capabilities).toEqual(['select']);
+  });
+
+  it('never widens what the admin accepted beyond the offer, even when told to', async () => {
+    const p = start({ capabilities: ['select'] });
+    host.channel = host.of('connect.offer')[0]?.channel as string;
+    host.version = 1;
+    host.send({ kind: 'connect.accept', version: 1, capabilities: ALL });
+    expect(p.capabilities).toEqual(['select']);
+  });
+
+  it('logs one actionable error naming both version lists when rejected', () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const rejected = vi.fn();
+    const p = start();
+    p.on('reject', rejected);
+    host.supported = [7, 8];
+    host.answer();
+    expect(p.connected).toBe(false);
+    expect(rejected).toHaveBeenCalledWith({ reason: 'unsupported-version', versions: [7, 8] });
+    expect(error).toHaveBeenCalledTimes(1);
+    expect(error.mock.calls[0]?.[0]).toMatch(/\[7, 8\].*\[1\]/);
+    error.mockRestore();
+  });
+
+  it('ignores a message from another origin, window or channel', async () => {
+    await connected();
+    host.send(state(0), 1, { origin: 'https://evil.test' });
+    host.send(state(0), 1, { source: window });
+    host.send(state(0), 1, { channel: 'BBBBBBBBBBBBBBBBBBBBBB' });
+    host.send(state(0), 2);
     await settle();
-    for (const [, origin] of parent.postMessage.mock.calls) expect(origin).toBe(ADMIN);
+    expect(states).toEqual([]);
+  });
+
+  it('reports the page once connected, if the app said what it renders first', async () => {
+    const p = start();
+    p.emit('page', {
+      url: `${SITE}/page`,
+      entries: [{ entryId: 'e1', contentType: 'landing', locale: 'en-US' }],
+    });
+    expect(host.of('page')).toEqual([]);
+    host.answer();
+    expect(host.of('page')).toEqual([
+      expect.objectContaining({
+        url: `${SITE}/page`,
+        entries: [{ entryId: 'e1', contentType: 'landing', locale: 'en-US' }],
+      }),
+    ]);
   });
 });
 
-/** A slot with two stacked blocks, a field inside the first. */
-function mountPage(): { slot: HTMLElement; a: HTMLElement; b: HTMLElement; h: HTMLElement } {
-  const slot = document.createElement('main');
-  for (const [k, v] of Object.entries(slotAttrs('body'))) slot.setAttribute(k, v);
-  const a = document.createElement('section');
-  for (const [k, v] of Object.entries(blockAttrs('h1'))) a.setAttribute(k, v);
-  const h = document.createElement('h1');
-  h.setAttribute('data-cw-ref', 's|main|e1|landing|title|en-US');
-  h.textContent = 'Welcome';
-  a.appendChild(h);
-  const b = document.createElement('section');
-  b.setAttribute('data-cw-block', 'c1');
-  slot.append(a, b);
-  document.body.appendChild(slot);
-  rect(slot, 0, 0, 800, 400);
-  rect(a, 0, 10, 800, 100);
-  rect(h, 20, 20, 300, 40);
-  rect(b, 0, 130, 800, 100);
-  return { slot, a, b, h };
-}
-
-describe('staying in step with the admin', () => {
-  const setTitle = (seq: number, value: string) =>
-    msg('patch', { seq, ops: [{ op: 'setField', field: 'title', locale: 'en-US', value }] });
-  const removeMissing = (seq: number) =>
-    msg('patch', { seq, ops: [{ op: 'remove', field: 'body', locale: 'en-US', key: 'missing' }] });
-
-  it('drops every patch after a refused one, naming it, until the entry comes again', async () => {
-    const onChange = vi.fn();
-    const p = start({ onChange });
-    send(init());
+describe('two windows, from connect to applied', () => {
+  it('renders the state, then each patch in order, acknowledging each rev', async () => {
+    await connected();
+    host.send(state(0, { title: 'Home', rich: { nodeType: 'document', content: [] } }));
     await settle();
-    send(removeMissing(1));
-    // Already in flight when the admin heard of the refusal: it must not land on stale fields.
-    send(setTitle(2, 'Stale'));
+    host.send({ kind: 'entry.patch', rev: 1, ...at, fields: { title: 'Hello', rich: null } });
     await settle();
-    expect(p.fields?.title).toEqual({ 'en-US': 'Home' });
-    expect(onChange).toHaveBeenCalledTimes(1);
-    expect(posted('rendered').map((m) => m.seq)).toEqual([0]);
-    expect(posted('error').map((e) => [e.kind, e.seq])).toEqual([
-      ['patch', 1],
-      ['patch', 1],
+    expect(states.map((s) => s.fields)).toEqual([
+      { title: 'Home', rich: { nodeType: 'document', content: [] } },
+      { title: 'Hello' },
     ]);
-
-    // An init without a seq starts the count again.
-    send(init());
-    send(setTitle(1, 'Fresh'));
-    await settle();
-    expect(p.fields?.title).toEqual({ 'en-US': 'Fresh' });
-    expect(posted('rendered').map((m) => m.seq)).toEqual([0, 0, 1]);
+    expect(host.of('applied')).toEqual([
+      expect.objectContaining({ rev: 0, entryId: 'e1' }),
+      expect.objectContaining({ rev: 1, entryId: 'e1' }),
+    ]);
   });
 
-  it('treats a patch it could not read as refused', async () => {
-    const p = start();
-    send(init());
+  it('answers a gap with failed, and starts over from a fresh state', async () => {
+    await connected();
+    host.send(state(0));
     await settle();
-    send(
-      msg('patch', {
-        seq: 1,
-        ops: [
-          { op: 'setField', field: 'title', locale: 'en-US', value: 'x'.repeat(MAX_MESSAGE_BYTES) },
-        ],
-      }),
-    );
-    send(setTitle(2, 'Stale'));
+    host.send({ kind: 'entry.patch', rev: 2, ...at, fields: { title: 'Skipped one' } });
+    host.send({
+      kind: 'entry.patch',
+      rev: 1,
+      ...at,
+      fields: { title: 'Wrong locale' },
+      locale: 'de-DE',
+    });
+    host.send({ kind: 'entry.patch', rev: 1, entryId: 'unknown', locale: 'en-US', fields: {} });
     await settle();
-    expect(p.fields?.title).toEqual({ 'en-US': 'Home' });
-    expect(posted('rendered').map((m) => m.seq)).toEqual([0]);
-    expect(posted('error').map((e) => [e.kind, e.seq])).toEqual([
-      ['patch', 1],
-      ['patch', 1],
+    expect(host.of('failed').map((m) => [m.rev, m.reason])).toEqual([
+      [2, 'gap'],
+      [1, 'gap'],
+      [1, 'gap'],
     ]);
-    send(init({ seq: 2 }));
-    send(setTitle(3, 'Back'));
+    host.send(state(5, { title: 'Fresh' }));
+    host.send({ kind: 'entry.patch', rev: 6, ...at, fields: { title: 'Again' } });
     await settle();
-    expect(p.fields?.title).toEqual({ 'en-US': 'Back' });
+    expect(states.at(-1)?.fields).toEqual({ title: 'Again' });
+    expect(host.of('applied').at(-1)).toMatchObject({ rev: 6 });
   });
 
-  it('acknowledges nothing a failed render held until a render that includes it succeeds', async () => {
-    const updates: { seq: number; ops: number }[] = [];
+  it('refuses a patch it could not read, and rich text turned into a string of HTML', async () => {
+    const p = await connected();
+    host.send(state(0, { body: { nodeType: 'document', content: [] } }));
+    await settle();
+    host.send({ kind: 'entry.patch', rev: 1, ...at, fields: { body: '<p>Hi</p>' } });
+    host.send({ kind: 'entry.patch', rev: 1, ...at, fields: JSON.parse('{"__proto__":{"x":1}}') });
+    await settle();
+    expect(host.of('failed').map((m) => [m.rev, m.reason])).toEqual([
+      [1, 'invalid'],
+      [1, 'invalid'],
+    ]);
+    expect(states).toHaveLength(1);
+    expect(p.dropped).toBe(2);
+    expect(({} as { x?: unknown }).x).toBeUndefined();
+  });
+
+  it('acknowledges nothing a failed render held, and the next render covers it', async () => {
     let fail = false;
-    start({
-      onChange: (_fields, update) => {
-        updates.push({ seq: update.seq, ops: update.ops.length });
+    await connected({
+      onState: () => {
         if (fail) throw new Error('render failed');
       },
     });
-    send(init());
+    host.send(state(0));
     await settle();
     fail = true;
-    send(setTitle(1, 'One'));
+    host.send({ kind: 'entry.patch', rev: 1, ...at, fields: { title: 'One' } });
     await settle();
-    // No retry of its own: the failed call isn't run again until something new arrives.
-    expect(updates).toHaveLength(2);
     fail = false;
-    send(setTitle(2, 'Two'));
+    host.send({ kind: 'entry.patch', rev: 2, ...at, fields: { title: 'Two' } });
     await settle();
-    expect(updates).toEqual([
-      { seq: 0, ops: 0 },
-      { seq: 1, ops: 1 },
-      { seq: 2, ops: 2 },
-    ]);
-    expect(posted('rendered').map((m) => m.seq)).toEqual([0, 2]);
-    expect(posted('error')).toEqual([expect.objectContaining({ kind: 'render', seq: 1 })]);
+    expect(host.of('applied').map((m) => m.rev)).toEqual([0, 2]);
+    expect(host.of('failed')).toEqual([expect.objectContaining({ rev: 1, reason: 'render' })]);
   });
 
-  it('resyncs rather than hold an unbounded backlog of edits it could not render', async () => {
-    start({
-      onChange: () => {
-        throw new Error('always');
-      },
+  it('refuses a message needing a capability the page did not offer', async () => {
+    const p = await connected({ capabilities: ['select', 'patch.fields'] });
+    host.send(state(0, { body: [] }));
+    await settle();
+    host.send({
+      kind: 'blocks.patch',
+      rev: 1,
+      ...at,
+      field: 'body',
+      ops: [{ op: 'insert', block: { _type: 'cta', _key: 'c1' } }],
     });
-    send(init());
+    host.send({ kind: 'scroll', ref: 'r' });
     await settle();
-    const hundred = Array.from({ length: 100 }, (_, i) => ({
-      op: 'setField',
-      field: 'title',
-      locale: 'en-US',
-      value: `v${i}`,
-    }));
-    for (let seq = 1; seq <= 11; seq++) send(msg('patch', { seq, ops: hundred }));
-    await settle();
-    expect(posted('error').filter((e) => e.kind === 'patch')).toEqual([
-      expect.objectContaining({ seq: 11 }),
-    ]);
-    expect(posted('rendered')).toEqual([]);
+    expect(states).toHaveLength(1);
+    expect(p.dropped).toBe(2);
+    expect(host.of('failed')).toEqual([]);
   });
 
-  it('ignores an unreadable patch from anyone but the admin', async () => {
-    const p = start();
-    send(init());
+  it('ignores a kind it does not speak, without counting it', async () => {
+    const p = await connected();
+    host.send({ kind: 'resize', height: 900 });
+    expect(p.dropped).toBe(0);
+  });
+});
+
+describe('blocks and proposals', () => {
+  const body = () => [
+    { _type: 'hero', _key: 'h1', heading: 'Welcome' },
+    { _type: 'cta', _key: 'c1', label: 'Sign up' },
+  ];
+  const keys = (value: unknown) => (value as { _key: string }[]).map((b) => b._key);
+
+  it('applies real ops to the fields', async () => {
+    await connected();
+    host.send(state(0, { body: body() }));
+    host.send({
+      kind: 'blocks.patch',
+      rev: 1,
+      ...at,
+      field: 'body',
+      ops: [{ op: 'move', key: 'c1', to: { index: 0 } }],
+    });
     await settle();
-    const big = msg('patch', {
-      seq: 1,
+    expect(keys(states.at(-1)?.fields.body)).toEqual(['c1', 'h1']);
+  });
+
+  it('answers an op it can’t place with failed: conflict, changing nothing', async () => {
+    await connected();
+    host.send(state(0, { body: body() }));
+    host.send({
+      kind: 'blocks.patch',
+      rev: 1,
+      ...at,
+      field: 'body',
+      ops: [{ op: 'remove', key: 'nope' }],
+    });
+    await settle();
+    expect(host.of('failed')).toEqual([expect.objectContaining({ rev: 1, reason: 'conflict' })]);
+    expect(states).toHaveLength(1);
+  });
+
+  it('renders a proposal as a ghost, never in the fields, until it is taken back', async () => {
+    await connected();
+    host.send(state(0, { body: body() }));
+    host.send({
+      kind: 'blocks.patch',
+      rev: 1,
+      ...at,
+      field: 'body',
       ops: [
-        { op: 'setField', field: 'title', locale: 'en-US', value: 'x'.repeat(MAX_MESSAGE_BYTES) },
+        {
+          op: 'insert',
+          after: 'h1',
+          block: { _type: 'cta', _key: 'g1', label: 'Proposed' },
+          proposed: true,
+        },
+        { op: 'update', key: 'h1', set: { heading: 'Proposed heading' }, proposed: true },
+        { op: 'remove', key: 'c1', proposed: true },
       ],
     });
-    send(big, { origin: 'https://evil.test' });
-    send(big, { source: window });
-    send(setTitle(1, 'Still in step'));
     await settle();
-    expect(posted('error')).toEqual([]);
-    expect(p.fields?.title).toEqual({ 'en-US': 'Still in step' });
+    const last = states.at(-1);
+    expect(keys(last?.fields.body)).toEqual(['h1', 'c1']);
+    expect(((last?.fields.body ?? []) as { heading?: string }[])[0]?.heading).toBe('Welcome');
+    expect(keys(last?.view.withProposals.body)).toEqual(['h1', 'g1', 'c1']);
+    expect(last?.view.ghosts).toEqual({ inserted: ['g1'], changed: ['h1'], removed: ['c1'] });
+
+    host.send({
+      kind: 'blocks.patch',
+      rev: 2,
+      ...at,
+      field: 'body',
+      ops: [{ op: 'remove', key: 'g1', proposed: true }],
+    });
+    await settle();
+    expect(keys(states.at(-1)?.view.withProposals.body)).toEqual(['h1', 'c1']);
+    expect(states.at(-1)?.view.ghosts.inserted).toEqual([]);
   });
 
-  it('starts the count again on an init without a seq', async () => {
-    const p = start();
-    send(init());
-    send(setTitle(5, 'Five'));
-    send(init());
-    send(setTitle(1, 'One again'));
+  it('drops a proposal the real edits overtook, and a fresh state clears them all', async () => {
+    await connected();
+    host.send(state(0, { body: body() }));
+    host.send({
+      kind: 'blocks.patch',
+      rev: 1,
+      ...at,
+      field: 'body',
+      ops: [{ op: 'insert', block: { _type: 'cta', _key: 'g1' }, proposed: true }],
+    });
+    // Accepted: the admin sends the same block as a real insert.
+    host.send({
+      kind: 'blocks.patch',
+      rev: 2,
+      ...at,
+      field: 'body',
+      ops: [{ op: 'insert', block: { _type: 'cta', _key: 'g1' } }],
+    });
     await settle();
-    expect(p.fields?.title).toEqual({ 'en-US': 'One again' });
+    expect(keys(states.at(-1)?.fields.body)).toEqual(['h1', 'c1', 'g1']);
+    expect(states.at(-1)?.view.ghosts.inserted).toEqual([]);
+    host.send({
+      kind: 'blocks.patch',
+      rev: 3,
+      ...at,
+      field: 'body',
+      ops: [{ op: 'insert', block: { _type: 'cta', _key: 'g2' }, proposed: true }],
+    });
+    host.send(state(9, { body: body() }));
+    await settle();
+    expect(states.at(-1)?.view.ghosts.inserted).toEqual([]);
+  });
+
+  it('needs proposals to propose', async () => {
+    const p = await connected({ capabilities: ['patch.blocks'] });
+    host.send(state(0, { body: body() }));
+    host.send({
+      kind: 'blocks.patch',
+      rev: 1,
+      ...at,
+      field: 'body',
+      ops: [{ op: 'remove', key: 'c1', proposed: true }],
+    });
+    await settle();
+    expect(p.dropped).toBe(1);
   });
 });
 
-describe('geometry', () => {
-  it('fits a page of more boxes than one message holds, on-screen ones first', () => {
-    const key = (i: number) => `${'k'.repeat(240)}${i}`;
-    const rect = (i: number) => ({ x: 0, y: i * 10 - 20_000, w: 800, h: 10 });
-    const blocks = Array.from({ length: 3000 }, (_, i) => ({ key: key(i), rect: rect(i) }));
-    const slots = Array.from({ length: 3000 }, (_, i) => ({
-      path: key(i),
-      parentKey: key(i),
-      rect: rect(i),
-      gaps: [
-        { index: 0, axis: 'y' as const, before: key(i), rect: rect(i) },
-        { index: 1, axis: 'y' as const, after: key(i), rect: rect(i) },
-      ],
-    }));
-    const fields = Array.from({ length: 3000 }, (_, i) => ({
-      ref: `${key(i)}|ref`,
-      rect: rect(i),
-    }));
-    const body = fitGeometry(
-      {
-        blocks,
-        slots,
-        fields,
-        scroll: { x: 0, y: 0 },
-        viewport: { w: 800, h: 600 },
-        docHeight: 30_000,
-      },
-      MAX_MESSAGE_BYTES - 64,
-    );
-    expect(body.truncated).toBe(true);
-    // Box 2000 is at y = 0, the top of the viewport.
-    expect(body.blocks.map((b) => b.key)).toContain(key(2000));
-    expect(body.blocks.map((b) => b.key)).toContain(key(2059));
-    const parsed = parseGuestMessage(
-      { data: msg('geometry', body), origin: PAGE, source: FRAME },
-      guest,
-    );
-    expect(parsed.ok).toBe(true);
+/** A slot holding two blocks, the first with a heading field. */
+function mountPage() {
+  const ref = (field: string) => ({
+    space: 's',
+    environment: 'main',
+    entryId: 'e1',
+    contentType: 'landing',
+    field,
+    locale: 'en-US',
   });
+  const slot = document.createElement('main');
+  for (const [k, v] of Object.entries(slotAttrs(ref('body')))) slot.setAttribute(k, v);
+  const a = document.createElement('section');
+  for (const [k, v] of Object.entries(refAttrs(ref('body[h1]')))) a.setAttribute(k, v);
+  const h = document.createElement('h1');
+  h.setAttribute('data-cw-ref', formatContentRef(ref('body[h1].heading')));
+  a.appendChild(h);
+  const b = document.createElement('section');
+  b.setAttribute('data-cw-ref', formatContentRef(ref('body[c1]')));
+  slot.append(a, b);
+  document.body.appendChild(slot);
+  const box = (el: Element, x: number, y: number, w: number, hh: number) => {
+    (el as HTMLElement).getBoundingClientRect = () =>
+      ({ left: x, top: y, width: w, height: hh, x, y, right: x + w, bottom: y + hh }) as DOMRect;
+  };
+  box(slot, 0, 0, 800, 400);
+  box(a, 0, 10, 800, 100);
+  box(h, 20, 20, 300, 40);
+  box(b, 0, 130, 800, 100);
+  return { slot, a, h, b, ref };
+}
 
-  it('keeps a slot with more seams than allowed, with the seams that fit', () => {
-    const r = { x: 0, y: 0, w: 1, h: 1 };
-    const gaps = Array.from({ length: 5000 }, (_, index) => ({
-      index,
-      axis: 'y' as const,
-      rect: r,
-    }));
-    const body = fitGeometry(
-      {
-        blocks: [],
-        slots: [{ path: 'body', rect: r, gaps }],
-        fields: [],
-        scroll: { x: 0, y: 0 },
-        viewport: { w: 800, h: 600 },
-        docHeight: 600,
-      },
-      MAX_MESSAGE_BYTES - 64,
-    );
-    expect(body.slots).toHaveLength(1);
-    expect(body.slots[0]?.gaps).toHaveLength(4000);
-    expect(body.truncated).toBe(true);
-  });
-
-  it('flags nothing when everything fits', () => {
-    const body = fitGeometry(
-      {
-        blocks: [{ key: 'a', rect: { x: 0, y: 0, w: 1, h: 1 } }],
-        slots: [],
-        fields: [],
-        scroll: { x: 0, y: 0 },
-        viewport: { w: 800, h: 600 },
-        docHeight: 600,
-      },
-      MAX_MESSAGE_BYTES,
-    );
-    expect(body.truncated).toBeUndefined();
-    expect(body.blocks).toHaveLength(1);
-  });
-
-  it('reports blocks, slots with their seams, and fields, once per frame', async () => {
-    mountPage();
-    start();
-    send(init());
-    await settle();
-    flushFrames();
-    const [first, ...rest] = posted('geometry');
-    expect(rest).toEqual([]);
-    expect(first?.blocks).toEqual([
-      { key: 'h1', rect: { x: 0, y: 10, w: 800, h: 100 }, slot: 'body' },
-      { key: 'c1', rect: { x: 0, y: 130, w: 800, h: 100 }, slot: 'body' },
-    ]);
-    expect(first?.fields).toEqual([
-      { ref: 's|main|e1|landing|title|en-US', rect: { x: 20, y: 20, w: 300, h: 40 } },
-    ]);
-    const [slot] = (first?.slots ?? []) as { path: string; gaps: unknown[] }[];
-    expect(slot?.path).toBe('body');
-    expect(slot?.gaps).toEqual([
-      { index: 0, axis: 'y', before: 'h1', rect: { x: 0, y: 0, w: 800, h: 10 } },
-      { index: 1, axis: 'y', after: 'h1', before: 'c1', rect: { x: 0, y: 110, w: 800, h: 20 } },
-      { index: 2, axis: 'y', after: 'c1', rect: { x: 0, y: 230, w: 800, h: 170 } },
-    ]);
-    expect(parseGuestMessage({ data: first, origin: PAGE, source: FRAME }, guest).ok).toBe(true);
-  });
-
-  it('folds scrolls, resizes and mutations into one message per frame, and skips no-ops', async () => {
-    const { b } = mountPage();
-    start();
-    send(init());
-    await settle();
-    flushFrames();
-    parent.postMessage.mockClear();
-
-    window.dispatchEvent(new Event('scroll'));
-    window.dispatchEvent(new Event('resize'));
-    b.textContent = 'changed';
-    await paint();
-    // Nothing moved, so nothing is worth sending.
-    expect(posted('geometry')).toEqual([]);
-
-    rect(b, 0, 150, 800, 100);
-    window.dispatchEvent(new Event('scroll'));
-    window.dispatchEvent(new Event('scroll'));
-    b.setAttribute('class', 'moved');
-    await paint();
-    expect(posted('geometry')).toHaveLength(1);
-    expect(frames.size).toBe(0);
-  });
-
-  it('measures nothing before the admin has sent the entry', async () => {
-    mountPage();
-    start();
-    window.dispatchEvent(new Event('scroll'));
-    await paint();
-    expect(posted('geometry')).toEqual([]);
-  });
-});
-
-describe('edit mode', () => {
-  async function editing(): Promise<void> {
-    start();
-    send(init());
-    send(msg('mode', { mode: 'edit' }));
-    await settle();
-  }
-
-  it('turns a click into a pick of the nearest field or block, and the page never sees it', async () => {
-    const { h, b } = mountPage();
+describe('pointer, select and scroll', () => {
+  it('turns a click on a marked element into pointer, with its box, and the page never sees it', async () => {
+    const { h } = mountPage();
     const pageHandler = vi.fn();
     h.addEventListener('click', pageHandler);
-    await editing();
+    await connected();
     const click = new MouseEvent('click', { bubbles: true, cancelable: true });
     h.dispatchEvent(click);
-    b.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
     expect(click.defaultPrevented).toBe(true);
     expect(pageHandler).not.toHaveBeenCalled();
-    expect(posted('pick')).toEqual([
-      expect.objectContaining({ ref: 's|main|e1|landing|title|en-US' }),
-      expect.objectContaining({ key: 'c1' }),
-    ]);
-  });
-
-  it('turns a link click into navigate, and never follows it', async () => {
-    const { b } = mountPage();
-    const nav = document.createElement('a');
-    nav.href = `/about?x=1&cw_session=${SESSION}`;
-    nav.textContent = 'About';
-    document.body.appendChild(nav);
-    const bad = document.createElement('a');
-    bad.setAttribute('href', 'javascript:alert(1)');
-    document.body.appendChild(bad);
-    const inBlock = document.createElement('a');
-    inBlock.href = 'https://other.test/x';
-    b.appendChild(inBlock);
-    await editing();
-
-    const click = new MouseEvent('click', { bubbles: true, cancelable: true });
-    nav.dispatchEvent(click);
-    expect(click.defaultPrevented).toBe(true);
-    const badClick = new MouseEvent('click', { bubbles: true, cancelable: true });
-    bad.dispatchEvent(badClick);
-    expect(badClick.defaultPrevented).toBe(true);
-    // Inside a block a plain click picks the block; ⌘-click follows the link.
-    inBlock.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
-    inBlock.dispatchEvent(
-      new MouseEvent('click', { bubbles: true, cancelable: true, metaKey: true }),
-    );
-
-    expect(posted('navigate').map((m) => m.url)).toEqual([
-      `${window.location.origin}/about?x=1`,
-      'https://other.test/x',
-    ]);
-    expect(posted('pick')).toEqual([expect.objectContaining({ key: 'c1' })]);
-    expect(window.location.pathname).toBe('/page');
-  });
-
-  it('does not hover again once the pointer has left, even with a frame pending', async () => {
-    const { h, b } = mountPage();
-    await editing();
-    h.dispatchEvent(new MouseEvent('pointermove', { bubbles: true }));
-    flushFrames();
-    b.dispatchEvent(new MouseEvent('pointermove', { bubbles: true }));
-    document.documentElement.dispatchEvent(new MouseEvent('pointerleave'));
-    flushFrames();
-    expect(posted('hover')).toEqual([
-      expect.objectContaining({ ref: 's|main|e1|landing|title|en-US' }),
-      expect.not.objectContaining({ key: expect.anything(), ref: expect.anything() }),
-    ]);
-  });
-
-  it('sends hover at most once a frame, and only when it changes', async () => {
-    const { h, b } = mountPage();
-    await editing();
-    h.dispatchEvent(new MouseEvent('pointermove', { bubbles: true }));
-    b.dispatchEvent(new MouseEvent('pointermove', { bubbles: true }));
-    flushFrames();
-    b.dispatchEvent(new MouseEvent('pointermove', { bubbles: true }));
-    flushFrames();
-    document.documentElement.dispatchEvent(new MouseEvent('pointerleave'));
-    expect(posted('hover')).toEqual([
-      expect.objectContaining({ key: 'c1' }),
-      expect.not.objectContaining({ key: expect.anything() }),
-    ]);
-  });
-
-  it('forwards only the listed shortcuts, and none typed into a form', async () => {
-    mountPage();
-    const input = document.createElement('input');
-    document.body.appendChild(input);
-    // An input inside a web component: a window listener sees only its host.
-    const host = document.createElement('site-search');
-    const shadowInput = document.createElement('input');
-    host.attachShadow({ mode: 'open' }).appendChild(shadowInput);
-    document.body.appendChild(host);
-    await editing();
-    const press = (
-      key: string,
-      init: KeyboardEventInit = {},
-      target: EventTarget = document.body,
-    ) => {
-      const e = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...init });
-      target.dispatchEvent(e);
-      return e;
-    };
-    const undo = press('z', { metaKey: true });
-    const redo = press('Z', { metaKey: true, shiftKey: true });
-    press('Escape');
-    press('/');
-    const arrow = press('ArrowDown');
-    press('a');
-    press('s', { metaKey: true });
-    press('z');
-    press('/', {}, input);
-    press('Backspace', {}, input);
-    const typed = press('/', { composed: true }, shadowInput);
-    expect(typed.defaultPrevented).toBe(false);
-    expect(undo.defaultPrevented).toBe(true);
-    expect(redo.defaultPrevented).toBe(true);
-    // Nothing is selected, so the arrow still scrolls the page.
-    expect(arrow.defaultPrevented).toBe(false);
-    expect(posted('key').map((m) => [m.key, m.meta, m.shift])).toEqual([
-      ['z', true, false],
-      ['z', true, true],
-      ['Escape', false, false],
-      ['/', false, false],
-      ['ArrowDown', false, false],
-    ]);
-    send(msg('select', { key: 'h1' }));
-    expect(press('ArrowDown').defaultPrevented).toBe(true);
-  });
-
-  it('leaves the page alone in view mode', async () => {
-    const { h } = mountPage();
-    start();
-    send(init());
-    await settle();
-    const pageHandler = vi.fn();
-    h.addEventListener('click', pageHandler);
-    const click = new MouseEvent('click', { bubbles: true, cancelable: true });
-    h.dispatchEvent(click);
-    document.body.dispatchEvent(
-      new KeyboardEvent('keydown', { key: 'z', metaKey: true, bubbles: true }),
-    );
-    h.dispatchEvent(new MouseEvent('pointermove', { bubbles: true }));
-    flushFrames();
-    expect(click.defaultPrevented).toBe(false);
-    expect(pageHandler).toHaveBeenCalledTimes(1);
-    expect(posted().map((m) => m.type)).not.toEqual(
-      expect.arrayContaining(['pick', 'key', 'hover']),
-    );
-  });
-
-  it('scrolls a target into view, and says so when there is none', async () => {
-    const { b } = mountPage();
-    const scrollIntoView = vi.fn();
-    b.scrollIntoView = scrollIntoView;
-    await editing();
-    send(msg('scrollTo', { key: 'c1' }));
-    send(msg('scrollTo', { key: '"] , * [x="' }));
-    expect(scrollIntoView).toHaveBeenCalledWith(expect.objectContaining({ block: 'center' }));
-    expect(posted('error')).toEqual([expect.objectContaining({ kind: 'target' })]);
-  });
-
-  it('passes the admin’s selection and hover on', async () => {
-    const onSelect = vi.fn();
-    const onHover = vi.fn();
-    start({ onSelect, onHover });
-    send(msg('select', { key: 'h1' }));
-    send(msg('select', {}));
-    send(msg('hover', { ref: 'x' }));
-    expect(onSelect.mock.calls).toEqual([[{ key: 'h1' }], [undefined]]);
-    expect(onHover.mock.calls).toEqual([[{ ref: 'x' }]]);
-  });
-});
-
-describe('destroy', () => {
-  it('removes every listener and observer', async () => {
-    const observers: { disconnect: ReturnType<typeof vi.fn> }[] = [];
-    class FakeResizeObserver {
-      disconnect = vi.fn();
-      observe = vi.fn();
-      unobserve = vi.fn();
-      constructor() {
-        observers.push(this);
-      }
-    }
-    (window as unknown as { ResizeObserver: unknown }).ResizeObserver = FakeResizeObserver;
-    const { h } = mountPage();
-    const onChange = vi.fn();
-    const p = start({ onChange });
-    send(init());
-    send(msg('mode', { mode: 'edit' }));
-    await settle();
-    window.dispatchEvent(new Event('scroll'));
-    expect(frames.size).toBe(1);
-    p.destroy();
-    expect(frames.size).toBe(0);
-    expect(observers[0]?.disconnect).toHaveBeenCalled();
-    parent.postMessage.mockClear();
-    onChange.mockClear();
-
-    send(init());
-    const click = new MouseEvent('click', { bubbles: true, cancelable: true });
-    h.dispatchEvent(click);
-    window.dispatchEvent(new Event('scroll'));
-    h.textContent = 'later';
-    await paint();
-    expect(click.defaultPrevented).toBe(false);
-    expect(onChange).not.toHaveBeenCalled();
-    expect(parent.postMessage).not.toHaveBeenCalled();
-    delete (window as unknown as { ResizeObserver?: unknown }).ResizeObserver;
-  });
-});
-
-describe('the protocol parsers', () => {
-  it('refuses a malformed admin message as invalid', () => {
-    const bad = [
-      msg('init', { fields: [], locale: 'en-US', version: 1, entryId: 'e', contentType: 't' }),
-      msg('patch', { seq: -1, ops: [] }),
-      msg('patch', { seq: 1, ops: [{ op: 'eval', field: 'a', locale: 'b' }] }),
-      msg('patch', { seq: 1, ops: [{ op: 'move', field: 'a', locale: 'b', key: 'k' }] }),
-      msg('mode', { mode: 'god' }),
-      msg('scrollTo', {}),
-      msg('select', { key: 'a', ref: 'b' }),
-    ];
-    for (const m of bad)
-      expect(parseAdminMessage(m, SESSION)).toEqual({ ok: false, reason: 'invalid' });
-  });
-
-  const from = (data: unknown, origin = PAGE, source: unknown = FRAME) =>
-    parseGuestMessage({ data, origin, source }, guest);
-
-  it('refuses page messages the admin should not act on', () => {
-    const bad = [
-      msg('navigate', { url: 'javascript:alert(1)' }),
-      msg('navigate', { url: 'data:text/html,hi' }),
-      // Off the page's origin, or http on the open internet.
-      msg('navigate', { url: 'https://attacker.test/' }),
-      msg('navigate', { url: 'http://site.test/next' }),
-      msg('pick', { key: 'constructor' }),
-      msg('hover', { ref: '__proto__' }),
-      JSON.parse(
-        `{"cw":1,"session":"${SESSION}","type":"hello","sdkVersion":"1","capabilities":[],"__proto__":{"x":1}}`,
-      ),
-      msg('rendered', { seq: 1, extra: new Map() }),
-      msg('key', { key: 'q', meta: false, ctrl: false, shift: false, alt: false }),
-      msg('geometry', {
-        blocks: [{ key: 'a', rect: { x: Number.NaN, y: 0, w: 0, h: 0 } }],
-        slots: [],
-        fields: [],
-        scroll: { x: 0, y: 0 },
-        viewport: { w: 0, h: 0 },
-        docHeight: 0,
+    expect(host.of('pointer')).toEqual([
+      expect.objectContaining({
+        pointer: 'click',
+        ref: h.getAttribute('data-cw-ref'),
+        rect: { x: 20, y: 20, w: 300, h: 40 },
       }),
-      msg('error', { kind: 'other', message: 'x' }),
-    ];
-    for (const m of bad) expect(from(m)).toEqual({ ok: false, reason: 'invalid' });
-    expect(from(msg('navigate', { url: 'https://site.test/next' })).ok).toBe(true);
+    ]);
   });
 
-  it('takes nothing on the session alone: origin and window come first', () => {
-    const pick = msg('pick', { key: 'h1' });
-    expect(from(pick).ok).toBe(true);
-    // The session is in the frame's URL, so anything that read it can send it.
-    expect(from(pick, 'https://attacker.test')).toEqual({ ok: false, reason: 'foreign' });
-    expect(from(pick, PAGE, window)).toEqual({ ok: false, reason: 'foreign' });
-    expect(from({ ...pick, session: 'sess_another0000' })).toEqual({
-      ok: false,
-      reason: 'foreign',
-    });
+  it('sends hover at most once a frame, and a clear when the pointer leaves', async () => {
+    const { h, b } = mountPage();
+    await connected();
+    h.dispatchEvent(new MouseEvent('pointermove', { bubbles: true }));
+    b.dispatchEvent(new MouseEvent('pointermove', { bubbles: true }));
+    flushFrames();
+    b.dispatchEvent(new MouseEvent('pointermove', { bubbles: true }));
+    document.documentElement.dispatchEvent(new MouseEvent('pointerleave'));
+    flushFrames();
+    expect(host.of('pointer').map((m) => m.ref)).toEqual([b.getAttribute('data-cw-ref'), null]);
   });
 
-  it('hands the admin only the fields it validated', () => {
-    const parsed = from({ ...msg('pick', { key: 'h1' }), onclick: 'alert(1)', nested: { a: 1 } });
-    expect(parsed).toEqual({
-      ok: true,
-      message: { cw: 1, session: SESSION, type: 'pick', key: 'h1' },
-    });
+  it('leaves the page alone while the admin has editing off', async () => {
+    const { h } = mountPage();
+    await connected();
+    host.send({ kind: 'editing', on: false });
+    const click = new MouseEvent('click', { bubbles: true, cancelable: true });
+    h.dispatchEvent(click);
+    expect(click.defaultPrevented).toBe(false);
+    expect(host.of('pointer').filter((m) => m.pointer === 'click')).toEqual([]);
+  });
+
+  it('passes select on, and scrolls a ref into view', async () => {
+    const { b } = mountPage();
+    b.scrollIntoView = vi.fn();
+    const p = await connected();
+    const selected = vi.fn();
+    p.on('select', selected);
+    host.send({ kind: 'select', ref: 'r1' });
+    host.send({ kind: 'select', ref: null });
+    host.send({ kind: 'scroll', ref: b.getAttribute('data-cw-ref') });
+    expect(selected.mock.calls).toEqual([['r1'], [null]]);
+    expect(b.scrollIntoView).toHaveBeenCalledWith(expect.objectContaining({ block: 'center' }));
   });
 });
 
-describe('applyLivePatch', () => {
-  it('sets an ordinary field and leaves the input untouched', () => {
-    const before = page();
-    const result = applyLivePatch(before, [
-      { op: 'setField', field: 'title', locale: 'de-DE', value: 'Start' },
-      { op: 'setField', field: 'title', locale: 'en-US' },
-    ]);
-    expect(result).toEqual({ ok: true, fields: { ...page(), title: { 'de-DE': 'Start' } } });
-    expect(before).toEqual(page());
+describe('navigation', () => {
+  it('lets the page follow its own links, and names where it went before unloading', async () => {
+    mountPage();
+    const link = document.createElement('a');
+    link.href = '/about';
+    document.body.appendChild(link);
+    await connected();
+    const click = new MouseEvent('click', { bubbles: true, cancelable: true });
+    link.dispatchEvent(click);
+    expect(click.defaultPrevented).toBe(false);
+    window.dispatchEvent(new Event('pagehide'));
+    expect(host.of('navigated')).toEqual([expect.objectContaining({ url: `${SITE}/about` })]);
   });
 
-  it('refuses the whole patch at the first op that can’t apply', () => {
-    const result = applyLivePatch(page(), [
-      { op: 'remove', field: 'body', locale: 'en-US', key: 'h1' },
-      { op: 'update', field: 'body', locale: 'en-US', key: 'h1', set: { heading: 'x' } },
-    ]);
-    expect(result).toMatchObject({ ok: false, op: 1 });
+  it('forgets a link the page’s own router took over', async () => {
+    const link = document.createElement('a');
+    link.href = '/routed';
+    document.body.appendChild(link);
+    link.addEventListener('click', (e) => e.preventDefault());
+    await connected();
+    link.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    window.dispatchEvent(new Event('pagehide'));
+    expect(host.of('navigated')).toEqual([expect.objectContaining({ url: `${SITE}/page` })]);
   });
 
-  it('refuses ops carrying prototype names, for callers that did not parse them', () => {
-    const op = JSON.parse(
-      '{"op":"insert","field":"body","locale":"en-US","block":{"_type":"cta","__proto__":{"x":1}}}',
+  it('resolves a relative URL from the router', async () => {
+    const p = await connected();
+    p.emit('navigated', { url: '/next?x=1' });
+    expect(host.of('navigated')).toEqual([expect.objectContaining({ url: `${SITE}/next?x=1` })]);
+  });
+
+  it('connects again on a new channel after client-side navigation', async () => {
+    const p = await connected();
+    const first = host.channel;
+    window.history.pushState(null, '', '/next');
+    p.emit('navigated', { url: `${SITE}/next` });
+    expect(host.of('navigated')).toEqual([expect.objectContaining({ url: `${SITE}/next` })]);
+    expect(p.connected).toBe(false);
+    // The host, still pinned to the old channel, drops the new offer: read what was posted.
+    const offer = host.raw.at(-1) as Posted;
+    expect(offer.kind).toBe('connect.offer');
+    expect(offer.channel).not.toBe(first);
+  });
+});
+
+describe('the inline editor, when the channel is connected', () => {
+  it('hides its toggle, draws nothing, and follows the admin’s editing switch', async () => {
+    const { h } = mountPage();
+    const onEdit = vi.fn();
+    const editor = mountInlineEditor({ onEdit });
+    const toggle = document.querySelector<HTMLButtonElement>('.cw-ie-toggle');
+    expect(toggle?.hidden).toBe(false);
+    await connected();
+    expect(toggle?.hidden).toBe(true);
+    expect(editor.enabled).toBe(true);
+    h.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    // The click went to the admin as pointer, not to the overlay's own handler.
+    expect(onEdit).not.toHaveBeenCalled();
+    expect(host.of('pointer')).toHaveLength(1);
+    host.send({ kind: 'editing', on: false });
+    expect(editor.enabled).toBe(false);
+    preview?.close();
+    expect(toggle?.hidden).toBe(false);
+    editor.destroy();
+  });
+});
+
+describe('layout (extension)', () => {
+  it('reports blocks, slots with their seams, and fields, by ref', async () => {
+    const { ref } = mountPage();
+    await connected();
+    host.send(state(0));
+    await settle();
+    flushFrames();
+    const [layout] = host.of('layout');
+    expect(layout?.blocks).toEqual([
+      { ref: formatContentRef(ref('body[h1]')), rect: { x: 0, y: 10, w: 800, h: 100 } },
+      { ref: formatContentRef(ref('body[c1]')), rect: { x: 0, y: 130, w: 800, h: 100 } },
+    ]);
+    expect(layout?.fields).toEqual([
+      { ref: formatContentRef(ref('body[h1].heading')), rect: { x: 20, y: 20, w: 300, h: 40 } },
+    ]);
+    const [slot] = (layout?.slots ?? []) as {
+      ref: string;
+      gaps: { index: number; after?: string; before?: string }[];
+    }[];
+    expect(slot?.ref).toBe(formatContentRef(ref('body')));
+    expect(slot?.gaps.map((g) => [g.index, g.after, g.before])).toEqual([
+      [0, undefined, 'h1'],
+      [1, 'h1', 'c1'],
+      [2, 'c1', undefined],
+    ]);
+  });
+
+  it('sends none without the layout capability', async () => {
+    mountPage();
+    await connected({ capabilities: ['select', 'patch.fields'] });
+    host.send(state(0));
+    await settle();
+    flushFrames();
+    expect(host.of('layout')).toEqual([]);
+  });
+});
+
+describe('close', () => {
+  it('removes every listener, and posts nothing after', async () => {
+    const { h } = mountPage();
+    const p = await connected();
+    p.close();
+    const count = host.raw.length;
+    host.send(state(0));
+    const click = new MouseEvent('click', { bubbles: true, cancelable: true });
+    h.dispatchEvent(click);
+    window.dispatchEvent(new Event('scroll'));
+    await settle();
+    flushFrames();
+    expect(click.defaultPrevented).toBe(false);
+    expect(states).toEqual([]);
+    expect(host.raw).toHaveLength(count);
+  });
+});
+
+describe('found in review', () => {
+  const body = () => [
+    { _type: 'hero', _key: 'h1', heading: 'Welcome' },
+    { _type: 'cta', _key: 'c1', label: 'Sign up' },
+  ];
+  const keys = (value: unknown) => ((value ?? []) as { _key: string }[]).map((b) => b._key);
+
+  it('never runs two onState calls for one entry at once, even across a fresh state', async () => {
+    let running = 0;
+    let most = 0;
+    const releases: (() => void)[] = [];
+    await connected({
+      onState: async (_id, _locale, fields) => {
+        running += 1;
+        most = Math.max(most, running);
+        states.push({ entryId: 'e1', locale: 'en-US', fields, view: undefined as never });
+        await new Promise<void>((r) => releases.push(r));
+        running -= 1;
+      },
+    });
+    host.send(state(0, { title: 'Old' }));
+    await settle();
+    host.send(state(9, { title: 'Fresh' }));
+    await settle();
+    expect(running).toBe(1);
+    releases.shift()?.();
+    await settle();
+    releases.shift()?.();
+    await settle();
+    expect(most).toBe(1);
+    expect(states.map((s) => s.fields.title)).toEqual(['Old', 'Fresh']);
+    // The superseded render acknowledges nothing; the fresh one does.
+    expect(host.of('applied').map((m) => m.rev)).toEqual([9]);
+  });
+
+  it('gives the inline editor back its own setting when the session ends', async () => {
+    mountPage();
+    const editor = mountInlineEditor({ onEdit: () => {} });
+    expect(editor.enabled).toBe(false);
+    const p = await connected();
+    expect(editor.enabled).toBe(true);
+    p.close();
+    expect(editor.enabled).toBe(false);
+    editor.destroy();
+  });
+
+  it('keeps the inline editor stood down while another connection is still live', async () => {
+    const editor = mountInlineEditor({ onEdit: () => {} });
+    const first = await connected();
+    const second = connectPreview({ adminOrigin: ADMIN, capabilities: ALL, onState: () => {} });
+    const offer = host.raw.at(-1) as Posted;
+    host.send({ kind: 'connect.accept', version: 1, capabilities: ALL }, 1, {
+      channel: offer.channel as string,
+    });
+    expect(second.connected).toBe(true);
+    first.close();
+    expect(document.querySelector<HTMLButtonElement>('.cw-ie-toggle')?.hidden).toBe(true);
+    second.close();
+    expect(document.querySelector<HTMLButtonElement>('.cw-ie-toggle')?.hidden).toBe(false);
+    editor.destroy();
+  });
+
+  it('tells its handlers the session ended, and gives the new one the layout again', async () => {
+    mountPage();
+    const p = await connected();
+    host.send(state(0));
+    await settle();
+    flushFrames();
+    expect(host.of('layout')).toHaveLength(1);
+    const ended = vi.fn();
+    p.on('disconnect', ended);
+    p.emit('navigated', { url: `${SITE}/again` });
+    expect(ended).toHaveBeenCalledTimes(1);
+    // The pinned host dropped the new offer; answer it from what was posted.
+    const offer = host.raw.at(-1) as Posted;
+    host.channel = offer.channel as string;
+    host.received.length = 0;
+    host.send({ kind: 'connect.accept', version: 1, capabilities: ALL });
+    flushFrames();
+    expect(host.of('layout')).toHaveLength(1);
+  });
+
+  it('logs one error however many rejects arrive', () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    start();
+    host.supported = [7];
+    host.answer();
+    host.answer();
+    expect(error).toHaveBeenCalledTimes(1);
+    error.mockRestore();
+  });
+
+  it('lays a proposal inside another proposal of the same patch, by ref', async () => {
+    await connected();
+    host.send(state(0, { body: body() }));
+    host.send({
+      kind: 'blocks.patch',
+      rev: 1,
+      ...at,
+      field: 'body',
+      ops: [
+        { op: 'insert', ref: 'r1', block: { _type: 'section', _key: 's9' }, proposed: true },
+        {
+          op: 'insert',
+          parent: { key: 'r1', slot: 'items' },
+          block: { _type: 'cta', _key: 'g9' },
+          proposed: true,
+        },
+      ],
+    });
+    await settle();
+    const view = states.at(-1)?.view;
+    expect(view?.ghosts.inserted).toEqual(['s9', 'g9']);
+    const section = ((view?.withProposals.body ?? []) as { _key: string; items?: unknown }[]).find(
+      (b) => b._key === 's9',
     );
-    expect(applyLivePatch(page(), [op])).toMatchObject({ ok: false, op: 0 });
+    expect(keys(section?.items)).toEqual(['g9']);
+  });
+
+  it('refuses a proposed insert that leaves a block to be keyed on the page', async () => {
+    await connected();
+    host.send(state(0, { body: body() }));
+    host.send({
+      kind: 'blocks.patch',
+      rev: 1,
+      ...at,
+      field: 'body',
+      ops: [
+        {
+          op: 'insert',
+          block: { _type: 'section', _key: 's9', items: [{ _type: 'cta' }] },
+          proposed: true,
+        },
+      ],
+    });
+    await settle();
+    expect(host.of('failed')).toEqual([expect.objectContaining({ rev: 1, reason: 'invalid' })]);
+  });
+
+  it('takes back what was proposed inside or beside a block taken back', async () => {
+    await connected();
+    host.send(state(0, { body: body() }));
+    host.send({
+      kind: 'blocks.patch',
+      rev: 1,
+      ...at,
+      field: 'body',
+      ops: [
+        { op: 'insert', block: { _type: 'section', _key: 's9' }, proposed: true },
+        {
+          op: 'insert',
+          parent: { key: 's9', slot: 'items' },
+          block: { _type: 'cta', _key: 'g9' },
+          proposed: true,
+        },
+        { op: 'remove', key: 's9', proposed: true },
+      ],
+    });
+    // The same key proposed again starts empty.
+    host.send({
+      kind: 'blocks.patch',
+      rev: 2,
+      ...at,
+      field: 'body',
+      ops: [{ op: 'insert', block: { _type: 'section', _key: 's9' }, proposed: true }],
+    });
+    await settle();
+    expect(states.at(-1)?.view.ghosts.inserted).toEqual(['s9']);
+  });
+
+  it('lists no proposed removal of a block the real edits already removed', async () => {
+    await connected();
+    host.send(state(0, { body: body() }));
+    host.send({
+      kind: 'blocks.patch',
+      rev: 1,
+      ...at,
+      field: 'body',
+      ops: [{ op: 'remove', key: 'c1', proposed: true }],
+    });
+    host.send({
+      kind: 'blocks.patch',
+      rev: 2,
+      ...at,
+      field: 'body',
+      ops: [{ op: 'remove', key: 'c1' }],
+    });
+    await settle();
+    expect(states.at(-1)?.view.ghosts.removed).toEqual([]);
+  });
+
+  it('caps the proposals one entry holds', async () => {
+    await connected();
+    host.send(state(0, { body: body() }));
+    for (let rev = 1; rev <= 3; rev++) {
+      const ops = Array.from({ length: 100 }, (_, i) => ({
+        op: 'update',
+        key: 'h1',
+        set: { heading: `${rev}.${i}` },
+        proposed: true,
+      }));
+      host.send({ kind: 'blocks.patch', rev, ...at, field: 'body', ops });
+    }
+    await settle();
+    expect(host.of('failed')).toEqual([expect.objectContaining({ rev: 3, reason: 'conflict' })]);
+  });
+
+  it('answers a state it could not read, so the admin needn’t wait on it', async () => {
+    await connected();
+    host.send(state(0, { numbers: Array.from({ length: 20_000 }, (_, i) => i) }));
+    await settle();
+    expect(host.of('failed')).toEqual([expect.objectContaining({ rev: 0, reason: 'invalid' })]);
+    expect(states).toEqual([]);
+  });
+
+  it('puts a block in a slot’s seams only when its path names that slot', async () => {
+    const { slot, ref } = mountPage();
+    const stray = document.createElement('section');
+    stray.setAttribute('data-cw-ref', formatContentRef({ ...ref('body[x1]'), entryId: 'other' }));
+    slot.appendChild(stray);
+    await connected();
+    host.send(state(0));
+    await settle();
+    flushFrames();
+    const [layout] = host.of('layout');
+    const gaps = ((layout?.slots ?? []) as { gaps: { before?: string }[] }[])[0]?.gaps ?? [];
+    expect(gaps.map((g) => g.before)).toEqual(['h1', 'c1', undefined]);
+  });
+
+  it('skips a block or field the admin could not read, rather than losing the whole layout', async () => {
+    const { slot, ref } = mountPage();
+    const bad = document.createElement('section');
+    bad.setAttribute('data-cw-ref', formatContentRef(ref('body[constructor]')));
+    const broken = document.createElement('p');
+    broken.setAttribute('data-cw-ref', 's|main|e1|landing|%E0|en-US');
+    slot.append(bad, broken);
+    await connected();
+    host.send(state(0));
+    await settle();
+    flushFrames();
+    expect(host.of('layout')).toHaveLength(1);
+  });
+
+  it('reports only the page entries the admin can read', () => {
+    const p = start();
+    p.emit('page', {
+      url: `${SITE}/page`,
+      entries: [
+        { entryId: 'e1', contentType: 'landing', locale: 'en-US' },
+        { entryId: '', contentType: 'landing', locale: 'en-US' },
+        { entryId: 'e2', contentType: 'constructor', locale: 'en-US' },
+      ],
+    });
+    host.answer();
+    expect(host.of('page')[0]?.entries).toEqual([
+      { entryId: 'e1', contentType: 'landing', locale: 'en-US' },
+    ]);
   });
 });

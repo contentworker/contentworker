@@ -1,182 +1,218 @@
 ---
 title: Live preview
-description: Let the admin frame your frontend and re-render each unsaved edit in it, from the entry editor's Site view and the page side of the live preview channel.
+description: Let the admin frame your frontend and render each unsaved edit in it, with connectPreview from @contentworker/sdk/live-preview.
 ---
 
 Live preview shows an editor their edits on your real site before they save. The admin frames
-your frontend, sends it the entry being edited and then each edit as a patch; your page applies the
-patch to its copy of the fields and re-renders. The admin draws selection, hover and the seams
-between blocks itself, outside the frame, from where your page says things are. Nothing unsaved
-reaches the API from your page.
+your frontend; your page connects to it, receives the editor's unsaved values for the entries it
+shows, and re-renders. The admin draws selection and hover outlines itself, outside the frame,
+from the boxes your page reports. Nothing reaches the API from your page: saving is the editor's
+ordinary save.
 
-## In the editor
+:::caution[Preview]
+This is the page side, `@contentworker/sdk/live-preview`, which you can add to your frontend now.
+The admin's side of the channel isn't released yet; until it is, `connectPreview` connects to
+nothing and your page behaves as it always does.
+:::
 
-Give the content type a [preview URL](/guides/content-modeling/#preview-url), and the entry
-editor's side pane gains a **Site** view beside Details and Preview. It shows the entry's page on
-your site, framed, and re-renders it as the editor types; saving works exactly as it does without
-it. A type with no preview URL has no Site view.
-
-- **Edit** and **View**: in edit mode a click on a marked element selects it and focuses that field
-  (or that block, in its blocks field) in the form, and your page's links go nowhere. In view mode
-  your page behaves as it does on its own, links and all.
-- **Desktop**, **Tablet** and **Phone** render your page at 1280, 768 or 390 pixels wide, scaled
-  down to fit the pane, so a layout never depends on how wide the editor's window is.
-- In edit mode, undo, redo and the other forwarded keys pressed in your page act in the editor;
-  Escape clears the selection.
-
-The page the admin frames is your preview URL, filled for the entry with a preview token that lasts
-an hour, plus a `cw_session` parameter minted fresh for each load. Your page must allow the admin
-to frame it: if it sends `Content-Security-Policy: frame-ancestors` or `X-Frame-Options`, name the
-admin's origin (`frame-ancestors https://your-workspace.contentworker.app`). The admin frames it
-sandboxed (scripts, forms and its own origin; no popups, downloads or navigating the editor's
-window) and sends no `Referer`.
-
-If your page loads but never answers, the pane says it doesn't speak live preview yet and shows it
-as saved. If it navigates elsewhere (a link followed in view mode), the pane offers the way back
-to the entry's page. If it answers from another origin than the preview URL names (a redirect to
-`www.`, say), the pane says so: set the preview URL to the address the page is served from.
-
-## Start it
+## Connect
 
 ```ts
-import { startLivePreview } from '@contentworker/sdk/live-preview';
+import { connectPreview } from '@contentworker/sdk/live-preview';
 
-const preview = startLivePreview({
+const preview = connectPreview({
   adminOrigin: 'https://your-workspace.contentworker.app',
-  onChange: async (fields, update) => {
-    // Re-render with `fields`: the whole page, or just the blocks `update.ops` touched.
-    await render(fields);
+  capabilities: ['select', 'patch.fields', 'patch.blocks', 'proposals', 'scroll'],
+  async onState(entryId, locale, fields, view) {
+    // Re-render the entry from `view.withProposals` (the unsaved values, plus any proposals).
+    await render(entryId, view.withProposals, view.ghosts);
   },
 });
 
-// Later, on teardown:
-preview.destroy();
+preview.emit('page', {
+  url: location.href,
+  entries: [{ entryId: entry.id, contentType: entry.contentType, locale: 'en-US' }],
+});
+preview.on('select', (ref) => highlight(ref));
+// On teardown:
+preview.close();
 ```
 
-It does nothing (and `preview.active` is `false`) unless the page is in a frame and its URL carries
-a `cw_session` parameter, so the same build ships to production. Your page keeps its own scrolling
-in the frame: sticky headers, full-height heroes and lazy loading behave as on the live site.
+`connectPreview` does nothing unless the page is in a frame and `adminOrigin` is set, so you can
+call it on every page. `adminOrigin` must be the admin's exact origin (https; http only on
+`localhost`) and must differ from your page's own origin. Your page keeps its own scrolling in the
+frame: sticky headers, full-height heroes and lazy loading behave as on the live site.
 
-| Option        | Meaning                                                                                                  |
-| ------------- | -------------------------------------------------------------------------------------------------------- |
-| `adminOrigin` | Required. The admin's exact origin (https; http only on `localhost`). Messages from any other origin are ignored; the page posts only to it. |
-| `onChange`    | Called with the edited fields once the entry arrives, then after each patch. May return a promise.       |
-| `onSelect`    | The editor selected a block or field in the admin (`{ key }` or `{ ref }`), or cleared it.               |
-| `onHover`     | The editor's pointer is over a block or field in the admin's outline, or none.                          |
-| `newKey`      | Mints a `_key` for a block a patch brings without one. Default: a random UUID.                           |
+`emit('page', …)` tells the admin which entries the page renders, so it knows whose state to
+send. Report the entry being edited and the entries it directly references. Keep one connection
+per page; after a client-side navigation it fires `disconnect`, offers again, and sends the next
+page you report to the new session. Tell it about such navigations with
+`preview.emit('navigated', { url })`; it notices the back and forward buttons itself.
 
-`fields` is locale-keyed, as the Management API returns an entry (`{ title: { 'en-US': 'Home' } }`).
-`update` says which entry and locale (`entryId`, `contentType`, `locale`, `version`), the last
-patch included (`seq`) and the ops since the last call (`ops`). Empty `ops` means the whole entry
-arrived (the first time, and whenever the admin sends it again): render everything, not only what
-changed. Patches that arrive while `onChange` is still running are folded into the next call, so a
-slow render never queues up a backlog. The admin hears an edit is on screen when the promise
-`onChange` returns settles. If it throws, the admin is told the render failed and nothing in that
-call counts as rendered; its ops come again in the next call, made when the next edit arrives.
+| Capability     | Lets the admin                                                              |
+| -------------- | --------------------------------------------------------------------------- |
+| `select`       | Receive clicks and hovers on marked elements, outline one, turn editing on and off |
+| `patch.fields` | Send unsaved field values                                                   |
+| `patch.blocks` | Send key-addressed block operations                                          |
+| `proposals`    | Send Coworker's proposed blocks, which you render as ghosts                  |
+| `scroll`       | Ask the page to scroll a marked element into view                           |
+| `layout`       | Receive where your blocks and slots are, to draw insertion points (an extension, below) |
 
-In React, `useLivePreview` does the same for as long as the component is mounted, and returns the
-fields to render:
+Capabilities are fixed when the page connects. The admin may use fewer, never more; a message
+that needs one you didn't offer is refused.
+
+In React, `useLivePreview` from `@contentworker/sdk/react` does the same for as long as the
+component is mounted:
 
 ```tsx
 import { useLivePreview } from '@contentworker/sdk/react';
 
 function Landing({ entry }) {
-  const live = useLivePreview({ adminOrigin: 'https://your-workspace.contentworker.app' });
-  const fields = live.fields ?? entry.fields;
+  const live = useLivePreview({
+    adminOrigin: 'https://your-workspace.contentworker.app',
+    page: { entries: [{ entryId: entry.id, contentType: entry.contentType, locale: 'en-US' }] },
+  });
+  const fields = live.entries[entry.id]?.view.withProposals ?? entry.fields;
   // …render from fields
 }
 ```
 
-It returns `{ active, fields, update }`; `fields` is `undefined` until the admin sends the entry,
-and always outside a session.
+It offers every capability unless you pass `capabilities`, and returns `{ active, connected,
+entries, preview }`. It reports `page` to each new session and again whenever `page` changes, and
+empties `entries` when a session ends. The admin hears an edit is on screen once React has
+committed it.
+
+## Render the state
+
+`onState(entryId, locale, fields, view)` is called once the admin sends an entry's state, then
+after each edit. `fields` is one locale's values, typed as the Management API types them: rich
+text as a `RichTextDocument`, blocks as `{ _type, _key, … }`, references as links. Nothing arrives
+as HTML or Markdown: render from the same structures you get from Delivery or Preview.
+
+- `fields` is the editor's unsaved state: what saving would save.
+- `view.withProposals` is `fields` with Coworker's proposals laid over it. Render this one.
+- `view.ghosts` lists the proposals' blocks by `_key`: `inserted` (proposed new), `changed`
+  (proposed edits) and `removed` (proposed for removal, still present in `withProposals`). Render
+  those as ghosts, for example translucent with a dashed outline, so the editor can tell a
+  proposal from a change. A proposal is never part of `fields`.
+
+Edits that arrive while `onState` is still running are folded into the next call, so a slow
+render never queues up a backlog. `onState` may return a promise: the admin hears the edit is on
+screen when it settles. If it throws, the admin is told the render failed and sends the whole
+state again; nothing the failed call held counts as rendered until a later call succeeds.
 
 ## Mark up your page
 
-The admin finds things on your page by three attributes:
+Mark every element that renders a field, or a block, with its content ref in `data-cw-ref` (the
+same attribute [inline editing](/guides/sdks/#inline-editing) uses). Inside blocks, the ref's
+field is a path with each block's `_key` in brackets:
 
-| Attribute       | On                                              | Holds                                                    |
-| --------------- | ----------------------------------------------- | -------------------------------------------------------- |
-| `data-cw-block` | A block's root element                          | The block's `_key`                                       |
-| `data-cw-slot`  | The element directly holding a list of blocks   | The blocks field's apiId, or the slot's apiId on its block |
-| `data-cw-ref`   | An element rendering one field                  | The field's ref, as [inline editing](/guides/sdks/#inline-editing) marks it |
+| Element                    | Ref field                     |
+| -------------------------- | ----------------------------- |
+| A top-level field          | `title`                       |
+| A block's root element     | `body[0192f…]`                |
+| A field inside a block     | `body[0192f…].heading`        |
+| A field in a nested block  | `body[0192f…].ctas[0192e…].label` |
 
-```tsx
-import { blockAttrs, slotAttrs } from '@contentworker/sdk/live-preview';
+A key, not a position, names each block, so a ref still points at the same block after a
+reorder. A key holding `[`, `]` or `%` is written escaped (`%5B`, `%5D`, `%25`), so any key
+round-trips. `formatFieldPath` and `parseFieldPath` from `@contentworker/sdk` build and read paths,
+and `refAttrs(ref)` from `@contentworker/sdk/live-preview` gives the attribute to spread. A ref
+with a path opens in the admin's entry form on its top-level field.
 
-<main {...slotAttrs('body')}>
-  {body.map((block) => (
-    <section key={block._key} {...blockAttrs(block._key)}>
-      <h2>{block.title}</h2>
-      <div {...slotAttrs('items')}>{/* the section's own blocks */}</div>
-    </section>
-  ))}
-</main>
-```
+## Editing in the frame
 
-A slot inside a block belongs to the nearest `data-cw-block` around it.
+While the admin has editing on, a click on a marked element selects it in the admin instead of
+reaching your page's handlers, and hovering reports the element under the pointer at most once a
+frame. Links outside marked elements work as usual: the page navigates, says where it went, and
+connects again on the new page. With editing off, the page behaves exactly as on its own.
 
-## Edit and view modes
+If the page also mounts the [inline editor](/guides/sdks/#inline-editing), the connection drives
+it: its toggle is hidden, the admin turns editing on and off, and it draws nothing in the page.
 
-The admin switches the page between two modes. In view mode, your page behaves exactly as it does
-on its own. In edit mode:
+## The channel
 
-- A click on a marked element selects it in the admin instead of reaching your page's handlers. A
-  field's ref wins over the block it sits in.
-- A click on a link outside any marked element, or a ⌘-click or Ctrl-click on any link, asks the
-  admin to navigate the frame; the page never follows a link itself.
-- Hovering reports the marked element under the pointer, at most once a frame.
-- Undo (⌘Z or Ctrl+Z), redo (with Shift), Escape, `/`, Delete, Backspace and the arrow keys go to
-  the admin, except while typing in a form field. Other keys stay with your page.
+Every message is `{ v, channel, kind, … }`. The page makes a fresh random `channel` for each page
+load and offers it, with the protocol versions it speaks and its capabilities, in
+`connect.offer`; it resends the offer up to three times, a second apart. The admin answers
+`connect.accept { version, capabilities }`, or `connect.reject { reason, versions }` when the two
+share no version, in which case the page logs one console error naming both lists: update
+`@contentworker/sdk`.
 
-## The protocol
+Each side drops a message unless it comes from the other side's origin, from the other side's
+window, on the session's channel, at the session's version. A message that then fails its schema
+is dropped whole and counted (`preview.dropped`), never partly applied. Kinds a side doesn't know
+are ignored, so a newer admin can talk to an older page at their shared version.
 
-Every message is an object `{ cw: 1, session, type, … }`, where `session` is the `cw_session`
-value; anything else is ignored. The page accepts a message only from the admin origin, from its
-parent window, for its own session, and never evaluates anything in one. The session tells one
-framing from another; it isn't a secret, since it is in the page's URL. Each side checks the
-other's origin and window before reading a message.
+| From admin       | Carries                                                       |
+| ---------------- | ------------------------------------------------------------- |
+| `connect.accept` | `version`, `capabilities`                                     |
+| `connect.reject` | `reason`, `versions`                                          |
+| `entry.state`    | `rev`, `entryId`, `locale`, `fields`: the whole unsaved state |
+| `entry.patch`    | `rev`, `entryId`, `locale`, `fields`: changed values (`null` clears one) |
+| `blocks.patch`   | `rev`, `entryId`, `locale`, `field`, `ops`: block operations, some `proposed: true` |
+| `select`         | `ref`, or `null` to clear                                     |
+| `scroll`         | `ref`                                                         |
+| `editing`        | `on` (extension)                                              |
 
-Unsaved edits are rendered into your page, so any script your page runs (analytics, tag managers,
+| From page       | Carries                                                       |
+| --------------- | ------------------------------------------------------------- |
+| `connect.offer` | `versions`, `capabilities`, `channel`, `sdk { name, version }` |
+| `page`          | `url`, `entries [{ entryId, contentType, locale }]`           |
+| `navigated`     | `url`                                                         |
+| `pointer`       | `pointer` (`hover` or `click`), `ref`, `rect`                  |
+| `applied`       | `rev`, `entryId`                                              |
+| `failed`        | `rev`, `reason`, `entryId`                                    |
+| `layout`        | `blocks`, `slots`, `fields`, `scroll`, `viewport`, `docHeight`, `truncated?` (extension) |
+
+`rev` counts up by one per entry. The page applies a patch only when its `rev` is one more than
+the last it applied for that entry, and answers anything else with `failed` and reason `gap`; the
+admin then sends a fresh `entry.state`, which sets the count. A patch that fails its schema (reason
+`invalid`), whose block operations can't be placed (`conflict`), or whose render threw (`render`)
+is answered the same way. `applied { rev }` means every rev up to it is on screen.
+
+A `blocks.patch` uses the operations of the Management API's block patch (`insert`, `update`,
+`move`, `remove`, `duplicate`), addressed by `_key`. An op with `proposed: true` is Coworker's
+proposal: a proposed `insert` adds a ghost block, a proposed `update` or `move` shows a proposed
+change, a proposed `remove` marks a block, and a proposed `remove` of a proposed block takes it
+back, with everything proposed in or beside it. A proposal names every block it brings by
+`_key`. A fresh `entry.state` clears every proposal; the admin sends them again. `proposals` is
+offered only with `patch.blocks`.
+
+Limits: a message is at most 256 KB (an `entry.state`, 2 MB); a `blocks.patch` has at most 100
+ops; `page` lists at most 200 entries.
+
+## Extensions
+
+Additions both sides may ignore, so they need no new protocol version:
+
+- **`layout` capability.** The page reports, in `layout`, the box of every block, field and slot.
+  Mark the element directly holding a slot's blocks with `data-cw-slot`, holding the slot's ref
+  (`slotAttrs(ref)`; the path is `body`, or `body[0192f…].items` inside a block). Each slot lists
+  its gaps: the place before its first block, between each pair and after its last, with the
+  insertion `index` and the blocks' keys on either side. The report is sent when something moves,
+  at most once a frame and only when it changed; a page with more boxes than one message holds
+  sends those on screen first and marks the message `truncated`. At most 2,000 blocks, slots and
+  fields each, and 4,000 gaps.
+- **`editing`.** The admin turns in-page editing on and off. It is on when the page connects with
+  `select`.
+- **`disconnect`.** `preview.on('disconnect')` fires when a session ends on a client-side
+  navigation.
+- **`pointer` with no ref.** A hover with `ref` and `rect` `null` says the pointer left every
+  marked element.
+- **`entryId` on `applied` and `failed`**, since `rev` counts per entry; and the failure reasons
+  `invalid`, `conflict` and `render` beside `gap`.
+
+## Your page and its scripts
+
+Unsaved edits are rendered into your page, so any script it runs (analytics, tag managers,
 third-party widgets) can read them while the editor works. Keep scripts you wouldn't trust with
 drafts off your preview deployment.
 
-| From admin | Carries                                                       |
-| ---------- | ------------------------------------------------------------- |
-| `init`     | `fields`, `locale`, `version`, `entryId`, `contentType`, and optionally `seq`, the last patch they include (0 when absent) |
-| `patch`    | `seq` (only goes up; a patch at or below the last is ignored) and `ops` |
-| `select`   | `key` or `ref`, or neither to clear                           |
-| `hover`    | `key` or `ref`, or neither                                    |
-| `scrollTo` | `key` or `ref`                                                |
-| `mode`     | `edit` or `view`                                              |
-
-| From page  | Carries                                                       |
-| ---------- | ------------------------------------------------------------- |
-| `hello`    | `sdkVersion`, `capabilities`                                  |
-| `rendered` | `seq`: everything up to it is on screen                       |
-| `geometry` | `blocks`, `slots` with their `gaps`, `fields`, `scroll`, `viewport`, `docHeight`, and `truncated: true` when some boxes were left out |
-| `pick`     | `key` or `ref`                                                |
-| `hover`    | `key` or `ref`, or neither                                    |
-| `navigate` | `url`: https (http only on `localhost`), on your site's origin |
-| `key`      | `key`, `meta`, `ctrl`, `shift`, `alt`                         |
-| `error`    | `kind` (`invalid`, `patch`, `render` or `target`), `message`, and for `patch` and `render` the `seq` it concerns |
-
-A patch's ops are those of the Management API's block patch (`insert`, `update`, `move`, `remove`,
-`duplicate`, addressed by `_key` with a `field` and `locale`), plus `setField { field, locale,
-value }` for an ordinary field. Send them in the form the block patch answers with (`applied`),
-every key present: a key the page mints for a block sent without one is the page's own.
-
-A patch applies whole or not at all. When one can't apply, or arrives too large or malformed to
-read, the page keeps the fields it had and answers `error` with kind `patch` and that patch's
-`seq`. From then on it is out of step: it drops every later patch, answering the same error again,
-until the admin sends `init`, which resets it. If the same patch is refused again after that, the
-admin sends the fields it changed whole, as `setField`, which always applies.
-
-Geometry is in the frame's viewport, in CSS pixels, and is sent when something moves (a resize, a
-scroll, a change to the page), at most once a frame and only when it changed. Each slot lists its
-gaps: the place before its first block, between each pair and after its last, with the insertion
-`index` and the blocks on either side. A page with more boxes than one message holds sends those
-on screen first, then those nearest it, and marks the message `truncated`.
-
-Limits: a message is at most 256 KB (an `init`, which carries the whole entry, 2 MB); a patch has at
-most 100 ops; a geometry message reports at most 2,000 blocks, slots and fields each, and 4,000
-gaps.
+Styling never crosses as CSS: a token prop arrives as a token name, which your page resolves from
+its own manifest. Before writing any value into a CSS custom property, check it with
+`isSafeTokenValue` from `@contentworker/sdk/live-preview`, and drop it whole when it fails. It
+refuses `url(`, `@import`, `expression(`, `javascript:`, `<`, `>`, `\`, quotes, `&`, `;`, braces and
+comments, and any function but `var`, `calc`, `clamp`, `min`, `max`, `rgb`, `hsl` and `oklch`, in
+any case. Write the value through `style.setProperty` or your framework's style object, never by
+building a `style` attribute or `<style>` text by hand.

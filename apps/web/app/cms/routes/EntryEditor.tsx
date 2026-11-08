@@ -108,8 +108,9 @@ export function EntryEditor() {
   const edit = useAssistantEdit();
 
   // An inline-edit deep link from a previewed page: which field it came from,
-  // and which space it was rendered against.
-  const linkedField = searchParams.get('field');
+  // and which space it was rendered against. A ref inside blocks names a path
+  // (`body[<key>].heading`); the form opens the top-level field it is in.
+  const linkedField = searchParams.get('field')?.split('[')[0] || null;
   const linkedSpace = searchParams.get('space');
   const linkedEnv = searchParams.get('env');
   const wrongScope =

@@ -19,12 +19,12 @@ import {
   type FieldDefinition,
 } from '@contentworker/domain';
 import { describe, expect, it } from 'vitest';
+import type { LocalizedFields as LiveFields } from '../../sdk/core/src/live-preview/patch';
 import {
   applyLivePatch,
   type LivePatchOp,
   type BlockOp as SdkBlockOp,
 } from '../../sdk/core/src/live-preview/patch';
-import type { LiveFields } from '../../sdk/core/src/live-preview/protocol';
 
 // The two op vocabularies are one: each side's ops are the other's.
 const toSdk = (ops: readonly BlockOp[]): readonly LivePatchOp[] => ops;

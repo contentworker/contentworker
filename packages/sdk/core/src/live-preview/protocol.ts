@@ -1,91 +1,120 @@
 /**
- * The live preview wire protocol: what the admin and a previewed page say to each other over
- * `postMessage` while an editor edits an entry the page is showing.
+ * The live preview channel's wire protocol (docs/specs/live-preview-channel.md): what the admin
+ * and a framed frontend say to each other over `postMessage`, and the checks every message passes
+ * before either side acts on it. The frontend half (`connectPreview`) and the admin half
+ * (`apps/web`) both import this module, so they share one definition.
  *
- * The admin frames the customer's real frontend, sends it the entry's fields and then each edit
- * as a patch (the op vocabulary of `patchBlocks`, plus `setField` for ordinary fields), and draws
- * every overlay itself, outside the frame, from the geometry the page reports back. Unsaved edits
- * never reach the API from the page.
- *
- * Each side is untrusted to the other: the frame runs whatever the customer's site runs, and the
- * page can't know that every message claiming to be the admin is. So every message is parsed here
- * before it is acted on, in both directions, with size caps, and nothing in one is ever evaluated.
- * The admin imports these same parsers for the page's messages.
+ * Each side is untrusted to the other. Every message goes through `acceptMessage` (origin, sender,
+ * channel, version), then its kind's schema; one that fails is dropped whole and counted, never
+ * partly applied. A message that parses is rebuilt from its validated fields, so nothing else the
+ * sender put in it reaches the receiver. Nothing in a message is ever evaluated, and no message
+ * carries content as HTML or Markdown.
  */
 import type { LivePatchOp } from './patch.js';
 
-/** The protocol version every message carries as `cw`. */
-export const LIVE_PREVIEW_PROTOCOL = 1;
+// --- versions ----------------------------------------------------------------------
 
-/** The query parameter the admin puts on the framed page's URL; its value is the session id. */
-export const LIVE_PREVIEW_SESSION_PARAM = 'cw_session';
+/** The protocol versions this SDK's frontend half speaks, newest first. */
+export const OFFERED_VERSIONS: readonly number[] = [1];
+
+/**
+ * The versions the admin speaks. Customers update the SDK in their own sites on their own
+ * schedule, so the admin keeps every version a supported SDK release offers. Dropping one is a
+ * breaking change, called out in the changelog. Each entry names the last SDK release that needs it.
+ */
+export const SUPPORTED_VERSIONS: readonly number[] = [
+  1, // needed by @contentworker/sdk 0.2.0 and every later release so far
+];
+
+/** The highest version both lists hold, or undefined when they share none. */
+export function negotiateVersion(
+  offered: readonly unknown[],
+  supported: readonly number[] = SUPPORTED_VERSIONS,
+): number | undefined {
+  const shared = offered.filter(
+    (v): v is number => isVersion(v) && supported.includes(v as number),
+  );
+  return shared.length > 0 ? Math.max(...shared) : undefined;
+}
+
+// --- capabilities --------------------------------------------------------------------
+
+/**
+ * What a page lets the admin do, fixed at connect. `layout` is an extension (see the spec's
+ * Extensions section): the slot and seam geometry the canvas editor draws insertion points from.
+ */
+export const CAPABILITIES = [
+  'select',
+  'patch.fields',
+  'patch.blocks',
+  'proposals',
+  'scroll',
+  'layout',
+] as const;
+export type Capability = (typeof CAPABILITIES)[number];
+
+/** `offered`, narrowed to what `allowed` holds: the admin can narrow, never widen. */
+export function narrowCapabilities(
+  offered: readonly unknown[],
+  allowed: readonly unknown[] = CAPABILITIES,
+): Capability[] {
+  const both = CAPABILITIES.filter((c) => offered.includes(c) && allowed.includes(c));
+  // Proposals are block ops rendered as ghosts: without `patch.blocks` there is no state to lay them on.
+  return both.includes('patch.blocks') ? both : both.filter((c) => c !== 'proposals');
+}
+
+// --- the channel -----------------------------------------------------------------------
+
+/** 128 bits of base64url, unpadded. */
+const CHANNEL = /^[A-Za-z0-9_-]{22}$/;
+
+/** A fresh channel: 128 random bits from `crypto.getRandomValues`, base64url. */
+export function newChannel(random: Crypto = crypto): string {
+  const bytes = random.getRandomValues(new Uint8Array(16));
+  let binary = '';
+  for (const b of bytes) binary += String.fromCharCode(b);
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+export function isChannel(value: unknown): value is string {
+  return typeof value === 'string' && CHANNEL.test(value);
+}
+
+// --- limits ------------------------------------------------------------------------------
 
 /** The largest message either side accepts, as UTF-8 JSON. */
 export const MAX_MESSAGE_BYTES = 256 * 1024;
-/**
- * The largest `init`: it carries the whole entry, which can be bigger than one edit. Stored entries
- * are D1 rows (at most 2 MB), so nothing real is larger.
- */
-export const MAX_INIT_BYTES = 2 * 1024 * 1024;
-/** The most ops one `patch` may carry (as `patchBlocks` allows). */
+/** The largest `entry.state`: the whole entry. Stored entries are D1 rows (at most 2 MB). */
+export const MAX_STATE_BYTES = 2 * 1024 * 1024;
+/** The most ops one `blocks.patch` carries (as `patchBlocks` allows). */
 export const MAX_PATCH_OPS = 100;
-/** The most blocks, slots or fields one `geometry` reports; a page with more reports those nearest the viewport. */
+/** The most blocks, slots or fields one `layout` reports; a page with more sends those nearest the viewport. */
 export const MAX_GEOMETRY_ITEMS = 2000;
-/** The most seams one `geometry` reports across all its slots. */
+/** The most seams one `layout` reports across its slots. */
 export const MAX_GEOMETRY_GAPS = 4000;
+/** The most entries one `page` reports. */
+export const MAX_PAGE_ENTRIES = 200;
 
 const MAX_ID = 256;
+const MAX_REF = 2048;
 const MAX_URL = 8192;
-const MAX_TEXT = 1000;
 const MAX_DEPTH = 64;
-const SESSION = /^[A-Za-z0-9_-]{8,128}$/;
 /** Names that would reach an object's prototype if assigned; refused anywhere in a message. */
 const FORBIDDEN_NAMES = new Set(['__proto__', 'constructor', 'prototype']);
 
-/** The shortcut keys a page forwards in edit mode; any other key stays with the page. */
-export const FORWARDED_KEYS = [
-  'z',
-  'Escape',
-  '/',
-  'Delete',
-  'Backspace',
-  'ArrowUp',
-  'ArrowDown',
-  'ArrowLeft',
-  'ArrowRight',
-] as const;
-export type ForwardedKey = (typeof FORWARDED_KEYS)[number];
+// --- shapes --------------------------------------------------------------------------------
 
-/** Whether a string can be a session id (what `cw_session` carries). */
-export function isLivePreviewSession(value: unknown): value is string {
-  return typeof value === 'string' && SESSION.test(value);
+/** One entry's field values in one locale (not locale-keyed): what `onState` renders. */
+export type LiveFields = Record<string, unknown>;
+
+/** What every message carries. */
+export interface LiveEnvelope<K extends string> {
+  readonly v: number;
+  readonly channel: string;
+  readonly kind: K;
 }
 
-// --- shapes ---------------------------------------------------------------------
-
-/** Locale-keyed field values, as the Management API returns an entry's fields. */
-export type LiveFields = Record<string, Record<string, unknown>>;
-
-/** What every message carries: the protocol version, the session it belongs to, and its type. */
-export interface LiveEnvelope<T extends string> {
-  readonly cw: typeof LIVE_PREVIEW_PROTOCOL;
-  readonly session: string;
-  readonly type: T;
-}
-
-/**
- * One thing on the page: a block by its `_key` (`data-cw-block`), or one field by its serialized
- * content ref (`data-cw-ref`).
- */
-export type LiveTarget =
-  | { readonly key: string; readonly ref?: undefined }
-  | { readonly ref: string; readonly key?: undefined };
-/** A target, or nothing (`hover` leaving every target, `select` clearing the selection). */
-export type LiveOptionalTarget =
-  | LiveTarget
-  | { readonly key?: undefined; readonly ref?: undefined };
-
-/** A box in the frame's viewport, in CSS pixels. */
+/** A box in the iframe's viewport, in CSS pixels. */
 export interface LiveRect {
   readonly x: number;
   readonly y: number;
@@ -93,358 +122,402 @@ export interface LiveRect {
   readonly h: number;
 }
 
-export type LivePreviewMode = 'edit' | 'view';
-
-// admin → page
-
-/** The entry being edited: its fields as the editor holds them, and which entry and locale. */
-export interface LiveInitMessage extends LiveEnvelope<'init'> {
-  readonly fields: LiveFields;
-  readonly locale: string;
-  readonly version: number;
+/** Which entry a patch is for, and its place in that entry's order. */
+interface EntryAddress {
+  /** Increases by one per entry per session; `entry.state` sets it. */
+  readonly rev: number;
   readonly entryId: string;
-  readonly contentType: string;
-  /**
-   * The last patch `seq` these fields already include. Lets the admin re-send the whole entry
-   * mid-session (after the page refused a patch) without its next patch being taken as stale.
-   */
-  readonly seq?: number;
+  readonly locale: string;
 }
 
-/** Edits since the last patch, in order. `seq` only goes up; a patch at or below the last is stale. */
-export interface LivePatchMessage extends LiveEnvelope<'patch'> {
-  readonly seq: number;
-  readonly ops: readonly LivePatchOp[];
+// admin → frontend
+
+export interface ConnectAcceptMessage extends LiveEnvelope<'connect.accept'> {
+  readonly version: number;
+  readonly capabilities: readonly Capability[];
 }
-
-export type LiveSelectMessage = LiveEnvelope<'select'> & LiveOptionalTarget;
-export type LiveHoverMessage = LiveEnvelope<'hover'> & LiveOptionalTarget;
-export type LiveScrollToMessage = LiveEnvelope<'scrollTo'> & LiveTarget;
-export interface LiveModeMessage extends LiveEnvelope<'mode'> {
-  readonly mode: LivePreviewMode;
+export interface ConnectRejectMessage extends LiveEnvelope<'connect.reject'> {
+  readonly reason: 'unsupported-version';
+  readonly versions: readonly number[];
 }
-
-export type LiveAdminMessage =
-  | LiveInitMessage
-  | LivePatchMessage
-  | LiveSelectMessage
-  | LiveHoverMessage
-  | LiveScrollToMessage
-  | LiveModeMessage;
-
-// page → admin
-
-export interface LiveHelloMessage extends LiveEnvelope<'hello'> {
-  readonly sdkVersion: string;
-  readonly capabilities: readonly string[];
+/** The whole unsaved state of one entry in one locale. */
+export interface EntryStateMessage extends LiveEnvelope<'entry.state'>, EntryAddress {
+  readonly fields: LiveFields;
 }
-
-/** Everything up to and including `seq` is on screen. */
-export interface LiveRenderedMessage extends LiveEnvelope<'rendered'> {
-  readonly seq: number;
+/** Changed top-level field values since `rev - 1`; `null` clears a field. */
+export interface EntryPatchMessage extends LiveEnvelope<'entry.patch'>, EntryAddress {
+  readonly fields: LiveFields;
 }
-
-export interface LiveBlockBox {
-  readonly key: string;
-  readonly rect: LiveRect;
-  /** The slot it sits in (`data-cw-slot`), and the block that slot belongs to. */
-  readonly slot?: string;
-  readonly parentKey?: string;
-}
-
 /**
- * A place a block can be inserted: `index` in the slot, between `after` and `before` (absent at
- * the slot's start or end). `axis` is the direction the slot's blocks run (`y` stacked, `x` side by
- * side), so the seam is drawn across it.
+ * The `patchBlocks` ops on one blocks field. An op's own `field` and `locale`, when given, must
+ * be the message's. An op with `proposed: true` is Coworker's proposal: rendered as a ghost, never
+ * part of the fields handed to `onState`.
  */
-export interface LiveGap {
-  readonly index: number;
-  readonly rect: LiveRect;
-  readonly axis: 'x' | 'y';
-  readonly after?: string;
-  readonly before?: string;
+export interface BlocksPatchMessage extends LiveEnvelope<'blocks.patch'>, EntryAddress {
+  readonly field: string;
+  readonly ops: readonly (LivePatchOp & { readonly proposed?: true })[];
 }
-
-export interface LiveSlotBox {
-  /** A top-level blocks field's apiId, or the slot's apiId on `parentKey`'s block. */
-  readonly path: string;
-  readonly parentKey?: string;
-  readonly rect: LiveRect;
-  readonly gaps: readonly LiveGap[];
+export interface SelectMessage extends LiveEnvelope<'select'> {
+  readonly ref: string | null;
 }
-
-export interface LiveFieldBox {
+export interface ScrollMessage extends LiveEnvelope<'scroll'> {
   readonly ref: string;
-  readonly rect: LiveRect;
+}
+/** Extension: the admin turns in-page editing (picking) on or off. Needs `select`. */
+export interface EditingMessage extends LiveEnvelope<'editing'> {
+  readonly on: boolean;
 }
 
-/** Where everything is, in the frame's viewport. */
-export interface LiveGeometryMessage extends LiveEnvelope<'geometry'> {
+export type AdminMessage =
+  | ConnectAcceptMessage
+  | ConnectRejectMessage
+  | EntryStateMessage
+  | EntryPatchMessage
+  | BlocksPatchMessage
+  | SelectMessage
+  | ScrollMessage
+  | EditingMessage;
+
+// frontend → admin
+
+export interface ConnectOfferMessage extends LiveEnvelope<'connect.offer'> {
+  readonly versions: readonly number[];
+  readonly capabilities: readonly Capability[];
+  readonly sdk: { readonly name: string; readonly version: string };
+}
+/** What the page renders: which entries' state to send. */
+export interface PageMessage extends LiveEnvelope<'page'> {
+  readonly url: string;
+  readonly entries: readonly {
+    readonly entryId: string;
+    readonly contentType: string;
+    readonly locale: string;
+  }[];
+}
+export interface NavigatedMessage extends LiveEnvelope<'navigated'> {
+  readonly url: string;
+}
+/**
+ * A marked element hovered or clicked, with its box. The spec names the hover/click field `kind`,
+ * which the envelope's `kind` already holds, so it travels as `pointer`. Extension: a hover with
+ * `ref` and `rect` null says the pointer left every marked element.
+ */
+export interface PointerMessage extends LiveEnvelope<'pointer'> {
+  readonly pointer: 'hover' | 'click';
+  readonly ref: string | null;
+  readonly rect: LiveRect | null;
+}
+/** Everything for `entryId` up to `rev` is on screen. `entryId` is an extension: revs are per entry. */
+export interface AppliedMessage extends LiveEnvelope<'applied'> {
+  readonly rev: number;
+  readonly entryId?: string;
+}
+/**
+ * A patch didn't render: `gap` (out of order), and as extensions `invalid` (failed its schema),
+ * `conflict` (its ops couldn't be placed) and `render` (`onState` threw). Every one is answered
+ * with a fresh `entry.state`.
+ */
+export interface FailedMessage extends LiveEnvelope<'failed'> {
+  readonly rev: number;
+  readonly reason: FailReason;
+  readonly entryId?: string;
+}
+export type FailReason = 'gap' | 'invalid' | 'conflict' | 'render';
+
+/** Extension (`layout`): where blocks, slots and fields are, for the canvas editor's seams. */
+export interface LayoutMessage extends LiveEnvelope<'layout'> {
   readonly blocks: readonly LiveBlockBox[];
   readonly slots: readonly LiveSlotBox[];
   readonly fields: readonly LiveFieldBox[];
   readonly scroll: { readonly x: number; readonly y: number };
   readonly viewport: { readonly w: number; readonly h: number };
   readonly docHeight: number;
-  /**
-   * Some boxes were left out to fit the caps and the message size; those on screen and nearest it
-   * are kept first. Absent when everything is reported.
-   */
+  /** Some boxes were left out to fit; those on screen and nearest it are kept first. */
   readonly truncated?: true;
 }
-
-export type LivePickMessage = LiveEnvelope<'pick'> & LiveTarget;
-export type LiveGuestHoverMessage = LiveEnvelope<'hover'> & LiveOptionalTarget;
-
-/** A link the editor clicked in edit mode; the page never follows it itself. */
-export interface LiveNavigateMessage extends LiveEnvelope<'navigate'> {
-  readonly url: string;
+export interface LiveBlockBox {
+  /** The block's ref: its field path ends with `[<key>]`. */
+  readonly ref: string;
+  readonly rect: LiveRect;
+}
+/** A place a block can go: `index` in the slot, between the blocks keyed `after` and `before`. */
+export interface LiveGap {
+  readonly index: number;
+  readonly rect: LiveRect;
+  /** The direction the slot's blocks run: `y` stacked, `x` side by side. */
+  readonly axis: 'x' | 'y';
+  readonly after?: string;
+  readonly before?: string;
+}
+export interface LiveSlotBox {
+  /** The slot's ref: its field path ends with the slot's field name (`body`, `body[<key>].items`). */
+  readonly ref: string;
+  readonly rect: LiveRect;
+  readonly gaps: readonly LiveGap[];
+}
+export interface LiveFieldBox {
+  readonly ref: string;
+  readonly rect: LiveRect;
 }
 
-/** A forwarded shortcut. */
-export interface LiveKeyMessage extends LiveEnvelope<'key'> {
-  readonly key: ForwardedKey;
-  readonly meta: boolean;
-  readonly ctrl: boolean;
-  readonly shift: boolean;
-  readonly alt: boolean;
+export type FrontendMessage =
+  | ConnectOfferMessage
+  | PageMessage
+  | NavigatedMessage
+  | PointerMessage
+  | AppliedMessage
+  | FailedMessage
+  | LayoutMessage;
+
+// --- the three checks -----------------------------------------------------------------------
+
+/** What a receiver expects of a message: who may send it, on which channel, at which version. */
+export interface Expected {
+  /** The other side's origin: the configured `adminOrigin`, or the framed URL's origin. */
+  readonly origin: string;
+  /** The other side's window: `window.parent`, or `iframe.contentWindow`. */
+  readonly source: unknown;
+  /** The pinned channel; absent only while the admin waits for an offer (then any well-formed one). */
+  readonly channel?: string;
+  /** The negotiated version; absent before connect (then any positive integer). */
+  readonly version?: number;
 }
 
-export type LiveErrorKind = 'invalid' | 'patch' | 'render' | 'target';
 /**
- * Something went wrong. For `patch`, `seq` is the patch that was refused or lost; the page is out of
- * step from it, drops every later patch (answering this again) and waits for an `init`. For
- * `render`, it is the last seq that call held; nothing from it is acknowledged until a render
- * that includes it succeeds.
+ * The checks every message passes, in both directions, before its shape is even looked at:
+ * origin, sender, channel (and version). Each catches what the others miss: the origin alone
+ * admits any frame of that origin, the sender alone whatever that window navigated to, and the
+ * channel ties a message to one connected page load. Returns the message's data, or undefined.
  */
-export interface LiveErrorMessage extends LiveEnvelope<'error'> {
-  readonly kind: LiveErrorKind;
-  readonly message: string;
-  readonly seq?: number;
+export function acceptMessage(
+  event: { readonly data: unknown; readonly origin: string; readonly source: unknown },
+  expected: Expected,
+): Record<string, unknown> | undefined {
+  if (event.origin !== expected.origin) return undefined;
+  if (event.source !== expected.source || event.source === null || event.source === undefined) {
+    return undefined;
+  }
+  const data = event.data;
+  if (!isRecord(data) || !isChannel(data.channel)) return undefined;
+  if (expected.channel !== undefined && data.channel !== expected.channel) return undefined;
+  if (expected.version !== undefined ? data.v !== expected.version : !isVersion(data.v)) {
+    return undefined;
+  }
+  return data;
 }
 
-export type LiveGuestMessage =
-  | LiveHelloMessage
-  | LiveRenderedMessage
-  | LiveGeometryMessage
-  | LivePickMessage
-  | LiveGuestHoverMessage
-  | LiveNavigateMessage
-  | LiveKeyMessage
-  | LiveErrorMessage;
-
-// --- parsing ---------------------------------------------------------------------
+// --- parsing ---------------------------------------------------------------------------------
 
 /**
- * A parsed message, or why not: `foreign` (not this protocol or session: ignore it quietly),
- * `unknown` (a type this side doesn't speak: ignore it, the other side may be newer), `too-large`
- * or `invalid` (ours, but malformed: worth an `error` back).
+ * A parsed message, or why not: `unknown` (a kind this side doesn't speak: ignore it, the other
+ * side may be newer), `too-large` or `invalid` (drop it whole and count it).
  */
 export type LiveParse<M> =
   | { readonly ok: true; readonly message: M }
-  | { readonly ok: false; readonly reason: 'foreign' | 'unknown' | 'too-large' | 'invalid' };
-
-const ADMIN_TYPES = new Set(['init', 'patch', 'select', 'hover', 'scrollTo', 'mode']);
-const GUEST_TYPES = new Set([
-  'hello',
-  'rendered',
-  'geometry',
-  'pick',
-  'hover',
-  'navigate',
-  'key',
-  'error',
-]);
-const ERROR_KINDS = new Set<string>(['invalid', 'patch', 'render', 'target']);
-
-/** Parses what the admin sent a page. `session` is the page's own. */
-export function parseAdminMessage(data: unknown, session: string): LiveParse<LiveAdminMessage> {
-  const head = envelope(data, session, ADMIN_TYPES);
-  if (!head.ok) return head;
-  const m = data as Record<string, unknown>;
-  const cap = m.type === 'init' ? MAX_INIT_BYTES : MAX_MESSAGE_BYTES;
-  if (!withinBytes(m, cap)) return { ok: false, reason: 'too-large' };
-  if (!clean(m)) return { ok: false, reason: 'invalid' };
-  return checked(m, adminValid(m));
-}
-
-/** What the admin expects of a message from the page it framed. */
-export interface LiveGuestExpectation {
-  /** The session id the admin minted for this framing (fresh and random, per frame load). */
-  readonly session: string;
-  /** The framed page's origin: the frame's `src` origin. */
-  readonly origin: string;
-  /** The frame's window (`iframe.contentWindow`). */
-  readonly source: unknown;
-  /**
-   * The origins a `navigate` may name; others are refused. Default: the page's own origin, so a
-   * page can't send the editor (or, framed again with a session, the session) anywhere else.
-   */
-  readonly navigateOrigins?: readonly string[];
-}
-
-/**
- * Parses what a page sent the admin. The session alone is no proof: it sits in the frame's URL,
- * readable by every script on the page and wherever the frame navigates, so the event's origin
- * and source are checked first, as the page checks the admin's. A message that parses is rebuilt
- * from its validated fields, so nothing else the page put in it reaches the admin.
- */
-export function parseGuestMessage(
-  event: { readonly data: unknown; readonly origin: string; readonly source: unknown },
-  expected: LiveGuestExpectation,
-): LiveParse<LiveGuestMessage> {
-  if (event.origin !== expected.origin || event.source !== expected.source) {
-    return { ok: false, reason: 'foreign' };
-  }
-  const head = envelope(event.data, expected.session, GUEST_TYPES);
-  if (!head.ok) return head;
-  const m = event.data as Record<string, unknown>;
-  if (!withinBytes(m, MAX_MESSAGE_BYTES)) return { ok: false, reason: 'too-large' };
-  if (!clean(m)) return { ok: false, reason: 'invalid' };
-  const body = guestBody(m, expected.navigateOrigins ?? [expected.origin]);
-  if (!body) return { ok: false, reason: 'invalid' };
-  return {
-    ok: true,
-    message: { cw: LIVE_PREVIEW_PROTOCOL, session: expected.session, ...body } as LiveGuestMessage,
-  };
-}
-
-function checked<M>(m: Record<string, unknown>, valid: boolean): LiveParse<M> {
-  return valid ? { ok: true, message: m as M } : { ok: false, reason: 'invalid' };
-}
-
-function envelope(
-  data: unknown,
-  session: string,
-  types: ReadonlySet<string>,
-): { ok: true } | { ok: false; reason: 'foreign' | 'unknown' } {
-  if (!isRecord(data) || data.cw !== LIVE_PREVIEW_PROTOCOL || data.session !== session) {
-    return { ok: false, reason: 'foreign' };
-  }
-  if (typeof data.type !== 'string' || !types.has(data.type))
-    return { ok: false, reason: 'unknown' };
-  return { ok: true };
-}
-
-/**
- * Whether `value` serializes to at most `cap` bytes of UTF-8 JSON. A value JSON can't serialize
- * (a cycle, a BigInt, nesting deep enough to overflow) is over every cap.
- */
-function withinBytes(value: unknown, cap: number): boolean {
-  let json: string;
-  try {
-    json = JSON.stringify(value);
-  } catch {
-    return false;
-  }
-  // UTF-8 is never shorter than UTF-16 code units, so a long string is over without encoding it.
-  if (json.length > cap) return false;
-  return new TextEncoder().encode(json).byteLength <= cap;
-}
-
-/**
- * Plain data only, anywhere in `value`: no prototype-reaching names, no absurd nesting, and no
- * object that isn't a plain one (structured clone carries Maps, Dates and ArrayBuffers, which JSON
- * measures as `{}`).
- */
-export function clean(value: unknown, depth = 0): boolean {
-  if (depth > MAX_DEPTH) return false;
-  if (Array.isArray(value)) return value.every((v) => clean(v, depth + 1));
-  if (typeof value !== 'object' || value === null) return true;
-  const proto = Object.getPrototypeOf(value);
-  if (proto !== Object.prototype && proto !== null) return false;
-  for (const [name, held] of Object.entries(value)) {
-    if (FORBIDDEN_NAMES.has(name) || !clean(held, depth + 1)) return false;
-  }
-  return true;
-}
-
-function adminValid(m: Record<string, unknown>): boolean {
-  switch (m.type) {
-    case 'init':
-      return (
-        isFields(m.fields) &&
-        isName(m.locale) &&
-        isCount(m.version) &&
-        isId(m.entryId) &&
-        isId(m.contentType) &&
-        (m.seq === undefined || isCount(m.seq))
-      );
-    case 'patch':
-      return (
-        isCount(m.seq) && Array.isArray(m.ops) && m.ops.length <= MAX_PATCH_OPS && m.ops.every(isOp)
-      );
-    case 'select':
-    case 'hover':
-      return isOptionalTarget(m);
-    case 'scrollTo':
-      return isTarget(m);
-    case 'mode':
-      return m.mode === 'edit' || m.mode === 'view';
-    default:
-      return false;
-  }
-}
+  | { readonly ok: false; readonly reason: 'unknown' | 'too-large' | 'invalid' };
 
 type Body = Record<string, unknown>;
 
-/** A page message's validated fields, freshly built; undefined when any is malformed. */
-function guestBody(
-  m: Record<string, unknown>,
-  navigateOrigins: readonly string[],
-): Body | undefined {
-  switch (m.type) {
-    case 'hello':
-      return isText(m.sdkVersion, 64) &&
+const ADMIN_KINDS = new Set([
+  'connect.accept',
+  'connect.reject',
+  'entry.state',
+  'entry.patch',
+  'blocks.patch',
+  'select',
+  'scroll',
+  'editing',
+]);
+const FRONTEND_KINDS = new Set([
+  'connect.offer',
+  'page',
+  'navigated',
+  'pointer',
+  'applied',
+  'failed',
+  'layout',
+]);
+const FAIL_REASONS = new Set<string>(['gap', 'invalid', 'conflict', 'render']);
+
+/** Parses, after `acceptMessage`, what the admin sent the frontend. */
+export function parseAdminMessage(data: Record<string, unknown>): LiveParse<AdminMessage> {
+  return parse(data, ADMIN_KINDS, adminBody);
+}
+
+/** Parses, after `acceptMessage`, what the frontend sent the admin. */
+export function parseFrontendMessage(data: Record<string, unknown>): LiveParse<FrontendMessage> {
+  return parse(data, FRONTEND_KINDS, frontendBody);
+}
+
+function parse<M>(
+  data: Record<string, unknown>,
+  kinds: ReadonlySet<string>,
+  body: (m: Record<string, unknown>) => Body | undefined,
+): LiveParse<M> {
+  if (typeof data.kind !== 'string' || !kinds.has(data.kind))
+    return { ok: false, reason: 'unknown' };
+  // The bounded walk first: structured clone can deliver a 100-byte message holding a list of a
+  // hundred million holes, or a typed array, which JSON would spend seconds measuring.
+  if (!clean(data)) return { ok: false, reason: 'invalid' };
+  const cap = data.kind === 'entry.state' ? MAX_STATE_BYTES : MAX_MESSAGE_BYTES;
+  if (!withinBytes(data, cap)) return { ok: false, reason: 'too-large' };
+  const built = body(data);
+  if (!built) return { ok: false, reason: 'invalid' };
+  return { ok: true, message: { v: data.v, channel: data.channel, ...built } as M };
+}
+
+/**
+ * Whether the accepted capabilities allow `message`. The admin checks before it sends, the
+ * frontend again when one arrives anyway; connect messages and acknowledgements need none.
+ */
+export function capabilityAllows(
+  message: AdminMessage | FrontendMessage,
+  accepted: readonly Capability[],
+): boolean {
+  const has = (c: Capability) => accepted.includes(c);
+  switch (message.kind) {
+    case 'entry.state':
+      // The whole state is what either kind of patch builds on.
+      return has('patch.fields') || has('patch.blocks');
+    case 'entry.patch':
+      return has('patch.fields');
+    case 'blocks.patch':
+      return message.ops.every((op) => (op.proposed ? has('proposals') : has('patch.blocks')));
+    case 'select':
+    case 'editing':
+    case 'pointer':
+      return has('select');
+    case 'scroll':
+      return has('scroll');
+    case 'layout':
+      return has('layout');
+    default:
+      return true;
+  }
+}
+
+function adminBody(m: Record<string, unknown>): Body | undefined {
+  switch (m.kind) {
+    case 'connect.accept':
+      return isVersion(m.version) &&
         Array.isArray(m.capabilities) &&
-        m.capabilities.length <= 32 &&
-        m.capabilities.every((c) => isText(c, 64))
-        ? { type: 'hello', sdkVersion: m.sdkVersion, capabilities: [...m.capabilities] }
-        : undefined;
-    case 'rendered':
-      return isCount(m.seq) ? { type: 'rendered', seq: m.seq } : undefined;
-    case 'geometry':
-      return geometryBody(m);
-    case 'pick': {
-      const target = targetBody(m);
-      return target ? { type: 'pick', ...target } : undefined;
-    }
-    case 'hover': {
-      if (m.key === undefined && m.ref === undefined) return { type: 'hover' };
-      const target = targetBody(m);
-      return target ? { type: 'hover', ...target } : undefined;
-    }
-    case 'navigate':
-      return isNavigable(m.url, navigateOrigins) ? { type: 'navigate', url: m.url } : undefined;
-    case 'key':
-      return (FORWARDED_KEYS as readonly unknown[]).includes(m.key) &&
-        [m.meta, m.ctrl, m.shift, m.alt].every((b) => typeof b === 'boolean')
-        ? { type: 'key', key: m.key, meta: m.meta, ctrl: m.ctrl, shift: m.shift, alt: m.alt }
-        : undefined;
-    case 'error':
-      return typeof m.kind === 'string' &&
-        ERROR_KINDS.has(m.kind) &&
-        isText(m.message, MAX_TEXT) &&
-        optional(m.seq, isCount)
+        m.capabilities.length <= CAPABILITIES.length * 2 &&
+        m.capabilities.every((c) => typeof c === 'string')
         ? {
-            type: 'error',
             kind: m.kind,
-            message: m.message,
-            ...(m.seq !== undefined ? { seq: m.seq } : {}),
+            version: m.version,
+            capabilities: narrowCapabilities(m.capabilities as string[]),
           }
         : undefined;
+    case 'connect.reject':
+      return m.reason === 'unsupported-version' && isVersionList(m.versions)
+        ? { kind: m.kind, reason: m.reason, versions: [...(m.versions as number[])] }
+        : undefined;
+    case 'entry.state':
+    case 'entry.patch': {
+      const at = address(m);
+      return at && isFields(m.fields) ? { kind: m.kind, ...at, fields: m.fields } : undefined;
+    }
+    case 'blocks.patch': {
+      const at = address(m);
+      if (!at || !isName(m.field) || !Array.isArray(m.ops) || m.ops.length > MAX_PATCH_OPS) {
+        return undefined;
+      }
+      if (m.ops.length === 0) return undefined;
+      const ops: unknown[] = [];
+      for (const op of m.ops) {
+        if (!isRecord(op) || !isOp(op, m.field as string, at.locale)) return undefined;
+        if (op.proposed !== undefined && op.proposed !== true) return undefined;
+        ops.push({ ...op, field: m.field, locale: at.locale });
+      }
+      return { kind: m.kind, ...at, field: m.field, ops };
+    }
+    case 'select':
+      return m.ref === null || isRef(m.ref) ? { kind: m.kind, ref: m.ref } : undefined;
+    case 'scroll':
+      return isRef(m.ref) ? { kind: m.kind, ref: m.ref } : undefined;
+    case 'editing':
+      return typeof m.on === 'boolean' ? { kind: m.kind, on: m.on } : undefined;
     default:
       return undefined;
   }
 }
 
-// --- the ops -------------------------------------------------------------------------
+function frontendBody(m: Record<string, unknown>): Body | undefined {
+  switch (m.kind) {
+    case 'connect.offer': {
+      const sdk = m.sdk;
+      if (!isVersionList(m.versions) || (m.versions as number[]).length === 0) return undefined;
+      if (!Array.isArray(m.capabilities) || m.capabilities.length > CAPABILITIES.length * 2) {
+        return undefined;
+      }
+      if (!isRecord(sdk) || !isText(sdk.name, 64) || !isText(sdk.version, 64)) return undefined;
+      return {
+        kind: m.kind,
+        versions: [...(m.versions as number[])],
+        capabilities: narrowCapabilities(m.capabilities),
+        sdk: { name: sdk.name, version: sdk.version },
+      };
+    }
+    case 'page': {
+      if (!isUrl(m.url) || !Array.isArray(m.entries) || m.entries.length > MAX_PAGE_ENTRIES) {
+        return undefined;
+      }
+      const entries = [];
+      for (const e of m.entries) {
+        if (!isRecord(e) || !isId(e.entryId) || !isId(e.contentType) || !isName(e.locale)) {
+          return undefined;
+        }
+        entries.push({ entryId: e.entryId, contentType: e.contentType, locale: e.locale });
+      }
+      return { kind: m.kind, url: m.url, entries };
+    }
+    case 'navigated':
+      return isUrl(m.url) ? { kind: m.kind, url: m.url } : undefined;
+    case 'pointer': {
+      if (m.pointer !== 'hover' && m.pointer !== 'click') return undefined;
+      if (m.ref === null && m.rect === null && m.pointer === 'hover') {
+        return { kind: m.kind, pointer: m.pointer, ref: null, rect: null };
+      }
+      return isRef(m.ref) && isRect(m.rect)
+        ? { kind: m.kind, pointer: m.pointer, ref: m.ref, rect: rectBody(m.rect) }
+        : undefined;
+    }
+    case 'applied':
+      return isCount(m.rev) && optional(m.entryId, isId)
+        ? { kind: m.kind, rev: m.rev, ...(m.entryId !== undefined ? { entryId: m.entryId } : {}) }
+        : undefined;
+    case 'failed':
+      return isCount(m.rev) &&
+        typeof m.reason === 'string' &&
+        FAIL_REASONS.has(m.reason) &&
+        optional(m.entryId, isId)
+        ? {
+            kind: m.kind,
+            rev: m.rev,
+            reason: m.reason,
+            ...(m.entryId !== undefined ? { entryId: m.entryId } : {}),
+          }
+        : undefined;
+    case 'layout':
+      return layoutBody(m);
+    default:
+      return undefined;
+  }
+}
 
-function isOp(value: unknown): boolean {
-  if (!isRecord(value) || !isName(value.field) || !isName(value.locale)) return false;
+function address(m: Record<string, unknown>): EntryAddress | undefined {
+  return isCount(m.rev) && isId(m.entryId) && isName(m.locale)
+    ? { rev: m.rev as number, entryId: m.entryId, locale: m.locale }
+    : undefined;
+}
+
+// --- ops ---------------------------------------------------------------------------------
+
+function isOp(value: Record<string, unknown>, field: string, locale: string): boolean {
+  if (value.field !== undefined && value.field !== field) return false;
+  if (value.locale !== undefined && value.locale !== locale) return false;
   switch (value.op) {
-    case 'setField':
-      return true;
     case 'insert':
       return isRecord(value.block) && isPlace(value) && optional(value.ref, isId);
     case 'update':
@@ -473,16 +546,47 @@ function isPlace(value: Record<string, unknown>): boolean {
   );
 }
 
-function isFields(value: unknown): boolean {
-  if (!isRecord(value)) return false;
-  return Object.entries(value).every(
-    ([name, held]) => isName(name) && isRecord(held) && Object.keys(held).every(isName),
-  );
+function isFields(value: unknown): value is LiveFields {
+  return isRecord(value) && Object.keys(value).every(isName);
 }
 
-// --- geometry -----------------------------------------------------------------------
+// --- content values -------------------------------------------------------------------------
 
-function geometryBody(m: Record<string, unknown>): Body | undefined {
+/**
+ * A rich text value: a `RichTextDocument` tree all the way down (every node an object with a
+ * `nodeType`, every `content` a list of nodes, every text node's `value` a string), never a
+ * string of markup anywhere in it. Structural only: which node types exist is the admin's check.
+ */
+export function isRichTextDocument(value: unknown): boolean {
+  if (!isRecord(value) || value.nodeType !== 'document') return false;
+  let nodes = 0;
+  const node = (n: unknown, depth: number): boolean => {
+    nodes += 1;
+    if (nodes > MAX_NODES || depth > MAX_DEPTH) return false;
+    if (!isRecord(n) || typeof n.nodeType !== 'string') return false;
+    if (n.nodeType === 'text' && typeof n.value !== 'string') return false;
+    if (n.content === undefined) return n.nodeType !== 'document';
+    return Array.isArray(n.content) && n.content.every((c) => node(c, depth + 1));
+  };
+  return node(value, 0);
+}
+
+/**
+ * Why `value` can't be a field value of `type` on the channel, or undefined when it can. The
+ * admin checks values with it before sending, holding the content type; the frontend, which
+ * doesn't, refuses a patch that turns a rich text document into anything else.
+ */
+export function contentValueIssue(type: string, value: unknown): string | undefined {
+  if (value === null) return undefined;
+  if (type === 'RichText' && !isRichTextDocument(value)) {
+    return 'Rich text crosses the channel as a RichTextDocument, never as HTML or Markdown';
+  }
+  return undefined;
+}
+
+// --- layout -------------------------------------------------------------------------------------
+
+function layoutBody(m: Record<string, unknown>): Body | undefined {
   const { blocks, slots, fields, scroll, viewport, docHeight } = m;
   if (!Array.isArray(blocks) || blocks.length > MAX_GEOMETRY_ITEMS) return undefined;
   if (!Array.isArray(slots) || slots.length > MAX_GEOMETRY_ITEMS) return undefined;
@@ -490,46 +594,42 @@ function geometryBody(m: Record<string, unknown>): Body | undefined {
   if (!isRecord(scroll) || !isNumber(scroll.x) || !isNumber(scroll.y)) return undefined;
   if (!isRecord(viewport) || !isNumber(viewport.w) || !isNumber(viewport.h)) return undefined;
   if (!isNumber(docHeight) || (m.truncated !== undefined && m.truncated !== true)) return undefined;
-  const outBlocks: LiveBlockBox[] = [];
-  for (const b of blocks) {
-    if (!isRecord(b) || !isId(b.key) || !isRect(b.rect)) return undefined;
-    if (!optional(b.slot, isId) || !optional(b.parentKey, isId)) return undefined;
-    outBlocks.push({
-      key: b.key,
-      rect: rectBody(b.rect),
-      ...(b.slot !== undefined ? { slot: b.slot as string } : {}),
-      ...(b.parentKey !== undefined ? { parentKey: b.parentKey as string } : {}),
-    });
-  }
+  const boxes = (list: unknown[]): LiveFieldBox[] | undefined => {
+    const out: LiveFieldBox[] = [];
+    for (const b of list) {
+      if (!isRecord(b) || !isRef(b.ref) || !isRect(b.rect)) return undefined;
+      out.push({ ref: b.ref, rect: rectBody(b.rect) });
+    }
+    return out;
+  };
+  const outBlocks = boxes(blocks);
+  const outFields = boxes(fields);
+  if (!outBlocks || !outFields) return undefined;
   const outSlots: LiveSlotBox[] = [];
   let gapCount = 0;
   for (const s of slots) {
-    if (!isRecord(s) || !isId(s.path) || !optional(s.parentKey, isId) || !isRect(s.rect)) {
+    if (!isRecord(s) || !isRef(s.ref) || !isRect(s.rect) || !Array.isArray(s.gaps)) {
       return undefined;
     }
-    if (!Array.isArray(s.gaps)) return undefined;
     gapCount += s.gaps.length;
     if (gapCount > MAX_GEOMETRY_GAPS) return undefined;
     const gaps: LiveGap[] = [];
     for (const g of s.gaps) {
-      const gap = gapBody(g);
-      if (!gap) return undefined;
-      gaps.push(gap);
+      if (!isRecord(g) || !isCount(g.index) || (g.axis !== 'x' && g.axis !== 'y')) return undefined;
+      if (!isRect(g.rect) || !optional(g.after, isId) || !optional(g.before, isId))
+        return undefined;
+      gaps.push({
+        index: g.index as number,
+        rect: rectBody(g.rect),
+        axis: g.axis,
+        ...(g.after !== undefined ? { after: g.after as string } : {}),
+        ...(g.before !== undefined ? { before: g.before as string } : {}),
+      });
     }
-    outSlots.push({
-      path: s.path,
-      rect: rectBody(s.rect),
-      gaps,
-      ...(s.parentKey !== undefined ? { parentKey: s.parentKey as string } : {}),
-    });
-  }
-  const outFields: LiveFieldBox[] = [];
-  for (const f of fields) {
-    if (!isRecord(f) || !isRef(f.ref) || !isRect(f.rect)) return undefined;
-    outFields.push({ ref: f.ref, rect: rectBody(f.rect) });
+    outSlots.push({ ref: s.ref, rect: rectBody(s.rect), gaps });
   }
   return {
-    type: 'geometry',
+    kind: 'layout',
     blocks: outBlocks,
     slots: outSlots,
     fields: outFields,
@@ -540,37 +640,58 @@ function geometryBody(m: Record<string, unknown>): Body | undefined {
   };
 }
 
-function gapBody(g: unknown): LiveGap | undefined {
-  if (!isRecord(g) || !isCount(g.index) || (g.axis !== 'x' && g.axis !== 'y')) return undefined;
-  if (!isRect(g.rect) || !optional(g.after, isId) || !optional(g.before, isId)) return undefined;
-  return {
-    index: g.index as number,
-    rect: rectBody(g.rect),
-    axis: g.axis,
-    ...(g.after !== undefined ? { after: g.after as string } : {}),
-    ...(g.before !== undefined ? { before: g.before as string } : {}),
+// --- primitives ----------------------------------------------------------------------------------
+
+/**
+ * Whether `value` serializes to at most `cap` bytes of UTF-8 JSON. A value JSON can't serialize
+ * (a cycle, a BigInt, nesting deep enough to overflow) is over every cap.
+ */
+export function withinBytes(value: unknown, cap: number): boolean {
+  let json: string;
+  try {
+    json = JSON.stringify(value);
+  } catch {
+    return false;
+  }
+  // UTF-8 is never shorter than UTF-16 code units, so a long string is over without encoding it.
+  if (json.length > cap) return false;
+  return new TextEncoder().encode(json).byteLength <= cap;
+}
+
+/** The most values (objects, lists and their members) one message may hold. */
+const MAX_NODES = 200_000;
+/** The longest list one message may hold; a list is refused by its length, before it is read. */
+const MAX_LIST = 10_000;
+
+/**
+ * Plain data only, anywhere in `value`, found in bounded time: no prototype-reaching names, no
+ * nesting past 64, no list longer than 10,000, at most 200,000 values, and no object that isn't a
+ * plain one or a plain list (structured clone carries Maps, Dates and typed arrays, which JSON
+ * measures as `{}` or spends seconds on). Runs before anything else reads the message.
+ */
+export function clean(value: unknown): boolean {
+  let nodes = 0;
+  const walk = (v: unknown, depth: number): boolean => {
+    nodes += 1;
+    if (nodes > MAX_NODES || depth > MAX_DEPTH) return false;
+    if (typeof v !== 'object' || v === null) return typeof v !== 'function';
+    const proto = Object.getPrototypeOf(v);
+    if (Array.isArray(v)) {
+      if (proto !== Array.prototype || v.length > MAX_LIST) return false;
+      // A hole would be skipped by every `every()` check and then reach the page as `null`.
+      for (let i = 0; i < v.length; i++) {
+        if (!Object.hasOwn(v, i) || !walk(v[i], depth + 1)) return false;
+      }
+      return true;
+    }
+    if (proto !== Object.prototype && proto !== null) return false;
+    for (const name of Object.keys(v)) {
+      if (FORBIDDEN_NAMES.has(name)) return false;
+      if (!walk((v as Record<string, unknown>)[name], depth + 1)) return false;
+    }
+    return true;
   };
-}
-
-const rectBody = (r: LiveRect): LiveRect => ({ x: r.x, y: r.y, w: r.w, h: r.h });
-
-function targetBody(m: Record<string, unknown>): LiveTarget | undefined {
-  if (!isTarget(m)) return undefined;
-  return m.key !== undefined ? { key: m.key as string } : { ref: m.ref as string };
-}
-
-function isRect(r: unknown): r is LiveRect {
-  return isRecord(r) && isNumber(r.x) && isNumber(r.y) && isNumber(r.w) && isNumber(r.h);
-}
-
-// --- primitives -----------------------------------------------------------------------
-
-function isTarget(m: Record<string, unknown>): boolean {
-  return m.key !== undefined ? m.ref === undefined && isId(m.key) : isRef(m.ref);
-}
-
-function isOptionalTarget(m: Record<string, unknown>): boolean {
-  return (m.key === undefined && m.ref === undefined) || isTarget(m);
+  return walk(value, 0);
 }
 
 /** An https URL, or http on this machine (a frontend in development). */
@@ -585,10 +706,15 @@ export function isPreviewUrl(value: string): boolean {
 
 const LOOPBACK = new Set(['localhost', '127.0.0.1', '[::1]']);
 
-function isNavigable(value: unknown, origins: readonly string[]): value is string {
-  return isText(value, MAX_URL) && isPreviewUrl(value) && origins.includes(new URL(value).origin);
+function isRect(r: unknown): r is LiveRect {
+  return isRecord(r) && isNumber(r.x) && isNumber(r.y) && isNumber(r.w) && isNumber(r.h);
 }
+const rectBody = (r: LiveRect): LiveRect => ({ x: r.x, y: r.y, w: r.w, h: r.h });
 
+const isUrl = (s: unknown): s is string => isText(s, MAX_URL) && isPreviewUrl(s);
+const isVersion = (n: unknown): boolean => Number.isSafeInteger(n) && (n as number) >= 1;
+const isVersionList = (l: unknown): boolean =>
+  Array.isArray(l) && l.length <= 32 && l.every(isVersion);
 const isNumber = (n: unknown): boolean => typeof n === 'number' && Number.isFinite(n);
 const isCount = (n: unknown): boolean => Number.isSafeInteger(n) && (n as number) >= 0;
 const isText = (s: unknown, max: number): s is string =>
@@ -599,7 +725,12 @@ const isText = (s: unknown, max: number): s is string =>
  */
 const isId = (s: unknown): s is string => isText(s, MAX_ID) && !FORBIDDEN_NAMES.has(s);
 const isName = isId;
-const isRef = (s: unknown): s is string => isText(s, MAX_ID * 4) && !FORBIDDEN_NAMES.has(s);
+const isRef = (s: unknown): s is string => isText(s, MAX_REF) && !FORBIDDEN_NAMES.has(s);
+
+/** Whether a page may send `value` as a key, id or locale: what the admin's parser accepts. */
+export const isWireId = isId;
+/** Whether a page may send `value` as a ref: what the admin's parser accepts. */
+export const isWireRef = isRef;
 const optional = (v: unknown, test: (v: unknown) => boolean): boolean => v === undefined || test(v);
 
 export function isRecord(value: unknown): value is Record<string, unknown> {

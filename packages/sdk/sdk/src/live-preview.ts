@@ -1,2 +1,2 @@
-/** @contentworker/sdk/live-preview: the page side of the admin's live preview (`startLivePreview`). */
+/** @contentworker/sdk/live-preview: the live preview channel (`connectPreview`, and the protocol the admin shares). */
 export * from '@contentworker/sdk-core/live-preview';
