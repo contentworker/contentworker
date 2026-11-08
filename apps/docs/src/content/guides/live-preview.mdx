@@ -249,7 +249,9 @@ back, with everything proposed in or beside it. A proposal names every block it 
 offered only with `patch.blocks`.
 
 Limits: a message is at most 256 KB (an `entry.state`, 2 MB); a `blocks.patch` has at most 100
-ops; `page` lists at most 200 entries.
+ops; a page reports at most 50 entries (`PAGE_REPORT_LIMIT`), the first the site lists, so list
+the edited entry first. The admin accepts up to 200 (`MAX_PAGE_ENTRIES`), as sites on
+`@contentworker/sdk` 0.3.0 send.
 
 ## Extensions
 

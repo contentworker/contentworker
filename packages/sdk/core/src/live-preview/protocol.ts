@@ -92,8 +92,17 @@ export const MAX_PATCH_OPS = 100;
 export const MAX_GEOMETRY_ITEMS = 2000;
 /** The most seams one `layout` reports across its slots. */
 export const MAX_GEOMETRY_GAPS = 4000;
-/** The most entries one `page` reports. */
+/**
+ * The most entries one `page` holds that the admin accepts. Pages from this release on send at most
+ * {@link PAGE_REPORT_LIMIT}; the admin keeps accepting up to this many because sites on
+ * `@contentworker/sdk` 0.3.0 send that many.
+ */
 export const MAX_PAGE_ENTRIES = 200;
+/**
+ * The most entries a page reports: the entry being edited and the entries it references directly,
+ * the first this many as the site lists them (so list the edited entry first).
+ */
+export const PAGE_REPORT_LIMIT = 50;
 
 const MAX_ID = 256;
 const MAX_REF = 2048;

@@ -36,10 +36,10 @@ import {
   type LiveRect,
   type LiveSlotBox,
   MAX_MESSAGE_BYTES,
-  MAX_PAGE_ENTRIES,
   narrowCapabilities,
   newChannel,
   OFFERED_VERSIONS,
+  PAGE_REPORT_LIMIT,
   type PageMessage,
   parseAdminMessage,
 } from './protocol.js';
@@ -826,7 +826,7 @@ function pageBody(
       (e): e is PageMessage['entries'][number] =>
         isRecord(e) && isWireId(e.entryId) && isWireId(e.contentType) && isWireId(e.locale),
     )
-    .slice(0, MAX_PAGE_ENTRIES)
+    .slice(0, PAGE_REPORT_LIMIT)
     .map(({ entryId, contentType, locale }) => ({ entryId, contentType, locale }));
   return { url: body.url, entries };
 }
