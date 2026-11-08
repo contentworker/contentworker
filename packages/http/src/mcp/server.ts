@@ -11,6 +11,7 @@ import {
   authorize,
   authorizeContent,
   authorizeTrash,
+  ConflictError,
   type ContentAction,
   ForbiddenError,
   inScope,
@@ -269,8 +270,12 @@ export function buildServer(
           });
         } catch (err) {
           if (err instanceof ValidationError) return validationResult(err);
-          // A refusal that says what was refused (a read-only field) answers as REST's 403 body.
-          if (err instanceof ForbiddenError && err.details !== undefined)
+          // A refusal that says what was refused (a read-only field, the version a save was made
+          // from) answers as REST's 403 or 409 body, so a client reads its details, not its words.
+          if (
+            (err instanceof ForbiddenError || err instanceof ConflictError) &&
+            err.details !== undefined
+          )
             return { ...ok(toHttpError(err).body), isError: true as const };
           throw toolFailure(name, err);
         }

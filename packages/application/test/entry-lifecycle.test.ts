@@ -307,13 +307,6 @@ describe('saving a draft from a version read earlier', () => {
       expectedVersion: entry.currentVersion,
     });
     await expect(stale).rejects.toBeInstanceOf(ConflictError);
-    // The admin reads a refusal that reaches it through Coworker by these words
-    // (apps/web/app/cms/lib/stale-save.ts): changing them changes that too.
-    await expect(stale).rejects.toThrow(
-      new RegExp(
-        `is at version ${entry.currentVersion + 1}, not ${entry.currentVersion}: it changed after it was read`,
-      ),
-    );
     await expect(stale).rejects.toMatchObject({
       details: { currentVersion: entry.currentVersion + 1, expectedVersion: entry.currentVersion },
     });

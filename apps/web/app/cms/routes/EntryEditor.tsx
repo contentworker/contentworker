@@ -192,7 +192,7 @@ export function EntryEditor() {
   if (baseVersion === null && meta) setBaseVersion(meta.version);
   /** A save refused as stale: the dialog's question, with the fields it would have saved. */
   const [conflict, setConflict] = useState<{
-    theirs: number | null;
+    theirs: number;
     fields: EntryFields;
     publish: boolean;
   } | null>(null);
@@ -993,7 +993,7 @@ export function EntryEditor() {
 
       <SaveConflictDialog
         open={conflict !== null}
-        theirs={conflict?.theirs ?? null}
+        theirs={conflict?.theirs ?? 0}
         mine={baseVersion ?? meta?.version ?? 0}
         where="the form"
         onOpenChange={(open) => !open && setConflict(null)}
@@ -1004,20 +1004,9 @@ export function EntryEditor() {
         onSaveOver={() => {
           const c = conflict;
           setConflict(null);
-          if (!c || !entryId) return;
-          if (c.theirs !== null) {
-            publishAfterSaveRef.current = c.publish;
-            void save(c.fields, c.theirs);
-            return;
-          }
-          // The refusal didn't say which version is current: read it, then save over it.
-          client.getEntry(entryId).then(
-            (now) => {
-              publishAfterSaveRef.current = c.publish;
-              void save(c.fields, now.version);
-            },
-            () => toast.error('The entry couldn’t be read again. Try saving once more.'),
-          );
+          if (!c) return;
+          publishAfterSaveRef.current = c.publish;
+          void save(c.fields, c.theirs);
         }}
       />
 

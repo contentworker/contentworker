@@ -17,8 +17,8 @@ import {
  */
 export function SaveConflictDialog(props: {
   readonly open: boolean;
-  /** The version the entry is at now, when the refusal said. */
-  readonly theirs: number | null;
+  /** The version the entry is at now, as the refusal said. */
+  readonly theirs: number;
   /** The version the edits were made from. */
   readonly mine: number;
   /** Where the edits are: "the form", "the canvas". */
@@ -33,10 +33,9 @@ export function SaveConflictDialog(props: {
         <AlertDialogHeader>
           <AlertDialogTitle>Someone saved this entry while you worked</AlertDialogTitle>
           <AlertDialogDescription>
-            It’s at {props.theirs ? `v${props.theirs}` : 'a newer version'} now, and {props.where}{' '}
-            started from v{props.mine}. Load theirs to see what changed (your edits here are
-            discarded), or save yours over it: theirs stays in the version history, and can be
-            restored from there.
+            It’s at v{props.theirs} now, and {props.where} started from v{props.mine}. Load theirs
+            to see what changed (your edits here are discarded), or save yours over it: theirs stays
+            in the version history, and can be restored from there.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>

@@ -467,20 +467,6 @@ describe('saving', () => {
     );
   });
 
-  it('saving over a newer save that didn’t say its version reads it first, never discards', async () => {
-    client.updateEntry.mockRejectedValueOnce(
-      new ApiError(409, 'The entry changed after it was read. Read it again.', { error: {} }),
-    );
-    client.updateEntry.mockResolvedValueOnce(saved(8));
-    await edited();
-    act(() => screen.getByRole('button', { name: 'Save draft' }).click());
-    const dialog = await screen.findByRole('alertdialog');
-    client.getEntry.mockResolvedValueOnce(entry({ version: 7 }));
-    act(() => within(dialog).getByRole('button', { name: 'Save mine over it' }).click());
-    await waitFor(() => expect(client.updateEntry).toHaveBeenCalledTimes(2));
-    expect(client.updateEntry.mock.calls[1]?.[2]).toEqual({ expectedVersion: 7 });
-  });
-
   it('meets a newer save with the two-way choice, and saves over it when asked', async () => {
     client.updateEntry.mockRejectedValueOnce(
       new ApiError(409, 'stale', {

@@ -244,7 +244,7 @@ function Canvas({
   const [tab, setTab] = useState<InspectorTab>('content');
   const [kept, setKept] = useState<ReadonlySet<string>>(new Set());
   const [draftStarted, setDraftStarted] = useState(false);
-  const [conflict, setConflict] = useState<{ theirs: number | null } | null>(null);
+  const [conflict, setConflict] = useState<{ theirs: number } | null>(null);
   const [said, setSaid] = useState('');
   const [focusInspector, setFocusInspector] = useState(false);
   const [focusChecks, setFocusChecks] = useState(false);
@@ -976,7 +976,7 @@ function Canvas({
 
       <SaveConflictDialog
         open={conflict !== null}
-        theirs={conflict?.theirs ?? null}
+        theirs={conflict?.theirs ?? 0}
         mine={doc.base.version}
         where="the canvas"
         onOpenChange={(open) => !open && setConflict(null)}
@@ -984,15 +984,7 @@ function Canvas({
         onSaveOver={() => {
           const theirs = conflict?.theirs;
           setConflict(null);
-          if (theirs) {
-            void save(theirs);
-            return;
-          }
-          // The refusal didn't say which version is current: read it, then save over it.
-          client.getEntry(entryId).then(
-            (now) => void save(now.version),
-            () => toast.error('The entry couldn’t be read again. Try saving once more.'),
-          );
+          if (theirs) void save(theirs);
         }}
       />
 

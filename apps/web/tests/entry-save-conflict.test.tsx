@@ -187,7 +187,16 @@ describe('the entry form’s save', () => {
 
   it('meets the same refusal through Coworker, in its words, and saves over it there', async () => {
     assistantEdit.mockRejectedValueOnce(
-      new Error('Entry "e1" is at version 7, not 2: it changed after it was read. Read it again.'),
+      new Error(
+        JSON.stringify({
+          error: {
+            code: 'conflict',
+            message:
+              'Entry "e1" is at version 7, not 2: it changed after it was read. Read it again.',
+            details: { currentVersion: 7, expectedVersion: 2 },
+          },
+        }),
+      ),
     );
     assistantEdit.mockResolvedValueOnce({ output: view(8, 'Mine') });
     await edited();
@@ -215,11 +224,18 @@ describe('the entry form’s save', () => {
     expect(await screen.findByRole('heading', { name: /^Publish “/ })).toBeTruthy();
   });
 
-  it('says any other refusal as it did', async () => {
+  it('says any other refusal as it did, a version’s words without its details included', async () => {
     client.updateEntry.mockRejectedValueOnce(new ApiError(409, 'title is taken'));
     await edited();
     saveDraft();
     await waitFor(() => expect(client.updateEntry).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    // Through Coworker: words alone are read as words, never parsed for a version.
+    assistantEdit.mockRejectedValueOnce(
+      new Error('Entry "e1" is at version 7, not 2: it changed after it was read.'),
+    );
+    saveDraft();
+    await waitFor(() => expect(assistantEdit).toHaveBeenCalledTimes(2));
     expect(screen.queryByRole('alertdialog')).toBeNull();
   });
 });

@@ -31,7 +31,10 @@ handler runs through one path. A failure that isn't a domain error becomes `Inte
 error` (`toolFailure`). A `ValidationError` is returned, not thrown, as an `isError` result whose
 text is REST's 422 body (`toHttpError`): `{ "error": { "code": "validation_failed", "message",
 "issues": [{ "field", "locale"?, "message" }] } }`, so an agent sees each field path
-(`body[0].heading`). A successful call that changes something is recorded in the audit trail
+(`body[0].heading`). A `ForbiddenError` or `ConflictError` that carries details answers the same
+way, as REST's 403 or 409 body: a stale `expectedVersion` gives
+`{ "error": { "code": "conflict", "message", "details": { "currentVersion", "expectedVersion" } } }`,
+which the admin reads when a save made through Coworker meets one. A successful call that changes something is recorded in the audit trail
 (`auditToolCall`, `packages/http/src/mcp/audit.ts`) with the shape REST's `auditMiddleware` uses:
 the actor (`auditActor`), action `MCP <tool>`, the space, the resolved environment when the tool
 takes one, `targetId` from `id` / `apiId` / `alias`, `targetType` in REST's words
