@@ -3,11 +3,14 @@ import { expect, type Page, type TestInfo, test } from '@playwright/test';
 import {
   api,
   asFreshDeployment,
+  askCoworker,
+  createBlocksPage,
   createChanged,
   createDraft,
   MGMT,
   openCms,
   PROPOSAL_TARGET,
+  resaveBlocksPage,
   SPACE,
   seedAsset,
   seedAssetFolder,
@@ -1003,6 +1006,36 @@ test('a publish card with its review open has no accessibility violations', asyn
   // The conversation is shared with every other test: a card left waiting would be in theirs.
   await card.getByRole('button', { name: 'Not now' }).click();
   await expect(card).toHaveCount(0);
+});
+
+test('a block patch card, ready and refused, has no accessibility violations', async ({
+  page,
+  request,
+}, testInfo) => {
+  const title = `Blocks card ${Date.now()}`;
+  const { id } = await createBlocksPage(request, title);
+  await openCms(page, `/content/landing/${id}`);
+  const panel = await askCoworker(page, 'Move the first block to the end');
+  // The conversation is shared with tests running beside this one: this entry's card only.
+  const card = panel.getByRole('region', { name: 'Change blocks' }).filter({ hasText: title });
+  await expect(card.getByRole('button', { name: 'Confirm' })).toBeEnabled();
+  await card.getByRole('button', { name: 'Review changes' }).click();
+  await expect(card.getByRole('list', { name: 'Changes' })).toBeVisible();
+  await scan(page, testInfo);
+
+  // Saved again under it, the card reads the draft again and refuses the stale move.
+  await resaveBlocksPage(request, id, title);
+  await openCms(page, `/content/landing/${id}`);
+  const stale = page
+    .getByRole('complementary', { name: 'Coworker' })
+    .getByRole('region', { name: 'Change blocks' })
+    .filter({ hasText: title });
+  await expect(stale.getByText('The entry changed after this was proposed')).toBeVisible();
+  await expect(stale.getByRole('button', { name: 'Confirm' })).toBeDisabled();
+  await scan(page, testInfo);
+  // The conversation is shared with every other test: a card left waiting would be in theirs.
+  await stale.getByRole('button', { name: 'Not now' }).click();
+  await expect(stale).toHaveCount(0);
 });
 
 test('an entry’s authorship and the Mine filter have no accessibility violations', async ({

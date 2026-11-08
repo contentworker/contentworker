@@ -73,8 +73,19 @@ export function toHttpError(err: unknown): { status: number; body: unknown } {
   }
   if (err instanceof DomainError && err.code === 'unauthorized')
     return { status: 401, body: errBody(err) };
-  if (err instanceof DomainError && err.code === 'forbidden')
-    return { status: 403, body: errBody(err) };
+  // A refusal's details say what was refused (a read-only field, how many it can't read).
+  if (err instanceof DomainError && err.code === 'forbidden') {
+    return {
+      status: 403,
+      body: {
+        error: {
+          code: err.code,
+          message: err.message,
+          ...(err.details !== undefined ? { details: err.details } : {}),
+        },
+      },
+    };
+  }
   // A hook refused it: the request was understood and declined on policy
   // grounds, which is 422 rather than 400 or 409.
   if (err instanceof HookRejectedError) return { status: 422, body: errBody(err) };
