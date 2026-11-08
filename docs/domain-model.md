@@ -1296,6 +1296,56 @@ serve `_type` as stored until the entry's next save.
 The catalog isn't in snapshots, exports or environment clones (the content types, and so their
 variants, are).
 
+## Block configs
+
+`packages/domain/src/content-type/block-config.ts`. What an environment's admins allow of the
+block catalog: narrowings laid over it per target and per block slot, never wider than the code.
+
+```ts
+interface SlotNarrowing { allowedChildren?: string[]; min?: number; max?: number; locked?: boolean }
+
+interface BlockConfig {
+  version: number; // 0 before the first set, then one more per set that changes something
+  targets: { contentTypeApiId: string; field: string; blocks?: string[]; min?: number; max?: number; locked?: boolean }[];
+  blocks: { block: string; slots: Record<string, SlotNarrowing> }[]; // wherever the block is placed
+  updatedAt: string | null;
+  updatedBy: string | null;
+}
+```
+
+- **Checks** (`checkBlockConfig(input, catalog)`) against the catalog in force: every target,
+  block and slot named exists (a former id is refused, naming the current one); a list is a
+  non-empty subset of what the code allows there (for a target, what `BlockCatalogTarget.blocks`
+  resolves to); `min` at least the code's, `max` at most the code's, `min ≤ max`; limits as the
+  catalog's (`BLOCK_CONFIG_LIMITS`, 200,000 bytes of JSON). Normalized: unknown keys and
+  narrowings of nothing dropped, `locked` kept only when true.
+- **Rules in force** (`effectiveBlockRules(catalog, config)`): every catalog target and slotted
+  block with the config laid over the code, in the catalog's order. A catalog push is never
+  checked against the config: parts naming what the catalog no longer has are `stale`, listed and
+  ignored; a renamed block (its old id in `aliases`) is followed; a narrowing the catalog leaves
+  nothing of (no named block allowed, bounds that no longer fit) falls back to the code's rule.
+- **Judging a save** (`blockConfigIssues(contentType, catalog, config, before, after, locales)`)
+  compares each catalog target of the type per locale and per slot (the field's top level, or a
+  block's slot by that block's `_key` and the slot's apiId, so a block moved keeps its slots). A
+  block in a slot after but not before must be one the narrowed list takes (an aliased `_type`
+  counts as its block); a locked slot's key sequence can't change, edits inside its blocks can; a
+  count is checked only when it changes, and may move toward the bounds (a slot over `max` can
+  shrink one at a time). A slot new in this save (a create, a newly placed block) is filled as it
+  comes, so locks don't apply to it; a field left without a value isn't counted (`required`
+  decides). Content stored before the config stays saveable while its slots are left as they
+  are. Issues use validation's paths (`body[2].items[0]`) and codes `BLOCK_CONFIG_ISSUE_CODES`.
+
+The use-cases (`packages/application/src/block-config.ts`): `getBlockConfig` (version 0 when
+unset), `setBlockConfig(ctx, caller, scope, { expectedVersion, targets, blocks })` (checked
+against `blockCatalogs.latest`, a no-op when unchanged, `409` for a stale `expectedVersion`, and
+`blockConfigs.save` in a unit: the first set inserts, each later one updates at the version read,
+a lost race a `TransactionConflictError` surfaced as `409`), `getEffectiveBlockRules`, and
+`assertBlockConfigAllows`, which `prepareFields` in `entries.ts` runs after validation for a create
+or an update (not a copy). It reads only for a type with a blocks field: the config (one
+statement), then the catalog only when a config could touch the type.
+
+The config isn't in snapshots, exports or environment clones; the environment purge clears it.
+
 ## Saved views
 
 ```ts

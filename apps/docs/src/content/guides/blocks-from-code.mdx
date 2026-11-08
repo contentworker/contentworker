@@ -184,6 +184,46 @@ entry however often it uses the block, a block stored under a former id counting
 Content types you can't read are left out. The count reads up to 2,000 entries per type; past that
 `complete` is `false` and the counts are a lower bound.
 
+## Narrowing blocks per environment
+
+The code says what a page can be built from; an environment's block config says what its editors
+may use of that. It only ever narrows: per target (the top level of a blocks field) and per block
+slot, wherever that block is placed, it can
+
+- allow fewer blocks (`blocks` for a target, `allowedChildren` for a slot): a subset of what the
+  code allows;
+- tighten the count (`min` no lower than the code's, `max` no higher);
+- lock the slot (`locked: true`): its blocks can't be added, removed, moved or reordered, but
+  what's inside them can still be edited.
+
+```json
+{
+  "expectedVersion": 0,
+  "targets": [{ "contentTypeApiId": "page", "field": "body", "blocks": ["hero", "grid"] }],
+  "blocks": [
+    { "block": "grid", "slots": { "items": { "allowedChildren": ["card"], "max": 3 } } },
+    { "block": "footer", "slots": { "links": { "locked": true } } }
+  ]
+}
+```
+
+`PUT …/block-config` replaces the whole config (`content:manage`), checked against the catalog in
+force: a name the catalog doesn't have, or anything wider than the code, is a `422` naming the part
+(`blocks[grid].slots.items.max`). Send the `version` you read as `expectedVersion`; another set
+landing first is a `409`. `GET …/block-config` reads it, and `GET …/block-config/effective` answers
+the rules every target and slot follows once the config is laid over the code.
+
+Every save holds what it changes to the config: placing a block where it isn't allowed
+(`block_not_allowed_here`), changing a locked slot's blocks (`slot_locked`), or taking a slot's
+count past its bounds (`slot_too_few`, `slot_too_many`) is a `422`, whether the save comes from the
+editor, the API, MCP or a block patch. Content saved before the config stays saveable as long as
+the save leaves those blocks where they are, and a slot over its new `max` can shrink one block at
+a time. Imports, snapshot restores and environment clones carry content as it is.
+
+Pushing a new catalog is never blocked by the config. Parts of the config naming what the catalog
+no longer has are listed as `stale` in the effective rules and ignored until the config is set
+again; a renamed block keeps its narrowing.
+
 ## The API and MCP
 
 | Method | Path                                 | Scope            | Does                                           |
@@ -193,16 +233,21 @@ Content types you can't read are left out. The count reads up to 2,000 entries p
 | GET    | `…/block-catalog/versions`           | `preview:read`   | Versions newest first, without their blocks (`?limit`, `?before`) |
 | GET    | `…/block-catalog/versions/:version`  | `preview:read`   | One version                                    |
 | GET    | `…/block-catalog/usage`              | `preview:read`   | Entries using each block, per content type     |
+| GET    | `…/block-config`                     | `preview:read`   | The block config; version 0 before the first set |
+| PUT    | `…/block-config`                     | `content:manage` | Replace `{ expectedVersion, targets, blocks }` |
+| GET    | `…/block-config/effective`           | `preview:read`   | Every target and slot's rules, and `stale` config parts |
 
 `…` is `/spaces/:space/environments/:env`. A push answers what it did, or would do with `dryRun`:
 `previousVersion`, `version`, `changes`, `contentTypes`, `destructive`, `inUse` (what it would
 remove that entries hold) and `warnings`. Send the dry run's `previousVersion` as
 `expectedVersion` to be refused (`409`) if another push lands first. A refused push carries the
 same result in the error's `details`. From code, the management SDK has
-`cma.blockCatalog.{get, version, versions, push, usage}` ([SDKs](/guides/sdks/)).
+`cma.blockCatalog.{get, version, versions, push, usage}` and `cma.blockConfig.{get, set, effective}`
+([SDKs](/guides/sdks/)).
 
-Agents get the same through MCP: `blocks_catalog_get`, `blocks_catalog_versions`, `blocks_usage`
-and `blocks_catalog_push` (with `dryRun`), under the same scopes ([MCP](/guides/mcp/)).
+Agents get the same through MCP: `blocks_catalog_get`, `blocks_catalog_versions`, `blocks_usage`,
+`blocks_catalog_push` (with `dryRun`), `blocks_config_get`, `blocks_config_effective` and
+`blocks_config_set`, under the same scopes ([MCP](/guides/mcp/)).
 
 The admin's Build → Blocks screen lists the catalog in force, read-only.
 
@@ -210,6 +255,7 @@ The admin's Build → Blocks screen lists the catalog in force, read-only.
 
 - Per-breakpoint overrides of token props.
 - Slots nested deeper than the content model's component depth.
-- Narrowing in the admin, per slot, what the code allows.
-- The catalog isn't carried by snapshots, exports or environment clones: the content types (and so
-  their block types) are, so push the catalog to a new environment once.
+- A screen in the admin for the block config (set it over the API, MCP or the SDK for now), and
+  the canvas offering only what a slot's config allows.
+- The catalog and its config aren't carried by snapshots, exports or environment clones: the
+  content types (and so their block types) are, so push the catalog to a new environment once.

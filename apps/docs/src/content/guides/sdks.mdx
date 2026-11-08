@@ -204,7 +204,9 @@ entries with your own grants applied. See [Saved views](/guides/saved-views/).
 
 **Block catalog.** `cma.blockCatalog.{get, version, versions, push, usage}` reads and pushes the
 component manifests pages are composed from; `push({ ...catalog, dryRun: true })` answers what a
-push would change. See [Blocks from code](/guides/blocks-from-code/).
+push would change. `cma.blockConfig.{get, set, effective}` reads and replaces what an environment
+allows of it, per target and slot, and answers the rules in force. See
+[Blocks from code](/guides/blocks-from-code/).
 
 **Menus.** `client.menus()` lists the navigation menus and `client.menu(handle, { locale })` returns one
 resolved for rendering, published entries only. The management client has
