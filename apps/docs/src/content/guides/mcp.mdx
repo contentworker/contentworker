@@ -93,7 +93,10 @@ a save of an entry its `detail`: the field paths and locales that changed, never
 and calls that only propose (an AI tool without `apply`, an import or clone `dryRun`), write
 nothing. A call refused for invalid fields returns `isError` with the same body as the REST
 `422`: `{ "error": { "code": "validation_failed", "issues": [...] } }`, each issue naming its
-field path (`body[0].heading`), locale and message.
+field path (`body[0].heading`), locale and message. A save refused because someone saved the entry
+since (`entries_update` with a stale `expectedVersion`) returns `isError` with REST's `409` body,
+`{ "error": { "code": "conflict", "details": { "currentVersion": 5, "expectedVersion": 3 } } }`,
+so a client knows the version to read again without parsing the message.
 
 ## Skills
 

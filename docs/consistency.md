@@ -18,10 +18,11 @@ This page is the honest list.
   won, the guard fails, the database rolls back the whole batch, and `withTransaction` throws
   `TransactionConflictError` (`@contentworker/ports`). Callers retry or treat the lost race as a
   no-op. A unique-constraint violation at commit throws `ConflictError`.
-- **A stale write is refused with `expectedVersion`.** A publish, unpublish or version restore can
-  carry the `currentVersion` the caller read (`?expectedVersion=N` on the Management route, the
-  `{ expectedVersion }` option of `@contentworker/sdk/management`, `assertExpectedVersion` in
-  `packages/application/src/publishing.ts`). If a draft was saved since, the write is a 409 that
+- **A stale write is refused with `expectedVersion`.** A draft save, publish, unpublish or version
+  restore can carry the `currentVersion` the caller read (`expectedVersion` in a draft save's body,
+  `?expectedVersion=N` on the other Management routes, the `{ expectedVersion }` option of
+  `@contentworker/sdk/management`, `assertExpectedVersion` in
+  `packages/application/src/publishing.ts`). The canvas editor saves this way. If a draft was saved since, the write is a 409 that
   changes nothing; without it, the write acts on the entry as it is.
 - **The outbox row rides in the same batch** as the state change it describes, so an event
   exists iff the commit happened (the transactional outbox).

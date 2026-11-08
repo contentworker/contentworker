@@ -455,7 +455,7 @@ a caller pastes into a file, and wrapping it in a JSON string only makes it some
 | ------ | ---------------------------------- | ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | POST   | `…/entries`                        | `content:write`   | Create draft `{ contentTypeApiId, fields }`                                                                    |
 | GET    | `…/entries/:id`                    | `preview:read`    | Get current entry (RBAC-filtered fields)                                                                       |
-| PUT    | `…/entries/:id`                    | `content:write`   | Save new draft version                                                                                         |
+| PUT    | `…/entries/:id`                    | `content:write`   | `{ fields, expectedVersion? }`: save a new draft version; `409` when the entry is past `expectedVersion` (nothing saved) |
 | POST   | `…/entries/validate`               | `content:write`   | Validate without saving `{ contentTypeApiId \| entryId, fields }`: a create's or an update's checks and errors, no write; `200 { valid, fields, skippedHooks }` |
 | POST   | `…/entries/:id/published`          | `content:publish` | Publish                                                                                                        |
 | DELETE | `…/entries/:id/published`          | `content:publish` | Unpublish                                                                                                      |
@@ -470,9 +470,10 @@ a caller pastes into a file, and wrapping it in a JSON string only makes it some
 | POST   | `…/embeds/resolve`                 | `content:write`   | Resolve a media URL `{ url }` into a rich-text `embed` node's data; `200 { embed, resolved }`                  |
 
 **Held to a version.** Publish, unpublish and version restore take an optional
-`?expectedVersion=N`: the entry's `currentVersion` as the caller read it. If someone has saved a
-newer draft since, the call returns **409** and changes nothing, rather than publishing or
-overwriting content the caller never saw. The MCP tools `entries_publish`, `entries_unpublish` and
+`?expectedVersion=N`, and a draft save (`PUT …/entries/:id`) an optional `expectedVersion` in its
+body: the entry's `currentVersion` as the caller read it. If someone has saved a newer draft since,
+the call returns **409** and changes nothing, rather than publishing or overwriting content the
+caller never saw. The MCP tools `entries_update`, `entries_publish`, `entries_unpublish` and
 `entries_restore_version` take the same `expectedVersion` argument.
 
 **Publish gating.** When the latest published version of a workflow has `gatesPublish` on and a run

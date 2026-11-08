@@ -159,6 +159,7 @@ export function trashRoutes(deps: AuthDeps): Hono<AuthVars> {
         body.fields,
         {
           unwritable,
+          ...(body.expectedVersion !== undefined ? { expectedVersion: body.expectedVersion } : {}),
         },
       );
       // The save kept the fields this writer may not write; the ones it may not read stay hidden.

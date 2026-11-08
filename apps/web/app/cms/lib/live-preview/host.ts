@@ -369,6 +369,20 @@ export class LivePreviewHost {
   }
 
   /**
+   * Scrolls a marked element into the page's view, leaving the selection alone: centred, or its top
+   * or bottom edge `inset` CSS pixels (the page's) clear of the view's (a page that doesn't read
+   * `align` centres it).
+   */
+  scrollTo(ref: string, place?: { readonly align: 'start' | 'end'; readonly inset: number }): void {
+    if (!this.has('scroll')) return;
+    this.post({
+      kind: 'scroll',
+      ref,
+      ...(place ? { align: place.align, inset: place.inset } : {}),
+    });
+  }
+
+  /**
    * The seam for Coworker's proposed blocks (rendered as ghosts, never saved), once Coworker's
    * proposals reach the editor: sent only when the session accepted `proposals`, which the admin
    * offers to accept only once the editor passes it in `setAllowed`.

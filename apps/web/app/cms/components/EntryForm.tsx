@@ -980,7 +980,8 @@ function ErrorCount(props: { count: number }) {
   );
 }
 
-function FieldInput(props: {
+/** One field's editor, by its type: what the entry form and the canvas inspector draw. */
+export function FieldInput(props: {
   id: string;
   field: FieldDefinition;
   value: unknown;

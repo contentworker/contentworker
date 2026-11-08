@@ -1843,8 +1843,13 @@ export function createManagementClient(
     createEntry(contentTypeApiId: string, fields: EntryFields): Promise<EntryView> {
       return req('POST', `${mgmt}/entries`, { contentTypeApiId, fields });
     },
-    updateEntry(id: string, fields: EntryFields): Promise<EntryView> {
-      return req('PUT', `${mgmt}/entries/${encodeURIComponent(id)}`, { fields });
+    /** With `expectedVersion`, a save someone made since is refused (409) and nothing is saved. */
+    updateEntry(
+      id: string,
+      fields: EntryFields,
+      opts: { readonly expectedVersion?: number } = {},
+    ): Promise<EntryView> {
+      return req('PUT', `${mgmt}/entries/${encodeURIComponent(id)}`, { fields, ...opts });
     },
     publishEntry(id: string): Promise<EntryAggregate> {
       return req('POST', `${mgmt}/entries/${encodeURIComponent(id)}/published`);

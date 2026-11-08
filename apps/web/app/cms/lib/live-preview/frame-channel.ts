@@ -8,7 +8,12 @@
  * last send, and what the person may let the page do; the frame runs the live preview channel with
  * the site (`host.ts`) and reports back where things stand and what was clicked.
  */
-import type { Capability, LiveFields } from '@contentworker/sdk-core/live-preview';
+import type {
+  Capability,
+  LiveFields,
+  LiveGap,
+  LiveRect,
+} from '@contentworker/sdk-core/live-preview';
 import type { LiveEdits } from './ops';
 
 /** Marks this channel's messages; anything without it is someone else's. */
@@ -62,9 +67,24 @@ export type EditorMessage =
        * Absent while it isn't known yet: the frame holds the page's offer until it is.
        */
       readonly allowed?: readonly Capability[];
+      /**
+       * The canvas editor draws the outlines and seams itself, over the frame: the frame draws
+       * none and reports the page's geometry instead (`geometry`, `hover`).
+       */
+      readonly canvas?: boolean;
     }
   /** The form's focused field or block on the page, or none. */
-  | { readonly type: 'select'; readonly ref: string | null };
+  | { readonly type: 'select'; readonly ref: string | null }
+  /**
+   * Bring a marked element into the page's view, selecting nothing (`scroll`): centred, or its top
+   * (`start`) or bottom (`end`) edge `inset` pixels of the frame clear of the frame's edge.
+   */
+  | {
+      readonly type: 'scroll';
+      readonly ref: string;
+      readonly align?: 'start' | 'end';
+      readonly inset?: number;
+    };
 
 export type FrameMessage =
   /** The frame is up and wants the entry; `origin` is the site it frames. */
@@ -74,12 +94,32 @@ export type FrameMessage =
   | { readonly type: 'note'; readonly kind: string }
   /** A marked element clicked in the page: its ref, already checked by the frame. */
   | { readonly type: 'pick'; readonly ref: string }
+  /** For the canvas: the page's boxes, in the frame's own coordinates (null: none to draw). */
+  | { readonly type: 'geometry'; readonly geometry: FrameGeometry | null }
+  /** For the canvas: the marked element under the pointer, or none. */
+  | { readonly type: 'hover'; readonly ref: string | null; readonly rect: LiveRect | null }
   /** The entries the page renders, and the capabilities the session was accepted with. */
   | {
       readonly type: 'session';
       readonly entries: readonly string[];
       readonly capabilities: readonly Capability[];
     };
+
+/**
+ * The page's `layout`, as the canvas draws it: every box moved from the page's viewport into the
+ * frame's (scaled to the device width and centred), so the canvas lays them straight over the frame
+ * element. Refs are the page's, untrusted: the canvas checks each names its entry before using it.
+ */
+export interface FrameGeometry {
+  readonly blocks: readonly { readonly ref: string; readonly rect: LiveRect }[];
+  readonly slots: readonly {
+    readonly ref: string;
+    readonly rect: LiveRect;
+    readonly gaps: readonly LiveGap[];
+  }[];
+  /** Some boxes far from the viewport were left out to fit the page's message. */
+  readonly truncated: boolean;
+}
 
 /** Posts on the channel to `target`, which is this origin's window, never `*`. */
 export function postFrame(

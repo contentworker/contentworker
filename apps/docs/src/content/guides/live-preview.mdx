@@ -36,6 +36,54 @@ If your page never offers to connect, the pane says it isn't connected and shows
 its SDK shares no protocol version with the admin, the pane says whether it is too old or too
 new. If it doesn't report the entry in `page`, the pane says the page doesn't show it.
 
+## The canvas
+
+A type with a preview URL and a [blocks field](/reference/field-types/#blocks) also opens on the
+**canvas**: switch the entry editor from **Form** to **Canvas** (`/content/<type>/<entry>/canvas`).
+The canvas is your page, framed nearly the full width of the admin, with the editor's tools drawn
+over it. It edits the same draft as the form.
+
+- **Seams.** Each slot your page marks with `data-cw-slot` (a blocks field, or a slot inside a
+  block, see [the `layout` extension](#extensions)) shows a dashed seam between its blocks, named
+  with the slot and how full it is ("Main · 3 of 8", or "Features · 0 of 2–4" when the slot sets
+  `min` and `max`). Choose a seam, or select a block and press <kbd>/</kbd>: the seam is marked
+  with a solid line, and the **dock** opens along the bottom as one row of cards (← and → move
+  across them) with exactly the blocks that slot takes: its field's block types, which a
+  [block catalog](/guides/blocks-from-code/) push writes from each slot's `allowedChildren`, under
+  the catalog's groups with a line of each block's description. Your page is scrolled so the seam
+  stays above the dock. A full slot says so and offers nothing. Thumbnails aren't drawn; each
+  block is its name.
+- **Inserting** puts the block in your page at once, unsaved, and selects it.
+- **The inspector** edits the selected block: **Content** (its own fields, with the form's
+  editors), **Data** (references to entries and assets) and **Look** (props limited to listed
+  values, as segmented controls or a select; never free CSS). Move, duplicate and remove are
+  there too. A block's slots are filled from the page's seams, or from **Add to …** here.
+- **Layers** opens on demand: every block as an outline, slot by slot. It is also the full
+  keyboard and screen-reader path to every block (the page itself isn't navigable from the
+  admin): ↑ and ↓ move through the page, ← to the block holding this one, → into it, Enter opens
+  its settings, and each top-level slot has its own Add.
+- **Keys:** ⌘↑ and ⌘↓ move a block in its slot, Delete removes it (with Undo in the toast), ⌘Z and
+  ⌘⇧Z undo and redo, ⌘S saves, Esc closes the dock or clears the selection. They are in the
+  shortcuts list (<kbd>?</kbd>).
+- **Device** widths render your page at 1280, 768 or 390 pixels wide, scaled to fit, as in the
+  Site view.
+
+Every change is a block patch (the same key-addressed operations as
+[`PATCH …/entries/:id/blocks`](/reference/rest-api/)), applied in the admin and sent to your
+page as `blocks.patch`; undo applies its inverse. **Save draft** is the entry's ordinary save, held
+to the version the canvas started from: if someone saved the entry meanwhile, the canvas says so and
+lets you load their version or save yours over it (theirs stays in the version history). Before it
+saves, the canvas lists what would stop the save: a required slot with too few blocks, a block
+your code no longer provides ("Removed from code": keep it for now or remove it; the entry can't be
+saved while it holds one), and any other field a block needs.
+
+The canvas says in place why it isn't editing: the type has no preview URL (with the way back to
+the form), the person's role can only read the entry, the entry is published and unchanged (edit a
+draft to begin), or the screen is narrower than an iPad held upright, where it is for review. From
+iPad width to a desktop's, the dock, the inspector and Layers open as sheets, by tap. A page whose
+SDK doesn't report its layout gets no seams: blocks are still selected by a click in the page or in
+Layers, and added from Layers. A page that never connects shows the same notices as the Site view.
+
 ## Connect
 
 ```ts
@@ -173,7 +221,7 @@ are ignored, so a newer admin can talk to an older page at their shared version.
 | `entry.patch`    | `rev`, `entryId`, `locale`, `fields`: changed values (`null` clears one) |
 | `blocks.patch`   | `rev`, `entryId`, `locale`, `field`, `ops`: block operations, some `proposed: true` |
 | `select`         | `ref`, or `null` to clear                                     |
-| `scroll`         | `ref`                                                         |
+| `scroll`         | `ref`, `align?` (`start`, `center`, `end`) and `inset?` (extension) |
 | `editing`        | `on` (extension)                                              |
 
 | From page       | Carries                                                       |

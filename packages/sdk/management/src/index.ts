@@ -1950,9 +1950,12 @@ export function createManagementClient(opts: ManagementClientOptions) {
       create: (input: { contentTypeApiId: string; fields: EntryFields }) =>
         post<EntryView>(`${envBase}/entries`, input),
       get: (id: string) => get<EntryView>(`${envBase}/entries/${e(id)}`),
-      /** Saves a new draft version with these field values. */
-      update: (id: string, fields: EntryFields) =>
-        put<EntryView>(`${envBase}/entries/${e(id)}`, { fields }),
+      /**
+       * Saves a new draft version with these field values. With `expectedVersion` (the
+       * `currentVersion` you read), a save made since is a 409 and nothing is saved.
+       */
+      update: (id: string, fields: EntryFields, opts: { readonly expectedVersion?: number } = {}) =>
+        put<EntryView>(`${envBase}/entries/${e(id)}`, { fields, ...opts }),
       /**
        * Changes one locale of the entry's SEO metadata and saves a new draft version (publish to put
        * it live). 422 when its content type has no Seo field.

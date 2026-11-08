@@ -7,6 +7,7 @@ import {
   createSpace,
   publishContentType,
   SYSTEM_CALLER,
+  updateEntry,
 } from '@contentworker/application';
 import {
   ASSISTANT_TOOLS,
@@ -309,5 +310,25 @@ describe('the assistant’s MCP tools', () => {
     expect(wrapped.startsWith('<user_content>\n')).toBe(true);
     expect(wrapped.endsWith('\n</user_content>')).toBe(true);
     expect(wrapped.match(/<\/user_content>/g)).toHaveLength(1);
+  });
+});
+
+describe('a stale save through the assistant', () => {
+  it('is refused with REST’s 409 body, the version it is at now among its details', async () => {
+    const deps = makeDeps();
+    const entry = await seedSpace(deps.ctx, 'space-a', 'Seen');
+    await updateEntry(deps.ctx, SCOPE_A, entry.id, { title: { 'en-US': 'Theirs' } });
+    const refused = await callAssistantTool(
+      deps,
+      editorOfA,
+      'entries_update',
+      { id: entry.id, fields: { title: { 'en-US': 'Mine' } }, expectedVersion: 1 },
+      SCOPE_A,
+    ).catch((e: unknown) => e);
+    expect(refused).toBeInstanceOf(ToolRefused);
+    // The page reads the version from this body (apps/web/app/cms/lib/stale-save.ts).
+    expect(JSON.parse((refused as Error).message)).toMatchObject({
+      error: { code: 'conflict', details: { currentVersion: 2, expectedVersion: 1 } },
+    });
   });
 });

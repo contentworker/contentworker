@@ -3,17 +3,12 @@
  * unsaved edit (live preview, docs/specs/live-preview-channel.md).
  *
  * It frames the Site frame (`routes/preview-frame.tsx`, this origin), which frames the site and
- * runs the live preview channel with it. This side sends the entry as the form holds it (one
- * locale's values, `liveFields`) with the edits since the last send (`liveEdits`), and what the
- * person may let the page do; it hears back where things stand, which entries the page renders
- * and what was clicked. Saving stays the editor's: nothing here writes.
+ * runs the live preview channel with it (`useSiteFrame`, shared with the canvas editor): the entry
+ * as the form holds it goes there with every edit, and clicks come back. Saving stays the
+ * editor's: nothing here writes.
  */
 
-import {
-  type ContentType,
-  type EntryFields,
-  previewTemplateVariesByLocale,
-} from '@contentworker/domain';
+import type { ContentType, EntryFields } from '@contentworker/domain';
 import type { Capability } from '@contentworker/sdk-core/live-preview';
 import { Alert, AlertDescription, AlertTitle } from '@contentworker/ui/alert';
 import { Button } from '@contentworker/ui/button';
@@ -21,31 +16,20 @@ import { cn } from '@contentworker/ui/lib/utils';
 import { Segmented, SegmentedItem } from '@contentworker/ui/segmented';
 import { Skeleton, SkeletonText } from '@contentworker/ui/skeleton';
 import { Monitor, Smartphone, Tablet } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { LoadingStatus } from '~/cms/components/loading';
-import {
-  DEVICE_WIDTHS,
-  type Device,
-  type FrameMessage,
-  postFrame,
-  readFrame,
-  type SiteStatus,
-} from '~/cms/lib/live-preview/frame-channel';
-import { LOAD_MS } from '~/cms/lib/live-preview/host';
-import { type LiveEdits, liveEdits, liveFields } from '~/cms/lib/live-preview/ops';
+import { DEVICE_WIDTHS, type Device, type SiteStatus } from '~/cms/lib/live-preview/frame-channel';
+import { useSiteFrame } from './use-site-frame';
 
 /** The published guide to the page side, linked where a site doesn't connect. */
 export const LIVE_PREVIEW_GUIDE = 'https://docs.contentworker.app/guides/live-preview/';
 
 const DEVICE_KEY = 'cw.entry-pane.device';
-const DEVICES: readonly { value: Device; label: string; icon: typeof Monitor }[] = [
+export const DEVICES: readonly { value: Device; label: string; icon: typeof Monitor }[] = [
   { value: 'desktop', label: 'Desktop', icon: Monitor },
   { value: 'tablet', label: 'Tablet', icon: Tablet },
   { value: 'phone', label: 'Phone', icon: Smartphone },
 ];
-
-/** How long a quiet note (a refused edit) stays under the frame. */
-const NOTE_MS = 6_000;
 
 export interface SitePaneProps {
   readonly spaceId: string;
@@ -70,137 +54,12 @@ export interface SitePaneProps {
 }
 
 export function SitePane(props: SitePaneProps) {
-  const { spaceId, environmentId, entryId, contentType, fields, locale, defaultLocale } = props;
-  const outer = useRef<HTMLIFrameElement>(null);
-  const [frameKey, setFrameKey] = useState(0);
-  const [status, setStatus] = useState<{ status: SiteStatus; detail?: string }>({
-    status: 'loading',
-  });
-  const [origin, setOrigin] = useState<string | undefined>();
-  const [note, setNote] = useState<string | undefined>();
   const [device, setDevice] = useDevice();
   const [mode, setMode] = useState<'edit' | 'view'>('edit');
-  const ready = useRef(false);
-  const pageEntries = useRef<readonly string[]>([]);
-  // One locale's values, as the page renders them; what was last sent is where the next edits start.
-  const now = liveFields(contentType, fields, locale, defaultLocale);
-  const latest = useRef(now);
-  latest.current = now;
-  const sent = useRef<{ fields: typeof now; locale: string } | null>(null);
-  const handlers = useRef(props);
-  handlers.current = props;
-
-  // Clicks select while editing; in view mode the page is the site, its links followed.
-  // Connected: clicks find fields even when the page can't take this entry's values.
-  const live =
-    status.status === 'live' || status.status === 'elsewhere' || status.status === 'unpreviewable';
+  const site = useSiteFrame({ ...props, mode, device });
+  const { status, origin, note, live, reload } = site;
+  // What clicks do now: View until the page answers, whatever was chosen.
   const effectiveMode = live ? mode : 'view';
-  const viewOf = () => ({
-    editing: effectiveMode === 'edit',
-    device,
-    ...(props.allowed ? { allowed: props.allowed } : {}),
-  });
-  const view = useRef(viewOf());
-  view.current = viewOf();
-  // A template that fills to another URL per locale is another page per locale: the frame loads
-  // that page. Otherwise the same page gets the entry in the new locale.
-  const perLocale = previewTemplateVariesByLocale(
-    contentType.preview?.urlTemplate ?? '',
-    contentType.fields,
-  );
-  const src =
-    `/preview-frame/${encodeURIComponent(spaceId)}/${encodeURIComponent(environmentId)}/` +
-    `${encodeURIComponent(entryId)}${perLocale ? `?locale=${encodeURIComponent(locale)}` : ''}`;
-
-  const reload = () => setFrameKey((k) => k + 1);
-  const toFrame = (m: Parameters<typeof postFrame>[1]) =>
-    postFrame(outer.current?.contentWindow, m);
-
-  // The frame's messages, from the frame's own window only. Each load of the frame (Try again, or
-  // another locale's page) starts over: loading, nothing sent, until it says it's ready.
-  // Listened for again per frame load (its key and src).
-  useEffect(() => {
-    ready.current = false;
-    sent.current = null;
-    pageEntries.current = [];
-    setStatus({ status: 'loading' });
-    setNote(undefined);
-    let noteTimer: ReturnType<typeof setTimeout> | undefined;
-    // The frame never came up (a refused load, a dead server): said, not waited on for ever.
-    const loadTimer = setTimeout(() => {
-      if (!ready.current) setStatus({ status: 'failed' });
-    }, LOAD_MS);
-    const onMessage = (event: MessageEvent) => {
-      const m = readFrame<FrameMessage>(event, outer.current?.contentWindow);
-      if (!m) return;
-      switch (m.type) {
-        case 'ready':
-          ready.current = true;
-          clearTimeout(loadTimer);
-          setOrigin(m.origin);
-          // What the page may do first, so its offer is answered with it; then the entry.
-          toFrame({ type: 'view', ...view.current });
-          sent.current = { fields: latest.current, locale };
-          toFrame({
-            type: 'entry',
-            entry: { entryId, locale, fields: latest.current },
-            edits: null,
-          });
-          if (handlers.current.selected) {
-            toFrame({ type: 'select', ref: handlers.current.selected });
-          }
-          return;
-        case 'status':
-          if (m.status === 'unavailable') clearTimeout(loadTimer);
-          setStatus({ status: m.status, ...(m.detail ? { detail: m.detail } : {}) });
-          if (m.status === 'live') setNote(undefined);
-          return;
-        case 'session':
-          pageEntries.current = Array.isArray(m.entries) ? m.entries : [];
-          return;
-        case 'note':
-          setNote(m.kind);
-          clearTimeout(noteTimer);
-          noteTimer = setTimeout(() => setNote(undefined), NOTE_MS);
-          return;
-        case 'pick':
-          if (typeof m.ref === 'string') handlers.current.onPick(m.ref, pageEntries.current);
-          return;
-      }
-    };
-    window.addEventListener('message', onMessage);
-    return () => {
-      window.removeEventListener('message', onMessage);
-      clearTimeout(loadTimer);
-      clearTimeout(noteTimer);
-    };
-  }, [frameKey, src]);
-
-  // Every edit: the changes since the last send, or the whole state for a new locale.
-  const nowJson = JSON.stringify(now);
-  // Keyed on the values by content (nowJson).
-  useEffect(() => {
-    if (!ready.current) return;
-    const before = sent.current;
-    const edits: LiveEdits | null =
-      before && before.locale === locale
-        ? liveEdits(contentType, locale, before.fields, now)
-        : null;
-    if (edits && Object.keys(edits.fields).length === 0 && edits.blocks.length === 0) return;
-    sent.current = { fields: now, locale };
-    toFrame({ type: 'entry', entry: { entryId, locale, fields: now }, edits });
-  }, [nowJson, locale, entryId, contentType]);
-
-  const allowedKey = props.allowed?.join(',') ?? '';
-  // `allowed` by content (allowedKey).
-  useEffect(() => {
-    if (ready.current) toFrame({ type: 'view', ...view.current });
-  }, [effectiveMode, device, allowedKey]);
-
-  // Per selection.
-  useEffect(() => {
-    if (ready.current) toFrame({ type: 'select', ref: props.selected });
-  }, [props.selected]);
 
   const loading = status.status === 'loading';
   const showFrame = status.status !== 'unavailable';
@@ -256,9 +115,9 @@ export function SitePane(props: SitePaneProps) {
         >
           <iframe
             // A new element per load, so a reload or another locale's page adds no history entry.
-            key={`${frameKey}:${src}`}
-            ref={outer}
-            src={src}
+            key={site.frameKey}
+            ref={site.frameRef}
+            src={site.src}
             title="Site preview"
             className="block size-full border-0"
           />
@@ -307,7 +166,7 @@ function GuideLink() {
 }
 
 /** Why the page isn't live, in words, with the one thing to do about it. */
-function SiteNotice({
+export function SiteNotice({
   status,
   origin,
   onReload,
@@ -451,7 +310,7 @@ const UNAVAILABLE: Record<string, string> = {
 };
 
 /** The device width, remembered per browser; Desktop until someone picks another. */
-function useDevice(): [Device, (d: Device) => void] {
+export function useDevice(): [Device, (d: Device) => void] {
   const [device, setDevice] = useState<Device>('desktop');
   useEffect(() => {
     try {

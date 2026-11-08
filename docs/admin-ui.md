@@ -132,6 +132,13 @@ menu at the sidebar's foot (the More sheet on a phone). Settings sections are ad
   exact MCP tool call, no model); when the assistant is off or its socket is down, the page makes
   the edit through the API itself. See
   [AI, agents & search](./ai-agents-and-search.md#coworker-the-admins-assistant).
+- **Canvas** (`/content/:typeId/:entryId/canvas`, `cms/routes/EntryCanvas.tsx`): an entry of a
+  type with a preview URL and a blocks field, laid out on the customer's page in the Site frame
+  (`useSiteFrame`, shared with the Site view; the frame reports the page's geometry instead of
+  drawing outlines). Seams between blocks from the page's `layout`, a dock offering exactly what a
+  slot takes (`cms/lib/canvas/`), an inspector, Layers, and undo by inverse block-patch ops. It
+  saves through `PUT …/entries/:id` with `expectedVersion`. Reached from the entry editor's
+  Form | Canvas switch; full-bleed, outside the content layout. See DESIGN.md.
 - **Approvals** (`/approvals`): the editorial workflow task inbox.
 - **Releases** (`/releases`): bundle entries and assets, publish as a unit, schedule.
 - **Workflows** (`/workflows`, `/workflows/:id`): editorial workflow definitions and the graph

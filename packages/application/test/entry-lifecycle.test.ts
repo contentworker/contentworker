@@ -290,3 +290,28 @@ describe('duplicating an entry', () => {
     await expect(duplicateEntry(ctx, scope, 'nope')).rejects.toBeInstanceOf(NotFoundError);
   });
 });
+
+describe('saving a draft from a version read earlier', () => {
+  it('saves when the entry is still at that version', async () => {
+    const { entry } = await createEntry(ctx, scope, article('First'));
+    const saved = await updateEntry(ctx, scope, entry.id, article('Second').fields, {
+      expectedVersion: entry.currentVersion,
+    });
+    expect(saved.entry.currentVersion).toBe(entry.currentVersion + 1);
+  });
+
+  it('refuses with a conflict, saving nothing, once someone saved over it', async () => {
+    const { entry } = await createEntry(ctx, scope, article('First'));
+    await updateEntry(ctx, scope, entry.id, article('Theirs').fields);
+    const stale = updateEntry(ctx, scope, entry.id, article('Mine').fields, {
+      expectedVersion: entry.currentVersion,
+    });
+    await expect(stale).rejects.toBeInstanceOf(ConflictError);
+    await expect(stale).rejects.toMatchObject({
+      details: { currentVersion: entry.currentVersion + 1, expectedVersion: entry.currentVersion },
+    });
+    const now = await getEntry(ctx, scope, entry.id);
+    expect(now.entry.currentVersion).toBe(entry.currentVersion + 1);
+    expect(now.fields.title).toEqual({ 'en-US': 'Theirs' });
+  });
+});

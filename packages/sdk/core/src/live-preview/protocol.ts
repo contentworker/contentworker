@@ -162,7 +162,18 @@ export interface SelectMessage extends LiveEnvelope<'select'> {
 }
 export interface ScrollMessage extends LiveEnvelope<'scroll'> {
   readonly ref: string;
+  /**
+   * Extension: where the element lands. `center` (the default, and what a page that doesn't read
+   * it does), `start` (its top edge at the top of the view) or `end` (its bottom edge at the
+   * bottom), each `inset` CSS pixels clear of that edge, so the admin can keep it out from under
+   * something it draws over the frame.
+   */
+  readonly align?: ScrollAlign;
+  readonly inset?: number;
 }
+export type ScrollAlign = 'start' | 'center' | 'end';
+/** The most an inset may be: more is no edge of any screen. */
+export const MAX_SCROLL_INSET = 4000;
 /** Extension: the admin turns in-page editing (picking) on or off. Needs `select`. */
 export interface EditingMessage extends LiveEnvelope<'editing'> {
   readonly on: boolean;
@@ -434,8 +445,33 @@ function adminBody(m: Record<string, unknown>): Body | undefined {
     }
     case 'select':
       return m.ref === null || isRef(m.ref) ? { kind: m.kind, ref: m.ref } : undefined;
-    case 'scroll':
-      return isRef(m.ref) ? { kind: m.kind, ref: m.ref } : undefined;
+    case 'scroll': {
+      if (!isRef(m.ref)) return undefined;
+      if (
+        m.align !== undefined &&
+        m.align !== 'start' &&
+        m.align !== 'center' &&
+        m.align !== 'end'
+      ) {
+        return undefined;
+      }
+      const inset = m.inset;
+      if (
+        inset !== undefined &&
+        (typeof inset !== 'number' ||
+          !Number.isFinite(inset) ||
+          inset < 0 ||
+          inset > MAX_SCROLL_INSET)
+      ) {
+        return undefined;
+      }
+      return {
+        kind: m.kind,
+        ref: m.ref,
+        ...(m.align !== undefined ? { align: m.align } : {}),
+        ...(inset !== undefined ? { inset } : {}),
+      };
+    }
     case 'editing':
       return typeof m.on === 'boolean' ? { kind: m.kind, on: m.on } : undefined;
     default:

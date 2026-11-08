@@ -359,6 +359,12 @@ Built on Blocks and the frontend runtime. Layouts stay a typed tree; rich text s
   admin config that narrows (never widens) what code allows per slot, the canvas dock listing a
   slot's allowed blocks, and carrying the catalog in snapshots and environment clones.
 - [ ] **Canvas editor.** A toolbox, selection overlay and undo in `apps/web` over the preview channel.
+  The canvas (`/content/:typeId/:entryId/canvas`) is in place: seams from the page's `layout`, a
+  dock offering exactly what a slot takes, an inspector (Content, Data, Look), Layers as the
+  keyboard path, undo by inverse block-patch ops, and a save held to `expectedVersion`. Still to
+  come: Coworker's "Fill this slot" and ghost proposals (`host.propose` is the seam), dragging
+  blocks with a fine pointer, block thumbnails (the admin's `img-src` takes no other origin), and
+  per-breakpoint overrides.
 - [ ] **Frontend SDK extras.** `client.live()` and `useLiveEntry`, a Next.js draft-mode helper, a
   preview URL template per content type, and a "connect a frontend" screen that mints a delivery key
   and prints its config.

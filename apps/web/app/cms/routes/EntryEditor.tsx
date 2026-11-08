@@ -45,27 +45,24 @@ import { SemanticPanel } from '~/cms/components/SemanticPanel';
 import { StatusBadge, ToneBadge } from '~/cms/components/status';
 import { VersionHistory } from '~/cms/components/VersionHistory';
 import { CanvasDialog } from '../components/CanvasDialog';
-import type { FocusRequest, Pickers, PickOption } from '../components/EntryForm';
+import type { FocusRequest } from '../components/EntryForm';
 import { EntryForm } from '../components/EntryForm';
 import { EntryActivity } from '../components/entries/EntryActivity';
 import { EntryAuthorship } from '../components/entries/EntryAuthorship';
 import { PublishConfirm } from '../components/entries/PublishConfirm';
+import { SaveConflictDialog } from '../components/entries/SaveConflictDialog';
 import { GenerateEntryDialog } from '../components/GenerateEntryDialog';
 import { orDirect, useAssistantEdit, usePageContext } from '../lib/assistant';
+import { canvasAvailable } from '../lib/canvas/model';
 import { useClient } from '../lib/client-context';
 import { dateTime, toMs } from '../lib/format';
 import { capabilitiesFor, SELECT_ONLY } from '../lib/live-preview/host';
 import { liveFields } from '../lib/live-preview/ops';
 import { focusForRef, refForField } from '../lib/live-preview/pick';
 import type { EntryAggregate, EntryView, ModelTier } from '../lib/management';
-import {
-  useAllEntriesQuery,
-  useAppExtensionsQuery,
-  useAssetsQuery,
-  useEntryQuery,
-  useQueryKeys,
-  useScopedQuery,
-} from '../lib/queries';
+import { useEntryPickers } from '../lib/pickers';
+import { useAppExtensionsQuery, useEntryQuery, useQueryKeys, useScopedQuery } from '../lib/queries';
+import { staleSave } from '../lib/stale-save';
 import { useToast } from '../lib/toast';
 import { useContentOutlet } from './content-context';
 
@@ -189,6 +186,16 @@ export function EntryEditor() {
   const meta = entryQuery.data
     ? { version: entryQuery.data.version, status: entryQuery.data.status }
     : null;
+  // The version the form was filled from, and then the version of its last save: what a save is
+  // held to. A refetch of the entry (someone else's save) never moves it.
+  const [baseVersion, setBaseVersion] = useState<number | null>(null);
+  if (baseVersion === null && meta) setBaseVersion(meta.version);
+  /** A save refused as stale: the dialog's question, with the fields it would have saved. */
+  const [conflict, setConflict] = useState<{
+    theirs: number;
+    fields: EntryFields;
+    publish: boolean;
+  } | null>(null);
   const baseFields = isEdit ? ((entryQuery.data?.fields as EntryFields) ?? null) : {};
   // Who wrote it: the freshest aggregate (a save names its author) over the loaded entry. Names
   // come from the team, which only an administrator may read; anyone else sees "You" and kinds.
@@ -242,56 +249,8 @@ export function EntryEditor() {
     };
   }, [pageTitle]);
 
-  // Build reference/asset picker options (all entries + all assets) for Link
-  // fields. Both queries are best-effort; the form still works without them.
-  const allEntriesQuery = useAllEntriesQuery();
-  const assetsQuery = useAssetsQuery();
-  /**
-   * Resolves reference matches on the server.
-   *
-   * The seeded `pickers.entries` list is capped by the list endpoint, so
-   * filtering it cannot reach an entry beyond that page — not slowly, at all.
-   * One request per content type the field allows, because a reference field
-   * restricted to two types should not search the rest of the space.
-   */
-  const searchEntries = useCallback(
-    async (query: string, contentTypes?: readonly string[]): Promise<PickOption[]> => {
-      const targets = contentTypes?.length ? contentTypes : [undefined];
-      const batches = await Promise.all(
-        targets.map((contentType) =>
-          client.suggestEntries({ q: query, ...(contentType ? { contentType } : {}) }),
-        ),
-      );
-      return batches.flat().map((hit) => ({
-        id: hit.id,
-        contentType: hit.contentType,
-        label: `${hit.title} (${hit.contentType})`,
-      }));
-    },
-    [client],
-  );
-
-  const pickers: Pickers = useMemo(() => {
-    const displayFieldOf = new Map(types.map((t) => [t.apiId, t.displayField]));
-    return {
-      entries: (allEntriesQuery.data ?? []).map((e) => {
-        const df = displayFieldOf.get(e.contentType);
-        const title = df
-          ? (e.fields[df] as Record<string, unknown> | undefined)?.[conn.locale]
-          : undefined;
-        return {
-          id: e.id,
-          contentType: e.contentType,
-          label: `${String(title ?? e.id)} (${e.contentType})`,
-        };
-      }),
-      assets: (assetsQuery.data ?? []).map((a) => ({
-        id: a.id,
-        label: String(a.title?.[conn.locale] ?? a.file.fileName),
-        mimeType: a.file.contentType,
-      })),
-    };
-  }, [allEntriesQuery.data, assetsQuery.data, types, conn.locale]);
+  // Reference and asset picker options for Link fields; best-effort, the form works without them.
+  const { pickers, searchEntries } = useEntryPickers();
 
   // Installed UI extensions (sidebar widgets + custom field editors); optional.
   const extensionsQuery = useAppExtensionsQuery();
@@ -305,6 +264,9 @@ export function EntryEditor() {
     if (entryId) {
       void queryClient.invalidateQueries({ queryKey: keys.entryActivityPages(entryId) });
       await queryClient.invalidateQueries({ queryKey: keys.entry(entryId) });
+      // The form starts again from the entry as it is now: later saves are held to that version.
+      const now = queryClient.getQueryData<{ version: number }>(keys.entry(entryId));
+      setBaseVersion(now?.version ?? null);
     }
     markDirty(false);
     // The aggregate predates the restore; a publish diff based on it would
@@ -348,9 +310,13 @@ export function EntryEditor() {
   // failed validation can't leak the flag into a later plain save.
   const publishAfterSaveRef = useRef(false);
 
-  const save = (fields: EntryFields) => {
+  const save = (fields: EntryFields, over?: number) => {
     const chainPublish = publishAfterSaveRef.current;
     publishAfterSaveRef.current = false;
+    // Held to the version the form was filled from (or the newer one being saved over): a save
+    // someone made meanwhile is never overwritten unseen.
+    const expected = over ?? baseVersion ?? undefined;
+    const held = expected !== undefined ? { expectedVersion: expected } : {};
     return run(async () => {
       if (!selectedType) return;
       if (!isEdit) setSwapping(true);
@@ -360,8 +326,8 @@ export function EntryEditor() {
         const r =
           isEdit && entryId
             ? await orDirect(
-                await edit<EntryView>('entries_update', { id: entryId, fields }, about),
-                () => client.updateEntry(entryId, fields),
+                await edit<EntryView>('entries_update', { id: entryId, fields, ...held }, about),
+                () => client.updateEntry(entryId, fields, held),
               )
             : await orDirect(
                 await edit<EntryView>(
@@ -375,6 +341,7 @@ export function EntryEditor() {
         if (!('output' in r)) return;
         const view = r.output;
         setLastAggregate(view.entry);
+        setBaseVersion(view.entry.currentVersion);
         // Edit mode: only clear dirty if nothing was typed while the request was
         // in flight — those keystrokes are NOT in the saved payload. Create mode
         // clears unconditionally: the form was removed while it saved, and the URL
@@ -397,6 +364,11 @@ export function EntryEditor() {
         toast.success('Draft updated');
         // Named as just saved: this render's title is from before the save.
         if (chainPublish) await publish(view.entry, titleOf(fields) ?? about);
+      } catch (err) {
+        const stale = isEdit ? staleSave(err) : undefined;
+        if (!stale) throw err;
+        // Publish waits on the answer: saving over theirs goes on to publish, as was asked.
+        setConflict({ ...stale, fields, publish: chainPublish });
       } finally {
         // A create that failed or wasn't saved hands the form back.
         if (!isEdit && !swapped) setSwapping(false);
@@ -683,6 +655,19 @@ export function EntryEditor() {
             <Skeleton className="h-5 w-32" />
           ) : (
             <>
+              {/* Form or canvas: two views of one draft, for a type with blocks and a site. */}
+              {isEdit && entryId && canvasAvailable(selectedType) ? (
+                <Segmented
+                  aria-label="Editor view"
+                  value="form"
+                  onValueChange={(v) => {
+                    if (v === 'canvas') navigate(`/content/${typeId}/${entryId}/canvas`);
+                  }}
+                >
+                  <SegmentedItem value="form">Form</SegmentedItem>
+                  <SegmentedItem value="canvas">Canvas</SegmentedItem>
+                </Segmented>
+              ) : null}
               {meta && <StatusBadge status={meta.status} />}
               {meta && <span className="font-mono text-xs">v{meta.version}</span>}
               {dirty ? (
@@ -1005,6 +990,25 @@ export function EntryEditor() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <SaveConflictDialog
+        open={conflict !== null}
+        theirs={conflict?.theirs ?? 0}
+        mine={baseVersion ?? meta?.version ?? 0}
+        where="the form"
+        onOpenChange={(open) => !open && setConflict(null)}
+        onLoadTheirs={() => {
+          setConflict(null);
+          void reseedFromServer();
+        }}
+        onSaveOver={() => {
+          const c = conflict;
+          setConflict(null);
+          if (!c) return;
+          publishAfterSaveRef.current = c.publish;
+          void save(c.fields, c.theirs);
+        }}
+      />
 
       <PublishConfirm
         open={publishConfirm !== null}
