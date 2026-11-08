@@ -13,6 +13,9 @@ import { defineConfig } from 'vite';
  */
 export default defineConfig({
   root: fileURLToPath(new URL('.', import.meta.url)),
+  // Its own dependency cache: sharing the admin's (apps/web/node_modules/.vite) lets each server's
+  // optimizer mark the other's bundles outdated mid-run, and the admin's pages stop hydrating.
+  cacheDir: fileURLToPath(new URL('../../node_modules/.vite-live-guest', import.meta.url)),
   server: { port: Number(process.env.LIVE_GUEST_PORT) || 5401, strictPort: true },
   define: {
     __ADMIN_ORIGIN__: JSON.stringify(process.env.LIVE_GUEST_ADMIN ?? 'http://localhost:5173'),

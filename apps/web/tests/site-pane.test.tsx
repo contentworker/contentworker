@@ -75,7 +75,7 @@ describe('the Site pane', () => {
   it('frames the Site frame for the entry, in its locale when the URL names one, loading meanwhile', () => {
     render(pane());
     expect(frame().getAttribute('src')).toBe('/preview-frame/s1/main/e1?locale=en-US');
-    expect(screen.getByRole('status').textContent).toMatch(/Loading the entry’s page/);
+    expect(screen.getByText('Loading the entry’s page…').getAttribute('role')).toBe('status');
     expect(frame().parentElement?.getAttribute('aria-busy')).toBe('true');
   });
 
@@ -110,10 +110,36 @@ describe('the Site pane', () => {
     expect(posted(spy, 'view').at(-1)).toMatchObject({ device: 'phone' });
   });
 
-  it('ignores the channel from any other window', () => {
+  it('loads another locale’s page afresh when the URL names the locale', () => {
+    const view = render(pane());
+    const first = frame();
+    fromFrame({ type: 'ready', origin: 'https://site.example' });
+    fromFrame({ type: 'status', status: 'live' });
+    view.rerender(pane({ title: { 'en-US': 'Home', de: 'Start' } }, 'de'));
+    expect(frame()).not.toBe(first);
+    expect(frame().getAttribute('src')).toBe('/preview-frame/s1/main/e1?locale=de');
+    expect(frame().parentElement?.getAttribute('aria-busy')).toBe('true');
+    expect(
+      (screen.getByRole('radio', { name: 'View' }) as HTMLElement).getAttribute('aria-checked'),
+    ).toBe('true');
+    // The new page never comes up: said, as for the first.
+    act(() => vi.advanceTimersByTime(LOAD_MS));
+    expect(screen.getByRole('alert').textContent).toMatch(/The page didn’t load/);
+  });
+
+  it('ignores the channel from any other window or origin', () => {
     render(pane());
     fromFrame({ type: 'status', status: 'timeout' }, window);
     fromFrame({ type: 'pick', target: { key: 'a' } }, null);
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: { channel: FRAME_CHANNEL, type: 'status', status: 'failed' },
+          origin: 'https://site.example',
+          source: frame().contentWindow,
+        }),
+      );
+    });
     expect(screen.queryByRole('alert')).toBeNull();
     expect(onPick).not.toHaveBeenCalled();
   });
@@ -176,7 +202,7 @@ describe('the Site pane', () => {
     fromFrame({ type: 'ready', origin: 'https://site.example' });
     fromFrame({ type: 'status', status: 'live' });
     fromFrame({ type: 'note', kind: 'patch' });
-    expect(screen.getByRole('status').textContent).toMatch(/sent the whole entry again/);
+    expect(screen.getByText(/sent the whole entry again/).getAttribute('role')).toBe('status');
     expect(screen.queryByRole('alert')).toBeNull();
     act(() => vi.advanceTimersByTime(6_000));
     expect(screen.queryByText(/sent the whole entry again/)).toBeNull();

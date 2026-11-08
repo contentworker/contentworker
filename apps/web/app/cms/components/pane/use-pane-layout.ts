@@ -123,13 +123,17 @@ export function paneViews(opts: {
 
 const VIEW_KEY = 'cw.entry-pane.view';
 
-/** The pane's view, remembered per browser; Details until someone picks another. */
+/**
+ * The pane's view, remembered per browser; Details until someone picks another. Site is never
+ * remembered: it frames the type's own site (and sends it the unsaved draft) only when someone
+ * picks it for the entry in front of them.
+ */
 export function usePaneView(): [PaneView, (v: PaneView) => void] {
   const [view, setView] = useState<PaneView>('details');
   useLayoutEffect(() => {
     try {
       const kept = localStorage.getItem(VIEW_KEY);
-      if (kept === 'preview' || kept === 'site' || kept === 'activity') setView(kept);
+      if (kept === 'preview' || kept === 'activity') setView(kept);
     } catch {
       // Storage blocked: Details.
     }
@@ -138,6 +142,7 @@ export function usePaneView(): [PaneView, (v: PaneView) => void] {
     view,
     (v) => {
       setView(v);
+      if (v === 'site') return;
       try {
         if (v === 'details') localStorage.removeItem(VIEW_KEY);
         else localStorage.setItem(VIEW_KEY, v);

@@ -1,5 +1,5 @@
 /**
- * The guest page: the entry's title and its `body` blocks (each shown by its `label` or
+ * The guest page: the entry's title and its blocks fields (each block shown by its `label` or
  * `heading`), re-rendered on every change the admin sends. Built from text nodes only, never
  * markup from the entry, as a real frontend renders structured content.
  */
@@ -38,20 +38,31 @@ function render(fields: LiveFields, update: LivePreviewUpdate) {
     field: 'title',
     locale: update.locale,
   });
-  const slot = el('div', { ...slotAttrs('body') });
-  const blocks = at('body');
-  for (const block of Array.isArray(blocks) ? blocks : []) {
-    const b = block as Record<string, unknown>;
-    if (typeof b._key !== 'string') continue;
-    const section = el('section', { ...blockAttrs(b._key) });
-    section.appendChild(el('p', {}, String(b.label ?? b.heading ?? b._type ?? '')));
-    slot.appendChild(section);
+  // Every blocks field (a list of objects with a `_type`), each block shown by its label or heading.
+  const slots: HTMLElement[] = [];
+  for (const name of Object.keys(fields)) {
+    const blocks = at(name);
+    if (
+      !Array.isArray(blocks) ||
+      !blocks.every((b) => typeof b === 'object' && b && '_type' in b)
+    ) {
+      continue;
+    }
+    const slot = el('div', { ...slotAttrs(name) });
+    for (const block of blocks as Record<string, unknown>[]) {
+      if (typeof block._key !== 'string') continue;
+      const section = el('section', { ...blockAttrs(block._key) });
+      const text = block.label ?? block.heading ?? block._type;
+      section.appendChild(el('p', {}, typeof text === 'string' ? text : ''));
+      slot.appendChild(section);
+    }
+    slots.push(slot);
   }
   const more = el('p', {});
   more.appendChild(el('a', { href: '/elsewhere' }, 'Another page on the site'));
   app.replaceChildren(
     el('h1', { 'data-cw-ref': ref }, typeof title === 'string' ? title : 'Untitled'),
-    slot,
+    ...slots,
     more,
   );
 }

@@ -164,11 +164,14 @@ describe('the entry editor’s Site segment', () => {
     expect(screen.queryByTitle('Site preview')).toBeNull();
   });
 
-  it('frames the Site frame for the entry when the type has one', async () => {
+  it('frames the Site frame for the entry when the type has one, and never remembers it', async () => {
     setup(page(TEMPLATE));
     await screen.findByRole('heading', { level: 1, name: 'Home' });
+    act(() => screen.getByRole('radio', { name: 'Preview' }).click());
     act(() => screen.getByRole('radio', { name: 'Site' }).click());
     expect(screen.getByTitle('Site preview').getAttribute('src')).toBe('/preview-frame/s/main/e1');
+    // The next entry opens on the view kept before: Site frames only when picked.
+    expect(localStorage.getItem('cw.entry-pane.view')).toBe('preview');
   });
 
   it('focuses the field a click in the page names, in its locale', async () => {
@@ -193,10 +196,11 @@ describe('the entry editor’s Site segment', () => {
     await screen.findByRole('heading', { level: 1, name: 'Home' });
     act(() => screen.getByRole('radio', { name: 'Site' }).click());
     pick({ key: 'k1' });
-    await waitFor(() =>
-      expect(document.activeElement).toBe(
-        screen.getByRole('group', { name: 'Call to action block 1' }),
-      ),
-    );
+    const block = screen.getByRole('group', { name: 'Call to action block 1' });
+    await waitFor(() => expect(document.activeElement).toBe(block));
+    // Ringed for the pick, until focus moves on.
+    expect(block.hasAttribute('data-picked')).toBe(true);
+    act(() => screen.getByRole('textbox', { name: /^Label/ }).focus());
+    expect(block.hasAttribute('data-picked')).toBe(false);
   });
 });

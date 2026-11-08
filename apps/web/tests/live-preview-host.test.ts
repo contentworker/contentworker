@@ -248,7 +248,12 @@ describe('the live preview host', () => {
     t.say('pick', { key: 'a' });
     expect(t.onPick).toHaveBeenCalledWith({ key: 'a' });
     expect(t.sent('select').at(-1)).toMatchObject({ key: 'a' });
-    t.say('key', { key: 'z', meta: true, ctrl: false, shift: false, alt: false });
+    const z = { key: 'z', meta: true, ctrl: false, shift: false, alt: false };
+    // A key in view mode isn't the editor's: the page is the site.
+    t.say('key', z);
+    expect(t.onKey).not.toHaveBeenCalled();
+    t.host.setMode('edit');
+    t.say('key', z);
     expect(t.onKey).toHaveBeenCalledWith(expect.objectContaining({ key: 'z', meta: true }));
     t.say('geometry', {
       blocks: [{ key: 'a', rect: { x: 0, y: 0, w: 10, h: 10 } }],
@@ -262,6 +267,35 @@ describe('the live preview host', () => {
     expect(t.onGeometry).toHaveBeenCalledWith(expect.objectContaining({ truncated: true }));
     t.host.select(undefined);
     expect(t.sent('select').at(-1)).not.toHaveProperty('key');
+  });
+
+  it('takes no key while focus is outside the page, whatever the page posts', () => {
+    const frame = { postMessage: vi.fn() };
+    const onKey = vi.fn();
+    let focused = false;
+    const host = new LivePreviewHost({
+      origin: ORIGIN,
+      session: SESSION,
+      frame: () => frame,
+      onStatus: () => {},
+      onKey,
+      focused: () => focused,
+    });
+    host.start();
+    host.setMode('edit');
+    const say = (type: string, body: Record<string, unknown>) =>
+      host.receive({
+        data: { cw: LIVE_PREVIEW_PROTOCOL, session: SESSION, type, ...body },
+        origin: ORIGIN,
+        source: frame,
+      });
+    say('hello', { sdkVersion: '1', capabilities: [] });
+    const backspace = { key: 'Backspace', meta: false, ctrl: false, shift: false, alt: false };
+    say('key', backspace);
+    expect(onKey).not.toHaveBeenCalled();
+    focused = true;
+    say('key', backspace);
+    expect(onKey).toHaveBeenCalledTimes(1);
   });
 
   it('follows a page’s link only in edit mode, and only on its own origin', () => {

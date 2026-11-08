@@ -139,6 +139,7 @@ function SiteFrame({ frontendUrl, origin }: { frontendUrl: string; origin: strin
       origin,
       session,
       frame: () => iframe.current?.contentWindow,
+      focused: () => document.activeElement === iframe.current,
       onStatus: (status, detail) => {
         if (status !== 'live') {
           setGeometry(null);

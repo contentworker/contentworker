@@ -83,6 +83,10 @@ export async function previewFrame(
   // The template was checked when it was saved; checked again here, since this origin goes into
   // the frame's policy. Loopback http stays allowed: only a local stack can have saved one.
   const origin = frontendUrl ? previewOrigin(frontendUrl, { allowLoopback: true }) : null;
-  if (!frontendUrl || !origin) return { frame: { ok: false, reason: 'incomplete' }, status: 200 };
+  // Never this admin: a frame of its own origin is not isolated by the sandbox (it could script
+  // the editor), and this very route there would frame itself, minting a token per level.
+  if (!frontendUrl || !origin || origin === adminOrigin) {
+    return { frame: { ok: false, reason: 'incomplete' }, status: 200 };
+  }
   return { frame: { ok: true, frontendUrl, origin }, status: 200 };
 }

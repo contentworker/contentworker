@@ -133,6 +133,20 @@ describe('the Site frame route', () => {
     const res = await load();
     expect(res.data).toEqual({ ok: false, reason: 'incomplete' });
     expect(res.init.headers.has(FRAME_HEADER)).toBe(false);
+    // Never the admin itself: a same-origin frame isn't isolated, and would frame this route.
+    answer = () =>
+      Response.json(
+        {
+          url: 'u',
+          frontendUrl: 'https://acme.contentworker.app/preview-frame/s1/main/e1?t=pw_x',
+          token: 't',
+          expiresAt: 'x',
+        },
+        { status: 201 },
+      );
+    const self = await load();
+    expect(self.data).toEqual({ ok: false, reason: 'incomplete' });
+    expect(self.init.headers.has(FRAME_HEADER)).toBe(false);
   });
 
   it('opens only as a frame, and never for ids that would name another path', async () => {

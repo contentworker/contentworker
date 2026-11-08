@@ -513,6 +513,12 @@ export function EntryForm(props: {
     const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
     el.scrollIntoView?.({ block: 'center', behavior: reduce ? 'auto' : 'smooth' });
     el.focus({ preventScroll: true });
+    // A block has no focus style of its own (a click on its padding shouldn't ring it): the pick
+    // marks it until focus moves on.
+    if (el.dataset.blockKey !== undefined) {
+      el.dataset.picked = '';
+      el.addEventListener('focusout', () => delete el.dataset.picked, { once: true });
+    }
   }, [pendingFocus]);
 
   const localeConfig = useMemo<LocaleConfig>(
@@ -1691,7 +1697,8 @@ function BlocksInput(
             data-block-key={typeof key === 'string' ? key : undefined}
             aria-label={noun}
             tabIndex={-1}
-            className="space-y-2 rounded-xl bg-secondary/40 p-3 outline-none focus:shadow-[0_0_0_2px_var(--ring)]"
+            // The ring marks a block a pick focused (`data-picked`), never a click on its padding.
+            className="m-0 min-w-0 space-y-2 rounded-xl border-0 bg-secondary/40 p-3 outline-none data-picked:shadow-[0_0_0_2px_var(--ring)]"
           >
             <div className="flex items-center justify-between gap-2">
               <span className="font-medium text-sm">

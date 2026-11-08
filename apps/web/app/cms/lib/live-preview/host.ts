@@ -51,6 +51,8 @@ export interface HostOptions {
   readonly onKey?: (key: LiveKeyMessage) => void;
   /** An edit-mode link the page asked to follow, on its own origin. */
   readonly onNavigate?: (url: string) => void;
+  /** Whether the framed page has focus (the frame's document's active element is its frame). */
+  readonly focused?: () => boolean;
   /** The page refused a patch or failed a render. */
   readonly onNote?: (kind: string) => void;
   readonly handshakeMs?: number;
@@ -165,7 +167,9 @@ export class LivePreviewHost {
         return;
       }
       case 'key':
-        this.o.onKey?.(m);
+        // Only a key the person plausibly pressed: in edit mode, with focus in the page. A page
+        // can post keys whenever it likes, and they act on the editor's form.
+        if (this.mode === 'edit' && (this.o.focused?.() ?? true)) this.o.onKey?.(m);
         return;
       case 'navigate':
         if (this.mode === 'edit') this.o.onNavigate?.(m.url);

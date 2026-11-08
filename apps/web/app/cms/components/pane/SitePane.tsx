@@ -8,13 +8,17 @@
  * shortcut keys were pressed in the page. Saving stays the editor's: nothing here writes.
  */
 
-import type { ContentType, EntryFields } from '@contentworker/domain';
+import {
+  type ContentType,
+  type EntryFields,
+  previewTemplateVariesByLocale,
+} from '@contentworker/domain';
 import type { LiveTarget } from '@contentworker/sdk-core/live-preview';
 import { Alert, AlertDescription, AlertTitle } from '@contentworker/ui/alert';
 import { Button } from '@contentworker/ui/button';
 import { cn } from '@contentworker/ui/lib/utils';
 import { Segmented, SegmentedItem } from '@contentworker/ui/segmented';
-import { Skeleton } from '@contentworker/ui/skeleton';
+import { Skeleton, SkeletonText } from '@contentworker/ui/skeleton';
 import { Monitor, Smartphone, Tablet } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { LoadingStatus } from '~/cms/components/loading';
@@ -94,24 +98,25 @@ export function SitePane(props: SitePaneProps) {
   modeRef.current = effectiveMode;
   const deviceRef = useRef(device);
   deviceRef.current = device;
-  // A template that says `{locale}` (or a field's value, which may be localized) is another page
-  // per locale: the frame loads that page. Otherwise the same page gets the entry in the locale.
-  const template = contentType.preview?.urlTemplate ?? '';
-  const perLocale = /\{(locale|field:[^}]*)\}/.test(template);
+  // A template that fills to another URL per locale is another page per locale: the frame loads
+  // that page. Otherwise the same page gets the entry in the new locale.
+  const perLocale = previewTemplateVariesByLocale(
+    contentType.preview?.urlTemplate ?? '',
+    contentType.fields,
+  );
   const src =
     `/preview-frame/${encodeURIComponent(spaceId)}/${encodeURIComponent(environmentId)}/` +
     `${encodeURIComponent(entryId)}${perLocale ? `?locale=${encodeURIComponent(locale)}` : ''}`;
 
-  const reload = () => {
+  const reload = () => setFrameKey((k) => k + 1);
+
+  // The frame's messages, from the frame's own window only. Each load of the frame (Try again, or
+  // another locale's page) starts over: loading, nothing sent, until it says it's ready.
+  useEffect(() => {
     ready.current = false;
     sent.current = null;
     setStatus({ status: 'loading' });
     setNote(undefined);
-    setFrameKey((k) => k + 1);
-  };
-
-  // The frame's messages, from the frame's own window only; listened for again per frame load.
-  useEffect(() => {
     let noteTimer: ReturnType<typeof setTimeout> | undefined;
     // The frame never came up (a refused load, a dead server): said, not waited on for ever.
     const loadTimer = setTimeout(() => {
@@ -225,7 +230,8 @@ export function SitePane(props: SitePaneProps) {
         </Segmented>
         <Segmented
           aria-label="Clicks in the page"
-          value={mode}
+          // What clicks do now: View until the page answers, whatever was chosen.
+          value={effectiveMode}
           onValueChange={(v) => setMode(v as 'edit' | 'view')}
           disabled={!live}
         >
@@ -243,6 +249,8 @@ export function SitePane(props: SitePaneProps) {
       {showFrame ? (
         <div
           aria-busy={loading || undefined}
+          // Not reachable by Tab under the skeleton.
+          inert={loading || undefined}
           className={cn(
             'relative overflow-hidden rounded-xl bg-muted',
             props.split
@@ -251,7 +259,8 @@ export function SitePane(props: SitePaneProps) {
           )}
         >
           <iframe
-            key={frameKey}
+            // A new element per load, so a reload or another locale's page adds no history entry.
+            key={`${frameKey}:${src}`}
             ref={outer}
             src={src}
             title="Site preview"
@@ -266,16 +275,22 @@ export function SitePane(props: SitePaneProps) {
         </div>
       ) : null}
 
-      {note === 'patch' || note === 'render' ? (
-        <p role="status" className="text-muted-foreground text-xs">
-          {note === 'patch'
-            ? 'The page couldn’t apply an edit, so it was sent the whole entry again.'
-            : 'The page couldn’t render the last edit.'}
-        </p>
-      ) : null}
-      {origin && showFrame ? (
+      {/* Always there, so a screen reader hears the note when its words arrive. */}
+      <p role="status" className="text-muted-foreground text-xs empty:hidden">
+        {note === 'patch'
+          ? 'The page couldn’t apply an edit, so it was sent the whole entry again.'
+          : note === 'render'
+            ? 'The page couldn’t render the last edit.'
+            : ''}
+      </p>
+      {/* Its line is held while the frame loads, so the address arriving moves nothing. */}
+      {showFrame && origin ? (
         <p className="truncate text-muted-foreground text-xs">
           On <span className="font-mono">{origin}</span>
+        </p>
+      ) : loading ? (
+        <p className="text-xs">
+          <SkeletonText width="10rem" />
         </p>
       ) : null}
     </section>
