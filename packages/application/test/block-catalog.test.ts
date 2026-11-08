@@ -1,6 +1,7 @@
 import {
   ConflictError,
   type FieldDefinition,
+  ForbiddenError,
   NotFoundError,
   type Principal,
   ValidationError,
@@ -22,6 +23,7 @@ import {
   publishEntry,
   pushBlockCatalog,
   SYSTEM_CALLER,
+  updateContentType,
   updateEntry,
 } from '../src/index';
 
@@ -41,7 +43,7 @@ const developer: Principal = {
   spaceId: 'site',
   kind: 'user',
   subject: 'dev@example.com',
-  scopes: ['content:manage', 'content:read'],
+  scopes: ['content:manage', 'content:publish', 'content:read'],
 };
 
 const HERO = {
@@ -266,6 +268,74 @@ describe('pushing a block catalog', () => {
     const saved = await getEntry(ctx, scope, entry.id);
     const blocks = (saved.fields.body?.['en-US'] ?? []) as { _type: string }[];
     expect(blocks[0]?._type).toBe('banner');
+  });
+
+  it('refuses to drop an alias while entries still hold blocks under it', async () => {
+    await push();
+    await createEntry(ctx, scope, {
+      contentTypeApiId: 'page',
+      fields: { title: { 'en-US': 'Home' }, body: { 'en-US': [{ _type: 'hero', heading: 'Hi' }] } },
+    });
+    const renamed = { ...HERO, id: 'banner', name: 'Banner', aliases: ['hero'] };
+    await push({ blocks: [renamed, GRID, CARD] });
+    // The entry still holds `_type: hero` (it hasn't been saved since). Forgetting the alias
+    // would strand it.
+    const plan = await push({
+      blocks: [{ ...renamed, aliases: undefined }, GRID, CARD],
+      dryRun: true,
+    });
+    expect(plan.destructive).toBe(true);
+    expect(plan.inUse).toMatchObject([{ at: 'body: hero', kind: 'variant' }]);
+    await conflict(push({ blocks: [{ ...renamed, aliases: undefined }, GRID, CARD] }));
+  });
+
+  it('needs content:publish to publish, and pushes drafts without it', async () => {
+    const manageOnly: Principal = { ...developer, scopes: ['content:manage', 'content:read'] };
+    await expect(
+      pushBlockCatalog(ctx, manageOnly, scope, {
+        blocks: [HERO],
+        targets: TARGETS,
+        allowDestructive: true,
+      }),
+    ).rejects.toThrow(ForbiddenError);
+    const drafts = await pushBlockCatalog(ctx, manageOnly, scope, {
+      blocks: [HERO],
+      targets: TARGETS,
+      allowDestructive: true,
+      publish: false,
+    });
+    expect(drafts).toMatchObject({ applied: true, contentTypes: [{ published: false }] });
+  });
+
+  it('is unchanged on a second push of props the content model normalizes', async () => {
+    const tidy = { ...HERO, fields: [{ ...HERO.fields[0], help: '' }, HERO.fields[1]] };
+    await push({ blocks: [tidy, GRID, CARD] });
+    const page = await getContentType(ctx, scope, 'page');
+    expect(await push({ blocks: [tidy, GRID, CARD] })).toMatchObject({ unchanged: true });
+    expect((await getContentType(ctx, scope, 'page')).version).toBe(page.version);
+  });
+
+  it('treats a retry whose first try landed as a no-op, whatever version it expected', async () => {
+    await push({ expectedVersion: 0 });
+    expect(await push({ expectedVersion: 0 })).toMatchObject({ unchanged: true, version: 1 });
+  });
+
+  it('refuses to overwrite a revision of a target type made while it was pushing', async () => {
+    await push();
+    // Someone revises `page` between the push's read and its commit.
+    const get = store.contentTypes.get.bind(store.contentTypes);
+    let raced = false;
+    store.contentTypes.get = async (s, apiId) => {
+      const read = await get(s, apiId);
+      if (!raced && read && apiId === 'page') {
+        raced = true;
+        await updateContentType(ctx, SYSTEM_CALLER, s, 'page', { name: 'Landing page' });
+      }
+      return read;
+    };
+    const err = await conflict(push({ blocks: [{ ...HERO, name: 'Changed' }, GRID, CARD] }));
+    expect(err.message).toMatch(/changed while it was being pushed/);
+    expect((await getContentType(ctx, scope, 'page')).name).toBe('Landing page');
   });
 
   it('refuses a stale expectedVersion, and takes the current one', async () => {

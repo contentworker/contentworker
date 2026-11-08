@@ -342,9 +342,11 @@ export interface ComponentVariant {
   readonly fields: readonly FieldDefinition[];
   /**
    * Former apiIds of this variant: a block stored as `{ "_type": "hero" }` before the variant was
-   * renamed `heroBanner` still reads, validates and delivers as a `heroBanner`, and takes the new
-   * apiId on its next save. So a rename never strands content, and a removed apiId listed here is
-   * not a removal. Each alias is used once in the field, and never as another variant's apiId.
+   * renamed `heroBanner` still reads and validates as a `heroBanner` (GraphQL serves it under the
+   * new apiId), and takes the new apiId on its next save. REST serves the stored `_type` until
+   * then. So a rename never strands content, and a removed apiId listed here is not a removal;
+   * dropping the alias later is. Each alias is used once in the field, and never as another
+   * variant's apiId.
    */
   readonly aliases?: readonly string[];
 }

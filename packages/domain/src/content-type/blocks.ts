@@ -23,7 +23,8 @@ import {
  * `removedFieldUses` are the same pair for that change.
  *
  * A variant renamed with its old apiId kept in `aliases` is not removed: its
- * blocks still read as it, so only its fields are compared.
+ * blocks still read as it, so only its fields are compared. Dropping an alias
+ * later is a removal of that old apiId, as dropping the variant would be.
  *
  * A blocks field is located by its path of apiIds, with the variant a nested
  * field sits in shown in brackets: `body`, `body[hero].ctas`, `meta.blocks`.
@@ -51,13 +52,15 @@ export function removedVariants(
         const kept = blockVariants(g) ?? [];
         for (const v of variants) {
           const survivor = variantNamed(kept, v.apiId);
-          if (!survivor) {
+          // A former apiId the variant listed and no variant lists any more is removed too: the
+          // blocks still stored under it would name nothing.
+          const dropped = (v.aliases ?? []).filter((a) => !variantNamed(kept, a));
+          for (const id of survivor ? dropped : [v.apiId, ...dropped]) {
             const set = removed.get(at) ?? new Set<string>();
-            set.add(v.apiId);
+            set.add(id);
             removed.set(at, set);
-          } else {
-            walk(v.fields, survivor.fields, `${at}[${v.apiId}]`);
           }
+          if (survivor) walk(v.fields, survivor.fields, `${at}[${v.apiId}]`);
         }
       } else if (f.type === 'Component') {
         walk(f.fields, g.fields, at);

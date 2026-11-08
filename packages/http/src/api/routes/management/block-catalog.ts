@@ -98,10 +98,11 @@ export function blockCatalogRoutes(deps: AuthDeps): Hono<AuthVars> {
     `${BASE}/block-catalog/versions/:version`,
     doc('Block catalog', 'Get a block catalog version', { ok: blockCatalogDocs.blockCatalog }),
     requireScope(SCOPES.previewRead),
-    async (c) =>
-      c.json(
-        await getBlockCatalog(ctx, scopeOf(c), versionOf(c.req.param('version'), 'version') ?? 0),
-      ),
+    async (c) => {
+      // A path parameter is never empty, so this is a version or a 422.
+      const version = versionOf(c.req.param('version'), 'version') as number;
+      return c.json(await getBlockCatalog(ctx, scopeOf(c), version));
+    },
   );
   app.get(
     `${BASE}/block-catalog/usage`,

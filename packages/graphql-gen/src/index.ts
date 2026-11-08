@@ -173,7 +173,9 @@ function servedValue(field: FieldDefinition, value: unknown): unknown {
     if (!variant) return [];
     const block = item as Record<string, unknown>;
     return [
-      block[BLOCK_TYPE_KEY] === variant.apiId ? block : { ...block, [BLOCK_TYPE_KEY]: variant.apiId },
+      block[BLOCK_TYPE_KEY] === variant.apiId
+        ? block
+        : { ...block, [BLOCK_TYPE_KEY]: variant.apiId },
     ];
   });
 }

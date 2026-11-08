@@ -431,6 +431,7 @@ function makeContentTypeRepo(x: Exec): ContentTypeRepo {
             scopeFilter(t, scope),
             eq(t.apiId, apiId),
             eq(t.singleton, expected.singleton),
+            expected.version !== undefined ? eq(t.version, expected.version) : undefined,
             others,
           ),
         );
@@ -6600,7 +6601,6 @@ const toSavedView = (r: SavedViewRow): SavedView => ({
   updatedAt: r.updatedAt.toISOString(),
 });
 
-/** Saved views are the space's: every read and write keys on `scope.spaceId` alone. */
 type BlockCatalogRow = typeof schema.blockCatalogs.$inferSelect;
 const toBlockCatalogSummary = (r: Omit<BlockCatalogRow, 'blocks'>): BlockCatalogSummary => ({
   version: r.version,
@@ -6616,6 +6616,7 @@ const toBlockCatalog = (r: BlockCatalogRow): BlockCatalog => {
   return { ...summary, blocks: r.blocks };
 };
 
+/** An environment's block catalog versions: one row each, the version's key its compare-and-set. */
 function makeBlockCatalogRepo(x: Exec): BlockCatalogRepo {
   const db = x.db;
   const t = schema.blockCatalogs;
@@ -6682,6 +6683,7 @@ function makeBlockCatalogRepo(x: Exec): BlockCatalogRepo {
   };
 }
 
+/** Saved views are the space's: every read and write keys on `scope.spaceId` alone. */
 function makeSavedViewRepo(x: Exec): SavedViewRepo {
   const db = x.db;
   const t = schema.savedViews;

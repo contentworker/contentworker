@@ -90,7 +90,11 @@ describe('the block catalog through the management SDK', () => {
       blocks: [{ id: 'hero', entries: 0 }],
     });
     const stale = await cma.blockCatalog
-      .push({ ...input, expectedVersion: 0 })
+      .push({
+        ...input,
+        blocks: input.blocks.map((b) => ({ ...b, name: 'Hero banner' })),
+        expectedVersion: 0,
+      })
       .catch((e: unknown) => e);
     expect(stale).toBeInstanceOf(ManagementError);
     expect((stale as ManagementError).status).toBe(409);

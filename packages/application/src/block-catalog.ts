@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import {
+  authorize,
   type BlockCatalog,
   type BlockCatalogChanges,
   type BlockCatalogSummary,
@@ -17,6 +18,7 @@ import {
   type Principal,
   planCatalogTypes,
   reviseContentType,
+  SCOPES,
   type Scope,
   ValidationError,
 } from '@contentworker/domain';
@@ -116,10 +118,11 @@ export function blockCatalogHash(
  * `publish: false`) and the new version stored, in one unit. Pushing the catalog in force again
  * changes nothing and writes nothing.
  *
- * Refused (409) when `expectedVersion` isn't the version in force, when it would remove a variant
- * or field an entry still holds (its current version, the trash or its published snapshot), when
- * it removes anything at all without `allowDestructive`, and when another push or a change to a
- * target type commits first. `caller` is the request's principal (or {@link SYSTEM_CALLER}), as
+ * Refused (409) when `expectedVersion` isn't the version in force (unless the push changes
+ * nothing, so a retry is a no-op), when it would remove a variant or field an entry still holds
+ * (its current version, the trash or its published snapshot), when it removes anything at all
+ * without `allowDestructive`, and when another push or a revision of a target type commits first.
+ * Publishing (the default) needs `content:publish` as well, as publishing a type always does. `caller` is the request's principal (or {@link SYSTEM_CALLER}), as
  * every content type save takes.
  */
 export async function pushBlockCatalog(
@@ -129,16 +132,14 @@ export async function pushBlockCatalog(
   input: PushBlockCatalogInput,
 ): Promise<BlockCatalogPush> {
   assertContentTypeCaller(caller);
+  const publish = input.publish !== false;
+  // Publishing a type takes content:publish wherever it happens; the surfaces check content:manage.
+  if (publish && caller !== SYSTEM_CALLER) {
+    authorize(caller, SCOPES.contentPublish, scope.spaceId);
+  }
   const { blocks, targets } = checkBlockCatalog(input);
   const latest = await ctx.store.blockCatalogs.latest(scope);
   const previousVersion = latest?.version ?? 0;
-  if (input.expectedVersion !== undefined && input.expectedVersion !== previousVersion) {
-    throw new ConflictError(
-      `The block catalog is at version ${previousVersion}, not ${input.expectedVersion}: ` +
-        'someone pushed since. Review the change again and push over it.',
-      { version: previousVersion },
-    );
-  }
   const changes = diffBlockCatalogs(latest?.blocks ?? null, blocks);
   await assertThumbnailAssets(ctx, scope, blocks);
 
@@ -147,21 +148,21 @@ export async function pushBlockCatalog(
     const type = await ctx.store.contentTypes.get(scope, apiId);
     if (type) types.set(apiId, type);
   }
-  const publish = input.publish !== false;
-  const plans = planCatalogTypes(blocks, targets, types);
-  const revisions = plans.map((plan) => {
+  const revisions = planCatalogTypes(blocks, targets, types).flatMap((plan) => {
     const current = types.get(plan.contentTypeApiId) as ContentType;
     const revised = reviseContentType(
       current,
       { fields: [...plan.fields] },
       { previewLoopback: ctx.previewLoopback === true },
     );
-    return {
-      plan,
-      current,
-      next: publish ? { ...revised, status: 'published' as const } : revised,
-    };
+    // Judged on the revision as it would be stored (blank guidance dropped, pattern presets
+    // compiled), so pushing the same catalog again is unchanged, not a new revision each time.
+    if (canonicalJson(revised.fields) === canonicalJson(current.fields)) return [];
+    return [
+      { plan, current, next: publish ? { ...revised, status: 'published' as const } : revised },
+    ];
   });
+  const plans = revisions.map((r) => r.plan);
 
   const inUse: BlocksInUse[] = [];
   const warnings: ContentTypeWarning[] = [];
@@ -188,6 +189,18 @@ export async function pushBlockCatalog(
 
   const hash = blockCatalogHash(blocks, targets);
   const unchanged = latest?.hash === hash && revisions.length === 0;
+  // Checked after `unchanged`: a retried push whose first try landed is a no-op, not a conflict.
+  if (
+    !unchanged &&
+    input.expectedVersion !== undefined &&
+    input.expectedVersion !== previousVersion
+  ) {
+    throw new ConflictError(
+      `The block catalog is at version ${previousVersion}, not ${input.expectedVersion}: ` +
+        'someone pushed since. Review the change again and push over it.',
+      { version: previousVersion },
+    );
+  }
   const destructive = plans.some((p) => p.destructive);
   const result: BlockCatalogPush = {
     dryRun: input.dryRun === true,

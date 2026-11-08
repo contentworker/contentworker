@@ -236,8 +236,8 @@ const SINGLETON_NAMED = 10;
  * entry created after the read fails the commit (409) rather than becoming a second one. Turning
  * it off gives the claim back the same way. A save that leaves the flag alone is the plain save.
  *
- * Every save over a stored definition is guarded on the singleton flag it read, so a save racing
- * a turn on or off fails (409) rather than undoing it.
+ * Every save over a stored definition is guarded on the singleton flag and the version it read,
+ * so a save racing a turn on or off, or another revision, fails (409) rather than undoing it.
  *
  * Delivery serves the definition as last published, fields, URL pattern and singleton flag alike
  * (`deliveredContentType`), so a save of a published definition (a merge or a promotion copies
@@ -313,12 +313,13 @@ export async function prepareContentTypeSave(
         ? `"${next.apiId}" gained an entry or changed while it was being made a singleton; try again`
         : `"${next.apiId}" changed while it was being saved; try again`,
     async write(tx) {
-      // Every save over a stored definition is judged against the flag it read, so one that
-      // raced a turn on or off fails rather than undoing it; turning it on also against the
-      // entries it read.
+      // Every save over a stored definition is judged against the flag and version it read, so
+      // one that raced a turn on or off, or another revision, fails rather than undoing it;
+      // turning it on also against the entries it read.
       if (current) {
         await tx.contentTypes.guard(scope, next.apiId, {
           singleton: was,
+          version: current.version,
           ...(is && !was ? { entries: holders.map((h) => h.id) } : {}),
         });
       }

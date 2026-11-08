@@ -1804,14 +1804,18 @@ export interface ContentTypeRepo {
   create(scope: Scope, contentType: ContentType): Promise<void>;
   /**
    * Writes nothing: a unit of work's guard that the type still exists with this `singleton` flag
-   * and, with `entries`, holds no entry outside the trash but those. A type deleted or flipped
-   * since the caller read it, or an entry created meanwhile, is a `TransactionConflictError` (at
-   * commit, inside a unit).
+   * (and, with `version`, still at that version) and, with `entries`, holds no entry outside the
+   * trash but those. A type deleted, flipped or revised since the caller read it, or an entry
+   * created meanwhile, is a `TransactionConflictError` (at commit, inside a unit).
    */
   guard(
     scope: Scope,
     apiId: string,
-    expected: { readonly singleton: boolean; readonly entries?: readonly string[] },
+    expected: {
+      readonly singleton: boolean;
+      readonly version?: number;
+      readonly entries?: readonly string[];
+    },
   ): Promise<void>;
   /**
    * Deletes the definition while it is still at `version` and no entry of the type exists (the

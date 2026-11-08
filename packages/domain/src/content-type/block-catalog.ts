@@ -131,7 +131,10 @@ export const BLOCK_CATALOG_LIMITS = {
   url: 2000,
   /** Variants one target expands to, slots included: bounds the content type's definition. */
   expandedVariants: 1000,
-  /** The catalog as JSON, characters: one D1 row, with room to spare. */
+  /**
+   * The catalog as JSON, UTF-8 bytes, and a target type's fields once expanded: each is one D1
+   * row (2 MB at most), with room to spare.
+   */
   bytes: 1_000_000,
 } as const;
 
@@ -162,8 +165,8 @@ export function checkBlockCatalog(input: BlockCatalogInput): {
   if (issues.length === 0) {
     for (const b of blocks) checkBlockFields(b, issue);
   }
-  if (issues.length === 0 && canonicalJson(blocks).length > BLOCK_CATALOG_LIMITS.bytes) {
-    issue('blocks', `The catalog is larger than ${BLOCK_CATALOG_LIMITS.bytes} characters as JSON`);
+  if (issues.length === 0 && utf8Length(canonicalJson(blocks)) > BLOCK_CATALOG_LIMITS.bytes) {
+    issue('blocks', `The catalog is larger than ${BLOCK_CATALOG_LIMITS.bytes} bytes as JSON`);
   }
   if (issues.length > 0) throw new ValidationError(issues);
   return { blocks, targets };
@@ -738,6 +741,14 @@ export function planCatalogTypes(
       return { ...f, items: { ...f.items, variants: after } };
     });
     if (changes.length === 0) continue;
+    if (utf8Length(canonicalJson(fields)) > BLOCK_CATALOG_LIMITS.bytes) {
+      throw new ValidationError([
+        {
+          field: `targets.${apiId}`,
+          message: `Its fields would be larger than ${BLOCK_CATALOG_LIMITS.bytes} bytes as JSON once slots are expanded; allow fewer children per slot`,
+        },
+      ]);
+    }
     const destructive =
       removedVariants(type.fields, fields).size > 0 || removedFields(type.fields, fields).size > 0;
     plans.push({ contentTypeApiId: apiId, fields, changes, destructive });
@@ -848,6 +859,16 @@ export function blocksUsed(fields: readonly FieldDefinition[], values: EntryFiel
     for (const value of Object.values(values[f.apiId] ?? {})) visit(f, value);
   }
   return used;
+}
+
+/** The UTF-8 length of `text` in bytes: what a D1 row's size limit counts. */
+export function utf8Length(text: string): number {
+  let n = 0;
+  for (const ch of text) {
+    const cp = ch.codePointAt(0) as number;
+    n += cp < 0x80 ? 1 : cp < 0x800 ? 2 : cp < 0x10000 ? 3 : 4;
+  }
+  return n;
 }
 
 /**

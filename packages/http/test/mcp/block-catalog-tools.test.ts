@@ -119,7 +119,10 @@ async function withPage() {
 describe('block catalog tools (MCP), on the HTTP routes’ use-cases', () => {
   it('dry-runs, pushes against the reviewed version, and reads the catalog, versions and usage', async () => {
     const { ctx, deps, scope } = await withPage();
-    const call = await connect(deps, manager);
+    const call = await connect(deps, {
+      ...manager,
+      scopes: [...manager.scopes, SCOPES.contentPublish],
+    });
     expect((await call('blocks_catalog_get')).isError).toBe(true);
 
     const dry = await call('blocks_catalog_push', {
@@ -170,6 +173,21 @@ describe('block catalog tools (MCP), on the HTTP routes’ use-cases', () => {
 
   it('pushes only with content:manage; reads with preview:read', async () => {
     const { deps } = await withPage();
+    // content:manage alone pushes drafts; publishing takes content:publish, as everywhere.
+    const manage = await connect(deps, manager);
+    expect(
+      (await manage('blocks_catalog_push', { blocks: BLOCKS, targets: TARGETS })).isError,
+    ).toBe(true);
+    expect(
+      (
+        await manage('blocks_catalog_push', {
+          blocks: BLOCKS,
+          targets: TARGETS,
+          publish: false,
+          allowDestructive: true,
+        })
+      ).isError,
+    ).toBe(false);
     const read = await connect(deps, reader);
     const refused = await read('blocks_catalog_push', {
       blocks: BLOCKS,

@@ -367,6 +367,7 @@ export class InMemoryContentStore implements ContentStore {
         this.redirectData,
         this.redirectRevisionData,
         this.menuData,
+        this.blockCatalogData,
         this.aiActionData,
         this.functionData,
         this.appExtensionData,
@@ -470,6 +471,9 @@ export class InMemoryContentStore implements ContentStore {
     guard: async (scope, apiId, expected) => {
       const ct = this.contentTypeData.get(`${scopeKey(scope)}::${apiId}`);
       if (!ct || (ct.singleton === true) !== expected.singleton) {
+        throw new TransactionConflictError();
+      }
+      if (expected.version !== undefined && ct.version !== expected.version) {
         throw new TransactionConflictError();
       }
       if (expected.entries) {

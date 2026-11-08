@@ -471,6 +471,22 @@ describe('renaming a variant through aliases', () => {
     ]).toEqual(['body[hero].image']);
   });
 
+  it('reads dropping an alias later as removing that former apiId', () => {
+    const forgotten = [
+      field({ apiId: 'title', type: 'Symbol' }),
+      blocksField([{ ...BANNER, aliases: undefined }, CTA]),
+    ];
+    const removed = removedVariants(RENAMED.fields, forgotten);
+    expect([...removed].map(([at, set]) => [at, [...set]])).toEqual([['body', ['hero']]]);
+    expect(
+      removedVariantUses(
+        RENAMED.fields,
+        { body: { 'en-US': [{ _type: 'hero', heading: 'x' }] } },
+        removed,
+      ),
+    ).toEqual(['body: hero']);
+  });
+
   it('refuses an alias that is another variant’s apiId, or listed twice', () => {
     expect(refusal(() => typeWith([blocksField([{ ...HERO, aliases: ['cta'] }, CTA])]))).toMatch(
       /Alias "cta" is the apiId of a variant/,
