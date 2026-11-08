@@ -19,7 +19,10 @@ export interface ContentRef {
   readonly environment: string;
   readonly entryId: string;
   readonly contentType: string;
-  /** apiId of the field, e.g. `title`. */
+  /**
+   * apiId of the field, e.g. `title`, or a path into blocks, e.g.
+   * `body[<key>].heading` (see {@link formatFieldPath}).
+   */
   readonly field: string;
   readonly locale: string;
 }

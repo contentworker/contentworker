@@ -23,6 +23,7 @@ import {
   PAGE_ENTRY_LIMIT,
   type PageEntry,
   type PreviewRect,
+  previewOrigin,
 } from './protocol.js';
 
 /** The window APIs the frontend half uses; the global `window` by default. */
@@ -31,8 +32,13 @@ export interface PreviewGuestWindow {
   readonly location: { readonly origin: string; readonly href: string };
   addEventListener(type: 'message', listener: (e: IncomingMessage) => void): void;
   addEventListener(type: 'pagehide', listener: () => void): void;
+  addEventListener(type: 'pageshow', listener: (e: { readonly persisted: boolean }) => void): void;
   removeEventListener(type: 'message', listener: (e: IncomingMessage) => void): void;
   removeEventListener(type: 'pagehide', listener: () => void): void;
+  removeEventListener(
+    type: 'pageshow',
+    listener: (e: { readonly persisted: boolean }) => void,
+  ): void;
 }
 
 export interface ConnectPreviewOptions {
@@ -103,25 +109,15 @@ const DEFAULT_SDK = { name: '@contentworker/sdk', version: 'unknown' } as const;
  * only the admin can frame a draft page: `frame-ancestors https://admin.example.com`.
  */
 export function previewFrameAncestors(adminOrigin: string): string {
-  return `frame-ancestors ${originOf(adminOrigin)}`;
+  return `frame-ancestors ${previewOrigin(adminOrigin, 'adminOrigin')}`;
 }
 
-function originOf(value: string): string {
-  let url: URL;
-  try {
-    url = new URL(value);
-  } catch {
-    throw new Error(`adminOrigin must be an origin like https://admin.example.com, not ${value}`);
-  }
-  if ((url.protocol !== 'https:' && url.protocol !== 'http:') || url.origin !== value) {
-    throw new Error(`adminOrigin must be an origin like https://admin.example.com, not ${value}`);
-  }
-  return url.origin;
-}
+/** The shortest gap between two restarts a connect request can cause. */
+const RESTART_MS = 500;
 
 /** Connects this page to the admin that frames it, if one does. */
 export function connectPreview(options: ConnectPreviewOptions): LivePreview {
-  const adminOrigin = originOf(options.adminOrigin);
+  const adminOrigin = previewOrigin(options.adminOrigin, 'adminOrigin');
   const win = options.window ?? (globalThis as unknown as { window?: PreviewGuestWindow }).window;
   const listeners = new Map<keyof LivePreviewEvents, Set<(detail: never) => void>>();
   const on: LivePreview['on'] = (event, listener) => {
@@ -154,7 +150,7 @@ export function connectPreview(options: ConnectPreviewOptions): LivePreview {
   const offered = LIVE_PREVIEW_CAPABILITIES.filter(
     (c) => !options.capabilities || options.capabilities.includes(c),
   );
-  const channel = newChannel();
+  let channel = newChannel();
   let status: LivePreviewStatus = 'connecting';
   let version: number | undefined;
   let accepted: readonly LivePreviewCapability[] = [];
@@ -174,7 +170,7 @@ export function connectPreview(options: ConnectPreviewOptions): LivePreview {
     post({ cw: LIVE_PREVIEW_MARK, v: version, channel, kind, ...body } as GuestMessage);
   };
 
-  const offer: ConnectOffer = {
+  const offer = (): ConnectOffer => ({
     cw: LIVE_PREVIEW_MARK,
     v: LIVE_PREVIEW_VERSIONS[0] ?? 1,
     channel,
@@ -182,10 +178,11 @@ export function connectPreview(options: ConnectPreviewOptions): LivePreview {
     versions: LIVE_PREVIEW_VERSIONS,
     capabilities: offered,
     sdk: options.sdk ?? DEFAULT_SDK,
-  };
+  });
   const retries = options.retries ?? 3;
   const retryMs = options.retryMs ?? 1000;
   let attempts = 0;
+  let restartedAt = Number.NEGATIVE_INFINITY;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const sendOffer = () => {
     if (status !== 'connecting') return;
@@ -195,14 +192,49 @@ export function connectPreview(options: ConnectPreviewOptions): LivePreview {
       return;
     }
     attempts++;
-    post(offer);
+    post(offer());
     timer = setTimeout(sendOffer, retryMs);
+  };
+
+  /**
+   * Starts over on a new channel: the admin is a new listener (it asked with
+   * `connect.request`), or this page came back from the back/forward cache
+   * after the admin ended its session. Unsaved state is the admin's to resend.
+   */
+  const restart = () => {
+    const now = Date.now();
+    if (now - restartedAt < RESTART_MS) return;
+    restartedAt = now;
+    clearTimeout(timer);
+    channel = newChannel();
+    status = 'connecting';
+    version = undefined;
+    accepted = [];
+    entries.clear();
+    attempts = 0;
+    sendOffer();
   };
 
   const apply = (message: HostMessage) => {
     switch (message.kind) {
+      case 'connect.request':
+        if (status === 'connecting') {
+          // Still waiting: the request crossed an offer in flight. Resend this
+          // one now rather than starting a new channel the admin hasn't seen.
+          clearTimeout(timer);
+          attempts = 0;
+          sendOffer();
+        } else if (status !== 'closed') {
+          restart();
+        }
+        return;
       case 'connect.accept': {
-        if (status !== 'connecting' || !LIVE_PREVIEW_VERSIONS.includes(message.version)) {
+        // An answer to the last offer can land after the page stopped
+        // waiting; it is still the answer (the channel matched).
+        // A repeat answer to a resent offer of this session: nothing to do.
+        if (status === 'connected' && message.version === version) return;
+        const waiting = status === 'connecting' || status === 'unanswered';
+        if (!waiting || !LIVE_PREVIEW_VERSIONS.includes(message.version)) {
           dropped++;
           return;
         }
@@ -217,7 +249,7 @@ export function connectPreview(options: ConnectPreviewOptions): LivePreview {
         return;
       }
       case 'connect.reject':
-        if (status !== 'connecting') return;
+        if (status !== 'connecting' && status !== 'unanswered') return;
         clearTimeout(timer);
         status = 'rejected';
         console.error(
@@ -238,7 +270,12 @@ export function connectPreview(options: ConnectPreviewOptions): LivePreview {
         const key = `${message.entryId}\u0000${message.locale}`;
         const known = entries.get(key);
         if (!known || message.rev !== known.rev + 1) {
-          send('failed', { entryId: message.entryId, rev: message.rev, reason: 'gap' });
+          send('failed', {
+            entryId: message.entryId,
+            locale: message.locale,
+            rev: message.rev,
+            reason: 'gap',
+          });
           return;
         }
         const fields = { ...known.fields, ...message.fields };
@@ -260,10 +297,10 @@ export function connectPreview(options: ConnectPreviewOptions): LivePreview {
       options.onState?.(entryId, locale, fields);
     } catch (error) {
       console.error('ContentWorker live preview: rendering unsaved state failed.', error);
-      send('failed', { entryId, rev, reason: 'render' });
+      send('failed', { entryId, locale, rev, reason: 'render' });
       return;
     }
-    send('applied', { entryId, rev });
+    send('applied', { entryId, locale, rev });
   };
 
   const onMessage = (event: IncomingMessage) => {
@@ -277,7 +314,10 @@ export function connectPreview(options: ConnectPreviewOptions): LivePreview {
       return;
     }
     const message = verdict.message;
-    const connecting = message.kind === 'connect.accept' || message.kind === 'connect.reject';
+    const connecting =
+      message.kind === 'connect.request' ||
+      message.kind === 'connect.accept' ||
+      message.kind === 'connect.reject';
     if (!connecting) {
       // Only a connected session carries other messages, at its own version,
       // and only for what this page allowed.
@@ -291,9 +331,13 @@ export function connectPreview(options: ConnectPreviewOptions): LivePreview {
   };
 
   const onPageHide = () => send('navigated', { url: win.location.href });
+  const onPageShow = (e: { readonly persisted: boolean }) => {
+    if (e.persisted && status !== 'closed') restart();
+  };
 
   win.addEventListener('message', onMessage);
   win.addEventListener('pagehide', onPageHide);
+  win.addEventListener('pageshow', onPageShow);
   sendOffer();
 
   return {
@@ -333,6 +377,7 @@ export function connectPreview(options: ConnectPreviewOptions): LivePreview {
       status = 'closed';
       win.removeEventListener('message', onMessage);
       win.removeEventListener('pagehide', onPageHide);
+      win.removeEventListener('pageshow', onPageShow);
     },
   };
 }

@@ -737,7 +737,11 @@ preview.on('select', (ref) => {
 - It connects with `connect.offer`. The admin answers `connect.accept` (the version both speak,
   and the capabilities it will use: `select`, `patch.fields`, `scroll`, never more than the page
   offered) or `connect.reject` (no shared version, logged with both version lists). An unanswered
-  offer is resent three times, a second apart.
+  offer is resent three times, a second apart. An admin that starts listening later sends
+  `connect.request`, and the page offers again on a new channel; so does a page restored from the
+  back/forward cache.
+- `adminOrigin` must be `https:`; `http:` is accepted only on `localhost`, `127.0.0.1` and `[::1]`
+  for local development.
 - Every message passes three checks: the sender's origin, the sender's window and the session's
   channel id. Messages that fail are dropped whole and counted in `preview.dropped`.
 - Send `previewFrameAncestors(adminOrigin)` as the `Content-Security-Policy` of preview responses,

@@ -19,6 +19,8 @@ export const LIVE_PREVIEW_MARK = 'cw.live-preview';
  * offers. Dropping an entry is a breaking change: say so in the changelog.
  * An additive change (a new optional field, or a new message kind both sides
  * can ignore) does not bump the version.
+ *
+ * - 1: every SDK release that ships `@contentworker/sdk/live-preview`.
  */
 export const LIVE_PREVIEW_VERSIONS: readonly number[] = [1];
 
@@ -75,6 +77,16 @@ export interface ConnectAccept extends Envelope {
   readonly capabilities: readonly LivePreviewCapability[];
 }
 
+/**
+ * Asks the page to connect again: sent by an admin that starts listening after
+ * the page loaded, or that was rebuilt. It carries no channel (the admin does
+ * not know one yet), so the page accepts it on origin and window alone; all it
+ * can do is make the page send a fresh offer to the admin origin.
+ */
+export interface ConnectRequest extends Envelope {
+  readonly kind: 'connect.request';
+}
+
 export interface ConnectReject extends Envelope {
   readonly kind: 'connect.reject';
   readonly reason: RejectReason;
@@ -129,18 +141,21 @@ export interface PointerMessage extends Envelope {
 export interface AppliedMessage extends Envelope {
   readonly kind: 'applied';
   readonly entryId: string;
+  readonly locale: string;
   readonly rev: number;
 }
 
 export interface FailedMessage extends Envelope {
   readonly kind: 'failed';
   readonly entryId: string;
+  readonly locale: string;
   readonly rev: number;
   readonly reason: FailReason;
 }
 
 /** Admin → frontend. */
 export type HostMessage =
+  | ConnectRequest
   | ConnectAccept
   | ConnectReject
   | EntryState
@@ -161,6 +176,7 @@ export type GuestMessage =
 export const HOST_MESSAGE_CAPABILITY: Readonly<
   Record<HostMessage['kind'], LivePreviewCapability | null>
 > = {
+  'connect.request': null,
   'connect.accept': null,
   'connect.reject': null,
   'entry.state': 'patch.fields',
@@ -286,7 +302,11 @@ export function acceptHostMessage(
   const pre = precheck(event, ctx);
   if (pre) return { ok: false, reason: pre };
   const data = event.data as Record<string, unknown>;
-  if (data.channel !== ctx.channel) return { ok: false, reason: 'channel' };
+  // A connect request is the one message without the page's channel: the
+  // admin sending it doesn't know one yet.
+  if (data.kind !== 'connect.request' && data.channel !== ctx.channel) {
+    return { ok: false, reason: 'channel' };
+  }
   if (typeof data.kind !== 'string' || !HOST_KINDS.has(data.kind)) {
     return { ok: false, reason: 'unknown' };
   }
@@ -308,6 +328,33 @@ const MAX_DEPTH = 64;
 const MAX_NODES = 100_000;
 const MAX_STRING = 64;
 const MAX_URL = 4096;
+/** Total characters of string data in one message's fields, about 32 MB as UTF-16. */
+const MAX_CHARS = 16_000_000;
+
+const LOOPBACK = new Set(['localhost', '127.0.0.1', '[::1]']);
+
+/**
+ * Normalizes an origin the channel may talk to, or throws. `https:` anywhere,
+ * `http:` only on loopback for local development: on a plain-http origin
+ * anyone on the network path could put a page in the frame and receive drafts.
+ */
+export function previewOrigin(value: string, what = 'origin'): string {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error(`${what} must be an origin like https://admin.example.com, not ${value}`);
+  }
+  const ok =
+    url.origin === value &&
+    (url.protocol === 'https:' || (url.protocol === 'http:' && LOOPBACK.has(url.hostname)));
+  if (!ok) {
+    throw new Error(
+      `${what} must be an origin like https://admin.example.com (http only on localhost), not ${value}`,
+    );
+  }
+  return url.origin;
+}
 
 function isRecord(x: unknown): x is Record<string, unknown> {
   if (typeof x !== 'object' || x === null || Array.isArray(x)) return false;
@@ -337,17 +384,23 @@ const isUrl = (x: unknown): x is string => {
  */
 export function isJsonData(x: unknown): boolean {
   let nodes = 0;
+  let chars = 0;
   const seen = new Set<object>();
+  const count = (text: string) => {
+    chars += text.length;
+    return chars <= MAX_CHARS;
+  };
   const walk = (v: unknown, depth: number): boolean => {
     if (++nodes > MAX_NODES || depth > MAX_DEPTH) return false;
-    if (v === null || typeof v === 'string' || typeof v === 'boolean') return true;
+    if (typeof v === 'string') return count(v);
+    if (v === null || typeof v === 'boolean') return true;
     if (typeof v === 'number') return Number.isFinite(v);
     if (typeof v !== 'object') return false;
     if (seen.has(v)) return false;
     seen.add(v);
     if (Array.isArray(v)) return v.every((item) => walk(item, depth + 1));
     if (!isRecord(v)) return false;
-    return Object.values(v).every((item) => walk(item, depth + 1));
+    return Object.entries(v).every(([key, item]) => count(key) && walk(item, depth + 1));
   };
   return walk(x, 0);
 }
@@ -366,8 +419,12 @@ function refOf(x: unknown): ContentRef | undefined {
   const parts = [x.space, x.environment, x.entryId, x.contentType, x.field, x.locale];
   if (!parts.every(isId)) return undefined;
   // Round-trip through the DOM format, so a ref here is exactly a ref an
-  // element could carry.
-  return parseContentRef(parts.map((p) => encodeURIComponent(p as string)).join('|'));
+  // element could carry. Encoding throws on a lone surrogate: not a ref.
+  try {
+    return parseContentRef(parts.map((p) => encodeURIComponent(p as string)).join('|'));
+  } catch {
+    return undefined;
+  }
 }
 
 function isPageEntry(x: unknown): x is PageEntry {
@@ -426,12 +483,22 @@ export function parseGuestMessage(d: Record<string, unknown>): GuestMessage | un
       return { ...b, kind: d.kind, pointer: d.pointer, ref, rect: { x, y, width, height } };
     }
     case 'applied':
-      return isId(d.entryId) && isRev(d.rev)
-        ? { ...b, kind: d.kind, entryId: d.entryId, rev: d.rev }
+      return isId(d.entryId) && isId(d.locale) && isRev(d.rev)
+        ? { ...b, kind: d.kind, entryId: d.entryId, locale: d.locale, rev: d.rev }
         : undefined;
     case 'failed':
-      return isId(d.entryId) && isRev(d.rev) && (d.reason === 'gap' || d.reason === 'render')
-        ? { ...b, kind: d.kind, entryId: d.entryId, rev: d.rev, reason: d.reason }
+      return isId(d.entryId) &&
+        isId(d.locale) &&
+        isRev(d.rev) &&
+        (d.reason === 'gap' || d.reason === 'render')
+        ? {
+            ...b,
+            kind: d.kind,
+            entryId: d.entryId,
+            locale: d.locale,
+            rev: d.rev,
+            reason: d.reason,
+          }
         : undefined;
     default:
       return undefined;
@@ -443,6 +510,8 @@ export function parseHostMessage(d: Record<string, unknown>): HostMessage | unde
   if (!isVersion(d.v) || typeof d.channel !== 'string') return undefined;
   const b = base(d);
   switch (d.kind) {
+    case 'connect.request':
+      return { ...b, kind: d.kind };
     case 'connect.accept': {
       const caps = d.capabilities;
       if (!isVersion(d.version) || !strings(caps, 32)) return undefined;

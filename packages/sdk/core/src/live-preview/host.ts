@@ -13,6 +13,7 @@ import {
   GUEST_MESSAGE_CAPABILITY,
   type HostMessage,
   type IncomingMessage,
+  isJsonData,
   LIVE_PREVIEW_CAPABILITIES,
   LIVE_PREVIEW_MARK,
   LIVE_PREVIEW_VERSIONS,
@@ -22,6 +23,7 @@ import {
   negotiateVersion,
   type PageEntry,
   type PreviewRect,
+  previewOrigin,
 } from './protocol.js';
 
 interface Postable {
@@ -42,8 +44,13 @@ export interface PreviewHostOptions {
   readonly versions?: readonly number[];
   /** What this admin may use, e.g. narrowed by the person's role. Defaults to everything. */
   readonly capabilities?: readonly LivePreviewCapability[];
-  /** Whether the signed-in person may read what a ref names. Refs failing it are dropped. */
-  readonly canRead?: (ref: ContentRef) => boolean;
+  /** The space and environment being edited. A ref from the page naming any other is dropped. */
+  readonly scope: { readonly space: string; readonly environment: string };
+  /**
+   * Whether the signed-in person may read what a ref names. Refs failing it are
+   * dropped. Required: what the page reports is a hint, never a permission.
+   */
+  readonly canRead: (ref: ContentRef) => boolean;
   /** Window to listen on. Defaults to the global one. */
   readonly window?: PreviewHostWindow;
 }
@@ -66,8 +73,13 @@ export interface PreviewHostEvents {
     readonly ref: ContentRef;
     readonly rect: PreviewRect;
   };
-  applied: { readonly entryId: string; readonly rev: number };
-  failed: { readonly entryId: string; readonly rev: number; readonly reason: 'gap' | 'render' };
+  applied: { readonly entryId: string; readonly locale: string; readonly rev: number };
+  failed: {
+    readonly entryId: string;
+    readonly locale: string;
+    readonly rev: number;
+    readonly reason: 'gap' | 'render';
+  };
 }
 
 export interface PreviewHost {
@@ -88,6 +100,11 @@ export interface PreviewHost {
   select(ref: ContentRef | null): boolean;
   /** Scrolls a marked element into view. Needs `scroll`. */
   scroll(ref: ContentRef): boolean;
+  /**
+   * Asks the framed page to connect again. Sent on creation too, so an admin
+   * that starts listening after the page loaded still reaches it.
+   */
+  reconnect(): void;
   close(): void;
 }
 
@@ -95,27 +112,56 @@ interface Session extends PreviewSession {
   readonly channel: string;
   readonly target: Postable;
   readonly revs: Map<string, number>;
+  /** Per entry and locale, the rev of the last state resent for a gap. */
+  readonly resentAt: Map<string, number>;
   page: readonly PageEntry[];
 }
 
 const keyOf = (entryId: string, locale: string) => `${entryId}\u0000${locale}`;
 
-function normalizeOrigin(value: string): string {
-  const origin = new URL(value).origin;
-  if (origin === 'null') throw new Error(`Not an origin: ${value}`);
-  return origin;
+/** The shortest gap between two sessions a burst of offers from one frame can start. */
+const NEW_SESSION_MS = 200;
+
+/**
+ * Field values as they go on the wire: `undefined` dropped the way JSON drops
+ * it (in arrays it becomes `null`), and anything else that isn't JSON data
+ * refused. The page drops a message whose values aren't JSON, so letting one
+ * through would freeze that entry's preview with nothing reported.
+ *
+ * In a patch, a top-level field set to `undefined` was cleared, and a missing
+ * key would mean "unchanged", so it is sent as `null`.
+ */
+function wireFields(fields: LivePreviewFields, patch = false): LivePreviewFields {
+  const strip = (v: unknown): unknown => {
+    if (Array.isArray(v)) return v.map((item) => (item === undefined ? null : strip(item)));
+    if (typeof v !== 'object' || v === null || Object.getPrototypeOf(v) !== Object.prototype) {
+      return v;
+    }
+    const out: Record<string, unknown> = {};
+    for (const [k, item] of Object.entries(v)) if (item !== undefined) out[k] = strip(item);
+    return out;
+  };
+  const out = strip(fields) as Record<string, unknown>;
+  if (patch) {
+    for (const [k, v] of Object.entries(fields)) if (v === undefined) out[k] = null;
+  }
+  if (!isJsonData(out)) {
+    throw new TypeError('Live preview fields must be JSON data (no dates, maps or cycles).');
+  }
+  return out;
 }
 
 /** Listens for the framed frontend and runs its sessions. */
 export function connectPreviewHost(options: PreviewHostOptions): PreviewHost {
   const win = options.window ?? (globalThis as unknown as { window?: PreviewHostWindow }).window;
   if (!win) throw new Error('connectPreviewHost requires a window.');
-  const allowed = new Set(options.allowedOrigins.map(normalizeOrigin));
+  const allowed = new Set(options.allowedOrigins.map((o) => previewOrigin(o, 'allowedOrigins')));
   const versions = options.versions ?? LIVE_PREVIEW_VERSIONS;
   const allowedCaps = options.capabilities ?? LIVE_PREVIEW_CAPABILITIES;
   const states = new Map<string, { entryId: string; locale: string; fields: LivePreviewFields }>();
   const listeners = new Map<keyof PreviewHostEvents, Set<(detail: never) => void>>();
   let session: Session | undefined;
+  let startedAt = Number.NEGATIVE_INFINITY;
   let dropped = 0;
   let closed = false;
 
@@ -150,6 +196,24 @@ export function connectPreviewHost(options: PreviewHostOptions): PreviewHost {
   };
 
   const start = (offer: ConnectOffer, origin: string, target: Postable) => {
+    if (session && session.channel === offer.channel && session.origin === origin) {
+      // A retry of the offer this session answered (it crossed the accept):
+      // answer again, without starting over.
+      post(session, 'connect.accept', {
+        version: session.version,
+        capabilities: session.capabilities,
+      });
+      return;
+    }
+    const now = Date.now();
+    if (session && now - startedAt < NEW_SESSION_MS) {
+      // A page that keeps sending new offers over a live session would tear it
+      // down and resend every state each time. A page that said `navigated`
+      // connects at once; any other retries a second later.
+      dropped++;
+      return;
+    }
+    startedAt = now;
     if (session) fire('ended', { url: undefined });
     session = undefined;
     const version = negotiateVersion(offer.versions, versions);
@@ -176,6 +240,7 @@ export function connectPreviewHost(options: PreviewHostOptions): PreviewHost {
       channel: offer.channel,
       target,
       revs: new Map(),
+      resentAt: new Map(),
       page: [],
     };
     session = s;
@@ -184,13 +249,19 @@ export function connectPreviewHost(options: PreviewHostOptions): PreviewHost {
     for (const key of states.keys()) sendState(s, key);
   };
 
-  // A ref from the page names an entry it reported, or one being edited here,
-  // and one the signed-in person may read: the page is never trusted to say
-  // which entry a click is about.
+  // A ref from the page must be in the scope being edited, name an entry it
+  // reported (same type and locale) or one being edited here, and pass
+  // `canRead`. The page's report narrows what a click may name; only
+  // `canRead` grants anything.
   const readable = (s: Session, ref: ContentRef) =>
-    (s.page.some((e) => e.entryId === ref.entryId) ||
-      [...states.values()].some((st) => st.entryId === ref.entryId)) &&
-    (options.canRead?.(ref) ?? true);
+    ref.space === options.scope.space &&
+    ref.environment === options.scope.environment &&
+    (s.page.some(
+      (e) =>
+        e.entryId === ref.entryId && e.contentType === ref.contentType && e.locale === ref.locale,
+    ) ||
+      states.has(keyOf(ref.entryId, ref.locale))) &&
+    options.canRead(ref);
 
   const onMessage = (event: IncomingMessage) => {
     if (closed) return;
@@ -238,23 +309,40 @@ export function connectPreviewHost(options: PreviewHostOptions): PreviewHost {
         fire('pointer', { pointer: message.pointer, ref: message.ref, rect: message.rect });
         return;
       case 'applied':
-        fire('applied', { entryId: message.entryId, rev: message.rev });
+        fire('applied', { entryId: message.entryId, locale: message.locale, rev: message.rev });
         return;
       case 'failed': {
-        fire('failed', { entryId: message.entryId, rev: message.rev, reason: message.reason });
-        // A gap is recovered by sending the whole state again; a render
-        // failure is the page's to report, and resending would fail the same way.
-        if (message.reason === 'gap') {
-          for (const [key, state] of states) {
-            if (state.entryId === message.entryId) sendState(s, key);
-          }
+        const { entryId, locale, rev, reason } = message;
+        fire('failed', { entryId, locale, rev, reason });
+        // A gap is recovered by sending that entry's whole state again; a
+        // render failure is the page's to report, and resending would fail
+        // the same way. A gap reported for a rev already superseded (patches
+        // were in flight) needs nothing: the resend it caused already covers it.
+        const key = keyOf(entryId, locale);
+        if (reason === 'gap' && rev > (s.resentAt.get(key) ?? -1)) {
+          sendState(s, key);
+          s.resentAt.set(key, s.revs.get(key) ?? 0);
         }
         return;
       }
     }
   };
 
+  const requestConnect = () => {
+    const target = options.frame.contentWindow as Postable | null | undefined;
+    if (!target || typeof target.postMessage !== 'function') return;
+    // The frame's origin isn't known before an offer, so the request goes to
+    // each allowed origin; the browser delivers only the one that matches.
+    for (const origin of allowed) {
+      target.postMessage(
+        { cw: LIVE_PREVIEW_MARK, v: versions[0] ?? 1, channel: '', kind: 'connect.request' },
+        origin,
+      );
+    }
+  };
+
   win.addEventListener('message', onMessage);
+  requestConnect();
 
   return {
     get session() {
@@ -274,21 +362,22 @@ export function connectPreviewHost(options: PreviewHostOptions): PreviewHost {
     },
     setState(entryId, locale, fields) {
       const key = keyOf(entryId, locale);
-      states.set(key, { entryId, locale, fields });
+      states.set(key, { entryId, locale, fields: wireFields(fields) });
       if (session) sendState(session, key);
     },
     patch(entryId, locale, fields) {
       const key = keyOf(entryId, locale);
       const state = states.get(key);
       if (!state) throw new Error(`setState(${entryId}, ${locale}) must come before patch.`);
-      states.set(key, { ...state, fields: { ...state.fields, ...fields } });
+      const changed = wireFields(fields, true);
+      states.set(key, { ...state, fields: { ...state.fields, ...changed } });
       const s = session;
       if (!s?.capabilities.includes('patch.fields')) return;
       if (!s.revs.has(key)) {
         sendState(s, key);
         return;
       }
-      post(s, 'entry.patch', { rev: nextRev(s, key), entryId, locale, fields });
+      post(s, 'entry.patch', { rev: nextRev(s, key), entryId, locale, fields: changed });
     },
     select(ref) {
       const s = session;
@@ -301,6 +390,14 @@ export function connectPreviewHost(options: PreviewHostOptions): PreviewHost {
       if (!s?.capabilities.includes('scroll')) return false;
       post(s, 'scroll', { ref });
       return true;
+    },
+    reconnect() {
+      if (closed) return;
+      if (session) {
+        session = undefined;
+        fire('ended', { url: undefined });
+      }
+      requestConnect();
     },
     close() {
       closed = true;

@@ -37,16 +37,22 @@ type Listener = (e: IncomingMessage) => void;
 class FakeWindow {
   readonly message = new Set<Listener>();
   readonly pagehide = new Set<() => void>();
+  readonly pageshow = new Set<(e: { persisted: boolean }) => void>();
   readonly location: { origin: string; href: string };
   parent: PreviewGuestWindow['parent'] = null;
   constructor(origin: string, path = '/') {
     this.location = { origin, href: `${origin}${path}` };
   }
-  addEventListener(type: 'message' | 'pagehide', fn: Listener & (() => void)) {
-    (type === 'message' ? this.message : this.pagehide).add(fn);
+  private set(type: 'message' | 'pagehide' | 'pageshow'): Set<never> {
+    return (
+      type === 'message' ? this.message : type === 'pagehide' ? this.pagehide : this.pageshow
+    ) as Set<never>;
   }
-  removeEventListener(type: 'message' | 'pagehide', fn: Listener & (() => void)) {
-    (type === 'message' ? this.message : this.pagehide).delete(fn);
+  addEventListener(type: 'message' | 'pagehide' | 'pageshow', fn: never) {
+    this.set(type).add(fn);
+  }
+  removeEventListener(type: 'message' | 'pagehide' | 'pageshow', fn: never) {
+    this.set(type).delete(fn);
   }
   /** Delivers a message as if `source` sent it from `origin`. */
   dispatch(event: IncomingMessage) {
@@ -93,6 +99,8 @@ function host(p: ReturnType<typeof pair>, opts: Partial<PreviewHostOptions> = {}
     frame: p.frame,
     allowedOrigins: [SITE],
     window: p.admin,
+    scope: { space: 's1', environment: 'main' },
+    canRead: () => true,
     ...opts,
   });
 }
@@ -131,12 +139,21 @@ describe('connecting the preview', () => {
     );
   });
 
-  it('posts only to the configured admin origin, never to "*"', async () => {
+  it('posts only to the configured origins, never to "*"', async () => {
     const p = pair();
-    connectPreview({ adminOrigin: ADMIN, window: p.site });
-    const spy = vi.spyOn(p.toAdmin, 'postMessage');
-    connectPreview({ adminOrigin: ADMIN, window: p.site });
-    expect(spy.mock.calls.every(([, target]) => target === ADMIN)).toBe(true);
+    const toAdmin = vi.spyOn(p.toAdmin, 'postMessage');
+    const toSite = vi.spyOn(p.toSite, 'postMessage');
+    const h = host(p);
+    const g = connectPreview({ adminOrigin: ADMIN, window: p.site });
+    await flush();
+    h.setState('e1', 'en-US', { title: 'A' });
+    h.select(ref());
+    g.reportPage([{ entryId: 'e1', contentType: 'page', locale: 'en-US' }]);
+    await flush();
+    expect(toAdmin.mock.calls.length).toBeGreaterThan(2);
+    expect(toSite.mock.calls.length).toBeGreaterThan(2);
+    expect(toAdmin.mock.calls.every(([, target]) => target === ADMIN)).toBe(true);
+    expect(toSite.mock.calls.every(([, target]) => target === SITE)).toBe(true);
   });
 
   it('rejects an offer with no shared version, and the page says which side is behind', async () => {
@@ -178,7 +195,13 @@ describe('connecting the preview', () => {
   it('refuses an admin origin equal to the page origin, or one that is not an origin', () => {
     const p = pair();
     expect(() => connectPreview({ adminOrigin: SITE, window: p.site })).toThrow(/admin origin/);
-    for (const bad of ['admin.test', `${ADMIN}/`, `${ADMIN}/cms`, 'javascript:alert(1)']) {
+    for (const bad of [
+      'admin.test',
+      `${ADMIN}/`,
+      `${ADMIN}/cms`,
+      'javascript:alert(1)',
+      'http://admin.example.com',
+    ]) {
       expect(() => connectPreview({ adminOrigin: bad, window: p.site })).toThrow(/origin like/);
     }
   });
@@ -456,7 +479,7 @@ describe('unsaved state', () => {
       source: p.toAdmin,
     });
     await flush();
-    expect(failed).toHaveBeenCalledWith({ entryId: 'e1', rev: 5, reason: 'gap' });
+    expect(failed).toHaveBeenCalledWith({ entryId: 'e1', locale: 'en-US', rev: 5, reason: 'gap' });
     expect(onState).toHaveBeenCalledTimes(2);
     expect(onState).toHaveBeenLastCalledWith('e1', 'en-US', { title: 'A' });
   });
@@ -473,7 +496,12 @@ describe('unsaved state', () => {
     });
     connectPreview({ adminOrigin: ADMIN, window: p.site, onState });
     await flush();
-    expect(failed).toHaveBeenCalledWith({ entryId: 'e1', rev: 0, reason: 'render' });
+    expect(failed).toHaveBeenCalledWith({
+      entryId: 'e1',
+      locale: 'en-US',
+      rev: 0,
+      reason: 'render',
+    });
     expect(onState).toHaveBeenCalledOnce();
   });
 
@@ -529,7 +557,7 @@ describe('page and pointer', () => {
     expect(seen.mock.calls[0]?.[0].entries).toHaveLength(50);
   });
 
-  it('drops a pointer ref for an entry the page did not report or the person may not read', async () => {
+  it('drops a pointer ref outside the scope, unreported, or one the person may not read', async () => {
     const p = pair();
     const h = host(p, { canRead: (r) => r.entryId !== 'secret' });
     const pointer = vi.fn();
@@ -543,10 +571,15 @@ describe('page and pointer', () => {
     g.reportPointer('click', ref(), rect);
     g.reportPointer('click', ref({ entryId: 'unreported' }), rect);
     g.reportPointer('hover', ref({ entryId: 'secret' }), rect);
+    // Reported entry, but the page decides the scope, type or locale: dropped.
+    g.reportPointer('click', ref({ space: 'other' }), rect);
+    g.reportPointer('click', ref({ environment: 'prod' }), rect);
+    g.reportPointer('click', ref({ contentType: 'post' }), rect);
+    g.reportPointer('click', ref({ locale: 'de-DE' }), rect);
     await flush();
     expect(pointer).toHaveBeenCalledOnce();
     expect(pointer).toHaveBeenCalledWith({ pointer: 'click', ref: ref(), rect });
-    expect(h.dropped).toBe(2);
+    expect(h.dropped).toBe(6);
   });
 
   it('passes select and scroll to the page', async () => {
@@ -642,5 +675,331 @@ describe('field paths in content refs', () => {
   it('names the top-level field a path starts at', () => {
     expect(topLevelField(path)).toBe('body');
     expect(topLevelField('title')).toBe('title');
+  });
+});
+
+/** The channel of the latest offer the page posted. */
+const lastChannel = (p: ReturnType<typeof pair>) =>
+  (
+    p.toAdmin.posted.filter((m) => (m as { kind: string }).kind === 'connect.offer').at(-1) as {
+      channel: string;
+    }
+  ).channel;
+
+describe('reconnecting', () => {
+  it('reaches a page that gave up before the admin started listening', async () => {
+    vi.useFakeTimers();
+    const p = pair();
+    const g = connectPreview({ adminOrigin: ADMIN, window: p.site });
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(g.status).toBe('unanswered');
+    const h = host(p);
+    h.setState('e1', 'en-US', { title: 'A' });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(g.status).toBe('connected');
+    expect(h.session).toBeDefined();
+  });
+
+  it('a recreated admin gets a new session from a connected page, with its state', async () => {
+    const p = pair();
+    const first = host(p);
+    const onState = vi.fn();
+    const g = connectPreview({ adminOrigin: ADMIN, window: p.site, onState });
+    await flush();
+    const before = lastChannel(p);
+    first.close();
+    const second = host(p);
+    second.setState('e1', 'en-US', { title: 'From the new admin' });
+    await flush();
+    expect(g.status).toBe('connected');
+    expect(lastChannel(p)).not.toBe(before);
+    expect(second.session).toBeDefined();
+    expect(onState).toHaveBeenLastCalledWith('e1', 'en-US', { title: 'From the new admin' });
+  });
+
+  it('reconnect() starts a new session with the same admin', async () => {
+    const p = pair();
+    const h = host(p);
+    const ended = vi.fn();
+    h.on('ended', ended);
+    connectPreview({ adminOrigin: ADMIN, window: p.site });
+    await flush();
+    const before = lastChannel(p);
+    h.reconnect();
+    await flush();
+    expect(ended).toHaveBeenCalledOnce();
+    expect(lastChannel(p)).not.toBe(before);
+    expect(h.session).toBeDefined();
+  });
+
+  it('takes an answer that lands after the page stopped waiting', async () => {
+    vi.useFakeTimers();
+    const p = pair();
+    const g = connectPreview({ adminOrigin: ADMIN, window: p.site });
+    await vi.advanceTimersByTimeAsync(5000);
+    p.site.dispatch({
+      data: {
+        cw: LIVE_PREVIEW_MARK,
+        v: 1,
+        channel: lastChannel(p),
+        kind: 'connect.accept',
+        version: 1,
+        capabilities: ['select'],
+      },
+      origin: ADMIN,
+      source: p.toAdmin,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(g.status).toBe('connected');
+  });
+
+  it('answers a repeated offer on the same channel without starting over', async () => {
+    const p = pair();
+    const h = host(p);
+    const ended = vi.fn();
+    const connected = vi.fn();
+    h.on('ended', ended);
+    h.on('connect', connected);
+    h.setState('e1', 'en-US', { title: 'A' });
+    const g = connectPreview({ adminOrigin: ADMIN, window: p.site });
+    await flush();
+    const offer = p.toAdmin.posted.find((m) => (m as { kind: string }).kind === 'connect.offer');
+    p.admin.dispatch({ data: offer, origin: SITE, source: p.toSite });
+    await flush();
+    expect(ended).not.toHaveBeenCalled();
+    expect(connected).toHaveBeenCalledOnce();
+    const states = p.toSite.posted.filter((m) => (m as { kind: string }).kind === 'entry.state');
+    expect(states).toHaveLength(1);
+    expect(g.dropped).toBe(0);
+  });
+
+  it('drops a burst of new offers over a live session', async () => {
+    const p = pair();
+    const h = host(p);
+    const connected = vi.fn();
+    h.on('connect', connected);
+    connectPreview({ adminOrigin: ADMIN, window: p.site });
+    await flush();
+    for (let i = 0; i < 20; i++) {
+      p.admin.dispatch({
+        data: {
+          cw: LIVE_PREVIEW_MARK,
+          v: 1,
+          channel: `burst${String(i).padStart(20, '0')}`,
+          kind: 'connect.offer',
+          versions: [1],
+          capabilities: ['select'],
+          sdk: { name: 'x', version: '0' },
+        },
+        origin: SITE,
+        source: p.toSite,
+      });
+    }
+    await flush();
+    expect(connected).toHaveBeenCalledOnce();
+    expect(h.dropped).toBe(20);
+  });
+
+  it('connects again when the page comes back from the back/forward cache', async () => {
+    const p = pair();
+    const h = host(p);
+    const g = connectPreview({ adminOrigin: ADMIN, window: p.site });
+    await flush();
+    const before = lastChannel(p);
+    for (const fn of p.site.pagehide) fn();
+    await flush();
+    expect(h.session).toBeUndefined();
+    for (const fn of p.site.pageshow) fn({ persisted: true });
+    await flush();
+    expect(lastChannel(p)).not.toBe(before);
+    expect(g.status).toBe('connected');
+    expect(h.session).toBeDefined();
+  });
+
+  it('a closed admin stops listening', async () => {
+    const p = pair();
+    const h = host(p);
+    h.close();
+    const g = connectPreview({ adminOrigin: ADMIN, window: p.site });
+    await flush();
+    expect(p.admin.message.size).toBe(0);
+    expect(g.status).toBe('connecting');
+    expect(h.session).toBeUndefined();
+  });
+});
+
+describe('review gaps', () => {
+  it('the admin drops a page message stamped with another version', async () => {
+    const p = pair();
+    const h = host(p);
+    const seen = vi.fn();
+    h.on('page', seen);
+    connectPreview({ adminOrigin: ADMIN, window: p.site });
+    await flush();
+    p.admin.dispatch({
+      data: {
+        cw: LIVE_PREVIEW_MARK,
+        v: 2,
+        channel: lastChannel(p),
+        kind: 'page',
+        url: `${SITE}/`,
+        entries: [],
+      },
+      origin: SITE,
+      source: p.toSite,
+    });
+    await flush();
+    expect(seen).not.toHaveBeenCalled();
+    expect(h.dropped).toBe(1);
+  });
+
+  it('the page refuses patch, select and scroll it did not allow', async () => {
+    const p = pair();
+    const onState = vi.fn();
+    const g = connectPreview({ adminOrigin: ADMIN, window: p.site, capabilities: [], onState });
+    const selected = vi.fn();
+    g.on('select', selected);
+    g.on('scroll', selected);
+    host(p);
+    await flush();
+    const channel = lastChannel(p);
+    const send = (body: Record<string, unknown>) =>
+      p.site.dispatch({
+        data: { cw: LIVE_PREVIEW_MARK, v: 1, channel, ...body },
+        origin: ADMIN,
+        source: p.toAdmin,
+      });
+    send({ kind: 'entry.patch', rev: 1, entryId: 'e1', locale: 'en-US', fields: {} });
+    send({ kind: 'select', ref: ref() });
+    send({ kind: 'scroll', ref: ref() });
+    await flush();
+    expect(onState).not.toHaveBeenCalled();
+    expect(selected).not.toHaveBeenCalled();
+    expect(g.dropped).toBe(3);
+  });
+
+  it('drops undefined values the way JSON does, and refuses values that are not JSON', async () => {
+    const p = pair();
+    const h = host(p);
+    const onState = vi.fn();
+    const applied = vi.fn();
+    h.on('applied', applied);
+    connectPreview({ adminOrigin: ADMIN, window: p.site, onState });
+    h.setState('e1', 'en-US', { title: 'A', subtitle: undefined, list: [1, undefined] });
+    h.patch('e1', 'en-US', { title: undefined, body: { a: undefined, b: 1 } });
+    await flush();
+    // State drops `subtitle`; the patch clears `title` with null, since a
+    // missing key in a patch means "unchanged".
+    expect(onState).toHaveBeenLastCalledWith('e1', 'en-US', {
+      title: null,
+      list: [1, null],
+      body: { b: 1 },
+    });
+    // Both landed before the page connected, so it got one merged state.
+    expect(applied).toHaveBeenCalledOnce();
+    expect(() => h.setState('e2', 'en-US', { when: new Date() })).toThrow(TypeError);
+    expect(() => h.patch('e1', 'en-US', { tags: new Set() as unknown })).toThrow(TypeError);
+  });
+
+  it('keeps each locale of an entry apart', async () => {
+    const p = pair();
+    const h = host(p);
+    const applied = vi.fn();
+    h.on('applied', applied);
+    h.setState('e1', 'en-US', { title: 'Hello' });
+    h.setState('e1', 'de-DE', { title: 'Hallo' });
+    const onState = vi.fn();
+    connectPreview({ adminOrigin: ADMIN, window: p.site, onState });
+    await flush();
+    expect(applied.mock.calls.map(([d]) => d)).toEqual([
+      { entryId: 'e1', locale: 'en-US', rev: 0 },
+      { entryId: 'e1', locale: 'de-DE', rev: 0 },
+    ]);
+    // A gap in German resends German only.
+    p.site.dispatch({
+      data: {
+        cw: LIVE_PREVIEW_MARK,
+        v: 1,
+        channel: lastChannel(p),
+        kind: 'entry.patch',
+        rev: 9,
+        entryId: 'e1',
+        locale: 'de-DE',
+        fields: {},
+      },
+      origin: ADMIN,
+      source: p.toAdmin,
+    });
+    await flush();
+    const resent = p.toSite.posted
+      .filter((m) => (m as { kind: string }).kind === 'entry.state')
+      .map((m) => (m as { locale: string }).locale);
+    expect(resent).toEqual(['en-US', 'de-DE', 'de-DE']);
+  });
+
+  it('resends once for a gap, however many patches were in flight', async () => {
+    const p = pair();
+    const h = host(p);
+    h.setState('e1', 'en-US', { n: 0 });
+    const onState = vi.fn();
+    connectPreview({ adminOrigin: ADMIN, window: p.site, onState });
+    await flush();
+    // Lose the next patch on the way to the page, then send three more.
+    const original = p.toSite.postMessage;
+    let lose = true;
+    p.toSite.postMessage = (data: unknown, target: string) => {
+      if (lose && (data as { kind: string }).kind === 'entry.patch') {
+        lose = false;
+        return;
+      }
+      original(data, target);
+    };
+    for (let n = 1; n <= 4; n++) h.patch('e1', 'en-US', { n });
+    await flush();
+    const states = p.toSite.posted.filter((m) => (m as { kind: string }).kind === 'entry.state');
+    expect(states).toHaveLength(2);
+    expect(onState).toHaveBeenLastCalledWith('e1', 'en-US', { n: 4 });
+  });
+
+  it('drops a ref that cannot be encoded instead of throwing', async () => {
+    const p = pair();
+    const h = host(p);
+    const g = connectPreview({ adminOrigin: ADMIN, window: p.site });
+    g.reportPage([{ entryId: 'e1', contentType: 'page', locale: 'en-US' }]);
+    await flush();
+    p.admin.dispatch({
+      data: {
+        cw: LIVE_PREVIEW_MARK,
+        v: 1,
+        channel: lastChannel(p),
+        kind: 'pointer',
+        pointer: 'click',
+        ref: ref({ entryId: '\uD800' }),
+        rect,
+      },
+      origin: SITE,
+      source: p.toSite,
+    });
+    await flush();
+    expect(h.dropped).toBe(1);
+  });
+
+  it('accepts http only on loopback', () => {
+    const local = new FakeWindow('http://localhost:5173');
+    local.parent = { postMessage() {} };
+    expect(() =>
+      connectPreview({ adminOrigin: 'http://localhost:3000', window: local }),
+    ).not.toThrow();
+    expect(previewFrameAncestors('http://127.0.0.1:3000')).toBe(
+      'frame-ancestors http://127.0.0.1:3000',
+    );
+    const p = pair();
+    expect(() => host(p, { allowedOrigins: ['http://preview.example.com'] })).toThrow(/localhost/);
+    expect(() => host(p, { allowedOrigins: ['http://localhost:4321'] })).not.toThrow();
+  });
+
+  it('caps the total size of field data', () => {
+    expect(isJsonData({ a: 'x'.repeat(1000) })).toBe(true);
+    expect(isJsonData({ a: 'x'.repeat(16_000_001) })).toBe(false);
   });
 });
