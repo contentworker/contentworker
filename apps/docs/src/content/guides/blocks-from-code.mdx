@@ -16,8 +16,10 @@ anyone's code. Placement rules are declarative too.
 
 ## Before you start
 
-- Pushing a catalog changes the content model, so it needs `content:manage`. Reading the catalog,
-  its versions and its usage needs `preview:read`. See [API keys and access](/guides/api-keys/).
+- Pushing a catalog changes the content model, so it needs `content:manage`; publishing the
+  changed types (the default) needs `content:publish` too, as publishing a type always does
+  (`--no-publish` pushes draft revisions with `content:manage` alone). Reading the catalog, its
+  versions and its usage needs `preview:read`. See [API keys and access](/guides/api-keys/).
 - Each target field must already exist: a top-level blocks field (an Array of Component with block
   types) on a content type. Create it once in the content model, or with
   [`contentworker model apply`](/guides/cli/#the-content-model-as-code), with any block type;
@@ -181,7 +183,7 @@ Content types you can't read are left out. The count reads up to 2,000 entries p
 | Method | Path                                 | Scope            | Does                                           |
 | ------ | ------------------------------------ | ---------------- | ---------------------------------------------- |
 | GET    | `…/block-catalog`                    | `preview:read`   | The catalog in force; `404` before the first push |
-| POST   | `…/block-catalog`                    | `content:manage` | Push `{ blocks, targets, dryRun?, expectedVersion?, allowDestructive?, publish? }` |
+| POST   | `…/block-catalog`                    | `content:manage` (+ `content:publish` to publish) | Push `{ blocks, targets, dryRun?, expectedVersion?, allowDestructive?, publish? }` |
 | GET    | `…/block-catalog/versions`           | `preview:read`   | Versions newest first, without their blocks (`?limit`, `?before`) |
 | GET    | `…/block-catalog/versions/:version`  | `preview:read`   | One version                                    |
 | GET    | `…/block-catalog/usage`              | `preview:read`   | Entries using each block, per content type     |
