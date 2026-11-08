@@ -298,17 +298,15 @@ hover/click field travels as `pointer`, since the envelope's `kind` already hold
 `entry.state` and `entry.patch` carry one locale's values (not locale-keyed), as the message names
 the locale.
 
-## Open questions
+## Decisions
 
-Each has a default the first implementation follows until decided otherwise.
+The owner settled these on 2026-11-07; the first implementation already follows them.
 
-1. Does the admin pin the frontend's origin from the framed URL alone, or also from an origin
-   list the space configures on the "connect a frontend" screen? The list is stricter, but it's
-   one more setting. **Default:** pinned from the origin of the framed preview URL's template, and
-   updated on `navigated` only to a URL that matches one of the space's templates.
-2. Should `page` report entries from every block reference on the page, or only the entry being
-   edited and its direct references? More entries means the page can show more edits, at the
-   cost of larger state messages. **Default:** the edited entry and its direct references.
-3. Do we want a `resize` message (frame height follows the page), or does the canvas always
-   scroll inside a fixed-height frame? **Default:** a fixed-height frame that scrolls inside; no
-   `resize`.
+1. **Allowed frontend origins** are the origins of the space's preview URL templates. The admin
+   pins the frontend's origin from the framed preview URL's template, and follows `navigated`
+   only to a URL that matches one of the space's templates. There is no separate origin list on
+   the "connect a frontend" screen.
+2. **What the page reports** is the entry being edited and its direct references, capped at
+   `MAX_PAGE_ENTRIES`. A wider set can come later without a version bump.
+3. **Frame height is fixed:** the canvas scrolls inside the frame and offers viewport-width
+   presets for breakpoints. There is no `resize` message.

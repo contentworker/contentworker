@@ -365,13 +365,13 @@ Built on Blocks and the frontend runtime. Layouts stay a typed tree; rich text s
 
 #### Follow-ups for M6
 
-From the live preview spec and a review of a second implementation of its channel. Each goes into
-the live preview work once it lands; none needs a new protocol version while v1 is unreleased.
+From the live preview spec and a review of a second implementation of its channel. Most touch the
+admin's live preview host and the preview frame, so they wait for the canvas editor to land; none
+needs a new protocol version while v1 is unreleased.
 
-- [ ] **Record the channel decisions in the spec.** Allowed frontend origins are the origins of the
-  space's preview URL templates; the page reports the edited entry and its direct references, at
-  most 50; the frame has a fixed height and the canvas scrolls inside it, with viewport-width
-  presets for breakpoints.
+- [ ] **Page report cap.** The owner chose at most 50 entries per `page` report; the code allows
+  200 (`MAX_PAGE_ENTRIES`). Settle one number and match the other to it. The other channel
+  decisions are recorded in the spec.
 - [ ] **Admin-started reconnect.** A `connect.request` from the admin on mount and on demand, so an
   admin that hydrates late or is rebuilt reaches a page that already loaded. Also: a late
   `connect.accept` on the page's channel still counts, and a page restored from the back/forward
@@ -383,12 +383,12 @@ the live preview work once it lands; none needs a new protocol version while v1 
   offers faster than one per 200 ms over a live session are dropped; `applied` and `failed` carry
   the locale, and a gap resends that locale once.
 - [ ] **Scoped refs from the page.** A click ref must match the edited space and environment and the
-  reported entry's type and locale, and pass a required `canRead`; `http:` origins only on loopback,
-  the same list as `checkPreviewTemplate`; a total size cap on field data; no `allow-popups` on the
-  frame.
-- [ ] **One block patch engine.** Either the admin applies `patchBlocks` operations and sends field
-  values, or the page keeps its own engine with a parity test that runs the same patches through the
-  domain's `applyBlockPatch` and the page's.
+  reported entry's type and locale, and pass a required `canRead`; `checkPreviewTemplate` allows
+  `[::1]` like the channel's loopback list; no `allow-popups` on the frame
+  (`apps/web/app/routes/preview-frame.tsx`).
+- [x] **One block patch engine.** The page keeps its own engine (`applyLivePatch`), and
+  `packages/http/test/live-preview-patch-parity.test.ts` runs the same patches through it and the
+  domain's `applyBlockPatch`.
 - [ ] **Locked regions on the canvas.** Admin config can lock a slot or region (no add, move or
   remove), narrowing what code allows and never widening it, beside the slot allow-lists.
 - [ ] **Token values checked everywhere.** The frontend runtime runs `isSafeTokenValue` on every
