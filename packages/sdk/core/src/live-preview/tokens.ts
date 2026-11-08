@@ -11,10 +11,13 @@ const ALLOWED_FUNCTIONS = new Set(['var', 'calc', 'clamp', 'min', 'max', 'rgb', 
 /**
  * Refused anywhere, in any case: loading (`url(`, `@import`), script (`expression(`,
  * `javascript:`), markup (`<`, `>`), escapes (`\`, which can spell any of these one character at a
- * time, as in `u\rl(`), comments (which can split a name from its `(`), and the characters that
- * end a declaration or a block (`;`, `{`, `}`). Control characters too.
+ * time, as in `u\rl(`), comments (which can split a name from its `(`), the characters that
+ * end a declaration or a block (`;`, `{`, `}`), and those that end or rewrite an HTML attribute
+ * (`"`, `'`, a backtick, and `&`, which starts an entity such as `ur&#108(`). Control characters
+ * too. Write a value that passes through `style.setProperty` or a framework's style object, never
+ * by building a `style` attribute or `<style>` text by hand.
  */
-const REFUSED = /url\s*\(|@import|expression\s*\(|javascript:|[<>\\;{}]|\/\*/i;
+const REFUSED = /url\s*\(|@import|expression\s*\(|javascript:|[<>\\;{}&"'`]|\/\*/i;
 
 /** A name directly before `(`, with or without whitespace between: a function call. */
 const CALL = /([a-z_-][a-z0-9_-]*)?\s*\(/gi;

@@ -44,11 +44,13 @@ afterEach(() => {
 let states: LivePreviewState[] = [];
 let onState: (() => void) | undefined;
 
+let entryId = 'e1';
+
 function Page() {
   const live = useLivePreview({
     adminOrigin: ADMIN,
     capabilities: ['select', 'patch.fields'],
-    page: { entries: [{ entryId: 'e1', contentType: 'page', locale: 'en-US' }] },
+    page: { entries: [{ entryId, contentType: 'page', locale: 'en-US' }] },
     onState: () => onState?.(),
   });
   states.push(live);
@@ -115,6 +117,38 @@ describe('useLivePreview', () => {
     await new Promise((r) => setTimeout(r, 0));
     expect(settled).toHaveBeenCalledTimes(1);
     onState = undefined;
+  });
+
+  it('reports the page again to each new session, and drops the old one’s state', async () => {
+    mount();
+    await act(async () => accept());
+    await act(async () => send(state));
+    expect(document.querySelector('h1')?.textContent).toBe('Draft');
+    const pages = () => posted().filter((m) => m.kind === 'page');
+    expect(pages()).toHaveLength(1);
+    await act(async () => states.at(-1)?.preview?.emit('navigated', { url: '/next' }));
+    expect(states.at(-1)).toMatchObject({ connected: false, entries: {} });
+    expect(document.querySelector('h1')?.textContent).toBe('Delivered');
+    await act(async () => {
+      channel = posted()
+        .filter((m) => m.kind === 'connect.offer')
+        .at(-1)?.channel as string;
+      send({ kind: 'connect.accept', version: 1, capabilities: ['select', 'patch.fields'] });
+    });
+    expect(states.at(-1)?.connected).toBe(true);
+    expect(pages()).toHaveLength(2);
+  });
+
+  it('tells the admin when the page renders another entry', async () => {
+    mount();
+    await act(async () => accept());
+    entryId = 'e2';
+    act(() => root?.render(createElement(Page)));
+    const last = posted()
+      .filter((m) => m.kind === 'page')
+      .at(-1);
+    expect(last?.entries).toEqual([{ entryId: 'e2', contentType: 'page', locale: 'en-US' }]);
+    entryId = 'e1';
   });
 
   it('stays inert outside a frame', () => {

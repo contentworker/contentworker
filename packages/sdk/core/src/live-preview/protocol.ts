@@ -58,7 +58,9 @@ export function narrowCapabilities(
   offered: readonly unknown[],
   allowed: readonly unknown[] = CAPABILITIES,
 ): Capability[] {
-  return CAPABILITIES.filter((c) => offered.includes(c) && allowed.includes(c));
+  const both = CAPABILITIES.filter((c) => offered.includes(c) && allowed.includes(c));
+  // Proposals are block ops rendered as ghosts: without `patch.blocks` there is no state to lay them on.
+  return both.includes('patch.blocks') ? both : both.filter((c) => c !== 'proposals');
 }
 
 // --- the channel -----------------------------------------------------------------------
@@ -354,9 +356,11 @@ function parse<M>(
 ): LiveParse<M> {
   if (typeof data.kind !== 'string' || !kinds.has(data.kind))
     return { ok: false, reason: 'unknown' };
+  // The bounded walk first: structured clone can deliver a 100-byte message holding a list of a
+  // hundred million holes, or a typed array, which JSON would spend seconds measuring.
+  if (!clean(data)) return { ok: false, reason: 'invalid' };
   const cap = data.kind === 'entry.state' ? MAX_STATE_BYTES : MAX_MESSAGE_BYTES;
   if (!withinBytes(data, cap)) return { ok: false, reason: 'too-large' };
-  if (!clean(data)) return { ok: false, reason: 'invalid' };
   const built = body(data);
   if (!built) return { ok: false, reason: 'invalid' };
   return { ok: true, message: { v: data.v, channel: data.channel, ...built } as M };
@@ -548,9 +552,23 @@ function isFields(value: unknown): value is LiveFields {
 
 // --- content values -------------------------------------------------------------------------
 
-/** A rich text value: a `RichTextDocument` tree, never a string of markup. */
+/**
+ * A rich text value: a `RichTextDocument` tree all the way down (every node an object with a
+ * `nodeType`, every `content` a list of nodes, every text node's `value` a string), never a
+ * string of markup anywhere in it. Structural only: which node types exist is the admin's check.
+ */
 export function isRichTextDocument(value: unknown): boolean {
-  return isRecord(value) && value.nodeType === 'document' && Array.isArray(value.content);
+  if (!isRecord(value) || value.nodeType !== 'document') return false;
+  let nodes = 0;
+  const node = (n: unknown, depth: number): boolean => {
+    nodes += 1;
+    if (nodes > MAX_NODES || depth > MAX_DEPTH) return false;
+    if (!isRecord(n) || typeof n.nodeType !== 'string') return false;
+    if (n.nodeType === 'text' && typeof n.value !== 'string') return false;
+    if (n.content === undefined) return n.nodeType !== 'document';
+    return Array.isArray(n.content) && n.content.every((c) => node(c, depth + 1));
+  };
+  return node(value, 0);
 }
 
 /**
@@ -640,21 +658,38 @@ export function withinBytes(value: unknown, cap: number): boolean {
   return new TextEncoder().encode(json).byteLength <= cap;
 }
 
+/** The most values (objects, lists and their members) one message may hold. */
+const MAX_NODES = 200_000;
+/** The longest list one message may hold; a list is refused by its length, before it is read. */
+const MAX_LIST = 10_000;
+
 /**
- * Plain data only, anywhere in `value`: no prototype-reaching names, no absurd nesting, and no
- * object that isn't a plain one (structured clone carries Maps, Dates and ArrayBuffers, which JSON
- * measures as `{}`).
+ * Plain data only, anywhere in `value`, found in bounded time: no prototype-reaching names, no
+ * nesting past 64, no list longer than 10,000, at most 200,000 values, and no object that isn't a
+ * plain one or a plain list (structured clone carries Maps, Dates and typed arrays, which JSON
+ * measures as `{}` or spends seconds on). Runs before anything else reads the message.
  */
-export function clean(value: unknown, depth = 0): boolean {
-  if (depth > MAX_DEPTH) return false;
-  if (Array.isArray(value)) return value.every((v) => clean(v, depth + 1));
-  if (typeof value !== 'object' || value === null) return true;
-  const proto = Object.getPrototypeOf(value);
-  if (proto !== Object.prototype && proto !== null) return false;
-  for (const [name, held] of Object.entries(value)) {
-    if (FORBIDDEN_NAMES.has(name) || !clean(held, depth + 1)) return false;
-  }
-  return true;
+export function clean(value: unknown): boolean {
+  let nodes = 0;
+  const walk = (v: unknown, depth: number): boolean => {
+    nodes += 1;
+    if (nodes > MAX_NODES || depth > MAX_DEPTH) return false;
+    if (typeof v !== 'object' || v === null) return typeof v !== 'function';
+    const proto = Object.getPrototypeOf(v);
+    if (Array.isArray(v)) {
+      if (proto !== Array.prototype || v.length > MAX_LIST) return false;
+      // Holes are read as undefined here and dropped by JSON: harmless, and bounded by length.
+      for (let i = 0; i < v.length; i++) if (!walk(v[i], depth + 1)) return false;
+      return true;
+    }
+    if (proto !== Object.prototype && proto !== null) return false;
+    for (const name of Object.keys(v)) {
+      if (FORBIDDEN_NAMES.has(name)) return false;
+      if (!walk((v as Record<string, unknown>)[name], depth + 1)) return false;
+    }
+    return true;
+  };
+  return walk(value, 0);
 }
 
 /** An https URL, or http on this machine (a frontend in development). */
@@ -689,6 +724,11 @@ const isText = (s: unknown, max: number): s is string =>
 const isId = (s: unknown): s is string => isText(s, MAX_ID) && !FORBIDDEN_NAMES.has(s);
 const isName = isId;
 const isRef = (s: unknown): s is string => isText(s, MAX_REF) && !FORBIDDEN_NAMES.has(s);
+
+/** Whether a page may send `value` as a key, id or locale: what the admin's parser accepts. */
+export const isWireId = isId;
+/** Whether a page may send `value` as a ref: what the admin's parser accepts. */
+export const isWireRef = isRef;
 const optional = (v: unknown, test: (v: unknown) => boolean): boolean => v === undefined || test(v);
 
 export function isRecord(value: unknown): value is Record<string, unknown> {

@@ -39,21 +39,29 @@ export interface FieldPath {
 }
 
 const NAME = /^[^.[\]]+$/;
-const KEY = /^[^[\]]+$/;
+
+/**
+ * A key as a path holds it. Keys are any string the server stored, so the three characters that
+ * would end or confuse a bracket are escaped (`%` first, so an escape can't be forged).
+ */
+const escapeKey = (key: string): string =>
+  key.replace(/%/g, '%25').replace(/\[/g, '%5B').replace(/\]/g, '%5D');
+const unescapeKey = (key: string): string =>
+  key.replace(/%5B/gi, '[').replace(/%5D/gi, ']').replace(/%25/g, '%');
 
 /**
  * A field path as a ref carries it, in the notation of `patchBlocks`'s paths with keys in place of
- * indexes: `body`, `body[k1]`, `body[k1].heading`, `body[k1].items[k2].label`. Throws on a name
- * holding `.`, `[` or `]`, or a key holding a bracket: those would make a path that parses as a
- * different one.
+ * indexes: `body`, `body[k1]`, `body[k1].heading`, `body[k1].items[k2].label`. A key's `[`, `]` and
+ * `%` are escaped, so any stored key round-trips. Throws on an empty key, or on a field name holding
+ * `.`, `[` or `]` (an apiId never does), which would make a path that parses as a different one.
  */
 export function formatFieldPath(path: FieldPath): string {
   if (!NAME.test(path.field)) throw new Error(`Not a field name: ${path.field}`);
   let out = path.field;
   for (const step of path.steps) {
     if ('key' in step) {
-      if (!KEY.test(step.key)) throw new Error(`Not a block key: ${step.key}`);
-      out += `[${step.key}]`;
+      if (step.key === '') throw new Error('A block key is never empty');
+      out += `[${escapeKey(step.key)}]`;
     } else {
       if (!NAME.test(step.field)) throw new Error(`Not a field name: ${step.field}`);
       out += `.${step.field}`;
@@ -76,7 +84,7 @@ export function parseFieldPath(value: string): FieldPath | undefined {
     const block = /^\[([^[\]]+)\]/.exec(rest);
     const field = /^\.([^.[\]]+)/.exec(rest);
     if (block && last === 'field') {
-      steps.push({ key: block[1] as string });
+      steps.push({ key: unescapeKey(block[1] as string) });
       last = 'key';
       rest = rest.slice(block[0].length);
     } else if (field && last === 'key') {
@@ -130,7 +138,13 @@ export function formatContentRef(ref: ContentRef): string {
 /** Parses a serialized ref, or returns undefined if it is not one. */
 export function parseContentRef(value: string | null | undefined): ContentRef | undefined {
   if (!value) return undefined;
-  const parts = value.split(SEPARATOR).map(decodeURIComponent);
+  let parts: string[];
+  try {
+    parts = value.split(SEPARATOR).map(decodeURIComponent);
+  } catch {
+    // A malformed escape: not a ref, rather than an exception in whoever reads the page.
+    return undefined;
+  }
   if (parts.length !== 6 || parts.some((p) => p === '')) return undefined;
   const [space, environment, entryId, contentType, field, locale] = parts as [
     string,

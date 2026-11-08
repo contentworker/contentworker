@@ -44,7 +44,10 @@ call it on every page. `adminOrigin` must be the admin's exact origin (https; ht
 frame: sticky headers, full-height heroes and lazy loading behave as on the live site.
 
 `emit('page', …)` tells the admin which entries the page renders, so it knows whose state to
-send. Report the entry being edited and the entries it directly references.
+send. Report the entry being edited and the entries it directly references. Keep one connection
+per page; after a client-side navigation it fires `disconnect`, offers again, and sends the next
+page you report to the new session. Tell it about such navigations with
+`preview.emit('navigated', { url })`; it notices the back and forward buttons itself.
 
 | Capability     | Lets the admin                                                              |
 | -------------- | --------------------------------------------------------------------------- |
@@ -75,7 +78,9 @@ function Landing({ entry }) {
 ```
 
 It offers every capability unless you pass `capabilities`, and returns `{ active, connected,
-entries, preview }`. The admin hears an edit is on screen once React has committed it.
+entries, preview }`. It reports `page` to each new session and again whenever `page` changes, and
+empties `entries` when a session ends. The admin hears an edit is on screen once React has
+committed it.
 
 ## Render the state
 
@@ -110,7 +115,8 @@ field is a path with each block's `_key` in brackets:
 | A field in a nested block  | `body[0192f…].ctas[0192e…].label` |
 
 A key, not a position, names each block, so a ref still points at the same block after a
-reorder. `formatFieldPath` and `parseFieldPath` from `@contentworker/sdk` build and read paths,
+reorder. A key holding `[`, `]` or `%` is written escaped (`%5B`, `%5D`, `%25`), so any key
+round-trips. `formatFieldPath` and `parseFieldPath` from `@contentworker/sdk` build and read paths,
 and `refAttrs(ref)` from `@contentworker/sdk/live-preview` gives the attribute to spread. A ref
 with a path opens in the admin's entry form on its top-level field.
 
@@ -169,7 +175,9 @@ A `blocks.patch` uses the operations of the Management API's block patch (`inser
 `move`, `remove`, `duplicate`), addressed by `_key`. An op with `proposed: true` is Coworker's
 proposal: a proposed `insert` adds a ghost block, a proposed `update` or `move` shows a proposed
 change, a proposed `remove` marks a block, and a proposed `remove` of a proposed block takes it
-back. A fresh `entry.state` clears every proposal; the admin sends them again.
+back, with everything proposed in or beside it. A proposal names every block it brings by
+`_key`. A fresh `entry.state` clears every proposal; the admin sends them again. `proposals` is
+offered only with `patch.blocks`.
 
 Limits: a message is at most 256 KB (an `entry.state`, 2 MB); a `blocks.patch` has at most 100
 ops; `page` lists at most 200 entries.
@@ -188,6 +196,8 @@ Additions both sides may ignore, so they need no new protocol version:
   fields each, and 4,000 gaps.
 - **`editing`.** The admin turns in-page editing on and off. It is on when the page connects with
   `select`.
+- **`disconnect`.** `preview.on('disconnect')` fires when a session ends on a client-side
+  navigation.
 - **`pointer` with no ref.** A hover with `ref` and `rect` `null` says the pointer left every
   marked element.
 - **`entryId` on `applied` and `failed`**, since `rev` counts per entry; and the failure reasons
@@ -202,5 +212,7 @@ drafts off your preview deployment.
 Styling never crosses as CSS: a token prop arrives as a token name, which your page resolves from
 its own manifest. Before writing any value into a CSS custom property, check it with
 `isSafeTokenValue` from `@contentworker/sdk/live-preview`, and drop it whole when it fails. It
-refuses `url(`, `@import`, `expression(`, `javascript:`, `<`, `>`, `\` and any function but `var`,
-`calc`, `clamp`, `min`, `max`, `rgb`, `hsl` and `oklch`, in any case.
+refuses `url(`, `@import`, `expression(`, `javascript:`, `<`, `>`, `\`, quotes, `&`, `;`, braces and
+comments, and any function but `var`, `calc`, `clamp`, `min`, `max`, `rgb`, `hsl` and `oklch`, in
+any case. Write the value through `style.setProperty` or your framework's style object, never by
+building a `style` attribute or `<style>` text by hand.

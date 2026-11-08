@@ -591,10 +591,27 @@ describe('navigation', () => {
     document.body.appendChild(link);
     await connected();
     const click = new MouseEvent('click', { bubbles: true, cancelable: true });
-    link.addEventListener('click', (e) => e.preventDefault());
     link.dispatchEvent(click);
+    expect(click.defaultPrevented).toBe(false);
     window.dispatchEvent(new Event('pagehide'));
     expect(host.of('navigated')).toEqual([expect.objectContaining({ url: `${SITE}/about` })]);
+  });
+
+  it('forgets a link the page’s own router took over', async () => {
+    const link = document.createElement('a');
+    link.href = '/routed';
+    document.body.appendChild(link);
+    link.addEventListener('click', (e) => e.preventDefault());
+    await connected();
+    link.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    window.dispatchEvent(new Event('pagehide'));
+    expect(host.of('navigated')).toEqual([expect.objectContaining({ url: `${SITE}/page` })]);
+  });
+
+  it('resolves a relative URL from the router', async () => {
+    const p = await connected();
+    p.emit('navigated', { url: '/next?x=1' });
+    expect(host.of('navigated')).toEqual([expect.objectContaining({ url: `${SITE}/next?x=1` })]);
   });
 
   it('connects again on a new channel after client-side navigation', async () => {
@@ -685,5 +702,257 @@ describe('close', () => {
     expect(click.defaultPrevented).toBe(false);
     expect(states).toEqual([]);
     expect(host.raw).toHaveLength(count);
+  });
+});
+
+describe('found in review', () => {
+  const body = () => [
+    { _type: 'hero', _key: 'h1', heading: 'Welcome' },
+    { _type: 'cta', _key: 'c1', label: 'Sign up' },
+  ];
+  const keys = (value: unknown) => ((value ?? []) as { _key: string }[]).map((b) => b._key);
+
+  it('never runs two onState calls for one entry at once, even across a fresh state', async () => {
+    let running = 0;
+    let most = 0;
+    const releases: (() => void)[] = [];
+    await connected({
+      onState: async (_id, _locale, fields) => {
+        running += 1;
+        most = Math.max(most, running);
+        states.push({ entryId: 'e1', locale: 'en-US', fields, view: undefined as never });
+        await new Promise<void>((r) => releases.push(r));
+        running -= 1;
+      },
+    });
+    host.send(state(0, { title: 'Old' }));
+    await settle();
+    host.send(state(9, { title: 'Fresh' }));
+    await settle();
+    expect(running).toBe(1);
+    releases.shift()?.();
+    await settle();
+    releases.shift()?.();
+    await settle();
+    expect(most).toBe(1);
+    expect(states.map((s) => s.fields.title)).toEqual(['Old', 'Fresh']);
+    // The superseded render acknowledges nothing; the fresh one does.
+    expect(host.of('applied').map((m) => m.rev)).toEqual([9]);
+  });
+
+  it('gives the inline editor back its own setting when the session ends', async () => {
+    mountPage();
+    const editor = mountInlineEditor({ onEdit: () => {} });
+    expect(editor.enabled).toBe(false);
+    const p = await connected();
+    expect(editor.enabled).toBe(true);
+    p.close();
+    expect(editor.enabled).toBe(false);
+    editor.destroy();
+  });
+
+  it('keeps the inline editor stood down while another connection is still live', async () => {
+    const editor = mountInlineEditor({ onEdit: () => {} });
+    const first = await connected();
+    const second = connectPreview({ adminOrigin: ADMIN, capabilities: ALL, onState: () => {} });
+    const offer = host.raw.at(-1) as Posted;
+    host.send({ kind: 'connect.accept', version: 1, capabilities: ALL }, 1, {
+      channel: offer.channel as string,
+    });
+    expect(second.connected).toBe(true);
+    first.close();
+    expect(document.querySelector<HTMLButtonElement>('.cw-ie-toggle')?.hidden).toBe(true);
+    second.close();
+    expect(document.querySelector<HTMLButtonElement>('.cw-ie-toggle')?.hidden).toBe(false);
+    editor.destroy();
+  });
+
+  it('tells its handlers the session ended, and gives the new one the layout again', async () => {
+    mountPage();
+    const p = await connected();
+    host.send(state(0));
+    await settle();
+    flushFrames();
+    expect(host.of('layout')).toHaveLength(1);
+    const ended = vi.fn();
+    p.on('disconnect', ended);
+    p.emit('navigated', { url: `${SITE}/again` });
+    expect(ended).toHaveBeenCalledTimes(1);
+    // The pinned host dropped the new offer; answer it from what was posted.
+    const offer = host.raw.at(-1) as Posted;
+    host.channel = offer.channel as string;
+    host.received.length = 0;
+    host.send({ kind: 'connect.accept', version: 1, capabilities: ALL });
+    flushFrames();
+    expect(host.of('layout')).toHaveLength(1);
+  });
+
+  it('logs one error however many rejects arrive', () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    start();
+    host.supported = [7];
+    host.answer();
+    host.answer();
+    expect(error).toHaveBeenCalledTimes(1);
+    error.mockRestore();
+  });
+
+  it('lays a proposal inside another proposal of the same patch, by ref', async () => {
+    await connected();
+    host.send(state(0, { body: body() }));
+    host.send({
+      kind: 'blocks.patch',
+      rev: 1,
+      ...at,
+      field: 'body',
+      ops: [
+        { op: 'insert', ref: 'r1', block: { _type: 'section', _key: 's9' }, proposed: true },
+        {
+          op: 'insert',
+          parent: { key: 'r1', slot: 'items' },
+          block: { _type: 'cta', _key: 'g9' },
+          proposed: true,
+        },
+      ],
+    });
+    await settle();
+    const view = states.at(-1)?.view;
+    expect(view?.ghosts.inserted).toEqual(['s9', 'g9']);
+    const section = ((view?.withProposals.body ?? []) as { _key: string; items?: unknown }[]).find(
+      (b) => b._key === 's9',
+    );
+    expect(keys(section?.items)).toEqual(['g9']);
+  });
+
+  it('refuses a proposed insert that leaves a block to be keyed on the page', async () => {
+    await connected();
+    host.send(state(0, { body: body() }));
+    host.send({
+      kind: 'blocks.patch',
+      rev: 1,
+      ...at,
+      field: 'body',
+      ops: [
+        {
+          op: 'insert',
+          block: { _type: 'section', _key: 's9', items: [{ _type: 'cta' }] },
+          proposed: true,
+        },
+      ],
+    });
+    await settle();
+    expect(host.of('failed')).toEqual([expect.objectContaining({ rev: 1, reason: 'invalid' })]);
+  });
+
+  it('takes back what was proposed inside or beside a block taken back', async () => {
+    await connected();
+    host.send(state(0, { body: body() }));
+    host.send({
+      kind: 'blocks.patch',
+      rev: 1,
+      ...at,
+      field: 'body',
+      ops: [
+        { op: 'insert', block: { _type: 'section', _key: 's9' }, proposed: true },
+        {
+          op: 'insert',
+          parent: { key: 's9', slot: 'items' },
+          block: { _type: 'cta', _key: 'g9' },
+          proposed: true,
+        },
+        { op: 'remove', key: 's9', proposed: true },
+      ],
+    });
+    // The same key proposed again starts empty.
+    host.send({
+      kind: 'blocks.patch',
+      rev: 2,
+      ...at,
+      field: 'body',
+      ops: [{ op: 'insert', block: { _type: 'section', _key: 's9' }, proposed: true }],
+    });
+    await settle();
+    expect(states.at(-1)?.view.ghosts.inserted).toEqual(['s9']);
+  });
+
+  it('lists no proposed removal of a block the real edits already removed', async () => {
+    await connected();
+    host.send(state(0, { body: body() }));
+    host.send({
+      kind: 'blocks.patch',
+      rev: 1,
+      ...at,
+      field: 'body',
+      ops: [{ op: 'remove', key: 'c1', proposed: true }],
+    });
+    host.send({
+      kind: 'blocks.patch',
+      rev: 2,
+      ...at,
+      field: 'body',
+      ops: [{ op: 'remove', key: 'c1' }],
+    });
+    await settle();
+    expect(states.at(-1)?.view.ghosts.removed).toEqual([]);
+  });
+
+  it('caps the proposals one entry holds', async () => {
+    await connected();
+    host.send(state(0, { body: body() }));
+    for (let rev = 1; rev <= 11; rev++) {
+      const ops = Array.from({ length: 100 }, (_, i) => ({
+        op: 'update',
+        key: 'h1',
+        set: { heading: `${rev}.${i}` },
+        proposed: true,
+      }));
+      host.send({ kind: 'blocks.patch', rev, ...at, field: 'body', ops });
+    }
+    await settle();
+    expect(host.of('failed')).toEqual([expect.objectContaining({ rev: 11, reason: 'conflict' })]);
+  });
+
+  it('puts a block in a slot’s seams only when its path names that slot', async () => {
+    const { slot, ref } = mountPage();
+    const stray = document.createElement('section');
+    stray.setAttribute('data-cw-ref', formatContentRef({ ...ref('body[x1]'), entryId: 'other' }));
+    slot.appendChild(stray);
+    await connected();
+    host.send(state(0));
+    await settle();
+    flushFrames();
+    const [layout] = host.of('layout');
+    const gaps = ((layout?.slots ?? []) as { gaps: { before?: string }[] }[])[0]?.gaps ?? [];
+    expect(gaps.map((g) => g.before)).toEqual(['h1', 'c1', undefined]);
+  });
+
+  it('skips a block or field the admin could not read, rather than losing the whole layout', async () => {
+    const { slot, ref } = mountPage();
+    const bad = document.createElement('section');
+    bad.setAttribute('data-cw-ref', formatContentRef(ref('body[constructor]')));
+    const broken = document.createElement('p');
+    broken.setAttribute('data-cw-ref', 's|main|e1|landing|%E0|en-US');
+    slot.append(bad, broken);
+    await connected();
+    host.send(state(0));
+    await settle();
+    flushFrames();
+    expect(host.of('layout')).toHaveLength(1);
+  });
+
+  it('reports only the page entries the admin can read', () => {
+    const p = start();
+    p.emit('page', {
+      url: `${SITE}/page`,
+      entries: [
+        { entryId: 'e1', contentType: 'landing', locale: 'en-US' },
+        { entryId: '', contentType: 'landing', locale: 'en-US' },
+        { entryId: 'e2', contentType: 'constructor', locale: 'en-US' },
+      ],
+    });
+    host.answer();
+    expect(host.of('page')[0]?.entries).toEqual([
+      { entryId: 'e1', contentType: 'landing', locale: 'en-US' },
+    ]);
   });
 });

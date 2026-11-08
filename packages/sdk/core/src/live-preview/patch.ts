@@ -403,3 +403,13 @@ const keyOf = (item: Block): string | undefined => {
 };
 
 const isName = (s: unknown): s is string => typeof s === 'string' && s !== '' && isSafeName(s);
+
+/** Whether `block`, and every block in its slots all the way down, carries a `_key`. */
+export function everyBlockKeyed(block: unknown): boolean {
+  if (!isRecord(block) || keyOf(block) === undefined) return false;
+  if (!isBlock(block)) return true;
+  for (const [name, held] of Object.entries(block)) {
+    if (isSafeName(name) && isSlot(held) && !held.every(everyBlockKeyed)) return false;
+  }
+  return true;
+}

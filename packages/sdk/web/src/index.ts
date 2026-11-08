@@ -257,20 +257,41 @@ export function useLivePreview(
         await latest.current.onState?.(entryId, locale, fields, view);
       },
     });
-    const page = latest.current.page;
-    if (page) preview.emit('page', { url: window.location.href, entries: page.entries });
+    // Every session (the first, and each after a client-side navigation) hears what the page
+    // renders: `connectPreview` holds the last report and sends it once a session connects.
+    const report = () => {
+      const page = latest.current.page;
+      if (page) preview.emit('page', { url: window.location.href, entries: page.entries });
+    };
+    report();
     const offConnect = preview.on('connect', () => {
       setState((s) => ({ ...s, connected: true }));
+    });
+    // A session that ended took its unsaved state with it.
+    const offDisconnect = preview.on('disconnect', () => {
+      setState((s) => ({ ...s, connected: false, entries: {} }));
+      report();
     });
     setState((s) => ({ ...s, active: preview.active, preview }));
     return () => {
       offConnect();
+      offDisconnect();
       preview.close();
       // Renders that will now never commit: settle their waits, so nothing is left hanging.
       for (const resolve of committed.current.splice(0)) resolve();
       setState({ active: false, connected: false, entries: {}, preview: undefined });
     };
   }, [adminOrigin, capabilities]);
+
+  // The page's entries changed (a route reused the component for another entry): tell the admin.
+  const pageKey = JSON.stringify(options.page?.entries ?? null);
+  const reported = useRef(pageKey);
+  useEffect(() => {
+    if (reported.current === pageKey) return;
+    reported.current = pageKey;
+    const page = latest.current.page;
+    if (page) state.preview?.emit('page', { url: window.location.href, entries: page.entries });
+  }, [pageKey, state.preview]);
 
   return state;
 }

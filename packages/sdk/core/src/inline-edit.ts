@@ -146,6 +146,8 @@ export function mountInlineEditor(options: InlineEditorOptions = {}): InlineEdit
 
   // A connected live preview owns the page's editing: this overlay stands down.
   let channel = false;
+  // What editing was before a session took over, given back when it ends.
+  let own = enabled;
 
   const onPointerOver = (e: Event) => {
     if (!enabled || channel) return;
@@ -174,6 +176,11 @@ export function mountInlineEditor(options: InlineEditorOptions = {}): InlineEdit
   };
 
   function setEnabled(on: boolean): void {
+    // While a live preview drives editing, the page's own choice waits for the session to end.
+    if (channel) {
+      own = on;
+      return;
+    }
     enabled = on;
     toggle.setAttribute('aria-pressed', String(on));
     if (!on) outline.hidden = true;
@@ -186,6 +193,8 @@ export function mountInlineEditor(options: InlineEditorOptions = {}): InlineEdit
   doc.defaultView?.addEventListener('scroll', reposition, true);
   doc.defaultView?.addEventListener('resize', reposition);
   const unlink = onPreviewLink((state) => {
+    if (state.connected && !channel) own = enabled;
+    if (!state.connected && channel) enabled = own;
     channel = state.connected;
     if (channel) {
       enabled = state.editing;

@@ -66,7 +66,22 @@ describe('field paths in refs', () => {
       expect(parseFieldPath(bad)).toBeUndefined();
     }
     expect(() => formatFieldPath({ field: 'a.b', steps: [] })).toThrow();
-    expect(() => formatFieldPath({ field: 'body', steps: [{ key: 'k]1' }] })).toThrow();
+    expect(() => formatFieldPath({ field: 'body', steps: [{ key: '' }] })).toThrow();
+  });
+
+  it('round-trips any stored key, brackets and escapes included', () => {
+    for (const key of ['a]b', '[x]', '100%', '%5B', 'a%25]']) {
+      const path = { field: 'body', steps: [{ key }, { field: 'heading' }] };
+      const text = formatFieldPath(path);
+      expect(parseFieldPath(text)).toEqual(path);
+      expect(blockKeyOf(formatFieldPath({ field: 'body', steps: [{ key }] }))).toBe(key);
+      const ref = { ...base, field: text };
+      expect(parseContentRef(formatContentRef(ref))).toEqual(ref);
+    }
+  });
+
+  it('reads a malformed escape as no ref, rather than throwing', () => {
+    expect(parseContentRef('s1|main|e1|landing|%E0|en-US')).toBeUndefined();
   });
 
   it('names the top-level field and the block a path is in', () => {

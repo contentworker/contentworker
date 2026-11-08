@@ -113,6 +113,14 @@ describe('version negotiation', () => {
 });
 
 describe('capabilities', () => {
+  it('drops proposals without patch.blocks: there is no state to lay them on', () => {
+    expect(narrowCapabilities(['select', 'proposals'])).toEqual(['select']);
+    expect(narrowCapabilities(['patch.blocks', 'proposals'])).toEqual([
+      'patch.blocks',
+      'proposals',
+    ]);
+  });
+
   it('narrows, never widens', () => {
     expect(narrowCapabilities(['select', 'scroll', 'telepathy'], ['select'])).toEqual(['select']);
     expect(narrowCapabilities(['select'], CAPABILITIES)).toEqual(['select']);
@@ -347,7 +355,39 @@ describe('schemas', () => {
       expect(parseFrontendMessage({ ...env, ...m })).toEqual({ ok: false, reason: 'invalid' });
   });
 
+  it('refuses a tiny message holding a huge list or a typed array, at once', () => {
+    const at = { rev: 1, entryId: 'e1', locale: 'en-US' };
+    const layout = {
+      scroll: { x: 0, y: 0 },
+      viewport: { w: 1, h: 1 },
+      docHeight: 1,
+      slots: [],
+      fields: [],
+    };
+    const started = performance.now();
+    for (const blocks of [new Array(1e8), new Uint8Array(3e7)]) {
+      const result = parseFrontendMessage({ ...env, kind: 'layout', ...layout, blocks });
+      expect(result.ok).toBe(false);
+    }
+    expect(
+      parseAdminMessage({ ...env, kind: 'entry.state', ...at, fields: { body: new Array(1e8) } })
+        .ok,
+    ).toBe(false);
+    expect(performance.now() - started).toBeLessThan(200);
+  });
+
   it('types values: rich text is a document, never a string of HTML', () => {
+    expect(contentValueIssue('RichText', { nodeType: 'document', content: ['<b>x</b>'] })).toMatch(
+      /never as HTML/,
+    );
+    expect(
+      contentValueIssue('RichText', {
+        nodeType: 'document',
+        content: [
+          { nodeType: 'paragraph', content: [{ nodeType: 'text', value: 'Hi', marks: [] }] },
+        ],
+      }),
+    ).toBeUndefined();
     expect(contentValueIssue('RichText', '<p>Hello <b>world</b></p>')).toMatch(/never as HTML/);
     expect(contentValueIssue('RichText', { nodeType: 'document', content: [] })).toBeUndefined();
     expect(contentValueIssue('Symbol', 'a < b')).toBeUndefined();
@@ -368,7 +408,7 @@ describe('isSafeTokenValue', () => {
     'hsl(260 80% 50%)',
     'oklch(0.6 0.2 290)',
     'CALC(1px + 1px)',
-    '"Inter", system-ui, sans-serif',
+    'Inter, system-ui, sans-serif',
   ];
   for (const value of allowed)
     it(`accepts ${value}`, () => expect(isSafeTokenValue(value)).toBe(true));
@@ -396,6 +436,12 @@ describe('isSafeTokenValue', () => {
     'red; background: red',
     'red } body { color: red',
     'u/**/rl(x)',
+    'ur&#108(https://evil.test/x)',
+    '&#117rl(x)',
+    'a" onfocus="alert(1)',
+    "a' onfocus='x",
+    '`x`',
+    '"Inter", sans-serif',
     'red\nblue',
     'x'.repeat(300),
   ];
