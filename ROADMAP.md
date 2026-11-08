@@ -318,7 +318,8 @@ Built on Blocks and the frontend runtime. Layouts stay a typed tree; rich text s
 `RichTextDocument`; styling is design tokens and enum props, never raw CSS.
 
 - [ ] **Live preview channel.** `@contentworker/sdk/live-preview`: the admin frames the customer's
-  frontend and pushes unsaved form state as patches; clicks select fields back.
+  frontend and pushes unsaved form state as patches; clicks select fields back. Spec (proposed):
+  [`docs/specs/live-preview-channel.md`](docs/specs/live-preview-channel.md).
 - [ ] **Blocks renderers.** `<Blocks components={…} />` for React, Vue and the frontend runtime, typed
   by codegen.
 - [ ] **Layout patches.** `patchBlocks` with key-addressed create, update, move and remove, for
