@@ -894,12 +894,17 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   the right column, which is the selected block's inspector or, with nothing selected, the page's
   Checks. Everything over the page is drawn by the admin outside it, from the boxes the page
   reports (never a copy of the page): a slot is a dashed grey seam between blocks, its name and
-  fill ("Main · 3 of 8") shown on hover and once chosen, in ink; a selected block is an ink edge
-  with the focus ring; colour on the canvas is for status only. Choosing a seam (a click, a tap, or
-  `/` after the selected block) opens the **dock** along the bottom edge with exactly the blocks
-  that slot takes, under the catalog's group captions, each its name and description (no
-  thumbnails: `img-src`); a full slot says so and offers nothing. Its first block takes focus, and
-  the block put in hands focus to the inspector's heading. The inspector's tabs are Content (the
+  fill shown on hover ("Main · 3 of 8"; a range when the slot has a least and a most, "Features ·
+  0 of 2–4"; "1 block, needs 2" with a least alone; the same words in Layers and the inspector); a
+  selected block is an ink edge with the focus ring; colour on the canvas is for status only.
+  Choosing a seam (a click, a tap, or `/` after the selected block) marks it with a solid brand
+  insertion line (brand is what you chose; it goes when the dock closes or the block is in) and
+  opens the **dock**: one compact row along the bottom edge, at most 160px tall, of block cards
+  (name and one line of description, no thumbnails: `img-src`) under the catalog's group captions,
+  scrolling sideways; ← → move across the cards, one tab stop for the row. When the dock would
+  cover the chosen seam, the page brings the block beside it to the middle of its view (`scroll`).
+  A full slot says so and offers nothing. Its first block takes focus, and the block put in hands
+  focus to the inspector's heading; closing it hands focus back to what opened it. The inspector's tabs are Content (the
   block's own fields, the entry form's editors), Data (references) and Look (props limited to
   listed values, four or fewer as a segmented control, more as a select; never free CSS); a block
   the code no longer provides says "Removed from code" with Remove and Keep for now. **Layers** is
@@ -914,7 +919,9 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   `text-lg`, as a toolbar does, not at the Title tier: the page is the content. Below lg the
   right column's sheet holds the inspector or, with nothing selected, the Checks; the header's
   "N checks to fix" and a refused save open it. A save someone else's beat asks
-  in an alert dialog: Keep editing, Load theirs, or Save mine over it.
+  in an alert dialog: Keep editing, Load theirs, or Save mine over it
+  (`cms/components/entries/SaveConflictDialog.tsx`, which the entry form asks too: its save is
+  held to the version it was filled from).
 
 ## Elevation & Depth
 

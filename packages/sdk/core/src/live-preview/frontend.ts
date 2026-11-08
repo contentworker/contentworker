@@ -382,7 +382,13 @@ export function connectPreview(options: ConnectPreviewOptions): PreviewConnectio
         const el = elementFor(m.ref);
         if (el) {
           const reduce = win.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-          el.scrollIntoView({ block: 'center', behavior: reduce ? 'auto' : 'smooth' });
+          const align = m.align ?? 'center';
+          const inset = align === 'center' ? 0 : (m.inset ?? 0);
+          // Kept `inset` clear of the edge it lands on: what the admin draws over the frame there.
+          // At once when there is an inset to add, so the second scroll starts where the first ends.
+          el.scrollIntoView({ block: align, behavior: reduce || inset > 0 ? 'auto' : 'smooth' });
+          if (inset > 0)
+            win.scrollBy?.({ top: align === 'end' ? inset : -inset, behavior: 'auto' });
         }
         fire('scroll', m.ref);
         return;

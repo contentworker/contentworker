@@ -45,6 +45,7 @@ import { CanvasStage } from '~/cms/components/canvas/CanvasStage';
 import { Dock } from '~/cms/components/canvas/Dock';
 import { Inspector, type InspectorTab } from '~/cms/components/canvas/Inspector';
 import { Layers } from '~/cms/components/canvas/Layers';
+import { SaveConflictDialog } from '~/cms/components/entries/SaveConflictDialog';
 import { LoadingStatus } from '~/cms/components/loading';
 import { DEVICES, SiteNotice, useDevice } from '~/cms/components/pane/SitePane';
 import { useSiteFrame } from '~/cms/components/pane/use-site-frame';
@@ -87,7 +88,6 @@ import {
 } from '~/cms/lib/live-preview/frame-channel';
 import { capabilitiesFor, SELECT_ONLY } from '~/cms/lib/live-preview/host';
 import { refForField } from '~/cms/lib/live-preview/pick';
-import { ApiError } from '~/cms/lib/management';
 import { useEntryPickers } from '~/cms/lib/pickers';
 import {
   useContentTypesQuery,
@@ -97,6 +97,7 @@ import {
   useSpaceConfigQuery,
 } from '~/cms/lib/queries';
 import { plainKeyAllowed, type ShortcutGroup, usePageShortcuts } from '~/cms/lib/shortcuts';
+import { staleSave } from '~/cms/lib/stale-save';
 import { useToast } from '~/cms/lib/toast';
 
 /** iPad upright and up: the canvas edits by tap there, its panels in sheets. */
@@ -122,6 +123,11 @@ export const CANVAS_SHORTCUTS: ShortcutGroup = {
 };
 
 const newKey = () => crypto.randomUUID();
+
+/** The dock's height at lg: its `max-h-40` below, in pixels. Keep the two together. */
+const DOCK_HEIGHT = 160;
+/** The room a chosen seam keeps from the edge of the page's view, or from the dock. */
+const SEAM_ROOM = 24;
 
 /** Why the canvas reviews rather than edits, in the words it says so with. */
 type ReviewReason = 'narrow' | 'role' | 'published';
@@ -280,18 +286,18 @@ function Canvas({
     locale,
     defaultLocale,
   };
-  const selectedRef =
-    block && contentType
+  /** A block's ref as the page writes it: what `select` and `scroll` name. */
+  const refOf = (b: CanvasBlock) =>
+    contentType
       ? refForField(
           { space: conn.space, environment: conn.environment, entryId, contentType },
           locale,
-          block.slot.address.field,
-          block.key,
-          (fields[block.slot.address.field] as Record<string, unknown> | undefined)?.[
-            block.slot.locale
-          ],
+          b.slot.address.field,
+          b.key,
+          (fields[b.slot.address.field] as Record<string, unknown> | undefined)?.[b.slot.locale],
         )
       : null;
+  const selectedRef = block ? refOf(block) : null;
 
   const treeRef = useRef(tree);
   treeRef.current = tree;
@@ -475,12 +481,9 @@ function Canvas({
         void queryClient.invalidateQueries({ queryKey: keys.entriesRoot });
         toast.success('Draft updated');
       } catch (err) {
-        if (err instanceof ApiError && err.status === 409) {
-          const details = (err.body as { error?: { details?: { currentVersion?: unknown } } })
-            ?.error?.details;
-          const theirs =
-            typeof details?.currentVersion === 'number' ? details.currentVersion : null;
-          setConflict({ theirs });
+        const stale = staleSave(err);
+        if (stale) {
+          setConflict(stale);
           return;
         }
         throw err;
@@ -653,6 +656,7 @@ function Canvas({
   const history = doc?.history ?? EMPTY_HISTORY;
   const loading = site.status.status === 'loading';
   const dockOpenAt = dockPlace && editable ? dockPlace : undefined;
+  const chosenSeam = dockOpenAt ? `${dockOpenAt.slot.path}#${dockOpenAt.index}` : null;
   const geometryNote =
     editable && site.live && site.status.status === 'live'
       ? !hasLayout
@@ -663,6 +667,41 @@ function Canvas({
             ? 'Some seams far from view aren’t drawn on a page this long: scroll the page to reach them.'
             : null
       : null;
+
+  // The chosen seam stays in view above the dock: when the dock would cover it (or it is off the
+  // top), the page brings the block beside it to the middle of its view. Once per choice.
+  const stageBox = useRef<HTMLDivElement>(null);
+  const scrolledFor = useRef<string | null>(null);
+  const chosenRect = seams.find((x) => x.id === chosenSeam)?.rect;
+  useEffect(() => {
+    if (!chosenSeam || !dockPlace) {
+      scrolledFor.current = null;
+      return;
+    }
+    if (scrolledFor.current === chosenSeam || !chosenRect) return;
+    scrolledFor.current = chosenSeam;
+    const height = stageBox.current?.clientHeight ?? 0;
+    // At lg the dock covers the stage's foot (max-h-40); in a sheet below lg, about half of it.
+    const covered = wide ? DOCK_HEIGHT : height / 2;
+    const middle = chosenRect.y + chosenRect.h / 2;
+    if (middle >= 0 && middle <= height - covered - SEAM_ROOM) return;
+    const { slot, index } = dockPlace;
+    // The seam is the top edge of the block after it: that block's top goes near the top of the
+    // view. With none after it, it is the bottom edge of the block before it, which goes just
+    // above the dock. An empty slot's seam is inside the block holding it: that block's top.
+    const holder = slot.address.parent ? findBlock(tree, slot.address.parent.key) : undefined;
+    const after = slot.blocks[index];
+    const before = slot.blocks[index - 1];
+    const target = after ?? before ?? holder;
+    const ref = target ? refOf(target) : null;
+    if (!ref) return;
+    site.scrollTo(
+      ref,
+      target === before
+        ? { align: 'end', inset: covered + SEAM_ROOM }
+        : { align: 'start', inset: SEAM_ROOM },
+    );
+  });
 
   const inspectorBody = block ? (
     <Inspector
@@ -847,14 +886,14 @@ function Canvas({
             {layersBody}
           </aside>
         ) : null}
-        <div className="relative min-h-0" aria-busy={loading || undefined}>
+        <div ref={stageBox} className="relative min-h-0" aria-busy={loading || undefined}>
           <CanvasStage
             frameRef={site.frameRef}
             frameKey={site.frameKey}
             src={site.src}
             loading={loading}
             seams={seams}
-            chosenSeam={dockOpenAt ? `${dockOpenAt.slot.path}#${dockOpenAt.index}` : null}
+            chosenSeam={chosenSeam}
             hovered={editable || site.live ? hoverRect : null}
             selected={selectedRect}
             onChooseSeam={(seam) => openDock(seam)}
@@ -866,7 +905,8 @@ function Canvas({
               </>
             ) : null}
             {wide && dockOpenAt ? (
-              <div className="absolute inset-x-0 bottom-0 max-h-[45%] border-t bg-background shadow-float">
+              // max-h-40 is DOCK_HEIGHT: what the chosen seam is kept clear of.
+              <div className="absolute inset-x-0 bottom-0 max-h-40 border-t bg-background shadow-float">
                 <Dock
                   key={`${dockOpenAt.slot.path}#${dockOpenAt.index}`}
                   place={dockOpenAt}
@@ -934,43 +974,27 @@ function Canvas({
         </>
       ) : null}
 
-      <AlertDialog open={conflict !== null} onOpenChange={(open) => !open && setConflict(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Someone saved this entry while you worked</AlertDialogTitle>
-            <AlertDialogDescription>
-              It’s at {conflict?.theirs ? `v${conflict.theirs}` : 'a newer version'} now, and the
-              canvas started from v{doc.base.version}. Load theirs to see what changed (your edits
-              here are discarded), or save yours over it: theirs stays in the version history, and
-              can be restored from there.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Keep editing</AlertDialogCancel>
-            <AlertDialogAction variant="destructive" onClick={loadTheirs}>
-              Load theirs
-            </AlertDialogAction>
-            <AlertDialogAction
-              variant="default"
-              onClick={() => {
-                const theirs = conflict?.theirs;
-                setConflict(null);
-                if (theirs) {
-                  void save(theirs);
-                  return;
-                }
-                // The refusal didn't say which version is current: read it, then save over it.
-                client.getEntry(entryId).then(
-                  (now) => void save(now.version),
-                  () => toast.error('The entry couldn’t be read again. Try saving once more.'),
-                );
-              }}
-            >
-              Save mine over it
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <SaveConflictDialog
+        open={conflict !== null}
+        theirs={conflict?.theirs ?? null}
+        mine={doc.base.version}
+        where="the canvas"
+        onOpenChange={(open) => !open && setConflict(null)}
+        onLoadTheirs={loadTheirs}
+        onSaveOver={() => {
+          const theirs = conflict?.theirs;
+          setConflict(null);
+          if (theirs) {
+            void save(theirs);
+            return;
+          }
+          // The refusal didn't say which version is current: read it, then save over it.
+          client.getEntry(entryId).then(
+            (now) => void save(now.version),
+            () => toast.error('The entry couldn’t be read again. Try saving once more.'),
+          );
+        }}
+      />
 
       <AlertDialog
         open={blocker.state === 'blocked'}

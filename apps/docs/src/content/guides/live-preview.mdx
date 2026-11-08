@@ -45,11 +45,14 @@ over it. It edits the same draft as the form.
 
 - **Seams.** Each slot your page marks with `data-cw-slot` (a blocks field, or a slot inside a
   block, see [the `layout` extension](#extensions)) shows a dashed seam between its blocks, named
-  with the slot and how full it is ("Main · 3 of 8"). Choose a seam, or select a block and press
-  <kbd>/</kbd>, and the **dock** opens along the bottom with exactly the blocks that slot takes:
-  its field's block types, which a [block catalog](/guides/blocks-from-code/) push writes from each
-  slot's `allowedChildren`, under the catalog's groups with each block's description. A full slot
-  says so and offers nothing. Thumbnails aren't drawn; each block is its name.
+  with the slot and how full it is ("Main · 3 of 8", or "Features · 0 of 2–4" when the slot sets
+  `min` and `max`). Choose a seam, or select a block and press <kbd>/</kbd>: the seam is marked
+  with a solid line, and the **dock** opens along the bottom as one row of cards (← and → move
+  across them) with exactly the blocks that slot takes: its field's block types, which a
+  [block catalog](/guides/blocks-from-code/) push writes from each slot's `allowedChildren`, under
+  the catalog's groups with a line of each block's description. Your page is scrolled so the seam
+  stays above the dock. A full slot says so and offers nothing. Thumbnails aren't drawn; each
+  block is its name.
 - **Inserting** puts the block in your page at once, unsaved, and selects it.
 - **The inspector** edits the selected block: **Content** (its own fields, with the form's
   editors), **Data** (references to entries and assets) and **Look** (props limited to listed
@@ -218,7 +221,7 @@ are ignored, so a newer admin can talk to an older page at their shared version.
 | `entry.patch`    | `rev`, `entryId`, `locale`, `fields`: changed values (`null` clears one) |
 | `blocks.patch`   | `rev`, `entryId`, `locale`, `field`, `ops`: block operations, some `proposed: true` |
 | `select`         | `ref`, or `null` to clear                                     |
-| `scroll`         | `ref`                                                         |
+| `scroll`         | `ref`, `align?` (`start`, `center`, `end`) and `inset?` (extension) |
 | `editing`        | `on` (extension)                                              |
 
 | From page       | Carries                                                       |

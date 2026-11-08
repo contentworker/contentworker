@@ -204,15 +204,24 @@ export function parentBlock(
   return key ? findBlock(slots, key) : undefined;
 }
 
-/** "Main · 3 of 8", "Main · 3 blocks", or "Main · full, 8 of 8": a seam's words. */
-export function slotFill(slot: CanvasSlot): string {
+/**
+ * How full a slot is, in words: "0 of 2–4" when it takes a range, "3 of 8" with a most only,
+ * "full, 8 of 8" at its most, "1 block, needs 2" with a least only, "3 blocks" with neither.
+ */
+export function slotCount(slot: CanvasSlot): string {
   const n = slot.blocks.length;
-  if (slot.max !== undefined) {
-    return slot.full
-      ? `${slot.name} · full, ${n} of ${slot.max}`
-      : `${slot.name} · ${n} of ${slot.max}`;
+  const { min, max } = slot;
+  if (slot.full) return `full, ${n} of ${max}`;
+  if (max !== undefined) {
+    return min !== undefined && min > 0 && min !== max ? `${n} of ${min}–${max}` : `${n} of ${max}`;
   }
-  return `${slot.name} · ${n} ${n === 1 ? 'block' : 'blocks'}`;
+  const blocks = `${n} ${n === 1 ? 'block' : 'blocks'}`;
+  return min !== undefined && n < min ? `${blocks}, needs ${min}` : blocks;
+}
+
+/** A seam's (and a slot's) words: the slot's name and how full it is ("Main · 3 of 8"). */
+export function slotFill(slot: CanvasSlot): string {
+  return `${slot.name} · ${slotCount(slot)}`;
 }
 
 /** A place in a slot: where a seam is (before or after a block by key, or an index). */

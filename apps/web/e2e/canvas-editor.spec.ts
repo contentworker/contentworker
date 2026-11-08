@@ -1,6 +1,6 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, type Page, type TestInfo, test } from '@playwright/test';
-import { api, MGMT, openCms, SPACE, seedCms, useCmsScope } from './cms';
+import { api, MGMT, openCms, SPACE, saveContentType, seedCms, useCmsScope } from './cms';
 import { guestPort } from './live-guest/port';
 import { settle } from './settle';
 
@@ -25,19 +25,12 @@ const field = (apiId: string, name: string, position = 0) => ({
 
 test.beforeAll(async ({ request }) => {
   await seedCms(request);
-  // Each worker saves the type; two saving it at once is a 409 the API asks to try again.
-  for (let attempt = 1; ; attempt++) {
-    const type = await saveType(request);
-    if (type.status() !== 409 || attempt === 3) {
-      expect([200, 201], await type.text()).toContain(type.status());
-      break;
-    }
-  }
+  await saveType(request);
   await api(request, 'POST', `${MGMT}/content-types/canvasPage/published`);
 });
 
 const saveType = (request: Parameters<typeof api>[0]) =>
-  api(request, 'POST', `${MGMT}/content-types`, {
+  saveContentType(request, {
     apiId: 'canvasPage',
     name: 'Canvas page',
     displayField: 'title',
@@ -148,6 +141,11 @@ test('a seam opens the dock with only what fits there; a block put in shows unsa
   const dock = page.getByRole('region', { name: 'Add to Main' });
   await expect(dock).toBeVisible();
   await expect(dock.locator('[data-dock-item]')).toHaveText(['Hero', 'Call to action', 'Section']);
+  // A compact row along the bottom, and the chosen seam marked above it.
+  expect((await dock.boundingBox())?.height ?? 999).toBeLessThanOrEqual(160);
+  await expect(top.locator('[data-insertion-line]')).toHaveCount(1);
+  await page.keyboard.press('ArrowRight');
+  await expect(dock.getByRole('button', { name: 'Call to action' })).toBeFocused();
   await scan(page, testInfo, 'dock');
 
   // The cards slot takes cards only.
@@ -161,6 +159,7 @@ test('a seam opens the dock with only what fits there; a block put in shows unsa
   // Put a call to action between the hero and the section: on the page at once, not saved.
   await top.click();
   await dock.getByRole('button', { name: 'Call to action' }).click();
+  await expect(page.locator('[data-insertion-line]')).toHaveCount(0);
   const blocks = site.locator('#app > [data-cw-slot] > section');
   await expect(blocks).toHaveText(['Welcome', 'cta', /^Features/, 'Start']);
   await expect(page.getByText('Unsaved changes')).toBeVisible();

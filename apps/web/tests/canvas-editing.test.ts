@@ -41,8 +41,33 @@ describe('the slot tree', () => {
     expect(slotFill(main as NonNullable<typeof main>)).toBe('Main · 3 of 8');
     const items = findSlot(slots, 'body[s1].items');
     expect(items?.address).toEqual({ field: 'body', parent: { key: 's1', slot: 'items' } });
-    expect(items && slotFill(items)).toBe('Items · 1 of 2');
+    expect(items && slotFill(items)).toBe('Items · 1 of 1–2');
     expect(flattenBlocks(slots).map((b) => b.key)).toEqual(['h1', 's1', 'c1', 'a1']);
+  });
+
+  it('says how full a slot is, with its least and its most', () => {
+    const slot = findSlot(tree(), 'body[s1].items') as NonNullable<ReturnType<typeof findSlot>>;
+    const at = (over: Partial<typeof slot>, n: number) =>
+      slotFill({
+        ...slot,
+        ...over,
+        blocks: slot.blocks.slice(0, 0).concat(Array(n).fill(slot.blocks[0])),
+      });
+    expect(at({ name: 'Features', min: 2, max: 4, full: false }, 0)).toBe('Features · 0 of 2–4');
+    expect(at({ name: 'Features', min: undefined, max: 4, full: false }, 0)).toBe(
+      'Features · 0 of 4',
+    );
+    expect(at({ name: 'Features', min: 4, max: 4, full: false }, 1)).toBe('Features · 1 of 4');
+    expect(at({ name: 'Features', min: 2, max: 4, full: true }, 4)).toBe('Features · full, 4 of 4');
+    expect(at({ name: 'Features', min: 2, max: undefined, full: false }, 1)).toBe(
+      'Features · 1 block, needs 2',
+    );
+    expect(at({ name: 'Features', min: 2, max: undefined, full: false }, 2)).toBe(
+      'Features · 2 blocks',
+    );
+    expect(at({ name: 'Features', min: undefined, max: undefined, full: false }, 0)).toBe(
+      'Features · 0 blocks',
+    );
   });
 
   it('marks a block whose type the slot no longer takes as removed from code', () => {

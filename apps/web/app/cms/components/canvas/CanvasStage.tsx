@@ -92,7 +92,8 @@ const SEAM_MAX = 48;
 
 /**
  * One seam: a dashed rule across the gap, its slot's name and fill shown on hover and once chosen.
- * Grey at rest and ink when chosen: colour on the canvas is for status only.
+ * Dashed grey at rest, ink under the pointer; the chosen one, while the dock is open, is a solid
+ * brand line (brand marks what you chose; it is never a status).
  */
 function SeamMark({
   seam,
@@ -122,17 +123,31 @@ function SeamMark({
       className="group pointer-events-auto absolute flex items-center justify-center"
       style={box}
     >
-      <span
-        className={cn(
-          'absolute border-dashed transition-[border-color] duration-(--motion-instant)',
-          across ? 'inset-x-0 top-1/2 border-t' : 'inset-y-0 left-1/2 border-l',
-          chosen ? 'border-foreground' : 'border-muted-foreground/50 group-hover:border-foreground',
-        )}
-      />
+      {chosen ? (
+        // Where the block will go, while the dock is open: a solid brand line, the mark of what
+        // was chosen (never a status), apart from the dashed seams and the hover pill.
+        <span
+          data-insertion-line
+          className={cn(
+            // A paper halo, so the line holds against whatever the customer's page is drawn in.
+            'absolute rounded-full bg-brand shadow-[0_0_0_2px_var(--background)]',
+            across
+              ? 'inset-x-0 top-1/2 h-0.5 -translate-y-1/2'
+              : 'inset-y-0 left-1/2 w-0.5 -translate-x-1/2',
+          )}
+        />
+      ) : (
+        <span
+          className={cn(
+            'absolute border-dashed border-muted-foreground/50 transition-[border-color] duration-(--motion-instant) group-hover:border-foreground',
+            across ? 'inset-x-0 top-1/2 border-t' : 'inset-y-0 left-1/2 border-l',
+          )}
+        />
+      )}
       <span
         className={cn(
           'relative rounded-full border bg-background px-2 py-0.5 text-2xs text-foreground shadow-sm',
-          chosen ? 'border-foreground' : 'hidden group-hover:inline-block',
+          chosen ? 'border-brand' : 'hidden group-hover:inline-block',
         )}
       >
         {slotFill(seam.slot)}

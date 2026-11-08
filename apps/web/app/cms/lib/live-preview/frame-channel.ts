@@ -74,7 +74,17 @@ export type EditorMessage =
       readonly canvas?: boolean;
     }
   /** The form's focused field or block on the page, or none. */
-  | { readonly type: 'select'; readonly ref: string | null };
+  | { readonly type: 'select'; readonly ref: string | null }
+  /**
+   * Bring a marked element into the page's view, selecting nothing (`scroll`): centred, or its top
+   * (`start`) or bottom (`end`) edge `inset` pixels of the frame clear of the frame's edge.
+   */
+  | {
+      readonly type: 'scroll';
+      readonly ref: string;
+      readonly align?: 'start' | 'end';
+      readonly inset?: number;
+    };
 
 export type FrameMessage =
   /** The frame is up and wants the entry; `origin` is the site it frames. */

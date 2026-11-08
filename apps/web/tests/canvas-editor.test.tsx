@@ -180,6 +180,55 @@ describe('seams and the dock', () => {
     ]);
   });
 
+  it('marks the chosen seam with an insertion line while the dock is open, and scrolls it into view', async () => {
+    await setup();
+    await screen.findByRole('heading', { level: 1, name: 'Home' });
+    const f = frame();
+    f.connect();
+    f.geometry(GEOMETRY);
+    expect(document.querySelector('[data-insertion-line]')).toBeNull();
+    act(() => seam('body#1').click());
+    expect(seam('body#1').querySelector('[data-insertion-line]')).toBeTruthy();
+    expect(document.querySelectorAll('[data-insertion-line]')).toHaveLength(1);
+    // The stage here has no height, so the dock would cover the seam: the page is asked to bring
+    // the block after it to the top of its view, and nothing is selected for it.
+    expect(f.posted).toContainEqual({
+      channel: FRAME_CHANNEL,
+      type: 'scroll',
+      ref: ref('body[s1]'),
+      align: 'start',
+      inset: 24,
+    });
+    fireEvent.keyDown(document.activeElement as Element, { key: 'Escape' });
+    expect(document.querySelector('[data-insertion-line]')).toBeNull();
+    act(() => seam('body#1').click());
+    act(() => (dock().querySelector('[data-dock-item="cta"]') as HTMLElement).click());
+    expect(document.querySelector('[data-insertion-line]')).toBeNull();
+  });
+
+  it('moves across the dock’s cards with the arrows, one tab stop for the row', async () => {
+    await setup();
+    await screen.findByRole('heading', { level: 1, name: 'Home' });
+    const f = frame();
+    f.connect();
+    f.geometry(GEOMETRY);
+    act(() => seam('body#1').click());
+    const cards = () => [...dock().querySelectorAll<HTMLElement>('[data-dock-item]')];
+    expect(cards().map((c) => c.tabIndex)).toEqual([0, -1, -1]);
+    fireEvent.keyDown(document.activeElement as Element, { key: 'ArrowRight' });
+    expect(document.activeElement?.getAttribute('data-dock-item')).toBe('hero');
+    expect(cards().map((c) => c.tabIndex)).toEqual([-1, 0, -1]);
+    fireEvent.keyDown(document.activeElement as Element, { key: 'End' });
+    expect(document.activeElement?.getAttribute('data-dock-item')).toBe('cta');
+    fireEvent.keyDown(document.activeElement as Element, { key: 'ArrowRight' });
+    expect(document.activeElement?.getAttribute('data-dock-item')).toBe('cta');
+    fireEvent.keyDown(document.activeElement as Element, { key: 'Home' });
+    expect(document.activeElement?.getAttribute('data-dock-item')).toBe('section');
+    // Each group is named by its caption; blocks without one are under "Blocks".
+    expect(within(dock()).getByRole('list', { name: 'Blocks' })).toBeTruthy();
+    expect(within(dock()).getByRole('list', { name: 'Headers' })).toBeTruthy();
+  });
+
   it('never lets a seam grow past its cap, whatever box the page reports', async () => {
     await setup();
     await screen.findByRole('heading', { level: 1, name: 'Home' });
@@ -219,6 +268,8 @@ describe('seams and the dock', () => {
     expect(seam('body[s1].items#2').dataset.full).toBe('true');
     act(() => seam('body[s1].items#2').click());
     expect(within(dock()).getByText(/Items is full: it holds 2 of 2/)).toBeTruthy();
+    // With nothing to offer, the dock itself takes focus, so its words are heard.
+    expect(dock().contains(document.activeElement)).toBe(true);
     expect(dock().querySelectorAll('[data-dock-item]')).toHaveLength(0);
   });
 
@@ -417,7 +468,9 @@ describe('saving', () => {
   });
 
   it('saving over a newer save that didn’t say its version reads it first, never discards', async () => {
-    client.updateEntry.mockRejectedValueOnce(new ApiError(409, 'stale', { error: {} }));
+    client.updateEntry.mockRejectedValueOnce(
+      new ApiError(409, 'The entry changed after it was read. Read it again.', { error: {} }),
+    );
     client.updateEntry.mockResolvedValueOnce(saved(8));
     await edited();
     act(() => screen.getByRole('button', { name: 'Save draft' }).click());

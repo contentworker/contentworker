@@ -266,6 +266,7 @@ them; an admin that doesn't simply never sends or reads them.
 | Extension | What it adds |
 | --- | --- |
 | `layout` capability and `layout` message | Frontend → admin: `{ blocks: [{ ref, rect }], slots: [{ ref, rect, gaps }], fields: [{ ref, rect }], scroll, viewport, docHeight, truncated? }`, the geometry the canvas editor draws seams (insertion points) from. A slot is the element marked `data-cw-slot` with the slot's ref (`body`, `body[<key>].items`); each gap is `{ index, rect, axis, after?, before? }`, naming the blocks on either side by `_key`. Sent on change, at most once an animation frame. Fitted to the message limit, on-screen boxes first; `truncated: true` when some were left out. At most 2,000 of each list and 4,000 gaps. |
+| `align` and `inset` on `scroll` | Admin → frontend: where the element lands, `center` (the default) or `start` / `end`, kept `inset` CSS pixels clear of that edge: the canvas keeps a chosen seam out from under its dock. A page that ignores them centres the element, as before; a value outside the list, or an inset that isn't a number from 0 to 4,000, drops the message. |
 | `editing { on }` | Admin → frontend, needs `select`: turns in-page editing (and the inline editor) on or off. On when a session connects with `select`. |
 | `pointer` with `ref` and `rect` `null` | A hover that left every marked element, so the admin can clear its outline. |
 | `entryId` on `applied` and `failed` | `rev` counts per entry, so the acknowledgement names the entry. |

@@ -581,6 +581,28 @@ describe('pointer, select and scroll', () => {
     expect(selected.mock.calls).toEqual([['r1'], [null]]);
     expect(b.scrollIntoView).toHaveBeenCalledWith(expect.objectContaining({ block: 'center' }));
   });
+
+  it('lands a ref at the top or the bottom, clear of an inset, when the admin asks', async () => {
+    const { b } = mountPage();
+    b.scrollIntoView = vi.fn();
+    const scrollBy = vi.fn();
+    window.scrollBy = scrollBy as unknown as typeof window.scrollBy;
+    await connected();
+    const ref = b.getAttribute('data-cw-ref');
+    host.send({ kind: 'scroll', ref, align: 'end', inset: 180 });
+    expect(b.scrollIntoView).toHaveBeenLastCalledWith(expect.objectContaining({ block: 'end' }));
+    expect(scrollBy).toHaveBeenLastCalledWith({ top: 180, behavior: 'auto' });
+    host.send({ kind: 'scroll', ref, align: 'start', inset: 24 });
+    expect(b.scrollIntoView).toHaveBeenLastCalledWith(expect.objectContaining({ block: 'start' }));
+    expect(scrollBy).toHaveBeenLastCalledWith({ top: -24, behavior: 'auto' });
+    // A bad align or inset drops the message whole.
+    const calls = (b.scrollIntoView as ReturnType<typeof vi.fn>).mock.calls.length;
+    host.send({ kind: 'scroll', ref, align: 'middle' });
+    host.send({ kind: 'scroll', ref, align: 'end', inset: -1 });
+    host.send({ kind: 'scroll', ref, align: 'end', inset: 1e9 });
+    host.send({ kind: 'scroll', ref, align: 'end', inset: '10' });
+    expect((b.scrollIntoView as ReturnType<typeof vi.fn>).mock.calls.length).toBe(calls);
+  });
 });
 
 describe('navigation', () => {

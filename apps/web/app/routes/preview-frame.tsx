@@ -182,6 +182,19 @@ function SiteFrame({
           h.select(m.ref, m.ref !== picked);
           picked = null;
           return;
+        case 'scroll': {
+          if (typeof m.ref !== 'string') return;
+          const align = m.align === 'start' || m.align === 'end' ? m.align : undefined;
+          const inset = typeof m.inset === 'number' && Number.isFinite(m.inset) ? m.inset : 0;
+          // The editor measures in the frame's pixels; the page, in its own (scaled down to fit).
+          h.scrollTo(
+            m.ref,
+            align
+              ? { align, inset: Math.min(4000, Math.max(0, inset / scaleRef.current)) }
+              : undefined,
+          );
+          return;
+        }
       }
     };
     window.addEventListener('message', onMessage);
@@ -207,6 +220,8 @@ function SiteFrame({
   const scale = size.w > 0 ? Math.min(1, size.w / width) : 1;
   const left = Math.max(0, (size.w - width * scale) / 2);
   const height = size.h / scale;
+  const scaleRef = useRef(scale);
+  scaleRef.current = scale;
 
   // The box to draw for a ref: the latest layout's when the page reports one (it follows scrolling),
   // else the box the page gave with the pointer. Geometry may be partial on a very large page.

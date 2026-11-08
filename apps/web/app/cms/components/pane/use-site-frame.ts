@@ -67,6 +67,14 @@ export interface SiteFrame {
   /** What the session was accepted with (empty before connect). */
   readonly capabilities: readonly Capability[];
   readonly reload: () => void;
+  /**
+   * Asks the page to bring a marked element into view (needs `scroll`): centred, or its top or
+   * bottom edge `inset` frame pixels clear of the frame's edge.
+   */
+  readonly scrollTo: (
+    ref: string,
+    place?: { readonly align: 'start' | 'end'; readonly inset: number },
+  ) => void;
 }
 
 export function useSiteFrame(props: SiteFrameOptions): SiteFrame {
@@ -222,5 +230,8 @@ export function useSiteFrame(props: SiteFrameOptions): SiteFrame {
     live,
     capabilities,
     reload: () => setFrameKey((k) => k + 1),
+    scrollTo: (ref, place) => {
+      if (ready.current) toFrame({ type: 'scroll', ref, ...(place ?? {}) });
+    },
   };
 }
