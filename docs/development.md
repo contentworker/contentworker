@@ -281,6 +281,7 @@ read paths), 10 GB per database.
 | `redirects`, `redirect_sets` (`0017`)                                                                                                             | Redirects and their revision                                                              |
 | `saved_views` (`0029`)                                                                                                                            | Saved views of the entries list (space-scoped)                                            |
 | `menus` (`0020`)                                                                                                                                  | Navigation menus, each item tree a JSON column                                            |
+| `block_catalogs` (`0036`)                                                                                                                         | Pushed block catalog versions, each a JSON document                                       |
 | `ai_actions`, `agent_runs`, `agent_reviews`, `agent_schedules`                                                                                    | AI actions and the agent ledger                                                           |
 | `audit_log`, `audit_log_entries` (`0033`)                                                                                                         | Per-space audit trail; `0031` adds the indexes its filters read through, `0032` the `detail` of changed paths, `0033` which entries each row is about |
 | `outbox`                                                                                                                                          | Transactional outbox (`claimed_until` lease, `relayed_at`)                                |
@@ -421,6 +422,14 @@ row, for the reason 0030's triggers give: code that has never heard of the table
 a deploy and after a rollback. A `detail` that isn't valid JSON indexes only its target rather than
 failing the append. The migration backfills the rows already written. Nothing deletes from it, as
 nothing deletes audit history; deleting an environment leaves it.
+
+`0036_block_catalogs.sql` adds `block_catalogs` and touches no existing table: one
+environment-scoped row per pushed version (`version`, `hash`, `blocks` as one JSON document,
+`block_count`, `targets` and `changes` JSON, `pushed_by`, epoch-ms `pushed_at`), primary key
+`(space_id, environment_id, version)`. The key is the compare-and-set a push rides with: a version
+another push wrote first inserts nothing and fails the unit's guard. The history list selects every
+column but `blocks`. The environment purge clears it; nothing is backfilled (see
+[Domain model](./domain-model.md#block-catalogs)).
 
 `0035_content_type_preview.sql` adds the nullable `content_types.preview_url_template`, a type's
 `preview.urlTemplate`, as plain text for the same reason: on a replica behind the migration

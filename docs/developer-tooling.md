@@ -29,6 +29,7 @@ name) and `description` (what it covers and "Use when …"), a body under 500 li
 | `oauth.ts`       | The RFC 8628 device flow against the api's authorization server: discovery, registration, polling, refresh, revocation          |
 | `credentials.ts` | `credentials.json` in the user config dir, written 0600 in a 0700 directory, atomically (temp file and rename)                  |
 | `model.ts`       | Model files (JSON or a TypeScript module), normalization, and the plan `model apply` shows                                      |
+| `blocks.ts`      | Blocks files (`contentworker.blocks.json`, or a JSON/TS/JS module) and the change `blocks push` prints                         |
 | `io.ts`          | `Io`: process, fetch, clock, config dir and prompt, injected so tests run without a network or a terminal                       |
 
 Design points:
@@ -48,7 +49,7 @@ Design points:
   details? } }`). Exit codes: 0 ok, 1 failure, 2 usage or confirmation needed, 3 auth, 4 a
   destructive change refused. They are part of the interface the skills rely on.
 - **No prompts off a terminal.** `Io.interactive` is true only when stdin and stdout are TTYs;
-  otherwise a write that would ask (`model apply`, `import`) needs `--yes` or exits 2.
+  otherwise a write that would ask (`model apply`, `blocks push`, `import`) needs `--yes` or exits 2.
 - **`model apply` plans before it writes.** `planModel` compares normalized drafts with
   `GET …/content-types`: removing a field or block variant at any depth, and changing `type`,
   `linkType`, `localized` or `items.type`/`items.linkType`, are destructive and need
@@ -56,6 +57,13 @@ Design points:
   and publishes each type, so the server's own guard (`assertNoRemovedContentInUse`) still has the
   last word on removals. Types not in the file are reported, never deleted (there is no delete
   route).
+- **`blocks push` lets the server plan.** It reads the blocks file (`loadBlocks`), sends it to
+  `POST …/block-catalog` with `dryRun: true`, prints the result (`renderPush`), refuses (exit 4)
+  when `inUse` is non-empty (`blocks_in_use`) or the push is destructive without
+  `--allow-destructive` (`destructive_change`), confirms, then pushes with `expectedVersion` set to
+  the dry run's `previousVersion`, so a push landing in between is a `409`, not an overwrite.
+  `--no-publish` sends `publish: false`. `model apply`'s plan reads a variant whose `aliases` hold a
+  removed apiId as a rename, not a destructive removal.
 - **`entries list`** reads Preview (`GET /preview/:space/:env/entries`), since the Management API
   has no entry list; `entries update` merges by field and locale before the `PUT`, because the API
   replaces the whole draft.

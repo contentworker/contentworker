@@ -10,6 +10,7 @@ import {
   optionValue,
   ruleMessage,
   unsafeRegexReason,
+  variantNamed,
 } from '../content-type/field';
 import { fieldState, sameFieldValue, valuesForRules } from '../content-type/field-rules';
 import { isSlug } from '../content-type/slug';
@@ -380,7 +381,8 @@ function validateBlocks(
       push(`Block is missing _type (one of: ${variants.map((v) => v.apiId).join(', ')})`);
       return;
     }
-    const variant = variants.find((v) => v.apiId === type);
+    // A former apiId (`aliases`) reads as its variant: the block takes the new one on write.
+    const variant = variantNamed(variants, type);
     if (!variant) {
       push(`Unknown block type "${type}" (one of: ${variants.map((v) => v.apiId).join(', ')})`);
       return;

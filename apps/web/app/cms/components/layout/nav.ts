@@ -1,5 +1,6 @@
 import {
   Blocks,
+  Boxes,
   Building2,
   FileText,
   Image,
@@ -53,6 +54,7 @@ export const NAV: readonly NavItem[] = [
   },
   { to: '/releases', label: 'Releases', icon: Rocket, shortcutKey: 'r', tab: true },
   { to: '/workflows', label: 'Workflows', icon: Workflow, shortcutKey: 'w', section: 'Build' },
+  { to: '/blocks', label: 'Blocks', icon: Boxes, shortcutKey: 'b', section: 'Build' },
   { to: '/assets', label: 'Assets', icon: Image, shortcutKey: 'm', section: 'Library' },
   { to: '/taxonomy', label: 'Taxonomy', icon: Tags, shortcutKey: 't', section: 'Library' },
   {

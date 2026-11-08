@@ -10,6 +10,7 @@ import {
   SCHEDULER_ALERT_MAX_RECIPIENTS,
 } from '@contentworker/application';
 import {
+  BLOCK_CATALOG_LIMITS,
   FIELD_GUIDANCE_LIMITS,
   MAX_ASSET_RIGHTS_TEXT,
   MAX_CANONICAL_URL_LENGTH,
@@ -41,6 +42,7 @@ import {
 import { STARTERS } from '@contentworker/seed';
 import type { Context } from 'hono';
 import { z } from 'zod';
+import * as blockCatalogDocs from './docs/schemas/block-catalog';
 import { blockPatchShape } from './docs/schemas/blocks';
 import {
   contentTypeDetails,
@@ -958,4 +960,35 @@ export const localeSettingsBody = z.object({
         .strict(),
     )
     .describe('Settings by locale'),
+});
+
+/**
+ * A block catalog push. The blocks' deep shape (props, slots, placement, aliases) is checked by
+ * the domain, which names each problem (`blocks[hero].slots.items`); here only its outline.
+ */
+export const blockCatalogPushBody = z.object({
+  blocks: z
+    .array(blockCatalogDocs.blockManifest.loose())
+    .min(1)
+    .max(BLOCK_CATALOG_LIMITS.blocks)
+    .describe('The component manifests, in the order the editor’s dock lists them'),
+  targets: z
+    .array(blockCatalogDocs.blockCatalogTarget)
+    .min(1)
+    .max(BLOCK_CATALOG_LIMITS.targets)
+    .describe('The blocks fields the catalog provides the variants of'),
+  dryRun: z.boolean().optional().describe('Return what the push would do; change nothing'),
+  expectedVersion: z
+    .int()
+    .min(0)
+    .optional()
+    .describe('The version the push was reviewed against (0 before the first); another is a 409'),
+  allowDestructive: z
+    .boolean()
+    .optional()
+    .describe('Apply a push that removes blocks or block props (none an entry still holds)'),
+  publish: z
+    .boolean()
+    .optional()
+    .describe('Publish each changed type (default true); false leaves draft revisions'),
 });

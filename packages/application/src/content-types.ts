@@ -22,7 +22,7 @@ import {
   uniqueClaims,
   validateEntryFields,
 } from '@contentworker/domain';
-import { TransactionConflictError } from '@contentworker/ports';
+import { type ContentStoreTx, TransactionConflictError } from '@contentworker/ports';
 import type { AppContext } from './context';
 
 /**
@@ -236,8 +236,8 @@ const SINGLETON_NAMED = 10;
  * entry created after the read fails the commit (409) rather than becoming a second one. Turning
  * it off gives the claim back the same way. A save that leaves the flag alone is the plain save.
  *
- * Every save over a stored definition is guarded on the singleton flag it read, so a save racing
- * a turn on or off fails (409) rather than undoing it.
+ * Every save over a stored definition is guarded on the singleton flag and the version it read,
+ * so a save racing a turn on or off, or another revision, fails (409) rather than undoing it.
  *
  * Delivery serves the definition as last published, fields, URL pattern and singleton flag alike
  * (`deliveredContentType`), so a save of a published definition (a merge or a promotion copies
@@ -253,6 +253,33 @@ export async function saveContentTypeOver(
   current: ContentType | null,
   next: ContentType,
 ): Promise<void> {
+  const save = await prepareContentTypeSave(ctx, scope, current, next);
+  try {
+    await ctx.store.withTransaction(save.write);
+  } catch (err) {
+    if (!(err instanceof TransactionConflictError)) throw err;
+    throw new ConflictError(save.conflict);
+  }
+}
+
+/** A content type save read and ready: its writes, for a unit, and what a lost race means. */
+export interface PreparedContentTypeSave {
+  readonly write: (tx: ContentStoreTx) => Promise<void>;
+  /** The message a `TransactionConflictError` from the unit turns into. */
+  readonly conflict: string;
+}
+
+/**
+ * The reads `saveContentTypeOver` makes before its unit, and the writes it puts in the unit, apart:
+ * so a caller saving several types together (a block catalog push) puts every type's writes in one
+ * unit, each with the guards and the event its own save would have.
+ */
+export async function prepareContentTypeSave(
+  ctx: AppContext,
+  scope: Scope,
+  current: ContentType | null,
+  next: ContentType,
+): Promise<PreparedContentTypeSave> {
   const was = current?.singleton === true;
   const is = next.singleton === true;
   // Whose claims change (none while the flag stays as it was): on, the type's entries outside the trash (at most one, or the turn is
@@ -280,14 +307,19 @@ export async function saveContentTypeOver(
     const found = held ? await ctx.store.entries.get(scope, held.entryId) : null;
     holders = found ? [{ id: found.entry.id, fields: found.fields }] : [];
   }
-  try {
-    await ctx.store.withTransaction(async (tx) => {
-      // Every save over a stored definition is judged against the flag it read, so one that
-      // raced a turn on or off fails rather than undoing it; turning it on also against the
-      // entries it read.
+  return {
+    conflict:
+      is && !was
+        ? `"${next.apiId}" gained an entry or changed while it was being made a singleton; try again`
+        : `"${next.apiId}" changed while it was being saved; try again`,
+    async write(tx) {
+      // Every save over a stored definition is judged against the flag and version it read, so
+      // one that raced a turn on or off, or another revision, fails rather than undoing it;
+      // turning it on also against the entries it read.
       if (current) {
         await tx.contentTypes.guard(scope, next.apiId, {
           singleton: was,
+          version: current.version,
           ...(is && !was ? { entries: holders.map((h) => h.id) } : {}),
         });
       }
@@ -306,15 +338,8 @@ export async function saveContentTypeOver(
           version: next.version,
         });
       }
-    });
-  } catch (err) {
-    if (!(err instanceof TransactionConflictError)) throw err;
-    throw new ConflictError(
-      is && !was
-        ? `"${next.apiId}" gained an entry or changed while it was being made a singleton; try again`
-        : `"${next.apiId}" changed while it was being saved; try again`,
-    );
-  }
+    },
+  };
 }
 
 /** Entries read per page while looking for content a revision would strand. */

@@ -20,6 +20,7 @@ import { assetRenditionsRoutes } from './management/asset-renditions';
 import { assetZipsRoutes } from './management/asset-zips';
 import { assetsRoutes } from './management/assets';
 import { auditLogRoutes } from './management/audit-log';
+import { blockCatalogRoutes } from './management/block-catalog';
 import { blocksRoutes } from './management/blocks';
 import { bulkRoutes } from './management/bulk';
 import { collaborationRoutes } from './management/collaboration';
@@ -73,6 +74,7 @@ const AREAS: readonly ((deps: AuthDeps) => Hono<AuthVars>)[] = [
   pluginsRoutes,
   rolesRoutes,
   contentTypesRoutes,
+  blockCatalogRoutes,
   entriesRoutes,
   trashRoutes,
   aiContentRoutes,

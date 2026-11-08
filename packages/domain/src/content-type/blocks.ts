@@ -1,5 +1,11 @@
 import type { EntryFields } from '../types';
-import { BLOCK_TYPE_KEY, blockVariants, type FieldDefinition, variantOf } from './field';
+import {
+  BLOCK_TYPE_KEY,
+  blockVariants,
+  type FieldDefinition,
+  variantNamed,
+  variantOf,
+} from './field';
 
 /**
  * Schema evolution for blocks fields.
@@ -15,6 +21,10 @@ import { BLOCK_TYPE_KEY, blockVariants, type FieldDefinition, variantOf } from '
  * still holds a value for it fails its next save ("Unknown field"), and the
  * value would be silently dropped from delivery. `removedFields` and
  * `removedFieldUses` are the same pair for that change.
+ *
+ * A variant renamed with its old apiId kept in `aliases` is not removed: its
+ * blocks still read as it, so only its fields are compared. Dropping an alias
+ * later is a removal of that old apiId, as dropping the variant would be.
  *
  * A blocks field is located by its path of apiIds, with the variant a nested
  * field sits in shown in brackets: `body`, `body[hero].ctas`, `meta.blocks`.
@@ -41,14 +51,16 @@ export function removedVariants(
       if (variants) {
         const kept = blockVariants(g) ?? [];
         for (const v of variants) {
-          const survivor = kept.find((k) => k.apiId === v.apiId);
-          if (!survivor) {
+          const survivor = variantNamed(kept, v.apiId);
+          // A former apiId the variant listed and no variant lists any more is removed too: the
+          // blocks still stored under it would name nothing.
+          const dropped = (v.aliases ?? []).filter((a) => !variantNamed(kept, a));
+          for (const id of survivor ? dropped : [v.apiId, ...dropped]) {
             const set = removed.get(at) ?? new Set<string>();
-            set.add(v.apiId);
+            set.add(id);
             removed.set(at, set);
-          } else {
-            walk(v.fields, survivor.fields, `${at}[${v.apiId}]`);
           }
+          if (survivor) walk(v.fields, survivor.fields, `${at}[${v.apiId}]`);
         }
       } else if (f.type === 'Component') {
         walk(f.fields, g.fields, at);
@@ -127,7 +139,7 @@ export function removedFields(
       if (variants) {
         const kept = blockVariants(g) ?? [];
         for (const v of variants) {
-          const survivor = kept.find((k) => k.apiId === v.apiId);
+          const survivor = variantNamed(kept, v.apiId);
           if (survivor) walk(v.fields, survivor.fields, `${at}[${v.apiId}]`);
         }
       } else if (f.type === 'Component') {

@@ -84,6 +84,7 @@ export default defineConfig({
           label: 'Content',
           items: [
             { label: 'Content modeling', slug: 'guides/content-modeling' },
+            { label: 'Blocks from code', slug: 'guides/blocks-from-code' },
             { label: 'Editing and publishing', slug: 'guides/editing-and-publishing' },
             { label: 'Saved views', slug: 'guides/saved-views' },
             { label: 'Releases and scheduling', slug: 'guides/releases-and-scheduling' },

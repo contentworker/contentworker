@@ -348,9 +348,14 @@ Built on Blocks and the frontend runtime. Layouts stay a typed tree; rich text s
   agents and the editor alike.
 - [ ] **Layout-aware generation.** Generation that knows a field's block catalog and resolves images
   through asset search.
-- [ ] **Layout model.** Slots, deeper nesting than three levels, `allowedParents` and
-  `allowedChildren`, and per-breakpoint overrides of token props.
-- [ ] **Blocks from code.** `contentworker blocks push` maps component manifests to Blocks variants.
+- [ ] **Layout model.** Deeper nesting than three levels, and per-breakpoint overrides of token
+  props. (Slots, `allowedChildren` and `allowedParents` shipped with blocks from code.)
+- [x] **Blocks from code.** `contentworker blocks push` maps component manifests (JSON data:
+  token and enum props, slots with `allowedChildren`, `allowedParents`, aliases for renamed ids,
+  thumbnails) to Blocks variants, versioned per environment, over REST, MCP and the management
+  SDK, with block usage counts and a read-only catalog screen in Build → Blocks. Still to come:
+  admin config that narrows (never widens) what code allows per slot, the canvas dock listing a
+  slot's allowed blocks, and carrying the catalog in snapshots and environment clones.
 - [ ] **Canvas editor.** A toolbox, selection overlay and undo in `apps/web` over the preview channel.
 - [ ] **Frontend SDK extras.** `client.live()` and `useLiveEntry`, a Next.js draft-mode helper, a
   preview URL template per content type, and a "connect a frontend" screen that mints a delivery key

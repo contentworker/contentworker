@@ -134,6 +134,40 @@ describe('a blocks field becomes a union', () => {
     ]);
   });
 
+  it('serves a block stored under a former apiId (aliases) as its renamed variant', async () => {
+    const body = landingPage.fields[1] as FieldDefinition;
+    const renamed: ContentType = {
+      ...landingPage,
+      fields: [
+        landingPage.fields[0] as FieldDefinition,
+        {
+          ...body,
+          items: {
+            type: 'Component',
+            variants: (body.items?.variants ?? []).map((v) =>
+              v.apiId === 'hero' ? { ...v, apiId: 'banner', aliases: ['hero'] } : v,
+            ),
+          },
+        },
+      ],
+    };
+    const r = await graphql({
+      schema: buildDeliverySchema([renamed]),
+      contextValue,
+      source: `{ landingPage(id: "e1") { body {
+        __typename
+        ... on LandingPageBodyBanner { _type _key heading }
+      } } }`,
+    });
+    expect(r.errors).toBeUndefined();
+    expect((r.data as { landingPage: { body: unknown[] } }).landingPage.body[0]).toEqual({
+      __typename: 'LandingPageBodyBanner',
+      _type: 'banner',
+      _key: 'k1',
+      heading: 'Big',
+    });
+  });
+
   it('suffixes a member name a content type already holds', () => {
     const taken: ContentType = {
       ...landingPage,
