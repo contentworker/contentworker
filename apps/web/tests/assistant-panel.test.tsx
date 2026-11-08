@@ -20,6 +20,8 @@ const client = vi.hoisted(() => ({
   listTags: vi.fn(async () => [] as unknown[]),
   getRelease: vi.fn<(id: string) => Promise<unknown>>(),
   listStarters: vi.fn(async () => [] as unknown[]),
+  getBlocksOutline: vi.fn<(id: string) => Promise<unknown>>(),
+  checkBlockPatch: vi.fn<(id: string, patch: unknown) => Promise<unknown>>(),
 }));
 let scopeState: 'loading' | 'no-spaces' | 'error' | 'ready' = 'ready';
 let admin = true;
@@ -1056,6 +1058,648 @@ describe('a model’s proposal', () => {
     show(proposal('releases_add_entry', { releaseId: 'r1', entryId: 'e1' }));
     await screen.findByText('May launch');
     expect(screen.getByText(/Publishes with/)).toBeTruthy();
+  });
+});
+
+describe('a model’s block patch', () => {
+  const here = { spaceId: 'sp_1', environmentId: 'main' };
+  const symbol = (apiId: string, name: string) => ({
+    apiId,
+    name,
+    type: 'Symbol',
+    localized: false,
+    required: false,
+    position: 0,
+  });
+  const hero = { apiId: 'hero', name: 'Hero', fields: [symbol('heading', 'Heading')] };
+  const cta = { apiId: 'cta', name: 'Call to action', fields: [symbol('label', 'Label')] };
+  const blocks = (apiId: string, name: string, variants: unknown[], position = 1) => ({
+    apiId,
+    name,
+    type: 'Array',
+    localized: false,
+    required: false,
+    position,
+    items: { type: 'Component', variants },
+  });
+  const section = {
+    apiId: 'section',
+    name: 'Section',
+    fields: [symbol('title', 'Title'), blocks('items', 'Items', [hero, cta])],
+  };
+  const page = {
+    apiId: 'page',
+    name: 'Page',
+    displayField: 'title',
+    fields: [
+      symbol('title', 'Title'),
+      { ...blocks('body', 'Body', [hero, cta, section]), localized: true },
+      blocks('notes', 'Notes', [cta], 2),
+    ],
+  };
+  const heroBlock = { _type: 'hero', _key: 'k-hero', heading: 'Welcome' };
+  const ctaBlock = { _type: 'cta', _key: 'k-cta', label: 'Sign up' };
+  const sectionBlock = { _type: 'section', _key: 'k-sec', title: 'Features', items: [] };
+  const fields = {
+    title: { 'en-US': 'Home' },
+    body: {
+      'en-US': [heroBlock, ctaBlock, sectionBlock],
+      de: [{ ...ctaBlock, label: 'Anmelden' }],
+    },
+  };
+  const outline = (readable = ['body', 'notes']) => ({
+    entryId: 'e1',
+    version: 3,
+    fields: Object.fromEntries(readable.map((f) => [f, {}])),
+  });
+  /** The dry run's answer: the fields as the save would store them, and the patch as applied. */
+  const checked = (body: Record<string, unknown[]>, applied: unknown[]) => ({
+    valid: true,
+    contentTypeApiId: 'page',
+    fields: { ...fields, body },
+    applied,
+    keys: {},
+  });
+  const unprocessable = (issues: unknown[]) =>
+    new ApiError(422, 'One or more fields are invalid', {
+      error: { code: 'validation_failed', issues },
+    });
+  const forbidden = (details?: Record<string, unknown>) =>
+    new ApiError(403, 'Missing required scope "content:write:page"', {
+      error: { code: 'forbidden', ...(details ? { details } : {}) },
+    });
+  const patch = (input: Record<string, unknown>) =>
+    ({
+      type: 'tool-entry_blocks_patch',
+      toolCallId: 'call_1',
+      state: 'approval-requested',
+      input: { id: 'e1', expectedVersion: 3, ...input },
+      approval: { id: 'call_1' },
+    }) as never;
+  const remove = { op: 'remove', field: 'body', key: 'k-cta' };
+  const confirm = () => screen.getByRole('button', { name: 'Confirm' }) as HTMLButtonElement;
+  const notNow = () => screen.getByRole('button', { name: 'Not now' }) as HTMLButtonElement;
+  const stepsText = async () =>
+    within(await screen.findByRole('list', { name: 'Steps' }))
+      .getAllByRole('listitem')
+      .map((li) => li.textContent);
+  const hold = (text: string) => {
+    const line = screen.getByText(text);
+    expect(line.getAttribute('role')).toBe('status');
+    expect(confirm().getAttribute('aria-describedby')).toBe(line.id);
+  };
+  const show = (part: never) =>
+    render(
+      <MemoryRouter>
+        <ActionCard part={part} respond={vi.fn()} actionKey="m1:0" direct={false} turn={here} />
+      </MemoryRouter>,
+    );
+
+  beforeEach(() => {
+    client.listContentTypes.mockReset().mockResolvedValue([page]);
+    client.getEntry.mockResolvedValue({
+      id: 'e1',
+      contentType: 'page',
+      status: 'draft',
+      version: 3,
+      fields,
+    });
+    client.getBlocksOutline.mockReset().mockResolvedValue(outline());
+    client.checkBlockPatch.mockReset();
+  });
+
+  it('says each step and where it lands, reviews the order by name, then lets it be confirmed', async () => {
+    client.checkBlockPatch.mockResolvedValue(
+      checked({ 'en-US': [ctaBlock, sectionBlock, heroBlock], de: fields.body.de }, [
+        { op: 'move', field: 'body', locale: 'en-US', key: 'k-hero', to: { index: 2 } },
+        { op: 'move', field: 'body', locale: 'en-US', key: 'k-cta', to: { index: 0 } },
+      ]),
+    );
+    const ops = [
+      { op: 'move', field: 'body', key: 'k-hero', to: { index: 2 } },
+      { op: 'move', field: 'body', key: 'k-cta', to: { index: 0 } },
+    ];
+    show(patch({ ops }));
+    expect(confirm().disabled).toBe(true);
+    expect(await stepsText()).toEqual([
+      'Moves Hero “Welcome” to the end of Body',
+      'Moves Call to action “Sign up” to the start of Body',
+    ]);
+    // The call that runs on Confirm is the one checked.
+    expect(client.checkBlockPatch).toHaveBeenCalledWith('e1', { expectedVersion: 3, ops });
+    expect(screen.getByText('1 change in the draft:')).toBeTruthy();
+    expect(confirm().disabled).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: 'Review changes' }));
+    const changes = screen.getByRole('list', { name: 'Changes' });
+    // The slot's order before and after, by block name: never a diff of whatever sits at index 0.
+    expect(
+      within(changes).getByText('Hero “Welcome” · Call to action “Sign up” · Section “Features”'),
+    ).toBeTruthy();
+    expect(
+      within(changes).getByText('Call to action “Sign up” · Section “Features” · Hero “Welcome”'),
+    ).toBeTruthy();
+    // Said once: open, the summary list steps aside for the review that names the same change.
+    expect(screen.queryByRole('list', { name: 'Changed fields' })).toBeNull();
+    expect(within(changes).getAllByText('Body')).toHaveLength(1);
+  });
+
+  it('says where an insert lands: after a sibling, into a block, in another locale', async () => {
+    const added = { _type: 'cta', _key: 'n-1', label: 'Docs' };
+    const inside = { _type: 'hero', _key: 'n-2', heading: 'Inside' };
+    client.checkBlockPatch.mockResolvedValue(
+      checked(
+        {
+          'en-US': [heroBlock, added, ctaBlock, { ...sectionBlock, items: [inside] }],
+          de: [],
+        },
+        [
+          { op: 'insert', field: 'body', locale: 'en-US', index: 1, block: added },
+          {
+            op: 'insert',
+            field: 'body',
+            locale: 'en-US',
+            parent: { key: 'k-sec', slot: 'items' },
+            index: 0,
+            block: inside,
+          },
+          { op: 'remove', field: 'body', locale: 'de', key: 'k-cta' },
+        ],
+      ),
+    );
+    show(
+      patch({
+        ops: [
+          { op: 'insert', field: 'body', after: 'k-hero', block: { _type: 'cta', label: 'Docs' } },
+          {
+            op: 'insert',
+            field: 'body',
+            parent: { key: 'k-sec', slot: 'items' },
+            block: { _type: 'hero', heading: 'Inside' },
+          },
+          { op: 'remove', field: 'body', locale: 'de', key: 'k-cta' },
+        ],
+      }),
+    );
+    expect(await stepsText()).toEqual([
+      'Adds Call to action “Docs” after Hero “Welcome”',
+      'Adds Hero “Inside” into Section “Features”',
+      // The de block shares its key with en-US's; it is named from its own locale.
+      'Removes Call to action “Anmelden” (de)',
+    ]);
+    fireEvent.click(screen.getByRole('button', { name: 'Review changes' }));
+    const changes = screen.getByRole('list', { name: 'Changes' });
+    expect(within(changes).getByText('Section “Features” › Items')).toBeTruthy();
+    // The section's slot before its first block, and the de field after its last went.
+    expect(within(changes).getAllByText('No blocks')).toHaveLength(2);
+  });
+
+  it('reviews an update as the block’s own fields, matched by key', async () => {
+    client.checkBlockPatch.mockResolvedValue(
+      checked({ 'en-US': [{ ...heroBlock, heading: 'Hi' }, ctaBlock, sectionBlock], de: [] }, [
+        {
+          op: 'update',
+          field: 'body',
+          locale: 'en-US',
+          key: 'k-hero',
+          set: { heading: 'Hi' },
+        },
+      ]),
+    );
+    show(patch({ ops: [{ op: 'update', field: 'body', key: 'k-hero', set: { heading: 'Hi' } }] }));
+    expect(await stepsText()).toEqual(['Changes Hero “Welcome”']);
+    fireEvent.click(screen.getByRole('button', { name: 'Review changes' }));
+    const changes = screen.getByRole('list', { name: 'Changes' });
+    expect(within(changes).getByText('Hero “Welcome” › Heading')).toBeTruthy();
+    expect(within(changes).getByText('Welcome')).toBeTruthy();
+    expect(within(changes).getByText('Hi')).toBeTruthy();
+  });
+
+  it('says a duplicate by its original, and a move across slots by where it goes in', async () => {
+    const copy = { ...heroBlock, _key: 'n-1' };
+    const inside = { _type: 'cta', _key: 'k-in', label: 'Inside' };
+    const last = { _type: 'hero', _key: 'k-last', heading: 'Last' };
+    const startWith = {
+      ...fields,
+      body: {
+        'en-US': [heroBlock, ctaBlock, { ...sectionBlock, items: [inside, last] }],
+        de: [],
+      },
+    };
+    client.getEntry.mockResolvedValue({
+      id: 'e1',
+      contentType: 'page',
+      status: 'draft',
+      version: 3,
+      fields: startWith,
+    });
+    client.checkBlockPatch.mockResolvedValue(
+      checked(
+        {
+          'en-US': [heroBlock, copy, { ...sectionBlock, items: [inside, ctaBlock, last] }],
+          de: [],
+        },
+        [
+          { op: 'insert', field: 'body', locale: 'en-US', index: 1, block: copy },
+          {
+            op: 'move',
+            field: 'body',
+            locale: 'en-US',
+            key: 'k-cta',
+            to: { parent: { key: 'k-sec', slot: 'items' }, index: 1 },
+          },
+        ],
+      ),
+    );
+    show(
+      patch({
+        ops: [
+          { op: 'duplicate', field: 'body', key: 'k-hero' },
+          {
+            op: 'move',
+            field: 'body',
+            key: 'k-cta',
+            to: { parent: { key: 'k-sec', slot: 'items' }, after: 'k-in' },
+          },
+        ],
+      }),
+    );
+    expect(await stepsText()).toEqual([
+      'Duplicates Hero “Welcome”',
+      'Moves Call to action “Sign up” into Section “Features”, after Call to action “Inside”',
+    ]);
+  });
+
+  it('sees two same-named blocks swap, numbering them, rather than calling it no change', async () => {
+    const one = { _type: 'hero', _key: 'k-1' };
+    const two = { _type: 'hero', _key: 'k-2' };
+    client.getEntry.mockResolvedValue({
+      id: 'e1',
+      contentType: 'page',
+      status: 'draft',
+      version: 3,
+      fields: { ...fields, body: { 'en-US': [one, two] } },
+    });
+    client.checkBlockPatch.mockResolvedValue(
+      checked({ 'en-US': [two, one] }, [
+        { op: 'move', field: 'body', locale: 'en-US', key: 'k-1', to: { index: 1 } },
+      ]),
+    );
+    show(patch({ ops: [{ op: 'move', field: 'body', key: 'k-1', to: { index: 1 } }] }));
+    expect(await stepsText()).toEqual(['Moves Hero to the end of Body']);
+    expect(confirm().disabled).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: 'Review changes' }));
+    const changes = screen.getByRole('list', { name: 'Changes' });
+    expect(within(changes).getByText('Hero (1) · Hero (2)')).toBeTruthy();
+    expect(within(changes).getByText('Hero (2) · Hero (1)')).toBeTruthy();
+  });
+
+  it('counts a block with no key in the place a step lands, and in the order', async () => {
+    const keyless = { _type: 'cta', label: 'Old' };
+    client.getEntry.mockResolvedValue({
+      id: 'e1',
+      contentType: 'page',
+      status: 'draft',
+      version: 3,
+      fields: { ...fields, body: { 'en-US': [keyless, heroBlock, ctaBlock] } },
+    });
+    client.checkBlockPatch.mockResolvedValue(
+      checked({ 'en-US': [keyless, ctaBlock, heroBlock] }, [
+        { op: 'move', field: 'body', locale: 'en-US', key: 'k-cta', to: { index: 1 } },
+      ]),
+    );
+    show(patch({ ops: [{ op: 'move', field: 'body', key: 'k-cta', to: { index: 1 } }] }));
+    // Index 1 is after the keyless block, not the start.
+    expect(await stepsText()).toEqual([
+      'Moves Call to action “Sign up” after Call to action “Old”',
+    ]);
+    fireEvent.click(screen.getByRole('button', { name: 'Review changes' }));
+    expect(
+      screen.getByText('Call to action “Old” · Hero “Welcome” · Call to action “Sign up”'),
+    ).toBeTruthy();
+  });
+
+  it('sees a link pointed elsewhere as a change, though both read “Linked entry”', async () => {
+    const linkPage = {
+      ...page,
+      fields: [
+        symbol('title', 'Title'),
+        blocks('body', 'Body', [
+          {
+            apiId: 'cta',
+            name: 'Call to action',
+            fields: [
+              symbol('label', 'Label'),
+              { ...symbol('target', 'Target'), type: 'Link', linkType: 'Entry' },
+            ],
+          },
+        ]),
+      ],
+    };
+    client.listContentTypes.mockResolvedValue([linkPage]);
+    const was = { ...ctaBlock, target: { id: 'a', linkType: 'Entry' } };
+    client.getEntry.mockResolvedValue({
+      id: 'e1',
+      contentType: 'page',
+      status: 'draft',
+      version: 3,
+      fields: { ...fields, body: { 'en-US': [was] } },
+    });
+    client.getBlocksOutline.mockResolvedValue(outline(['body']));
+    client.checkBlockPatch.mockResolvedValue(
+      checked({ 'en-US': [{ ...was, target: { id: 'b', linkType: 'Entry' } }] }, [
+        {
+          op: 'update',
+          field: 'body',
+          locale: 'en-US',
+          key: 'k-cta',
+          set: { target: { id: 'b', linkType: 'Entry' } },
+        },
+      ]),
+    );
+    show(
+      patch({
+        ops: [
+          {
+            op: 'update',
+            field: 'body',
+            key: 'k-cta',
+            set: { target: { id: 'b', linkType: 'Entry' } },
+          },
+        ],
+      }),
+    );
+    expect(await stepsText()).toEqual(['Changes Call to action “Sign up”']);
+    expect(confirm().disabled).toBe(false);
+  });
+
+  it('shows what a new block would hold before it is confirmed', async () => {
+    const added = { _type: 'hero', _key: 'n-1', heading: 'Spring launch' };
+    client.checkBlockPatch.mockResolvedValue(
+      checked({ 'en-US': [heroBlock, ctaBlock, sectionBlock, added], de: fields.body.de }, [
+        { op: 'insert', field: 'body', locale: 'en-US', index: 3, block: added },
+      ]),
+    );
+    show(
+      patch({
+        ops: [{ op: 'insert', field: 'body', block: { _type: 'hero', heading: 'Spring launch' } }],
+      }),
+    );
+    expect(await stepsText()).toEqual(['Adds Hero “Spring launch” to the end of Body']);
+    fireEvent.click(screen.getByRole('button', { name: 'Review changes' }));
+    const changes = screen.getByRole('list', { name: 'Changes' });
+    expect(within(changes).getByText('Hero “Spring launch” › Heading')).toBeTruthy();
+    // With the review open the summary is no longer a lead-in to a list.
+    expect(screen.getByText('2 changes in the draft.')).toBeTruthy();
+  });
+
+  it('names a rule broken in a new block by its type, the api having minted its key', async () => {
+    client.checkBlockPatch.mockRejectedValue(
+      unprocessable([
+        {
+          field: 'body[3].label',
+          locale: 'en-US',
+          message: 'Field is required',
+          block: { key: 'minted', type: 'cta', path: 'label' },
+        },
+      ]),
+    );
+    show(patch({ ops: [{ op: 'insert', field: 'body', block: { _type: 'cta' } }] }));
+    await screen.findByText(
+      'The new call to action › Label: Field is required. Choose Not now, then ask again.',
+    );
+  });
+
+  it('words every step refusal from its code, never the api’s own text', async () => {
+    client.checkBlockPatch.mockRejectedValue(
+      unprocessable([
+        {
+          op: 0,
+          field: 'ops[0]',
+          locale: 'en-US',
+          code: 'holds_blocks',
+          key: 'k-sec',
+          message: '"items" holds blocks: change them with insert, move, remove or duplicate',
+        },
+      ]),
+    );
+    show(patch({ ops: [{ op: 'update', field: 'body', key: 'k-sec', set: { items: [] } }] }));
+    await screen.findByText(/Section “Features” keeps its blocks in a field a change can’t set/);
+    expect(screen.queryByText(/"items"/)).toBeNull();
+  });
+
+  it('refuses, never offers Try again, when the person can’t read the entry it would change', async () => {
+    client.getEntry.mockRejectedValue(
+      new ApiError(403, 'Missing required scope "content:read:page"'),
+    );
+    show(patch({ ops: [remove] }));
+    await screen.findByText('Your role can’t change this entry');
+    expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull();
+    expect(confirm().disabled).toBe(true);
+  });
+
+  it('won’t confirm a patch made for a version the draft has moved past', async () => {
+    client.checkBlockPatch.mockRejectedValue(
+      new ApiError(409, 'Entry "e1" is at version 4, not 3', {
+        error: { code: 'conflict', details: { currentVersion: 4, expectedVersion: 3 } },
+      }),
+    );
+    show(patch({ ops: [remove] }));
+    await screen.findByText('The entry changed after this was proposed');
+    expect(
+      screen.getByText(
+        'Its draft is at version 4; this change was made for version 3. Choose Not now, then ask again.',
+      ),
+    ).toBeTruthy();
+    expect(confirm().disabled).toBe(true);
+    hold('You can’t confirm this: the entry changed after it was proposed.');
+    expect(notNow().disabled).toBe(false);
+  });
+
+  it('says why a step doesn’t fit from its code, naming the block by its key', async () => {
+    client.checkBlockPatch.mockRejectedValue(
+      unprocessable([
+        {
+          op: 1,
+          field: 'ops[1]',
+          locale: 'en-US',
+          code: 'keyless_parent',
+          key: 'k-hero',
+          message: 'Block "k-hero" sits in a block with no _key; save the entry once to key it',
+        },
+      ]),
+    );
+    show(patch({ ops: [remove, { op: 'remove', field: 'body', key: 'k-hero' }] }));
+    await screen.findByText('Step 2 doesn’t fit this entry');
+    expect(
+      screen.getByText(
+        'Hero “Welcome” sits in a block with no key; save the entry once to give it one. Choose Not now, then ask again.',
+      ),
+    ).toBeTruthy();
+    expect(confirm().disabled).toBe(true);
+    hold('You can’t confirm this: step 2 doesn’t fit this entry.');
+  });
+
+  it('says a new block’s key is taken, naming the block that holds it', async () => {
+    client.checkBlockPatch.mockRejectedValue(
+      unprocessable([
+        {
+          op: 0,
+          field: 'ops[0]',
+          locale: 'en-US',
+          code: 'key_taken',
+          key: 'k-hero',
+          message: '_key "k-hero" is already held by a block in body (en-US)',
+        },
+      ]),
+    );
+    show(
+      patch({ ops: [{ op: 'insert', field: 'body', block: { _type: 'cta', _key: 'k-hero' } }] }),
+    );
+    await screen.findByText(/The new block’s key is already Hero “Welcome”’s\./);
+    expect(screen.queryByText(/k-hero/)).toBeNull();
+  });
+
+  it('reads an op the call can’t even express as that step', async () => {
+    client.checkBlockPatch.mockRejectedValue(
+      unprocessable([{ field: 'ops.0.op', message: 'Invalid input' }]),
+    );
+    show(patch({ ops: [{ op: 'rename', field: 'body', key: 'k-cta' }] }));
+    await screen.findByText('Step 1 doesn’t fit this entry');
+    expect(confirm().disabled).toBe(true);
+  });
+
+  it('names the block a broken rule falls in, by its key, and its field', async () => {
+    client.checkBlockPatch.mockRejectedValue(
+      unprocessable([
+        {
+          field: 'body[0].label',
+          locale: 'en-US',
+          message: 'Field is required',
+          block: { key: 'k-cta', type: 'cta', path: 'label' },
+        },
+      ]),
+    );
+    show(patch({ ops: [{ op: 'update', field: 'body', key: 'k-cta', unset: ['label'] }] }));
+    await screen.findByText('The entry wouldn’t be valid after this');
+    // One full stop, whatever the message ends with.
+    expect(
+      screen.getByText(
+        'Call to action “Sign up” › Label: Field is required. Choose Not now, then ask again.',
+      ),
+    ).toBeTruthy();
+    expect(screen.queryByText(/body\[0\]/i)).toBeNull();
+    hold('You can’t confirm this: the entry wouldn’t be valid after it.');
+  });
+
+  it('keeps a message’s own full stop rather than doubling it', async () => {
+    client.checkBlockPatch.mockRejectedValue(
+      unprocessable([{ field: 'title', locale: 'en-US', message: 'Too long.' }]),
+    );
+    show(patch({ ops: [remove] }));
+    await screen.findByText('Title: Too long. Choose Not now, then ask again.');
+  });
+
+  it('refuses a field the role can read but not write, named from the 403’s details', async () => {
+    client.checkBlockPatch.mockRejectedValue(forbidden({ reason: 'read_only', field: 'body' }));
+    show(patch({ ops: [remove] }));
+    await screen.findByText('Your role can’t change Body');
+    expect(confirm().disabled).toBe(true);
+    expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull();
+    hold('You can’t confirm this: it changes a field your role can’t change.');
+  });
+
+  it('counts the fields the dry run says the person can’t read', async () => {
+    client.checkBlockPatch.mockRejectedValue(forbidden({ reason: 'hidden', hidden: 2 }));
+    show(patch({ ops: [remove] }));
+    await screen.findByText('2 fields you can’t read are in this change, so it can’t be saved.');
+    hold('You can’t confirm this: it changes a field you can’t read.');
+  });
+
+  it('counts stored values the person can’t read that fail a rule, never naming them', async () => {
+    client.checkBlockPatch.mockRejectedValue(
+      unprocessable([
+        {
+          field: '',
+          code: 'hidden',
+          hidden: 1,
+          message:
+            '1 field you can’t read isn’t valid; someone who can read it has to fix it first',
+        },
+      ]),
+    );
+    show(patch({ ops: [remove] }));
+    await screen.findByText(
+      '1 field you can’t read isn’t valid, so this change can’t be saved until someone who can read it fixes it.',
+    );
+    expect(confirm().disabled).toBe(true);
+    hold('You can’t confirm this: a field you can’t read isn’t valid.');
+  });
+
+  it('counts a field missing from the outline without asking the dry run', async () => {
+    client.getBlocksOutline.mockResolvedValue(outline(['body']));
+    show(patch({ ops: [{ op: 'insert', field: 'notes', block: { _type: 'cta' } }] }));
+    await screen.findByText('1 field you can’t read is in this change, so it can’t be saved.');
+    expect(client.checkBlockPatch).not.toHaveBeenCalled();
+  });
+
+  it('refuses, never offers Try again, when the role can’t change the entry at all', async () => {
+    client.checkBlockPatch.mockRejectedValue(forbidden());
+    show(patch({ ops: [remove] }));
+    await screen.findByText('Your role can’t change this entry');
+    expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull();
+    expect(confirm().disabled).toBe(true);
+    hold('You can’t confirm this: your role can’t change this entry.');
+  });
+
+  it('holds Confirm when the patch changes nothing in the draft', async () => {
+    client.checkBlockPatch.mockResolvedValue(
+      checked(fields.body, [
+        {
+          op: 'update',
+          field: 'body',
+          locale: 'en-US',
+          key: 'k-cta',
+          set: { label: 'Sign up' },
+        },
+      ]),
+    );
+    show(
+      patch({ ops: [{ op: 'update', field: 'body', key: 'k-cta', set: { label: 'Sign up' } }] }),
+    );
+    await screen.findByText('The draft already holds this; the change does nothing.');
+    hold('You can’t confirm this: it changes nothing in the draft.');
+  });
+
+  it('holds Confirm for a call that doesn’t say what to change', async () => {
+    show(patch({ expectedVersion: undefined, ops: [] }));
+    await screen.findByText(/Coworker didn’t say which entry or what to change/);
+    expect(confirm().disabled).toBe(true);
+    expect(client.getEntry).not.toHaveBeenCalled();
+  });
+
+  it('offers Try again when the draft can’t be read, and Not now meanwhile', async () => {
+    client.getBlocksOutline.mockReset().mockRejectedValueOnce(new Error('down'));
+    client.checkBlockPatch.mockResolvedValue(
+      checked({ 'en-US': [heroBlock, sectionBlock], de: fields.body.de }, [
+        { ...remove, locale: 'en-US' },
+      ]),
+    );
+    show(patch({ ops: [remove] }));
+    await screen.findByRole('button', { name: 'Try again' });
+    expect(confirm().disabled).toBe(true);
+    hold('You can’t confirm until this can show what changes.');
+    expect(notNow().disabled).toBe(false);
+    client.getBlocksOutline.mockResolvedValue(outline());
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    expect(await stepsText()).toEqual(['Removes Call to action “Sign up”']);
+    expect(confirm().disabled).toBe(false);
+  });
+
+  it('treats a server failure other than a refusal as a failed read', async () => {
+    client.checkBlockPatch.mockRejectedValue(new ApiError(500, 'Internal error'));
+    show(patch({ ops: [remove] }));
+    await screen.findByRole('button', { name: 'Try again' });
+    expect(confirm().disabled).toBe(true);
   });
 });
 

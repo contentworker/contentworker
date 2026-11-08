@@ -844,6 +844,7 @@ as a new draft through the same save as `PUT …/entries/:id` (`patchEntryBlocks
 | ------ | ---------------------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | GET    | `…/entries/:id/blocks` | `preview:read`  | The current draft's blocks fields as a tree: `field`, `locale` narrow it → `{ entryId, version, fields: { [field]: { [locale]: [{ key, type, name, label?, path, ambiguous?, children? }] } } }`. Fields the role may not read are left out                                                                                 |
 | PATCH  | `…/entries/:id/blocks` | `content:write` | `{ expectedVersion, ops }` (1–100 ops, at most 64 KB) → `{ entry, fields, keys, inverse }`, a new draft. `409` when the entry is past `expectedVersion`; `422` with `op` and `field: ops[i]` on the first op that can't apply (nothing saved); `403` for an op on a field the role denies or makes read-only |
+| POST   | `…/entries/blocks/validate` | `content:write` | `{ entryId, expectedVersion, ops }`: the patch's dry run, with the same checks and errors (`409`, `403`, `422`), then the result judged as a save judges it → `{ valid, contentTypeApiId, fields, applied, keys, skippedHooks }`. Nothing is written; keys minted for new blocks are this answer's only. The entry is named in the body, as `…/entries/validate` names it |
 
 Each op names `field` (a top-level blocks field) and optionally `locale` (default: the default
 locale):
@@ -869,7 +870,24 @@ and the outline marks it `ambiguous`. An op on a block inside a block with no `_
 wrote, since an undo built from the patch would not restore them. The result is validated as any
 save is (field issues at `body[i].heading`).
 
-MCP: `entry_blocks_patch` (audited) and `entry_blocks_outline` (`readOnlyHint`, not audited).
+Refusals are structured, the same on REST and MCP, so a client acts on them without reading the
+message:
+
+- A `422` issue for an op carries `op` (its index), `code` (`unknown_key`, `ambiguous_key`,
+  `keyless_parent`, `type_not_allowed`, `into_itself`, `placed_by_itself`, `not_in_slot`,
+  `key_taken`, `bad_locale`, … : `BLOCK_PATCH_ISSUE_CODES` in the domain) and, when it is about an
+  existing block, `key` (that block's `_key`).
+- A `422` field issue from the result's validation also carries `block: { key, type, path }`: the
+  innermost keyed block its position falls in and the path inside it (`label`), since positions
+  say nothing once blocks move.
+- Field issues in fields the caller's role denies (a stored value someone else left failing a
+  rule) are never listed: they fold into one issue after the others,
+  `{ field: "", code: "hidden", hidden: n, message }`, that counts the fields without naming them.
+- A `403` for a field carries `details`: `{ reason: "read_only", field }` for a field the role can
+  read but not write, or `{ reason: "hidden", hidden: n }` counting fields it can't read (never
+  named). A `403` with no details is the role refusing the entry itself.
+
+MCP: `entry_blocks_patch` (audited), `entry_blocks_validate` and `entry_blocks_outline` (`readOnlyHint`, not audited). Coworker offers `entry_blocks_outline` and proposes `entry_blocks_patch`; its card shows the dry run's field diff and holds Confirm while the dry run refuses.
 
 ### Menus
 

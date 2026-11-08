@@ -530,6 +530,11 @@ export const entrySeoShape = {
 export const entrySeoBody = z.object(entrySeoShape);
 /** A key-addressed patch of an entry's blocks fields (`patchEntryBlocks`). */
 export const blockPatchBody = z.object(blockPatchShape);
+/**
+ * A dry run of one (`checkEntryBlocks`). The entry is named in the body, as `…/entries/validate`
+ * names it, so the audit row of a check that wrote nothing is never read as the entry's activity.
+ */
+export const blockPatchCheckBody = z.object({ entryId: zId, ...blockPatchShape });
 export const translateBody = z.object({
   targetLocale: zLocale,
   sourceLocale: zLocale.optional(),

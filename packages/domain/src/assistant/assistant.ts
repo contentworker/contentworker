@@ -90,6 +90,7 @@ export const ASSISTANT_TOOLS = {
   model_get_content_type: read('Read a content type', 'Read a content type'),
   entries_query: read('Find entries', 'Found entries'),
   entries_get: read('Read an entry', 'Read an entry'),
+  entry_blocks_outline: read('Outline an entry’s blocks', 'Outlined an entry’s blocks'),
   entries_suggest: read('Suggest entries', 'Suggested entries'),
   content_search: read('Search content', 'Searched content'),
   entries_list_versions: read('List an entry’s versions', 'Listed an entry’s versions'),
@@ -105,6 +106,7 @@ export const ASSISTANT_TOOLS = {
 
   entries_create: edit('Create an entry', 'Created', 'Not created'),
   entries_update: edit('Save a draft', 'Saved a draft', 'Draft not saved'),
+  entry_blocks_patch: edit('Change blocks', 'Changed blocks', 'Blocks not changed'),
   entries_duplicate: edit('Duplicate an entry', 'Duplicated', 'Not duplicated'),
   entries_restore: edit('Restore from trash', 'Restored from trash', 'Left in the trash'),
   entries_set_metadata: edit('Set entry details', 'Set details', 'Details not set'),

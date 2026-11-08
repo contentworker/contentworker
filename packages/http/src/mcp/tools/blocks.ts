@@ -1,6 +1,7 @@
 import {
   authorizeBlockPatch,
   type BlockOpInput,
+  checkEntryBlocks,
   getEntry,
   outlineEntryBlocks,
   patchEntryBlocks,
@@ -14,6 +15,38 @@ import { ok, READ_ONLY, scopeArgs, scopeOf, type ToolContext, toolSchema } from 
 export function registerBlockTools(server: McpServer, t: ToolContext): void {
   const { ctx, principal, guard } = t;
   // --- key-addressed edits to an entry's blocks fields ------------------------------
+  server.registerTool(
+    'entry_blocks_validate',
+    {
+      description:
+        'Check an entry_blocks_patch without saving it: exactly the checks the patch makes, failing ' +
+        'with the same errors (a stale expectedVersion, a field your role may not write, the op ' +
+        'that can’t apply or the field the result breaks). Writes nothing. Answers the fields as ' +
+        'the save would store them and the patch as it would apply (refs, positions and locales ' +
+        'resolved); keys minted for new blocks are this answer’s only.',
+      inputSchema: toolSchema('entry_blocks_validate', () =>
+        z.object({ id: z.string(), ...blockPatchShape, ...scopeArgs }),
+      ),
+      annotations: { readOnlyHint: true },
+    },
+    async (args) => {
+      guard(SCOPES.contentWrite, scopeOf(args));
+      const access = await authorizeBlockPatch(ctx, scopeOf(args), principal, args.id);
+      const checked = await checkEntryBlocks(
+        ctx,
+        scopeOf(args),
+        args.id,
+        { expectedVersion: args.expectedVersion, ops: args.ops as readonly BlockOpInput[] },
+        access,
+      );
+      // As the route does: the answer shows only the fields the caller may read.
+      return ok({
+        ...checked,
+        fields: maskDeniedFields(principal, checked.contentTypeApiId, checked.fields),
+      });
+    },
+  );
+
   server.registerTool(
     'entry_blocks_outline',
     {
@@ -67,13 +100,13 @@ export function registerBlockTools(server: McpServer, t: ToolContext): void {
     },
     async (args) => {
       guard(SCOPES.contentWrite, scopeOf(args));
-      const unwritable = await authorizeBlockPatch(ctx, scopeOf(args), principal, args.id);
+      const access = await authorizeBlockPatch(ctx, scopeOf(args), principal, args.id);
       const saved = await patchEntryBlocks(
         ctx,
         scopeOf(args),
         args.id,
         { expectedVersion: args.expectedVersion, ops: args.ops as readonly BlockOpInput[] },
-        { unwritable },
+        access,
       );
       // As the route does: the answer shows only the fields the caller may read.
       return ok({

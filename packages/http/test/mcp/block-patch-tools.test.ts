@@ -8,6 +8,7 @@ import {
   getEntry,
   publishContentType,
   SYSTEM_CALLER,
+  updateContentType,
 } from '@contentworker/application';
 import { type FieldDefinition, type Principal, SCOPES } from '@contentworker/domain';
 import {
@@ -192,6 +193,7 @@ describe('the blocks tools', () => {
         op: 1,
         field: 'ops[1]',
         locale: 'en-US',
+        code: 'type_not_allowed',
         message: 'A "hero" block can’t go here (one of: cta)',
       },
     ]);
@@ -217,6 +219,29 @@ describe('the blocks tools', () => {
     expect(outline?.annotations?.readOnlyHint).toBe(true);
     expect(patch).toBeDefined();
     expect(patch?.annotations?.readOnlyHint).not.toBe(true);
+    expect(tools.find((t) => t.name === 'entry_blocks_validate')?.annotations?.readOnlyHint).toBe(
+      true,
+    );
+  });
+
+  it('checks a patch without saving it, refusing as the patch would', async () => {
+    const { ctx, id, body, call } = await setup();
+    const ok = await call('entry_blocks_validate', {
+      id,
+      expectedVersion: 1,
+      ops: [{ op: 'update', field: 'body', key: body, set: { label: 'Join' } }],
+    });
+    expect(ok.isError, ok.text).toBe(false);
+    const checked = JSON.parse(ok.text);
+    expect(checked.fields.body['en-US']).toEqual([{ _type: 'cta', _key: body, label: 'Join' }]);
+    expect(checked.applied[0]).toMatchObject({ op: 'update', locale: 'en-US', key: body });
+    const stale = await call('entry_blocks_validate', {
+      id,
+      expectedVersion: 2,
+      ops: [{ op: 'remove', field: 'body', key: body }],
+    });
+    expect(stale.isError).toBe(true);
+    expect((await getEntry(ctx, scope, id)).entry.currentVersion).toBe(1);
   });
 });
 
@@ -254,5 +279,66 @@ describe('the blocks tools for a restricted role', () => {
     expect(r.isError).toBe(true);
     expect(r.text).toContain('content:write:page');
     expect((await readOnly.call('entry_blocks_outline', { id: readOnly.id })).isError).toBe(false);
+  });
+
+  it('counts a stored value it can’t read that fails a rule, as REST does', async () => {
+    const { ctx, id, body, call } = await setup(writer);
+    // A rule added to the notes' blocks after they were saved: the stored one now fails it.
+    const stricter = {
+      ...cta,
+      fields: [...cta.fields, field({ apiId: 'url', type: 'Symbol', position: 1, required: true })],
+    };
+    await updateContentType(ctx, SYSTEM_CALLER, scope, 'page', {
+      fields: [
+        field({ apiId: 'title', type: 'Symbol' }),
+        blocks('body', 1),
+        blocks('sidebar', 2),
+        field({
+          apiId: 'notes',
+          type: 'Array',
+          position: 3,
+          items: { type: 'Component', variants: [stricter] },
+        }),
+      ],
+    });
+    await publishContentType(ctx, scope, 'page');
+    for (const tool of ['entry_blocks_patch', 'entry_blocks_validate']) {
+      const r = await call(tool, {
+        id,
+        expectedVersion: 1,
+        ops: [{ op: 'update', field: 'body', key: body, set: { label: 'Join' } }],
+      });
+      expect(r.isError).toBe(true);
+      expect(JSON.parse(r.text).error.issues).toEqual([
+        expect.objectContaining({ field: '', code: 'hidden', hidden: 1 }),
+      ]);
+      expect(r.text).not.toContain('notes');
+    }
+  });
+
+  it('answers a refusal with REST’s 403 body: a read-only field named, a hidden one counted', async () => {
+    const { id, sidebar, call } = await setup(writer);
+    for (const tool of ['entry_blocks_patch', 'entry_blocks_validate']) {
+      const locked = await call(tool, {
+        id,
+        expectedVersion: 1,
+        ops: [{ op: 'remove', field: 'sidebar', key: sidebar }],
+      });
+      expect(locked.isError).toBe(true);
+      expect(JSON.parse(locked.text).error).toMatchObject({
+        code: 'forbidden',
+        details: { reason: 'read_only', field: 'sidebar' },
+      });
+      const hidden = await call(tool, {
+        id,
+        expectedVersion: 1,
+        ops: [{ op: 'insert', field: 'notes', block: { _type: 'cta' } }],
+      });
+      expect(JSON.parse(hidden.text).error).toMatchObject({
+        code: 'forbidden',
+        details: { reason: 'hidden', hidden: 1 },
+      });
+      expect(hidden.text).not.toContain('notes');
+    }
   });
 });
