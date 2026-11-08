@@ -276,6 +276,28 @@ Found while building and reviewing M1 and M2. None blocks a release.
 - [ ] **Unused api email config.** Drop `EMAIL_FROM`, `EMAIL_FROM_NAME` and the `send_email` comment
   from `apps/api/wrangler.jsonc`; nothing on the api sends email.
 
+#### Follow-ups from first-run onboarding
+
+Found while building and reviewing the setup flow (`/setup` → `/setup/two-factor` → `/setup/space`).
+None blocks a release.
+
+- [ ] **A setup step for a due password change.** A person whose password change is due is held on
+  the whole `/account` page inside the shell; give it a bare step like `/setup/two-factor`.
+- [ ] **Back to Coworker after skipping.** "Skip for now" leaves the New space dialog as the only
+  way to a first space; offer setting up with Coworker from the no-spaces notice too.
+- [ ] **No space to reach.** A person whose role covers no space sees the no-spaces notice with
+  nothing to do; say who can give them access.
+- [ ] **Setup without a model.** Where the assistant has no model, open `/setup/space` on the New
+  space form rather than a conversation that can't answer. Check it on a deployment.
+- [ ] **Background installs in the conversation.** After Coworker creates a space with a starter
+  that installs in the background, follow the install on its card, as the New space dialog does.
+- [ ] **Keep recovery codes.** Copy all and download on the recovery codes shown after turning on
+  two-factor, the one time they're shown.
+- [ ] **Setup at phone width.** Walk the three setup pages on a phone and add them to the device
+  tests.
+- [ ] **One landing after setup.** Skipping lands on `/dashboard` and finishing lands on `/`; pick
+  one.
+
 #### M3. Collaboration
 
 - [ ] **Entry locks.** A stateful edge object per entry: a heartbeat lease, request-unlock, admin
