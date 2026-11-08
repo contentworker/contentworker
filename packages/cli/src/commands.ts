@@ -7,6 +7,7 @@ import type {
   ImportInput,
   ManagementClient,
 } from '@contentworker/sdk-management';
+import { DEFAULT_BLOCKS_FILE, loadBlocks, pushInput, renderPush } from './blocks.js';
 import {
   credentialsMode,
   FILE_MODE,
@@ -442,6 +443,72 @@ export function renderPlan(plan: Plan): string {
   );
   return lines.join('\n');
 }
+
+// --- blocks ------------------------------------------------------------------
+
+const blocksPush: Command = {
+  name: 'blocks push',
+  args: '[<file>]',
+  summary: `Show what a blocks file changes, then push it as the block catalog (default ${DEFAULT_BLOCKS_FILE})`,
+  options: {
+    'dry-run': { type: 'boolean', description: 'Show the change and push nothing' },
+    'allow-destructive': {
+      type: 'boolean',
+      description: 'Push a catalog that removes blocks or block props (none an entry holds)',
+    },
+    publish: {
+      type: 'boolean',
+      description: 'Publish each changed type (default; --no-publish leaves drafts)',
+    },
+    yes: YES,
+  },
+  async run(ctx) {
+    const file = ctx.args[0] ?? DEFAULT_BLOCKS_FILE;
+    const input = pushInput(await loadBlocks(file, ctx.io.cwd));
+    const cma = await ctx.client();
+    const publish = ctx.values.publish !== false;
+    // The server works the change out: the same checks the push itself makes.
+    const plan = await cma.blockCatalog.push({ ...input, publish, dryRun: true });
+    if (bool(ctx, 'dry-run') || plan.unchanged) {
+      return { json: { ...plan, applied: false }, human: renderPush(plan) };
+    }
+    if (plan.inUse.length > 0) {
+      throw new CliError(
+        `${renderPush(plan)}\n\nRefused: entries still hold blocks or props this push removes. ` +
+          'Change those entries first, or keep the old id in the new block’s aliases.',
+        EXIT.refused,
+        'blocks_in_use',
+        plan,
+      );
+    }
+    if (plan.destructive && !bool(ctx, 'allow-destructive')) {
+      throw new CliError(
+        `${renderPush(plan)}\n\nRefused: the push removes blocks or block props. ` +
+          'Re-run with --allow-destructive to push it.',
+        EXIT.refused,
+        'destructive_change',
+        plan,
+      );
+    }
+    const session = await ctx.session();
+    if (!ctx.json) ctx.io.stderr(renderPush(plan));
+    await confirm(
+      ctx,
+      `Push block catalog version ${plan.version} to ${session.space}/${session.environment}?`,
+    );
+    // Against the version just shown: a push that landed since is refused (409), not overwritten.
+    const done = await cma.blockCatalog.push({
+      ...input,
+      publish,
+      expectedVersion: plan.previousVersion,
+      allowDestructive: bool(ctx, 'allow-destructive'),
+    });
+    return {
+      json: done,
+      human: `Pushed block catalog version ${done.version}: ${done.contentTypes.length} content type(s) changed.`,
+    };
+  },
+};
 
 // --- entries -----------------------------------------------------------------
 
@@ -905,6 +972,7 @@ export const COMMANDS: readonly Command[] = [
   spaces,
   modelExport,
   modelApply,
+  blocksPush,
   entriesList,
   entriesGet,
   entriesCreate,
