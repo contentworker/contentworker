@@ -9,7 +9,8 @@
  * A block's slots aren't fields here: blocks go into them from the page's seams (or from Add,
  * here and in Layers). Each change is one `update` op (`setPropOp`) on the block, applied on the
  * canvas at once; nothing saves until Save draft. A block the code no longer provides can't be
- * edited, only kept as it is or removed.
+ * edited, only kept as it is or removed. A block in a slot the block config locks keeps its place:
+ * no move, duplicate or remove, and its settings stay editable.
  */
 import {
   type FieldDefinition,
@@ -24,11 +25,17 @@ import { Button } from '@contentworker/ui/button';
 import { Label } from '@contentworker/ui/label';
 import { Segmented, SegmentedItem } from '@contentworker/ui/segmented';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@contentworker/ui/tabs';
-import { ArrowDown, ArrowUp, Copy, Plus, Trash2 } from 'lucide-react';
+import { ArrowDown, ArrowUp, Copy, Lock, Plus, Trash2 } from 'lucide-react';
 import { useId } from 'react';
 import { FieldInput, type Pickers, type PickOption } from '~/cms/components/EntryForm';
 import { RequiredMark } from '~/cms/components/required-mark';
-import { type CanvasBlock, type CanvasSlot, slotFill } from '~/cms/lib/canvas/model';
+import {
+  type CanvasBlock,
+  type CanvasSlot,
+  canDuplicate,
+  canMove,
+  slotFill,
+} from '~/cms/lib/canvas/model';
 
 export type InspectorTab = 'content' | 'data' | 'look';
 
@@ -100,7 +107,12 @@ export function Inspector(props: InspectorProps) {
         </p>
       </div>
 
-      {readOnly ? null : (
+      {readOnly ? null : block.slot.locked ? (
+        <p className="flex max-w-measure items-start gap-1.5 text-muted-foreground text-xs">
+          <Lock aria-hidden="true" className="mt-0.5 size-3 shrink-0" />
+          {where} is locked: this block keeps its place. Its settings can still be edited.
+        </p>
+      ) : (
         <div className="flex flex-wrap gap-1">
           <Button
             type="button"
@@ -108,7 +120,7 @@ export function Inspector(props: InspectorProps) {
             size="icon-sm"
             aria-label={`Move ${block.name} up`}
             title="Move up (⌘↑)"
-            disabled={block.index === 0}
+            disabled={!canMove(block, -1)}
             onClick={() => props.onMove(-1)}
           >
             <ArrowUp aria-hidden="true" />
@@ -119,7 +131,7 @@ export function Inspector(props: InspectorProps) {
             size="icon-sm"
             aria-label={`Move ${block.name} down`}
             title="Move down (⌘↓)"
-            disabled={block.index === block.slot.blocks.length - 1}
+            disabled={!canMove(block, 1)}
             onClick={() => props.onMove(1)}
           >
             <ArrowDown aria-hidden="true" />
@@ -129,8 +141,14 @@ export function Inspector(props: InspectorProps) {
             variant="ghost"
             size="icon-sm"
             aria-label={`Duplicate ${block.name}`}
-            title={block.slot.full ? `${where} is full` : 'Duplicate'}
-            disabled={block.slot.full || !block.variant}
+            title={
+              block.slot.full
+                ? `${where} is full`
+                : canDuplicate(block) || !block.variant
+                  ? 'Duplicate'
+                  : `The block config doesn’t allow another ${block.name} in ${where}`
+            }
+            disabled={!canDuplicate(block)}
             onClick={props.onDuplicate}
           >
             <Copy aria-hidden="true" />
@@ -159,9 +177,16 @@ export function Inspector(props: InspectorProps) {
             </p>
             {readOnly ? null : (
               <div className="flex flex-wrap gap-2">
-                <Button type="button" size="sm" variant="outline" onClick={props.onRemove}>
-                  Remove
-                </Button>
+                {block.slot.locked ? (
+                  <p className="w-full">
+                    {where} is locked, so it can’t be removed here: an admin can unlock it in Build
+                    → Blocks.
+                  </p>
+                ) : (
+                  <Button type="button" size="sm" variant="outline" onClick={props.onRemove}>
+                    Remove
+                  </Button>
+                )}
                 {props.kept ? null : (
                   <Button type="button" size="sm" variant="ghost" onClick={props.onKeep}>
                     Keep for now
@@ -199,16 +224,21 @@ export function Inspector(props: InspectorProps) {
           <h3 className="caption">Slots</h3>
           {block.slots.map((slot) => (
             <div key={slot.path} className="flex items-center justify-between gap-2 text-sm">
-              <span>{slotFill(slot)}</span>
-              <Button
-                type="button"
-                size="sm"
-                variant="ghost"
-                // A full slot's dock says so, as its seam does.
-                onClick={() => props.onAdd(slot)}
-              >
-                <Plus aria-hidden="true" /> Add to {slot.name}
-              </Button>
+              <span className="inline-flex items-center gap-1.5">
+                {slot.locked ? <Lock aria-hidden="true" className="size-3" /> : null}
+                {slotFill(slot)}
+              </span>
+              {slot.locked ? null : (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  // A full slot's dock says so, as its seam does.
+                  onClick={() => props.onAdd(slot)}
+                >
+                  <Plus aria-hidden="true" /> Add to {slot.name}
+                </Button>
+              )}
             </div>
           ))}
         </div>

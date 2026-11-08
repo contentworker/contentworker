@@ -15,6 +15,8 @@ import type {
   AssetZipJob,
   AuditDetail,
   BlockCatalog,
+  BlockConfig,
+  BlockNarrowing,
   BlockOp,
   BlockOutline,
   Comment,
@@ -23,6 +25,7 @@ import type {
   ContentType,
   ContentTypeDraft,
   ContentTypeGrant,
+  EffectiveBlockRules,
   EmbedData,
   EntryFields,
   EntryMetadata,
@@ -50,6 +53,7 @@ import type {
   ScheduledActionType,
   ScheduledEntityType,
   Tag,
+  TargetNarrowing,
   Task,
   TermUsageSummary,
   WorkflowDefinition,
@@ -2906,6 +2910,26 @@ export function createManagementClient(
     /** Entries using each block of the catalog in force, per content type. */
     getBlockUsage(): Promise<BlockCatalogUsage> {
       return req('GET', `${mgmt}/block-catalog/usage`);
+    },
+    // --- block config (what admins allow of the catalog, only ever narrower) --
+    /** The narrowings in force: version 0 and empty before the first set. */
+    getBlockConfig(): Promise<BlockConfig> {
+      return req('GET', `${mgmt}/block-config`);
+    },
+    /**
+     * Replaces the config. 409 when `expectedVersion` is stale; 422 naming each part that widens
+     * what the code allows or names something the catalog doesn't have. Needs content:manage.
+     */
+    setBlockConfig(input: {
+      readonly expectedVersion: number;
+      readonly targets: readonly TargetNarrowing[];
+      readonly blocks: readonly BlockNarrowing[];
+    }): Promise<{ config: BlockConfig; unchanged: boolean }> {
+      return req('PUT', `${mgmt}/block-config`, input);
+    },
+    /** Every target and slot with the config laid over the code, and the config's stale parts. */
+    getEffectiveBlockRules(): Promise<EffectiveBlockRules> {
+      return req('GET', `${mgmt}/block-config/effective`);
     },
     // --- settings: menus (environment-scoped) ----------------------------
     async listMenus(): Promise<MenuSummary[]> {

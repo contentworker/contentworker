@@ -1,5 +1,13 @@
 // @vitest-environment jsdom
-import type { ComponentVariant, ContentType, FieldDefinition } from '@contentworker/domain';
+import {
+  type BlockCatalog,
+  type BlockConfig,
+  type ComponentVariant,
+  type ContentType,
+  type EntryFields,
+  effectiveBlockRules,
+  type FieldDefinition,
+} from '@contentworker/domain';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ContentTypeDialog } from '~/cms/components/ContentTypeDialog';
@@ -183,6 +191,181 @@ describe('editing a blocks field', () => {
     const add = screen.getByRole('button', { name: 'Add hero' }) as HTMLButtonElement;
     expect(add.disabled).toBe(true);
     expect(screen.getByText('Holds one block.')).toBeTruthy();
+  });
+});
+
+describe('a blocks field under the block config', () => {
+  const QUOTE: ComponentVariant = {
+    apiId: 'quote',
+    name: 'Quote',
+    fields: [field({ apiId: 'text', name: 'Text' })],
+  };
+  const CARD: ComponentVariant = {
+    apiId: 'card',
+    name: 'Card',
+    fields: [field({ apiId: 'title', name: 'Title' })],
+  };
+  const SECTION: ComponentVariant = {
+    apiId: 'section',
+    name: 'Section',
+    fields: [
+      field({
+        apiId: 'items',
+        name: 'Items',
+        type: 'Array',
+        items: { type: 'Component', variants: [CARD] },
+      }),
+    ],
+  };
+  const TYPE = typeWith([blocksField([HERO, CTA, QUOTE, SECTION])]);
+  const catalog = {
+    version: 3,
+    hash: 'h',
+    pushedAt: '2026-11-01T00:00:00Z',
+    pushedBy: null,
+    changes: { added: [], changed: [], removed: [], renamed: [] },
+    targets: [{ contentTypeApiId: 'page', field: 'body' }],
+    blocks: [
+      { id: 'hero', name: 'Hero', fields: [] },
+      { id: 'cta', name: 'Call to action', fields: [] },
+      { id: 'quote', name: 'Quote', fields: [] },
+      {
+        id: 'section',
+        name: 'Section',
+        fields: [],
+        slots: [{ apiId: 'items', name: 'Items', allowedChildren: ['card'] }],
+      },
+      { id: 'card', name: 'Card', allowedParents: ['section'], fields: [] },
+    ],
+  } as unknown as BlockCatalog;
+  const rulesOf = (over: Partial<BlockConfig>) =>
+    effectiveBlockRules(catalog, { version: 1, targets: [], blocks: [], ...over });
+  const STORED: EntryFields = {
+    body: {
+      'en-US': [
+        { _type: 'cta', _key: 'a1', label: 'Start' },
+        { _type: 'section', _key: 's1', items: [{ _type: 'card', _key: 'c1', title: 'One' }] },
+      ],
+    },
+  };
+
+  function renderUnder(
+    over: Partial<BlockConfig>,
+    opts: {
+      stored?: EntryFields;
+      onSave?: (fields: EntryFields) => void;
+      serverIssues?: Parameters<typeof EntryForm>[0]['serverIssues'];
+    } = {},
+  ) {
+    const onSave = opts.onSave ?? vi.fn<(fields: EntryFields) => void>();
+    const props = {
+      contentType: TYPE,
+      initial: opts.stored ?? {},
+      locales: ['en-US'],
+      defaultLocale: 'en-US',
+      pickers: { entries: [], assets: [] },
+      blockRules: { rules: rulesOf(over), catalog, stored: opts.stored },
+      onSave,
+      onCancel: () => {},
+    };
+    const view = render(<EntryForm {...props} serverIssues={opts.serverIssues ?? null} />);
+    return {
+      onSave,
+      rerender: (serverIssues: Parameters<typeof EntryForm>[0]['serverIssues']) =>
+        view.rerender(<EntryForm {...props} serverIssues={serverIssues} />),
+    };
+  }
+
+  it('offers in Add only the blocks the narrowed rule takes, and keeps a stored one editable', async () => {
+    renderUnder(
+      { targets: [{ contentTypeApiId: 'page', field: 'body', blocks: ['hero', 'quote'] }] },
+      { stored: STORED },
+    );
+    // The stored call to action is still there, editable, and can be moved or removed.
+    expect((screen.getByLabelText(/^Label/) as HTMLInputElement).value).toBe('Start');
+    expect(screen.getByRole('button', { name: 'Remove Call to action block 1' })).toBeTruthy();
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Add block to Body' }), {
+      button: 0,
+      ctrlKey: false,
+    });
+    const offered = (await screen.findAllByRole('menuitem')).map((m) => m.textContent);
+    expect(offered).toEqual(['Hero', 'Quote']);
+  });
+
+  it('offers a single allowed block as a plain button, capped at the config’s most', () => {
+    renderUnder(
+      {
+        targets: [{ contentTypeApiId: 'page', field: 'body', blocks: ['cta', 'section'], max: 2 }],
+      },
+      { stored: STORED },
+    );
+    // The section's slot takes cards only.
+    expect(screen.getByRole('button', { name: 'Add card' })).toBeTruthy();
+    // Two of two: full.
+    expect(
+      (screen.getByRole('button', { name: 'Add block to Body' }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+    expect(screen.getByText('Holds up to 2 blocks.')).toBeTruthy();
+  });
+
+  it('keeps a locked field’s blocks in place, and what’s inside them editable', () => {
+    const onSave = vi.fn();
+    renderUnder(
+      { targets: [{ contentTypeApiId: 'page', field: 'body', locked: true }] },
+      { stored: STORED, onSave },
+    );
+    expect(screen.getByText(/Body is locked: its blocks stay as they are/)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Add block to Body' })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Remove Call to action/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Move Call to action/ })).toBeNull();
+    fireEvent.change(screen.getByLabelText(/^Label/), { target: { value: 'Begin' } });
+    save();
+    expect(onSave).toHaveBeenCalled();
+  });
+
+  it('locks a block’s slot only once it is stored', () => {
+    const lock = { blocks: [{ block: 'section', slots: { items: { locked: true } } }] };
+    renderUnder(lock, { stored: STORED });
+    expect(screen.getByText(/Items is locked/)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Add card' })).toBeNull();
+    cleanup();
+    // A new entry has nothing stored: its section's items are filled as they come.
+    renderUnder(lock, { stored: undefined });
+    expect(screen.queryByText(/is locked/)).toBeNull();
+  });
+
+  it('refuses before saving what the config won’t take, on the field', () => {
+    const onSave = vi.fn();
+    renderUnder(
+      { targets: [{ contentTypeApiId: 'page', field: 'body', min: 2 }] },
+      {
+        stored: STORED,
+        onSave,
+      },
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Call to action block 1' }));
+    save();
+    expect(onSave).not.toHaveBeenCalled();
+    expect(screen.getAllByText('This slot holds at least 2 blocks').length).toBeGreaterThan(0);
+  });
+
+  it('shows the server’s refusal on the field it names', () => {
+    const { rerender } = renderUnder({}, { stored: STORED });
+    rerender({
+      seq: 1,
+      issues: [
+        {
+          field: 'body',
+          locale: 'en-US',
+          message:
+            'This slot is locked: its blocks can’t be added, removed, moved, reordered or swapped',
+        },
+      ],
+    });
+    expect(
+      screen.getAllByText(/This slot is locked: its blocks can’t be added/).length,
+    ).toBeGreaterThan(0);
+    expect(screen.getByRole('alert').textContent).toContain('Body (en-US)');
   });
 });
 

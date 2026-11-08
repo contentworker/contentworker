@@ -5,6 +5,12 @@
  * dock with exactly the blocks that slot takes; the inspector edits the selected block; Layers is
  * the outline, and the keyboard and screen-reader path to every block.
  *
+ * What each slot offers follows the block config (`GET …/block-config/effective`, read with the
+ * catalog as the canvas opens): the dock lists only the blocks a slot's narrowed rule takes, a locked slot draws
+ * no seams and its blocks keep their place, and the checks judge the edit as the server will
+ * (`blockConfigIssues`), so a refusal is said on the block or slot it is about before a save, or
+ * after one when the config changed meanwhile. Blocks stored before the config stay as they are.
+ *
  * It edits the same draft as the entry form. Every change is a block-patch op applied here with
  * the domain's `applyBlockPatch` and kept with its inverse for undo (`cms/lib/canvas/history.ts`);
  * the page re-renders each one before anything is saved, over the live preview channel (the Site
@@ -15,6 +21,7 @@
  * the inspector and Layers in sheets. Below md it is review-only, and says so in place.
  */
 import {
+  type BlockConfigIssue,
   type BlockOp,
   type ComponentVariant,
   type EntryFields,
@@ -51,6 +58,7 @@ import { DEVICES, SiteNotice, useDevice } from '~/cms/components/pane/SitePane';
 import { useSiteFrame } from '~/cms/components/pane/use-site-frame';
 import { ResponsiveSheetContent } from '~/cms/components/responsive-sheet';
 import { StatusBadge, ToneBadge } from '~/cms/components/status';
+import { configRefusal, rulesOver } from '~/cms/lib/block-rules';
 import { canvasChecks } from '~/cms/lib/canvas/checks';
 import {
   applyOps,
@@ -64,6 +72,10 @@ import {
 import {
   type CanvasBlock,
   type CanvasPlace,
+  type CanvasRules,
+  canDuplicate,
+  canMove,
+  canRemove,
   canvasAvailable,
   canvasTree,
   duplicateOp,
@@ -200,6 +212,14 @@ function Canvas({
   const catalog = useScopedQuery(['block-catalog'], () => client.getBlockCatalog(), {
     silent: true,
   }).data;
+  // Read as the canvas opens: a config set after that is the server's to refuse, and is said on
+  // the block or slot it falls on. Rules made over another catalog than this one narrow nothing.
+  const rulesQuery = useScopedQuery(
+    ['block-config', 'effective'],
+    () => client.getEffectiveBlockRules(),
+    { silent: true, staleTime: 0 },
+  );
+  const rules = rulesOver(rulesQuery.data, catalog);
   const access = useScopedQuery(['space-access'], () => client.getSpaceAccess(), { silent: true });
   const workflowState = useScopedQuery(
     ['workflow-state', entryId],
@@ -245,6 +265,11 @@ function Canvas({
   const [kept, setKept] = useState<ReadonlySet<string>>(new Set());
   const [draftStarted, setDraftStarted] = useState(false);
   const [conflict, setConflict] = useState<{ theirs: number } | null>(null);
+  /** What the server's block config refused of a save, for the fields it was refused for. */
+  const [refused, setRefused] = useState<{
+    fields: EntryFields;
+    issues: readonly BlockConfigIssue[];
+  } | null>(null);
   const [said, setSaid] = useState('');
   const [focusInspector, setFocusInspector] = useState(false);
   const [focusChecks, setFocusChecks] = useState(false);
@@ -255,9 +280,14 @@ function Canvas({
   const [device, setDevice] = useDevice();
 
   const fields = doc?.fields ?? (entryQuery.data?.fields as EntryFields | undefined) ?? {};
+  const storedFields = doc?.base.fields;
+  const under = useMemo<CanvasRules>(
+    () => ({ rules, stored: storedFields }),
+    [rules, storedFields],
+  );
   const tree = useMemo(
-    () => (contentType ? canvasTree(contentType, fields, locale, defaultLocale) : []),
-    [contentType, fields, locale, defaultLocale],
+    () => (contentType ? canvasTree(contentType, fields, locale, defaultLocale, under) : []),
+    [contentType, fields, locale, defaultLocale, under],
   );
   const block = selected ? findBlock(tree, selected) : undefined;
   const dirty = !!doc && JSON.stringify(doc.fields) !== JSON.stringify(doc.base.fields);
@@ -356,7 +386,7 @@ function Canvas({
     setDoc(next);
     setSaid(`${way === 'undo' ? 'Undone' : 'Redone'}: ${r.step.label}`);
     // The block the step put back (or put in again) is selected; one it took away is not.
-    const after = canvasTree(contentType, r.fields, locale, defaultLocale);
+    const after = canvasTree(contentType, r.fields, locale, defaultLocale, under);
     const op = (way === 'undo' ? r.step.inverse : r.step.ops)[0];
     const touched =
       op?.op === 'insert' && typeof op.block._key === 'string'
@@ -384,6 +414,7 @@ function Canvas({
   const dockPlace = place(dockAt);
   /** What had focus when the dock opened: focus goes back there when it closes. */
   const dockOpener = useRef<HTMLElement | null>(null);
+  // A locked slot's dock opens (from `/` or Add) only to say so: it offers nothing.
   const openDock = (at: CanvasPlace | undefined) => {
     if (!at || !editable) return;
     const active = document.activeElement;
@@ -396,7 +427,7 @@ function Canvas({
   };
 
   const insert = (variant: ComponentVariant) => {
-    if (!dockPlace) return;
+    if (!dockPlace || dockPlace.slot.locked) return;
     const made = newBlock(variant, newKey);
     const step = apply([insertOp(dockPlace, made)], `Added ${variant.name}`);
     if (!step) return;
@@ -408,6 +439,7 @@ function Canvas({
   /** An edit from Layers: focus follows the selection there once the outline re-renders. */
   const fromLayers = () => !!document.activeElement?.closest('[role="tree"]');
   const move = (b: CanvasBlock, by: -1 | 1) => {
+    if (!canMove(b, by)) return;
     const op = moveOp(b, by);
     const inLayers = fromLayers();
     if (op && apply([op], `Moved ${b.name} ${by < 0 ? 'up' : 'down'}`) && inLayers) {
@@ -415,6 +447,7 @@ function Canvas({
     }
   };
   const remove = (b: CanvasBlock) => {
+    if (!canRemove(b)) return;
     if (fromLayers()) setRestoreFocus('layer');
     const step = apply([removeOp(b)], `Removed ${b.name}`);
     if (!step) return;
@@ -424,6 +457,7 @@ function Canvas({
     toast.success(`Removed ${b.name}`, { action: { label: 'Undo', onAction: () => revert(step) } });
   };
   const duplicate = (b: CanvasBlock) => {
+    if (!canDuplicate(b)) return;
     const step = apply([duplicateOp(b)], `Duplicated ${b.name}`);
     const copy = step?.ops[0];
     if (copy?.op === 'insert' && typeof copy.block._key === 'string') setSelected(copy.block._key);
@@ -447,8 +481,14 @@ function Canvas({
       const blocking = canvasChecks(
         contentType,
         d.fields,
-        canvasTree(contentType, d.fields, locale, defaultLocale),
-        { locales, defaultLocale, locale, previous: d.base.fields },
+        canvasTree(contentType, d.fields, locale, defaultLocale, under),
+        {
+          locales,
+          defaultLocale,
+          locale,
+          previous: d.base.fields,
+          blocks: { catalog, rules },
+        },
       );
       if (blocking.length > 0) {
         showChecks();
@@ -484,6 +524,16 @@ function Canvas({
         const stale = staleSave(err);
         if (stale) {
           setConflict(stale);
+          return;
+        }
+        // The config changed since the canvas read it: said on the blocks and slots it names.
+        const issues = configRefusal(err);
+        if (issues.length > 0) {
+          setRefused({ fields: d.fields, issues });
+          showChecks();
+          toast.error(
+            `The block config refused ${issues.length === 1 ? 'a change' : `${issues.length} changes`}: see the checks`,
+          );
           return;
         }
         throw err;
@@ -569,6 +619,10 @@ function Canvas({
       case 'Backspace':
         if (!block || !editable) return;
         e.preventDefault();
+        if (!canRemove(block)) {
+          setSaid(`${block.slot.name} is locked: ${block.name} keeps its place`);
+          return;
+        }
         remove(block);
         return;
       case 'ArrowDown':
@@ -650,6 +704,9 @@ function Canvas({
           defaultLocale,
           locale,
           previous: doc.base.fields,
+          blocks: { catalog, rules },
+          // Until the next edit: the refusal was of these fields.
+          refused: refused?.fields === doc.fields ? refused.issues : [],
         })
       : [];
   const title = titleOf(contentType, fields, defaultLocale) ?? 'Untitled entry';
@@ -750,7 +807,7 @@ function Canvas({
     />
   );
 
-  if (!doc || !contentType) return <CanvasSkeleton />;
+  if (!doc || !contentType || rulesQuery.isPending) return <CanvasSkeleton />;
 
   return (
     <div className="flex h-[calc(100dvh-var(--shell-h)-var(--tabbar-h,0px))] flex-col md:h-[calc(100dvh-var(--shell-h))] lg:pb-safe-0">

@@ -1,16 +1,23 @@
 /**
  * What stands between the canvas and a save (and so a publish): a block whose type the code no
- * longer provides, a required slot with too few blocks, and every other issue validation finds in
- * the blocks fields, each pointed at the block it falls in so a click selects it. Judged by the
- * domain's own `validateEntryFields`, as the save will judge it.
+ * longer provides, a required slot with too few blocks, every other issue validation finds in the
+ * blocks fields, and what the block config refuses of the edit (a block placed where it isn't
+ * allowed, a locked slot changed, a count pushed past the config's bounds), each pointed at the
+ * block it falls in so a click selects it. Judged by the domain's own `validateEntryFields` and
+ * `blockConfigIssues`, as the save will judge it; a refusal the server sends back anyway (a config
+ * set since the canvas read it) is pointed at the same way (`configChecks`).
  */
 import {
+  type BlockCatalog,
+  type BlockConfigIssue,
   blockAtPath,
   blockVariants,
   type ContentType,
+  type EffectiveBlockRules,
   type EntryFields,
   validateEntryFields,
 } from '@contentworker/domain';
+import { configIssues } from '../block-rules';
 import { type CanvasSlot, flattenBlocks, flattenSlots } from './model';
 
 export interface CanvasCheck {
@@ -32,6 +39,13 @@ export function canvasChecks(
     readonly locale: string;
     /** The stored fields, which a field its rules disable must keep, as the save judges it. */
     readonly previous?: EntryFields;
+    /** The block config in force, over the catalog it was read with: the edit is judged by it. */
+    readonly blocks?: {
+      readonly catalog: BlockCatalog | null | undefined;
+      readonly rules: EffectiveBlockRules | null | undefined;
+    };
+    /** What the server's block config refused of the last save, until the next edit. */
+    readonly refused?: readonly BlockConfigIssue[];
   },
 ): CanvasCheck[] {
   const out: CanvasCheck[] = [];
@@ -47,12 +61,14 @@ export function canvasChecks(
   }
   const shortSlots: CanvasSlot[] = [];
   for (const slot of flattenSlots(slots)) {
-    if (slot.min === undefined || slot.blocks.length >= slot.min) continue;
+    // The field's own least, which every save is held to; the config's holds edits only (below).
+    const min = slot.fieldMin;
+    if (min === undefined || slot.blocks.length >= min) continue;
     shortSlots.push(slot);
-    const need = slot.min - slot.blocks.length;
+    const need = min - slot.blocks.length;
     out.push({
       id: `min:${slot.path}`,
-      message: `${slot.name} needs ${slot.min === 1 ? 'a block' : `at least ${slot.min} blocks`}${
+      message: `${slot.name} needs ${min === 1 ? 'a block' : `at least ${min} blocks`}${
         slot.blocks.length > 0 ? ` (${need} more)` : ''
       }`,
       ...(slot.address.parent ? { blockKey: slot.address.parent.key } : {}),
@@ -93,7 +109,111 @@ export function canvasChecks(
       ...(block ? { blockKey: block.key } : {}),
     });
   });
+  const judged = config.blocks
+    ? configIssues(
+        contentType,
+        config.blocks.catalog,
+        config.blocks.rules,
+        config.previous,
+        fields,
+        config.locales,
+      )
+    : [];
+  const seen = new Set(out.map((c) => c.id));
+  for (const c of configChecks([...judged, ...(config.refused ?? [])], fields, slots, config)) {
+    // A short slot is said once, by validation's line when the field itself needs more.
+    if (c.id.startsWith('config:slot_too_few:') && c.slotPath && seen.has(`min:${c.slotPath}`)) {
+      continue;
+    }
+    if (seen.has(c.id)) continue;
+    seen.add(c.id);
+    out.push({
+      id: c.id,
+      message: c.message,
+      ...(c.blockKey ? { blockKey: c.blockKey } : {}),
+      ...(c.inForm ? { inForm: c.inForm } : {}),
+    });
+  }
   return out;
+}
+
+/**
+ * The block config's issues with an edit (judged here, or a save's refusal) as checks, in the
+ * canvas's words: each names the block or the slot by name and selects the block it falls in. An
+ * issue in a locale the canvas isn't showing is said, to fix in the form.
+ */
+export function configChecks(
+  issues: readonly BlockConfigIssue[],
+  fields: EntryFields,
+  slots: readonly CanvasSlot[],
+  config: { readonly locale: string; readonly defaultLocale: string },
+): (CanvasCheck & { readonly slotPath?: string })[] {
+  const blocks = flattenBlocks(slots);
+  const all = flattenSlots(slots);
+  return issues.map((issue) => {
+    const locale = issue.locale ?? config.defaultLocale;
+    const id = `config:${issue.code}:${issue.field}:${locale}`;
+    if (locale !== config.locale && locale !== config.defaultLocale) {
+      return { id, message: `${issue.locale ? `${issue.locale}: ` : ''}${issue.message}`, inForm };
+    }
+    if (issue.code === 'block_not_allowed_here') {
+      const block = issue.key ? blocks.find((b) => b.key === issue.key) : undefined;
+      if (!block) return { id, message: issue.message };
+      return {
+        id,
+        message: `${block.name} can’t go in ${block.slot.name}: the block config doesn’t allow it there`,
+        blockKey: block.key,
+      };
+    }
+    const slot = slotAtPath(all, fields, locale, issue.field);
+    if (!slot) return { id, message: issue.message };
+    const at = {
+      slotPath: slot.path,
+      ...(slot.address.parent ? { blockKey: slot.address.parent.key } : {}),
+    };
+    switch (issue.code) {
+      case 'slot_locked':
+        return {
+          id,
+          message: `${slot.name} is locked: its blocks can’t be added, removed or moved. Undo the change to save`,
+          ...at,
+        };
+      case 'slot_too_few':
+        return {
+          id,
+          message: `${slot.name} needs at least ${slot.min ?? 1} ${slot.min === 1 ? 'block' : 'blocks'} here`,
+          ...at,
+        };
+      case 'slot_too_many':
+        return {
+          id,
+          message: `${slot.name} holds at most ${slot.max ?? 0} ${slot.max === 1 ? 'block' : 'blocks'} here`,
+          ...at,
+        };
+      default:
+        return { id, message: issue.message, ...at };
+    }
+  });
+}
+
+const inForm = true as const;
+
+/**
+ * The slot a positional path names (`body`, `body[2].items`) among every slot of the tree: a
+ * top-level field by its name, a block's slot by the key of the block the path leads to.
+ */
+function slotAtPath(
+  all: readonly CanvasSlot[],
+  fields: EntryFields,
+  locale: string,
+  path: string,
+): CanvasSlot | undefined {
+  const dot = path.lastIndexOf('.');
+  if (dot < 0) return all.find((s) => s.address.field === path && !s.address.parent);
+  const parent = keyAt(fields, locale, path.slice(0, dot));
+  const name = path.slice(dot + 1);
+  if (parent === undefined) return undefined;
+  return all.find((s) => s.address.parent?.key === parent && s.address.parent.slot === name);
 }
 
 /** Whether a validation issue at `field` (positional: `body`, `body[2].items`) is about `slot`. */

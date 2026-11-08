@@ -61,7 +61,10 @@ export function blockKeyOfRef(
   return key !== undefined && flattenBlocks(slots).some((b) => b.key === key) ? key : undefined;
 }
 
-/** The seams the page's geometry draws, matched to the entry's slots; unknown ones are dropped. */
+/**
+ * The seams the page's geometry draws, matched to the entry's slots; unknown ones are dropped, and
+ * so is every seam of a locked slot: nothing goes in there, or moves in.
+ */
 export function seamsFrom(
   geometry: FrameGeometry | null,
   slots: readonly CanvasSlot[],
@@ -73,7 +76,7 @@ export function seamsFrom(
   for (const box of geometry.slots) {
     const path = ownPath(box.ref, ctx);
     const slot = path ? findSlot(slots, canonical(path)) : undefined;
-    if (!slot) continue;
+    if (!slot || slot.locked) continue;
     for (const gap of box.gaps) {
       const index = placeOf(slot, gap);
       if (index === undefined) continue;

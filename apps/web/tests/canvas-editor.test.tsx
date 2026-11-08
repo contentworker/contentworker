@@ -1,9 +1,17 @@
 // @vitest-environment jsdom
 // The canvas editor's screen: seams drawn from the page's geometry, the dock offering exactly what
 // a slot takes, inserts, moves and removes that undo and redo, the inspector's edits reaching the
-// page, Layers by keyboard, the save held to its version (and the conflict it can meet), and every
-// state the canvas says in place instead of editing.
-import type { ContentType } from '@contentworker/domain';
+// page, Layers by keyboard, the save held to its version (and the conflict it can meet), the block
+// config (a narrowed dock, a locked slot, a refusal said on its block), and every state the canvas
+// says in place instead of editing.
+import {
+  type BlockCatalog,
+  type BlockConfig,
+  type ContentType,
+  type EffectiveBlockRules,
+  EMPTY_BLOCK_CONFIG,
+  effectiveBlockRules,
+} from '@contentworker/domain';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { createMemoryRouter, RouterProvider } from 'react-router';
@@ -16,7 +24,10 @@ const client = {
   listContentTypes: vi.fn(async (): Promise<ContentType[]> => [pageType]),
   getSpaceConfig: vi.fn(async () => ({ defaultLocale: 'en-US', locales: ['en-US'] })),
   getEntry: vi.fn<(id: string) => Promise<PreviewEntry>>(),
-  getBlockCatalog: vi.fn(async () => catalog),
+  getBlockCatalog: vi.fn(async (): Promise<BlockCatalog> => catalog),
+  getEffectiveBlockRules: vi.fn(
+    async (): Promise<EffectiveBlockRules> => effectiveBlockRules(catalog, EMPTY_BLOCK_CONFIG),
+  ),
   getSpaceAccess: vi.fn(async () => ({ subject: 'me', scopes: ['content:write'] })),
   getEntryWorkflowState: vi.fn(async (): Promise<unknown> => null),
   listWorkflows: vi.fn(async (): Promise<unknown[]> => []),
@@ -499,6 +510,123 @@ describe('saving', () => {
     // The checks are in view, and a check selects the block it is about.
     act(() => screen.getByRole('button', { name: 'Items needs a block' }).click());
     expect(screen.getByRole('heading', { level: 2, name: 'Section' })).toBeTruthy();
+  });
+});
+
+describe('the block config', () => {
+  /** The fixture's catalog with the section's items as a slot, as a push would have it. */
+  const slotted = {
+    ...catalog,
+    version: 2,
+    blocks: catalog.blocks.map((b) =>
+      b.id === 'section'
+        ? { ...b, slots: [{ apiId: 'items', name: 'Items', allowedChildren: ['card'], max: 2 }] }
+        : b,
+    ),
+  } as BlockCatalog;
+  /** Heroes and sections only at the top; the section's items locked. */
+  const NARROWED: Pick<BlockConfig, 'version' | 'targets' | 'blocks'> = {
+    version: 1,
+    targets: [{ contentTypeApiId: 'page', field: 'body', blocks: ['hero', 'section'] }],
+    blocks: [{ block: 'section', slots: { items: { locked: true } } }],
+  };
+  beforeEach(() => {
+    client.getBlockCatalog.mockResolvedValue(slotted);
+    client.getEffectiveBlockRules.mockResolvedValue(effectiveBlockRules(slotted, NARROWED));
+  });
+
+  it('offers in the dock only what the narrowed rule takes, and keeps what is stored', async () => {
+    await setup();
+    await screen.findByRole('heading', { level: 1, name: 'Home' });
+    const f = frame();
+    f.connect();
+    f.geometry(GEOMETRY);
+    act(() => seam('body#1').click());
+    expect(
+      [...dock().querySelectorAll('[data-dock-item]')].map((b) => b.getAttribute('data-dock-item')),
+    ).toEqual(['section', 'hero']);
+    // The call to action stored before the config stays on the page, in Layers too.
+    openLayers();
+    expect(layer('a1')).toBeTruthy();
+    expect(client.getEffectiveBlockRules).toHaveBeenCalledTimes(1);
+  });
+
+  it('draws no seams in a locked slot, says the lock in Layers, and keeps its blocks in place', async () => {
+    await setup();
+    await screen.findByRole('heading', { level: 1, name: 'Home' });
+    const f = frame();
+    f.connect();
+    f.geometry(GEOMETRY);
+    expect(
+      [...document.querySelectorAll('[data-seam]')].map((el) => el.getAttribute('data-seam')),
+    ).toEqual(['body#1', 'body#3']);
+    openLayers();
+    expect(screen.getByRole('group', { name: 'Items · 1 of 1–2 · locked' })).toBeTruthy();
+    act(() => layer('c1').click());
+    expect(
+      screen.getByText(
+        'Items is locked: this block keeps its place. Its settings can still be edited.',
+      ),
+    ).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Remove Card' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Move Card down' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Duplicate Card' })).toBeNull();
+    // Nor do the keys move or remove it.
+    fireEvent.keyDown(document.body, { key: 'Delete' });
+    fireEvent.keyDown(document.body, { key: 'ArrowUp', metaKey: true });
+    expect(layer('c1')).toBeTruthy();
+    // The section holding it says so, and offers no Add there.
+    act(() => layer('s1').click());
+    expect(screen.queryByRole('button', { name: 'Add to Items' })).toBeNull();
+    const settings = screen.getByRole('complementary', { name: 'Block settings' });
+    expect(within(settings).getByText('Items · 1 of 1–2 · locked')).toBeTruthy();
+  });
+
+  it('won’t duplicate a stored block the narrowed rule no longer takes', async () => {
+    await setup();
+    await screen.findByRole('heading', { level: 1, name: 'Home' });
+    openLayers();
+    act(() => layer('a1').click());
+    const copy = screen.getByRole('button', {
+      name: 'Duplicate Call to action',
+    }) as HTMLButtonElement;
+    expect(copy.disabled).toBe(true);
+    // Still edited in place.
+    expect((screen.getByLabelText(/^Label/) as HTMLInputElement).value).toBe('Start');
+  });
+
+  it('says a save the server’s config refused on the block it names', async () => {
+    client.updateEntry.mockRejectedValueOnce(
+      new ApiError(422, 'Validation failed', {
+        error: {
+          code: 'validation_failed',
+          message: 'Validation failed',
+          issues: [
+            {
+              field: 'body[0]',
+              locale: 'en-US',
+              code: 'block_not_allowed_here',
+              key: 'h1',
+              message: '"Hero banner" can’t go here',
+            },
+          ],
+        },
+      }),
+    );
+    await setup();
+    await screen.findByRole('heading', { level: 1, name: 'Home' });
+    openLayers();
+    act(() => layer('h1').click());
+    fireEvent.change(screen.getByLabelText(/^Heading/), { target: { value: 'Hello' } });
+    act(() => screen.getByRole('button', { name: 'Save draft' }).click());
+    const check = await screen.findByRole('button', {
+      name: 'Hero can’t go in Main: the block config doesn’t allow it there',
+    });
+    expect(
+      await screen.findByText('The block config refused a change: see the checks'),
+    ).toBeTruthy();
+    act(() => check.click());
+    expect(screen.getByRole('heading', { level: 2, name: 'Hero' })).toBeTruthy();
   });
 });
 
