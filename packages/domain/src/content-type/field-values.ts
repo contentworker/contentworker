@@ -130,7 +130,7 @@ export function assignBlockKeys(
 }
 
 /** True when a blocks field sits at or anywhere under `field`. */
-function mayHoldBlocks(field: FieldDefinition): boolean {
+export function mayHoldBlocks(field: FieldDefinition): boolean {
   if (blockVariants(field)) return true;
   if (field.type === 'Component') return (field.fields ?? []).some(mayHoldBlocks);
   if (field.type === 'Array' && field.items?.type === 'Component') {

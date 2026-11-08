@@ -115,6 +115,24 @@ repeater is unchanged: its elements carry neither key.
   so a block keeps its identity across edits and reorders. Validation does not require `_key`
   (an AI draft or an import dry-run is judged on content), but a present key must be a non-empty
   string used once in the field value: a duplicate is refused at `body[i]`.
+- **`_key` is unique per list, not per tree.** Validation refuses a key repeated within one field
+  value at one level, but the same key at two depths (a section pasted inside itself with its
+  keys) is stored. Keys minted on write never collide; a caller's can.
+- **Block patches** (`applyBlockPatch` in `packages/domain/src/content-type/block-patch.ts`) edit
+  a top-level blocks field in one locale by key: `insert`, `update` (a block's own fields, never
+  one that holds blocks), `move` (never into itself or a block inside it), `remove` and
+  `duplicate` (fresh keys throughout). A block's slots are the blocks fields its variant declares
+  directly; blocks under a plain component or repeater inside a block are carried along but not
+  addressable. A key two blocks of the tree hold is refused as ambiguous rather than guessed at,
+  and so is an op on a block whose parent has no `_key` (its place couldn't be written into an
+  undo). A `ref` resolves only on its own field and locale. Ops apply in order, all or none, and
+  the first that can't apply is reported with its index. `invertBlockPatch` takes the `applied`
+  ops (refs and positions resolved, every key present) and returns the ops that undo them;
+  `outlineBlocks` is the tree of keys, types and labels to build a patch from. The use-case
+  (`patchEntryBlocks`) holds the patch to `expectedVersion` and saves through `saveEntryDraft`, so
+  the result is validated as any save is. It answers the inverse only when the save stored the
+  blocks the patch made (`null` when an `entry:beforeSave` plugin rewrote them).
+  `authorizeBlockPatch` is the role check both surfaces run before it.
 - **Validation** looks up each element's variant by `_type`; a missing or unknown `_type` is one
   issue at `body[i]`, and the element is then checked as that variant's component (`body[i].heading`).
 - **References, defaults and search** read each element with its own variant's fields, so links in

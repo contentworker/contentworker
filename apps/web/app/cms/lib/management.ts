@@ -15,6 +15,8 @@ import type {
   AssetZipJob,
   AuditDetail,
   BlockCatalog,
+  BlockOp,
+  BlockOutline,
   Comment,
   Concept,
   ConceptScheme,
@@ -269,6 +271,25 @@ export interface PreviewEntry extends EntryAuthorship {
   /** When the entry last changed (ISO-8601); the paged list carries it. */
   readonly updatedAt?: string;
   readonly fields: Record<string, unknown>;
+}
+
+/** An entry's blocks fields as `GET …/entries/:id/blocks` answers them (`outlineEntryBlocks`). */
+export interface EntryBlocksOutline {
+  readonly entryId: string;
+  readonly version: number;
+  /** Blocks field → locale → its blocks; a field this person may not read is left out. */
+  readonly fields: Readonly<Record<string, Readonly<Record<string, readonly BlockOutline[]>>>>;
+}
+
+/** A block patch as its dry run reads it (`checkEntryBlocks`). */
+export interface BlockPatchCheck {
+  readonly valid: true;
+  readonly contentTypeApiId: string;
+  /** The fields as the save would store them, without those this person may not read. */
+  readonly fields: EntryFields;
+  /** The patch as it would apply: refs, positions and locales resolved, every key present. */
+  readonly applied: readonly BlockOp[];
+  readonly keys: Readonly<Record<string, string>>;
 }
 
 /** One page of the entries list; pass `nextCursor` back for the next. */
@@ -1784,6 +1805,24 @@ export function createManagementClient(
     },
     duplicateEntry(id: string): Promise<{ entry: EntryAggregate }> {
       return req('POST', `${mgmt}/entries/${encodeURIComponent(id)}/duplicate`);
+    },
+    /**
+     * The entry's blocks fields as a tree of keys, types and labels (`GET …/entries/:id/blocks`).
+     * Only the fields this person may read are in it, which is how a card tells a hidden field from
+     * an empty one.
+     */
+    getBlocksOutline(id: string): Promise<EntryBlocksOutline> {
+      return req('GET', `${mgmt}/entries/${encodeURIComponent(id)}/blocks`);
+    },
+    /**
+     * A block patch's dry run (`POST …/entries/blocks/validate`): the fields the save would store
+     * and the patch as it would apply, or the error the save would answer. Writes nothing.
+     */
+    checkBlockPatch(
+      entryId: string,
+      patch: { readonly expectedVersion: number; readonly ops: readonly unknown[] },
+    ): Promise<BlockPatchCheck> {
+      return req('POST', `${mgmt}/entries/blocks/validate`, { entryId, ...patch });
     },
     /** Entries/assets that reference this entry ("what links here"). */
     async reverseReferences(id: string): Promise<ReferenceEdge[]> {

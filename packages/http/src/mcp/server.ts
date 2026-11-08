@@ -12,6 +12,7 @@ import {
   authorizeContent,
   authorizeTrash,
   type ContentAction,
+  ForbiddenError,
   inScope,
   type PermissionScope,
   type Principal,
@@ -35,6 +36,7 @@ import { registerAssetVersionTools } from './tools/asset-versions';
 import { registerAssetTools } from './tools/assets';
 import { registerAuditLogTools } from './tools/audit-log';
 import { registerBlockCatalogTools } from './tools/block-catalog';
+import { registerBlockTools } from './tools/blocks';
 import { registerCollaborationTools } from './tools/collaboration';
 import { registerDocsTools } from './tools/docs';
 import { registerEnvironmentAliasTools } from './tools/environment-aliases';
@@ -117,6 +119,7 @@ const TOOL_AREAS: readonly ((server: McpServer, t: ToolContext) => void)[] = [
   registerWorkflowTools,
   registerRedirectTools,
   registerSeoTools,
+  registerBlockTools,
   registerMenuTools,
   registerBlockCatalogTools,
   registerSavedViewTools,
@@ -266,6 +269,9 @@ export function buildServer(
           });
         } catch (err) {
           if (err instanceof ValidationError) return validationResult(err);
+          // A refusal that says what was refused (a read-only field) answers as REST's 403 body.
+          if (err instanceof ForbiddenError && err.details !== undefined)
+            return { ...ok(toHttpError(err).body), isError: true as const };
           throw toolFailure(name, err);
         }
       }) as never,

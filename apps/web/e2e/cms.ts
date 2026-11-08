@@ -199,6 +199,85 @@ export async function statusOf(request: APIRequestContext, id: string) {
   return items.find((e) => e.id === id)?.status;
 }
 
+const blockField = (apiId: string, name: string) => ({
+  apiId,
+  name,
+  type: 'Symbol',
+  localized: false,
+  required: false,
+  position: 0,
+});
+
+/**
+ * A landing page shaped like the demo's "Everything showcase" (the e2e space has no demo data):
+ * a Blocks field holding a hero, a section and a call to action. Returns its id and version.
+ */
+export async function createBlocksPage(request: APIRequestContext, title: string) {
+  const type = await api(request, 'POST', `${MGMT}/content-types`, {
+    apiId: 'landing',
+    name: 'Landing page',
+    displayField: 'title',
+    fields: [
+      { ...blockField('title', 'Title'), required: true },
+      {
+        apiId: 'blocks',
+        name: 'Blocks',
+        type: 'Array',
+        localized: false,
+        required: false,
+        position: 1,
+        items: {
+          type: 'Component',
+          variants: [
+            { apiId: 'hero', name: 'Hero', fields: [blockField('heading', 'Heading')] },
+            { apiId: 'section', name: 'Section', fields: [blockField('title', 'Title')] },
+            { apiId: 'cta', name: 'Call to action', fields: [blockField('label', 'Label')] },
+          ],
+        },
+      },
+    ],
+  });
+  expect([200, 201, 409], await type.text()).toContain(type.status());
+  await api(request, 'POST', `${MGMT}/content-types/landing/published`);
+  const res = await api(request, 'POST', `${MGMT}/entries`, {
+    contentTypeApiId: 'landing',
+    fields: {
+      title: { 'en-US': title },
+      blocks: {
+        'en-US': [
+          { _type: 'hero', heading: title },
+          { _type: 'section', title: 'Features' },
+          { _type: 'cta', label: 'Sign up' },
+        ],
+      },
+    },
+  });
+  expect(res.ok(), await res.text()).toBe(true);
+  const { entry } = (await res.json()) as { entry: { id: string; currentVersion: number } };
+  return { id: entry.id, version: entry.currentVersion };
+}
+
+/** Saves the entry's draft again as it is, so a card held to the version before it is stale. */
+export async function resaveBlocksPage(request: APIRequestContext, id: string, title: string) {
+  const got = await api(request, 'GET', `${MGMT}/entries/${id}`);
+  const { fields } = (await got.json()) as { fields: Record<string, unknown> };
+  const saved = await api(request, 'PUT', `${MGMT}/entries/${id}`, {
+    fields: { ...fields, title: { 'en-US': `${title} (saved again)` } },
+  });
+  expect(saved.ok(), await saved.text()).toBe(true);
+}
+
+/** Opens Coworker (when it isn't) and sends `text` as the person's message. */
+export async function askCoworker(page: Page, text: string) {
+  const toggle = page.getByRole('button', { name: 'Coworker', exact: true });
+  if ((await toggle.getAttribute('aria-pressed')) !== 'true') await toggle.click();
+  const panel = page.getByRole('complementary', { name: 'Coworker' });
+  const box = panel.getByRole('textbox', { name: 'Message Coworker' });
+  await box.fill(text);
+  await box.press('Enter');
+  return panel;
+}
+
 /** A published article whose draft then changed (status `changed`): the body is edited. */
 export async function createChanged(request: APIRequestContext, title: string) {
   const id = await createDraft(request, title, 'Live body');

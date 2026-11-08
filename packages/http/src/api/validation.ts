@@ -43,6 +43,7 @@ import { STARTERS } from '@contentworker/seed';
 import type { Context } from 'hono';
 import { z } from 'zod';
 import * as blockCatalogDocs from './docs/schemas/block-catalog';
+import { blockPatchShape } from './docs/schemas/blocks';
 import {
   contentTypeDetails,
   contentTypeLayout,
@@ -529,6 +530,13 @@ export const entrySeoShape = {
     .describe('Social sharing image: { id, linkType: "Asset" }'),
 };
 export const entrySeoBody = z.object(entrySeoShape);
+/** A key-addressed patch of an entry's blocks fields (`patchEntryBlocks`). */
+export const blockPatchBody = z.object(blockPatchShape);
+/**
+ * A dry run of one (`checkEntryBlocks`). The entry is named in the body, as `…/entries/validate`
+ * names it, so the audit row of a check that wrote nothing is never read as the entry's activity.
+ */
+export const blockPatchCheckBody = z.object({ entryId: zId, ...blockPatchShape });
 export const translateBody = z.object({
   targetLocale: zLocale,
   sourceLocale: zLocale.optional(),

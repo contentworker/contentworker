@@ -12,6 +12,7 @@ export * from './collaboration/task';
 export * from './collaboration/workflow';
 export * from './content-type/asset-mime';
 export * from './content-type/block-catalog';
+export * from './content-type/block-patch';
 export * from './content-type/blocks';
 export * from './content-type/content-type';
 export * from './content-type/dates';

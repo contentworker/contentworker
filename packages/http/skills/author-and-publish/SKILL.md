@@ -70,6 +70,14 @@ To change only an entry's SEO metadata (its type's `Seo` field), call `entries_s
 parts to change (`null` clears one; `locale` for a localized field): it saves a draft, so publish
 afterwards. `sitemap_list` shows the published pages the sitemap lists.
 
+To change a few blocks of a long blocks field, don't resend the whole field with `entries_update`:
+read `entry_blocks_outline` (each block's `key`, type, label and children, and the `version`),
+then send `entry_blocks_patch` with `expectedVersion` set to that version and ops addressed by
+`key` (`insert`, `update`, `move`, `remove`, `duplicate`). Give an inserted block a `ref` to put
+blocks inside it in the same patch. A refused op names its index; nothing is saved, so fix it and
+send the patch again. A `409` means someone saved since you read: outline again. The answer's
+`inverse` undoes the patch, and it saves a draft, so publish afterwards.
+
 ## Editorial workflows
 
 A workflow is a published graph (approvals, waits for events, AI checks, publish). Runs act as
