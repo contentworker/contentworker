@@ -227,6 +227,32 @@ Pushing a new catalog is never blocked by the config. Parts of the config naming
 no longer has are listed as `stale` in the effective rules and ignored until the config is set
 again; a renamed block keeps its narrowing.
 
+### Setting it in the admin
+
+Build → Blocks has a **Rules** card between the catalog's facts and its blocks, with one row per
+place blocks go: each blocks field the catalog fills ("Page › Main") and each block's slot
+("Grid › Items"). A row says what the code allows there and what editors may place now. With
+`content:manage`:
+
+- **Edit** opens the place's controls under its row: the blocks it takes, ticked from the code's
+  list (at least one stays ticked), and **Fewest** and **Most**, blank for the code's own and
+  refused past it.
+- **Locked** is a switch on the row.
+- **Save rules** sends the whole config with the version you started from. If someone else saved
+  first, the card says so and shows their rules; make your change again over them. A refusal
+  shows beside the control it names.
+
+The card's header shows the config's version, and who set it when. Parts a newer push left stale
+are listed as ignored; saving the rules removes them. Without `content:manage` the card reads only.
+
+The editors follow the rules in force. On the canvas the dock offers only the blocks a slot's rule
+takes, a locked slot draws no seams, and its blocks can't be moved, duplicated or removed (Layers
+and the inspector show the lock). In the entry form, Add offers only the allowed blocks, and a
+locked field or slot has no Add, move or Remove. Blocks stored before the rules stay, editable in
+place. Both judge a save as the server will before sending it, and a refusal shows on the block,
+slot or field it names. A lock holds only what is stored: a block placed in this edit, or a new
+entry, is filled as it comes, as the server allows.
+
 ## The API and MCP
 
 | Method | Path                                 | Scope            | Does                                           |
@@ -252,13 +278,12 @@ Agents get the same through MCP: `blocks_catalog_get`, `blocks_catalog_versions`
 `blocks_catalog_push` (with `dryRun`), `blocks_config_get`, `blocks_config_effective` and
 `blocks_config_set`, under the same scopes ([MCP](/guides/mcp/)).
 
-The admin's Build → Blocks screen lists the catalog in force, read-only.
+The admin's Build → Blocks screen lists the catalog in force, read-only, and sets the block config
+([Setting it in the admin](#setting-it-in-the-admin)).
 
 ## Not yet
 
 - Per-breakpoint overrides of token props.
 - Slots nested deeper than the content model's component depth.
-- A screen in the admin for the block config (set it over the API, MCP or the SDK for now), and
-  the canvas offering only what a slot's config allows.
 - The catalog and its config aren't carried by snapshots, exports or environment clones: the
   content types (and so their block types) are, so push the catalog to a new environment once.
