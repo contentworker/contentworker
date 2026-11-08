@@ -35,6 +35,18 @@ describe('@contentworker/sdk-management entry blocks', () => {
     ]);
   });
 
+  it('checks a patch without saving it, naming the entry in the body', async () => {
+    const { calls, client } = recording();
+    await client.entries.checkBlocks('e1', {
+      expectedVersion: 3,
+      ops: [{ op: 'remove', field: 'body', key: 'k2' }],
+    });
+    expect(calls).toEqual([
+      'POST https://cms.test/spaces/s1/environments/main/entries/blocks/validate ' +
+        '{"entryId":"e1","expectedVersion":3,"ops":[{"op":"remove","field":"body","key":"k2"}]}',
+    ]);
+  });
+
   it('outlines blocks, narrowed to a field', async () => {
     const { calls, client } = recording();
     await client.entries.outlineBlocks('e1', { field: 'body' });

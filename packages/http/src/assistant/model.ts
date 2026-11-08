@@ -236,6 +236,37 @@ function lastUserText(prompt: Prompt) {
   return '';
 }
 
+/** "Move the first block to the end": the one block patch the mock knows how to make. */
+const MOVE_FIRST_BLOCK = /\bmove\b.*\bfirst block\b.*\b(end|last|bottom)\b/;
+
+/**
+ * The block patch "move the first block to the end" asks for, from the outline the mock read for
+ * it: the first blocks field (and locale) holding two or more blocks, its first block moved last,
+ * held to the version outlined. Null when no field has two blocks to swap.
+ */
+export function mockBlockMove(id: string, outline: unknown): Step | null {
+  const o = outline as {
+    version?: unknown;
+    fields?: Record<string, Record<string, { key?: unknown }[]>>;
+  } | null;
+  if (typeof o?.version !== 'number' || !o.fields) return null;
+  for (const [field, byLocale] of Object.entries(o.fields)) {
+    for (const [locale, blocks] of Object.entries(byLocale)) {
+      const key = blocks[0]?.key;
+      if (blocks.length < 2 || typeof key !== 'string') continue;
+      return {
+        tool: 'entry_blocks_patch',
+        input: {
+          id,
+          expectedVersion: o.version,
+          ops: [{ op: 'move', field, locale, key, to: { index: blocks.length - 1 } }],
+        },
+      };
+    }
+  }
+  return null;
+}
+
 /** Picks one tool from the words used, or says what it understands. */
 export function mockStep(text: string, context: AssistantContext, tools: Set<string>): Step {
   if (isSetupScope(context.scope)) return mockSetupStep(text, tools);
@@ -246,6 +277,8 @@ export function mockStep(text: string, context: AssistantContext, tools: Set<str
   const pick = (tool: string, input: Record<string, unknown>): Step =>
     tools.has(tool) ? { tool, input } : { text: 'That isn’t something I can do here.' };
 
+  // A block move needs the entry's keys and version: outline it first (`mockBlockMove` follows).
+  if (entryId && MOVE_FIRST_BLOCK.test(t)) return pick('entry_blocks_outline', { id: entryId });
   if (entryId && /\bunpublish\b/.test(t)) return pick('entries_unpublish', { id: entryId });
   if (entryId && /\bpublish\b/.test(t)) return pick('entries_publish', { id: entryId });
   if (entryId && /\b(trash|delete|remove)\b/.test(t)) return pick('entries_trash', { id: entryId });
@@ -352,6 +385,20 @@ export function mockModel(context: AssistantContext): Model {
   const answer = (options: CallOptions): Step => {
     const tools = new Set((options.tools ?? []).map((t) => t.name));
     const results = lastToolResults(options.prompt);
+    // The outline a block move asked for becomes the move itself, held to the outlined version.
+    const outlined = results?.length === 1 ? results[0] : undefined;
+    if (
+      outlined?.toolName === 'entry_blocks_outline' &&
+      context.page.kind === 'entry' &&
+      tools.has('entry_blocks_patch') &&
+      MOVE_FIRST_BLOCK.test(lastUserText(options.prompt).toLowerCase())
+    ) {
+      const out = outlined.output;
+      const value =
+        out.type === 'json' ? out.value : out.type === 'text' ? unwrapped(out.value) : null;
+      const move = mockBlockMove(context.page.entryId, value);
+      if (move) return move;
+    }
     if (results) {
       return {
         text: results

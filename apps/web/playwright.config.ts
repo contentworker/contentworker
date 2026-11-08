@@ -93,7 +93,7 @@ export default defineConfig({
       testMatch:
         PART === 'axe'
           ? AXE
-          : /(cms|workflows|space-access|first-space|accessibility|contrast-settle|modal-focus)\.spec\.ts/,
+          : /(cms|workflows|space-access|first-space|block-patch-card|accessibility|contrast-settle|modal-focus)\.spec\.ts/,
       testIgnore: PART === 'cms' ? AXE : undefined,
       use: { ...devices['Desktop Chrome'] },
     },

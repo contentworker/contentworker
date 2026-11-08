@@ -13,6 +13,7 @@ import {
   type AppContext,
   BLOCK_PATCH_MAX_OPS,
   type BlockOpInput,
+  checkEntryBlocks,
   createContentType,
   createEntry,
   createEnvironment,
@@ -23,6 +24,7 @@ import {
   publishContentType,
   SYSTEM_CALLER,
   trashEntry,
+  updateContentType,
 } from '../src/index';
 
 const scope = { spaceId: 'site', environmentId: 'main' };
@@ -287,6 +289,7 @@ describe('patching an entry’s blocks', () => {
         op: 1,
         field: 'ops[1]',
         locale: 'en-US',
+        code: 'type_not_allowed',
         message: 'A "section" block can’t go here (one of: hero, cta)',
       },
     ]);
@@ -306,7 +309,45 @@ describe('patching an entry’s blocks', () => {
     expect((err as ValidationError).issues[0]).toMatchObject({
       field: 'body[1].label',
       message: 'Field is required',
+      // The block it falls in, by key: positions say nothing once a patch moves blocks.
+      block: { key: page.cta, type: 'cta', path: 'label' },
     });
+    expect(await versions(page.id)).toBe(1);
+  });
+
+  it('says what it refused: a read-only field by name, fields the caller can’t read by count', async () => {
+    const page = await landing();
+    const readOnly = await refusal(
+      patchEntryBlocks(
+        ctx,
+        scope,
+        page.id,
+        {
+          expectedVersion: page.version,
+          ops: [{ op: 'remove', field: 'body', key: page.cta }],
+        },
+        { unwritable: ['body'] },
+      ),
+    );
+    expect((readOnly as ForbiddenError).details).toEqual({ reason: 'read_only', field: 'body' });
+    const hidden = await refusal(
+      patchEntryBlocks(
+        ctx,
+        scope,
+        page.id,
+        {
+          expectedVersion: page.version,
+          ops: [
+            { op: 'remove', field: 'body', key: page.cta },
+            { op: 'insert', field: 'aside', block: { _type: 'cta', label: 'x' } },
+          ],
+        },
+        { unwritable: ['body', 'aside'], unreadable: ['aside'] },
+      ),
+    );
+    // Counted, never named: the caller can't read it.
+    expect((hidden as ForbiddenError).details).toEqual({ reason: 'hidden', hidden: 1 });
+    expect((hidden as Error).message).not.toContain('aside');
     expect(await versions(page.id)).toBe(1);
   });
 
@@ -322,11 +363,18 @@ describe('patching an entry’s blocks', () => {
       }),
     );
     expect((err as ValidationError).issues).toEqual([
-      { op: 0, field: 'ops[0]', locale: 'fr', message: '"fr" is not one of this space’s locales' },
+      {
+        op: 0,
+        field: 'ops[0]',
+        locale: 'fr',
+        code: 'bad_locale',
+        message: '"fr" is not one of this space’s locales',
+      },
       {
         op: 1,
         field: 'ops[1]',
         locale: 'de',
+        code: 'bad_locale',
         message: '"body" is not localized; only en-US is allowed',
       },
     ]);
@@ -385,6 +433,141 @@ describe('patching an entry’s blocks', () => {
     expect(err).toBeInstanceOf(NotFoundError);
     expect(await versions(page.id)).toBe(1);
     await expect(outlineEntryBlocks(ctx, staging, page.id)).rejects.toBeInstanceOf(NotFoundError);
+  });
+});
+
+describe('a refusal about fields the caller can’t read', () => {
+  /** A memo whose `notes` the caller's role denies, stored empty, then made required. */
+  const memo = async () => {
+    const def = (required: boolean) => [
+      field({ apiId: 'title', type: 'Symbol' }),
+      field({
+        apiId: 'body',
+        type: 'Array',
+        position: 1,
+        items: { type: 'Component', variants: [hero, cta] },
+      }),
+      field({ apiId: 'notes', type: 'Symbol', position: 2, required }),
+    ];
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
+      apiId: 'memo',
+      name: 'Memo',
+      displayField: 'title',
+      fields: def(false),
+    });
+    await publishContentType(ctx, scope, 'memo');
+    const { entry, fields } = await createEntry(ctx, scope, {
+      contentTypeApiId: 'memo',
+      fields: {
+        title: { 'en-US': 'Memo' },
+        body: { 'en-US': [{ _type: 'cta', label: 'Go' }] },
+      },
+    });
+    // Someone else's rule: the stored entry now fails it in a field this caller can't see.
+    await updateContentType(ctx, SYSTEM_CALLER, scope, 'memo', { fields: def(true) });
+    await publishContentType(ctx, scope, 'memo');
+    const key = ((fields.body?.['en-US'] ?? []) as { _key: string }[])[0]?._key as string;
+    return { id: entry.id, version: entry.currentVersion, key };
+  };
+  const restricted = { unwritable: ['notes'], unreadable: ['notes'] };
+
+  it.each([
+    ['the patch', patchEntryBlocks],
+    ['its dry run', checkEntryBlocks],
+  ] as const)('counts them in %s and never names them', async (_name, run) => {
+    const m = await memo();
+    const err = await refusal(
+      run(
+        ctx,
+        scope,
+        m.id,
+        {
+          expectedVersion: m.version,
+          ops: [{ op: 'update', field: 'body', key: m.key, set: { label: 'Went' } }],
+        },
+        restricted,
+      ),
+    );
+    expect(err).toBeInstanceOf(ValidationError);
+    const issues = (err as ValidationError).issues;
+    expect(issues).toEqual([expect.objectContaining({ field: '', code: 'hidden', hidden: 1 })]);
+    // Neither the field, its path, nor a block in it.
+    expect(JSON.stringify(issues)).not.toContain('notes');
+    expect(issues.some((i) => 'block' in i)).toBe(false);
+  });
+
+  it('names them to a caller who can read them', async () => {
+    const m = await memo();
+    const err = await refusal(
+      checkEntryBlocks(ctx, scope, m.id, {
+        expectedVersion: m.version,
+        ops: [{ op: 'update', field: 'body', key: m.key, set: { label: 'Went' } }],
+      }),
+    );
+    expect((err as ValidationError).issues[0]).toMatchObject({ field: 'notes' });
+  });
+});
+
+describe('checking a block patch without saving it', () => {
+  it('answers the fields the save would store, the applied ops and the refs’ keys, and writes nothing', async () => {
+    const page = await landing();
+    const checked = await checkEntryBlocks(ctx, scope, page.id, {
+      expectedVersion: page.version,
+      ops: [
+        { op: 'insert', field: 'body', block: { _type: 'cta', label: 'Docs' }, ref: 'docs' },
+        { op: 'move', field: 'body', key: 'docs', to: { index: 0 } },
+      ],
+    });
+    const key = checked.keys.docs as string;
+    expect(checked.fields.body?.['en-US']).toEqual([
+      { _type: 'cta', _key: key, label: 'Docs' },
+      { _type: 'hero', _key: page.hero, heading: 'Welcome' },
+      { _type: 'cta', _key: page.cta, label: 'Sign up' },
+    ]);
+    // Resolved as the save resolves them: the default locale, keys for refs.
+    expect(checked.applied[1]).toEqual({
+      op: 'move',
+      field: 'body',
+      locale: 'en-US',
+      key,
+      to: { index: 0 },
+    });
+    expect(await versions(page.id)).toBe(1);
+  });
+
+  it('refuses what the save refuses: a moved draft, an unwritable field, a bad locale, a model rule', async () => {
+    const page = await landing();
+    const remove: BlockOpInput = { op: 'remove', field: 'body', key: page.cta };
+    expect(
+      await refusal(checkEntryBlocks(ctx, scope, page.id, { expectedVersion: 9, ops: [remove] })),
+    ).toBeInstanceOf(ConflictError);
+    expect(
+      await refusal(
+        checkEntryBlocks(
+          ctx,
+          scope,
+          page.id,
+          { expectedVersion: page.version, ops: [remove] },
+          { unwritable: ['body'] },
+        ),
+      ),
+    ).toBeInstanceOf(ForbiddenError);
+    const locale = await refusal(
+      checkEntryBlocks(ctx, scope, page.id, {
+        expectedVersion: page.version,
+        ops: [{ ...remove, locale: 'fr' }],
+      }),
+    );
+    expect((locale as ValidationError).issues[0]).toMatchObject({ op: 0, locale: 'fr' });
+    // The content model's own rule, judged as a save judges it.
+    const invalid = await refusal(
+      checkEntryBlocks(ctx, scope, page.id, {
+        expectedVersion: page.version,
+        ops: [{ op: 'update', field: 'body', key: page.cta, unset: ['label'] }],
+      }),
+    );
+    expect((invalid as ValidationError).issues[0]).toMatchObject({ field: 'body[1].label' });
+    expect(await versions(page.id)).toBe(1);
   });
 });
 

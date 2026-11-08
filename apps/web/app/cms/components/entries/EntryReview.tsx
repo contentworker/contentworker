@@ -405,6 +405,8 @@ export function ReviewHold(props: {
   /** What the hold waits to show, and what it is doing meanwhile: a publish's by default. */
   shows?: string;
   reading?: string;
+  /** Why it is blocked, when the read showed it can't go ahead rather than failing to show. */
+  why?: string | undefined;
 }) {
   const {
     id,
@@ -413,6 +415,7 @@ export function ReviewHold(props: {
     blocked,
     shows = 'what goes live',
     reading = 'comparing with what’s live',
+    why,
   } = props;
   return (
     <p
@@ -421,7 +424,7 @@ export function ReviewHold(props: {
       className={cn('text-xs leading-snug empty:hidden', pending && !blocked && 'sr-only')}
     >
       {blocked
-        ? `You can’t ${verb} until this can show ${shows}.`
+        ? (why ?? `You can’t ${verb} until this can show ${shows}.`)
         : pending
           ? `You can’t ${verb} yet: still ${reading}.`
           : null}
