@@ -1,0 +1,528 @@
+// @vitest-environment jsdom
+// The canvas editor's screen: seams drawn from the page's geometry, the dock offering exactly what
+// a slot takes, inserts, moves and removes that undo and redo, the inspector's edits reaching the
+// page, Layers by keyboard, the save held to its version (and the conflict it can meet), and every
+// state the canvas says in place instead of editing.
+import type { ContentType } from '@contentworker/domain';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { createMemoryRouter, RouterProvider } from 'react-router';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { FRAME_CHANNEL, type FrameGeometry } from '~/cms/lib/live-preview/frame-channel';
+import { ApiError, type PreviewEntry } from '~/cms/lib/management';
+import { catalog, pageFields, pageType, ref } from './canvas-fixture';
+
+const client = {
+  listContentTypes: vi.fn(async (): Promise<ContentType[]> => [pageType]),
+  getSpaceConfig: vi.fn(async () => ({ defaultLocale: 'en-US', locales: ['en-US'] })),
+  getEntry: vi.fn<(id: string) => Promise<PreviewEntry>>(),
+  getBlockCatalog: vi.fn(async () => catalog),
+  getSpaceAccess: vi.fn(async () => ({ subject: 'me', scopes: ['content:write'] })),
+  getEntryWorkflowState: vi.fn(async (): Promise<unknown> => null),
+  listWorkflows: vi.fn(async (): Promise<unknown[]> => []),
+  listEntries: vi.fn(async () => []),
+  listAssets: vi.fn(async () => ({ items: [] })),
+  suggestEntries: vi.fn(async () => []),
+  updateEntry: vi.fn(),
+};
+vi.mock('~/cms/lib/client-context', () => ({
+  useClient: () => ({
+    client,
+    conn: { space: 'sp', environment: 'main', locale: 'en-US' },
+    busy: false,
+    run: async (fn: () => Promise<void>) => {
+      try {
+        await fn();
+      } catch {}
+    },
+  }),
+}));
+
+const { ToastProvider } = await import('~/cms/lib/toast');
+const { EntryCanvas } = await import('~/cms/routes/EntryCanvas');
+
+/** What the screen is as wide as: lg and up by default. */
+let media = { wide: true, tablet: true };
+beforeEach(() => {
+  media = { wide: true, tablet: true };
+  window.matchMedia = ((query: string) => ({
+    matches: query.includes('1024px') ? media.wide : query.includes('768px') ? media.tablet : false,
+    media: query,
+    onchange: null,
+    addListener: () => {},
+    removeListener: () => {},
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    dispatchEvent: () => false,
+  })) as typeof window.matchMedia;
+});
+afterEach(() => {
+  cleanup();
+  vi.clearAllMocks();
+  localStorage.clear();
+});
+
+function entry(over: Partial<PreviewEntry> = {}): PreviewEntry {
+  return {
+    id: 'e1',
+    contentType: 'page',
+    status: 'draft',
+    version: 3,
+    fields: pageFields(),
+    ...over,
+  };
+}
+
+async function setup(over: Partial<PreviewEntry> = {}) {
+  client.getEntry.mockResolvedValue(entry(over));
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const router = createMemoryRouter(
+    [
+      { path: '/content/:typeId/:entryId/canvas', element: <EntryCanvas /> },
+      { path: '/content/:typeId/:entryId', element: <p>The form</p> },
+    ],
+    { initialEntries: ['/content/page/e1/canvas'] },
+  );
+  render(
+    <QueryClientProvider client={queryClient}>
+      <ToastProvider>
+        <RouterProvider router={router} />
+      </ToastProvider>
+    </QueryClientProvider>,
+  );
+  return router;
+}
+
+/** The Site frame: says it's up, that the page connected with `capabilities`, and its geometry. */
+function frame() {
+  const el = screen.getByTitle('Site preview') as HTMLIFrameElement;
+  const posted: unknown[] = [];
+  vi.spyOn(el.contentWindow as Window, 'postMessage').mockImplementation((m: unknown) => {
+    posted.push(m);
+  });
+  const say = (data: Record<string, unknown>) =>
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: { channel: FRAME_CHANNEL, ...data },
+          origin: window.location.origin,
+          source: el.contentWindow,
+        }),
+      );
+    });
+  return {
+    posted,
+    say,
+    connect(capabilities = ['select', 'patch.fields', 'patch.blocks', 'scroll', 'layout']) {
+      say({ type: 'ready', origin: 'https://site.example' });
+      say({ type: 'status', status: 'live' });
+      say({ type: 'session', entries: ['e1'], capabilities });
+    },
+    geometry(g: FrameGeometry) {
+      say({ type: 'geometry', geometry: g });
+    },
+  };
+}
+
+const rect = (y: number, h = 10) => ({ x: 0, y, w: 100, h });
+const GEOMETRY: FrameGeometry = {
+  truncated: false,
+  blocks: [
+    { ref: ref('body[h1]'), rect: rect(0, 40) },
+    { ref: ref('body[s1]'), rect: rect(50, 100) },
+  ],
+  slots: [
+    {
+      ref: ref('body'),
+      rect: rect(0, 300),
+      gaps: [
+        { index: 1, axis: 'y', after: 'h1', before: 's1', rect: rect(40) },
+        { index: 3, axis: 'y', after: 'a1', rect: rect(290) },
+      ],
+    },
+    {
+      ref: ref('body[s1].items'),
+      rect: rect(60, 80),
+      gaps: [{ index: 1, axis: 'y', after: 'c1', rect: rect(130) }],
+    },
+  ],
+};
+
+const seam = (id: string) => document.querySelector(`[data-seam="${id}"]`) as HTMLElement;
+const dock = () => screen.getByRole('region', { name: /^Add to/ });
+const layer = (key: string) => document.querySelector(`[data-layer="${key}"]`) as HTMLElement;
+const openLayers = () => act(() => screen.getByRole('button', { name: 'Layers' }).click());
+
+describe('seams and the dock', () => {
+  it('draws a seam per place the page reports, and the dock offers only what that slot takes', async () => {
+    await setup();
+    await screen.findByRole('heading', { level: 1, name: 'Home' });
+    const f = frame();
+    f.connect();
+    f.geometry(GEOMETRY);
+    expect(document.querySelectorAll('[data-seam]')).toHaveLength(3);
+
+    act(() => seam('body#1').click());
+    const top = dock();
+    expect(within(top).getByText('after Hero', { exact: false })).toBeTruthy();
+    const offered = [...top.querySelectorAll('[data-dock-item]')].map((b) =>
+      b.getAttribute('data-dock-item'),
+    );
+    expect(offered).toEqual(['section', 'hero', 'cta']);
+    expect(within(top).getByRole('heading', { name: 'Headers' })).toBeTruthy();
+    expect(within(top).getByText('A big opening')).toBeTruthy();
+    // The first block it offers has focus: Enter puts it there.
+    expect(document.activeElement?.getAttribute('data-dock-item')).toBe('section');
+
+    act(() => seam('body[s1].items#1').click());
+    expect([...dock().querySelectorAll('[data-dock-item]')].map((b) => b.textContent)).toEqual([
+      'Card',
+    ]);
+  });
+
+  it('never lets a seam grow past its cap, whatever box the page reports', async () => {
+    await setup();
+    await screen.findByRole('heading', { level: 1, name: 'Home' });
+    const f = frame();
+    f.connect();
+    f.geometry({
+      ...GEOMETRY,
+      slots: [
+        {
+          ref: ref('body'),
+          rect: rect(0, 5000),
+          gaps: [{ index: 1, axis: 'y', after: 'h1', rect: rect(0, 5000) }],
+        },
+      ],
+    });
+    expect(Number.parseFloat(seam('body#1').style.height)).toBe(48);
+  });
+
+  it('says a full slot is full and offers nothing there', async () => {
+    const fields = pageFields();
+    const section = (fields.body!['en-US'] as { items: unknown[] }[])[1] as { items: unknown[] };
+    section.items.push({ _type: 'card', _key: 'c2', title: 'Kind' });
+    await setup({ fields });
+    await screen.findByRole('heading', { level: 1, name: 'Home' });
+    const f = frame();
+    f.connect();
+    f.geometry({
+      ...GEOMETRY,
+      slots: [
+        {
+          ref: ref('body[s1].items'),
+          rect: rect(60, 80),
+          gaps: [{ index: 2, axis: 'y', after: 'c2', rect: rect(130) }],
+        },
+      ],
+    });
+    expect(seam('body[s1].items#2').dataset.full).toBe('true');
+    act(() => seam('body[s1].items#2').click());
+    expect(within(dock()).getByText(/Items is full: it holds 2 of 2/)).toBeTruthy();
+    expect(dock().querySelectorAll('[data-dock-item]')).toHaveLength(0);
+  });
+
+  it('without the page’s layout, says seams aren’t shown and still selects from a click', async () => {
+    await setup();
+    await screen.findByRole('heading', { level: 1, name: 'Home' });
+    const f = frame();
+    f.connect(['select', 'patch.fields', 'patch.blocks', 'scroll']);
+    f.geometry(GEOMETRY);
+    expect(document.querySelectorAll('[data-seam]')).toHaveLength(0);
+    expect(screen.getByText(/doesn’t report its layout, so seams aren’t shown/)).toBeTruthy();
+    f.say({ type: 'pick', ref: ref('body[s1].items[c1].title') });
+    expect(screen.getByRole('heading', { level: 2, name: 'Card' })).toBeTruthy();
+  });
+
+  it('ignores a click naming another entry', async () => {
+    await setup();
+    await screen.findByRole('heading', { level: 1, name: 'Home' });
+    const f = frame();
+    f.connect();
+    f.say({ type: 'pick', ref: ref('body[h1]', { entryId: 'other' }) });
+    expect(screen.getByRole('heading', { level: 2, name: 'Checks' })).toBeTruthy();
+  });
+});
+
+describe('editing on the canvas', () => {
+  it('inserts at a seam (unsaved, in the page at once), and undo and redo take it back and again', async () => {
+    await setup();
+    await screen.findByRole('heading', { level: 1, name: 'Home' });
+    const f = frame();
+    f.connect();
+    f.geometry(GEOMETRY);
+    act(() => seam('body#1').click());
+    act(() => (dock().querySelector('[data-dock-item="cta"]') as HTMLElement).click());
+
+    expect(screen.getByText('Unsaved changes')).toBeTruthy();
+    // Selected, and its settings have focus.
+    expect(document.activeElement?.textContent).toBe('Call to action');
+    // The page was sent the insert as a key-addressed op, before anything was saved.
+    const sent = f.posted.at(-2) as { type: string; edits: { blocks: { ops: unknown[] }[] } };
+    expect(sent.type).toBe('entry');
+    expect(sent.edits.blocks[0]?.ops[0]).toMatchObject({ op: 'insert', after: 'h1' });
+    openLayers();
+    const names = () =>
+      [...document.querySelectorAll('[role="tree"] > [data-layer]')].map(
+        (el) => el.querySelector('span')?.textContent,
+      );
+    expect(names()).toEqual(['Hero', 'Call to action', 'Section', 'Call to action']);
+
+    act(() => screen.getByRole('button', { name: 'Undo' }).click());
+    expect(names()).toEqual(['Hero', 'Section', 'Call to action']);
+    expect(screen.queryByText('Unsaved changes')).toBeNull();
+    act(() => screen.getByRole('button', { name: 'Redo' }).click());
+    expect(names()).toHaveLength(4);
+  });
+
+  it('moves with ⌘↓, removes with Delete and puts it back from the toast', async () => {
+    await setup();
+    await screen.findByRole('heading', { level: 1, name: 'Home' });
+    openLayers();
+    act(() => layer('h1').click());
+    fireEvent.keyDown(document.body, { key: 'ArrowDown', metaKey: true });
+    const order = () =>
+      [...document.querySelectorAll('[role="tree"] > [data-layer]')].map((el) =>
+        el.getAttribute('data-layer'),
+      );
+    expect(order()).toEqual(['s1', 'h1', 'a1']);
+
+    fireEvent.keyDown(document.body, { key: 'Delete' });
+    expect(order()).toEqual(['s1', 'a1']);
+    // The selection steps to its neighbour.
+    expect(layer('a1').getAttribute('aria-selected')).toBe('true');
+    // The toast's Undo (the header has one too).
+    const undos = screen.getAllByRole('button', { name: 'Undo' });
+    expect(undos).toHaveLength(2);
+    act(() => (undos.at(-1) as HTMLElement).click());
+    expect(order()).toEqual(['s1', 'h1', 'a1']);
+    fireEvent.keyDown(document.body, { key: 'z', metaKey: true });
+    expect(order()).toEqual(['h1', 's1', 'a1']);
+  });
+
+  it('gives focus back to what opened the dock, and keeps plain keys off buttons', async () => {
+    await setup();
+    await screen.findByRole('heading', { level: 1, name: 'Home' });
+    openLayers();
+    act(() => layer('h1').click());
+    const add = screen.getByRole('button', { name: 'Add a block to the end of Main' });
+    act(() => add.focus());
+    act(() => add.click());
+    expect(dock()).toBeTruthy();
+    fireEvent.keyDown(document.activeElement as Element, { key: 'Escape' });
+    expect(document.activeElement).toBe(add);
+    // Backspace on a button is the button's: the selected block stays.
+    fireEvent.keyDown(add, { key: 'Backspace' });
+    expect(layer('h1')).toBeTruthy();
+  });
+
+  it('keeps focus in Layers when a block is removed from there', async () => {
+    await setup();
+    await screen.findByRole('heading', { level: 1, name: 'Home' });
+    openLayers();
+    act(() => layer('h1').focus());
+    act(() => layer('h1').click());
+    fireEvent.keyDown(layer('h1'), { key: 'Delete' });
+    await waitFor(() => expect(document.activeElement).toBe(layer('s1')));
+  });
+
+  it('opens the dock at the selected block with /, and closes it with Esc', async () => {
+    await setup();
+    await screen.findByRole('heading', { level: 1, name: 'Home' });
+    openLayers();
+    act(() => layer('s1').click());
+    fireEvent.keyDown(document.body, { key: '/' });
+    expect(within(dock()).getByText('after Section', { exact: false })).toBeTruthy();
+    fireEvent.keyDown(document.activeElement as Element, { key: 'Escape' });
+    expect(screen.queryByRole('region', { name: /^Add to/ })).toBeNull();
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    expect(layer('s1').getAttribute('aria-selected')).toBe('false');
+  });
+
+  it('edits a block’s content and its look in the inspector, and the page gets the new value', async () => {
+    await setup();
+    await screen.findByRole('heading', { level: 1, name: 'Home' });
+    const f = frame();
+    f.connect();
+    openLayers();
+    act(() => layer('h1').click());
+    const heading = screen.getByLabelText(/^Heading/) as HTMLInputElement;
+    fireEvent.change(heading, { target: { value: 'Hello' } });
+    const sent = f.posted.at(-1) as { type: string; edits: { blocks: { ops: unknown[] }[] } };
+    expect(sent.edits.blocks[0]?.ops[0]).toMatchObject({
+      op: 'update',
+      key: 'h1',
+      set: { heading: 'Hello' },
+    });
+
+    fireEvent.mouseDown(screen.getByRole('tab', { name: 'Look' }));
+    // A token prop is a segmented control of its choices, never a free CSS field.
+    act(() => screen.getByRole('radio', { name: 'dark' }).click());
+    expect(screen.getByRole('radio', { name: 'dark' }).getAttribute('aria-checked')).toBe('true');
+    expect(screen.getByRole('tab', { name: 'Data' })).toBeTruthy();
+  });
+
+  it('moves the selection through Layers with the arrows', async () => {
+    await setup();
+    await screen.findByRole('heading', { level: 1, name: 'Home' });
+    openLayers();
+    act(() => layer('s1').focus());
+    act(() => layer('s1').click());
+    const tree = layer('s1').closest('[role="tree"]') as HTMLElement;
+    fireEvent.keyDown(tree, { key: 'ArrowRight' });
+    expect(layer('c1').getAttribute('aria-selected')).toBe('true');
+    fireEvent.keyDown(tree, { key: 'ArrowLeft' });
+    expect(layer('s1').getAttribute('aria-selected')).toBe('true');
+    fireEvent.keyDown(tree, { key: 'ArrowDown' });
+    expect(layer('c1').getAttribute('aria-selected')).toBe('true');
+    fireEvent.keyDown(tree, { key: 'ArrowDown' });
+    expect(layer('a1').getAttribute('aria-selected')).toBe('true');
+    fireEvent.keyDown(tree, { key: 'Home' });
+    expect(layer('h1').getAttribute('aria-selected')).toBe('true');
+    expect(layer('h1').getAttribute('tabindex')).toBe('0');
+  });
+});
+
+describe('saving', () => {
+  const saved = (version: number) => ({
+    entry: {
+      id: 'e1',
+      contentTypeApiId: 'page',
+      status: 'draft',
+      currentVersion: version,
+      publishedVersion: null,
+    },
+    fields: pageFields(),
+  });
+
+  async function edited() {
+    await setup();
+    await screen.findByRole('heading', { level: 1, name: 'Home' });
+    openLayers();
+    act(() => layer('a1').click());
+    fireEvent.change(screen.getByLabelText(/^Label/), { target: { value: 'Go' } });
+  }
+
+  it('saves through the entry’s save, held to the version the canvas started from', async () => {
+    client.updateEntry.mockResolvedValue(saved(4));
+    await edited();
+    act(() => screen.getByRole('button', { name: 'Save draft' }).click());
+    await waitFor(() => expect(client.updateEntry).toHaveBeenCalled());
+    const [id, fields, opts] = client.updateEntry.mock.calls[0] as [string, unknown, unknown];
+    expect(id).toBe('e1');
+    expect(opts).toEqual({ expectedVersion: 3 });
+    expect((fields as { body: { 'en-US': { label?: string }[] } }).body['en-US'][2]?.label).toBe(
+      'Go',
+    );
+  });
+
+  it('saving over a newer save that didn’t say its version reads it first, never discards', async () => {
+    client.updateEntry.mockRejectedValueOnce(new ApiError(409, 'stale', { error: {} }));
+    client.updateEntry.mockResolvedValueOnce(saved(8));
+    await edited();
+    act(() => screen.getByRole('button', { name: 'Save draft' }).click());
+    const dialog = await screen.findByRole('alertdialog');
+    client.getEntry.mockResolvedValueOnce(entry({ version: 7 }));
+    act(() => within(dialog).getByRole('button', { name: 'Save mine over it' }).click());
+    await waitFor(() => expect(client.updateEntry).toHaveBeenCalledTimes(2));
+    expect(client.updateEntry.mock.calls[1]?.[2]).toEqual({ expectedVersion: 7 });
+  });
+
+  it('meets a newer save with the two-way choice, and saves over it when asked', async () => {
+    client.updateEntry.mockRejectedValueOnce(
+      new ApiError(409, 'stale', {
+        error: { code: 'conflict', details: { currentVersion: 5, expectedVersion: 3 } },
+      }),
+    );
+    client.updateEntry.mockResolvedValueOnce(saved(6));
+    await edited();
+    act(() => screen.getByRole('button', { name: 'Save draft' }).click());
+    const dialog = await screen.findByRole('alertdialog');
+    expect(within(dialog).getByText(/It’s at v5 now, and the canvas started from v3/)).toBeTruthy();
+    expect(within(dialog).getByRole('button', { name: 'Load theirs' })).toBeTruthy();
+    act(() => within(dialog).getByRole('button', { name: 'Save mine over it' }).click());
+    await waitFor(() => expect(client.updateEntry).toHaveBeenCalledTimes(2));
+    expect(client.updateEntry.mock.calls[1]?.[2]).toEqual({ expectedVersion: 5 });
+  });
+
+  it('refuses to save while a required slot is empty, and lists it in the checks', async () => {
+    const fields = pageFields();
+    ((fields.body!['en-US'] as unknown[])[1] as { items: unknown[] }).items = [];
+    await setup({ fields });
+    await screen.findByRole('heading', { level: 1, name: 'Home' });
+    expect(screen.getByRole('button', { name: 'Items needs a block' })).toBeTruthy();
+    openLayers();
+    act(() => layer('a1').click());
+    fireEvent.change(screen.getByLabelText(/^Label/), { target: { value: 'Go' } });
+    act(() => screen.getByRole('button', { name: 'Save draft' }).click());
+    expect(client.updateEntry).not.toHaveBeenCalled();
+    expect(await screen.findByText('Fix 1 check to save the draft')).toBeTruthy();
+    // The checks are in view, and a check selects the block it is about.
+    act(() => screen.getByRole('button', { name: 'Items needs a block' }).click());
+    expect(screen.getByRole('heading', { level: 2, name: 'Section' })).toBeTruthy();
+  });
+});
+
+describe('what the canvas says instead of editing', () => {
+  it('explains a type without a preview URL, with the way back to the form', async () => {
+    client.listContentTypes.mockResolvedValueOnce([{ ...pageType, preview: undefined }]);
+    await setup();
+    expect(await screen.findByText('Page has no preview URL')).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Edit in the form' }).getAttribute('href')).toBe(
+      '/content/page/e1',
+    );
+    expect(screen.queryByTitle('Site preview')).toBeNull();
+  });
+
+  it('is review-only for a role that can’t edit', async () => {
+    client.getSpaceAccess.mockResolvedValueOnce({ subject: 'me', scopes: ['preview:read'] });
+    await setup();
+    expect(await screen.findByText(/Your role can read this entry but not edit it/)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Save draft' })).toBeNull();
+  });
+
+  it('is review-only below md, and says so', async () => {
+    media = { wide: false, tablet: false };
+    await setup();
+    expect(await screen.findByText(/Arranging blocks needs a wider screen/)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Save draft' })).toBeNull();
+  });
+
+  it('shows the published version read-only until a draft is started', async () => {
+    await setup({ status: 'published' });
+    await screen.findByText(/This is the published version/);
+    expect(screen.queryByRole('button', { name: 'Save draft' })).toBeNull();
+    act(() => screen.getByRole('button', { name: 'Edit a draft' }).click());
+    expect(screen.getByRole('button', { name: 'Save draft' })).toBeTruthy();
+  });
+
+  it('says where the entry is in a workflow', async () => {
+    client.getEntryWorkflowState.mockResolvedValue({ workflowId: 'w', currentStepId: 'r' });
+    client.listWorkflows.mockResolvedValue([
+      { id: 'w', steps: [{ id: 'r', name: 'Legal review' }] },
+    ]);
+    await setup();
+    expect(await screen.findByText('Legal review')).toBeTruthy();
+  });
+
+  it('offers to keep or remove a block the code no longer provides', async () => {
+    const fields = pageFields();
+    (fields.body!['en-US'] as unknown[]).push({ _type: 'gone', _key: 'g1' });
+    await setup({ fields });
+    await screen.findByRole('heading', { level: 1, name: 'Home' });
+    openLayers();
+    expect(within(layer('g1')).getByText('Removed from code')).toBeTruthy();
+    act(() => layer('g1').click());
+    act(() => screen.getByRole('button', { name: 'Keep for now' }).click());
+    expect(screen.queryByRole('button', { name: 'Keep for now' })).toBeNull();
+    act(() => screen.getByRole('button', { name: 'Remove' }).click());
+    expect(layer('g1')).toBeNull();
+  });
+
+  it('reuses the Site pane’s notice when the page never connects', async () => {
+    await setup();
+    await screen.findByRole('heading', { level: 1, name: 'Home' });
+    frame().say({ type: 'status', status: 'not-connected' });
+    expect(screen.getByText('This site isn’t connected for live preview')).toBeTruthy();
+  });
+});

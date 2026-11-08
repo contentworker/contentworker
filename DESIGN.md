@@ -886,6 +886,35 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   label at 10px. Every canvas with a loop or a wait has **Jump to**. React Flow's credit stays, at
   caption size. Publish asks in place about the draft on screen (any edit withdraws the question)
   and, while the checks have errors, refuses and lists them instead.
+- **Canvas editor** (`cms/routes/EntryCanvas.tsx`, `/content/:typeId/:entryId/canvas`): the
+  entry's own page on the customer's site, framed nearly full width; the guardrails are the
+  toolbox. Full-bleed, the window's height (the page never scrolls; the frame and the panels do),
+  reached from the entry editor's **Form | Canvas** switch (a segmented control in its facts row),
+  for a type with a preview URL and a blocks field. At lg it edits: Layers (on demand) | the page |
+  the right column, which is the selected block's inspector or, with nothing selected, the page's
+  Checks. Everything over the page is drawn by the admin outside it, from the boxes the page
+  reports (never a copy of the page): a slot is a dashed grey seam between blocks, its name and
+  fill ("Main · 3 of 8") shown on hover and once chosen, in ink; a selected block is an ink edge
+  with the focus ring; colour on the canvas is for status only. Choosing a seam (a click, a tap, or
+  `/` after the selected block) opens the **dock** along the bottom edge with exactly the blocks
+  that slot takes, under the catalog's group captions, each its name and description (no
+  thumbnails: `img-src`); a full slot says so and offers nothing. Its first block takes focus, and
+  the block put in hands focus to the inspector's heading. The inspector's tabs are Content (the
+  block's own fields, the entry form's editors), Data (references) and Look (props limited to
+  listed values, four or fewer as a segmented control, more as a select; never free CSS); a block
+  the code no longer provides says "Removed from code" with Remove and Keep for now. **Layers** is
+  a tree, and the keyboard and screen-reader path to every block (the seams are pointer-only,
+  out of the tab order). Undo and redo are in the header beside Save draft; a remove's toast offers
+  Undo. From md to lg it edits by tap: the dock comes from the bottom, the inspector from the side
+  and Layers from the left, as sheets. Below md it is review-only, saying so in place ("Arranging
+  blocks needs a wider screen…"). It says in place, in a strip under the header, why it is
+  reviewing (a role that can only read, the published version until **Edit a draft**), where a
+  workflow has the entry, and when the page reports no layout (no seams; select by click or in
+  Layers). The Site view's notices stand for the frame's states. Its header names the entry at
+  `text-lg`, as a toolbar does, not at the Title tier: the page is the content. Below lg the
+  right column's sheet holds the inspector or, with nothing selected, the Checks; the header's
+  "N checks to fix" and a refused save open it. A save someone else's beat asks
+  in an alert dialog: Keep editing, Load theirs, or Save mine over it.
 
 ## Elevation & Depth
 

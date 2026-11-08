@@ -11,12 +11,14 @@
  * to its URL.
  *
  * It owns the inner frame and draws the hover and selection outlines over it, from the boxes the
- * page reports, scaled with the frame to the device width the editor chose. Unsaved edits come
+ * page reports, scaled with the frame to the device width the editor chose. Under the canvas editor
+ * it draws nothing: it hands the boxes (and the seams between blocks) up to the canvas, moved into
+ * its own coordinates, and the canvas draws them over this frame. Unsaved edits come
  * from the editor over a same-origin channel (`cms/lib/live-preview/frame-channel.ts`) and go to the
  * page over the live preview channel (`cms/lib/live-preview/host.ts`); clicks go back the same way.
  */
 
-import type { LayoutMessage, LiveRect } from '@contentworker/sdk-core/live-preview';
+import type { LayoutMessage, LiveGap, LiveRect } from '@contentworker/sdk-core/live-preview';
 import { cn } from '@contentworker/ui/lib/utils';
 import { useEffect, useRef, useState } from 'react';
 import { data, useLoaderData } from 'react-router';
@@ -24,6 +26,7 @@ import {
   DEVICE_WIDTHS,
   type Device,
   type EditorMessage,
+  type FrameGeometry,
   postFrame,
   readFrame,
 } from '~/cms/lib/live-preview/frame-channel';
@@ -116,6 +119,7 @@ function SiteFrame({
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [device, setDevice] = useState<Device>('desktop');
   const [editing, setEditing] = useState(true);
+  const [canvas, setCanvas] = useState(false);
   const [layout, setLayout] = useState<LayoutMessage | null>(null);
   // What the pointer is over and what is selected, by ref, with the box the page last gave.
   const [hover, setHover] = useState<{ ref: string; rect: LiveRect } | null>(null);
@@ -164,6 +168,7 @@ function SiteFrame({
         case 'view':
           setDevice(m.device in DEVICE_WIDTHS ? m.device : 'desktop');
           setEditing(m.editing === true);
+          setCanvas(m.canvas === true);
           if (Array.isArray(m.allowed)) h.setAllowed(m.allowed);
           h.setEditing(m.editing === true);
           return;
@@ -211,9 +216,48 @@ function SiteFrame({
       layout?.blocks.find((b) => b.ref === ref)?.rect;
     return found ?? given;
   };
-  const picked = editing && selected ? rectOf(selected.ref, selected.rect) : null;
+  const picked = editing && !canvas && selected ? rectOf(selected.ref, selected.rect) : null;
   const hovered =
-    editing && hover && hover.ref !== selected?.ref ? rectOf(hover.ref, hover.rect) : null;
+    editing && !canvas && hover && hover.ref !== selected?.ref
+      ? rectOf(hover.ref, hover.rect)
+      : null;
+
+  // Under the canvas: the page's boxes, in this frame's coordinates, whenever they or the scale move.
+  const toFrame = (r: LiveRect): LiveRect => ({
+    x: left + r.x * scale,
+    y: r.y * scale,
+    w: r.w * scale,
+    h: r.h * scale,
+  });
+  const geometryKey = canvas ? JSON.stringify([layout, scale, left]) : '';
+  // Keyed on the boxes by content (geometryKey).
+  useEffect(() => {
+    if (!canvas) return;
+    const gap = (g: LiveGap): LiveGap => ({ ...g, rect: toFrame(g.rect) });
+    const geometry: FrameGeometry | null = layout
+      ? {
+          blocks: layout.blocks.map((b) => ({ ref: b.ref, rect: toFrame(b.rect) })),
+          slots: layout.slots.map((s) => ({
+            ref: s.ref,
+            rect: toFrame(s.rect),
+            gaps: s.gaps.map(gap),
+          })),
+          truncated: layout.truncated === true,
+        }
+      : null;
+    postFrame(window.parent, { type: 'geometry', geometry });
+  }, [geometryKey]);
+  const hoverRect = canvas && hover ? rectOf(hover.ref, hover.rect) : null;
+  const hoverKey = canvas ? JSON.stringify([hover?.ref ?? null, hoverRect, scale, left]) : '';
+  // Keyed on the hovered box by content (hoverKey).
+  useEffect(() => {
+    if (!canvas) return;
+    postFrame(window.parent, {
+      type: 'hover',
+      ref: hover?.ref ?? null,
+      rect: hoverRect ? toFrame(hoverRect) : null,
+    });
+  }, [hoverKey]);
 
   return (
     <main

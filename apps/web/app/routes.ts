@@ -44,6 +44,11 @@ export default [
         route(':typeId/entry', 'routes/content-singleton.tsx', { id: 'content-singleton' }),
         route(':typeId/:entryId', 'routes/content-entry.tsx', { id: 'content-entry' }),
       ]),
+      // An entry's canvas (its blocks laid out on the type's preview URL): full-bleed, outside the
+      // content layout's types nav, like the workflow editor.
+      route('content/:typeId/:entryId/canvas', 'routes/content-canvas.tsx', {
+        id: 'content-canvas',
+      }),
       route('approvals', 'routes/approvals.tsx', { id: 'approvals' }),
       route('releases', 'routes/releases.tsx', { id: 'releases' }),
       route('workflows', 'routes/workflows.tsx', { id: 'workflows' }),

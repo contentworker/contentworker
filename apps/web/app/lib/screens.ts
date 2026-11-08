@@ -32,6 +32,12 @@ export const SCREENS = {
     label: 'Content',
     summary: 'The entry editor: fields, references, versions, comments and publishing.',
   },
+  'content-canvas': {
+    id: 'content-canvas',
+    to: '/content',
+    label: 'Content',
+    summary: 'An entry’s blocks laid out on the site: seams, the dock, the inspector and layers.',
+  },
   approvals: {
     id: 'approvals',
     to: '/approvals',

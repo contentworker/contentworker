@@ -45,27 +45,22 @@ import { SemanticPanel } from '~/cms/components/SemanticPanel';
 import { StatusBadge, ToneBadge } from '~/cms/components/status';
 import { VersionHistory } from '~/cms/components/VersionHistory';
 import { CanvasDialog } from '../components/CanvasDialog';
-import type { FocusRequest, Pickers, PickOption } from '../components/EntryForm';
+import type { FocusRequest } from '../components/EntryForm';
 import { EntryForm } from '../components/EntryForm';
 import { EntryActivity } from '../components/entries/EntryActivity';
 import { EntryAuthorship } from '../components/entries/EntryAuthorship';
 import { PublishConfirm } from '../components/entries/PublishConfirm';
 import { GenerateEntryDialog } from '../components/GenerateEntryDialog';
 import { orDirect, useAssistantEdit, usePageContext } from '../lib/assistant';
+import { canvasAvailable } from '../lib/canvas/model';
 import { useClient } from '../lib/client-context';
 import { dateTime, toMs } from '../lib/format';
 import { capabilitiesFor, SELECT_ONLY } from '../lib/live-preview/host';
 import { liveFields } from '../lib/live-preview/ops';
 import { focusForRef, refForField } from '../lib/live-preview/pick';
 import type { EntryAggregate, EntryView, ModelTier } from '../lib/management';
-import {
-  useAllEntriesQuery,
-  useAppExtensionsQuery,
-  useAssetsQuery,
-  useEntryQuery,
-  useQueryKeys,
-  useScopedQuery,
-} from '../lib/queries';
+import { useEntryPickers } from '../lib/pickers';
+import { useAppExtensionsQuery, useEntryQuery, useQueryKeys, useScopedQuery } from '../lib/queries';
 import { useToast } from '../lib/toast';
 import { useContentOutlet } from './content-context';
 
@@ -242,56 +237,8 @@ export function EntryEditor() {
     };
   }, [pageTitle]);
 
-  // Build reference/asset picker options (all entries + all assets) for Link
-  // fields. Both queries are best-effort; the form still works without them.
-  const allEntriesQuery = useAllEntriesQuery();
-  const assetsQuery = useAssetsQuery();
-  /**
-   * Resolves reference matches on the server.
-   *
-   * The seeded `pickers.entries` list is capped by the list endpoint, so
-   * filtering it cannot reach an entry beyond that page — not slowly, at all.
-   * One request per content type the field allows, because a reference field
-   * restricted to two types should not search the rest of the space.
-   */
-  const searchEntries = useCallback(
-    async (query: string, contentTypes?: readonly string[]): Promise<PickOption[]> => {
-      const targets = contentTypes?.length ? contentTypes : [undefined];
-      const batches = await Promise.all(
-        targets.map((contentType) =>
-          client.suggestEntries({ q: query, ...(contentType ? { contentType } : {}) }),
-        ),
-      );
-      return batches.flat().map((hit) => ({
-        id: hit.id,
-        contentType: hit.contentType,
-        label: `${hit.title} (${hit.contentType})`,
-      }));
-    },
-    [client],
-  );
-
-  const pickers: Pickers = useMemo(() => {
-    const displayFieldOf = new Map(types.map((t) => [t.apiId, t.displayField]));
-    return {
-      entries: (allEntriesQuery.data ?? []).map((e) => {
-        const df = displayFieldOf.get(e.contentType);
-        const title = df
-          ? (e.fields[df] as Record<string, unknown> | undefined)?.[conn.locale]
-          : undefined;
-        return {
-          id: e.id,
-          contentType: e.contentType,
-          label: `${String(title ?? e.id)} (${e.contentType})`,
-        };
-      }),
-      assets: (assetsQuery.data ?? []).map((a) => ({
-        id: a.id,
-        label: String(a.title?.[conn.locale] ?? a.file.fileName),
-        mimeType: a.file.contentType,
-      })),
-    };
-  }, [allEntriesQuery.data, assetsQuery.data, types, conn.locale]);
+  // Reference and asset picker options for Link fields; best-effort, the form works without them.
+  const { pickers, searchEntries } = useEntryPickers();
 
   // Installed UI extensions (sidebar widgets + custom field editors); optional.
   const extensionsQuery = useAppExtensionsQuery();
@@ -683,6 +630,19 @@ export function EntryEditor() {
             <Skeleton className="h-5 w-32" />
           ) : (
             <>
+              {/* Form or canvas: two views of one draft, for a type with blocks and a site. */}
+              {isEdit && entryId && canvasAvailable(selectedType) ? (
+                <Segmented
+                  aria-label="Editor view"
+                  value="form"
+                  onValueChange={(v) => {
+                    if (v === 'canvas') navigate(`/content/${typeId}/${entryId}/canvas`);
+                  }}
+                >
+                  <SegmentedItem value="form">Form</SegmentedItem>
+                  <SegmentedItem value="canvas">Canvas</SegmentedItem>
+                </Segmented>
+              ) : null}
               {meta && <StatusBadge status={meta.status} />}
               {meta && <span className="font-mono text-xs">v{meta.version}</span>}
               {dirty ? (
