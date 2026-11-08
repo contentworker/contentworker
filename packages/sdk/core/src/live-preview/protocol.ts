@@ -23,7 +23,7 @@ export const OFFERED_VERSIONS: readonly number[] = [1];
  * breaking change, called out in the changelog. Each entry names the last SDK release that needs it.
  */
 export const SUPPORTED_VERSIONS: readonly number[] = [
-  1, // needed by @contentworker/sdk 0.2.0 and every later release so far
+  1, // needed by @contentworker/sdk 0.3.0 (the first with live preview) and every later release so far
 ];
 
 /** The highest version both lists hold, or undefined when they share none. */

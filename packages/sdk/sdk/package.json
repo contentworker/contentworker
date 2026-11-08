@@ -1,6 +1,6 @@
 {
   "name": "@contentworker/sdk",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "The ContentWorker SDK: read and render content in any framework, verify webhooks, manage spaces, generate types, and the `contentworker` command. One package, import only what you use.",
   "keywords": [
     "contentworker",
