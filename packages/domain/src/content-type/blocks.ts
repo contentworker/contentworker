@@ -1,5 +1,11 @@
 import type { EntryFields } from '../types';
-import { BLOCK_TYPE_KEY, blockVariants, type FieldDefinition, variantOf } from './field';
+import {
+  BLOCK_TYPE_KEY,
+  blockVariants,
+  type FieldDefinition,
+  variantNamed,
+  variantOf,
+} from './field';
 
 /**
  * Schema evolution for blocks fields.
@@ -15,6 +21,9 @@ import { BLOCK_TYPE_KEY, blockVariants, type FieldDefinition, variantOf } from '
  * still holds a value for it fails its next save ("Unknown field"), and the
  * value would be silently dropped from delivery. `removedFields` and
  * `removedFieldUses` are the same pair for that change.
+ *
+ * A variant renamed with its old apiId kept in `aliases` is not removed: its
+ * blocks still read as it, so only its fields are compared.
  *
  * A blocks field is located by its path of apiIds, with the variant a nested
  * field sits in shown in brackets: `body`, `body[hero].ctas`, `meta.blocks`.
@@ -41,7 +50,7 @@ export function removedVariants(
       if (variants) {
         const kept = blockVariants(g) ?? [];
         for (const v of variants) {
-          const survivor = kept.find((k) => k.apiId === v.apiId);
+          const survivor = variantNamed(kept, v.apiId);
           if (!survivor) {
             const set = removed.get(at) ?? new Set<string>();
             set.add(v.apiId);
@@ -127,7 +136,7 @@ export function removedFields(
       if (variants) {
         const kept = blockVariants(g) ?? [];
         for (const v of variants) {
-          const survivor = kept.find((k) => k.apiId === v.apiId);
+          const survivor = variantNamed(kept, v.apiId);
           if (survivor) walk(v.fields, survivor.fields, `${at}[${v.apiId}]`);
         }
       } else if (f.type === 'Component') {

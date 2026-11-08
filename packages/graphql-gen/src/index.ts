@@ -163,11 +163,19 @@ function blocksType(
  * A field's value as the schema serves it. A blocks element whose `_type`
  * names no variant (one removed while a stale snapshot still held it) is left
  * out rather than failing the whole query: the union has no member to type it.
+ * One stored under a former apiId (`aliases`) is served under the current one.
  */
 function servedValue(field: FieldDefinition, value: unknown): unknown {
   const variants = blockVariants(field);
   if (!variants || !Array.isArray(value)) return value;
-  return value.filter((item) => variantOf(variants, item) !== undefined);
+  return value.flatMap((item) => {
+    const variant = variantOf(variants, item);
+    if (!variant) return [];
+    const block = item as Record<string, unknown>;
+    return [
+      block[BLOCK_TYPE_KEY] === variant.apiId ? block : { ...block, [BLOCK_TYPE_KEY]: variant.apiId },
+    ];
+  });
 }
 
 /** The GraphQL type for one field, recursing into components. */

@@ -179,6 +179,15 @@ export const field = z.object({
             apiId: z.string().describe('Stored on each element as `_type`'),
             name: z.string(),
             fields: nestedFields,
+            aliases: z
+              .array(z.string())
+              .max(50)
+              .optional()
+              .describe(
+                'Former apiIds of this variant: blocks stored under one read and deliver as ' +
+                  'this variant and take its apiId on their next save, so a rename strands ' +
+                  'nothing',
+              ),
           }),
         )
         .optional()

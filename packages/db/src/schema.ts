@@ -9,6 +9,9 @@ import type {
   AssetZipSource,
   AssetZipStatus,
   AuditDetail,
+  BlockCatalogChanges,
+  BlockCatalogTarget,
+  BlockManifest,
   ContentTypeGrant,
   ContentTypeLayout,
   DomainEvent,
@@ -1344,6 +1347,28 @@ export const redirectSets = sqliteTable(
     revision: integer('revision').notNull(),
   },
   (t) => [primaryKey({ columns: [t.spaceId, t.environmentId] })],
+);
+
+/**
+ * Pushed versions of an environment's block catalog (0036_block_catalogs): the component
+ * manifests a developer's site renders, as one JSON document per version, kept as history. The
+ * primary key's `version` is the compare-and-set a push rides with.
+ */
+export const blockCatalogs = sqliteTable(
+  'block_catalogs',
+  {
+    spaceId: text('space_id').notNull(),
+    environmentId: text('environment_id').notNull(),
+    version: integer('version').notNull(),
+    hash: text('hash').notNull(),
+    blocks: text('blocks', { mode: 'json' }).$type<BlockManifest[]>().notNull(),
+    blockCount: integer('block_count').notNull(),
+    targets: text('targets', { mode: 'json' }).$type<BlockCatalogTarget[]>().notNull(),
+    changes: text('changes', { mode: 'json' }).$type<BlockCatalogChanges>().notNull(),
+    pushedBy: text('pushed_by'),
+    pushedAt: integer('pushed_at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.spaceId, t.environmentId, t.version] })],
 );
 
 /** Navigation menus, each a JSON tree of items written whole at its revision (0020_menus). */

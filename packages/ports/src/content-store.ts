@@ -14,6 +14,8 @@ import type {
   AssetStatus,
   AssetZipJob,
   AuditDetail,
+  BlockCatalog,
+  BlockCatalogSummary,
   Comment,
   Concept,
   ConceptScheme,
@@ -145,6 +147,7 @@ export interface ContentStore {
   readonly taxonomy: TaxonomyRepo;
   readonly redirects: RedirectRepo;
   readonly menus: MenuRepo;
+  readonly blockCatalogs: BlockCatalogRepo;
   readonly savedViews: SavedViewRepo;
   readonly audit: AuditRepo;
   readonly aiActions: AIActionRepo;
@@ -360,6 +363,26 @@ export interface MenuRepo {
   save(scope: Scope, menu: Menu, expected?: number): Promise<void>;
   /** Deletes a menu still at revision `expected`, as `save` checks it. */
   delete(scope: Scope, id: string, expected: number): Promise<void>;
+}
+
+/**
+ * An environment's block catalog, one row per pushed version, kept as history. Versions count up
+ * from 1; the latest is the catalog in force.
+ */
+export interface BlockCatalogRepo {
+  /** The latest version, or null before the first push. */
+  latest(scope: Scope): Promise<BlockCatalog | null>;
+  get(scope: Scope, version: number): Promise<BlockCatalog | null>;
+  /** Versions newest first, without their blocks: at most `limit`, below `before` when given. */
+  list(
+    scope: Scope,
+    opts: { readonly limit: number; readonly before?: number },
+  ): Promise<BlockCatalogSummary[]>;
+  /**
+   * Inserts `catalog` at its version, never over another: a version already there (another push
+   * won the race) is a `TransactionConflictError` (at commit, inside a unit; thrown outside one).
+   */
+  save(scope: Scope, catalog: BlockCatalog): Promise<void>;
 }
 
 /**
@@ -1340,6 +1363,8 @@ export interface ContentStoreTx {
   readonly redirects: RedirectRepo;
   /** A menu is written with its revision's compare-and-set and the event that announces it. */
   readonly menus: MenuRepo;
+  /** A catalog version is written with the content types it changes. */
+  readonly blockCatalogs: BlockCatalogRepo;
   readonly bulkJobs: BulkJobRepo;
   /** Run and task rows change in the same transaction as the outbox events they announce. */
   readonly workflowRuns: WorkflowRunRepo;

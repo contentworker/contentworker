@@ -2,10 +2,12 @@ import type { EntryFields, LocaleCode, LocalizedValue } from '../types';
 import type { ContentType } from './content-type';
 import {
   BLOCK_KEY,
+  BLOCK_TYPE_KEY,
   blockVariants,
   type FieldDefinition,
   nestedFieldsFor,
   UNIQUE_FIELD_TYPES,
+  variantOf,
 } from './field';
 import { normalizeSlug } from './slug';
 
@@ -103,6 +105,8 @@ function withComponentDefaults(nested: readonly FieldDefinition[], value: unknow
  * field sits; keys already present are kept, so a block keeps its identity
  * across edits and reorders. Ids come from the caller (`ctx.ids.newId`), so the
  * use-case stays deterministic under test. Values are copied, never mutated.
+ * A block whose `_type` is a former apiId of its variant (`aliases`) is written
+ * under the current one, so a renamed block converges on its next save.
  *
  * Runs before validation on every entry write; a duplicate key the caller sent
  * is left for validation to refuse rather than silently re-keyed, since the
@@ -144,10 +148,18 @@ function keyed(field: FieldDefinition, value: unknown, newId: () => string): unk
     const nested = nestedFieldsFor(field, item);
     const filled = nested ? keyedComponent(nested, item, newId) : item;
     if (!variants) return filled;
-    const key = (item as Record<string, unknown>)[BLOCK_KEY];
-    return typeof key === 'string' && key !== ''
-      ? filled
-      : { ...(filled as Record<string, unknown>), [BLOCK_KEY]: newId() };
+    const block = filled as Record<string, unknown>;
+    const key = block[BLOCK_KEY];
+    // A block stored under a former apiId (`aliases`) takes the variant's current one.
+    const variant = variantOf(variants, block);
+    const renamed = variant !== undefined && block[BLOCK_TYPE_KEY] !== variant.apiId;
+    const keyless = typeof key !== 'string' || key === '';
+    if (!renamed && !keyless) return filled;
+    return {
+      ...block,
+      ...(renamed ? { [BLOCK_TYPE_KEY]: variant.apiId } : {}),
+      ...(keyless ? { [BLOCK_KEY]: newId() } : {}),
+    };
   });
 }
 

@@ -8,6 +8,7 @@ import {
   type AssetRendition,
   type AssetZipJob,
   assetKind,
+  type BlockCatalog,
   type Comment,
   type Concept,
   type ConceptScheme,
@@ -86,6 +87,7 @@ import type {
   AuditRepo,
   AuthRepo,
   BlobStore,
+  BlockCatalogRepo,
   BulkJob,
   BulkJobChunk,
   BulkJobRepo,
@@ -2895,6 +2897,34 @@ export class InMemoryContentStore implements ContentStore {
     },
   };
 
+  /** `space::env::version` → catalog version. */
+  private readonly blockCatalogData = new JournaledMap<string, BlockCatalog>();
+
+  private catalogsOf(scope: Scope): BlockCatalog[] {
+    const prefix = `${scopeKey(scope)}::`;
+    return [...this.blockCatalogData.entries()]
+      .filter(([k]) => k.startsWith(prefix))
+      .map(([, v]) => v)
+      .sort((a, b) => b.version - a.version);
+  }
+
+  readonly blockCatalogs: BlockCatalogRepo = {
+    latest: async (scope) => this.catalogsOf(scope)[0] ?? null,
+    get: async (scope, version) =>
+      this.blockCatalogData.get(`${scopeKey(scope)}::${version}`) ?? null,
+    list: async (scope, opts) =>
+      this.catalogsOf(scope)
+        .filter((c) => opts.before === undefined || c.version < opts.before)
+        .slice(0, opts.limit)
+        .map(({ blocks, ...rest }) => ({ ...rest, blockCount: blocks.length })),
+    save: async (scope, catalog) => {
+      const key = `${scopeKey(scope)}::${catalog.version}`;
+      // As the D1 store's primary key: a version another push wrote first loses the race.
+      if (this.blockCatalogData.get(key)) throw new TransactionConflictError();
+      this.blockCatalogData.set(key, catalog);
+    },
+  };
+
   /** `space::id` → view: saved views are the space's, whatever environment asks. */
   private readonly savedViewData = new Map<string, SavedView>();
 
@@ -3429,6 +3459,7 @@ export class InMemoryContentStore implements ContentStore {
       this.redirectData,
       this.redirectRevisionData,
       this.menuData,
+      this.blockCatalogData,
     ] as JournaledMap<string, unknown>[];
   }
 
@@ -3461,6 +3492,7 @@ export class InMemoryContentStore implements ContentStore {
         taxonomy: this.taxonomy,
         redirects: this.redirects,
         menus: this.menus,
+        blockCatalogs: this.blockCatalogs,
         bulkJobs: this.bulkJobs,
         workflowRuns: this.workflowRuns,
         workflowTasks: this.workflowTasks,

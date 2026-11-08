@@ -441,3 +441,52 @@ describe('removing a field', () => {
     ).toEqual([]);
   });
 });
+
+describe('renaming a variant through aliases', () => {
+  const BANNER: ComponentVariant = { ...HERO, apiId: 'banner', name: 'Banner', aliases: ['hero'] };
+  const RENAMED = typeWith([field({ apiId: 'title', type: 'Symbol' }), blocksField([BANNER, CTA])]);
+
+  it('reads a block stored under a former apiId as its variant', () => {
+    const values = { body: { 'en-US': [{ _type: 'hero', heading: 'Old' }] } };
+    expect(validateEntryFields(RENAMED, values, vctx)).toEqual([]);
+    expect(nestedFieldsFor(RENAMED.fields[1] as FieldDefinition, { _type: 'hero' })).toBe(
+      BANNER.fields,
+    );
+  });
+
+  it('writes it under the current apiId on its next save', () => {
+    const out = assignBlockKeys(
+      RENAMED,
+      { body: { 'en-US': [{ _type: 'hero', _key: 'k', heading: 'Old' }] } },
+      () => 'new',
+    );
+    expect(out.body?.['en-US']).toEqual([{ _type: 'banner', _key: 'k', heading: 'Old' }]);
+  });
+
+  it('is not a removal of the former apiId, and still compares its fields', () => {
+    expect(removedVariants(LANDING.fields, RENAMED.fields).size).toBe(0);
+    const slimmer = blocksField([{ ...BANNER, fields: [HERO.fields[0] as FieldDefinition] }, CTA]);
+    expect([
+      ...removedFields(LANDING.fields, [field({ apiId: 'title', type: 'Symbol' }), slimmer]),
+    ]).toEqual(['body[hero].image']);
+  });
+
+  it('refuses an alias that is another variant’s apiId, or listed twice', () => {
+    expect(refusal(() => typeWith([blocksField([{ ...HERO, aliases: ['cta'] }, CTA])]))).toMatch(
+      /Alias "cta" is the apiId of a variant/,
+    );
+    expect(
+      refusal(() =>
+        typeWith([
+          blocksField([
+            { ...HERO, aliases: ['old'] },
+            { ...CTA, aliases: ['old'] },
+          ]),
+        ]),
+      ),
+    ).toMatch(/Alias "old" is listed twice/);
+    expect(refusal(() => typeWith([blocksField([{ ...HERO, aliases: ['_x'] }])]))).toMatch(
+      /Invalid alias "_x"/,
+    );
+  });
+});

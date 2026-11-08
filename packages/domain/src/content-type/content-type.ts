@@ -561,6 +561,9 @@ function assertFieldSetValid(
  * A field declares `items.fields` or `items.variants`, never both: with both,
  * an element without a `_type` would have two plausible shapes, and which one
  * wins would be a guess the author never made.
+ *
+ * A variant's `aliases` (the apiIds it was renamed from) are legal apiIds, each
+ * listed once across the field and none another variant's apiId.
  */
 function assertVariantsValid(
   f: FieldDefinition,
@@ -598,6 +601,25 @@ function assertVariantsValid(
     }
     const variantBefore = before?.items?.variants?.find((b) => b.apiId === apiId);
     assertFieldSetValid(v.fields, at, depth + 1, variantBefore?.fields, true);
+  }
+  // Former apiIds: each names one variant only, and never one still in use as an apiId, so a
+  // stored `_type` always resolves to exactly one variant.
+  const aliased = new Set<string>();
+  for (const v of variants as readonly ComponentVariant[]) {
+    const aliases: unknown = v.aliases;
+    if (aliases === undefined) continue;
+    const at = `${where}[${v.apiId}]`;
+    if (!Array.isArray(aliases)) fail('aliases must be a list of former variant apiIds', at);
+    for (const alias of aliases as unknown[]) {
+      if (typeof alias !== 'string' || !isValidApiId(alias)) {
+        fail(`Invalid alias "${String(alias)}"`, at);
+      }
+      if (seen.has(alias as string)) {
+        fail(`Alias "${alias}" is the apiId of a variant in this field`, at);
+      }
+      if (aliased.has(alias as string)) fail(`Alias "${alias}" is listed twice`, at);
+      aliased.add(alias as string);
+    }
   }
 }
 
