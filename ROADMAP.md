@@ -382,10 +382,11 @@ needs a new protocol version while v1 is unreleased.
 - [ ] **Steady sessions.** A retried offer on the live channel is answered without a reset; new
   offers faster than one per 200 ms over a live session are dropped; `applied` and `failed` carry
   the locale, and a gap resends that locale once.
-- [ ] **Scoped refs from the page.** A click ref must match the edited space and environment and the
-  reported entry's type and locale, and pass a required `canRead`; `checkPreviewTemplate` allows
-  `[::1]` like the channel's loopback list; no `allow-popups` on the frame
-  (`apps/web/app/routes/preview-frame.tsx`).
+- [ ] **No popups from the preview frame.** Drop `allow-popups` from the frame's sandbox
+  (`apps/web/app/routes/preview-frame.tsx`), so a framed page can't open windows that keep a
+  reference back to it. Click refs are already checked against the edited space, environment,
+  entry, type and locale where they are used (the canvas's `ownPath`, the entry editor's
+  `focusForRef`).
 - [x] **One block patch engine.** The page keeps its own engine (`applyLivePatch`), and
   `packages/http/test/live-preview-patch-parity.test.ts` runs the same patches through it and the
   domain's `applyBlockPatch`.
