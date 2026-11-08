@@ -57,8 +57,11 @@ export type EditorMessage =
       /** Editing on: clicks in the page select (`editing { on }`); off, the page is the site. */
       readonly editing: boolean;
       readonly device: Device;
-      /** What the person may let the page do; the frame accepts no more than this of the offer. */
-      readonly allowed: readonly Capability[];
+      /**
+       * What the person may let the page do; the frame accepts no more than this of the offer.
+       * Absent while it isn't known yet: the frame holds the page's offer until it is.
+       */
+      readonly allowed?: readonly Capability[];
     }
   /** The form's focused field or block on the page, or none. */
   | { readonly type: 'select'; readonly ref: string | null };

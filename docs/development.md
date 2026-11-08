@@ -83,7 +83,7 @@ Then give a type the preview URL
 (Content model, the seeded Landing page type's settings; `type` names the type, since the page
 reports which entry it renders) and open one of its entries: the page connects
 (`connectPreview`) and renders the `title` and, for each blocks field, each block's `label` or
-`heading`. `silent.html` in place of `/` is a page that never connects, and `old-sdk.html` one
+`heading`. `silent.html` in place of `/` is a page that never connects, `refuse.html` one that refuses the entry, and `old-sdk.html` one
 whose SDK the admin refuses. `LIVE_GUEST_ADMIN` is the admin's origin, the only
 one the page listens to; `LIVE_GUEST_PORT` moves it off 5401.
 

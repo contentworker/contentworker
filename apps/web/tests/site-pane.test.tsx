@@ -31,7 +31,7 @@ const onPick = vi.fn();
 function pane(
   fields: EntryFields = { title: { 'en-US': 'Home' } },
   locale = 'en-US',
-  over: { selected?: string | null; allowed?: readonly Capability[] } = {},
+  over: { selected?: string | null; allowed?: readonly Capability[] | null } = {},
 ) {
   return (
     <SitePane
@@ -42,7 +42,7 @@ function pane(
       fields={fields}
       locale={locale}
       defaultLocale="en-US"
-      allowed={over.allowed ?? ADMIN_CAPABILITIES}
+      allowed={over.allowed === null ? undefined : (over.allowed ?? ADMIN_CAPABILITIES)}
       selected={over.selected ?? null}
       split={false}
       onPick={onPick}
@@ -190,11 +190,11 @@ describe('the Site pane', () => {
   it('says which way a refused SDK is off', () => {
     render(pane());
     status('unsupported', 'old');
-    expect(screen.getByRole('alert').textContent).toMatch(/SDK is too old for live preview/);
+    expect(screen.getByRole('alert').textContent).toMatch(/The site’s SDK is too old/);
     cleanup();
     render(pane());
     status('unsupported', 'new');
-    expect(screen.getByRole('alert').textContent).toMatch(/SDK is too new for live preview/);
+    expect(screen.getByRole('alert').textContent).toMatch(/The site’s SDK is too new/);
   });
 
   it('offers the way back from a page that doesn’t show the entry, or moved away', () => {
@@ -209,10 +209,20 @@ describe('the Site pane', () => {
     expect(screen.queryByRole('alert')).toBeNull();
   });
 
-  it('says an entry the page refused can’t be previewed', () => {
+  it('says an entry the page refused can’t be previewed, and clicks still find their fields', () => {
     render(pane());
     status('unpreviewable');
     expect(screen.getByRole('alert').textContent).toMatch(/can’t be previewed on this page/);
+    expect((screen.getByRole('radio', { name: 'Edit' }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('says nothing of what the page may do until the person’s access is known, then does', () => {
+    const view = render(pane(undefined, undefined, { allowed: null }));
+    const spy = spyFrame();
+    ready();
+    expect(posted(spy, 'view')[0]).not.toHaveProperty('allowed');
+    view.rerender(pane());
+    expect(posted(spy, 'view').at(-1)).toMatchObject({ allowed: ADMIN_CAPABILITIES });
   });
 
   it('names both origins when the page offered from another', () => {

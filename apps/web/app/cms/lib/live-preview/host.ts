@@ -15,6 +15,8 @@
  * a state the page refused as invalid, which would fail again: then the entry can't be previewed.
  * Nothing it says saves, publishes or calls a use-case: clicks only move focus in the form.
  */
+
+import { SCOPES } from '@contentworker/domain';
 import {
   type AdminMessage,
   acceptMessage,
@@ -51,6 +53,18 @@ export const ADMIN_CAPABILITIES: readonly Capability[] = [
   'scroll',
   'layout',
 ];
+
+/** What a person who can't edit the entry lets the page do: clicks and outlines, never values. */
+export const SELECT_ONLY: readonly Capability[] = ['select', 'scroll', 'layout'];
+
+/**
+ * What the page may do for a person with `scopes` in the space (docs/specs/live-preview-channel.md,
+ * "Capabilities": narrowed by the space's admin config). Without `content:write` their unsaved
+ * values aren't theirs to send, so they only select; the page shows the entry as saved.
+ */
+export function capabilitiesFor(scopes: readonly string[]): readonly Capability[] {
+  return scopes.includes(SCOPES.contentWrite) ? ADMIN_CAPABILITIES : SELECT_ONLY;
+}
 
 /** Anything with a `postMessage(message, targetOrigin)`: the framed page's window. */
 interface Postable {
@@ -286,6 +300,8 @@ export class LivePreviewHost {
   /** What the person may let the page do. An offer waiting on it is answered now. */
   setAllowed(allowed: readonly Capability[]): void {
     this.allowed = allowed;
+    // A live session only ever narrows: the admin may use less than it accepted, never more.
+    if (this.channel) this.accepted = narrowCapabilities(this.accepted, allowed);
     const pending = this.pending;
     this.pending = undefined;
     if (pending) this.offer(pending);

@@ -54,7 +54,7 @@ import { GenerateEntryDialog } from '../components/GenerateEntryDialog';
 import { orDirect, useAssistantEdit, usePageContext } from '../lib/assistant';
 import { useClient } from '../lib/client-context';
 import { dateTime, toMs } from '../lib/format';
-import { ADMIN_CAPABILITIES } from '../lib/live-preview/host';
+import { capabilitiesFor, SELECT_ONLY } from '../lib/live-preview/host';
 import { liveFields } from '../lib/live-preview/ops';
 import { focusForRef, refForField } from '../lib/live-preview/pick';
 import type { EntryAggregate, EntryView, ModelTier } from '../lib/management';
@@ -79,9 +79,6 @@ const PANE_LABELS: Record<PaneView, string> = {
 
 /** The scope that reads the team (`GET …/team`), and with it teammates' names. */
 const SPACE_ADMIN = 'space:admin';
-/** The scope that edits entries: without it the Site pane only selects, never sends values. */
-const CONTENT_WRITE = 'content:write';
-const SELECT_ONLY: readonly Capability[] = ['select', 'scroll', 'layout'];
 
 const FORM_ID = 'entry-form';
 
@@ -549,12 +546,26 @@ export function EntryEditor() {
         ),
       );
     };
+    // Focus leaving every field (for the toolbar, the pane, another window) clears the outline.
+    const onFocusOut = (e: FocusEvent) => {
+      const next = e.relatedTarget as Element | null;
+      if (!next?.closest?.('[data-field]')) setSiteSelected(null);
+    };
     box.addEventListener('focusin', onFocusIn);
-    return () => box.removeEventListener('focusin', onFocusIn);
+    box.addEventListener('focusout', onFocusOut);
+    return () => {
+      box.removeEventListener('focusin', onFocusIn);
+      box.removeEventListener('focusout', onFocusOut);
+    };
   }, [selectedType, entryId, conn.space, conn.environment, defaultLocale, initial]);
   // What the page may do for this person: a role that can't write content only selects.
-  const canWrite = accessQuery.data?.scopes.includes(CONTENT_WRITE) === true;
-  const siteAllowed: readonly Capability[] = canWrite ? ADMIN_CAPABILITIES : SELECT_ONLY;
+  // Undefined while the person's access is read: the frame holds the page's offer until it is
+  // known, so a session is never settled on less than they may do. Unread, select only.
+  const siteAllowed: readonly Capability[] | undefined = accessQuery.data
+    ? capabilitiesFor(accessQuery.data.scopes)
+    : accessQuery.isError
+      ? SELECT_ONLY
+      : undefined;
   const localeConfig = useMemo(
     () => ({ defaultLocale, locales, fallbacks }),
     [defaultLocale, locales, fallbacks],

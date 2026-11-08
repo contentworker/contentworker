@@ -60,7 +60,7 @@ export interface SitePaneProps {
    * What the person may let the page do: a role that can't edit the entry only selects (its clicks
    * still focus fields); its unsaved values are never sent.
    */
-  readonly allowed: readonly Capability[];
+  readonly allowed: readonly Capability[] | undefined;
   /** The form's focused field or block on the page, or none: outlined and scrolled into view. */
   readonly selected: string | null;
   /** Beside the form (the pane's own height) rather than stacked under it. */
@@ -91,10 +91,17 @@ export function SitePane(props: SitePaneProps) {
   handlers.current = props;
 
   // Clicks select while editing; in view mode the page is the site, its links followed.
-  const live = status.status === 'live' || status.status === 'elsewhere';
+  // Connected: clicks find fields even when the page can't take this entry's values.
+  const live =
+    status.status === 'live' || status.status === 'elsewhere' || status.status === 'unpreviewable';
   const effectiveMode = live ? mode : 'view';
-  const view = useRef({ editing: effectiveMode === 'edit', device, allowed: props.allowed });
-  view.current = { editing: effectiveMode === 'edit', device, allowed: props.allowed };
+  const viewOf = () => ({
+    editing: effectiveMode === 'edit',
+    device,
+    ...(props.allowed ? { allowed: props.allowed } : {}),
+  });
+  const view = useRef(viewOf());
+  view.current = viewOf();
   // A template that fills to another URL per locale is another page per locale: the frame loads
   // that page. Otherwise the same page gets the entry in the new locale.
   const perLocale = previewTemplateVariesByLocale(
@@ -184,7 +191,7 @@ export function SitePane(props: SitePaneProps) {
     toFrame({ type: 'entry', entry: { entryId, locale, fields: now }, edits });
   }, [nowJson, locale, entryId, contentType]);
 
-  const allowedKey = props.allowed.join(',');
+  const allowedKey = props.allowed?.join(',') ?? '';
   // `allowed` by content (allowedKey).
   useEffect(() => {
     if (ready.current) toFrame({ type: 'view', ...view.current });
@@ -316,11 +323,14 @@ function SiteNotice({
     case 'not-connected':
       return (
         <Alert>
-          <AlertTitle>This site isn’t connected for live preview</AlertTitle>
+          <AlertTitle className="line-clamp-none">
+            This site isn’t connected for live preview
+          </AlertTitle>
           <AlertDescription>
             <p>
               The page loaded but didn’t offer to connect, so it shows the entry as saved. Edits
-              appear here as you type once the page calls connectPreview.
+              appear here as you type once the page calls{' '}
+              <span className="font-mono">connectPreview</span>.
             </p>
             <GuideLink />
           </AlertDescription>
@@ -329,16 +339,14 @@ function SiteNotice({
     case 'unsupported':
       return (
         <Alert variant="destructive">
-          <AlertTitle>
-            {status.detail === 'new'
-              ? 'This site’s ContentWorker SDK is too new for live preview'
-              : 'This site’s ContentWorker SDK is too old for live preview'}
+          <AlertTitle className="line-clamp-none">
+            {status.detail === 'new' ? 'The site’s SDK is too new' : 'The site’s SDK is too old'}
           </AlertTitle>
           <AlertDescription>
             <p>
-              {status.detail === 'new'
-                ? 'It speaks only protocol versions this admin doesn’t know yet. The page shows the entry as saved.'
-                : 'Update @contentworker/sdk on the site to a release this admin supports. Until then the page shows the entry as saved.'}
+              Its ContentWorker SDK shares no live preview version with this admin. Use a{' '}
+              <span className="font-mono">@contentworker/sdk</span> release this admin supports;
+              until then the page shows the entry as saved.
             </p>
             <GuideLink />
           </AlertDescription>
@@ -347,7 +355,7 @@ function SiteNotice({
     case 'elsewhere':
       return (
         <Alert>
-          <AlertTitle>This page doesn’t show this entry</AlertTitle>
+          <AlertTitle className="line-clamp-none">This page doesn’t show this entry</AlertTitle>
           <AlertDescription>
             <p>It’s connected, but your edits go to the page that renders the entry.</p>
             <Button type="button" variant="outline" size="sm" onClick={onReload}>
@@ -359,7 +367,9 @@ function SiteNotice({
     case 'unpreviewable':
       return (
         <Alert variant="destructive">
-          <AlertTitle>This entry can’t be previewed on this page</AlertTitle>
+          <AlertTitle className="line-clamp-none">
+            This entry can’t be previewed on this page
+          </AlertTitle>
           <AlertDescription>
             <p>
               The page refused the entry as the form holds it, so your edits aren’t shown. Clicks in
@@ -371,7 +381,7 @@ function SiteNotice({
     case 'navigated':
       return (
         <Alert>
-          <AlertTitle>The page moved away from this entry</AlertTitle>
+          <AlertTitle className="line-clamp-none">The page moved away from this entry</AlertTitle>
           <AlertDescription>
             <p>Edits go to the entry’s own page.</p>
             <Button type="button" variant="outline" size="sm" onClick={onReload}>
@@ -383,7 +393,9 @@ function SiteNotice({
     case 'origin':
       return (
         <Alert variant="destructive">
-          <AlertTitle>The page answered from another address</AlertTitle>
+          <AlertTitle className="line-clamp-none">
+            The page answered from another address
+          </AlertTitle>
           <AlertDescription>
             <p>
               It answered from <span className="font-mono">{status.detail}</span>
@@ -400,7 +412,7 @@ function SiteNotice({
     case 'failed':
       return (
         <Alert variant="destructive">
-          <AlertTitle>The page didn’t load</AlertTitle>
+          <AlertTitle className="line-clamp-none">The page didn’t load</AlertTitle>
           <AlertDescription>
             <p>Check that the site is running and lets this admin frame it.</p>
             <Button type="button" variant="outline" size="sm" onClick={onReload}>
@@ -412,7 +424,7 @@ function SiteNotice({
     case 'unavailable':
       return (
         <Alert variant={status.detail === 'incomplete' ? 'default' : 'destructive'}>
-          <AlertTitle>
+          <AlertTitle className="line-clamp-none">
             {status.detail === 'incomplete'
               ? 'This entry has no page on the site yet'
               : 'The entry’s page can’t be shown'}

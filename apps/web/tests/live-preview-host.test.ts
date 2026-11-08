@@ -16,8 +16,10 @@ import type { FrameEntry } from '~/cms/lib/live-preview/frame-channel';
 import {
   ADMIN_CAPABILITIES,
   CONNECT_MS,
+  capabilitiesFor,
   LivePreviewHost,
   LOAD_MS,
+  SELECT_ONLY,
 } from '~/cms/lib/live-preview/host';
 
 const ADMIN = 'https://admin.example';
@@ -158,6 +160,15 @@ function setup(allowed: readonly Capability[] = ADMIN_CAPABILITIES) {
   return { host, frame, onStatus, onPointer, onNote, onSession, channel, say, offer, page, sent };
 }
 
+describe('what the page may do for a person', () => {
+  it('lets someone who edits content send values, and anyone else only select', () => {
+    expect(capabilitiesFor(['content:read', 'content:write'])).toEqual(ADMIN_CAPABILITIES);
+    expect(capabilitiesFor(['content:read', 'preview:read'])).toEqual(SELECT_ONLY);
+    expect(SELECT_ONLY).not.toContain('patch.fields');
+    expect(SELECT_ONLY).not.toContain('patch.blocks');
+  });
+});
+
 describe('the live preview host', () => {
   it('drops an offer from another window, and says so for one from another origin', () => {
     const t = setup();
@@ -251,6 +262,18 @@ describe('the live preview host', () => {
       kind: 'connect.accept',
       capabilities: ['select'],
     });
+  });
+
+  it('narrows a live session when the person may do less, and sends no values after', () => {
+    const t = setup();
+    t.offer();
+    t.host.setEntry(entry(), null);
+    t.page();
+    expect(t.sent('entry.state')).toHaveLength(1);
+    t.host.setAllowed(SELECT_ONLY);
+    t.host.setEntry(entry('Typed'), titled('Typed'));
+    expect(t.sent('entry.patch')).toEqual([]);
+    expect(t.host.capabilities).toEqual(['select', 'scroll', 'layout']);
   });
 
   it('a role that may only select gets clicks, and the page is never sent its values', () => {

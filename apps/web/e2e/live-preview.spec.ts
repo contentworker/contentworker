@@ -16,8 +16,8 @@ const WCAG = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'];
 test.beforeAll(async ({ request }) => {
   await seedCms(request);
   const type = await api(request, 'POST', `${MGMT}/content-types`, {
-    apiId: 'landing',
-    name: 'Landing',
+    apiId: 'livePage',
+    name: 'Live page',
     displayField: 'title',
     fields: [
       {
@@ -57,11 +57,11 @@ test.beforeAll(async ({ request }) => {
       },
     ],
     preview: {
-      urlTemplate: `${GUEST}/?entry={id}&type=landing&space={space}&env={environment}#token={token}`,
+      urlTemplate: `${GUEST}/?entry={id}&type=livePage&space={space}&env={environment}#token={token}`,
     },
   });
   expect([200, 201], await type.text()).toContain(type.status());
-  await api(request, 'POST', `${MGMT}/content-types/landing/published`);
+  await api(request, 'POST', `${MGMT}/content-types/livePage/published`);
   // A frontend without the SDK: it loads, and never answers.
   const silent = await api(request, 'POST', `${MGMT}/content-types`, {
     apiId: 'silentPage',
@@ -100,6 +100,25 @@ test.beforeAll(async ({ request }) => {
   });
   expect([200, 201], await old.text()).toContain(old.status());
   await api(request, 'POST', `${MGMT}/content-types/oldSdkPage/published`);
+  // A frontend that connects, then refuses the entry's state.
+  const refusing = await api(request, 'POST', `${MGMT}/content-types`, {
+    apiId: 'refusingPage',
+    name: 'Refusing page',
+    displayField: 'title',
+    fields: [
+      {
+        apiId: 'title',
+        name: 'Title',
+        type: 'Symbol',
+        localized: false,
+        required: false,
+        position: 0,
+      },
+    ],
+    preview: { urlTemplate: `${GUEST}/refuse.html?entry={id}#token={token}` },
+  });
+  expect([200, 201], await refusing.text()).toContain(refusing.status());
+  await api(request, 'POST', `${MGMT}/content-types/refusingPage/published`);
 });
 
 /** An entry of a one-title type, opened on its Site pane. */
@@ -141,7 +160,7 @@ test.beforeEach(async ({ page }) => {
 
 async function landing(request: Parameters<typeof api>[0], title: string) {
   const res = await api(request, 'POST', `${MGMT}/entries`, {
-    contentTypeApiId: 'landing',
+    contentTypeApiId: 'livePage',
     fields: {
       title: { 'en-US': title },
       body: { 'en-US': [{ _type: 'cta', _key: 'k1', label: 'Read the guide' }] },
@@ -156,7 +175,7 @@ test('the Site pane re-renders the framed page as you type, and a click there fo
   request,
 }, testInfo) => {
   const id = await landing(request, `Live ${testInfo.workerIndex}`);
-  await openCms(page, `/content/landing/${id}`);
+  await openCms(page, `/content/livePage/${id}`);
   await expect(page.getByRole('button', { name: 'Save draft' })).toBeVisible(EDITOR_READY);
   await page.getByRole('radio', { name: 'Site' }).click();
 
@@ -181,6 +200,13 @@ test('the Site pane re-renders the framed page as you type, and a click there fo
   // A click on the title focuses the title field.
   await site.getByRole('heading', { level: 1 }).click();
   await expect(page.locator('#field-title')).toBeFocused();
+
+  // The field focused in the form is outlined on the page; focus leaving the fields clears it.
+  const frame = page.frameLocator('iframe[title="Site preview"]');
+  await page.getByRole('textbox', { name: /^Label/ }).focus();
+  await expect(frame.locator('[data-outline="selected"]')).toBeVisible();
+  await page.getByRole('radio', { name: 'Site' }).focus();
+  await expect(frame.locator('[data-outline="selected"]')).toHaveCount(0);
 
   // Nothing typed reached the API.
   const saved = await api(request, 'GET', `/preview/${SPACE}/main/entries?sys.id=${id}&limit=1`);
@@ -220,8 +246,15 @@ test('a site whose SDK shares no protocol version is refused, and says so at onc
   request,
 }, testInfo) => {
   await openSite(page, request, 'oldSdkPage', `Old ${testInfo.workerIndex}`);
-  await expect(page.getByRole('alert')).toContainText(
-    'This site’s ContentWorker SDK is too new for live preview',
-  );
+  await expect(page.getByRole('alert')).toContainText('The site’s SDK is too new');
+  await scanPane(page, testInfo);
+});
+
+test('a page that refuses the entry says it can’t be previewed, and isn’t sent it again', async ({
+  page,
+  request,
+}, testInfo) => {
+  await openSite(page, request, 'refusingPage', `Refused ${testInfo.workerIndex}`);
+  await expect(page.getByRole('alert')).toContainText('This entry can’t be previewed on this page');
   await scanPane(page, testInfo);
 });

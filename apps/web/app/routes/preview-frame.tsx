@@ -124,6 +124,8 @@ function SiteFrame({
 
   useEffect(() => {
     const parent = window.parent;
+    /** The ref last clicked in the page, until the form answers with its focus. */
+    let picked: string | null = null;
     const h = new LivePreviewHost({
       origin,
       origins,
@@ -143,6 +145,7 @@ function SiteFrame({
           return;
         }
         if (!ref) return;
+        picked = ref;
         setSelected({ ref, rect });
         // The editor checks the ref names its entry before it moves focus.
         postFrame(parent, { type: 'pick', ref });
@@ -161,7 +164,7 @@ function SiteFrame({
         case 'view':
           setDevice(m.device in DEVICE_WIDTHS ? m.device : 'desktop');
           setEditing(m.editing === true);
-          h.setAllowed(Array.isArray(m.allowed) ? m.allowed : []);
+          if (Array.isArray(m.allowed)) h.setAllowed(m.allowed);
           h.setEditing(m.editing === true);
           return;
         case 'entry':
@@ -169,7 +172,10 @@ function SiteFrame({
           return;
         case 'select':
           setSelected(m.ref ? { ref: m.ref, rect: null } : null);
-          h.select(m.ref, true);
+          // The form focusing what was just clicked: outlined, but the page isn't scrolled under
+          // the pointer.
+          h.select(m.ref, m.ref !== picked);
+          picked = null;
           return;
       }
     };
@@ -250,6 +256,7 @@ function SiteFrame({
 function Outline({ rect, scale, selected }: { rect: LiveRect; scale: number; selected?: boolean }) {
   return (
     <div
+      data-outline={selected ? 'selected' : 'hover'}
       className={cn(
         'absolute rounded-sm border',
         selected ? 'border-foreground shadow-[0_0_0_2px_var(--ring)]' : 'border-foreground/40',
