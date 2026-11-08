@@ -1,4 +1,5 @@
 import {
+  type BlockCatalog,
   type BlockConfig,
   blockConfigIssues,
   blockVariants,
@@ -6,6 +7,7 @@ import {
   type ContentType,
   canonicalJson,
   checkBlockConfig,
+  diffBlockConfigs,
   type EffectiveBlockRules,
   EMPTY_BLOCK_CONFIG,
   type EntryFields,
@@ -29,7 +31,7 @@ import type { AppContext } from './context';
  * `entries.ts`), so the editor, the API, MCP, block patches and AI all meet the same refusals.
  */
 
-/** The environment's config: version 0 and empty before the first set. */
+/** The environment's config: version 0 and empty before the first set. A read: writes nothing. */
 export async function getBlockConfig(ctx: AppContext, scope: Scope): Promise<BlockConfig> {
   return (await ctx.store.blockConfigs.get(scope)) ?? EMPTY_BLOCK_CONFIG;
 }
@@ -66,8 +68,11 @@ export async function setBlockConfig(
   input: SetBlockConfigInput,
 ): Promise<BlockConfigSet> {
   assertContentTypeCaller(caller);
-  const current = await getBlockConfig(ctx, scope);
-  const catalog = await ctx.store.blockCatalogs.latest(scope);
+  const [stored, catalog] = await Promise.all([
+    ctx.store.blockConfigs.get(scope),
+    ctx.store.blockCatalogs.latest(scope),
+  ]);
+  const current = stored ?? EMPTY_BLOCK_CONFIG;
   const { targets, blocks } = checkBlockConfig(input, catalog);
   if (
     canonicalJson({ targets, blocks }) ===
@@ -99,6 +104,8 @@ export async function setBlockConfig(
       version: current.version,
     });
   }
+  // Committed: the audit row says what changed, a lock taken off above all.
+  ctx.changes?.noteBlockConfig(diffBlockConfigs(current, config));
   return { config, unchanged: false };
 }
 
@@ -111,19 +118,50 @@ export async function getEffectiveBlockRules(
   ctx: AppContext,
   scope: Scope,
 ): Promise<EffectiveBlockRules> {
-  const config = await getBlockConfig(ctx, scope);
-  const catalog = await ctx.store.blockCatalogs.latest(scope);
+  const [config, catalog] = await Promise.all([
+    getBlockConfig(ctx, scope),
+    ctx.store.blockCatalogs.latest(scope),
+  ]);
   return effectiveBlockRules(catalog, config);
+}
+
+/** The config and the catalog a type's saves are judged by, when there is anything to judge. */
+export interface BlockRulesInForce {
+  readonly config: BlockConfig;
+  readonly catalog: BlockCatalog;
+}
+
+/**
+ * What a save of `contentType` is held to, read only when it can matter: nothing for a type
+ * with no blocks field (no statement), else one statement (`blockConfigs.inForce`) that answers
+ * nothing when the environment has no config, and the config with the catalog in force when it
+ * has one. Null when nothing applies: no config, none that touches the type, or a type the
+ * catalog doesn't target. A caller saving many entries of one type reads this once.
+ */
+export async function loadBlockRules(
+  ctx: AppContext,
+  scope: Scope,
+  contentType: ContentType,
+): Promise<BlockRulesInForce | null> {
+  if (!contentType.fields.some((f) => blockVariants(f) !== undefined)) return null;
+  const held = await ctx.store.blockConfigs.inForce(scope);
+  if (!held?.catalog) return null;
+  const { config, catalog } = held;
+  // A block narrowing applies wherever its block is placed; a target one only to its own type.
+  const touches =
+    config.blocks.length > 0 ||
+    config.targets.some((t) => t.contentTypeApiId === contentType.apiId);
+  if (!touches || !catalog.targets.some((t) => t.contentTypeApiId === contentType.apiId)) {
+    return null;
+  }
+  return { config, catalog };
 }
 
 /**
  * Refuses (422) a save whose new edits the block config doesn't allow (`blockConfigIssues`):
  * a block placed where the narrowed list doesn't take it, a locked slot's blocks changed, a count
- * pushed past the narrowed bounds. `before` is the stored fields, undefined for a create.
- *
- * It reads only when it can matter, so a save of a type with no blocks field reads nothing more,
- * and a type with one reads the config (one statement) and, only when there is a config that could
- * touch it, the catalog in force.
+ * pushed past the narrowed bounds. `before` is the stored fields, undefined for a create. `rules`
+ * is what `loadBlockRules` read, when the caller read it already; undefined reads it here.
  */
 export async function assertBlockConfigAllows(
   ctx: AppContext,
@@ -132,17 +170,10 @@ export async function assertBlockConfigAllows(
   before: EntryFields | undefined,
   after: EntryFields,
   locales: readonly LocaleCode[],
+  rules?: BlockRulesInForce | null,
 ): Promise<void> {
-  if (!contentType.fields.some((f) => blockVariants(f) !== undefined)) return;
-  const config = await ctx.store.blockConfigs.get(scope);
-  if (!config) return;
-  // A block narrowing applies wherever its block is placed; a target one only to its own type.
-  const touches =
-    config.blocks.length > 0 ||
-    config.targets.some((t) => t.contentTypeApiId === contentType.apiId);
-  if (!touches) return;
-  const catalog = await ctx.store.blockCatalogs.latest(scope);
-  if (!catalog?.targets.some((t) => t.contentTypeApiId === contentType.apiId)) return;
-  const issues = blockConfigIssues(contentType, catalog, config, before, after, locales);
+  const held = rules === undefined ? await loadBlockRules(ctx, scope, contentType) : rules;
+  if (!held) return;
+  const issues = blockConfigIssues(contentType, held.catalog, held.config, before, after, locales);
   if (issues.length > 0) throw new ValidationError(issues);
 }

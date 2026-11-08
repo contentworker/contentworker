@@ -1,13 +1,14 @@
-import { BLOCK_CONFIG_LIMITS } from '@contentworker/domain';
+import { BLOCK_CATALOG_LIMITS, BLOCK_CONFIG_LIMITS } from '@contentworker/domain';
 import { z } from 'zod';
 
 // --- block config (what admins allow of the block catalog) ------------------------------------------
 
 const count = (what: string) => z.int().min(0).optional().describe(what);
+/** A list of block ids: never longer than a catalog can hold, so a request stays bounded. */
+const blockIds = () => z.array(z.string().max(100)).max(BLOCK_CATALOG_LIMITS.blocks);
 
 export const slotNarrowing = z.object({
-  allowedChildren: z
-    .array(z.string())
+  allowedChildren: blockIds()
     .optional()
     .describe('The block ids the slot takes: a non-empty subset of the code’s allowedChildren'),
   min: count('Fewest blocks: at least the code’s min'),
@@ -21,8 +22,7 @@ export const slotNarrowing = z.object({
 export const targetNarrowing = z.object({
   contentTypeApiId: z.string(),
   field: z.string().describe('A catalog target: a top-level blocks field'),
-  blocks: z
-    .array(z.string())
+  blocks: blockIds()
     .optional()
     .describe('The blocks its top level takes: a non-empty subset of what the target takes'),
   min: count('Fewest blocks at its top level'),
@@ -33,7 +33,10 @@ export const targetNarrowing = z.object({
 export const blockNarrowing = z.object({
   block: z.string().describe('A block id of the catalog'),
   slots: z
-    .record(z.string(), slotNarrowing)
+    .record(z.string().max(100), slotNarrowing)
+    .refine((slots) => Object.keys(slots).length <= BLOCK_CONFIG_LIMITS.slots, {
+      message: `A block has at most ${BLOCK_CONFIG_LIMITS.slots} slots`,
+    })
     .describe('Narrowings by slot apiId, wherever the block is placed'),
 });
 

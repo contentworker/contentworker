@@ -4,6 +4,7 @@ import {
   createConcept,
   createContentType,
   createEntry,
+  createEnvironment,
   createMenu,
   createRedirect,
   createScheme,
@@ -33,8 +34,10 @@ import {
   publishAsset,
   publishContentType,
   publishEntry,
+  pushBlockCatalog,
   resolveDeliveredRedirect,
   SYSTEM_CALLER,
+  setBlockConfig,
   setEntryMetadata,
   setEntrySeo,
 } from '@contentworker/application';
@@ -65,6 +68,7 @@ const UPDATE = 'pnpm --filter @contentworker/db test:query-counts:update';
 
 const run = crypto.randomUUID();
 const scope = { spaceId: `qc-${run}`, environmentId: 'main' };
+const configured = { spaceId: scope.spaceId, environmentId: 'blocks' };
 /** A Delivery key with no content grants: it reads every type, unmasked. */
 const reader: Principal = { spaceId: scope.spaceId, kind: 'cda', scopes: [SCOPES.deliveryRead] };
 
@@ -214,6 +218,43 @@ async function seed(): Promise<void> {
   for (const apiId of ['author', 'article', 'roundup', 'landing', 'page', 'settings']) {
     await publishContentType(ctx, scope, apiId);
   }
+  // An environment with a block catalog and a block config: its saves read both, in one statement.
+  await createEnvironment(ctx, scope.spaceId, configured.environmentId);
+  await createContentType(ctx, SYSTEM_CALLER, configured, {
+    apiId: 'landing',
+    name: 'Landing',
+    displayField: 'title',
+    fields: [
+      field({ apiId: 'title', type: 'Symbol', required: true }),
+      field({
+        apiId: 'body',
+        type: 'Array',
+        position: 1,
+        items: {
+          type: 'Component',
+          variants: [{ apiId: 'x', name: 'X', fields: [field({ apiId: 'x', type: 'Symbol' })] }],
+        },
+      }),
+    ],
+  });
+  await publishContentType(ctx, configured, 'landing');
+  await pushBlockCatalog(ctx, SYSTEM_CALLER, configured, {
+    blocks: [
+      { id: 'hero', name: 'Hero', fields: [{ apiId: 'heading', name: 'Heading', type: 'Symbol' }] },
+      {
+        id: 'cta',
+        name: 'Call to action',
+        fields: [{ apiId: 'label', name: 'Label', type: 'Symbol' }],
+      },
+    ],
+    targets: [{ contentTypeApiId: 'landing', field: 'body' }],
+    allowDestructive: true,
+  });
+  await setBlockConfig(ctx, SYSTEM_CALLER, configured, {
+    expectedVersion: 0,
+    targets: [{ contentTypeApiId: 'landing', field: 'body', max: 5 }],
+    blocks: [],
+  });
 
   const { asset } = await createAsset(ctx, blob, scope, {
     fileName: 'hero.jpg',
@@ -541,6 +582,22 @@ const REQUESTS: readonly (readonly [string, () => Promise<unknown>])[] = [
       }),
   ],
   ['management: POST /entries (blocks)', () => createEntry(ctx, scope, landingFields())],
+  [
+    'management: POST /entries (blocks, block config set)',
+    () =>
+      createEntry(ctx, configured, {
+        contentTypeApiId: 'landing',
+        fields: {
+          title: { 'en-US': 'Configured' },
+          body: {
+            'en-US': [
+              { _type: 'hero', heading: 'Hi' },
+              { _type: 'cta', label: 'Go' },
+            ],
+          },
+        },
+      }),
+  ],
   ['management: POST /entries/:id/published', () => publishEntry(ctx, scope, ids.draft)],
   [
     'management: PATCH /entries/:id/seo',

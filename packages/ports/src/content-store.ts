@@ -396,6 +396,11 @@ export interface BlockConfigRepo {
   /** The config, or null before the first set. */
   get(scope: Scope): Promise<BlockConfig | null>;
   /**
+   * The config with the catalog in force, in one read: what an entry save is judged by. Null
+   * before the first set, so an environment without a config pays one small statement.
+   */
+  inForce(scope: Scope): Promise<{ config: BlockConfig; catalog: BlockCatalog | null } | null>;
+  /**
    * Writes `config` at its version while the stored one is at the version before it (no row, for
    * version 1). A config another set wrote first is a `TransactionConflictError` (at commit,
    * inside a unit; thrown outside one).

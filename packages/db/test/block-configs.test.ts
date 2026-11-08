@@ -71,6 +71,29 @@ describe('block configs on D1', () => {
     );
   });
 
+  it('reads the config with the latest catalog version in one statement', async () => {
+    const { scope } = await harness();
+    expect(await store.blockConfigs.inForce(scope)).toBeNull();
+    await store.blockConfigs.save(scope, config(1));
+    expect(await store.blockConfigs.inForce(scope)).toEqual({ config: config(1), catalog: null });
+    const catalog = (version: number) => ({
+      version,
+      hash: `h${version}`,
+      blocks: [{ id: 'hero', name: 'Hero', fields: [] }],
+      targets: [{ contentTypeApiId: 'page', field: 'body' }],
+      changes: { added: [], changed: [], removed: [], renamed: [] },
+      pushedAt: AT,
+      pushedBy: null,
+    });
+    await store.blockCatalogs.save(scope, catalog(1));
+    await store.blockCatalogs.save(scope, catalog(2));
+    // Another environment's newer catalog is not this one's.
+    await store.blockCatalogs.save({ ...scope, environmentId: 'other' }, catalog(3));
+    const held = await store.blockConfigs.inForce(scope);
+    expect(held?.config).toEqual(config(1));
+    expect(held?.catalog).toMatchObject({ version: 2, hash: 'h2' });
+  });
+
   it('keeps one environment’s config from another’s', async () => {
     const { ctx, spaceId, scope } = await harness();
     await createEnvironment(ctx, spaceId, 'staging');

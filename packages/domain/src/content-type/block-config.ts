@@ -87,6 +87,8 @@ export const BLOCK_CONFIG_LIMITS = {
   slots: BLOCK_CATALOG_LIMITS.slots,
   /** The config as JSON, UTF-8 bytes: one D1 row, far below its limit. */
   bytes: 200_000,
+  /** Issues one refusal names, or one save reports, before the rest are only counted. */
+  issues: 100,
 } as const;
 
 /** What a set sends, before it is checked. */
@@ -104,6 +106,9 @@ const isObject = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v);
 
 const quoted = (ids: readonly string[]) => ids.map((id) => `"${id}"`).join(', ');
+/** At most ten ids, quoted, then how many more. */
+const quotedSome = (ids: readonly string[]) =>
+  ids.length > 10 ? `${quoted(ids.slice(0, 10))} and ${ids.length - 10} more` : quoted(ids);
 
 /** What one slot or target takes, as the code (or, once narrowed, the config) says. */
 interface Rules {
@@ -168,7 +173,12 @@ export function checkBlockConfig(
   catalog: BlockConfigCatalog | null,
 ): { targets: TargetNarrowing[]; blocks: BlockNarrowing[] } {
   const issues: FieldIssue[] = [];
-  const issue: Issue = (field, message) => issues.push({ field, message });
+  let more = 0;
+  // A refusal stays small whatever was sent: past the cap, issues are only counted.
+  const issue: Issue = (field, message) => {
+    if (issues.length < BLOCK_CONFIG_LIMITS.issues) issues.push({ field, message });
+    else more += 1;
+  };
   const code = codeRules(catalog);
   const targets = checkTargetNarrowings(input.targets, code, issue);
   const blocks = checkBlockNarrowings(input.blocks, code, issue);
@@ -178,6 +188,7 @@ export function checkBlockConfig(
   ) {
     issue('', `The block config is larger than ${BLOCK_CONFIG_LIMITS.bytes} bytes as JSON`);
   }
+  if (more > 0) issues.push({ field: '', message: `…and ${more} more` });
   if (issues.length > 0) throw new ValidationError(issues);
   return { targets, blocks };
 }
@@ -281,8 +292,9 @@ function checkBlockNarrowings(raw: unknown, code: CodeRules, issue: Issue): Bloc
     if (entries.length > BLOCK_CONFIG_LIMITS.slots) {
       issue(`${at}.slots`, `A block has at most ${BLOCK_CONFIG_LIMITS.slots} slots`);
     }
-    const narrowed: Record<string, SlotNarrowing> = {};
-    for (const [apiId, s] of entries) {
+    // Built as entries: a slot apiId is author data, never a key to assign on a plain object.
+    const narrowed: [string, SlotNarrowing][] = [];
+    for (const [apiId, s] of entries.slice(0, BLOCK_CONFIG_LIMITS.slots)) {
       const where = `${at}.slots.${apiId}`;
       const rules = slots.get(apiId);
       if (!rules) {
@@ -295,9 +307,9 @@ function checkBlockNarrowings(raw: unknown, code: CodeRules, issue: Issue): Bloc
       }
       const n = checkNarrowing(s, 'allowedChildren', rules, where, code, issue);
       if (n.list === undefined && n.min === undefined && n.max === undefined && !n.locked) continue;
-      narrowed[apiId] = { ...(n.list ? { allowedChildren: n.list } : {}), ...bounds(n) };
+      narrowed.push([apiId, { ...(n.list ? { allowedChildren: n.list } : {}), ...bounds(n) }]);
     }
-    if (Object.keys(narrowed).length > 0) out.push({ block: id, slots: narrowed });
+    if (narrowed.length > 0) out.push({ block: id, slots: Object.fromEntries(narrowed) });
   });
   return out;
 }
@@ -328,24 +340,42 @@ function checkNarrowing(
   const given = raw[listKey];
   if (given !== undefined) {
     list = [];
+    const where = `${at}.${listKey}`;
     if (!Array.isArray(given) || given.length === 0) {
-      issue(`${at}.${listKey}`, 'names at least one block id, or is left out');
+      issue(where, 'names at least one block id, or is left out');
+    } else if (given.length > code.allowed.length) {
+      issue(where, `names more blocks than the code allows here (${code.allowed.length})`);
     } else {
+      const allowed = new Set(code.allowed);
+      const kept = new Set<string>();
+      // Each kind of problem once per list, naming the ids it applies to.
+      const invalid: string[] = [];
+      const twice: string[] = [];
+      const wider: string[] = [];
       for (const id of given) {
-        if (typeof id !== 'string' || !isValidApiId(id)) {
-          issue(`${at}.${listKey}`, `"${String(id)}" is not a valid block id`);
-        } else if (list.includes(id)) {
-          issue(`${at}.${listKey}`, `"${id}" is listed twice`);
-        } else if (!code.allowed.includes(id)) {
+        if (typeof id !== 'string' || !isValidApiId(id)) invalid.push(String(id));
+        else if (kept.has(id)) twice.push(id);
+        else if (!allowed.has(id)) {
           const renamed = rules.aliases.get(id);
-          issue(
-            `${at}.${listKey}`,
-            renamed && code.allowed.includes(renamed)
-              ? `"${id}" is a former id of "${renamed}"; name the block by its id`
-              : `"${id}" is not a block the code allows here (it allows ${quoted(code.allowed)})`,
-          );
-        } else list.push(id);
+          if (renamed && allowed.has(renamed)) {
+            issue(where, `"${id}" is a former id of "${renamed}"; name the block by its id`);
+          } else wider.push(id);
+        } else kept.add(id);
       }
+      if (invalid.length > 0)
+        issue(
+          where,
+          `${quotedSome(invalid)} ${invalid.length === 1 ? 'is not a valid block id' : 'are not valid block ids'}`,
+        );
+      if (twice.length > 0)
+        issue(where, `${quotedSome(twice)} ${twice.length === 1 ? 'is' : 'are'} listed twice`);
+      if (wider.length > 0) {
+        issue(
+          where,
+          `${quotedSome(wider)} ${wider.length === 1 ? 'is not a block' : 'are not blocks'} the code allows here (it allows ${quoted(code.allowed)})`,
+        );
+      }
+      list = [...kept];
     }
   }
   const count = (key: 'min' | 'max'): number | undefined => {
@@ -549,7 +579,8 @@ export function effectiveBlockRules(
   for (const [id, slots] of code.slots) {
     const n = byBlock.get(id);
     const at = `blocks[${n?.block ?? id}]`;
-    for (const apiId of Object.keys(n?.slots ?? {})) {
+    const given = new Map(Object.entries(n?.slots ?? {}));
+    for (const apiId of given.keys()) {
       if (!slots.has(apiId)) {
         stale.push({
           at: `${at}.slots.${apiId}`,
@@ -557,12 +588,15 @@ export function effectiveBlockRules(
         });
       }
     }
-    const out: Record<string, EffectiveSlotRules> = {};
+    const out: [string, EffectiveSlotRules][] = [];
     for (const [apiId, rules] of slots) {
-      const s = n?.slots[apiId];
-      out[apiId] = narrow(rules, s, s?.allowedChildren, `${at}.slots.${apiId}`, 'allowedChildren');
+      const s = given.get(apiId);
+      out.push([
+        apiId,
+        narrow(rules, s, s?.allowedChildren, `${at}.slots.${apiId}`, 'allowedChildren'),
+      ]);
     }
-    blocks.push({ block: id, slots: out });
+    blocks.push({ block: id, slots: Object.fromEntries(out) });
   }
   return {
     catalogVersion: catalog?.version ?? null,
@@ -584,6 +618,8 @@ export const BLOCK_CONFIG_ISSUE_CODES = [
   'slot_locked',
   'slot_too_few',
   'slot_too_many',
+  /** The save broke more than `BLOCK_CONFIG_LIMITS.issues` rules: this one counts the rest. */
+  'more_issues',
 ] as const;
 export type BlockConfigIssueCode = (typeof BLOCK_CONFIG_ISSUE_CODES)[number];
 
@@ -597,21 +633,50 @@ export interface BlockConfigIssue extends FieldIssue {
   readonly key?: string;
 }
 
-type Item = Record<string, unknown>;
-
 const keyOf = (item: unknown): string | undefined => {
   const key = isObject(item) ? item[BLOCK_KEY] : undefined;
   return typeof key === 'string' ? key : undefined;
 };
 
-/** A slot of one field value, in one locale: the field's top level, or one block's slot. */
-const TOP = '';
-const slotId = (parentKey: string, slot: string) => `${parentKey}\u0000${slot}`;
+/** A block's own value under `apiId`: never something its prototype answers for. */
+const own = (item: unknown, apiId: string): unknown =>
+  isObject(item) && Object.hasOwn(item, apiId) ? item[apiId] : undefined;
 
-/** What a field value held before the save: each slot's child keys, and every block's key. */
+/** One slot's blocks as the save found them. */
+interface HeldSlot {
+  readonly keys: readonly (string | undefined)[];
+  /** Each block's id, an alias resolved, in the same order. */
+  readonly types: readonly (string | undefined)[];
+  /** Key → block id, of every keyed block in the slot. */
+  readonly members: ReadonlyMap<string, string | undefined>;
+  /** Its block's key is held by more than one stored block: see `hold`. */
+  readonly ambiguous: boolean;
+}
+
+const NO_SLOT: HeldSlot = { keys: [], types: [], members: new Map(), ambiguous: false };
+
+/** What one field value held in one locale before the save. */
 interface Held {
-  readonly slots: ReadonlyMap<string, readonly (string | undefined)[]>;
+  /** The field's top level; undefined when it held no blocks there (no value, or none). */
+  readonly top: HeldSlot | undefined;
+  /** Each block's slots, by the block's key, then the slot's apiId. */
+  readonly slots: ReadonlyMap<string, ReadonlyMap<string, HeldSlot>>;
   readonly blocks: ReadonlySet<string>;
+}
+
+/** Where a slot is: the field's top level, or one block's slot (by that block's key, if any). */
+type SlotAt =
+  | { readonly top: true }
+  | { readonly parent: string | undefined; readonly slot: string };
+const TOP_LEVEL: SlotAt = { top: true };
+
+/** The rules one slot is judged by. */
+interface SlotRules {
+  readonly allowed: ReadonlySet<string>;
+  readonly list: readonly string[];
+  readonly min?: number;
+  readonly max?: number;
+  readonly locked: boolean;
 }
 
 /**
@@ -622,11 +687,12 @@ interface Held {
  * children keeps its slots.
  *
  * - **Placement.** A block in a slot after the save but not before it (inserted, duplicated or
- *   moved in) must be one the slot's narrowed list takes. A block stored under a former id
- *   (an alias) counts as its block.
- * - **Lock.** A locked slot's sequence of keys can't change (nothing inserted, removed, moved in
- *   or out, or reordered); what's inside its blocks can. A slot that comes into being in this save
- *   (a block newly placed, or a create) is filled as it comes, under placement and counts.
+ *   moved in), or one whose key stayed while its `_type` changed, must be one the slot's narrowed
+ *   list takes. A block stored under a former id (an alias) counts as its block.
+ * - **Lock.** A locked slot's sequence of blocks (key and block, in order) can't change: nothing
+ *   inserted, removed, moved in or out, reordered or swapped for another block; what's inside its
+ *   blocks can. A slot that comes into being in this save (a block newly placed, a create, or a
+ *   target with no blocks yet in that locale) is filled as it comes, under placement and counts.
  * - **Counts.** Only when the save changes a slot's number of blocks, the new number must fit the
  *   narrowed `min` and `max`, unless it moves toward them: a slot holding more than `max` (stored
  *   before the config tightened) can lose one block at a time, and one holding fewer than `min`
@@ -635,7 +701,8 @@ interface Held {
  *
  * So content stored before the config (or before it tightened) stays saveable as long as the save
  * leaves the slot's blocks where they are. Values the type or the catalog doesn't know are left
- * to validation, which runs first.
+ * to validation, which runs first. At most `BLOCK_CONFIG_LIMITS.issues` are listed, then one
+ * `more_issues` counting the rest; the work is linear in the blocks.
  */
 export function blockConfigIssues(
   contentType: ContentType,
@@ -654,84 +721,143 @@ export function blockConfigIssues(
     if (typeof type !== 'string') return undefined;
     return byId.get(type) ?? byId.get(aliases.get(type) ?? '');
   };
-  const slotRules = new Map(rules.blocks.map((b) => [b.block, b.slots]));
+  const asRules = (r: Omit<EffectiveSlotRules, 'allowedChildren'>, list: readonly string[]) => ({
+    allowed: new Set(list),
+    list,
+    ...(r.min !== undefined ? { min: r.min } : {}),
+    ...(r.max !== undefined ? { max: r.max } : {}),
+    locked: r.locked,
+  });
+  const slotRules = new Map(
+    rules.blocks.map((b) => [
+      b.block,
+      new Map(Object.entries(b.slots).map(([apiId, r]) => [apiId, asRules(r, r.allowedChildren)])),
+    ]),
+  );
   const issues: BlockConfigIssue[] = [];
+  let more = 0;
+  const report = (issue: BlockConfigIssue) => {
+    if (issues.length < BLOCK_CONFIG_LIMITS.issues) issues.push(issue);
+    else more += 1;
+  };
 
-  /** Every slot's child keys in one field value, and every block's key. */
+  /**
+   * Every slot's blocks in one stored field value. Keys are unique per array, not per tree: a key
+   * held by blocks at two depths can't say which block's slots a later save means, so those
+   * slots are `ambiguous`, holding every one of those blocks' children. Of the two ways out, this
+   * is the one that never refuses an unchanged save and never lets an edit through unjudged:
+   * placement is still judged (a child new to all of them, or changed, is placed), only the lock
+   * and the counts, which need the one sequence, are left alone.
+   */
   const hold = (root: unknown): Held => {
-    const slots = new Map<string, (string | undefined)[]>();
-    const blocks = new Set<string>();
-    const walk = (items: unknown, id: string | undefined): void => {
+    const counts = new Map<string, number>();
+    const count = (items: unknown): void => {
       if (!Array.isArray(items)) return;
-      // Keys are unique per array, not per tree: a key held twice keeps the first's slots.
-      if (id !== undefined && !slots.has(id)) slots.set(id, items.map(keyOf));
       for (const item of items) {
         const key = keyOf(item);
-        if (key !== undefined) blocks.add(key);
+        if (key !== undefined) counts.set(key, (counts.get(key) ?? 0) + 1);
+        for (const s of blockOf(item)?.slots ?? []) count(own(item, s.apiId));
+      }
+    };
+    count(root);
+    const slots = new Map<string, Map<string, HeldSlot>>();
+    const read = (items: unknown[]): HeldSlot => {
+      const keys = items.map(keyOf);
+      const types = items.map((item) => blockOf(item)?.id);
+      const members = new Map<string, string | undefined>();
+      keys.forEach((k, i) => {
+        if (k !== undefined) members.set(k, types[i]);
+      });
+      return { keys, types, members, ambiguous: false };
+    };
+    const walk = (items: unknown): void => {
+      if (!Array.isArray(items)) return;
+      for (const item of items) {
+        const key = keyOf(item);
         for (const s of blockOf(item)?.slots ?? []) {
-          walk((item as Item)[s.apiId], key === undefined ? undefined : slotId(key, s.apiId));
+          const value = own(item, s.apiId);
+          if (key !== undefined) {
+            const bySlot = slots.get(key) ?? new Map<string, HeldSlot>();
+            slots.set(key, bySlot);
+            const found = read(Array.isArray(value) ? value : []);
+            const seen = bySlot.get(s.apiId);
+            const ambiguous = (counts.get(key) ?? 0) > 1;
+            bySlot.set(
+              s.apiId,
+              seen
+                ? { ...seen, members: new Map([...seen.members, ...found.members]), ambiguous }
+                : { ...found, ambiguous },
+            );
+          }
+          walk(value);
         }
       }
     };
-    walk(root, TOP);
-    return { slots, blocks };
+    walk(root);
+    const top = Array.isArray(root) && root.length > 0 ? read(root) : undefined;
+    return { top, slots, blocks: new Set(counts.keys()) };
   };
 
   const judge = (
     items: unknown,
-    id: string | undefined,
-    slot: {
-      readonly allowed: readonly string[];
-      readonly min?: number;
-      readonly max?: number;
-      readonly locked: boolean;
-    },
+    at: SlotAt,
+    slot: SlotRules,
     path: string,
     locale: LocaleCode,
     held: Held | undefined,
   ): void => {
     const list = Array.isArray(items) ? items : [];
     // A field left without a value isn't counted (see above); a block's empty slot is.
-    const counted = id !== TOP || items !== undefined;
-    // The slot was there before: the field of an entry being updated, or a slot of a block it held.
-    const existed =
-      held !== undefined &&
-      id !== undefined &&
-      (id === TOP || held.blocks.has(id.slice(0, id.indexOf('\u0000'))));
-    const was = existed ? (held.slots.get(id) ?? []) : undefined;
+    const counted = !('top' in at) || items !== undefined;
+    // The slot as it was: the field's top level when it held blocks, or a slot of a block it held.
+    let was: HeldSlot | undefined;
+    if (held) {
+      if ('top' in at) was = held.top;
+      else if (at.parent !== undefined && held.blocks.has(at.parent)) {
+        was = held.slots.get(at.parent)?.get(at.slot) ?? NO_SLOT;
+      }
+    }
     const keys = list.map(keyOf);
-    list.forEach((item, i) => {
+    const blocks = list.map(blockOf);
+    list.forEach((_, i) => {
       const key = keys[i];
-      const placed = was === undefined || key === undefined || !was.includes(key);
-      const block = blockOf(item);
-      if (placed && block && !slot.allowed.includes(block.id)) {
-        issues.push({
+      const block = blocks[i];
+      const placed =
+        was === undefined ||
+        key === undefined ||
+        !was.members.has(key) ||
+        was.members.get(key) !== block?.id;
+      if (placed && block && !slot.allowed.has(block.id)) {
+        report({
           field: `${path}[${i}]`,
           locale,
           code: 'block_not_allowed_here',
           ...(key !== undefined ? { key } : {}),
-          message: `"${block.name}" can't go here: this slot takes ${quoted(slot.allowed)}`,
+          message: `"${block.name}" can't go here: this slot takes ${quotedSome(slot.list)}`,
         });
       }
     });
     if (
       slot.locked &&
       was !== undefined &&
-      (was.length !== keys.length || was.some((k, i) => k !== keys[i]))
+      !was.ambiguous &&
+      (was.keys.length !== keys.length ||
+        was.keys.some((k, i) => k !== keys[i] || was.types[i] !== blocks[i]?.id))
     ) {
-      issues.push({
+      report({
         field: path,
         locale,
         code: 'slot_locked',
         message:
-          'This slot is locked: its blocks can’t be added, removed, moved or reordered (what’s inside them can still be edited)',
+          'This slot is locked: its blocks can’t be added, removed, moved, reordered or swapped (what’s inside them can still be edited)',
       });
     }
     // A new slot is counted as it comes; an old one only when it grew past max or shrank below min.
-    const grew = counted && (was === undefined || list.length > was.length);
-    const shrank = counted && (was === undefined || list.length < was.length);
+    const before = was?.ambiguous ? list.length : was?.keys.length;
+    const grew = counted && (before === undefined || list.length > before);
+    const shrank = counted && (before === undefined || list.length < before);
     if (shrank && slot.min !== undefined && list.length < slot.min) {
-      issues.push({
+      report({
         field: path,
         locale,
         code: 'slot_too_few',
@@ -739,7 +865,7 @@ export function blockConfigIssues(
       });
     }
     if (grew && slot.max !== undefined && list.length > slot.max) {
-      issues.push({
+      report({
         field: path,
         locale,
         code: 'slot_too_many',
@@ -747,17 +873,16 @@ export function blockConfigIssues(
       });
     }
     list.forEach((item, i) => {
-      const block = blockOf(item);
+      const block = blocks[i];
       const nested = block ? slotRules.get(block.id) : undefined;
       if (!block || !nested) return;
-      const key = keys[i];
       for (const s of block.slots ?? []) {
-        const r = nested[s.apiId];
+        const r = nested.get(s.apiId);
         if (!r) continue;
         judge(
-          (item as Item)[s.apiId],
-          key === undefined ? undefined : slotId(key, s.apiId),
-          { allowed: r.allowedChildren, ...r },
+          own(item, s.apiId),
+          { parent: keys[i], slot: s.apiId },
+          r,
           `${path}[${i}].${s.apiId}`,
           locale,
           held,
@@ -766,6 +891,7 @@ export function blockConfigIssues(
     });
   };
 
+  const only = locales ? new Set(locales) : undefined;
   for (const target of rules.targets) {
     if (target.contentTypeApiId !== contentType.apiId) continue;
     const def = contentType.fields.find((f) => f.apiId === target.field);
@@ -774,16 +900,93 @@ export function blockConfigIssues(
     const now = after[def.apiId] ?? {};
     const inLocales = new Set([...Object.keys(was), ...Object.keys(now)]);
     for (const locale of inLocales) {
-      if (locales && !locales.includes(locale)) continue;
+      if (only && !only.has(locale)) continue;
       judge(
-        now[locale],
-        TOP,
-        { allowed: target.blocks, ...target },
+        Object.hasOwn(now, locale) ? now[locale] : undefined,
+        TOP_LEVEL,
+        asRules(target, target.blocks),
         def.apiId,
         locale,
-        before === undefined ? undefined : hold(was[locale]),
+        before === undefined
+          ? undefined
+          : hold(Object.hasOwn(was, locale) ? was[locale] : undefined),
       );
     }
   }
+  if (more > 0) {
+    issues.push({
+      field: '',
+      code: 'more_issues',
+      message: `…and ${more} more the block config refuses`,
+    });
+  }
   return issues;
+}
+
+// --- what a set changed --------------------------------------------------------------------------
+
+/** What one set of the config changed, for the audit trail: parts named as `checkBlockConfig` does. */
+export interface BlockConfigChange {
+  readonly from: number;
+  readonly to: number;
+  /** Targets and slots narrowed that weren't before. */
+  readonly added: readonly string[];
+  /** Targets and slots no longer narrowed at all. */
+  readonly removed: readonly string[];
+  /** Narrowed before and still, but less: more blocks, a lower min, a higher max, or unlocked. */
+  readonly loosened: readonly string[];
+  /** Locks taken off, whether the part is still narrowed or not. */
+  readonly unlocked: readonly string[];
+}
+
+/** Lists in a change hold at most this many parts each. */
+const CHANGE_PARTS = 10;
+
+/** What `next` changes from `previous`, part by part. */
+export function diffBlockConfigs(
+  previous: Pick<BlockConfig, 'version' | 'targets' | 'blocks'>,
+  next: Pick<BlockConfig, 'version' | 'targets' | 'blocks'>,
+): BlockConfigChange {
+  const parts = (c: Pick<BlockConfig, 'targets' | 'blocks'>) => {
+    const out = new Map<string, SlotNarrowing>();
+    for (const t of c.targets) {
+      out.set(`targets[${targetKey(t.contentTypeApiId, t.field)}]`, {
+        ...(t.blocks ? { allowedChildren: t.blocks } : {}),
+        ...bounds({ ...t, locked: t.locked === true }),
+      });
+    }
+    for (const b of c.blocks) {
+      for (const [apiId, s] of Object.entries(b.slots))
+        out.set(`blocks[${b.block}].slots.${apiId}`, s);
+    }
+    return out;
+  };
+  const was = parts(previous);
+  const now = parts(next);
+  const added = [...now.keys()].filter((k) => !was.has(k));
+  const removed = [...was.keys()].filter((k) => !now.has(k));
+  const loosened: string[] = [];
+  const unlocked: string[] = [];
+  for (const [k, a] of was) {
+    const b = now.get(k);
+    if (a.locked && !b?.locked) unlocked.push(k);
+    if (!b) continue;
+    const wider =
+      (a.allowedChildren !== undefined &&
+        (b.allowedChildren === undefined ||
+          b.allowedChildren.some((id) => !a.allowedChildren?.includes(id)))) ||
+      (a.min !== undefined && (b.min ?? 0) < a.min) ||
+      (a.max !== undefined && (b.max === undefined || b.max > a.max)) ||
+      (a.locked === true && !b.locked);
+    if (wider) loosened.push(k);
+  }
+  const cap = (list: string[]) => list.slice(0, CHANGE_PARTS);
+  return {
+    from: previous.version,
+    to: next.version,
+    added: cap(added),
+    removed: cap(removed),
+    loosened: cap(loosened),
+    unlocked: cap(unlocked),
+  };
 }

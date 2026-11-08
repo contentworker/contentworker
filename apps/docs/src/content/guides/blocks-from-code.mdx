@@ -213,12 +213,15 @@ force: a name the catalog doesn't have, or anything wider than the code, is a `4
 landing first is a `409`. `GET …/block-config` reads it, and `GET …/block-config/effective` answers
 the rules every target and slot follows once the config is laid over the code.
 
-Every save holds what it changes to the config: placing a block where it isn't allowed
-(`block_not_allowed_here`), changing a locked slot's blocks (`slot_locked`), or taking a slot's
-count past its bounds (`slot_too_few`, `slot_too_many`) is a `422`, whether the save comes from the
-editor, the API, MCP or a block patch. Content saved before the config stays saveable as long as
-the save leaves those blocks where they are, and a slot over its new `max` can shrink one block at
-a time. Imports, snapshot restores and environment clones carry content as it is.
+Every save holds what it changes to the config: placing a block where it isn't allowed, or
+changing a block's type under its key (`block_not_allowed_here`), changing a locked slot's blocks
+(`slot_locked`), or taking a slot's count past its bounds (`slot_too_few`, `slot_too_many`) is a
+`422`, whether the save comes from the editor, the API, MCP, a block patch or a CSV or JSON import
+(whose analysis lists the records it would refuse). Content saved before the config stays
+saveable as long as the save leaves those blocks where they are, and a slot over its new `max` can
+shrink one block at a time. A locked page can still be filled in a locale it has no blocks in yet.
+Snapshot restores, environment clones and promotions, and restoring an entry's earlier version
+carry content as it is, so a restored version can bring back blocks from before a lock.
 
 Pushing a new catalog is never blocked by the config. Parts of the config naming what the catalog
 no longer has are listed as `stale` in the effective rules and ignored until the config is set

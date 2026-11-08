@@ -6690,17 +6690,40 @@ function makeBlockCatalogRepo(x: Exec): BlockCatalogRepo {
 function makeBlockConfigRepo(x: Exec): BlockConfigRepo {
   const db = x.db;
   const t = schema.blockConfigs;
+  const c = schema.blockCatalogs;
+  const toConfig = (row: typeof t.$inferSelect): BlockConfig => ({
+    version: row.version,
+    targets: row.document.targets,
+    blocks: row.document.blocks,
+    updatedAt: row.updatedAt.toISOString(),
+    updatedBy: row.updatedBy,
+  });
   return {
     async get(scope) {
       const [row] = await db.select().from(t).where(scopeFilter(t, scope));
+      return row ? toConfig(row) : null;
+    },
+    async inForce(scope) {
+      // One statement: no config row answers nothing, so a save of an unconfigured environment
+      // reads no catalog; with one, the latest catalog version rides along.
+      const latest = sql`(SELECT max(${c.version}) FROM ${c} WHERE ${c.spaceId} = ${scope.spaceId} AND ${c.environmentId} = ${scope.environmentId})`;
+      const [row] = await db
+        .select({ config: t, catalog: c })
+        .from(t)
+        .leftJoin(
+          c,
+          and(
+            eq(c.spaceId, t.spaceId),
+            eq(c.environmentId, t.environmentId),
+            eq(c.version, latest),
+          ),
+        )
+        .where(scopeFilter(t, scope));
       if (!row) return null;
       return {
-        version: row.version,
-        targets: row.document.targets,
-        blocks: row.document.blocks,
-        updatedAt: row.updatedAt.toISOString(),
-        updatedBy: row.updatedBy,
-      } satisfies BlockConfig;
+        config: toConfig(row.config),
+        catalog: row.catalog ? toBlockCatalog(row.catalog) : null,
+      };
     },
     async save(scope, config) {
       const document = { targets: [...config.targets], blocks: [...config.blocks] };

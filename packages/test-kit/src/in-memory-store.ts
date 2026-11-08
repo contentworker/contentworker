@@ -2937,6 +2937,10 @@ export class InMemoryContentStore implements ContentStore {
 
   readonly blockConfigs: BlockConfigRepo = {
     get: async (scope) => this.blockConfigData.get(scopeKey(scope)) ?? null,
+    inForce: async (scope) => {
+      const config = this.blockConfigData.get(scopeKey(scope));
+      return config ? { config, catalog: this.catalogsOf(scope)[0] ?? null } : null;
+    },
     save: async (scope, config) => {
       // As the D1 store's compare-and-set: the row must be at the version before this one.
       const held = this.blockConfigData.get(scopeKey(scope))?.version ?? 0;

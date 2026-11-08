@@ -195,6 +195,109 @@ describe('the block config over HTTP', () => {
     expect((await send(app, 'GET', '/block-config/effective', undefined, cpa)).status).toBe(200);
   });
 
+  it('refuses a Delivery key, and another space’s key, on every route', async () => {
+    const { app } = await makeApp();
+    const cda = { Authorization: 'Bearer cda', 'Content-Type': 'application/json' };
+    expect((await send(app, 'GET', '/block-config', undefined, cda)).status).toBe(403);
+    expect((await send(app, 'GET', '/block-config/effective', undefined, cda)).status).toBe(403);
+    await app.request('/spaces', {
+      method: 'POST',
+      headers: admin,
+      body: JSON.stringify({ spaceId: 's2', name: 'Second', defaultLocale: 'en-US' }),
+    });
+    const mint = await app.request('/spaces/s2/api-keys', {
+      method: 'POST',
+      headers: admin,
+      body: JSON.stringify({ kind: 'cma', name: 's2 writer' }),
+    });
+    const { token } = (await mint.json()) as { token: string };
+    const other = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+    const body = { expectedVersion: 0, ...NARROWING };
+    expect((await send(app, 'PUT', '/block-config', body, other)).status).toBe(403);
+    expect((await send(app, 'GET', '/block-config', undefined, other)).status).toBe(403);
+    expect((await send(app, 'GET', '/block-config/effective', undefined, other)).status).toBe(403);
+    // The same key works on its own space's config.
+    const own = await app.request('/spaces/s2/environments/main/block-config', { headers: other });
+    expect(own.status).toBe(200);
+  });
+
+  it('answers an oversized list with a bounded 422', async () => {
+    const { app } = await makeApp();
+    const huge = Array.from({ length: 5000 }, (_, i) => `block${i}`);
+    const res = await send(app, 'PUT', '/block-config', {
+      expectedVersion: 0,
+      targets: [{ contentTypeApiId: 'cpage', field: 'body', blocks: huge }],
+      blocks: [
+        {
+          block: 'grid',
+          slots: Object.fromEntries(Array.from({ length: 50 }, (_, i) => [`s${i}`, {}])),
+        },
+      ],
+    });
+    expect(res.status).toBe(422);
+    expect((await res.text()).length).toBeLessThan(4000);
+    // Within the request's bounds, the domain still names one problem per list, not per id.
+    const wide = await send(app, 'PUT', '/block-config', {
+      expectedVersion: 0,
+      targets: [
+        { contentTypeApiId: 'cpage', field: 'body', blocks: ['hero', 'card', 'quote', 'nope'] },
+      ],
+      blocks: [],
+    });
+    expect(wide.status).toBe(422);
+    const issues = ((await wide.json()) as { error: { issues: unknown[] } }).error.issues;
+    expect(issues).toHaveLength(1);
+  });
+
+  it('records the set in the audit trail, naming what it changed', async () => {
+    const { app, ctx } = await makeApp();
+    await send(app, 'PUT', '/block-config', { expectedVersion: 0, ...NARROWING });
+    await send(app, 'PUT', '/block-config', {
+      expectedVersion: 1,
+      targets: NARROWING.targets,
+      blocks: [],
+    });
+    // A set that changes nothing writes no change, and its row says so by having no detail.
+    await send(app, 'PUT', '/block-config', {
+      expectedVersion: 2,
+      targets: NARROWING.targets,
+      blocks: [],
+    });
+    const rows = await ctx.store.audit.list('s1', {
+      action: 'PUT /spaces/:space/environments/:env/block-config',
+    });
+    const byVersion = rows.toSorted((a, b) =>
+      String(b.targetId ?? '9').localeCompare(String(a.targetId ?? '9')),
+    );
+    expect(byVersion.map((r) => [r.targetType, r.targetId, r.detail?.blockConfig])).toEqual([
+      [undefined, undefined, undefined],
+      [
+        'block_config',
+        '2',
+        {
+          from: 1,
+          to: 2,
+          added: [],
+          removed: ['blocks[grid].slots.items'],
+          loosened: [],
+          unlocked: ['blocks[grid].slots.items'],
+        },
+      ],
+      [
+        'block_config',
+        '1',
+        {
+          from: 0,
+          to: 1,
+          added: ['targets[cpage.body]', 'blocks[grid].slots.items'],
+          removed: [],
+          loosened: [],
+          unlocked: [],
+        },
+      ],
+    ]);
+  });
+
   it('is described in the OpenAPI document under its own tag', async () => {
     const { app } = await makeApp();
     const spec = (await (await app.request('/openapi.json')).json()) as {

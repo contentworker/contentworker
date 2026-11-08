@@ -6,6 +6,7 @@ import {
   checkBlockCatalog,
   checkBlockConfig,
   defineContentType,
+  diffBlockConfigs,
   type EntryFields,
   effectiveBlockRules,
   ValidationError,
@@ -524,5 +525,192 @@ describe('judging a save against the config', () => {
     const post = defineContentType({ ...PAGE, apiId: 'post' });
     expect(blockConfigIssues(post, CATALOG, NARROWED, body([]), body([hero('h1')]))).toEqual([]);
     expect(blockConfigIssues(PAGE, null, NARROWED, body([]), body([hero('h1')]))).toEqual([]);
+  });
+});
+
+describe('judging a save: what a review found', () => {
+  // The top level is locked and takes grids and sections only; a grid's items take only cards.
+  const LOCKED_TOP = config({
+    targets: [
+      { contentTypeApiId: 'page', field: 'body', blocks: ['grid', 'section'], locked: true },
+    ],
+    blocks: [{ block: 'grid', slots: { items: { allowedChildren: ['card'] } } }],
+  });
+
+  it('judges a block whose _type changed under the same _key as placed', () => {
+    // Nested, in a narrowed slot: a grid's card c1 becomes a quote, keeping its key.
+    const before = body([grid('g1', [card('c1')])]);
+    expect(judged(NARROWED, before, body([grid('g1', [{ ...quote('q'), _key: 'c1' }])]))).toEqual([
+      'block_not_allowed_here en-US body[0].items[0]',
+    ]);
+    // The top level: grid g1 becomes a hero.
+    expect(judged(NARROWED, before, body([{ ...hero('h'), _key: 'g1' }]))).toEqual([
+      'block_not_allowed_here en-US body[0]',
+    ]);
+    // A locked slot: swapping a block for another under its key changes the slot.
+    const locked = body([section('s1', [hero('h1'), grid('g1', [card('c1')])])]);
+    const toGrid = body([section('s1', [grid('h1', []), grid('g1', [card('c1')])])]);
+    expect(judged(NARROWED, locked, toGrid)).toEqual(['slot_locked en-US body[0].content']);
+  });
+
+  it('fills a locked target in a locale, or a field, it held no blocks in', () => {
+    const en = body([grid('g1', [card('c1')])]);
+    // A de value added to an entry whose top level is locked.
+    expect(
+      judged(LOCKED_TOP, en, body([grid('g1', [card('c1')])], { de: [grid('g2', [card('c9')])] })),
+    ).toEqual([]);
+    // A field that was absent, or empty, filled.
+    expect(judged(LOCKED_TOP, { title: { 'en-US': 'x' } }, en)).toEqual([]);
+    expect(judged(LOCKED_TOP, body([]), en)).toEqual([]);
+    // Placement still holds there.
+    expect(judged(LOCKED_TOP, en, body([grid('g1', [card('c1')])], { de: [hero('h1')] }))).toEqual([
+      'block_not_allowed_here de body[0]',
+    ]);
+    // And the lock holds where the locale held blocks.
+    expect(
+      judged(LOCKED_TOP, en, body([grid('g1', [card('c1')]), grid('g2', [card('c2')])])),
+    ).toEqual(['slot_locked en-US body']);
+  });
+
+  it('never refuses an unchanged save of a tree holding one key at two depths', () => {
+    const tight = config({
+      blocks: [
+        { block: 'grid', slots: { items: { allowedChildren: ['card'], min: 2, locked: true } } },
+      ],
+    });
+    const stored = body([
+      grid('g', [card('c1'), card('c2')]),
+      section('s', [grid('g', [card('c3')])]),
+    ]);
+    expect(judged(tight, stored, structuredClone(stored))).toEqual([]);
+    // Placement is still judged in those slots: a quote new to every grid g.
+    const withQuote = body([
+      grid('g', [card('c1'), card('c2'), quote('q1')]),
+      section('s', [grid('g', [card('c3')])]),
+    ]);
+    expect(judged(tight, stored, withQuote)).toEqual([
+      'block_not_allowed_here en-US body[0].items[2]',
+    ]);
+  });
+
+  it('reads a slot named like an Object method as the block’s own value only', () => {
+    const odd = checkBlockCatalog({
+      blocks: [
+        {
+          id: 'box',
+          name: 'Box',
+          fields: [],
+          slots: [{ apiId: 'constructor', name: 'Inside', allowedChildren: ['leaf'] }],
+        },
+        { id: 'leaf', name: 'Leaf', fields: [symbol('text')], allowedParents: ['box'] },
+      ],
+      targets: [{ contentTypeApiId: 'page', field: 'body' }],
+    });
+    const cat = { version: 1, ...odd };
+    const cfg = {
+      version: 1,
+      ...checkBlockConfig(
+        { blocks: [{ block: 'box', slots: { constructor: { max: 1, locked: true } } }] },
+        cat,
+      ),
+    };
+    expect(cfg.blocks[0]?.slots).toEqual({ constructor: { max: 1, locked: true } });
+    const fixed = defineContentType({
+      apiId: 'page',
+      name: 'Page',
+      displayField: 'title',
+      fields: [
+        PAGE.fields[0] as (typeof PAGE.fields)[number],
+        {
+          apiId: 'body',
+          name: 'body',
+          type: 'Array',
+          localized: true,
+          required: false,
+          position: 1,
+          items: {
+            type: 'Component',
+            variants: catalogVariants(odd.blocks, odd.targets[0] as (typeof targets)[number]),
+          },
+        },
+      ],
+    });
+    const leaf = (key: string) => ({ _type: 'leaf', _key: key, text: 't' });
+    // No value under the slot: the block's own nothing, never Object's constructor.
+    expect(
+      blockConfigIssues(fixed, cat, cfg, undefined, body([{ _type: 'box', _key: 'b1' }])),
+    ).toEqual([]);
+    const before = body([{ _type: 'box', _key: 'b1', constructor: [leaf('l1')] }]);
+    const after = body([{ _type: 'box', _key: 'b1', constructor: [leaf('l1'), leaf('l2')] }]);
+    expect(
+      blockConfigIssues(fixed, cat, cfg, before, after).map((i) => `${i.code} ${i.field}`),
+    ).toEqual(['slot_locked body[0].constructor', 'slot_too_many body[0].constructor']);
+    expect(effectiveBlockRules(cat, cfg).blocks[0]?.slots).toMatchObject({
+      constructor: { max: 1, locked: true },
+    });
+  });
+
+  it('checks a ten-thousand-block slot quickly, and lists at most a hundred issues', () => {
+    const many = Array.from({ length: 10_000 }, (_, i) => quote(`q${i}`));
+    const started = performance.now();
+    const issues = blockConfigIssues(
+      PAGE,
+      CATALOG,
+      NARROWED,
+      body([grid('g1', [])]),
+      body([grid('g1', many)]),
+    );
+    expect(performance.now() - started).toBeLessThan(500);
+    expect(issues).toHaveLength(101);
+    expect(issues.at(-1)).toMatchObject({ code: 'more_issues' });
+    expect(issues.at(-1)?.message).toMatch(/and 9901 more/);
+    // Unchanged, the same slot is judged as quickly, and passes.
+    const stored = body([grid('g1', many)]);
+    const again = performance.now();
+    expect(blockConfigIssues(PAGE, CATALOG, NARROWED, stored, structuredClone(stored))).toEqual([]);
+    expect(performance.now() - again).toBeLessThan(500);
+  });
+});
+
+describe('bounding a config refusal', () => {
+  it('names a list’s problems once, and stops listing at a hundred issues', () => {
+    expect(
+      refusal({ blocks: [{ block: 'grid', slots: { items: { allowedChildren: ['x0', 'x1'] } } }] }),
+    ).toEqual([
+      'blocks[grid].slots.items.allowedChildren: "x0", "x1" are not blocks the code allows here (it allows "card", "quote")',
+    ]);
+    const blocks = Array.from({ length: 150 }, (_, i) => ({ block: `nope${i}`, slots: {} }));
+    const issues = refusal({ blocks });
+    expect(issues).toHaveLength(101);
+    expect(issues.at(-1)).toBe(': …and 50 more');
+  });
+});
+
+describe('what a set changed', () => {
+  it('names parts added, removed, loosened and unlocked', () => {
+    const before = {
+      version: 3,
+      targets: [{ contentTypeApiId: 'page', field: 'body', blocks: ['grid'], locked: true }],
+      blocks: [
+        { block: 'grid', slots: { items: { allowedChildren: ['card'], max: 3 } } },
+        { block: 'section', slots: { content: { locked: true } } },
+      ],
+    };
+    const after = {
+      version: 4,
+      targets: [{ contentTypeApiId: 'page', field: 'body', blocks: ['grid', 'section'] }],
+      blocks: [
+        { block: 'grid', slots: { items: { allowedChildren: ['card'], max: 2 } } },
+        { block: 'hero', slots: { media: { locked: true } } },
+      ],
+    };
+    expect(diffBlockConfigs(before, after)).toEqual({
+      from: 3,
+      to: 4,
+      added: ['blocks[hero].slots.media'],
+      removed: ['blocks[section].slots.content'],
+      loosened: ['targets[page.body]'],
+      unlocked: ['targets[page.body]', 'blocks[section].slots.content'],
+    });
   });
 });

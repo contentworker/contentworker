@@ -134,8 +134,15 @@ export async function auditToolCall(ctx: AppContext, input: ToolAuditInput): Pro
         : undefined,
       actor: auditActor(input.principal),
       action: `MCP ${tool}`,
-      targetType: named ? toolTargetType(tool) : created && 'entry',
-      targetId: named ?? created?.entryId,
+      targetType: named
+        ? toolTargetType(tool)
+        : created
+          ? 'entry'
+          : input.detail?.blockConfig && toolTargetType(tool),
+      targetId:
+        named ??
+        created?.entryId ??
+        (input.detail?.blockConfig && String(input.detail.blockConfig.to)),
       status: 200,
       detail: input.detail,
     });

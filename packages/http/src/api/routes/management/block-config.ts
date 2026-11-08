@@ -5,7 +5,7 @@ import { type AuthDeps, type AuthVars, requireScope } from '../../auth';
 import { doc } from '../../docs/openapi';
 import * as blockConfigDocs from '../../docs/schemas/block-config';
 import { blockConfigSetBody, parseBody } from '../../validation';
-import { BASE, scopeOf } from './shared';
+import { actingCtx, BASE, scopeOf } from './shared';
 
 /**
  * The block config: what an environment's admins allow of the block catalog, per target and per
@@ -44,7 +44,7 @@ export function blockConfigRoutes(deps: AuthDeps): Hono<AuthVars> {
     async (c) =>
       c.json(
         await setBlockConfig(
-          ctx,
+          actingCtx(ctx, c),
           c.get('principal'),
           scopeOf(c),
           await parseBody(c, blockConfigSetBody),

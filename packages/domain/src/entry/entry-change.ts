@@ -8,6 +8,7 @@
  * that locale (a localized field stores whatever keys it is sent).
  */
 
+import type { BlockConfigChange } from '../content-type/block-config';
 import type { ContentType } from '../content-type/content-type';
 import type { EntryFields } from '../types';
 import { diffEntryFields, type NestedFieldDiff, type ValueDiff } from './entry-diff';
@@ -41,6 +42,8 @@ export interface EntryChange {
 /** A row's structured `detail`: paths and small structural facts, never a value. */
 export interface AuditDetail {
   readonly entries: readonly EntryChange[];
+  /** What a set of the block config changed (`diffBlockConfigs`): parts named, never values. */
+  readonly blockConfig?: BlockConfigChange;
   /** Some of what changed isn't listed: the row hit a cap, or a change could not be read. */
   readonly truncated?: true;
 }
@@ -116,7 +119,9 @@ const sizeOf = (value: unknown): number => JSON.stringify(value).length;
 /** `detail` within {@link MAX_AUDIT_DETAIL_SIZE}: as much of it as fits, marked `truncated`. */
 export function capAuditDetail(detail: AuditDetail): AuditDetail {
   if (sizeOf(detail) <= MAX_AUDIT_DETAIL_SIZE) return detail;
-  let room = MAX_AUDIT_DETAIL_SIZE - sizeOf({ entries: [], truncated: true });
+  // A block config change is small and bounded (`diffBlockConfigs`), so it is kept whole.
+  const kept = detail.blockConfig ? { blockConfig: detail.blockConfig } : {};
+  let room = MAX_AUDIT_DETAIL_SIZE - sizeOf({ ...kept, entries: [], truncated: true });
   const fit = (items: readonly string[]): string[] => {
     const kept: string[] = [];
     for (const item of items) {
@@ -137,5 +142,5 @@ export function capAuditDetail(detail: AuditDetail): AuditDetail {
     const locales = fit(entry.locales);
     entries.push({ ...bare, locales, paths: fit(entry.paths) });
   }
-  return { entries, truncated: true };
+  return { ...kept, entries, truncated: true };
 }

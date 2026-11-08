@@ -21,8 +21,22 @@ const entryChange = z.object({
     .describe('How many fields the type no longer declares changed; they are not named'),
 });
 
+const parts = z.array(z.string());
+
+const blockConfigChange = z.object({
+  from: z.number().int().describe('The version it replaced'),
+  to: z.number().int().describe('The version it wrote'),
+  added: parts.describe('Targets and slots newly narrowed (`blocks[grid].slots.items`)'),
+  removed: parts.describe('Targets and slots no longer narrowed'),
+  loosened: parts.describe('Narrowed still, but less than before'),
+  unlocked: parts.describe('Locks taken off'),
+});
+
 const auditDetail = z.object({
   entries: z.array(entryChange).describe('The entries the action saved'),
+  blockConfig: blockConfigChange
+    .optional()
+    .describe('What a block config set changed: parts named, at most ten per list'),
   truncated: z
     .literal(true)
     .optional()

@@ -131,9 +131,9 @@ describe('block config tools (MCP), on the HTTP routes’ use-cases', () => {
       targets: [{ field: 'body', blocks: ['hero'], narrowed: true }],
     });
     const rows = await ctx.store.audit.list(SPACE, {});
-    expect(rows.map((r) => [r.action, r.environmentId])).toEqual([
-      ['MCP blocks_config_set', 'main'],
-    ]);
+    expect(
+      rows.map((r) => [r.action, r.environmentId, r.targetType, r.detail?.blockConfig?.to]),
+    ).toEqual([['MCP blocks_config_set', 'main', 'block_config', 1]]);
 
     // Stale, and widening: refused as over HTTP.
     const stale = await call('blocks_config_set', { expectedVersion: 0, targets: [], blocks: [] });
@@ -163,5 +163,15 @@ describe('block config tools (MCP), on the HTTP routes’ use-cases', () => {
     expect(refused.isError).toBe(true);
     expect((await read('blocks_config_get')).isError).toBe(false);
     expect((await read('blocks_config_effective')).isError).toBe(false);
+  });
+
+  it('refuses another space’s key on every tool', async () => {
+    const { deps } = await withCatalog();
+    const other = await connect(deps, { ...manager, spaceId: 'space-2' });
+    // `connect` sends every call to SPACE: this principal's key is space-2's.
+    const set = await other('blocks_config_set', { expectedVersion: 0, ...NARROWING });
+    expect(set.isError).toBe(true);
+    expect((await other('blocks_config_get')).isError).toBe(true);
+    expect((await other('blocks_config_effective')).isError).toBe(true);
   });
 });

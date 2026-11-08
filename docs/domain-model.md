@@ -1317,8 +1317,9 @@ interface BlockConfig {
   block and slot named exists (a former id is refused, naming the current one); a list is a
   non-empty subset of what the code allows there (for a target, what `BlockCatalogTarget.blocks`
   resolves to); `min` at least the code's, `max` at most the code's, `min ≤ max`; limits as the
-  catalog's (`BLOCK_CONFIG_LIMITS`, 200,000 bytes of JSON). Normalized: unknown keys and
-  narrowings of nothing dropped, `locked` kept only when true.
+  catalog's (`BLOCK_CONFIG_LIMITS`, 200,000 bytes of JSON). Each kind of problem is named once
+  per list, and a refusal lists at most 100 issues, then one counting the rest. Normalized:
+  unknown keys and narrowings of nothing dropped, `locked` kept only when true.
 - **Rules in force** (`effectiveBlockRules(catalog, config)`): every catalog target and slotted
   block with the config laid over the code, in the catalog's order. A catalog push is never
   checked against the config: parts naming what the catalog no longer has are `stale`, listed and
@@ -1327,22 +1328,37 @@ interface BlockConfig {
 - **Judging a save** (`blockConfigIssues(contentType, catalog, config, before, after, locales)`)
   compares each catalog target of the type per locale and per slot (the field's top level, or a
   block's slot by that block's `_key` and the slot's apiId, so a block moved keeps its slots). A
-  block in a slot after but not before must be one the narrowed list takes (an aliased `_type`
-  counts as its block); a locked slot's key sequence can't change, edits inside its blocks can; a
-  count is checked only when it changes, and may move toward the bounds (a slot over `max` can
-  shrink one at a time). A slot new in this save (a create, a newly placed block) is filled as it
-  comes, so locks don't apply to it; a field left without a value isn't counted (`required`
-  decides). Content stored before the config stays saveable while its slots are left as they
-  are. Issues use validation's paths (`body[2].items[0]`) and codes `BLOCK_CONFIG_ISSUE_CODES`.
+  block in a slot after but not before, or whose `_type` changed under the same `_key`, must be
+  one the narrowed list takes (an aliased `_type` counts as its block); a locked slot's sequence
+  of key and block can't change (no insert, remove, move, reorder or swap), edits inside its
+  blocks can; a count is checked only when it changes, and may move toward the bounds (a slot over
+  `max` can shrink one at a time). A slot new in this save (a create, a newly placed block, or a
+  target with no blocks yet in that locale) is filled as it comes, so locks don't apply to it; a
+  field left without a value isn't counted (`required` decides). A stored key held at two depths
+  makes that key's slots ambiguous: placement is judged against all of them, the lock and counts
+  are not (an unchanged save is never refused). Content stored before the config stays saveable
+  while its slots are left as they are. Issues use validation's paths (`body[2].items[0]`) and
+  codes `BLOCK_CONFIG_ISSUE_CODES`; at most 100, then one `more_issues`. Linear in the blocks;
+  slot apiIds are read as the block's own keys only.
 
 The use-cases (`packages/application/src/block-config.ts`): `getBlockConfig` (version 0 when
 unset), `setBlockConfig(ctx, caller, scope, { expectedVersion, targets, blocks })` (checked
 against `blockCatalogs.latest`, a no-op when unchanged, `409` for a stale `expectedVersion`, and
 `blockConfigs.save` in a unit: the first set inserts, each later one updates at the version read,
-a lost race a `TransactionConflictError` surfaced as `409`), `getEffectiveBlockRules`, and
-`assertBlockConfigAllows`, which `prepareFields` in `entries.ts` runs after validation for a create
-or an update (not a copy). It reads only for a type with a blocks field: the config (one
-statement), then the catalog only when a config could touch the type.
+a lost race a `TransactionConflictError` surfaced as `409`; once committed it notes
+`diffBlockConfigs` on the change log, so the audit row's `detail.blockConfig` names the parts
+added, removed, loosened and unlocked, and its target is `block_config` at the new version),
+`getEffectiveBlockRules`, `loadBlockRules` and `assertBlockConfigAllows`, which `prepareFields` in
+`entries.ts` runs after validation. It reads only for a type with a blocks field, one statement
+(`blockConfigs.inForce`: the config joined to the latest catalog, nothing when there's no
+config); the bulk field runner reads it once per chunk.
+
+Which saves are judged: every create and update (the API, MCP, block patches, AI, SEO and bulk
+field edits, judged on what they change), and CSV and JSON imports (`EntryWriteOptions.imported`:
+new content from the caller, whose planner reports the refusals in its analysis before a run).
+Not judged, because they move data the environment or space already held: snapshot restore,
+environment clone and promotion, branch merge, duplicate, and version restore. So a version
+restore can bring back blocks from before a lock or a narrowing.
 
 The config isn't in snapshots, exports or environment clones; the environment purge clears it.
 

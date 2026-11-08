@@ -946,10 +946,13 @@ environment-scoped row, versioned. See [Domain model](./domain-model.md#block-co
 | PUT    | `…/block-config`          | `content:manage` | Replace `{ expectedVersion, targets, blocks }` → `{ config, unchanged }`. `422` naming each part that names something the catalog in force doesn't have or widens it (`blocks[grid].slots.items.max`); `409` for a stale `expectedVersion` (setting the config in force is a no-op whatever it expected) or a set that lost the race, `details.version` |
 | GET    | `…/block-config/effective`| `preview:read`   | `{ catalogVersion, configVersion, targets, blocks, stale }`: every catalog target and block slot with the config laid over the code, and the config parts the catalog no longer has (ignored)                                                 |
 
-Every entry save (create, update, `…/validate`, `PATCH …/entries/:id/blocks` and its check) is
-held to it for new edits only, as a `422` whose issues carry a `code`: `block_not_allowed_here`
-(with the block's `key`), `slot_locked`, `slot_too_few`, `slot_too_many`. Copies (import, snapshot
-restore, environment clone, promotion, a restored version, a duplicate) are not judged. MCP:
+Every entry save (create, update, `…/validate`, `PATCH …/entries/:id/blocks` and its check, and
+CSV or JSON imports, whose analysis lists the refusals) is held to it for new edits only, as a
+`422` whose issues carry a `code`: `block_not_allowed_here` (with the block's `key`),
+`slot_locked`, `slot_too_few`, `slot_too_many`, and `more_issues` past 100. Data the environment
+already held (snapshot restore, environment clone, promotion, branch merge, a restored version, a
+duplicate) is not judged. A set's audit row has target `block_config` (the new version) and
+`detail.blockConfig` naming the parts added, removed, loosened and unlocked. MCP:
 `blocks_config_get`, `blocks_config_effective` (`preview:read`), `blocks_config_set`
 (`content:manage`).
 
