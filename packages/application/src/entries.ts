@@ -34,7 +34,7 @@ import { type BlobStore, type EntryRepo, TransactionConflictError } from '@conte
 import { noteEntryChange } from './change-log';
 import { type AppContext, actorOf } from './context';
 import { runHook, runPureHook } from './hooks';
-import { unpublishEntryTx } from './publishing';
+import { assertExpectedVersion, unpublishEntryTx } from './publishing';
 import { versionBodyPrefix } from './version-archive';
 
 /**
@@ -93,6 +93,12 @@ export interface EntryWriteOptions {
    * erased. A field among them that its rules disable then holds its stored value and passes.
    */
   readonly unwritable?: readonly string[];
+  /**
+   * The `currentVersion` the caller read: an update made from a copy someone has since saved over
+   * is refused (409) rather than replacing their version with one built on an older read. Absent,
+   * the update saves whatever the entry is at, as it always has.
+   */
+  readonly expectedVersion?: number;
 }
 
 /**
@@ -339,7 +345,10 @@ export async function getEntry(ctx: AppContext, scope: Scope, id: string): Promi
   return { entry: found.entry, fields: found.fields };
 }
 
-/** Saves an edited set of field values as a new draft version. */
+/**
+ * Saves an edited set of field values as a new draft version. Refused with 409 when the entry is
+ * no longer at `options.expectedVersion`, when the caller gives one.
+ */
 export async function updateEntry(
   ctx: AppContext,
   scope: Scope,
@@ -349,6 +358,7 @@ export async function updateEntry(
 ): Promise<EntryView> {
   const found = await ctx.store.entries.get(scope, id);
   if (!found) throw new NotFoundError('Entry', id);
+  assertExpectedVersion(found.entry, options);
   const contentType = await requireContentType(ctx, scope, found.entry.contentTypeApiId);
   const vctx = await loadValidationContext(ctx, scope);
   // The stored version is what a disabled field must keep, unless the whole entry is a copy.

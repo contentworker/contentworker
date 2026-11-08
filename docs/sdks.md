@@ -398,7 +398,7 @@ cma.contentTypes.dependents(apiId) / .delete(apiId, { purgeEntries? }) / .clone(
 
 cma.entries.list({ contentType?, locale?, limit?, skip?, order?, query? })  // Preview: drafts included
 cma.entries.create({ contentTypeApiId, fields })      // fields are locale-keyed
-cma.entries.get(id) / .update(id, fields)             // update = new draft version
+cma.entries.get(id) / .update(id, fields, { expectedVersion? })  // update = new draft version; 409 if saved since
 cma.entries.publish(id, { expectedVersion? }) / .unpublish(id, { expectedVersion? })
 cma.entries.bulkCreate(items) / .bulkPublish(ids) / .bulkUnpublish(ids)
 cma.entries.reverseReferences(id)                     // "what links here"

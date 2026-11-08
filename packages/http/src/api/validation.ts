@@ -473,7 +473,14 @@ export const previewLinkBody = z.object({
     .optional()
     .describe('The locale frontendUrl is filled in; the space’s default if absent'),
 });
-export const updateEntryBody = z.object({ fields: zFieldValues });
+export const updateEntryBody = z.object({
+  fields: zFieldValues,
+  expectedVersion: z
+    .int()
+    .min(1)
+    .optional()
+    .describe('The currentVersion the edit was made from; a newer one is a 409 and nothing saves'),
+});
 /**
  * A dry run of a save: `contentTypeApiId` judges the fields as a new entry, `entryId` as a new
  * version of that entry.

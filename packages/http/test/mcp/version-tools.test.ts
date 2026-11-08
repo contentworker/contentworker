@@ -144,3 +144,19 @@ describe('entries_diff_versions (MCP), on the HTTP route’s use-case', () => {
     );
   });
 });
+
+describe('entries_update (MCP) held to expectedVersion, as PUT …/entries/:id is', () => {
+  it('refuses a save made from an older version, and saves from the current one', async () => {
+    const { deps } = await setup();
+    const call = await connect(deps, admin);
+    // Published at 1, then saved over: the entry is at 2.
+    const id = await seedEntry(call);
+    const fields = { title: { 'en-US': 'Mine' } };
+    const stale = await call('entries_update', { id, fields, expectedVersion: 1 });
+    expect(stale.isError).toBe(true);
+    expect(stale.text).toMatch(/version 2, not 1/);
+    const fresh = await call('entries_update', { id, fields, expectedVersion: 2 });
+    expect(fresh.isError, fresh.text).toBe(false);
+    expect((fresh.body as { entry: { currentVersion: number } }).entry.currentVersion).toBe(3);
+  });
+});

@@ -275,9 +275,16 @@ export function registerWriteTools(server: McpServer, t: ToolContext): void {
   server.registerTool(
     'entries_update',
     {
-      description: 'Save new field values as a new draft version of an entry.',
+      description:
+        'Save new field values as a new draft version of an entry. Pass the currentVersion you ' +
+        'read as expectedVersion to have the save refused (409) if someone saved since.',
       inputSchema: toolSchema('entries_update', () =>
-        z.object({ id: z.string(), fields: entryFields, ...scopeArgs }),
+        z.object({
+          id: z.string(),
+          fields: entryFields,
+          expectedVersion: z.number().int().min(1).optional(),
+          ...scopeArgs,
+        }),
       ),
     },
     async (args) => {
@@ -291,6 +298,7 @@ export function registerWriteTools(server: McpServer, t: ToolContext): void {
       }
       const saved = await updateEntry(ctx, scopeOf(args), args.id, args.fields as EntryFields, {
         unwritable,
+        ...(args.expectedVersion !== undefined ? { expectedVersion: args.expectedVersion } : {}),
       });
       // The save kept the fields this writer may not write; the ones it may not read stay hidden.
       return ok({

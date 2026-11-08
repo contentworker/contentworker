@@ -93,6 +93,62 @@ describe('REST writes held to ?expectedVersion', () => {
     expect(restore.status).toBe(409);
   });
 
+  it('holds a draft save to the version it was edited from', async () => {
+    const { app, id, save } = await setUp();
+    expect((await save('Theirs')).status).toBe(200);
+    const put = (expectedVersion: number) =>
+      app.request(`${M}/entries/${id}`, {
+        method: 'PUT',
+        headers: cma,
+        body: JSON.stringify({ fields: { title: { 'en-US': 'Mine' } }, expectedVersion }),
+      });
+    const stale = await put(1);
+    expect(stale.status).toBe(409);
+    expect(await stale.json()).toMatchObject({
+      error: { code: 'conflict', message: expect.stringMatching(/version 2, not 1/) },
+    });
+    // Nothing was saved: the entry still holds the other save.
+    const read = await app.request(`${M}/entries/${id}`, { headers: cma });
+    expect(await read.json()).toMatchObject({
+      entry: { currentVersion: 2 },
+      fields: { title: { 'en-US': 'Theirs' } },
+    });
+    const fresh = await put(2);
+    expect(fresh.status).toBe(200);
+    expect(await fresh.json()).toMatchObject({ entry: { currentVersion: 3 } });
+    expect((await put(0)).status).toBe(422);
+  });
+
+  it('refuses a writer who may not write the type before it says anything of the version', async () => {
+    const { app, id, save } = await setUp();
+    expect((await save('Theirs')).status).toBe(200);
+    const admin = { Authorization: 'Bearer admin', 'Content-Type': 'application/json' };
+    const role = await app.request('/spaces/s1/roles', {
+      method: 'POST',
+      headers: admin,
+      body: JSON.stringify({
+        name: 'Reader of held',
+        scopes: ['content:write', 'preview:read'],
+        contentGrants: [{ contentTypeApiId: 'held', actions: ['read'] }],
+      }),
+    });
+    expect(role.status).toBe(201);
+    const { id: roleId } = (await role.json()) as { id: string };
+    const key = await app.request('/spaces/s1/api-keys', {
+      method: 'POST',
+      headers: admin,
+      body: JSON.stringify({ kind: 'cma', roleId }),
+    });
+    const { token } = (await key.json()) as { token: string };
+    const res = await app.request(`${M}/entries/${id}`, {
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fields: { title: { 'en-US': 'Mine' } }, expectedVersion: 1 }),
+    });
+    // A 403, never the 409 that would say the entry moved on.
+    expect(res.status).toBe(403);
+  });
+
   it('refuses an expectedVersion that is not a positive integer', async () => {
     const { app, id } = await setUp();
     for (const bad of ['0', '-1', '1.5', 'latest']) {
