@@ -1,6 +1,15 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, type Page, type TestInfo, test } from '@playwright/test';
-import { api, EDITOR_READY, MGMT, openCms, SPACE, seedCms, useCmsScope } from './cms';
+import {
+  api,
+  EDITOR_READY,
+  MGMT,
+  openCms,
+  SPACE,
+  saveContentType,
+  seedCms,
+  useCmsScope,
+} from './cms';
 import { guestPort } from './live-guest/port';
 import { settle } from './settle';
 
@@ -15,7 +24,7 @@ const WCAG = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'];
 
 test.beforeAll(async ({ request }) => {
   await seedCms(request);
-  const type = await api(request, 'POST', `${MGMT}/content-types`, {
+  await saveContentType(request, {
     apiId: 'livePage',
     name: 'Live page',
     displayField: 'title',
@@ -60,10 +69,9 @@ test.beforeAll(async ({ request }) => {
       urlTemplate: `${GUEST}/?entry={id}&type=livePage&space={space}&env={environment}#token={token}`,
     },
   });
-  expect([200, 201], await type.text()).toContain(type.status());
   await api(request, 'POST', `${MGMT}/content-types/livePage/published`);
   // A frontend without the SDK: it loads, and never answers.
-  const silent = await api(request, 'POST', `${MGMT}/content-types`, {
+  await saveContentType(request, {
     apiId: 'silentPage',
     name: 'Silent page',
     displayField: 'title',
@@ -79,10 +87,9 @@ test.beforeAll(async ({ request }) => {
     ],
     preview: { urlTemplate: `${GUEST}/silent.html?entry={id}#token={token}` },
   });
-  expect([200, 201], await silent.text()).toContain(silent.status());
   await api(request, 'POST', `${MGMT}/content-types/silentPage/published`);
   // A frontend on an SDK release that shares no protocol version with this admin.
-  const old = await api(request, 'POST', `${MGMT}/content-types`, {
+  await saveContentType(request, {
     apiId: 'oldSdkPage',
     name: 'Old SDK page',
     displayField: 'title',
@@ -98,10 +105,9 @@ test.beforeAll(async ({ request }) => {
     ],
     preview: { urlTemplate: `${GUEST}/old-sdk.html?entry={id}#token={token}` },
   });
-  expect([200, 201], await old.text()).toContain(old.status());
   await api(request, 'POST', `${MGMT}/content-types/oldSdkPage/published`);
   // A frontend that connects, then refuses the entry's state.
-  const refusing = await api(request, 'POST', `${MGMT}/content-types`, {
+  await saveContentType(request, {
     apiId: 'refusingPage',
     name: 'Refusing page',
     displayField: 'title',
@@ -117,7 +123,6 @@ test.beforeAll(async ({ request }) => {
     ],
     preview: { urlTemplate: `${GUEST}/refuse.html?entry={id}#token={token}` },
   });
-  expect([200, 201], await refusing.text()).toContain(refusing.status());
   await api(request, 'POST', `${MGMT}/content-types/refusingPage/published`);
 });
 

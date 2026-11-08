@@ -26,6 +26,20 @@ export async function api(
   });
 }
 
+/**
+ * Saves a content type, as every worker's `beforeAll` does at once: two saves of one type racing
+ * each other lose with a 409 that says to try again, so it is tried again, up to three times.
+ */
+export async function saveContentType(request: APIRequestContext, type: Record<string, unknown>) {
+  for (let attempt = 1; ; attempt++) {
+    const res = await api(request, 'POST', `${MGMT}/content-types`, type);
+    if (res.status() !== 409 || attempt === 3) {
+      expect([200, 201], await res.text()).toContain(res.status());
+      return res;
+    }
+  }
+}
+
 /** Creates the e2e space and its article type, once; a 409 (already there) is fine. */
 export async function seedCms(request: APIRequestContext) {
   const space = await api(request, 'POST', '/spaces', {
