@@ -97,14 +97,37 @@ export function usePaneLayout(): PaneLayout {
 }
 
 /**
- * What the entry editor's side pane shows: the draft as a document, the entry's panels, or its
- * activity (the audit rows about it, for a space administrator).
+ * What the entry editor's side pane shows: the draft as a document, the entry on the customer's
+ * own site (live preview), the entry's panels, or its activity (the audit rows about it, for a
+ * space administrator).
  */
-export type PaneView = 'preview' | 'details' | 'activity';
+export type PaneView = 'preview' | 'site' | 'details' | 'activity';
+
+/**
+ * The segments the pane offers, in order. A new entry has none (its pane is the preview alone);
+ * Site only when the entry's type has a preview URL to frame; Activity only for an administrator.
+ */
+export function paneViews(opts: {
+  readonly isEdit: boolean;
+  readonly hasSite: boolean;
+  readonly isAdmin: boolean;
+}): PaneView[] {
+  if (!opts.isEdit) return [];
+  return [
+    'details',
+    'preview',
+    ...(opts.hasSite ? (['site'] as const) : []),
+    ...(opts.isAdmin ? (['activity'] as const) : []),
+  ];
+}
 
 const VIEW_KEY = 'cw.entry-pane.view';
 
-/** The pane's view, remembered per browser; Details until someone picks another. */
+/**
+ * The pane's view, remembered per browser; Details until someone picks another. Site is never
+ * remembered: it frames the type's own site (and sends it the unsaved draft) only when someone
+ * picks it for the entry in front of them.
+ */
 export function usePaneView(): [PaneView, (v: PaneView) => void] {
   const [view, setView] = useState<PaneView>('details');
   useLayoutEffect(() => {
@@ -119,6 +142,7 @@ export function usePaneView(): [PaneView, (v: PaneView) => void] {
     view,
     (v) => {
       setView(v);
+      if (v === 'site') return;
       try {
         if (v === 'details') localStorage.removeItem(VIEW_KEY);
         else localStorage.setItem(VIEW_KEY, v);

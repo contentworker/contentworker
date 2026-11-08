@@ -54,6 +54,20 @@ moves it back, and a value not shaped like a database bookmark is ignored), as t
 [Architecture](./architecture.md#appsweb-the-admin-and-the-gateway) and
 [Auth & RBAC](./auth-and-rbac.md#the-web-principal).
 
+One document route reaches the API from the server instead:
+`/preview-frame/:spaceId/:environmentId/:entryId` (`routes/preview-frame.tsx`), the page the
+entry editor's Site view frames for live preview. Its loader mints a preview link for the signed-in person over the `API`
+binding (`app/lib/preview-frame.server.ts`, the same `POST …/preview-link` as Copy preview link,
+an hour long), and its document's policy is set per response through `x-cw-frames` and
+`x-cw-embed`: it may frame only the origins the space's preview URLs name (`frame-src 'self'
+<origins>`, read from `GET …/content-types` as the person; never the admin's own), and only this
+origin may frame it (`frame-ancestors 'self'`, `X-Frame-Options: SAMEORIGIN`). It refuses to load
+outside a frame (`Sec-Fetch-Dest`). The editor can't frame the customer's site itself: its own
+policy is fixed when it loads, and the space is chosen in the browser after that. The editor and
+the frame talk over a same-origin channel (`cms/lib/live-preview/frame-channel.ts`); the frame
+runs the live preview channel with the site (`cms/lib/live-preview/host.ts`, over sdk-core's
+`acceptMessage` and `parseFrontendMessage`; docs/specs/live-preview-channel.md).
+
 The admin is not a composition root. All business logic, validation and RBAC run in
 `@contentworker/application` behind the api. A new capability is exposed through the API and MCP
 first; the admin then calls the route.

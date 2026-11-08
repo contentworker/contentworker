@@ -508,6 +508,9 @@ importers:
       '@contentworker/domain':
         specifier: workspace:*
         version: link:../../packages/domain
+      '@contentworker/sdk-core':
+        specifier: workspace:*
+        version: link:../../packages/sdk/core
       '@contentworker/security':
         specifier: workspace:*
         version: link:../../packages/security

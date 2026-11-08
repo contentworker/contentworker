@@ -578,7 +578,29 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   A segmented switch shows **Details** (the panels) or **Preview**: the draft as a document, live
   as you type, in the form's locale with delivery's fallbacks (its title and values carry that
   locale's `lang` and `dir`, the captions stay the admin's), references by name, and links shown
-  but never followed. For a space administrator a third segment, **Activity**
+  but never followed. Where the entry's type has a preview URL, **Site** (`pane/SitePane.tsx`)
+  shows the entry on the customer's own site, re-rendered as you type (live preview); a type
+  without one has no Site segment. Site is never remembered (it sends the site the unsaved draft,
+  so it is picked for the entry in front of you); the pane opens on the view kept before. Its
+  header holds two
+  segmented controls: the device width (Desktop, Tablet, Phone as icons, named in words), which
+  sets the framed page's own width and scales it to fit, never the admin's width; and Edit or
+  View, where Edit makes a click in the page select that field or block and focus it in the form,
+  and View lets the page be the site, links followed (the control reads View, off, until the page
+  connects). A block a pick focused in the form carries the focus ring until focus moves on, and
+  the field or block focused in the form is outlined on the page and scrolled into view.
+  Over the page the frame draws the selection as the workflow canvas does, an ink edge with the
+  focus ring, and the hover a lighter ink edge, neither animated. While it loads the frame is a
+  skeleton. A page that never offers to connect says "This site isn't connected for live preview"
+  in an Alert with the guide's link and still shows the page; one connected that doesn't show the
+  entry, or that moved away, offers Back to the entry. An SDK that shares no protocol version says
+  whether it is too old or too new, a page that answered from another origin or refused the
+  entry says so, and a frame that never loaded or a link that can't be made says so with Try again
+  where trying again can help, each in a destructive Alert; an entry that only lacks a value its
+  preview URL needs (a slug) says so in a plain Alert. A refused edit is a quiet caption under the
+  frame for a few seconds, the whole entry sent again. The frame's address is in mono
+  under it, its line held while the frame loads. For a space
+  administrator a last segment, **Activity**
   (`entries/EntryActivity.tsx`), lists the entry's audit rows newest first in one card: what
   happened in words ("Saved", "Published", "Approved an agent's proposal", an unknown action as
   recorded, in mono), who and when (`actorLabel`, `Ago`, "through MCP" for a tool call), and under

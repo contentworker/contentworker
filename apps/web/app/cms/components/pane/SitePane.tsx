@@ -1,0 +1,476 @@
+/**
+ * The side pane's Site view: the entry on the customer's own frontend, re-rendered with every
+ * unsaved edit (live preview, docs/specs/live-preview-channel.md).
+ *
+ * It frames the Site frame (`routes/preview-frame.tsx`, this origin), which frames the site and
+ * runs the live preview channel with it. This side sends the entry as the form holds it (one
+ * locale's values, `liveFields`) with the edits since the last send (`liveEdits`), and what the
+ * person may let the page do; it hears back where things stand, which entries the page renders
+ * and what was clicked. Saving stays the editor's: nothing here writes.
+ */
+
+import {
+  type ContentType,
+  type EntryFields,
+  previewTemplateVariesByLocale,
+} from '@contentworker/domain';
+import type { Capability } from '@contentworker/sdk-core/live-preview';
+import { Alert, AlertDescription, AlertTitle } from '@contentworker/ui/alert';
+import { Button } from '@contentworker/ui/button';
+import { cn } from '@contentworker/ui/lib/utils';
+import { Segmented, SegmentedItem } from '@contentworker/ui/segmented';
+import { Skeleton, SkeletonText } from '@contentworker/ui/skeleton';
+import { Monitor, Smartphone, Tablet } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { LoadingStatus } from '~/cms/components/loading';
+import {
+  DEVICE_WIDTHS,
+  type Device,
+  type FrameMessage,
+  postFrame,
+  readFrame,
+  type SiteStatus,
+} from '~/cms/lib/live-preview/frame-channel';
+import { LOAD_MS } from '~/cms/lib/live-preview/host';
+import { type LiveEdits, liveEdits, liveFields } from '~/cms/lib/live-preview/ops';
+
+/** The published guide to the page side, linked where a site doesn't connect. */
+export const LIVE_PREVIEW_GUIDE = 'https://docs.contentworker.app/guides/live-preview/';
+
+const DEVICE_KEY = 'cw.entry-pane.device';
+const DEVICES: readonly { value: Device; label: string; icon: typeof Monitor }[] = [
+  { value: 'desktop', label: 'Desktop', icon: Monitor },
+  { value: 'tablet', label: 'Tablet', icon: Tablet },
+  { value: 'phone', label: 'Phone', icon: Smartphone },
+];
+
+/** How long a quiet note (a refused edit) stays under the frame. */
+const NOTE_MS = 6_000;
+
+export interface SitePaneProps {
+  readonly spaceId: string;
+  readonly environmentId: string;
+  readonly entryId: string;
+  readonly contentType: Pick<ContentType, 'apiId' | 'fields' | 'preview'>;
+  /** The form's values, as a save would send them, and the locale tab it is on. */
+  readonly fields: EntryFields;
+  readonly locale: string;
+  readonly defaultLocale: string;
+  /**
+   * What the person may let the page do: a role that can't edit the entry only selects (its clicks
+   * still focus fields); its unsaved values are never sent.
+   */
+  readonly allowed: readonly Capability[] | undefined;
+  /** The form's focused field or block on the page, or none: outlined and scrolled into view. */
+  readonly selected: string | null;
+  /** Beside the form (the pane's own height) rather than stacked under it. */
+  readonly split: boolean;
+  /** A marked element clicked in the page, and the entries the page said it renders. */
+  readonly onPick: (ref: string, pageEntries: readonly string[]) => void;
+}
+
+export function SitePane(props: SitePaneProps) {
+  const { spaceId, environmentId, entryId, contentType, fields, locale, defaultLocale } = props;
+  const outer = useRef<HTMLIFrameElement>(null);
+  const [frameKey, setFrameKey] = useState(0);
+  const [status, setStatus] = useState<{ status: SiteStatus; detail?: string }>({
+    status: 'loading',
+  });
+  const [origin, setOrigin] = useState<string | undefined>();
+  const [note, setNote] = useState<string | undefined>();
+  const [device, setDevice] = useDevice();
+  const [mode, setMode] = useState<'edit' | 'view'>('edit');
+  const ready = useRef(false);
+  const pageEntries = useRef<readonly string[]>([]);
+  // One locale's values, as the page renders them; what was last sent is where the next edits start.
+  const now = liveFields(contentType, fields, locale, defaultLocale);
+  const latest = useRef(now);
+  latest.current = now;
+  const sent = useRef<{ fields: typeof now; locale: string } | null>(null);
+  const handlers = useRef(props);
+  handlers.current = props;
+
+  // Clicks select while editing; in view mode the page is the site, its links followed.
+  // Connected: clicks find fields even when the page can't take this entry's values.
+  const live =
+    status.status === 'live' || status.status === 'elsewhere' || status.status === 'unpreviewable';
+  const effectiveMode = live ? mode : 'view';
+  const viewOf = () => ({
+    editing: effectiveMode === 'edit',
+    device,
+    ...(props.allowed ? { allowed: props.allowed } : {}),
+  });
+  const view = useRef(viewOf());
+  view.current = viewOf();
+  // A template that fills to another URL per locale is another page per locale: the frame loads
+  // that page. Otherwise the same page gets the entry in the new locale.
+  const perLocale = previewTemplateVariesByLocale(
+    contentType.preview?.urlTemplate ?? '',
+    contentType.fields,
+  );
+  const src =
+    `/preview-frame/${encodeURIComponent(spaceId)}/${encodeURIComponent(environmentId)}/` +
+    `${encodeURIComponent(entryId)}${perLocale ? `?locale=${encodeURIComponent(locale)}` : ''}`;
+
+  const reload = () => setFrameKey((k) => k + 1);
+  const toFrame = (m: Parameters<typeof postFrame>[1]) =>
+    postFrame(outer.current?.contentWindow, m);
+
+  // The frame's messages, from the frame's own window only. Each load of the frame (Try again, or
+  // another locale's page) starts over: loading, nothing sent, until it says it's ready.
+  // Listened for again per frame load (its key and src).
+  useEffect(() => {
+    ready.current = false;
+    sent.current = null;
+    pageEntries.current = [];
+    setStatus({ status: 'loading' });
+    setNote(undefined);
+    let noteTimer: ReturnType<typeof setTimeout> | undefined;
+    // The frame never came up (a refused load, a dead server): said, not waited on for ever.
+    const loadTimer = setTimeout(() => {
+      if (!ready.current) setStatus({ status: 'failed' });
+    }, LOAD_MS);
+    const onMessage = (event: MessageEvent) => {
+      const m = readFrame<FrameMessage>(event, outer.current?.contentWindow);
+      if (!m) return;
+      switch (m.type) {
+        case 'ready':
+          ready.current = true;
+          clearTimeout(loadTimer);
+          setOrigin(m.origin);
+          // What the page may do first, so its offer is answered with it; then the entry.
+          toFrame({ type: 'view', ...view.current });
+          sent.current = { fields: latest.current, locale };
+          toFrame({
+            type: 'entry',
+            entry: { entryId, locale, fields: latest.current },
+            edits: null,
+          });
+          if (handlers.current.selected) {
+            toFrame({ type: 'select', ref: handlers.current.selected });
+          }
+          return;
+        case 'status':
+          if (m.status === 'unavailable') clearTimeout(loadTimer);
+          setStatus({ status: m.status, ...(m.detail ? { detail: m.detail } : {}) });
+          if (m.status === 'live') setNote(undefined);
+          return;
+        case 'session':
+          pageEntries.current = Array.isArray(m.entries) ? m.entries : [];
+          return;
+        case 'note':
+          setNote(m.kind);
+          clearTimeout(noteTimer);
+          noteTimer = setTimeout(() => setNote(undefined), NOTE_MS);
+          return;
+        case 'pick':
+          if (typeof m.ref === 'string') handlers.current.onPick(m.ref, pageEntries.current);
+          return;
+      }
+    };
+    window.addEventListener('message', onMessage);
+    return () => {
+      window.removeEventListener('message', onMessage);
+      clearTimeout(loadTimer);
+      clearTimeout(noteTimer);
+    };
+  }, [frameKey, src]);
+
+  // Every edit: the changes since the last send, or the whole state for a new locale.
+  const nowJson = JSON.stringify(now);
+  // Keyed on the values by content (nowJson).
+  useEffect(() => {
+    if (!ready.current) return;
+    const before = sent.current;
+    const edits: LiveEdits | null =
+      before && before.locale === locale
+        ? liveEdits(contentType, locale, before.fields, now)
+        : null;
+    if (edits && Object.keys(edits.fields).length === 0 && edits.blocks.length === 0) return;
+    sent.current = { fields: now, locale };
+    toFrame({ type: 'entry', entry: { entryId, locale, fields: now }, edits });
+  }, [nowJson, locale, entryId, contentType]);
+
+  const allowedKey = props.allowed?.join(',') ?? '';
+  // `allowed` by content (allowedKey).
+  useEffect(() => {
+    if (ready.current) toFrame({ type: 'view', ...view.current });
+  }, [effectiveMode, device, allowedKey]);
+
+  // Per selection.
+  useEffect(() => {
+    if (ready.current) toFrame({ type: 'select', ref: props.selected });
+  }, [props.selected]);
+
+  const loading = status.status === 'loading';
+  const showFrame = status.status !== 'unavailable';
+
+  return (
+    <section aria-label="Site" className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <Segmented
+          aria-label="Device width"
+          value={device}
+          onValueChange={(v) => setDevice(v as Device)}
+        >
+          {DEVICES.map(({ value, label, icon: Icon }) => (
+            <SegmentedItem
+              key={value}
+              value={value}
+              aria-label={`${label}, ${DEVICE_WIDTHS[value]} pixels`}
+              title={`${label} (${DEVICE_WIDTHS[value]}px)`}
+            >
+              <Icon aria-hidden="true" />
+            </SegmentedItem>
+          ))}
+        </Segmented>
+        <Segmented
+          aria-label="Clicks in the page"
+          // What clicks do now: View until the page answers, whatever was chosen.
+          value={effectiveMode}
+          onValueChange={(v) => setMode(v as 'edit' | 'view')}
+          disabled={!live}
+        >
+          <SegmentedItem value="edit" title="A click selects the field in the form">
+            Edit
+          </SegmentedItem>
+          <SegmentedItem value="view" title="Links are followed, as on the site">
+            View
+          </SegmentedItem>
+        </Segmented>
+      </div>
+
+      <SiteNotice status={status} origin={origin} onReload={reload} />
+
+      {showFrame ? (
+        <div
+          aria-busy={loading || undefined}
+          // Not reachable by Tab under the skeleton.
+          inert={loading || undefined}
+          className={cn(
+            'relative overflow-hidden rounded-xl bg-muted',
+            props.split
+              ? 'h-[calc(100dvh-var(--shell-h)-var(--editor-bar-h,0px)-9rem)] min-h-80'
+              : 'h-[36rem]',
+          )}
+        >
+          <iframe
+            // A new element per load, so a reload or another locale's page adds no history entry.
+            key={`${frameKey}:${src}`}
+            ref={outer}
+            src={src}
+            title="Site preview"
+            className="block size-full border-0"
+          />
+          {loading ? (
+            <>
+              <LoadingStatus>Loading the entry’s page…</LoadingStatus>
+              <Skeleton aria-hidden="true" className="absolute inset-0 rounded-none" />
+            </>
+          ) : null}
+        </div>
+      ) : null}
+
+      {/* Always there, so a screen reader hears the note when its words arrive. */}
+      <p role="status" className="text-muted-foreground text-xs empty:hidden">
+        {note === 'render'
+          ? 'The page couldn’t render the last edit, so it was sent the whole entry again.'
+          : note
+            ? 'The page couldn’t apply an edit, so it was sent the whole entry again.'
+            : ''}
+      </p>
+      {/* Its line is held while the frame loads, so the address arriving moves nothing. */}
+      {showFrame && origin ? (
+        <p className="truncate text-muted-foreground text-xs">
+          On <span className="font-mono">{origin}</span>
+        </p>
+      ) : loading ? (
+        <p className="text-xs">
+          <SkeletonText width="10rem" />
+        </p>
+      ) : null}
+    </section>
+  );
+}
+
+function GuideLink() {
+  return (
+    <a
+      href={LIVE_PREVIEW_GUIDE}
+      target="_blank"
+      rel="noreferrer"
+      className="font-medium text-link hover:underline"
+    >
+      Set up live preview
+    </a>
+  );
+}
+
+/** Why the page isn't live, in words, with the one thing to do about it. */
+function SiteNotice({
+  status,
+  origin,
+  onReload,
+}: {
+  status: { status: SiteStatus; detail?: string };
+  origin: string | undefined;
+  onReload: () => void;
+}) {
+  switch (status.status) {
+    case 'loading':
+    case 'live':
+      return null;
+    case 'not-connected':
+      return (
+        <Alert>
+          <AlertTitle className="line-clamp-none">
+            This site isn’t connected for live preview
+          </AlertTitle>
+          <AlertDescription>
+            <p>
+              The page loaded but didn’t offer to connect, so it shows the entry as saved. Edits
+              appear here as you type once the page calls{' '}
+              <span className="font-mono">connectPreview</span>.
+            </p>
+            <GuideLink />
+          </AlertDescription>
+        </Alert>
+      );
+    case 'unsupported':
+      return (
+        <Alert variant="destructive">
+          <AlertTitle className="line-clamp-none">
+            {status.detail === 'new' ? 'The site’s SDK is too new' : 'The site’s SDK is too old'}
+          </AlertTitle>
+          <AlertDescription>
+            <p>
+              Its ContentWorker SDK shares no live preview version with this admin. Use a{' '}
+              <span className="font-mono">@contentworker/sdk</span> release this admin supports;
+              until then the page shows the entry as saved.
+            </p>
+            <GuideLink />
+          </AlertDescription>
+        </Alert>
+      );
+    case 'elsewhere':
+      return (
+        <Alert>
+          <AlertTitle className="line-clamp-none">This page doesn’t show this entry</AlertTitle>
+          <AlertDescription>
+            <p>It’s connected, but your edits go to the page that renders the entry.</p>
+            <Button type="button" variant="outline" size="sm" onClick={onReload}>
+              Back to the entry
+            </Button>
+          </AlertDescription>
+        </Alert>
+      );
+    case 'unpreviewable':
+      return (
+        <Alert variant="destructive">
+          <AlertTitle className="line-clamp-none">
+            This entry can’t be previewed on this page
+          </AlertTitle>
+          <AlertDescription>
+            <p>
+              The page refused the entry as the form holds it, so your edits aren’t shown. Clicks in
+              the page still find their fields.
+            </p>
+          </AlertDescription>
+        </Alert>
+      );
+    case 'navigated':
+      return (
+        <Alert>
+          <AlertTitle className="line-clamp-none">The page moved away from this entry</AlertTitle>
+          <AlertDescription>
+            <p>Edits go to the entry’s own page.</p>
+            <Button type="button" variant="outline" size="sm" onClick={onReload}>
+              Back to the entry
+            </Button>
+          </AlertDescription>
+        </Alert>
+      );
+    case 'origin':
+      return (
+        <Alert variant="destructive">
+          <AlertTitle className="line-clamp-none">
+            The page answered from another address
+          </AlertTitle>
+          <AlertDescription>
+            <p>
+              It answered from <span className="font-mono">{status.detail}</span>
+              {origin ? (
+                <>
+                  , but the preview URL names <span className="font-mono">{origin}</span>
+                </>
+              ) : null}
+              . Set the type’s preview URL to the address the page is served from.
+            </p>
+          </AlertDescription>
+        </Alert>
+      );
+    case 'failed':
+      return (
+        <Alert variant="destructive">
+          <AlertTitle className="line-clamp-none">The page didn’t load</AlertTitle>
+          <AlertDescription>
+            <p>Check that the site is running and lets this admin frame it.</p>
+            <Button type="button" variant="outline" size="sm" onClick={onReload}>
+              Try again
+            </Button>
+          </AlertDescription>
+        </Alert>
+      );
+    case 'unavailable':
+      return (
+        <Alert variant={status.detail === 'incomplete' ? 'default' : 'destructive'}>
+          <AlertTitle className="line-clamp-none">
+            {status.detail === 'incomplete'
+              ? 'This entry has no page on the site yet'
+              : 'The entry’s page can’t be shown'}
+          </AlertTitle>
+          <AlertDescription>
+            <p>{UNAVAILABLE[status.detail ?? ''] ?? UNAVAILABLE.error}</p>
+            {status.detail === 'error' || status.detail === 'incomplete' ? (
+              <Button type="button" variant="outline" size="sm" onClick={onReload}>
+                Try again
+              </Button>
+            ) : null}
+          </AlertDescription>
+        </Alert>
+      );
+  }
+}
+
+const UNAVAILABLE: Record<string, string> = {
+  'not-found': 'This entry can’t be found in this space and environment.',
+  refused: 'Your role can’t make a preview link for this entry.',
+  incomplete:
+    'Its preview URL needs a value this entry doesn’t have in this locale yet (a slug, say). Save one, then try again.',
+  error: 'The preview link couldn’t be made just now.',
+};
+
+/** The device width, remembered per browser; Desktop until someone picks another. */
+function useDevice(): [Device, (d: Device) => void] {
+  const [device, setDevice] = useState<Device>('desktop');
+  useEffect(() => {
+    try {
+      const kept = localStorage.getItem(DEVICE_KEY);
+      if (kept === 'tablet' || kept === 'phone') setDevice(kept);
+    } catch {
+      // Storage blocked: Desktop.
+    }
+  }, []);
+  return [
+    device,
+    (d) => {
+      setDevice(d);
+      try {
+        if (d === 'desktop') localStorage.removeItem(DEVICE_KEY);
+        else localStorage.setItem(DEVICE_KEY, d);
+      } catch {
+        // Storage blocked: the choice lasts for this page.
+      }
+    },
+  ];
+}

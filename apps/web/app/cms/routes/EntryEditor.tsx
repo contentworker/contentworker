@@ -1,4 +1,6 @@
 import type { EntryFields, FieldDiff } from '@contentworker/domain';
+import { topLevelField } from '@contentworker/sdk-core';
+import type { Capability } from '@contentworker/sdk-core/live-preview';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -31,13 +33,19 @@ import { EntryMetadataPanel } from '~/cms/components/EntryMetadataPanel';
 import { EntryPreview } from '~/cms/components/EntryPreview';
 import { ExtensionFrame } from '~/cms/components/ExtensionFrame';
 import { PaneDivider } from '~/cms/components/pane/PaneDivider';
-import { type PaneView, usePaneLayout, usePaneView } from '~/cms/components/pane/use-pane-layout';
+import { SitePane } from '~/cms/components/pane/SitePane';
+import {
+  type PaneView,
+  paneViews,
+  usePaneLayout,
+  usePaneView,
+} from '~/cms/components/pane/use-pane-layout';
 import { ReferencedBy } from '~/cms/components/ReferencedBy';
 import { SemanticPanel } from '~/cms/components/SemanticPanel';
 import { StatusBadge, ToneBadge } from '~/cms/components/status';
 import { VersionHistory } from '~/cms/components/VersionHistory';
 import { CanvasDialog } from '../components/CanvasDialog';
-import type { Pickers, PickOption } from '../components/EntryForm';
+import type { FocusRequest, Pickers, PickOption } from '../components/EntryForm';
 import { EntryForm } from '../components/EntryForm';
 import { EntryActivity } from '../components/entries/EntryActivity';
 import { EntryAuthorship } from '../components/entries/EntryAuthorship';
@@ -46,6 +54,9 @@ import { GenerateEntryDialog } from '../components/GenerateEntryDialog';
 import { orDirect, useAssistantEdit, usePageContext } from '../lib/assistant';
 import { useClient } from '../lib/client-context';
 import { dateTime, toMs } from '../lib/format';
+import { capabilitiesFor, SELECT_ONLY } from '../lib/live-preview/host';
+import { liveFields } from '../lib/live-preview/ops';
+import { focusForRef, refForField } from '../lib/live-preview/pick';
 import type { EntryAggregate, EntryView, ModelTier } from '../lib/management';
 import {
   useAllEntriesQuery,
@@ -57,6 +68,14 @@ import {
 } from '../lib/queries';
 import { useToast } from '../lib/toast';
 import { useContentOutlet } from './content-context';
+
+/** The side pane's segments, by view. */
+const PANE_LABELS: Record<PaneView, string> = {
+  details: 'Details',
+  preview: 'Preview',
+  site: 'Site',
+  activity: 'Activity',
+};
 
 /** The scope that reads the team (`GET …/team`), and with it teammates' names. */
 const SPACE_ADMIN = 'space:admin';
@@ -93,7 +112,9 @@ export function EntryEditor() {
   // An inline-edit deep link from a previewed page: which field it came from,
   // and which space it was rendered against. A ref inside blocks names a path
   // (`body[<key>].heading`); the form opens the top-level field it is in.
-  const linkedField = searchParams.get('field')?.split('[')[0] || null;
+  // A ref's field is a path (`body[k1].heading`): the form opens its top-level field.
+  const linkedFieldParam = searchParams.get('field');
+  const linkedField = linkedFieldParam ? topLevelField(linkedFieldParam) || null : null;
   const linkedSpace = searchParams.get('space');
   const linkedEnv = searchParams.get('env');
   const wrongScope =
@@ -469,8 +490,82 @@ export function EntryEditor() {
   const pane = usePaneLayout();
   const [chosenView, setPaneView] = usePaneView();
   // Activity is the audit log for this entry, so it takes what the log takes (space:admin): anyone
-  // else, or anyone while that is still being read, sees Details in its place.
-  const paneView: PaneView = chosenView === 'activity' && !isAdmin ? 'details' : chosenView;
+  // else, or anyone while that is still being read, sees Details in its place. Site frames the
+  // customer's page for the entry, so it needs a preview URL on the type.
+  const views = paneViews({
+    isEdit,
+    hasSite: Boolean(selectedType?.preview?.urlTemplate),
+    isAdmin,
+  });
+  const paneView: PaneView = views.includes(chosenView) ? chosenView : 'details';
+
+  // A click in the Site pane's page focuses that field (or block) in the form.
+  const [focusRequest, setFocusRequest] = useState<FocusRequest | null>(null);
+  const onSitePick = useCallback(
+    (ref: string, pageEntries: readonly string[]) => {
+      if (!selectedType || !entryId) return;
+      const at = focusForRef(ref, {
+        space: conn.space,
+        environment: conn.environment,
+        entryId,
+        contentType: selectedType,
+        locales,
+        pageEntries,
+      });
+      if (at) setFocusRequest((r) => ({ seq: (r?.seq ?? 0) + 1, ...at }));
+    },
+    [selectedType, entryId, conn.space, conn.environment, locales],
+  );
+  // The form's focused field (or block) as the page names it: outlined there and scrolled to.
+  const [siteSelected, setSiteSelected] = useState<string | null>(null);
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
+  const formBox = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const box = formBox.current;
+    if (!box || !selectedType || !entryId) return;
+    const onFocusIn = (e: FocusEvent) => {
+      const el = e.target as Element;
+      const apiId = el.closest('[data-field]')?.getAttribute('data-field');
+      if (!apiId) return;
+      const blockKey = el.closest('[data-block-key]')?.getAttribute('data-block-key') ?? undefined;
+      const locale = draftRef.current?.locale ?? defaultLocale;
+      const values = liveFields(
+        selectedType,
+        draftRef.current?.fields ?? initial ?? {},
+        locale,
+        defaultLocale,
+      );
+      setSiteSelected(
+        refForField(
+          { space: conn.space, environment: conn.environment, entryId, contentType: selectedType },
+          locale,
+          apiId,
+          blockKey,
+          values[apiId],
+        ),
+      );
+    };
+    // Focus leaving every field (for the toolbar, the pane, another window) clears the outline.
+    const onFocusOut = (e: FocusEvent) => {
+      const next = e.relatedTarget as Element | null;
+      if (!next?.closest?.('[data-field]')) setSiteSelected(null);
+    };
+    box.addEventListener('focusin', onFocusIn);
+    box.addEventListener('focusout', onFocusOut);
+    return () => {
+      box.removeEventListener('focusin', onFocusIn);
+      box.removeEventListener('focusout', onFocusOut);
+    };
+  }, [selectedType, entryId, conn.space, conn.environment, defaultLocale, initial]);
+  // What the page may do for this person: a role that can't write content only selects.
+  // Undefined while the person's access is read: the frame holds the page's offer until it is
+  // known, so a session is never settled on less than they may do. Unread, select only.
+  const siteAllowed: readonly Capability[] | undefined = accessQuery.data
+    ? capabilitiesFor(accessQuery.data.scopes)
+    : accessQuery.isError
+      ? SELECT_ONLY
+      : undefined;
   const localeConfig = useMemo(
     () => ({ defaultLocale, locales, fallbacks }),
     [defaultLocale, locales, fallbacks],
@@ -690,6 +785,7 @@ export function EntryEditor() {
         <div
           className={cn('min-w-0 flex-1', pane.split && 'pr-5')}
           aria-busy={swapping || undefined}
+          ref={formBox}
         >
           {initial === null || swapping ? (
             <div className="max-w-2xl space-y-3">
@@ -731,6 +827,7 @@ export function EntryEditor() {
                 const goal = publishAfterSaveRef.current ? 'publish' : 'save';
                 toast.error(`Fix ${count} field ${count === 1 ? 'error' : 'errors'} to ${goal}`);
               }}
+              focusRequest={focusRequest}
               mergePatch={patchState.patch}
               onValuesChange={onValuesChange}
               onSave={save}
@@ -773,11 +870,13 @@ export function EntryEditor() {
               aria-label="Side pane"
               value={paneView}
               onValueChange={(v) => setPaneView(v as PaneView)}
-              className={cn('grid w-full', isAdmin ? 'grid-cols-3' : 'grid-cols-2')}
+              className="grid w-full"
             >
-              <SegmentedItem value="details">Details</SegmentedItem>
-              <SegmentedItem value="preview">Preview</SegmentedItem>
-              {isAdmin ? <SegmentedItem value="activity">Activity</SegmentedItem> : null}
+              {views.map((v) => (
+                <SegmentedItem key={v} value={v}>
+                  {PANE_LABELS[v]}
+                </SegmentedItem>
+              ))}
             </Segmented>
           ) : null}
           {!isEdit || paneView === 'preview' ? (
@@ -788,6 +887,22 @@ export function EntryEditor() {
               localeConfig={localeConfig}
               direction={directions?.[draft?.locale ?? defaultLocale]}
               pickers={pickers}
+            />
+          ) : null}
+          {isEdit && entryId && paneView === 'site' ? (
+            <SitePane
+              key={`site:${entryId}`}
+              spaceId={conn.space}
+              environmentId={conn.environment}
+              entryId={entryId}
+              contentType={selectedType}
+              fields={draft?.fields ?? initial ?? {}}
+              locale={draft?.locale ?? defaultLocale}
+              defaultLocale={defaultLocale}
+              allowed={siteAllowed}
+              selected={siteSelected}
+              split={pane.split}
+              onPick={onSitePick}
             />
           ) : null}
           {isEdit && entryId && paneView === 'activity' ? (
