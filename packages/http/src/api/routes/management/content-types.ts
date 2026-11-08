@@ -104,8 +104,10 @@ export function contentTypesRoutes(deps: AuthDeps): Hono<AuthVars> {
     async (c) => {
       const ct = await createContentType(
         ctx,
+        // A preview URL decides where the type's preview tokens go: read on the type is needed too.
+        c.get('principal'),
         scopeOf(c),
-        (await parseBody(c, contentTypeBody)) as unknown as Parameters<typeof createContentType>[2],
+        (await parseBody(c, contentTypeBody)) as unknown as Parameters<typeof createContentType>[3],
       );
       return c.json(ct, 201);
     },
@@ -224,7 +226,8 @@ export function contentTypesRoutes(deps: AuthDeps): Hono<AuthVars> {
     doc('Content types', 'Clone a content type', {
       description:
         'Copies the definition (fields, display field, singleton, group, description, icon, ' +
-        'agent instructions, layout) under a new apiId and name, as a draft with no entries. Not its URL pattern. ' +
+        'agent instructions, layout, preview URL) under a new apiId and name, as a draft with no ' +
+        'entries. Not its URL pattern. ' +
         '409 when the apiId is taken.',
       body: cloneContentTypeBody,
       ok: contentTypeDocs.contentType,
@@ -234,7 +237,14 @@ export function contentTypesRoutes(deps: AuthDeps): Hono<AuthVars> {
     async (c) => {
       const body = await parseBody(c, cloneContentTypeBody);
       return c.json(
-        await cloneContentType(ctx, scopeOf(c), c.req.param('apiId'), body.apiId, body.name),
+        await cloneContentType(
+          ctx,
+          c.get('principal'),
+          scopeOf(c),
+          c.req.param('apiId'),
+          body.apiId,
+          body.name,
+        ),
         201,
       );
     },

@@ -8,6 +8,7 @@ import {
   entryTrashChunkRunner,
   publishContentType,
   runBulkChunk,
+  SYSTEM_CALLER,
   trashEntry,
 } from '@contentworker/application';
 import {
@@ -89,7 +90,7 @@ const field = (apiId: string, type: string, position: number) => ({
 async function seeded() {
   const { ctx, deps } = await setup();
   const scope = { spaceId: SPACE, environmentId: 'main' };
-  await createContentType(ctx, scope, {
+  await createContentType(ctx, SYSTEM_CALLER, scope, {
     apiId: 'note',
     name: 'Note',
     displayField: 'title',

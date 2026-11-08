@@ -13,6 +13,7 @@ import {
   publishAsset,
   publishContentType,
   publishEntry,
+  SYSTEM_CALLER,
 } from '@contentworker/application';
 import { type Principal, SCOPES } from '@contentworker/domain';
 import {
@@ -139,7 +140,7 @@ describe('asset library tools (MCP), on the same use-cases as the HTTP routes', 
     const { ctx, deps, add } = await setup();
     const linked = await add('hero.png', 'image/png');
     await publishAsset(ctx, scope, linked.id);
-    await createContentType(ctx, scope, {
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
       apiId: 'page',
       name: 'Page',
       displayField: 'title',

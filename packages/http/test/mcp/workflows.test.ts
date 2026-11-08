@@ -9,6 +9,7 @@ import {
   createWorkflowDraft,
   publishContentType,
   publishWorkflowVersion,
+  SYSTEM_CALLER,
 } from '@contentworker/application';
 import { type Principal, SCOPES, WorkflowBuilder } from '@contentworker/domain';
 import {
@@ -81,7 +82,7 @@ describe('MCP workflow tools', () => {
       ),
     };
     await createSpace(ctx, { spaceId: SPACE, name: 'Blog', defaultLocale: 'en-US' });
-    await createContentType(ctx, scope, {
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
       apiId: 'article',
       name: 'Article',
       displayField: 'title',

@@ -49,6 +49,7 @@ import {
   publishAsset,
   publishContentType,
   publishEntry,
+  SYSTEM_CALLER,
   searchDeliveredAssets,
   setAssetMetadata,
   setLocaleSettings,
@@ -72,7 +73,7 @@ const field = (over: Partial<FieldDefinition> & Pick<FieldDefinition, 'apiId' | 
   ({ name: over.apiId, localized: true, required: false, position: 0, ...over }) as FieldDefinition;
 
 async function seed(at = scope) {
-  await createContentType(ctx, at, {
+  await createContentType(ctx, SYSTEM_CALLER, at, {
     apiId: 'page',
     name: 'Page',
     displayField: 'title',
@@ -265,7 +266,7 @@ describe('every Delivery output with a locale turned off', () => {
 
   it('leaves the locale out of asset text: one, a page, a collection and an include', async () => {
     const { id, blob } = await frenchAsset();
-    await createContentType(ctx, scope, {
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
       apiId: 'card',
       name: 'Card',
       displayField: 'heading',
@@ -368,7 +369,7 @@ describe('every Delivery output with a locale turned off', () => {
   });
 
   it('neither matches nor quotes the locale in search: lexical, semantic and GraphQL', async () => {
-    await createContentType(ctx, scope, {
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
       apiId: 'note',
       name: 'Note',
       displayField: 'body',

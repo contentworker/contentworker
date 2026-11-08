@@ -9,6 +9,7 @@ import {
   createEntry,
   createSpace,
   getPublishedEntry,
+  SYSTEM_CALLER,
 } from '../src/index';
 
 const scope = { spaceId: 'blog', environmentId: 'main' };
@@ -21,7 +22,7 @@ function setup() {
 
 async function seed(ctx: AppContext) {
   await createSpace(ctx, { spaceId: 'blog', name: 'Blog', defaultLocale: 'en-US' });
-  await createContentType(ctx, scope, {
+  await createContentType(ctx, SYSTEM_CALLER, scope, {
     apiId: 'post',
     name: 'Post',
     displayField: 'title',
@@ -95,7 +96,7 @@ describe('bulk entry actions', () => {
   });
 
   it('keeps a dangling-link failure per-item without sinking the chunk', async () => {
-    await createContentType(ctx, scope, {
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
       apiId: 'linked',
       name: 'Linked',
       displayField: 'title',
@@ -141,7 +142,7 @@ describe('bulk entry actions', () => {
   });
 
   it('resolves an in-batch link target published in the same chunk', async () => {
-    await createContentType(ctx, scope, {
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
       apiId: 'linked2',
       name: 'Linked2',
       displayField: 'title',

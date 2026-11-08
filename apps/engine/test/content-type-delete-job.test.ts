@@ -9,6 +9,7 @@ import {
   getBulkJob,
   publishContentType,
   publishEntry,
+  SYSTEM_CALLER,
 } from '@contentworker/application';
 import { createD1Store } from '@contentworker/db';
 import type { DomainEvent, FieldDefinition } from '@contentworker/domain';
@@ -49,7 +50,7 @@ describe('a content type delete job in the engine', () => {
     const spaceId = `engine-ct-delete-${crypto.randomUUID()}`;
     await createSpace(ctx, { spaceId, name: 'Delete', defaultLocale: 'en-US' });
     const scope = { spaceId, environmentId: 'main' };
-    await createContentType(ctx, scope, {
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
       apiId: 'note',
       name: 'Note',
       displayField: 'title',

@@ -16,6 +16,7 @@ import {
   moveEntry,
   publishContentType,
   publishEntry,
+  SYSTEM_CALLER,
   trashEntry,
   updateEntry,
 } from '../src/index';
@@ -54,7 +55,7 @@ beforeEach(async () => {
   ctx = { store, clock: new FixedClock(), ids: new TimeOrderedIds() };
   await createSpace(ctx, { spaceId: 'site', name: 'Site', defaultLocale: 'en-US' });
   for (const apiId of ['note', 'page']) {
-    await createContentType(ctx, scope, {
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
       apiId,
       name: apiId,
       displayField: 'title',
@@ -68,7 +69,7 @@ beforeEach(async () => {
           position: 0,
         },
       ],
-    } as Parameters<typeof createContentType>[2]);
+    } as Parameters<typeof createContentType>[3]);
     await publishContentType(ctx, scope, apiId);
   }
 });

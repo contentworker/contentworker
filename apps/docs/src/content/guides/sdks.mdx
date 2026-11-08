@@ -192,7 +192,9 @@ content type draft takes `urlPattern`.
 
 **Singletons.** `client.getSingleton('settings', { locale, include })` returns a
 [singleton type's](/guides/content-modeling/#singletons) one entry by the type's API ID (from a
-preview client, as it is now). The management client's content type draft takes `singleton`, and
+preview client, as it is now). The management client's content type draft takes `singleton` and a
+[preview URL](/guides/content-modeling/#preview-url) (`preview: { urlTemplate }`;
+`cma.entries.previewLink(id, { locale })` returns it filled as `frontendUrl`), and
 `cma.contentTypes.{dependents, delete, clone}` check, delete (`{ purgeEntries: true }` starts the
 job that deletes its entries first) and copy a type.
 

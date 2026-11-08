@@ -3,6 +3,7 @@ import {
   createContentType,
   createEntry,
   createSpace,
+  SYSTEM_CALLER,
   startWorkflowRun,
 } from '@contentworker/application';
 import {
@@ -64,7 +65,7 @@ export async function makeHarness(opts: { ai?: AppContext['ai'] } = {}) {
   const act = makeGraphActivities({ ctx, engine, nodes: { email, webhooks } });
 
   await createSpace(ctx, { spaceId: 'blog', name: 'Blog', defaultLocale: 'en-US' });
-  await createContentType(ctx, scope, {
+  await createContentType(ctx, SYSTEM_CALLER, scope, {
     apiId: 'post',
     name: 'Post',
     displayField: 'title',

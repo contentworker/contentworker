@@ -8,6 +8,7 @@ import {
   createEntry,
   createSpace,
   publishContentType,
+  SYSTEM_CALLER,
 } from '@contentworker/application';
 import { type Principal, SCOPES } from '@contentworker/domain';
 import {
@@ -80,13 +81,13 @@ describe('reference filters over MCP', () => {
       required: false,
       position: 0,
     });
-    await createContentType(deps.ctx, scope, {
+    await createContentType(deps.ctx, SYSTEM_CALLER, scope, {
       apiId: 'person',
       name: 'Person',
       displayField: 'name',
       fields: [sym('name')],
     });
-    await createContentType(deps.ctx, scope, {
+    await createContentType(deps.ctx, SYSTEM_CALLER, scope, {
       apiId: 'note',
       name: 'Note',
       displayField: 'title',

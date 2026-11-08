@@ -8,6 +8,7 @@ import {
   listSavedViews,
   publishContentType,
   runSavedView,
+  SYSTEM_CALLER,
   updateSavedView,
 } from '@contentworker/application';
 import {
@@ -48,7 +49,7 @@ async function harness() {
   await createSpace(ctx, { spaceId, name: 'Views', defaultLocale: 'en-US' });
   await createEnvironment(ctx, spaceId, 'staging');
   const scope = { spaceId, environmentId: 'main' };
-  await createContentType(ctx, scope, {
+  await createContentType(ctx, SYSTEM_CALLER, scope, {
     apiId: 'article',
     name: 'Article',
     displayField: 'title',

@@ -10,6 +10,7 @@ import {
   getReverseReferences,
   listPublishedEntries,
   publishEntry,
+  SYSTEM_CALLER,
   unpublishEntry,
   updateEntry,
 } from '../src/index';
@@ -24,7 +25,7 @@ function makeContext() {
 
 async function seedModel(ctx: AppContext) {
   await createSpace(ctx, { spaceId: 'blog', name: 'Blog', defaultLocale: 'en-US' });
-  await createContentType(ctx, scope, {
+  await createContentType(ctx, SYSTEM_CALLER, scope, {
     apiId: 'author',
     name: 'Author',
     displayField: 'name',
@@ -39,7 +40,7 @@ async function seedModel(ctx: AppContext) {
       },
     ],
   });
-  await createContentType(ctx, scope, {
+  await createContentType(ctx, SYSTEM_CALLER, scope, {
     apiId: 'post',
     name: 'Post',
     displayField: 'title',
@@ -122,7 +123,7 @@ describe('P3: references + link resolution', () => {
   it('embeds a two-level link chain at include=2 and stubs beyond the depth', async () => {
     await seedModel(ctx);
     // bio <- author <- post: three levels, resolved to depth 2.
-    await createContentType(ctx, scope, {
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
       apiId: 'bio',
       name: 'Bio',
       displayField: 'text',
@@ -137,7 +138,7 @@ describe('P3: references + link resolution', () => {
         },
       ],
     });
-    await createContentType(ctx, scope, {
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
       apiId: 'author2',
       name: 'Author2',
       displayField: 'name',
@@ -256,7 +257,7 @@ describe('P3: references + link resolution', () => {
 
   it('resolves links inside array fields', async () => {
     await seedModel(ctx);
-    await createContentType(ctx, scope, {
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
       apiId: 'collection',
       name: 'Collection',
       displayField: 'title',

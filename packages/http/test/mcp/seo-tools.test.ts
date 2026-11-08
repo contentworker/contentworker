@@ -7,6 +7,7 @@ import {
   createSpace,
   publishContentType,
   publishEntry,
+  SYSTEM_CALLER,
 } from '@contentworker/application';
 import { type FieldDefinition, type Principal, SCOPES } from '@contentworker/domain';
 import {
@@ -54,7 +55,7 @@ async function setup() {
   await createSpace(ctx, { spaceId: SPACE, name: 'Site', defaultLocale: 'en-US' });
   const field = (apiId: string, type: FieldDefinition['type'], position: number) =>
     ({ apiId, name: apiId, type, localized: false, required: false, position }) as FieldDefinition;
-  await createContentType(ctx, scope, {
+  await createContentType(ctx, SYSTEM_CALLER, scope, {
     apiId: 'article',
     name: 'Article',
     displayField: 'title',

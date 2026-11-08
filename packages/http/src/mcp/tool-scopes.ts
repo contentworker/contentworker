@@ -106,6 +106,7 @@ export const TOOL_SCOPES: Readonly<Record<string, readonly PermissionScope[]>> =
   entries_list_trashed: [SCOPES.previewRead],
   entries_list_versions: [SCOPES.previewRead],
   entries_move: [SCOPES.contentWrite],
+  entries_preview_link: [SCOPES.contentWrite],
   entries_publish: [SCOPES.contentPublish],
   entries_purge: [SCOPES.contentPublish],
   entries_query: [SCOPES.previewRead],

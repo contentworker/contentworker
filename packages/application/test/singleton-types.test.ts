@@ -30,6 +30,7 @@ import {
   publishEntry,
   requestPromotion,
   restoreEntry,
+  SYSTEM_CALLER,
   trashEntry,
   updateContentType,
   updateEntry,
@@ -64,7 +65,7 @@ const symbol = (apiId: string, position: number, extra: Record<string, unknown> 
 });
 
 async function settingsType(h: Harness, s = scope, singleton = true) {
-  await createContentType(h.ctx, s, {
+  await createContentType(h.ctx, SYSTEM_CALLER, s, {
     apiId: 'settings',
     name: 'Site settings',
     displayField: 'title',
@@ -82,17 +83,17 @@ async function settingsType(h: Harness, s = scope, singleton = true) {
       },
     ],
     singleton,
-  } as Parameters<typeof createContentType>[2]);
+  } as Parameters<typeof createContentType>[3]);
   await publishContentType(h.ctx, s, 'settings');
 }
 
 async function pageType(h: Harness, s = scope) {
-  await createContentType(h.ctx, s, {
+  await createContentType(h.ctx, SYSTEM_CALLER, s, {
     apiId: 'page',
     name: 'Page',
     displayField: 'title',
     fields: [symbol('title', 0)],
-  } as Parameters<typeof createContentType>[2]);
+  } as Parameters<typeof createContentType>[3]);
   await publishContentType(h.ctx, s, 'page');
 }
 
@@ -113,7 +114,9 @@ describe('singleton types', () => {
     await pageType(h);
     expect('singleton' in (await getContentType(h.ctx, scope, 'page'))).toBe(false);
 
-    const revised = await updateContentType(h.ctx, scope, 'settings', { name: 'Settings' });
+    const revised = await updateContentType(h.ctx, SYSTEM_CALLER, scope, 'settings', {
+      name: 'Settings',
+    });
     expect(revised.singleton).toBe(true);
   });
 
@@ -186,7 +189,7 @@ describe('singleton types', () => {
         ).entry.id,
       );
     }
-    const turn = updateContentType(h.ctx, scope, 'page', { singleton: true });
+    const turn = updateContentType(h.ctx, SYSTEM_CALLER, scope, 'page', { singleton: true });
     await expect(turn).rejects.toBeInstanceOf(ConflictError);
     await expect(turn).rejects.toThrow(ids[0] as string);
     expect('singleton' in (await getContentType(h.ctx, scope, 'page'))).toBe(false);
@@ -194,7 +197,7 @@ describe('singleton types', () => {
     // Trashed entries don't count: with two in the trash, the one left makes it a singleton.
     await trashEntry(h.ctx, scope, ids[1] as string);
     await trashEntry(h.ctx, scope, ids[2] as string);
-    await updateContentType(h.ctx, scope, 'page', { singleton: true });
+    await updateContentType(h.ctx, SYSTEM_CALLER, scope, 'page', { singleton: true });
     const held = await h.store.entries.findUniqueConflicts(scope, [singletonClaim('page')]);
     expect(held.map((c) => c.entryId)).toEqual([ids[0]]);
     await expect(
@@ -207,7 +210,7 @@ describe('singleton types', () => {
       contentTypeApiId: 'settings',
       fields: { title: { 'en-US': 'Site' }, code: { 'en-US': 'x1' } },
     });
-    await updateContentType(h.ctx, scope, 'settings', { singleton: false });
+    await updateContentType(h.ctx, SYSTEM_CALLER, scope, 'settings', { singleton: false });
     expect('singleton' in (await getContentType(h.ctx, scope, 'settings'))).toBe(false);
     await settings(h, 'Second');
     expect(await h.store.entries.findUniqueConflicts(scope, [singletonClaim('settings')])).toEqual(
@@ -293,7 +296,7 @@ describe('singleton types', () => {
     await createEnvironment(h.ctx, 'site', 'staging');
     await settingsType(h, staging);
     // Main has the same type as an ordinary one, with two entries.
-    await updateContentType(h.ctx, scope, 'settings', { singleton: false });
+    await updateContentType(h.ctx, SYSTEM_CALLER, scope, 'settings', { singleton: false });
     await settings(h, 'A');
     await settings(h, 'B');
     await expect(
@@ -325,7 +328,9 @@ describe('singleton types across environments', () => {
     expect((await getContentType(h.ctx, qa, 'settings')).singleton).toBe(true);
 
     // Promoted back after an edit, production's type stays a singleton.
-    await updateContentType(h.ctx, staging, 'settings', { name: 'Settings (renamed)' });
+    await updateContentType(h.ctx, SYSTEM_CALLER, staging, 'settings', {
+      name: 'Settings (renamed)',
+    });
     const requested = await requestPromotion(h.ctx, ada, 'site', {
       source: 'staging',
       target: 'main',
@@ -396,7 +401,7 @@ describe('singleton types, served by their published revision', () => {
   });
 
   it('keeps serving through a draft that turns the flag off, and stops when it is published', async () => {
-    await updateContentType(h.ctx, scope, 'settings', { singleton: false });
+    await updateContentType(h.ctx, SYSTEM_CALLER, scope, 'settings', { singleton: false });
     expect((await getDeliveredSingleton(h.ctx, scope, 'settings')).fields.title).toBeDefined();
     await publishContentType(h.ctx, scope, 'settings');
     await expect(getDeliveredSingleton(h.ctx, scope, 'settings')).rejects.toBeInstanceOf(
@@ -404,7 +409,7 @@ describe('singleton types, served by their published revision', () => {
     );
 
     // On again as a draft: not served until that is published too.
-    await updateContentType(h.ctx, scope, 'settings', { singleton: true });
+    await updateContentType(h.ctx, SYSTEM_CALLER, scope, 'settings', { singleton: true });
     await expect(getDeliveredSingleton(h.ctx, scope, 'settings')).rejects.toBeInstanceOf(
       NotFoundError,
     );
@@ -463,7 +468,7 @@ describe('a create racing a change to its content type', () => {
   it('is refused (409) when the type became a singleton after its read', async () => {
     const first = await page('First');
     const read = await getContentType(h.ctx, scope, 'page');
-    await updateContentType(h.ctx, scope, 'page', { singleton: true });
+    await updateContentType(h.ctx, SYSTEM_CALLER, scope, 'page', { singleton: true });
     // The create read an ordinary type, so it neither checked for nor staked the singleton.
     await expect(withStaleType(read, () => page('Second'))).rejects.toBeInstanceOf(ConflictError);
     expect(await pages()).toEqual([first.entry.id]);
@@ -478,7 +483,7 @@ describe('a create racing a change to its content type', () => {
       (await list(s, q)).filter((e) => e.entry.id === first.entry.id);
     try {
       await expect(
-        updateContentType(h.ctx, scope, 'page', { singleton: true }),
+        updateContentType(h.ctx, SYSTEM_CALLER, scope, 'page', { singleton: true }),
       ).rejects.toBeInstanceOf(ConflictError);
     } finally {
       h.store.entries.list = list;
@@ -496,12 +501,12 @@ describe('merging entries with unique values', () => {
     await createSpace(h.ctx, { spaceId: 'site', name: 'Site', defaultLocale: 'en-US' });
     await createEnvironment(h.ctx, 'site', 'staging');
     for (const s of [scope, staging]) {
-      await createContentType(h.ctx, s, {
+      await createContentType(h.ctx, SYSTEM_CALLER, s, {
         apiId: 'product',
         name: 'Product',
         displayField: 'sku',
         fields: [symbol('sku', 0, { unique: true })],
-      } as Parameters<typeof createContentType>[2]);
+      } as Parameters<typeof createContentType>[3]);
       await publishContentType(h.ctx, s, 'product');
     }
   });
@@ -606,9 +611,11 @@ describe('saving a content type over a raced turn of its flag', () => {
 
   it('refuses a revision and a publish that read the flag before a turn off', async () => {
     const read = await getContentType(h.ctx, scope, 'settings');
-    await updateContentType(h.ctx, scope, 'settings', { singleton: false });
+    await updateContentType(h.ctx, SYSTEM_CALLER, scope, 'settings', { singleton: false });
     await expect(
-      stale(read, () => updateContentType(h.ctx, scope, 'settings', { name: 'Renamed' })),
+      stale(read, () =>
+        updateContentType(h.ctx, SYSTEM_CALLER, scope, 'settings', { name: 'Renamed' }),
+      ),
     ).rejects.toBeInstanceOf(ConflictError);
     await expect(
       stale(read, () => publishContentType(h.ctx, scope, 'settings')),
@@ -621,7 +628,7 @@ describe('saving a content type over a raced turn of its flag', () => {
   it('announces a promotion’s published type once', async () => {
     await createEnvironment(h.ctx, 'site', 'staging');
     await settingsType(h, staging);
-    await updateContentType(h.ctx, staging, 'settings', { name: 'Settings v2' });
+    await updateContentType(h.ctx, SYSTEM_CALLER, staging, 'settings', { name: 'Settings v2' });
     await publishContentType(h.ctx, staging, 'settings');
     const before = h.store.allEvents().length;
     const requested = await requestPromotion(h.ctx, ada, 'site', {

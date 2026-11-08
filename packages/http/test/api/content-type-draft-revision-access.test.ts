@@ -3,6 +3,7 @@ import {
   createEnvironment,
   createMenu,
   mergeEnvironments,
+  SYSTEM_CALLER,
 } from '@contentworker/application';
 import type { ApiConfig } from '@contentworker/platform/config';
 import { describe, expect, it } from 'vitest';
@@ -119,7 +120,7 @@ async function setup(definition: ReturnType<typeof page>) {
   /** Saves `fields` as a draft over main by a merge, which has no in-use check to refuse it. */
   const draftByMerge = async (fields: unknown[], urlPattern?: string) => {
     await createEnvironment(wired.ctx, 's1', 'staging');
-    await createContentType(wired.ctx, staging, page(fields, urlPattern) as never);
+    await createContentType(wired.ctx, SYSTEM_CALLER, staging, page(fields, urlPattern) as never);
     await mergeEnvironments(wired.ctx, 's1', 'staging', 'main', { contentTypes: ['page'] });
   };
   return { app, wired, post, publish, reader, draftByMerge };

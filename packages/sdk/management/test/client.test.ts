@@ -432,6 +432,7 @@ describe('@contentworker/sdk-management client', () => {
     await c.bulkJobs.report('j1');
     await c.bulkJobs.cancel('j1');
     await c.entries.move('e1', { after: null });
+    await c.entries.previewLink('e1', { locale: 'fr' });
     await c.bulkJobs.setFields({
       contentTypeApiId: 'post',
       entryIds: ['e1'],
@@ -488,6 +489,7 @@ describe('@contentworker/sdk-management client', () => {
       `GET ${env}/bulk/jobs/j1/report`,
       `POST ${env}/bulk/jobs/j1/cancel`,
       `POST ${env}/entries/e1/move`,
+      `POST ${env}/entries/e1/preview-link`,
       `POST ${env}/bulk/jobs/set-fields`,
       `GET ${env}/webhooks`,
       `POST ${env}/webhooks`,

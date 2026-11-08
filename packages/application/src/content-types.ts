@@ -1,5 +1,6 @@
 import {
   assetMimeChecks,
+  authorizeContent,
   ConflictError,
   type ContentType,
   type ContentTypeChanges,
@@ -7,8 +8,10 @@ import {
   defineContentType,
   type EntryFields,
   type FieldDefinition,
+  ForbiddenError,
   mimeTypeAllowed,
   NotFoundError,
+  type Principal,
   removedFields,
   removedFieldUses,
   removedVariants,
@@ -37,19 +40,71 @@ export interface ContentTypeWarning {
 /** A saved content type, with what its revision means for the entries that hold it. */
 export type SavedContentType = ContentType & { readonly warnings?: readonly ContentTypeWarning[] };
 
-/** Creates a new content type definition (status "draft", version 1). */
+/**
+ * Work no request's principal asks for in the moment: seeding, and an import or promotion already
+ * authorized as a whole. The only value a content type save takes in place of a principal, so a
+ * request handler can't skip the caller's checks by leaving its principal out: it has to name this.
+ */
+export const SYSTEM_CALLER: unique symbol = Symbol('contentworker.system-caller');
+
+/** Who saves a content type: the request's principal, or {@link SYSTEM_CALLER}. */
+export type ContentTypeCaller = Principal | typeof SYSTEM_CALLER;
+
+/**
+ * Refuses anything that is neither {@link SYSTEM_CALLER} nor shaped as a principal, before a save
+ * reads anything: a caller the type system was talked out of (`as never`, an argument in the wrong
+ * place, an untyped test) fails closed instead of skipping the caller's checks.
+ */
+export function assertContentTypeCaller(caller: ContentTypeCaller): void {
+  if (caller === SYSTEM_CALLER) return;
+  const shaped =
+    typeof caller === 'object' &&
+    caller !== null &&
+    typeof caller.kind === 'string' &&
+    Array.isArray(caller.scopes);
+  if (!shaped) {
+    throw new ForbiddenError('A content type is saved by a principal or the system caller');
+  }
+}
+
+/**
+ * A caller setting a type's preview URL decides where every preview link minted for its entries
+ * sends its token, so it must be able to read those entries itself: `content:manage` alone isn't
+ * enough when its grant leaves the type out. Clearing it, or sending back the stored one, needs
+ * nothing more. Only {@link SYSTEM_CALLER} skips the check.
+ */
+export function authorizePreviewChange(
+  caller: ContentTypeCaller,
+  apiId: string,
+  stored: ContentType['preview'],
+  given: ContentTypeDraft['preview'],
+): void {
+  assertContentTypeCaller(caller);
+  if (caller === SYSTEM_CALLER || !given) return;
+  const template = typeof given.urlTemplate === 'string' ? given.urlTemplate.trim() : given;
+  if (!template || template === stored?.urlTemplate) return;
+  authorizeContent(caller, 'read', apiId);
+}
+
+/**
+ * Creates a new content type definition (status "draft", version 1). `caller` is held to
+ * `authorizePreviewChange`: the HTTP route and the MCP tool pass their principal.
+ */
 export async function createContentType(
   ctx: AppContext,
+  caller: ContentTypeCaller,
   scope: Scope,
   draft: ContentTypeDraft,
 ): Promise<SavedContentType> {
+  assertContentTypeCaller(caller);
   // An existing type is revised, not defined afresh: a revision is checked against what is
   // stored, so a definition saved before a check existed can still be edited.
   const existing = await ctx.store.contentTypes.get(scope, draft.apiId);
   if (existing) {
-    return updateContentType(ctx, scope, draft.apiId, draft);
+    return updateContentType(ctx, caller, scope, draft.apiId, draft);
   }
-  const contentType = defineContentType(draft);
+  authorizePreviewChange(caller, draft.apiId, undefined, draft.preview);
+  const contentType = defineContentType(draft, { previewLoopback: ctx.previewLoopback === true });
   await ctx.store.contentTypes.save(scope, contentType);
   return contentType;
 }
@@ -57,13 +112,18 @@ export async function createContentType(
 /** Revises an existing content type, bumping its version. */
 export async function updateContentType(
   ctx: AppContext,
+  caller: ContentTypeCaller,
   scope: Scope,
   apiId: string,
   changes: ContentTypeChanges,
 ): Promise<SavedContentType> {
+  assertContentTypeCaller(caller);
   const current = await ctx.store.contentTypes.get(scope, apiId);
   if (!current) throw new NotFoundError('ContentType', apiId);
-  const revised = reviseContentType(current, changes);
+  authorizePreviewChange(caller, apiId, current.preview, changes.preview);
+  const revised = reviseContentType(current, changes, {
+    previewLoopback: ctx.previewLoopback === true,
+  });
   await assertNoRemovedContentInUse(ctx, scope, current, revised);
   const warnings = await tightenedRulesInUse(ctx, scope, current, revised);
   await saveContentTypeOver(ctx, scope, current, revised);

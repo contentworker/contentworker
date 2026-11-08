@@ -523,9 +523,13 @@ async function assessPromotion(
     const current = await ctx.store.contentTypes.get(target, ct.apiId);
     if (!current) {
       // A new type changes no field the target has, but agents read its instructions as guidance.
-      if (ct.agentInstructions) {
-        typeChanges[ct.apiId] = ['adds agent instructions'];
-        reasons.push(`The content type "${ct.apiId}" adds agent instructions`);
+      const adds = [
+        ...(ct.agentInstructions ? ['adds agent instructions'] : []),
+        ...(ct.preview ? ['adds a preview URL'] : []),
+      ];
+      if (adds.length) {
+        typeChanges[ct.apiId] = adds;
+        for (const a of adds) reasons.push(`The content type "${ct.apiId}" ${a}`);
       }
       continue;
     }
@@ -566,6 +570,10 @@ async function assessPromotion(
     // Agents read these as guidance, so an approver sees a change to them even with no field moved.
     if ((ct.agentInstructions ?? '') !== (current.agentInstructions ?? '')) {
       changes.add('changes its agent instructions');
+    }
+    // Where preview links send their tokens: an approver sees the frontend move.
+    if ((ct.preview?.urlTemplate ?? '') !== (current.preview?.urlTemplate ?? '')) {
+      changes.add('changes its preview URL');
     }
     if (changes.size) {
       typeChanges[ct.apiId] = [...changes];

@@ -13,6 +13,7 @@ import {
   publishEntry,
   publishRelease,
   removeEntryFromRelease,
+  SYSTEM_CALLER,
 } from '../src/index';
 
 const scope = { spaceId: 'space-1', environmentId: 'main' };
@@ -24,7 +25,7 @@ function makeContext(): { ctx: AppContext; store: InMemoryContentStore } {
 }
 
 async function seedType(ctx: AppContext) {
-  await createContentType(ctx, scope, {
+  await createContentType(ctx, SYSTEM_CALLER, scope, {
     apiId: 'article',
     name: 'Article',
     displayField: 'title',

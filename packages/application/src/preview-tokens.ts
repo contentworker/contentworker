@@ -1,4 +1,11 @@
-import { type Principal, SCOPES, type Scope, scopesForKind } from '@contentworker/domain';
+import {
+  fillPreviewTemplate,
+  type Principal,
+  SCOPES,
+  type Scope,
+  scopesForKind,
+  ValidationError,
+} from '@contentworker/domain';
 import type { Hasher } from '@contentworker/ports';
 import type { AppContext } from './context';
 import { getEntry } from './entries';
@@ -7,7 +14,13 @@ import { randomSecret } from './token-crypto';
 const DEFAULT_TTL_HOURS = 72;
 
 export interface PreviewLink {
+  /** The entry on the Preview API, with the token. */
   readonly url: string;
+  /**
+   * The entry on the customer's frontend: its type's preview URL template, filled. Absent when
+   * the type has none, or a field the template names has no value in the locale yet.
+   */
+  readonly frontendUrl?: string;
   readonly token: string;
   readonly expiresAt: string;
 }
@@ -16,11 +29,14 @@ export interface CreatePreviewLinkInput {
   readonly ttlHours?: number;
   /** Base URL for the preview API (e.g. https://cms.example.com). */
   readonly previewBaseUrl: string;
+  /** The locale `frontendUrl` fills `{locale}` and `{field:…}` in; the space's default if absent. */
+  readonly locale?: string;
 }
 
 /**
  * Mints an expiring preview token for a single entry. The raw token is returned
- * once; only its hash is stored.
+ * once; only its hash is stored. The token reads that one entry, wherever the link is opened: the
+ * Preview API URL or, when the entry's type has a preview URL template, the customer's frontend.
  */
 export async function createPreviewLink(
   ctx: AppContext,
@@ -29,7 +45,17 @@ export async function createPreviewLink(
   entryId: string,
   input: CreatePreviewLinkInput,
 ): Promise<PreviewLink> {
-  await getEntry(ctx, scope, entryId);
+  const view = await getEntry(ctx, scope, entryId);
+  const [contentType, config] = await Promise.all([
+    ctx.store.contentTypes.get(scope, view.entry.contentTypeApiId),
+    ctx.store.spaces.getConfig(scope),
+  ]);
+  const template = contentType?.preview?.urlTemplate;
+  const defaultLocale = config?.defaultLocale ?? '';
+  const locale = input.locale ?? defaultLocale;
+  if (template && input.locale !== undefined && !config?.locales.includes(input.locale)) {
+    throw new ValidationError([{ field: 'locale', message: `Unknown locale "${input.locale}"` }]);
+  }
 
   const ttlHours = input.ttlHours ?? DEFAULT_TTL_HOURS;
   const expiresAt = new Date(ctx.clock.now());
@@ -50,7 +76,29 @@ export async function createPreviewLink(
 
   const base = input.previewBaseUrl.replace(/\/$/, '');
   const url = `${base}/preview/${scope.spaceId}/${scope.environmentId}/entries/${entryId}?preview_token=${token}`;
-  return { url, token, expiresAt: expiresAt.toISOString() };
+  const frontendUrl = template
+    ? fillPreviewTemplate(template, {
+        id: entryId,
+        token,
+        locale,
+        space: scope.spaceId,
+        environment: scope.environmentId,
+        // A field that isn't localized holds its value under the default locale; a localized one
+        // never borrows another locale's value, which would preview some other locale's page.
+        fields: Object.fromEntries(
+          (contentType?.fields ?? []).map((f) => [
+            f.apiId,
+            view.fields[f.apiId]?.[f.localized ? locale : defaultLocale],
+          ]),
+        ),
+      })
+    : null;
+  return {
+    url,
+    ...(frontendUrl ? { frontendUrl } : {}),
+    token,
+    expiresAt: expiresAt.toISOString(),
+  };
 }
 
 /** Resolves a preview link token to a read-only CPA principal for one entry. */

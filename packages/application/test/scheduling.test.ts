@@ -12,6 +12,7 @@ import {
   publishContentType,
   publishEntry,
   runDueScheduledActions,
+  SYSTEM_CALLER,
   scheduleAction,
 } from '../src/index';
 
@@ -26,7 +27,7 @@ function makeContext(): { ctx: AppContext; clock: FixedClock } {
 }
 
 async function seedDraft(ctx: AppContext, title: string) {
-  await createContentType(ctx, scope, {
+  await createContentType(ctx, SYSTEM_CALLER, scope, {
     apiId: 'article',
     name: 'Article',
     displayField: 'title',

@@ -12,6 +12,7 @@ import {
   publishContentType,
   publishEntry,
   restoreVersion,
+  SYSTEM_CALLER,
   updateEntry,
   visibleDiff,
 } from '../src/index';
@@ -25,7 +26,7 @@ function makeContext(): AppContext {
 }
 
 async function seedArticleType(ctx: AppContext) {
-  await createContentType(ctx, scope, {
+  await createContentType(ctx, SYSTEM_CALLER, scope, {
     apiId: 'article',
     name: 'Article',
     displayField: 'title',

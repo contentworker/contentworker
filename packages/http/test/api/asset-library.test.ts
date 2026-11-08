@@ -3,6 +3,7 @@ import {
   createEntry,
   publishContentType,
   publishEntry,
+  SYSTEM_CALLER,
 } from '@contentworker/application';
 import type { ApiConfig } from '@contentworker/platform/config';
 import { describe, expect, it } from 'vitest';
@@ -170,7 +171,7 @@ describe('the asset library over HTTP', () => {
     const { app, ctx } = makeApp();
     const a = await upload(app, { fileName: 'hero.png', contentType: 'image/png' });
     await app.request(`${M}/assets/${a.id}/published`, { method: 'POST', headers: cma });
-    await createContentType(ctx, scope, {
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
       apiId: 'banner',
       name: 'Banner',
       displayField: 'title',

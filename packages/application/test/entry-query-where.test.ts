@@ -12,6 +12,7 @@ import {
   parseEntryQuery,
   publishContentType,
   publishEntry,
+  SYSTEM_CALLER,
 } from '../src/index';
 
 // Richer queries from the query string: startsWith, between, component paths and `where` groups.
@@ -22,7 +23,7 @@ const field = (apiId: string, type: FieldDefinition['type'], position: number) =
   ({ apiId, name: apiId, type, localized: false, required: false, position }) as FieldDefinition;
 
 async function seed(ctx: AppContext) {
-  await createContentType(ctx, scope, {
+  await createContentType(ctx, SYSTEM_CALLER, scope, {
     apiId: 'page',
     name: 'Page',
     displayField: 'title',

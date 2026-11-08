@@ -13,6 +13,7 @@ import {
   moveMenuItem,
   publishContentType,
   publishEntry,
+  SYSTEM_CALLER,
   unpublishEntry,
   updateMenu,
 } from '@contentworker/application';
@@ -53,7 +54,7 @@ async function harness() {
     locales: ['en-US', 'de'],
   });
   const scope = { spaceId, environmentId: 'main' };
-  await createContentType(ctx, scope, {
+  await createContentType(ctx, SYSTEM_CALLER, scope, {
     apiId: 'page',
     name: 'Page',
     displayField: 'title',

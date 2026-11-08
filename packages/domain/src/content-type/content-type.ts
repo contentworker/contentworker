@@ -24,6 +24,13 @@ import {
 import { MAX_FIELD_RULES, ruleProblem, ruleTarget } from './field-rules';
 import { type ContentTypeLayout, checkLayout } from './layout';
 import { isPatternPreset, PATTERN_PRESETS, presetRegexp } from './patterns';
+import { type ContentTypePreview, checkPreviewTemplate } from './preview';
+
+/** What a define or revision may allow, by deployment rather than by type. */
+export interface ContentTypeOptions {
+  /** A preview URL on plain http to localhost or 127.0.0.1: a local stack only. */
+  readonly previewLoopback?: boolean;
+}
 
 /**
  * A content type: the schema for a class of entries. Definitions are versioned
@@ -63,6 +70,11 @@ export interface ContentType {
    * nothing stored or validated, and Delivery never serves it.
    */
   readonly layout?: ContentTypeLayout;
+  /**
+   * Where the admin previews the type's entries on the customer's frontend
+   * ({@link ContentTypePreview}). Editor-only: Delivery never serves it.
+   */
+  readonly preview?: ContentTypePreview;
   readonly version: number;
   readonly status: ContentTypeStatus;
 }
@@ -87,7 +99,7 @@ export interface PublishedContentTypeDefinition {
  */
 export type DeliveredContentType = Omit<
   ContentType,
-  'group' | 'description' | 'icon' | 'agentInstructions' | 'layout'
+  'group' | 'description' | 'icon' | 'agentInstructions' | 'layout' | 'preview'
 >;
 
 /**
@@ -143,6 +155,8 @@ export interface ContentTypeDraft {
   icon?: string | null;
   agentInstructions?: string | null;
   layout?: ContentTypeLayout | null;
+  /** Left out keeps it on a revision; `null` clears it. Checked against the revised fields. */
+  preview?: ContentTypePreview | null;
 }
 
 /** The longest group, description, icon name and agent instructions. */
@@ -169,6 +183,7 @@ export type ContentTypeChanges = Partial<
     | 'icon'
     | 'agentInstructions'
     | 'layout'
+    | 'preview'
   >
 >;
 
@@ -177,7 +192,10 @@ export type ContentTypeChanges = Partial<
  * normalized `ContentType` at version 1, status "draft". Throws on invalid
  * input so callers never persist a malformed schema.
  */
-export function defineContentType(draft: ContentTypeDraft): ContentType {
+export function defineContentType(
+  draft: ContentTypeDraft,
+  options: ContentTypeOptions = {},
+): ContentType {
   if (!isValidApiId(draft.apiId)) {
     throw new ValidationError([
       { field: 'apiId', message: `Invalid content type apiId "${draft.apiId}"` },
@@ -186,6 +204,7 @@ export function defineContentType(draft: ContentTypeDraft): ContentType {
   const fields = compilePatternPresets(draft.fields);
   assertFieldsValid(fields, draft.displayField, undefined);
   const urlPattern = draft.urlPattern ? checkUrlPattern(draft.urlPattern, fields) : undefined;
+  const preview = previewOf(draft.preview, fields, { allowLoopback: options.previewLoopback });
   return {
     apiId: draft.apiId,
     name: draft.name,
@@ -194,6 +213,7 @@ export function defineContentType(draft: ContentTypeDraft): ContentType {
     ...(urlPattern ? { urlPattern } : {}),
     ...(draft.singleton ? { singleton: true as const } : {}),
     ...typeDetails(draft, undefined, fields),
+    ...(preview ? { preview } : {}),
     version: 1,
     status: 'draft',
   };
@@ -204,7 +224,11 @@ export function defineContentType(draft: ContentTypeDraft): ContentType {
  * current definition is the baseline for the checks that only refuse what is
  * new, so a type stored before a check existed can still be revised.
  */
-export function reviseContentType(current: ContentType, changes: ContentTypeChanges): ContentType {
+export function reviseContentType(
+  current: ContentType,
+  changes: ContentTypeChanges,
+  options: ContentTypeOptions = {},
+): ContentType {
   const fields = compilePatternPresets(changes.fields ?? [...current.fields], current.fields);
   const displayField = changes.displayField ?? current.displayField;
   assertFieldsValid(fields, displayField, current.fields);
@@ -212,6 +236,7 @@ export function reviseContentType(current: ContentType, changes: ContentTypeChan
   const pattern = changes.urlPattern === undefined ? current.urlPattern : changes.urlPattern;
   const urlPattern = pattern ? checkUrlPattern(pattern, fields) : undefined;
   const singleton = changes.singleton ?? current.singleton === true;
+  const preview = revisedPreview(current.preview, changes.preview, fields, options);
   const {
     urlPattern: _old,
     singleton: _was,
@@ -220,6 +245,7 @@ export function reviseContentType(current: ContentType, changes: ContentTypeChan
     icon: _i,
     agentInstructions: _a,
     layout: _l,
+    preview: _p,
     ...rest
   } = current;
   return {
@@ -230,8 +256,57 @@ export function reviseContentType(current: ContentType, changes: ContentTypeChan
     ...(urlPattern ? { urlPattern } : {}),
     ...(singleton ? { singleton: true as const } : {}),
     ...typeDetails(changes, current, fields),
+    ...(preview ? { preview } : {}),
     version: current.version + 1,
     status: 'draft',
+  };
+}
+
+/**
+ * A revision's preview setting. A template sent is checked against the revised fields, strictly
+ * when it is new; sent back as stored, its scheme passes as it stands (a loopback URL saved on a
+ * local stack stays editable). Left out, the stored one is kept while it still checks, and dropped
+ * when it doesn't: code that never heard of it may have removed the field it names, and a save
+ * that doesn't mention it must not be refused for it.
+ */
+function revisedPreview(
+  stored: ContentTypePreview | undefined,
+  given: ContentTypePreview | null | undefined,
+  fields: readonly FieldDefinition[],
+  options: ContentTypeOptions,
+): ContentTypePreview | undefined {
+  if (given === undefined) {
+    if (!stored) return undefined;
+    try {
+      return previewOf(stored, fields, { allowLoopback: true });
+    } catch (err) {
+      if (err instanceof ValidationError) return undefined;
+      throw err;
+    }
+  }
+  const asStored =
+    typeof given?.urlTemplate === 'string' && given.urlTemplate.trim() === stored?.urlTemplate;
+  return previewOf(given, fields, { allowLoopback: asStored || options.previewLoopback });
+}
+
+/** A type's preview setting as stored: null or a blank template clears it. */
+function previewOf(
+  given: ContentTypePreview | null | undefined,
+  fields: readonly FieldDefinition[],
+  check: { allowLoopback?: boolean | undefined },
+): ContentTypePreview | undefined {
+  if (!given) return undefined;
+  const raw: unknown = (given as { urlTemplate?: unknown }).urlTemplate;
+  if (raw === undefined || raw === null || (typeof raw === 'string' && raw.trim() === '')) {
+    return undefined;
+  }
+  if (typeof raw !== 'string') {
+    throw new ValidationError([
+      { field: 'preview.urlTemplate', message: 'urlTemplate must be text' },
+    ]);
+  }
+  return {
+    urlTemplate: checkPreviewTemplate(raw, fields, { allowLoopback: check.allowLoopback === true }),
   };
 }
 

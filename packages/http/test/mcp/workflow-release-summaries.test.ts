@@ -9,6 +9,7 @@ import {
   createWorkflowDraft,
   publishContentType,
   publishWorkflowVersion,
+  SYSTEM_CALLER,
   saveWorkflowDraft,
 } from '@contentworker/application';
 import { type Principal, SCOPES, WorkflowBuilder } from '@contentworker/domain';
@@ -69,7 +70,7 @@ describe('release and workflow list summaries', () => {
         makeActivities({ ctx, ai: new StubAIProvider(() => ({})) }),
       ),
     };
-    await createContentType(ctx, scope, {
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
       apiId: 'article',
       name: 'Article',
       displayField: 'title',

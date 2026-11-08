@@ -1,4 +1,9 @@
-import { createContentType, createEntry, publishContentType } from '@contentworker/application';
+import {
+  createContentType,
+  createEntry,
+  publishContentType,
+  SYSTEM_CALLER,
+} from '@contentworker/application';
 import type { ApiConfig } from '@contentworker/platform/config';
 import { createManagementClient } from '@contentworker/sdk-management';
 import { describe, expect, it } from 'vitest';
@@ -14,7 +19,7 @@ describe('saved views through the SDK', () => {
   it('saves, runs, changes and deletes a shared view', async () => {
     const wired = wire(config);
     const app = createApp(wired.ctx, config, wired.rag, wired.blob, wired.ai);
-    await createContentType(wired.ctx, scope, {
+    await createContentType(wired.ctx, SYSTEM_CALLER, scope, {
       apiId: 'note',
       name: 'Note',
       displayField: 'title',

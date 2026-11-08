@@ -5,6 +5,7 @@ import {
   listPreviewEntries,
   publishContentType,
   publishEntry,
+  SYSTEM_CALLER,
   setEntryMetadata,
   updateEntry,
 } from '@contentworker/application';
@@ -292,7 +293,7 @@ export async function ensureContentType(run: SeedRun, draft: ContentTypeDraft): 
   // The starter never touches a type that's already there: on a retry it's its own, and otherwise
   // it's someone's model, which sample content has no business rewriting.
   if (existed && run.keepExistingTypes) return;
-  await createContentType(run.ctx, run.scope, draft);
+  await createContentType(run.ctx, SYSTEM_CALLER, run.scope, draft);
   await publishContentType(run.ctx, run.scope, draft.apiId);
   if (!existed) {
     logger.info({ apiId: draft.apiId }, 'seed: created content type');

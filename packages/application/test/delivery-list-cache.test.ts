@@ -15,6 +15,7 @@ import {
   dispatchEvent,
   listPublishedEntries,
   publishEntry,
+  SYSTEM_CALLER,
   unpublishEntry,
   updateEntry,
 } from '../src/index';
@@ -56,7 +57,7 @@ function setup() {
 async function seed(ctx: AppContext) {
   await createSpace(ctx, { spaceId: 'shop', name: 'Shop', defaultLocale: 'en-US' });
   for (const apiId of ['article', 'author']) {
-    await createContentType(ctx, scope, {
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
       apiId,
       name: apiId,
       displayField: 'title',
@@ -245,7 +246,7 @@ describe('delivery list cache', () => {
 
   it('evicts when an EMBEDDED entry of another type changes', async () => {
     // article -> author link, so the rendered list contains author fields.
-    await createContentType(h.ctx, scope, {
+    await createContentType(h.ctx, SYSTEM_CALLER, scope, {
       apiId: 'post',
       name: 'post',
       displayField: 'title',

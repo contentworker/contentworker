@@ -14,6 +14,7 @@ import {
   pruneEventHistory,
   publishEntry,
   relayOutbox,
+  SYSTEM_CALLER,
 } from '../src/index';
 
 const scope = { spaceId: 'shop', environmentId: 'main' };
@@ -32,7 +33,7 @@ function setup() {
 
 async function seedAndPublish(ctx: AppContext, n: number) {
   await createSpace(ctx, { spaceId: 'shop', name: 'Shop', defaultLocale: 'en-US' });
-  await createContentType(ctx, scope, {
+  await createContentType(ctx, SYSTEM_CALLER, scope, {
     apiId: 'article',
     name: 'Article',
     displayField: 'title',

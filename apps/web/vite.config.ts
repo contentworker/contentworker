@@ -13,6 +13,23 @@ import { defineConfig } from 'vite';
 const e2e = process.env.CONTENTWORKER_E2E === '1';
 
 /**
+ * A fresh deployment's first run (`pnpm dev:first-run`): a database of its own under
+ * .wrangler/first-run, nothing seeded, and the admin closed until set up, as a deployment is
+ * (`awaitingSetup`), so /setup → /setup/two-factor → /setup/space can be walked locally.
+ */
+const firstRun = !e2e && process.env.CONTENTWORKER_FIRST_RUN === '1';
+// Its setup code is public and fixed: a build carrying it would let anyone become the first admin.
+if (firstRun && process.argv.includes('build'))
+  throw new Error('CONTENTWORKER_FIRST_RUN is for local development (pnpm dev), never a build.');
+
+/** The first run's setup code: local only, never a deployment's (they come from provisioning). */
+const FIRST_RUN_SETUP_CODE = 'local-first-run';
+if (firstRun)
+  console.log(
+    `\n  First run: every page goes to /setup until it is done. Setup code: ${FIRST_RUN_SETUP_CODE}\n`,
+  );
+
+/**
  * The dev server's port: PORT, else 5173. Fixed (strictPort), never "the next free one", because
  * the local stack's OAuth issuer, the MCP smoke scripts and the docs all name this origin; a busy
  * port fails fast instead of moving the admin somewhere they don't point.
@@ -46,7 +63,7 @@ const LOCAL_STACK_VARS = {
   // Local dev always runs on the demo dataset (@contentworker/seed), loaded on the api's first
   // request. The device tests keep their fresh, empty database: they create what they need.
   // Config validation refuses SEED_DEV wherever secure secrets are required.
-  SEED_DEV: e2e ? 'false' : 'true',
+  SEED_DEV: e2e || firstRun ? 'false' : 'true',
   // SEED_SCALE=10 pnpm dev seeds ~10× the demo corpus (with CONTENTWORKER_STATE so it doesn't
   // land in the everyday database).
   SEED_SCALE: process.env.SEED_SCALE ?? '1',
@@ -76,8 +93,16 @@ export default defineConfig({
       // CONTENTWORKER_REMOTE=1 pnpm dev opts in (never under the e2e harness).
       remoteBindings: !e2e && process.env.CONTENTWORKER_REMOTE === '1',
       ...(e2e ? { persistState: { path: '.wrangler/e2e' } } : {}),
+      ...(firstRun
+        ? {
+            persistState: { path: '.wrangler/first-run' },
+            config: () => ({
+              vars: { FIRST_RUN: 'true', SETUP_TOKEN: FIRST_RUN_SETUP_CODE },
+            }),
+          }
+        : {}),
       // A separate local database (e.g. CONTENTWORKER_STATE=.wrangler/scale for a large seed).
-      ...(!e2e && process.env.CONTENTWORKER_STATE
+      ...(!e2e && !firstRun && process.env.CONTENTWORKER_STATE
         ? { persistState: { path: process.env.CONTENTWORKER_STATE } }
         : {}),
       // `pnpm dev` runs the whole stack in one session: this web Worker plus the api, engine

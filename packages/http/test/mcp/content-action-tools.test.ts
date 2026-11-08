@@ -9,6 +9,7 @@ import {
   createSpace,
   publishContentType,
   publishEntry,
+  SYSTEM_CALLER,
   trashEntry,
   updateEntry,
 } from '@contentworker/application';
@@ -55,7 +56,7 @@ async function setup() {
     blob: new FakeBlobStore(),
   };
   await createSpace(ctx, { spaceId: SPACE, name: 'Site', defaultLocale: 'en-US' });
-  await createContentType(ctx, scope, {
+  await createContentType(ctx, SYSTEM_CALLER, scope, {
     apiId: 'post',
     name: 'Post',
     displayField: 'title',

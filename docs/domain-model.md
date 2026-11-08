@@ -556,6 +556,7 @@ interface ContentType {
   icon?: string; // a kebab-case icon name the admin draws (≤ 40)
   agentInstructions?: string; // style guidance for agents; never delivered (≤ 4000)
   layout?: ContentTypeLayout; // editor-only tabs and field groups; never delivered
+  preview?: { urlTemplate: string }; // the frontend URL the admin previews entries at; never delivered
   version: number; // bumped on each revision
   status: 'draft' | 'published';
 }
@@ -647,7 +648,7 @@ interface ContentType {
   `bulk.job_completed`, and records the outcome on the job (`BulkJobRepo.mergeConfig`,
   `config.typeDeletion`: `{ deleted: true }` or `{ deleted: false, reason }`, also when the job is
   stopped). `cloneContentType` defines a copy (fields, display field, singleton, group, description, icon,
-  agent instructions, layout; not `urlPattern`)
+  agent instructions, layout, preview; not `urlPattern`)
   at version 1 under a new `apiId`, inserted by `ContentTypeRepo.create`, which never overwrites.
 - `checkUrlPattern(pattern, fields)` — a pattern is a path starting with `/` (at most
   `MAX_URL_PATTERN_LENGTH`, 512; no space, `?`, `#`, `[`, `]` or `\`) whose `{…}` placeholders are
@@ -656,6 +657,30 @@ interface ContentType {
   slug a kept pattern names is refused. `urlPath(pattern, entry, locale)` builds an entry's path (or
   `null` when a named slug has no value in that locale), which is also how a preview or site link
   can be built. A pattern is what makes a slug change write a [redirect](#redirects).
+- `checkPreviewTemplate(template, fields, { allowLoopback })` (`content-type/preview.ts`) —
+  `preview.urlTemplate` is an absolute URL (at most `MAX_PREVIEW_TEMPLATE_LENGTH`, 1024; no space):
+  `https`, or `http` on `localhost` or `127.0.0.1` only with `allowLoopback`, on a host of DNS
+  labels or a bracketed IPv6 address (never `*`), without credentials, with no placeholder in the
+  scheme or authority. `defineContentType` / `reviseContentType` take `{ previewLoopback }`, which
+  the use-cases pass from `AppContext.previewLoopback` (set by `wireEdge` with no D1 or
+  `REQUIRE_SECURE_SECRETS=false`).
+  Its placeholders are `{id}`, `{token}` (required), `{locale}`, `{space}`, `{environment}` and
+  `{field:<apiId>}` naming one of the type's top-level `PREVIEW_FIELD_TYPES` fields (Symbol, Slug,
+  Integer, Number, Date); anything else is a `ValidationError` on `preview.urlTemplate`. `null` or a
+  blank template clears it. Sent on a revision it is checked against the revised fields (one sent
+  back as stored keeps its scheme as it stands); left out, the stored one is kept while it still
+  checks and dropped when it doesn't (older code may have removed the field it names), so a save
+  that doesn't mention it is never refused for it. `previewOrigin(template)` is its fixed origin (what the admin's
+  `frame-src` may allow), `fillPreviewTemplate(template, values)` fills it URL-encoded, or `null`
+  while a named field has no value. `createPreviewLink` returns it filled as `frontendUrl` (a
+  localized field in the link's locale only; one that isn't, under the default locale). Stored in
+  `content_types.preview_url_template` (0035); a promotion that adds or changes it needs approval.
+  `createContentType`, `updateContentType` and `cloneContentType` take a required caller as their
+  second argument (`ContentTypeCaller`): the request's principal (the HTTP route and MCP tool pass
+  theirs), or `SYSTEM_CALLER` for seeding and snapshot import, which are authorized as a whole.
+  Anything else is refused before a read (`assertContentTypeCaller`), so the check fails closed.
+  `authorizePreviewChange` holds a principal to `read` on the type when it sets a template other
+  than the stored one: it decides where that type's preview tokens go.
 
 ## Entry aggregate & state machine
 

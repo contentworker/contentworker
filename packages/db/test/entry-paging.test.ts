@@ -6,6 +6,7 @@ import {
   type ListedPreviewEntry,
   listPreviewEntryPage,
   publishContentType,
+  SYSTEM_CALLER,
   updateEntry,
 } from '@contentworker/application';
 import type { Scope } from '@contentworker/domain';
@@ -32,7 +33,7 @@ async function seedSpace(at: Scope) {
     defaultLocale: 'en-US',
     locales: ['en-US'],
   });
-  await createContentType(ctx, at, {
+  await createContentType(ctx, SYSTEM_CALLER, at, {
     apiId: 'article',
     name: 'Article',
     displayField: 'title',

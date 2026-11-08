@@ -19,6 +19,11 @@ import {
   TransactionConflictError,
 } from '@contentworker/ports';
 import { type BulkChunkOutcome, bulkMaxItemsOf, startBulkJob } from './bulk-jobs';
+import {
+  assertContentTypeCaller,
+  authorizePreviewChange,
+  type ContentTypeCaller,
+} from './content-types';
 import type { AppContext } from './context';
 import { purgeEntry, trashEntry } from './entries';
 
@@ -348,32 +353,42 @@ export async function finishContentTypeDeletion(
  * Copies a content type's definition under `newApiId` and `name`: its fields, display field and
  * singleton flag, as a new draft at version 1 with no entries. Not its URL pattern, which would
  * route the same paths to two types. A link restricted to the source type stays restricted to it.
+ * A copied preview URL is set on the new type, so `caller` is held to `authorizePreviewChange`
+ * for it.
  */
 export async function cloneContentType(
   ctx: AppContext,
+  caller: ContentTypeCaller,
   scope: Scope,
   source: string,
   newApiId: string,
   name: string,
 ): Promise<ContentType> {
+  assertContentTypeCaller(caller);
   const [from, taken] = await Promise.all([
     ctx.store.contentTypes.get(scope, source),
     ctx.store.contentTypes.get(scope, newApiId),
   ]);
   if (!from) throw new NotFoundError('ContentType', source);
   if (taken) throw new ConflictError(`A content type "${newApiId}" already exists`);
-  const clone = defineContentType({
-    apiId: newApiId,
-    name,
-    displayField: from.displayField,
-    fields: [...from.fields],
-    ...(from.singleton ? { singleton: true } : {}),
-    ...(from.group ? { group: from.group } : {}),
-    ...(from.description ? { description: from.description } : {}),
-    ...(from.icon ? { icon: from.icon } : {}),
-    ...(from.agentInstructions ? { agentInstructions: from.agentInstructions } : {}),
-    ...(from.layout ? { layout: from.layout } : {}),
-  });
+  authorizePreviewChange(caller, newApiId, undefined, from.preview);
+  // The copy keeps what the source holds as it stands: a loopback URL saved on a local stack too.
+  const clone = defineContentType(
+    {
+      apiId: newApiId,
+      name,
+      displayField: from.displayField,
+      fields: [...from.fields],
+      ...(from.singleton ? { singleton: true } : {}),
+      ...(from.group ? { group: from.group } : {}),
+      ...(from.description ? { description: from.description } : {}),
+      ...(from.icon ? { icon: from.icon } : {}),
+      ...(from.agentInstructions ? { agentInstructions: from.agentInstructions } : {}),
+      ...(from.layout ? { layout: from.layout } : {}),
+      ...(from.preview ? { preview: from.preview } : {}),
+    },
+    { previewLoopback: true },
+  );
   // Insert-only: a clone (or create) of the same apiId that landed after the read keeps its type.
   try {
     await ctx.store.contentTypes.create(scope, clone);

@@ -13,6 +13,7 @@ import {
   createContentType,
   createEntry,
   publishContentType,
+  SYSTEM_CALLER,
   trashEntry,
   updateEntry,
   validateEntry,
@@ -29,7 +30,7 @@ async function seed(hooks?: HookDispatcher) {
   store.seedSpace({ spaceId: 's1', defaultLocale: 'en-US', locales: ['en-US'] });
   ctx = { store, clock: new FixedClock(), ids: new SequenceIdGenerator('e'), hooks };
   for (const s of [scope, other]) {
-    await createContentType(ctx, s, {
+    await createContentType(ctx, SYSTEM_CALLER, s, {
       apiId: 'article',
       name: 'Article',
       displayField: 'title',
@@ -61,7 +62,7 @@ async function seed(hooks?: HookDispatcher) {
           position: 2,
         },
       ],
-    } as Parameters<typeof createContentType>[2]);
+    } as Parameters<typeof createContentType>[3]);
     await publishContentType(ctx, s, 'article');
   }
 }

@@ -9,6 +9,7 @@ import {
   publishContentType,
   publishEntry,
   requestPromotion,
+  SYSTEM_CALLER,
 } from '@contentworker/application';
 import { type Principal, SCOPES } from '@contentworker/domain';
 import type { Clock, IdGenerator } from '@contentworker/ports';
@@ -35,7 +36,7 @@ describe('promotions on D1', () => {
     await createSpace(ctx, { spaceId, name: 'P', defaultLocale: 'en-US', locales: ['en-US'] });
     await createEnvironment(ctx, spaceId, 'staging');
     for (const scope of [staging, main]) {
-      await createContentType(ctx, scope, {
+      await createContentType(ctx, SYSTEM_CALLER, scope, {
         apiId: 'page',
         name: 'Page',
         displayField: 'title',
@@ -49,7 +50,7 @@ describe('promotions on D1', () => {
             position: 0,
           },
         ],
-      } as Parameters<typeof createContentType>[2]);
+      } as Parameters<typeof createContentType>[3]);
       await publishContentType(ctx, scope, 'page');
     }
     const e = await createEntry(ctx, staging, {

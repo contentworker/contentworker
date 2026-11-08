@@ -25,6 +25,7 @@ import {
   listWorkflowVersions,
   MAX_WORKFLOW_NODES,
   publishWorkflowVersion,
+  SYSTEM_CALLER,
   saveWorkflowDraft,
   transitionEntry,
   validateWorkflowGraph,
@@ -45,7 +46,7 @@ function makeContext(): AppContext {
 }
 
 async function seedEntry(ctx: AppContext) {
-  await createContentType(ctx, scope, {
+  await createContentType(ctx, SYSTEM_CALLER, scope, {
     apiId: 'article',
     name: 'Article',
     displayField: 'title',

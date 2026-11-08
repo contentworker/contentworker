@@ -184,12 +184,18 @@ Recovery targets not met yet (`docs/backup-and-restore.md`) and the move to a pr
   Deferred until a customer is close; the plan is in the private fleet repo.
 - [ ] **Restore drill.** Time a database restore against its 1-hour target.
 - [ ] **Assistant recovery.** Nothing calls the conversation object's point-in-time recovery.
-- [ ] **Fleet cutover.** Live since 2026-11-07: the registry, rings and production secrets (set
-  from escrow) are in the private repo, the edge account token is on its `main`-only environment,
-  and this repo only dispatches to it. The escrow workflow stays defined here and the private repo
-  calls it, so its runs and artifacts aren't public. Left: once an escrow run from the private repo
-  succeeds, delete this repo's `production` environment and its repository-level edge account
-  secrets, which any branch can read.
+- [ ] **Fleet cutover.** Live since 2026-11-07: the registry, rings and every deployment's secrets
+  are in the private repo, and this repo only dispatches to it. One deploy token, shared as the
+  private repo's repository secrets, serves every deployment. Staging (its own zone) ships first in
+  every release, and a registry change ships on its own push. The escrow workflow stays defined
+  here and the private repo calls it, so its runs and artifacts aren't public; the first escrow of
+  both environments from there succeeded on 2026-11-07. Left, in order:
+  - [ ] Download both escrow generations, check they decrypt, keep them offline and delete the
+        artifacts (`docs/backup-and-restore.md`).
+  - [ ] Delete this repo's `production` environment and its repository-level edge account secrets,
+        which any branch can read. Nothing reads them since the cutover.
+  - [ ] Tick this item, and mark the cutover done in the private repo's README.
+  - [ ] Provision the demo deployment, still held in the registry.
 
 ### Parity milestones
 
@@ -312,8 +318,9 @@ Built on Blocks and the frontend runtime. Layouts stay a typed tree; rich text s
 `RichTextDocument`; styling is design tokens and enum props, never raw CSS.
 
 - [ ] **Live preview channel.** `@contentworker/sdk/live-preview`: the admin frames the customer's
-  frontend and pushes unsaved form state as patches; clicks select fields back. The page side and
-  the protocol are in place (`startLivePreview`, `useLivePreview`); the admin side is next.
+  frontend and pushes unsaved form state as patches; clicks select fields back. Spec (proposed):
+  [`docs/specs/live-preview-channel.md`](docs/specs/live-preview-channel.md). The page side
+  (`connectPreview`) is in place; the admin side is next.
 - [ ] **Blocks renderers.** `<Blocks components={…} />` for React, Vue and the frontend runtime, typed
   by codegen.
 - [ ] **Layout patches.** `patchBlocks` with key-addressed create, update, move and remove, for

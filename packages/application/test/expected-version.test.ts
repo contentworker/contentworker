@@ -9,6 +9,7 @@ import {
   publishContentType,
   publishEntry,
   restoreVersion,
+  SYSTEM_CALLER,
   unpublishEntry,
   updateEntry,
 } from '../src/index';
@@ -22,7 +23,7 @@ function makeContext(): AppContext {
 }
 
 async function seed(ctx: AppContext) {
-  await createContentType(ctx, scope, {
+  await createContentType(ctx, SYSTEM_CALLER, scope, {
     apiId: 'article',
     name: 'Article',
     displayField: 'title',

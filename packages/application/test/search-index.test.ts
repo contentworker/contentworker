@@ -13,6 +13,7 @@ import {
   createSpace,
   extractTextByLocale,
   publishEntry,
+  SYSTEM_CALLER,
   searchIndexHealth,
   unpublishEntry,
 } from '../src/index';
@@ -33,7 +34,7 @@ describe('search index health', () => {
     index = new InMemorySearchIndex();
     await createSpace(ctx, { spaceId: 'kb', name: 'kb', defaultLocale: 'en-US' });
     for (const s of [scope, other]) {
-      await createContentType(ctx, s, {
+      await createContentType(ctx, SYSTEM_CALLER, s, {
         apiId: 'article',
         name: 'Article',
         displayField: 'title',
@@ -48,7 +49,7 @@ describe('search index health', () => {
           },
         ],
       });
-      await createContentType(ctx, s, {
+      await createContentType(ctx, SYSTEM_CALLER, s, {
         apiId: 'note',
         name: 'Note',
         displayField: 'title',

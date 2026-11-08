@@ -4,6 +4,7 @@ import {
   contentTypeDependents,
   createContentType,
   createEntry,
+  createPreviewLink,
   deleteContentType,
   deleteContentTypeWithEntries,
   getPreviewEntry,
@@ -20,6 +21,7 @@ import {
   authorizeContent,
   CONTENT_TYPE_LIMITS,
   type EntryFields,
+  MAX_PREVIEW_TEMPLATE_LENGTH,
   MAX_URL_PATTERN_LENGTH,
   maskDeniedFields,
   SCOPES,
@@ -51,8 +53,9 @@ export function registerWriteTools(server: McpServer, t: ToolContext): void {
         '{ value, label }, and `validations.messages` to replace a rule’s default error text. ' +
         '`rules` hide or disable a field while a sibling matches: a hidden field is not ' +
         'required, and a disabled one keeps its stored value. The type can carry a `group` and ' +
-        '`icon` (how the admin lists it), a `description`, and an editor-only `layout` of tabs ' +
-        'and field groups for the entry form.',
+        '`icon` (how the admin lists it), a `description`, an editor-only `layout` of tabs ' +
+        'and field groups for the entry form, and a `preview` URL template for the frontend ' +
+        'the admin previews entries on.',
       inputSchema: toolSchema('model_create_content_type', () =>
         z.object({
           apiId: z.string(),
@@ -111,6 +114,18 @@ export function registerWriteTools(server: McpServer, t: ToolContext): void {
                 '[{ name?, fields: [top-level field apiIds], collapsed? }] }] }; each field ' +
                 'placed at most once, unplaced fields follow on the first tab; null clears it',
             ),
+          preview: z
+            .object({ urlTemplate: z.string().max(MAX_PREVIEW_TEMPLATE_LENGTH) })
+            .nullable()
+            .optional()
+            .describe(
+              'editor-only, never delivered: where the admin previews entries on the frontend. ' +
+                'urlTemplate is an https URL (http to localhost on a local stack only) with a fixed ' +
+                'host, e.g. https://site.example/__preview?entry={id}#token={token}; ' +
+                'placeholders {id}, {token} (required), {locale}, {space}, {environment}, ' +
+                '{field:<apiId>} (a Symbol, Slug, Integer, Number or Date field), filled ' +
+                'URL-encoded; null clears it',
+            ),
           ...scopeArgs,
         }),
       ),
@@ -118,7 +133,7 @@ export function registerWriteTools(server: McpServer, t: ToolContext): void {
     async (args) => {
       guard(SCOPES.contentManage, scopeOf(args));
       return ok(
-        await createContentType(ctx, scopeOf(args), {
+        await createContentType(ctx, principal, scopeOf(args), {
           apiId: args.apiId,
           name: args.name,
           displayField: args.displayField,
@@ -132,6 +147,7 @@ export function registerWriteTools(server: McpServer, t: ToolContext): void {
             : {}),
           // biome-ignore lint/suspicious/noExplicitAny: zod record → domain ContentTypeLayout, checked there
           ...(args.layout !== undefined ? { layout: args.layout as any } : {}),
+          ...(args.preview !== undefined ? { preview: args.preview } : {}),
           // biome-ignore lint/suspicious/noExplicitAny: zod field shape → domain FieldDefinition
           fields: args.fields as any,
         }),
@@ -215,7 +231,8 @@ export function registerWriteTools(server: McpServer, t: ToolContext): void {
     {
       description:
         'Copy a content type’s definition (fields, display field, singleton, group, description, ' +
-        'icon, agent instructions, layout) under a new apiId and name, as a draft with no entries. Not its URL ' +
+        'icon, agent instructions, layout, preview URL) under a new apiId and name, as a draft with no ' +
+        'entries. Not its URL ' +
         'pattern.',
       inputSchema: toolSchema('model_clone_content_type', () =>
         z.object({
@@ -228,7 +245,9 @@ export function registerWriteTools(server: McpServer, t: ToolContext): void {
     },
     async (args) => {
       guard(SCOPES.contentManage, scopeOf(args));
-      return ok(await cloneContentType(ctx, scopeOf(args), args.apiId, args.newApiId, args.name));
+      return ok(
+        await cloneContentType(ctx, principal, scopeOf(args), args.apiId, args.newApiId, args.name),
+      );
     },
   );
 
@@ -362,6 +381,42 @@ export function registerWriteTools(server: McpServer, t: ToolContext): void {
       const place =
         args.after !== undefined ? { after: args.after } : { before: args.before ?? null };
       return ok(await moveEntry(ctx, scopeOf(args), args.id, place));
+    },
+  );
+
+  server.registerTool(
+    'entries_preview_link',
+    {
+      description:
+        'Mint an expiring preview link for one entry (default 72 hours): a token that reads ' +
+        'that entry, drafts included, returned once. `url` is the entry on the Preview API ' +
+        '(`previewPath` instead, a path, when the deployment has no public origin); ' +
+        'when its content type has a preview URL template, `frontendUrl` is the entry on the ' +
+        'site, in `locale` (the space default if absent). Share it only with whoever should see ' +
+        'the draft. Needs content:write and read on the entry.',
+      inputSchema: toolSchema('entries_preview_link', () =>
+        z.object({
+          id: z.string(),
+          ttlHours: z.number().positive().max(8760).optional(),
+          locale: z.string().min(1).max(35).optional(),
+          ...scopeArgs,
+        }),
+      ),
+    },
+    async (args) => {
+      guard(SCOPES.contentWrite, scopeOf(args));
+      await guardEntry(scopeOf(args), args.id, 'read');
+      const link = await createPreviewLink(ctx, deps.hasher, scopeOf(args), args.id, {
+        ...(args.ttlHours !== undefined ? { ttlHours: args.ttlHours } : {}),
+        ...(args.locale !== undefined ? { locale: args.locale } : {}),
+        // The admin fronts the Preview API, as the HTTP route's caller (its Origin) does.
+        previewBaseUrl: deps.inviteOrigin ?? '',
+      });
+      if (deps.inviteOrigin) return ok(link);
+      // No public origin is configured (OAUTH_ISSUER unset): a relative URL would read as a link
+      // to nowhere, so only the path is returned, named as one.
+      const { url, ...rest } = link;
+      return ok({ ...rest, previewPath: url });
     },
   );
 

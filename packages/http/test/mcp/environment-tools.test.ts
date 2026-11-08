@@ -7,6 +7,7 @@ import {
   createEnvironment,
   createSpace,
   publishContentType,
+  SYSTEM_CALLER,
   setEnvironmentAlias,
 } from '@contentworker/application';
 import { type Principal, SCOPES, scopesForKind } from '@contentworker/domain';
@@ -191,7 +192,7 @@ describe('environment_clone over MCP', () => {
     await createSpace(deps.ctx, { spaceId: 'space-1', name: 'S', defaultLocale: 'en-US' });
     await createEnvironment(deps.ctx, 'space-1', 'copy');
     const main = { spaceId: 'space-1', environmentId: 'main' };
-    await createContentType(deps.ctx, main, {
+    await createContentType(deps.ctx, SYSTEM_CALLER, main, {
       apiId: 'note',
       name: 'Note',
       displayField: 'title',
@@ -205,7 +206,7 @@ describe('environment_clone over MCP', () => {
           position: 0,
         },
       ],
-    } as Parameters<typeof createContentType>[2]);
+    } as Parameters<typeof createContentType>[3]);
     await publishContentType(deps.ctx, main, 'note');
     await createEntry(deps.ctx, main, {
       contentTypeApiId: 'note',
@@ -235,7 +236,7 @@ describe('environment_import over MCP', () => {
       await createEnvironment(deps.ctx, spaceId, 'copy');
     }
     const main = { spaceId: 'space-1', environmentId: 'main' };
-    await createContentType(deps.ctx, main, {
+    await createContentType(deps.ctx, SYSTEM_CALLER, main, {
       apiId: 'note',
       name: 'Note',
       displayField: 'title',
@@ -249,7 +250,7 @@ describe('environment_import over MCP', () => {
           position: 0,
         },
       ],
-    } as Parameters<typeof createContentType>[2]);
+    } as Parameters<typeof createContentType>[3]);
     await publishContentType(deps.ctx, main, 'note');
     await createEntry(deps.ctx, main, {
       contentTypeApiId: 'note',
@@ -345,7 +346,7 @@ describe('promotions over MCP', () => {
     await createEnvironment(deps.ctx, 'space-1', 'staging');
     for (const environmentId of ['staging', 'main']) {
       const scope = { spaceId: 'space-1', environmentId };
-      await createContentType(deps.ctx, scope, {
+      await createContentType(deps.ctx, SYSTEM_CALLER, scope, {
         apiId: 'note',
         name: 'Note',
         displayField: 'title',
@@ -359,7 +360,7 @@ describe('promotions over MCP', () => {
             position: 0,
           },
         ],
-      } as Parameters<typeof createContentType>[2]);
+      } as Parameters<typeof createContentType>[3]);
       await publishContentType(deps.ctx, scope, 'note');
     }
     const { entry } = await createEntry(

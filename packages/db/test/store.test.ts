@@ -41,6 +41,7 @@ import {
   publishEntry,
   publishWorkflowVersion,
   reportRun,
+  SYSTEM_CALLER,
   saveWorkflowDraft,
   startWorkflowRun,
   unpublishEntry,
@@ -99,7 +100,7 @@ describe('D1 store (contract)', () => {
 
   beforeAll(async () => {
     await createSpace(ctx, { spaceId, name: 'Test', defaultLocale: 'en-US', locales: ['en-US'] });
-    await createContentType(ctx, scope, {
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
       apiId: 'article',
       name: 'Article',
       displayField: 'title',
@@ -380,7 +381,7 @@ describe('D1 store (contract)', () => {
       defaultLocale: 'en-US',
       locales: ['en-US'],
     });
-    await createContentType(ctx, otherScope, {
+    await createContentType(ctx, SYSTEM_CALLER, otherScope, {
       apiId: 'article',
       name: 'Article',
       displayField: 'title',

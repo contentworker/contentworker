@@ -20,6 +20,7 @@ export * from './content-type/field-rules';
 export * from './content-type/field-values';
 export * from './content-type/layout';
 export * from './content-type/patterns';
+export * from './content-type/preview';
 export * from './content-type/slug';
 export * from './entry/authorship';
 export * from './entry/entry';
