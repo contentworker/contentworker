@@ -709,6 +709,47 @@ navigating.
 **In the admin.** The link opens the entry editor on the referenced field; see
 [Admin UI](./admin-ui.md#inline-edit-links).
 
+## Live preview
+
+`@contentworker/sdk/live-preview` is the frontend half of the live preview channel (M6): when the
+admin frames a page, the page renders the editor's unsaved values before anything is saved, and a
+click on a marked element selects that field in the admin. The admin's canvas, which connects to
+it, is not shipped yet; the protocol is specified in
+[`specs/live-preview-channel.md`](./specs/live-preview-channel.md).
+
+```ts
+import { connectPreview, previewFrameAncestors } from '@contentworker/sdk/live-preview';
+
+const preview = connectPreview({
+  adminOrigin: 'https://admin.example.com',
+  onState(entryId, locale, fields) {
+    // Re-render this entry with its unsaved fields: typed values, never markup.
+  },
+});
+preview.reportPage([{ entryId, contentType: 'page', locale: 'en-US' }]);
+preview.on('select', (ref) => {
+  /* outline the element carrying this ref, or clear it on null */
+});
+```
+
+- Call it on every page. It does nothing unless the page is framed, and throws if `adminOrigin`
+  is not an origin or is the page's own origin.
+- It connects with `connect.offer`. The admin answers `connect.accept` (the version both speak,
+  and the capabilities it will use: `select`, `patch.fields`, `scroll`, never more than the page
+  offered) or `connect.reject` (no shared version, logged with both version lists). An unanswered
+  offer is resent three times, a second apart.
+- Every message passes three checks: the sender's origin, the sender's window and the session's
+  channel id. Messages that fail are dropped whole and counted in `preview.dropped`.
+- Send `previewFrameAncestors(adminOrigin)` as the `Content-Security-Policy` of preview responses,
+  so only the admin can frame a draft page.
+- `isSafeTokenValue(value)` is the last check before a token value goes into a CSS custom
+  property: it rejects `url(`, `@import`, escapes, quotes, comments, `!important` and any function
+  outside `var`, `calc`, `clamp`, `min`, `max`, `rgb`, `hsl` and `oklch`.
+
+A ref's `field` can be a path into blocks, `body[<_key>].heading` (`formatFieldPath`,
+`parseFieldPath` and `topLevelField` from `@contentworker/sdk`). It is still a six-part ref, so
+inline-edit links keep working: the entry editor opens the top-level field.
+
 ## GraphQL
 
 If you prefer GraphQL over the REST client, the Delivery API also exposes a per-space GraphQL

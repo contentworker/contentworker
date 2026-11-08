@@ -45,6 +45,7 @@ import { PublishConfirm } from '../components/entries/PublishConfirm';
 import { GenerateEntryDialog } from '../components/GenerateEntryDialog';
 import { orDirect, useAssistantEdit, usePageContext } from '../lib/assistant';
 import { useClient } from '../lib/client-context';
+import { linkedFieldApiId } from '../lib/entry-url';
 import { dateTime, toMs } from '../lib/format';
 import type { EntryAggregate, EntryView, ModelTier } from '../lib/management';
 import {
@@ -92,7 +93,7 @@ export function EntryEditor() {
 
   // An inline-edit deep link from a previewed page: which field it came from,
   // and which space it was rendered against.
-  const linkedField = searchParams.get('field');
+  const linkedField = linkedFieldApiId(searchParams.get('field'));
   const linkedSpace = searchParams.get('space');
   const linkedEnv = searchParams.get('env');
   const wrongScope =

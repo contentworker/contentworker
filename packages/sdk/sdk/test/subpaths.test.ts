@@ -5,6 +5,7 @@ import manifest from '../package.json' with { type: 'json' };
 const SOURCES: Record<string, () => Promise<Record<string, unknown>>> = {
   '.': () => import('@contentworker/sdk-core'),
   './inline-edit': () => import('@contentworker/sdk-core/inline-edit'),
+  './live-preview': () => import('@contentworker/sdk-core/live-preview'),
   './redirects': () => import('@contentworker/sdk-core/redirects'),
   './webhooks': () => import('@contentworker/sdk-core/webhooks'),
   './rich-text': () => import('@contentworker/sdk-rich-text'),
@@ -19,6 +20,7 @@ const SOURCES: Record<string, () => Promise<Record<string, unknown>>> = {
 const FACADES: Record<string, () => Promise<Record<string, unknown>>> = {
   '.': () => import('../src/index'),
   './inline-edit': () => import('../src/inline-edit'),
+  './live-preview': () => import('../src/live-preview'),
   './redirects': () => import('../src/redirects'),
   './webhooks': () => import('../src/webhooks'),
   './rich-text': () => import('../src/rich-text'),

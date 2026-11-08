@@ -298,3 +298,11 @@ export function matchesView(state: EntryListState, view: SavedView): boolean {
   };
   return canonical(state) === canonical(viewToListState(view));
 }
+
+/**
+ * The field an inline-edit link focuses. A ref inside blocks names a path
+ * (`body[<key>].heading`), and the form focuses the top-level field it starts at.
+ */
+export function linkedFieldApiId(param: string | null): string | null {
+  return param?.split(/[[.]/)[0] || null;
+}
