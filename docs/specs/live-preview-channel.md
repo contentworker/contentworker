@@ -97,9 +97,13 @@ grant.
 | --- | --- |
 | `select` | Receive clicks and hovers on marked elements, and send `select` to outline one |
 | `patch.fields` | Send unsaved field values for entries on the page |
-| `patch.blocks` | Send key-addressed block operations (create, update, move, remove) |
-| `proposals` | Send Coworker's proposed blocks, rendered as ghosts (see `patch.blocks`) |
+| `patch.blocks` | Send key-addressed block operations (create, update, move, remove). Added with the `patchBlocks` use-case |
+| `proposals` | Send Coworker's proposed blocks, rendered as ghosts (see `patch.blocks`). Added with `patch.blocks` |
 | `scroll` | Ask the page to scroll a marked element into view |
+
+Version 1 ships `select`, `patch.fields` and `scroll`. The other two come with M6 "Layout
+patches"; as new capabilities and a new message kind both sides can ignore, they don't need a new
+version.
 
 `connect.accept` echoes the subset the admin will use: the offer, narrowed by the space's
 admin config (for example a role that may only select). The admin can narrow, never widen: a
@@ -129,9 +133,10 @@ counted (a debug counter on each side). It is never partially applied.
 - `page { url, entries: [{ entryId, contentType, locale }] }`: what this page renders: the
   entry being edited and the entries it references directly, at most 50 (`PAGE_ENTRY_LIMIT`). It
   tells the admin which entries' state to send. Raising the limit is an additive change.
-- `navigated { url }`: sent on navigation. The new page then connects again with a new
-  channel. The admin accepts it only if the URL matches a preview URL template of this space.
-- `pointer { kind: 'hover' | 'click', ref, rect }`: a marked element. `rect` is in iframe
+- `navigated { url }`: sent when the page goes away (`pagehide`, or `close()`), with the URL it
+  is leaving. The session ends there. The next page connects again with a new channel, and the
+  admin hears it only if its origin is one of the space's preview URL templates.
+- `pointer { pointer: 'hover' | 'click', ref, rect }`: a marked element. `rect` is in iframe
   viewport coordinates, so the admin can draw its outline outside the page.
 - `applied { rev }` and `failed { rev, reason }`: whether a patch rendered.
 
@@ -192,12 +197,13 @@ import { connectPreview } from '@contentworker/sdk/live-preview';
 
 const preview = connectPreview({
   adminOrigin: 'https://admin.example.com',
-  capabilities: ['select', 'patch.fields', 'patch.blocks', 'proposals', 'scroll'],
+  capabilities: ['select', 'patch.fields', 'scroll'],
   onState(entryId, locale, fields) { /* re-render with these values */ },
 });
 
-preview.on('select', (ref) => { /* … */ });
-preview.emit('page', { url: location.href, entries });
+preview.reportPage(entries); // sent once connected, even if called before
+preview.reportPointer('click', ref, element.getBoundingClientRect());
+preview.on('select', (ref) => { /* outline it, or clear on null */ });
 preview.close();
 ```
 
@@ -208,16 +214,17 @@ preview.close();
 - When connected, `mountInlineEditor` (`inline-edit.ts`) is driven by the channel. Its
   toggle is hidden, the admin turns editing on and off, and clicks go to `pointer` instead of
   opening a new tab. The overlay draws nothing in the page, since the admin draws the outline.
-- Before the page unloads, a final `navigated` is posted. If the parent is gone, nothing is
+- When the page goes away, a final `navigated` is posted. If the parent is gone, nothing is
   retried: the next page's `connect.offer` is the recovery.
 
 ## Where the code goes
 
 | Part | Location |
 | --- | --- |
-| Message types, schemas, `acceptMessage`, version list, `isSafeTokenValue` | `packages/sdk/core/src/live-preview/` |
+| Message types, schemas, the checks (`acceptGuestMessage`, `acceptHostMessage`), version list, `isSafeTokenValue` | `packages/sdk/core/src/live-preview/` |
 | Frontend half (`connectPreview`) | same, exported as the `@contentworker/sdk/live-preview` subpath (`packages/sdk/sdk`: exports, `src/`, `tsup.config.ts`, `scripts/types.ts`, subpath test) |
-| Admin half (`usePreviewChannel`, the framed canvas) | `apps/web/app/cms/...`, importing the protocol from `@contentworker/sdk-core` (`workspace:*`) so both sides share one definition |
+| Admin half, framework-free (`connectPreviewHost`) | `packages/sdk/core/src/live-preview/host.ts`, a workspace-only export (`@contentworker/sdk-core/live-preview-host`), not published |
+| Admin canvas (`usePreviewChannel` and the framed canvas) | `apps/web/app/cms/...`, over `connectPreviewHost`, so both sides share one definition |
 | Ref paths | `content-ref.ts` (format and parse helpers for paths) |
 | Runtime wiring and `frame-ancestors` | `contentworker/site` (`@contentworker/frontend`) |
 | `blocks.patch` ops | shared with the `patchBlocks` use-case, which is exposed over HTTP and MCP (M6 "Layout patches") |
@@ -236,8 +243,9 @@ the same edits through `patchBlocks` over HTTP and MCP.
 - **Capabilities**: the admin never sends a message needing a capability that wasn't accepted,
   and the frontend refuses one that arrives anyway.
 - **Ordering**: in-order patches apply, a gap answers `failed: gap`, and `entry.state` resets.
-- **Schemas**: fuzzed and malformed messages are dropped whole. Values are typed structures. A
-  string of HTML in a rich-text field fails validation.
+- **Schemas**: fuzzed and malformed messages are dropped whole. Values are JSON data only: no
+  dates, maps, cycles, non-finite numbers or deep nesting. (The channel doesn't know field types;
+  the page renders values with the same typed renderers it uses for Delivery.)
 - **Token values**: `isSafeTokenValue` accepts the allowed functions and rejects every listed
   pattern, including nested and mixed-case forms (`URL(`, `u\rl(`).
 - **Refs**: path refs round-trip. An old six-part ref still parses. `adminEditUrl` with a path
