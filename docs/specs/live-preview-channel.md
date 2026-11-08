@@ -65,7 +65,7 @@ something the other two miss.
 
 | Check | Admin side | Frontend side |
 | --- | --- | --- |
-| Origin | `event.origin` equals the origin of the URL the admin framed (updated on `navigated`, see below) | `event.origin` equals the configured `adminOrigin` |
+| Origin | `event.origin` is the origin of one of the space's preview URL templates | `event.origin` equals the configured `adminOrigin` |
 | Sender | `event.source === iframe.contentWindow` | `event.source === window.parent` |
 | Channel | `data.channel` equals the pinned channel (on an offer: new, well formed) | `data.channel` equals its own channel |
 
@@ -126,8 +126,9 @@ counted (a debug counter on each side). It is never partially applied.
 ### Frontend → admin
 
 - `connect.offer { versions, capabilities, channel, sdk: { name, version } }`.
-- `page { url, entries: [{ entryId, contentType, locale }] }`: what this page renders. It
-  tells the admin which entries' state to send.
+- `page { url, entries: [{ entryId, contentType, locale }] }`: what this page renders: the
+  entry being edited and the entries it references directly, at most 50 (`PAGE_ENTRY_LIMIT`). It
+  tells the admin which entries' state to send. Raising the limit is an additive change.
 - `navigated { url }`: sent on navigation. The new page then connects again with a new
   channel. The admin accepts it only if the URL matches a preview URL template of this space.
 - `pointer { kind: 'hover' | 'click', ref, rect }`: a marked element. `rect` is in iframe
@@ -254,13 +255,12 @@ The canvas UI (toolbox, seams, dock, inspector, undo), the `patchBlocks` use-cas
 renderers, and per-breakpoint overrides each have their own M6 item. This spec only fixes the
 channel they use.
 
-## Open questions
+## Decisions
 
-1. Does the admin pin the frontend's origin from the framed URL alone, or also from an origin
-   list the space configures on the "connect a frontend" screen? The list is stricter, but it's
-   one more setting.
-2. Should `page` report entries from every block reference on the page, or only the entry being
-   edited and its direct references? More entries means the page can show more edits, at the
-   cost of larger state messages.
-3. Do we want a `resize` message (frame height follows the page), or does the canvas always
-   scroll inside a fixed-height frame?
+1. **Allowed frontend origins** are the origins of the space's preview URL templates. Those are
+   already space config, so the admin needs no separate origin list, and a navigation off them
+   ends live preview.
+2. **What the page reports** is the entry being edited and its direct references, capped at
+   `PAGE_ENTRY_LIMIT` (50). A wider set can come later without a version bump.
+3. **Frame height** is fixed: the canvas scrolls inside the frame and offers viewport-width
+   presets for breakpoints. There is no `resize` message.
