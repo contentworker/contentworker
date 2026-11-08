@@ -2,8 +2,10 @@
  * What a change the model proposed would do, read from the system before the person confirms it:
  * a draft save as the field diff from what the draft holds now (`diffEntryFields`, the domain's
  * own diff), a new entry by its fields, a batch by the entries it names, a tagging by its tags'
- * names, a release by its title. The proposal's input is the exact call that runs on Confirm, so it
- * is what is shown; anything a model wrote around it (its prose) never reaches here.
+ * names, a release by its title, a block patch as the field diff its dry run answers (the api's
+ * own checks, `checkEntryBlocks`, nothing written). The proposal's input is the
+ * exact call that runs on Confirm, so it is what is shown; anything a model wrote around it (its
+ * prose) never reaches here.
  */
 
 import { type ContentType, diffEntryFields, type EntryFields } from '@contentworker/domain';
@@ -21,6 +23,7 @@ import {
   type ReviewField,
   reviewFields,
 } from '../entries/EntryReview';
+import { type BlockRefusal, BlockRefused, readBlockPatch } from './block-proposal';
 import type { Part } from './parts';
 
 /** What a proposal is, as far as reviewing it goes. */
@@ -43,6 +46,13 @@ export type Proposal =
       readonly releaseId: string;
       readonly entryId: string;
       readonly unpublish: boolean;
+    }
+  | {
+      readonly kind: 'blocks';
+      /** Empty, or the version missing, when the call doesn't say: the card then can't confirm. */
+      readonly entryId: string;
+      readonly expectedVersion?: number;
+      readonly ops: readonly unknown[];
     };
 
 const str = (v: unknown) => (typeof v === 'string' && v ? v : undefined);
@@ -99,6 +109,16 @@ export function proposalOf(part: Part): Proposal | null {
         concepts: strings(input.concepts).length,
       };
     }
+    case 'entry_blocks_patch': {
+      // Always a proposal, however malformed: a card that can't show what changes stays held.
+      const version = input.expectedVersion;
+      return {
+        kind: 'blocks',
+        entryId: str(input.id) ?? '',
+        ...(typeof version === 'number' ? { expectedVersion: version } : {}),
+        ops: Array.isArray(input.ops) ? input.ops : [],
+      };
+    }
     case 'releases_add_entry': {
       const releaseId = str(input.releaseId);
       const entryId = str(input.entryId);
@@ -130,11 +150,16 @@ export type ProposalReview =
       readonly entries?: { readonly titles: readonly string[]; readonly more: number };
       readonly tags?: { readonly names: readonly string[]; readonly created: readonly string[] };
       readonly release?: string;
-    };
+      /** A block patch's steps, in order, each naming its blocks and where they go. */
+      readonly steps?: readonly string[];
+    }
+  /** Read, and it can't be confirmed as it stands: the card says why, and Confirm stays off. */
+  | { readonly status: 'refused'; readonly title?: string; readonly refusal: BlockRefusal };
 
 type Ready = Extract<ProposalReview, { status: 'ready' }>;
+type Read = Ready | Extract<ProposalReview, { status: 'refused' }>;
 
-async function readProposal(client: ManagementClient, p: Proposal, locale: string): Promise<Ready> {
+async function readProposal(client: ManagementClient, p: Proposal, locale: string): Promise<Read> {
   const types = await client.listContentTypes();
   const titleOf = async (id: string) => {
     const entry = await client.getEntry(id);
@@ -197,6 +222,8 @@ async function readProposal(client: ManagementClient, p: Proposal, locale: strin
       ]);
       return { status: 'ready', title, release: release.release.title };
     }
+    case 'blocks':
+      return readBlockPatch(client, p, types, locale);
   }
 }
 
@@ -271,6 +298,7 @@ export function ProposalDetail({
     return <div className="min-h-12">{note('Reading what this changes…')}</div>;
   if (review.status === 'failed')
     return <ReviewFailed onRetry={onRetry} next="Try again to see what changes and confirm." />;
+  if (review.status === 'refused') return <BlockRefused refusal={review.refusal} />;
   if (review.status !== 'ready') return null;
 
   if (review.entries) {
@@ -326,12 +354,30 @@ export function ProposalDetail({
   }
   if (review.fields) {
     const create = proposal.kind === 'create';
+    const blocks = proposal.kind === 'blocks';
     const n = changedCount(review.fields);
     if (n === 0) return note('The draft already holds these values; saving changes nothing.');
     return (
       <Collapsible open={open} onOpenChange={setOpen} className="space-y-1">
-        {note(fieldsChange(n, create))}
-        <ChangedFields fields={review.fields} />
+        {review.steps?.length ? (
+          <ol aria-label="Steps" className="list-decimal space-y-0.5 ps-5 text-ui">
+            {review.steps.map((s, i) => (
+              // Steps needn't be unique; their order is the call's.
+              <li key={`${i}:${s}`} className="break-words">
+                {s}
+              </li>
+            ))}
+          </ol>
+        ) : null}
+        {note(
+          // The colon introduces the list below it; open, the list steps aside, and so does it.
+          (blocks
+            ? `${n} ${n === 1 ? 'change' : 'changes'} in the draft:`
+            : fieldsChange(n, create)
+          ).replace(/:$/, open ? '.' : ':'),
+        )}
+        {/* Open, the review below names each change itself: the list would say it twice. */}
+        {open ? null : <ChangedFields fields={review.fields} />}
         <Button
           variant="link"
           size="xs"

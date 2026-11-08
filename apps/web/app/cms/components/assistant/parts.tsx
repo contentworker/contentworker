@@ -48,6 +48,7 @@ import {
   useHandFocus,
 } from '../entries/EntryReview';
 import { DEFAULT_STARTERS } from '../layout/CreateSpaceDialog';
+import { refusalHold } from './block-proposal';
 import { ProposalDetail, proposalOf, useProposalReview } from './proposal';
 
 export type Part = ToolUIPart | DynamicToolUIPart;
@@ -524,7 +525,7 @@ export function ActionCard({
   const reviewTitle =
     'title' in review && review.title
       ? review.title
-      : proposed.status === 'ready'
+      : proposed.status === 'ready' || proposed.status === 'refused'
         ? proposed.title
         : undefined;
   const about = aboutOf(part) ?? reviewTitle;
@@ -532,7 +533,7 @@ export function ActionCard({
   const blocked = target
     ? place !== undefined || review.status === 'failed'
     : proposal
-      ? proposalPlace !== undefined || proposed.status === 'failed'
+      ? proposalPlace !== undefined || proposed.status === 'failed' || proposed.status === 'refused'
       : false;
   const pending = target ? review.status === 'loading' : proposed.status === 'loading';
   const held = Boolean(target || proposal);
@@ -662,6 +663,11 @@ export function ActionCard({
                   blocked={blocked}
                   shows="what changes"
                   reading="reading what changes"
+                  why={
+                    proposed.status === 'refused' && !proposalPlace
+                      ? refusalHold(proposed.refusal)
+                      : undefined
+                  }
                 />
               ) : null}
               <ConfirmationActions>

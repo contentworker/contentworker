@@ -26,6 +26,7 @@ export * from './asset-zip';
 export * from './assets';
 export * from './audit';
 export * from './auth';
+export * from './block-patches';
 export * from './branching';
 export * from './bulk';
 export * from './bulk-jobs';

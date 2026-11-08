@@ -119,7 +119,11 @@ Over the API or MCP, declare `items.variants` in place of `items.fields`:
 Each stored block names its variant in `_type` and carries a `_key` the server assigns when the
 entry is saved: `{ "_type": "hero", "_key": "0192f4a1-…", "heading": "Spring launch" }`. Send
 existing blocks back with their `_key` and they keep it, so a front end can use it as a stable
-identity across reorders. A variant's fields follow the component rules above. For a slot that
+identity across reorders. To change a few blocks without resending the field, patch them by
+`_key` (`PATCH …/entries/:id/blocks`, MCP `entry_blocks_patch`): insert, update, move, remove and
+duplicate blocks, all or none, as a new draft. `GET …/entries/:id/blocks` (MCP
+`entry_blocks_outline`) lists every block's key, type and label to build the patch from. A
+variant's fields follow the component rules above. For a slot that
 holds at most one block, set `validations: { size: { max: 1 } }` on the field. Links inside
 blocks resolve with `include` like any other, GraphQL types the field as a union with one type per
 variant, and the generated TypeScript types narrow on `_type`.

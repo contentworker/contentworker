@@ -516,6 +516,76 @@ export interface EntrySeoChange {
   readonly ogImage?: { readonly id: string; readonly linkType: 'Asset' } | null;
 }
 
+/** Where a block goes: a parent block's slot (absent: the field itself) and a place in it. */
+export interface BlockPlace {
+  readonly parent?: { readonly key: string; readonly slot: string };
+  readonly before?: string;
+  readonly after?: string;
+  readonly index?: number;
+}
+
+/**
+ * One key-addressed op on a blocks field. `key` (and `parent.key`, `before`, `after`) is a block's
+ * `_key`, or the `ref` an earlier op in the same patch gave a new block. `locale` defaults to the
+ * space's default locale.
+ */
+export type BlockOp = { readonly field: string; readonly locale?: string } & (
+  | ({
+      readonly op: 'insert';
+      readonly block: { readonly _type: string; readonly [field: string]: unknown };
+      readonly ref?: string;
+    } & BlockPlace)
+  | {
+      readonly op: 'update';
+      readonly key: string;
+      readonly set?: Readonly<Record<string, unknown>>;
+      readonly unset?: readonly string[];
+    }
+  | { readonly op: 'move'; readonly key: string; readonly to: BlockPlace }
+  | { readonly op: 'remove'; readonly key: string }
+  | { readonly op: 'duplicate'; readonly key: string; readonly ref?: string }
+);
+
+/** What a block patch saved: the new draft, the key each ref was given and the ops that undo it. */
+export interface BlockPatchResult extends EntryView {
+  readonly keys: Readonly<Record<string, string>>;
+  /** Null when a server plugin rewrote the blocks the patch wrote: no undo is offered then. */
+  readonly inverse: readonly BlockOp[] | null;
+}
+
+/** A block patch's dry run (`entries.checkBlocks`): what the save would store, nothing written. */
+export interface BlockPatchCheck {
+  readonly valid: true;
+  readonly contentTypeApiId: string;
+  readonly fields: EntryFields;
+  /** The patch as it would apply: refs, positions and locales resolved, every key present. */
+  readonly applied: readonly BlockOp[];
+  /** The key each `ref` would be given, minted for this answer only. */
+  readonly keys: Readonly<Record<string, string>>;
+  readonly skippedHooks: readonly string[];
+}
+
+/** One block in an entry's outline (`entries.outlineBlocks`). */
+export interface BlockOutline {
+  readonly key: string | null;
+  readonly type: string;
+  readonly name: string;
+  readonly label?: string;
+  /** Where it sits, as validation issues name it: `body[2].items[0]`. */
+  readonly path: string;
+  /** Another block in the field holds the same key, so ops can't address it. */
+  readonly ambiguous?: true;
+  readonly children?: Readonly<Record<string, readonly BlockOutline[]>>;
+}
+
+export interface BlocksOutline {
+  readonly entryId: string;
+  /** The version outlined: pass it as `expectedVersion`. */
+  readonly version: number;
+  /** Blocks field → locale → its blocks. */
+  readonly fields: Readonly<Record<string, Readonly<Record<string, readonly BlockOutline[]>>>>;
+}
+
 export interface EntryVersion {
   readonly entryId: string;
   readonly version: number;
@@ -1752,6 +1822,25 @@ export function createManagementClient(opts: ManagementClientOptions) {
        */
       setSeo: (id: string, change: EntrySeoChange) =>
         patch<EntryView>(`${envBase}/entries/${e(id)}/seo`, change),
+      /**
+       * Edits blocks by `_key` (insert, update, move, remove, duplicate) and saves a new draft
+       * version. All ops apply or none do (a 422 naming the op that failed); a 409 when the entry
+       * is no longer at `expectedVersion`. Undo with `result.inverse` at the new version.
+       */
+      patchBlocks: (id: string, change: { expectedVersion: number; ops: readonly BlockOp[] }) =>
+        patch<BlockPatchResult>(`${envBase}/entries/${e(id)}/blocks`, change),
+      /**
+       * The same patch's dry run: the checks and errors `patchBlocks` would give, then the fields
+       * as the save would store them and the patch as it would apply. Nothing is written.
+       */
+      checkBlocks: (id: string, change: { expectedVersion: number; ops: readonly BlockOp[] }) =>
+        post<BlockPatchCheck>(`${envBase}/entries/blocks/validate`, { entryId: id, ...change }),
+      /** The entry's blocks fields as a tree of keys, types and labels, to build a patch from. */
+      outlineBlocks: (id: string, opts: { field?: string; locale?: string } = {}) =>
+        get<BlocksOutline>(`${envBase}/entries/${e(id)}/blocks`, {
+          field: opts.field,
+          locale: opts.locale,
+        }),
       /**
        * Moves an entry in its content type's manual order (`order=sys.position`): right after
        * another entry (`{ after: id }`, `null` for first) or right before one (`{ before: id }`,
