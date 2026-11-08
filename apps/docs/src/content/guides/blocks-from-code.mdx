@@ -34,7 +34,7 @@ object.
 
 ```json
 {
-  "targets": [{ "contentTypeApiId": "page", "field": "body" }],
+  "targets": [{ "contentTypeApiId": "page", "field": "sections" }],
   "blocks": [
     {
       "id": "hero",
@@ -66,6 +66,12 @@ object.
   ]
 }
 ```
+
+`page.sections` stands for a field of your own. A target must be a top-level Blocks field (an Array
+of components with block types), not a Rich text field: pointing at one is refused with
+`targets[0]: page.body is not a blocks field (an Array of Component with items.variants)`. The
+admin's Build › Blocks screen fills its copy of this example with the first Blocks field in your
+space.
 
 Each target names a content type and one of its top-level blocks fields. Its top level takes every
 block without `allowedParents`, or only the blocks a target lists in `blocks`. The catalog owns the
@@ -111,7 +117,7 @@ blocks it holds.
   allows it, and no slot may allow it from a parent the list leaves out.
 - A block can't end up inside itself, directly or through other blocks.
 - Slots nest at most two deep below the page (a section's columns' cards), as components do. A
-  deeper chain is refused, naming its path (`page.body[a].s[b].s[c].s`).
+  deeper chain is refused, naming its path (`page.sections[a].s[b].s[c].s`).
 
 The push answers `422` naming each problem by its place in the file (`blocks[hero].fields.tone`,
 `blocks[grid].slots.cards.allowedChildren`), all of them at once.

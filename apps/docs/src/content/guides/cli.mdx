@@ -78,6 +78,10 @@ API's when it refused.
 | `3`       | Not signed in, or the token was refused                              |
 | `4`       | `model apply` or `blocks push` found a destructive change and `--allow-destructive` wasn't passed, or `blocks push` would remove what entries still hold |
 
+When the API refuses a request, the CLI prints the API's message on stderr, and for a `422` each
+field it refused on its own line (`targets[0]: page has no field "blocks"`). With `--json` the
+same text is in `error.message`, and the API's whole answer in `error.details`.
+
 The CLI only asks a question when both stdin and stdout are a terminal. Elsewhere, a command that
 writes after a plan (`model apply`, `blocks push`, `import`) needs `--yes`, and fails with exit code 2 without it.
 

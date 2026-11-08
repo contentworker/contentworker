@@ -1,11 +1,12 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import { basename, extname, resolve } from 'node:path';
 import { generateTypes } from '@contentworker/sdk-codegen';
-import type {
-  EntryFields,
-  ImportAnalysis,
-  ImportInput,
-  ManagementClient,
+import {
+  type EntryFields,
+  type ImportAnalysis,
+  type ImportInput,
+  type ManagementClient,
+  ManagementError,
 } from '@contentworker/sdk-management';
 import { DEFAULT_BLOCKS_FILE, loadBlocks, pushInput, renderPush } from './blocks.js';
 import {
@@ -25,7 +26,7 @@ import {
   revoke,
   startDevice,
 } from './oauth.js';
-import { CliError, EXIT, pairs, type Result, table, usageError } from './output.js';
+import { apiErrorText, CliError, EXIT, pairs, type Result, table, usageError } from './output.js';
 import { clientFor, profileName, type Session, type Target, trimUrl, whoAmI } from './session.js';
 
 /** The API version this CLI is written against (`info.version` of the api's `/openapi.json`). */
@@ -72,6 +73,10 @@ export const GLOBAL_OPTIONS: Readonly<Record<string, OptionSpec>> = {
   profile: { type: 'string', description: 'Credentials profile (default: the current one)' },
   help: { type: 'boolean', short: 'h', description: 'Show help' },
 };
+
+/** A failure in words: what the api said (each refused field included), else the error's message. */
+const errorText = (err: unknown): string =>
+  err instanceof ManagementError ? apiErrorText(err) : (err as Error).message;
 
 const str = (ctx: CommandContext, key: string) => ctx.values[key] as string | undefined;
 const bool = (ctx: CommandContext, key: string) => ctx.values[key] === true;
@@ -390,8 +395,9 @@ const modelApply: Command = {
         // Nothing applied yet: the API's own error (status, code) says it best.
         if (applied.length === 0) throw err;
         // Otherwise what applied stays applied; say so, so a re-run's plan makes sense.
+        const why = errorText(err);
         throw new CliError(
-          `${t.apiId}: ${(err as Error).message} (already applied: ${applied.map((a) => a.apiId).join(', ')})`,
+          `${t.apiId}: ${why} (already applied: ${applied.map((a) => a.apiId).join(', ')})`,
           EXIT.failure,
           'apply_failed',
           {
@@ -942,13 +948,13 @@ const doctor: Command = {
           add('token', 'warn', 'the access token has expired');
         }
       } catch (err) {
-        add('token', 'fail', (err as Error).message);
+        add('token', 'fail', errorText(err));
       }
       try {
         const n = (await clientFor(session, io).contentTypes.list()).length;
         add('space', 'ok', `${session.space}/${session.environment}: ${n} content type(s)`);
       } catch (err) {
-        add('space', 'fail', `${session.space}/${session.environment}: ${(err as Error).message}`);
+        add('space', 'fail', `${session.space}/${session.environment}: ${errorText(err)}`);
       }
     }
 

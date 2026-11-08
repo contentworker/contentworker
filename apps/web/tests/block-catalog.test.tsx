@@ -63,7 +63,11 @@ const client = {
   getBlockCatalog: vi.fn<() => Promise<BlockCatalog | null>>(),
   getBlockUsage: vi.fn<() => Promise<BlockCatalogUsage>>(),
   listContentTypes: vi.fn(async () => [
-    { apiId: 'page', name: 'Page', fields: [{ apiId: 'body', name: 'Page body' }] },
+    {
+      apiId: 'page',
+      name: 'Page',
+      fields: [{ apiId: 'body', name: 'Page body', type: 'RichText' }],
+    },
   ]),
   getTeam: vi.fn(async () => ({
     people: [{ id: 'dev@example.com', name: 'Dev Person', email: 'dev@example.com' }],
@@ -118,6 +122,47 @@ describe('the block catalog screen', () => {
     expect(screen.getAllByRole('button', { name: 'Copy' })).toHaveLength(2);
     // Nothing to count before there is a catalog.
     expect(client.getBlockUsage).not.toHaveBeenCalled();
+  });
+
+  it('points the example at a placeholder, and says what a target must be, without a blocks field', async () => {
+    setup(null);
+    const example = await screen.findByLabelText('Example contentworker.blocks.json');
+    expect(example.textContent).toContain(
+      '{ "contentTypeApiId": "YOUR_CONTENT_TYPE", "field": "YOUR_BLOCKS_FIELD" }',
+    );
+    expect(await screen.findByText(/Replace the target with a Blocks field/)).toBeTruthy();
+    expect(screen.getByRole('link', { name: /Blocks from code guide/ }).getAttribute('href')).toBe(
+      'https://docs.contentworker.app/guides/blocks-from-code/',
+    );
+  });
+
+  it('prefills the example with the first blocks field in the space', async () => {
+    client.listContentTypes.mockResolvedValueOnce([
+      {
+        apiId: 'article',
+        name: 'Article',
+        fields: [{ apiId: 'body', name: 'Body', type: 'RichText' }],
+      },
+      {
+        apiId: 'landing',
+        name: 'Landing page',
+        fields: [
+          { apiId: 'title', name: 'Title', type: 'Symbol' },
+          {
+            apiId: 'sections',
+            name: 'Sections',
+            type: 'Array',
+            items: { type: 'Component', variants: [{ apiId: 'x', name: 'X', fields: [] }] },
+          },
+        ],
+      },
+    ] as never);
+    setup(null);
+    expect(await screen.findByText(/The example fills Landing page › Sections/)).toBeTruthy();
+    expect(screen.getByLabelText('Example contentworker.blocks.json').textContent).toContain(
+      '{ "contentTypeApiId": "landing", "field": "sections" }',
+    );
+    expect(screen.queryByText(/Replace the target/)).toBeNull();
   });
 
   it('offers to try again when the catalog can’t be loaded', async () => {

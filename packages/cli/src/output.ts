@@ -1,3 +1,5 @@
+import type { ManagementError } from '@contentworker/sdk-management';
+
 /**
  * What a command hands back, and how the CLI prints it: one JSON document on stdout with `--json`
  * (for agents and scripts), a table or a few lines otherwise. Errors go to stderr either way, so
@@ -31,6 +33,39 @@ export class CliError extends Error {
 }
 
 export const usageError = (message: string) => new CliError(message, EXIT.usage, 'usage');
+
+/** One field a write was refused for, as the api's `validation_failed` details name it. */
+interface Issue {
+  readonly field: string;
+  readonly locale?: string;
+  readonly message: string;
+}
+
+const isIssue = (v: unknown): v is Issue =>
+  typeof v === 'object' &&
+  v !== null &&
+  typeof (v as Issue).field === 'string' &&
+  typeof (v as Issue).message === 'string';
+
+/** The fields a refused write names (`validation_failed`), in the order the api gave them. */
+export function apiIssues(err: ManagementError): Issue[] {
+  const details = err.error?.details;
+  return Array.isArray(details) ? details.filter(isIssue) : [];
+}
+
+/**
+ * What the api said about a failed request, for a person: its message (the SDK's own only when the
+ * body had none), then each field it refused, one per line (`targets[0]: page has no field
+ * "blocks"`), so a 422 says what to fix rather than only that something was wrong. Every command
+ * reports an api failure through this.
+ */
+export function apiErrorText(err: ManagementError): string {
+  const message = err.error?.message || err.message;
+  const issues = apiIssues(err).map(
+    (i) => `  ${i.field || '(entry)'}${i.locale ? ` [${i.locale}]` : ''}: ${i.message}`,
+  );
+  return issues.length ? `${message}:\n${issues.join('\n')}` : message;
+}
 
 /** A command's outcome: `json` is printed with `--json`, `human` without it. */
 export interface Result {

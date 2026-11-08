@@ -145,14 +145,44 @@ describe('blocks push', () => {
     expect(pushes[1]).toMatchObject({ publish: false, expectedVersion: 2 });
   });
 
-  it('passes the server’s refusal through: a manifest problem is its 422', async () => {
-    const { h, file } = await setup(() =>
+  it('prints each field the server refused (422), and exits 1', async () => {
+    const refused = () =>
       status(422, {
-        error: { code: 'validation_failed', details: [{ field: 'blocks[hero].css' }] },
+        error: {
+          code: 'validation_failed',
+          message: 'One or more fields are invalid',
+          details: [
+            { field: 'targets[0]', message: 'page has no field "blocks"' },
+            { field: 'blocks[box].css', message: '"css" is a style prop, so it must be a token' },
+          ],
+        },
+      });
+    const { h, file } = await setup(refused);
+    const out = await h.run('blocks', 'push', file, '--dry-run');
+    expect(out.code).toBe(EXIT.failure);
+    expect(out.stderr).toBe(
+      [
+        'contentworker: One or more fields are invalid:',
+        '  targets[0]: page has no field "blocks"',
+        '  blocks[box].css: "css" is a style prop, so it must be a token',
+      ].join('\n'),
+    );
+    const json = await h.run('blocks', 'push', file, '--dry-run', '--json');
+    expect(json.code).toBe(EXIT.failure);
+    const error = JSON.parse(json.stderr).error;
+    expect(error).toMatchObject({ code: 'validation_failed', status: 422 });
+    expect(error.message).toContain('targets[0]: page has no field "blocks"');
+  });
+
+  it('prints the server’s own message for a refusal without issues (409)', async () => {
+    const { h, file } = await setup(() =>
+      status(409, {
+        error: { code: 'conflict', message: 'The block catalog is at version 3, not 2' },
       }),
     );
     const out = await h.run('blocks', 'push', file, '--dry-run');
     expect(out.code).toBe(EXIT.failure);
+    expect(out.stderr).toBe('contentworker: The block catalog is at version 3, not 2');
   });
 });
 

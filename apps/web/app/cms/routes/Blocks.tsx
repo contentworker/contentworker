@@ -1,4 +1,9 @@
-import type { BlockManifest, FieldDefinition } from '@contentworker/domain';
+import {
+  type BlockManifest,
+  blockVariants,
+  type ContentType,
+  type FieldDefinition,
+} from '@contentworker/domain';
 import { Button } from '@contentworker/ui/button';
 import {
   Catalog,
@@ -33,10 +38,37 @@ import { useContentTypesQuery, useScopedQuery } from '../lib/queries';
  * is a push from there, so the code and the admin can't disagree.
  */
 
-/** A minimal blocks file: what the empty state shows, as the CLI reads it. */
-export const EXAMPLE_BLOCKS_FILE = `{
+/** Where the empty state's example points when the space has no blocks field to fill in. */
+export const PLACEHOLDER_TARGET = {
+  contentTypeApiId: 'YOUR_CONTENT_TYPE',
+  field: 'YOUR_BLOCKS_FIELD',
+} as const;
+
+/** The guide the empty state links to. */
+export const BLOCKS_GUIDE_URL = 'https://docs.contentworker.app/guides/blocks-from-code/';
+
+/**
+ * The first top-level blocks field (an Array of components with block types) among the space's
+ * content types, in the model's order: what a push can target. Null when there is none.
+ */
+export function firstBlocksTarget(
+  types: readonly Pick<ContentType, 'apiId' | 'fields'>[],
+): { contentTypeApiId: string; field: string } | null {
+  for (const t of types) {
+    const f = t.fields.find((d) => blockVariants(d) !== undefined);
+    if (f) return { contentTypeApiId: t.apiId, field: f.apiId };
+  }
+  return null;
+}
+
+/** A minimal blocks file, as the CLI reads it, pushing one block into `target`. */
+export function exampleBlocksFile(target: {
+  readonly contentTypeApiId: string;
+  readonly field: string;
+}): string {
+  return `{
   "targets": [
-    { "contentTypeApiId": "page", "field": "body" }
+    { "contentTypeApiId": ${JSON.stringify(target.contentTypeApiId)}, "field": ${JSON.stringify(target.field)} }
   ],
   "blocks": [
     {
@@ -59,6 +91,7 @@ export const EXAMPLE_BLOCKS_FILE = `{
     }
   ]
 }`;
+}
 
 const PUSH_COMMAND = 'npx contentworker blocks push --dry-run';
 
@@ -73,6 +106,9 @@ export function Blocks() {
   });
   const typesQuery = useContentTypesQuery();
   const [filter, setFilter] = useState('');
+  // The example targets a real blocks field when the space has one, so copying it works.
+  const target = firstBlocksTarget(typesQuery.data ?? []);
+  const example = exampleBlocksFile(target ?? PLACEHOLDER_TARGET);
   const groupId = useId();
   // The team names who pushed; only an administrator may read it, so a refusal leaves the
   // pusher described by kind.
@@ -155,12 +191,34 @@ export function Blocks() {
               <code className="font-mono">contentworker.blocks.json</code> at the root of your site,
               then push them. The dry run shows what would change.
             </p>
+            <p className="max-w-measure text-muted-foreground text-sm">
+              {target ? (
+                <>
+                  The example fills {typeName(target.contentTypeApiId)} ›{' '}
+                  {fieldName(target.contentTypeApiId, target.field)}, and its block types become the
+                  catalog’s.{' '}
+                </>
+              ) : (
+                <>
+                  Replace the target with a Blocks field (an Array of components) on one of your
+                  content types: no content type has one yet.{' '}
+                </>
+              )}
+              <a
+                href={BLOCKS_GUIDE_URL}
+                target="_blank"
+                rel="noreferrer noopener"
+                className="text-link underline underline-offset-4"
+              >
+                Blocks from code guide<span className="sr-only"> (opens in a new tab)</span>
+              </a>
+            </p>
             <CodeBlock size="sm">
               <CodeBlockActions>
-                <CodeBlockCopyButton value={EXAMPLE_BLOCKS_FILE} />
+                <CodeBlockCopyButton value={example} />
               </CodeBlockActions>
               <CodeBlockContent aria-label="Example contentworker.blocks.json">
-                {EXAMPLE_BLOCKS_FILE}
+                {example}
               </CodeBlockContent>
             </CodeBlock>
             <CodeBlock size="sm">

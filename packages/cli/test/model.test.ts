@@ -242,6 +242,24 @@ describe('model apply', () => {
     expect(writes).toEqual([]);
   });
 
+  it('prints each field the api refused when a type fails to save (422)', async () => {
+    const { h, file } = await setup([]);
+    h.io.fetch = (async () =>
+      status(422, {
+        error: {
+          code: 'validation_failed',
+          message: 'One or more fields are invalid',
+          details: [{ field: 'fields.title', message: 'Invalid field apiId "1title"' }],
+        },
+      })) as typeof fetch;
+    await writeFile(file, renderModel([article], 'json'));
+    const out = await h.run('model', 'apply', file, '--yes');
+    expect(out.code).toBe(EXIT.failure);
+    expect(out.stderr).toBe(
+      'contentworker: One or more fields are invalid:\n  fields.title: Invalid field apiId "1title"',
+    );
+  });
+
   it('refuses a destructive plan without --allow-destructive (exit 4), even with --yes', async () => {
     const { h, writes, file } = await setup([live(article)]);
     await writeFile(file, renderModel([{ ...article, fields: [field('title')] }], 'json'));
