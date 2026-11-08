@@ -23,6 +23,7 @@ import {
   negotiateVersion,
   type PageEntry,
   type PreviewRect,
+  type ProposalMark,
   previewOrigin,
 } from './protocol.js';
 
@@ -101,6 +102,23 @@ export interface PreviewHost {
   /** Scrolls a marked element into view. Needs `scroll`. */
   scroll(ref: ContentRef): boolean;
   /**
+   * Shows Coworker's proposal on the page as ghosts: the field values after
+   * the proposed block patch (applied here, with the domain's patch engine),
+   * and how each touched block changed. Kept and shown again to a page that
+   * connects later, until cleared. Needs `proposals`.
+   */
+  showProposal(
+    entryId: string,
+    locale: string,
+    proposal: {
+      readonly fields: LivePreviewFields;
+      readonly marks: Readonly<Record<string, ProposalMark>>;
+      readonly removed?: readonly string[];
+    },
+  ): boolean;
+  /** Takes a proposal away, accepted or dismissed. Needs `proposals`. */
+  clearProposal(entryId: string, locale: string): boolean;
+  /**
    * Asks the framed page to connect again. Sent on creation too, so an admin
    * that starts listening after the page loaded still reaches it.
    */
@@ -159,6 +177,16 @@ export function connectPreviewHost(options: PreviewHostOptions): PreviewHost {
   const versions = options.versions ?? LIVE_PREVIEW_VERSIONS;
   const allowedCaps = options.capabilities ?? LIVE_PREVIEW_CAPABILITIES;
   const states = new Map<string, { entryId: string; locale: string; fields: LivePreviewFields }>();
+  const proposals = new Map<
+    string,
+    {
+      entryId: string;
+      locale: string;
+      fields: LivePreviewFields;
+      marks: Readonly<Record<string, ProposalMark>>;
+      removed: readonly string[];
+    }
+  >();
   const listeners = new Map<keyof PreviewHostEvents, Set<(detail: never) => void>>();
   let session: Session | undefined;
   let startedAt = Number.NEGATIVE_INFINITY;
@@ -247,6 +275,13 @@ export function connectPreviewHost(options: PreviewHostOptions): PreviewHost {
     post(s, 'connect.accept', { version, capabilities: s.capabilities });
     fire('connect', { origin, version, capabilities: s.capabilities, sdk: s.sdk });
     for (const key of states.keys()) sendState(s, key);
+    for (const key of proposals.keys()) sendProposal(s, key);
+  };
+
+  const sendProposal = (s: Session, key: string) => {
+    const p = proposals.get(key);
+    if (!p || !s.capabilities.includes('proposals')) return;
+    post(s, 'proposal.show', p);
   };
 
   // A ref from the page must be in the scope being edited, name an entry it
@@ -389,6 +424,27 @@ export function connectPreviewHost(options: PreviewHostOptions): PreviewHost {
       const s = session;
       if (!s?.capabilities.includes('scroll')) return false;
       post(s, 'scroll', { ref });
+      return true;
+    },
+    showProposal(entryId, locale, proposal) {
+      const key = keyOf(entryId, locale);
+      proposals.set(key, {
+        entryId,
+        locale,
+        fields: wireFields(proposal.fields),
+        marks: { ...proposal.marks },
+        removed: [...(proposal.removed ?? [])],
+      });
+      const s = session;
+      if (!s?.capabilities.includes('proposals')) return false;
+      sendProposal(s, key);
+      return true;
+    },
+    clearProposal(entryId, locale) {
+      const had = proposals.delete(keyOf(entryId, locale));
+      const s = session;
+      if (!had || !s?.capabilities.includes('proposals')) return false;
+      post(s, 'proposal.clear', { entryId, locale });
       return true;
     },
     reconnect() {

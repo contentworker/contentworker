@@ -107,13 +107,13 @@ grant.
 | --- | --- |
 | `select` | Receive clicks and hovers on marked elements, and send `select` to outline one |
 | `patch.fields` | Send unsaved field values for entries on the page |
-| `patch.blocks` | Send key-addressed block operations (create, update, move, remove). Added with the `patchBlocks` use-case |
-| `proposals` | Send Coworker's proposed blocks, rendered as ghosts (see `patch.blocks`). Added with `patch.blocks` |
+| `proposals` | Show Coworker's proposed change as ghost blocks, and take it away |
 | `scroll` | Ask the page to scroll a marked element into view |
 
-Version 1 ships `select`, `patch.fields` and `scroll`. The other two come with M6 "Layout
-patches"; as new capabilities and a new message kind both sides can ignore, they don't need a new
-version.
+Block edits need no capability of their own. The admin applies `patchBlocks` operations with the
+domain's patch engine and sends the changed blocks field in `entry.patch`; blocks carry stable
+`_key`s, so a keyed renderer keeps the page's DOM. A second patch engine in the page would have to
+match the domain's exactly, and nothing on the page needs the operations themselves.
 
 `connect.accept` echoes the subset the admin will use: the offer, narrowed by the space's
 admin config (for example a role that may only select). The admin can narrow, never widen: a
@@ -132,10 +132,15 @@ counted (a debug counter on each side). It is never partially applied.
 - `entry.state { rev, entryId, locale, fields }`: the whole unsaved state of one entry. Sent
   right after connect, and after any gap the admin can't fill with patches.
 - `entry.patch { rev, entryId, locale, fields }`: changed top-level field values since `rev - 1`.
-- `blocks.patch { rev, entryId, locale, field, ops }`: the same key-addressed operations as the
-  `patchBlocks` use-case (M6 "Layout patches"), so the editor and agents share one vocabulary.
-  An op may be `proposed: true`, which the frontend renders as a ghost block that is never
-  part of saved state.
+- `proposal.show { entryId, locale, fields, marks, removed }`: Coworker's proposal, never
+  saved. The admin applies the proposed block patch itself and sends the resulting top-level
+  field values; `marks` maps the `_key` of each block it inserts, updates or moves to `inserted`,
+  `updated` or `moved`, and `removed` lists the keys it deletes (at most 1,000 keys in all). The
+  page renders `fields` over the unsaved state and styles the marked blocks as ghosts. The admin
+  keeps it and shows it again to a page that connects later, and sends it again when the state
+  under it changes.
+- `proposal.clear { entryId, locale }`: the proposal was accepted (the unsaved state now holds it)
+  or dismissed.
 - `select { ref | null }` and `scroll { ref }`.
 
 ### Frontend → admin
@@ -211,7 +216,8 @@ block, so a path still points at the same block after a reorder.
   `allow-popups`, so a page can't open windows that hold a reference back to the frame. `allow-same-origin` grants the frontend only its own origin (it needs its own
   cookies and storage), which is safe only because that origin is never the admin's.
 - **No remote control.** The channel has no way to run script, read the DOM, take screenshots or
-  trigger clicks in the page. Coworker changes the page only through `blocks.patch` proposals.
+  trigger clicks in the page. Coworker changes the page only through `proposal.show`, and only
+  as ghosts until a person accepts it.
 
 ## Page-side API
 
@@ -220,8 +226,12 @@ import { connectPreview } from '@contentworker/sdk/live-preview';
 
 const preview = connectPreview({
   adminOrigin: 'https://admin.example.com',
-  capabilities: ['select', 'patch.fields', 'scroll'],
+  capabilities: ['select', 'patch.fields', 'scroll', 'proposals'],
   onState(entryId, locale, fields) { /* re-render with these values */ },
+});
+
+preview.on('proposal', ({ entryId, fields, marks }) => {
+  /* render `fields` (null: back to the state), ghosting the blocks `marks` names */
 });
 
 preview.reportPage(entries); // sent once connected, even if called before
@@ -250,7 +260,7 @@ preview.close();
 | Admin canvas (`usePreviewChannel` and the framed canvas) | `apps/web/app/cms/...`, over `connectPreviewHost`, so both sides share one definition |
 | Ref paths | `content-ref.ts` (format and parse helpers for paths) |
 | Runtime wiring and `frame-ancestors` | `contentworker/site` (`@contentworker/frontend`) |
-| `blocks.patch` ops | shared with the `patchBlocks` use-case, which is exposed over HTTP and MCP (M6 "Layout patches") |
+| Block edits and proposals | applied in the admin with the domain's `applyBlockPatch`, the engine behind the `patchBlocks` use-case (HTTP and MCP); the channel carries the resulting field values |
 
 The channel adds no use-case of its own: it moves unsaved form state and focus between two
 windows. Every change it previews is saved through the existing entry update, and agents get

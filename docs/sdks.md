@@ -738,8 +738,8 @@ preview.on('select', (ref) => {
 - Call it on every page. It does nothing unless the page is framed, and throws if `adminOrigin`
   is not an origin or is the page's own origin.
 - It connects with `connect.offer`. The admin answers `connect.accept` (the version both speak,
-  and the capabilities it will use: `select`, `patch.fields`, `scroll`, never more than the page
-  offered) or `connect.reject` (no shared version, logged with both version lists). An unanswered
+  and the capabilities it will use: `select`, `patch.fields`, `scroll`, `proposals`, never more
+  than the page offered) or `connect.reject` (no shared version, logged with both version lists). An unanswered
   offer is resent three times, a second apart. An admin that starts listening later sends
   `connect.request`, and the page offers again on a new channel; so does a page restored from the
   back/forward cache.
@@ -747,6 +747,10 @@ preview.on('select', (ref) => {
   for local development.
 - Every message passes three checks: the sender's origin, the sender's window and the session's
   channel id. Messages that fail are dropped whole and counted in `preview.dropped`.
+- With `proposals`, Coworker's proposed change arrives as a `proposal` event: the unsaved fields
+  with the proposed values over them, and `marks` (block `_key` → `inserted`, `updated` or
+  `moved`) to render as ghosts; `fields: null` takes it away. The admin applies block patches
+  itself, so the page never sees patch operations, only field values.
 - Send `previewFrameAncestors(adminOrigin)` as the `Content-Security-Policy` of preview responses,
   so only the admin can frame a draft page.
 - `isSafeTokenValue(value)` is the last check before a token value goes into a CSS custom

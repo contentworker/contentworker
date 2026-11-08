@@ -1003,3 +1003,127 @@ describe('review gaps', () => {
     expect(isJsonData({ a: 'x'.repeat(16_000_001) })).toBe(false);
   });
 });
+
+describe('proposals', () => {
+  const marks = { k2: 'inserted', k1: 'updated' } as const;
+  const proposed = {
+    body: [
+      { _type: 'hero', _key: 'k1', heading: 'Sharper' },
+      { _type: 'cta', _key: 'k2', label: 'Book a call' },
+    ],
+  };
+
+  it('shows a proposal over the unsaved state as ghosts, and takes it away', async () => {
+    const p = pair();
+    const h = host(p);
+    h.setState('e1', 'en-US', { title: 'A', body: [{ _type: 'hero', _key: 'k1', heading: 'Hi' }] });
+    const g = connectPreview({ adminOrigin: ADMIN, window: p.site });
+    const shown = vi.fn();
+    g.on('proposal', shown);
+    await flush();
+    expect(h.showProposal('e1', 'en-US', { fields: proposed, marks, removed: ['k0'] })).toBe(true);
+    await flush();
+    expect(shown).toHaveBeenLastCalledWith({
+      entryId: 'e1',
+      locale: 'en-US',
+      fields: { title: 'A', ...proposed },
+      marks,
+      removed: ['k0'],
+    });
+    expect(h.clearProposal('e1', 'en-US')).toBe(true);
+    await flush();
+    expect(shown).toHaveBeenLastCalledWith({
+      entryId: 'e1',
+      locale: 'en-US',
+      fields: null,
+      marks: {},
+      removed: [],
+    });
+    expect(h.clearProposal('e1', 'en-US')).toBe(false);
+  });
+
+  it('shows a standing proposal again to a page that connects later', async () => {
+    const p = pair();
+    const h = host(p);
+    h.showProposal('e1', 'en-US', { fields: proposed, marks });
+    const g = connectPreview({ adminOrigin: ADMIN, window: p.site });
+    const shown = vi.fn();
+    g.on('proposal', shown);
+    await flush();
+    expect(shown).toHaveBeenCalledWith(expect.objectContaining({ marks, removed: [] }));
+  });
+
+  it('needs the proposals capability on both sides', async () => {
+    const p = pair();
+    const h = host(p);
+    const g = connectPreview({ adminOrigin: ADMIN, window: p.site, capabilities: ['select'] });
+    const shown = vi.fn();
+    g.on('proposal', shown);
+    await flush();
+    expect(h.showProposal('e1', 'en-US', { fields: proposed, marks })).toBe(false);
+    p.site.dispatch({
+      data: {
+        cw: LIVE_PREVIEW_MARK,
+        v: 1,
+        channel: lastChannel(p),
+        kind: 'proposal.show',
+        entryId: 'e1',
+        locale: 'en-US',
+        fields: proposed,
+        marks,
+        removed: [],
+      },
+      origin: ADMIN,
+      source: p.toAdmin,
+    });
+    await flush();
+    expect(shown).not.toHaveBeenCalled();
+    expect(g.dropped).toBe(1);
+  });
+
+  it('drops a malformed proposal whole', async () => {
+    const p = pair();
+    host(p);
+    const g = connectPreview({ adminOrigin: ADMIN, window: p.site });
+    const shown = vi.fn();
+    g.on('proposal', shown);
+    await flush();
+    const many = Object.fromEntries(Array.from({ length: 1001 }, (_, i) => [`k${i}`, 'moved']));
+    const bad = [
+      { marks: { 'not a key': 'inserted' } },
+      { marks: { k1: 'deleted' } },
+      { marks: many },
+      { removed: ['ok', '<b>'] },
+      { removed: 'k1' },
+      { fields: { when: 'x', bad: Number.NaN } },
+    ];
+    for (const over of bad) {
+      p.site.dispatch({
+        data: {
+          cw: LIVE_PREVIEW_MARK,
+          v: 1,
+          channel: lastChannel(p),
+          kind: 'proposal.show',
+          entryId: 'e1',
+          locale: 'en-US',
+          fields: proposed,
+          marks,
+          removed: [],
+          ...over,
+        },
+        origin: ADMIN,
+        source: p.toAdmin,
+      });
+    }
+    await flush();
+    expect(shown).not.toHaveBeenCalled();
+    expect(g.dropped).toBe(bad.length);
+  });
+
+  it('refuses proposed values that are not JSON', () => {
+    const h = host(pair());
+    expect(() =>
+      h.showProposal('e1', 'en-US', { fields: { when: new Date() }, marks: {} }),
+    ).toThrow(TypeError);
+  });
+});

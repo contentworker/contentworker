@@ -19,6 +19,8 @@ export {
   type LivePreviewFields,
   PAGE_ENTRY_LIMIT,
   type PageEntry,
+  PROPOSAL_MARK_LIMIT,
   type PreviewRect,
+  type ProposalMark,
 } from './live-preview/protocol.js';
 export { isSafeTokenValue, TOKEN_VALUE_FUNCTIONS } from './live-preview/token-value.js';

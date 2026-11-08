@@ -23,6 +23,7 @@ import {
   PAGE_ENTRY_LIMIT,
   type PageEntry,
   type PreviewRect,
+  type ProposalMark,
   previewOrigin,
 } from './protocol.js';
 
@@ -76,6 +77,18 @@ export interface LivePreviewEvents {
   unanswered: undefined;
   select: ContentRef | null;
   scroll: ContentRef;
+  /**
+   * Coworker's proposal for an entry, or `fields: null` when it is taken away.
+   * `fields` is the unsaved state with the proposed values over it: render it
+   * in place of the state, and style the blocks `marks` names as ghosts.
+   */
+  proposal: {
+    readonly entryId: string;
+    readonly locale: string;
+    readonly fields: LivePreviewFields | null;
+    readonly marks: Readonly<Record<string, ProposalMark>>;
+    readonly removed: readonly string[];
+  };
 }
 
 export interface LivePreview {
@@ -288,6 +301,26 @@ export function connectPreview(options: ConnectPreviewOptions): LivePreview {
         return;
       case 'scroll':
         fire('scroll', message.ref);
+        return;
+      case 'proposal.show': {
+        const known = entries.get(`${message.entryId}\u0000${message.locale}`);
+        fire('proposal', {
+          entryId: message.entryId,
+          locale: message.locale,
+          fields: { ...known?.fields, ...message.fields },
+          marks: message.marks,
+          removed: message.removed,
+        });
+        return;
+      }
+      case 'proposal.clear':
+        fire('proposal', {
+          entryId: message.entryId,
+          locale: message.locale,
+          fields: null,
+          marks: {},
+          removed: [],
+        });
         return;
     }
   };

@@ -25,12 +25,13 @@ export const LIVE_PREVIEW_MARK = 'cw.live-preview';
 export const LIVE_PREVIEW_VERSIONS: readonly number[] = [1];
 
 /** What a page lets the admin do. Fixed when the preview connects. */
-export type LivePreviewCapability = 'select' | 'patch.fields' | 'scroll';
+export type LivePreviewCapability = 'select' | 'patch.fields' | 'scroll' | 'proposals';
 
 export const LIVE_PREVIEW_CAPABILITIES: readonly LivePreviewCapability[] = [
   'select',
   'patch.fields',
   'scroll',
+  'proposals',
 ];
 
 /** Most entries one `page` message reports: the edited entry and its direct references. */
@@ -115,6 +116,36 @@ export interface SelectMessage extends Envelope {
   readonly ref: ContentRef | null;
 }
 
+/** How a proposed change touches a block, by its `_key`. */
+export type ProposalMark = 'inserted' | 'updated' | 'moved';
+
+/** Most block keys one proposal marks. */
+export const PROPOSAL_MARK_LIMIT = 1000;
+
+/**
+ * Coworker's proposed change to an entry, shown as ghosts and never saved. The
+ * admin applies the proposed block patch itself and sends the resulting
+ * top-level field values, so the page needs no patch engine: it renders
+ * `fields` over the unsaved state and styles the marked blocks. `removed`
+ * names blocks the proposal deletes (absent from `fields`), for the admin's
+ * overlay or a page that wants to show them struck out.
+ */
+export interface ProposalShow extends Envelope {
+  readonly kind: 'proposal.show';
+  readonly entryId: string;
+  readonly locale: string;
+  readonly fields: LivePreviewFields;
+  readonly marks: Readonly<Record<string, ProposalMark>>;
+  readonly removed: readonly string[];
+}
+
+/** Takes the proposal away: accepted (the unsaved state now holds it) or dismissed. */
+export interface ProposalClear extends Envelope {
+  readonly kind: 'proposal.clear';
+  readonly entryId: string;
+  readonly locale: string;
+}
+
 export interface ScrollMessage extends Envelope {
   readonly kind: 'scroll';
   readonly ref: ContentRef;
@@ -161,7 +192,9 @@ export type HostMessage =
   | EntryState
   | EntryPatch
   | SelectMessage
-  | ScrollMessage;
+  | ScrollMessage
+  | ProposalShow
+  | ProposalClear;
 
 /** Frontend → admin. */
 export type GuestMessage =
@@ -183,6 +216,8 @@ export const HOST_MESSAGE_CAPABILITY: Readonly<
   'entry.patch': 'patch.fields',
   select: 'select',
   scroll: 'scroll',
+  'proposal.show': 'proposals',
+  'proposal.clear': 'proposals',
 };
 
 /** What a guest message needs the session to have accepted. */
@@ -427,6 +462,11 @@ function refOf(x: unknown): ContentRef | undefined {
   }
 }
 
+const BLOCK_KEY = /^[A-Za-z0-9_-]{1,64}$/;
+const isBlockKey = (x: unknown): x is string => typeof x === 'string' && BLOCK_KEY.test(x);
+const isMark = (x: unknown): x is ProposalMark =>
+  x === 'inserted' || x === 'updated' || x === 'moved';
+
 function isPageEntry(x: unknown): x is PageEntry {
   return isRecord(x) && isId(x.entryId) && isId(x.contentType) && isId(x.locale);
 }
@@ -547,6 +587,29 @@ export function parseHostMessage(d: Record<string, unknown>): HostMessage | unde
       const ref = refOf(d.ref);
       return ref ? { ...b, kind: d.kind, ref } : undefined;
     }
+    case 'proposal.show': {
+      const marks = d.marks;
+      const removed = d.removed;
+      if (!isId(d.entryId) || !isId(d.locale) || !isFields(d.fields)) return undefined;
+      if (!isRecord(marks) || !Array.isArray(removed)) return undefined;
+      const entries = Object.entries(marks);
+      if (entries.length + removed.length > PROPOSAL_MARK_LIMIT) return undefined;
+      if (!entries.every(([k, m]) => isBlockKey(k) && isMark(m))) return undefined;
+      if (!removed.every(isBlockKey)) return undefined;
+      return {
+        ...b,
+        kind: d.kind,
+        entryId: d.entryId,
+        locale: d.locale,
+        fields: d.fields,
+        marks: Object.fromEntries(entries) as Record<string, ProposalMark>,
+        removed: [...removed],
+      };
+    }
+    case 'proposal.clear':
+      return isId(d.entryId) && isId(d.locale)
+        ? { ...b, kind: d.kind, entryId: d.entryId, locale: d.locale }
+        : undefined;
     default:
       return undefined;
   }
