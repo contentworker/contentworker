@@ -97,7 +97,8 @@ compared, with each issue naming the region's first `_key`:
 Both surfaces, as AGENTS.md requires:
 
 - **REST:** `PUT /entries/{id}/block-locks` (the whole list, with `expectedVersion` as other
-  entry writes take it), and the locks returned on the management entry read. Delivery and preview never return them.
+  entry writes take it), and the locks returned on the management entry read. Delivery and
+  preview never return them.
 - **MCP:** `entries_block_locks_get` and `entries_block_locks_set`.
 - **SDK:** `cma.entries.blockLocks.{get,set}`.
 - **Permission:** a content-level action `lock` per content type, alongside `write` and `publish`
