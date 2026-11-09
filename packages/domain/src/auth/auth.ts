@@ -131,6 +131,34 @@ export function grantedActions(grant: ContentTypeGrant): ReadonlySet<ContentActi
 }
 
 /**
+ * Whether `next` grants nothing `held` doesn't: the same grants, one for one and in order, each on
+ * the same content type with the same field rules, holding a subset of the held grant's actions
+ * (implied ones included, so dropping a denial never slips through). Anything else counts as a
+ * change, not a narrowing: grants aren't ordered against each other, and no grants at all is
+ * unrestricted, so fewer grants can mean more. Lets a delegated bearer move a key from a role
+ * that locks to one that doesn't (Manager to Editor) without being able to widen it.
+ */
+export function grantsNoWider(
+  next: readonly ContentTypeGrant[] | undefined,
+  held: readonly ContentTypeGrant[] | undefined,
+): boolean {
+  const a = next ?? [];
+  const b = held ?? [];
+  if (a.length !== b.length) return false;
+  const sameSet = (x?: readonly string[], y?: readonly string[]) =>
+    JSON.stringify([...(x ?? [])].sort()) === JSON.stringify([...(y ?? [])].sort());
+  return a.every((g, i) => {
+    const h = b[i];
+    if (!h || g.contentTypeApiId !== h.contentTypeApiId) return false;
+    if (!sameSet(g.deniedFields, h.deniedFields) || !sameSet(g.readOnlyFields, h.readOnlyFields)) {
+      return false;
+    }
+    const mine = grantedActions(h);
+    return [...grantedActions(g)].every((action) => mine.has(action));
+  });
+}
+
+/**
  * A named, space-scoped permission set assignable to API keys. Roles are the
  * live source of truth: a key with a role resolves the role's scopes and
  * content grants on every request, so editing a role updates every key.

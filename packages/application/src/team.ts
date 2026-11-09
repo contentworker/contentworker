@@ -12,6 +12,7 @@ import {
   ConflictError,
   DelegatedKeyMintError,
   grantsAdmin,
+  grantsNoWider,
   isDelegatedBearer,
   isEmail,
   isRolePreset,
@@ -464,8 +465,7 @@ export async function assignApiKeyRole(
       scopes.some((s) => !held.includes(s)) ||
       (key.roleId !== undefined &&
         (!role ||
-          (role.id !== key.roleId &&
-            JSON.stringify(role.contentGrants) !== JSON.stringify(current?.contentGrants))));
+          (role.id !== key.roleId && !grantsNoWider(role.contentGrants, current?.contentGrants))));
     // As `assertMayMintKeys` (auth.ts) refuses a delegated bearer minting a key.
     if (widens) throw new DelegatedKeyMintError();
   }

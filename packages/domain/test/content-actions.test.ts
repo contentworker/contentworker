@@ -9,6 +9,7 @@ import {
   canAccessContentType,
   ENTRY_OPERATION_ACTIONS,
   grantedActions,
+  grantsNoWider,
   type ListedContentAction,
   type Principal,
   ROLE_PRESET_DEFINITIONS,
@@ -216,5 +217,55 @@ describe('finer content actions: delete and unpublish', () => {
         grant([{ contentTypeApiId: 'page', actions: ['read', 'write'] }]),
       ]),
     ).not.toThrow();
+  });
+});
+
+describe('grantsNoWider', () => {
+  const g = (actions: ListedContentAction[], rest: Partial<ContentTypeGrant> = {}) => ({
+    contentTypeApiId: '*',
+    actions,
+    ...rest,
+  });
+
+  it('allows the same grants, and the same grants holding fewer actions', () => {
+    expect(grantsNoWider([g(['read', 'write'])], [g(['read', 'write'])])).toBe(true);
+    expect(grantsNoWider([g(['read', 'write'])], [g(['read', 'write', 'lock'])])).toBe(true);
+    expect(grantsNoWider([g(['read'])], [g(['read', 'write', 'publish'])])).toBe(true);
+    expect(grantsNoWider(undefined, [])).toBe(true);
+  });
+
+  it('refuses more actions, or an implied one a denial held back', () => {
+    expect(grantsNoWider([g(['read', 'write', 'lock'])], [g(['read', 'write'])])).toBe(false);
+    // Fewer listed, but no longer denying delete: write now deletes.
+    expect(
+      grantsNoWider(
+        [g(['read', 'write'])],
+        [g(['read', 'write', 'publish'], { deniedActions: ['delete'] })],
+      ),
+    ).toBe(false);
+    expect(
+      grantsNoWider(
+        [g(['read', 'write'], { deniedActions: ['delete'] })],
+        [g(['read', 'write', 'publish'], { deniedActions: ['delete'] })],
+      ),
+    ).toBe(true);
+  });
+
+  it('refuses fewer or more grants (no grants is unrestricted), another type, or other field rules', () => {
+    expect(grantsNoWider([], [g(['read'])])).toBe(false);
+    expect(
+      grantsNoWider([g(['read']), g(['read'], { contentTypeApiId: 'post' })], [g(['read'])]),
+    ).toBe(false);
+    expect(grantsNoWider([g(['read'], { contentTypeApiId: 'post' })], [g(['read'])])).toBe(false);
+    expect(grantsNoWider([g(['read'])], [g(['read'], { deniedFields: ['secret'] })])).toBe(false);
+    expect(
+      grantsNoWider([g(['read', 'write'])], [g(['read', 'write'], { readOnlyFields: ['slug'] })]),
+    ).toBe(false);
+    expect(
+      grantsNoWider(
+        [g(['read'], { deniedFields: ['b', 'a'] })],
+        [g(['read', 'write'], { deniedFields: ['a', 'b'] })],
+      ),
+    ).toBe(true);
   });
 });
