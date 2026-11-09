@@ -146,6 +146,11 @@ test('the rules as code hold a narrowing and a lock, and the diff marks only tho
     const item = narrowed.getByRole('listitem').filter({ hasText: 'Grid › Items' });
     await expect(item.locator('.cm-merge-a .cm-diffSigns')).toContainText('−');
     await expect(item.locator('.cm-merge-b .cm-diffSigns')).toContainText('+');
+    // Only changed lines are signed: the spacers that keep the columns aligned carry none.
+    await expect(item.locator('.cm-merge-b .cm-diffSign-remove')).toHaveCount(0);
+    await expect(item.locator('.cm-merge-a .cm-diffSign-remove')).toHaveCount(
+      await item.locator('.cm-merge-a .cm-changedLine').count(),
+    );
   } else {
     const one = page.getByRole('textbox', {
       name: 'The rule in force for Grid › Items, with the code’s lines it replaces, as JSON',

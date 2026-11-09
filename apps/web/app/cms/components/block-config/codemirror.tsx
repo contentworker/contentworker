@@ -119,24 +119,28 @@ const REMOVE = new Sign('−');
 /**
  * − beside each of the code's changed lines and + beside each of the rule in force's; in a unified
  * view, − beside each block of the code's lines shown over the new ones.
+ *
+ * Only the unified view marks block widgets: there they are the deleted chunks. Side by side, the
+ * merge view's block widgets are spacers that keep the two columns aligned, and a sign on one
+ * would mark a line that isn't there.
  */
-const signs = gutter({
-  class: 'cm-diffSigns',
-  lineMarker(view, line) {
-    const found = getChunks(view.state);
-    if (!found) return null;
-    const a = found.side === 'a';
-    for (const c of found.chunks) {
-      const [from, to, end] = a ? [c.fromA, c.toA, c.endA] : [c.fromB, c.toB, c.endB];
-      if (to > from && line.from >= from && line.from <= end) return a ? REMOVE : ADD;
-    }
-    return null;
-  },
-  // The only block widgets here are the unified view's deleted chunks.
-  widgetMarker: () => REMOVE,
-  lineMarkerChange: () => true,
-  initialSpacer: () => ADD,
-});
+const signs = (layout: 'split' | 'unified') =>
+  gutter({
+    class: 'cm-diffSigns',
+    lineMarker(view, line) {
+      const found = getChunks(view.state);
+      if (!found) return null;
+      const a = found.side === 'a';
+      for (const c of found.chunks) {
+        const [from, to, end] = a ? [c.fromA, c.toA, c.endA] : [c.fromB, c.toB, c.endB];
+        if (to > from && line.from >= from && line.from <= end) return a ? REMOVE : ADD;
+      }
+      return null;
+    },
+    widgetMarker: () => (layout === 'unified' ? REMOVE : null),
+    lineMarkerChange: () => true,
+    initialSpacer: () => ADD,
+  });
 
 /** The block config as read-only JSON, with line numbers and folding. */
 export function JsonCode({
@@ -195,8 +199,8 @@ export function JsonDiff(props: {
     if (layout === 'split') {
       const merge = new MergeView({
         parent,
-        a: { doc: code, extensions: [...base(codeLabel), signs] },
-        b: { doc: inForce, extensions: [...base(inForceLabel), signs] },
+        a: { doc: code, extensions: [...base(codeLabel), signs('split')] },
+        b: { doc: inForce, extensions: [...base(inForceLabel), signs('split')] },
         gutter: false,
       });
       return () => merge.destroy();
@@ -207,7 +211,7 @@ export function JsonDiff(props: {
         doc: inForce,
         extensions: [
           ...base(unifiedLabel),
-          signs,
+          signs('unified'),
           unifiedMergeView({ original: code, mergeControls: false, gutter: false }),
         ],
       }),
