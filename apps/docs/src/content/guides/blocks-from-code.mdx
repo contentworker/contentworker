@@ -245,6 +245,21 @@ place blocks go: each blocks field the catalog fills ("Page › Main") and each 
 The card's header shows the config's version, and who set it when. Parts a newer push left stale
 are listed as ignored; saving the rules removes them. Without `content:manage` the card reads only.
 
+The card switches between three views (it opens on **Rules** each visit):
+
+- **Rules**: the rows and their controls, above.
+- **Code**: the config exactly as [`PUT …/block-config`](#the-api-and-mcp) takes it, the
+  `{ targets, blocks }` of its body, as read-only JSON, with **Copy JSON**. It is normalized and in
+  a stable order (the catalog's targets and slots, and each part's keys as the API returns them), so
+  it diffs cleanly against a copy you keep. Ignored parts aren't in it.
+- **Narrowed from code**: each place's rule from the code against the rule in force, as JSON in
+  one shape (`blocks` or `allowedChildren`, `min`, `max`, `locked`). Only the places that differ
+  are shown, and any with ignored parts, unless **Show all** is on. Side by side from tablet width
+  (the code's on the left, marked −; in force on the right, marked +), one column on a phone.
+
+While the Rules view has unsaved edits, Code and Narrowed from code show the draft, marked
+**Unsaved**: Code is then the body Save rules will send, with the version it was edited from.
+
 The editors follow the rules in force. On the canvas the dock offers only the blocks a slot's rule
 takes, a locked slot draws no seams, and its blocks can't be moved, duplicated or removed (Layers
 and the inspector show the lock). In the entry form, Add offers only the allowed blocks, and a

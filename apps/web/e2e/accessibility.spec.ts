@@ -274,11 +274,45 @@ test('the block rules, edited, stale and read-only, have no accessibility violat
   await expect(page.getByText(/^Editors may place Card · up to 3 · locked$/)).toBeVisible();
   await scan(page, testInfo);
 
+  // The same rules as code, and narrowed from code (every place, too), in the real editor.
+  const views = page.getByRole('radiogroup', { name: 'Show the rules as' });
+  await views.getByRole('radio', { name: 'Code', exact: true }).click();
+  await expect(page.getByRole('textbox', { name: 'Block config as JSON' })).toBeVisible();
+  await scan(page, testInfo);
+  await views.getByRole('radio', { name: 'Narrowed from code' }).click();
+  await expect(
+    page.getByRole('textbox', { name: 'The rule in force for Grid › Items, as JSON' }),
+  ).toBeVisible();
+  await scan(page, testInfo);
+  await page.getByRole('switch', { name: 'Show all' }).click();
+  await expect(
+    page.getByRole('list', { name: 'Every place, code against in force' }),
+  ).toBeVisible();
+  await scan(page, testInfo);
+  // Dark: the diff's tints, its − and + and the muted ink on them.
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  await scan(page, testInfo);
+  await page.emulateMedia({ colorScheme: 'light' });
+  await views.getByRole('radio', { name: 'Rules' }).click();
+
   await page.getByRole('button', { name: 'Edit the rules for Grid › Items' }).click();
   const panel = page.getByRole('group', { name: 'Rules for Grid › Items' });
   await panel.getByLabel('Most').fill('9');
   await expect(panel.getByText('At most 6: the code’s limit.')).toBeVisible();
   await scan(page, testInfo);
+  // The draft as code: unsaved, and not sendable as it stands.
+  await views.getByRole('radio', { name: 'Code', exact: true }).click();
+  await expect(page.getByText('Unsaved', { exact: true })).toBeVisible();
+  await expect(
+    page.getByText(/^Fix the rules marked in Rules before this can be sent/),
+  ).toBeVisible();
+  await scan(page, testInfo);
+  await views.getByRole('radio', { name: 'Narrowed from code' }).click();
+  await expect(page.getByRole('list', { name: 'Places narrowed from code' })).toBeVisible();
+  await expect(page.getByText('Unsaved', { exact: true })).toBeVisible();
+  await scan(page, testInfo);
+  await views.getByRole('radio', { name: 'Rules' }).click();
 
   // Read-only: the same rows, no controls.
   await page.route('**/auth/me', async (route) => {

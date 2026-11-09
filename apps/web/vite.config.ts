@@ -132,6 +132,14 @@ export default defineConfig({
     include: [
       '@ai-sdk/react',
       '@cloudflare/ai-chat/react',
+      // The block config's code views import these lazily: found only then, they'd make the dev
+      // server re-optimize and reload the page, losing the Rules card's unsaved edits.
+      '@codemirror/lang-json',
+      '@codemirror/language',
+      '@codemirror/merge',
+      '@codemirror/state',
+      '@codemirror/view',
+      '@lezer/highlight',
       '@tanstack/react-query',
       '@tiptap/core',
       '@tiptap/react',

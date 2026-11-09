@@ -8,11 +8,17 @@
  *
  * Without content:manage it reads only: the rows, no controls. The parts of the config the catalog
  * no longer has (`stale`) are listed as ignored; saving removes them.
+ *
+ * Two more views read the same rules as code (`block-config/code-views.tsx`): Code, the config as
+ * `PUT …/block-config` takes it, and Narrowed from code, each place's code rule against the one in
+ * force. With unsaved edits both show the draft, marked so: the exact request before it is sent.
+ * Which view is open isn't remembered.
  */
 import {
   type BlockCatalog,
   type EffectiveBlockRules,
   type EffectiveSlotRules,
+  effectiveBlockRules,
   SCOPES,
 } from '@contentworker/domain';
 import { Alert, AlertDescription, AlertTitle } from '@contentworker/ui/alert';
@@ -21,16 +27,23 @@ import { Catalog, CatalogFigure, CatalogRow, CatalogTile } from '@contentworker/
 import { Checkbox } from '@contentworker/ui/checkbox';
 import { Input } from '@contentworker/ui/input';
 import { Label } from '@contentworker/ui/label';
+import { Segmented, SegmentedItem } from '@contentworker/ui/segmented';
 import { SkeletonText } from '@contentworker/ui/skeleton';
 import { Switch } from '@contentworker/ui/switch';
 import { LayoutList, Lock } from 'lucide-react';
 import { Fragment, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useBlocker } from 'react-router';
 import { Ago } from '~/cms/components/ago';
+import {
+  BlockConfigCode,
+  BlockConfigDiff,
+  loadEditor,
+} from '~/cms/components/block-config/code-views';
 import { InlineConfirm } from '~/cms/components/InlineConfirm';
 import { LoadingStatus } from '~/cms/components/loading';
 import { Section } from '~/cms/components/page';
 import { actorLabel } from '~/cms/lib/authorship';
+import { configJson, ignoredElsewhere, placesAsCode } from '~/cms/lib/block-config-code';
 import {
   type CodeRule,
   configFromDraft,
@@ -67,6 +80,10 @@ function ruleText(
   return `${rule.allowed.map(blockName).join(', ')} · ${boundsText(rule.min, rule.max)}`;
 }
 
+/** The card's views: the rows (and their controls), the config as code, and the diff. */
+type View = 'rules' | 'code' | 'narrowed';
+const isView = (v: string): v is View => v === 'rules' || v === 'code' || v === 'narrowed';
+
 export interface BlockRulesProps {
   readonly catalog: BlockCatalog;
   /** "Page › Main" for a target, "Grid › Items" for a slot. */
@@ -99,6 +116,7 @@ export function BlockRules({ catalog, placeName, blockName, people }: BlockRules
   const [draft, setDraft] = useState<Draft | null>(null);
   const [base, setBase] = useState<Draft | null>(null);
   const [open, setOpen] = useState<ReadonlySet<string>>(new Set());
+  const [view, setView] = useState<View>('rules');
   const [saving, setSaving] = useState(false);
   /** What the server refused of the last save, by control, until the next edit. */
   const [refused, setRefused] = useState<Record<string, string>>({});
@@ -123,6 +141,19 @@ export function BlockRules({ catalog, placeName, blockName, people }: BlockRules
   const dirty = !!draft && !!base && !sameConfig(places, draft, base);
   const stale = rules?.stale ?? [];
   const valid = Object.keys(errors).length === 0;
+
+  // The rules as code: the draft's while it has unsaved edits (what a save would send and set), the
+  // rules in force otherwise. The ignored parts are always the stored config's: a save removes them.
+  const body = useMemo(() => (draft ? configFromDraft(places, draft) : null), [places, draft]);
+  const shownRules = useMemo(() => {
+    if (!rules || !config || !body) return undefined;
+    return dirty ? effectiveBlockRules(catalog, { version: config.version, ...body }) : rules;
+  }, [rules, config, body, dirty, catalog]);
+  const asCode = useMemo(
+    () => (shownRules && rules ? placesAsCode(places, shownRules, rules.stale) : []),
+    [places, shownRules, rules],
+  );
+  const narrowedCount = asCode.filter((p) => p.narrowed).length;
 
   const edit = (key: string, change: Partial<PartDraft>) => {
     setRefused({});
@@ -164,6 +195,8 @@ export function BlockRules({ catalog, placeName, blockName, people }: BlockRules
       if (Array.isArray(issues) && issues.length > 0) {
         const byControl = issuesByControl(places, issues);
         setRefused(byControl);
+        // The refusal lands on the controls, so they are what shows.
+        setView('rules');
         // Each refused place opens, so its controls show what to change.
         setOpen((o) => {
           const next = new Set(o);
@@ -205,6 +238,49 @@ export function BlockRules({ catalog, placeName, blockName, people }: BlockRules
   }, [dirty]);
 
   const loading = configQuery.isPending || rulesQuery.isPending;
+
+  /** How many places are narrowed, and which view: drawn while the rules load too, held till then. */
+  const toolbar = (ready: boolean) => (
+    <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b px-4 py-3">
+      {ready ? (
+        <p className="text-muted-foreground text-xs tabular">
+          {narrowedCount === 0
+            ? `Nothing narrowed in ${plural(places.length, 'place')}`
+            : `${narrowedCount} of ${plural(places.length, 'place')} narrowed`}
+          {dirty ? ' (unsaved)' : ''}
+        </p>
+      ) : (
+        <SkeletonText width="9rem" className="text-xs" />
+      )}
+      <Segmented
+        aria-label="Show the rules as"
+        disabled={!ready}
+        value={view}
+        onValueChange={(v) => {
+          if (isView(v)) setView(v);
+        }}
+      >
+        <SegmentedItem value="rules">Rules</SegmentedItem>
+        {/* The editor is fetched ahead as soon as a pointer or the keyboard comes near. */}
+        <SegmentedItem
+          value="code"
+          onPointerEnter={() => void loadEditor().catch(() => {})}
+          onFocus={() => void loadEditor().catch(() => {})}
+        >
+          Code
+        </SegmentedItem>
+        {/* "Narrowed" on a phone, where three equal segments must fit; named in full. */}
+        <SegmentedItem
+          value="narrowed"
+          aria-label="Narrowed from code"
+          onPointerEnter={() => void loadEditor().catch(() => {})}
+          onFocus={() => void loadEditor().catch(() => {})}
+        >
+          Narrowed<span className="max-sm:hidden">{' from code'}</span>
+        </SegmentedItem>
+      </Segmented>
+    </div>
+  );
   const failed = configQuery.isError || rulesQuery.isError;
 
   return (
@@ -251,13 +327,17 @@ export function BlockRules({ catalog, placeName, blockName, people }: BlockRules
           </Alert>
         </div>
       ) : loading || !draft || !rules || !config ? (
-        <div className="space-y-2 p-4" aria-busy="true">
-          <LoadingStatus>Loading the rules…</LoadingStatus>
-          <SkeletonText width="18rem" />
-          <SkeletonText width="12rem" />
-        </div>
+        <>
+          {toolbar(false)}
+          <div className="space-y-2 p-4" aria-busy="true">
+            <LoadingStatus>Loading the rules…</LoadingStatus>
+            <SkeletonText width="18rem" />
+            <SkeletonText width="12rem" />
+          </div>
+        </>
       ) : (
         <>
+          {toolbar(true)}
           {overtaken !== null ? (
             <div className="px-4 pt-4">
               <Alert role="alert">
@@ -315,108 +395,127 @@ export function BlockRules({ catalog, placeName, blockName, people }: BlockRules
               {shown['']}
             </p>
           ) : null}
-          <Catalog aria-label="Rules by place">
-            {places.map((p) => {
-              const d = draft[p.key];
-              if (!d) return null;
-              const rule = ruleOf(rules, p);
-              const panelId = `${id}-${places.indexOf(p)}`;
-              const isOpen = open.has(p.key);
-              const name = placeName(p);
-              const invalid = Object.keys(shown).some(
-                (k) => k === p.key || k.startsWith(`${p.key}.`),
-              );
-              return (
-                <Fragment key={p.key}>
-                  <CatalogRow
-                    media={
-                      <CatalogTile>
-                        {(canManage ? d.locked : rule?.locked) ? (
-                          <Lock aria-hidden="true" />
-                        ) : (
-                          <LayoutList aria-hidden="true" />
-                        )}
-                      </CatalogTile>
-                    }
-                    title={<span className="font-medium text-foreground">{name}</span>}
-                    meta={
-                      <span className="flex flex-col gap-0.5">
-                        <span>Code allows {ruleText(p.code, blockName)}</span>
-                        {invalid ? (
-                          <span className="text-destructive">Needs fixing before it saves</span>
-                        ) : null}
-                        <span className={rule?.narrowed ? 'text-foreground' : undefined}>
-                          {rule?.narrowed
-                            ? `Editors may place ${ruleText(
-                                {
-                                  allowed: rule.allowedChildren,
-                                  ...(rule.min !== undefined ? { min: rule.min } : {}),
-                                  ...(rule.max !== undefined ? { max: rule.max } : {}),
-                                },
-                                blockName,
-                              )}${rule.locked ? ' · locked' : ''}`
-                            : 'Editors may place what the code allows'}
+          {view === 'code' && body ? (
+            <BlockConfigCode
+              text={configJson(places, body)}
+              unsaved={dirty}
+              invalid={!valid}
+              version={config.version}
+              ignored={stale.length}
+            />
+          ) : null}
+          {view === 'narrowed' ? (
+            <BlockConfigDiff
+              list={asCode}
+              elsewhere={ignoredElsewhere(places, stale)}
+              placeName={placeName}
+              unsaved={dirty}
+            />
+          ) : null}
+          {view === 'rules' ? (
+            <Catalog aria-label="Rules by place">
+              {places.map((p) => {
+                const d = draft[p.key];
+                if (!d) return null;
+                const rule = ruleOf(rules, p);
+                const panelId = `${id}-${places.indexOf(p)}`;
+                const isOpen = open.has(p.key);
+                const name = placeName(p);
+                const invalid = Object.keys(shown).some(
+                  (k) => k === p.key || k.startsWith(`${p.key}.`),
+                );
+                return (
+                  <Fragment key={p.key}>
+                    <CatalogRow
+                      media={
+                        <CatalogTile>
+                          {(canManage ? d.locked : rule?.locked) ? (
+                            <Lock aria-hidden="true" />
+                          ) : (
+                            <LayoutList aria-hidden="true" />
+                          )}
+                        </CatalogTile>
+                      }
+                      title={<span className="font-medium text-foreground">{name}</span>}
+                      meta={
+                        <span className="flex flex-col gap-0.5">
+                          <span>Code allows {ruleText(p.code, blockName)}</span>
+                          {invalid ? (
+                            <span className="text-destructive">Needs fixing before it saves</span>
+                          ) : null}
+                          <span className={rule?.narrowed ? 'text-foreground' : undefined}>
+                            {rule?.narrowed
+                              ? `Editors may place ${ruleText(
+                                  {
+                                    allowed: rule.allowedChildren,
+                                    ...(rule.min !== undefined ? { min: rule.min } : {}),
+                                    ...(rule.max !== undefined ? { max: rule.max } : {}),
+                                  },
+                                  blockName,
+                                )}${rule.locked ? ' · locked' : ''}`
+                              : 'Editors may place what the code allows'}
+                          </span>
                         </span>
-                      </span>
-                    }
-                    aside={
-                      canManage ? (
-                        <CatalogFigure label="Locked">
-                          <Switch
-                            checked={d.locked}
-                            disabled={saving}
-                            aria-label={`Lock ${name}`}
-                            onCheckedChange={(on) => edit(p.key, { locked: on })}
-                          />
-                        </CatalogFigure>
-                      ) : rule?.locked ? (
-                        <CatalogFigure label="Locked">Yes</CatalogFigure>
-                      ) : null
-                    }
-                    actions={
-                      canManage ? (
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="xs"
-                          aria-expanded={isOpen}
-                          aria-controls={isOpen ? panelId : undefined}
-                          aria-label={`${isOpen ? 'Done editing' : 'Edit'} the rules for ${name}${
-                            invalid ? ' (needs fixing)' : ''
-                          }`}
-                          className={invalid ? 'text-destructive' : undefined}
-                          onClick={() =>
-                            setOpen((o) => {
-                              const next = new Set(o);
-                              if (next.has(p.key)) next.delete(p.key);
-                              else next.add(p.key);
-                              return next;
-                            })
-                          }
-                        >
-                          {isOpen ? 'Done' : 'Edit'}
-                        </Button>
-                      ) : null
-                    }
-                  />
-                  {canManage && isOpen ? (
-                    <li>
-                      <PlacePanel
-                        id={panelId}
-                        place={p}
-                        name={name}
-                        draft={d}
-                        errors={shown}
-                        blockName={blockName}
-                        disabled={saving}
-                        onChange={(change) => edit(p.key, change)}
-                      />
-                    </li>
-                  ) : null}
-                </Fragment>
-              );
-            })}
-          </Catalog>
+                      }
+                      aside={
+                        canManage ? (
+                          <CatalogFigure label="Locked">
+                            <Switch
+                              checked={d.locked}
+                              disabled={saving}
+                              aria-label={`Lock ${name}`}
+                              onCheckedChange={(on) => edit(p.key, { locked: on })}
+                            />
+                          </CatalogFigure>
+                        ) : rule?.locked ? (
+                          <CatalogFigure label="Locked">Yes</CatalogFigure>
+                        ) : null
+                      }
+                      actions={
+                        canManage ? (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="xs"
+                            aria-expanded={isOpen}
+                            aria-controls={isOpen ? panelId : undefined}
+                            aria-label={`${isOpen ? 'Done editing' : 'Edit'} the rules for ${name}${
+                              invalid ? ' (needs fixing)' : ''
+                            }`}
+                            className={invalid ? 'text-destructive' : undefined}
+                            onClick={() =>
+                              setOpen((o) => {
+                                const next = new Set(o);
+                                if (next.has(p.key)) next.delete(p.key);
+                                else next.add(p.key);
+                                return next;
+                              })
+                            }
+                          >
+                            {isOpen ? 'Done' : 'Edit'}
+                          </Button>
+                        ) : null
+                      }
+                    />
+                    {canManage && isOpen ? (
+                      <li>
+                        <PlacePanel
+                          id={panelId}
+                          place={p}
+                          name={name}
+                          draft={d}
+                          errors={shown}
+                          blockName={blockName}
+                          disabled={saving}
+                          onChange={(change) => edit(p.key, change)}
+                        />
+                      </li>
+                    ) : null}
+                  </Fragment>
+                );
+              })}
+            </Catalog>
+          ) : null}
           {blocker.state === 'blocked' ? (
             <InlineConfirm
               className="rounded-none border-t bg-wait/10 px-4"
