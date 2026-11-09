@@ -11,10 +11,22 @@ import {
   effectiveBlockRules,
 } from '@contentworker/domain';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import {
+  act,
+  cleanup,
+  configure,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react';
 import { createMemoryRouter, RouterProvider } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ApiError } from '~/cms/lib/management';
+
+/** As in asset-library.test.tsx: a CI runner's first render can outlast the default second. */
+configure({ asyncUtilTimeout: 5000 });
 
 const CATALOG = {
   version: 4,
