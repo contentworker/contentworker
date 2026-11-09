@@ -5,12 +5,14 @@ import {
   ConflictError,
   checkBlockLocks,
   diffBlockLocks,
+  ForbiddenError,
   NotFoundError,
   type Principal,
   principalActorId,
   type Scope,
   sameBlockLocks,
   staleBlockLocks,
+  unwritableFieldsFor,
 } from '@contentworker/domain';
 import { TransactionConflictError } from '@contentworker/ports';
 import type { AppContext } from './context';
@@ -96,9 +98,20 @@ export interface EntryBlockLocksSet extends EntryBlockLocks {
  * no block in two regions), stamping each new lock with the principal and the clock; a lock it
  * already holds keeps its stamp. Sending the locks it holds writes nothing. Makes no version.
  *
+ * A lock on a field the principal's grant denies or makes read-only is theirs neither to make,
+ * change nor lift: one sent that the entry doesn't hold as it is is refused (403
+ * `content:lock:<type>.<field>`), and the entry's locks on those fields are kept whatever the list
+ * says (a denied field's locks aren't even shown to them, `blockLocksFor`).
+ *
+ * The two writes guard each other: a lock set holds to the `currentVersion` it read, so a save
+ * that commits first fails it, and a judged save holds to the locks it was judged against
+ * (`SaveVersionGuard`), so a lock set that commits first fails the save. Either way the loser is a
+ * 409.
+ *
  * Refused with 403 (`content:lock:<type>`) without the `lock` action on the entry's type; 409 when
  * the entry is not at `expectedVersion`, or a save or another lock set commits first; 422 naming
- * each lock that isn't one, names keys no locale holds as a run, or overlaps another.
+ * each lock that isn't one, names keys no locale holds as a run, holds a key twice, or overlaps
+ * another.
  */
 export async function setEntryBlockLocks(
   ctx: AppContext,
@@ -111,17 +124,21 @@ export async function setEntryBlockLocks(
   authorizeContent(principal, 'lock', entry.contentTypeApiId);
   assertExpectedVersion(entry, input);
   const current = entry.blockLocks ?? [];
-  const locks = checkBlockLocks(contentType, fields, input.locks, current, {
+  const unwritable = new Set(unwritableFieldsFor(principal, entry.contentTypeApiId));
+  const sent = keepUnwritable(entry.contentTypeApiId, input.locks, current, unwritable);
+  const locks = checkBlockLocks(contentType, fields, sent, current, {
     by: principalActorId(principal),
     at: ctx.clock.now().toISOString(),
   });
+  const readable = (l: readonly BlockLock[]) =>
+    blockLocksFor(principal, entry.contentTypeApiId, l) as readonly BlockLock[];
   const result = (unchanged: boolean): EntryBlockLocksSet => ({
     ...view(
       entry.id,
       entry.contentTypeApiId,
       entry.currentVersion,
-      locks,
-      staleBlockLocks(contentType, fields, locks),
+      readable(locks),
+      readable(staleBlockLocks(contentType, fields, locks)),
     ),
     unchanged,
   });
@@ -143,4 +160,40 @@ export async function setEntryBlockLocks(
   // Committed: the audit row says what was locked and unlocked.
   ctx.changes?.noteBlockLocks(diffBlockLocks(entry.id, current, locks));
   return result(false);
+}
+
+/**
+ * The list a set is checked as: what was sent, less the locks on fields the principal may not
+ * write, which are the entry's own as stored. A sent lock on such a field passes only when the
+ * entry holds it as it is (a read-only field's locks are shown, and come back unchanged).
+ */
+function keepUnwritable(
+  contentTypeApiId: string,
+  sent: unknown,
+  current: readonly BlockLock[],
+  unwritable: ReadonlySet<string>,
+): unknown {
+  if (unwritable.size === 0 || !Array.isArray(sent)) return sent;
+  const held = current.filter((l) => unwritable.has(l.field));
+  const own = sent.filter((raw: unknown) => {
+    const field = (raw as { field?: unknown } | null)?.field;
+    if (typeof field !== 'string' || !unwritable.has(field)) return true;
+    const lock = raw as Partial<BlockLock>;
+    const same = held.some((h) =>
+      sameBlockLocks(
+        [h],
+        [
+          {
+            ...h,
+            keys: lock.keys ?? [],
+            depth: lock.depth ?? 'subtree',
+            freeze: lock.freeze ?? 'structure',
+          },
+        ],
+      ),
+    );
+    if (!same) throw new ForbiddenError(`content:lock:${contentTypeApiId}.${field}`);
+    return false;
+  });
+  return [...own, ...held];
 }

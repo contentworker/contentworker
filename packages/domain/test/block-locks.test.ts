@@ -217,6 +217,21 @@ describe('locked regions: judging a save', () => {
     ]);
   });
 
+  it('refuses a copy keyed like a locked block, so the real one can’t be edited or removed', () => {
+    const stored = body([hero('h1'), grid('g1', [card('c1'), card('c2')])]);
+    const locks = [lock(['c1'], { freeze: 'all' })];
+    // A decoy at the top, found first depth first, while the real c1 is removed…
+    const removed = body([card('c1'), hero('h1'), grid('g1', [card('c2')])]);
+    // …or kept beside it and edited.
+    const edited = body([card('c1'), hero('h1'), grid('g1', [card('c1', 'New'), card('c2')])]);
+    expect(judged(locks, stored, removed)).toEqual([]);
+    expect(judged(locks, stored, edited)).toEqual(['region_locked en-US body c1']);
+    // The first is the locked block moved whole, which a lock allows; with the copy only beside
+    // it, the doubled key is refused before any run is looked for.
+    const doubled = body([hero('h1'), grid('g1', [card('c1'), card('c2')]), card('c1')]);
+    expect(judged(locks, stored, doubled)).toEqual(['region_locked en-US body c1']);
+  });
+
   it('never lets a stale lock block a save', () => {
     const locks = [lock(['gone'])];
     expect(judged(locks, STORED, body([]))).toEqual([]);
@@ -291,6 +306,21 @@ describe('locked regions: setting locks', () => {
     expect(refusal([{ field: 'body', keys: ['h1', 'c1'] }])).toEqual([
       'lock_not_a_run locks[0].keys',
     ]);
+  });
+
+  it('refuses to lock a key more than one block holds, in any locale', () => {
+    const doubled = {
+      body: {
+        'en-US': [hero('h1'), grid('g1', [card('c1')])],
+        'de-DE': [hero('c1'), grid('g1', [card('c1')])],
+      },
+    };
+    expect(refusal([{ field: 'body', keys: ['c1'] }], [], doubled)).toEqual([
+      'lock_ambiguous locks[0].keys',
+    ]);
+    expect(
+      checkBlockLocks(PAGE, doubled, [{ field: 'body', keys: ['h1'] }], [], stamp),
+    ).toHaveLength(1);
   });
 
   it('keeps a stale lock it already held, and refuses a new one', () => {

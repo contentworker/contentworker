@@ -761,7 +761,12 @@ export class InMemoryContentStore implements ContentStore {
       this.setEntry(scope, entry, true);
       this.versionData.set(`${scopeKey(scope)}::${entry.id}`, [version]);
     },
-    saveVersion: async (scope, entry, version) => {
+    saveVersion: async (scope, entry, version, guard) => {
+      // As D1: the locks compared as the text the store wrote, before anything is written.
+      const held = this.entryData.get(`${scopeKey(scope)}::${entry.id}`)?.blockLocks ?? [];
+      if (guard && JSON.stringify(held) !== JSON.stringify(guard.blockLocks)) {
+        throw new TransactionConflictError();
+      }
       this.setEntry(scope, entry);
       const key = `${scopeKey(scope)}::${entry.id}`;
       const versions = this.versionData.get(key) ?? [];

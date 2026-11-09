@@ -55,12 +55,14 @@ export const BLOCK_LOCK_LIMITS = {
 
 /**
  * Why a set of locks is refused, as a stable code: a lock that isn't a lock, keys no locale holds,
- * keys that aren't neighbours in one slot in order, or a block in two regions.
+ * keys that aren't neighbours in one slot in order, a key more than one block holds, or a block in
+ * two regions.
  */
 export const BLOCK_LOCK_ISSUE_CODES = [
   'lock_invalid',
   'lock_not_found',
   'lock_not_a_run',
+  'lock_ambiguous',
   'lock_overlaps',
 ] as const;
 export type BlockLockIssueCode = (typeof BLOCK_LOCK_ISSUE_CODES)[number];
@@ -108,7 +110,9 @@ interface Found {
 
 /**
  * The first block keyed `key` in one locale's value, depth first. Keys are unique per array, not
- * per tree; a key held at two depths is found where a reader of the page meets it first.
+ * per tree, so this answers for the one block a lock means only where `count` is 1: a lock is
+ * never made on a key held twice (`lock_ambiguous`), and a save that holds one of a held lock's
+ * keys twice is refused before the run is looked for (`blockLockIssues`).
  */
 function find(
   value: unknown,
@@ -126,6 +130,17 @@ function find(
     }
   }
   return undefined;
+}
+
+/** How many blocks of one locale's value, at any depth a slot reaches, hold `key`. */
+function count(value: unknown, variants: readonly ComponentVariant[], key: string): number {
+  if (!Array.isArray(value)) return 0;
+  let n = 0;
+  for (const item of value) {
+    if (keyOf(item) === key) n += 1;
+    for (const s of slotsOf(variants, item)) n += count(own(item, s.apiId), s.variants, key);
+  }
+  return n;
 }
 
 /** The lock's run in one locale's value: found, its keys neighbours in order; else undefined. */
@@ -312,6 +327,16 @@ export function checkBlockLocks(
     const was = kept.get(identity(lock));
     if (!was) {
       const values = localesOf(fields, def.apiId);
+      // Before the run is looked for: with a key held twice, which block the lock means is a guess.
+      const twice = lock.keys.find((k) => values.some(([, v]) => count(v, def.variants, k) > 1));
+      if (twice !== undefined) {
+        issue(
+          `${at}.keys`,
+          'lock_ambiguous',
+          `More than one block in "${def.apiId}" is keyed "${twice}"; give each its own key first`,
+        );
+        continue;
+      }
       if (!values.some(([, v]) => held(v, def, lock.keys))) {
         const missing = lock.keys.filter(
           (k) => !values.some(([, v]) => find(v, def.variants, def.apiId, k)),
@@ -385,6 +410,8 @@ function overlaps(
 
 // --- judging a save -------------------------------------------------------------------------------
 
+const DOUBLED =
+  'This region is locked: one of its blocks’ keys is held by more than one block, so which is the locked one can’t be told';
 const LOCKED =
   'This region is locked: its blocks can’t be removed, swapped, reordered, split or have blocks inserted between them';
 const LOCKED_INSIDE =
@@ -402,6 +429,12 @@ const FROZEN = 'This region is frozen: its content can’t be edited';
  *   move as a whole: a locked slot it sits in is the block config's to refuse.
  * - `region_frozen`: with `freeze: 'all'`, any field of a locked block changed (with `subtree`,
  *   inside its children too; with `self`, its own slots stay open).
+ *
+ * A save that holds one of a held lock's keys on more than one block is `region_locked` first
+ * (keys are unique per array, not per tree): otherwise a copy keyed like a locked block could
+ * stand in for it while the real one is edited or removed. With each key on one block, the run
+ * found is the locked one wherever it is, so a run moved whole needs no check of where it came
+ * from, and every other change to it is caught above.
  *
  * A lock no stored locale holds is stale and judges nothing. One issue per lock and locale.
  */
@@ -427,6 +460,12 @@ export function blockLockIssues(
       const report = (code: BlockConfigIssue['code'], field: string, message: string) =>
         issues.push({ field, locale, code, key, message });
       const nowValue = Object.hasOwn(now, locale) ? now[locale] : undefined;
+      // A copy of a locked block keeps its key: with two blocks keyed alike, the run found could be
+      // the copy while the real one is edited or removed. Refused, so the run below is the one.
+      if (lock.keys.some((k) => count(nowValue, def.variants, k) > 1)) {
+        report('region_locked', def.apiId, DOUBLED);
+        continue;
+      }
       const at = find(nowValue, def.variants, def.apiId, key);
       const pairs = lock.keys.map((_, i) => ({
         before: was.items[was.index + i],
@@ -521,6 +560,6 @@ export function diffBlockLocks(
   };
 }
 
-/** Whether two lists hold the same locks, in the same order. */
+/** Whether two lists hold the same locks, in any order: a list's order means nothing. */
 export const sameBlockLocks = (a: readonly BlockLock[], b: readonly BlockLock[]): boolean =>
-  canonicalJson(a.map(identity)) === canonicalJson(b.map(identity));
+  canonicalJson(a.map(identity).sort()) === canonicalJson(b.map(identity).sort());

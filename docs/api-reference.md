@@ -951,7 +951,7 @@ CSV or JSON imports, whose analysis lists the refusals) is held to it for new ed
 `422` whose issues carry a `code`: `block_not_allowed_here` (with the block's `key`),
 `slot_locked`, `slot_too_few`, `slot_too_many`, the [locked regions'](#locked-regions)
 `region_locked` and `region_frozen`, and `more_issues` past 100. Data the environment
-already held (snapshot restore, environment clone, promotion, branch merge, a restored version, a
+already held (snapshot restore, environment clone, promotion, branch merge, a restored version (which the [locked regions](#locked-regions) still hold), a
 duplicate) is not judged. A set's audit row has target `block_config` (the new version) and
 `detail.blockConfig` naming the parts added, removed, loosened and unlocked. MCP:
 `blocks_config_get`, `blocks_config_effective` (`preview:read`), `blocks_config_set`
@@ -965,12 +965,14 @@ slot, by `_key`. See [Domain model](./domain-model.md#locked-regions).
 | Method | Path                        | Scope                                 | Notes                                                                                                                                                                                                                                                                         |
 | ------ | --------------------------- | ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | GET    | `…/entries/:id/block-locks` | `preview:read` (+ `read` on the type) | `{ entryId, contentTypeApiId, version, locks, stale }`; `version` is the entry's `currentVersion`                                                                                                                                                                             |
-| PUT    | `…/entries/:id/block-locks` | `content:write` + `lock` on the type  | Replace `{ locks: [{ field, keys, depth?, freeze? }], expectedVersion? }` → the same plus `unchanged`. Makes no version. `403` `content:lock:<type>`; `422` `lock_not_found`, `lock_not_a_run`, `lock_overlaps`; `409` for a stale `expectedVersion` or a set that lost the race |
+| PUT    | `…/entries/:id/block-locks` | `content:write` + `lock` on the type  | Replace `{ locks: [{ field, keys, depth?, freeze? }], expectedVersion? }` → the same plus `unchanged`. Makes no version. `403` `content:lock:<type>`, or `content:lock:<type>.<field>` for a field the grant denies or makes read-only (those locks are kept whatever the list says); `422` `lock_not_found`, `lock_not_a_run`, `lock_ambiguous`, `lock_overlaps`; `409` for a stale `expectedVersion` or a set that lost the race |
 
 The management `GET …/entries/:id` returns `entry.blockLocks` when the entry holds any; Delivery
 and Preview never do. Every update is held to the locks the stored entry holds, as a `422` with
 `region_locked` or `region_frozen` (each naming the region's first `key`), whether or not a block
-config applies; copies are not judged. A set's audit row targets the entry, with
+config applies, and fails with `409` when a lock set committed after it read the entry. Copies are
+not judged, except `POST …/versions/:version/restore` (and `entries_restore_version`): since
+2026-11-09 a restore is held to the locks held now, unless the caller holds `lock` on the type. A set's audit row targets the entry, with
 `detail.blockLocks` listing the regions locked and unlocked. MCP: `entries_block_locks_get`
 (`preview:read`), `entries_block_locks_set` (`content:write` and `lock`).
 

@@ -7,6 +7,7 @@ import {
   createSpace,
   publishContentType,
   SYSTEM_CALLER,
+  updateEntry,
 } from '@contentworker/application';
 import { type Principal, SCOPES } from '@contentworker/domain';
 import {
@@ -166,6 +167,26 @@ describe('block lock tools (MCP), on the HTTP routes’ use-cases', () => {
     expect((await call('entries_block_locks_get', { id })).isError).toBe(false);
     const read = await connect(deps, reader);
     expect((await read('entries_block_locks_set', { id, locks: [] })).isError).toBe(true);
+  });
+
+  it('holds entries_restore_version to the locks held now, unless the caller holds lock', async () => {
+    const { ctx, deps, id } = await withPage();
+    const scope = { spaceId: SPACE, environmentId: 'main' };
+    // v2 adds c, which is then locked: restoring v1 would remove it.
+    await updateEntry(ctx, scope, id, { body: { 'en-US': [hero('a'), hero('b'), hero('c')] } });
+    const lockAs = await connect(deps, locker);
+    expect(
+      (await lockAs('entries_block_locks_set', { id, locks: [{ field: 'body', keys: ['c'] }] }))
+        .isError,
+    ).toBe(false);
+    const refused = await (await connect(deps, writer))('entries_restore_version', {
+      id,
+      version: 1,
+    });
+    expect(refused.isError).toBe(true);
+    expect(refused.text).toContain('region_locked');
+    const restored = await lockAs('entries_restore_version', { id, version: 1 });
+    expect(restored.isError).toBe(false);
   });
 
   it('refuses another space’s key', async () => {

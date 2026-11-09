@@ -444,8 +444,11 @@ nothing deletes audit history; deleting an environment leaves it.
 as JSON text (null for none), and gives the Manager and Administrator preset roles `lock` on a `*`
 grant that writes. Only a lock set writes the column, a compare-and-set on `current_version` and
 the locks as read; no save, publish or restore names it, so code deployed before it leaves it as
-it is. Plain text, read by `blockLocksOf`: on a replica behind the migration a bare read answers
-the column's own name, which reads as no locks. `entry_published` has no copy (see
+it is. A judged save guards on the column too (`SaveVersionGuard`), on the primary. Plain text,
+read by `blockLocksOf`: on a replica behind the migration an unqualified `"block_locks"` answers
+the column's own name, which reads as no locks. Single-table reads name it unqualified, and so does
+the joined `withFields` read, on purpose (a qualified `"entries"."block_locks"` would fail the
+statement there); `entry-block-locks-replica.test.ts` drops the column to prove both. `entry_published` has no copy (see
 [Domain model](./domain-model.md#locked-regions)).
 
 `0036_block_catalogs.sql` adds `block_catalogs` and touches no existing table: one

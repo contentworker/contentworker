@@ -11,10 +11,16 @@ import {
   publishEntry,
   restoreVersion,
   SYSTEM_CALLER,
+  saveEntryDraft,
   setEntryBlockLocks,
   updateEntry,
 } from '@contentworker/application';
-import type { BlockLock, FieldDefinition, Principal } from '@contentworker/domain';
+import {
+  type BlockLock,
+  ConflictError,
+  type FieldDefinition,
+  type Principal,
+} from '@contentworker/domain';
 import { TransactionConflictError } from '@contentworker/ports';
 import { FixedClock } from '@contentworker/test-kit';
 import { describe, expect, it } from 'vitest';
@@ -144,6 +150,39 @@ describe('entry block locks on D1', () => {
       await listPublishedEntries(h.ctx, h.scope, { contentTypeApiId: 'page' })
     ).filter((e) => e.id === id);
     expect(JSON.stringify(delivered)).not.toContain('lockedBy');
+  });
+
+  it('refuses a save judged before a lock set that committed first, writing nothing', async () => {
+    const h = await harness();
+    const id = await h.page(['a', 'b']);
+    // The save read the entry with no locks…
+    const read = await store.entries.get(h.scope, id);
+    if (!read) throw new Error('no entry');
+    // …then a lock lands…
+    await setEntryBlockLocks(h.ctx, manager, h.scope, id, {
+      locks: [{ field: 'body', keys: ['a'] }],
+    });
+    // …and the save, judged against no locks, must not.
+    await expect(
+      saveEntryDraft(
+        h.ctx,
+        h.scope,
+        read.entry,
+        (await store.contentTypes.get(h.scope, 'page')) as never,
+        { defaultLocale: 'en-US', locales: ['en-US'], previous: read.fields },
+        { body: { 'en-US': [block('b')] } },
+        read.fields,
+      ),
+    ).rejects.toBeInstanceOf(ConflictError);
+    const after = await store.entries.get(h.scope, id);
+    expect(after?.entry.currentVersion).toBe(1);
+    expect(await store.entries.listVersions(h.scope, id)).toHaveLength(1);
+    // A save that read the locks as they are goes through.
+    await updateEntry(h.ctx, h.scope, id, {
+      title: { 'en-US': 'v2' },
+      body: { 'en-US': [block('a'), block('b')] },
+    });
+    expect((await store.entries.get(h.scope, id))?.entry.currentVersion).toBe(2);
   });
 
   it('refuses a set whose version or locks moved since they were read', async () => {

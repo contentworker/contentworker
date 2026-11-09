@@ -511,9 +511,17 @@ function makeEntryRepo(
     eq(cv.entryId, schema.entries.id),
     eq(cv.version, schema.entries.currentVersion),
   );
+  // `block_locks` unqualified, as a single-table read names a column: on a replica behind 0038 the
+  // joined read's `"entries"."block_locks"` would fail the statement, where a bare `"block_locks"`
+  // answers its own name and reads as no locks (`blockLocksOf`). Only `entries` has the column, so
+  // the bare name is never ambiguous. Remove once every deployment is past 0038.
+  const entryColumns = {
+    ...getTableColumns(schema.entries),
+    blockLocks: sql<string | null>`"block_locks"`,
+  };
   const withFields = () =>
     db
-      .select({ entry: schema.entries, fields: cv.fields, bodyKey: cv.bodyKey })
+      .select({ entry: entryColumns, fields: cv.fields, bodyKey: cv.bodyKey })
       .from(schema.entries)
       .leftJoin(cv, currentVersionJoin);
   type CurrentRow = { entry: EntryRow; fields: EntryFields | null; bodyKey: string | null };
@@ -913,8 +921,20 @@ function makeEntryRepo(
         db.insert(schema.entryVersions).values(versionRow(scope, version)),
       ]);
     },
-    async saveVersion(scope, entry, version) {
+    async saveVersion(scope, entry, version, guard) {
+      const e = schema.entries;
       await writeAll(x, [
+        // First, so a lock set that landed since this save was judged writes nothing of it.
+        ...(guard
+          ? [
+              x.db
+                .insert(schema.guard)
+                .select(
+                  sql`SELECT EXISTS (SELECT 1 FROM ${e} WHERE ${scopeFilter(e, scope)} AND ${e.id} = ${entry.id} AND ${e.blockLocks} IS ${locksText(guard.blockLocks)}) AS ok`,
+                ),
+              x.db.delete(schema.guard),
+            ]
+          : []),
         db.insert(schema.entryVersions).values(versionRow(scope, version)),
         saveEntryAggregate(db, scope, entry),
         // The version this one supersedes becomes due to have its body moved, a day from now.
@@ -7721,9 +7741,11 @@ const locksText = (locks: readonly BlockLock[]): string | null =>
   locks.length > 0 ? JSON.stringify(locks) : null;
 
 /**
- * The locks a `block_locks` value holds. On a replica behind 0038 a bare read of the column answers
- * its own name (as 0035's column does), which is not a list: read as none rather than failing the
- * entry. Remove the guard once every deployment is past 0038.
+ * The locks a `block_locks` value holds. On a replica behind 0038 an unqualified `"block_locks"`
+ * answers its own name (as 0035's column does), which is not a list: read as none rather than
+ * failing the entry. That covers single-table reads and the joined `withFields` read, which names
+ * the column bare for this reason; a read that qualified it (`"entries"."block_locks"`) would fail
+ * there instead. Remove the guard once every deployment is past 0038.
  */
 function blockLocksOf(text: string | null): { blockLocks?: BlockLock[] } {
   if (!text?.startsWith('[')) return {};

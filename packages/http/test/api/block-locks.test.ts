@@ -150,6 +150,38 @@ describe('locked regions over HTTP', () => {
     expect([400, 422]).toContain(malformed.status);
   });
 
+  it('holds a version restore to the locks held now, unless the caller holds lock', async () => {
+    const { app } = await makeApp();
+    const id = await page(app, ['a']);
+    // v2 adds b, which is then locked: restoring v1 would remove it.
+    expect(
+      (
+        await send(app, 'PUT', `/entries/${id}`, {
+          fields: { title: { 'en-US': 'Home' }, body: { 'en-US': [hero('a'), hero('b')] } },
+        })
+      ).status,
+    ).toBe(200);
+    await send(app, 'PUT', `/entries/${id}/block-locks`, {
+      locks: [{ field: 'body', keys: ['b'] }],
+    });
+    const writer = await keyFor(app, ['read', 'write']);
+    const refused = await send(app, 'POST', `/entries/${id}/versions/1/restore`, undefined, writer);
+    expect(refused.status).toBe(422);
+    expect(JSON.stringify(await refused.json())).toContain('region_locked');
+    const locker = await keyFor(app, ['read', 'write', 'lock']);
+    const restored = await send(
+      app,
+      'POST',
+      `/entries/${id}/versions/1/restore`,
+      undefined,
+      locker,
+    );
+    expect(restored.status).toBe(200);
+    expect(
+      ((await restored.json()) as { entry: { currentVersion: number } }).entry.currentVersion,
+    ).toBe(3);
+  });
+
   it('takes content:write and the lock action to set; preview keys may read', async () => {
     const { app } = await makeApp();
     const id = await page(app, ['a']);
@@ -222,29 +254,17 @@ describe('locked regions over HTTP', () => {
       locks: [{ field: 'body', keys: ['a'], freeze: 'all' }],
     });
     await send(app, 'PUT', `/entries/${id}/block-locks`, { locks: [] });
-    const rows = (await ctx.store.audit.list('s1', { limit: 10 }))
-      .filter((r) => r.action.endsWith('/block-locks'))
-      // Oldest first: the lock, then the unlock.
-      .sort((a, b) => (a.at < b.at || (a.at === b.at && a.id < b.id) ? -1 : 1));
-    expect(rows.map((r) => [r.targetType, r.targetId, r.detail?.blockLocks])).toEqual([
-      [
-        'entry',
-        id,
-        {
-          entryId: id,
-          locked: [{ field: 'body', keys: ['a'], depth: 'subtree', freeze: 'all' }],
-          unlocked: [],
-        },
-      ],
-      [
-        'entry',
-        id,
-        {
-          entryId: id,
-          locked: [],
-          unlocked: [{ field: 'body', keys: ['a'], depth: 'subtree', freeze: 'all' }],
-        },
-      ],
-    ]);
+    const rows = (await ctx.store.audit.list('s1', { limit: 10 })).filter((r) =>
+      r.action.endsWith('/block-locks'),
+    );
+    // Two rows can share a millisecond, so neither their order nor their ids say which came first.
+    const region = { field: 'body', keys: ['a'], depth: 'subtree', freeze: 'all' };
+    expect(rows).toHaveLength(2);
+    expect(rows.map((r) => [r.targetType, r.targetId, r.detail?.blockLocks])).toEqual(
+      expect.arrayContaining([
+        ['entry', id, { entryId: id, locked: [region], unlocked: [] }],
+        ['entry', id, { entryId: id, locked: [], unlocked: [region] }],
+      ]),
+    );
   });
 });

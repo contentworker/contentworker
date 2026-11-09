@@ -25,6 +25,7 @@ import {
   publishContentType,
   restoreVersion,
   SYSTEM_CALLER,
+  saveEntryDraft,
   setEntryBlockLocks,
   updateEntry,
   updateImportedEntry,
@@ -193,6 +194,34 @@ describe('locked regions', () => {
     expect((await lock([{ field: 'body', keys: ['h3'] }], unrestricted)).locks).toHaveLength(1);
   });
 
+  it('keeps locks on a field the grant denies or makes read-only out of the caller’s reach', async () => {
+    await lock([{ field: 'body', keys: ['h1'] }]);
+    const grant = { contentTypeApiId: '*', actions: ['read', 'write', 'lock'] as never };
+    const readOnly: Principal = {
+      ...manager,
+      contentGrants: [{ ...grant, readOnlyFields: ['body'] }],
+    };
+    const denied: Principal = { ...manager, contentGrants: [{ ...grant, deniedFields: ['body'] }] };
+    // A read-only field's lock is shown and may come back unchanged; a new one is refused.
+    const shown = (await getEntryBlockLocks(ctx, readOnly, scope, id)).locks;
+    expect(shown).toHaveLength(1);
+    expect((await lock(shown, readOnly)).unchanged).toBe(true);
+    const refused = await failure(
+      lock([...shown, { field: 'body', keys: ['h3'] }], readOnly),
+      ForbiddenError,
+    );
+    expect(refused.message).toContain('content:lock:page.body');
+    // Leaving it out doesn't lift it.
+    expect((await lock([], readOnly)).unchanged).toBe(true);
+    // A denied field's locks aren't shown, and survive a set that can't name them.
+    expect((await getEntryBlockLocks(ctx, denied, scope, id)).locks).toEqual([]);
+    await lock([], denied);
+    await failure(lock([{ field: 'body', keys: ['h3'] }], denied), ForbiddenError);
+    expect((await getEntryBlockLocks(ctx, manager, scope, id)).locks).toEqual([
+      expect.objectContaining({ keys: ['h1'] }),
+    ]);
+  });
+
   it('refuses a stale expectedVersion, and a set that loses its race at commit', async () => {
     await updateEntry(ctx, scope, id, body(STORED));
     await failure(lock([{ field: 'body', keys: ['h1'] }], manager, 1), ConflictError);
@@ -350,14 +379,39 @@ describe('locked regions', () => {
       expect(run.analysis.issues[0]?.messages[0]).toMatch(/^body: This region is locked/);
     });
 
-    it('does not judge copies: a restore keeps the locks held now, and a duplicate holds none', async () => {
-      await updateEntry(ctx, scope, id, body([hero('h1'), hero('h2'), STORED[2] as Block]));
-      await lock([], manager);
-      await lock([{ field: 'body', keys: ['h1'] }], manager);
-      const restored = await restoreVersion(ctx, scope, id, 1);
-      expect(restored.entry.blockLocks).toEqual([
-        expect.objectContaining({ field: 'body', keys: ['h1'] }),
+    it('holds a version restore to the locks held now, unless the restorer holds lock', async () => {
+      // v2 adds h4, which is then locked: v1, without it, would remove a locked block.
+      await updateEntry(
+        ctx,
+        scope,
+        id,
+        body([hero('h1'), hero('h2'), STORED[2] as Block, hero('h4')]),
+      );
+      const held = (await getEntryBlockLocks(ctx, manager, scope, id)).locks;
+      await lock([...held, { field: 'body', keys: ['h4'] }]);
+      expect(await codes(restoreVersion(ctx, scope, id, 1, { restorer: editor }))).toEqual([
+        'region_locked body h4',
       ]);
+      // Nobody named: nobody vouches for lock.
+      expect(await codes(restoreVersion(ctx, scope, id, 1))).toEqual(['region_locked body h4']);
+      expect((await store.entries.get(scope, id))?.entry.currentVersion).toBe(2);
+      // One who could lift the lock may restore through it; the locks held now stay.
+      const restored = await restoreVersion(ctx, scope, id, 1, { restorer: manager });
+      expect(restored.entry.currentVersion).toBe(3);
+      expect(restored.entry.blockLocks).toHaveLength(3);
+      expect((await getEntryBlockLocks(ctx, manager, scope, id)).stale).toEqual([
+        expect.objectContaining({ keys: ['h4'] }),
+      ]);
+    });
+
+    it('judges a restore by the regions only, not the block config', async () => {
+      // A restore that leaves every region as it is goes through without lock.
+      await updateEntry(ctx, scope, id, body([hero('h1'), hero('h2'), STORED[2] as Block]));
+      const restored = await restoreVersion(ctx, scope, id, 1, { restorer: editor });
+      expect(restored.entry.currentVersion).toBe(3);
+    });
+
+    it('does not judge other copies: a copy update and a duplicate', async () => {
       // A copy that drops a locked block is not refused; the lock is stale and blocks nothing.
       await updateEntry(ctx, scope, id, body([hero('h3')]), { copy: true });
       const read = await getEntryBlockLocks(ctx, manager, scope, id);
@@ -365,6 +419,26 @@ describe('locked regions', () => {
       await expect(updateEntry(ctx, scope, id, body([]))).resolves.toBeDefined();
       const copy = await duplicateEntry(ctx, scope, id);
       expect(copy.entry.blockLocks).toBeUndefined();
+    });
+
+    it('refuses a save judged before a lock set that committed first (409)', async () => {
+      const read = await store.entries.get(scope, id);
+      const type = await store.contentTypes.get(scope, 'page');
+      if (!read || !type) throw new Error('no entry');
+      await lock([{ field: 'body', keys: ['h3'] }]);
+      await failure(
+        saveEntryDraft(
+          ctx,
+          scope,
+          read.entry,
+          type,
+          { defaultLocale: 'en-US', locales: ['en-US'], previous: read.fields },
+          body([hero('h1'), hero('h2'), STORED[2] as Block]),
+          read.fields,
+        ),
+        ConflictError,
+      );
+      expect((await store.entries.get(scope, id))?.entry.currentVersion).toBe(1);
     });
 
     it('carries the locks to a clone of the environment', async () => {

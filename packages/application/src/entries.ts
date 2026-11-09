@@ -1,12 +1,15 @@
-import type { BlockLock, ContentType, UniqueClaim } from '@contentworker/domain';
+import type { BlockLock, ContentType, Principal, UniqueClaim } from '@contentworker/domain';
 import {
   applyDefaults,
   archive,
   assertEntryFieldsValid,
   assetMimeChecks,
   assignBlockKeys,
+  blockConfigIssues,
   ConflictError,
+  canAccessContentType,
   deriveStatus,
+  EMPTY_BLOCK_CONFIG,
   EMPTY_METADATA,
   ENTRY_ID_RULE,
   type Entry,
@@ -110,6 +113,12 @@ export interface EntryWriteOptions {
    * the update saves whatever the entry is at, as it always has.
    */
   readonly expectedVersion?: number;
+  /**
+   * A copy that is still held to the entry's locked regions (a version restore): judged against
+   * `blockLockIssues` only, the block config's rules skipped, unless this principal holds `lock` on
+   * the entry's type (it could lift the lock anyway). Not accepted over the API.
+   */
+  readonly regionsUnless?: Principal | null;
 }
 
 /**
@@ -244,7 +253,11 @@ type SaveKind = (
       /** The locked regions the stored entry holds, judged with the config. */
       readonly locks?: readonly BlockLock[];
     }
-  | { readonly kind: 'copy' }
+  | {
+      readonly kind: 'copy';
+      /** A copy held to the entry's locked regions only (a version restore without `lock`). */
+      readonly regions?: { readonly before: EntryFields; readonly locks: readonly BlockLock[] };
+    }
 ) & { readonly rules?: BlockRulesInForce | null };
 
 /**
@@ -290,6 +303,18 @@ async function prepareFields(
       save.rules,
       save.kind === 'update' ? save.locks : [],
     );
+  } else if (save.regions?.locks.length) {
+    // The regions alone, through the same capped check; the block config doesn't judge a copy.
+    const issues = blockConfigIssues(
+      contentType,
+      null,
+      EMPTY_BLOCK_CONFIG,
+      save.regions.before,
+      fields,
+      vctx.locales,
+      save.regions.locks,
+    );
+    if (issues.length > 0) throw new ValidationError(issues);
   }
   await assertAssetMimeTypes(ctx, scope, contentType, fields);
   return { fields, skippedHooks: hooked.skipped };
@@ -418,7 +443,15 @@ export async function updateEntry(
     options.copy ? vctx : { ...vctx, previous: found.fields },
     withUnwritable(found.fields, fields, options),
     found.fields,
-    { judgeBlocks: !options.copy || options.imported === true },
+    {
+      judgeBlocks: !options.copy || options.imported === true,
+      judgeRegions:
+        options.regionsUnless !== undefined &&
+        !(
+          options.regionsUnless !== null &&
+          canAccessContentType(options.regionsUnless, 'lock', found.entry.contentTypeApiId)
+        ),
+    },
   );
 }
 
@@ -428,6 +461,8 @@ export interface SaveDraftOptions {
   readonly judgeBlocks?: boolean;
   /** The config and catalog, when the caller read them for many saves (`loadBlockRules`). */
   readonly blockRules?: BlockRulesInForce | null;
+  /** A copy held to the entry's locked regions all the same (`EntryWriteOptions.regionsUnless`). */
+  readonly judgeRegions?: boolean;
 }
 
 /**
@@ -449,6 +484,10 @@ export async function saveEntryDraft(
   // No defaults on update. The fields passed become the whole new version: an
   // omitted field is absent from it (nothing is merged from the previous
   // version), and a cleared one is empty. Re-applying a default would override both.
+  // A copy is judged without previous values (`EntryWriteOptions.copy`), and so is not an edit.
+  const judged = opts.judgeBlocks ?? vctx.previous !== undefined;
+  const regions =
+    !judged && opts.judgeRegions ? { before: stored, locks: current.blockLocks ?? [] } : undefined;
   const { fields: normalized } = await prepareFields(
     ctx,
     scope,
@@ -456,10 +495,9 @@ export async function saveEntryDraft(
     vctx,
     { contentTypeApiId: current.contentTypeApiId, entryId: id, fields },
     'save',
-    // A copy is judged without previous values (`EntryWriteOptions.copy`), and so is not an edit.
-    (opts.judgeBlocks ?? vctx.previous !== undefined)
+    judged
       ? { kind: 'update', before: stored, locks: current.blockLocks, rules: opts.blockRules }
-      : { kind: 'copy' },
+      : { kind: 'copy', ...(regions ? { regions } : {}) },
   );
 
   const { entry, version } = saveDraft(current, normalized);
@@ -475,15 +513,26 @@ export async function saveEntryDraft(
   };
 
   const claims = uniqueClaims(contentType, normalized);
-  if (claims.length === 0 && !hasUniqueFields(contentType)) {
-    await ctx.store.entries.saveVersion(scope, synced, stamped);
-  } else {
-    await ctx.store.withTransaction(async (tx) => {
-      await assertClaimsFree(tx.entries, scope, claims, id);
-      await tx.entries.saveVersion(scope, synced, stamped);
-      // Replace rather than add: clearing a unique field has to free its value.
-      await tx.entries.replaceUniqueClaims(scope, id, claims);
-    });
+  // A judged save holds to the locks it was judged against: one set since fails it (409).
+  const guard = judged || regions ? { blockLocks: current.blockLocks ?? [] } : undefined;
+  try {
+    if (claims.length === 0 && !hasUniqueFields(contentType)) {
+      await ctx.store.entries.saveVersion(scope, synced, stamped, guard);
+    } else {
+      await ctx.store.withTransaction(async (tx) => {
+        await assertClaimsFree(tx.entries, scope, claims, id);
+        await tx.entries.saveVersion(scope, synced, stamped, guard);
+        // Replace rather than add: clearing a unique field has to free its value.
+        await tx.entries.replaceUniqueClaims(scope, id, claims);
+      });
+    }
+  } catch (err) {
+    if (!(err instanceof TransactionConflictError)) throw err;
+    throw new ConflictError(
+      `Entry "${id}" changed while it was being saved (its locked regions were set since it ` +
+        'was read): read it again',
+      { currentVersion: current.currentVersion },
+    );
   }
   // What is measured is what was stored: after the hook, the slugs and the block keys.
   noteEntryChange(ctx, {

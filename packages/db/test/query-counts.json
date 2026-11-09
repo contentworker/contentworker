@@ -44,6 +44,6 @@
   "management: POST /entries (blocks)": { "statements": 8, "roundTrips": 4 },
   "management: POST /entries (blocks, block config set)": { "statements": 8, "roundTrips": 4 },
   "management: POST /entries/:id/published": { "statements": 12, "roundTrips": 6 },
-  "management: PATCH /entries/:id/seo": { "statements": 6, "roundTrips": 4 },
+  "management: PATCH /entries/:id/seo": { "statements": 8, "roundTrips": 4 },
   "management: GET /entries/:id/activity": { "statements": 1, "roundTrips": 1 }
 }

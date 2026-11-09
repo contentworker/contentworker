@@ -2048,6 +2048,15 @@ export interface BlockLockGuard {
   readonly locks: readonly BlockLock[];
 }
 
+/**
+ * What a save of a new version holds to: the entry still holds the locks the save was judged
+ * against, so a lock set that commits between the save's read and its write fails the save
+ * rather than letting an edit through unjudged.
+ */
+export interface SaveVersionGuard {
+  readonly blockLocks: readonly BlockLock[];
+}
+
 export interface EntryRepo {
   get(scope: Scope, id: string): Promise<EntryWithFields | null>;
   /**
@@ -2119,8 +2128,17 @@ export interface EntryRepo {
   distinctFieldValues(scope: Scope, query: FieldValuesQuery): Promise<FieldValueCount[]>;
   /** Persists a new entry and its first version. */
   create(scope: Scope, entry: Entry, version: EntryVersion): Promise<void>;
-  /** Persists the updated aggregate plus a new version snapshot. */
-  saveVersion(scope: Scope, entry: Entry, version: EntryVersion): Promise<void>;
+  /**
+   * Persists the updated aggregate plus a new version snapshot. With `guard`, only while the entry
+   * holds those locks: a lock set since throws {@link TransactionConflictError} (inside a unit of
+   * work, at commit) and nothing is written.
+   */
+  saveVersion(
+    scope: Scope,
+    entry: Entry,
+    version: EntryVersion,
+    guard?: SaveVersionGuard,
+  ): Promise<void>;
   /**
    * Replaces the entry's locked regions (empty clears them), only while `guard` holds: no version
    * is made, and nothing else on the entry moves. A lost race throws

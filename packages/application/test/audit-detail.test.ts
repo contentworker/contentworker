@@ -1,4 +1,5 @@
 import {
+  ConflictError,
   type EntryChange,
   type EntryFields,
   MAX_AUDIT_DETAIL_ENTRIES,
@@ -193,7 +194,8 @@ describe('what a save tells its audit row', () => {
     );
     await expect(
       updateEntry(ctx, scope, entryId, fields({ title: { 'en-US': 'Lost' } })),
-    ).rejects.toBeInstanceOf(TransactionConflictError);
+      // A lost commit is the usual 409.
+    ).rejects.toBeInstanceOf(ConflictError);
     expect(log.detail()).toBeUndefined();
   });
 
