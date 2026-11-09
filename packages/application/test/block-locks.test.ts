@@ -147,7 +147,10 @@ describe('locked regions', () => {
     });
 
   it('sets locks stamped with who and when, making no version', async () => {
-    expect(await getEntryBlockLocks(ctx, scope, id)).toMatchObject({ version: 1, locks: [] });
+    expect(await getEntryBlockLocks(ctx, manager, scope, id)).toMatchObject({
+      version: 1,
+      locks: [],
+    });
     const set = await lock([{ field: 'body', keys: ['h1', 'h2'] }], manager, 1);
     expect(set).toMatchObject({
       unchanged: false,
@@ -167,7 +170,7 @@ describe('locked regions', () => {
     const stored = await store.entries.get(scope, id);
     expect(stored?.entry.currentVersion).toBe(1);
     expect(await store.entries.listVersions(scope, id)).toHaveLength(1);
-    expect((await getEntryBlockLocks(ctx, scope, id)).locks).toEqual(set.locks);
+    expect((await getEntryBlockLocks(ctx, manager, scope, id)).locks).toEqual(set.locks);
   });
 
   it('takes the lock action to lock and to unlock, whoever locked', async () => {
@@ -212,7 +215,7 @@ describe('locked regions', () => {
     );
     expect(overlap.issues).toMatchObject([{ code: 'lock_overlaps', field: 'locks[1].keys' }]);
     await failure(lock([{ field: 'body', keys: ['nope'] }]), ValidationError);
-    expect((await getEntryBlockLocks(ctx, scope, id)).locks).toEqual([]);
+    expect((await getEntryBlockLocks(ctx, manager, scope, id)).locks).toEqual([]);
   });
 
   it('writes nothing and notes nothing for a set that changes nothing', async () => {
@@ -357,7 +360,7 @@ describe('locked regions', () => {
       ]);
       // A copy that drops a locked block is not refused; the lock is stale and blocks nothing.
       await updateEntry(ctx, scope, id, body([hero('h3')]), { copy: true });
-      const read = await getEntryBlockLocks(ctx, scope, id);
+      const read = await getEntryBlockLocks(ctx, manager, scope, id);
       expect(read.stale).toEqual(read.locks);
       await expect(updateEntry(ctx, scope, id, body([]))).resolves.toBeDefined();
       const copy = await duplicateEntry(ctx, scope, id);

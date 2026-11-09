@@ -1,5 +1,5 @@
 import { getEntryBlockLocks, setEntryBlockLocks } from '@contentworker/application';
-import { authorizeContent, SCOPES } from '@contentworker/domain';
+import { SCOPES } from '@contentworker/domain';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { blockLocksSetBody } from '../../api/validation';
@@ -26,9 +26,7 @@ export function registerBlockLockTools(server: McpServer, t: ToolContext): void 
     },
     async (args) => {
       guard(SCOPES.previewRead, scopeOf(args));
-      const locks = await getEntryBlockLocks(ctx, scopeOf(args), args.id);
-      authorizeContent(t.principal, 'read', locks.contentTypeApiId);
-      return ok(locks);
+      return ok(await getEntryBlockLocks(ctx, t.principal, scopeOf(args), args.id));
     },
   );
 

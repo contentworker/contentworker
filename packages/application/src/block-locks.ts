@@ -1,6 +1,7 @@
 import {
   authorizeContent,
   type BlockLock,
+  blockLocksFor,
   ConflictError,
   checkBlockLocks,
   diffBlockLocks,
@@ -53,20 +54,28 @@ const view = (
   stale: readonly BlockLock[],
 ): EntryBlockLocks => ({ entryId, contentTypeApiId, version, locks, stale });
 
-/** The entry's locks, the stale ones named. A read: writes nothing. */
+/**
+ * The entry's locks, the stale ones named: those `principal` may read (`blockLocksFor`: none on a
+ * field it can't read, and no `lockedBy` for a reader that doesn't see who wrote what). Refused
+ * with 403 without `read` on the entry's type. A read: writes nothing.
+ */
 export async function getEntryBlockLocks(
   ctx: AppContext,
+  principal: Principal,
   scope: Scope,
   id: string,
 ): Promise<EntryBlockLocks> {
   const { entry, fields, contentType } = await read(ctx, scope, id);
+  authorizeContent(principal, 'read', entry.contentTypeApiId);
   const locks = entry.blockLocks ?? [];
+  const readable = (l: readonly BlockLock[]) =>
+    blockLocksFor(principal, entry.contentTypeApiId, l) as readonly BlockLock[];
   return view(
     entry.id,
     entry.contentTypeApiId,
     entry.currentVersion,
-    locks,
-    staleBlockLocks(contentType, fields, locks),
+    readable(locks),
+    readable(staleBlockLocks(contentType, fields, locks)),
   );
 }
 

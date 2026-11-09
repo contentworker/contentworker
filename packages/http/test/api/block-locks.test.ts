@@ -174,6 +174,26 @@ describe('locked regions over HTTP', () => {
         )
       ).status,
     ).toBe(422);
+    // A preview key reads the locks, but not who locked them (as it isn't told who wrote what).
+    const seen = (await (
+      await send(app, 'GET', `/entries/${id}/block-locks`, undefined, cpa)
+    ).json()) as { locks: { field: string; lockedBy?: string }[] };
+    expect(seen.locks).toHaveLength(1);
+    expect(seen.locks[0]).not.toHaveProperty('lockedBy');
+    const entry = (await (await send(app, 'GET', `/entries/${id}`, undefined, cpa)).json()) as {
+      entry: { blockLocks?: { lockedBy?: string }[] };
+    };
+    expect(entry.entry.blockLocks?.[0]).toBeDefined();
+    expect(entry.entry.blockLocks?.[0]).not.toHaveProperty('lockedBy');
+    expect(
+      (
+        (await (
+          await send(app, 'GET', `/entries/${id}/block-locks`, undefined, locker)
+        ).json()) as {
+          locks: { lockedBy?: string }[];
+        }
+      ).locks[0]?.lockedBy,
+    ).toBeTruthy();
     // Anyone with lock may unlock, whoever locked.
     expect(
       (await send(app, 'PUT', `/entries/${id}/block-locks`, { locks: [] }, admin)).status,

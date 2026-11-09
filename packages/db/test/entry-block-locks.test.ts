@@ -138,7 +138,7 @@ describe('entry block locks on D1', () => {
     });
     await publishEntry(h.ctx, h.scope, id);
     await restoreVersion(h.ctx, h.scope, id, 1);
-    expect((await getEntryBlockLocks(h.ctx, h.scope, id)).locks).toEqual(locks);
+    expect((await getEntryBlockLocks(h.ctx, manager, h.scope, id)).locks).toEqual(locks);
     // Delivery never sees one: the published row has no copy, and a delivered entry no lock.
     const [delivered] = (
       await listPublishedEntries(h.ctx, h.scope, { contentTypeApiId: 'page' })

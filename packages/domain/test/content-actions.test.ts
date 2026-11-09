@@ -3,6 +3,7 @@ import {
   assertCanGrant,
   authorizeContent,
   authorizeTrash,
+  blockLocksFor,
   CONTENT_ACTIONS,
   type ContentAction,
   type ContentTypeGrant,
@@ -251,6 +252,21 @@ describe('grantsNoWider', () => {
     ).toBe(true);
   });
 
+  it('refuses dropping a denial the held grant names, even with publish gone', () => {
+    expect(
+      grantsNoWider(
+        [g(['read', 'write'])],
+        [g(['read', 'write', 'publish'], { deniedActions: ['unpublish'] })],
+      ),
+    ).toBe(false);
+    expect(
+      grantsNoWider(
+        [g(['read', 'write'], { deniedActions: ['unpublish'] })],
+        [g(['read', 'write', 'publish'], { deniedActions: ['unpublish'] })],
+      ),
+    ).toBe(true);
+  });
+
   it('refuses fewer or more grants (no grants is unrestricted), another type, or other field rules', () => {
     expect(grantsNoWider([], [g(['read'])])).toBe(false);
     expect(
@@ -267,5 +283,33 @@ describe('grantsNoWider', () => {
         [g(['read', 'write'], { deniedFields: ['a', 'b'] })],
       ),
     ).toBe(true);
+  });
+});
+
+describe('blockLocksFor', () => {
+  const locks = [
+    { field: 'body', keys: ['a'], lockedBy: 'user:1' },
+    { field: 'secret', keys: ['b'], lockedBy: 'user:1' },
+  ];
+  it('keeps every lock, and who locked it, for a writer', () => {
+    expect(blockLocksFor({ kind: 'key', scopes: [SCOPES.contentWrite] }, 'page', locks)).toEqual(
+      locks,
+    );
+  });
+  it('drops who locked it for a reader that doesn’t see who wrote what', () => {
+    expect(blockLocksFor({ kind: 'key', scopes: [SCOPES.previewRead] }, 'page', locks)).toEqual([
+      { field: 'body', keys: ['a'] },
+      { field: 'secret', keys: ['b'] },
+    ]);
+  });
+  it('drops the locks on a field the grant denies', () => {
+    const principal = {
+      kind: 'key' as const,
+      scopes: [SCOPES.contentWrite],
+      contentGrants: [
+        { contentTypeApiId: 'page', actions: ['read' as const], deniedFields: ['secret'] },
+      ],
+    };
+    expect(blockLocksFor(principal, 'page', locks)).toEqual([locks[0]]);
   });
 });

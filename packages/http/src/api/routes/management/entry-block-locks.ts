@@ -1,5 +1,5 @@
 import { getEntryBlockLocks, setEntryBlockLocks } from '@contentworker/application';
-import { authorizeContent, SCOPES } from '@contentworker/domain';
+import { SCOPES } from '@contentworker/domain';
 import { Hono } from 'hono';
 import { type AuthDeps, type AuthVars, requireScope } from '../../auth';
 import { doc } from '../../docs/openapi';
@@ -27,9 +27,9 @@ export function entryBlockLocksRoutes(deps: AuthDeps): Hono<AuthVars> {
     }),
     requireScope(SCOPES.previewRead),
     async (c) => {
-      const locks = await getEntryBlockLocks(ctx, scopeOf(c), c.req.param('id'));
-      authorizeContent(c.get('principal'), 'read', locks.contentTypeApiId);
-      return c.json(locks);
+      return c.json(
+        await getEntryBlockLocks(ctx, c.get('principal'), scopeOf(c), c.req.param('id')),
+      );
     },
   );
   app.put(
