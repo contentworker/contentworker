@@ -1417,6 +1417,11 @@ lock on a field the principal's grant denies or makes read-only is theirs neithe
 nor lift (`403 content:lock:<type>.<field>`); the entry's locks there are kept whatever the list
 says.
 
+Reads go through `blockLocksFor(principal, type, locks)` (`packages/domain/src/auth/auth.ts`): the
+lock reads and every management entry response (via `withAuthorIdsFor`) leave out the locks on a
+field the reader's grant denies, and `lockedBy` for a reader that isn't told who wrote what
+(`seesAuthorIds`: a preview-only key, for one).
+
 The save path passes the stored entry's locks to `assertBlockConfigAllows`, so creates are never
 judged by them, and every update (the API, MCP, block patches, imports, SEO and bulk field edits)
 is. A judged save also passes them to `entries.saveVersion` as a `SaveVersionGuard`, so a lock set

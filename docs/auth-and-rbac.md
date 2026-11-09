@@ -565,10 +565,15 @@ MCP tool for the same reason. Operator API keys are on MCP (`api_keys_list`, `ap
 bearer (`isDelegatedBearer`: an OAuth or personal access token, which `authenticate` marks with
 the principal's `issuance`) gets **403** from `POST /spaces/:space/api-keys` and from a
 `PUT /spaces/:space/api-keys/:id/role` (or `role_preset_assign`) that would widen a key: new
-scopes it doesn't hold, a different role's content grants, or unbinding it from a role. It is
-refused the same way editing a role an active key holds (`PUT /spaces/:space/roles/:id`,
-`role_update`) to add scopes or change its content grants, and minting a personal access token
-(a token can't mint another). Narrowing is allowed. The key use-cases take the issuer as a
+scopes it doesn't hold, content grants that aren't a narrowing of the key's, or unbinding it from
+a role. It is refused the same way editing a role an active key holds (`PUT /spaces/:space/roles/:id`,
+`role_update`) to add scopes or widen its content grants, and minting a personal access token
+(a token can't mint another). Narrowing is allowed. Content grants narrow only one for one
+(`grantsNoWider`): the same number of grants in the same order, each on the same content type
+with the same denied and read-only fields, holding a subset of the held grant's actions (implied
+`delete` and `unpublish` included) and keeping every action the held grant denies. So moving a key
+from Manager to Editor (dropping `lock`) is a narrowing; dropping a grant (no grants is
+unrestricted), naming another type or lifting a denial is a change, and refused. The key use-cases take the issuer as a
 required argument (a principal, or `system` for the OAuth and personal access token flows). A signed-in person, an operator key and the admin token are unaffected. Before this,
 a personal access token holding `space:admin` could mint a key over REST.
 
