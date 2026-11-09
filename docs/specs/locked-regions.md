@@ -1,6 +1,6 @@
 # Locked regions
 
-Status: **proposed** (M6, "Locked regions on the canvas" in `ROADMAP.md`). Nothing here is built.
+Status: **proposed**, decisions made 2026-11-09 (M6, "Locked regions on the canvas" in `ROADMAP.md`). Nothing here is built.
 This file sits in `docs/specs/`, which the docs embed does not read (it takes `docs/*.md` only),
 so MCP clients never mistake it for a description of shipped behaviour.
 
@@ -55,6 +55,8 @@ interface BlockLock {
   readonly keys: readonly string[];
   /** `subtree`: the blocks and everything inside them. `self`: their own slots stay open. */
   readonly depth: 'subtree' | 'self';
+  /** `structure`: no add, remove, move or swap; fields stay editable. `all`: fields frozen too. */
+  readonly freeze: 'structure' | 'all';
   /** Who locked it and when, from the principal and `ctx.clock`. */
   readonly lockedBy: string;
   readonly lockedAt: string;
@@ -70,7 +72,7 @@ interface BlockLock {
 - **One region per block.** A block belongs to at most one region; overlapping locks are refused
   when made (422 `lock_overlaps`).
 - Locks are entry state, not versioned content: locking or unlocking is its own operation, not a
-  save of the fields, and does not create a version. (Open question 5.)
+  save of the fields, and does not create a version (decision 5).
 
 ## Enforcement
 
@@ -83,7 +85,7 @@ compared, with each issue naming the region's first `_key`:
 | A block inserted between two of a run's blocks             | `region_locked`               |
 | A run's blocks reordered or split across slots             | `region_locked`               |
 | With `subtree`: any slot inside a locked block changed     | `region_locked`               |
-| With content frozen (open question 1): any field changed   | `region_frozen`               |
+| With `freeze: 'all'`: any field inside the region changed  | `region_frozen`               |
 
 - The same rules as today: new edits are judged, copies are not. A clone carries its source's
   locks; a version restore keeps the locks held now.
@@ -102,14 +104,14 @@ Both surfaces, as AGENTS.md requires:
 - **MCP:** `entries_block_locks_get` and `entries_block_locks_set`.
 - **SDK:** `cma.entries.blockLocks.{get,set}`.
 - **Permission:** a content-level action `lock` per content type, alongside `write` and `publish`
-  (`ForbiddenError('content:lock:<type>')`). Unlocking takes the same action. (Open question 2.)
+  (`ForbiddenError('content:lock:<type>')`). Unlocking takes the same action (decision 2).
 - **Audit:** every lock and unlock is an audit event with the keys and depth.
 
 ## The canvas
 
 - Select a block (or shift-select neighbours in one slot) → **Lock** in the block's menu, for
   people with `lock`. The menu offers "This block and everything inside" (`subtree`) or "Only
-  this block" (`self`).
+  this block" (`self`), and "Also freeze the content" (`freeze: 'all'`), off by default.
 - A locked region draws a lock on its outline and in Layers, with who locked it and when. Its
   seams, move, duplicate and remove are gone, as for a locked slot; editors without `lock` see
   the same, plus "Locked by …".
@@ -118,23 +120,22 @@ Both surfaces, as AGENTS.md requires:
 - The live preview channel needs no change: locks change what the admin offers, not what the
   page renders.
 
-## Open questions
+## Decisions
 
-1. **What a lock freezes.** Structure only (as a slot lock: blocks can't be added, removed,
-   moved or swapped, but their fields stay editable), or structure and content (fully frozen)?
-   Proposed: structure by default, with "and content" as an option on the lock
-   (`freeze: 'structure' | 'all'`).
-2. **Who can lock and unlock.** A new `lock` content action (proposed), or the admin role only?
-   Should unlocking take more than locking (for example, only the person who locked it, or an
-   admin)?
-3. **Locales.** When a blocks field is localized, does a lock hold in one locale or every locale?
-   Proposed: every locale, by `_key`, wherever the keys are present; a locale without those keys
-   is not affected.
-4. **Stale locks.** When a locked block no longer exists (a schema change removed its block type,
-   or a copy dropped it), proposed: show the lock as stale, as the block config shows stale rules,
-   and never let it block a save. Stale locks can be cleared by anyone with `lock`.
-5. **Versions.** Should locking be recorded in the entry's version history, so a restore can bring
-   old locks back? Proposed: no; locks are current state, kept in the audit log.
+Made by the owner on 2026-11-09, each as proposed:
+
+1. **What a lock freezes.** Structure by default, as a slot lock: blocks can't be added, removed,
+   moved or swapped, but their fields stay editable. Freezing the content too is an option on the
+   lock (`freeze: 'all'`).
+2. **Who can lock and unlock.** A new `lock` content action per content type. Unlocking takes the
+   same action, and no more: anyone who may lock may unlock, whoever locked it.
+3. **Locales.** A lock holds in every locale, by `_key`, wherever the keys are present; a locale
+   without those keys is not affected.
+4. **Stale locks.** A lock whose blocks no longer exist (a schema change removed their block type,
+   or a copy dropped them) shows as stale, as the block config shows stale rules, and never blocks
+   a save. Anyone with `lock` can clear it.
+5. **Versions.** Locks are not in the entry's version history, and a restore doesn't bring old
+   locks back. Locks are current state; the audit log records every lock and unlock.
 
 ## Out of scope
 
