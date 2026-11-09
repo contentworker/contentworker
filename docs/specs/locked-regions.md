@@ -1,6 +1,7 @@
 # Locked regions
 
-Status: **proposed**, decisions made 2026-11-09 (M6, "Locked regions on the canvas" in `ROADMAP.md`). Nothing here is built.
+Status: **proposed**, decisions made 2026-11-09 (M6, "Locked regions on the canvas" in
+`ROADMAP.md`). Nothing here is built.
 This file sits in `docs/specs/`, which the docs embed does not read (it takes `docs/*.md` only),
 so MCP clients never mistake it for a description of shipped behaviour.
 
