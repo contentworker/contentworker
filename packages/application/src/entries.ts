@@ -1,4 +1,4 @@
-import type { ContentType, UniqueClaim } from '@contentworker/domain';
+import type { BlockLock, ContentType, UniqueClaim } from '@contentworker/domain';
 import {
   applyDefaults,
   archive,
@@ -76,6 +76,11 @@ export interface CreateEntryInput {
    * instead of crediting whoever copied it. Not accepted over the API.
    */
   readonly authorship?: Pick<Entry, 'createdAt' | 'createdBy' | 'firstPublishedAt'>;
+  /**
+   * The locked regions an environment clone brings from its source entry, written with it. Not
+   * accepted over the API: locks are set on their own (`setEntryBlockLocks`).
+   */
+  readonly blockLocks?: readonly BlockLock[];
 }
 
 /** How a write's fields are judged. */
@@ -167,6 +172,7 @@ export async function createEntry(
       currentVersion: 1,
       publishedVersion: null,
       ...input.authorship,
+      ...(input.blockLocks?.length ? { blockLocks: input.blockLocks } : {}),
     },
     actorOf(ctx),
     now,
@@ -232,7 +238,12 @@ export async function writeNewEntry(
  */
 type SaveKind = (
   | { readonly kind: 'create' }
-  | { readonly kind: 'update'; readonly before: EntryFields }
+  | {
+      readonly kind: 'update';
+      readonly before: EntryFields;
+      /** The locked regions the stored entry holds, judged with the config. */
+      readonly locks?: readonly BlockLock[];
+    }
   | { readonly kind: 'copy' }
 ) & { readonly rules?: BlockRulesInForce | null };
 
@@ -277,6 +288,7 @@ async function prepareFields(
       fields,
       vctx.locales,
       save.rules,
+      save.kind === 'update' ? save.locks : [],
     );
   }
   await assertAssetMimeTypes(ctx, scope, contentType, fields);
@@ -446,7 +458,7 @@ export async function saveEntryDraft(
     'save',
     // A copy is judged without previous values (`EntryWriteOptions.copy`), and so is not an edit.
     (opts.judgeBlocks ?? vctx.previous !== undefined)
-      ? { kind: 'update', before: stored, rules: opts.blockRules }
+      ? { kind: 'update', before: stored, locks: current.blockLocks, rules: opts.blockRules }
       : { kind: 'copy' },
   );
 
@@ -540,7 +552,7 @@ export async function validateEntry(
         fields: withUnwritable(found.fields, input.fields, options),
       },
       'dry-run',
-      { kind: 'update', before: found.fields },
+      { kind: 'update', before: found.fields, locks: found.entry.blockLocks },
     );
     // The domain's own refusal (an archived entry can't take a new version), at the point a save
     // meets it.

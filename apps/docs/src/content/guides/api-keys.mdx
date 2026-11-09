@@ -73,7 +73,8 @@ list of grants:
 
 - A key bound to a role can only touch the content types its grants name (`*` matches any type;
   an exact grant wins over `*`). Types without a grant are invisible to it, in lists too.
-- **Actions** are `read`, `write` and `publish`. Two finer actions come with them: `delete`
+- **Actions** are `read`, `write`, `publish` and `lock` (locking and unlocking regions of an
+  entry's blocks; only a grant that lists it has it). Two finer actions come with them: `delete`
   (moving to the trash, and with `publish` deleting permanently) with `write` or `publish`, and
   `unpublish` with `publish`. List `deniedActions` to withhold either, so a role can write but not
   delete, or publish but not unpublish:

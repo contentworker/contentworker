@@ -313,7 +313,8 @@ async function runClonePrepare(
   }
   if (await ctx.store.bulkJobs.getJob(target, createJobId)) return { succeeded: 1, failures: [] };
   try {
-    await startSnapshotImport(ctx, blob, target, await exportSnapshot(ctx, source), {
+    const snapshot = await exportSnapshot(ctx, source, { blockLocks: true });
+    await startSnapshotImport(ctx, blob, target, snapshot, {
       publish: config.publish !== false,
       jobIds: { create: createJobId, publish: publishJobId },
       filesFrom: source.spaceId,

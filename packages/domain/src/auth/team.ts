@@ -31,6 +31,10 @@ const READS: readonly ContentTypeGrant[] = [{ contentTypeApiId: '*', actions: ['
 const WRITES: readonly ContentTypeGrant[] = [
   { contentTypeApiId: '*', actions: ['read', 'write', 'publish'] },
 ];
+/** Managers and admins also lock regions of an entry's blocks, and unlock them. */
+const MANAGES: readonly ContentTypeGrant[] = [
+  { contentTypeApiId: '*', actions: ['read', 'write', 'publish', 'lock'] },
+];
 
 const VIEWER: readonly PermissionScope[] = [
   SCOPES.previewRead,
@@ -79,7 +83,7 @@ export const ROLE_PRESET_DEFINITIONS: readonly RolePresetDefinition[] = [
     description:
       'Everything an editor can do, and also changes how content is structured: content types, workflows, taxonomy, functions and AI actions.',
     scopes: MANAGER,
-    contentGrants: WRITES,
+    contentGrants: MANAGES,
   },
   {
     preset: 'admin',
@@ -87,7 +91,7 @@ export const ROLE_PRESET_DEFINITIONS: readonly RolePresetDefinition[] = [
     description:
       'Everything a manager can do, and also manages the team, API keys, roles, webhooks, environments, plugins and the audit log.',
     scopes: ADMIN,
-    contentGrants: WRITES,
+    contentGrants: MANAGES,
   },
 ];
 

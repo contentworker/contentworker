@@ -41,19 +41,26 @@ export function scopesForKind(kind: ApiKeyKind): PermissionScope[] {
 }
 
 /**
- * Content-level actions a role can grant per content type. `read`, `write` and `publish` are listed
- * on a grant; `delete` (trash and purge) and `unpublish` are finer actions a grant holds by
- * implication and can withhold ({@link ContentTypeGrant.deniedActions}).
+ * Content-level actions a role can grant per content type. `read`, `write`, `publish` and `lock`
+ * are listed on a grant; `delete` (trash and purge) and `unpublish` are finer actions a grant holds
+ * by implication and can withhold ({@link ContentTypeGrant.deniedActions}). `lock` locks and
+ * unlocks regions of an entry's blocks (`block-locks.ts`), whoever locked them; a grant holds it
+ * only when it lists it, so no grant stored before it existed gains it.
  */
-export type ContentAction = 'read' | 'write' | 'publish' | 'delete' | 'unpublish';
+export type ContentAction = 'read' | 'write' | 'publish' | 'lock' | 'delete' | 'unpublish';
 
 /** The actions a grant lists. */
-export type ListedContentAction = 'read' | 'write' | 'publish';
+export type ListedContentAction = 'read' | 'write' | 'publish' | 'lock';
 
 /** The actions a grant holds by implication unless it withholds them. */
 export type ImpliedContentAction = 'delete' | 'unpublish';
 
-export const LISTED_CONTENT_ACTIONS: readonly ListedContentAction[] = ['read', 'write', 'publish'];
+export const LISTED_CONTENT_ACTIONS: readonly ListedContentAction[] = [
+  'read',
+  'write',
+  'publish',
+  'lock',
+];
 export const IMPLIED_CONTENT_ACTIONS: readonly ImpliedContentAction[] = ['delete', 'unpublish'];
 export const CONTENT_ACTIONS: readonly ContentAction[] = [
   ...LISTED_CONTENT_ACTIONS,

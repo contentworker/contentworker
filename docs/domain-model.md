@@ -1362,6 +1362,59 @@ restore can bring back blocks from before a lock or a narrowing.
 
 The config isn't in snapshots, exports or environment clones; the environment purge clears it.
 
+## Locked regions
+
+`packages/domain/src/content-type/block-locks.ts` (design: `docs/specs/locked-regions.md`). Part of
+one entry's blocks that editors can't restructure: one block, or a run of neighbouring blocks in
+one slot, named by `_key`. Entry state, not content: `Entry.blockLocks`, stored in
+`entries.block_locks` (0038), never in a version, a published row, Delivery or Preview.
+
+```ts
+interface BlockLock {
+  field: string; // a top-level blocks field
+  keys: string[]; // one block, or neighbours in one slot, in order
+  depth: 'subtree' | 'self'; // self: the blocks' own slots stay open
+  freeze: 'structure' | 'all'; // all: their fields are frozen too
+  lockedBy: string; // principalActorId
+  lockedAt: string;
+}
+```
+
+- **Slots** are what the content model says: a blocks field of a block's variant. Regions need no
+  block catalog or config.
+- **Setting** (`checkBlockLocks(contentType, fields, input, stored, stamp)`) takes the whole list.
+  Depth defaults to `subtree`, freeze to `structure`. A lock the entry already holds (same field,
+  keys, depth and freeze) keeps its stamp and is kept even when stale; any other must name keys
+  some locale holds as a run (`lock_not_found`, `lock_not_a_run`). A block belongs to at most one
+  region: two locks sharing a block, or one inside another's `subtree`, are `lock_overlaps`.
+  `BLOCK_LOCK_LIMITS`: 50 locks, 100 keys each.
+- **Judging a save** (`blockLockIssues`, called by `blockConfigIssues` through its `locks`
+  argument, with or without a catalog). Per lock, in each locale whose stored value holds its run
+  (by `_key`, so a locale without it is unaffected): `region_locked` when a locked block is removed
+  or swapped for another block type (an alias renamed to its new id is not a swap), a block is
+  inserted into the run, or the run is reordered or split; the run may move as a whole (a locked
+  slot it sits in is the config's to refuse). With `subtree`, any slot inside a locked block that
+  changes (a child added, removed, moved or swapped, at any depth) is `region_locked`. With
+  `freeze: 'all'`, any field of a locked block that changes is `region_frozen` (with `self`, its
+  slots stay open). One issue per lock and locale, naming the region's first `_key`.
+- **Stale**: a lock no locale holds (`staleBlockLocks`) judges nothing; it's listed as stale.
+- **Audit** (`diffBlockLocks`): the regions locked and unlocked, at most ten of each, each with
+  field, at most ten keys, depth and freeze.
+
+The use-cases (`packages/application/src/block-locks.ts`): `getEntryBlockLocks` (a read) and
+`setEntryBlockLocks(ctx, principal, scope, id, { locks, expectedVersion? })`, which authorizes
+the `lock` content action on the entry's type (`content:lock:<type>`) for locking and unlocking
+alike, checks `expectedVersion`, is a no-op when nothing changes, and writes with
+`entries.setBlockLocks` in a unit, guarded on the entry's `currentVersion` and the locks as read
+(a lost race is `409`). It makes no version, and notes `detail.blockLocks` on the change log.
+
+The save path passes the stored entry's locks to `assertBlockConfigAllows`, so creates are never
+judged by them, and every update (the API, MCP, block patches, imports, SEO and bulk field edits)
+is. Copies are not judged. No save, publish or restore writes the column, so a version restore
+keeps the locks held now. An environment clone carries each entry's locks (`exportSnapshot` with
+`blockLocks: true`, written by `createEntry` only for a clone); an export file, a duplicate and a
+promotion carry none.
+
 ## Saved views
 
 ```ts

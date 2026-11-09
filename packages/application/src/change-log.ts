@@ -1,6 +1,7 @@
 import {
   type AuditDetail,
   type BlockConfigChange,
+  type BlockLockChange,
   type ContentType,
   changedPaths,
   type Entry,
@@ -22,6 +23,8 @@ export interface ChangeLog {
   note(entryId: string, summarize: () => EntryChange): void;
   /** Records a committed set of the block config: what it changed, part by part. */
   noteBlockConfig(change: BlockConfigChange): void;
+  /** Records a committed set of an entry's locks: the regions locked and unlocked. */
+  noteBlockLocks(change: BlockLockChange): void;
   /** What has been noted, or undefined when nothing was. */
   detail(): AuditDetail | undefined;
   clear(): void;
@@ -42,6 +45,7 @@ function merged(first: EntryChange, next: EntryChange): EntryChange {
 export function createChangeLog(): ChangeLog {
   const entries = new Map<string, EntryChange>();
   let blockConfig: BlockConfigChange | undefined;
+  let blockLocks: BlockLockChange | undefined;
   let incomplete = false;
   return {
     note(entryId, summarize) {
@@ -61,17 +65,22 @@ export function createChangeLog(): ChangeLog {
     noteBlockConfig(change) {
       blockConfig = change;
     },
+    noteBlockLocks(change) {
+      blockLocks = change;
+    },
     detail() {
-      if (entries.size === 0 && !blockConfig && !incomplete) return undefined;
+      if (entries.size === 0 && !blockConfig && !blockLocks && !incomplete) return undefined;
       return {
         entries: [...entries.values()],
         ...(blockConfig ? { blockConfig } : {}),
+        ...(blockLocks ? { blockLocks } : {}),
         ...(incomplete ? { truncated: true } : {}),
       };
     },
     clear() {
       entries.clear();
       blockConfig = undefined;
+      blockLocks = undefined;
       incomplete = false;
     },
   };

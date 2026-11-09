@@ -949,12 +949,30 @@ environment-scoped row, versioned. See [Domain model](./domain-model.md#block-co
 Every entry save (create, update, `…/validate`, `PATCH …/entries/:id/blocks` and its check, and
 CSV or JSON imports, whose analysis lists the refusals) is held to it for new edits only, as a
 `422` whose issues carry a `code`: `block_not_allowed_here` (with the block's `key`),
-`slot_locked`, `slot_too_few`, `slot_too_many`, and `more_issues` past 100. Data the environment
+`slot_locked`, `slot_too_few`, `slot_too_many`, the [locked regions'](#locked-regions)
+`region_locked` and `region_frozen`, and `more_issues` past 100. Data the environment
 already held (snapshot restore, environment clone, promotion, branch merge, a restored version, a
 duplicate) is not judged. A set's audit row has target `block_config` (the new version) and
 `detail.blockConfig` naming the parts added, removed, loosened and unlocked. MCP:
 `blocks_config_get`, `blocks_config_effective` (`preview:read`), `blocks_config_set`
 (`content:manage`).
+
+### Locked regions
+
+Part of one entry's blocks editors can't restructure: one block, or a run of neighbours in one
+slot, by `_key`. See [Domain model](./domain-model.md#locked-regions).
+
+| Method | Path                        | Scope                                 | Notes                                                                                                                                                                                                                                                                         |
+| ------ | --------------------------- | ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| GET    | `…/entries/:id/block-locks` | `preview:read` (+ `read` on the type) | `{ entryId, contentTypeApiId, version, locks, stale }`; `version` is the entry's `currentVersion`                                                                                                                                                                             |
+| PUT    | `…/entries/:id/block-locks` | `content:write` + `lock` on the type  | Replace `{ locks: [{ field, keys, depth?, freeze? }], expectedVersion? }` → the same plus `unchanged`. Makes no version. `403` `content:lock:<type>`; `422` `lock_not_found`, `lock_not_a_run`, `lock_overlaps`; `409` for a stale `expectedVersion` or a set that lost the race |
+
+The management `GET …/entries/:id` returns `entry.blockLocks` when the entry holds any; Delivery
+and Preview never do. Every update is held to the locks the stored entry holds, as a `422` with
+`region_locked` or `region_frozen` (each naming the region's first `key`), whether or not a block
+config applies; copies are not judged. A set's audit row targets the entry, with
+`detail.blockLocks` listing the regions locked and unlocked. MCP: `entries_block_locks_get`
+(`preview:read`), `entries_block_locks_set` (`content:write` and `lock`).
 
 ### Saved views
 

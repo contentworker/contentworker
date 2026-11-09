@@ -440,6 +440,14 @@ a deploy and after a rollback. A `detail` that isn't valid JSON indexes only its
 failing the append. The migration backfills the rows already written. Nothing deletes from it, as
 nothing deletes audit history; deleting an environment leaves it.
 
+`0038_entry_block_locks.sql` adds the nullable `entries.block_locks`, an entry's locked regions
+as JSON text (null for none), and gives the Manager and Administrator preset roles `lock` on a `*`
+grant that writes. Only a lock set writes the column, a compare-and-set on `current_version` and
+the locks as read; no save, publish or restore names it, so code deployed before it leaves it as
+it is. Plain text, read by `blockLocksOf`: on a replica behind the migration a bare read answers
+the column's own name, which reads as no locks. `entry_published` has no copy (see
+[Domain model](./domain-model.md#locked-regions)).
+
 `0036_block_catalogs.sql` adds `block_catalogs` and touches no existing table: one
 environment-scoped row per pushed version (`version`, `hash`, `blocks` as one JSON document,
 `block_count`, `targets` and `changes` JSON, `pushed_by`, epoch-ms `pushed_at`), primary key

@@ -17,6 +17,7 @@ import type {
   BlockCatalog,
   BlockCatalogSummary,
   BlockConfig,
+  BlockLock,
   Comment,
   Concept,
   ConceptScheme,
@@ -2037,6 +2038,16 @@ export interface PositionGuard {
   readonly anchor?: EntryPlaceKey;
 }
 
+/**
+ * What must still hold when an entry's locks are written: the entry is at the version the caller
+ * read (`expectedVersion`), and holds the locks it read, so two lock sets made from one read can't
+ * both land.
+ */
+export interface BlockLockGuard {
+  readonly currentVersion: number;
+  readonly locks: readonly BlockLock[];
+}
+
 export interface EntryRepo {
   get(scope: Scope, id: string): Promise<EntryWithFields | null>;
   /**
@@ -2110,6 +2121,18 @@ export interface EntryRepo {
   create(scope: Scope, entry: Entry, version: EntryVersion): Promise<void>;
   /** Persists the updated aggregate plus a new version snapshot. */
   saveVersion(scope: Scope, entry: Entry, version: EntryVersion): Promise<void>;
+  /**
+   * Replaces the entry's locked regions (empty clears them), only while `guard` holds: no version
+   * is made, and nothing else on the entry moves. A lost race throws
+   * {@link TransactionConflictError} (inside a unit of work, at commit). No other write touches
+   * the locks: create writes the ones a copy brings, and every save keeps them.
+   */
+  setBlockLocks(
+    scope: Scope,
+    id: string,
+    locks: readonly BlockLock[],
+    guard: BlockLockGuard,
+  ): Promise<void>;
   /** Updates only the aggregate (status/pointers) — no new version. */
   saveAggregate(scope: Scope, entry: Entry): Promise<void>;
   /** Batch {@link saveAggregate} — one statement for the whole set. */

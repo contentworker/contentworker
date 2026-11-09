@@ -674,6 +674,43 @@ export interface Entry extends EntryAuthorship {
   readonly status: EntryStatus;
   readonly currentVersion: number;
   readonly publishedVersion: number | null;
+  /** The locked regions of its blocks, on a management read; absent when it holds none. */
+  readonly blockLocks?: readonly BlockLock[];
+}
+
+/**
+ * A locked region of an entry's blocks: one block, or a run of neighbours in one slot, by `_key`,
+ * that editors can't add to, remove, move or swap (and with `freeze: 'all'`, can't edit).
+ */
+export interface BlockLock {
+  /** The blocks field (a top-level field apiId) the region is in. */
+  readonly field: string;
+  readonly keys: readonly string[];
+  /** `subtree`: the blocks and everything inside them. `self`: their own slots stay open. */
+  readonly depth: 'subtree' | 'self';
+  /** `structure`: fields stay editable. `all`: fields frozen too. */
+  readonly freeze: 'structure' | 'all';
+  readonly lockedBy: string;
+  readonly lockedAt: string;
+}
+
+/** A lock as you set it: who and when are the server's; depth and freeze default to subtree, structure. */
+export type BlockLockInput = Pick<BlockLock, 'field' | 'keys'> &
+  Partial<Pick<BlockLock, 'depth' | 'freeze'>>;
+
+export interface EntryBlockLocks {
+  readonly entryId: string;
+  readonly contentTypeApiId: string;
+  /** The entry's `currentVersion`: send it back as `expectedVersion`. */
+  readonly version: number;
+  readonly locks: readonly BlockLock[];
+  /** Locks whose blocks are gone: never blocking a save. */
+  readonly stale: readonly BlockLock[];
+}
+
+export interface EntryBlockLocksSet extends EntryBlockLocks {
+  /** The entry already held these locks: nothing written. */
+  readonly unchanged: boolean;
 }
 
 /** An entry plus its current draft field values. */
@@ -2038,6 +2075,24 @@ export function createManagementClient(opts: ManagementClientOptions) {
       create: (input: { contentTypeApiId: string; fields: EntryFields }) =>
         post<EntryView>(`${envBase}/entries`, input),
       get: (id: string) => get<EntryView>(`${envBase}/entries/${e(id)}`),
+      /**
+       * Locked regions: parts of an entry's blocks editors can't restructure. Every save is held to
+       * them (422 `region_locked`, `region_frozen`). Setting them needs the `lock` action on the
+       * entry's type, for locking and unlocking alike, and makes no version.
+       */
+      blockLocks: {
+        /** The entry's locks, and which are stale. */
+        get: (id: string) => get<EntryBlockLocks>(`${envBase}/entries/${e(id)}/block-locks`),
+        /**
+         * Replaces the whole list (a lock left out is unlocked). 422 for keys the entry doesn't
+         * hold as a run or an overlap; 409 when `expectedVersion` is stale.
+         */
+        set: (
+          id: string,
+          locks: readonly BlockLockInput[],
+          opts: { readonly expectedVersion?: number } = {},
+        ) => put<EntryBlockLocksSet>(`${envBase}/entries/${e(id)}/block-locks`, { locks, ...opts }),
+      },
       /**
        * Saves a new draft version with these field values. With `expectedVersion` (the
        * `currentVersion` you read), a save made since is a 409 and nothing is saved.

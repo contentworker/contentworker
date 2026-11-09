@@ -389,8 +389,10 @@ From the live preview spec and a review of a second implementation of its channe
   block and everything inside it) as one unit. Locking one slot is in place: the block config's
   `locked`, set in Build → Blocks, refuses a save that changes that slot's blocks, and the canvas
   and the entry form honour it (no seams; no move, duplicate or remove; Layers shows the lock).
-  Proposed design (per-entry locks keyed by `_key`):
-  [`docs/specs/locked-regions.md`](docs/specs/locked-regions.md).
+  Design (per-entry locks keyed by `_key`):
+  [`docs/specs/locked-regions.md`](docs/specs/locked-regions.md). The backend is in place (the
+  `lock` action, `…/entries/:id/block-locks`, `entries_block_locks_*`, every save held to the
+  locks); the canvas and the entry form are still to come.
 - [ ] **Token values checked everywhere.** The frontend runtime runs `isSafeTokenValue` on every
   value it writes into a CSS custom property, not only on live preview patches.
 - [x] **Block config as code.** Build → Blocks' Rules card switches between Rules, **Code** and

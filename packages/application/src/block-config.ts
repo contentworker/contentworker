@@ -1,6 +1,7 @@
 import {
   type BlockCatalog,
   type BlockConfig,
+  type BlockLock,
   blockConfigIssues,
   blockVariants,
   ConflictError,
@@ -28,7 +29,8 @@ import type { AppContext } from './context';
  * the rules in force needs what reading the catalog does.
  *
  * Every entry save holds new edits to it (`assertBlockConfigAllows`, from the save path in
- * `entries.ts`), so the editor, the API, MCP, block patches and AI all meet the same refusals.
+ * `entries.ts`), so the editor, the API, MCP, block patches and AI all meet the same refusals. The
+ * same check holds the save to the locked regions the stored entry holds (`block-locks.ts`).
  */
 
 /** The environment's config: version 0 and empty before the first set. A read: writes nothing. */
@@ -160,8 +162,10 @@ export async function loadBlockRules(
 /**
  * Refuses (422) a save whose new edits the block config doesn't allow (`blockConfigIssues`):
  * a block placed where the narrowed list doesn't take it, a locked slot's blocks changed, a count
- * pushed past the narrowed bounds. `before` is the stored fields, undefined for a create. `rules`
- * is what `loadBlockRules` read, when the caller read it already; undefined reads it here.
+ * pushed past the narrowed bounds; or that breaks a locked region the stored entry holds
+ * (`locks`: `region_locked`, `region_frozen`), whether or not any config applies. `before` is the
+ * stored fields, undefined for a create. `rules` is what `loadBlockRules` read, when the caller
+ * read it already; undefined reads it here.
  */
 export async function assertBlockConfigAllows(
   ctx: AppContext,
@@ -171,9 +175,19 @@ export async function assertBlockConfigAllows(
   after: EntryFields,
   locales: readonly LocaleCode[],
   rules?: BlockRulesInForce | null,
+  locks: readonly BlockLock[] = [],
 ): Promise<void> {
   const held = rules === undefined ? await loadBlockRules(ctx, scope, contentType) : rules;
-  if (!held) return;
-  const issues = blockConfigIssues(contentType, held.catalog, held.config, before, after, locales);
+  const regions = before !== undefined && locks.length > 0;
+  if (!held && !regions) return;
+  const issues = blockConfigIssues(
+    contentType,
+    held?.catalog ?? null,
+    held?.config ?? EMPTY_BLOCK_CONFIG,
+    before,
+    after,
+    locales,
+    regions ? locks : [],
+  );
   if (issues.length > 0) throw new ValidationError(issues);
 }

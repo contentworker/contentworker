@@ -70,16 +70,23 @@ describe('finer content actions: delete and unpublish', () => {
     }
   });
 
-  it('gives every preset all five actions on every type, unchanged', () => {
+  it('gives every writing preset the five content actions on every type, and lock to managers up', () => {
     for (const def of ROLE_PRESET_DEFINITIONS) {
       const [grant] = def.contentGrants;
       expect(grant?.deniedActions).toBeUndefined();
       const held = grantedActions(grant as ContentTypeGrant);
+      const locks = def.preset === 'manager' || def.preset === 'admin';
       const expected: ContentAction[] = def.contentGrants.some((g) => g.actions.includes('write'))
-        ? [...CONTENT_ACTIONS]
+        ? CONTENT_ACTIONS.filter((a) => a !== 'lock' || locks)
         : ['read'];
       expect([...held].sort(), def.preset).toEqual([...expected].sort());
     }
+  });
+
+  it('never implies lock: a grant holds it only when it lists it', () => {
+    const all: ContentTypeGrant = { contentTypeApiId: '*', actions: ['read', 'write', 'publish'] };
+    expect(grantedActions(all).has('lock')).toBe(false);
+    expect(grantedActions({ ...all, actions: [...all.actions, 'lock'] }).has('lock')).toBe(true);
   });
 
   it('implies delete from write or publish and unpublish from publish', () => {

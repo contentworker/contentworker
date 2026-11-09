@@ -32,11 +32,28 @@ const blockConfigChange = z.object({
   unlocked: parts.describe('Locks taken off'),
 });
 
+const blockLockSummary = z.object({
+  field: z.string(),
+  keys: parts.describe('At most ten of the region’s block `_key`s'),
+  keyCount: z.int().optional().describe('How many keys it names, when more than are listed'),
+  depth: z.enum(['subtree', 'self']),
+  freeze: z.enum(['structure', 'all']),
+});
+
+const blockLockChange = z.object({
+  entryId: z.string(),
+  locked: z.array(blockLockSummary).describe('Regions locked, at most ten'),
+  unlocked: z.array(blockLockSummary).describe('Regions unlocked, at most ten'),
+});
+
 const auditDetail = z.object({
   entries: z.array(entryChange).describe('The entries the action saved'),
   blockConfig: blockConfigChange
     .optional()
     .describe('What a block config set changed: parts named, at most ten per list'),
+  blockLocks: blockLockChange
+    .optional()
+    .describe('What a set of an entry’s locked regions locked and unlocked'),
   truncated: z
     .literal(true)
     .optional()

@@ -38,6 +38,7 @@ import { registerAssetTools } from './tools/assets';
 import { registerAuditLogTools } from './tools/audit-log';
 import { registerBlockCatalogTools } from './tools/block-catalog';
 import { registerBlockConfigTools } from './tools/block-config';
+import { registerBlockLockTools } from './tools/block-locks';
 import { registerBlockTools } from './tools/blocks';
 import { registerCollaborationTools } from './tools/collaboration';
 import { registerDocsTools } from './tools/docs';
@@ -125,6 +126,7 @@ const TOOL_AREAS: readonly ((server: McpServer, t: ToolContext) => void)[] = [
   registerMenuTools,
   registerBlockCatalogTools,
   registerBlockConfigTools,
+  registerBlockLockTools,
   registerSavedViewTools,
   registerTaxonomyTools,
   registerAgentTools,

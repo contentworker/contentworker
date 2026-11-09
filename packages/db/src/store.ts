@@ -12,6 +12,7 @@ import {
   type BlockCatalog,
   type BlockCatalogSummary,
   type BlockConfig,
+  type BlockLock,
   type Comment,
   type Concept,
   ConflictError,
@@ -665,6 +666,26 @@ function makeEntryRepo(
       }
       queries.push(x.db.delete(schema.guard));
       await writeAll(x, queries);
+    },
+    async setBlockLocks(scope, id, locks, guard) {
+      const e = schema.entries;
+      // Compared as the text the store wrote: each lock's fields in one order (`checkBlockLocks`).
+      const read = locksText(guard.locks);
+      await writeAll(x, [
+        x.db
+          .update(e)
+          .set({ blockLocks: locksText(locks) })
+          .where(
+            and(
+              scopeFilter(e, scope),
+              eq(e.id, id),
+              eq(e.currentVersion, guard.currentVersion),
+              sql`${e.blockLocks} IS ${read}`,
+            ),
+          ),
+        x.db.insert(schema.guard).select(sql`SELECT changes() = 1 AS ok`),
+        x.db.delete(schema.guard),
+      ]);
     },
     async getMany(scope, ids) {
       const rows = await selectChunked(
@@ -7692,7 +7713,27 @@ const toEntry = (r: EntryRow): Entry => ({
   updatedBy: r.modifiedBy,
   firstPublishedAt: r.firstPublishedAt?.toISOString() ?? null,
   position: r.position,
+  ...blockLocksOf(r.blockLocks),
 });
+
+/** An entry's locks as `block_locks` holds them: JSON text, null for none. */
+const locksText = (locks: readonly BlockLock[]): string | null =>
+  locks.length > 0 ? JSON.stringify(locks) : null;
+
+/**
+ * The locks a `block_locks` value holds. On a replica behind 0038 a bare read of the column answers
+ * its own name (as 0035's column does), which is not a list: read as none rather than failing the
+ * entry. Remove the guard once every deployment is past 0038.
+ */
+function blockLocksOf(text: string | null): { blockLocks?: BlockLock[] } {
+  if (!text?.startsWith('[')) return {};
+  try {
+    const locks = JSON.parse(text) as BlockLock[];
+    return Array.isArray(locks) && locks.length > 0 ? { blockLocks: locks } : {};
+  } catch {
+    return {};
+  }
+}
 
 type AgentRunRow = typeof schema.agentRuns.$inferSelect;
 const toAgentRun = (r: AgentRunRow): AgentRunRecord => ({
@@ -7887,6 +7928,8 @@ const entryRow = (scope: Scope, entry: Entry) => {
     createdBy: entry.createdBy ?? null,
     modifiedBy: entry.updatedBy ?? null,
     firstPublishedAt: isoDate(entry.firstPublishedAt),
+    // Only a copy that brings its source's locks (an environment clone) creates an entry with any.
+    blockLocks: locksText(entry.blockLocks ?? []),
   };
 };
 

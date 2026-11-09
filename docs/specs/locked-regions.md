@@ -1,7 +1,9 @@
 # Locked regions
 
-Status: **proposed**, decisions made 2026-11-09 (M6, "Locked regions on the canvas" in
-`ROADMAP.md`). Nothing here is built.
+Status: **backend built**, decisions made 2026-11-09 (M6, "Locked regions on the canvas" in
+`ROADMAP.md`). The model, enforcement, store, `lock` action and both surfaces are in place
+(`packages/domain/src/content-type/block-locks.ts`, `0038_entry_block_locks`); the canvas and the
+entry form are not yet.
 This file sits in `docs/specs/`, which the docs embed does not read (it takes `docs/*.md` only),
 so MCP clients never mistake it for a description of shipped behaviour.
 

@@ -7,6 +7,7 @@ import {
   canonicalJson,
   utf8Length,
 } from './block-catalog';
+import { type BlockLock, blockLockIssues } from './block-locks';
 import type { ContentType } from './content-type';
 import { BLOCK_KEY, BLOCK_TYPE_KEY, blockVariants, isValidApiId } from './field';
 
@@ -618,6 +619,10 @@ export const BLOCK_CONFIG_ISSUE_CODES = [
   'slot_locked',
   'slot_too_few',
   'slot_too_many',
+  /** A locked region's blocks removed, swapped, reordered, split or inserted into (`block-locks.ts`). */
+  'region_locked',
+  /** A frozen region's content changed (`freeze: 'all'`). */
+  'region_frozen',
   /** The save broke more than `BLOCK_CONFIG_LIMITS.issues` rules: this one counts the rest. */
   'more_issues',
 ] as const;
@@ -703,6 +708,10 @@ interface SlotRules {
  * leaves the slot's blocks where they are. Values the type or the catalog doesn't know are left
  * to validation, which runs first. At most `BLOCK_CONFIG_LIMITS.issues` are listed, then one
  * `more_issues` counting the rest; the work is linear in the blocks.
+ *
+ * `locks` are the locked regions the stored entry holds (`block-locks.ts`), judged on the same
+ * save as `region_locked` and `region_frozen`, with or without a catalog: a region is the
+ * entry's, not the config's.
  */
 export function blockConfigIssues(
   contentType: ContentType,
@@ -711,8 +720,9 @@ export function blockConfigIssues(
   before: EntryFields | undefined,
   after: EntryFields,
   locales?: readonly LocaleCode[],
+  locks: readonly BlockLock[] = [],
 ): BlockConfigIssue[] {
-  if (!catalog) return [];
+  if (!catalog) return capped(blockLockIssues(contentType, locks, before, after, locales));
   const rules = effectiveBlockRules(catalog, config);
   const byId = new Map(catalog.blocks.map((b) => [b.id, b]));
   const aliases = codeRules(catalog).aliases;
@@ -740,6 +750,7 @@ export function blockConfigIssues(
     if (issues.length < BLOCK_CONFIG_LIMITS.issues) issues.push(issue);
     else more += 1;
   };
+  for (const issue of blockLockIssues(contentType, locks, before, after, locales)) report(issue);
 
   /**
    * Every slot's blocks in one stored field value. Keys are unique per array, not per tree: a key
@@ -921,6 +932,19 @@ export function blockConfigIssues(
     });
   }
   return issues;
+}
+
+/** `issues` within `BLOCK_CONFIG_LIMITS.issues`, then one `more_issues` counting the rest. */
+function capped(issues: BlockConfigIssue[]): BlockConfigIssue[] {
+  if (issues.length <= BLOCK_CONFIG_LIMITS.issues) return issues;
+  return [
+    ...issues.slice(0, BLOCK_CONFIG_LIMITS.issues),
+    {
+      field: '',
+      code: 'more_issues',
+      message: `…and ${issues.length - BLOCK_CONFIG_LIMITS.issues} more the block config refuses`,
+    },
+  ];
 }
 
 // --- what a set changed --------------------------------------------------------------------------

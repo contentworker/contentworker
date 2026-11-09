@@ -1,4 +1,4 @@
-import { type Principal, SCOPES, scopesForKind } from '@contentworker/domain';
+import { type Principal, rolePresetDefinition, SCOPES, scopesForKind } from '@contentworker/domain';
 import { FixedClock, InMemoryContentStore, SequenceIdGenerator } from '@contentworker/test-kit';
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
@@ -88,8 +88,15 @@ describe('minting and widening API keys', () => {
       })
     ).apiKey;
     // Narrower scopes, and the same grants: allowed.
-    await expect(assignApiKeyRole(ctx, S, key.id, 'editor', NO_SSO, pat)).resolves.toBeDefined();
-    // Other grants, even narrower ones, count as a change it may not make (grants aren't ordered).
+    const writer = await createRole(ctx, S, {
+      name: 'Writer who locks',
+      scopes: rolePresetDefinition('editor').scopes,
+      contentGrants: rolePresetDefinition('manager').contentGrants,
+    });
+    await expect(assignApiKeyRole(ctx, S, key.id, writer.id, NO_SSO, pat)).resolves.toBeDefined();
+    // Other grants, even narrower ones (an editor doesn't lock), count as a change it may not
+    // make (grants aren't ordered).
+    await expect(assignApiKeyRole(ctx, S, key.id, 'editor', NO_SSO, pat)).rejects.toThrow(/widen/);
     await expect(assignApiKeyRole(ctx, S, key.id, 'approver', NO_SSO, pat)).rejects.toThrow(
       /widen/,
     );

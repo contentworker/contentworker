@@ -569,6 +569,11 @@ export class InMemoryContentStore implements ContentStore {
       // As D1: no save writes the manual order, so an aggregate read before a move can't undo it.
       position: before?.position ?? null,
     });
+    // As D1: only a create (a clone bringing its source's) or a lock set writes the locks.
+    const blockLocks = created ? entry.blockLocks : before?.blockLocks;
+    const set = this.entryData.get(key) as Entry;
+    const { blockLocks: _drop, ...rest } = set;
+    this.entryData.set(key, blockLocks?.length ? { ...rest, blockLocks } : rest);
     this.lastEntryTouch = Math.max(this.nowMs(), this.lastEntryTouch + 1);
     this.entryTouched.set(key, new Date(this.lastEntryTouch).toISOString());
   }
@@ -615,6 +620,20 @@ export class InMemoryContentStore implements ContentStore {
         const published = this.publishedData.get(key);
         if (published) this.publishedData.set(key, { ...published, position: w.position });
       }
+    },
+    setBlockLocks: async (scope, id, locks, guard) => {
+      const key = `${scopeKey(scope)}::${id}`;
+      const entry = this.entryData.get(key);
+      // As D1: the locks compared as the text the store wrote.
+      if (
+        !entry ||
+        entry.currentVersion !== guard.currentVersion ||
+        JSON.stringify(entry.blockLocks ?? []) !== JSON.stringify(guard.locks)
+      ) {
+        throw new TransactionConflictError();
+      }
+      const { blockLocks: _drop, ...rest } = entry;
+      this.entryData.set(key, locks.length > 0 ? { ...rest, blockLocks: [...locks] } : rest);
     },
     getMany: async (scope, ids) =>
       // Dedupe first: the D1 store's inArray returns each matching row once, so

@@ -162,7 +162,10 @@ one before it can:
 | `admin`    | Administrator | manager + `space:admin`                        | Also manages the team, API keys, roles, webhooks, environments, plugins, audit log            |
 
 Each preset grants every content type (`*`): `read` for Viewer and Approver, `read`/`write`/`publish`
-for Editor and up (a role-bound key is denied any type its grants don't name). Presets are seeded when a space is created (or on first use where a space was seeded directly,
+for Editor, and `read`/`write`/`publish`/`lock` for Manager and Administrator (a role-bound key is
+denied any type its grants don't name). `0038_entry_block_locks` gave the Manager and Administrator
+roles already seeded `lock` on their `*` grant where it writes; custom roles, and grants on one
+named type, gained nothing. Presets are seeded when a space is created (or on first use where a space was seeded directly,
 as the in-memory dev store is). `GET /spaces/:space/role-presets` lists them with the role id each was seeded as;
 `POST /spaces/:space/roles/:id/clone` copies any role into a new custom one. Anywhere a role is assigned
 (`POST /spaces/:space/members`, `PATCH /spaces/:space/members/:id`,
@@ -419,7 +422,7 @@ interface Role {
 
 interface ContentTypeGrant {
   contentTypeApiId: string; // exact apiId, or '*' for all types
-  actions: readonly ('read' | 'write' | 'publish')[];
+  actions: readonly ('read' | 'write' | 'publish' | 'lock')[];
   deniedActions?: readonly ('delete' | 'unpublish')[]; // finer actions withheld (see below)
   deniedFields?: readonly string[]; // masked on read, rejected on write
   readOnlyFields?: readonly string[]; // readable, rejected on write
@@ -432,8 +435,10 @@ Semantics:
   request (`authenticate`), so editing a role instantly changes what every bound key can do.
   Deleting a role is refused while active keys reference it; a dangling reference fails closed.
 - **Exact grant wins over `'*'`**; a type with no matching grant is denied entirely.
-- **Five actions, three listed.** `ContentAction` is `read | write | publish | delete | unpublish`.
-  A grant lists only the first three; `grantedActions(grant)` adds `delete` when it lists `write`
+- **Six actions, four listed.** `ContentAction` is
+  `read | write | publish | lock | delete | unpublish`. A grant lists only the first four;
+  `lock` (locking and unlocking regions of an entry's blocks, whoever locked them) is never
+  implied, so a grant holds it only when it lists it. `grantedActions(grant)` adds `delete` when it lists `write`
   or `publish`, and `unpublish` when it lists `publish`, unless `deniedActions` withholds them.
   Every grant stored before the finer actions existed names no `deniedActions`, so it authorizes
   exactly what it did (`packages/domain/test/content-actions.test.ts` proves it for every legacy
