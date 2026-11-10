@@ -65,10 +65,13 @@ a route handler checks the link's token, keeps the entry and the token in an Htt
 longer than the token has left (an hour at most), and turns draft mode on. While it is on, the
 client reads that one entry as it is now, with the link's own token, and everything else as
 published. It needs only the Delivery key, as `CONTENTWORKER_DELIVERY_KEY`: no Preview key, so a
-preview link shows its entry and nothing more. The cookie is `SameSite=Lax`: when your site is on
-another domain than the admin, the editor's Site view (a frame) shows the entry as published, so
-open the preview link in its own tab. [SDKs](/guides/sdks/#nextjs-draft-mode) has the route and the
-client.
+preview link shows its entry and nothing more. It works top-level and in the editor's Site view and
+canvas, on another domain than the admin too: the cookie is kept per top-level site
+(`SameSite=None; Partitioned`), so a draft opened in the admin's frame stays there. A browser that
+blocks third-party cookies shows the entry published in the frame; open the link in a tab there.
+Send `Content-Security-Policy: frame-ancestors 'self' https://your-workspace.contentworker.app`
+(your admin's origin) so only your admin can frame the site.
+[SDKs](/guides/sdks/#nextjs-draft-mode) has the route and the client.
 
 **Live preview.** The editor's Site view frames your page; `connectPreview` lets the page connect
 to your admin and show edits as they are typed. The screen prints your admin's origin:

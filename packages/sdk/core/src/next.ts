@@ -90,11 +90,23 @@ const redirect = (request: Request, path: string, cookie: string) =>
 
 /**
  * The draft cookie's `Set-Cookie`: never readable by the page's script (`HttpOnly`), sent only
- * over https (`Secure`; browsers treat `localhost` as secure), and not on another site's requests
- * (`SameSite=Lax`). Empty with `maxAge` 0 clears it.
+ * over https (`Secure`; browsers treat `localhost` as secure), and kept when the admin frames the
+ * site from another site (`SameSite=None`), but only in that top-level site's own jar
+ * (`Partitioned`): a draft opened in the editor's frame is never sent when the site is visited
+ * directly, or framed by anyone else. Empty with `maxAge` 0 clears it; a partitioned cookie is
+ * cleared only by a `Set-Cookie` with the same attributes, so both use this one.
  */
 const draftCookie = (value: string, maxAge: number) =>
-  `${DRAFT_COOKIE}=${value}; Path=/; Max-Age=${maxAge}; HttpOnly; Secure; SameSite=Lax`;
+  `${DRAFT_COOKIE}=${value}; Path=/; Max-Age=${maxAge}; HttpOnly; Secure; SameSite=None; Partitioned`;
+
+/**
+ * What a draft link may be opened as (`Sec-Fetch-Dest`): a page, or a page in a frame. With the
+ * cookie riding cross-site requests, another site's image, script or fetch pointed at a draft link
+ * is refused before anything is read. A browser that doesn't send the header is let through: a
+ * request it can't label could still be the person following a link. Defence in depth against a
+ * draft link used as a subresource, not against someone sending a visitor their own preview link.
+ */
+const OPENED_AS = new Set(['document', 'iframe', 'frame']);
 
 /** The entry and token a draft cookie holds, or null for anything else. */
 export function readDraftCookie(
@@ -152,15 +164,17 @@ function cookieLife(res: Response, now: number): number {
  * nothing; a link missing its entry or token, 400; a Preview API that can't answer, 502. The token
  * is never echoed back, and leaves the URL at once: the page it redirects to has none.
  *
- * The cookie is `SameSite=Lax`, so a browser keeps and sends it only when the page is the top
- * window or framed by the same site. The editor's Site view frames the site from the admin's
- * origin: on another site (another registrable domain) the frame turns draft mode on but holds no
- * draft cookie, and shows the entry as published; open the preview link in its own tab there.
+ * It works top-level and framed by the admin (the editor's Site view and canvas), on another site
+ * or the same: the cookie is `SameSite=None; Partitioned`, kept per top-level site, so a draft
+ * opened in the admin's frame stays there. A request that isn't a page or a frame
+ * (`Sec-Fetch-Dest`: an image, a script, a fetch) gets 403 before anything is read.
  */
 export function createDraftRoute(o: DraftRouteOptions): (request: Request) => Promise<Response> {
   const doFetch = o.fetch ?? globalThis.fetch;
   const base = `${o.baseUrl.replace(/\/$/, '')}/preview/${encodeURIComponent(o.space)}/${encodeURIComponent(o.environment)}`;
   return async (request) => {
+    const dest = request.headers.get('sec-fetch-dest');
+    if (dest && !OPENED_AS.has(dest)) return text(403, 'A preview link opens as a page.');
     const query = new URL(request.url).searchParams;
     const entryId = query.get('entry');
     const token = query.get('token');
@@ -221,6 +235,9 @@ export function createExitDraftRoute(o: {
   readonly path?: string;
 }): (request: Request) => Promise<Response> {
   return async (request) => {
+    // Another site's image or fetch can't switch a visitor's draft mode off either.
+    const dest = request.headers.get('sec-fetch-dest');
+    if (dest && !OPENED_AS.has(dest)) return text(403, 'A preview link opens as a page.');
     (await o.draftMode()).disable();
     const asked = safeRedirectPath(new URL(request.url).searchParams.get('path'));
     return redirect(request, asked ?? safeRedirectPath(o.path) ?? '/', draftCookie('', 0));

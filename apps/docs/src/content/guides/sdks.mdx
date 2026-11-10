@@ -455,13 +455,17 @@ export const GET = createDraftRoute({
 ```
 
 It checks the link's preview token with the Preview API, then keeps the entry and the token in
-an HttpOnly cookie (`cw_draft`: `Secure`, `SameSite=Lax`, for no longer than the token has left
-and an hour at most), turns draft mode on and redirects to the page, the token gone from the URL.
+an HttpOnly cookie (`cw_draft`: `Secure`, `SameSite=None`, `Partitioned`, for no longer than the
+token has left and an hour at most), turns draft mode on and redirects to the page, the token gone from the URL.
 A refused or expired token gets a 401 and changes nothing. A redirect that would leave your site
 goes to `/` instead, and nothing it answers is cached. `createExitDraftRoute({ draftMode })` turns
-draft mode off and clears the cookie. Being `SameSite=Lax`, the cookie isn't kept in a frame from
-another site: the editor's Site view of a site on another domain than the admin shows the entry
-as published, so open its preview link in a tab.
+draft mode off and clears the cookie. It works top-level and framed by the admin's Site view and
+canvas, from another site too; the cookie is partitioned, kept per top-level site, so a draft
+opened in the admin's frame is never sent when your site is visited directly. A browser that
+blocks third-party cookies shows the entry published in the frame. Let only your admin frame the
+site (`Content-Security-Policy: frame-ancestors 'self' <admin origin>`). A link opened as anything
+but a page or a frame (an image, a script, a fetch: `Sec-Fetch-Dest`) gets a 403, and so does the
+exit route.
 
 Draft mode reads only that entry. Pages read through `createDraftClient`: outside draft mode it is
 your Delivery client; in draft mode it is still Delivery, except for the link's entry, which reads

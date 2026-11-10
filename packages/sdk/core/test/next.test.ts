@@ -71,7 +71,7 @@ describe('createDraftRoute', () => {
     expectNoStore(res);
     // The entry and its token go in an HttpOnly cookie, never in the URL the page gets.
     expect(res.headers.get('set-cookie')).toBe(
-      `${DRAFT_COOKIE}=e1~${TOKEN}; Path=/; Max-Age=3600; HttpOnly; Secure; SameSite=Lax`,
+      `${DRAFT_COOKIE}=e1~${TOKEN}; Path=/; Max-Age=3600; HttpOnly; Secure; SameSite=None; Partitioned`,
     );
     expect(res.headers.get('location')).not.toContain(TOKEN);
     expect(await res.text()).toBe('');
@@ -173,6 +173,43 @@ describe('createDraftRoute', () => {
     },
   );
 
+  it.each(['image', 'script', 'style', 'empty', 'object', 'worker'])(
+    'refuses a link opened as %s, reading nothing and setting nothing',
+    async (dest) => {
+      const dm = fakeDraftMode();
+      const p = preview(ok);
+      const res = await createDraftRoute({ ...opts, draftMode: dm.draftMode, fetch: p.fetch })(
+        new Request(`https://site.test/api/draft?entry=e1&token=${TOKEN}`, {
+          headers: { 'sec-fetch-dest': dest },
+        }),
+      );
+      expect(res.status).toBe(403);
+      expect(p.urls).toHaveLength(0);
+      expect(dm.handle.enable).not.toHaveBeenCalled();
+      expect(res.headers.get('set-cookie')).toBeNull();
+      expect(await res.text()).not.toContain(TOKEN);
+      expectNoStore(res);
+    },
+  );
+
+  it.each(['document', 'iframe', 'frame', null])(
+    'opens a link as a page or a frame (%s)',
+    async (dest) => {
+      const dm = fakeDraftMode();
+      const res = await createDraftRoute({
+        ...opts,
+        draftMode: dm.draftMode,
+        fetch: preview(ok).fetch,
+      })(
+        new Request(`https://site.test/api/draft?entry=e1&token=${TOKEN}`, {
+          headers: dest ? { 'sec-fetch-dest': dest } : {},
+        }),
+      );
+      expect(res.status).toBe(307);
+      expect(res.headers.get('set-cookie')).toContain('SameSite=None; Partitioned');
+    },
+  );
+
   it.each(['token=x', 'entry=e1', ''])(
     'answers 400 for a link missing its entry or token (%s)',
     async (qs) => {
@@ -221,12 +258,25 @@ describe('createExitDraftRoute', () => {
     expectNoStore(res);
     // The draft cookie goes with draft mode.
     expect(res.headers.get('set-cookie')).toBe(
-      `${DRAFT_COOKIE}=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax`,
+      `${DRAFT_COOKIE}=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=None; Partitioned`,
     );
     const asked = await route(new Request('https://site.test/api/draft/exit?path=//evil.test'));
     expect(asked.headers.get('location')).toBe('https://site.test/blog');
     const back = await route(new Request('https://site.test/api/draft/exit?path=/post/1'));
     expect(back.headers.get('location')).toBe('https://site.test/post/1');
+  });
+});
+
+describe('createExitDraftRoute, opened as something else', () => {
+  it.each(['image', 'empty', 'script'])('refuses %s and leaves draft mode on', async (dest) => {
+    const dm = fakeDraftMode();
+    dm.handle.isEnabled = true;
+    const res = await createExitDraftRoute({ draftMode: dm.draftMode })(
+      new Request('https://site.test/api/draft/exit', { headers: { 'sec-fetch-dest': dest } }),
+    );
+    expect(res.status).toBe(403);
+    expect(dm.handle.disable).not.toHaveBeenCalled();
+    expect(res.headers.get('set-cookie')).toBeNull();
   });
 });
 

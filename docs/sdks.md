@@ -360,16 +360,21 @@ export const GET = createDraftRoute({
   would leave the site — `//host`, `/\host`, a scheme, control characters — becomes `/`,
   `safeRedirectPath`), then sets the draft cookie and calls `(await draftMode()).enable()` and
   answers `307`. The cookie is `cw_draft=<entry>~<token>` (`DRAFT_COOKIE`; `readDraftCookie` reads
-  it), `Path=/; HttpOnly; Secure; SameSite=Lax`, with `Max-Age` the token's remaining life from the
-  Preview API's `x-cw-preview-expires` header, at most 3600 (`DRAFT_COOKIE_MAX_AGE`); a token with
-  none left answers 401. Being `SameSite=Lax`, a browser neither keeps nor sends it in a frame from
-  another site, so the editor's Site view of a site on another registrable domain than the admin
-  shows the entry published; the token reads are `cache: 'no-store'`. A refused token (401, 403 or 404 from Preview) answers 401 and sets
-  nothing; a link without `entry` or `token`, 400; a Preview API that fails or can't be reached,
+  it), `Path=/; HttpOnly; Secure; SameSite=None; Partitioned`, with `Max-Age` the token's
+  remaining life from the Preview API's `x-cw-preview-expires` header, at most 3600
+  (`DRAFT_COOKIE_MAX_AGE`); a token with none left answers 401. Partitioned, it is kept per
+  top-level site: it works top-level and framed by the admin (the Site view, the canvas) from
+  another site, and a draft opened in the admin's frame is never sent on a direct visit (where a
+  browser blocks third-party cookies, Next's own draft cookie isn't kept in the frame, so it shows
+  published). A request whose `Sec-Fetch-Dest` is anything but `document`, `iframe` or `frame`
+  answers 403 before anything is read (no header: let through), on the exit route too: defence
+  against a link used as a subresource, not against being sent someone's preview link. Sites should
+  send `frame-ancestors 'self' <admin origin>`. The token reads are `cache: 'no-store'`. A refused
+  token (401, 403 or 404 from Preview) answers 401 and sets nothing; a link without `entry` or `token`, 400; a Preview API that fails or can't be reached,
   502. Every answer is `cache-control: no-store` and `referrer-policy: no-referrer`, none echoes the
   token, and the redirect's URL carries none.
 - `createExitDraftRoute({ draftMode, path? })` turns draft mode off, clears the cookie
-  (`Max-Age=0`) and redirects to the request's `path` (when it is on the site), else `path`, else
+  (`Max-Age=0`, the same attributes: a partitioned cookie is cleared only so) and redirects to the request's `path` (when it is on the site), else `path`, else
   `/`.
 - `createDraftClient({ draftMode, cookies, delivery, preview? })` → `() => Promise<DraftClient>`.
   Outside draft mode, or without a readable cookie, it is the Delivery client (made once) with
