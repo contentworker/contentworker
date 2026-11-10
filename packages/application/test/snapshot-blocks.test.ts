@@ -4,6 +4,8 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import {
   type AppContext,
   cloneEnvironment,
+  createAsset,
+  createChangeLog,
   createContentType,
   createEntry,
   createEnvironment,
@@ -17,6 +19,8 @@ import {
   pushBlockCatalog,
   SYSTEM_CALLER,
   setBlockConfig,
+  updateContentType,
+  withChanges,
 } from '../src/index';
 
 /**
@@ -281,20 +285,109 @@ describe('importing the blocks', () => {
 
   it('leaves the target’s own when a push there commits first, and says so', async () => {
     const snapshot = await exportSnapshot(ctx, source);
-    // The import reads no catalog in the target, but a push lands version 1 before it commits.
+    // The write reads no catalog in the target, but a push lands version 1 before it commits.
     const latest = store.blockCatalogs.latest.bind(store.blockCatalogs);
+    let reads = 0;
     store.blockCatalogs.latest = async (scope) => {
-      if (scope.environmentId !== target.environmentId) return latest(scope);
+      if (scope.environmentId !== target.environmentId || ++reads < 2) return latest(scope);
       store.blockCatalogs.latest = latest;
       await store.blockCatalogs.save(target, await getBlockCatalog(ctx, source));
       return null;
     };
     const report = await importSnapshot(ctx, target, snapshot);
     expect(report.skipped.join('\n')).toMatch(/changed there during the import/);
+    // The report says what the write did, not what the checks expected.
+    expect(report).toMatchObject({ blockCatalog: false, blockConfig: false });
     expect(await getBlockCatalog(ctx, target)).toMatchObject({ version: 1, pushedBy: null });
     expect(await store.blockConfigs.get(target)).toBeNull();
     // The content went ahead regardless.
     expect(await store.contentTypes.get(target, 'page')).not.toBeNull();
+  });
+
+  it('leaves both behind when the target’s catalog retired an id the snapshot’s uses', async () => {
+    // The target renamed hero to banner: "hero" may never come back as another block's id.
+    const banner = { ...BLOCKS[0], id: 'banner', name: 'Banner', aliases: ['hero'] };
+    await store.blockCatalogs.save(target, {
+      version: 1,
+      hash: 'target',
+      blocks: [banner] as never,
+      targets: [],
+      changes: { added: ['banner'], changed: [], removed: [], renamed: [] },
+      pushedAt: '2026-11-01T00:00:00.000Z',
+      pushedBy: null,
+    });
+    const snapshot = await exportSnapshot(ctx, source);
+
+    const dry = await importSnapshot(ctx, target, snapshot, { dryRun: true });
+    expect(dry).toMatchObject({ blockCatalog: false, blockConfig: false });
+    expect(dry.skipped).toEqual([
+      expect.stringMatching(
+        /^block catalog: left behind, the target's catalog retired an id.*hero/,
+      ),
+      'block config: left behind with its block catalog',
+    ]);
+
+    const report = await importSnapshot(ctx, target, snapshot);
+    expect(report).toMatchObject({ blockCatalog: false, blockConfig: false });
+    expect(report.skipped).toEqual(dry.skipped);
+    expect(await getBlockCatalog(ctx, target)).toMatchObject({ version: 1, hash: 'target' });
+    expect(await store.blockConfigs.get(target)).toBeNull();
+  });
+
+  it('leaves behind a catalog whose thumbnails name assets the snapshot doesn’t carry', async () => {
+    const files = {
+      getUploadUrl: async () => 'https://upload',
+      getDownloadUrl: async () => 'https://download',
+      delete: async () => {},
+    } as never;
+    const { asset } = await createAsset(ctx, files, source, {
+      fileName: 'hero.png',
+      contentType: 'image/png',
+    });
+    await push(
+      BLOCKS.map((b) => (b.id === 'hero' ? { ...b, thumbnail: { assetId: asset.id } } : b)),
+    );
+    const snapshot = await exportSnapshot(ctx, source);
+
+    // An export carries the asset with the catalog, so its thumbnail travels.
+    const whole = await importSnapshot(ctx, target, snapshot, { dryRun: true });
+    expect(whole).toMatchObject({ blockCatalog: true, blockConfig: true });
+
+    const report = await importSnapshot(ctx, target, { ...snapshot, assets: [] });
+    expect(report).toMatchObject({ blockCatalog: false, blockConfig: false });
+    expect(report.skipped.join('\n')).toContain(
+      `block catalog: left behind, its thumbnails name assets the snapshot doesn't carry: hero (${asset.id})`,
+    );
+    expect(await store.blockCatalogs.latest(target)).toBeNull();
+  });
+
+  it('leaves behind a catalog the snapshot’s types don’t line up with', async () => {
+    const snapshot = await exportSnapshot(ctx, source);
+    // The file's page type lost the grid variant the catalog makes: carried as it is, the
+    // catalog would say the page takes a block its type can't hold.
+    const contentTypes = snapshot.contentTypes.map((ct) => ({
+      ...ct,
+      fields: ct.fields.map((f) =>
+        f.apiId === 'body' && f.items
+          ? { ...f, items: { ...f.items, variants: f.items.variants?.slice(0, 1) } }
+          : f,
+      ),
+    }));
+    const report = await importSnapshot(ctx, target, { ...snapshot, contentTypes });
+    expect(report).toMatchObject({ contentTypes: 1, blockCatalog: false, blockConfig: false });
+    expect(report.skipped.join('\n')).toContain(
+      "block catalog: left behind, the snapshot's content types don't hold the variants it makes: page.body",
+    );
+  });
+
+  it('notes the config it sets for the audit row, as a set does', async () => {
+    const changes = createChangeLog();
+    await importSnapshot(withChanges(ctx, changes), target, await exportSnapshot(ctx, source));
+    expect(changes.detail()?.blockConfig).toMatchObject({ from: 0, to: 1, removed: [] });
+    expect(changes.detail()?.blockConfig?.added).toEqual([
+      'targets[page.body]',
+      'blocks[grid].slots.items',
+    ]);
   });
 });
 
@@ -346,5 +439,46 @@ describe('cloning the blocks', () => {
     const uploaded = await importSnapshot(ctx, other, await exportSnapshot(ctx, source));
     expect(uploaded).toMatchObject({ blockCatalog: true, blockConfig: false });
     expect(uploaded.skipped.join('\n')).toMatch(/block config: left behind.*quote/);
+  });
+
+  it('carries the catalog in force when a type has since drifted from it', async () => {
+    await push();
+    await configure({ targets: [] });
+    // The targeted field is gone from the type, so a push of this catalog would now be refused;
+    // the source still holds it in force, and so does the copy.
+    await updateContentType(ctx, SYSTEM_CALLER, source, 'page', {
+      fields: [field({ apiId: 'title', type: 'Symbol' })],
+    });
+    const report = await cloneEnvironment(ctx, source, target);
+    expect(report).toMatchObject({ blockCatalog: true, blockConfig: true, skipped: [] });
+    const from = await getBlockCatalog(ctx, source);
+    expect(await getBlockCatalog(ctx, target)).toMatchObject({ version: 1, hash: from.hash });
+
+    // An uploaded copy of the same export has no such standing.
+    const other = { spaceId: 's1', environmentId: 'upload' };
+    await createEnvironment(ctx, 's1', 'upload');
+    const uploaded = await importSnapshot(ctx, other, await exportSnapshot(ctx, source));
+    expect(uploaded).toMatchObject({ blockCatalog: false, blockConfig: false });
+    expect(uploaded.skipped.join('\n')).toMatch(/block catalog: left behind.*has no field "body"/);
+  });
+
+  it('carries thumbnails, their assets coming along', async () => {
+    const files = {
+      getUploadUrl: async () => 'https://upload',
+      getDownloadUrl: async () => 'https://download',
+      delete: async () => {},
+    } as never;
+    const { asset } = await createAsset(ctx, files, source, {
+      fileName: 'hero.png',
+      contentType: 'image/png',
+    });
+    await push(
+      BLOCKS.map((b) => (b.id === 'hero' ? { ...b, thumbnail: { assetId: asset.id } } : b)),
+    );
+    const report = await cloneEnvironment(ctx, source, target);
+    expect(report).toMatchObject({ blockCatalog: true });
+    const hero = (await getBlockCatalog(ctx, target)).blocks.find((b) => b.id === 'hero');
+    expect(hero?.thumbnail).toEqual({ assetId: asset.id });
+    expect(await store.assets.get(target, asset.id)).not.toBeNull();
   });
 });

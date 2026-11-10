@@ -98,22 +98,29 @@ What an import preserves:
 - **The block catalog and its config.** The export carries the catalog in force as `blockCatalog`
   (`{ version, hash, blocks, targets }`) and the config as `blockConfig` (`{ version, targets,
   blocks }`), each left out when the source has none. Both are optional and `snapshotVersion`
-  stays 1, so a snapshot from before them imports unchanged and leaves the target's alone. The
-  import checks them as the API checks a push and a set (`checkedSnapshotBlocks`): the catalog with
-  `checkBlockCatalog`, its targets against the snapshot's model (each a blocks field of a type it
-  defines, as `planCatalogTypes` requires), then the config with `checkBlockConfig` against that
-  catalog. One that fails is left behind and named in `skipped` (on a dry run too), not a failed
-  import, and a catalog left behind takes its config with it; the report's `blockCatalog` and
-  `blockConfig` say whether each is carried. `writeSnapshotModel` writes them right after the
-  content types and before any entry (whose saves the config judges), in one unit: each becomes the
-  next version over what the target holds (version 1 in a new environment, as a type's versions
-  start again), replacing it rather than merging, written as the system and now; the hash is worked
-  out again rather than taken from the file. One the target already holds the same is not written
-  again. Nothing revises a type: the source's pushes already shaped the types the snapshot
-  carries, so the copy's next push of the same catalog changes nothing. A push or set in the target
-  that commits first wins, and the snapshot's is named in `skipped`. A clone carries the source's
-  config as it stands, stale parts included (ignored there by `effectiveBlockRules`, and so here),
-  so the copy judges saves as the source does; an uploaded file's config must pass the check whole.
+  stays 1, so a snapshot from before them imports unchanged and leaves the target's alone. An
+  uploaded file's are checked as the API checks a push and a set (`checkedSnapshotBlocks`): the
+  catalog with `checkBlockCatalog`; every thumbnail `assetId` must be an asset the snapshot carries;
+  each target must be a blocks field of a type the snapshot defines and hold exactly the variants
+  the catalog makes of it (`planCatalogTypes` plans no revision, since the import writes the types
+  as they are and never revises one); the catalog may not reuse an id the target's own catalog
+  retired into an alias (`diffBlockCatalogs`); then the config with `checkBlockConfig` against that
+  catalog. One that fails is left behind and named in `skipped` (on a dry run too, which reads the
+  target's catalog as the write does), not a failed import, and a catalog left behind takes its
+  config with it. The report's `blockCatalog` and `blockConfig` say whether the target holds each
+  once the model is written. `writeSnapshotModel` writes them right after the content types and
+  before any entry (whose saves the config judges), in one unit: each becomes the next version over
+  what the target holds (version 1 in a new environment, as a type's versions start again),
+  replacing it rather than merging, written as the system and now; the hash is worked out again
+  rather than taken from the file. One the target already holds the same is not written again. A
+  config written is noted for the request's audit row, as a set is. Since the types arrive as the
+  source had them and an uploaded catalog must match them, the copy's next push of the same catalog
+  changes nothing. A push or set in the target that commits first wins, and the snapshot's is named
+  in `skipped`. A clone carries the source's catalog and config as they stand, since the source
+  holds them in force and judges saves by them: a catalog a type has since drifted from (a targeted
+  field dropped, variants edited by hand) and a config's stale parts (ignored there by
+  `effectiveBlockRules`, and so here). There, a push of the same catalog revises the drifted types
+  as it would at the source.
 
 What ingest found is not carried: an imported asset arrives without `ingestStatus`,
 `ingestError`, `duplicateOf` or `aiSuggestions` (`createSnapshotAsset`), because the target's

@@ -149,9 +149,10 @@ redirects, menus, the block catalog and its config, and asset metadata. Use it f
   between spaces with its files, clone instead.
 - The block catalog and config land as version 1 of the target's own history. One that no longer
   passes the checks a push and a config set make (a config wider than the catalog, a catalog
-  targeting a type the snapshot lacks) is left behind and named in the report's `skipped`; the
-  report's `blockCatalog` and `blockConfig` say whether each came across. A clone also carries a
-  config's stale parts as the source has them.
+  targeting a type the snapshot lacks or doesn't match, a thumbnail asset the snapshot doesn't
+  carry) is left behind and named in the report's `skipped`; the report's `blockCatalog` and
+  `blockConfig` say whether each came across. A clone carries both as the source holds them, a
+  config's stale parts included.
 
 ## Delete an environment
 
