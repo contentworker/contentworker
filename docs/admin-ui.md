@@ -84,7 +84,7 @@ scope, search and New entry. Below `md` a bottom tab bar holds the day's work an
 `/team`, `/audit` and `/account` are not in `NAV` (`nav.ts`). The shell adds them: admins get a
 Deployment group (People and sign-in, Audit log) after Settings, and Account sits in the account
 menu at the sidebar's foot (the More sheet on a phone). Settings sections are addressed as
-`/settings/:section` (default `team`, Space access): **Access** (Space access, API keys, Roles, Connected apps), **Automation**
+`/settings/:section` (default `team`, Space access): **Access** (Space access, API keys, Connect a frontend, Roles, Connected apps), **Automation**
 (Webhooks, Functions, AI actions), **Extensions** (App extensions, Plugins), **Workspace**
 (Environments, Redirects, Menus, Audit log).
 
@@ -164,6 +164,21 @@ menu at the sidebar's foot (the More sheet on a phone). Settings sections are ad
 - **Settings**: API keys, roles, OAuth connected apps, webhooks, functions, AI actions, app
   extensions (iframe panels, `ExtensionFrame`), plugins, environments and aliases, branch
   compare/merge, redirects, menus, the space audit log.
+- **Connect a frontend** (`/settings/frontend`, `app/cms/components/ConnectFrontend.tsx`): mints a
+  site's Delivery key (and, ticked, a Preview key), each with an optional role, through
+  `connectFrontend` (once shown, minting others asks in place first), its tokens shown once
+  in an Alert with copy buttons and held only in the screen's state; prints the config as tabs
+  (frontend runtime `wrangler.jsonc` vars and `wrangler secret put`, the SDK's env and client, the
+  Next.js draft route and client, `connectPreview` with this admin’s origin), from the answer's
+  `endpoints` (before minting, from this origin by the same rule, `frontendEndpoints`) and never a
+  token outside an env snippet (`cms/lib/frontend-config.ts`); a preview URL row per content type, as the
+  API lists them, checked by
+  `checkPreviewTemplate` before `PUT …/content-types/:apiId/preview` saves it alone; and **Check
+  connection**, which frames the Site frame (`/preview-frame/…`) for the picked type's latest
+  entry, off screen, sends it a `view` allowing nothing, and maps its status to Connected, the
+  site's SDK too old or too new, or Not connected (`pane/use-connection-check.ts`). The frame is
+  dropped once it answers (and is `inert` while it is up); picking another type waits for the
+  button. The Site pane's "isn't connected" notice links here, in a new tab.
 - **Audit log** (`/settings/audit-log`, `app/cms/components/AuditLog.tsx`): the space's trail, with
   fields for actor, action, target type, target id and a range of days on the reader's clock.
   Filters match exactly, so pressing a row's actor, action or target fills its field. Pages of 50

@@ -263,3 +263,53 @@ test('a page that refuses the entry says it can’t be previewed, and isn’t se
   await expect(page.getByRole('alert')).toContainText('This entry can’t be previewed on this page');
   await scanPane(page, testInfo);
 });
+
+// Settings → Connect a frontend runs the same frame and host as the Site pane, out of sight, and
+// says how each kind of page answers: connected, an SDK it can't speak with, or no answer at all.
+test('Connect a frontend checks a page connects, and its screen has no accessibility violations', async ({
+  page,
+  request,
+}, testInfo) => {
+  for (const type of ['livePage', 'oldSdkPage', 'silentPage']) {
+    const res = await api(request, 'POST', `${MGMT}/entries`, {
+      contentTypeApiId: type,
+      fields: { title: { 'en-US': `Check ${testInfo.workerIndex}` } },
+    });
+    expect(res.ok(), await res.text()).toBe(true);
+  }
+  await openCms(page, '/settings/frontend');
+  await expect(page.getByRole('heading', { name: 'Connect a frontend' })).toBeVisible();
+
+  // Minted once: the tokens show in the alert and fill the config, and the screen still scans.
+  await page.getByRole('checkbox', { name: 'Also create a Preview key' }).click();
+  await page.getByRole('button', { name: 'Create keys' }).click();
+  await expect(page.getByText('Copy these keys now')).toBeVisible();
+  await page.getByRole('tab', { name: 'SDK' }).click();
+  await expect(page.getByLabel('.env', { exact: true })).toContainText('cwk_cda_');
+  await settle(page);
+  const results = await new AxeBuilder({ page }).withTags(WCAG).analyze();
+  expect(
+    results.violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(' ')).join(', ')}`),
+  ).toEqual([]);
+
+  const check = async (typeName: string) => {
+    await page.getByRole('combobox', { name: 'Content type to check' }).click();
+    await page.getByRole('option', { name: typeName, exact: true }).click();
+    await page.getByRole('button', { name: 'Check connection' }).click();
+  };
+  await check('Live page');
+  await expect(page.getByText('Connected', { exact: true })).toBeVisible();
+  await expect(page.getByTitle('Connection check')).toHaveCount(0);
+  // The fixture's SDK offers only a version newer than this admin speaks (see its spec above).
+  await check('Old SDK page');
+  await expect(page.getByText('The site’s SDK is too new')).toBeVisible();
+  await check('Silent page');
+  // While the silent page is still being waited on, its frame is mounted: scanned with it.
+  await expect(page.getByTitle('Connection check')).toHaveCount(1);
+  const checking = await new AxeBuilder({ page }).withTags(WCAG).analyze();
+  expect(
+    checking.violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(' ')).join(', ')}`),
+  ).toEqual([]);
+  await expect(page.getByText('Not connected', { exact: true })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText(/didn’t offer to connect/)).toBeVisible();
+});

@@ -37,6 +37,7 @@ import type {
   EntryWorkflowState,
   FieldDiff,
   FilterOp,
+  FrontendEndpoints,
   GraphIssue,
   Menu,
   MenuItemInput,
@@ -744,6 +745,20 @@ export interface CreatedApiKey {
   readonly id: string;
   readonly kind: ApiKeyKind;
   readonly token: string;
+}
+
+/** A connected frontend's keys (tokens shown once) and the endpoints its config names. */
+export interface FrontendConnection {
+  readonly space: string;
+  readonly environment: string;
+  readonly deliveryKey: { readonly id: string; readonly token: string };
+  readonly previewKey?: { readonly id: string; readonly token: string };
+  readonly endpoints?: FrontendEndpoints;
+  readonly previewUrls: readonly {
+    readonly contentType: string;
+    readonly name: string;
+    readonly urlTemplate: string | null;
+  }[];
 }
 
 /**
@@ -2789,6 +2804,24 @@ export function createManagementClient(
     },
     revokeApiKey(id: string): Promise<void> {
       return req('DELETE', `${spaceBase}/api-keys/${encodeURIComponent(id)}`);
+    },
+    /**
+     * Connects a frontend to this environment: a Delivery key (and, with `preview`, a Preview key),
+     * whose tokens are answered this once, with the endpoints and preview URLs its config names.
+     */
+    connectFrontend(input: {
+      name?: string;
+      roleId?: string;
+      previewRoleId?: string;
+      preview?: boolean;
+    }): Promise<FrontendConnection> {
+      return req('POST', `${mgmt}/frontend-connections`, input);
+    },
+    /** Sets a type's preview URL template, or clears it with null, and nothing else. */
+    setContentTypePreview(apiId: string, urlTemplate: string | null): Promise<ContentType> {
+      return req('PUT', `${mgmt}/content-types/${encodeURIComponent(apiId)}/preview`, {
+        urlTemplate,
+      });
     },
 
     // --- settings: OAuth connections + personal access tokens -------------
