@@ -30,6 +30,12 @@ export interface ValidationContext {
    * change to refuse.
    */
   readonly previous?: EntryFields;
+  /**
+   * Top-level fields the write doesn't fill and so isn't judged required on: a generated draft
+   * leaves rich text, links and slugs for an editor, and is a proposal for one, not a save. The
+   * save that follows judges them.
+   */
+  readonly unfilled?: ReadonlySet<string>;
 }
 
 /** The stored value a disabled field must keep, when the write is an edit; undefined when not. */
@@ -97,7 +103,12 @@ export function validateEntryFields(
         // Required is enforced on the default locale only; other locales are
         // optional and resolve via the fallback chain at delivery time. A field
         // its rules hide is not required: nobody can see it to fill it.
-        if (field.required && locale === ctx.defaultLocale && !state.hidden) {
+        if (
+          field.required &&
+          locale === ctx.defaultLocale &&
+          !state.hidden &&
+          !ctx.unfilled?.has(field.apiId)
+        ) {
           issues.push({ field: field.apiId, locale, message: 'Field is required' });
         }
         continue;
