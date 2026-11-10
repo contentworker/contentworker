@@ -14,6 +14,7 @@ import {
   createContentType,
   createEntry,
   createSpace,
+  findBlockCatalog,
   getBlockCatalog,
   getBlockUsage,
   getContentType,
@@ -159,6 +160,13 @@ describe('pushing a block catalog', () => {
     await expect(getBlockCatalog(ctx, scope)).rejects.toThrow(NotFoundError);
     const page = await getContentType(ctx, scope, 'page');
     expect(page.fields[1]?.items?.variants?.map((v) => v.apiId)).toEqual(['placeholder']);
+  });
+
+  it('finds the catalog in force, or none before the first push, per environment', async () => {
+    expect(await findBlockCatalog(ctx, scope)).toBeUndefined();
+    await push();
+    expect((await findBlockCatalog(ctx, scope))?.version).toBe(1);
+    expect(await findBlockCatalog(ctx, { ...scope, environmentId: 'staging' })).toBeUndefined();
   });
 
   it('applies: revises and publishes the type, stores version 1, announces the publish', async () => {

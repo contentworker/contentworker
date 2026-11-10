@@ -4,6 +4,7 @@ import manifest from '../package.json' with { type: 'json' };
 // Each subpath of @contentworker/sdk re-exports one workspace SDK module, unchanged.
 const SOURCES: Record<string, () => Promise<Record<string, unknown>>> = {
   '.': () => import('@contentworker/sdk-core'),
+  './blocks': () => import('@contentworker/sdk-core/blocks'),
   './inline-edit': () => import('@contentworker/sdk-core/inline-edit'),
   './live-preview': () => import('@contentworker/sdk-core/live-preview'),
   './redirects': () => import('@contentworker/sdk-core/redirects'),
@@ -19,6 +20,7 @@ const SOURCES: Record<string, () => Promise<Record<string, unknown>>> = {
 
 const FACADES: Record<string, () => Promise<Record<string, unknown>>> = {
   '.': () => import('../src/index'),
+  './blocks': () => import('../src/blocks'),
   './inline-edit': () => import('../src/inline-edit'),
   './live-preview': () => import('../src/live-preview'),
   './redirects': () => import('../src/redirects'),

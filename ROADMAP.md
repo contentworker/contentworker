@@ -344,8 +344,16 @@ Built on Blocks and the frontend runtime. Layouts stay a typed tree; rich text s
   [`docs/specs/live-preview-channel.md`](docs/specs/live-preview-channel.md). The page side
   (`connectPreview`) and the admin side (the entry editor's Site view) are in place; Coworker's
   proposals as ghost blocks are next.
-- [ ] **Blocks renderers.** `<Blocks components={…} />` for React, Vue and the frontend runtime, typed
-  by codegen.
+- [x] **Blocks renderers.** `<Blocks components={…} />` for React, Vue and the frontend runtime, typed
+  by codegen. `<Blocks>` in `@contentworker/sdk/react`, `<CwBlocks>` and `useBlock` in
+  `@contentworker/sdk/vue`, and `resolveBlocks` / `renderBlocks` in `@contentworker/sdk/blocks`
+  for any other renderer: a component per block id, renamed blocks read through the catalog's or
+  variants' aliases, a `fallback` for unknown ones, slots rendered with the same components, keys
+  from `_key`, ghosts from `view.ghosts`, and `data-cw-ref` / `data-cw-slot` marks only with
+  `preview`. Codegen emits a type per block and `BlockTypes` from the catalog in force (or the
+  variants), and `contentworker types --blocks` takes a blocks file. Still to come: the frontend
+  runtime (`@contentworker/frontend`) rendering with `renderBlocks`, and an SDK release (0.4.0) to
+  ship it.
 - [x] **Layout patches.** `patchBlocks` with key-addressed create, update, move and remove, for
   agents and the editor alike (#185): insert, update, move, remove and duplicate ops by `_key`,
   held to `expectedVersion`, over REST (`PATCH …/entries/:id/blocks`, an outline at

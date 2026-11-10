@@ -8,6 +8,7 @@ import { defineConfig } from 'tsup';
  */
 const entries = [
   'index',
+  'blocks',
   'inline-edit',
   'live-preview',
   'redirects',

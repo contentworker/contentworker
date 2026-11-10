@@ -442,6 +442,9 @@ curl -H "Authorization: Bearer $CMA_KEY" \
   "$API/spaces/$SPACE/environments/main/content-types?format=typescript" > src/contentworker.d.ts
 ```
 
+It includes a type per block and `BlockTypes`, the catalog's blocks from the block catalog in force
+and the rest from the blocks fields' variants, as `contentworker types` gives.
+
 The point is that CI and coding agents need nothing installed, and cannot type against a stale file:
 the banner carries the space, environment and generation time, so a checked-in copy that has drifted
 says so. `preview:read`, the same scope as listing content types, since it is the same information

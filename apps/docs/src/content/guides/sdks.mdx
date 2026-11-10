@@ -121,6 +121,12 @@ function Article({ id }: { id: string }) {
 `app.use(createContentworker(client))`. Both fetch on the
 client only, so server rendering stays predictable.
 
+A [blocks field](/reference/field-types/#blocks) renders with `<Blocks components={…} />` (Vue:
+`<CwBlocks>`): a component per block id, typed by the generated `BlockTypes`, slots rendered with
+the same components, and live preview marks only when you pass `preview`. See
+[Rendering blocks](/guides/blocks-from-code/#rendering-blocks); `@contentworker/sdk/blocks` does
+the same with plain functions for any other renderer.
+
 ### Edge devices and mobile
 
 `@contentworker/sdk/edge` is a tiny client for edge functions, kiosks and devices. It always asks
@@ -353,6 +359,12 @@ property's doc comment, with a Date field's format. A list of numbers is `number
 field that a [conditional rule](/guides/content-modeling/#conditional-field-rules) can hide is
 optional. Regenerate after upgrading: an older generator types number lists as `string[]`. The
 same output is served at `GET …/content-types?format=typescript`.
+
+Each block of a blocks field gets a type too (`HeroBlock`, its slots typed as lists of the blocks
+they allow), and `BlockTypes` maps every block id to its type, for
+[`<Blocks>`](/guides/blocks-from-code/#rendering-blocks). They come from the block catalog in force
+(`contentworker types --blocks <file>` takes them from a blocks file instead), and before the
+first push from the blocks fields' block types.
 
 :::caution[Upgrade before labelling options]
 A field's `in` list can hold `{ value, label }` options. SDK releases from before that throw when

@@ -12,7 +12,7 @@ import {
  * React hooks. Install the client with `app.use(createContentworker(client))`
  * (in Nuxt: inside a plugin via `nuxtApp.vueApp.use(...)`), then call
  * `useEntry` / `useEntries` / `useAsset` / `useSemanticSearch` in setup, and render assets
- * with `<CwImage>`. Inputs accept
+ * with `<CwImage>` and blocks fields with `<CwBlocks>`. Inputs accept
  * plain values, refs, or getters; changes re-fetch automatically.
  *
  * Fetching starts on mount (client-side), matching the React hooks' SSR
@@ -239,3 +239,15 @@ export {
   localizedText,
   srcset,
 } from '@contentworker/sdk-core';
+export type {
+  BlockAttrs,
+  BlockCatalogLike,
+  BlockGhost,
+  BlockGhosts,
+  BlockValue,
+  BlockVariantLike,
+  FieldAttrs,
+  SlotAttrs,
+  UnknownBlock,
+} from '@contentworker/sdk-core/blocks';
+export { type BlockComponents, type BlockContext, CwBlocks, useBlock } from './blocks.js';
