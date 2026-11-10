@@ -5,12 +5,16 @@ import {
   createEnvironment,
   createSpace,
   exportSnapshot,
+  getBlockCatalog,
+  getBlockConfig,
   getBulkJob,
   importChunkRunner,
   publishContentType,
   publishEntry,
+  pushBlockCatalog,
   runBulkChunk,
   SYSTEM_CALLER,
+  setBlockConfig,
   startEnvironmentClone,
   updateEntry,
 } from '@contentworker/application';
@@ -32,6 +36,21 @@ const ctx: AppContext = { store, clock, ids };
 const spaceId = `clone-${crypto.randomUUID().slice(0, 8)}`;
 const source = { spaceId, environmentId: 'main' };
 const target = { spaceId, environmentId: 'copy' };
+
+/** Runs every pending `bulk.chunk_due`, as the engine's bulk consumer would. */
+async function drain(blob: FakeBlobStore) {
+  const ran = new Set<string>();
+  for (let round = 0; round < 10; round++) {
+    const due = (await store.outbox.readPending(1000)).filter(
+      (e): e is BulkChunkDueEvent => 'type' in e && e.type === 'bulk.chunk_due' && !ran.has(e.id),
+    );
+    if (due.length === 0) break;
+    for (const event of due) {
+      ran.add(event.id);
+      await runBulkChunk(ctx, event, { importChunk: importChunkRunner(ctx, blob) });
+    }
+  }
+}
 
 describe('cloning an environment as a job on D1', () => {
   it('creates every entry, then publishes them with links into later chunks resolved', async () => {
@@ -81,17 +100,7 @@ describe('cloning an environment as a job on D1', () => {
 
     const blob = new FakeBlobStore();
     const started = await startEnvironmentClone(ctx, source, target);
-    const ran = new Set<string>();
-    for (let round = 0; round < 10; round++) {
-      const due = (await store.outbox.readPending(1000)).filter(
-        (e): e is BulkChunkDueEvent => 'type' in e && e.type === 'bulk.chunk_due' && !ran.has(e.id),
-      );
-      if (due.length === 0) break;
-      for (const event of due) {
-        ran.add(event.id);
-        await runBulkChunk(ctx, event, { importChunk: importChunkRunner(ctx, blob) });
-      }
-    }
+    await drain(blob);
 
     expect(await getBulkJob(ctx, target, started.job.id)).toMatchObject({
       status: 'completed',
@@ -110,5 +119,80 @@ describe('cloning an environment as a job on D1', () => {
     expect(first?.fields.next).toEqual({ 'en-US': { id: pageIds[1], linkType: 'Entry' } });
     const published = await store.entries.listPublished(target, { limit: 500 });
     expect(published).toHaveLength(150);
+  });
+
+  it('copies the block catalog and config in force, at version 1 in the copy', async () => {
+    const space = `blocks-${crypto.randomUUID().slice(0, 8)}`;
+    const from = { spaceId: space, environmentId: 'main' };
+    const to = { spaceId: space, environmentId: 'copy' };
+    await createSpace(ctx, { spaceId: space, name: 'Blocks', defaultLocale: 'en-US' });
+    await createEnvironment(ctx, space, 'copy');
+    const text = (apiId: string, position = 0) => ({
+      apiId,
+      name: apiId,
+      type: 'Symbol' as const,
+      localized: false,
+      required: false,
+      position,
+    });
+    await createContentType(ctx, SYSTEM_CALLER, from, {
+      apiId: 'page',
+      name: 'Page',
+      displayField: 'title',
+      fields: [
+        text('title'),
+        {
+          ...text('body', 1),
+          type: 'Array',
+          items: {
+            type: 'Component',
+            variants: [{ apiId: 'hero', name: 'Hero', fields: [text('heading')] }],
+          },
+        },
+      ],
+    } as Parameters<typeof createContentType>[3]);
+    await publishContentType(ctx, from, 'page');
+    const blocks = [
+      { id: 'hero', name: 'Hero', fields: [{ apiId: 'heading', name: 'Heading', type: 'Symbol' }] },
+      { id: 'quote', name: 'Quote', fields: [{ apiId: 'text', name: 'Text', type: 'Symbol' }] },
+    ];
+    const targets = [{ contentTypeApiId: 'page', field: 'body' }];
+    await pushBlockCatalog(ctx, SYSTEM_CALLER, from, { blocks, targets });
+    // A second version, so the copy's restarting at 1 shows.
+    const pushed = await pushBlockCatalog(ctx, SYSTEM_CALLER, from, {
+      blocks: blocks.map((b) => ({ ...b, description: `The ${b.name}` })),
+      targets,
+    });
+    const narrowing = [{ contentTypeApiId: 'page', field: 'body', blocks: ['quote'] }];
+    await setBlockConfig(ctx, SYSTEM_CALLER, from, {
+      expectedVersion: 0,
+      targets: narrowing,
+      blocks: [],
+    });
+    await createEntry(ctx, from, {
+      contentTypeApiId: 'page',
+      fields: { title: { 'en-US': 'Home' }, body: { 'en-US': [{ _type: 'quote', _key: 'q1' }] } },
+    });
+
+    const started = await startEnvironmentClone(ctx, from, to);
+    await drain(new FakeBlobStore());
+    expect(await getBulkJob(ctx, to, started.createJobId)).toMatchObject({
+      status: 'completed',
+      succeeded: 1,
+      failed: 0,
+    });
+    expect(await getBlockCatalog(ctx, to)).toMatchObject({
+      version: 1,
+      hash: pushed.hash,
+      targets,
+      pushedBy: null,
+    });
+    expect(await getBlockConfig(ctx, to)).toMatchObject({
+      version: 1,
+      targets: narrowing,
+      blocks: [],
+    });
+    // The source keeps its own history.
+    expect((await getBlockCatalog(ctx, from)).version).toBe(2);
   });
 });

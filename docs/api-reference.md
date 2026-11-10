@@ -347,7 +347,8 @@ imports) write their rows without it.
 | POST   | `…/clone`  | `content:manage` | Copy this environment into another, entirely as jobs (`202`) `{ targetSpaceId?, targetEnvironmentId, publish? }` |
 
 A snapshot carries the content model, entries, taxonomy, workflows, asset metadata, asset
-folders and asset collections (with their member order), never
+folders, asset collections (with their member order), and the block catalog and block config
+in force, never
 credentials or asset bytes. Import and clone answer `202` and run as bulk jobs in the engine,
 followed at `…/bulk/jobs/:id` in the target environment; `?dryRun=true` reports with `200`. What an
 import checks, preserves and writes, how clone differs, and how
