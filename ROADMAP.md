@@ -366,7 +366,9 @@ Built on Blocks and the frontend runtime. Layouts stay a typed tree; rich text s
   and its config (each restarting at version 1 in the copy; an import names what no longer passes
   the push and set checks in its report). Promotions copy both, pinned on both sides, and wait for
   approval when they change which blocks go where, a slot's counts or locks, or remove blocks a
-  type holds; environment compare reports how they differ (a merge never copies them).
+  type holds; environment compare reports how they differ, as a promotion judges it (a merge
+  never copies them). Release note: after a rollback past this, reject waiting promotions
+  requested with blocks (older code applies them without the blocks).
 - [ ] **Canvas editor.** A toolbox, selection overlay and undo in `apps/web` over the preview channel.
   The canvas (`/content/:typeId/:entryId/canvas`) is in place: seams from the page's `layout`, a
   dock offering exactly what a slot takes, an inspector (Content, Data, Look), Layers as the

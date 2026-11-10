@@ -1,10 +1,8 @@
 import {
   assertEntryFieldsValid,
-  type BlockConfig,
   ConflictError,
   type ContentType,
   canAccessContentType,
-  canonicalJson,
   type Entry,
   type EntryFields,
   type EntryVersion,
@@ -18,6 +16,7 @@ import {
   uniqueClaims,
   type ValidationContext,
 } from '@contentworker/domain';
+import { blockConfigChange } from './block-config';
 import { saveContentTypeOver } from './content-types';
 import { type AppContext, actorOf } from './context';
 import {
@@ -51,10 +50,10 @@ export interface EnvironmentComparison {
   readonly contentTypes: readonly ContentTypeChange[];
   readonly entries: readonly EntryChange[];
   /**
-   * How the block catalog in force (by hash) and the block config (by what it narrows) differ, as
-   * the other kinds do: `added` only in the source, `removed` only in the target. Reported only: a
-   * merge never copies them (a promotion does). Left out for a role limited to some types, since
-   * the catalog's targets span them.
+   * How the block catalog in force (by hash) and the block config (as a promotion judges it,
+   * `blockConfigChange`) differ, as the other kinds do: `added` only in the source, `removed` only
+   * in the target. Reported only: a merge never copies them (a promotion does). Left out for a role
+   * limited to some types, since the catalog's targets span them.
    */
   readonly blocks?: { readonly catalog: ChangeKind; readonly config: ChangeKind };
 }
@@ -131,11 +130,6 @@ export async function compareEnvironments(
     ctx.store.blockConfigs.get(src),
     ctx.store.blockConfigs.get(tgt),
   ]);
-  // A config set back to nothing narrows nothing, as one never set.
-  const narrows = (c: BlockConfig | null) =>
-    c && (c.targets.length > 0 || c.blocks.length > 0)
-      ? canonicalJson({ targets: c.targets, blocks: c.blocks })
-      : null;
   const srcById = new Map(srcEntries.map((e) => [e.entry.id, e]));
   const tgtById = new Map(tgtEntries.map((e) => [e.entry.id, e]));
   const entryChanges = classify(srcById, tgtById, (a, b) => eq(a.fields, b.fields));
@@ -155,7 +149,7 @@ export async function compareEnvironments(
     })),
     blocks: {
       catalog: kindOf(srcCatalog?.hash ?? null, tgtCatalog?.hash ?? null),
-      config: kindOf(narrows(srcConfig), narrows(tgtConfig)),
+      config: blockConfigChange(srcCatalog, srcConfig, tgtCatalog, tgtConfig),
     },
   };
 }

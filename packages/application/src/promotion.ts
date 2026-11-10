@@ -37,7 +37,7 @@ import { wrapUntrusted } from './ai-prompt';
 import { isUncheckedFallback } from './ai-provenance';
 import { auditActor } from './audit';
 import { assertThumbnailAssets, pushBlockCatalog } from './block-catalog';
-import { setBlockConfig } from './block-config';
+import { blockConfigChange, setBlockConfig } from './block-config';
 import { compareEnvironments } from './branching';
 import {
   describeRemovedInUse,
@@ -408,6 +408,12 @@ async function applyPromotion(base: AppContext, promotion: Promotion): Promise<P
     const blocks = promotion.blocks
       ? await readPromotedBlocks(ctx, source, target, promotion)
       : null;
+    // And what the push would refuse, judged over the types as this apply leaves them: refused
+    // here rather than after the types are written. (A race after these reads can still stop the
+    // apply partway, as it can any promotion; what was applied stays, as for any edits.)
+    if (blocks) {
+      await checkPromotedCatalog(ctx, target, types, blocks.catalog, blocks.targetCatalog);
+    }
     for (const ct of types) {
       await saveContentTypeOver(
         ctx,
@@ -484,6 +490,7 @@ async function applyPromotion(base: AppContext, promotion: Promotion): Promise<P
         source: promotion.source,
         contentTypes: result.contentTypes.length,
         entries: result.entries.length,
+        ...(result.blocks ? { blocks: result.blocks } : {}),
       });
     });
     return (await finish({ status: 'completed', result: done })) ?? promotion;
@@ -727,9 +734,11 @@ interface PlannedBlocks {
 
 /**
  * The source's block catalog and config, when copying them would change the target: a catalog
- * other than the target's (by hash), or a config that gives the target other rules. Null when the
- * source has no catalog (a promotion adds and overwrites, never deletes) or nothing would change.
- * A source config never set leaves the target's in place.
+ * other than the target's (by hash), a config that gives the target other rules, or one that
+ * differs as `blockConfigChange` judges it (a narrowing equal to the code's today, which a later
+ * push would make bite). Null when the source has no catalog (a promotion adds and overwrites,
+ * never deletes) or nothing would change. A source config never set leaves the target's in place;
+ * one set back to nothing is carried, and clears the target's.
  */
 async function planPromotedBlocks(
   ctx: AppContext,
@@ -743,15 +752,30 @@ async function planPromotedBlocks(
     ctx.store.blockConfigs.get(target),
   ]);
   if (!catalog) return null;
-  const config =
-    sourceConfig && sourceConfig.version > 0 ? effectiveBlockConfig(catalog, sourceConfig) : null;
+  let config: CarriedBlockConfig | null = null;
+  try {
+    // A source config set back to nothing is carried too: it clears the target's narrowing.
+    if (sourceConfig && sourceConfig.version > 0) {
+      config = effectiveBlockConfig(catalog, sourceConfig);
+    }
+  } catch (err) {
+    if (!(err instanceof ValidationError)) throw err;
+    throw cantGo(target, err.issues);
+  }
   const before = effectiveBlockRules(targetCatalog, targetConfig ?? EMPTY_BLOCK_CONFIG);
   const after = effectiveBlockRules(
     catalog,
     config ? { version: 0, ...config } : (targetConfig ?? EMPTY_BLOCK_CONFIG),
   );
   const ruleChanges = blockRuleChanges(before, after);
-  if (targetCatalog?.hash === catalog.hash && ruleChanges.length === 0) return null;
+  // As `compareEnvironments` judges them, so a promotion copies what a comparison says differs, and
+  // a comparison after it says nothing does.
+  const configMoves =
+    config !== null &&
+    ['added', 'changed'].includes(
+      blockConfigChange(catalog, sourceConfig, targetCatalog, targetConfig),
+    );
+  if (targetCatalog?.hash === catalog.hash && ruleChanges.length === 0 && !configMoves) return null;
   return {
     pinned: {
       catalogVersion: catalog.version,
@@ -768,13 +792,9 @@ async function planPromotedBlocks(
 
 /**
  * The risk check's lines for the blocks a promotion copies, each of which requires approval:
- * every change to what editors may place where (counts and locks included), and what the push
- * would remove from a target type the promotion doesn't copy itself (those it copies are judged
- * as content types above), and a target draft the push would publish. A catalog change that
- * leaves the rules as they are and removes nothing adds no line. Refuses (422), before anyone
- * approves it, what the apply would refuse: a target type it neither has nor gets, a thumbnail
- * naming an asset the target lacks, or a block or block prop entries in the target still hold
- * (the push never removes those, approved or not), as `assertSingletonsHold` does for singletons.
+ * every change to what editors may place where (counts and locks included), and what the catalog
+ * check finds (`checkPromotedCatalog`). A catalog change that leaves the rules as they are and
+ * removes nothing adds no line.
  */
 async function assessPromotedBlocks(
   ctx: AppContext,
@@ -783,70 +803,92 @@ async function assessPromotedBlocks(
   blocks: PlannedBlocks,
 ): Promise<string[]> {
   const { catalog } = blocks;
-  const lines: string[] = [];
-  if (blocks.targetCatalog?.hash !== catalog.hash) {
-    const copied = new Map(promoted.map((t) => [t.apiId, t]));
-    const types = new Map<string, ContentType>();
-    for (const apiId of new Set(catalog.targets.map((t) => t.contentTypeApiId))) {
-      const type = copied.get(apiId) ?? (await ctx.store.contentTypes.get(target, apiId));
-      if (type) types.set(apiId, type);
-    }
-    let plans: ReturnType<typeof planCatalogTypes>;
-    let changes: ReturnType<typeof diffBlockCatalogs>;
-    try {
-      changes = diffBlockCatalogs(blocks.targetCatalog?.blocks ?? null, catalog.blocks);
-      plans = planCatalogTypes(catalog.blocks, catalog.targets, types);
-      await assertThumbnailAssets(ctx, target, catalog.blocks);
-    } catch (err) {
-      if (!(err instanceof ValidationError)) throw err;
-      throw cantGo(target, err.issues);
-    }
-    const held: string[] = [];
-    for (const plan of plans) {
-      if (copied.has(plan.contentTypeApiId)) continue;
-      const current = types.get(plan.contentTypeApiId) as ContentType;
-      // Published with the push, as any push publishes the types it revises.
-      if (current.status !== 'published') {
-        lines.push(
-          `The block catalog publishes the target's draft of the content type "${current.apiId}"`,
-        );
-      }
-      if (!plan.destructive) continue;
-      lines.push(
-        `The block catalog removes blocks or block props from the content type "${current.apiId}"`,
-      );
-      const inUse = await removedContentInUse(ctx, target, current, {
-        ...current,
-        fields: [...plan.fields],
-      });
-      for (const { variant, entries } of inUse.variantsInUse) {
-        held.push(`${current.apiId}.${describeRemovedInUse(variant, entries)}`);
-      }
-      for (const { field, entries } of inUse.fieldsInUse) {
-        held.push(`${current.apiId}.${describeRemovedInUse(field, entries)}`);
-      }
-    }
-    if (held.length > 0) {
-      throw cantGo(
-        target,
-        held.map((at) => ({
-          field: '',
-          message: `it removes what entries there still hold (${at}); change those entries first`,
-        })),
-      );
-    }
-    if (lines.length > 0 || blocks.ruleChanges.length > 0) {
-      const said = [
-        ...(changes.added.length ? [`adds ${quotedIds(changes.added)}`] : []),
-        ...(changes.removed.length ? [`removes ${quotedIds(changes.removed)}`] : []),
-        ...(changes.changed.length ? [`changes ${quotedIds(changes.changed)}`] : []),
-        ...changes.renamed.map((r) => `renames "${r.from}" to "${r.to}"`),
-      ];
-      if (said.length > 0) lines.unshift(`The block catalog ${said.join('; ')}`);
-    }
+  // Whatever the hashes: a push of the same catalog still revises a target type (copied or the
+  // target's own) whose blocks field has drifted from it.
+  const checked = await checkPromotedCatalog(ctx, target, promoted, catalog, blocks.targetCatalog);
+  const lines: string[] = [...checked.lines];
+  if (lines.length > 0 || blocks.ruleChanges.length > 0) {
+    const { changes } = checked;
+    const said = [
+      ...(changes.added.length ? [`adds ${quotedIds(changes.added)}`] : []),
+      ...(changes.removed.length ? [`removes ${quotedIds(changes.removed)}`] : []),
+      ...(changes.changed.length ? [`changes ${quotedIds(changes.changed)}`] : []),
+      ...changes.renamed.map((r) => `renames "${r.from}" to "${r.to}"`),
+    ];
+    if (said.length > 0) lines.unshift(`The block catalog ${said.join('; ')}`);
   }
   for (const change of blocks.ruleChanges) lines.push(`The block rules change: ${change}`);
   return lines;
+}
+
+/**
+ * What pushing `catalog` into the target would do, judged over its types as the promotion leaves
+ * them (each type it copies in place of the target's, since the push runs after them): the
+ * blocks and props it removes from a type, including one the promotion copies whose blocks field
+ * has drifted from the source's catalog, and a draft it would publish (a push publishes the types
+ * it revises), as reason lines. Refuses (422) what the push would refuse: a target type the target
+ * neither has nor gets, a thumbnail naming an asset it lacks, a block or block prop entries there
+ * still hold (the push never removes those, approved or not), as `assertSingletonsHold` does for
+ * singletons. Run when the promotion is requested, and again by the apply before it writes.
+ */
+async function checkPromotedCatalog(
+  ctx: AppContext,
+  target: Scope,
+  promoted: readonly ContentType[],
+  catalog: BlockCatalog,
+  targetCatalog: BlockCatalog | null,
+): Promise<{ lines: string[]; changes: ReturnType<typeof diffBlockCatalogs> }> {
+  const copied = new Map(promoted.map((t) => [t.apiId, t]));
+  const types = new Map<string, ContentType>();
+  for (const apiId of new Set(catalog.targets.map((t) => t.contentTypeApiId))) {
+    const type = copied.get(apiId) ?? (await ctx.store.contentTypes.get(target, apiId));
+    if (type) types.set(apiId, type);
+  }
+  let plans: ReturnType<typeof planCatalogTypes>;
+  let changes: ReturnType<typeof diffBlockCatalogs>;
+  try {
+    changes = diffBlockCatalogs(targetCatalog?.blocks ?? null, catalog.blocks);
+    plans = planCatalogTypes(catalog.blocks, catalog.targets, types);
+    await assertThumbnailAssets(ctx, target, catalog.blocks);
+  } catch (err) {
+    if (!(err instanceof ValidationError)) throw err;
+    throw cantGo(target, err.issues);
+  }
+  const lines: string[] = [];
+  const held: string[] = [];
+  for (const plan of plans) {
+    const current = types.get(plan.contentTypeApiId) as ContentType;
+    const whose = copied.has(current.apiId) ? 'the copied' : "the target's";
+    if (current.status !== 'published') {
+      lines.push(
+        `The block catalog publishes ${whose} draft of the content type "${current.apiId}"`,
+      );
+    }
+    if (!plan.destructive) continue;
+    lines.push(
+      `The block catalog removes blocks or block props from ${whose} content type "${current.apiId}"`,
+    );
+    const inUse = await removedContentInUse(ctx, target, current, {
+      ...current,
+      fields: [...plan.fields],
+    });
+    for (const { variant, entries } of inUse.variantsInUse) {
+      held.push(`${current.apiId}.${describeRemovedInUse(variant, entries)}`);
+    }
+    for (const { field, entries } of inUse.fieldsInUse) {
+      held.push(`${current.apiId}.${describeRemovedInUse(field, entries)}`);
+    }
+  }
+  if (held.length > 0) {
+    throw cantGo(
+      target,
+      held.map((at) => ({
+        field: '',
+        message: `it removes what entries there still hold (${at}); change those entries first`,
+      })),
+    );
+  }
+  return { lines, changes };
 }
 
 /** A catalog the target can't take, refused when requested, with the way round it. */
@@ -871,6 +913,7 @@ interface PinnedBlocks {
   readonly pinned: PromotedBlocks;
   readonly catalog: BlockCatalog;
   readonly config: BlockConfig | null;
+  readonly targetCatalog: BlockCatalog | null;
 }
 
 /**
@@ -908,7 +951,7 @@ async function readPromotedBlocks(
       `The block catalog or block config changed in ${promotion.target} after the promotion was requested; request a new one`,
     );
   }
-  return { pinned, catalog, config };
+  return { pinned, catalog, config, targetCatalog };
 }
 
 /**

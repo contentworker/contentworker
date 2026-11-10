@@ -1,6 +1,7 @@
 import {
   type AppContext,
   approvePromotion,
+  compareEnvironments,
   createContentType,
   createEnvironment,
   createSpace,
@@ -139,6 +140,15 @@ describe('promoting blocks on D1', () => {
       result: { blocks: { catalog: false, config: true } },
     });
     expect(await rulesOf(ctx, qa)).toEqual(await rulesOf(ctx, staging));
+    // Read back from D1, the copy compares as the source: nothing left to promote.
+    expect((await compareEnvironments(ctx, spaceId, 'staging', 'qa')).blocks).toEqual({
+      catalog: 'unchanged',
+      config: 'unchanged',
+    });
+    const [event] = (await store.outbox.readPending(1000)).filter(
+      (e) => 'type' in e && e.type === 'environment.promoted' && e.scope.spaceId === spaceId,
+    );
+    expect(event).toMatchObject({ blocks: { catalog: false, config: true } });
   });
 
   it('reads a promotion with no blocks as it was', async () => {

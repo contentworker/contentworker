@@ -228,7 +228,9 @@ check first.
    content types), the block catalog and block config included; `blocks: true` adds them to a
    selection. They are pinned by the source's and the target's catalog and config versions
    (`blocks`), and another push or set on either side fails the apply with a 409 before anything
-   is written. Promotions take a role without content-type or field restrictions (`403`
+   is written; so does (with a 422) an entry made since that holds a block the push would remove.
+   After a rollback of the Workers past this change, reject waiting promotions requested with
+   blocks: older code would apply them without their blocks. Promotions take a role without content-type or field restrictions (`403`
    otherwise), since they write and publish whole entries across types. An entry that a workflow
    gates in the target (`gatesPublish`) goes as a draft, and the reasons say which workflow: that
    workflow's run publishes it there, not the promotion. A gate added after the request leaves that

@@ -1,5 +1,7 @@
 import {
+  type BlockConfig,
   ConflictError,
+  checkBlockCatalog,
   type FieldDefinition,
   type Principal,
   SCOPES,
@@ -10,6 +12,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import {
   type AppContext,
   approvePromotion,
+  blockConfigChange,
   compareEnvironments,
   comparisonFor,
   createContentType,
@@ -22,6 +25,7 @@ import {
   requestPromotion,
   SYSTEM_CALLER,
   setBlockConfig,
+  updateContentType,
 } from '../src/index';
 
 /**
@@ -294,7 +298,7 @@ describe('promoting blocks between environments', () => {
     expect(p.status).toBe('awaiting_approval');
     expect(p.risk.reasons).toEqual([
       'The block catalog removes "quote"; changes "grid"',
-      'The block catalog removes blocks or block props from the content type "page"',
+      'The block catalog removes blocks or block props from the target\'s content type "page"',
       'The block rules change: grid.slots.items takes card, at most 6 (was: takes card, quote, at most 6)',
     ]);
     const done = await approvePromotion(ctx, approver, spaceId, p.id);
@@ -332,6 +336,93 @@ describe('promoting blocks between environments', () => {
     );
     expect((await store.contentTypes.get(qa, 'page'))?.version).toBe(before?.version);
     expect((await store.promotions.get(spaceId, p.id))?.result?.contentTypes).toEqual([]);
+  });
+
+  it('names a removal from a copied type whose blocks field drifted from the source catalog', async () => {
+    // A variant added by hand in staging, after its push: the push into qa takes it back out.
+    const page = await store.contentTypes.get(staging, 'page');
+    const fields = (page?.fields ?? []).map((f) =>
+      f.apiId === 'body' && f.items?.variants
+        ? {
+            ...f,
+            items: {
+              ...f.items,
+              variants: [
+                ...f.items.variants,
+                {
+                  apiId: 'extra',
+                  name: 'Extra',
+                  fields: [field({ apiId: 'note', type: 'Symbol' })],
+                },
+              ],
+            },
+          }
+        : f,
+    );
+    await updateContentType(ctx, SYSTEM_CALLER, staging, 'page', { fields });
+    await publishContentType(ctx, staging, 'page');
+    await setBlockConfig(ctx, admin, staging, { expectedVersion: 0, ...NARROWING });
+    const p = await requestPromotion(ctx, admin, spaceId, { source: 'staging', target: 'qa' });
+    expect(p.contentTypes.map((t) => t.apiId)).toEqual(['page']);
+    expect(p.risk.reasons).toContain(
+      'The block catalog removes blocks or block props from the copied content type "page"',
+    );
+  });
+
+  it('refuses at the apply, before writing, a push an entry made since would block', async () => {
+    await pushBlockCatalog(ctx, admin, staging, {
+      blocks: [
+        BLOCKS[0],
+        { ...BLOCKS[1], slots: [{ ...BLOCKS[1]?.slots?.[0], allowedChildren: ['card'] }] },
+        BLOCKS[2],
+      ],
+      targets: TARGETS,
+      allowDestructive: true,
+    });
+    const before = await store.contentTypes.get(qa, 'page');
+    // The types left out, so the push is what would take the quote out of qa's page.
+    const p = await requestPromotion(ctx, admin, spaceId, {
+      source: 'staging',
+      target: 'qa',
+      entries: [],
+      blocks: true,
+    });
+    expect(p.status).toBe('awaiting_approval');
+    // While it waits, an entry in qa takes up the quote the push removes.
+    await createEntry(ctx, qa, {
+      contentTypeApiId: 'page',
+      fields: {
+        title: { 'en-US': 'Quoted' },
+        body: {
+          'en-US': [
+            { _type: 'grid', _key: 'g1', items: [{ _type: 'quote', _key: 'q1', text: 'Hi' }] },
+          ],
+        },
+      },
+    });
+    await expect(approvePromotion(ctx, approver, spaceId, p.id)).rejects.toBeInstanceOf(
+      ValidationError,
+    );
+    expect((await store.contentTypes.get(qa, 'page'))?.version).toBe(before?.version);
+    expect((await store.blockCatalogs.latest(qa))?.version).toBe(1);
+    const failed = await store.promotions.get(spaceId, p.id);
+    expect(failed?.status).toBe('failed');
+    expect(failed?.result?.blocks).toBeUndefined();
+  });
+
+  it('says on the environment.promoted event what blocks landed', async () => {
+    await setBlockConfig(ctx, admin, staging, { expectedVersion: 0, ...NARROWING });
+    const p = await requestPromotion(ctx, admin, spaceId, {
+      source: 'staging',
+      target: 'qa',
+      entries: [],
+      blocks: true,
+    });
+    await approvePromotion(ctx, approver, spaceId, p.id);
+    const events = (await store.outbox.readPending(1000)).filter(
+      (e) => e.type === 'environment.promoted',
+    );
+    expect(events).toMatchObject([{ promotionId: p.id, blocks: { catalog: false, config: true } }]);
   });
 
   it('takes content:manage to approve a promotion with blocks', async () => {
@@ -373,9 +464,56 @@ describe('comparing blocks between environments', () => {
       catalog: 'unchanged',
       config: 'changed',
     });
-    // A config set back to nothing narrows nothing, as one never set.
+    // A source config set back to nothing is carried: over a narrowed target it is a change.
     await setBlockConfig(ctx, admin, staging, { expectedVersion: 1, targets: [], blocks: [] });
-    await setBlockConfig(ctx, admin, qa, { expectedVersion: 1, targets: [], blocks: [] });
+    expect((await compareEnvironments(ctx, spaceId, 'staging', 'qa')).blocks?.config).toBe(
+      'changed',
+    );
+    const cleared = await requestPromotion(ctx, admin, spaceId, {
+      source: 'staging',
+      target: 'qa',
+      entries: [],
+      blocks: true,
+    });
+    expect(cleared.risk.reasons).toEqual([
+      'The block rules change: page.body takes hero, grid (was: takes grid)',
+    ]);
+    await approvePromotion(ctx, approver, spaceId, cleared.id);
+    expect(await store.blockConfigs.get(qa)).toMatchObject({ version: 2, targets: [], blocks: [] });
+    expect((await compareEnvironments(ctx, spaceId, 'staging', 'qa')).blocks).toEqual({
+      catalog: 'unchanged',
+      config: 'unchanged',
+    });
+  });
+
+  it('says nothing differs once a promotion has copied the blocks', async () => {
+    await pushBlockCatalog(ctx, admin, staging, { blocks: BLOCKS, targets: TARGETS });
+    await setBlockConfig(ctx, admin, staging, { expectedVersion: 0, ...NARROWING });
+    const p = await requestPromotion(ctx, admin, spaceId, { source: 'staging', target: 'qa' });
+    await approvePromotion(ctx, approver, spaceId, p.id);
+    expect((await compareEnvironments(ctx, spaceId, 'staging', 'qa')).blocks).toEqual({
+      catalog: 'unchanged',
+      config: 'unchanged',
+    });
+    await expect(
+      requestPromotion(ctx, admin, spaceId, { source: 'staging', target: 'qa' }),
+    ).rejects.toBeInstanceOf(ValidationError);
+  });
+
+  it('copies, and then matches, a narrowing equal to the code today', async () => {
+    await pushBlockCatalog(ctx, admin, staging, { blocks: BLOCKS, targets: TARGETS });
+    await pushBlockCatalog(ctx, admin, qa, { blocks: BLOCKS, targets: TARGETS });
+    // The code allows hero and grid at the top already: no rule moves, but a push adding a block
+    // would leave staging's page at these two and qa's open to the new one.
+    await setBlockConfig(ctx, admin, staging, {
+      expectedVersion: 0,
+      targets: [{ contentTypeApiId: 'page', field: 'body', blocks: ['hero', 'grid'] }],
+      blocks: [],
+    });
+    expect((await compareEnvironments(ctx, spaceId, 'staging', 'qa')).blocks?.config).toBe('added');
+    const p = await requestPromotion(ctx, admin, spaceId, { source: 'staging', target: 'qa' });
+    expect(p).toMatchObject({ status: 'completed', risk: { requiresApproval: false } });
+    expect(p.result?.blocks).toEqual({ catalog: false, config: true });
     expect((await compareEnvironments(ctx, spaceId, 'staging', 'qa')).blocks?.config).toBe(
       'unchanged',
     );
@@ -389,5 +527,53 @@ describe('comparing blocks between environments', () => {
     };
     expect(comparisonFor(admin, diff).blocks).toEqual(diff.blocks);
     expect(comparisonFor(limited, diff)).not.toHaveProperty('blocks');
+  });
+});
+
+describe('judging two configs as a promotion does', () => {
+  const wide = checkBlockCatalog({
+    blocks: BLOCKS,
+    targets: [
+      { contentTypeApiId: 'page', field: 'body' },
+      { contentTypeApiId: 'page', field: 'aside' },
+    ],
+  });
+  const catalog = {
+    version: 1,
+    hash: 'h',
+    ...wide,
+    changes: { added: [], changed: [], removed: [], renamed: [] },
+    pushedAt: '2026-11-09T10:00:00.000Z',
+    pushedBy: null,
+  };
+  const config = (over: Partial<BlockConfig>): BlockConfig => ({
+    version: 1,
+    targets: [],
+    blocks: [],
+    updatedAt: null,
+    updatedBy: null,
+    ...over,
+  });
+  const body = { contentTypeApiId: 'page', field: 'body', blocks: ['grid'] };
+  const aside = { contentTypeApiId: 'page', field: 'aside', locked: true };
+
+  it('reads a config stored in another order, or with a former id, as the same', () => {
+    expect(
+      blockConfigChange(
+        catalog,
+        config({ targets: [body, aside] }),
+        catalog,
+        config({ targets: [aside, body], version: 4 }),
+      ),
+    ).toBe('unchanged');
+  });
+
+  it('keeps added and removed for a config on one side only, and empty for neither', () => {
+    expect(blockConfigChange(catalog, config({ targets: [body] }), catalog, null)).toBe('added');
+    expect(blockConfigChange(catalog, null, catalog, config({ targets: [body] }))).toBe('removed');
+    expect(blockConfigChange(catalog, config({}), catalog, null)).toBe('unchanged');
+    expect(blockConfigChange(catalog, config({}), catalog, config({ targets: [body] }))).toBe(
+      'changed',
+    );
   });
 });
