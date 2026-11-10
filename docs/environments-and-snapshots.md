@@ -34,7 +34,8 @@ current model would reject fails the import loudly.
 
 Import requires a target environment with **no content types**, and the target environment must
 exist (create it first). Merging two content models is a different and much harder operation; use
-`compare`/`merge` for the intra-space case. Cloning is the cross-space case those cannot cover, and
+`compare`/`merge` for the intra-space case (compare reports how the block catalog and config
+differ; a merge never copies them, a promotion does: [Domain model](./domain-model.md#block-configs)). Cloning is the cross-space case those cannot cover, and
 the target space is authorized separately so a clone cannot cross a tenancy boundary.
 
 A live type with a draft revision carries what it serves in `published` beside its draft

@@ -10,7 +10,8 @@ export function registerEnvironmentMergeTools(server: McpServer, t: ToolContext)
   server.registerTool(
     'environments_compare',
     {
-      description: 'Diff two environments in a space (content types + entries that differ).',
+      description:
+        'Diff two environments in a space: the content types and entries that differ, and whether the block catalog and block config do (`blocks`; a merge never copies those).',
       inputSchema: toolSchema('environments_compare', () =>
         z.object({
           source: z.string(),

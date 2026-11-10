@@ -141,6 +141,12 @@ export const promotionBody = z.object({
   target: zId,
   contentTypes: z.array(zId).max(1000).optional(),
   entries: zIdList.optional(),
+  blocks: z
+    .boolean()
+    .optional()
+    .describe(
+      'Copy the block catalog and block config when they differ (default: only when contentTypes and entries are omitted)',
+    ),
 });
 export const createApiKeyBody = z.object({
   kind: z.enum(['cma', 'cda', 'cpa']),

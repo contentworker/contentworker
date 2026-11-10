@@ -24,6 +24,7 @@ import type {
   MenuItem,
   PluginManifest,
   PluginSettingValue,
+  PromotedBlocks,
   PromotedContentType,
   PromotedEntry,
   PromotionResult,
@@ -149,6 +150,8 @@ export const environmentPromotions = sqliteTable(
     targetEnvironmentId: text('target_environment_id').notNull(),
     contentTypes: text('content_types', { mode: 'json' }).$type<PromotedContentType[]>().notNull(),
     entries: text('entries', { mode: 'json' }).$type<PromotedEntry[]>().notNull(),
+    /** The block catalog and config it copies (0039_promotion_blocks). */
+    blocks: text('blocks', { mode: 'json' }).$type<PromotedBlocks>(),
     status: text('status').$type<PromotionStatus>().notNull(),
     risk: text('risk', { mode: 'json' }).$type<PromotionRisk>().notNull(),
     requestedBy: text('requested_by').notNull(),

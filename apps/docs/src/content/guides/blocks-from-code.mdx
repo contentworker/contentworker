@@ -227,7 +227,10 @@ carry content as it is, so a restored version can bring back blocks from before 
 Exports, snapshot imports and environment clones carry the catalog in force and its config: the
 copy starts its own history at version 1. An import leaves behind (and names in its report) a
 config that doesn't fit the catalog; a clone carries it as the source has it, stale parts included
-([Environments](/guides/environments/#export-and-import-a-snapshot)).
+([Environments](/guides/environments/#export-and-import-a-snapshot)). A
+[promotion](/guides/environments/#promote-changes-to-the-live-environment) copies them too, as a
+push and a set of the target's own, and waits for approval whenever that changes which blocks go
+where, a slot's counts or locks, or removes blocks from a type.
 
 Pushing a new catalog is never blocked by the config. Parts of the config naming what the catalog
 no longer has are listed as `stale` in the effective rules and ignored until the config is set

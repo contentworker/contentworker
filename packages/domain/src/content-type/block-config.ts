@@ -608,6 +608,242 @@ export function effectiveBlockRules(
   };
 }
 
+// --- carrying a config to another environment ---------------------------------------------------
+
+/** A config written elsewhere (a snapshot, a promotion), as `effectiveBlockConfig` carries it. */
+export interface CarriedBlockConfig {
+  readonly targets: TargetNarrowing[];
+  readonly blocks: BlockNarrowing[];
+  /** What it left behind: the stale parts, and any part that isn't a narrowing at all. */
+  readonly stale: readonly StaleNarrowing[];
+}
+
+const isIdList = (v: unknown): v is string[] =>
+  Array.isArray(v) && v.every((id) => typeof id === 'string');
+const isCount = (v: unknown) => v === undefined || (Number.isInteger(v) && (v as number) >= 0);
+
+/** One narrowing's keys, kept only when each has the shape a stored config gives it. */
+function wellFormed(n: Record<string, unknown>, listKey: 'blocks' | 'allowedChildren'): boolean {
+  return (
+    (n[listKey] === undefined || isIdList(n[listKey])) &&
+    isCount(n.min) &&
+    isCount(n.max) &&
+    (n.locked === undefined || typeof n.locked === 'boolean')
+  );
+}
+
+/**
+ * `config` as it can be carried to another environment with `catalog`: every part kept as written
+ * where a set would take it as it stands (`checkBlockConfig`), with a former id followed to its
+ * block and a block the catalog no longer allows there dropped from a list. Kept as written, not
+ * rebuilt from today's rules, so a narrowing equal to the code's now (a list of every block the
+ * slot takes, a `max` at the code's) still holds in the copy after a push widens the code, as it
+ * does in the original. A part a set would refuse (a `max` above a code that tightened since) is
+ * replaced by what is in force of it (`effectiveBlockRules`), and stale parts are left out. Laid
+ * over the same catalog it gives the same rules, so a copy judges saves and offers blocks as the
+ * original does.
+ *
+ * What a snapshot or a promotion carries: a config stored against an older catalog may hold parts
+ * `checkBlockConfig` refuses, and an uploaded snapshot's config is anyone's JSON, so a part that
+ * isn't shaped like a narrowing is left behind too, and named, rather than trusted.
+ */
+export function effectiveBlockConfig(
+  catalog: BlockConfigCatalog,
+  config: { readonly targets?: unknown; readonly blocks?: unknown },
+): CarriedBlockConfig {
+  const malformed: StaleNarrowing[] = [];
+  if (config.targets !== undefined && !Array.isArray(config.targets)) {
+    malformed.push({ at: 'targets', message: 'Not a list of target narrowings' });
+  }
+  if (config.blocks !== undefined && !Array.isArray(config.blocks)) {
+    malformed.push({ at: 'blocks', message: 'Not a list of block narrowings' });
+  }
+  const targets = (Array.isArray(config.targets) ? config.targets : []).filter(
+    (t, i): t is TargetNarrowing => {
+      const ok =
+        isObject(t) &&
+        typeof t.contentTypeApiId === 'string' &&
+        typeof t.field === 'string' &&
+        wellFormed(t, 'blocks');
+      if (!ok) malformed.push({ at: `targets[${i}]`, message: 'Not a target narrowing' });
+      return ok;
+    },
+  );
+  const blocks = (Array.isArray(config.blocks) ? config.blocks : []).flatMap(
+    (b, i): BlockNarrowing[] => {
+      if (!isObject(b) || typeof b.block !== 'string' || !isObject(b.slots)) {
+        malformed.push({ at: `blocks[${i}]`, message: 'Not a block narrowing' });
+        return [];
+      }
+      const slots: [string, SlotNarrowing][] = [];
+      for (const [apiId, s] of Object.entries(b.slots)) {
+        if (isObject(s) && wellFormed(s, 'allowedChildren')) slots.push([apiId, s]);
+        else
+          malformed.push({ at: `blocks[${b.block}].slots.${apiId}`, message: 'Not a narrowing' });
+      }
+      return [{ block: b.block, slots: Object.fromEntries(slots) }];
+    },
+  );
+  const rules = effectiveBlockRules(catalog, { version: 0, targets, blocks });
+  const code = codeRules(catalog);
+  const current = (id: string) => (code.ids.has(id) ? id : code.aliases.get(id));
+  /** A list as written, former ids followed, kept to what the code allows there; or nothing. */
+  const listed = (list: readonly string[] | undefined, allowed: readonly string[]) => {
+    if (!list) return undefined;
+    const kept = [...new Set(list.map((id) => current(id) ?? id))].filter((id) =>
+      allowed.includes(id),
+    );
+    return kept.length > 0 ? kept : undefined;
+  };
+  const counts = (n: SlotNarrowing) => ({
+    ...(n.min !== undefined ? { min: n.min } : {}),
+    ...(n.max !== undefined ? { max: n.max } : {}),
+    ...(n.locked ? { locked: true } : {}),
+  });
+  /** One part through a set's own check: what it keeps of it, or null when it refuses it. */
+  const taken = (part: { targets: TargetNarrowing[]; blocks: BlockNarrowing[] }) => {
+    try {
+      return checkBlockConfig(part, catalog);
+    } catch (err) {
+      if (err instanceof ValidationError) return null;
+      throw err;
+    }
+  };
+  /** The narrowing that gives `r` over the code's `c`: only what is tighter. */
+  const inForce = (r: EffectiveSlotRules, c: Rules) => ({
+    ...(r.allowedChildren.length < c.allowed.length ? { list: [...r.allowedChildren] } : {}),
+    ...(r.min !== c.min && r.min !== undefined ? { min: r.min } : {}),
+    ...(r.max !== c.max && r.max !== undefined ? { max: r.max } : {}),
+    ...(r.locked ? { locked: true } : {}),
+  });
+
+  // As `effectiveBlockRules` reads them: the last narrowing of a part is the one in force.
+  const byTarget = new Map<string, TargetNarrowing>();
+  for (const t of targets) {
+    const key = targetKey(t.contentTypeApiId, t.field);
+    if (code.targets.has(key)) byTarget.set(key, t);
+  }
+  const carriedTargets: TargetNarrowing[] = [];
+  for (const t of rules.targets) {
+    const key = targetKey(t.contentTypeApiId, t.field);
+    const written = byTarget.get(key);
+    if (!written) continue;
+    const c = code.targets.get(key) as Rules;
+    const list = listed(written.blocks, c.allowed);
+    const kept = taken({
+      targets: [
+        {
+          contentTypeApiId: t.contentTypeApiId,
+          field: t.field,
+          ...(list ? { blocks: list } : {}),
+          ...counts(written),
+        },
+      ],
+      blocks: [],
+    });
+    if (kept) {
+      carriedTargets.push(...kept.targets);
+      continue;
+    }
+    if (!t.narrowed) continue;
+    const { list: tighter, ...rest } = inForce({ ...t, allowedChildren: t.blocks }, c);
+    carriedTargets.push({
+      contentTypeApiId: t.contentTypeApiId,
+      field: t.field,
+      ...(tighter ? { blocks: tighter } : {}),
+      ...rest,
+    });
+  }
+
+  const byBlock = new Map<string, BlockNarrowing>();
+  for (const b of blocks) {
+    const id = current(b.block);
+    if (id !== undefined && code.slots.has(id)) byBlock.set(id, b);
+  }
+  const carriedBlocks: BlockNarrowing[] = [];
+  for (const b of rules.blocks) {
+    const written = byBlock.get(b.block);
+    if (!written) continue;
+    const slots: [string, SlotNarrowing][] = [];
+    for (const [apiId, r] of Object.entries(b.slots)) {
+      const s = Object.entries(written.slots).find(([k]) => k === apiId)?.[1];
+      if (!s) continue;
+      const c = code.slots.get(b.block)?.get(apiId) as Rules;
+      const list = listed(s.allowedChildren, c.allowed);
+      const kept = taken({
+        targets: [],
+        blocks: [
+          {
+            block: b.block,
+            slots: Object.fromEntries([
+              [apiId, { ...(list ? { allowedChildren: list } : {}), ...counts(s) }],
+            ]),
+          },
+        ],
+      });
+      const narrowed = kept ? Object.entries(kept.blocks[0]?.slots ?? {})[0]?.[1] : undefined;
+      if (kept) {
+        if (narrowed) slots.push([apiId, narrowed]);
+        continue;
+      }
+      if (!r.narrowed) continue;
+      const { list: tighter, ...rest } = inForce(r, c);
+      slots.push([apiId, { ...(tighter ? { allowedChildren: tighter } : {}), ...rest }]);
+    }
+    if (slots.length > 0) carriedBlocks.push({ block: b.block, slots: Object.fromEntries(slots) });
+  }
+  // Each part passed on its own; the whole is held to the limits a set holds it to.
+  return {
+    ...checkBlockConfig({ targets: carriedTargets, blocks: carriedBlocks }, catalog),
+    stale: [...malformed, ...rules.stale],
+  };
+}
+
+/** Parts a comparison of rules names, at most. */
+const RULE_CHANGES_NAMED = 20;
+
+/**
+ * What changes for editors between two sets of rules (`effectiveBlockRules` before and after a
+ * catalog or a config moves), part by part in words: `post.body: takes hero, text (was hero)`,
+ * `blocks[grid].slots.items: locked (was not)`, a target or slot added or gone. Empty when editors
+ * may do exactly what they could. Versions don't count, only the rules.
+ */
+export function blockRuleChanges(
+  before: Pick<EffectiveBlockRules, 'targets' | 'blocks'>,
+  after: Pick<EffectiveBlockRules, 'targets' | 'blocks'>,
+): string[] {
+  const parts = (r: Pick<EffectiveBlockRules, 'targets' | 'blocks'>) => {
+    const out = new Map<string, EffectiveSlotRules>();
+    for (const t of r.targets) {
+      out.set(targetKey(t.contentTypeApiId, t.field), { ...t, allowedChildren: t.blocks });
+    }
+    for (const b of r.blocks) {
+      for (const [apiId, s] of Object.entries(b.slots)) out.set(`${b.block}.slots.${apiId}`, s);
+    }
+    return out;
+  };
+  const describe = (s: EffectiveSlotRules) =>
+    [
+      `takes ${s.allowedChildren.join(', ') || 'nothing'}`,
+      ...(s.min !== undefined ? [`at least ${s.min}`] : []),
+      ...(s.max !== undefined ? [`at most ${s.max}`] : []),
+      ...(s.locked ? ['locked'] : []),
+    ].join(', ');
+  const was = parts(before);
+  const now = parts(after);
+  const changes: string[] = [];
+  for (const [at, s] of now) {
+    const w = was.get(at);
+    if (!w) changes.push(`${at} is new: ${describe(s)}`);
+    else if (describe(w) !== describe(s))
+      changes.push(`${at} ${describe(s)} (was: ${describe(w)})`);
+  }
+  for (const at of was.keys()) if (!now.has(at)) changes.push(`${at} is gone`);
+  return changes.length > RULE_CHANGES_NAMED
+    ? [...changes.slice(0, RULE_CHANGES_NAMED), `and ${changes.length - RULE_CHANGES_NAMED} more`]
+    : changes;
+}
+
 // --- judging a save ------------------------------------------------------------------------------
 
 /**

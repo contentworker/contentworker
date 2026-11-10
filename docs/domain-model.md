@@ -1293,8 +1293,9 @@ rewrites `_type` to the current apiId on write, `removedVariants` and `removedFi
 aliased variant as surviving, and GraphQL serves the current apiId. REST Delivery and Preview
 serve `_type` as stored until the entry's next save.
 
-The catalog isn't in snapshots, exports or environment clones (the content types, and so their
-variants, are).
+Snapshots, exports and environment clones carry the catalog in force, and a promotion copies it as
+a push of the target's own (see [Block configs](#block-configs) and
+[Environments and snapshots](./environments-and-snapshots.md#snapshots)).
 
 ## Block configs
 
@@ -1361,7 +1362,39 @@ environment clone and promotion, branch merge, duplicate, and version restore. S
 restore can bring back blocks from before a narrowing (a locked region still holds it: see
 [Locked regions](#locked-regions)).
 
-The config isn't in snapshots, exports or environment clones; the environment purge clears it.
+Snapshots, exports and environment clones carry the config
+([Environments and snapshots](./environments-and-snapshots.md#snapshots)); the environment purge
+clears it.
+
+A **promotion** copies both when they would change the target (`PromotedBlocks`, pinned by the
+source's and the target's catalog and config versions in `environment_promotions.blocks`, 0039):
+by default when `contentTypes` and `entries` are omitted, or with `blocks: true` beside a
+selection. A catalog with the target's hash and a config giving the same rules copy nothing; a
+source never configured leaves the target's config as it is; a source with no catalog copies
+nothing (promotions add and overwrite, never delete). The risk check compares the rules before and
+after (`blockRuleChanges` over `effectiveBlockRules`): every change to which blocks go where, a
+count or a lock is a reason, and so is what the catalog would remove from a target type the
+promotion doesn't copy itself, and a target draft the push would publish; each requires approval.
+A catalog change that leaves the rules as they are and removes nothing needs none. What the apply
+would refuse is refused when requested (`422`, naming `blocks: false` as the way round it): a
+target type the target neither has nor gets, a thumbnail naming an asset it lacks, a block or block
+prop entries in the target still hold. Approving takes `content:manage`, as for content types.
+The apply checks every pin (content types, and the source's and target's catalog and config)
+before it writes anything, so a push or set on either side since fails it with `409` and nothing
+changed. It runs after the content types and before the entries: `pushBlockCatalog` into the
+target at the pinned target version (destructive allowed, since the approver saw the removals),
+then `setBlockConfig` at the pinned config version, with the source's config as
+`effectiveBlockConfig(catalog, config)` carries it: each part as written where a set would take
+it (former ids followed, blocks the catalog no longer allows dropped from a list, so a narrowing
+equal to the code's today still holds after a push widens the code), a part a set would refuse
+replaced by what is in force of it, stale parts left out. Both as `SYSTEM_CALLER` (`pushedBy` and
+`updatedBy` null; the audit row names the approver). Two units: `result.blocks` records the catalog
+as soon as it lands, so a promotion that fails on the config says so. A rollback of the Workers
+past this release would apply a waiting promotion without its blocks.
+
+`compareEnvironments` reports both (`blocks: { catalog, config }`, by hash and by what the config
+narrows, as `added`, `removed`, `changed` or `unchanged`), left out for a role limited to some
+types; a merge never copies them.
 
 ## Locked regions
 

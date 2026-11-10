@@ -1,8 +1,10 @@
 import {
   assertEntryFieldsValid,
+  type BlockConfig,
   ConflictError,
   type ContentType,
   canAccessContentType,
+  canonicalJson,
   type Entry,
   type EntryFields,
   type EntryVersion,
@@ -48,6 +50,13 @@ export interface EnvironmentComparison {
   readonly target: string;
   readonly contentTypes: readonly ContentTypeChange[];
   readonly entries: readonly EntryChange[];
+  /**
+   * How the block catalog in force (by hash) and the block config (by what it narrows) differ, as
+   * the other kinds do: `added` only in the source, `removed` only in the target. Reported only: a
+   * merge never copies them (a promotion does). Left out for a role limited to some types, since
+   * the catalog's targets span them.
+   */
+  readonly blocks?: { readonly catalog: ChangeKind; readonly config: ChangeKind };
 }
 
 const scopeOf = (spaceId: string, environmentId: string): Scope => ({ spaceId, environmentId });
@@ -116,6 +125,17 @@ export async function compareEnvironments(
     allPages((skip, limit) => ctx.store.entries.list(src, { skip, limit })),
     allPages((skip, limit) => ctx.store.entries.list(tgt, { skip, limit })),
   ]);
+  const [srcCatalog, tgtCatalog, srcConfig, tgtConfig] = await Promise.all([
+    ctx.store.blockCatalogs.latest(src),
+    ctx.store.blockCatalogs.latest(tgt),
+    ctx.store.blockConfigs.get(src),
+    ctx.store.blockConfigs.get(tgt),
+  ]);
+  // A config set back to nothing narrows nothing, as one never set.
+  const narrows = (c: BlockConfig | null) =>
+    c && (c.targets.length > 0 || c.blocks.length > 0)
+      ? canonicalJson({ targets: c.targets, blocks: c.blocks })
+      : null;
   const srcById = new Map(srcEntries.map((e) => [e.entry.id, e]));
   const tgtById = new Map(tgtEntries.map((e) => [e.entry.id, e]));
   const entryChanges = classify(srcById, tgtById, (a, b) => eq(a.fields, b.fields));
@@ -133,8 +153,24 @@ export async function compareEnvironments(
         '',
       kind,
     })),
+    blocks: {
+      catalog: kindOf(srcCatalog?.hash ?? null, tgtCatalog?.hash ?? null),
+      config: kindOf(narrows(srcConfig), narrows(tgtConfig)),
+    },
   };
 }
+
+/** One item's change, from its form on each side (null where it is absent). */
+const kindOf = (source: string | null, target: string | null): ChangeKind =>
+  source === null
+    ? target === null
+      ? 'unchanged'
+      : 'removed'
+    : target === null
+      ? 'added'
+      : source === target
+        ? 'unchanged'
+        : 'changed';
 
 /**
  * A comparison as `principal` may see it: only the content types it can read, and their entries.
@@ -145,8 +181,10 @@ export function comparisonFor(
   comparison: EnvironmentComparison,
 ): EnvironmentComparison {
   const readable = (apiId: string) => canAccessContentType(principal, 'read', apiId);
+  const { blocks, ...rest } = comparison;
   return {
-    ...comparison,
+    ...rest,
+    ...(blocks && !principal.contentGrants ? { blocks } : {}),
     contentTypes: comparison.contentTypes.filter((c) => readable(c.apiId)),
     entries: comparison.entries.filter((e) => readable(e.contentTypeApiId)),
   };
