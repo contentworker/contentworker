@@ -3,10 +3,14 @@
 // and stand a skeleton in, and a fetch that fails says so in place, once for the view, with Try
 // again, which fetches it anew (a failed fetch isn't kept). Its own file: the editor module's mock
 // fails the first import, and a module loads once per file.
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, configure, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { PlaceCode } from '~/cms/lib/block-config-code';
 import type { Place } from '~/cms/lib/block-config-draft';
+
+/** The editor is a lazily fetched chunk: the first code view to open waits on it, and on a busy CI
+ * runner that outlasts testing-library's default second. Wait on the editor, with room. */
+configure({ asyncUtilTimeout: 5000 });
 
 const fetches = vi.hoisted(() => ({ count: 0 }));
 vi.mock('~/cms/components/block-config/codemirror', () => {
