@@ -44,6 +44,7 @@ import { registerCollaborationTools } from './tools/collaboration';
 import { registerDocsTools } from './tools/docs';
 import { registerEnvironmentAliasTools } from './tools/environment-aliases';
 import { registerEnvironmentMergeTools } from './tools/environment-merge';
+import { registerFrontendTools } from './tools/frontend';
 import { registerFunctionTools } from './tools/functions';
 import { registerImportTools } from './tools/imports';
 import { registerInviteTools } from './tools/invites';
@@ -105,6 +106,7 @@ const TOOL_AREAS: readonly ((server: McpServer, t: ToolContext) => void)[] = [
   registerAiContentTools,
   registerRoleTools,
   registerApiKeyTools,
+  registerFrontendTools,
   registerPluginTools,
   registerImportTools,
   registerSpaceExportTools,

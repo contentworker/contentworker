@@ -375,8 +375,10 @@ The body, the analysis report and the format notes are in
 | GET    | `/spaces/:space/api-keys`                 | `space:admin` | List keys                                                                                    |
 | POST   | `/spaces/:space/api-keys`                 | `space:admin` | Mint key (`kind`, optional `roleId`); raw `token` returned once                              |
 | DELETE | `/spaces/:space/api-keys/:id`             | `space:admin` | Revoke a key (also how a personal access token or OAuth token is revoked)                    |
+| POST   | `/spaces/:space/environments/:env/frontend-connections` | `space:admin` | Connect a frontend: `{ name?, roleId?, preview?, previewRoleId? }` (each role may hold no scope beyond its key's kind: `422`) → `201 { space, environment, deliveryKey: { id, token }, previewKey?, endpoints?: { admin, delivery, preview }, previewUrls }`, the tokens once (keys named `<name> (delivery)` / `(preview)`); `endpoints` from `OAUTH_ISSUER` (`cdn.` and `api.` of its host; one origin on a local stack); `404` for an unknown environment |
 
-MCP: `api_keys_list`, `api_key_create`, `api_key_update` (the key's role), `api_key_revoke`.
+MCP: `api_keys_list`, `api_key_create`, `api_key_update` (the key's role), `api_key_revoke`,
+`frontend_connect`.
 Minting a key, and a role change that widens one, answer 403 to a personal access token or an
 OAuth token (see [Auth & RBAC](./auth-and-rbac.md#one-token-model-three-issuances)).
 | POST   | `/spaces/:space/personal-access-tokens`   | `space:admin` | Mint a personal access token `{ name, scopes, expiresInDays? }` (1 to 365); raw `token` once |
@@ -415,6 +417,7 @@ principal) may call it; the web app does when it ends a person's access (see
 | GET    | `…/content-types/:apiId`           | `preview:read`    | Get one                            |
 | GET    | `…/content-types/:apiId/fields/:field/values` | `preview:read` | Distinct values of a short scalar field (not `Text`) or list of Symbols across current entries, trash excluded, each with its entry `count`; booleans, numbers, strings ascending; `locale`, `limit` (≤ 100), `cursor` → `{ items, nextCursor? }`. 422 for any other field, 403 for a hidden one, `query_too_broad` when the type holds more entries than the scan cap (5,000) |
 | POST   | `…/content-types/:apiId/published` | `content:publish` | Publish definition                 |
+| PUT    | `…/content-types/:apiId/preview`   | `content:manage`  | `{ urlTemplate: string \| null }`: the preview URL alone, held to the version read (`409` when another save lands first); a published type stays published, one with unpublished changes stays a draft; setting one needs read on the type (MCP `model_set_content_type_preview`) |
 | GET    | `…/content-types/:apiId/dependents` | `preview:read`   | What blocks a delete: `{ entries: { live, trashed }, linkedFrom, menus, redirects, urlPattern? }`; `403` for a role without read on the type |
 | DELETE | `…/content-types/:apiId`           | `content:manage`  | Delete (`{ deleted: true }`, emits `content_type.deleted`); `409` naming every dependent (`details.dependents`); `?purge_entries=true` (also `content:write` and `content:publish`, and a role on every type) → `202 { deleted: false, job }`, a `content_type_delete` bulk job that trashes and purges each entry, then deletes the type on `bulk.job_completed`; the job's `config.typeDeletion` (on `GET …/bulk/jobs/:id`) is then `{ deleted: true }` or `{ deleted: false, reason }` (also when the job is stopped) |
 | POST   | `…/content-types/:apiId/clone`     | `content:manage`  | `{ apiId, name }` → the copy (`201`): fields, display field, singleton, group, description, icon, agent instructions, layout; not `urlPattern`; draft, version 1; `409` for a taken apiId, also when a concurrent clone or create took it after the check (the insert never overwrites) |

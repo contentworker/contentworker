@@ -13,6 +13,7 @@ import {
   listFieldValues,
   MAX_FIELD_VALUES_PAGE,
   publishContentType,
+  setContentTypePreview,
   setLocaleSettings,
 } from '@contentworker/application';
 import {
@@ -30,6 +31,7 @@ import * as contentTypeDocs from '../../docs/schemas/content-types';
 import {
   cloneContentTypeBody,
   contentTypeBody,
+  contentTypePreviewBody,
   localeSettingsBody,
   parseBody,
 } from '../../validation';
@@ -246,6 +248,31 @@ export function contentTypesRoutes(deps: AuthDeps): Hono<AuthVars> {
           body.name,
         ),
         201,
+      );
+    },
+  );
+  app.put(
+    `${BASE}/content-types/:apiId/preview`,
+    doc('Content types', 'Set a content type’s preview URL', {
+      body: contentTypePreviewBody,
+      ok: contentTypeDocs.contentType,
+      description:
+        'Sets the preview URL template (or clears it with null) and nothing else, held to the ' +
+        'version it read (409 when another save lands first). Delivery never serves it, so a ' +
+        'published type stays published and a type with unpublished changes keeps them as a ' +
+        'draft. Setting one needs read on the type too: it decides where its preview tokens go.',
+    }),
+    requireScope(SCOPES.contentManage),
+    async (c) => {
+      const body = await parseBody(c, contentTypePreviewBody);
+      return c.json(
+        await setContentTypePreview(
+          ctx,
+          c.get('principal'),
+          scopeOf(c),
+          c.req.param('apiId'),
+          body.urlTemplate,
+        ),
       );
     },
   );

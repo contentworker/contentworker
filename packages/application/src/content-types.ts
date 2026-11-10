@@ -130,6 +130,48 @@ export async function updateContentType(
   return warnings.length > 0 ? { ...revised, warnings } : revised;
 }
 
+/**
+ * Sets (or, with null, clears) a type's preview URL template and nothing else, so a caller
+ * connecting a frontend never sends the whole definition back over someone's edit. Delivery never
+ * serves the template, so it isn't a model change awaiting publish: a published type stays
+ * published (with its `content_type.published` event, in the same unit), and a type with
+ * unpublished changes keeps them as a draft. Held to the version it read, like every save: a
+ * revision that lands first fails this one with a `ConflictError`.
+ */
+export async function setContentTypePreview(
+  ctx: AppContext,
+  caller: ContentTypeCaller,
+  scope: Scope,
+  apiId: string,
+  urlTemplate: string | null,
+): Promise<ContentType> {
+  assertContentTypeCaller(caller);
+  const current = await ctx.store.contentTypes.get(scope, apiId);
+  if (!current) throw new NotFoundError('ContentType', apiId);
+  const preview = urlTemplate === null ? null : { urlTemplate };
+  authorizePreviewChange(caller, apiId, current.preview, preview);
+  const revised = reviseContentType(
+    current,
+    { preview },
+    { previewLoopback: ctx.previewLoopback === true },
+  );
+  // Published stays published only when the template is all that changed: a revision re-normalizes
+  // the fields (pattern presets, blank guidance), and a definition stored before those rules would
+  // otherwise go out as published without a publish.
+  const rest = ({ preview: _p, version: _v, status: _s, ...t }: ContentType) =>
+    JSON.stringify(t, (_k, v: unknown) =>
+      v && typeof v === 'object' && !Array.isArray(v)
+        ? Object.fromEntries(Object.entries(v).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
+        : v,
+    );
+  const next: ContentType =
+    current.status === 'published' && rest(revised) === rest(current)
+      ? { ...revised, status: 'published' }
+      : revised;
+  await saveContentTypeOver(ctx, scope, current, next);
+  return next;
+}
+
 /** The rules a revision can tighten under values entries already hold, by field. */
 const TIGHTENING = (f: FieldDefinition | undefined) =>
   JSON.stringify([

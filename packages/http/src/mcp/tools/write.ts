@@ -12,6 +12,7 @@ import {
   moveEntry,
   publishContentType,
   publishEntry,
+  setContentTypePreview,
   unpublishEntry,
   updateEntry,
   validateEntry,
@@ -247,6 +248,33 @@ export function registerWriteTools(server: McpServer, t: ToolContext): void {
       guard(SCOPES.contentManage, scopeOf(args));
       return ok(
         await cloneContentType(ctx, principal, scopeOf(args), args.apiId, args.newApiId, args.name),
+      );
+    },
+  );
+
+  server.registerTool(
+    'model_set_content_type_preview',
+    {
+      description:
+        'Set a content type’s preview URL template, where the frontend shows a draft of one of ' +
+        'its entries (and the page the admin frames for live preview), or clear it with null. ' +
+        'Changes nothing else, held to the version it read. A published type stays published. ' +
+        'The template is an https URL with {token} (required) and optionally {id}, {locale}, ' +
+        '{space}, {environment} and {field:<apiId>}; a Next.js site using ' +
+        '@contentworker/sdk/next points it at its draft route: ' +
+        'https://<site>/api/draft?entry={id}&token={token}&locale={locale}.',
+      inputSchema: toolSchema('model_set_content_type_preview', () =>
+        z.object({
+          apiId: z.string(),
+          urlTemplate: z.string().max(MAX_PREVIEW_TEMPLATE_LENGTH).nullable(),
+          ...scopeArgs,
+        }),
+      ),
+    },
+    async (args) => {
+      guard(SCOPES.contentManage, scopeOf(args));
+      return ok(
+        await setContentTypePreview(ctx, principal, scopeOf(args), args.apiId, args.urlTemplate),
       );
     },
   );
