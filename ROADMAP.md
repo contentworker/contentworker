@@ -346,10 +346,22 @@ Built on Blocks and the frontend runtime. Layouts stay a typed tree; rich text s
   proposals as ghost blocks are next.
 - [ ] **Blocks renderers.** `<Blocks components={…} />` for React, Vue and the frontend runtime, typed
   by codegen.
-- [ ] **Layout patches.** `patchBlocks` with key-addressed create, update, move and remove, for
-  agents and the editor alike.
+- [x] **Layout patches.** `patchBlocks` with key-addressed create, update, move and remove, for
+  agents and the editor alike (#185): insert, update, move, remove and duplicate ops by `_key`,
+  held to `expectedVersion`, over REST (`PATCH …/entries/:id/blocks`, an outline at
+  `GET …/entries/:id/blocks` and a dry run at `POST …/entries/blocks/validate`), MCP
+  (`entry_blocks_patch`, `entry_blocks_outline`, `entry_blocks_validate`) and the management SDK.
+  Coworker proposes block changes through it, the canvas applies and undoes its edits with the same
+  `applyBlockPatch` (keeping each change's inverse), and live preview sends them as `blocks.patch`.
 - [ ] **Layout-aware generation.** Generation that knows a field's block catalog and resolves images
-  through asset search.
+  through asset search. The backend is in place: `generateBlocks` composes one blocks field or slot
+  from the blocks the rules allow there (a JSON schema per place, `blocksSchemaFor`), finds images
+  by description in the asset library, and answers insert ops judged by the block patch's dry run,
+  refusing locked or full places before the model is called (REST `…/entries/blocks/generate`, MCP
+  `entry_blocks_generate`, the management SDK, and Coworker's tools). Drafts and Canvas fill
+  top-level blocks fields too, and no longer fail on required fields they can't fill. The admin
+  side (composing from the canvas and the dock) is next; rich text inside generated blocks is not
+  generated yet.
 - [ ] **Layout model.** Deeper nesting than three levels, and per-breakpoint overrides of token
   props. (Slots, `allowedChildren` and `allowedParents` shipped with blocks from code.)
 - [x] **Blocks from code.** `contentworker blocks push` maps component manifests (JSON data:

@@ -122,7 +122,9 @@ existing blocks back with their `_key` and they keep it, so a front end can use 
 identity across reorders. To change a few blocks without resending the field, patch them by
 `_key` (`PATCH …/entries/:id/blocks`, MCP `entry_blocks_patch`): insert, update, move, remove and
 duplicate blocks, all or none, as a new draft. `GET …/entries/:id/blocks` (MCP
-`entry_blocks_outline`) lists every block's key, type and label to build the patch from. A
+`entry_blocks_outline`) lists every block's key, type and label to build the patch from, and
+`POST …/entries/blocks/generate` (MCP `entry_blocks_generate`) composes one with AI from the
+blocks the place allows ([AI](/guides/ai/#compose-blocks)). A
 variant's fields follow the component rules above. For a slot that
 holds at most one block, set `validations: { size: { max: 1 } }` on the field. Links inside
 blocks resolve with `include` like any other, GraphQL types the field as a union with one type per

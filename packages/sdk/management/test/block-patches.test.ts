@@ -47,6 +47,21 @@ describe('@contentworker/sdk-management entry blocks', () => {
     ]);
   });
 
+  it('composes blocks for a slot, answering the patch without saving', async () => {
+    const { calls, client } = recording();
+    await client.entries.generateBlocks({
+      entryId: 'e1',
+      field: 'body',
+      parent: { key: 'k1', slot: 'items' },
+      prompt: 'Three feature cards',
+    });
+    expect(calls).toEqual([
+      'POST https://cms.test/spaces/s1/environments/main/entries/blocks/generate ' +
+        '{"entryId":"e1","field":"body","parent":{"key":"k1","slot":"items"},' +
+        '"prompt":"Three feature cards"}',
+    ]);
+  });
+
   it('outlines blocks, narrowed to a field', async () => {
     const { calls, client } = recording();
     await client.entries.outlineBlocks('e1', { field: 'body' });

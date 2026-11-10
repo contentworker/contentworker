@@ -1,9 +1,13 @@
 import {
+  assetSearchDeps,
+  authorizeBlockGeneration,
   authorizeBlockPatch,
   BLOCK_PATCH_MAX_BYTES,
   BLOCK_PATCH_MAX_OPS,
   type BlockOpInput,
   checkEntryBlocks,
+  generateBlocks,
+  imageSearchFor,
   outlineEntryBlocks,
   patchEntryBlocks,
 } from '@contentworker/application';
@@ -12,11 +16,18 @@ import { Hono } from 'hono';
 import { type AuthDeps, type AuthVars, requireScope } from '../../auth';
 import { doc } from '../../docs/openapi';
 import * as blockDocs from '../../docs/schemas/blocks';
-import { blockPatchBody, blockPatchCheckBody, parseBody } from '../../validation';
+import {
+  blockPatchBody,
+  blockPatchCheckBody,
+  generateBlocksBody,
+  parseBody,
+} from '../../validation';
 import { actingCtx, BASE, entryAccess, scopeOf } from './shared';
 
 export function blocksRoutes(deps: AuthDeps): Hono<AuthVars> {
-  const { ctx } = deps;
+  const { ctx, ai } = deps;
+  // Generated blocks find their images as the asset search route does.
+  const assetSearch = deps.assetSearch ?? assetSearchDeps(deps.rag);
   const { authorizeEntryRead } = entryAccess(ctx);
   const app = new Hono<AuthVars>();
 
@@ -53,6 +64,39 @@ export function blocksRoutes(deps: AuthDeps): Hono<AuthVars> {
         ...checked,
         fields: maskDeniedFields(principal, checked.contentTypeApiId, checked.fields),
       });
+    },
+  );
+  // Layout-aware generation: blocks composed for one place, judged as the patch that would add
+  // them, and answered as that patch. Gated like the patch (or, for a new entry, the create).
+  app.post(
+    `${BASE}/entries/blocks/generate`,
+    doc('Entries', 'Compose blocks with AI', {
+      body: generateBlocksBody,
+      ok: blockDocs.generatedBlocks,
+      description:
+        'Composes blocks for one place from a prompt: a blocks field of an entry (`entryId`), ' +
+        'a slot of one of its blocks (`parent: { key, slot }`), or a new entry’s field ' +
+        '(`contentTypeApiId`). The model is shown only the blocks the block rules allow there, ' +
+        'with their fields, slots and counts; an image is asked for by what it shows and found ' +
+        'in the asset library (the first matching image), or left empty and listed in ' +
+        '`unresolvedImages`. The answer is the insert ops for `PATCH …/entries/:id/blocks` ' +
+        '(with `expectedVersion`), judged exactly as `POST …/entries/blocks/validate` judges ' +
+        'them; for a new entry, the field to create it with. Nothing is saved. 422 before the ' +
+        'model is called for a place that is locked (by the block rules or a locked region), ' +
+        'full, or takes nothing, and after, when the answer breaks a rule in the field; 403 for ' +
+        'a field your role may not write; 409 when the entry changed meanwhile; 429 over the ' +
+        'space’s AI budget. Rich text inside blocks is not generated.',
+    }),
+    requireScope(SCOPES.contentWrite),
+    async (c) => {
+      const body = await parseBody(c, generateBlocksBody);
+      const access = await authorizeBlockGeneration(ctx, scopeOf(c), c.get('principal'), body);
+      return c.json(
+        await generateBlocks(ctx, ai, scopeOf(c), body, {
+          ...access,
+          assets: imageSearchFor(c.get('principal'), assetSearch),
+        }),
+      );
     },
   );
   app.get(

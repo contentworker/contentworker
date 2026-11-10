@@ -175,6 +175,33 @@ describe('the assistant’s MCP tools', () => {
     expect(tools.get('docs_search')!.scoped).toEqual({ space: false, environment: false });
   });
 
+  it('offers the layout tools as reads, each to whoever holds its scope', async () => {
+    const layout = [
+      'blocks_catalog_get',
+      'blocks_config_effective',
+      'entries_block_locks_get',
+      'entry_blocks_generate',
+      'entry_blocks_validate',
+      'assets_search',
+    ] as const;
+    for (const name of layout) {
+      expect(ASSISTANT_TOOLS[name]).toMatchObject({ write: false, confirm: false });
+    }
+    const editor = await listAssistantTools(deps, editorOfA, SCOPE_A);
+    for (const name of layout) expect(editor.has(name), name).toBe(true);
+    // Composing and checking a change need content:write, as their MCP tools do; reading the
+    // rules, the catalog, the locks and the library needs only preview:read.
+    const viewer = await listAssistantTools(
+      deps,
+      { ...editorOfA, scopes: [SCOPES.previewRead] },
+      SCOPE_A,
+    );
+    expect(layout.filter((n) => !viewer.has(n))).toEqual([
+      'entry_blocks_generate',
+      'entry_blocks_validate',
+    ]);
+  });
+
   it('offers each person their own tools, whoever an isolate listed first', async () => {
     // The catalogue is module state: a fresh module is a fresh isolate, listed first by a viewer.
     vi.resetModules();
