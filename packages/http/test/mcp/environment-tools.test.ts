@@ -311,6 +311,9 @@ describe('environment_import over MCP', () => {
       arguments: { space: 'space-1', environment: 'copy', snapshot: exported },
     });
     expect(res.isError).toBeFalsy();
+    expect(body(res)).toMatchObject({
+      report: { blockCatalog: true, blockConfig: true },
+    });
     await drainImportJobs(deps.ctx, deps.blob);
     const copied = body(
       await admin.callTool({

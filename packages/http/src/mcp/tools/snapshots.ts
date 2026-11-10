@@ -20,7 +20,7 @@ export function registerSnapshotTools(server: McpServer, t: ToolContext): void {
     {
       description:
         'Export an environment as a portable snapshot: content model, entries, ' +
-        'taxonomy and workflows. Never includes credentials or asset binaries.',
+        'taxonomy, workflows, and the block catalog and block config. Never includes credentials or asset binaries.',
       inputSchema: toolSchema('environment_export', () =>
         z.object({ limit: z.number().int().positive().optional(), ...scopeArgs }),
       ),

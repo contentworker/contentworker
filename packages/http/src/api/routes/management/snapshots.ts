@@ -22,7 +22,8 @@ export function snapshotsRoutes(deps: AuthDeps): Hono<AuthVars> {
     `${BASE}/export`,
     doc('Spaces & environments', 'Export an environment as a snapshot', {
       description:
-        'Portable JSON: content model, entries, taxonomy, workflows, and asset METADATA. ' +
+        'Portable JSON: content model, entries, taxonomy, workflows, the block catalog and ' +
+        'block config, and asset METADATA. ' +
         'Never includes credentials (API keys, OAuth clients, webhook secrets) or asset binaries.',
     }),
     // Reads the whole environment in one response, so it needs the same
