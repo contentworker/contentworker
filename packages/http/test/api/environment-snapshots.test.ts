@@ -171,6 +171,9 @@ describe('environment clone and import over HTTP', () => {
       body: JSON.stringify(exported),
     });
     expect(res.status).toBe(202);
+    expect(await res.json()).toMatchObject({
+      report: { blockCatalog: true, blockConfig: true },
+    });
     await drainImportJobs(wired.ctx, wired.blob);
     const copied = await (await app.request(`${COPY}/export`, { headers: admin })).json();
     expect(sections(copied)).toEqual(before);

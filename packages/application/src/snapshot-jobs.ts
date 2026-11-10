@@ -122,7 +122,7 @@ export async function startSnapshotImport(
     })),
   ];
   if (createItems.length === 0) {
-    await writeSnapshotModel(ctx, target, snapshot, report.skipped as string[]);
+    await writeSnapshotModel(ctx, target, snapshot, report.skipped as string[], options);
     return { report, job: null, publishJobId: null };
   }
 
@@ -177,7 +177,13 @@ export async function startSnapshotImport(
     };
   }
 
-  const taxonomyIds = await writeSnapshotModel(ctx, target, snapshot, report.skipped as string[]);
+  const taxonomyIds = await writeSnapshotModel(
+    ctx,
+    target,
+    snapshot,
+    report.skipped as string[],
+    options,
+  );
   const config: SnapshotJobConfig & { next?: ChainedJob } = {
     kind: 'snapshot',
     phase: 'create',
