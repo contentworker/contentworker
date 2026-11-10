@@ -74,7 +74,9 @@ describe('AssetZipWorkflow on Cloudflare Workflows', () => {
     for (let i = 0; same && i < big.byteLength; i++) same = archive[dataAt + i] === big[i];
     expect(same).toBe(true);
     expect(view.getUint32(archive.byteLength - 22, true)).toBe(0x06054b50);
-  });
+    // Heavy by design (an 8 MiB+ upload, a two-part Workflow run, a byte-by-byte check): on a busy
+    // CI runner it outlasts vitest's 5 s default, so it gets its own limit.
+  }, 30_000);
 
   it('marks the job failed, and leaves no upload behind, when no asset has a file', async () => {
     const { asset } = await createAsset(ctx, blob, scope, {
