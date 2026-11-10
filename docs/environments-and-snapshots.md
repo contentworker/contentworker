@@ -12,8 +12,9 @@ and `snapshot-jobs.ts`).
 
 A snapshot carries the content model, entries (with taxonomy metadata), taxonomy, workflows,
 asset **metadata**, the asset folders, the asset collections, the redirects (a `redirects` array,
-optional, so snapshots written before redirects still import) and the menus (a `menus` array,
-optional likewise). It deliberately never carries **credentials** (API keys, OAuth clients and
+optional, so snapshots written before redirects still import), the menus (a `menus` array,
+optional likewise) and the block catalog and block config in force (`blockCatalog` and
+`blockConfig`, optional likewise; see below). It deliberately never carries **credentials** (API keys, OAuth clients and
 grants, preview tokens, webhook signing secrets), because a snapshot is a file people move around.
 Asset **binaries** stay in the blob store: a restore into the same space, on a deployment
 pointing at the same bucket, works, and one pointing elsewhere has dangling files, which is
@@ -94,6 +95,32 @@ What an import preserves:
   dropped. A collection already there (a retried import) is kept as it is. A snapshot from before
   collections carries none. Share links, zip downloads and multipart uploads are not carried: a link
   belongs to the environment it was made in.
+- **The block catalog and its config.** The export carries the catalog in force as `blockCatalog`
+  (`{ version, hash, blocks, targets }`) and the config as `blockConfig` (`{ version, targets,
+  blocks }`), each left out when the source has none. Both are optional and `snapshotVersion`
+  stays 1, so a snapshot from before them imports unchanged and leaves the target's alone. An
+  uploaded file's are checked as the API checks a push and a set (`checkedSnapshotBlocks`): the
+  catalog with `checkBlockCatalog`; every thumbnail `assetId` must be an asset the snapshot carries;
+  each target must be a blocks field of a type the snapshot defines and hold exactly the variants
+  the catalog makes of it (`planCatalogTypes` plans no revision, since the import writes the types
+  as they are and never revises one); the catalog may not reuse an id the target's own catalog
+  retired into an alias (`diffBlockCatalogs`); then the config with `checkBlockConfig` against that
+  catalog. One that fails is left behind and named in `skipped` (on a dry run too, which reads the
+  target's catalog as the write does), not a failed import, and a catalog left behind takes its
+  config with it. The report's `blockCatalog` and `blockConfig` say whether the target holds each
+  once the model is written. `writeSnapshotModel` writes them right after the content types and
+  before any entry (whose saves the config judges), in one unit: each becomes the next version over
+  what the target holds (version 1 in a new environment, as a type's versions start again),
+  replacing it rather than merging, written as the system and now; the hash is worked out again
+  rather than taken from the file. One the target already holds the same is not written again. A
+  config written is noted for the request's audit row, as a set is. Since the types arrive as the
+  source had them and an uploaded catalog must match them, the copy's next push of the same catalog
+  changes nothing. A push or set in the target that commits first wins, and the snapshot's is named
+  in `skipped`. A clone carries the source's catalog and config as they stand, since the source
+  holds them in force and judges saves by them: a catalog a type has since drifted from (a targeted
+  field dropped, variants edited by hand) and a config's stale parts (ignored there by
+  `effectiveBlockRules`, and so here). There, a push of the same catalog revises the drifted types
+  as it would at the source.
 
 What ingest found is not carried: an imported asset arrives without `ingestStatus`,
 `ingestError`, `duplicateOf` or `aiSuggestions` (`createSnapshotAsset`), because the target's
@@ -116,7 +143,7 @@ infrastructure error) is reported per entry in the job's report.
 
 Replaying every entry through the use-cases is far more than one request can hold for an
 environment of any size. After the checks, the import request writes the content model, asset
-folders, taxonomy, redirects, menus and workflows (small, and everything else depends on them) and answers `202` with
+folders, block catalog and config, taxonomy, redirects, menus and workflows (small, and everything else depends on them) and answers `202` with
 `{ report, job, publishJobId }`. The assets and entries are staged in the blob store in chunks of
 100 before the model is written (so a staging failure leaves the target empty and a retry works),
 and written by bulk jobs, with progress at `…/bulk/jobs/:id` and per-item failures at

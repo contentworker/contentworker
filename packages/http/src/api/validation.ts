@@ -174,6 +174,10 @@ export const snapshotBody = z.object({
   workflows: z.array(z.any()).max(1000).optional(),
   redirects: z.array(z.any()).max(MAX_REDIRECTS).optional(),
   menus: z.array(z.any()).max(MAX_MENUS).optional(),
+  // Checked by the domain, as a push and a set check them: one that fails is left behind and
+  // named in the report, not a refusal of the whole import.
+  blockCatalog: z.object({}).loose().optional(),
+  blockConfig: z.object({}).loose().optional(),
 });
 
 // Menu items are checked by the domain (shape, links, depth, attributes), which names each bad

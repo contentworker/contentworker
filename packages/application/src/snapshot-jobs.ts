@@ -20,6 +20,7 @@ import {
   type StagedSnapshotPublication,
   stagedEntry,
   stagedPublication,
+  withBlocksWritten,
   writeSnapshotModel,
 } from './snapshots';
 
@@ -108,7 +109,8 @@ export async function startSnapshotImport(
   options: StartSnapshotOptions = {},
 ): Promise<StartedSnapshotImport> {
   snapshot = normalizeSnapshotModel(confineSnapshotFiles(target, snapshot, options.filesFrom));
-  const { report, publishable } = await prepareSnapshotImport(ctx, target, snapshot, options);
+  const prepared = await prepareSnapshotImport(ctx, target, snapshot, options);
+  const { publishable } = prepared;
   const publishing = options.publish !== false;
 
   const createItems = [
@@ -122,8 +124,14 @@ export async function startSnapshotImport(
     })),
   ];
   if (createItems.length === 0) {
-    await writeSnapshotModel(ctx, target, snapshot, report.skipped as string[]);
-    return { report, job: null, publishJobId: null };
+    const { blocks } = await writeSnapshotModel(
+      ctx,
+      target,
+      snapshot,
+      prepared.report.skipped as string[],
+      options,
+    );
+    return { report: withBlocksWritten(prepared.report, blocks), job: null, publishJobId: null };
   }
 
   const publishItems = publishing
@@ -177,7 +185,14 @@ export async function startSnapshotImport(
     };
   }
 
-  const taxonomyIds = await writeSnapshotModel(ctx, target, snapshot, report.skipped as string[]);
+  const { taxonomyIds, blocks } = await writeSnapshotModel(
+    ctx,
+    target,
+    snapshot,
+    prepared.report.skipped as string[],
+    options,
+  );
+  const report = withBlocksWritten(prepared.report, blocks);
   const config: SnapshotJobConfig & { next?: ChainedJob } = {
     kind: 'snapshot',
     phase: 'create',

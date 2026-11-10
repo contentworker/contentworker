@@ -9,12 +9,19 @@ import {
   assetCollectionName,
   assetFolderName,
   assetFolderPath,
+  type BlockCatalog,
+  type BlockCatalogTarget,
+  type BlockConfig,
   type BlockLock,
+  type BlockManifest,
   type Concept,
   type ConceptScheme,
   type ContentType,
   type ContentTypeDraft,
+  canonicalJson,
   carriedAuthorshipIssues,
+  checkBlockCatalog,
+  checkBlockConfig,
   checkMenuDescription,
   checkMenuHandle,
   checkMenuItems,
@@ -22,6 +29,9 @@ import {
   checkRedirect,
   DomainError,
   defineContentType,
+  diffBlockCatalogs,
+  diffBlockConfigs,
+  EMPTY_BLOCK_CONFIG,
   ENTRY_ID_RULE,
   type EntryFields,
   type EntryMetadata,
@@ -37,6 +47,7 @@ import {
   NotFoundError,
   normalizeLegacyFields,
   type PublishedContentTypeDefinition,
+  planCatalogTypes,
   type Redirect,
   redirectKey,
   redirectSetError,
@@ -49,8 +60,10 @@ import {
   type WorkflowGraph,
   type WorkflowVersion,
 } from '@contentworker/domain';
+import { TransactionConflictError } from '@contentworker/ports';
 import { startAssetReindex } from './asset-ingest';
 import { allAssets, publishAsset } from './assets';
+import { blockCatalogHash } from './block-catalog';
 import { createContentType, publishContentType, SYSTEM_CALLER } from './content-types';
 import type { AppContext } from './context';
 import { createEntry, updateEntry } from './entries';
@@ -157,7 +170,26 @@ export interface EnvironmentSnapshot {
     readonly tags: readonly Tag[];
   };
   readonly workflows: readonly SnapshotWorkflow[];
+  /**
+   * The block catalog in force: its manifests and targets, with the source's version and hash.
+   * Absent in snapshots written before catalogs travelled, and when the source has none.
+   */
+  readonly blockCatalog?: SnapshotBlockCatalog;
+  /**
+   * The block config in force. Absent in snapshots written before configs travelled, and when the
+   * source never set one.
+   */
+  readonly blockConfig?: SnapshotBlockConfig;
 }
+
+/**
+ * A block catalog in a snapshot. `version` and `hash` say which of the source's versions it is;
+ * an import starts its own history and works the hash out again (a snapshot is anyone's JSON).
+ */
+export type SnapshotBlockCatalog = Pick<BlockCatalog, 'version' | 'hash' | 'blocks' | 'targets'>;
+
+/** A block config in a snapshot; `version` is the source's, for reading only. */
+export type SnapshotBlockConfig = Pick<BlockConfig, 'version' | 'targets' | 'blocks'>;
 
 /** A collection in a snapshot: its record and its members, in order. */
 export interface SnapshotCollection {
@@ -235,6 +267,10 @@ export async function exportSnapshot(
   const live = new Map(
     (await ctx.store.entries.getPublishedMany(scope, changedIds)).map((p) => [p.entryId, p.fields]),
   );
+  const [catalog, blockConfig] = await Promise.all([
+    ctx.store.blockCatalogs.latest(scope),
+    ctx.store.blockConfigs.get(scope),
+  ]);
 
   return {
     snapshotVersion: SNAPSHOT_VERSION,
@@ -266,6 +302,25 @@ export async function exportSnapshot(
       tags: await ctx.store.taxonomy.listTags(scope),
     },
     workflows: await exportWorkflows(ctx, scope),
+    ...(catalog
+      ? {
+          blockCatalog: {
+            version: catalog.version,
+            hash: catalog.hash,
+            blocks: catalog.blocks,
+            targets: catalog.targets,
+          },
+        }
+      : {}),
+    ...(blockConfig
+      ? {
+          blockConfig: {
+            version: blockConfig.version,
+            targets: blockConfig.targets,
+            blocks: blockConfig.blocks,
+          },
+        }
+      : {}),
   };
 }
 
@@ -383,7 +438,9 @@ export interface ImportOptions {
   /**
    * Keep each entry's `createdBy` from the snapshot. Only a clone sets it (the snapshot is the
    * server's own export of the source); never taken from a request, where it would let anyone
-   * credit an entry to someone else. Unset, the importer is every entry's creator.
+   * credit an entry to someone else. Unset, the importer is every entry's creator. A clone also
+   * carries the entries' locked regions, and a block config with stale parts as the source
+   * holds it (see {@link checkedSnapshotBlocks}).
    */
   readonly keepCreators?: boolean;
 }
@@ -420,6 +477,10 @@ export interface ImportReport {
   readonly published: number;
   readonly taxonomy: number;
   readonly workflows: number;
+  /** The import makes the snapshot's block catalog the target's (false when it has none). */
+  readonly blockCatalog: boolean;
+  /** The import makes the snapshot's block config the target's (false when it has none). */
+  readonly blockConfig: boolean;
   /** Things that were present in the snapshot and deliberately not imported. */
   readonly skipped: readonly string[];
 }
@@ -440,10 +501,18 @@ export async function importSnapshot(
   options: ImportOptions = {},
 ): Promise<ImportReport> {
   snapshot = normalizeSnapshotModel(confineSnapshotFiles(target, snapshot, options.filesFrom));
-  const { report, publishable } = await prepareSnapshotImport(ctx, target, snapshot, options);
-  if (options.dryRun) return report;
+  const prepared = await prepareSnapshotImport(ctx, target, snapshot, options);
+  const { publishable } = prepared;
+  if (options.dryRun) return prepared.report;
   const publishing = options.publish !== false;
-  const taxonomyIds = await writeSnapshotModel(ctx, target, snapshot, report.skipped as string[]);
+  const { taxonomyIds, blocks } = await writeSnapshotModel(
+    ctx,
+    target,
+    snapshot,
+    prepared.report.skipped as string[],
+    options,
+  );
+  const report = withBlocksWritten(prepared.report, blocks);
 
   // Asset records keep their ids (and their files, which stay where they are), so the entries'
   // asset links resolve; published ones are published again below, before the entries.
@@ -545,6 +614,14 @@ export async function prepareSnapshotImport(
   const publishable = snapshot.entries.filter(
     (e) => e.status === 'published' || (e.status === 'changed' && e.publishedFields),
   );
+  // Named here, so a dry run says what of the blocks will be left behind: judged against the
+  // catalog the target holds, as the write will judge it.
+  const blocks = checkedSnapshotBlocks(
+    snapshot,
+    options.keepCreators === true,
+    snapshot.blockCatalog ? await ctx.store.blockCatalogs.latest(target) : null,
+  );
+  skipped.push(...blocks.skipped);
   return {
     publishable,
     report: {
@@ -557,10 +634,24 @@ export async function prepareSnapshotImport(
         snapshot.taxonomy.concepts.length +
         snapshot.taxonomy.tags.length,
       workflows: snapshot.workflows.length,
+      blockCatalog: blocks.catalog !== undefined,
+      blockConfig: blocks.config !== undefined,
       skipped,
     },
   };
 }
+
+/** Whether the target now holds the snapshot's block catalog and config, as the write left them. */
+export interface SnapshotBlocksWritten {
+  readonly catalog: boolean;
+  readonly config: boolean;
+}
+
+/** The report with what the write did to the blocks in place of what the checks expected. */
+export const withBlocksWritten = (
+  report: ImportReport,
+  blocks: SnapshotBlocksWritten,
+): ImportReport => ({ ...report, blockCatalog: blocks.catalog, blockConfig: blocks.config });
 
 /**
  * The snapshot with its content model made writable: definitions stored before guidance and
@@ -583,16 +674,22 @@ export function normalizeSnapshotModel(snapshot: EnvironmentSnapshot): Environme
 }
 
 /**
- * Writes a snapshot's content model, taxonomy and workflows: the small, ordered part of an import
- * that everything else depends on. Returns the snapshot's taxonomy ids mapped to the new ones,
- * for remapping entry metadata. Workflow versions that no longer validate are named in `skipped`.
+ * Writes a snapshot's content model, block catalog and config, taxonomy and workflows: the small,
+ * ordered part of an import that everything else depends on. Returns the snapshot's taxonomy ids
+ * mapped to the new ones, for remapping entry metadata, and whether the target now holds the
+ * snapshot's block catalog and config (for the report: `withBlocksWritten`). Workflow versions
+ * that no longer validate, and blocks left behind, are named in `skipped`.
  */
 export async function writeSnapshotModel(
   ctx: AppContext,
   target: Scope,
   snapshot: EnvironmentSnapshot,
   skipped: string[],
-): Promise<ReadonlyMap<string, string>> {
+  options: Pick<ImportOptions, 'keepCreators'> = {},
+): Promise<{
+  readonly taxonomyIds: ReadonlyMap<string, string>;
+  readonly blocks: SnapshotBlocksWritten;
+}> {
   // Content model first: entries cannot be validated without it. The singleton flag is the
   // snapshot's either way: left out, a revision would keep the target's, and a clone promoted or
   // merged back would then turn production's off (or keep one the source no longer has).
@@ -612,6 +709,15 @@ export async function writeSnapshotModel(
     await createContentType(ctx, SYSTEM_CALLER, target, workingDraftOf(ct));
     if (ct.status === 'published') await publishContentType(ctx, target, ct.apiId);
   }
+
+  // Before any entry, whose saves the config judges.
+  const blocks = await writeSnapshotBlocks(
+    ctx,
+    target,
+    snapshot,
+    options.keepCreators === true,
+    skipped,
+  );
 
   // Folders before assets, so the assets' folderIds have something to point at.
   await writeSnapshotFolders(ctx, target, snapshot.assetFolders ?? []);
@@ -672,7 +778,212 @@ export async function writeSnapshotModel(
   for (const workflow of snapshot.workflows) {
     await importWorkflow(ctx, target, workflow, skipped);
   }
-  return taxonomyIds;
+  return { taxonomyIds, blocks };
+}
+
+/** What of a snapshot's block catalog and config an import writes, and what it leaves behind. */
+export interface CheckedSnapshotBlocks {
+  readonly catalog?: {
+    readonly blocks: readonly BlockManifest[];
+    readonly targets: readonly BlockCatalogTarget[];
+  };
+  readonly config?: Pick<BlockConfig, 'targets' | 'blocks'>;
+  /** Why a section is left behind, as the import report names it. */
+  readonly skipped: readonly string[];
+}
+
+/** A refusal's first few issues, on one line. */
+const issuesOf = (err: ValidationError, most = 5): string => {
+  const listed = err.issues
+    .slice(0, most)
+    .map((i) => (i.field ? `${i.field}: ${i.message}` : i.message));
+  const more = err.issues.length - most;
+  return listed.join('; ') + (more > 0 ? `; …and ${more} more` : '');
+};
+
+/**
+ * The snapshot's block catalog and config, checked as the API checks a push and a set, without
+ * writing. An uploaded file's catalog must pass `checkBlockCatalog`; every thumbnail asset it
+ * names must be one the snapshot carries (a push checks that the asset is in the environment, and
+ * the import brings the snapshot's with their ids); its targets must be blocks fields of types the
+ * snapshot defines, holding exactly the variants the catalog makes of them (`planCatalogTypes`
+ * plans no revision), since the import writes the types as they are and never revises one. Then
+ * the config must pass `checkBlockConfig` against that catalog.
+ *
+ * Whatever fails is left behind and named in `skipped` rather than failing the import: the
+ * content does not depend on it, and both can be pushed and set again. A catalog left behind takes
+ * its config with it: judged against no catalog, or the target's, it would mean something else.
+ * So does a catalog the target's (`held`, its catalog in force) refuses to be followed by, one
+ * reusing an id that catalog retired into another block's `aliases`, as a push would be refused.
+ *
+ * `ownExport` (a clone, `ImportOptions.keepCreators`): the catalog and config are the source's own
+ * rows, in force there and judging its saves, so a clone carries them as they stand: a catalog a
+ * later type revision has drifted from (a target field since dropped, variants edited by hand),
+ * and a config whose parts name what a later push dropped (stale there, ignored by
+ * `effectiveBlockRules`, and so in the copy). The copy then judges saves as the source does. An
+ * uploaded file has no such history, so everything about it must pass.
+ */
+export function checkedSnapshotBlocks(
+  snapshot: EnvironmentSnapshot,
+  ownExport = false,
+  held: Pick<BlockCatalog, 'hash' | 'blocks'> | null = null,
+): CheckedSnapshotBlocks {
+  const skipped: string[] = [];
+  let catalog: CheckedSnapshotBlocks['catalog'];
+  const given = snapshot.blockCatalog;
+  if (given) {
+    catalog = ownExport
+      ? { blocks: given.blocks, targets: given.targets }
+      : uploadedCatalog(snapshot, given, skipped);
+    if (catalog && held && held.hash !== blockCatalogHash(catalog.blocks, catalog.targets)) {
+      try {
+        diffBlockCatalogs(held.blocks, catalog.blocks);
+      } catch (err) {
+        if (!(err instanceof ValidationError)) throw err;
+        skipped.push(
+          `block catalog: left behind, the target's catalog retired an id it uses (${issuesOf(err)})`,
+        );
+        catalog = undefined;
+      }
+    }
+  }
+  let config: CheckedSnapshotBlocks['config'];
+  const narrowing = snapshot.blockConfig;
+  if (narrowing && given && !catalog) {
+    skipped.push('block config: left behind with its block catalog');
+  } else if (narrowing) {
+    try {
+      config = checkBlockConfig(narrowing, catalog ? { version: 0, ...catalog } : null);
+    } catch (err) {
+      if (!(err instanceof ValidationError)) throw err;
+      if (ownExport && catalog) config = { targets: narrowing.targets, blocks: narrowing.blocks };
+      else {
+        skipped.push(
+          `block config: left behind, it doesn't fit the snapshot's block catalog (${issuesOf(err)})`,
+        );
+      }
+    }
+  }
+  return { ...(catalog ? { catalog } : {}), ...(config ? { config } : {}), skipped };
+}
+
+/** An uploaded file's catalog when it passes every check, else undefined, named in `skipped`. */
+function uploadedCatalog(
+  snapshot: EnvironmentSnapshot,
+  given: SnapshotBlockCatalog,
+  skipped: string[],
+): CheckedSnapshotBlocks['catalog'] {
+  const leave = (why: string) => {
+    skipped.push(`block catalog: left behind, ${why}`);
+    return undefined;
+  };
+  try {
+    const checked = checkBlockCatalog(given);
+    const carried = new Set(snapshot.assets.map((a) => a.id));
+    const missing = checked.blocks.flatMap((b) =>
+      b.thumbnail && 'assetId' in b.thumbnail && !carried.has(b.thumbnail.assetId)
+        ? [`${b.id} (${b.thumbnail.assetId})`]
+        : [],
+    );
+    if (missing.length > 0) {
+      return leave(`its thumbnails name assets the snapshot doesn't carry: ${missing.join(', ')}`);
+    }
+    const plans = planCatalogTypes(
+      checked.blocks,
+      checked.targets,
+      new Map(snapshot.contentTypes.map((ct) => [ct.apiId, ct])),
+    );
+    if (plans.length > 0) {
+      const fields = plans.flatMap((p) => p.changes.map((c) => `${p.contentTypeApiId}.${c.field}`));
+      return leave(
+        `the snapshot's content types don't hold the variants it makes: ${fields.join(', ')}`,
+      );
+    }
+    return checked;
+  } catch (err) {
+    if (!(err instanceof ValidationError)) throw err;
+    return leave(`it no longer passes the checks (${issuesOf(err)})`);
+  }
+}
+
+/**
+ * Makes the snapshot's checked catalog and config the target's, in one unit: each the next
+ * version over what the target holds (version 1 in a new environment, as a type's versions start
+ * again in a copy), and nothing written for one the target already holds the same (a retried
+ * write, or a push of the same catalog made there). The target's catalog and config are replaced,
+ * not merged, as a push and a set replace them; a snapshot without them leaves the target's as
+ * they are. Written as the system (`pushedBy` and `updatedBy` null), now: the copy's history
+ * begins at the import. A push or set in the target committing first wins the race, and the
+ * snapshot's is named in `skipped` instead.
+ *
+ * Checked again here against the target's catalog as it is now (`prepareSnapshotImport` checked
+ * against it as it was), naming only what that check didn't. Answers whether the target now holds
+ * each; a committed config is noted for the audit row, as a set notes it.
+ */
+async function writeSnapshotBlocks(
+  ctx: AppContext,
+  target: Scope,
+  snapshot: EnvironmentSnapshot,
+  ownExport: boolean,
+  skipped: string[],
+): Promise<SnapshotBlocksWritten> {
+  if (!snapshot.blockCatalog && !snapshot.blockConfig) return { catalog: false, config: false };
+  const [latest, held] = await Promise.all([
+    ctx.store.blockCatalogs.latest(target),
+    ctx.store.blockConfigs.get(target),
+  ]);
+  const checked = checkedSnapshotBlocks(snapshot, ownExport, latest);
+  for (const line of checked.skipped) if (!skipped.includes(line)) skipped.push(line);
+  if (!checked.catalog && !checked.config) return { catalog: false, config: false };
+
+  const at = ctx.clock.now().toISOString();
+  let catalog: BlockCatalog | undefined;
+  if (checked.catalog) {
+    const { blocks, targets } = checked.catalog;
+    const hash = blockCatalogHash(blocks, targets);
+    if (latest?.hash !== hash) {
+      catalog = {
+        version: (latest?.version ?? 0) + 1,
+        hash,
+        blocks,
+        targets,
+        // The checks ran `diffBlockCatalogs` against `latest` already: it doesn't refuse here.
+        changes: diffBlockCatalogs(latest?.blocks ?? null, blocks),
+        pushedAt: at,
+        pushedBy: null,
+      };
+    }
+  }
+  const current = held ?? EMPTY_BLOCK_CONFIG;
+  const config: BlockConfig | undefined =
+    checked.config &&
+    canonicalJson({ targets: checked.config.targets, blocks: checked.config.blocks }) !==
+      canonicalJson({ targets: current.targets, blocks: current.blocks })
+      ? {
+          version: current.version + 1,
+          targets: checked.config.targets,
+          blocks: checked.config.blocks,
+          updatedAt: at,
+          updatedBy: null,
+        }
+      : undefined;
+  const holds = { catalog: checked.catalog !== undefined, config: checked.config !== undefined };
+  if (!catalog && !config) return holds;
+  try {
+    await ctx.store.withTransaction(async (tx) => {
+      if (catalog) await tx.blockCatalogs.save(target, catalog);
+      if (config) await tx.blockConfigs.save(target, config);
+    });
+  } catch (err) {
+    if (!(err instanceof TransactionConflictError)) throw err;
+    skipped.push(
+      'block catalog and config: left as the target has them, changed there during the import',
+    );
+    return { catalog: false, config: false };
+  }
+  // Committed: the audit row says what the config changed, as a set's does.
+  if (config) ctx.changes?.noteBlockConfig(diffBlockConfigs(current, config));
+  return holds;
 }
 
 /**
