@@ -4,8 +4,11 @@
  * to the model as untrusted content, and the confirm card holds the model's patch to it: blocks put
  * in at that place and nowhere else, of the types the slot offers, within its bounds. What the
  * slot may hold (the block config's narrowing, its locks, the entry's locked regions) is still the
- * server's to judge, on the dry run and on the save.
+ * server's to judge, on the dry run and on the save. The agent holds the call to the same slot when
+ * it runs, from the fill it recorded with the turn (`fillRefusal`), whatever a client shows.
  */
+
+import { ASSISTANT_TOOLS, isAssistantTool } from './assistant';
 
 /** A block type the slot offers, with the text fields a proposal may fill in. */
 export interface AssistantFillBlock {
@@ -42,6 +45,57 @@ export const FILL_LIMITS = { blocks: 40, fields: 8, around: 20, text: 120 } as c
 
 const isRecord = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v);
+
+/** A turn asked to fill one slot of one entry: what its changes are held to. */
+export interface FillTurn {
+  /** The entry the canvas asked about. */
+  readonly entryId: string;
+  readonly fill: AssistantFill;
+}
+
+/**
+ * Why a change proposed in a fill turn can't be confirmed, in the words the card shows and the
+ * agent refuses with: a heading, what it means, and the line Confirm is described by.
+ */
+export interface FillRefusal {
+  /** The step of a block patch that goes outside, counted from 1. */
+  readonly step?: number;
+  readonly title: string;
+  readonly detail: string;
+  readonly hold: string;
+}
+
+/**
+ * Whether a change Coworker proposes in a fill turn keeps to what was asked: a block patch of that
+ * entry whose every step keeps to the slot (`outsideFill`). Any other change (another tool's write,
+ * a patch of another entry) is outside it. Reads are never held. The card and the agent's tool
+ * executor both judge with this, so a client can't widen it: undefined when it keeps to the slot.
+ */
+export function fillRefusal(turn: FillTurn, tool: string, input: unknown): FillRefusal | undefined {
+  if (!isAssistantTool(tool) || !ASSISTANT_TOOLS[tool].write) return undefined;
+  const { slot } = turn.fill;
+  const asked = `You asked Coworker to fill ${slot} at one place`;
+  const args = isRecord(input) ? input : {};
+  if (tool !== 'entry_blocks_patch' || args.id !== turn.entryId) {
+    return {
+      title: `This isn’t filling ${slot}`,
+      detail: `${asked}. This change is to something else, so it can’t be confirmed`,
+      hold: 'You can’t confirm this: it changes something other than the slot you asked it to fill.',
+    };
+  }
+  const at = outsideFill(turn.fill, Array.isArray(args.ops) ? args.ops : []);
+  if (at === undefined) return undefined;
+  const step = at + 1;
+  return {
+    step,
+    title: `Step ${step} goes outside ${slot}`,
+    detail: `${asked}. This step changes something else, or puts a block somewhere else or of a kind ${slot} doesn’t take, so nothing here can be confirmed`,
+    hold: `You can’t confirm this: step ${step} goes outside the slot you asked it to fill.`,
+  };
+}
+
+/** A refusal as one message: what the agent says when it won't run the change. */
+export const fillRefusalText = (r: FillRefusal) => `${r.title}. ${r.detail}.`;
 
 /**
  * The first step of `ops` that doesn't keep to `fill`, or undefined when every one does. A step
@@ -178,4 +232,12 @@ export function readAssistantFill(raw: unknown): AssistantFill | undefined {
       .map(text)
       .filter(Boolean),
   };
+}
+
+/** A fill turn as a turn's message metadata carries it (the agent writes it), or undefined. */
+export function readFillTurn(raw: unknown): FillTurn | undefined {
+  const turn = record(raw);
+  const fill = readAssistantFill(turn?.fill);
+  const entryId = key(turn?.entryId);
+  return fill && entryId ? { entryId, fill } : undefined;
 }

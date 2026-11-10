@@ -9,11 +9,11 @@
  */
 
 import {
-  type AssistantFill,
   type BlockOp,
   type ContentType,
   diffEntryFields,
   type EntryFields,
+  type FillTurn,
 } from '@contentworker/domain';
 import { Button } from '@contentworker/ui/button';
 import { Collapsible, CollapsibleContent } from '@contentworker/ui/collapsible';
@@ -59,8 +59,8 @@ export type Proposal =
       readonly entryId: string;
       readonly expectedVersion?: number;
       readonly ops: readonly unknown[];
-      /** The slot its turn was asked to fill (the canvas's ask): the patch is held to it. */
-      readonly fill?: AssistantFill;
+      /** The entry and slot its turn was asked to fill (the canvas's ask): held to them. */
+      readonly fill?: FillTurn;
     };
 
 const str = (v: unknown) => (typeof v === 'string' && v ? v : undefined);

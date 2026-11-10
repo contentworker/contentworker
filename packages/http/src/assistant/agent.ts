@@ -38,7 +38,10 @@ import {
   type AssistantScope,
   type AssistantTool,
   DIRECT_CALL_PREFIX,
+  type FillTurn,
   ForbiddenError,
+  fillRefusal,
+  fillRefusalText,
   isAssistantTool,
   isSetupScope,
   offeredIn,
@@ -58,7 +61,7 @@ import {
   type UIMessage,
 } from 'ai';
 import type { McpDeps } from '../mcp/deps';
-import { readContext } from './context';
+import { fillTurnOf, readContext } from './context';
 import { assistantCaller, engineKeys } from './gate';
 import { BUDGET_SPENT, meterTurn } from './meter';
 import {
@@ -150,6 +153,11 @@ type Made = {
    * refused. Absent: it needs none (not a held action, or its input names its own version).
    */
   bound?: { expectedVersion: number } | null;
+  /**
+   * The slot the turn was asked to fill, as this object read it from the turn's own message: the
+   * call must keep to it when it runs (`fillRefusal`), whatever a client shows or sends later.
+   */
+  fill?: FillTurn;
 };
 
 /**
@@ -640,7 +648,12 @@ export abstract class AssistantAgentBase extends AIChatAgent<AgentEnv> {
    * a held action with the entry's version as it was when the model proposed it (`principal`
    * reads it, as the person).
    */
-  private record(call: EmittedCall, scope: AssistantScope, principal: Principal) {
+  private record(
+    call: EmittedCall,
+    scope: AssistantScope,
+    principal: Principal,
+    fill: FillTurn | undefined,
+  ) {
     const made = (async (): Promise<Made | null> => {
       if (!isAssistantTool(call.toolName)) return null;
       let input: unknown;
@@ -662,6 +675,7 @@ export abstract class AssistantAgentBase extends AIChatAgent<AgentEnv> {
         scope,
         at: Date.now(),
         ...(bound !== undefined ? { bound } : {}),
+        ...(fill ? { fill } : {}),
       };
       await this.ctx.storage.put(modelKey(call.toolCallId), m);
       return m;
@@ -708,11 +722,13 @@ export abstract class AssistantAgentBase extends AIChatAgent<AgentEnv> {
       const principal = await this.principalIn(w.deps, who, context.scope);
       await this.touch();
       const used: ModelSource = { source: 'model' };
+      // The slot this turn was asked to fill, if any: its calls are held to it when they run.
+      const fillTurn = fillTurnOf(context);
       const scope = { spaceId: context.scope.spaceId, environmentId: context.scope.environmentId };
       const meter = meterTurn(w.deps.ctx.costGuard, scope, () => used.source === 'model', close);
       const model = recordingCalls(
         await assistantModel(this.env, context, used, who.claims.sub),
-        (call) => this.record(call, context.scope, principal),
+        (call) => this.record(call, context.scope, principal, fillTurn),
       );
       if (!(await meter.begin())) {
         await meter.settle();
@@ -747,11 +763,9 @@ export abstract class AssistantAgentBase extends AIChatAgent<AgentEnv> {
                 source: used.source,
                 at: Date.now(),
                 scope: options?.continuation ? this.continuedScope(scope) : scope,
-                // The slot this turn was asked to fill (a continuation's too: its body is the
-                // turn's own): its card holds the patch to it.
-                ...(context.page.kind === 'entry' && context.page.fill
-                  ? { fill: context.page.fill }
-                  : {}),
+                // The entry and slot this turn was asked to fill (a continuation's too: its body
+                // is the turn's own): its cards say what goes outside it, as the run refuses it.
+                ...(fillTurn ? { fill: fillTurn } : {}),
               }
             : undefined,
       });
@@ -833,6 +847,9 @@ export abstract class AssistantAgentBase extends AIChatAgent<AgentEnv> {
                   await this.ctx.storage.delete(modelKey(toolCallId));
                   this.emitted.delete(toolCallId);
                   if (made.bound === null) throw new ToolRefused(NOT_HELD);
+                  // Asked to fill one slot: nothing else runs, as the card says.
+                  const outside = made.fill ? fillRefusal(made.fill, name, input) : undefined;
+                  if (outside) throw new ToolRefused(fillRefusalText(outside));
                   const p = await this.principalIn(now, await this.caller(), made.scope);
                   const output = await callAssistantTool(
                     now,

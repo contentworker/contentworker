@@ -1778,7 +1778,7 @@ describe('a model’s block patch', () => {
               respond={respond}
               actionKey="m1:0"
               direct={false}
-              turn={{ ...here, fill }}
+              turn={{ ...here, fill: { entryId: 'e1', fill } }}
             />
           </AssistantProvider>
         </MemoryRouter>
@@ -1803,13 +1803,34 @@ describe('a model’s block patch', () => {
       expect(t.proposals()).toEqual([]);
     });
 
+    it('holds any other change of a fill turn, as the agent refuses it when it runs', async () => {
+      // A publish proposed in the turn: said, nothing read, Confirm off.
+      asked({
+        type: 'tool-entries_publish',
+        toolCallId: 'call_2',
+        state: 'approval-requested',
+        input: { id: 'e1' },
+        approval: { id: 'call_2' },
+      } as never);
+      expect(await screen.findByText('This isn’t filling Body')).toBeTruthy();
+      hold(
+        'You can’t confirm this: it changes something other than the slot you asked it to fill.',
+      );
+      expect(client.getEntry).not.toHaveBeenCalled();
+      cleanup();
+      // A patch of another entry, however well it keeps to a slot of that name.
+      asked(patch({ id: 'e2', ops: [insert] }));
+      expect(await screen.findByText('This isn’t filling Body')).toBeTruthy();
+      expect(client.checkBlockPatch).not.toHaveBeenCalled();
+    });
+
     it('reads the slot from the turn as the agent writes it, in the conversation itself', async () => {
       chat.messages = [
         {
           id: 'm1',
           role: 'assistant',
           // The agent's start metadata: the scope, and the fill beside it.
-          metadata: { source: 'mock', at: Date.now(), scope: here, fill },
+          metadata: { source: 'mock', at: Date.now(), scope: here, fill: { entryId: 'e1', fill } },
           parts: [patch({ ops: [insert, remove] })],
         },
       ];

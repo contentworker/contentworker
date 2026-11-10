@@ -825,6 +825,53 @@ describe('a model turn (the mock model)', () => {
     panel.close();
   });
 
+  it('refuses, when it runs, a change outside the slot a fill turn was asked about', async () => {
+    const ada = await person('ada_fill_outside');
+    const id = await entryIn(SPACE_A, 'Fill target');
+    const panel = await socket(ada);
+    // A turn asked to fill one slot of the entry, whose model proposes something else (here the
+    // mock's publish): the agent recorded the fill with the call, so its run is refused whatever
+    // the client shows or answers.
+    const page = contextIn(SPACE_A, {
+      kind: 'entry',
+      entryId: id,
+      contentType: 'article',
+      label: 'Fill target',
+      fill: {
+        field: 'body',
+        locale: 'en-US',
+        slot: 'Body',
+        blocks: [{ type: 'cta', name: 'Call to action', fields: [] }],
+        count: 0,
+        around: [],
+      },
+    });
+    await panel.ask('Publish this entry', page);
+    const message = (await messagesOf(ada)).find((m) =>
+      m.parts.some((x) => x.type === 'tool-entries_publish'),
+    );
+    // The turn says which entry and slot it was asked about: the card holds its changes to them.
+    expect(message?.metadata).toMatchObject({ fill: { entryId: id, fill: { slot: 'Body' } } });
+    const card = message?.parts.find((x) => x.type === 'tool-entries_publish') as {
+      toolCallId: string;
+    };
+    const continued = panel.nextOtherTurn();
+    panel.send({
+      type: 'cf_agent_tool_approval',
+      toolCallId: card.toolCallId,
+      approved: true,
+      autoContinue: true,
+    });
+    await continued;
+    expect(await statusOf(SPACE_A, id)).toBe('draft');
+    expect(await partOf(ada, card.toolCallId)).toMatchObject({
+      state: 'output-error',
+      errorText:
+        'This isn’t filling Body. You asked Coworker to fill Body at one place. This change is to something else, so it can’t be confirmed.',
+    });
+    panel.close();
+  });
+
   it('refuses a turn that names no space', async () => {
     const ada = await person('ada_noscope');
     const panel = await socket(ada);

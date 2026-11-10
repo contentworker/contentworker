@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { type AssistantFill, outsideFill } from '../src/assistant/fill';
+import {
+  type AssistantFill,
+  fillRefusal,
+  fillRefusalText,
+  outsideFill,
+  readFillTurn,
+} from '../src/assistant/fill';
 
 const fill: AssistantFill = {
   field: 'body',
@@ -86,5 +92,53 @@ describe('a proposal held to the slot it was asked to fill', () => {
     expect(outsideFill(inner, [op])).toBeUndefined();
     expect(outsideFill(inner, [{ ...op, index: 0 }])).toBeUndefined();
     expect(outsideFill(inner, [{ ...op, parent: undefined }])).toBe(0);
+  });
+});
+
+describe('a fill turn’s changes, as the card and the agent judge them', () => {
+  const turn = { entryId: 'e1', fill };
+  const patch = (ops: unknown[], id = 'e1') => ({ id, expectedVersion: 3, ops });
+
+  it('lets through a patch of that entry that keeps to the slot, and every read', () => {
+    expect(fillRefusal(turn, 'entry_blocks_patch', patch([insert()]))).toBeUndefined();
+    expect(fillRefusal(turn, 'entry_blocks_outline', { id: 'other' })).toBeUndefined();
+    expect(fillRefusal(turn, 'entries_get', { id: 'e1' })).toBeUndefined();
+  });
+
+  it('refuses a step outside the slot in words, counted from 1', () => {
+    const r = fillRefusal(
+      turn,
+      'entry_blocks_patch',
+      patch([insert(), { op: 'remove', field: 'body', locale: 'en-US', key: 'hero' }]),
+    );
+    expect(r).toEqual({
+      step: 2,
+      title: 'Step 2 goes outside Body',
+      detail:
+        'You asked Coworker to fill Body at one place. This step changes something else, or puts a block somewhere else or of a kind Body doesn’t take, so nothing here can be confirmed',
+      hold: 'You can’t confirm this: step 2 goes outside the slot you asked it to fill.',
+    });
+    expect(fillRefusalText(r!)).toBe(`${r?.title}. ${r?.detail}.`);
+  });
+
+  it('refuses a patch of another entry, and any other write, whatever its input', () => {
+    expect(fillRefusal(turn, 'entry_blocks_patch', patch([insert()], 'e2'))).toMatchObject({
+      title: 'This isn’t filling Body',
+    });
+    for (const tool of ['entries_update', 'entries_publish', 'entries_trash', 'comments_add']) {
+      expect(fillRefusal(turn, tool, { id: 'e1' })).toMatchObject({
+        hold: 'You can’t confirm this: it changes something other than the slot you asked it to fill.',
+      });
+    }
+    // Not a tool Coworker offers: nothing to judge here (the agent never runs one).
+    expect(fillRefusal(turn, 'entries_purge_everything', {})).toBeUndefined();
+  });
+
+  it('reads a turn’s fill as the agent writes it, or none', () => {
+    expect(readFillTurn({ entryId: 'e1', fill })).toEqual({ entryId: 'e1', fill });
+    expect(readFillTurn({ fill })).toBeUndefined();
+    expect(readFillTurn({ entryId: 'e1', fill: { ...fill, blocks: [] } })).toBeUndefined();
+    expect(readFillTurn(fill)).toBeUndefined();
+    expect(readFillTurn(undefined)).toBeUndefined();
   });
 });

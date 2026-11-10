@@ -4,7 +4,7 @@ import {
   readAssistantFill as readFill,
 } from '@contentworker/domain';
 import { describe, expect, it } from 'vitest';
-import { readContext } from '../../src/assistant/context';
+import { fillTurnOf, readContext } from '../../src/assistant/context';
 import { MOCK_FILL_TEXT, mockFill, mockModel, mockStep } from '../../src/assistant/model';
 
 const fill: AssistantFill = {
@@ -125,5 +125,13 @@ describe('filling a slot the canvas asked about', () => {
     expect(mockStep('Publish this entry', onSlot, new Set(['entries_publish']))).toMatchObject({
       tool: 'entries_publish',
     });
+  });
+});
+
+describe('the fill turn the agent records with each call', () => {
+  it('is the page’s entry and slot, and nothing on a page that asked for none', () => {
+    expect(fillTurnOf(onSlot)).toEqual({ entryId: 'e1', fill });
+    expect(fillTurnOf({ ...onSlot, page: { ...onSlot.page, fill: undefined } })).toBeUndefined();
+    expect(fillTurnOf({ scope: onSlot.scope, page: { kind: 'everything' } })).toBeUndefined();
   });
 });

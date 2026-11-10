@@ -350,10 +350,14 @@ tab goes away. User-facing behaviour is in the
   place, the block types the slot takes there (narrowed by the block config) with their text
   fields, its bounds and the names of the blocks around it. `readAssistantFill` cuts it to
   `FILL_LIMITS`; the system prompt quotes it with `wrapUntrusted` and asks for one
-  `entry_blocks_patch` that only inserts there. The turn's message metadata carries the fill, and
-  the card holds the model's patch to it (`outsideFill`: inserts only, of the types offered,
-  holding only text in their listed fields, at the place), refusing a step outside the slot in
-  words before any dry run; the dry run then holds it to the block config and the entry's locks.
+  `entry_blocks_patch` that only inserts there. Every model call of the turn is recorded with the
+  fill turn (`fillTurnOf`: the entry and the fill), and its run is refused with `fillRefusal`'s
+  words when it goes outside: a patch of that entry whose every step keeps to the slot
+  (`outsideFill`: inserts only, of the types offered, holding only text in their listed fields, at
+  the place) runs, and any other write (another tool, another entry) never does, whatever a client
+  shows or answers. The turn's message metadata carries the same fill turn, and the card says the
+  same refusal before any dry run, Confirm off; the dry run then holds an allowed patch to the
+  block config and the entry's locks.
   The ask's own words (the person's message, unquoted) name the slot by schema names only. The mock
   answers `Fill …` with an outline, then one block of the first type at the place (`mockFill`).
 - **Trust.** The object verifies the principal the web worker signed for its path (the

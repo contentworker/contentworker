@@ -1,6 +1,7 @@
 import {
   type AssistantContext,
   type AssistantPage,
+  type FillTurn,
   isSetupScope,
   readAssistantFill,
   SETUP_SCOPE,
@@ -59,3 +60,9 @@ function readPage(raw: unknown): AssistantPage {
     return { kind: 'content-type', contentType, label: label(p.label, contentType) };
   return { kind: 'everything' };
 }
+
+/** The fill turn a context names, when its page asks to fill a slot of its entry. */
+export const fillTurnOf = (context: AssistantContext): FillTurn | undefined =>
+  context.page.kind === 'entry' && context.page.fill
+    ? { entryId: context.page.entryId, fill: context.page.fill }
+    : undefined;

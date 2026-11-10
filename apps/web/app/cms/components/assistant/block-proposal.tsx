@@ -8,7 +8,6 @@
  */
 
 import {
-  type AssistantFill,
   applyBlockPatch,
   BLOCK_PATCH_ISSUE_CODES,
   type BlockOp,
@@ -19,8 +18,10 @@ import {
   type ContentType,
   type EntryFields,
   type FieldDefinition,
+  type FillRefusal,
+  type FillTurn,
+  fillRefusal,
   outlineBlocks,
-  outsideFill,
 } from '@contentworker/domain';
 import { Alert, AlertDescription, AlertTitle } from '@contentworker/ui/alert';
 import { TriangleAlert } from 'lucide-react';
@@ -46,10 +47,11 @@ export type BlockRefusal =
   /** The role can't change this entry at all. */
   | { readonly why: 'denied' }
   /**
-   * Asked to fill one slot (the canvas's Ask Coworker to fill this), a step does something else:
-   * changes a block, or puts one in another place or of a type the slot doesn't take.
+   * Asked to fill one slot (the canvas's Ask Coworker to fill this), it does something else: a
+   * step changes a block, or puts one in another place, of a type the slot doesn't take, or in
+   * another entry. Said in the domain's words (`fillRefusal`), which the agent refuses with too.
    */
-  | { readonly why: 'outside'; readonly step: number; readonly slot: string }
+  | ({ readonly why: 'outside' } & FillRefusal)
   | { readonly why: 'nothing' }
   /** The call doesn't say which entry, at which version, or what to change. */
   | { readonly why: 'unclear' };
@@ -586,8 +588,8 @@ export async function readBlockPatch(
     readonly entryId: string;
     readonly expectedVersion?: number;
     readonly ops: readonly unknown[];
-    /** The slot the turn was asked to fill: the patch is held to it. */
-    readonly fill?: AssistantFill;
+    /** The entry and slot the turn was asked to fill: the patch is held to them. */
+    readonly fill?: FillTurn;
   },
   types: readonly ContentType[],
   locale: string,
@@ -624,9 +626,10 @@ export async function readBlockPatch(
   if (hidden.size > 0) return refused({ why: 'hidden', count: hidden.size });
   // Asked to fill one slot, it puts blocks there and does nothing else: whatever the page's words
   // led the model to, nothing outside the slot is offered for Confirm.
-  const outside = p.fill ? outsideFill(p.fill, p.ops) : undefined;
-  if (p.fill && outside !== undefined)
-    return refused({ why: 'outside', step: outside + 1, slot: p.fill.slot });
+  const outside = p.fill
+    ? fillRefusal(p.fill, 'entry_blocks_patch', { id: p.entryId, ops: p.ops })
+    : undefined;
+  if (outside) return refused({ why: 'outside', ...outside });
 
   const beforeFields = entry.fields as EntryFields;
   const before = indexBlocks(type, beforeFields);
@@ -735,7 +738,7 @@ export function refusalHold(refusal: BlockRefusal): string {
     case 'denied':
       return 'You can’t confirm this: your role can’t change this entry.';
     case 'outside':
-      return `You can’t confirm this: step ${refusal.step} goes outside the slot you asked it to fill.`;
+      return refusal.hold;
     case 'hidden':
       return 'You can’t confirm this: it changes a field you can’t read.';
     case 'hiddenInvalid':
@@ -797,11 +800,7 @@ export function BlockRefused({ refusal }: { refusal: BlockRefusal }) {
         </Refused>
       );
     case 'outside':
-      return (
-        <Refused title={`Step ${refusal.step} goes outside ${refusal.slot}`}>
-          {`You asked Coworker to fill ${refusal.slot} at one place. This step changes something else, or puts a block somewhere else or of a kind ${refusal.slot} doesn’t take, so nothing here can be confirmed`}
-        </Refused>
-      );
+      return <Refused title={refusal.title}>{refusal.detail}</Refused>;
     case 'hidden':
       // Counted, never left out: the person's role can't write what it can't read either.
       return (
