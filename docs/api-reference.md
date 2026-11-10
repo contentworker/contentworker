@@ -445,6 +445,9 @@ curl -H "Authorization: Bearer $CMA_KEY" \
   "$API/spaces/$SPACE/environments/main/content-types?format=typescript" > src/contentworker.d.ts
 ```
 
+It includes a type per block and `BlockTypes`, the catalog's blocks from the block catalog in force
+and the rest from the blocks fields' variants, as `contentworker types` gives.
+
 The point is that CI and coding agents need nothing installed, and cannot type against a stale file:
 the banner carries the space, environment and generation time, so a checked-in copy that has drifted
 says so. `preview:read`, the same scope as listing content types, since it is the same information
@@ -524,8 +527,8 @@ which is valid to store. See [Rich text](./domain-model.md#rich-text).
 
 | Method | Path                         | Scope            | Description                                                                                                         |
 | ------ | ---------------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------- |
-| POST   | `…/entries/generate`         | `content:write`  | Generate draft fields from prompt                                                                                   |
-| POST   | `…/entries/canvas`           | `content:write`  | Multi-field canvas generation                                                                                       |
+| POST   | `…/entries/generate`         | `content:write`  | Draft fields from a prompt: scalars and top-level blocks fields (images from the asset library); nothing saved     |
+| POST   | `…/entries/canvas`           | `content:write`  | Map prose (delimited as data) into the same fields `…/generate` drafts; nothing saved                               |
 | POST   | `…/entries/:id/translate`    | `content:write`  | Translate fields to locales                                                                                         |
 | POST   | `…/entries/:id/summarize`    | `content:write`  | Summarize entry text                                                                                                |
 | POST   | `…/entries/:id/autofill`     | `content:write`  | Fill empty fields                                                                                                   |
@@ -892,7 +895,23 @@ message:
   read but not write, or `{ reason: "hidden", hidden: n }` counting fields it can't read (never
   named). A `403` with no details is the role refusing the entry itself.
 
-MCP: `entry_blocks_patch` (audited), `entry_blocks_validate` and `entry_blocks_outline` (`readOnlyHint`, not audited). Coworker offers `entry_blocks_outline` and proposes `entry_blocks_patch`; its card shows the dry run's field diff and holds Confirm while the dry run refuses.
+`POST …/entries/blocks/generate` (`content:write`, gated like the patch) composes blocks with AI
+for one place: `{ field, prompt, entryId | contentTypeApiId, parent?: { key, slot }, locale?,
+tier? }` → `{ contentTypeApiId, entryId, expectedVersion, locale, ops, fields, unresolvedImages,
+issues, usage }`. The model is offered only the blocks the block rules allow there (with their
+fields, slots and counts); images are asked for by description and found with asset search; the
+answer's `insert` ops are judged as `…/entries/blocks/validate` judges them. Nothing is saved:
+send `ops` with `expectedVersion` to the patch, or create a new entry with `fields`; `ready` says
+whether they save as they are. Images are asked for only for a key holding `preview:read`; a
+required one the library can't match comes back as an `image_required` issue (`ready: false`)
+rather than a refusal. `503 ai_unavailable` (retryable) when the model doesn't answer in time.
+`422` before
+the model is called for a locked place or region (`locked`, `slot_locked`, `region_locked`,
+`region_frozen`), a `full` one or one that takes nothing; `422 bad_generation` for an answer
+outside the schema, and the field's issues for one a save would refuse. See
+[AI, agents and search](./ai-agents-and-search.md#layout-aware-generation).
+
+MCP: `entry_blocks_patch` and `entry_blocks_generate` (audited; the second spends a model call, so it isn't marked read-only), `entry_blocks_validate` and `entry_blocks_outline` (`readOnlyHint`, not audited). Coworker offers `entry_blocks_outline` and proposes `entry_blocks_patch`; its card shows the dry run's field diff and holds Confirm while the dry run refuses.
 
 ### Menus
 
@@ -1293,6 +1312,7 @@ run before routing (the last two rows).
 | `DomainError` code `unauthorized`                                    | 401        | `unauthorized`      |                                                 |
 | `DomainError` code `forbidden`                                       | 403        | `forbidden`         |                                                 |
 | `RateLimitedError`                                                   | 429        | `rate_limited`      |                                                 |
+| `AiUnavailableError`                                                 | 503        | `ai_unavailable`    | `retryAfterSeconds` when given; retryable       |
 | `NotConfiguredError`                                                 | 501        | `not_configured`    |                                                 |
 | `SecretUnreadableError`                                              | 500        | `secret_unreadable` |                                                 |
 | other `DomainError` (`InvalidStateError`, `QueryTooBroadError`, ...) | 400        | its code            |                                                 |

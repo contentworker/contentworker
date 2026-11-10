@@ -89,7 +89,16 @@ const article = await client.getEntry<ArticleFields>(id, { locale: 'en-US' });
 
 Each type gets a delivery shape (`ArticleFields`) and a management shape (`ArticleDraftFields`).
 Regenerate in CI after the model changes (the `content_type.published` webhook fires on publish).
-`contentworker types` and `GET …/content-types?format=typescript` give the same output.
+`contentworker types` and `GET …/content-types?format=typescript` give the same output, block
+types (`BlockTypes`) included: from the block catalog once one is pushed.
+
+## Render blocks
+
+Render a blocks field with `<Blocks value components catalog />` from `@contentworker/sdk/react`
+(`<CwBlocks>` from `@contentworker/sdk/vue`, `renderBlocks` from `@contentworker/sdk/blocks`
+elsewhere), typing `components` as `BlockComponents<BlockTypes>`. Pass the catalog so a block
+stored under a former id renders as its block, a `fallback` for ids your code doesn't know yet,
+and `preview` only in a live preview render.
 
 ## Render rich text
 

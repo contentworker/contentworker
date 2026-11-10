@@ -26,7 +26,8 @@ import {
 /**
  * @contentworker/sdk-web — React hooks over @contentworker/sdk-core. Provide a client via
  * `ContentworkerProvider`, then call `useEntry` / `useEntries` / `useAsset` /
- * `useSemanticSearch`, and render assets with `<Image>`. SSR-safe (no fetch on the server unless invoked).
+ * `useSemanticSearch`, render assets with `<Image>` and blocks fields with `<Blocks>`. SSR-safe
+ * (no fetch on the server unless invoked).
  */
 import {
   type CSSProperties,
@@ -392,3 +393,23 @@ export {
   localizedText,
   srcset,
 } from '@contentworker/sdk-core';
+export type {
+  BlockAttrs,
+  BlockCatalogLike,
+  BlockGhost,
+  BlockGhosts,
+  BlockValue,
+  BlockVariantLike,
+  FieldAttrs,
+  SlotAttrs,
+  UnknownBlock,
+} from '@contentworker/sdk-core/blocks';
+export {
+  type BlockComponentProps,
+  type BlockComponents,
+  Blocks,
+  type BlocksProps,
+  type SlotNames,
+  type SlotProps,
+  type SlotRender,
+} from './blocks.js';

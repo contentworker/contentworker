@@ -16,6 +16,7 @@ export * from './content-type/block-config';
 export * from './content-type/block-locks';
 export * from './content-type/block-patch';
 export * from './content-type/blocks';
+export * from './content-type/blocks-schema';
 export * from './content-type/content-type';
 export * from './content-type/dates';
 export * from './content-type/field';

@@ -123,6 +123,12 @@ function Article({ id }: { id: string }) {
 `app.use(createContentworker(client))`. Both fetch on the
 client only, so server rendering stays predictable.
 
+A [blocks field](/reference/field-types/#blocks) renders with `<Blocks components={…} />` (Vue:
+`<CwBlocks>`): a component per block id, typed by the generated `BlockTypes`, slots rendered with
+the same components, and live preview marks only when you pass `preview`. See
+[Rendering blocks](/guides/blocks-from-code/#rendering-blocks); `@contentworker/sdk/blocks` does
+the same with plain functions for any other renderer.
+
 ### Live updates
 
 `useLiveEntry` and `useLiveEntries` (React and Vue) are `useEntry` and `useEntries` that stay
@@ -215,6 +221,8 @@ The management client changes an entry's SEO metadata with `cma.entries.setSeo(i
 **Blocks.** `cma.entries.outlineBlocks(id)` lists an entry's blocks by key, and
 `cma.entries.patchBlocks(id, { expectedVersion, ops })` inserts, updates, moves, removes and
 duplicates them by key as one new draft (see [Field types](/reference/field-types/#blocks)).
+`cma.entries.generateBlocks({ entryId, field, prompt })` composes blocks for a field or slot with
+AI and answers the ops to send to `patchBlocks` (see [AI](/guides/ai/#compose-blocks)).
 
 **Redirects.** `client.redirects()` returns the environment's enabled redirects and
 `client.resolveRedirect(path, { locale })` asks Delivery about one path (`null` when none matches).
@@ -388,6 +396,12 @@ property's doc comment, with a Date field's format. A list of numbers is `number
 field that a [conditional rule](/guides/content-modeling/#conditional-field-rules) can hide is
 optional. Regenerate after upgrading: an older generator types number lists as `string[]`. The
 same output is served at `GET …/content-types?format=typescript`.
+
+Each block of a blocks field gets a type too (`HeroBlock`, its slots typed as lists of the blocks
+they allow), and `BlockTypes` maps every block id to its type, for
+[`<Blocks>`](/guides/blocks-from-code/#rendering-blocks). They come from the block catalog in force
+(`contentworker types --blocks <file>` takes them from a blocks file instead), and before the
+first push from the blocks fields' block types.
 
 :::caution[Upgrade before labelling options]
 A field's `in` list can hold `{ value, label }` options. SDK releases from before that throw when

@@ -1615,6 +1615,7 @@ All extend `DomainError` (`{ code, message, details? }`) and carry a stable, cli
 | `ForbiddenError(scope)`               | `forbidden`         | 403  | Missing the required scope                                       |
 | `HookRejectedError(hook, reason)`     | `hook_rejected`     | 422  | A write-path hook refused the operation                          |
 | `RateLimitedError(message, retry?)`   | `rate_limited`      | 429  | A per-space rate or budget ceiling was exceeded                  |
+| `AiUnavailableError(message, retry?)` | `ai_unavailable`    | 503  | The model didn't answer within the call's cap; retryable         |
 | `NotConfiguredError(capability, msg)` | `not_configured`    | 501  | The deployment has not bound the capability the request needs    |
 | `SecretUnreadableError(context)`      | `secret_unreadable` | 500  | A stored secret no configured key opens (never treated as unset) |
 

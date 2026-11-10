@@ -7,6 +7,7 @@ import {
   createContentType,
   deleteContentType,
   deleteContentTypeWithEntries,
+  findBlockCatalog,
   getContentType,
   getLocaleSettings,
   listContentTypes,
@@ -23,7 +24,7 @@ import {
   canAccessContentType,
   SCOPES,
 } from '@contentworker/domain';
-import { generateTypes } from '@contentworker/sdk-codegen';
+import { type BlockCatalogInput, generateTypes } from '@contentworker/sdk-codegen';
 import { Hono } from 'hono';
 import { type AuthDeps, type AuthVars, requireScope } from '../../auth';
 import { doc } from '../../docs/openapi';
@@ -73,14 +74,17 @@ export function contentTypesRoutes(deps: AuthDeps): Hono<AuthVars> {
     doc('Content types', 'List content types', {
       description:
         '`?format=typescript` returns the content model as a TypeScript module instead of ' +
-        'JSON — the same output the codegen CLI produces, served from the live model so CI ' +
-        'and coding agents need nothing installed to type against it.',
+        'JSON — the same output the codegen CLI produces, block types from the block catalog ' +
+        'in force included, served from the live model so CI and coding agents need nothing ' +
+        'installed to type against it.',
       query: { format: 'json (default) | typescript' },
     }),
     requireScope(SCOPES.previewRead),
     async (c) => {
       const types = await listContentTypes(ctx, scopeOf(c));
       if (c.req.query('format') !== 'typescript') return c.json({ items: types });
+      // The block types follow the catalog in force, as `contentworker types` does.
+      const blockCatalog = await findBlockCatalog(ctx, scopeOf(c));
 
       // Served as text/plain rather than a TypeScript media type: browsers and
       // `curl` show it, and nothing downstream tries to execute it.
@@ -89,6 +93,7 @@ export function contentTypesRoutes(deps: AuthDeps): Hono<AuthVars> {
           banner: `Generated from ${scopeOf(c).spaceId}/${scopeOf(c).environmentId} at ${ctx.clock
             .now()
             .toISOString()}. Do not edit by hand.`,
+          blockCatalog: blockCatalog as unknown as BlockCatalogInput | undefined,
         }),
         200,
         { 'content-type': 'text/plain; charset=utf-8' },

@@ -35,6 +35,9 @@ name) and `description` (what it covers and "Use when …"), a body under 500 li
 Design points:
 
 - **Built on `@contentworker/sdk-management`**, with `@contentworker/sdk-codegen` for `types`.
+  `types` types the blocks from the catalog in force (`cma.blockCatalog.get()`, a 404 meaning none
+  yet, when the variants are used), or from the blocks file `--blocks` names (read like `blocks
+  push` reads one).
   Both are dev dependencies that tsup bundles into `dist/bin.js`, so the published package has no
   runtime dependencies. Runs on Node 24+, not workerd.
 - **Login is the MCP device flow.** The CLI registers itself as a public client

@@ -62,6 +62,7 @@ export * from './image';
 export * from './import';
 export * from './import-jobs';
 export * from './invites';
+export * from './layout-generation';
 export * from './locales';
 export * from './media-ai';
 export * from './menus';

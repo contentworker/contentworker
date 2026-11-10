@@ -3,8 +3,9 @@
 > A private workspace package. It ships on npm inside [`@contentworker/sdk`](../sdk/README.md) as `@contentworker/sdk/react`; the examples below use that name.
 
 React hooks and components over `@contentworker/sdk`: `useEntry`, `useEntries`,
-`useAsset`, `useSemanticSearch`, an `<Image>` for delivered assets, and inline editing on
-previews. Fetching happens on the client, so server rendering is predictable.
+`useAsset`, `useSemanticSearch`, an `<Image>` for delivered assets, `<Blocks>` for blocks fields
+([Rendering blocks](https://docs.contentworker.app/guides/blocks-from-code/#rendering-blocks)), and
+inline editing on previews. Fetching happens on the client, so server rendering is predictable.
 
 ```sh
 npm install @contentworker/sdk react
