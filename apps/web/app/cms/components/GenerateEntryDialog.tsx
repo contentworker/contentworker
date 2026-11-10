@@ -23,6 +23,7 @@ import { useRef, useState } from 'react';
 import { Confirmation, ProposedValue } from '~/cms/components/ai/Confirmation';
 import { Suggestion, Suggestions } from '~/cms/components/ai/Suggestion';
 import { Task, TaskItem } from '~/cms/components/ai/Task';
+import { draftBlockRows, isBlocksField, placeName } from '../lib/draft-blocks';
 import type { GeneratedDraft, ModelTier } from '../lib/management';
 import { useStoppable } from '../lib/use-stoppable';
 
@@ -128,14 +129,24 @@ export function GenerateEntryDialog(props: {
   };
 
   const values = draft
-    ? Object.entries(draft.result.fields).flatMap(([apiId, byLocale]) =>
-        Object.entries(byLocale ?? {}).map(([locale, value]) => ({
+    ? Object.entries(draft.result.fields).flatMap(([apiId, byLocale]) => {
+        const field = contentType.fields.find((f) => f.apiId === apiId);
+        return Object.entries(byLocale ?? {}).map(([locale, value]) => ({
           key: `${apiId}:${locale}`,
           label: `${fieldName(apiId)} (${locale})`,
+          // A blocks field reads as the blocks it holds, not as JSON.
+          blocks: field && isBlocksField(field) ? draftBlockRows(field, value) : undefined,
           preview: previewOf(value),
-        })),
-      )
+        }));
+      })
     : [];
+  const missing = draft
+    ? (draft.result.unresolvedImages ?? []).map((image) => ({
+        ...image,
+        place: placeName(contentType, draft.result.fields, image.path),
+      }))
+    : [];
+  const required = missing.filter((m) => m.required).length;
   const fieldCount = draft ? Object.keys(draft.result.fields).length : 0;
   const tokens = draft ? draft.result.usage.inputTokens + draft.result.usage.outputTokens : 0;
 
@@ -171,6 +182,11 @@ export function GenerateEntryDialog(props: {
                   Drafted {fieldCount} {fieldCount === 1 ? 'field' : 'fields'}; validation runs when
                   you save
                 </TaskItem>
+                {missing.length > 0 && (
+                  <TaskItem>
+                    Looked in the library for images: no match for {missing.length}
+                  </TaskItem>
+                )}
               </Task>
             }
           >
@@ -178,11 +194,62 @@ export function GenerateEntryDialog(props: {
               <p className="text-muted-foreground text-sm">The model returned no field values.</p>
             ) : (
               <div className="max-h-72 space-y-2 overflow-y-auto pr-1">
-                {values.map((v) => (
-                  <ProposedValue key={v.key} label={v.label}>
-                    {v.preview}
-                  </ProposedValue>
-                ))}
+                {values.map((v) =>
+                  v.blocks ? (
+                    <div key={v.key} className="min-w-0">
+                      <p className="text-muted-foreground text-xs">{v.label}</p>
+                      {v.blocks.length === 0 ? (
+                        <p className="text-sm">No blocks</p>
+                      ) : (
+                        <ol
+                          aria-label={`${v.label}: drafted blocks`}
+                          className="mt-0.5 space-y-0.5"
+                        >
+                          {v.blocks.map((b) => (
+                            <li
+                              key={b.key}
+                              className="flex min-w-0 gap-1.5 text-sm"
+                              style={{ paddingInlineStart: `${b.depth * 1}rem` }}
+                            >
+                              <span className="shrink-0 font-medium">{b.name}</span>
+                              {b.text && (
+                                <span className="truncate text-muted-foreground">{b.text}</span>
+                              )}
+                            </li>
+                          ))}
+                        </ol>
+                      )}
+                    </div>
+                  ) : (
+                    <ProposedValue key={v.key} label={v.label}>
+                      {v.preview}
+                    </ProposedValue>
+                  ),
+                )}
+                {missing.length > 0 && (
+                  <div className="min-w-0 border-rule border-t pt-2">
+                    <p className="text-muted-foreground text-xs">
+                      {missing.length === 1
+                        ? 'An image the library had no match for, left empty'
+                        : 'Images the library had no match for, left empty'}
+                    </p>
+                    <ul className="mt-0.5 space-y-0.5">
+                      {missing.map((m) => (
+                        <li key={m.path} className="text-sm">
+                          <span className="font-medium">{m.place}</span>
+                          <span className="text-muted-foreground"> · “{m.query}”</span>
+                          {m.required && <span className="text-bad"> · required</span>}
+                        </li>
+                      ))}
+                    </ul>
+                    {required > 0 && (
+                      <p className="mt-1 text-sm">
+                        Choose {required === 1 ? 'an image for it' : 'images for them'} before you
+                        save.
+                      </p>
+                    )}
+                  </div>
+                )}
               </div>
             )}
           </Confirmation>

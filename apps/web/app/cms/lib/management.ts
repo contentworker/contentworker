@@ -551,6 +551,18 @@ export type ModelTier = 'flagship' | 'balanced' | 'fast';
 export interface GeneratedDraft {
   readonly contentTypeApiId: string;
   readonly fields: EntryFields;
+  /** Images the drafted blocks asked for that the library had no match for: left empty. */
+  readonly unresolvedImages?: readonly {
+    readonly path: string;
+    readonly query: string;
+    readonly required?: true;
+  }[];
+  /** What still stands between the draft and a save (a required image left empty). */
+  readonly issues?: readonly {
+    readonly field: string;
+    readonly locale?: string;
+    readonly message: string;
+  }[];
   readonly usage: { readonly inputTokens: number; readonly outputTokens: number };
 }
 
