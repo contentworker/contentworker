@@ -6,7 +6,7 @@
  * failure, and reads in the past tense ("Not published"), so it still makes sense later.
  */
 
-import { ASSISTANT_TOOLS, isAssistantTool } from '@contentworker/domain';
+import { ASSISTANT_TOOLS, fillRefusal, isAssistantTool, readFillTurn } from '@contentworker/domain';
 import { Button } from '@contentworker/ui/button';
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@contentworker/ui/card';
 import { Collapsible, CollapsibleContent } from '@contentworker/ui/collapsible';
@@ -29,7 +29,7 @@ import { Link, useNavigate } from 'react-router';
 import { Confirmation, ConfirmationActions } from '~/components/ai-elements/confirmation';
 import { MessageAction, MessageResponse } from '~/components/ai-elements/message';
 import { Mark } from '~/components/mark';
-import { useAssistantIfAny } from '../../lib/assistant';
+import { type ProposedBlocks, useAssistantIfAny } from '../../lib/assistant';
 import { metaOf } from '../../lib/assistant-client';
 import { useClient } from '../../lib/client-context';
 import type { Connection, SpaceStarterInfo } from '../../lib/management';
@@ -48,7 +48,7 @@ import {
   useHandFocus,
 } from '../entries/EntryReview';
 import { DEFAULT_STARTERS } from '../layout/CreateSpaceDialog';
-import { refusalHold } from './block-proposal';
+import { BlockRefused, refusalHold } from './block-proposal';
 import { ProposalDetail, proposalOf, useProposalReview } from './proposal';
 
 export type Part = ToolUIPart | DynamicToolUIPart;
@@ -340,6 +340,8 @@ export function isDestructive(part: Part): boolean {
 export interface TurnScope {
   readonly spaceId?: unknown;
   readonly environmentId?: unknown;
+  /** The entry and slot the turn was asked to fill, as the agent wrote it (`readFillTurn`). */
+  readonly fill?: unknown;
 }
 
 /**
@@ -496,9 +498,19 @@ export function ActionCard({
   const asking = part.state === 'approval-requested' && !replaced;
 
   const { client, conn } = useClient();
+  // Asked to fill one slot, the turn's other changes (another tool's write, a patch of another
+  // entry) are refused here as the agent refuses them when they run: said, and nothing read.
+  const fillTurn = useMemo(() => (direct ? undefined : readFillTurn(turn?.fill)), [direct, turn]);
+  const offFill = useMemo(
+    () =>
+      asking && fillTurn && name !== 'entry_blocks_patch'
+        ? fillRefusal(fillTurn, name, part.input)
+        : undefined,
+    [asking, fillTurn, name, part.input],
+  );
   const target = useMemo(
-    () => (asking ? publishTarget(part, conn, direct, turn) : null),
-    [asking, part, conn, direct, turn],
+    () => (asking && !offFill ? publishTarget(part, conn, direct, turn) : null),
+    [asking, offFill, part, conn, direct, turn],
   );
   const place = target === 'elsewhere' || target === 'unknown' ? target : undefined;
   const review = useEntryReview(
@@ -508,10 +520,12 @@ export function ActionCard({
   );
   // A model's proposal (other than a publish, read above) shows what it would change. A page's card
   // needs no reading: the page made it from what the person was looking at.
-  const proposal = useMemo(
-    () => (asking && !direct && target === null ? proposalOf(part) : null),
-    [asking, direct, target, part],
-  );
+  const proposal = useMemo(() => {
+    const p = asking && !direct && !offFill && target === null ? proposalOf(part) : null;
+    if (p?.kind !== 'blocks') return p;
+    // A turn asked to fill one slot holds its block patch to that entry and slot.
+    return fillTurn ? { ...p, fill: fillTurn } : p;
+  }, [asking, direct, offFill, target, part, fillTurn]);
   const proposalPlace = useMemo(() => {
     if (!proposal) return undefined;
     const p = placeOf(part, conn, direct, turn);
@@ -530,13 +544,17 @@ export function ActionCard({
         : undefined;
   const about = aboutOf(part) ?? reviewTitle;
   // A card that can't show what it changes can't be confirmed from here, wherever it's pressed.
-  const blocked = target
-    ? place !== undefined || review.status === 'failed'
-    : proposal
-      ? proposalPlace !== undefined || proposed.status === 'failed' || proposed.status === 'refused'
-      : false;
+  const blocked = offFill
+    ? true
+    : target
+      ? place !== undefined || review.status === 'failed'
+      : proposal
+        ? proposalPlace !== undefined ||
+          proposed.status === 'failed' ||
+          proposed.status === 'refused'
+        : false;
   const pending = target ? review.status === 'loading' : proposed.status === 'loading';
-  const held = Boolean(target || proposal);
+  const held = Boolean(target || proposal || offFill);
   const confirmOff = sent || blocked || (held && pending);
   const reasonId = useId();
 
@@ -570,12 +588,54 @@ export function ActionCard({
   }, [asking]);
   const confirmButton = useRef<HTMLButtonElement>(null);
   useHandFocus(confirmOff && !sent, confirmButton, safe, () => focusWithin.current);
+  /** What this person answered here, if they did. */
+  const [said, setSaid] = useState<boolean | null>(null);
   const answer = (approved: boolean) => {
     if (approved && confirmOff) return;
     holder.current?.focus({ preventScroll: true });
     setSent(true);
+    setSaid(approved);
     respond(part, approved);
   };
+
+  // A block patch whose dry run would save as it stands shows on its entry's page as ghosts
+  // (`useProposedBlocks`): while it asks, and on Confirm until its save lands; Not now, a failed
+  // save or a newer request replacing it takes them back. Only ever what the dry run applied.
+  const setGhosts = useAssistantIfAny()?.setProposal;
+  const ghost = useRef<Omit<ProposedBlocks, 'state'> | null>(null);
+  if (asking && said === null) {
+    ghost.current =
+      proposal?.kind === 'blocks' && proposed.status === 'ready' && proposed.applied
+        ? {
+            entryId: proposal.entryId,
+            spaceId: conn.space,
+            environmentId: conn.environment,
+            ops: proposed.applied,
+          }
+        : null;
+  }
+  const approved = (part.approval as { approved?: boolean } | undefined)?.approved;
+  const ghostState: ProposedBlocks['state'] | null = !ghost.current
+    ? null
+    : asking && said === null
+      ? 'pending'
+      : replaced ||
+          said === false ||
+          approved === false ||
+          part.state === 'output-error' ||
+          part.state === 'output-denied'
+        ? 'declined'
+        : part.state === 'output-available'
+          ? 'saved'
+          : 'saving';
+  const ghostKey = ghostState ? JSON.stringify([ghostState, ghost.current]) : null;
+  // Keyed on the ghosts by content (ghostKey).
+  useEffect(() => {
+    if (!setGhosts) return;
+    const g = ghost.current;
+    setGhosts(actionKey, g && ghostState ? { ...g, state: ghostState } : null);
+  }, [ghostKey, setGhosts, actionKey]);
+  useEffect(() => () => setGhosts?.(actionKey, null), [setGhosts, actionKey]);
 
   return (
     // biome-ignore lint/a11y/noStaticElementInteractions: it only notices focus; it is no control.
@@ -613,10 +673,11 @@ export function ActionCard({
               </CardTitle>
               <Source direct={direct} />
             </CardHeader>
-            {about || target || proposal || name === 'space_create' ? (
+            {about || target || proposal || offFill || name === 'space_create' ? (
               <CardContent className="space-y-2">
                 {about ? <p className="break-words text-ui leading-snug">{about}</p> : null}
                 {name === 'space_create' ? <SpaceProposal input={part.input} /> : null}
+                {offFill ? <BlockRefused refusal={{ why: 'outside', ...offFill }} /> : null}
                 {proposal ? (
                   <ProposalDetail
                     proposal={proposal}
@@ -648,7 +709,17 @@ export function ActionCard({
               <p className="text-muted-foreground text-xs leading-snug">
                 Nothing changes until you confirm, here or wherever else you’re signed in.
               </p>
-              {target ? (
+              {offFill ? (
+                <ReviewHold
+                  id={reasonId}
+                  verb="confirm"
+                  pending={false}
+                  blocked
+                  shows="what changes"
+                  reading="reading what changes"
+                  why={offFill.hold}
+                />
+              ) : target ? (
                 <ReviewHold
                   id={reasonId}
                   verb="confirm"

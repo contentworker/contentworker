@@ -1,0 +1,43 @@
+/** Banner (`banner`) — formerly `hero` — The top of a page. */
+export type BannerBlock = {
+  _type: 'banner';
+  _key: string;
+  /** Heading */
+  heading: string;
+  tone?: 'light' | 'dark';
+  image?: AssetLink | DeliveredAsset;
+};
+
+/** Card grid (`grid`) */
+export type GridBlock = {
+  _type: 'grid';
+  _key: string;
+  title?: string;
+  /** Cards */
+  cards: (CardBlock | QuoteBlock)[];
+  aside?: QuoteBlock[];
+};
+
+/** Card (`card`) */
+export type CardBlock = {
+  _type: 'card';
+  _key: string;
+  title: string;
+};
+
+/** `quote` */
+export type QuoteBlock = {
+  _type: 'quote';
+  _key: string;
+  text?: string;
+};
+
+/** Each block id's type: what `BlockComponents<BlockTypes>` (@contentworker/sdk/react, /vue) types each component's block by. */
+export type BlockTypes = {
+  banner: BannerBlock;
+  grid: GridBlock;
+  card: CardBlock;
+  quote: QuoteBlock;
+};
+
+export type BlockId = keyof BlockTypes;

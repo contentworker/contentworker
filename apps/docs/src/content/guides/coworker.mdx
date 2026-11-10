@@ -69,6 +69,16 @@ the release. **Confirm** stays off until the card has read this; if it can't, th
 A declined card's line says what stayed as it was, such as **Not published · Spring launch
 notes**. A card that nobody answers is let go after a day.
 
+A block patch's card, while it waits, also shows on the entry's own page: the canvas and the
+entry editor's Site view draw the proposed blocks as ghosts on your site, marked **Proposed**
+([live preview](/guides/live-preview/#the-canvas)). They are never saved by being shown; **Not
+now** takes them off the page, and **Confirm** saves the patch as the card read it. On the canvas,
+**Ask Coworker to fill this** at a seam asks Coworker to fill that one place with the blocks the
+slot takes there. The slot, its bounds and the names of the blocks around it go with that message
+as quoted content, never as instructions. In that turn, Coworker can only put blocks there: a
+card for anything else (another place, another entry, any other change) says so and can't be
+confirmed, and the change is refused if it is sent anyway.
+
 A card that publishes, unpublishes or restores an entry is held to the entry as it was when the
 card was made: the version on your screen for a page's card, the current version when the model
 proposed it. If someone saves a newer draft before you confirm, the card is refused and nothing
@@ -103,13 +113,18 @@ It offers a fixed set of [MCP tools](/guides/mcp/), by their MCP names.
 
 | Kind | Tools |
 | --- | --- |
-| Reads, no confirm | `docs_search`, `docs_read`, `model_list_content_types`, `model_get_content_type`, `entries_query`, `entries_get`, `entry_blocks_outline`, `entries_suggest`, `content_search`, `entries_list_versions`, `entries_diff_versions`, `entries_list_trashed`, `releases_list`, `releases_get`, `comments_list`, `tasks_list`, `taxonomy_list_tags`, `assets_list`, `workflow_task_list` |
+| Reads, no confirm | `docs_search`, `docs_read`, `model_list_content_types`, `model_get_content_type`, `entries_query`, `entries_get`, `entry_blocks_outline`, `blocks_catalog_get`, `blocks_config_effective`, `entries_block_locks_get`, `entry_blocks_generate`, `entry_blocks_validate`, `assets_search`, `entries_suggest`, `content_search`, `entries_list_versions`, `entries_diff_versions`, `entries_list_trashed`, `releases_list`, `releases_get`, `comments_list`, `tasks_list`, `taxonomy_list_tags`, `assets_list`, `workflow_task_list` |
 | Edits, run at once from a page | `entries_create`, `entries_update`, `entry_blocks_patch`, `entries_duplicate`, `entries_restore`, `entries_set_metadata`, `entry_apply_tags`, `comments_add`, `releases_add_entry` |
 | Actions, always ask first | `entries_publish`, `entries_unpublish`, `entries_trash`, `entries_purge`, `entries_restore_version`, `entries_bulk_action`, `bulk_job_start`, `schedule_action`, `releases_publish` |
 
 Before the workspace has a space, it offers only `space_starters_list` and `space_create`, and
 only to a workspace admin: it asks what the first space will hold and proposes one, which you
 confirm on its card. Those two never run inside a space, and nothing else runs without one.
+
+To lay out a page of blocks, it outlines the entry, reads what each place takes (the block rules
+and catalog) and what is locked, composes blocks with `entry_blocks_generate` (images come from
+your asset library, found by what they show) or writes the ops itself, checks them, and proposes
+them as one `entry_blocks_patch`. It never changes blocks inside a locked region or slot.
 
 A write the model proposes always waits for your confirm, whichever row it is in. Every other MCP
 tool stays MCP's alone. Whatever arguments it is given, a call runs in the space and environment

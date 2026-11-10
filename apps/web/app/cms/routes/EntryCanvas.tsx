@@ -59,12 +59,14 @@ import { CanvasStage } from '~/cms/components/canvas/CanvasStage';
 import { Dock } from '~/cms/components/canvas/Dock';
 import { Inspector, type InspectorTab } from '~/cms/components/canvas/Inspector';
 import { Layers } from '~/cms/components/canvas/Layers';
+import { ProposalLine } from '~/cms/components/canvas/ProposalLine';
 import { SaveConflictDialog } from '~/cms/components/entries/SaveConflictDialog';
 import { LoadingStatus } from '~/cms/components/loading';
 import { DEVICES, SiteNotice, useDevice } from '~/cms/components/pane/SitePane';
 import { useSiteFrame } from '~/cms/components/pane/use-site-frame';
 import { ResponsiveSheetContent } from '~/cms/components/responsive-sheet';
 import { StatusBadge, ToneBadge } from '~/cms/components/status';
+import { useAssistantIfAny, useProposedBlocks } from '~/cms/lib/assistant';
 import type { ActorDirectory } from '~/cms/lib/authorship';
 import {
   canLock,
@@ -77,6 +79,7 @@ import {
 } from '~/cms/lib/block-locks';
 import { configRefusal, rulesOver } from '~/cms/lib/block-rules';
 import { canvasChecks } from '~/cms/lib/canvas/checks';
+import { fillAsk, fillFor, proposedLayers } from '~/cms/lib/canvas/fill';
 import {
   applyOps,
   type CanvasHistory,
@@ -111,6 +114,7 @@ import {
 import {
   blockKeyOfRef,
   blockRects,
+  ghostRects,
   type RefContext,
   regionRects,
   seamsFrom,
@@ -124,6 +128,7 @@ import {
 } from '~/cms/lib/live-preview/frame-channel';
 import { capabilitiesFor, SELECT_ONLY } from '~/cms/lib/live-preview/host';
 import { refForField } from '~/cms/lib/live-preview/pick';
+import { type GhostKind, ghostKeys, ghostOps } from '~/cms/lib/live-preview/proposals';
 import { ApiError, type BlockLockInput, type EntryBlockLock } from '~/cms/lib/management';
 import { useEntryPickers } from '~/cms/lib/pickers';
 import {
@@ -357,7 +362,45 @@ function Canvas({
   const locking = review !== 'narrow' && canLock(access.data, typeId);
   usePageShortcuts(locking ? CANVAS_LOCK_SHORTCUTS : CANVAS_SHORTCUTS);
   const chosenRun = runBetween(tree, anchor, selected);
-  const allowed = scopes ? capabilitiesFor(scopes) : access.isError ? SELECT_ONLY : undefined;
+  const assistant = useAssistantIfAny();
+  const coworker = assistant?.enabled === true;
+  const allowed = scopes
+    ? capabilitiesFor(scopes, { assistant: coworker })
+    : access.isError
+      ? SELECT_ONLY
+      : undefined;
+
+  // --- Coworker's proposal -------------------------------------------------------------------
+  // A block patch Coworker proposes for this entry shows on the page as ghosts while its card
+  // waits; once it is saved the canvas reads the entry again (unless it holds edits of its own,
+  // whose save then asks about the newer draft as any other).
+  const proposal = useProposedBlocks(entryId, () => {
+    void locksQuery.refetch();
+    if (dirtyRef.current) {
+      // The canvas's own edits stay; their save meets the newer draft and asks, as any other.
+      toast.success(
+        'Saved Coworker’s change. Your unsaved edits are kept: saving them asks about the newer draft.',
+      );
+      return;
+    }
+    toast.success('Saved Coworker’s change');
+    setSelected(null);
+    setDockAt(null);
+    void queryClient.invalidateQueries({ queryKey: keys.entryActivityPages(entryId) });
+    // Read again first, then taken in: the draft the canvas holds becomes the saved one.
+    void queryClient
+      .invalidateQueries({ queryKey: keys.entry(entryId) })
+      .then(() => setReloading(true));
+  });
+  const shownOps = useMemo(() => (proposal ? ghostOps(proposal.ops) : null), [proposal]);
+  const ghosts = useMemo(
+    () => (shownOps ? ghostKeys(shownOps) : new Map<string, GhostKind>()),
+    [shownOps],
+  );
+  const proposedInLayers = useMemo(
+    () => (proposal ? proposedLayers(tree, proposal.ops) : undefined),
+    [proposal, tree],
+  );
 
   const refCtx: RefContext = {
     space: conn.space,
@@ -395,6 +438,7 @@ function Canvas({
     mode: 'edit',
     device,
     canvas: true,
+    proposal: shownOps,
     onPick: (ref, pageEntries) => {
       if (!pageEntries.includes(entryId)) return;
       const key = blockKeyOfRef(ref, treeRef.current, refCtx);
@@ -488,6 +532,38 @@ function Canvas({
     setInspectorOpen(true);
     setFocusInspector(true);
   };
+  /**
+   * Ask Coworker to fill the dock's place: the blocks the dock offers there, the slot's bounds and
+   * the blocks around it go with that one message, and Coworker's answer is a card to confirm.
+   * Nothing is put in here: the proposal shows on the page as ghosts until the card is answered.
+   */
+  const askFill = () => {
+    if (!assistant || !dockPlace || !editable) return;
+    const fill = fillFor(tree, dockPlace, catalog);
+    if (!fill) return;
+    assistant.ask(fillAsk(tree, dockPlace), {
+      kind: 'entry',
+      entryId,
+      contentType: typeId,
+      label: title,
+      fill,
+    });
+    // Below lg the dock is a sheet, which would hand focus back to the seam as it closes.
+    askedFromDock.current = !wide;
+    setDockAt(null);
+    setSaid('Asked Coworker to fill this place: its proposal comes as a card to confirm.');
+  };
+  /** The dock closed because Coworker was asked: its sheet leaves focus where the panel put it. */
+  const askedFromDock = useRef(false);
+  /** Why Ask Coworker to fill this waits, when it does. */
+  const askHeld = dirty
+    ? 'Save the draft first: Coworker works from the draft as it is saved.'
+    : proposal?.state === 'saving'
+      ? 'Coworker’s proposal is being saved.'
+      : proposal
+        ? 'Answer Coworker’s proposal first: confirm it or choose Not now.'
+        : undefined;
+
   /** An edit from Layers: focus follows the selection there once the outline re-renders. */
   const fromLayers = () => !!document.activeElement?.closest('[role="tree"]');
   const move = (b: CanvasBlock, by: -1 | 1) => {
@@ -819,6 +895,7 @@ function Canvas({
   const seams = editable && hasLayout ? seamsFrom(geometry, tree, refCtx) : [];
   const rects = blockRects(geometry, tree, refCtx);
   const regions = regionRects(tree, rects);
+  const ghostBoxes = site.proposal.shown ? ghostRects(geometry, ghosts, refCtx) : [];
   const selectedRect = block ? (rects.get(block.key) ?? null) : null;
   /** Who's who for "Locked by …": the team isn't read here, so a teammate reads as one. */
   const directory = { me: access.data?.subject };
@@ -851,6 +928,12 @@ function Canvas({
   const history = doc?.history ?? EMPTY_HISTORY;
   const loading = site.status.status === 'loading';
   const dockOpenAt = dockPlace && editable ? dockPlace : undefined;
+  // Offered with Coworker on, to someone who edits, where Coworker can be asked for what the dock
+  // offers (never a locked place or a full slot: `fillFor` is null there).
+  const dockAsk =
+    coworker && editable && dockOpenAt && fillFor(tree, dockOpenAt, catalog)
+      ? { onAsk: askFill, ...(askHeld ? { held: askHeld } : {}) }
+      : undefined;
   const chosenSeam = dockOpenAt ? `${dockOpenAt.slot.path}#${dockOpenAt.index}` : null;
   const geometryNote =
     editable && site.live && site.status.status === 'live'
@@ -972,6 +1055,7 @@ function Canvas({
         setFocusInspector(true);
       }}
       onAdd={editable ? (slot) => openDock({ slot, index: slot.blocks.length }) : undefined}
+      {...(proposedInLayers ? { proposed: proposedInLayers } : {})}
     />
   );
 
@@ -1097,6 +1181,14 @@ function Canvas({
           <SiteNotice status={site.status} origin={site.origin} onReload={site.reload} />
         </div>
       )}
+      <ProposalLine
+        waiting={!!proposal}
+        saving={proposal?.state === 'saving'}
+        shown={site.proposal.shown}
+        refused={site.proposal.refused}
+        unsupported={site.live && !site.capabilities.includes('proposals')}
+        className="border-b px-4 py-2 sm:px-5"
+      />
 
       <div
         className={cn(
@@ -1122,6 +1214,7 @@ function Canvas({
             hovered={editable || site.live ? hoverRect : null}
             selected={selectedRect}
             regions={regions}
+            ghosts={ghostBoxes}
             onChooseSeam={(seam) => openDock(seam)}
           >
             {loading ? (
@@ -1139,6 +1232,7 @@ function Canvas({
                   catalog={catalog}
                   onInsert={insert}
                   onClose={closeDock}
+                  {...(dockAsk ? { ask: dockAsk } : {})}
                 />
               </div>
             ) : null}
@@ -1180,7 +1274,15 @@ function Canvas({
             </ResponsiveSheetContent>
           </Sheet>
           <Sheet open={!!dockOpenAt} onOpenChange={(open) => !open && closeDock()}>
-            <SheetContent side="bottom">
+            <SheetContent
+              side="bottom"
+              onCloseAutoFocus={(e) => {
+                // Asked Coworker: focus is Coworker's prompt now, not back on the seam.
+                if (!askedFromDock.current) return;
+                askedFromDock.current = false;
+                e.preventDefault();
+              }}
+            >
               <SheetHeader>
                 <SheetTitle>
                   {dockOpenAt ? `Add to ${dockOpenAt.slot.name}` : 'Add a block'}
@@ -1193,6 +1295,7 @@ function Canvas({
                   catalog={catalog}
                   onInsert={insert}
                   onClose={closeDock}
+                  {...(dockAsk ? { ask: dockAsk } : {})}
                 />
               ) : null}
             </SheetContent>

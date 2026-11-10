@@ -25,15 +25,21 @@ export function registerPromotionTools(server: McpServer, t: ToolContext): void 
         'Promote content from one environment to another. Pins the entries to copy (what is live ' +
         'in the source goes live in the target; drafts go as drafts) and runs a risk check. ' +
         'Applies at once when nothing stops it; otherwise it waits as `awaiting_approval` (into ' +
-        'main or an aliased environment, a field removed or retyped, or the risk check flagged ' +
-        'it), and someone other than you approves it with promotion_approve. Omit contentTypes ' +
-        'and entries to promote everything that differs (at most 200 entries).',
+        'main or an aliased environment, a field removed or retyped, the block rules changed or ' +
+        'blocks removed, or the risk check flagged it), and someone other than you approves it ' +
+        'with promotion_approve. Omit contentTypes and entries to promote everything that ' +
+        'differs (at most 200 entries), the block catalog and block config included; blocks: ' +
+        'true adds them to a selection.',
       inputSchema: toolSchema('promotion_request', () =>
         z.object({
           source: z.string(),
           target: z.string(),
           contentTypes: z.array(z.string()).max(MAX_PROMOTION_CONTENT_TYPES).optional(),
           entries: z.array(z.string()).max(MAX_PROMOTION_ENTRIES).optional(),
+          blocks: z
+            .boolean()
+            .optional()
+            .describe('copy the block catalog and block config when they differ'),
           space: z.string().optional(),
         }),
       ),
@@ -48,6 +54,7 @@ export function registerPromotionTools(server: McpServer, t: ToolContext): void 
           target: args.target,
           ...(args.contentTypes ? { contentTypes: args.contentTypes } : {}),
           ...(args.entries ? { entries: args.entries } : {}),
+          ...(args.blocks !== undefined ? { blocks: args.blocks } : {}),
         }),
       );
     },

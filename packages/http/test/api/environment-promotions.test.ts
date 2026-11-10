@@ -1,6 +1,7 @@
 import type { ApiConfig } from '@contentworker/platform/config';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from '../../src/api/app.js';
+import { seedBlocks } from '../snapshot-round-trip';
 import { testConfig } from './config.js';
 import { wire } from './wire.js';
 
@@ -25,9 +26,11 @@ const STAGING = '/spaces/s1/environments/staging';
 
 let app: ReturnType<typeof createApp>;
 let entryId: string;
+let wired: ReturnType<typeof wire>;
 
 beforeEach(async () => {
-  const { ctx, rag, blob, ai } = wire(config);
+  wired = wire(config);
+  const { ctx, rag, blob, ai } = wired;
   app = createApp(ctx, config, rag, blob, ai);
   await app.request('/spaces/s1/environments', {
     method: 'POST',
@@ -100,6 +103,45 @@ describe('promotions over HTTP', () => {
     expect(((await listed.json()) as { items: P[] }).items.map((x) => x.id)).toEqual([p.id]);
     const one = await app.request(`/spaces/s1/promotions/${p.id}`, { headers: admin });
     expect(one.status).toBe(200);
+  });
+
+  it('copies the block catalog and config with a selection when the body asks for them', async () => {
+    await seedBlocks(wired.ctx, { spaceId: 's1', environmentId: 'staging' });
+    const req = await app.request('/spaces/s1/promotions', {
+      method: 'POST',
+      headers: cma,
+      body: JSON.stringify({
+        source: 'staging',
+        target: 'main',
+        contentTypes: ['page'],
+        blocks: true,
+      }),
+    });
+    expect(req.status).toBe(201);
+    const p = (await req.json()) as P & { blocks?: unknown };
+    expect(p.blocks).toEqual({
+      catalogVersion: 1,
+      configVersion: 1,
+      targetCatalogVersion: 0,
+      targetConfigVersion: 0,
+    });
+    expect(p.risk.reasons).toContain(
+      'The block rules change: page.body is new: takes hero, locked',
+    );
+    const approved = await app.request(`/spaces/s1/promotions/${p.id}/approve`, {
+      method: 'POST',
+      headers: admin,
+    });
+    expect(await approved.json()).toMatchObject({
+      status: 'completed',
+      result: { contentTypes: ['page'], blocks: { catalog: true, config: true } },
+    });
+    const rules = await app.request('/spaces/s1/environments/main/block-config/effective', {
+      headers: admin,
+    });
+    expect(await rules.json()).toMatchObject({
+      targets: [{ contentTypeApiId: 'page', field: 'body', blocks: ['hero'], locked: true }],
+    });
   });
 
   it('shows promotions to whoever can decide them, not to a preview key', async () => {

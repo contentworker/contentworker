@@ -28,6 +28,7 @@ api serves, so give it the api host. The Delivery clients share a model (`Delive
 | Edge functions, constrained devices, single-locale, minimal payload | `@contentworker/sdk/edge`         |
 | React Native apps with offline sync                                 | `@contentworker/sdk/react-native` |
 | Programmatic authoring/publishing (writes)                          | `@contentworker/sdk/management`   |
+| Next.js draft mode (route handler + a client that follows it)       | `@contentworker/sdk/next`         |
 | Types for entry fields                                              | `@contentworker/sdk/codegen`      |
 | Rendering rich text to HTML, Markdown or plain text (any framework) | `@contentworker/sdk/rich-text`    |
 
@@ -163,6 +164,58 @@ client.bookmark: string | undefined     // read-your-writes position (preview); 
   appear; an item whose link doesn't resolve is dropped and its children lifted. See
   [the guide](https://docs.contentworker.app/guides/menus/).
 
+### Live updates: `client.live()`
+
+`client.live(options)` (`packages/sdk/core/src/live.ts`) follows the Live Content API, the
+server-sent event stream at `GET <baseUrl>/delivery/<space>/<env>/live` (served on the delivery
+and api hosts). It reads the stream with `fetch` and the client's key as a bearer header
+(`EventSource` can't send one), so the key's scope is the server's to apply: its space, and only
+content its role may read (`liveEventFor`). A preview client connects to the same delivery path,
+since there is no preview stream: it hears of publishes, not draft saves.
+
+```ts
+const live = client.live({
+  types: ['entry.published', 'entry.unpublished'], // server-side filter (?types=)
+  entryIds: [entry.id],                            // client-side filters; either one matching passes
+  contentTypes: ['post'],
+  onEvent(event) { /* LiveEvent, typed by `type` */ },
+  onStatus(status) { /* 'connecting' | 'open' | 'reconnecting' | 'closed' */ },
+  onError(err) { /* transient while reconnecting; final once closed */ },
+  retry: { minMs: 1000, maxMs: 30_000 },           // the defaults
+  signal,                                          // optional AbortSignal
+});
+live.close();
+```
+
+- `LiveEvent` is a union over the stream's types: `entry.published` (`entryId`,
+  `contentTypeApiId`, `version`, locale-keyed `fields`), `entry.unpublished`,
+  `entries.published_bulk` (`action`, `entryIds`), `asset.published` / `asset.unpublished`,
+  `content_type.published` / `content_type.deleted`, `release.published` (`entryIds`) and
+  `environment_alias.changed`, each with `id`, `scope` and `occurredAt`. `ping` heartbeats are
+  not delivered; a frame whose data isn't JSON is skipped.
+- Filters (`liveEventMatches`): a bulk job or release passes `entryIds` when it names one of them,
+  and always passes `contentTypes` (it names entries, not their types); an alias change always
+  passes.
+- Reconnects with exponential backoff and full jitter, from `minMs` to `maxMs`, after a network
+  failure, a 408, 429 or 5xx (a `Retry-After` is followed, up to ten minutes), or the stream's end:
+  the server ends each stream after `LIVE_STREAM_MAX_MS` (10 minutes) so the key is authorized
+  again. The backoff resets once a stream opens. A 401, 403, 404 or other 4xx, or an answer that
+  isn't `text/event-stream`, closes it for good with a `DeliveryError` (a revoked key is never
+  retried in a loop).
+- `createSseParser()` is the incremental `text/event-stream` parser it uses (CRLF, LF or CR line
+  ends, chunks split anywhere, a leading BOM, comments, multi-line `data`, `id`, `retry`).
+- `followEntry(client, id, { locale?, include?, delayMs? }, onState)` and
+  `followEntries(client, query, { delayMs? }, onState)` (`live-query.ts`) are the framework-free
+  form of the hooks below: a read, then the same read a moment (`delayMs`, default 1000) after a
+  matching change, once per burst, with one read in flight at a time. Delivery purges its cache in
+  batches, some seconds after a publish is announced, so a change-driven read that still answers
+  the old version (the same `publishedAt`; for a list, the same answer) reads again after 2, 4, 8
+  and 16 times `delayMs`, then gives up until the next change. Each change-driven read clears the
+  client's own response cache (`cacheTtlMs`) first. `onState` gets
+  `LiveState<T> = { data?, error?, loading, live, removed }`; a refetch keeps the data it had, and
+  `error` takes the stream's final failure (a refused key), not the ones it reconnects after.
+  An `onEvent` that throws is reported through `onError`; the stream reads on.
+
 Shapes:
 
 ```ts
@@ -215,6 +268,13 @@ Hooks (all return `AsyncState<T> = { data?: T; error?: Error; loading: boolean }
 - `useDeliveryClient()` — the injected client
 - `useEditable()` — returns `editable(entry, field, locale?)`, which spreads the inline-edit mark
   onto an element (see [Inline editing](#inline-editing))
+- `useLiveEntry<F>(id, { locale?, include?, delayMs? })` and `useLiveEntries<F>(query?, { delayMs? })`
+  — `useEntry` and `useEntries` kept current over `client.live()` (`followEntry` /
+  `followEntries`): read again a moment after the entry (or an entry of `query.contentType`, or
+  any, without one) is published, or a release or bulk job ships. They return
+  `LiveAsyncState<T>`: `AsyncState<T>` plus `live` (the stream is open) and `removed` (the entry
+  was unpublished; `data` is cleared). `useLiveEntries` compares the query by content, so a fresh
+  object each render doesn't resubscribe.
 
 `<InlineEditor adminUrl onEdit defaultEnabled toggle />` mounts the click-to-edit overlay and
 renders no markup. `<Image asset sizes? width? rendition? locale? priority? …img />` renders
@@ -224,6 +284,22 @@ into its own. `createDeliveryClient`, `DeliveryError`, `assetUrl`, `srcset`, `im
 `localizedText` are re-exported, so `@contentworker/sdk/react` alone is enough.
 
 SSR-safe: no fetch happens on the server unless a hook is actually invoked.
+
+`<Blocks value components fallback? catalog? variants? ghosts? preview? as? …attrs />` renders a
+blocks field, each block with `components[block._type]` (`BlockComponents<BlockTypes>`, typed by
+codegen), keyed by `_key` (a key two siblings hold falls back to the position), inside one `as`
+element (`div`) that takes the other attributes. A component gets `{ block, index, ghost, attrs,
+fieldAttrs, slots }`: `block._type` is the current id (a block stored under one of a catalog
+block's or variant's `aliases` is rendered as that block when `catalog` or `variants` is given),
+`slots.<name>({ as?, …attrs })` renders that slot's blocks with the same components (a slot holding
+nothing renders its empty element), and `attrs` / `fieldAttrs(name)` are the block's and a field's
+live preview marks, empty unless `preview` (a `ContentRef` naming the blocks field) is given. A
+block with no component renders with `fallback`, else nothing; an element that isn't a block is
+skipped. No hooks: it renders on the server and in server components, where the block components
+are server components too (`slots` and `fieldAttrs` are functions, so they can't be passed into a
+`'use client'` component). React's own probes (`then`, `toJSON`, `constructor`, …) and names that
+aren't field apiIds read as `undefined` on `slots`; any field name gives a slot function. See
+[`@contentworker/sdk/blocks`](#contentworkersdkblocks--blocks-fields-framework-free).
 
 ## `@contentworker/sdk/vue` — Vue 3 composables
 
@@ -254,10 +330,22 @@ Composables (all return `AsyncRefs<T> = { data, error, loading }` as refs):
 - `useAsset(id, { locale? })`
 - `useSemanticSearch(query, { topK? })` — returns `[]` for an empty query (no request)
 - `useDeliveryClient()` — the injected client
+- `useLiveEntry<F>(id, { locale?, include?, delayMs? })` and `useLiveEntries<F>(query?, { delayMs? })`
+  — as in React, returning `LiveRefs<T>`: `AsyncRefs<T>` plus `live` and `removed` refs; a reactive
+  input that changes closes the stream and opens one for the new input
 
 `<CwImage :asset sizes width rendition locale priority />` renders `imageProps` as an `<img>`
 (`srcset`, `fetchpriority` as attributes), nothing while `asset` is unset; fallthrough `alt`,
 `class` and `style` win or merge. The same helpers as `@contentworker/sdk/react` are re-exported.
+
+`<CwBlocks :value :components :fallback :catalog :variants :ghosts :preview as>` is `<Blocks>` for
+Vue. Each block's component declares a `block` prop (a stateful component that doesn't is not
+given it, so it can't fall through as an attribute; it reads `useBlock().block`); its preview marks (`data-cw-ref`,
+`data-cw-ghost`) fall through onto its root element; its slots are Vue slots, called with `as` and
+attributes as slot props (`<slot name="cards" as="ul" class="cards" />`); and `useBlock()` inside it
+returns `{ block, index, ghost, attrs, fieldAttrs }`. Vue needs a slot's name before rendering, so a
+slot is known from `catalog` or `variants`, or from the blocks it holds: pass one for an empty slot
+to render its element.
 
 Fetching starts on mount (client-side), matching the React hooks' SSR behavior — this
 holds outside components too (plugins, stores): on the server nothing fetches. Rapid
@@ -266,6 +354,81 @@ previous data. Query tracking is top-level: replace the query or its nested
 `filters`/`order` arrays (or pass a getter) — in-place mutation of a nested element is
 not observed. For server-fetched Nuxt data, wrap the client's promise methods in
 `useAsyncData` instead.
+
+## `@contentworker/sdk/next` — Next.js draft mode
+
+`packages/sdk/core/src/next.ts`, re-exported as `@contentworker/sdk/next`. It imports nothing from
+Next.js: the caller passes `draftMode` and `cookies` from `next/headers` (sync in Next.js 14,
+async from 15; both work), so `next` is only an optional peer dependency (`>=14`). See
+[Connect a frontend](https://docs.contentworker.app/guides/connect-a-frontend/).
+
+```ts
+// app/api/draft/route.ts
+import { draftMode } from 'next/headers';
+import { createDraftRoute } from '@contentworker/sdk/next';
+
+export const GET = createDraftRoute({
+  baseUrl: 'https://api.your-workspace.contentworker.app', // the Preview API's host
+  space: 'your-space',
+  environment: 'main',
+  draftMode,
+  resolvePath: (entry) => `/blog/${entry.fields.slug}`,
+});
+```
+
+- Set the content type's preview URL to
+  `https://<site>/api/draft?entry={id}&token={token}&locale={locale}`.
+- `createDraftRoute({ baseUrl, space, environment, draftMode, resolvePath?, fetch? })` →
+  `(request: Request) => Promise<Response>`. It checks the per-entry preview token with
+  `GET <baseUrl>/preview/<space>/<env>/entries/<entry>?preview_token=…` (no key: the token is the
+  grant), works out the target (`resolvePath(entry)`, else the link's `path`, else `/`; one that
+  would leave the site — `//host`, `/\host`, a scheme, control characters — becomes `/`,
+  `safeRedirectPath`), then sets the draft cookie and calls `(await draftMode()).enable()` and
+  answers `307`. The cookie is `cw_draft=<entry>~<token>` (`DRAFT_COOKIE`; `readDraftCookie` reads
+  it), `Path=/; HttpOnly; Secure; SameSite=None; Partitioned`, with `Max-Age` the token's
+  remaining life from the Preview API's `x-cw-preview-expires` header, at most 3600
+  (`DRAFT_COOKIE_MAX_AGE`); a token with none left answers 401. Partitioned, it is kept per
+  top-level site: it works top-level and framed by the admin (the Site view, the canvas) from
+  another site, and a draft opened in the admin's frame is never sent on a direct visit (where a
+  browser blocks third-party cookies, Next's own draft cookie isn't kept in the frame, so it shows
+  published). A request whose `Sec-Fetch-Dest` is anything but `document`, `iframe` or `frame`
+  answers 403 before anything is read (no header: let through), on the exit route too: defence
+  against a link used as a subresource, not against being sent someone's preview link. Sites should
+  send `frame-ancestors 'self' <admin origin>`. The token reads are `cache: 'no-store'`. A refused
+  token (401, 403 or 404 from Preview) answers 401 and sets nothing; a link without `entry` or `token`, 400; a Preview API that fails or can't be reached,
+  502. Every answer is `cache-control: no-store` and `referrer-policy: no-referrer`, none echoes the
+  token, and the redirect's URL carries none.
+- `createExitDraftRoute({ draftMode, path? })` turns draft mode off, clears the cookie
+  (`Max-Age=0`, the same attributes: a partitioned cookie is cleared only so) and redirects to the request's `path` (when it is on the site), else `path`, else
+  `/`.
+- `createDraftClient({ draftMode, cookies, delivery, preview? })` → `() => Promise<DraftClient>`.
+  Outside draft mode, or without a readable cookie, it is the Delivery client (made once) with
+  `draft: null`. In draft mode it is the Delivery client too, except for the cookie's entry: `getEntry`
+  of it, and it in its place in `listEntries`, `query()` and `getSingleton` (also a never-published
+  singleton of its type), is read from `<preview.baseUrl or delivery.baseUrl>/preview/…/entries/<id>`
+  with `preview_token` and no key, once per locale per request; `editable()` marks only it;
+  `draft` is `{ entryId }` and `getDraftEntry({ locale? })` reads it for a page that finds its
+  entry another way. Every other entry, and what the draft links to, reads published from
+  Delivery. A token the Preview API refuses (expired, revoked) reads the entry published again.
+  The site needs no Preview key for draft mode.
+
+```ts
+// lib/contentworker.ts (server only)
+import { cookies, draftMode } from 'next/headers';
+import { createDraftClient } from '@contentworker/sdk/next';
+
+export const getClient = createDraftClient({
+  draftMode,
+  cookies,
+  delivery: {
+    baseUrl: 'https://cdn.your-workspace.contentworker.app',
+    space: 'your-space',
+    environment: 'main',
+    token: process.env.CONTENTWORKER_DELIVERY_KEY!,
+  },
+  preview: { baseUrl: 'https://api.your-workspace.contentworker.app' },
+});
+```
 
 ## `@contentworker/sdk/edge` — tiny single-locale client
 
@@ -327,6 +490,31 @@ const html = toHtml(entry.fields.body, {
   => … }` does the same for marks.
 - **`toMarkdown`** gives CommonMark with GFM tables, for agents, feeds and `.md` endpoints.
   **`toPlainText`** and **`excerpt`** give search text and meta descriptions.
+
+## `@contentworker/sdk/blocks` — blocks fields, framework-free
+
+What `<Blocks>` and `<CwBlocks>` are built on, for any other renderer (the frontend runtime, HTML
+strings, DOM nodes):
+
+- `resolveBlocks(value, { catalog?, variants?, ghosts?, preview? })` → `{ path, attrs, blocks }`.
+  Each block: `type` (current id; `catalog` wins over `variants`, an exact id over an alias, a
+  variants slot resolves with its own nested variants, and a catalog applies only inside the slots
+  its blocks declare), `storedType`, `key`, `renderKey`, `index`,
+  `block` (a copy with `_type` set to `type` when it differs), `ghost` (from `ghosts` by `_key`;
+  `inserted` over `removed` over `changed`), `path`, `attrs`, `fieldAttrs(name)`, `slotNames` (the
+  definition's slots plus any field holding a non-empty list of blocks) and `slot(name)` (resolved
+  on first call). Not a list renders nothing; an element without a string `_type` is skipped.
+- `renderBlocks<BlockTypes, R>(value, { components, fallback?, …resolve options })` →
+  `{ attrs, items: R[] }`, calling `components[type]({ block, index, ghost, attrs, fieldAttrs,
+  slot })` (`slot(name)` → `{ attrs, items }`); own properties only, so a `_type` of `toString` never
+  calls an inherited function.
+- Preview marks, only when `preview` (a `ContentRef` whose `field` names the blocks field, or a path
+  to a slot) is given: `data-cw-slot` on the element holding each list (`body`, `body[k1].cards`),
+  `data-cw-ref` on each block (`body[k1]`) and field (`body[k1].heading`), formatted with
+  `formatFieldPath` and `formatContentRef` exactly as `refAttrs` and `slotAttrs` would, and
+  `data-cw-ghost` (`GHOST_ATTRIBUTE`) on a ghost. A block with no `_key` has no path, so neither it
+  nor anything inside it is marked. Without `preview` every attrs object is empty; a `preview`
+  whose `field` doesn't parse as a path throws.
 
 ## `@contentworker/sdk/react-native` — offline Delivery sync
 
@@ -394,6 +582,7 @@ cma.approvals.count()                                 // what waits on a person
 cma.contentTypes.list() / .get(apiId) / .create(draft) / .publish(apiId) / .entryCounts()
 cma.contentTypes.fieldValues(apiId, field, { locale?, limit?, cursor? }): Promise<FieldValuesPage>
 cma.contentTypes.dependents(apiId) / .delete(apiId, { purgeEntries? }) / .clone(apiId, { apiId, name })
+cma.contentTypes.setPreview(apiId, urlTemplate | null)  // the preview URL alone (PUT …/content-types/:apiId/preview)
                                                       // create on an existing apiId revises it
 
 cma.entries.list({ contentType?, locale?, limit?, skip?, order?, query? })  // Preview: drafts included
@@ -457,6 +646,7 @@ cma.entries.move(id, { after: id | null } | { before: id | null })   // manual o
 cma.entries.outlineBlocks(id, { field?, locale? })   // blocks as a tree of keys, types, labels; version
 cma.entries.patchBlocks(id, { expectedVersion, ops })   // by _key, all or none; → { entry, fields, keys, inverse }
 cma.entries.checkBlocks(id, { expectedVersion, ops })   // the same patch's dry run; nothing written
+cma.entries.generateBlocks({ field, prompt, entryId | contentTypeApiId, parent?, locale?, tier? })   // AI-composed inserts for one place, checked; nothing saved
 cma.entries.previewLink(id, { ttlHours?, previewBaseUrl?, locale? })   // { url, frontendUrl?, token, expiresAt }
 
 cma.redirects.list({ q?, limit?, cursor? }) / .get(id) / .create(input) / .update(id, changes) / .delete(id)
@@ -483,6 +673,7 @@ cma.spaces.starters() / .starterInstall(spaceId, environmentId, install)
 cma.environments.list() / .create(id, name)           // space-level
 cma.environments.aliases.list() / .set(alias, envId) / .delete(alias)
 cma.apiKeys.list() / .create({ kind, name }) / .revoke(id)   // admin scope
+cma.frontend.connect({ name?, roleId?, preview?, previewRoleId? })  // keys + config for a frontend (POST …/frontend-connections), admin scope
 ```
 
 - Entry `fields` use the Management shape: field apiId → locale → value
@@ -645,6 +836,16 @@ For each content type it emits two interfaces plus shared helpers and lookup map
 - `<Name>DraftFields` — Management shape (locale-keyed: `Localized<T>`), usable with
   `@contentworker/sdk/management`.
 - `ContentTypeApiId` (union of apiIds), `FieldsByContentType`, and `DraftFieldsByContentType`.
+- `<Id>Block` per block id and `BlockTypes` (id → block type) with `BlockId`, for
+  `BlockComponents<BlockTypes>` and `renderBlocks<BlockTypes, R>`: `{ _type: '<id>'; _key: string;
+  …props }`, each slot a list of the blocks it allows (required when its `min` is above 0), doc
+  comments naming the block and its former ids. A catalog's blocks are typed from
+  `generateTypes(types, { blockCatalog })` (`contentworker types` passes the catalog in force, or
+  `--blocks <file>`; the workspace `contentworker-codegen` takes a JSON `--blocks` or fetches
+  `…/block-catalog`, a 404 meaning none); every other block, from the blocks fields' variants at
+  any depth (a variant whose id is a catalog block's id or former id is that block), an id two
+  fields define apart typed as either shape. `?format=typescript` and MCP's `model_typescript` pass the catalog in
+  force too (`findBlockCatalog`), so all three give the same block types.
 
 Pass the shape as the type argument, e.g. `client.getEntry<ArticleFields>(id, { locale })`.
 

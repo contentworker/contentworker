@@ -361,6 +361,73 @@ describe('types', () => {
     const source = await readFile(join(dir, 'types.ts'), 'utf8');
     expect(source).toContain('export type ArticleFields = {');
     expect(source).toContain('from s1/main');
+    // No catalog pushed yet (404): no block types, and no failure.
+    expect(source).not.toContain('BlockTypes');
+  });
+
+  const page = {
+    apiId: 'page',
+    name: 'Page',
+    displayField: null,
+    version: 1,
+    status: 'published',
+    fields: [
+      {
+        apiId: 'body',
+        name: 'Body',
+        type: 'Array',
+        localized: false,
+        required: false,
+        position: 0,
+        items: { type: 'Component', variants: [{ apiId: 'hero', name: 'Hero', fields: [] }] },
+      },
+    ],
+  };
+
+  it('types the blocks from the catalog in force, else from the variants', async () => {
+    const pushed = await harness(
+      {
+        [`GET ${M}/content-types`]: () => ({ items: [page] }),
+        [`GET ${M}/block-catalog`]: () => ({
+          version: 2,
+          blocks: [{ id: 'banner', name: 'Banner', aliases: ['hero'], fields: [] }],
+          targets: [{ contentTypeApiId: 'page', field: 'body' }],
+        }),
+      },
+      { env: ENV },
+    );
+    expect((await pushed.run('types', '--json')).code).toBe(EXIT.ok);
+    const fromCatalog = (pushed.json() as { source: string }).source;
+    expect(fromCatalog).toContain('export type BlockTypes = {\n  banner: BannerBlock;\n};');
+
+    const unpushed = await harness(
+      { [`GET ${M}/content-types`]: () => ({ items: [page] }) },
+      { env: ENV },
+    );
+    await unpushed.run('types', '--json');
+    expect((unpushed.json() as { source: string }).source).toContain(
+      'export type BlockTypes = {\n  hero: HeroBlock;\n};',
+    );
+  });
+
+  it('types the blocks from a blocks file with --blocks, and fails on an unreadable catalog', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'cw-types-'));
+    await writeFile(
+      join(dir, 'contentworker.blocks.json'),
+      JSON.stringify({ targets: [], blocks: [{ id: 'local', name: 'Local', fields: [] }] }),
+    );
+    const h = await harness(
+      {
+        [`GET ${M}/content-types`]: () => ({ items: [page] }),
+        [`GET ${M}/block-catalog`]: () => status(403, { code: 'forbidden' }),
+      },
+      { env: ENV },
+    );
+    expect(
+      (await h.run('types', '--blocks', join(dir, 'contentworker.blocks.json'), '--json')).code,
+    ).toBe(EXIT.ok);
+    expect((h.json() as { source: string }).source).toContain('local: LocalBlock;');
+    expect((await h.run('types', '--json')).code).not.toBe(EXIT.ok);
   });
 });
 

@@ -5,6 +5,8 @@
  * client can't. This file only says which of them the assistant offers and how each is treated.
  */
 
+import type { AssistantFill } from './fill';
+
 /** Where a turn works: the space, environment and locale the admin's header has chosen. */
 export interface AssistantScope {
   readonly spaceId: string;
@@ -31,6 +33,11 @@ export type AssistantPage =
       readonly entryId: string;
       readonly contentType: string;
       readonly label: string;
+      /**
+       * The slot the person asked Coworker to fill from the canvas (`Ask Coworker to fill this`):
+       * sent with that one message only, and quoted to the model as content.
+       */
+      readonly fill?: AssistantFill;
     };
 
 /** Sent with every message and every page edit: the scope, and the page in front. */
@@ -91,6 +98,14 @@ export const ASSISTANT_TOOLS = {
   entries_query: read('Find entries', 'Found entries'),
   entries_get: read('Read an entry', 'Read an entry'),
   entry_blocks_outline: read('Outline an entry’s blocks', 'Outlined an entry’s blocks'),
+  // Composing a layout: what the blocks are, what the rules allow, what is locked, then a draft
+  // of the patch, checked, before entry_blocks_patch proposes it.
+  blocks_catalog_get: read('Read the block catalog', 'Read the block catalog'),
+  blocks_config_effective: read('Read the block rules', 'Read the block rules'),
+  entries_block_locks_get: read('Read an entry’s locked regions', 'Read the locked regions'),
+  entry_blocks_generate: read('Compose blocks', 'Composed blocks'),
+  entry_blocks_validate: read('Check a block change', 'Checked a block change'),
+  assets_search: read('Search assets', 'Searched assets'),
   entries_suggest: read('Suggest entries', 'Suggested entries'),
   content_search: read('Search content', 'Searched content'),
   entries_list_versions: read('List an entry’s versions', 'Listed an entry’s versions'),

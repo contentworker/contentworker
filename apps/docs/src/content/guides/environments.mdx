@@ -75,7 +75,9 @@ curl -s "$API/spaces/$SPACE/merge" \
 ```
 
 The comparison lists each content type and entry as `added`, `changed`, `removed` or `unchanged`,
-framed as what merging would do. A merge only adds and overwrites: it never deletes target content,
+framed as what merging would do, and `blocks` says the same of the
+[block catalog and block config](/guides/blocks-from-code/). A merge never copies those; a
+promotion does. A merge only adds and overwrites: it never deletes target content,
 so `removed` items stay where they are. Entries keep their ids and are validated against the
 target's content type, so include a type in the merge before the entries that use it. Unique
 values (and a singleton's one entry) hold as they do for edits: before anything is written, a
@@ -98,18 +100,25 @@ curl -s "$API/spaces/$SPACE/promotions" \
   -d '{ "source": "staging", "target": "main" }'
 ```
 
-Without `contentTypes` or `entries`, it promotes everything that differs. A promotion applies at
-once unless something calls for a second pair of eyes: the target is `main` or has an alias
-pointing at it, a content type would lose a field or a block type or change a field's type, or the
-AI risk check suggests a review. Then it waits as `awaiting_approval`, with the reasons, until
-someone else approves (`POST …/promotions/:id/approve`) or rejects it. Deciding takes a person (in the admin, or
-with their own token), not an API key or an assistant acting for you. An entry a workflow
-**gates publishing** for in the target arrives as a draft, and that workflow publishes it. If a content type changes in
-the source while a promotion waits, approving it fails, so request a new one. A content type that would remove a field or block type entries in the target still hold
-is refused (`422`, naming the type, what it removes and how many entries hold it), as changing the
-type there would be: change or clear those entries first, or leave the type out. Entries the
-promotion brings in over the target's copies don't count, unless they arrive as drafts over a
-published copy that still holds it. Approving checks again before anything is written. A draft content type that a merge or promotion
+Without `contentTypes` or `entries`, it promotes everything that differs, the
+[block catalog and block config](/guides/blocks-from-code/) included; add `"blocks": true` to bring
+them along with a selection. A promotion applies at once unless something calls for a second pair
+of eyes: the target is `main` or has an alias pointing at it, a content type would lose a field or
+a block type or change a field's type, the blocks editors may place, or their counts or locks,
+would change, or the AI risk check suggests a review. Then it waits as `awaiting_approval`, with
+the reasons, until someone else approves (`POST …/promotions/:id/approve`) or rejects it. Deciding
+takes a person (in the admin, or with their own token), not an API key or an assistant acting for
+you. An entry a workflow **gates publishing** for in the target arrives as a draft, and that
+workflow publishes it. If a content type changes in the source while a promotion waits, or the
+block catalog or config changes in either environment, approving it fails, so request a new one.
+
+A content type that would remove a field or block type entries in the target still hold is refused
+when you ask (`422`, naming the type, what it removes and how many entries hold it), as changing
+the type there would be: change or clear those entries first, or leave the type out. A catalog that
+would remove blocks entries in the target still use is refused the same way; change those entries
+first, or send `"blocks": false` to promote the rest. For both, entries the promotion brings in over
+the target's copies don't count, unless they arrive as drafts over a published copy that still
+holds it. Approving checks again before anything is written. A draft content type that a merge or promotion
 copies over a live one changes nothing the target serves until it is published there. Copied into a
 target without that type, it arrives as a type never published: GraphQL serves it at once, and the
 routes, sitemap and menus leave it out until it is published. A webhook on

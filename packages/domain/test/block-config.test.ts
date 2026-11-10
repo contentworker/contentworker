@@ -2,12 +2,14 @@ import { describe, expect, it } from 'vitest';
 import {
   type BlockConfig,
   blockConfigIssues,
+  blockRuleChanges,
   catalogVariants,
   checkBlockCatalog,
   checkBlockConfig,
   defineContentType,
   diffBlockConfigs,
   type EntryFields,
+  effectiveBlockConfig,
   effectiveBlockRules,
   ValidationError,
 } from '../src/index';
@@ -712,5 +714,130 @@ describe('what a set changed', () => {
       loosened: ['targets[page.body]'],
       unlocked: ['targets[page.body]', 'blocks[section].slots.content'],
     });
+  });
+});
+
+describe('carrying a config to another environment', () => {
+  const rulesOf = (c: { targets: unknown; blocks: unknown }) => {
+    const { targets, blocks } = effectiveBlockRules(CATALOG, {
+      version: 1,
+      ...(c as Pick<BlockConfig, 'targets' | 'blocks'>),
+    });
+    return { targets, blocks };
+  };
+
+  it('keeps what is in force, follows former ids, and leaves stale parts behind, named', () => {
+    const stored = {
+      targets: [
+        // Gone from the catalog: stale.
+        { contentTypeApiId: 'post', field: 'body', blocks: ['hero'] },
+        // A former id and a block no longer here: the rest of the list holds.
+        { contentTypeApiId: 'page', field: 'body', blocks: ['banner', 'gone'], locked: true },
+      ],
+      blocks: [{ block: 'grid', slots: { items: { allowedChildren: ['tile'], max: 3 }, old: {} } }],
+    };
+    const carried = effectiveBlockConfig(CATALOG, stored);
+    expect(carried.targets).toEqual([
+      { contentTypeApiId: 'page', field: 'body', blocks: ['hero'], locked: true },
+    ]);
+    expect(carried.blocks).toEqual([
+      { block: 'grid', slots: { items: { allowedChildren: ['card'], max: 3 } } },
+    ]);
+    expect(carried.stale.map((s) => s.at)).toEqual([
+      'targets[post.body]',
+      'targets[page.body].blocks',
+      'blocks[grid].slots.old',
+    ]);
+    // Laid over the same catalog, the same rules: what a copy judges saves by.
+    expect(rulesOf(carried)).toEqual(rulesOf(stored));
+    // And a set would take it as it stands.
+    expect(checkBlockConfig(carried, CATALOG)).toEqual({
+      targets: carried.targets,
+      blocks: carried.blocks,
+    });
+  });
+
+  it('leaves behind what is not shaped like a narrowing, rather than trusting it', () => {
+    const carried = effectiveBlockConfig(CATALOG, {
+      targets: [
+        { contentTypeApiId: 'page', field: 'aside', max: 1 },
+        { contentTypeApiId: 'page', field: 'body', min: 'lots' },
+        'everything',
+      ],
+      blocks: { grid: true },
+    });
+    expect(carried.targets).toEqual([{ contentTypeApiId: 'page', field: 'aside', max: 1 }]);
+    expect(carried.blocks).toEqual([]);
+    expect(carried.stale.map((s) => s.at)).toEqual(['blocks', 'targets[1]', 'targets[2]']);
+  });
+
+  it('keeps a narrowing as written when it equals the code today, so it holds after a push widens it', () => {
+    const stored = {
+      targets: [{ contentTypeApiId: 'page', field: 'aside', blocks: ['hero', 'grid'] }],
+      blocks: [{ block: 'grid', slots: { items: { max: 6 } } }],
+    };
+    const carried = effectiveBlockConfig(CATALOG, stored);
+    expect({ targets: carried.targets, blocks: carried.blocks }).toEqual(stored);
+    expect(carried.stale).toEqual([]);
+    // The code widens: a new top-level block, and room for more items. Both copies still hold.
+    const wider = checkBlockCatalog({
+      blocks: [
+        ...blocks.map((b) =>
+          b.id === 'grid' ? { ...b, slots: b.slots?.map((s) => ({ ...s, max: 12 })) } : b,
+        ),
+        { id: 'promo', name: 'Promo', fields: [symbol('text')] },
+      ],
+      targets: [
+        { contentTypeApiId: 'page', field: 'body' },
+        { contentTypeApiId: 'page', field: 'aside', blocks: ['hero', 'grid', 'promo'] },
+      ],
+    });
+    const next = { version: 5, ...wider };
+    expect(effectiveBlockRules(next, { version: 1, ...carried })).toEqual(
+      effectiveBlockRules(next, { version: 1, ...stored }),
+    );
+  });
+
+  it('replaces a part a set would refuse by what is in force of it', () => {
+    const tighter = checkBlockCatalog({
+      blocks: blocks.map((b) =>
+        b.id === 'grid' ? { ...b, slots: b.slots?.map((s) => ({ ...s, max: 4 })) } : b,
+      ),
+      targets,
+    });
+    const catalog = { version: 5, ...tighter };
+    // Set when the code allowed six: above the code's four now, and so refused by a set.
+    const stored = {
+      targets: [],
+      blocks: [{ block: 'grid', slots: { items: { max: 5, locked: true } } }],
+    };
+    const carried = effectiveBlockConfig(catalog, stored);
+    expect(carried.blocks).toEqual([{ block: 'grid', slots: { items: { locked: true } } }]);
+    expect(effectiveBlockRules(catalog, { version: 1, ...carried })).toMatchObject({
+      blocks: effectiveBlockRules(catalog, { version: 1, ...stored }).blocks,
+    });
+  });
+});
+
+describe('what changes for editors', () => {
+  const before = effectiveBlockRules(CATALOG, { version: 0, targets: [], blocks: [] });
+
+  it('is nothing when the rules match, whatever the versions', () => {
+    expect(
+      blockRuleChanges(before, effectiveBlockRules({ ...CATALOG, version: 9 }, before)),
+    ).toEqual([]);
+  });
+
+  it('names each target and slot that moves, and what it was', () => {
+    const after = effectiveBlockRules(CATALOG, {
+      version: 1,
+      targets: [{ contentTypeApiId: 'page', field: 'aside', blocks: ['grid'], locked: true }],
+      blocks: [{ block: 'grid', slots: { items: { max: 2 } } }],
+    });
+    expect(blockRuleChanges(before, after)).toEqual([
+      'page.aside takes grid, locked (was: takes hero, grid)',
+      'grid.slots.items takes card, quote, at least 1, at most 2 (was: takes card, quote, at least 1, at most 6)',
+    ]);
+    expect(blockRuleChanges(after, { targets: [], blocks: [] })).toContain('page.body is gone');
   });
 });

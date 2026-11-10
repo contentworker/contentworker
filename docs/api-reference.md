@@ -207,7 +207,7 @@ Base paths: `/spaces`, and `…` for `/spaces/:space/environments/:env`. Space-l
 | GET    | `/spaces/:space/audit-log`                  | `space:admin`                        | Space audit log, a page at a time ([filters and paging](#audit-log))                      |
 | GET    | `/spaces/:space/compare`                    | `preview:read`                       | Compare two environments (`?from`, `?to`), limited to the types the role can read         |
 | POST   | `/spaces/:space/merge`                      | `content:manage`                     | Merge environment branch (entries need the actions on every content type); `409` (`details.conflicts`) before any write when its entries would take a unique value twice; an entry in the target's trash stays there |
-| POST   | `/spaces/:space/promotions`                 | `content:manage` + `content:publish` | Promote content between environments (`{ source, target, contentTypes?, entries? }`)      |
+| POST   | `/spaces/:space/promotions`                 | `content:manage` + `content:publish` | Promote content between environments (`{ source, target, contentTypes?, entries?, blocks? }`)      |
 | GET    | `/spaces/:space/promotions`                 | `content:publish`                    | List promotions, newest first (`?status=`)                                                |
 | GET    | `/spaces/:space/promotions/:id`             | `content:publish`                    | A promotion, its risk check and result                                                    |
 | POST   | `/spaces/:space/promotions/:id/approve`     | `content:publish`                    | Approve a waiting promotion and apply it (a person or the admin token, not the requester) |
@@ -225,7 +225,12 @@ check first.
    nothing edited in the source afterwards gets in. A content type changed since fails the apply
    with a 409. What's live in the source goes live in the target, and a draft goes as a draft. Omit
    `contentTypes` and `entries` to promote everything that differs (at most 200 entries and 100
-   content types). Promotions take a role without content-type or field restrictions (`403`
+   content types), the block catalog and block config included; `blocks: true` adds them to a
+   selection. They are pinned by the source's and the target's catalog and config versions
+   (`blocks`), and another push or set on either side fails the apply with a 409 before anything
+   is written; so does (with a 422) an entry made since that holds a block the push would remove.
+   After a rollback of the Workers past this change, reject waiting promotions requested with
+   blocks: older code would apply them without their blocks. Promotions take a role without content-type or field restrictions (`403`
    otherwise), since they write and publish whole entries across types. An entry that a workflow
    gates in the target (`gatesPublish`) goes as a draft, and the reasons say which workflow: that
    workflow's run publishes it there, not the promotion. A gate added after the request leaves that
@@ -233,20 +238,26 @@ check first.
 2. **The risk check.** The rules come first. Approval is required when:
    - the target is `main`, or an alias points at it;
    - a promoted content type would remove a field (at any depth) or a block variant, change a
-     field's type, or make one required.
+     field's type, or make one required;
+   - the block catalog or config it copies changes what editors may do in the target: which blocks
+     a target or slot takes, its counts or its lock (each change named, before and after), or the
+     catalog removes blocks or block props from a type, or publishes a target draft.
 
-   A removal the target's entries still hold is not a reason to approve: it's refused (`422`,
-   one issue on `contentTypes` per removed field or variant, naming the type, how many entries
-   hold it and which, never their content), as revising the type there would be, and with no
-   override. Every copy counts (an entry's current version, the trash, its published snapshot)
-   except one the promotion replaces: a promoted entry's current version, and its published
-   snapshot when it goes live. Change or clear those values in the target, or leave the type out.
-   When it counts on replacing a copy, a promoted entry in the target's trash is refused too
-   (`422` on `entries`): it would fail the apply after the types were saved. The apply checks
-   again before it writes anything, so an entry that gained the removed content while the
-   promotion waited fails it (`failed`, nothing copied). A failure later in the apply (a publish
-   refused, say) keeps what was written, as below, and can leave the snapshot of an entry it was
-   to publish holding what the type removed.
+   A removal the target's entries still hold is not a reason to approve: it's refused (`422`) at
+   the request, as revising the type or pushing the catalog there would be, and with no override.
+   For a content type, one issue on `contentTypes` per removed field or variant, naming the type,
+   how many entries hold it and which, never their content; for the catalog, one issue on `blocks`
+   naming each block or prop and its entries (send `"blocks": false` to promote the rest). A
+   catalog the apply would refuse for another reason (a target type missing, a thumbnail asset the
+   target lacks) is refused the same way. Every copy counts (an entry's current version, the trash,
+   its published snapshot) except one the promotion replaces: a promoted entry's current version,
+   and its published snapshot when it goes live. Change or clear those values in the target, or
+   leave the type out. When it counts on replacing a copy, a promoted entry in the target's trash
+   is refused too (`422` on `entries`): it would fail the apply after the types were saved. The
+   apply checks again before it writes anything, so an entry that gained the removed content while
+   the promotion waited fails it (`failed`, nothing copied). A failure later in the apply (a
+   publish refused, say) keeps what was written, as below, and can leave the snapshot of an entry
+   it was to publish holding what the type removed.
 
    Then the decision model (Clef) answers `review`, `breaking` and `risk` over a summary of the
    change. It can only add a requirement, at `review` ≥ 0.5 or `risk` Significant or above, never
@@ -257,7 +268,7 @@ check first.
    rejected by a person, or the deployment admin token, other than whoever requested it:
    - an API key, or an application acting for a person (an MCP or OAuth client, an agent), can
      request a promotion but not decide one;
-   - approving one with content types also takes `content:manage`;
+   - approving one with content types or blocks also takes `content:manage`;
    - both environments must still exist when it's approved.
 
    Approving moves it to `applying` with a compare-and-set, so it applies exactly once. The
@@ -387,8 +398,10 @@ The body, the analysis report and the format notes are in
 | GET    | `/spaces/:space/api-keys`                 | `space:admin` | List keys                                                                                    |
 | POST   | `/spaces/:space/api-keys`                 | `space:admin` | Mint key (`kind`, optional `roleId`); raw `token` returned once                              |
 | DELETE | `/spaces/:space/api-keys/:id`             | `space:admin` | Revoke a key (also how a personal access token or OAuth token is revoked)                    |
+| POST   | `/spaces/:space/environments/:env/frontend-connections` | `space:admin` | Connect a frontend: `{ name?, roleId?, preview?, previewRoleId? }` (each role may hold no scope beyond its key's kind: `422`) → `201 { space, environment, deliveryKey: { id, token }, previewKey?, endpoints?: { admin, delivery, preview }, previewUrls }`, the tokens once (keys named `<name> (delivery)` / `(preview)`); `endpoints` from `OAUTH_ISSUER` (`cdn.` and `api.` of its host; one origin on a local stack); `404` for an unknown environment |
 
-MCP: `api_keys_list`, `api_key_create`, `api_key_update` (the key's role), `api_key_revoke`.
+MCP: `api_keys_list`, `api_key_create`, `api_key_update` (the key's role), `api_key_revoke`,
+`frontend_connect`.
 Minting a key, and a role change that widens one, answer 403 to a personal access token or an
 OAuth token (see [Auth & RBAC](./auth-and-rbac.md#one-token-model-three-issuances)).
 | POST   | `/spaces/:space/personal-access-tokens`   | `space:admin` | Mint a personal access token `{ name, scopes, expiresInDays? }` (1 to 365); raw `token` once |
@@ -427,6 +440,7 @@ principal) may call it; the web app does when it ends a person's access (see
 | GET    | `…/content-types/:apiId`           | `preview:read`    | Get one                            |
 | GET    | `…/content-types/:apiId/fields/:field/values` | `preview:read` | Distinct values of a short scalar field (not `Text`) or list of Symbols across current entries, trash excluded, each with its entry `count`; booleans, numbers, strings ascending; `locale`, `limit` (≤ 100), `cursor` → `{ items, nextCursor? }`. 422 for any other field, 403 for a hidden one, `query_too_broad` when the type holds more entries than the scan cap (5,000) |
 | POST   | `…/content-types/:apiId/published` | `content:publish` | Publish definition                 |
+| PUT    | `…/content-types/:apiId/preview`   | `content:manage`  | `{ urlTemplate: string \| null }`: the preview URL alone, held to the version read (`409` when another save lands first); a published type stays published, one with unpublished changes stays a draft; setting one needs read on the type (MCP `model_set_content_type_preview`) |
 | GET    | `…/content-types/:apiId/dependents` | `preview:read`   | What blocks a delete: `{ entries: { live, trashed }, linkedFrom, menus, redirects, urlPattern? }`; `403` for a role without read on the type |
 | DELETE | `…/content-types/:apiId`           | `content:manage`  | Delete (`{ deleted: true }`, emits `content_type.deleted`); `409` naming every dependent (`details.dependents`); `?purge_entries=true` (also `content:write` and `content:publish`, and a role on every type) → `202 { deleted: false, job }`, a `content_type_delete` bulk job that trashes and purges each entry, then deletes the type on `bulk.job_completed`; the job's `config.typeDeletion` (on `GET …/bulk/jobs/:id`) is then `{ deleted: true }` or `{ deleted: false, reason }` (also when the job is stopped) |
 | POST   | `…/content-types/:apiId/clone`     | `content:manage`  | `{ apiId, name }` → the copy (`201`): fields, display field, singleton, group, description, icon, agent instructions, layout; not `urlPattern`; draft, version 1; `409` for a taken apiId, also when a concurrent clone or create took it after the check (the insert never overwrites) |
@@ -452,6 +466,9 @@ now.
 curl -H "Authorization: Bearer $CMA_KEY" \
   "$API/spaces/$SPACE/environments/main/content-types?format=typescript" > src/contentworker.d.ts
 ```
+
+It includes a type per block and `BlockTypes`, the catalog's blocks from the block catalog in force
+and the rest from the blocks fields' variants, as `contentworker types` gives.
 
 The point is that CI and coding agents need nothing installed, and cannot type against a stale file:
 the banner carries the space, environment and generation time, so a checked-in copy that has drifted
@@ -532,8 +549,8 @@ which is valid to store. See [Rich text](./domain-model.md#rich-text).
 
 | Method | Path                         | Scope            | Description                                                                                                         |
 | ------ | ---------------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------- |
-| POST   | `…/entries/generate`         | `content:write`  | Generate draft fields from prompt                                                                                   |
-| POST   | `…/entries/canvas`           | `content:write`  | Multi-field canvas generation                                                                                       |
+| POST   | `…/entries/generate`         | `content:write`  | Draft fields from a prompt: scalars and top-level blocks fields (images from the asset library); nothing saved     |
+| POST   | `…/entries/canvas`           | `content:write`  | Map prose (delimited as data) into the same fields `…/generate` drafts; nothing saved                               |
 | POST   | `…/entries/:id/translate`    | `content:write`  | Translate fields to locales                                                                                         |
 | POST   | `…/entries/:id/summarize`    | `content:write`  | Summarize entry text                                                                                                |
 | POST   | `…/entries/:id/autofill`     | `content:write`  | Fill empty fields                                                                                                   |
@@ -900,7 +917,23 @@ message:
   read but not write, or `{ reason: "hidden", hidden: n }` counting fields it can't read (never
   named). A `403` with no details is the role refusing the entry itself.
 
-MCP: `entry_blocks_patch` (audited), `entry_blocks_validate` and `entry_blocks_outline` (`readOnlyHint`, not audited). Coworker offers `entry_blocks_outline` and proposes `entry_blocks_patch`; its card shows the dry run's field diff and holds Confirm while the dry run refuses.
+`POST …/entries/blocks/generate` (`content:write`, gated like the patch) composes blocks with AI
+for one place: `{ field, prompt, entryId | contentTypeApiId, parent?: { key, slot }, locale?,
+tier? }` → `{ contentTypeApiId, entryId, expectedVersion, locale, ops, fields, unresolvedImages,
+issues, usage }`. The model is offered only the blocks the block rules allow there (with their
+fields, slots and counts); images are asked for by description and found with asset search; the
+answer's `insert` ops are judged as `…/entries/blocks/validate` judges them. Nothing is saved:
+send `ops` with `expectedVersion` to the patch, or create a new entry with `fields`; `ready` says
+whether they save as they are. Images are asked for only for a key holding `preview:read`; a
+required one the library can't match comes back as an `image_required` issue (`ready: false`)
+rather than a refusal. `503 ai_unavailable` (retryable) when the model doesn't answer in time.
+`422` before
+the model is called for a locked place or region (`locked`, `slot_locked`, `region_locked`,
+`region_frozen`), a `full` one or one that takes nothing; `422 bad_generation` for an answer
+outside the schema, and the field's issues for one a save would refuse. See
+[AI, agents and search](./ai-agents-and-search.md#layout-aware-generation).
+
+MCP: `entry_blocks_patch` and `entry_blocks_generate` (audited; the second spends a model call, so it isn't marked read-only), `entry_blocks_validate` and `entry_blocks_outline` (`readOnlyHint`, not audited). Coworker offers `entry_blocks_outline` and proposes `entry_blocks_patch`; its card shows the dry run's field diff and holds Confirm while the dry run refuses.
 
 ### Menus
 
@@ -1301,6 +1334,7 @@ run before routing (the last two rows).
 | `DomainError` code `unauthorized`                                    | 401        | `unauthorized`      |                                                 |
 | `DomainError` code `forbidden`                                       | 403        | `forbidden`         |                                                 |
 | `RateLimitedError`                                                   | 429        | `rate_limited`      |                                                 |
+| `AiUnavailableError`                                                 | 503        | `ai_unavailable`    | `retryAfterSeconds` when given; retryable       |
 | `NotConfiguredError`                                                 | 501        | `not_configured`    |                                                 |
 | `SecretUnreadableError`                                              | 500        | `secret_unreadable` |                                                 |
 | other `DomainError` (`InvalidStateError`, `QueryTooBroadError`, ...) | 400        | its code            |                                                 |

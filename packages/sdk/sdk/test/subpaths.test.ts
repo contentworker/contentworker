@@ -4,8 +4,10 @@ import manifest from '../package.json' with { type: 'json' };
 // Each subpath of @contentworker/sdk re-exports one workspace SDK module, unchanged.
 const SOURCES: Record<string, () => Promise<Record<string, unknown>>> = {
   '.': () => import('@contentworker/sdk-core'),
+  './blocks': () => import('@contentworker/sdk-core/blocks'),
   './inline-edit': () => import('@contentworker/sdk-core/inline-edit'),
   './live-preview': () => import('@contentworker/sdk-core/live-preview'),
+  './next': () => import('@contentworker/sdk-core/next'),
   './redirects': () => import('@contentworker/sdk-core/redirects'),
   './webhooks': () => import('@contentworker/sdk-core/webhooks'),
   './rich-text': () => import('@contentworker/sdk-rich-text'),
@@ -19,8 +21,10 @@ const SOURCES: Record<string, () => Promise<Record<string, unknown>>> = {
 
 const FACADES: Record<string, () => Promise<Record<string, unknown>>> = {
   '.': () => import('../src/index'),
+  './blocks': () => import('../src/blocks'),
   './inline-edit': () => import('../src/inline-edit'),
   './live-preview': () => import('../src/live-preview'),
+  './next': () => import('../src/next'),
   './redirects': () => import('../src/redirects'),
   './webhooks': () => import('../src/webhooks'),
   './rich-text': () => import('../src/rich-text'),

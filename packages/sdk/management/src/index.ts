@@ -793,6 +793,49 @@ export interface BlockPatchCheck {
   readonly skippedHooks: readonly string[];
 }
 
+/**
+ * What to compose with AI (`entries.generateBlocks`): one place, an entry's blocks field
+ * (`entryId`), a slot of one of its blocks (`parent`), or a new entry's field (`contentTypeApiId`).
+ */
+export type GenerateBlocksRequest = {
+  readonly field: string;
+  readonly prompt: string;
+  readonly parent?: { readonly key: string; readonly slot: string };
+  readonly locale?: string;
+  readonly tier?: 'flagship' | 'balanced' | 'fast';
+} & (
+  | { readonly entryId: string; readonly contentTypeApiId?: never }
+  | { readonly contentTypeApiId: string; readonly entryId?: never }
+);
+
+/** Composed blocks, as the patch that would add them; nothing is saved. */
+export interface GeneratedBlocks {
+  readonly contentTypeApiId: string;
+  readonly entryId: string | null;
+  /** Pass to `patchBlocks` with `ops`. Null for a new entry. */
+  readonly expectedVersion: number | null;
+  readonly locale: string;
+  /** The ops (or the new entry's field) save as they are; false: read `issues` first. */
+  readonly ready: boolean;
+  /** One insert per block, at the end of the place. */
+  readonly ops: readonly BlockOp[];
+  /** The field as the ops leave it; for a new entry, the value to create it with. */
+  readonly fields: EntryFields;
+  /** Images the asset library had no answer for: those fields are left empty. */
+  readonly unresolvedImages: readonly {
+    readonly path: string;
+    readonly query: string;
+    /** The field is required: choose an image before saving. */
+    readonly required?: true;
+  }[];
+  /**
+   * What a save would still be refused for: a required image left unresolved (`image_required`)
+   * and anything outside the field (a new entry's other required fields).
+   */
+  readonly issues: readonly { readonly field: string; readonly message: string }[];
+  readonly usage: { readonly inputTokens: number; readonly outputTokens: number };
+}
+
 /** One block in an entry's outline (`entries.outlineBlocks`). */
 export interface BlockOutline {
   readonly key: string | null;
@@ -1536,6 +1579,49 @@ export interface CreatedApiKey {
   readonly token: string;
 }
 
+/** What `frontend.connect` mints: name the keys, bind them to a role, add a preview key. */
+export interface ConnectFrontendInput {
+  /** Labels the keys (`<name> (delivery)`, `<name> (preview)`). At most 100 characters. */
+  readonly name?: string;
+  /**
+   * A custom role the delivery key reads as (its content grants narrow what it sees). Refused
+   * (422) when the role holds any scope beyond `delivery:read` and `search:read`.
+   */
+  readonly roleId?: string;
+  /** A custom role the preview key reads as; it may also hold `preview:read`. */
+  readonly previewRoleId?: string;
+  /** Also mint a preview key, for draft mode. */
+  readonly preview?: boolean;
+}
+
+/** A key minted for a frontend: its raw token is in this answer only. */
+export interface FrontendKey {
+  readonly id: string;
+  readonly token: string;
+}
+
+/**
+ * Everything a frontend needs to read this space and environment: the keys (shown once), the
+ * deployment's hosts when the api knows them, and each content type's preview URL.
+ */
+export interface FrontendConnection {
+  readonly space: string;
+  readonly environment: string;
+  readonly deliveryKey: FrontendKey;
+  readonly previewKey?: FrontendKey;
+  /** The admin, the Delivery API's and the Preview API's origins. */
+  readonly endpoints?: {
+    readonly admin: string;
+    readonly delivery: string;
+    readonly preview: string;
+  };
+  readonly previewUrls: readonly {
+    readonly contentType: string;
+    readonly name: string;
+    readonly urlTemplate: string | null;
+  }[];
+}
+
 export interface Principal {
   readonly spaceId: string;
   readonly kind: string;
@@ -1909,6 +1995,12 @@ export function createManagementClient(opts: ManagementClientOptions) {
       /** Copies the definition under a new apiId and name, as a draft with no entries. */
       clone: (apiId: string, to: { readonly apiId: string; readonly name: string }) =>
         post<ContentType>(`${envBase}/content-types/${e(apiId)}/clone`, to),
+      /**
+       * Sets (or, with `null`, clears) the type's preview URL template alone, leaving the rest of
+       * its definition as it is. Needs content:manage, and read on the type to set one.
+       */
+      setPreview: (apiId: string, urlTemplate: string | null) =>
+        put<ContentType>(`${envBase}/content-types/${e(apiId)}/preview`, { urlTemplate }),
     },
 
     /**
@@ -2118,6 +2210,14 @@ export function createManagementClient(opts: ManagementClientOptions) {
        */
       checkBlocks: (id: string, change: { expectedVersion: number; ops: readonly BlockOp[] }) =>
         post<BlockPatchCheck>(`${envBase}/entries/blocks/validate`, { entryId: id, ...change }),
+      /**
+       * Composes blocks for one place with AI, from the blocks the block rules allow there, with
+       * images found in the asset library. Answers the insert ops (send them with `patchBlocks`
+       * at `expectedVersion`), judged as `checkBlocks` judges them; nothing is saved. A 422 for a
+       * locked or full place, or an answer that breaks a rule in the field.
+       */
+      generateBlocks: (request: GenerateBlocksRequest) =>
+        post<GeneratedBlocks>(`${envBase}/entries/blocks/generate`, request),
       /** The entry's blocks fields as a tree of keys, types and labels, to build a patch from. */
       outlineBlocks: (id: string, opts: { field?: string; locale?: string } = {}) =>
         get<BlocksOutline>(`${envBase}/entries/${e(id)}/blocks`, {
@@ -2646,6 +2746,15 @@ export function createManagementClient(opts: ManagementClientOptions) {
           put<unknown>(`${spaceBase}/environment-aliases/${e(alias)}`, { targetEnvironmentId }),
         delete: (alias: string) => del<void>(`${spaceBase}/environment-aliases/${e(alias)}`),
       },
+    },
+
+    frontend: {
+      /**
+       * Connects a frontend: mints a delivery key (and, with `preview`, a preview key) and answers
+       * what its config needs. The tokens are in this answer only. Needs space:admin.
+       */
+      connect: (input: ConnectFrontendInput = {}) =>
+        post<FrontendConnection>(`${envBase}/frontend-connections`, input),
     },
 
     apiKeys: {

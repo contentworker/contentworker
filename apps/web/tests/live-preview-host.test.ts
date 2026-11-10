@@ -105,6 +105,72 @@ describe('the live preview host with the real frontend half', () => {
     await vi.waitFor(() => expect(host?.rendered).toBe(3));
     preview.close();
   });
+  it('shows Coworker’s proposal as ghosts the page never saves, and Not now takes them away', async () => {
+    const dom = new JSDOM('<main id="app"></main>', { url: `${SITE}/p`, pretendToBeVisual: true });
+    const guest = dom.window as unknown as Window;
+    let host: LivePreviewHost | undefined;
+    const framed = {
+      postMessage(data: unknown) {
+        const ev = new dom.window.Event('message');
+        Object.assign(ev, { data: structuredClone(data), origin: ADMIN, source: parent });
+        guest.dispatchEvent(ev);
+      },
+    };
+    const parent = {
+      postMessage(data: unknown) {
+        host?.receive({ data: structuredClone(data), origin: SITE, source: framed });
+      },
+    };
+    Object.defineProperty(guest, 'parent', { value: parent });
+    const shown = vi.fn();
+    host = new LivePreviewHost({
+      origin: SITE,
+      origins: [SITE],
+      frame: () => framed,
+      onStatus: () => {},
+      onProposal: shown,
+    });
+    host.setAllowed(capabilitiesFor(['content:write'], { assistant: true }));
+    host.setEntry(entry(), null);
+    const views: { fields: LiveFields; ghosts: string[]; withProposals: LiveFields }[] = [];
+    const preview = connectPreview({
+      adminOrigin: ADMIN,
+      capabilities: ['select', 'patch.fields', 'patch.blocks', 'scroll', 'proposals'],
+      window: guest,
+      onState: (_id, _locale, fields, view) => {
+        views.push({
+          fields,
+          ghosts: [...view.ghosts.inserted],
+          withProposals: view.withProposals,
+        });
+      },
+    });
+    preview.emit('page', {
+      url: `${SITE}/p`,
+      entries: [{ entryId: 'e1', contentType: 'page', locale: 'en-US' }],
+    });
+    await vi.waitFor(() => expect(views.at(-1)?.fields.title).toBe('Home'));
+    // The dry run's applied insert, keyed.
+    host.setProposal([
+      {
+        op: 'insert',
+        field: 'body',
+        locale: 'en-US',
+        index: 1,
+        block: { _type: 'cta', _key: 'g1', label: 'Proposed by Coworker' },
+      },
+    ]);
+    await vi.waitFor(() => expect(views.at(-1)?.ghosts).toEqual(['g1']));
+    const last = views.at(-1);
+    expect(last?.withProposals.body).toHaveLength(2);
+    // What the page holds as the entry's state never has it.
+    expect(last?.fields.body).toHaveLength(1);
+    expect(shown).toHaveBeenLastCalledWith(true, false);
+    host.setProposal(null);
+    await vi.waitFor(() => expect(views.at(-1)?.ghosts).toEqual([]));
+    expect(views.at(-1)?.withProposals.body).toHaveLength(1);
+    preview.close();
+  });
 });
 
 /** A host and a scripted page: what the page says, and what the host posted it. */
@@ -114,6 +180,7 @@ function setup(allowed: readonly Capability[] = ADMIN_CAPABILITIES) {
   const onPointer = vi.fn();
   const onNote = vi.fn();
   const onSession = vi.fn();
+  const onProposal = vi.fn();
   const host = new LivePreviewHost({
     origin: SITE,
     origins: [SITE, 'https://shop.example'],
@@ -122,6 +189,7 @@ function setup(allowed: readonly Capability[] = ADMIN_CAPABILITIES) {
     onPointer,
     onNote,
     onSession,
+    onProposal,
   });
   const channel = newChannel();
   const say = (
@@ -157,7 +225,20 @@ function setup(allowed: readonly Capability[] = ADMIN_CAPABILITIES) {
       .filter((m) => !kind || m.kind === kind);
   };
   host.setAllowed(allowed);
-  return { host, frame, onStatus, onPointer, onNote, onSession, channel, say, offer, page, sent };
+  return {
+    host,
+    frame,
+    onStatus,
+    onPointer,
+    onNote,
+    onSession,
+    onProposal,
+    channel,
+    say,
+    offer,
+    page,
+    sent,
+  };
 }
 
 describe('what the page may do for a person', () => {
@@ -445,24 +526,202 @@ describe('the live preview host', () => {
     expect(t.onStatus).toHaveBeenLastCalledWith('navigated', undefined);
   });
 
-  it('turns editing off and on, and sends proposals only on a session that accepted them', () => {
+  it('passes over a load that never offers when the page after it offers before its own load', () => {
+    vi.useFakeTimers();
+    const t = setup();
+    t.host.start();
+    // A redirect or sign-in hand-off page loads first and never offers…
+    t.host.frameLoaded();
+    vi.advanceTimersByTime(CONNECT_MS / 2);
+    // …then the entry's page offers, as pages do, before its own load event.
+    t.offer();
+    expect(t.onStatus).toHaveBeenLastCalledWith('live', undefined);
+    t.host.frameLoaded();
+    vi.advanceTimersByTime(CONNECT_MS * 2);
+    expect(t.onStatus).toHaveBeenLastCalledWith('live', undefined);
+    expect(t.onStatus).not.toHaveBeenCalledWith('navigated', undefined);
+    expect(t.onStatus).not.toHaveBeenCalledWith('not-connected', undefined);
+    // Still connected: the entry goes once the page reports it.
+    t.host.setEntry(entry(), null);
+    t.page();
+    expect(t.sent('entry.state')).toHaveLength(1);
+  });
+
+  it('passes over a load that never offers when the page after it offers after its own load', () => {
+    vi.useFakeTimers();
+    const t = setup();
+    t.host.start();
+    t.offer();
+    t.host.frameLoaded();
+    expect(t.onStatus).toHaveBeenLastCalledWith('live', undefined);
+    // The connected page leaves (it says so), a hand-off page loads and never offers…
+    t.say('navigated', { url: `${SITE}/handoff` });
+    t.host.frameLoaded();
+    vi.advanceTimersByTime(CONNECT_MS - 1);
+    // …and the next page loads, then offers within the time from its load.
+    t.host.frameLoaded();
+    vi.advanceTimersByTime(CONNECT_MS - 1);
+    t.offer(undefined, undefined, newChannel());
+    vi.advanceTimersByTime(CONNECT_MS * 2);
+    expect(t.onStatus).toHaveBeenLastCalledWith('live', undefined);
+    expect(t.onStatus).not.toHaveBeenCalledWith('navigated', undefined);
+  });
+
+  it('counts a fresh offer on a page already loaded as no later load’s', () => {
+    vi.useFakeTimers();
+    const t = setup();
+    t.host.start();
+    t.offer();
+    t.host.frameLoaded();
+    // The page remounts and offers again; then the frame loads something that never offers.
+    t.offer(undefined, undefined, newChannel());
+    t.host.frameLoaded();
+    vi.advanceTimersByTime(CONNECT_MS);
+    expect(t.onStatus).toHaveBeenLastCalledWith('navigated', undefined);
+  });
+
+  it('says the page moved away only when no offer comes in the time after the last load', () => {
+    vi.useFakeTimers();
+    const t = setup();
+    t.host.start();
+    t.offer();
+    t.host.frameLoaded();
+    // A page that had connected leaves, and what replaces it never offers.
+    t.say('navigated', { url: `${SITE}/elsewhere` });
+    t.host.frameLoaded();
+    t.host.frameLoaded();
+    vi.advanceTimersByTime(CONNECT_MS - 1);
+    expect(t.onStatus).toHaveBeenLastCalledWith('live', undefined);
+    vi.advanceTimersByTime(1);
+    expect(t.onStatus).toHaveBeenLastCalledWith('navigated', undefined);
+  });
+
+  it('turns editing off and on', () => {
     const t = setup();
     t.offer();
     t.host.setEditing(false);
     expect(t.sent('editing').at(-1)).toMatchObject({ on: false });
+    t.host.setEditing(true);
+    expect(t.sent('editing').at(-1)).toMatchObject({ on: true });
+  });
+});
+
+describe('Coworker’s proposals on the page', () => {
+  const ghost = {
+    op: 'insert',
+    field: 'body',
+    locale: 'en-US',
+    after: 'k1',
+    block: { _type: 'cta', _key: 'g1', label: 'Proposed' },
+  } as const;
+  const proposing = () => {
+    const t = setup([...ADMIN_CAPABILITIES, 'proposals']);
+    t.offer();
     t.host.setEntry(entry(), null);
     t.page();
-    expect(
-      t.host.propose('body', [{ op: 'remove', field: 'body', locale: 'en-US', key: 'k1' }]),
-    ).toBe(false);
+    return t;
+  };
 
-    const u = setup([...ADMIN_CAPABILITIES, 'proposals']);
-    u.offer();
-    u.host.setEntry(entry(), null);
-    u.page();
+  it('lets a writer’s page show them only with Coworker on', () => {
+    expect(capabilitiesFor(['content:write'], { assistant: true })).toContain('proposals');
+    expect(capabilitiesFor(['content:write'])).not.toContain('proposals');
+    expect(capabilitiesFor(['content:read'], { assistant: true })).toEqual(SELECT_ONLY);
+  });
+
+  it('sends a proposal only on a session that accepted them, marked proposed', () => {
+    const t = setup();
+    t.offer();
+    t.host.setEntry(entry(), null);
+    t.page();
+    expect(t.host.setProposal([ghost])).toBe(false);
+    expect(t.sent('blocks.patch')).toHaveLength(0);
+
+    // Let through for this person, but not offered by the page: still nothing.
+    const n = setup([...ADMIN_CAPABILITIES, 'proposals']);
+    n.offer(undefined, ['select', 'patch.fields', 'patch.blocks', 'scroll', 'layout']);
+    n.host.setEntry(entry(), null);
+    n.page();
+    expect(n.host.setProposal([ghost])).toBe(false);
+
+    const u = proposing();
+    expect(u.host.setProposal([ghost])).toBe(true);
+    expect(u.sent('blocks.patch').at(-1)).toMatchObject({
+      rev: 2,
+      field: 'body',
+      ops: [{ ...ghost, proposed: true }],
+    });
+    expect(u.onProposal).toHaveBeenLastCalledWith(true, false);
+  });
+
+  it('sends it again after every whole state, and only in the locale the page shows', () => {
+    const t = proposing();
+    t.host.setProposal([
+      ghost,
+      { ...ghost, locale: 'de-DE', block: { ...ghost.block, _key: 'g2' } },
+    ]);
+    expect(t.sent('blocks.patch').at(-1)?.ops).toHaveLength(1);
+    // A gap: the page gets the whole entry, which clears its ghosts, then the proposal again.
+    t.say('failed', { rev: 2, reason: 'gap', entryId: 'e1' });
     expect(
-      u.host.propose('body', [{ op: 'remove', field: 'body', locale: 'en-US', key: 'k1' }]),
-    ).toBe(true);
-    expect(u.sent('blocks.patch').at(-1)).toMatchObject({ ops: [{ proposed: true }] });
+      t
+        .sent()
+        .slice(-2)
+        .map((m) => m.kind),
+    ).toEqual(['entry.state', 'blocks.patch']);
+    // Another session (the page reloaded): the same.
+    const channel = newChannel();
+    t.offer(undefined, undefined, channel);
+    t.say(
+      'page',
+      { url: `${SITE}/p`, entries: [{ entryId: 'e1', contentType: 'page', locale: 'en-US' }] },
+      { channel },
+    );
+    expect(
+      t
+        .sent()
+        .slice(-2)
+        .map((m) => m.kind),
+    ).toEqual(['entry.state', 'blocks.patch']);
+  });
+
+  it('takes it back with a fresh state on Not now, and sends no more of it', () => {
+    const t = proposing();
+    t.host.setProposal([ghost]);
+    const before = t.sent().length;
+    expect(t.host.setProposal(null)).toBe(false);
+    expect(
+      t
+        .sent()
+        .slice(before)
+        .map((m) => m.kind),
+    ).toEqual(['entry.state']);
+    expect(t.onProposal).toHaveBeenLastCalledWith(false, false);
+    t.say('failed', { rev: 3, reason: 'gap', entryId: 'e1' });
+    expect(t.sent().at(-1)?.kind).toBe('entry.state');
+    expect(t.sent('blocks.patch')).toHaveLength(1);
+  });
+
+  it('shows the saved entry after Confirm, with nothing proposed on it', () => {
+    const t = proposing();
+    t.host.setProposal([ghost]);
+    t.host.setProposal(null);
+    // The card saved it: the editor reads the entry again and sends it, the block now real.
+    const saved = entry('Home', {
+      fields: { title: 'Home', body: [{ _type: 'cta', _key: 'k1', label: 'Go' }, ghost.block] },
+    });
+    t.host.setEntry(saved, null);
+    expect(t.sent().at(-1)).toMatchObject({ kind: 'entry.state', fields: saved.fields });
+    expect(t.sent('blocks.patch')).toHaveLength(1);
+  });
+
+  it('drops a proposal the page refuses, rather than sending it to fail again', () => {
+    const t = proposing();
+    t.host.setProposal([ghost]);
+    t.say('failed', { rev: 2, reason: 'conflict', entryId: 'e1' });
+    expect(t.sent().at(-1)?.kind).toBe('entry.state');
+    expect(t.onProposal).toHaveBeenLastCalledWith(false, true);
+    t.say('failed', { rev: 3, reason: 'gap', entryId: 'e1' });
+    expect(t.sent().at(-1)?.kind).toBe('entry.state');
+    expect(t.sent('blocks.patch')).toHaveLength(1);
   });
 });

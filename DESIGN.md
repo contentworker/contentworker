@@ -827,6 +827,18 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   **Settings** is a sheet (from the side; the bottom on a phone) whose form is drawn from its
   manifest's fields: a secret shows an `idle` Set or Not set stamp with Set/Replace and Clear,
   never a value; a refusal sits beside its field and takes focus.
+  **Connect a frontend** (Access) is four cards: the keys (a row of Name, a Delivery key role and
+  Create key; under it an "Also create a Preview key" checkbox named by `aria-label`, and when
+  ticked, on a line of its own, a Preview key role, so ticking moves nothing; once minted, a
+  "Create other keys…" that asks in place first), whose tokens show once in an Alert, each in
+  mono with an outline copy button named for it; Configuration, `Tabs` of the ways a site reads
+  (Frontend runtime, SDK, Next.js, Live preview), each a muted line held to the measure and
+  `CodeBlock`s with a title and copy button; Preview URLs, a labelled mono input per content
+  type, its refusal beneath it as an alert tied by `aria-describedby`, focus back on the input; and Check the connection, a type select
+  and an outline Check connection whose answer is an `ok` "Connected" stamp with the page's origin,
+  or an Alert saying why not (destructive for an SDK it can't speak with). The check's frame is
+  off screen, `aria-hidden` and `inert`, and goes once the page answers; picking another type
+  waits for the button.
   **Trash** (Workspace) is one section: a segmented Keep until deleted / Delete after a while
   (off by default), and when on a "Days in the trash" field (1 to 3650; an out-of-range value is
   said under it, tied to it by `aria-describedby`), with a muted line saying what happens (an
@@ -941,7 +953,17 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   shift-click or Shift with ↑ ↓ in Layers takes neighbours in one slot into the run), and
   **Unlock** on a locked block. A lock waits for unsaved block changes, saying why; a refused one
   is said under the button in plain words; stale locks are listed under the Checks with Clear.
-  The entry form's block cards carry the same lock line. Its first block takes focus, and the block put in hands
+  The entry form's block cards carry the same lock line. With Coworker on, a dock that offers
+  blocks also offers **Ask Coworker to fill this** in its header (a ghost `xs` button led by the
+  mark in `ai`; held, with a muted line saying why, while the canvas has unsaved edits or another
+  proposal waits or saves); never at a full or locked place. Asked from the dock's sheet (below lg), focus stays in Coworker's prompt. Coworker's proposal comes back as a card in the
+  panel, the one place it is decided; while it waits the page draws its blocks as ghosts and the
+  canvas outlines each in a dashed `ai` edge with "Proposed" (or "Proposed change", "Proposed
+  removal") and the mark on a paper chip at its corner (`GhostMark`), Layers lists the proposed
+  blocks after their slot's blocks with an `ai` "Proposed" stamp and where each goes (not tree
+  items: they aren't the entry's), and a quiet status line under the header says it is on the page
+  and that nothing is saved until it is confirmed (or that the page can't show it, so the card is
+  where to review it). The Site view beside the form draws the same marks and line. The dock's first block takes focus, and the block put in hands
   focus to the inspector's heading; closing it hands focus back to what opened it. The inspector's tabs are Content (the
   block's own fields, the entry form's editors), Data (references) and Look (props limited to
   listed values, four or fewer as a segmented control, more as a select; never free CSS); a block

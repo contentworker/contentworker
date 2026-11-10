@@ -47,6 +47,7 @@ import { AuditLog } from '~/cms/components/AuditLog';
 import { BranchMerge } from '~/cms/components/BranchMerge';
 import { ConfirmDialog } from '~/cms/components/ConfirmDialog';
 import { ConnectedApps } from '~/cms/components/ConnectedApps';
+import { ConnectFrontend } from '~/cms/components/ConnectFrontend';
 import { Functions } from '~/cms/components/Functions';
 import { ConfirmButton } from '~/cms/components/InlineConfirm';
 import { LocaleSettings } from '~/cms/components/LocaleSettings';
@@ -86,6 +87,7 @@ function NoMatches(props: { what: string; onClear: () => void }) {
 const SECTION_BODY: Record<string, (client: ManagementClient) => React.ReactNode> = {
   team: (client) => <Team client={client} />,
   'api-keys': (client) => <ApiKeys client={client} />,
+  frontend: (client) => <ConnectFrontend client={client} />,
   roles: (client) => <RolesSettings client={client} />,
   'connected-apps': (client) => <ConnectedApps client={client} />,
   webhooks: (client) => <Webhooks client={client} />,

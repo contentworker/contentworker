@@ -91,3 +91,4 @@
 ^(scripts/sdk-packages\.ts|\.github/workflows/sdk-(packages|release)\.yml)$	docs/deployment.md docs/development.md	prose
 ^packages/(sdk/core/src/live-preview(\.ts|/)|domain/src/content-type/block-patch\.ts$)	guides/live-preview guides/sdks docs/sdks.md	prose
 ^apps/web/app/(cms/components/pane/SitePane\.tsx|cms/lib/live-preview/|routes/preview-frame\.tsx|lib/preview-frame\.server\.ts)	guides/live-preview guides/editing-and-publishing docs/admin-ui.md	prose
+^(packages/(application/src/frontend-connection\.ts|http/src/(api/routes/management/frontend|mcp/tools/frontend|api/docs/schemas/frontend)\.ts|sdk/core/src/(live|live-query|next)\.ts)|apps/web/app/cms/(components/ConnectFrontend\.tsx|components/pane/use-connection-check\.ts|lib/frontend-config\.ts))$	guides/connect-a-frontend guides/sdks docs/sdks.md docs/admin-ui.md	prose

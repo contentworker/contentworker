@@ -2,7 +2,8 @@
  * The guest page: a customer's frontend in miniature. It connects to the admin that frames it
  * (`connectPreview`), says which entry it renders (`page`, from its URL), and renders the entry's
  * title and its blocks fields (each block shown by its `label`, `heading` or `title`, its slots
- * nested inside it) from the unsaved state the admin sends. Every blocks field and slot is marked
+ * nested inside it) from the unsaved state the admin sends, with Coworker's proposed blocks laid over
+ * it as ghosts (`data-cw-proposed`, dashed). Every blocks field and slot is marked
  * `data-cw-slot`, so the page reports seams in its `layout`. Built from text nodes only, never markup from the entry, as a real
  * frontend renders structured content.
  *
@@ -46,6 +47,9 @@ type Step = { key: string } | { field: string };
 const isBlocks = (value: unknown): value is Record<string, unknown>[] =>
   Array.isArray(value) && value.every((b) => typeof b === 'object' && b !== null && '_type' in b);
 
+/** Coworker's ghost blocks in this render, by key: drawn dashed and marked, never saved. */
+let ghosts = new Set<string>();
+
 /** One slot: its blocks, each marked with its ref, and each block's own slots inside it. */
 function slot(name: string, steps: Step[], blocks: Record<string, unknown>[], locale: string) {
   const box = el('div', { ...slotAttrs(ref(formatFieldPath({ field: name, steps }), locale)) });
@@ -54,6 +58,7 @@ function slot(name: string, steps: Step[], blocks: Record<string, unknown>[], lo
     const at: Step[] = [...steps, { key: block._key }];
     const section = el('section', {
       ...refAttrs(ref(formatFieldPath({ field: name, steps: at }), locale)),
+      ...(ghosts.has(block._key) ? { 'data-cw-proposed': 'inserted' } : {}),
     });
     const text = block.label ?? block.heading ?? block.title ?? block._type;
     section.appendChild(el('p', {}, typeof text === 'string' ? text : ''));
@@ -88,8 +93,9 @@ function render(locale: string, fields: LiveFields) {
 
 const preview = connectPreview({
   adminOrigin: __ADMIN_ORIGIN__,
-  capabilities: ['select', 'patch.fields', 'patch.blocks', 'scroll', 'layout'],
+  capabilities: ['select', 'patch.fields', 'patch.blocks', 'scroll', 'layout', 'proposals'],
   onState(_entryId, locale, _fields, view) {
+    ghosts = new Set(view.ghosts.inserted);
     render(locale, view.withProposals);
   },
 });

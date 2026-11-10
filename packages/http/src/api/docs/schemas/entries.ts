@@ -76,6 +76,21 @@ export const entryValidation = z.object({
     ),
 });
 
+export const draftResult = z.object({
+  contentTypeApiId: z.string(),
+  fields: entryFields.describe(
+    'The drafted fields under the default locale: scalars and top-level blocks fields. Nothing ' +
+      'is saved; create the entry with them',
+  ),
+  unresolvedImages: z
+    .array(z.object({ path: z.string(), query: z.string(), required: z.literal(true).optional() }))
+    .describe('Images the drafted blocks asked for that the asset library had no answer for'),
+  issues: z
+    .array(z.object({ field: z.string(), message: z.string() }).loose())
+    .describe('Required images left unresolved (image_required): choose one before creating'),
+  usage: z.object({ inputTokens: z.int(), outputTokens: z.int() }),
+});
+
 export const publishedEntry = z.object({
   id: z.uuid(),
   contentType: z.string().describe('Content type apiId'),

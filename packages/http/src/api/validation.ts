@@ -141,6 +141,12 @@ export const promotionBody = z.object({
   target: zId,
   contentTypes: z.array(zId).max(1000).optional(),
   entries: zIdList.optional(),
+  blocks: z
+    .boolean()
+    .optional()
+    .describe(
+      'Copy the block catalog and block config when they differ (default: only when contentTypes and entries are omitted)',
+    ),
 });
 export const createApiKeyBody = z.object({
   kind: z.enum(['cma', 'cda', 'cpa']),
@@ -457,6 +463,31 @@ export const contentTypeBody = z.object({
 });
 /** A content type's copy: its new apiId and name. */
 export const cloneContentTypeBody = z.object({ apiId: zId, name: zShort });
+export const contentTypePreviewBody = z.object({
+  urlTemplate: contentTypePreview.shape.urlTemplate
+    .nullable()
+    .describe('The preview URL template (see `preview` on a content type), or null to clear it'),
+});
+export const connectFrontendBody = z.object({
+  name: z
+    .string()
+    .max(100)
+    .optional()
+    .describe('Names the keys: `<name> (delivery)`, `<name> (preview)`. Default `Frontend`'),
+  roleId: zId
+    .optional()
+    .describe(
+      'Bind the Delivery key to this role, to narrow what it reads; the role may hold only ' +
+        '`delivery:read` and `search:read` (422 otherwise)',
+    ),
+  previewRoleId: zId
+    .optional()
+    .describe('The same for the Preview key; its role may also hold `preview:read`'),
+  preview: z
+    .boolean()
+    .optional()
+    .describe('Also mint a Content Preview API key, for a frontend’s draft mode'),
+});
 export const createEntryBody = z.object({
   contentTypeApiId: zId,
   fields: zFieldValues.optional(),
@@ -552,6 +583,34 @@ export const blockPatchBody = z.object(blockPatchShape);
  * names it, so the audit row of a check that wrote nothing is never read as the entry's activity.
  */
 export const blockPatchCheckBody = z.object({ entryId: zId, ...blockPatchShape });
+/**
+ * Blocks composed for one place (`generateBlocks`): an entry's field or a slot of one of its
+ * blocks, or a new entry's field. Shared with the MCP tool, so both take the same request.
+ */
+export const generateBlocksShape = {
+  field: zId.describe('A top-level blocks field of the type'),
+  prompt: zText.describe('What to compose, as you would ask an editor'),
+  entryId: zId
+    .optional()
+    .describe('The entry to add blocks to (or contentTypeApiId for a new one)'),
+  contentTypeApiId: zId
+    .optional()
+    .describe('A new entry of this type: answers the field to create it with'),
+  parent: z
+    .object({
+      key: z.string().min(1).max(128).describe('The _key of the block whose slot to fill'),
+      slot: zId.describe('The slot (a blocks field of that block)'),
+    })
+    .optional()
+    .describe('A slot of one of the entry’s blocks; absent, the field’s top level'),
+  locale: zLocale.optional().describe('The locale to compose for (default: the default locale)'),
+  tier: zTier.optional().describe('Model tier (default flagship)'),
+};
+export const generateBlocksBody = z
+  .object(generateBlocksShape)
+  .refine((b) => (b.entryId === undefined) !== (b.contentTypeApiId === undefined), {
+    message: 'Give entryId (an entry’s blocks) or contentTypeApiId (a new entry), not both',
+  });
 export const translateBody = z.object({
   targetLocale: zLocale,
   sourceLocale: zLocale.optional(),

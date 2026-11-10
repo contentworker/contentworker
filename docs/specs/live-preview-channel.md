@@ -1,9 +1,9 @@
 # Live preview channel
 
-Status: **proposed** (M6, "Live preview channel" in `ROADMAP.md`). The frontend half is built
+Status: **built** (M6, "Live preview channel" in `ROADMAP.md`). The frontend half is built
 (`@contentworker/sdk/live-preview`, see Extensions); so is the admin half (the entry editor's
-Site view, `apps/web/app/cms/lib/live-preview/host.ts`), except Coworker's proposals, which it
-doesn't accept yet.
+Site view and the canvas, `apps/web/app/cms/lib/live-preview/host.ts`), Coworker's proposals
+included (see "Coworker's proposals, as the admin sends them").
 This file sits in `docs/specs/`, which the docs embed does not read (it takes `docs/*.md` only),
 so MCP clients never mistake it for a description of shipped behaviour.
 
@@ -293,6 +293,30 @@ Behaviour the spec leaves open, as the frontend implements it:
   one, at most 200,000 values, plain objects and lists only, then the byte cap. An entry beyond
   those can't be previewed. A 100-byte message holding a list of a
   hundred million holes, or a typed array, is refused at once.
+
+### Coworker's proposals, as the admin sends them
+
+- **When.** Capabilities are fixed at connect, so the admin accepts `proposals` (offered with
+  `patch.blocks`) for a person who may write content while Coworker is on, and uses it only while a
+  Coworker card proposing a block patch for the entry waits for an answer (and, after Confirm, until
+  the save lands). With Coworker off, or for a role that only selects, it is never accepted.
+- **What.** The ops are the card's dry run's `applied` ops (`POST …/entries/blocks/validate`), in the
+  locale the page shows, never the model's own: every block they bring is keyed, so each ghost has
+  a name. A card the dry run refuses (a locked region, the block config, another version) shows no
+  ghosts. Inserts, updates, moves and removes only; a patch with anything else is reviewed in the
+  card alone.
+- **Taking back.** Not now, a failed save, or a newer request replacing the card takes the ghosts
+  back with a fresh `entry.state`. Every whole state is followed by the proposal again while it
+  waits, so a gap, a reload or a new session keeps showing it. A `failed` on a proposal's rev (other
+  than `gap`) drops the proposal, so it isn't resent to fail again, and the admin says the page
+  couldn't show it.
+- **Confirm** saves through the card, as ever (the dry-run-checked call with its `expectedVersion`);
+  then the editor reads the entry again and sends it whole. Nothing on the channel saves.
+- **Untrusted.** A proposal's values are a model's, unconfirmed, and may have been shaped by
+  content it read: a page renders them as it renders any field (as text, never as markup).
+- **Marked.** The admin outlines each ghost the page reports in its `layout` in `ai` (the brand),
+  dashed, with "Proposed" (or "Proposed change", "Proposed removal") in words; Layers lists proposed
+  blocks after their slot's blocks, not as tree items.
 
 Two wire details differ from the text above, because it can't be written as stated: `pointer`'s
 hover/click field travels as `pointer`, since the envelope's `kind` already holds `'pointer'`; and

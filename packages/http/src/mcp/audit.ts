@@ -51,7 +51,7 @@ export function toolMutates(tool: string, args: Args, readOnly: boolean): boolea
 /** A tool's target by its name, first match wins, in the words REST's rows use (`routeTargetType`). */
 const TOOL_TARGET_TYPES: readonly (readonly [RegExp, string])[] = [
   [/^entr(y|ies)_/, 'entry'],
-  [/_content_type$/, 'content_type'],
+  [/_content_type(_preview)?$/, 'content_type'],
   [/^agent_schedule_/, 'agent_schedule'],
   [/^agent_review_/, 'agent_review'],
   [/^ai_action_/, 'ai_action'],
@@ -59,6 +59,8 @@ const TOOL_TARGET_TYPES: readonly (readonly [RegExp, string])[] = [
   [/^blocks_catalog_/, 'block_catalog'],
   [/^blocks_config_/, 'block_config'],
   [/^api_key_/, 'api_key'],
+  // Names the Delivery key it minted (`auditTarget`).
+  [/^frontend_connect$/, 'api_key'],
   [/^app_extension_/, 'app_extension'],
   [/^asset_collections?_/, 'asset_collection'],
   [/^asset_folders?_/, 'asset_folder'],

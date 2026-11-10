@@ -3,7 +3,9 @@
 > A private workspace package. It ships on npm inside [`@contentworker/sdk`](../sdk/README.md) as `@contentworker/sdk/vue`; the examples below use that name.
 
 Vue 3 composables and components over `@contentworker/sdk`: `useEntry`,
-`useEntries`, `useAsset`, `useSemanticSearch` and `<CwImage>` for delivered assets. Inputs take
+`useEntries`, `useAsset`, `useSemanticSearch`, `<CwImage>` for delivered assets and `<CwBlocks>`
+for blocks fields
+([Rendering blocks](https://docs.contentworker.app/guides/blocks-from-code/#rendering-blocks)). Inputs take
 plain values, refs or getters and re-fetch on change; fetching starts on mount, never during SSR.
 
 ```sh

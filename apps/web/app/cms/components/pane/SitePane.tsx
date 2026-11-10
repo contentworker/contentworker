@@ -8,7 +8,7 @@
  * editor's: nothing here writes.
  */
 
-import type { ContentType, EntryFields } from '@contentworker/domain';
+import type { BlockOp, ContentType, EntryFields } from '@contentworker/domain';
 import type { Capability } from '@contentworker/sdk-core/live-preview';
 import { Alert, AlertDescription, AlertTitle } from '@contentworker/ui/alert';
 import { Button } from '@contentworker/ui/button';
@@ -16,9 +16,11 @@ import { cn } from '@contentworker/ui/lib/utils';
 import { Segmented, SegmentedItem } from '@contentworker/ui/segmented';
 import { Skeleton, SkeletonText } from '@contentworker/ui/skeleton';
 import { Monitor, Smartphone, Tablet } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { ProposalLine } from '~/cms/components/canvas/ProposalLine';
 import { LoadingStatus } from '~/cms/components/loading';
 import { DEVICE_WIDTHS, type Device, type SiteStatus } from '~/cms/lib/live-preview/frame-channel';
+import { ghostOps } from '~/cms/lib/live-preview/proposals';
 import { useSiteFrame } from './use-site-frame';
 
 /** The published guide to the page side, linked where a site doesn't connect. */
@@ -51,12 +53,23 @@ export interface SitePaneProps {
   readonly split: boolean;
   /** A marked element clicked in the page, and the entries the page said it renders. */
   readonly onPick: (ref: string, pageEntries: readonly string[]) => void;
+  /**
+   * The block patch a Coworker card for this entry proposes, while it waits: the page shows its
+   * blocks as ghosts, outlined as proposed. Nothing here saves it; the card does, on Confirm.
+   */
+  readonly proposal?: readonly BlockOp[] | null;
+  /** The proposal was confirmed, and its save is under way. */
+  readonly saving?: boolean;
 }
 
 export function SitePane(props: SitePaneProps) {
   const [device, setDevice] = useDevice();
   const [mode, setMode] = useState<'edit' | 'view'>('edit');
-  const site = useSiteFrame({ ...props, mode, device });
+  const shownOps = useMemo(
+    () => (props.proposal ? ghostOps(props.proposal) : null),
+    [props.proposal],
+  );
+  const site = useSiteFrame({ ...props, mode, device, proposal: shownOps });
   const { status, origin, note, live, reload } = site;
   // What clicks do now: View until the page answers, whatever was chosen.
   const effectiveMode = live ? mode : 'view';
@@ -130,6 +143,13 @@ export function SitePane(props: SitePaneProps) {
         </div>
       ) : null}
 
+      <ProposalLine
+        waiting={!!props.proposal}
+        saving={props.saving === true}
+        shown={site.proposal.shown}
+        refused={site.proposal.refused}
+        unsupported={live && !site.capabilities.includes('proposals')}
+      />
       {/* Always there, so a screen reader hears the note when its words arrive. */}
       <p role="status" className="text-muted-foreground text-xs empty:hidden">
         {note === 'render'
@@ -191,7 +211,19 @@ export function SiteNotice({
               appear here as you type once the page calls{' '}
               <span className="font-mono">connectPreview</span>.
             </p>
-            <GuideLink />
+            <p className="flex flex-wrap gap-x-4">
+              {/* The screen that prints the page's config and checks it connects: in a new tab,
+                  so the edit in hand isn't left. */}
+              <a
+                href="/settings/frontend"
+                target="_blank"
+                rel="noreferrer"
+                className="font-medium text-link hover:underline"
+              >
+                Connect a frontend<span className="sr-only"> (opens in a new tab)</span>
+              </a>
+              <GuideLink />
+            </p>
           </AlertDescription>
         </Alert>
       );
