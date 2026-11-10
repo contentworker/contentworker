@@ -12,9 +12,20 @@ import {
   effectiveBlockRules,
 } from '@contentworker/domain';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import {
+  cleanup,
+  configure,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react';
 import { createMemoryRouter, RouterProvider } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+/** As in asset-library.test.tsx: a CI runner's first render can outlast the default second. */
+configure({ asyncUtilTimeout: 5000 });
 
 vi.mock('~/cms/components/block-config/codemirror', () => ({
   JsonCode: (p: { value: string; label: string; describedBy?: string }) => (
