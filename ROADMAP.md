@@ -346,8 +346,13 @@ Built on Blocks and the frontend runtime. Layouts stay a typed tree; rich text s
   proposals as ghost blocks are next.
 - [ ] **Blocks renderers.** `<Blocks components={…} />` for React, Vue and the frontend runtime, typed
   by codegen.
-- [ ] **Layout patches.** `patchBlocks` with key-addressed create, update, move and remove, for
-  agents and the editor alike.
+- [x] **Layout patches.** `patchBlocks` with key-addressed create, update, move and remove, for
+  agents and the editor alike (#185): insert, update, move, remove and duplicate ops by `_key`,
+  held to `expectedVersion`, over REST (`PATCH …/entries/:id/blocks`, an outline at
+  `GET …/entries/:id/blocks` and a dry run at `POST …/entries/blocks/validate`), MCP
+  (`entry_blocks_patch`, `entry_blocks_outline`, `entry_blocks_validate`) and the management SDK.
+  Coworker proposes block changes through it, the canvas applies and undoes its edits with the same
+  `applyBlockPatch` (keeping each change's inverse), and live preview sends them as `blocks.patch`.
 - [ ] **Layout-aware generation.** Generation that knows a field's block catalog and resolves images
   through asset search.
 - [ ] **Layout model.** Deeper nesting than three levels, and per-breakpoint overrides of token
