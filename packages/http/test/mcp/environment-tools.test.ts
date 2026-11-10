@@ -28,6 +28,7 @@ import {
   drainImportJobs,
   SNAPSHOT_ENVELOPE,
   sections,
+  seedBlocks,
   seedEverySection,
 } from '../snapshot-round-trip';
 
@@ -403,5 +404,41 @@ describe('promotions over MCP', () => {
       }),
     );
     expect(approved).toMatchObject({ status: 'completed', decidedBy: 'grace' });
+  });
+
+  it('carries the block catalog and config with a selection when asked to', async () => {
+    const deps = makeDeps();
+    await createSpace(deps.ctx, { spaceId: 'space-1', name: 'S', defaultLocale: 'en-US' });
+    await createEnvironment(deps.ctx, 'space-1', 'staging');
+    await createEnvironment(deps.ctx, 'space-1', 'qa');
+    await seedBlocks(deps.ctx, { spaceId: 'space-1', environmentId: 'staging' });
+    const person = (subject: string): Principal => ({
+      spaceId: 'space-1',
+      kind: 'user',
+      subject,
+      scopes: [...scopesForKind('cma')],
+    });
+    const body = (r: Awaited<ReturnType<Client['callTool']>>) =>
+      JSON.parse((r.content as { text: string }[])[0]?.text ?? '{}');
+    const ada = await connect(deps, person('ada'));
+    const args = { space: 'space-1', source: 'staging', target: 'qa', contentTypes: ['page'] };
+    const without = body(await ada.callTool({ name: 'promotion_request', arguments: args }));
+    expect(without).not.toHaveProperty('blocks');
+    const requested = body(
+      await ada.callTool({ name: 'promotion_request', arguments: { ...args, blocks: true } }),
+    );
+    expect(requested).toMatchObject({
+      status: 'awaiting_approval',
+      blocks: { catalogVersion: 1, configVersion: 1 },
+    });
+    const grace = await connect(deps, person('grace'));
+    expect(
+      body(
+        await grace.callTool({
+          name: 'promotion_approve',
+          arguments: { space: 'space-1', id: requested.id },
+        }),
+      ),
+    ).toMatchObject({ status: 'completed', result: { blocks: { catalog: true, config: true } } });
   });
 });

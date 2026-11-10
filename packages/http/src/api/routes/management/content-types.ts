@@ -7,12 +7,14 @@ import {
   createContentType,
   deleteContentType,
   deleteContentTypeWithEntries,
+  findBlockCatalog,
   getContentType,
   getLocaleSettings,
   listContentTypes,
   listFieldValues,
   MAX_FIELD_VALUES_PAGE,
   publishContentType,
+  setContentTypePreview,
   setLocaleSettings,
 } from '@contentworker/application';
 import {
@@ -22,7 +24,7 @@ import {
   canAccessContentType,
   SCOPES,
 } from '@contentworker/domain';
-import { generateTypes } from '@contentworker/sdk-codegen';
+import { type BlockCatalogInput, generateTypes } from '@contentworker/sdk-codegen';
 import { Hono } from 'hono';
 import { type AuthDeps, type AuthVars, requireScope } from '../../auth';
 import { doc } from '../../docs/openapi';
@@ -30,6 +32,7 @@ import * as contentTypeDocs from '../../docs/schemas/content-types';
 import {
   cloneContentTypeBody,
   contentTypeBody,
+  contentTypePreviewBody,
   localeSettingsBody,
   parseBody,
 } from '../../validation';
@@ -71,14 +74,17 @@ export function contentTypesRoutes(deps: AuthDeps): Hono<AuthVars> {
     doc('Content types', 'List content types', {
       description:
         '`?format=typescript` returns the content model as a TypeScript module instead of ' +
-        'JSON — the same output the codegen CLI produces, served from the live model so CI ' +
-        'and coding agents need nothing installed to type against it.',
+        'JSON — the same output the codegen CLI produces, block types from the block catalog ' +
+        'in force included, served from the live model so CI and coding agents need nothing ' +
+        'installed to type against it.',
       query: { format: 'json (default) | typescript' },
     }),
     requireScope(SCOPES.previewRead),
     async (c) => {
       const types = await listContentTypes(ctx, scopeOf(c));
       if (c.req.query('format') !== 'typescript') return c.json({ items: types });
+      // The block types follow the catalog in force, as `contentworker types` does.
+      const blockCatalog = await findBlockCatalog(ctx, scopeOf(c));
 
       // Served as text/plain rather than a TypeScript media type: browsers and
       // `curl` show it, and nothing downstream tries to execute it.
@@ -87,6 +93,7 @@ export function contentTypesRoutes(deps: AuthDeps): Hono<AuthVars> {
           banner: `Generated from ${scopeOf(c).spaceId}/${scopeOf(c).environmentId} at ${ctx.clock
             .now()
             .toISOString()}. Do not edit by hand.`,
+          blockCatalog: blockCatalog as unknown as BlockCatalogInput | undefined,
         }),
         200,
         { 'content-type': 'text/plain; charset=utf-8' },
@@ -246,6 +253,31 @@ export function contentTypesRoutes(deps: AuthDeps): Hono<AuthVars> {
           body.name,
         ),
         201,
+      );
+    },
+  );
+  app.put(
+    `${BASE}/content-types/:apiId/preview`,
+    doc('Content types', 'Set a content type’s preview URL', {
+      body: contentTypePreviewBody,
+      ok: contentTypeDocs.contentType,
+      description:
+        'Sets the preview URL template (or clears it with null) and nothing else, held to the ' +
+        'version it read (409 when another save lands first). Delivery never serves it, so a ' +
+        'published type stays published and a type with unpublished changes keeps them as a ' +
+        'draft. Setting one needs read on the type too: it decides where its preview tokens go.',
+    }),
+    requireScope(SCOPES.contentManage),
+    async (c) => {
+      const body = await parseBody(c, contentTypePreviewBody);
+      return c.json(
+        await setContentTypePreview(
+          ctx,
+          c.get('principal'),
+          scopeOf(c),
+          c.req.param('apiId'),
+          body.urlTemplate,
+        ),
       );
     },
   );

@@ -339,13 +339,23 @@ None blocks a release.
 Built on Blocks and the frontend runtime. Layouts stay a typed tree; rich text stays a
 `RichTextDocument`; styling is design tokens and enum props, never raw CSS.
 
-- [ ] **Live preview channel.** `@contentworker/sdk/live-preview`: the admin frames the customer's
-  frontend and pushes unsaved form state as patches; clicks select fields back. Spec (proposed):
+- [x] **Live preview channel.** `@contentworker/sdk/live-preview`: the admin frames the customer's
+  frontend and pushes unsaved form state as patches; clicks select fields back. Spec:
   [`docs/specs/live-preview-channel.md`](docs/specs/live-preview-channel.md). The page side
-  (`connectPreview`) and the admin side (the entry editor's Site view) are in place; Coworker's
-  proposals as ghost blocks are next.
-- [ ] **Blocks renderers.** `<Blocks components={…} />` for React, Vue and the frontend runtime, typed
-  by codegen.
+  (`connectPreview`), the admin side (the entry editor's Site view and the canvas) and Coworker's
+  proposals as ghost blocks are in place: while a Coworker block-patch card waits for an answer,
+  the page shows its blocks as ghosts (`proposals`, `proposed: true`), the admin marks them
+  "Proposed", Not now takes them back and Confirm saves through the card.
+- [x] **Blocks renderers.** `<Blocks components={…} />` for React, Vue and the frontend runtime, typed
+  by codegen. `<Blocks>` in `@contentworker/sdk/react`, `<CwBlocks>` and `useBlock` in
+  `@contentworker/sdk/vue`, and `resolveBlocks` / `renderBlocks` in `@contentworker/sdk/blocks`
+  for any other renderer: a component per block id, renamed blocks read through the catalog's or
+  variants' aliases, a `fallback` for unknown ones, slots rendered with the same components, keys
+  from `_key`, ghosts from `view.ghosts`, and `data-cw-ref` / `data-cw-slot` marks only with
+  `preview`. Codegen emits a type per block and `BlockTypes` from the catalog in force (or the
+  variants), and `contentworker types --blocks` takes a blocks file. Still to come: the frontend
+  runtime (`@contentworker/frontend`) rendering with `renderBlocks`, and an SDK release (0.4.0) to
+  ship it.
 - [x] **Layout patches.** `patchBlocks` with key-addressed create, update, move and remove, for
   agents and the editor alike (#185): insert, update, move, remove and duplicate ops by `_key`,
   held to `expectedVersion`, over REST (`PATCH …/entries/:id/blocks`, an outline at
@@ -376,17 +386,32 @@ Built on Blocks and the frontend runtime. Layouts stay a typed tree; rich text s
   `/block-config/effective`: the dock and Add offer only the allowed blocks, and both judge a save
   as the server will. Exports, snapshot imports and environment clones carry the catalog in force
   and its config (each restarting at version 1 in the copy; an import names what no longer passes
-  the push and set checks in its report).
+  the push and set checks in its report). Promotions copy both, pinned on both sides, and wait for
+  approval when they change which blocks go where, a slot's counts or locks, or remove blocks a
+  type holds; environment compare reports how they differ, as a promotion judges it (a merge
+  never copies them). Release note: after a rollback past this, reject waiting promotions
+  requested with blocks (older code applies them without the blocks).
 - [ ] **Canvas editor.** A toolbox, selection overlay and undo in `apps/web` over the preview channel.
   The canvas (`/content/:typeId/:entryId/canvas`) is in place: seams from the page's `layout`, a
   dock offering exactly what a slot takes, an inspector (Content, Data, Look), Layers as the
-  keyboard path, undo by inverse block-patch ops, and a save held to `expectedVersion`. Still to
-  come: Coworker's "Fill this slot" and ghost proposals (`host.propose` is the seam), dragging
-  blocks with a fine pointer, block thumbnails (the admin's `img-src` takes no other origin), and
-  per-breakpoint overrides.
-- [ ] **Frontend SDK extras.** `client.live()` and `useLiveEntry`, a Next.js draft-mode helper, a
-  preview URL template per content type, and a "connect a frontend" screen that mints a delivery key
-  and prints its config.
+  keyboard path, undo by inverse block-patch ops, a save held to `expectedVersion`, and
+  Coworker's "Ask Coworker to fill this" at a seam (the slot's allowed blocks, bounds and the
+  blocks around it, quoted to the model; the card holds the patch to that slot) with its proposal
+  shown as ghosts on the page and in Layers until it is confirmed or declined. Still to come:
+  dragging blocks with a fine pointer, block thumbnails (the admin's `img-src` takes no other
+  origin), and per-breakpoint overrides.
+- [x] **Frontend SDK extras.** `client.live()` over the live stream (reconnecting with backoff,
+  stopping when the key is refused) with `useLiveEntry` / `useLiveEntries` for React and Vue; a
+  Next.js draft-mode helper (`@contentworker/sdk/next`: a route that checks the preview token, and a
+  client that, in draft mode, reads only the preview link's entry with the link's own token, and
+  everything else from Delivery, so a site needs no Preview key); the preview URL template per
+  content type, now settable alone (`PUT …/content-types/:apiId/preview`,
+  `model_set_content_type_preview`); and Settings →
+  Connect a frontend, which mints a Delivery key (and a Preview key) through `connectFrontend`
+  (`POST …/frontend-connections`, `frontend_connect`), prints the config for the frontend runtime,
+  the SDK, Next.js and live preview, sets the preview URLs, and checks a page connects through the
+  Site frame. Ships to sites in the next SDK release. `@contentworker/frontend` doesn't take an
+  admin origin yet, so a runtime site doesn't connect for live preview.
 
 #### Follow-ups for M6
 

@@ -16,12 +16,20 @@
  * its own coordinates, and the canvas draws them over this frame. Unsaved edits come
  * from the editor over a same-origin channel (`cms/lib/live-preview/frame-channel.ts`) and go to the
  * page over the live preview channel (`cms/lib/live-preview/host.ts`); clicks go back the same way.
+ * So does a Coworker proposal waiting for its answer: the page draws its blocks as ghosts, and this
+ * frame outlines each as proposed (the canvas does, under the canvas).
  */
 
-import type { LayoutMessage, LiveGap, LiveRect } from '@contentworker/sdk-core/live-preview';
+import type {
+  LayoutMessage,
+  LiveGap,
+  LivePatchOp,
+  LiveRect,
+} from '@contentworker/sdk-core/live-preview';
 import { cn } from '@contentworker/ui/lib/utils';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { data, useLoaderData } from 'react-router';
+import { GhostMark } from '~/cms/components/canvas/GhostMark';
 import {
   DEVICE_WIDTHS,
   type Device,
@@ -31,6 +39,7 @@ import {
   readFrame,
 } from '~/cms/lib/live-preview/frame-channel';
 import { LivePreviewHost } from '~/cms/lib/live-preview/host';
+import { ghostKeys, ghostOps, refBlockKey } from '~/cms/lib/live-preview/proposals';
 import { requireUser } from '~/lib/auth.server';
 import { EMBED_HEADER, FRAME_HEADER, SELF_FRAMER } from '~/lib/csp';
 import { type PreviewFrame, previewFrame } from '~/lib/preview-frame.server';
@@ -124,6 +133,19 @@ function SiteFrame({
   // What the pointer is over and what is selected, by ref, with the box the page last gave.
   const [hover, setHover] = useState<{ ref: string; rect: LiveRect } | null>(null);
   const [selected, setSelected] = useState<{ ref: string; rect: LiveRect | null } | null>(null);
+  /** Coworker's proposal's blocks, by key: outlined as proposed where the page draws them. */
+  const [proposed, setProposed] = useState<readonly LivePatchOp[] | null>(null);
+  const [ghostsShown, setGhostsShown] = useState(false);
+  const [entry, setEntry] = useState<{ id: string; locale: string } | null>(null);
+  const entryId = entry?.id ?? null;
+  // The page shows the ops in its locale only (the host's `sendProposal`): those are what it drew.
+  const ghosts = useMemo(
+    () =>
+      ghostKeys(
+        ghostsShown && proposed ? proposed.filter((op) => op.locale === entry?.locale) : [],
+      ),
+    [ghostsShown, proposed, entry?.locale],
+  );
   const host = useRef<LivePreviewHost | null>(null);
 
   useEffect(() => {
@@ -156,6 +178,11 @@ function SiteFrame({
       },
       onLayout: setLayout,
       onNote: (kind) => postFrame(parent, { type: 'note', kind }),
+      onProposal: (shown, refused) => {
+        // Marked only while the page holds it: a refused or unsupported one draws nothing.
+        setGhostsShown(shown);
+        postFrame(parent, { type: 'proposal', shown, ...(refused ? { refused } : {}) });
+      },
     });
     host.current = h;
     const onMessage = (event: MessageEvent) => {
@@ -173,8 +200,16 @@ function SiteFrame({
           h.setEditing(m.editing === true);
           return;
         case 'entry':
+          setEntry({ id: m.entry.entryId, locale: m.entry.locale });
           h.setEntry(m.entry, m.edits);
           return;
+        case 'proposal': {
+          // The editor's own window, but held to the shape the page will check again anyway.
+          const ops = Array.isArray(m.ops) ? ghostOps(m.ops) : null;
+          setProposed(ops);
+          h.setProposal(ops);
+          return;
+        }
         case 'select':
           setSelected(m.ref ? { ref: m.ref, rect: null } : null);
           // The form focusing what was just clicked: outlined, but the page isn't scrolled under
@@ -232,6 +267,15 @@ function SiteFrame({
     return found ?? given;
   };
   const picked = editing && !canvas && selected ? rectOf(selected.ref, selected.rect) : null;
+  // Coworker's ghosts where the page draws them; under the canvas, the canvas marks them.
+  const ghostBoxes =
+    !canvas && entryId && ghosts.size > 0
+      ? (layout?.blocks ?? []).flatMap((b) => {
+          const key = refBlockKey(b.ref, entryId);
+          const kind = key ? ghosts.get(key) : undefined;
+          return key && kind ? [{ key, kind, rect: b.rect }] : [];
+        })
+      : [];
   const hovered =
     editing && !canvas && hover && hover.ref !== selected?.ref
       ? rectOf(hover.ref, hover.rect)
@@ -304,6 +348,18 @@ function SiteFrame({
         className="pointer-events-none absolute top-0 overflow-hidden"
         style={{ left, width: width * scale, height: size.h }}
       >
+        {ghostBoxes.map((g) => (
+          <GhostMark
+            key={g.key}
+            kind={g.kind}
+            rect={{
+              x: g.rect.x * scale,
+              y: g.rect.y * scale,
+              w: g.rect.w * scale,
+              h: g.rect.h * scale,
+            }}
+          />
+        ))}
         {hovered ? <Outline rect={hovered} scale={scale} /> : null}
         {picked ? <Outline rect={picked} scale={scale} selected /> : null}
       </div>

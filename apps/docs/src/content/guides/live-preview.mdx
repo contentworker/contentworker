@@ -67,6 +67,17 @@ over it. It edits the same draft as the form.
   shortcuts list (<kbd>?</kbd>).
 - **Device** widths render your page at 1280, 768 or 390 pixels wide, scaled to fit, as in the
   Site view.
+- **Ask Coworker to fill this.** With [Coworker](/guides/coworker/) on, the dock also offers to
+  ask Coworker to fill that place, wherever it offers blocks (never a full or locked slot, or a
+  place inside a locked region). Coworker is asked for the same blocks the dock lists there,
+  within the slot's bounds, and answers with a block patch on a confirm card. While the card
+  waits, your page shows the proposed blocks as ghosts (if your page accepts `proposals`, see
+  [Extensions](#extensions)), marked **Proposed** on the canvas and listed as proposed in Layers;
+  nothing is saved. **Not now** takes them off the page; **Confirm** saves the patch (held to the
+  version it was made for) and the canvas reads the entry again. Anything outside the slot you
+  asked about is refused, on the card and when it runs. Asking waits while the canvas has unsaved edits: save
+  the draft first. The entry editor's Site view shows the same ghosts while a Coworker card for
+  that entry waits.
 
 Every change is a block patch (the same key-addressed operations as
 [`PATCH …/entries/:id/blocks`](/reference/rest-api/)), applied in the admin and sent to your
@@ -109,7 +120,8 @@ preview.close();
 
 `connectPreview` does nothing unless the page is in a frame and `adminOrigin` is set, so you can
 call it on every page. `adminOrigin` must be the admin's exact origin (https; http only on
-`localhost`) and must differ from your page's own origin. Your page keeps its own scrolling in the
+`localhost`) and must differ from your page's own origin. **Settings → Connect a frontend** prints
+it, and checks that a page connects ([Connect a frontend](/guides/connect-a-frontend/)). Your page keeps its own scrolling in the
 frame: sticky headers, full-height heroes and lazy loading behave as on the live site.
 
 `emit('page', …)` tells the admin which entries the page renders, so it knows whose state to
@@ -188,6 +200,11 @@ reorder. A key holding `[`, `]` or `%` is written escaped (`%5B`, `%5D`, `%25`),
 round-trips. `formatFieldPath` and `parseFieldPath` from `@contentworker/sdk` build and read paths,
 and `refAttrs(ref)` from `@contentworker/sdk/live-preview` gives the attribute to spread. A ref
 with a path opens in the admin's entry form on its top-level field.
+
+A blocks field rendered with `<Blocks>` (React) or `<CwBlocks>` (Vue) is marked for you: pass it the
+field's ref as `preview` and `view.ghosts` as `ghosts`, and every block, field and slot carries its
+mark, and each ghost `data-cw-ghost` (see
+[Rendering blocks](/guides/blocks-from-code/#in-a-live-preview)).
 
 ## Editing in the frame
 

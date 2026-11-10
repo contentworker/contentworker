@@ -267,8 +267,8 @@ export async function pushBlockCatalog(
   return { ...result, applied: true };
 }
 
-/** A thumbnail naming an asset names one in the scope. */
-async function assertThumbnailAssets(
+/** A thumbnail naming an asset names one in the scope. A promotion checks it before it waits. */
+export async function assertThumbnailAssets(
   ctx: AppContext,
   scope: Scope,
   blocks: readonly BlockManifest[],
@@ -306,6 +306,17 @@ export async function getBlockCatalog(
     throw new NotFoundError('BlockCatalog', version === undefined ? 'latest' : String(version));
   }
   return catalog;
+}
+
+/**
+ * The catalog in force, or undefined before the first push: for readers that fall back to the
+ * content types' own variants (the content model as TypeScript), where no catalog isn't an error.
+ */
+export async function findBlockCatalog(
+  ctx: AppContext,
+  scope: Scope,
+): Promise<BlockCatalog | undefined> {
+  return (await ctx.store.blockCatalogs.latest(scope)) ?? undefined;
 }
 
 /** Versions listed per page, at most. */

@@ -24,8 +24,7 @@ import {
 import { createMemoryRouter, RouterProvider } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-/** The editor is a lazily fetched chunk: the first code view to open waits on it, and on a busy CI
- * runner that outlasts testing-library's default second. Wait on the editor, with room. */
+/** As in asset-library.test.tsx: a CI runner's first render can outlast the default second. */
 configure({ asyncUtilTimeout: 5000 });
 
 vi.mock('~/cms/components/block-config/codemirror', () => ({

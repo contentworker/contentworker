@@ -4,8 +4,8 @@ import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import type { ContentTypeInput } from '../src/index.js';
-import { generateTypes, loadContentTypes, parseArgs } from '../src/index.js';
+import type { BlockCatalogInput, ContentTypeInput } from '../src/index.js';
+import { generateTypes, loadBlockCatalog, loadContentTypes, parseArgs } from '../src/index.js';
 
 // TypeScript 7 ships no compiler JS API, so this runs its own `tsc` on the source in a temp dir and
 // returns the diagnostics it prints ('' when it compiles clean).
@@ -332,6 +332,196 @@ for (const node of article.body?.content ?? []) {
     const empty = generateTypes([]);
     expect(empty).toContain('export interface EntryLink');
     expect(empty).not.toContain('ContentTypeApiId');
+    expect(empty).not.toContain('BlockTypes');
+  });
+});
+
+/** A catalog as `contentworker blocks push` sends it: a renamed block, slots, a nested child. */
+const CATALOG: BlockCatalogInput = {
+  blocks: [
+    {
+      id: 'banner',
+      name: 'Banner',
+      description: 'The top of a page.',
+      aliases: ['hero'],
+      fields: [
+        { apiId: 'heading', name: 'Heading', type: 'Symbol', required: true },
+        { apiId: 'tone', type: 'Symbol', validations: { in: ['light', 'dark'] } },
+        { apiId: 'image', type: 'Link', linkType: 'Asset' },
+      ],
+    },
+    {
+      id: 'grid',
+      name: 'Card grid',
+      fields: [{ apiId: 'title', type: 'Symbol' }],
+      slots: [
+        { apiId: 'cards', name: 'Cards', allowedChildren: ['card', 'quote'], min: 1 },
+        { apiId: 'aside', allowedChildren: ['quote'] },
+      ],
+    },
+    { id: 'card', name: 'Card', fields: [{ apiId: 'title', type: 'Symbol', required: true }] },
+    { id: 'quote', fields: [{ apiId: 'text', type: 'Text' }] },
+  ],
+};
+
+/** The same catalog as the content type's variants once pushed (slots expanded in place). */
+const card = { apiId: 'card', name: 'Card', fields: CATALOG.blocks[2]?.fields ?? [] };
+const quote = { apiId: 'quote', fields: CATALOG.blocks[3]?.fields ?? [] };
+const PAGE: ContentTypeInput = {
+  apiId: 'page',
+  fields: [
+    {
+      apiId: 'body',
+      type: 'Array',
+      items: {
+        type: 'Component',
+        variants: [
+          {
+            apiId: 'banner',
+            name: 'Banner',
+            aliases: ['hero'],
+            fields: CATALOG.blocks[0]?.fields ?? [],
+          },
+          {
+            apiId: 'grid',
+            name: 'Card grid',
+            fields: [
+              { apiId: 'title', type: 'Symbol' },
+              {
+                apiId: 'cards',
+                name: 'Cards',
+                type: 'Array',
+                required: true,
+                items: { type: 'Component', variants: [card, quote] },
+              },
+              { apiId: 'aside', type: 'Array', items: { type: 'Component', variants: [quote] } },
+            ],
+          },
+        ],
+      },
+    },
+  ],
+};
+
+/** The block types section: from the first block type's doc comment to the end. */
+const blockSection = (source: string) =>
+  source.slice(source.lastIndexOf('/**', source.search(/export type \w+Block = /)));
+
+describe('@contentworker/sdk-codegen block types', () => {
+  it('types each catalog block and the components map (golden)', async () => {
+    const source = generateTypes([], { blockCatalog: CATALOG });
+    await expect(blockSection(source)).toMatchFileSnapshot('./golden/block-types.txt');
+  });
+
+  it("types the same blocks from the content types' variants as from the catalog", () => {
+    const fromCatalog = generateTypes([], { blockCatalog: CATALOG });
+    const fromVariants = blockSection(generateTypes([PAGE]));
+    // The variants carry no description; everything else agrees.
+    expect(fromVariants).toBe(blockSection(fromCatalog).replace(' — The top of a page.', ''));
+  });
+
+  it('types catalog blocks from the catalog, and blocks of other fields from their variants', () => {
+    const article: ContentTypeInput = {
+      apiId: 'article',
+      fields: [
+        {
+          apiId: 'sidebar',
+          type: 'Array',
+          items: {
+            type: 'Component',
+            variants: [
+              // A block the catalog also defines: the catalog's shape wins.
+              { apiId: 'card', fields: [] },
+              { apiId: 'callout', fields: [{ apiId: 'text', type: 'Text' }] },
+            ],
+          },
+        },
+      ],
+    };
+    const source = generateTypes([PAGE, article], { blockCatalog: CATALOG });
+    expect(source).toContain(
+      'export type BlockTypes = {\n  banner: BannerBlock;\n  grid: GridBlock;\n  card: CardBlock;\n  quote: QuoteBlock;\n  callout: CalloutBlock;\n};',
+    );
+    expect(source).toContain(
+      "export type CardBlock = {\n  _type: 'card';\n  _key: string;\n  title: string;\n};",
+    );
+    expect(source).toContain("export type CalloutBlock = {\n  _type: 'callout';");
+  });
+
+  it('types an id two fields define apart as either shape', () => {
+    const source = generateTypes([
+      {
+        apiId: 'a',
+        fields: [
+          {
+            apiId: 'x',
+            type: 'Array',
+            items: { type: 'Component', variants: [{ apiId: 'note', fields: [] }] },
+          },
+          {
+            apiId: 'y',
+            type: 'Array',
+            items: {
+              type: 'Component',
+              variants: [{ apiId: 'note', fields: [{ apiId: 'text', type: 'Text' }] }],
+            },
+          },
+        ],
+      },
+    ]);
+    expect(source).toContain(
+      "export type NoteBlock = {\n  _type: 'note';\n  _key: string;\n} | {\n  _type: 'note';\n  _key: string;\n  text?: string;\n};",
+    );
+  });
+
+  it('finds blocks fields inside components, and names ids that would collide apart', () => {
+    const source = generateTypes([
+      {
+        apiId: 'a',
+        fields: [
+          {
+            apiId: 'wrap',
+            type: 'Component',
+            fields: [
+              {
+                apiId: 'inner',
+                type: 'Array',
+                items: {
+                  type: 'Component',
+                  variants: [
+                    { apiId: 'two-col', fields: [] },
+                    { apiId: 'two_col', fields: [] },
+                    { apiId: '9', fields: [] },
+                  ],
+                },
+              },
+            ],
+          },
+        ],
+      },
+    ]);
+    expect(source).toContain(
+      "export type BlockTypes = {\n  'two-col': TwoColBlock;\n  two_col: TwoCol2Block;\n  '9': UnnamedBlock;\n};",
+    );
+  });
+
+  it('compiles, and types a slot as a list of its blocks', async () => {
+    const source = `${generateTypes([PAGE])}
+declare const page: PageFields;
+declare const types: BlockTypes;
+const grid: GridBlock = types.grid;
+for (const child of grid.cards) {
+  if (child._type === 'card') child.title.toUpperCase();
+  else child.text?.toUpperCase();
+}
+const id: BlockId = 'banner';
+// @ts-expect-error a slot holds only the blocks it allows
+const wrong: GridBlock['aside'] = [{ _type: 'card', _key: 'k', title: 't' }];
+// A blocks field's value is a list of the block types.
+const body: BlockTypes[BlockId][] = page.body ?? [];
+void [id, wrong, body];
+`;
+    expect(await tsc(source, { strict: true, target: 'es2022', types: [] })).toBe('');
   });
 });
 
@@ -500,5 +690,50 @@ describe('@contentworker/sdk-codegen CLI', () => {
     const written = await readFile(out, 'utf8');
     expect(written).toContain('Generated by @contentworker/sdk-codegen from');
     expect(written).toContain('export type ArticleFields = {');
+  });
+
+  it('loads the block catalog in force, and none before the first push', async () => {
+    const live = { url: 'https://cms.test/', space: 's1', environment: 'main', token: 'tok' };
+    const urls: string[] = [];
+    const answer = (status: number, body: unknown) =>
+      (async (input: string | URL | Request) => {
+        urls.push(String(input));
+        return new Response(JSON.stringify(body), { status });
+      }) as typeof fetch;
+    expect(await loadBlockCatalog(live, answer(200, CATALOG))).toEqual(CATALOG);
+    expect(urls[0]).toBe('https://cms.test/spaces/s1/environments/main/block-catalog');
+    expect(await loadBlockCatalog(live, answer(404, { code: 'not_found' }))).toBeUndefined();
+    await expect(loadBlockCatalog(live, answer(403, {}))).rejects.toThrow(
+      'Fetching the block catalog failed: 403',
+    );
+    // From an exported model, only --blocks gives a catalog.
+    const never = vi.fn() as unknown as typeof fetch;
+    expect(await loadBlockCatalog({ ...live, input: 'model.json' }, never)).toBeUndefined();
+    expect(never).not.toHaveBeenCalled();
+  });
+
+  it('end-to-end: --blocks types the blocks from a blocks file', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'contentworker-codegen-'));
+    const input = join(dir, 'model.json');
+    const blocks = join(dir, 'contentworker.blocks.json');
+    const out = join(dir, 'types.ts');
+    await writeFile(input, JSON.stringify({ items: [PAGE] }), 'utf8');
+    await writeFile(blocks, JSON.stringify({ targets: [], blocks: [{ id: 'only', fields: [] }] }));
+    expect(parseArgs(['--blocks', blocks])).toEqual({ blocks });
+
+    const { main } = await import('../src/cli.js');
+    await main(['--input', input, '--blocks', blocks, '--out', out]);
+    const written = await readFile(out, 'utf8');
+    expect(written).toContain(
+      'export type BlockTypes = {\n  only: OnlyBlock;\n  banner: BannerBlock;',
+    );
+
+    await writeFile(blocks, JSON.stringify({ items: [] }));
+    await expect(main(['--input', input, '--blocks', blocks])).rejects.toThrow(
+      'has no "blocks" list',
+    );
+    await expect(main(['--input', input, '--blocks', 'contentworker.blocks.ts'])).rejects.toThrow(
+      '--blocks takes a JSON file',
+    );
   });
 });

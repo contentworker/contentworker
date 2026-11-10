@@ -5,6 +5,8 @@
  * client can't. This file only says which of them the assistant offers and how each is treated.
  */
 
+import type { AssistantFill } from './fill';
+
 /** Where a turn works: the space, environment and locale the admin's header has chosen. */
 export interface AssistantScope {
   readonly spaceId: string;
@@ -31,6 +33,11 @@ export type AssistantPage =
       readonly entryId: string;
       readonly contentType: string;
       readonly label: string;
+      /**
+       * The slot the person asked Coworker to fill from the canvas (`Ask Coworker to fill this`):
+       * sent with that one message only, and quoted to the model as content.
+       */
+      readonly fill?: AssistantFill;
     };
 
 /** Sent with every message and every page edit: the scope, and the page in front. */

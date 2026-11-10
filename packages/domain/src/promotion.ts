@@ -1,8 +1,9 @@
 /**
  * Promoting content from one environment to another (staging → main, say).
  *
- * A promotion pins each entry and content type it copies by version when it is requested, so
- * nothing edited in the source afterwards is swept in: a changed content type fails the apply. What is
+ * A promotion pins each entry and content type it copies by version when it is requested (and the
+ * block catalog and config, when it carries them), so nothing edited in the source afterwards is
+ * swept in: a changed content type, catalog or config fails the apply. What is
  * live in the source goes live in the target (`publish`), and drafts go as drafts. A risk check
  * decides whether a person must approve it first; it is recorded so the approver sees why.
  */
@@ -32,6 +33,23 @@ export interface PromotedEntry {
   readonly contentTypeApiId: string;
   readonly version: number;
   readonly publish: boolean;
+}
+
+/**
+ * The block catalog and block config a promotion copies, pinned by the source's versions and the
+ * target's: another push or set on either side fails the apply, as a changed content type does.
+ */
+export interface PromotedBlocks {
+  /** The source catalog's version: the target gets its blocks and targets as a push of its own. */
+  readonly catalogVersion: number;
+  /** The source config's version; 0 (never set) leaves the target's config as it is. */
+  readonly configVersion: number;
+  /**
+   * The target's catalog and config versions (0 for none) the risk check was made against: a push
+   * or set there since fails the apply too, so nothing lands that the approver didn't see.
+   */
+  readonly targetCatalogVersion: number;
+  readonly targetConfigVersion: number;
 }
 
 /** What a decision model made of the promotion (absent without one). */
@@ -67,6 +85,8 @@ export interface PromotionResult {
    * them in the target (its run publishes them, not a promotion).
    */
   readonly gated: readonly string[];
+  /** Whether the target's block catalog and config changed: absent when it carried neither. */
+  readonly blocks?: { readonly catalog: boolean; readonly config: boolean };
 }
 
 export interface Promotion {
@@ -76,6 +96,8 @@ export interface Promotion {
   readonly target: string;
   readonly contentTypes: readonly PromotedContentType[];
   readonly entries: readonly PromotedEntry[];
+  /** The block catalog and config it copies; absent when it copies neither. */
+  readonly blocks?: PromotedBlocks;
   readonly status: PromotionStatus;
   readonly risk: PromotionRisk;
   /** Who asked for it (their principal subject, or `admin-token`). */

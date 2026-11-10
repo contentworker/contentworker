@@ -20,11 +20,13 @@ npm install @contentworker/sdk
 | `@contentworker/sdk/vue`          | Vue 3 composables and components                                      |
 | `@contentworker/sdk/edge`         | A tiny single-locale Delivery client for edge functions               |
 | `@contentworker/sdk/react-native` | Delivery with offline sync for mobile apps                            |
+| `@contentworker/sdk/next`         | Next.js draft mode: a preview link's route handler, and its client    |
 | `@contentworker/sdk/management`   | The Management API: model, author, publish, administer (server only)  |
 | `@contentworker/sdk/codegen`      | TypeScript types generated from your content model                    |
 
-The package also installs the [`contentworker` command](/guides/cli/). React and Vue are optional
-peer dependencies: install the one you use (`npm install react` or `npm install vue`).
+The package also installs the [`contentworker` command](/guides/cli/). React, Vue and Next.js are
+optional peer dependencies: install the one you use (`npm install react` or `npm install vue`);
+`@contentworker/sdk/next` imports nothing from Next.js itself.
 
 ## Reading content
 
@@ -120,6 +122,44 @@ function Article({ id }: { id: string }) {
 `useAsset`, `useSemanticSearch`) and a `<CwImage>` component, installed with
 `app.use(createContentworker(client))`. Both fetch on the
 client only, so server rendering stays predictable.
+
+A [blocks field](/reference/field-types/#blocks) renders with `<Blocks components={…} />` (Vue:
+`<CwBlocks>`): a component per block id, typed by the generated `BlockTypes`, slots rendered with
+the same components, and live preview marks only when you pass `preview`. See
+[Rendering blocks](/guides/blocks-from-code/#rendering-blocks); `@contentworker/sdk/blocks` does
+the same with plain functions for any other renderer.
+
+### Live updates
+
+`useLiveEntry` and `useLiveEntries` (React and Vue) are `useEntry` and `useEntries` that stay
+current: they read again a moment after the entry, or an entry of the list's content type, is
+published, and `removed` turns on when the entry is unpublished. `live` says the stream is open.
+
+```tsx
+import { useLiveEntry } from '@contentworker/sdk/react';
+
+function Scoreboard({ id }: { id: string }) {
+  const { data, removed, live } = useLiveEntry(id, { locale: 'en-US' });
+  if (removed) return <p>This page was taken down.</p>;
+  return <h1 data-live={live}>{String(data?.fields.title ?? '')}</h1>;
+}
+```
+
+Underneath, `client.live({ entryIds, contentTypes, types, onEvent })` follows Delivery's live
+stream with the client's key, so a key sees only the space and content its role may read. It
+reconnects with backoff (the server ends each stream every ten minutes, so the key is checked
+again) and stops for good when the key is refused. A preview client hears of publishes, not of
+draft saves.
+
+```ts
+const live = client.live({
+  entryIds: [entry.id],
+  onEvent: (event) => {
+    if (event.type === 'entry.published') refresh();
+  },
+});
+// live.close() when you're done
+```
 
 ### Edge devices and mobile
 
@@ -243,7 +283,10 @@ you haven't seen.
 Every method maps to one Management route: content types, entries and their versions, the asset
 library, bulk jobs, releases, scheduled actions, webhooks, taxonomy (`cma.taxonomy.tags`,
 `schemes`, `concepts`: create and update with a `slug`, `description` and `labels` per locale; lists
-carry each term's published `usage`), environments and keys. The client is
+carry each term's published `usage`), environments and keys. Two help connect a frontend:
+`cma.contentTypes.setPreview(apiId, urlTemplate)` sets a type's preview URL alone (`null` clears
+it), and `cma.frontend.connect({ name?, roleId?, preview?, previewRoleId? })` mints a delivery key (and a preview
+key) and answers the hosts and preview URLs a frontend's config needs, the tokens once. The client is
 exactly as powerful as its token; the server checks every call. Keep the token on a server: a
 Management key never belongs in a browser or app bundle.
 
@@ -354,6 +397,12 @@ field that a [conditional rule](/guides/content-modeling/#conditional-field-rule
 optional. Regenerate after upgrading: an older generator types number lists as `string[]`. The
 same output is served at `GET …/content-types?format=typescript`.
 
+Each block of a blocks field gets a type too (`HeroBlock`, its slots typed as lists of the blocks
+they allow), and `BlockTypes` maps every block id to its type, for
+[`<Blocks>`](/guides/blocks-from-code/#rendering-blocks). They come from the block catalog in force
+(`contentworker types --blocks <file>` takes them from a blocks file instead), and before the
+first push from the blocks fields' block types.
+
 :::caution[Upgrade before labelling options]
 A field's `in` list can hold `{ value, label }` options. SDK releases from before that throw when
 generating types for one, and typed `validations` as an array. Upgrade `@contentworker/sdk` and
@@ -395,8 +444,73 @@ instead of navigating to the admin.
 `@contentworker/sdk/live-preview` is the frontend half of live preview: the admin frames your frontend
 and your page renders each unsaved edit. `connectPreview({ adminOrigin, capabilities, onState })`
 connects it in any framework, and `useLivePreview({ adminOrigin })` from `@contentworker/sdk/react`
-returns each entry's unsaved state to render. The admin's side isn't released yet. See
-[Live preview](/guides/live-preview/).
+returns each entry's unsaved state to render. The entry editor's Site view and the canvas frame
+it, and [Connect a frontend](/guides/connect-a-frontend/) prints your admin's origin and checks a
+page connects. See [Live preview](/guides/live-preview/).
+
+## Next.js draft mode
+
+`@contentworker/sdk/next` turns a content type's preview link into Next.js draft mode. Add a route
+handler, then set the type's preview URL to
+`https://<your site>/api/draft?entry={id}&token={token}&locale={locale}`:
+
+```ts
+// app/api/draft/route.ts
+import { draftMode } from 'next/headers';
+import { createDraftRoute } from '@contentworker/sdk/next';
+
+export const GET = createDraftRoute({
+  baseUrl: 'https://api.your-workspace.contentworker.app',
+  space: 'your-space',
+  environment: 'main',
+  draftMode,
+  resolvePath: (entry) => `/blog/${entry.fields.slug}`,
+});
+```
+
+It checks the link's preview token with the Preview API, then keeps the entry and the token in
+an HttpOnly cookie (`cw_draft`: `Secure`, `SameSite=None`, `Partitioned`, for no longer than the
+token has left and an hour at most), turns draft mode on and redirects to the page, the token gone from the URL.
+A refused or expired token gets a 401 and changes nothing. A redirect that would leave your site
+goes to `/` instead, and nothing it answers is cached. `createExitDraftRoute({ draftMode })` turns
+draft mode off and clears the cookie. It works top-level and framed by the admin's Site view and
+canvas, from another site too; the cookie is partitioned, kept per top-level site, so a draft
+opened in the admin's frame is never sent when your site is visited directly. A browser that
+blocks third-party cookies shows the entry published in the frame. Let only your admin frame the
+site (`Content-Security-Policy: frame-ancestors 'self' <admin origin>`). A link opened as anything
+but a page or a frame (an image, a script, a fetch: `Sec-Fetch-Dest`) gets a 403, and so does the
+exit route.
+
+Draft mode reads only that entry. Pages read through `createDraftClient`: outside draft mode it is
+your Delivery client; in draft mode it is still Delivery, except for the link's entry, which reads
+as it is now with the link's own token (by `getEntry`, and in its place in `listEntries`,
+`query()` and `getSingleton`). Every other entry, and what the draft links to, reads published. No
+Preview key is involved, so a preview link shows its own entry and nothing else, and once its token
+expires the entry reads published again:
+
+```ts
+// lib/contentworker.ts
+import { cookies, draftMode } from 'next/headers';
+import { createDraftClient } from '@contentworker/sdk/next';
+
+export const getClient = createDraftClient({
+  draftMode,
+  cookies,
+  delivery: {
+    baseUrl: 'https://cdn.your-workspace.contentworker.app',
+    space: 'your-space',
+    environment: 'main',
+    token: process.env.CONTENTWORKER_DELIVERY_KEY!,
+  },
+  preview: { baseUrl: 'https://api.your-workspace.contentworker.app' },
+});
+
+// In a page: const entry = await (await getClient()).getEntry(id);
+// A page that finds its entry by a slug not yet published: (await getClient()).getDraftEntry().
+```
+
+[Connect a frontend](/guides/connect-a-frontend/) mints the Delivery key and prints this setup for
+your space.
 
 ## Next steps
 

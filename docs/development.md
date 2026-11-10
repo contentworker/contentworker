@@ -85,7 +85,10 @@ reports which entry it renders) and open one of its entries: the page connects
 (`connectPreview`) and renders the `title` and, for each blocks field, each block's `label` or
 `heading`. `silent.html` in place of `/` is a page that never connects, `refuse.html` one that refuses the entry, and `old-sdk.html` one
 whose SDK the admin refuses. `LIVE_GUEST_ADMIN` is the admin's origin, the only
-one the page listens to; `LIVE_GUEST_PORT` moves it off 5401.
+one the page listens to; `LIVE_GUEST_PORT` moves it off 5401. The page takes `proposals` and
+draws Coworker's proposed blocks dashed (`data-cw-proposed`): on the entry's canvas, choose a
+seam and **Ask Coworker to fill this**, and the local mock model (`AI_MODE=mock`) proposes one
+block there ("Proposed by Coworker") on a card to confirm or decline.
 
 The same package holds the **sample starter** a real space can start with (`installStarter` and
 `createSpaceWithStarter` in `packages/seed/src/starter.ts`, behind `POST /spaces` `starter:
@@ -439,6 +442,12 @@ row, for the reason 0030's triggers give: code that has never heard of the table
 a deploy and after a rollback. A `detail` that isn't valid JSON indexes only its target rather than
 failing the append. The migration backfills the rows already written. Nothing deletes from it, as
 nothing deletes audit history; deleting an environment leaves it.
+
+`0039_promotion_blocks.sql` adds the nullable `environment_promotions.blocks`, the block catalog
+and config a promotion copies as JSON (`{ catalogVersion, configVersion, targetCatalogVersion,
+targetConfigVersion }`, the source's and the target's versions when it was requested). No backfill:
+older promotions, and those copying no blocks, have none, and code deployed before it never names
+the column (see [Domain model](./domain-model.md#block-configs)).
 
 `0038_entry_block_locks.sql` adds the nullable `entries.block_locks`, an entry's locked regions
 as JSON text (null for none), and gives the Manager and Administrator preset roles `lock` on a `*`

@@ -1,7 +1,9 @@
 import {
   type AssistantContext,
   type AssistantPage,
+  type FillTurn,
   isSetupScope,
+  readAssistantFill,
   SETUP_SCOPE,
 } from '@contentworker/domain';
 
@@ -44,9 +46,23 @@ function readPage(raw: unknown): AssistantPage {
   const p = (raw ?? {}) as Record<string, unknown>;
   const contentType =
     typeof p.contentType === 'string' && ID.test(p.contentType) ? p.contentType : '';
-  if (p.kind === 'entry' && typeof p.entryId === 'string' && ID.test(p.entryId) && contentType)
-    return { kind: 'entry', entryId: p.entryId, contentType, label: label(p.label, p.entryId) };
+  if (p.kind === 'entry' && typeof p.entryId === 'string' && ID.test(p.entryId) && contentType) {
+    const fill = readAssistantFill(p.fill);
+    return {
+      kind: 'entry',
+      entryId: p.entryId,
+      contentType,
+      label: label(p.label, p.entryId),
+      ...(fill ? { fill } : {}),
+    };
+  }
   if (p.kind === 'content-type' && contentType)
     return { kind: 'content-type', contentType, label: label(p.label, contentType) };
   return { kind: 'everything' };
 }
+
+/** The fill turn a context names, when its page asks to fill a slot of its entry. */
+export const fillTurnOf = (context: AssistantContext): FillTurn | undefined =>
+  context.page.kind === 'entry' && context.page.fill
+    ? { entryId: context.page.entryId, fill: context.page.fill }
+    : undefined;

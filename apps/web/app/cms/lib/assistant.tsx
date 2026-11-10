@@ -15,6 +15,7 @@ import type {
   AssistantPage,
   AssistantScope,
   AssistantTool,
+  BlockOp,
 } from '@contentworker/domain';
 import {
   createContext,
@@ -49,6 +50,26 @@ export interface QueuedAct {
 }
 
 /**
+ * A Coworker block patch waiting for (or just given) the person's answer, as its card read it:
+ * the dry run's applied ops, every block keyed, for the entry's page to show as ghosts. Only a card
+ * whose dry run would save as it stands has one. `pending` while it asks, `saving` once confirmed,
+ * then `saved`; `declined` on Not now, a failure, or a newer request replacing it.
+ */
+export interface ProposedBlocks {
+  readonly entryId: string;
+  readonly spaceId: string;
+  readonly environmentId: string;
+  readonly ops: readonly BlockOp[];
+  readonly state: 'pending' | 'saving' | 'saved' | 'declined';
+}
+
+/** A question a page asks as if typed, with what the page is about for that message alone. */
+export interface PageAsk {
+  readonly text: string;
+  readonly page?: AssistantPage;
+}
+
+/**
  * The edit was never sent: the assistant is off, its panel didn't load, or its socket is down. The
  * page makes the edit itself; nothing reached the agent, so nothing runs twice.
  */
@@ -66,10 +87,13 @@ interface AssistantState {
   setOpen(open: boolean): void;
   /** Opens the panel and puts the cursor in its prompt. */
   focus(): void;
-  /** Asks a question as if typed, opening the panel. */
-  ask(text: string): void;
-  readonly pendingAsk: string | null;
-  takeAsk(): string | null;
+  /**
+   * Asks a question as if typed, opening the panel. `page` is what that message is about in place
+   * of the page's own context (the canvas's slot to fill); later messages carry the page's again.
+   */
+  ask(text: string, page?: AssistantPage): void;
+  readonly pendingAsk: PageAsk | null;
+  takeAsk(): PageAsk | null;
   readonly focusToken: number;
   /** What the page in front is about, when it says; everything otherwise. */
   readonly page: AssistantPage;
@@ -91,6 +115,12 @@ interface AssistantState {
   /** A card `act` made, waiting for the person's answer, and the page waiting on it. */
   awaitAnswer(callId: string, act: QueuedAct): void;
   answered(callId: string, r: ActResult | Error): void;
+  /**
+   * Block patches Coworker proposed, by card, for an entry's page to show as ghosts while each
+   * waits (`useProposedBlocks`). Cards publish theirs; nothing here saves.
+   */
+  readonly proposals: ReadonlyMap<string, ProposedBlocks>;
+  setProposal(card: string, p: ProposedBlocks | null): void;
 }
 
 const EVERYTHING: AssistantPage = { kind: 'everything' };
@@ -121,8 +151,19 @@ export function AssistantProvider({ children }: { children: React.ReactNode }) {
   const [open, setOpenState] = useState(false);
   const [scope, setScope] = useState<Scope>('page');
   const [focusToken, setFocusToken] = useState(0);
-  const [pendingAsk, setPendingAsk] = useState<string | null>(null);
+  const [pendingAsk, setPendingAsk] = useState<PageAsk | null>(null);
   const [page, setPage] = useState<AssistantPage>(EVERYTHING);
+  const [proposals, setProposals] = useState<ReadonlyMap<string, ProposedBlocks>>(new Map());
+  const setProposal = useCallback((card: string, p: ProposedBlocks | null) => {
+    setProposals((was) => {
+      const had = was.get(card);
+      if (p === null ? !had : had && JSON.stringify(had) === JSON.stringify(p)) return was;
+      const next = new Map(was);
+      if (p) next.set(card, p);
+      else next.delete(card);
+      return next;
+    });
+  }, []);
   const reader = useRef<PageReader | null>(null);
   // The queue itself lives in a ref, so taking it empties it at once: an effect that runs twice
   // (React's strict mode, a remount) never sends the same edit twice. `acts` re-renders the panel.
@@ -238,8 +279,8 @@ export function AssistantProvider({ children }: { children: React.ReactNode }) {
         setOpen(true);
         setFocusToken((n) => n + 1);
       },
-      ask: (text) => {
-        setPendingAsk(text);
+      ask: (text, askPage) => {
+        setPendingAsk({ text, ...(askPage ? { page: askPage } : {}) });
         setOpen(true);
         setFocusToken((n) => n + 1);
       },
@@ -260,6 +301,8 @@ export function AssistantProvider({ children }: { children: React.ReactNode }) {
       takeActs,
       awaitAnswer,
       answered,
+      proposals,
+      setProposal,
     }),
     [
       enabled,
@@ -276,6 +319,8 @@ export function AssistantProvider({ children }: { children: React.ReactNode }) {
       takeActs,
       awaitAnswer,
       answered,
+      proposals,
+      setProposal,
     ],
   );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
@@ -339,4 +384,35 @@ export async function orDirect<T>(
   direct: () => Promise<T>,
 ): Promise<ActResult<T>> {
   return r ?? { output: await direct() };
+}
+
+/**
+ * The block patch Coworker proposes for `entryId` in the header's space and environment, while
+ * its card waits (or saves): what the entry's page shows as ghosts. `onSaved` runs once when a
+ * proposal this page saw waiting is saved, so the page reads the entry again.
+ */
+export function useProposedBlocks(
+  entryId: string | undefined,
+  onSaved?: () => void,
+): ProposedBlocks | null {
+  const proposals = useAssistantIfAny()?.proposals;
+  const { conn } = useClient();
+  const mine = [...(proposals ?? [])].filter(
+    ([, p]) =>
+      p.entryId === entryId && p.spaceId === conn.space && p.environmentId === conn.environment,
+  );
+  const seen = useRef(new Map<string, ProposedBlocks['state']>());
+  const saved = useRef(onSaved);
+  saved.current = onSaved;
+  const states = mine.map(([card, p]) => `${card}:${p.state}`).join('|');
+  // Keyed on each card's state (states).
+  useEffect(() => {
+    for (const [card, p] of mine) {
+      const was = seen.current.get(card);
+      seen.current.set(card, p.state);
+      if (p.state === 'saved' && (was === 'pending' || was === 'saving')) saved.current?.();
+    }
+  }, [states]);
+  const live = mine.filter(([, p]) => p.state === 'pending' || p.state === 'saving');
+  return live.at(-1)?.[1] ?? null;
 }

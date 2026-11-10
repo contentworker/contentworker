@@ -678,6 +678,12 @@ interface ContentType {
   `createContentType`, `updateContentType` and `cloneContentType` take a required caller as their
   second argument (`ContentTypeCaller`): the request's principal (the HTTP route and MCP tool pass
   theirs), or `SYSTEM_CALLER` for seeding and snapshot import, which are authorized as a whole.
+  `setContentTypePreview(ctx, caller, scope, apiId, urlTemplate | null)` sets the template alone,
+  held to the version it read; a published type stays published (its `content_type.published`
+  event rides in the unit), one with unpublished changes stays a draft. `frontendEndpoints(origin)`
+  is where a frontend reaches the deployment from the admin's origin: `cdn.<host>` for Delivery,
+  `api.<host>` for Preview, and the one origin on `localhost`, `127.0.0.1` or a dotless host;
+  `connectFrontend` answers it with the keys it mints.
   Anything else is refused before a read (`assertContentTypeCaller`), so the check fails closed.
   `authorizePreviewChange` holds a principal to `read` on the type when it sets a template other
   than the stored one: it decides where that type's preview tokens go.
@@ -1293,8 +1299,9 @@ rewrites `_type` to the current apiId on write, `removedVariants` and `removedFi
 aliased variant as surviving, and GraphQL serves the current apiId. REST Delivery and Preview
 serve `_type` as stored until the entry's next save.
 
-The catalog isn't in snapshots, exports or environment clones (the content types, and so their
-variants, are).
+Snapshots, exports and environment clones carry the catalog in force, and a promotion copies it as
+a push of the target's own (see [Block configs](#block-configs) and
+[Environments and snapshots](./environments-and-snapshots.md#snapshots)).
 
 ## Block configs
 
@@ -1361,7 +1368,54 @@ environment clone and promotion, branch merge, duplicate, and version restore. S
 restore can bring back blocks from before a narrowing (a locked region still holds it: see
 [Locked regions](#locked-regions)).
 
-The config isn't in snapshots, exports or environment clones; the environment purge clears it.
+Snapshots, exports and environment clones carry the config
+([Environments and snapshots](./environments-and-snapshots.md#snapshots)); the environment purge
+clears it.
+
+A **promotion** copies both when they would change the target (`PromotedBlocks`, pinned by the
+source's and the target's catalog and config versions in `environment_promotions.blocks`, 0039):
+by default when `contentTypes` and `entries` are omitted, or with `blocks: true` beside a
+selection. It copies them when the catalog's hash differs, the config gives the target other rules,
+or the configs differ as `blockConfigChange` judges them (below); otherwise nothing. A source never
+configured (version 0) leaves the target's config as it is; one set back to nothing is carried and
+clears the target's; a source with no catalog copies nothing (promotions add and overwrite, never
+delete). The risk check compares the rules before and after (`blockRuleChanges` over
+`effectiveBlockRules`): every change to which blocks go where, a count or a lock is a reason, and
+so is what the push would remove from a type, judged over the types as the promotion leaves them
+(the target's own, and the ones it copies, whose blocks field may have drifted from the source's
+catalog), and a draft the push would publish; each requires approval. A catalog change that leaves
+the rules as they are and removes nothing needs none. What the push would refuse is refused when
+requested (`422`, naming `blocks: false` as the way round it): a target type the target neither
+has nor gets, a thumbnail naming an asset it lacks, a block or block prop entries in the target
+still hold, and a config past a set's limits. Approving takes `content:manage`, as for content
+types.
+
+The apply checks, before it writes anything, every pin (content types, and the source's and the
+target's catalog and config: a push or set on either side since is a `409`) and the push again
+(`checkPromotedCatalog`, over the types as it will leave them: an entry made since that holds what
+the push removes is a `422`). A race after those reads can still stop it partway, as it can any
+promotion, and what was applied stays. It runs after the content types and before the entries:
+`pushBlockCatalog` into the target at the pinned target version (destructive allowed, since the
+approver saw the removals), then `setBlockConfig` at the pinned config version, with the source's
+config as `effectiveBlockConfig(catalog, config)` carries it: each part as written where a set
+would take it (former ids followed, blocks the catalog no longer allows dropped from a list, so a
+narrowing equal to the code's today still holds after a push widens the code), a part a set would
+refuse replaced by what is in force of it, stale parts left out. Both as `SYSTEM_CALLER`
+(`pushedBy` and `updatedBy` null; the audit row names the approver). Two units: `result.blocks`
+records the catalog as soon as it lands, so a promotion that fails on the config says so, and
+`environment.promoted` carries the same `blocks`. **Release note:** code deployed before this
+change ignores `environment_promotions.blocks`, so after a rollback of the Workers past it, reject
+any promotion requested with blocks that is still awaiting approval rather than approving it; old
+code would apply it without its blocks (and without asking for `content:manage`).
+
+`compareEnvironments` reports both as `blocks: { catalog, config }` (`added`, `removed`, `changed`
+or `unchanged`), left out for a role limited to some types; a merge never copies them. The catalog
+is compared by hash; the config by `blockConfigChange`, as a promotion judges it: each side as
+`effectiveBlockConfig` carries it under the catalog the target ends up with (the source's), so a
+config stored in another order or with former ids reads the same, and a target a promotion just
+wrote compares `unchanged`. A config never set is absent; one set back to nothing is present and
+empty, so a cleared source over a narrowed target is `changed`; one side empty and the other absent
+is `unchanged`.
 
 ## Locked regions
 

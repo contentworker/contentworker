@@ -54,12 +54,43 @@ export interface FieldInput {
 export interface VariantInput {
   readonly apiId: string;
   readonly name?: string;
+  /** Ids the variant had before; noted on its block type. */
+  readonly aliases?: readonly string[];
   readonly fields: readonly FieldInput[];
+}
+
+/**
+ * A block catalog, or the part of it the generator reads: what `GET …/block-catalog` answers, and
+ * the shape of a `contentworker.blocks.json`. Extra keys are ignored.
+ */
+export interface BlockCatalogInput {
+  readonly blocks: readonly BlockManifestInput[];
+}
+
+/** One block of a catalog: its id, former ids, props and slots. */
+export interface BlockManifestInput {
+  readonly id: string;
+  readonly name?: string;
+  readonly description?: string;
+  readonly aliases?: readonly string[];
+  readonly fields: readonly FieldInput[];
+  readonly slots?: readonly {
+    readonly apiId: string;
+    readonly name?: string;
+    readonly help?: string;
+    readonly allowedChildren: readonly string[];
+    readonly min?: number;
+  }[];
 }
 
 export interface GenerateOptions {
   /** Header comment noting provenance (defaults to a generic banner). */
   readonly banner?: string;
+  /**
+   * The block catalog, for the block types (`BlockTypes`): its blocks are typed from it, and every
+   * other block (a blocks field the catalog doesn't target) from the content types' variants.
+   */
+  readonly blockCatalog?: BlockCatalogInput;
 }
 
 /** Shared helper types emitted once at the top of every generated module. */
@@ -180,7 +211,174 @@ export function generateTypes(
     );
   }
 
+  sections.push(...renderBlockTypes(blockShapes(contentTypes, opts.blockCatalog)));
+
   return sections.join('\n');
+}
+
+// --- block types -------------------------------------------------------------------------------
+
+/** One block as the generator types it: its props, and its slots by the block ids they take. */
+interface BlockShape {
+  readonly id: string;
+  readonly name?: string;
+  readonly description?: string;
+  readonly aliases?: readonly string[];
+  readonly fields: readonly FieldInput[];
+  readonly slots: readonly {
+    readonly apiId: string;
+    readonly present: boolean;
+    readonly comment: string;
+    readonly children: readonly string[];
+  }[];
+}
+
+/** A blocks field (an Array of Component with variants): its variants, else undefined. */
+function variantsOf(field: FieldInput): readonly VariantInput[] | undefined {
+  return field.type === 'Array' && field.items?.type === 'Component' && field.items.variants?.length
+    ? field.items.variants
+    : undefined;
+}
+
+/** A list from JSON the generator didn't check, or none. */
+const list = <T>(v: readonly T[] | undefined): readonly T[] => (Array.isArray(v) ? v : []);
+
+/**
+ * The catalog's blocks, then every variant of a blocks field the catalog doesn't define (by id or
+ * former id): a model can hold blocks fields of its own beside the ones a catalog fills.
+ */
+function blockShapes(
+  contentTypes: readonly ContentTypeInput[],
+  catalog: BlockCatalogInput | undefined,
+): BlockShape[] {
+  const variants = variantShapes(contentTypes);
+  if (!catalog) return variants;
+  const fromCatalog = catalogShapes(catalog);
+  // A former id of a catalog block is that block, not one of the model's own.
+  const defined = new Set(fromCatalog.flatMap((b) => [b.id, ...list(b.aliases)]));
+  return [...fromCatalog, ...variants.filter((v) => !defined.has(v.id))];
+}
+
+function catalogShapes(catalog: BlockCatalogInput): BlockShape[] {
+  return list(catalog.blocks).map((b) => ({
+    id: b.id,
+    name: b.name,
+    description: b.description,
+    aliases: b.aliases,
+    fields: list(b.fields),
+    slots: list(b.slots).map((slot) => ({
+      apiId: slot.apiId,
+      present: (slot.min ?? 0) > 0,
+      comment: fieldComment({ apiId: slot.apiId, name: slot.name, help: slot.help, type: 'Array' }),
+      children: list(slot.allowedChildren),
+    })),
+  }));
+}
+
+/**
+ * Every variant of every blocks field in the model, at any depth, in the order they are met. A
+ * catalog expands each block once per place it goes, so the same id is met more than once.
+ */
+function variantShapes(contentTypes: readonly ContentTypeInput[]): BlockShape[] {
+  const shapes: BlockShape[] = [];
+  const visitFields = (fields: readonly FieldInput[] | undefined) => {
+    for (const f of fields ?? []) {
+      const variants = variantsOf(f);
+      if (variants) for (const v of variants) visitVariant(v);
+      else if (f.type === 'Component') visitFields(f.fields);
+      else if (f.type === 'Array' && f.items?.type === 'Component') visitFields(f.items.fields);
+    }
+  };
+  const visitVariant = (v: VariantInput) => {
+    const fields: FieldInput[] = [];
+    const slots: BlockShape['slots'][number][] = [];
+    const children: VariantInput[] = [];
+    for (const f of v.fields ?? []) {
+      const nested = variantsOf(f);
+      if (!nested) {
+        fields.push(f);
+        if (f.type === 'Component') visitFields(f.fields);
+        else if (f.type === 'Array' && f.items?.type === 'Component') visitFields(f.items.fields);
+        continue;
+      }
+      slots.push({
+        apiId: f.apiId,
+        present: present(f),
+        comment: fieldComment(f),
+        children: nested.map((n) => n.apiId),
+      });
+      children.push(...nested);
+    }
+    // A block before the blocks its slots hold, as a catalog lists them.
+    shapes.push({ id: v.apiId, name: v.name, aliases: v.aliases, fields, slots });
+    for (const n of children) visitVariant(n);
+  };
+  for (const ct of contentTypes) visitFields(ct.fields);
+  return shapes;
+}
+
+/**
+ * Each block id's type, `<Id>Block`, and `BlockTypes` mapping every id to it: the map
+ * `<Blocks components={…}>` is typed by. Slots are typed as lists of their blocks' types. An id
+ * the model gives two shapes (two fields defining it apart) is typed as either.
+ */
+function renderBlockTypes(shapes: readonly BlockShape[]): string[] {
+  const byId = new Map<string, BlockShape[]>();
+  for (const shape of shapes) {
+    if (!shape.id) continue;
+    byId.set(shape.id, [...(byId.get(shape.id) ?? []), shape]);
+  }
+  if (byId.size === 0) return [];
+  const names = new Map<string, string>();
+  const taken = new Set<string>();
+  for (const id of byId.keys()) {
+    const base = `${pascalCase(id) || 'Unnamed'}Block`;
+    let candidate = base;
+    for (let n = 2; taken.has(candidate); n++) candidate = `${base.slice(0, -5)}${n}Block`;
+    taken.add(candidate);
+    names.set(id, candidate);
+  }
+  const shapeType = (shape: BlockShape): string => {
+    const rows = [`  _type: ${literal(shape.id)};`, '  _key: string;'];
+    for (const f of shape.fields) {
+      rows.push(
+        `${fieldComment(f)}  ${propertyKey(f.apiId)}${present(f) ? '' : '?'}: ${fieldValueType(f, { delivered: true })};`,
+      );
+    }
+    for (const slot of shape.slots) {
+      const children = [...new Set(slot.children)].flatMap((c) => {
+        const name = names.get(c);
+        return name ? [name] : [];
+      });
+      const element = children.length ? children.join(' | ') : '{ _type: string; _key: string }';
+      rows.push(
+        `${slot.comment}  ${propertyKey(slot.apiId)}${slot.present ? '' : '?'}: ${children.length > 1 ? `(${element})` : element}[];`,
+      );
+    }
+    return `{\n${rows.join('\n')}\n}`;
+  };
+  const out: string[] = [];
+  for (const [id, variants] of byId) {
+    const first = variants[0] as BlockShape;
+    const shapesOf = [...new Set(variants.map(shapeType))];
+    const notes: string[] = [];
+    notes.push(escapeComment(first.name ? `${first.name} (\`${id}\`)` : `\`${id}\``));
+    const aliases = [...new Set(variants.flatMap((v) => v.aliases ?? []))];
+    if (aliases.length) {
+      notes.push(escapeComment(`formerly ${aliases.map((a) => `\`${a}\``).join(', ')}`));
+    }
+    const guidance = first.description?.replace(/\s+/g, ' ').trim();
+    if (guidance) notes.push(escapeComment(guidance));
+    out.push(
+      `/** ${notes.join(' — ')} */\nexport type ${names.get(id)} = ${shapesOf.join(' | ')};\n`,
+    );
+  }
+  const rows = [...byId.keys()].map((id) => `  ${propertyKey(id)}: ${names.get(id)};`).join('\n');
+  out.push(
+    `/** Each block id's type: what \`BlockComponents<BlockTypes>\` (@contentworker/sdk/react, /vue) types each component's block by. */\nexport type BlockTypes = {\n${rows}\n};\n`,
+    `export type BlockId = keyof BlockTypes;\n`,
+  );
+  return out;
 }
 
 function renderContentType(ct: ContentTypeInput, typeName: string): string {

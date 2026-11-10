@@ -229,4 +229,43 @@ describe('content type preview URL template through MCP', () => {
     );
     expect((await createContentType(ctx, SYSTEM_CALLER, scope, draft)).apiId).toBe('post');
   });
+
+  it('sets and clears the template alone, as PUT …/preview does', async () => {
+    const { call, connectAs } = await connect();
+    await call('model_create_content_type', post);
+    await call('model_publish_content_type', { apiId: 'post' });
+    const set = await call('model_set_content_type_preview', {
+      apiId: 'post',
+      urlTemplate: TEMPLATE,
+    });
+    expect(set.isError, set.text).toBe(false);
+    expect(JSON.parse(set.text)).toMatchObject({
+      status: 'published',
+      preview: { urlTemplate: TEMPLATE },
+    });
+    const bad = await call('model_set_content_type_preview', {
+      apiId: 'post',
+      urlTemplate: 'https://site.example/p/{id}',
+    });
+    expect(bad.isError).toBe(true);
+    expect(bad.text).toContain('preview.urlTemplate');
+    // The same read-on-the-type rule as the route.
+    const modeller = await connectAs({
+      spaceId: SPACE,
+      kind: 'cma',
+      scopes: [SCOPES.contentManage, SCOPES.previewRead],
+      contentGrants: [{ contentTypeApiId: 'page', actions: ['read', 'write'] }],
+    });
+    const moved = await modeller('model_set_content_type_preview', {
+      apiId: 'post',
+      urlTemplate: 'https://elsewhere.example/p?token={token}',
+    });
+    expect(moved.isError).toBe(true);
+    const cleared = await modeller('model_set_content_type_preview', {
+      apiId: 'post',
+      urlTemplate: null,
+    });
+    expect(cleared.isError, cleared.text).toBe(false);
+    expect(JSON.parse(cleared.text)).not.toHaveProperty('preview');
+  });
 });
