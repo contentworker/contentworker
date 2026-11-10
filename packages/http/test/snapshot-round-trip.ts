@@ -19,8 +19,10 @@ import {
   createWorkflowDraft,
   importChunkRunner,
   publishContentType,
+  pushBlockCatalog,
   runBulkChunk,
   SYSTEM_CALLER,
+  setBlockConfig,
 } from '@contentworker/application';
 import type { BulkChunkDueEvent, Scope } from '@contentworker/domain';
 import type { BlobStore } from '@contentworker/ports';
@@ -68,6 +70,62 @@ export async function seedEverySection(ctx: AppContext, blob: BlobStore, scope: 
     name: 'Main',
     items: [{ label: 'Home', link: { type: 'url', url: '/' } }],
   });
+  // A blocks field for the catalog to target, and a config narrowing what it allows.
+  await createContentType(ctx, SYSTEM_CALLER, scope, {
+    apiId: 'page',
+    name: 'Page',
+    displayField: 'title',
+    fields: [
+      {
+        apiId: 'title',
+        name: 'Title',
+        type: 'Symbol',
+        localized: false,
+        required: false,
+        position: 0,
+      },
+      {
+        apiId: 'body',
+        name: 'Body',
+        type: 'Array',
+        localized: false,
+        required: false,
+        position: 1,
+        items: {
+          type: 'Component',
+          variants: [
+            {
+              apiId: 'hero',
+              name: 'Hero',
+              fields: [
+                {
+                  apiId: 'heading',
+                  name: 'Heading',
+                  type: 'Symbol',
+                  localized: false,
+                  required: false,
+                  position: 0,
+                },
+              ],
+            },
+          ],
+        },
+      },
+    ],
+  } as Parameters<typeof createContentType>[3]);
+  await publishContentType(ctx, scope, 'page');
+  await pushBlockCatalog(ctx, SYSTEM_CALLER, scope, {
+    blocks: [
+      { id: 'hero', name: 'Hero', fields: [{ apiId: 'heading', name: 'Heading', type: 'Symbol' }] },
+      { id: 'quote', name: 'Quote', fields: [{ apiId: 'text', name: 'Text', type: 'Symbol' }] },
+    ],
+    targets: [{ contentTypeApiId: 'page', field: 'body' }],
+  });
+  await setBlockConfig(ctx, SYSTEM_CALLER, scope, {
+    expectedVersion: 0,
+    targets: [{ contentTypeApiId: 'page', field: 'body', blocks: ['hero'], locked: true }],
+    blocks: [],
+  });
 }
 
 /** Runs every pending `bulk.chunk_due`, as the engine's bulk consumer would, until none are left. */
@@ -100,6 +158,8 @@ interface ExportedSnapshot {
   workflows: Named[];
   redirects: Named[];
   menus: Named[];
+  blockCatalog?: { hash: string; blocks: { id: string }[] };
+  blockConfig?: { targets: unknown[]; blocks: unknown[] };
 }
 
 /** The envelope keys that describe the export itself rather than carry content. */
@@ -132,5 +192,12 @@ export function sections(raw: unknown) {
     workflows: names(s.workflows),
     redirects: ids(s.redirects),
     menus: ids(s.menus),
+    // The version restarts in the copy; the content (and so the hash) is the source's.
+    blockCatalog: s.blockCatalog
+      ? [s.blockCatalog.hash, ...s.blockCatalog.blocks.map((b) => b.id)]
+      : [],
+    blockConfig: s.blockConfig
+      ? [...s.blockConfig.targets, ...s.blockConfig.blocks].map((n) => JSON.stringify(n))
+      : [],
   };
 }
