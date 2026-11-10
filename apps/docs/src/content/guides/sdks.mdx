@@ -187,6 +187,8 @@ The management client changes an entry's SEO metadata with `cma.entries.setSeo(i
 **Blocks.** `cma.entries.outlineBlocks(id)` lists an entry's blocks by key, and
 `cma.entries.patchBlocks(id, { expectedVersion, ops })` inserts, updates, moves, removes and
 duplicates them by key as one new draft (see [Field types](/reference/field-types/#blocks)).
+`cma.entries.generateBlocks({ entryId, field, prompt })` composes blocks for a field or slot with
+AI and answers the ops to send to `patchBlocks` (see [AI](/guides/ai/#compose-blocks)).
 
 **Redirects.** `client.redirects()` returns the environment's enabled redirects and
 `client.resolveRedirect(path, { locale })` asks Delivery about one path (`null` when none matches).

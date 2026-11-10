@@ -149,6 +149,49 @@ export const blockOutline = z.object({
     .describe('Its non-empty slots: slot apiId → its blocks (this same shape)'),
 });
 
+/** An image request the asset library had no answer for. */
+export const unresolvedImage = z.object({
+  path: z.string().describe('Where the image was asked for: body[1].image'),
+  query: z.string().describe('What the model described; the field is left empty'),
+  required: z
+    .literal(true)
+    .optional()
+    .describe('The field is required: choose an image for it before saving (image_required)'),
+});
+
+export const generatedBlocks = z.object({
+  contentTypeApiId: z.string(),
+  entryId: z.string().nullable().describe('The entry the ops are for; null for a new entry'),
+  expectedVersion: z
+    .int()
+    .nullable()
+    .describe('The version the ops were judged against: pass it to the patch'),
+  locale: z.string(),
+  ready: z
+    .boolean()
+    .describe(
+      'The ops (or, for a new entry, the field) save as they are; false: read issues first',
+    ),
+  ops: z
+    .array(blockOp)
+    .describe('One insert per generated block, at the end of the place: the patch to send'),
+  fields: entryFields.describe(
+    'The field as the ops leave it, keys minted for this answer only; for a new entry, the ' +
+      'value to create it with',
+  ),
+  unresolvedImages: z.array(unresolvedImage),
+  issues: z
+    .array(z.object({ field: z.string(), message: z.string() }).loose())
+    .describe(
+      'What a save would still be refused for: a required image left unresolved ' +
+        '(image_required), and anything outside the generated field (a new entry’s other ' +
+        'required fields)',
+    ),
+  usage: z
+    .object({ inputTokens: z.int(), outputTokens: z.int() })
+    .describe('What the model call used'),
+});
+
 export const blocksOutline = z.object({
   entryId: z.string(),
   version: z.int().describe('The version outlined: pass it as expectedVersion'),

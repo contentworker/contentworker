@@ -17,13 +17,17 @@ interface JsonSchema {
   readonly maximum?: number;
   readonly minLength?: number;
   readonly maxLength?: number;
+  readonly minItems?: number;
+  readonly maxItems?: number;
   readonly anyOf?: readonly JsonSchema[];
   readonly oneOf?: readonly JsonSchema[];
 }
 
 /** A placeholder value of `schema`'s shape, so the caller's parsing runs as it would live. */
 function sample(schema: JsonSchema | undefined, name: string, depth = 0): unknown {
-  if (!schema || depth > 6) return `Sample ${name}`;
+  // Deep enough for a blocks tree at the content model's full component depth (three levels of
+  // array, variant and object below the answer), shallow enough to stop a cyclic schema.
+  if (!schema || depth > 16) return `Sample ${name}`;
   if (schema.const !== undefined) return schema.const;
   if (schema.enum?.length) return schema.enum[0];
   const variant = schema.anyOf?.[0] ?? schema.oneOf?.[0];
@@ -37,8 +41,11 @@ function sample(schema: JsonSchema | undefined, name: string, depth = 0): unknow
       }
       return out;
     }
-    case 'array':
-      return [sample(schema.items, name, depth + 1)];
+    case 'array': {
+      // As many as the schema asks for at least (one when it doesn't say), never more than it takes.
+      const n = Math.min(Math.max(1, schema.minItems ?? 1), schema.maxItems ?? Infinity);
+      return Array.from({ length: n }, () => sample(schema.items, name, depth + 1));
+    }
     case 'integer':
     case 'number':
       // Inside the schema's range, as a model told the range would answer.

@@ -507,6 +507,7 @@ cma.entries.move(id, { after: id | null } | { before: id | null })   // manual o
 cma.entries.outlineBlocks(id, { field?, locale? })   // blocks as a tree of keys, types, labels; version
 cma.entries.patchBlocks(id, { expectedVersion, ops })   // by _key, all or none; → { entry, fields, keys, inverse }
 cma.entries.checkBlocks(id, { expectedVersion, ops })   // the same patch's dry run; nothing written
+cma.entries.generateBlocks({ field, prompt, entryId | contentTypeApiId, parent?, locale?, tier? })   // AI-composed inserts for one place, checked; nothing saved
 cma.entries.previewLink(id, { ttlHours?, previewBaseUrl?, locale? })   // { url, frontendUrl?, token, expiresAt }
 
 cma.redirects.list({ q?, limit?, cursor? }) / .get(id) / .create(input) / .update(id, changes) / .delete(id)

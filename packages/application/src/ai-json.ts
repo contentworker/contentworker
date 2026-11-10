@@ -1,7 +1,7 @@
 import { RateLimitedError, type Scope } from '@contentworker/domain';
 import type { AIProvider, GenerateRequest, ModelTier } from '@contentworker/ports';
 import type { FakeAdapterBinding } from './adapter-guard';
-import { generateWithBudget } from './ai-budget';
+import { generateWithBudget, withTimeout } from './ai-budget';
 import type { AiCallRecord, AiProvenance } from './ai-provenance';
 import type { AiMode, AppContext } from './context';
 
@@ -67,11 +67,22 @@ function typeMatches(value: unknown, type: string): boolean {
 
 /**
  * Structural JSON Schema check covering what generation schemas use: `type`
- * (single or union), `enum`, `required`, `properties`, `items` and
- * `additionalProperties: false`, recursively. Unknown keywords are accepted —
- * this guards the shape a step relies on, not every rule.
+ * (single or union), `const`, `enum`, `anyOf` (some branch), `oneOf` (exactly
+ * one branch), `required`, `properties`, `items` and `additionalProperties:
+ * false`, recursively. Unknown keywords are accepted — this guards the shape a
+ * step relies on, not every rule (lengths, counts and patterns are the
+ * validators' to judge, and they name the field).
  */
 export function conforms(value: unknown, schema: Schema): boolean {
+  const branches = (key: 'anyOf' | 'oneOf') =>
+    Array.isArray(schema[key])
+      ? (schema[key] as unknown[]).filter((b): b is Schema => !!b && typeof b === 'object')
+      : undefined;
+  const anyOf = branches('anyOf');
+  if (anyOf && !anyOf.some((b) => conforms(value, b))) return false;
+  const oneOf = branches('oneOf');
+  if (oneOf && oneOf.filter((b) => conforms(value, b)).length !== 1) return false;
+  if ('const' in schema && schema.const !== value) return false;
   const type = schema.type;
   if (typeof type === 'string' && !typeMatches(value, type)) return false;
   if (Array.isArray(type) && !type.some((t) => typeof t === 'string' && typeMatches(value, t))) {
@@ -139,18 +150,6 @@ export function answerStrings(result: { readonly object?: unknown }, field: stri
 }
 
 // ---- generateJson -----------------------------------------------------------
-
-class AiTimeoutError extends Error {}
-
-function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  return Promise.race([
-    p,
-    new Promise<never>((_, reject) => {
-      timer = setTimeout(() => reject(new AiTimeoutError(`AI call timed out after ${ms}ms`)), ms);
-    }),
-  ]).finally(() => clearTimeout(timer));
-}
 
 export interface GenerateJsonOptions<T> {
   /** Stable prompt id for provenance and logs (e.g. `workflow.router`). */

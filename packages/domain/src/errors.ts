@@ -69,6 +69,18 @@ export class RateLimitedError extends DomainError {
 }
 
 /**
+ * The model didn't answer within the call's cap (maps to HTTP 503). Nothing was written; the
+ * same request may succeed when retried, after `retryAfterSeconds` if given.
+ */
+export class AiUnavailableError extends DomainError {
+  readonly retryAfterSeconds?: number;
+  constructor(message: string, retryAfterSeconds?: number) {
+    super('ai_unavailable', message, { retryAfterSeconds });
+    this.retryAfterSeconds = retryAfterSeconds;
+  }
+}
+
+/**
  * A registered hook refused the operation.
  *
  * Distinct from ValidationError: the content is well-formed, and something

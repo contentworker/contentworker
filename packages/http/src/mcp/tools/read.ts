@@ -1,4 +1,5 @@
 import {
+  assetSearchDeps,
   canvasToEntry,
   countEntriesByContentType,
   draftEntry,
@@ -10,6 +11,7 @@ import {
   getPreviewSingleton,
   getSchedulerStatus,
   hybridSearch,
+  imageSearchFor,
   listContentTypes,
   listFieldValues,
   listPreviewEntryPage,
@@ -48,6 +50,8 @@ import { ok, scopeArgs, scopeOf, type ToolContext, toolSchema } from './shared';
 
 export function registerReadTools(server: McpServer, t: ToolContext): void {
   const { deps, ctx, ai, rag, principal, guard } = t;
+  // Drafted blocks find their images as assets_search does.
+  const assetSearch = deps.assetSearch ?? assetSearchDeps(rag);
   // --- read / query / search ---------------------------------------------
   server.registerTool(
     'model_list_content_types',
@@ -568,8 +572,12 @@ export function registerReadTools(server: McpServer, t: ToolContext): void {
     'generate_draft',
     {
       description:
-        'Generate draft field values for a content type from a prompt. Validated against ' +
-        'the content model before being returned. Pair with entries_create to author it.',
+        'Generate draft field values for a content type from a prompt: its scalar fields and ' +
+        'its top-level blocks fields (composed from the blocks the block rules allow, images ' +
+        'found in the asset library; unresolvedImages lists any it could not find). Rich text, ' +
+        'links and slugs are left for you. Validated against the content model before being ' +
+        'returned; nothing is saved. Pair with entries_create to author it. For one blocks ' +
+        'field or slot of an existing entry, use entry_blocks_generate.',
       inputSchema: toolSchema('generate_draft', () =>
         z.object({
           contentType: z.string(),
@@ -582,12 +590,16 @@ export function registerReadTools(server: McpServer, t: ToolContext): void {
     },
     async (args) => {
       guard(SCOPES.contentWrite, scopeOf(args));
+      // As the route: a draft is for a type the caller may write.
+      authorizeContent(principal, 'write', args.contentType);
       return ok(
-        await draftEntry(ctx, ai, scopeOf(args), {
-          contentTypeApiId: args.contentType,
-          prompt: args.prompt,
-          tier: args.tier,
-        }),
+        await draftEntry(
+          ctx,
+          ai,
+          scopeOf(args),
+          { contentTypeApiId: args.contentType, prompt: args.prompt, tier: args.tier },
+          { assets: imageSearchFor(principal, assetSearch) },
+        ),
       );
     },
   );
@@ -610,12 +622,15 @@ export function registerReadTools(server: McpServer, t: ToolContext): void {
     },
     async (args) => {
       guard(SCOPES.contentWrite, scopeOf(args));
+      authorizeContent(principal, 'write', args.contentType);
       return ok(
-        await canvasToEntry(ctx, ai, scopeOf(args), {
-          contentTypeApiId: args.contentType,
-          prose: args.prose,
-          tier: args.tier,
-        }),
+        await canvasToEntry(
+          ctx,
+          ai,
+          scopeOf(args),
+          { contentTypeApiId: args.contentType, prose: args.prose, tier: args.tier },
+          { assets: imageSearchFor(principal, assetSearch) },
+        ),
       );
     },
   );
