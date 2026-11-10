@@ -207,7 +207,7 @@ Base paths: `/spaces`, and `…` for `/spaces/:space/environments/:env`. Space-l
 | GET    | `/spaces/:space/audit-log`                  | `space:admin`                        | Space audit log, a page at a time ([filters and paging](#audit-log))                      |
 | GET    | `/spaces/:space/compare`                    | `preview:read`                       | Compare two environments (`?from`, `?to`), limited to the types the role can read         |
 | POST   | `/spaces/:space/merge`                      | `content:manage`                     | Merge environment branch (entries need the actions on every content type); `409` (`details.conflicts`) before any write when its entries would take a unique value twice; an entry in the target's trash stays there |
-| POST   | `/spaces/:space/promotions`                 | `content:manage` + `content:publish` | Promote content between environments (`{ source, target, contentTypes?, entries? }`)      |
+| POST   | `/spaces/:space/promotions`                 | `content:manage` + `content:publish` | Promote content between environments (`{ source, target, contentTypes?, entries?, blocks? }`)      |
 | GET    | `/spaces/:space/promotions`                 | `content:publish`                    | List promotions, newest first (`?status=`)                                                |
 | GET    | `/spaces/:space/promotions/:id`             | `content:publish`                    | A promotion, its risk check and result                                                    |
 | POST   | `/spaces/:space/promotions/:id/approve`     | `content:publish`                    | Approve a waiting promotion and apply it (a person or the admin token, not the requester) |
@@ -225,7 +225,12 @@ check first.
    nothing edited in the source afterwards gets in. A content type changed since fails the apply
    with a 409. What's live in the source goes live in the target, and a draft goes as a draft. Omit
    `contentTypes` and `entries` to promote everything that differs (at most 200 entries and 100
-   content types). Promotions take a role without content-type or field restrictions (`403`
+   content types), the block catalog and block config included; `blocks: true` adds them to a
+   selection. They are pinned by the source's and the target's catalog and config versions
+   (`blocks`), and another push or set on either side fails the apply with a 409 before anything
+   is written; so does (with a 422) an entry made since that holds a block the push would remove.
+   After a rollback of the Workers past this change, reject waiting promotions requested with
+   blocks: older code would apply them without their blocks. Promotions take a role without content-type or field restrictions (`403`
    otherwise), since they write and publish whole entries across types. An entry that a workflow
    gates in the target (`gatesPublish`) goes as a draft, and the reasons say which workflow: that
    workflow's run publishes it there, not the promotion. A gate added after the request leaves that
@@ -235,7 +240,12 @@ check first.
    - a promoted content type would remove a field (at any depth) or a block variant, change a
      field's type, or make one required;
    - the target's entries still hold a field or a block variant it removes (each named with its
-     entries; applying it would be refused with `409` until they are cleared).
+     entries; applying it would be refused with `409` until they are cleared);
+   - the block catalog or config it copies changes what editors may do in the target: which blocks
+     a target or slot takes, its counts or its lock (each change named, before and after), or the
+     catalog removes blocks or block props from a type the promotion doesn't copy, or publishes a
+     target draft. A catalog the apply would refuse (a target type missing, a thumbnail asset the
+     target lacks, a block entries there still hold) is refused with `422` at the request.
 
    Then the decision model (Clef) answers `review`, `breaking` and `risk` over a summary of the
    change. It can only add a requirement, at `review` ≥ 0.5 or `risk` Significant or above, never
@@ -246,7 +256,7 @@ check first.
    rejected by a person, or the deployment admin token, other than whoever requested it:
    - an API key, or an application acting for a person (an MCP or OAuth client, an agent), can
      request a promotion but not decide one;
-   - approving one with content types also takes `content:manage`;
+   - approving one with content types or blocks also takes `content:manage`;
    - both environments must still exist when it's approved.
 
    Approving moves it to `applying` with a compare-and-set, so it applies exactly once. The

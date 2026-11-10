@@ -26,9 +26,11 @@ export function promotionsRoutes(deps: AuthDeps): Hono<AuthVars> {
         'Pins the entries to copy (what is live in the source goes live in the target; a draft ' +
         'goes as a draft) and runs a risk check. With nothing to stop it, it applies at once ' +
         '(`completed`). A promotion into `main` or an aliased environment, one that would remove ' +
-        'or retype a field, or one the risk check flags waits as `awaiting_approval` for someone ' +
+        'or retype a field, change the block rules (which blocks go where, counts, locks) or ' +
+        'remove blocks, or one the risk check flags waits as `awaiting_approval` for someone ' +
         'else to approve. Omit `contentTypes` and `entries` to promote everything that differs ' +
-        '(at most 200 entries).',
+        '(at most 200 entries), the block catalog and block config included; `blocks: true` ' +
+        'adds them to a selection.',
     }),
     requireScope(SCOPES.contentManage),
     async (c) => {

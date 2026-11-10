@@ -297,6 +297,8 @@ export interface EnvironmentPromotedEvent extends BaseEvent {
   readonly source: string;
   readonly contentTypes: number;
   readonly entries: number;
+  /** Whether the target's block catalog and config changed; absent when it carried neither. */
+  readonly blocks?: { readonly catalog: boolean; readonly config: boolean };
 }
 
 export interface ContentTypePublishedEvent extends BaseEvent {

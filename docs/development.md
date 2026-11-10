@@ -440,6 +440,12 @@ a deploy and after a rollback. A `detail` that isn't valid JSON indexes only its
 failing the append. The migration backfills the rows already written. Nothing deletes from it, as
 nothing deletes audit history; deleting an environment leaves it.
 
+`0039_promotion_blocks.sql` adds the nullable `environment_promotions.blocks`, the block catalog
+and config a promotion copies as JSON (`{ catalogVersion, configVersion, targetCatalogVersion,
+targetConfigVersion }`, the source's and the target's versions when it was requested). No backfill:
+older promotions, and those copying no blocks, have none, and code deployed before it never names
+the column (see [Domain model](./domain-model.md#block-configs)).
+
 `0038_entry_block_locks.sql` adds the nullable `entries.block_locks`, an entry's locked regions
 as JSON text (null for none), and gives the Manager and Administrator preset roles `lock` on a `*`
 grant that writes. Only a lock set writes the column, a compare-and-set on `current_version` and

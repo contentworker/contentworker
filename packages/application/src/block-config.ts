@@ -12,6 +12,7 @@ import {
   type EffectiveBlockRules,
   EMPTY_BLOCK_CONFIG,
   type EntryFields,
+  effectiveBlockConfig,
   effectiveBlockRules,
   type LocaleCode,
   type Scope,
@@ -190,4 +191,43 @@ export async function assertBlockConfigAllows(
     regions ? locks : [],
   );
   if (issues.length > 0) throw new ValidationError(issues);
+}
+
+/**
+ * How the source's block config differs from the target's, as `compareEnvironments` reports it and
+ * a promotion judges what to copy: each side as `effectiveBlockConfig` carries it under the
+ * catalog the target ends up with (the source's, or the target's when the source has none), so
+ * a config stored in another order, with former ids, stale parts or a narrowing equal to the code
+ * reads as what it means, and a target holding what a promotion wrote reads as `unchanged`.
+ * `added` only in the source, `removed` only in the target (a promotion leaves it); a config never
+ * set (version 0) is absent, and one set back to nothing is present but empty, so a cleared source
+ * over a narrowed target is `changed` (a promotion carries it, and clears the target's). One-sided
+ * and empty is `unchanged`: it narrows nothing, as the absent side doesn't.
+ */
+export function blockConfigChange(
+  sourceCatalog: BlockCatalog | null,
+  sourceConfig: BlockConfig | null,
+  targetCatalog: BlockCatalog | null,
+  targetConfig: BlockConfig | null,
+): 'added' | 'removed' | 'changed' | 'unchanged' {
+  const catalog = sourceCatalog ?? targetCatalog;
+  const form = (c: BlockConfig | null): string | null => {
+    if (!c || c.version === 0) return null;
+    let carried: Pick<BlockConfig, 'targets' | 'blocks'> = c;
+    if (catalog) {
+      try {
+        carried = effectiveBlockConfig(catalog, c);
+      } catch (err) {
+        // Past a set's limits as a whole: compared as stored.
+        if (!(err instanceof ValidationError)) throw err;
+      }
+    }
+    return canonicalJson({ targets: carried.targets, blocks: carried.blocks });
+  };
+  const empty = canonicalJson({ targets: [], blocks: [] });
+  const s = form(sourceConfig);
+  const t = form(targetConfig);
+  if (s === null) return t === null || t === empty ? 'unchanged' : 'removed';
+  if (t === null) return s === empty ? 'unchanged' : 'added';
+  return s === t ? 'unchanged' : 'changed';
 }
