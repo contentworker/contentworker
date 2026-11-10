@@ -42,14 +42,18 @@ a page: an entry's blocks field, a slot of one of its blocks (`parent: { key, sl
 entry's field (`contentTypeApiId` instead of `entryId`). The model is offered only the blocks your
 [block rules](/reference/field-types/#blocks) allow there, with their fields, slots and counts.
 An image is asked for by what it shows and filled with the first matching image in your asset
-library; one it can't find is left empty and listed in `unresolvedImages`. Rich text inside
+library (for a key that may read the library), never into a field whose file types exclude
+images; one it can't find is left empty and listed in `unresolvedImages`. A block that needs
+something AI doesn't write (rich text, a link to another entry) isn't offered. Rich text inside
 blocks is not generated.
 
 The answer is a block patch, checked exactly as `POST …/entries/blocks/validate` checks one:
 send its `ops` with its `expectedVersion` to `PATCH …/entries/{id}/blocks` to save them. A place
 that is locked, by the rules or a locked region, or full, is refused before the model is asked;
 an answer that breaks a rule in the field is refused too, so you're never handed blocks a save
-would turn down.
+would turn down. The one exception is a required image the library has no match for: the blocks
+come back with `ready: false` and an `image_required` issue naming the field, for you to choose
+one. A model that doesn't answer in time is a `503` you can retry.
 
 ### AI actions
 

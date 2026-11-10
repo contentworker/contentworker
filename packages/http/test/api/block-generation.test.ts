@@ -164,34 +164,134 @@ describe('composing blocks over HTTP', () => {
     expect(both.status).toBe(422);
   });
 
-  it('refuses a field the caller’s role may not write, before the model is asked', async () => {
-    const { app, ai, id } = await setup(() => ({ blocks: [] }));
+  /** A key whose role is `role` (scopes and grants), in s1. */
+  async function keyFor(
+    app: Awaited<ReturnType<typeof setup>>['app'],
+    role: { scopes: string[]; contentGrants?: unknown[] },
+  ) {
     const admin = { Authorization: 'Bearer admin', 'Content-Type': 'application/json' };
-    const role = await app.request('/spaces/s1/roles', {
+    const made = await app.request('/spaces/s1/roles', {
       method: 'POST',
       headers: admin,
-      body: JSON.stringify({
-        name: 'Page editor',
-        scopes: ['content:write', 'preview:read'],
-        contentGrants: [
-          { contentTypeApiId: 'page', actions: ['read', 'write'], readOnlyFields: ['sidebar'] },
-        ],
-      }),
+      body: JSON.stringify({ name: `Role ${Math.random()}`, ...role }),
     });
-    const { id: roleId } = (await role.json()) as { id: string };
+    expect(made.status).toBe(201);
+    const { id: roleId } = (await made.json()) as { id: string };
     const key = await app.request('/spaces/s1/api-keys', {
       method: 'POST',
       headers: admin,
       body: JSON.stringify({ kind: 'cma', roleId }),
     });
     const { token } = (await key.json()) as { token: string };
-    const res = await app.request(`${M}/entries/blocks/generate`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ entryId: id, field: 'sidebar', prompt: 'x' }),
+    return { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+  }
+
+  it('refuses a field the role may not write, or may not read, before the model is asked', async () => {
+    const { app, ai, id, send } = await setup(() => ({ blocks: [] }));
+    const readOnly = await keyFor(app, {
+      scopes: ['content:write', 'preview:read'],
+      contentGrants: [
+        { contentTypeApiId: 'page', actions: ['read', 'write'], readOnlyFields: ['sidebar'] },
+      ],
     });
+    const res = await send(
+      '/entries/blocks/generate',
+      'POST',
+      { entryId: id, field: 'sidebar', prompt: 'x' },
+      readOnly,
+    );
     expect(res.status).toBe(403);
+    expect(((await res.json()) as { error: { details: unknown } }).error.details).toEqual({
+      reason: 'read_only',
+      field: 'sidebar',
+    });
+
+    const denied = await keyFor(app, {
+      scopes: ['content:write', 'preview:read'],
+      contentGrants: [
+        { contentTypeApiId: 'page', actions: ['read', 'write'], deniedFields: ['sidebar'] },
+      ],
+    });
+    const hidden = await send(
+      '/entries/blocks/generate',
+      'POST',
+      { contentTypeApiId: 'page', field: 'sidebar', prompt: 'x' },
+      denied,
+    );
+    expect(hidden.status).toBe(403);
+    const body = (await hidden.json()) as { error: { details: unknown } };
+    // Counted, never named: the role may not know the field is there.
+    expect(body.error.details).toEqual({ reason: 'hidden', hidden: 1 });
     expect(ai.requests).toHaveLength(0);
+  });
+
+  it('refuses a new entry of a type the role only reads, and a key from another space', async () => {
+    const { app, ai, send } = await setup(() => ({ blocks: [] }));
+    const reader = await keyFor(app, {
+      scopes: ['content:write', 'preview:read'],
+      contentGrants: [{ contentTypeApiId: 'page', actions: ['read'] }],
+    });
+    const res = await send(
+      '/entries/blocks/generate',
+      'POST',
+      { contentTypeApiId: 'page', field: 'body', prompt: 'x' },
+      reader,
+    );
+    expect(res.status).toBe(403);
+    // The dev keys are s1's: another space's route is closed to them.
+    const elsewhere = await app.request('/spaces/s2/environments/main/entries/blocks/generate', {
+      method: 'POST',
+      headers: cma,
+      body: JSON.stringify({ contentTypeApiId: 'page', field: 'body', prompt: 'x' }),
+    });
+    expect(elsewhere.status).toBe(403);
+    expect(ai.requests).toHaveLength(0);
+  });
+
+  it('asks for images only for a key that may read the asset library', async () => {
+    const withImage = { apiId: 'hero', name: 'Hero', fields: [symbol('heading')] };
+    const { app, ai, send } = await setup(() => ({ blocks: [{ _type: 'hero', heading: 'Hi' }] }));
+    // A type whose block has an image: asked for by a key with preview:read only.
+    await send('/content-types', 'POST', {
+      apiId: 'promo',
+      name: 'Promo',
+      displayField: 'title',
+      fields: [
+        symbol('title'),
+        blocks(
+          'body',
+          [
+            {
+              ...withImage,
+              fields: [
+                ...withImage.fields,
+                { ...symbol('image', 1), type: 'Link', linkType: 'Asset' },
+              ],
+            },
+          ],
+          1,
+        ),
+      ],
+    });
+    await send('/content-types/promo/published', 'POST');
+    const writeOnly = await keyFor(app, {
+      scopes: ['content:write'],
+      contentGrants: [{ contentTypeApiId: '*', actions: ['read', 'write'] }],
+    });
+    const asWriter = await send(
+      '/entries/blocks/generate',
+      'POST',
+      { contentTypeApiId: 'promo', field: 'body', prompt: 'x' },
+      writeOnly,
+    );
+    expect(asWriter.status).toBe(200);
+    expect(JSON.stringify(ai.requests[0]?.outputSchema)).not.toContain('$asset');
+    await send('/entries/blocks/generate', 'POST', {
+      contentTypeApiId: 'promo',
+      field: 'body',
+      prompt: 'x',
+    });
+    expect(JSON.stringify(ai.requests[1]?.outputSchema)).toContain('$asset');
   });
 
   it('drafts an entry’s blocks field through …/entries/generate', async () => {

@@ -7,6 +7,7 @@ import {
   type BlockOpInput,
   checkEntryBlocks,
   generateBlocks,
+  imageSearchFor,
   outlineEntryBlocks,
   patchEntryBlocks,
 } from '@contentworker/application';
@@ -91,7 +92,10 @@ export function blocksRoutes(deps: AuthDeps): Hono<AuthVars> {
       const body = await parseBody(c, generateBlocksBody);
       const access = await authorizeBlockGeneration(ctx, scopeOf(c), c.get('principal'), body);
       return c.json(
-        await generateBlocks(ctx, ai, scopeOf(c), body, { ...access, assets: assetSearch }),
+        await generateBlocks(ctx, ai, scopeOf(c), body, {
+          ...access,
+          assets: imageSearchFor(c.get('principal'), assetSearch),
+        }),
       );
     },
   );

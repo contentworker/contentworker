@@ -11,6 +11,7 @@ import {
   MAX_COMPONENT_DEPTH,
   normalizeOptions,
   optionValue,
+  variantNamed,
 } from './field';
 
 /**
@@ -28,9 +29,9 @@ import {
  * resolves against the asset library ({@link resolveAssetRequests}): the model never invents an
  * asset id. `$` can't start a field apiId, so a request is never mistaken for a value.
  *
- * Left out of a block (the save judges them, and a required one makes the result refused): rich
- * text, entry links, lists of links, plain components and repeaters, JSON, locations. A slot the
- * rules lock is left out of a new block too: its blocks are the developer's to place.
+ * Left out of a block: rich text, entry links, lists of links, plain components and repeaters,
+ * JSON, locations, an image a field's MIME rule doesn't take, and a slot the rules lock (its blocks
+ * are the developer's to place). A block that requires one of them isn't offered at all.
  */
 
 export type JsonSchema = Record<string, unknown>;
@@ -109,6 +110,15 @@ function constraintsFor(field: FieldDefinition): JsonSchema {
 /** A single link to an asset: what a block's image becomes in the schema. */
 const isAssetLink = (f: FieldDefinition) => f.type === 'Link' && f.linkType === 'Asset';
 
+/**
+ * Whether an image may fill the asset link `f`: no MIME rule, or one that takes some image type.
+ * A link that only takes a PDF or a video is never offered an image.
+ */
+export function acceptsImages(f: FieldDefinition): boolean {
+  const allowed = f.validations?.assetMimeTypes;
+  return !allowed?.length || allowed.some((m) => m.toLowerCase().startsWith('image/'));
+}
+
 function assetRequestSchema(field: FieldDefinition, describe: Describe): JsonSchema {
   return {
     type: 'object',
@@ -132,12 +142,22 @@ function assetRequestSchema(field: FieldDefinition, describe: Describe): JsonSch
   };
 }
 
+/** One step down to a slot: a block of `variant` (its `_type`), and its slot `slot`. */
+export interface SlotStep {
+  readonly variant: string;
+  readonly slot: string;
+}
+
 /** Where the blocks are generated: a blocks field's top level, or one slot of a block in it. */
 export interface BlocksTarget {
   /** A top-level blocks field of the type. */
   readonly field: string;
-  /** The slot of a block: the block's variant (`_type`) and the slot's apiId. */
-  readonly parent?: { readonly variant: string; readonly slot: string };
+  /**
+   * The slot, as the steps from the field's top level to it: each ancestor block's `_type` and the
+   * slot it sits in, then the parent block's `_type` and the slot to fill. Where the parent sits
+   * decides its depth and its definition, not the first variant that shares its `_type`.
+   */
+  readonly slot?: readonly SlotStep[];
   /** Blocks the place holds already: the count bounds take them into account. */
   readonly held?: number;
 }
@@ -150,6 +170,11 @@ export interface BlocksSchemaOptions {
   readonly describe?: Describe;
   /** How a block is described to the model: its name and the catalog's description. */
   readonly describeBlock?: (block: { name: string; description?: string }) => string;
+  /**
+   * Images can be found in the asset library for this caller. Without it, no image is asked for,
+   * and a block whose image is required is not offered.
+   */
+  readonly images?: boolean;
 }
 
 /** The bounds and list one place follows: the rules in force, else the content model's own. */
@@ -167,6 +192,10 @@ export type BlocksSchemaResult =
       /** An object schema with one property, `blocks`: the array the model fills. */
       readonly schema: JsonSchema;
       readonly place: PlaceRules;
+      /** The blocks field that is the place: the top-level field, or the slot's definition. */
+      readonly field: FieldDefinition;
+      /** The block ids the schema offers: the place's, less any it can't fill. */
+      readonly offered: readonly string[];
     }
   | {
       readonly ok: false;
@@ -178,8 +207,12 @@ export type BlocksSchemaResult =
  * The schema of the blocks to generate at `target`: one variant per block the place takes (its
  * `_type` a `const`), each with its scalar fields, image requests for its single Asset links, and
  * its slots recursing with their own allowed children down to {@link MAX_COMPONENT_DEPTH}; the
- * place's `min` and `max` (less what it holds already) as `minItems` and `maxItems`. Refused, with
- * a reason, for a place that is locked, takes nothing, or is full.
+ * place's `min` and `max` (less what it holds already) as `minItems` and `maxItems`.
+ *
+ * A block with a required field the model isn't asked for (rich text, an entry link, a component,
+ * a locked or empty slot, an image the caller can't search for) is not offered: every block in an
+ * answer can then pass the save. Refused, with a reason, for a place that is locked, full, or
+ * offers nothing.
  */
 export function blocksSchemaFor(
   contentType: ContentType,
@@ -187,8 +220,7 @@ export function blocksSchemaFor(
   options: BlocksSchemaOptions = {},
 ): BlocksSchemaResult {
   const top = contentType.fields.find((f) => f.apiId === target.field);
-  const topVariants = top ? blockVariants(top) : undefined;
-  if (!top || !topVariants) {
+  if (!top || !blockVariants(top)) {
     return {
       ok: false,
       code: 'not_a_blocks_field',
@@ -196,24 +228,24 @@ export function blocksSchemaFor(
     };
   }
   let field: FieldDefinition = top;
-  let place = placeRules(contentType.apiId, top, undefined, options.rules);
-  // The slot is the top-level field's when it's a top-level variant's: blocks fields nest, and a
-  // slot's own variants are what the content model expanded the catalog's children into.
+  let parentVariant: string | undefined;
+  // `depth` is the component depth of the field holding the place's blocks: the top level is 1.
   let depth = 1;
-  if (target.parent) {
-    const variant = findVariant(top, target.parent.variant);
-    const slot = variant?.v.fields.find((f) => f.apiId === target.parent?.slot);
+  for (const step of target.slot ?? []) {
+    const variant = variantNamed(blockVariants(field) ?? [], step.variant);
+    const slot = variant?.fields.find((f) => f.apiId === step.slot);
     if (!variant || !slot || !blockVariants(slot)) {
       return {
         ok: false,
         code: 'not_a_slot',
-        message: `"${target.parent.slot}" is not a slot of the block "${target.parent.variant}"`,
+        message: `"${step.slot}" is not a slot of the block "${step.variant}"`,
       };
     }
     field = slot;
-    depth = variant.depth + 1;
-    place = placeRules(contentType.apiId, slot, target.parent.variant, options.rules);
+    parentVariant = variant.apiId;
+    depth += 1;
   }
+  const place = placeRules(contentType.apiId, field, parentVariant, options.rules);
   if (place.locked) {
     return {
       ok: false,
@@ -233,16 +265,22 @@ export function blocksSchemaFor(
   const min = place.min === undefined ? undefined : Math.max(0, place.min - held);
   const array = slotSchema(contentType.apiId, field, place, depth, options);
   if (!array) {
-    return { ok: false, code: 'nothing_allowed', message: 'No block can be placed here' };
+    return {
+      ok: false,
+      code: 'nothing_allowed',
+      message: 'No block the model can fill can be placed here',
+    };
   }
   return {
     ok: true,
     place,
+    field,
+    offered: array.offered,
     schema: {
       type: 'object',
       properties: {
         blocks: {
-          ...array,
+          ...array.schema,
           ...(min ? { minItems: min } : {}),
           ...(max !== undefined ? { maxItems: max } : {}),
         },
@@ -255,7 +293,7 @@ export function blocksSchemaFor(
 
 /**
  * The blocks field `field`'s schema as one property of a draft's: the place's bounds, without the
- * `blocks` wrapper. Undefined when the field's top level is locked or takes nothing.
+ * `blocks` wrapper. Undefined when the field's top level is locked or offers nothing.
  */
 export function blocksFieldSchema(
   contentType: ContentType,
@@ -265,26 +303,6 @@ export function blocksFieldSchema(
   const result = blocksSchemaFor(contentType, { field }, options);
   if (!result.ok) return undefined;
   return (result.schema.properties as Record<string, JsonSchema>).blocks;
-}
-
-/** The variant `id` of the blocks field `field`, searched down its slots, with its depth. */
-function findVariant(
-  field: FieldDefinition,
-  id: string,
-  depth = 1,
-): { v: ComponentVariant; depth: number } | undefined {
-  const variants = blockVariants(field) ?? [];
-  const hit = variants.find((v) => v.apiId === id);
-  if (hit) return { v: hit, depth };
-  if (depth >= MAX_COMPONENT_DEPTH) return undefined;
-  for (const v of variants) {
-    for (const f of v.fields) {
-      if (!blockVariants(f)) continue;
-      const found = findVariant(f, id, depth + 1);
-      if (found) return found;
-    }
-  }
-  return undefined;
 }
 
 /** A place's rules: the target's or the block's slot's in force, narrowed by the field's size. */
@@ -322,32 +340,45 @@ export function placeRules(
   };
 }
 
-/** The array schema of one place, or undefined when it takes no block. */
+/** The array schema of one place and the blocks it offers, or undefined when it offers none. */
 function slotSchema(
   contentTypeApiId: string,
   field: FieldDefinition,
   place: PlaceRules,
   depth: number,
   options: BlocksSchemaOptions,
-): JsonSchema | undefined {
+): { schema: JsonSchema; offered: string[] } | undefined {
   const variants = (blockVariants(field) ?? []).filter((v) => place.allowed.includes(v.apiId));
-  const shapes = variants.map((v) => variantSchema(contentTypeApiId, v, depth, options));
+  const offered: string[] = [];
+  const shapes: JsonSchema[] = [];
+  for (const v of variants) {
+    const shape = variantSchema(contentTypeApiId, v, depth, options);
+    if (!shape) continue;
+    offered.push(v.apiId);
+    shapes.push(shape);
+  }
   if (shapes.length === 0) return undefined;
   const describe = options.describe ?? ((f: FieldDefinition) => f.name);
   return {
-    type: 'array',
-    description: describe(field),
-    items: shapes.length === 1 ? shapes[0] : { anyOf: shapes },
+    offered,
+    schema: {
+      type: 'array',
+      description: describe(field),
+      items: shapes.length === 1 ? shapes[0] : { anyOf: shapes },
+    },
   };
 }
 
-/** One block as an object: `_type` fixed, its scalar fields, its images, its open slots. */
+/**
+ * One block as an object: `_type` fixed, its scalar fields, its images, its open slots. Undefined
+ * when a required field of it is one the model isn't asked for, so the block could never save.
+ */
 function variantSchema(
   contentTypeApiId: string,
   variant: ComponentVariant,
   depth: number,
   options: BlocksSchemaOptions,
-): JsonSchema {
+): JsonSchema | undefined {
   const describe = options.describe ?? ((f: FieldDefinition) => f.name);
   const manifest = options.catalog?.find((b) => b.id === variant.apiId);
   const described = options.describeBlock
@@ -360,23 +391,9 @@ function variantSchema(
     [BLOCK_TYPE_KEY]: { type: 'string', const: variant.apiId },
   };
   for (const f of variant.fields) {
-    const scalar = draftableFieldSchema(f, describe);
-    if (scalar) {
-      properties[f.apiId] = scalar;
-    } else if (isAssetLink(f)) {
-      properties[f.apiId] = assetRequestSchema(f, describe);
-    } else if (blockVariants(f) && depth < MAX_COMPONENT_DEPTH) {
-      const place = placeRules(contentTypeApiId, f, variant.apiId, options.rules);
-      // A locked slot is the developer's to fill; a new block leaves it empty.
-      if (place.locked) continue;
-      const array = slotSchema(contentTypeApiId, f, place, depth + 1, options);
-      if (!array) continue;
-      properties[f.apiId] = {
-        ...array,
-        ...(place.min ? { minItems: place.min } : {}),
-        ...(place.max !== undefined ? { maxItems: place.max } : {}),
-      };
-    }
+    const filled = fieldSchema(contentTypeApiId, variant, f, depth, options, describe);
+    if (filled) properties[f.apiId] = filled;
+    else if (f.required) return undefined;
   }
   return {
     type: 'object',
@@ -388,13 +405,53 @@ function variantSchema(
   };
 }
 
+/** What the model is asked for one field of a block, or undefined when it isn't asked for it. */
+function fieldSchema(
+  contentTypeApiId: string,
+  variant: ComponentVariant,
+  f: FieldDefinition,
+  depth: number,
+  options: BlocksSchemaOptions,
+  describe: Describe,
+): JsonSchema | undefined {
+  const scalar = draftableFieldSchema(f, describe);
+  if (scalar) return scalar;
+  if (isAssetLink(f)) {
+    return options.images && acceptsImages(f) ? assetRequestSchema(f, describe) : undefined;
+  }
+  if (!blockVariants(f) || depth >= MAX_COMPONENT_DEPTH) return undefined;
+  const place = placeRules(contentTypeApiId, f, variant.apiId, options.rules);
+  // A locked slot is the developer's to fill; a new block leaves it empty.
+  if (place.locked) return undefined;
+  const array = slotSchema(contentTypeApiId, f, place, depth + 1, options);
+  if (!array) return undefined;
+  // A slot that must hold blocks is a required field: one empty would not save.
+  const min = place.min ?? (f.required ? 1 : undefined);
+  return {
+    ...array.schema,
+    ...(min ? { minItems: min } : {}),
+    ...(place.max !== undefined ? { maxItems: place.max } : {}),
+  };
+}
+
 // --- image requests ------------------------------------------------------------------------------
 
-/** An image request the library had no answer for, by where it was asked. */
-export interface UnresolvedImage {
+/** One image a generated tree asks for: where, what, and what the field takes. */
+export interface AssetRequestSite {
   /** The path validation names the field by: `body[0].image`, `body[1].items[0].image`. */
   readonly path: string;
   readonly query: string;
+  readonly required: boolean;
+  /** The field's MIME rule, when it has one: the image found must be one of these. */
+  readonly accepts?: readonly string[];
+}
+
+/** An image request the library had no answer for, by where it was asked. */
+export interface UnresolvedImage {
+  readonly path: string;
+  readonly query: string;
+  /** The field is required: the blocks can't be saved until an image is chosen for it. */
+  readonly required?: true;
 }
 
 const isObject = (v: unknown): v is Record<string, unknown> =>
@@ -407,27 +464,49 @@ function requestQuery(value: unknown): string | undefined {
   return isObject(req) && typeof req.query === 'string' ? req.query : undefined;
 }
 
-/** Every image request's query in a generated tree, once each, in the order they appear. */
-export function assetRequestsIn(value: unknown): string[] {
-  const found = new Set<string>();
-  const walk = (v: unknown): void => {
-    const q = requestQuery(v);
-    if (q !== undefined) {
-      found.add(q.trim());
-      return;
-    }
-    if (Array.isArray(v)) v.forEach(walk);
-    else if (isObject(v)) Object.values(v).forEach(walk);
+/**
+ * Every image request in `blocks` (the blocks of the place `field`, numbered from `offset`, the
+ * blocks it held already), walked by the content model: each block's variant, its Asset links and
+ * its slots. A request anywhere else in the tree is not one the schema asked for and is not found.
+ */
+export function assetRequestSites(
+  field: FieldDefinition,
+  blocks: readonly unknown[],
+  path: string,
+  offset = 0,
+): AssetRequestSite[] {
+  const sites: AssetRequestSite[] = [];
+  const walk = (f: FieldDefinition, items: readonly unknown[], at: string, from: number) => {
+    const variants = blockVariants(f) ?? [];
+    items.forEach((item, i) => {
+      if (!isObject(item)) return;
+      const variant = variants.find((v) => v.apiId === item[BLOCK_TYPE_KEY]);
+      const here = `${at}[${from + i}]`;
+      for (const nested of variant?.fields ?? []) {
+        const value = item[nested.apiId];
+        const query = isAssetLink(nested) ? requestQuery(value) : undefined;
+        if (query !== undefined && query.trim() !== '') {
+          const accepts = nested.validations?.assetMimeTypes;
+          sites.push({
+            path: `${here}.${nested.apiId}`,
+            query: query.trim(),
+            required: nested.required,
+            ...(accepts?.length ? { accepts } : {}),
+          });
+        } else if (blockVariants(nested) && Array.isArray(value)) {
+          walk(nested, value, `${here}.${nested.apiId}`, 0);
+        }
+      }
+    });
   };
-  walk(value);
-  return [...found].filter((q) => q !== '');
+  walk(field, blocks, path, offset);
+  return sites;
 }
 
 /**
- * A generated tree with each image request replaced by the asset `found` names for its query
+ * A generated tree with each image request replaced by the asset `found` names for its path
  * (`{ id, linkType: 'Asset' }`), and the field left out where it names none, listed in
- * `unresolved` by path. `path` is where the tree sits (`body`, `body[2].items`); its blocks are
- * numbered from `offset` (the blocks the place holds already).
+ * `unresolved`. Paths are numbered as {@link assetRequestSites} numbers them.
  */
 export function resolveAssetRequests<T>(
   value: T,
@@ -446,7 +525,7 @@ export function resolveAssetRequests<T>(
         out[k] = walk(child, `${at}.${k}`);
         continue;
       }
-      const id = found.get(q.trim());
+      const id = found.get(`${at}.${k}`);
       if (id) out[k] = { id, linkType: 'Asset' };
       else unresolved.push({ path: `${at}.${k}`, query: q });
     }

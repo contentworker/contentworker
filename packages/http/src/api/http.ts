@@ -1,4 +1,5 @@
 import {
+  AiUnavailableError,
   AssetInUseError,
   AssetRightsError,
   ConflictError,
@@ -90,6 +91,21 @@ export function toHttpError(err: unknown): { status: number; body: unknown } {
   // grounds, which is 422 rather than 400 or 409.
   if (err instanceof HookRejectedError) return { status: 422, body: errBody(err) };
   if (err instanceof RateLimitedError) return { status: 429, body: errBody(err) };
+  // The model didn't answer in time: the server's upstream, not the request, so 503 and retryable.
+  if (err instanceof AiUnavailableError) {
+    return {
+      status: 503,
+      body: {
+        error: {
+          code: err.code,
+          message: err.message,
+          ...(err.retryAfterSeconds !== undefined
+            ? { retryAfterSeconds: err.retryAfterSeconds }
+            : {}),
+        },
+      },
+    };
+  }
   if (err instanceof NotConfiguredError) return { status: 501, body: errBody(err) };
   // A stored secret no configured key opens is a server-side fault (a lost
   // DATA_KEY, or tampering), never the client's. The message names only where

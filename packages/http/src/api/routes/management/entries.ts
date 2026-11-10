@@ -5,6 +5,7 @@ import {
   createPreviewLink,
   draftEntry,
   getEntry,
+  imageSearchFor,
   moveEntry,
   resolveEmbed,
   validateEntry,
@@ -160,7 +161,11 @@ export function entriesRoutes(deps: AuthDeps): Hono<AuthVars> {
     async (c) => {
       const body = await parseBody(c, draftEntryBody);
       authorizeContent(c.get('principal'), 'write', body.contentTypeApiId);
-      return c.json(await draftEntry(ctx, ai, scopeOf(c), body, { assets: assetSearch }));
+      return c.json(
+        await draftEntry(ctx, ai, scopeOf(c), body, {
+          assets: imageSearchFor(c.get('principal'), assetSearch),
+        }),
+      );
     },
   );
   // Canvas: map free-form prose into structured fields (same validation gate).
@@ -178,7 +183,11 @@ export function entriesRoutes(deps: AuthDeps): Hono<AuthVars> {
     async (c) => {
       const body = await parseBody(c, canvasBody);
       authorizeContent(c.get('principal'), 'write', body.contentTypeApiId);
-      return c.json(await canvasToEntry(ctx, ai, scopeOf(c), body, { assets: assetSearch }));
+      return c.json(
+        await canvasToEntry(ctx, ai, scopeOf(c), body, {
+          assets: imageSearchFor(c.get('principal'), assetSearch),
+        }),
+      );
     },
   );
   // Rich text's external media: a pasted URL becomes an `embed` node's data. Scoped like a

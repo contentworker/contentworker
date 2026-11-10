@@ -815,13 +815,23 @@ export interface GeneratedBlocks {
   /** Pass to `patchBlocks` with `ops`. Null for a new entry. */
   readonly expectedVersion: number | null;
   readonly locale: string;
+  /** The ops (or the new entry's field) save as they are; false: read `issues` first. */
+  readonly ready: boolean;
   /** One insert per block, at the end of the place. */
   readonly ops: readonly BlockOp[];
   /** The field as the ops leave it; for a new entry, the value to create it with. */
   readonly fields: EntryFields;
   /** Images the asset library had no answer for: those fields are left empty. */
-  readonly unresolvedImages: readonly { readonly path: string; readonly query: string }[];
-  /** What else a save would be refused for, outside the field (a new entry's other required fields). */
+  readonly unresolvedImages: readonly {
+    readonly path: string;
+    readonly query: string;
+    /** The field is required: choose an image before saving. */
+    readonly required?: true;
+  }[];
+  /**
+   * What a save would still be refused for: a required image left unresolved (`image_required`)
+   * and anything outside the field (a new entry's other required fields).
+   */
   readonly issues: readonly { readonly field: string; readonly message: string }[];
   readonly usage: { readonly inputTokens: number; readonly outputTokens: number };
 }

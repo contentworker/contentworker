@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   ASSET_REQUEST_KEY,
-  assetRequestsIn,
+  acceptsImages,
+  assetRequestSites,
   blocksFieldSchema,
   blocksSchemaFor,
   catalogVariants,
@@ -55,6 +56,40 @@ const { blocks, targets } = checkBlockCatalog({
       allowedParents: ['grid'],
     },
     { id: 'quote', name: 'Quote', fields: [symbol('text')], allowedParents: ['grid'] },
+    // Each needs what a model isn't asked for: never offered.
+    {
+      id: 'article',
+      name: 'Article',
+      fields: [{ apiId: 'text', name: 'Text', type: 'RichText', required: true }],
+    },
+    {
+      id: 'download',
+      name: 'Download',
+      fields: [
+        {
+          apiId: 'file',
+          name: 'File',
+          type: 'Link',
+          linkType: 'Asset',
+          required: true,
+          validations: { assetMimeTypes: ['application/pdf'] },
+        },
+      ],
+    },
+    {
+      id: 'banner',
+      name: 'Banner',
+      fields: [
+        {
+          apiId: 'photo',
+          name: 'Photo',
+          type: 'Link',
+          linkType: 'Asset',
+          required: true,
+          validations: { assetMimeTypes: ['image/png'] },
+        },
+      ],
+    },
   ],
   targets: [{ contentTypeApiId: 'page', field: 'body' }],
 });
@@ -92,19 +127,19 @@ const variantsOf = (array: unknown): Schema[] => {
   const items = (array as { items: Schema }).items;
   return (items.anyOf as Schema[] | undefined) ?? [items];
 };
+const ids = (array: unknown) => variantsOf(array).map((v) => props(v)._type?.const);
 const variant = (array: unknown, id: string) =>
   variantsOf(array).find((v) => props(v)._type?.const === id);
+const withImages = { images: true } as const;
 
 describe('the blocks schema a model fills', () => {
-  it('offers one variant per block the place takes, its _type a const, and no _key', () => {
-    const built = blocksSchemaFor(PAGE, { field: 'body' }, { rules: null });
+  it('offers one variant per block it can fill, its _type a const, and no _key', () => {
+    const built = blocksSchemaFor(PAGE, { field: 'body' }, withImages);
     if (!built.ok) throw new Error(built.message);
     const blocksArray = props(built.schema).blocks;
-    expect(variantsOf(blocksArray).map((v) => props(v)._type?.const)).toEqual([
-      'hero',
-      'grid',
-      'section',
-    ]);
+    // article needs rich text, download a PDF: neither can be generated, so neither is offered.
+    expect(ids(blocksArray)).toEqual(['hero', 'grid', 'section', 'banner']);
+    expect(built.offered).toEqual(['hero', 'grid', 'section', 'banner']);
     const hero = variant(blocksArray, 'hero')!;
     expect(Object.keys(props(hero))).toEqual(['_type', 'heading', 'image']);
     expect(hero.required).toEqual(['_type', 'heading', 'image']);
@@ -116,26 +151,46 @@ describe('the blocks schema a model fills', () => {
     expect(JSON.stringify(built.schema)).not.toContain('_key');
   });
 
-  it('asks for an image by what it shows, and leaves rich text out', () => {
-    const built = blocksSchemaFor(PAGE, { field: 'body' }, {});
+  it('asks for an image by what it shows, only where an image fits, and leaves rich text out', () => {
+    const built = blocksSchemaFor(PAGE, { field: 'body' }, withImages);
     if (!built.ok) throw new Error(built.message);
     const hero = variant(props(built.schema).blocks, 'hero')!;
     expect(props(hero).image).toMatchObject({
       type: 'object',
       required: [ASSET_REQUEST_KEY],
-      properties: {
-        [ASSET_REQUEST_KEY]: { type: 'object', required: ['query'] },
-      },
+      properties: { [ASSET_REQUEST_KEY]: { type: 'object', required: ['query'] } },
     });
     expect(props(hero).body).toBeUndefined();
+    const field = (rule?: string[]) =>
+      ({
+        apiId: 'f',
+        name: 'f',
+        type: 'Link',
+        linkType: 'Asset',
+        localized: false,
+        required: false,
+        position: 0,
+        ...(rule ? { validations: { assetMimeTypes: rule } } : {}),
+      }) as FieldDefinition;
+    expect(acceptsImages(field())).toBe(true);
+    expect(acceptsImages(field(['image/*']))).toBe(true);
+    expect(acceptsImages(field(['application/pdf', 'video/*']))).toBe(false);
+  });
+
+  it('asks for no image without a library search, and leaves out a block that needs one', () => {
+    const built = blocksSchemaFor(PAGE, { field: 'body' }, {});
+    if (!built.ok) throw new Error(built.message);
+    expect(ids(props(built.schema).blocks)).toEqual(['hero', 'grid', 'section']);
+    // The hero's image is optional: the hero stays, without it.
+    expect(props(variant(props(built.schema).blocks, 'hero')).image).toBeUndefined();
   });
 
   it('recurses into slots with their own children and bounds, down to the component depth', () => {
-    const built = blocksSchemaFor(PAGE, { field: 'body' }, {});
+    const built = blocksSchemaFor(PAGE, { field: 'body' }, withImages);
     if (!built.ok) throw new Error(built.message);
     const section = variant(props(built.schema).blocks, 'section')!;
     const content = props(section).content;
-    expect(variantsOf(content).map((v) => props(v)._type?.const)).toEqual(['hero', 'grid']);
+    expect(ids(content)).toEqual(['hero', 'grid']);
     const grid = variant(content, 'grid')!;
     const items = props(grid).items as Schema;
     expect(items).toMatchObject({ minItems: 1, maxItems: 6 });
@@ -145,35 +200,67 @@ describe('the blocks schema a model fills', () => {
     expect(props(card).rank).toMatchObject({ type: 'integer' });
   });
 
-  it('narrows to the rules in force, and leaves a locked slot out of a new block', () => {
+  it('narrows to the rules in force, and leaves out a block whose required slot is locked', () => {
     const rules = effectiveBlockRules(CATALOG, {
       version: 1,
-      targets: [{ contentTypeApiId: 'page', field: 'body', blocks: ['hero', 'section'], max: 4 }],
+      targets: [
+        { contentTypeApiId: 'page', field: 'body', blocks: ['hero', 'grid', 'section'], max: 4 },
+      ],
       blocks: [
-        { block: 'grid', slots: { items: { allowedChildren: ['card'], max: 3 } } },
+        { block: 'grid', slots: { items: { allowedChildren: ['card'], max: 3, locked: true } } },
         { block: 'section', slots: { content: { locked: true } } },
       ],
     });
     const built = blocksSchemaFor(PAGE, { field: 'body' }, { rules });
     if (!built.ok) throw new Error(built.message);
-    expect(built.place).toEqual({ allowed: ['hero', 'section'], max: 4, locked: false });
+    expect(built.place).toEqual({ allowed: ['hero', 'grid', 'section'], max: 4, locked: false });
     const top = props(built.schema).blocks;
-    expect(variantsOf(top).map((v) => props(v)._type?.const)).toEqual(['hero', 'section']);
+    // A grid must hold a card, and its slot is locked: it could never save, so it isn't offered.
+    // A section's slot is optional: the section stays, its slot left out.
+    expect(ids(top)).toEqual(['hero', 'section']);
     expect(top.maxItems).toBe(4);
     expect(props(variant(top, 'section')).content).toBeUndefined();
+  });
 
-    // The grid's own slot, generated into directly, takes cards only, three at most.
-    const slot = blocksSchemaFor(
+  it('fills a slot where its parent sits, its bounds less what it holds', () => {
+    const rules = effectiveBlockRules(CATALOG, {
+      version: 1,
+      targets: [],
+      blocks: [{ block: 'grid', slots: { items: { allowedChildren: ['card'], max: 3 } } }],
+    });
+    // A grid at the top level, and one inside a section: the same block at two depths.
+    const atTop = blocksSchemaFor(
       PAGE,
-      { field: 'body', parent: { variant: 'grid', slot: 'items' }, held: 1 },
+      { field: 'body', slot: [{ variant: 'grid', slot: 'items' }], held: 1 },
       { rules },
     );
-    if (!slot.ok) throw new Error(slot.message);
-    const items = props(slot.schema).blocks;
-    expect(variantsOf(items).map((v) => props(v)._type?.const)).toEqual(['card']);
-    // One block is there already: one more needed for min 1 is met, two more fit.
+    if (!atTop.ok) throw new Error(atTop.message);
+    const items = props(atTop.schema).blocks;
+    expect(ids(items)).toEqual(['card']);
     expect(items.maxItems).toBe(2);
     expect(items.minItems).toBeUndefined();
+    const nested = blocksSchemaFor(
+      PAGE,
+      {
+        field: 'body',
+        slot: [
+          { variant: 'section', slot: 'content' },
+          { variant: 'grid', slot: 'items' },
+        ],
+      },
+      { rules },
+    );
+    expect(nested).toMatchObject({ ok: true, offered: ['card'] });
+    // A step that doesn't lead where it says is refused, not guessed at.
+    expect(
+      blocksSchemaFor(PAGE, {
+        field: 'body',
+        slot: [
+          { variant: 'hero', slot: 'content' },
+          { variant: 'grid', slot: 'items' },
+        ],
+      }),
+    ).toMatchObject({ ok: false, code: 'not_a_slot' });
   });
 
   it('refuses a locked place, a full one, and one that is not a blocks field or slot', () => {
@@ -188,14 +275,14 @@ describe('the blocks schema a model fills', () => {
     });
     expect(blocksFieldSchema(PAGE, 'body', { rules })).toBeUndefined();
     expect(
-      blocksSchemaFor(PAGE, { field: 'body', parent: { variant: 'grid', slot: 'items' }, held: 6 }),
+      blocksSchemaFor(PAGE, { field: 'body', slot: [{ variant: 'grid', slot: 'items' }], held: 6 }),
     ).toMatchObject({ ok: false, code: 'full' });
     expect(blocksSchemaFor(PAGE, { field: 'title' })).toMatchObject({
       ok: false,
       code: 'not_a_blocks_field',
     });
     expect(
-      blocksSchemaFor(PAGE, { field: 'body', parent: { variant: 'hero', slot: 'items' } }),
+      blocksSchemaFor(PAGE, { field: 'body', slot: [{ variant: 'hero', slot: 'items' }] }),
     ).toMatchObject({ ok: false, code: 'not_a_slot' });
   });
 
@@ -241,22 +328,35 @@ describe('the blocks schema a model fills', () => {
 });
 
 describe('image requests', () => {
+  const body = PAGE.fields[1] as FieldDefinition;
   const tree = [
-    { _type: 'hero', heading: 'Hi', image: { $asset: { query: 'a lighthouse at dusk' } } },
+    { _type: 'hero', heading: 'Hi', image: { $asset: { query: ' a lighthouse at dusk ' } } },
     {
       _type: 'section',
       content: [{ _type: 'hero', heading: 'Two', image: { $asset: { query: 'a red door' } } }],
     },
+    { _type: 'banner', photo: { $asset: { query: 'a red door' } } },
+    // Not where the schema asks for an image: not a request.
+    { _type: 'card', title: { $asset: { query: 'stray' } } },
   ];
 
-  it('lists each query once, in order', () => {
-    expect(assetRequestsIn([...tree, tree[0]])).toEqual(['a lighthouse at dusk', 'a red door']);
+  it('finds each request where the content model puts an image, with its rule and need', () => {
+    expect(assetRequestSites(body, tree, 'body', 2)).toEqual([
+      { path: 'body[2].image', query: 'a lighthouse at dusk', required: false },
+      { path: 'body[3].content[0].image', query: 'a red door', required: false },
+      {
+        path: 'body[4].photo',
+        query: 'a red door',
+        required: true,
+        accepts: ['image/png'],
+      },
+    ]);
   });
 
-  it('links what the library found and leaves the rest out, naming where', () => {
+  it('links what the library found by path and leaves the rest out, naming where', () => {
     const { value, unresolved } = resolveAssetRequests(
-      tree,
-      new Map([['a lighthouse at dusk', 'asset-1']]),
+      tree.slice(0, 2),
+      new Map([['body[2].image', 'asset-1']]),
       'body',
       2,
     );

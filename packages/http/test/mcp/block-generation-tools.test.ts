@@ -29,6 +29,13 @@ const SPACE = 'space-1';
 const scope = { spaceId: SPACE, environmentId: 'main' };
 
 const admin: Principal = { spaceId: '*', kind: 'admin', scopes: Object.values(SCOPES) };
+// Holds the coarse write scope, but its role only reads the type.
+const reader: Principal = {
+  spaceId: SPACE,
+  kind: 'cma',
+  scopes: [SCOPES.previewRead, SCOPES.contentWrite],
+  contentGrants: [{ contentTypeApiId: 'page', actions: ['read'] }],
+};
 // Writes the page's body, reads but may not write its sidebar.
 const writer: Principal = {
   spaceId: SPACE,
@@ -101,13 +108,14 @@ async function setup(principal: Principal, answer: (req: GenerateRequest) => unk
 }
 
 describe('the blocks generation tool', () => {
-  it('composes ops that entry_blocks_patch saves, read-only itself', async () => {
+  it('composes ops that entry_blocks_patch saves, and is not marked read-only (it spends)', async () => {
     const { client, id, call } = await setup(admin, () => ({
       blocks: [{ _type: 'cta', label: 'Two' }],
     }));
     const listed = await client.listTools();
     const tool = listed.tools.find((t) => t.name === 'entry_blocks_generate');
-    expect(tool?.annotations?.readOnlyHint).toBe(true);
+    // A flagship call: a client asks before running it, and the audit trail records it.
+    expect(tool?.annotations?.readOnlyHint).not.toBe(true);
 
     const generated = await call('entry_blocks_generate', { id, field: 'body', prompt: 'More' });
     expect(generated.isError, generated.text).toBe(false);
@@ -158,5 +166,19 @@ describe('the blocks generation tool', () => {
     const out = await call('generate_draft', { contentType: 'page', prompt: 'x' });
     expect(out.isError, out.text).toBe(false);
     expect(JSON.parse(out.text).fields.body).toEqual({ 'en-US': [{ _type: 'cta', label: 'Go' }] });
+  });
+
+  it('refuses a draft or a Canvas mapping for a type the role may not write', async () => {
+    const { ai, call } = await setup(reader, () => ({ title: 'T' }));
+    for (const [name, args] of [
+      ['generate_draft', { contentType: 'page', prompt: 'x' }],
+      ['entry_from_canvas', { contentType: 'page', prose: 'x' }],
+      ['entry_blocks_generate', { contentType: 'page', field: 'body', prompt: 'x' }],
+    ] as const) {
+      const out = await call(name, args);
+      expect(out.isError, name).toBe(true);
+      expect(out.text, name).toContain('content:write:page');
+    }
+    expect(ai.requests).toHaveLength(0);
   });
 });

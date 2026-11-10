@@ -10,6 +10,7 @@ import {
   getPreviewSingleton,
   getSchedulerStatus,
   hybridSearch,
+  imageSearchFor,
   listContentTypes,
   listFieldValues,
   listPreviewEntryPage,
@@ -591,7 +592,7 @@ export function registerReadTools(server: McpServer, t: ToolContext): void {
           ai,
           scopeOf(args),
           { contentTypeApiId: args.contentType, prompt: args.prompt, tier: args.tier },
-          { assets: assetSearch },
+          { assets: imageSearchFor(principal, assetSearch) },
         ),
       );
     },
@@ -622,7 +623,7 @@ export function registerReadTools(server: McpServer, t: ToolContext): void {
           ai,
           scopeOf(args),
           { contentTypeApiId: args.contentType, prose: args.prose, tier: args.tier },
-          { assets: assetSearch },
+          { assets: imageSearchFor(principal, assetSearch) },
         ),
       );
     },

@@ -6,6 +6,7 @@ import {
   checkEntryBlocks,
   generateBlocks,
   getEntry,
+  imageSearchFor,
   outlineEntryBlocks,
   patchEntryBlocks,
 } from '@contentworker/application';
@@ -77,7 +78,8 @@ export function registerBlockTools(server: McpServer, t: ToolContext): void {
           ...scopeArgs,
         }),
       ),
-      annotations: READ_ONLY,
+      // Not read-only: it spends a flagship call, so a client asks before running it, and the
+      // audit trail records who spent it. It saves nothing in the space.
     },
     async (args) => {
       guard(SCOPES.contentWrite, scopeOf(args));
@@ -100,7 +102,7 @@ export function registerBlockTools(server: McpServer, t: ToolContext): void {
       return ok(
         await generateBlocks(ctx, t.ai, scopeOf(args), input, {
           ...access,
-          assets: t.deps.assetSearch ?? assetSearchDeps(t.rag),
+          assets: imageSearchFor(principal, t.deps.assetSearch ?? assetSearchDeps(t.rag)),
         }),
       );
     },

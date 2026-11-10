@@ -1,4 +1,4 @@
-import { RateLimitedError, type Scope } from '@contentworker/domain';
+import { AiUnavailableError, RateLimitedError, type Scope } from '@contentworker/domain';
 import type {
   AIProvider,
   DecisionModel,
@@ -57,6 +57,29 @@ export function agentBudgetLimits(
   return limits;
 }
 
+/** A call that ran past its cap. */
+export class AiTimeoutError extends Error {}
+
+/** `p`, or a rejection once `ms` have passed: the per-call cap every model call is held to. */
+export function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    p,
+    new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new AiTimeoutError(`AI call timed out after ${ms}ms`)), ms);
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
+
+export interface BudgetOptions {
+  /**
+   * The call's cap. Past it, the call is abandoned and the space is charged `maxTokens` (the
+   * provider may still bill it, and an abandoned call settles nothing), then
+   * {@link AiUnavailableError} is thrown: HTTP 503, retryable.
+   */
+  readonly timeoutMs?: number;
+}
+
 /**
  * Runs an AI generation under the space's budget: consults `ctx.costGuard`
  * first (throwing {@link RateLimitedError} → HTTP 429 when the scope is over its
@@ -70,6 +93,7 @@ export async function generateWithBudget(
   ai: AIProvider,
   scope: Scope,
   req: GenerateRequest,
+  options: BudgetOptions = {},
 ): Promise<GenerateResult> {
   // AI_MODE=mock: never call the model (local development, demos), from any use-case.
   if (ctx.ai?.mode === 'mock') return mockGenerate(req);
@@ -82,7 +106,23 @@ export async function generateWithBudget(
       );
     }
   }
-  const result = await ai.generate(req);
+  const call = ai.generate(req);
+  let result: GenerateResult;
+  if (options.timeoutMs === undefined) {
+    result = await call;
+  } else {
+    try {
+      result = await withTimeout(call, options.timeoutMs);
+    } catch (err) {
+      if (!(err instanceof AiTimeoutError)) throw err;
+      // The abandoned call may still fail later: nobody is listening for it.
+      call.catch(() => {});
+      if (ctx.costGuard) await ctx.costGuard.settle(scope, req.maxTokens);
+      throw new AiUnavailableError(
+        `The model didn’t answer within ${Math.round(options.timeoutMs / 1000)} s; try again`,
+      );
+    }
+  }
   if (ctx.costGuard) {
     const total = result.usage.inputTokens + result.usage.outputTokens;
     await ctx.costGuard.settle(scope, total);

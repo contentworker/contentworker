@@ -83,8 +83,11 @@ export const draftResult = z.object({
       'is saved; create the entry with them',
   ),
   unresolvedImages: z
-    .array(z.object({ path: z.string(), query: z.string() }))
+    .array(z.object({ path: z.string(), query: z.string(), required: z.literal(true).optional() }))
     .describe('Images the drafted blocks asked for that the asset library had no answer for'),
+  issues: z
+    .array(z.object({ field: z.string(), message: z.string() }).loose())
+    .describe('Required images left unresolved (image_required): choose one before creating'),
   usage: z.object({ inputTokens: z.int(), outputTokens: z.int() }),
 });
 

@@ -1,7 +1,7 @@
 import { RateLimitedError, type Scope } from '@contentworker/domain';
 import type { AIProvider, GenerateRequest, ModelTier } from '@contentworker/ports';
 import type { FakeAdapterBinding } from './adapter-guard';
-import { generateWithBudget } from './ai-budget';
+import { generateWithBudget, withTimeout } from './ai-budget';
 import type { AiCallRecord, AiProvenance } from './ai-provenance';
 import type { AiMode, AppContext } from './context';
 
@@ -150,19 +150,6 @@ export function answerStrings(result: { readonly object?: unknown }, field: stri
 }
 
 // ---- generateJson -----------------------------------------------------------
-
-class AiTimeoutError extends Error {}
-
-/** `p`, or a rejection once `ms` have passed: the per-call cap every model call is held to. */
-export function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  return Promise.race([
-    p,
-    new Promise<never>((_, reject) => {
-      timer = setTimeout(() => reject(new AiTimeoutError(`AI call timed out after ${ms}ms`)), ms);
-    }),
-  ]).finally(() => clearTimeout(timer));
-}
 
 export interface GenerateJsonOptions<T> {
   /** Stable prompt id for provenance and logs (e.g. `workflow.router`). */
