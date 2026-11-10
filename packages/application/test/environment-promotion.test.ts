@@ -31,6 +31,7 @@ import {
   requestPromotion,
   SYSTEM_CALLER,
   setEnvironmentAlias,
+  trashEntry,
   updateEntry,
 } from '../src/index';
 
@@ -89,6 +90,47 @@ beforeEach(async () => {
 
 const events = async (type: string) =>
   (await store.outbox.readPending(1000)).filter((e) => e.type === type);
+
+const symbol = (apiId: string, position = 0) => ({
+  apiId,
+  name: apiId,
+  type: 'Symbol',
+  localized: false,
+  required: false,
+  position,
+});
+const page = (variants: unknown[]) =>
+  ({
+    apiId: 'page',
+    name: 'Page',
+    displayField: 'title',
+    fields: [
+      { ...symbol('title'), required: true },
+      { ...symbol('body', 1), type: 'Array', items: { type: 'Component', variants } },
+    ],
+  }) as Parameters<typeof createContentType>[3];
+const hero = { apiId: 'hero', name: 'Hero', fields: [symbol('heading'), symbol('kicker', 1)] };
+const cta = { apiId: 'cta', name: 'CTA', fields: [symbol('label')] };
+
+/** qa's page has a hero (with a kicker) and a cta; staging's drops the cta and the kicker. */
+async function seedPages() {
+  await createContentType(ctx, SYSTEM_CALLER, qa, page([hero, cta]));
+  await publishContentType(ctx, qa, 'page');
+  await createContentType(
+    ctx,
+    SYSTEM_CALLER,
+    staging,
+    page([{ ...hero, fields: [symbol('heading')] }]),
+  );
+  await publishContentType(ctx, staging, 'page');
+}
+
+const withCta = (title: string) => ({
+  title: { 'en-US': title },
+  body: { 'en-US': [{ _type: 'cta', label: 'Go' }] },
+});
+const variantsOf = async (scope: typeof qa) =>
+  (await store.contentTypes.get(scope, 'page'))?.fields[1]?.items?.variants?.map((v) => v.apiId);
 
 describe('promoting content between environments', () => {
   it('applies at once when nothing calls for approval: live goes live, drafts stay drafts', async () => {
@@ -246,7 +288,7 @@ describe('promoting content between environments', () => {
     expect(p.risk.reasons).toContain('The content type "note" changes its preview URL');
   });
 
-  it('names the target entries that still hold a field the promotion removes', async () => {
+  it('refuses a type that removes a field the target’s entries still hold, writing nothing', async () => {
     await createEnvironment(ctx, spaceId, 'slim');
     const slim = { spaceId, environmentId: 'slim' };
     await seedModel(slim, note({ extra: false }));
@@ -259,76 +301,38 @@ describe('promoting content between environments', () => {
       contentTypeApiId: 'note',
       fields: { title: { 'en-US': 'Bare' } },
     });
-    const p = await requestPromotion(ctx, ada, spaceId, {
+    const err = await requestPromotion(ctx, ada, spaceId, {
       source: 'slim',
       target: 'qa',
       contentTypes: ['note'],
-    });
-    expect(p.status).toBe('awaiting_approval');
-    expect(p.risk.reasons).toContain(
-      `The content type "note" removes a field entries in the target still hold: body (entry ${held.id})`,
-    );
+    }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ValidationError);
+    expect((err as ValidationError).issues).toEqual([
+      {
+        field: 'contentTypes',
+        message: `The content type "note" can't go to qa: it removes a field 1 entry there still holds a value for: body (entry ${held.id}). Change or clear those values there first, or leave "note" out of the promotion`,
+      },
+    ]);
+    expect(await store.promotions.list(spaceId)).toEqual([]);
+    expect((await store.contentTypes.get(qa, 'note'))?.fields.map((f) => f.apiId)).toEqual([
+      'title',
+      'body',
+    ]);
   });
 
   it('asks for approval when a block variant or a nested field would be removed', async () => {
-    const symbol = (apiId: string, position = 0) => ({
-      apiId,
-      name: apiId,
-      type: 'Symbol',
-      localized: false,
-      required: false,
-      position,
-    });
-    const page = (variants: unknown[]) =>
-      ({
-        apiId: 'page',
-        name: 'Page',
-        displayField: 'title',
-        fields: [
-          { ...symbol('title'), required: true },
-          {
-            ...symbol('body', 1),
-            type: 'Array',
-            items: { type: 'Component', variants },
-          },
-        ],
-      }) as Parameters<typeof createContentType>[3];
-    const hero = { apiId: 'hero', name: 'Hero', fields: [symbol('heading'), symbol('kicker', 1)] };
-    const cta = { apiId: 'cta', name: 'CTA', fields: [symbol('label')] };
-    await createContentType(ctx, SYSTEM_CALLER, qa, page([hero, cta]));
-    await publishContentType(ctx, qa, 'page');
-    await createContentType(
-      ctx,
-      SYSTEM_CALLER,
-      staging,
-      page([{ ...hero, fields: [symbol('heading')] }]),
-    );
-    await publishContentType(ctx, staging, 'page');
-    const { entry } = await createEntry(ctx, qa, {
-      contentTypeApiId: 'page',
-      fields: {
-        title: { 'en-US': 'Home' },
-        body: { 'en-US': [{ _type: 'cta', label: 'Go' }] },
-      },
-    });
-
+    await seedPages();
     const p = await requestPromotion(ctx, ada, spaceId, {
       source: 'staging',
       target: 'qa',
       contentTypes: ['page'],
     });
     expect(p.status).toBe('awaiting_approval');
-    expect(p.risk.reasons).toEqual(
-      expect.arrayContaining([
-        'The content type "page" removes the field "body[hero].kicker"',
-        'The content type "page" removes the block variant "cta" from "body"',
-        `The content type "page" removes a block variant entries in the target still use: body: cta (entry ${entry.id})`,
-      ]),
-    );
-    // Nobody holds a kicker, so it is not named as in use.
-    expect(p.risk.reasons.join('\n')).not.toMatch(/still hold: body\[hero\]\.kicker/);
+    expect(p.risk.reasons).toEqual([
+      'The content type "page" removes the field "body[hero].kicker"',
+      'The content type "page" removes the block variant "cta" from "body"',
+    ]);
   });
-
   it('lets a decision model ask for approval, never waive it, and fails closed when it can’t answer', async () => {
     const e = await createEntry(ctx, staging, {
       contentTypeApiId: 'note',
@@ -522,5 +526,223 @@ describe('promoting content between environments', () => {
     expect((await store.entries.get(qa, e.entry.id))?.fields.title).toEqual({
       'en-US': 'Needs legal',
     });
+  });
+});
+
+describe('promoting a content type that would strand blocks in the target', () => {
+  const managers = { ...grace, scopes: [SCOPES.contentPublish, SCOPES.contentManage] };
+  const refusal = async (run: Promise<unknown>) => {
+    const err = await run.catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ValidationError);
+    return (err as ValidationError).issues;
+  };
+  const ctaRefusal = (ids: string[]) => ({
+    field: 'contentTypes',
+    message:
+      `The content type "page" can't go to qa: it removes a block variant ${ids.length} ` +
+      `${ids.length === 1 ? 'entry there still uses' : 'entries there still use'}: body: cta ` +
+      `(${ids.length === 1 ? 'entry' : 'entries'} ${[...ids].sort().join(', ')}). Change or clear ` +
+      'those values there first, or leave "page" out of the promotion',
+  });
+  const heroOnly = (title: string) => ({
+    title: { 'en-US': title },
+    body: { 'en-US': [{ _type: 'hero', heading: 'Hi' }] },
+  });
+
+  it('refuses it when requested, naming the variant and counting its entries, writing nothing', async () => {
+    await seedPages();
+    // A live one and one in the trash: both could be served or saved again.
+    const live = await createEntry(ctx, qa, { contentTypeApiId: 'page', fields: withCta('Live') });
+    await publishEntry(ctx, qa, live.entry.id);
+    const trashed = await createEntry(ctx, qa, {
+      contentTypeApiId: 'page',
+      fields: withCta('Old'),
+    });
+    await trashEntry(ctx, qa, trashed.entry.id);
+    const before = await store.contentTypes.get(qa, 'page');
+
+    const issues = await refusal(
+      requestPromotion(ctx, ada, spaceId, {
+        source: 'staging',
+        target: 'qa',
+        contentTypes: ['page'],
+      }),
+    );
+    expect(issues).toEqual([ctaRefusal([live.entry.id, trashed.entry.id])]);
+    // Never the entries' content.
+    expect(JSON.stringify(issues)).not.toContain('Live');
+    expect(await store.promotions.list(spaceId)).toEqual([]);
+    expect(await store.contentTypes.get(qa, 'page')).toEqual(before);
+  });
+
+  it('refuses it at the apply, before writing anything, when an entry gains the variant after the request', async () => {
+    await seedPages();
+    const incoming = await createEntry(ctx, staging, {
+      contentTypeApiId: 'page',
+      fields: heroOnly('New'),
+    });
+    const p = await requestPromotion(ctx, ada, spaceId, {
+      source: 'staging',
+      target: 'qa',
+      contentTypes: ['page'],
+      entries: [incoming.entry.id],
+    });
+    expect(p.status).toBe('awaiting_approval');
+    // Written in the target while the promotion waits.
+    const late = await createEntry(ctx, qa, { contentTypeApiId: 'page', fields: withCta('Late') });
+    const before = await store.contentTypes.get(qa, 'page');
+    const published = (await events('content_type.published')).length;
+
+    const issues = await refusal(approvePromotion(ctx, managers, spaceId, p.id));
+    expect(issues).toEqual([ctaRefusal([late.entry.id])]);
+    expect(await store.promotions.get(spaceId, p.id)).toMatchObject({
+      status: 'failed',
+      result: { contentTypes: [], entries: [] },
+    });
+    expect(await store.contentTypes.get(qa, 'page')).toEqual(before);
+    expect(await events('content_type.published')).toHaveLength(published);
+    expect(await store.entries.get(qa, incoming.entry.id)).toBeNull();
+    expect((await store.entries.get(qa, late.entry.id))?.fields).toMatchObject(withCta('Late'));
+  });
+
+  it('promotes a removal nothing in the target holds, once approved', async () => {
+    await seedPages();
+    await createEntry(ctx, qa, { contentTypeApiId: 'page', fields: heroOnly('Plain') });
+    const p = await requestPromotion(ctx, ada, spaceId, {
+      source: 'staging',
+      target: 'qa',
+      contentTypes: ['page'],
+    });
+    expect(p.status).toBe('awaiting_approval');
+    expect(await approvePromotion(ctx, managers, spaceId, p.id)).toMatchObject({
+      status: 'completed',
+    });
+    expect(await variantsOf(qa)).toEqual(['hero']);
+  });
+
+  it('lets an entry it promotes live replace what the target’s copy held', async () => {
+    await seedPages();
+    const { entry } = await createEntry(ctx, staging, {
+      contentTypeApiId: 'page',
+      fields: heroOnly('Moved'),
+    });
+    await publishEntry(ctx, staging, entry.id);
+    await createEntry(ctx, qa, { contentTypeApiId: 'page', id: entry.id, fields: withCta('Was') });
+    await publishEntry(ctx, qa, entry.id);
+
+    const p = await requestPromotion(ctx, ada, spaceId, {
+      source: 'staging',
+      target: 'qa',
+      contentTypes: ['page'],
+      entries: [entry.id],
+    });
+    expect(await approvePromotion(ctx, managers, spaceId, p.id)).toMatchObject({
+      status: 'completed',
+    });
+    expect(await variantsOf(qa)).toEqual(['hero']);
+    expect((await store.entries.getPublished(qa, entry.id))?.fields).toMatchObject(
+      heroOnly('Moved'),
+    );
+  });
+
+  it('refuses, when it leans on replacing a copy, an entry the target holds in its trash', async () => {
+    await seedPages();
+    // A replaces qa's copy, which holds a cta; B would fail the apply after the type is saved,
+    // before A goes live, leaving A's qa snapshot holding the removed cta.
+    const ids: string[] = [];
+    for (const [title, trash] of [
+      ['A', false],
+      ['B', true],
+    ] as const) {
+      const { entry } = await createEntry(ctx, staging, {
+        contentTypeApiId: 'page',
+        fields: heroOnly(title),
+      });
+      await publishEntry(ctx, staging, entry.id);
+      await createEntry(ctx, qa, {
+        contentTypeApiId: 'page',
+        id: entry.id,
+        fields: trash ? heroOnly(title) : withCta(title),
+      });
+      await publishEntry(ctx, qa, entry.id);
+      if (trash) await trashEntry(ctx, qa, entry.id);
+      ids.push(entry.id);
+    }
+
+    const issues = await refusal(
+      requestPromotion(ctx, ada, spaceId, {
+        source: 'staging',
+        target: 'qa',
+        contentTypes: ['page'],
+        entries: ids,
+      }),
+    );
+    expect(issues).toEqual([
+      {
+        field: 'entries',
+        message: `Entry ${ids[1]} is in the trash in qa, so the promotion can't write it. Restore it there first, or leave it out of the promotion`,
+      },
+    ]);
+    expect(await variantsOf(qa)).toEqual(['hero', 'cta']);
+  });
+
+  it('counts the published snapshot an entry it promotes as a draft leaves in the target', async () => {
+    await seedPages();
+    const { entry } = await createEntry(ctx, staging, {
+      contentTypeApiId: 'page',
+      fields: heroOnly('Draft'),
+    });
+    await createEntry(ctx, qa, { contentTypeApiId: 'page', id: entry.id, fields: withCta('Live') });
+    await publishEntry(ctx, qa, entry.id);
+
+    const issues = await refusal(
+      requestPromotion(ctx, ada, spaceId, {
+        source: 'staging',
+        target: 'qa',
+        contentTypes: ['page'],
+        entries: [entry.id],
+      }),
+    );
+    expect(issues).toEqual([ctaRefusal([entry.id])]);
+  });
+
+  it('counts it too when a gate added after the request keeps the entry a draft', async () => {
+    await seedPages();
+    const { entry } = await createEntry(ctx, staging, {
+      contentTypeApiId: 'page',
+      fields: heroOnly('Gated'),
+    });
+    await publishEntry(ctx, staging, entry.id);
+    await createEntry(ctx, qa, { contentTypeApiId: 'page', id: entry.id, fields: withCta('Live') });
+    await publishEntry(ctx, qa, entry.id);
+    const p = await requestPromotion(ctx, ada, spaceId, {
+      source: 'staging',
+      target: 'qa',
+      contentTypes: ['page'],
+      entries: [entry.id],
+    });
+    expect(p.status).toBe('awaiting_approval');
+    const { workflow } = await createWorkflowDraft(ctx, qa, {
+      name: 'Legal review',
+      contentTypes: [],
+      gatesPublish: true,
+      graph: new WorkflowBuilder()
+        .n('start', 'trigger.manual', 'Submit for review')
+        .n('review', 'control.approval', 'Review')
+        .n('publish', 'content.publish', 'Publish')
+        .n('done', 'control.end', 'Done')
+        .n('no', 'control.end', 'Declined', { outcome: 'declined' })
+        .e('start', 'review')
+        .e('review.approved', 'publish')
+        .e('review.rejected', 'no')
+        .e('publish', 'done')
+        .graph(),
+    });
+    await publishWorkflowVersion(ctx, qa, workflow.id);
+
+    expect(await refusal(approvePromotion(ctx, managers, spaceId, p.id))).toEqual([
+      ctaRefusal([entry.id]),
+    ]);
+    expect(await variantsOf(qa)).toEqual(['hero', 'cta']);
   });
 });

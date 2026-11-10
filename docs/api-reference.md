@@ -233,9 +233,20 @@ check first.
 2. **The risk check.** The rules come first. Approval is required when:
    - the target is `main`, or an alias points at it;
    - a promoted content type would remove a field (at any depth) or a block variant, change a
-     field's type, or make one required;
-   - the target's entries still hold a field or a block variant it removes (each named with its
-     entries; applying it would be refused with `409` until they are cleared).
+     field's type, or make one required.
+
+   A removal the target's entries still hold is not a reason to approve: it's refused (`422`,
+   one issue on `contentTypes` per removed field or variant, naming the type, how many entries
+   hold it and which, never their content), as revising the type there would be, and with no
+   override. Every copy counts (an entry's current version, the trash, its published snapshot)
+   except one the promotion replaces: a promoted entry's current version, and its published
+   snapshot when it goes live. Change or clear those values in the target, or leave the type out.
+   When it counts on replacing a copy, a promoted entry in the target's trash is refused too
+   (`422` on `entries`): it would fail the apply after the types were saved. The apply checks
+   again before it writes anything, so an entry that gained the removed content while the
+   promotion waited fails it (`failed`, nothing copied). A failure later in the apply (a publish
+   refused, say) keeps what was written, as below, and can leave the snapshot of an entry it was
+   to publish holding what the type removed.
 
    Then the decision model (Clef) answers `review`, `breaking` and `risk` over a summary of the
    change. It can only add a requirement, at `review` ≥ 0.5 or `risk` Significant or above, never

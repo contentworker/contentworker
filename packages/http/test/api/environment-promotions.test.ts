@@ -110,6 +110,75 @@ describe('promotions over HTTP', () => {
     expect((await app.request('/spaces/s1/promotions', { headers: admin })).status).toBe(200);
   });
 
+  it('refuses with a 422 a content type that drops a block variant the target’s entries use', async () => {
+    const symbol = (apiId: string) => ({
+      apiId,
+      name: apiId,
+      type: 'Symbol',
+      localized: false,
+      required: false,
+      position: 0,
+    });
+    const page = (variants: unknown[]) => ({
+      apiId: 'page',
+      name: 'Page',
+      displayField: 'title',
+      fields: [
+        { ...symbol('title'), required: true },
+        { ...symbol('body'), position: 1, type: 'Array', items: { type: 'Component', variants } },
+      ],
+    });
+    const hero = { apiId: 'hero', name: 'Hero', fields: [symbol('heading')] };
+    const cta = { apiId: 'cta', name: 'CTA', fields: [symbol('label')] };
+    for (const [env, variants] of [
+      ['staging', [hero]],
+      ['main', [hero, cta]],
+    ] as const) {
+      const base = `/spaces/s1/environments/${env}`;
+      await app.request(`${base}/content-types`, {
+        method: 'POST',
+        headers: admin,
+        body: JSON.stringify(page([...variants])),
+      });
+      await app.request(`${base}/content-types/page/published`, { method: 'POST', headers: admin });
+    }
+    const held = await app.request('/spaces/s1/environments/main/entries', {
+      method: 'POST',
+      headers: admin,
+      body: JSON.stringify({
+        contentTypeApiId: 'page',
+        fields: {
+          title: { 'en-US': 'Home' },
+          body: { 'en-US': [{ _type: 'cta', label: 'Secret launch copy' }] },
+        },
+      }),
+    });
+    const heldId = ((await held.json()) as { entry: { id: string } }).entry.id;
+
+    const res = await app.request('/spaces/s1/promotions', {
+      method: 'POST',
+      headers: cma,
+      body: JSON.stringify({ source: 'staging', target: 'main', contentTypes: ['page'] }),
+    });
+    expect(res.status).toBe(422);
+    const body = await res.json();
+    expect(body).toEqual({
+      error: {
+        code: 'validation_failed',
+        message: 'One or more fields are invalid',
+        issues: [
+          {
+            field: 'contentTypes',
+            message: `The content type "page" can't go to main: it removes a block variant 1 entry there still uses: body: cta (entry ${heldId}). Change or clear those values there first, or leave "page" out of the promotion`,
+          },
+        ],
+      },
+    });
+    expect(JSON.stringify(body)).not.toContain('Secret launch copy');
+    const listed = await app.request('/spaces/s1/promotions', { headers: admin });
+    expect(((await listed.json()) as { items: P[] }).items).toEqual([]);
+  });
+
   it('refuses a delivery key', async () => {
     const res = await app.request('/spaces/s1/promotions', {
       method: 'POST',
