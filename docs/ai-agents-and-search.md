@@ -415,6 +415,21 @@ tab goes away. User-facing behaviour is in the
   The AI budget meters setup turns under the `*` scope.
 - **Page edits skip the model.** `act` runs the exact tool call for what was pressed and joins the
   conversation as a tool call of its own (`direct_` ids); `resolve` answers its confirm card.
+- **Filling a slot.** The canvas's Ask Coworker to fill this sends one message whose entry page
+  carries `fill` (`AssistantFill`, `packages/domain/src/assistant/fill.ts`): the field, locale and
+  place, the block types the slot takes there (narrowed by the block config) with their text
+  fields, its bounds and the names of the blocks around it. `readAssistantFill` cuts it to
+  `FILL_LIMITS`; the system prompt quotes it with `wrapUntrusted` and asks for one
+  `entry_blocks_patch` that only inserts there. Every model call of the turn is recorded with the
+  fill turn (`fillTurnOf`: the entry and the fill), and its run is refused with `fillRefusal`'s
+  words when it goes outside: a patch of that entry whose every step keeps to the slot
+  (`outsideFill`: inserts only, of the types offered, holding only text in their listed fields, at
+  the place) runs, and any other write (another tool, another entry) never does, whatever a client
+  shows or answers. The turn's message metadata carries the same fill turn, and the card says the
+  same refusal before any dry run, Confirm off; the dry run then holds an allowed patch to the
+  block config and the entry's locks.
+  The ask's own words (the person's message, unquoted) name the slot by schema names only. The mock
+  answers `Fill …` with an outline, then one block of the first type at the place (`mockFill`).
 - **Trust.** The object verifies the principal the web worker signed for its path (the
   `ASSISTANT_PRINCIPAL_KEY`, see [Auth & RBAC](./auth-and-rbac.md)), re-checks the person (enabled,
   session live) on every frame, turn and `act`, and runs only tool calls it made itself (`model:`

@@ -9,6 +9,7 @@ import { type UseAgentChatOptions, useAgentChat } from '@cloudflare/ai-chat/reac
 import {
   ASSISTANT_TOOLS,
   type AssistantContext,
+  type AssistantPage,
   isAssistantTool,
   SETUP_SCOPE,
 } from '@contentworker/domain';
@@ -79,6 +80,7 @@ import {
   type ActResult,
   AssistantUnavailable,
   contextLabel,
+  type PageAsk,
   type QueuedAct,
   useAssistant,
 } from '../../lib/assistant';
@@ -436,6 +438,14 @@ type Message = UIMessage;
 /** A turn with no space to work in: a deployment admin setting up the first one. */
 const SETUP_CONTEXT: AssistantContext = { scope: SETUP_SCOPE, page: { kind: 'everything' } };
 
+/** The page a message was asked about, when a page asked it with its own (`ask`). */
+function pageOf(metadata: unknown): AssistantPage | undefined {
+  const page = (metadata as { page?: unknown } | undefined)?.page;
+  return typeof page === 'object' && page !== null && (page as { kind?: unknown }).kind === 'entry'
+    ? (page as AssistantPage)
+    : undefined;
+}
+
 function ChatView({
   agent,
   link,
@@ -457,6 +467,13 @@ function ChatView({
   const chat = useAgentChat<unknown, Message>({
     agent,
     body: () => chatBody(setup.current ? SETUP_CONTEXT : a.readContext()),
+    // A message a page asked with its own page (the canvas's slot to fill) carries that page, in
+    // the scope the header has now; every other message, the page in front.
+    prepareSendMessagesRequest: ({ messages: sent }) => {
+      const last = sent.at(-1);
+      const page = last?.role === 'user' ? pageOf(last.metadata) : undefined;
+      return page && !setup.current ? { body: chatBody({ ...a.readContext(), page }) } : {};
+    },
   });
   const {
     messages,
@@ -506,29 +523,36 @@ function ChatView({
       }
   }, [messages]);
 
-  // ── Messages written while a reply is running wait here, editable, until it ends.
-  const [held, setHeld] = useState<string[]>([]);
+  // ── Messages written while a reply is running wait here, editable, until it ends. A page's
+  // question carries what that page is about for it alone (`ask`, the canvas's slot to fill).
+  const [held, setHeld] = useState<PageAsk[]>([]);
+  const post = useCallback(
+    (m: PageAsk) =>
+      void sendMessage({ text: m.text, ...(m.page ? { metadata: { page: m.page } } : {}) }),
+    [sendMessage],
+  );
   const send = useCallback(
-    (text: string) => {
+    (text: string, page?: AssistantPage) => {
       const t = text.trim();
       if (!t) return;
-      if (busy) setHeld((h) => [...h, t]);
-      else void sendMessage({ text: t });
+      const m = { text: t, ...(page ? { page } : {}) };
+      if (busy) setHeld((h) => [...h, m]);
+      else post(m);
     },
-    [busy, sendMessage],
+    [busy, post],
   );
   useEffect(() => {
     if (busy || !held.length) return;
     const [next, ...rest] = held;
     setHeld(rest);
-    if (next) void sendMessage({ text: next });
-  }, [busy, held, sendMessage]);
+    if (next) post(next);
+  }, [busy, held, post]);
 
   // A question asked from a page.
   useEffect(() => {
     if (!a.pendingAsk) return;
     const t = a.takeAsk();
-    if (t) send(t);
+    if (t) send(t.text, t.page);
   }, [a.pendingAsk, a.takeAsk, send]);
 
   const last = messages.at(-1);
@@ -652,8 +676,8 @@ function ChatView({
       {pending.length && variant === 'panel' ? <WaitingBar pending={pending} /> : null}
       {held.length ? (
         <HeldMessages
-          held={held}
-          onChange={(i, text) => setHeld((h) => h.map((x, j) => (j === i ? text : x)))}
+          held={held.map((m) => m.text)}
+          onChange={(i, text) => setHeld((h) => h.map((x, j) => (j === i ? { ...x, text } : x)))}
           onRemove={(i) => setHeld((h) => h.filter((_, j) => j !== i))}
         />
       ) : null}
@@ -932,8 +956,11 @@ function AssistantMessage({
 }) {
   const lastText = m.parts.findLastIndex((p) => p.type === 'text');
   const text = textOf(m);
-  const meta = m.metadata as { scope?: TurnScope; at?: unknown } | undefined;
-  const turn = meta?.scope;
+  const meta = m.metadata as { scope?: TurnScope; at?: unknown; fill?: unknown } | undefined;
+  // Where the turn ran, and the slot it was asked to fill: a card holds its block patch to that.
+  const turn = meta?.scope
+    ? { ...meta.scope, ...(meta.fill !== undefined ? { fill: meta.fill } : {}) }
+    : undefined;
   // When the reply (or a page's edit) began: its edits and cards say so in their margin.
   const at = typeof meta?.at === 'number' ? meta.at : undefined;
   return (

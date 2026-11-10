@@ -14,6 +14,11 @@
  * entry. The page answers `applied` or `failed`; a failure is answered with a fresh state, except
  * a state the page refused as invalid, which would fail again: then the entry can't be previewed.
  * Nothing it says saves, publishes or calls a use-case: clicks only move focus in the form.
+ *
+ * While a Coworker card for the entry waits for the person's answer, its proposal rides on top as
+ * `blocks.patch` ops marked `proposed` (`setProposal`), which the page renders as ghosts: sent
+ * again after every whole state, and taken back with a fresh one. Confirm saves through the card,
+ * never through here.
  */
 
 import { SCOPES } from '@contentworker/domain';
@@ -45,7 +50,7 @@ export const CONNECT_MS = 5_000;
 /** How long the frame has to load at all before the pane says the page didn't load. */
 export const LOAD_MS = 20_000;
 
-/** The capabilities the admin uses. Proposals wait for Coworker's side (`propose`). */
+/** The capabilities the admin uses for someone who edits the entry. */
 export const ADMIN_CAPABILITIES: readonly Capability[] = [
   'select',
   'patch.fields',
@@ -60,10 +65,17 @@ export const SELECT_ONLY: readonly Capability[] = ['select', 'scroll', 'layout']
 /**
  * What the page may do for a person with `scopes` in the space (docs/specs/live-preview-channel.md,
  * "Capabilities": narrowed by the space's admin config). Without `content:write` their unsaved
- * values aren't theirs to send, so they only select; the page shows the entry as saved.
+ * values aren't theirs to send, so they only select; the page shows the entry as saved. With
+ * Coworker on (`assistant`), a writer's page may also show its proposals as ghosts: capabilities
+ * are fixed when the page connects, so it is accepted then, and used only while a proposal waits
+ * for the person's answer (`setProposal`).
  */
-export function capabilitiesFor(scopes: readonly string[]): readonly Capability[] {
-  return scopes.includes(SCOPES.contentWrite) ? ADMIN_CAPABILITIES : SELECT_ONLY;
+export function capabilitiesFor(
+  scopes: readonly string[],
+  opts: { readonly assistant?: boolean } = {},
+): readonly Capability[] {
+  if (!scopes.includes(SCOPES.contentWrite)) return SELECT_ONLY;
+  return opts.assistant ? [...ADMIN_CAPABILITIES, 'proposals'] : ADMIN_CAPABILITIES;
 }
 
 /** Anything with a `postMessage(message, targetOrigin)`: the framed page's window. */
@@ -91,6 +103,11 @@ export interface HostOptions {
   readonly onLayout?: (layout: LayoutMessage) => void;
   /** The page couldn't take an edit and was sent the whole entry (`failed` reason). */
   readonly onNote?: (reason: string) => void;
+  /**
+   * Whether the page shows Coworker's proposal now: true once it was sent, false when there is
+   * none, the session can't show one, or the page refused it (`refused`).
+   */
+  readonly onProposal?: (shown: boolean, refused?: boolean) => void;
   readonly connectMs?: number;
   readonly loadMs?: number;
 }
@@ -123,12 +140,25 @@ export class LivePreviewHost {
   private selected: string | null = null;
   /** The page refused the entry's whole state: nothing more is sent this session. */
   private blocked = false;
+  /**
+   * Coworker's proposal waiting for the person's answer, one list of ops per blocks field: sent
+   * after every whole state (which clears the page's proposals), until it is taken back.
+   */
+  private proposal: { readonly field: string; readonly ops: readonly LivePatchOp[] }[] = [];
+  /** The revs the proposal went out on, this session: a refusal of one drops the proposal. */
+  private proposalRevs = new Set<number>();
+  /** The page holds the proposal now. */
+  private proposalShown = false;
   /** The last state answered a failure, and nothing since has rendered. */
   private recovering = false;
   /** Whether a page ever connected in this frame: a later load that never does navigated away. */
   private connectedOnce = false;
   private phase: 'loading' | 'waiting' | 'idle' = 'idle';
-  private offeredBeforeLoad = false;
+  /**
+   * An offer came since the frame's last load event, and no `navigated` after it: the next load
+   * event is that page's own (a page offers before its load event), whatever loads came before.
+   */
+  private offeredSinceLoad = false;
   private timer: ReturnType<typeof setTimeout> | undefined;
   private readonly o: HostOptions;
 
@@ -142,18 +172,21 @@ export class LivePreviewHost {
   /** The frame is about to load the page: starts the clock on it loading at all. */
   start(): void {
     this.endSession();
-    this.offeredBeforeLoad = false;
+    this.offeredSinceLoad = false;
     this.phase = 'loading';
     this.wait(this.o.loadMs ?? LOAD_MS, () => this.setStatus('failed'));
   }
 
   /**
    * The frame finished a load. A page usually offers before its load event, and then this is that
-   * page's load; otherwise the frame went somewhere and that page has its time to offer.
+   * page's load; otherwise the frame went somewhere and that page has its time to offer. A load
+   * that never offers (a site's redirect or sign-in hand-off page) is passing: the page after it
+   * may still offer, before its own load or within the time from it, and then it is live. Only a
+   * load with no offer in that time says the page moved away (or never connected).
    */
   frameLoaded(): void {
-    if (this.offeredBeforeLoad) {
-      this.offeredBeforeLoad = false;
+    if (this.offeredSinceLoad) {
+      this.offeredSinceLoad = false;
       this.phase = 'idle';
       return;
     }
@@ -199,7 +232,9 @@ export class LivePreviewHost {
   }
 
   private offer(m: ConnectOfferMessage): void {
-    if (this.phase === 'loading') this.offeredBeforeLoad = true;
+    // Only while a load is under way (the frame's, or the one after a load that never offered): a
+    // fresh offer on a page whose load was already counted (a remount) is no load's.
+    this.offeredSinceLoad = this.phase !== 'idle';
     if (this.phase === 'waiting') this.phase = 'idle';
     this.clearTimer();
     if (this.allowed === undefined) {
@@ -253,6 +288,8 @@ export class LivePreviewHost {
           to = undefined;
         }
         this.endSession();
+        // That page is leaving: the next load is another page's, which has its own offer to make.
+        this.offeredSinceLoad = false;
         if (to && this.o.origins.includes(to)) {
           this.origin = to;
           this.phase = 'loading';
@@ -279,6 +316,16 @@ export class LivePreviewHost {
         if (m.entryId !== undefined && m.entryId !== this.entry?.entryId) return;
         // Something the last whole state already replaced: that state puts it right.
         if (m.rev < this.stateRev || this.blocked) return;
+        if (this.proposalRevs.has(m.rev) && m.reason !== 'gap') {
+          // The page can't show the proposal (too many ghosts, a block it can't place, a render
+          // that threw): it goes, so the state that resyncs the page doesn't bring it back to fail
+          // again. A gap is the page missing an edit before it: resent with the state as ever.
+          this.proposal = [];
+          this.proposalRevs.clear();
+          this.setShown(false, true);
+          this.sendState();
+          return;
+        }
         if (m.reason === 'invalid' && m.rev === this.stateRev) {
           // The page can't read the entry itself; sending it again would fail the same way.
           this.blocked = true;
@@ -383,20 +430,67 @@ export class LivePreviewHost {
   }
 
   /**
-   * The seam for Coworker's proposed blocks (rendered as ghosts, never saved), once Coworker's
-   * proposals reach the editor: sent only when the session accepted `proposals`, which the admin
-   * offers to accept only once the editor passes it in `setAllowed`.
+   * Coworker's proposal for the entry, rendered by the page as ghost blocks that are never part of
+   * its saved state, or null to take it back. Its ops are the dry run's applied ops in the entry's
+   * locale, every block they bring keyed, so each ghost has a name. Sent only on a session that
+   * accepted `proposals`; a new proposal, or none, first clears the page's with a fresh state.
+   * Returns whether the page was sent it.
    */
-  propose(field: string, ops: readonly LivePatchOp[]): boolean {
-    if (!this.has('proposals') || !this.shows() || this.blocked || ops.length === 0) return false;
-    this.rev += 1;
-    this.post({
-      kind: 'blocks.patch',
-      ...this.address(0),
-      field,
-      ops: ops.map((op) => ({ ...op, proposed: true as const })),
-    });
-    return true;
+  setProposal(ops: readonly LivePatchOp[] | null): boolean {
+    const had = this.proposalShown;
+    const next: { field: string; ops: LivePatchOp[] }[] = [];
+    for (const op of ops ?? []) {
+      const group = next.find((g) => g.field === op.field);
+      if (group) group.ops.push(op);
+      else next.push({ field: op.field, ops: [op] });
+    }
+    this.proposal = next;
+    // A fresh state clears what the page holds, and sends the new proposal after it.
+    if (had) this.sendState();
+    else this.sendProposal();
+    return this.proposalShown;
+  }
+
+  /**
+   * Sends the held proposal, the ops in the locale the page shows: after a whole state, or on its
+   * own when the page holds none.
+   */
+  private sendProposal(): void {
+    const locale = this.entry?.locale;
+    const groups = this.proposal
+      .map((g) => ({ field: g.field, ops: g.ops.filter((op) => op.locale === locale) }))
+      .filter((g) => g.ops.length > 0);
+    if (groups.length === 0 || !this.has('proposals') || !this.shows() || this.blocked) {
+      this.setShown(false);
+      return;
+    }
+    for (const { field, ops } of groups) {
+      const patch = {
+        kind: 'blocks.patch',
+        ...this.address(1),
+        field,
+        ops: ops.map((op) => ({ ...op, proposed: true as const })),
+      } as const;
+      // Too big to cross: shown in Coworker's card only.
+      if (!withinBytes(patch, MAX_MESSAGE_BYTES - 1024)) {
+        const sent = this.proposalRevs.size > 0;
+        this.proposal = [];
+        this.setShown(false, true);
+        // Part of it went out: a fresh state takes that back.
+        if (sent) this.sendState();
+        return;
+      }
+      this.rev += 1;
+      this.proposalRevs.add(this.rev);
+      this.post({ ...patch, rev: this.rev });
+    }
+    this.setShown(true);
+  }
+
+  private setShown(shown: boolean, refused = false): void {
+    if (shown === this.proposalShown && !refused) return;
+    this.proposalShown = shown;
+    this.o.onProposal?.(shown, refused);
   }
 
   /** The capabilities the session was accepted with (empty before connect). */
@@ -431,12 +525,16 @@ export class LivePreviewHost {
     const state = { kind: 'entry.state', ...this.address(1), fields: e.fields } as const;
     if (!withinBytes(state, MAX_STATE_BYTES - 1024)) {
       this.blocked = true;
+      this.setShown(false);
       this.setStatus('unpreviewable');
       return;
     }
     this.rev += 1;
     this.stateRev = this.rev;
     this.post({ ...state, rev: this.rev });
+    // A whole state clears the page's proposals: the one still waiting goes again on top of it.
+    this.proposalRevs.clear();
+    this.sendProposal();
   }
 
   private endSession(): void {
@@ -446,6 +544,9 @@ export class LivePreviewHost {
     this.pageEntries = [];
     this.blocked = false;
     this.recovering = false;
+    // The page and its ghosts are gone; a proposal still waiting goes to the next one.
+    this.proposalRevs.clear();
+    this.setShown(false);
   }
 
   private post(message: Outbound): void {

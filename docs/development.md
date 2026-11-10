@@ -85,7 +85,10 @@ reports which entry it renders) and open one of its entries: the page connects
 (`connectPreview`) and renders the `title` and, for each blocks field, each block's `label` or
 `heading`. `silent.html` in place of `/` is a page that never connects, `refuse.html` one that refuses the entry, and `old-sdk.html` one
 whose SDK the admin refuses. `LIVE_GUEST_ADMIN` is the admin's origin, the only
-one the page listens to; `LIVE_GUEST_PORT` moves it off 5401.
+one the page listens to; `LIVE_GUEST_PORT` moves it off 5401. The page takes `proposals` and
+draws Coworker's proposed blocks dashed (`data-cw-proposed`): on the entry's canvas, choose a
+seam and **Ask Coworker to fill this**, and the local mock model (`AI_MODE=mock`) proposes one
+block there ("Proposed by Coworker") on a card to confirm or decline.
 
 The same package holds the **sample starter** a real space can start with (`installStarter` and
 `createSpaceWithStarter` in `packages/seed/src/starter.ts`, behind `POST /spaces` `starter:

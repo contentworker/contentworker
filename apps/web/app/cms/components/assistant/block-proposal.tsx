@@ -18,6 +18,9 @@ import {
   type ContentType,
   type EntryFields,
   type FieldDefinition,
+  type FillRefusal,
+  type FillTurn,
+  fillRefusal,
   outlineBlocks,
 } from '@contentworker/domain';
 import { Alert, AlertDescription, AlertTitle } from '@contentworker/ui/alert';
@@ -43,6 +46,12 @@ export type BlockRefusal =
   | { readonly why: 'locked'; readonly field: string }
   /** The role can't change this entry at all. */
   | { readonly why: 'denied' }
+  /**
+   * Asked to fill one slot (the canvas's Ask Coworker to fill this), it does something else: a
+   * step changes a block, or puts one in another place, of a type the slot doesn't take, or in
+   * another entry. Said in the domain's words (`fillRefusal`), which the agent refuses with too.
+   */
+  | ({ readonly why: 'outside' } & FillRefusal)
   | { readonly why: 'nothing' }
   /** The call doesn't say which entry, at which version, or what to change. */
   | { readonly why: 'unclear' };
@@ -55,6 +64,11 @@ export interface BlockPatchRead {
   readonly steps: readonly string[];
   /** What changes: each touched slot's order, then each updated block's fields. */
   readonly fields: readonly ReviewField[];
+  /**
+   * The patch as the dry run applied it, every block it brings keyed: what the entry's page shows
+   * as ghosts while the card waits. The save on Confirm runs the call itself, not these.
+   */
+  readonly applied: readonly BlockOp[];
 }
 
 export type BlockPatchReview =
@@ -574,6 +588,8 @@ export async function readBlockPatch(
     readonly entryId: string;
     readonly expectedVersion?: number;
     readonly ops: readonly unknown[];
+    /** The entry and slot the turn was asked to fill: the patch is held to them. */
+    readonly fill?: FillTurn;
   },
   types: readonly ContentType[],
   locale: string,
@@ -608,6 +624,12 @@ export async function readBlockPatch(
     }),
   );
   if (hidden.size > 0) return refused({ why: 'hidden', count: hidden.size });
+  // Asked to fill one slot, it puts blocks there and does nothing else: whatever the page's words
+  // led the model to, nothing outside the slot is offered for Confirm.
+  const outside = p.fill
+    ? fillRefusal(p.fill, 'entry_blocks_patch', { id: p.entryId, ops: p.ops })
+    : undefined;
+  if (outside) return refused({ why: 'outside', ...outside });
 
   const beforeFields = entry.fields as EntryFields;
   const before = indexBlocks(type, beforeFields);
@@ -692,7 +714,7 @@ export async function readBlockPatch(
   const steps = checked.applied.map((step, i) =>
     stepText(verbs[i], step, states[i], after, type, locale),
   );
-  return { status: 'ready', title, steps, fields };
+  return { status: 'ready', title, steps, fields, applied: checked.applied };
 }
 
 // --- the refusal, said ----------------------------------------------------------------
@@ -715,6 +737,8 @@ export function refusalHold(refusal: BlockRefusal): string {
       return 'You can’t confirm this: it changes a field your role can’t change.';
     case 'denied':
       return 'You can’t confirm this: your role can’t change this entry.';
+    case 'outside':
+      return refusal.hold;
     case 'hidden':
       return 'You can’t confirm this: it changes a field you can’t read.';
     case 'hiddenInvalid':
@@ -775,6 +799,8 @@ export function BlockRefused({ refusal }: { refusal: BlockRefusal }) {
           You can read this entry, but your role can’t save it, so this change can’t be saved
         </Refused>
       );
+    case 'outside':
+      return <Refused title={refusal.title}>{refusal.detail}</Refused>;
     case 'hidden':
       // Counted, never left out: the person's role can't write what it can't read either.
       return (

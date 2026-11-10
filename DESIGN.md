@@ -953,7 +953,17 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   shift-click or Shift with ↑ ↓ in Layers takes neighbours in one slot into the run), and
   **Unlock** on a locked block. A lock waits for unsaved block changes, saying why; a refused one
   is said under the button in plain words; stale locks are listed under the Checks with Clear.
-  The entry form's block cards carry the same lock line. Its first block takes focus, and the block put in hands
+  The entry form's block cards carry the same lock line. With Coworker on, a dock that offers
+  blocks also offers **Ask Coworker to fill this** in its header (a ghost `xs` button led by the
+  mark in `ai`; held, with a muted line saying why, while the canvas has unsaved edits or another
+  proposal waits or saves); never at a full or locked place. Asked from the dock's sheet (below lg), focus stays in Coworker's prompt. Coworker's proposal comes back as a card in the
+  panel, the one place it is decided; while it waits the page draws its blocks as ghosts and the
+  canvas outlines each in a dashed `ai` edge with "Proposed" (or "Proposed change", "Proposed
+  removal") and the mark on a paper chip at its corner (`GhostMark`), Layers lists the proposed
+  blocks after their slot's blocks with an `ai` "Proposed" stamp and where each goes (not tree
+  items: they aren't the entry's), and a quiet status line under the header says it is on the page
+  and that nothing is saved until it is confirmed (or that the page can't show it, so the card is
+  where to review it). The Site view beside the form draws the same marks and line. The dock's first block takes focus, and the block put in hands
   focus to the inspector's heading; closing it hands focus back to what opened it. The inspector's tabs are Content (the
   block's own fields, the entry form's editors), Data (references) and Look (props limited to
   listed values, four or fewer as a segmented control, more as a select; never free CSS); a block

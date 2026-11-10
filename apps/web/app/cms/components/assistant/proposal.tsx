@@ -8,7 +8,13 @@
  * prose) never reaches here.
  */
 
-import { type ContentType, diffEntryFields, type EntryFields } from '@contentworker/domain';
+import {
+  type BlockOp,
+  type ContentType,
+  diffEntryFields,
+  type EntryFields,
+  type FillTurn,
+} from '@contentworker/domain';
 import { Button } from '@contentworker/ui/button';
 import { Collapsible, CollapsibleContent } from '@contentworker/ui/collapsible';
 import { getToolName } from 'ai';
@@ -53,6 +59,8 @@ export type Proposal =
       readonly entryId: string;
       readonly expectedVersion?: number;
       readonly ops: readonly unknown[];
+      /** The entry and slot its turn was asked to fill (the canvas's ask): held to them. */
+      readonly fill?: FillTurn;
     };
 
 const str = (v: unknown) => (typeof v === 'string' && v ? v : undefined);
@@ -152,6 +160,8 @@ export type ProposalReview =
       readonly release?: string;
       /** A block patch's steps, in order, each naming its blocks and where they go. */
       readonly steps?: readonly string[];
+      /** A block patch as its dry run applied it: what the entry's page shows as ghosts. */
+      readonly applied?: readonly BlockOp[];
     }
   /** Read, and it can't be confirmed as it stands: the card says why, and Confirm stays off. */
   | { readonly status: 'refused'; readonly title?: string; readonly refusal: BlockRefusal };

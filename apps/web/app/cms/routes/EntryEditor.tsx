@@ -57,7 +57,13 @@ import { EntryAuthorship } from '../components/entries/EntryAuthorship';
 import { PublishConfirm } from '../components/entries/PublishConfirm';
 import { SaveConflictDialog } from '../components/entries/SaveConflictDialog';
 import { GenerateEntryDialog } from '../components/GenerateEntryDialog';
-import { orDirect, useAssistantEdit, usePageContext } from '../lib/assistant';
+import {
+  orDirect,
+  useAssistantEdit,
+  useAssistantIfAny,
+  usePageContext,
+  useProposedBlocks,
+} from '../lib/assistant';
 import { regionRefusal } from '../lib/block-locks';
 import { configRefusal, rulesOver } from '../lib/block-rules';
 import { canvasAvailable } from '../lib/canvas/model';
@@ -591,11 +597,24 @@ export function EntryEditor() {
       box.removeEventListener('focusout', onFocusOut);
     };
   }, [selectedType, entryId, conn.space, conn.environment, defaultLocale, initial]);
+  // Coworker's block patch for this entry, while its card waits: the Site pane shows it as ghosts.
+  // Once it is saved, a form with no edits of its own starts again from the entry as it is now.
+  const assistantOn = useAssistantIfAny()?.enabled === true;
+  const proposal = useProposedBlocks(isEdit ? entryId : undefined, () => {
+    if (!dirtyRef.current) {
+      void reseedFromServer();
+      return;
+    }
+    // The form's own edits stay; their save meets the newer draft and asks, as any other.
+    toast.success(
+      'Saved Coworker’s change. Your unsaved edits are kept: saving them asks about the newer draft.',
+    );
+  });
   // What the page may do for this person: a role that can't write content only selects.
   // Undefined while the person's access is read: the frame holds the page's offer until it is
   // known, so a session is never settled on less than they may do. Unread, select only.
   const siteAllowed: readonly Capability[] | undefined = accessQuery.data
-    ? capabilitiesFor(accessQuery.data.scopes)
+    ? capabilitiesFor(accessQuery.data.scopes, { assistant: assistantOn })
     : accessQuery.isError
       ? SELECT_ONLY
       : undefined;
@@ -953,6 +972,8 @@ export function EntryEditor() {
               selected={siteSelected}
               split={pane.split}
               onPick={onSitePick}
+              proposal={proposal?.ops ?? null}
+              saving={proposal?.state === 'saving'}
             />
           ) : null}
           {isEdit && entryId && paneView === 'activity' ? (

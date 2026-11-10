@@ -11,6 +11,10 @@
  *
  * One tab stop: ← → (and ↑ ↓) move across the cards, Home and End go to either end, Enter or Space
  * puts the block in, Escape closes the dock.
+ *
+ * With Coworker on, where the dock offers blocks it also offers Ask Coworker to fill this (a ghost
+ * `xs` button led by the mark in `ai`): Coworker is asked for those same blocks at this place, and
+ * its proposal comes back as a card to confirm, shown on the page as ghosts meanwhile.
  */
 import type { BlockCatalog, ComponentVariant } from '@contentworker/domain';
 import { Button } from '@contentworker/ui/button';
@@ -19,6 +23,7 @@ import { X } from 'lucide-react';
 import { useEffect, useId, useRef, useState } from 'react';
 import { dockGroups } from '~/cms/lib/canvas/dock';
 import { type CanvasPlace, placeLockedBy, slotCount } from '~/cms/lib/canvas/model';
+import { Mark } from '~/components/mark';
 
 export interface DockProps {
   readonly place: CanvasPlace;
@@ -27,10 +32,16 @@ export interface DockProps {
   readonly onClose: () => void;
   /** Drawn in a sheet, which has its own title and close button. */
   readonly inSheet?: boolean;
+  /**
+   * Ask Coworker to fill this place instead, with the blocks offered here; absent where Coworker is
+   * off or the person can't edit. `held` says why it can't be asked yet.
+   */
+  readonly ask?: { readonly onAsk: () => void; readonly held?: string };
 }
 
-export function Dock({ place, catalog, onInsert, onClose, inSheet }: DockProps) {
+export function Dock({ place, catalog, onInsert, onClose, inSheet, ask }: DockProps) {
   const titleId = useId();
+  const heldId = useId();
   const { slot, index } = place;
   const lockedBy = placeLockedBy(place);
   const groups = lockedBy ? [] : dockGroups(slot, catalog);
@@ -110,12 +121,28 @@ export function Dock({ place, catalog, onInsert, onClose, inSheet }: DockProps) 
         <span className="text-muted-foreground text-xs tabular-nums">
           {slotCount(slot)} · {where}
         </span>
+        {/* Only where the dock offers blocks: Coworker is asked for what a person could add. */}
+        {ask && items.length > 0 ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="xs"
+            className="ml-auto"
+            data-ask-fill
+            disabled={!!ask.held}
+            aria-describedby={ask.held ? heldId : undefined}
+            onClick={ask.onAsk}
+          >
+            <Mark className="text-ai" />
+            Ask Coworker to fill this
+          </Button>
+        ) : null}
         {inSheet ? null : (
           <Button
             type="button"
             variant="ghost"
             size="icon-sm"
-            className="ml-auto"
+            className={ask && items.length > 0 ? undefined : 'ml-auto'}
             aria-label="Close the dock"
             onClick={onClose}
           >
@@ -123,6 +150,11 @@ export function Dock({ place, catalog, onInsert, onClose, inSheet }: DockProps) 
           </Button>
         )}
       </div>
+      {ask?.held && items.length > 0 ? (
+        <p id={heldId} className="px-4 pb-1 text-muted-foreground text-xs">
+          {ask.held}
+        </p>
+      ) : null}
       {slot.locked ? (
         <p className="max-w-measure px-4 pb-3 text-sm">
           {slot.name} is locked: its blocks stay as they are, in their order. What’s inside them can

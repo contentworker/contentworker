@@ -12,7 +12,7 @@ import {
   type EntryFields,
   previewTemplateVariesByLocale,
 } from '@contentworker/domain';
-import type { Capability, LiveRect } from '@contentworker/sdk-core/live-preview';
+import type { Capability, LivePatchOp, LiveRect } from '@contentworker/sdk-core/live-preview';
 import { useEffect, useRef, useState } from 'react';
 import {
   type Device,
@@ -46,6 +46,11 @@ export interface SiteFrameOptions {
   readonly device: Device;
   /** The canvas draws its own outlines: the frame reports geometry instead (`onGeometry`). */
   readonly canvas?: boolean;
+  /**
+   * Coworker's proposal while its card waits for the person's answer (the dry run's applied ops),
+   * shown on the page as ghosts; null or absent, none.
+   */
+  readonly proposal?: readonly LivePatchOp[] | null;
   /** A marked element clicked in the page, and the entries the page said it renders. */
   readonly onPick: (ref: string, pageEntries: readonly string[]) => void;
   readonly onGeometry?: (geometry: FrameGeometry | null) => void;
@@ -66,6 +71,8 @@ export interface SiteFrame {
   readonly live: boolean;
   /** What the session was accepted with (empty before connect). */
   readonly capabilities: readonly Capability[];
+  /** The page shows the proposal now; or it refused the last one (it couldn't place a block). */
+  readonly proposal: { readonly shown: boolean; readonly refused: boolean };
   readonly reload: () => void;
   /**
    * Asks the page to bring a marked element into view (needs `scroll`): centred, or its top or
@@ -87,7 +94,10 @@ export function useSiteFrame(props: SiteFrameOptions): SiteFrame {
   const [origin, setOrigin] = useState<string | undefined>();
   const [note, setNote] = useState<string | undefined>();
   const [capabilities, setCapabilities] = useState<readonly Capability[]>([]);
+  const [proposal, setProposal] = useState({ shown: false, refused: false });
   const ready = useRef(false);
+  /** The proposal the frame was last sent, by content. */
+  const proposalSent = useRef<string | null>(null);
   const pageEntries = useRef<readonly string[]>([]);
   // One locale's values, as the page renders them; what was last sent is where the next edits start.
   const now = liveFields(contentType, fields, locale, defaultLocale);
@@ -131,6 +141,7 @@ export function useSiteFrame(props: SiteFrameOptions): SiteFrame {
     setStatus({ status: 'loading' });
     setNote(undefined);
     setCapabilities([]);
+    setProposal({ shown: false, refused: false });
     handlers.current.onGeometry?.(null);
     handlers.current.onHover?.(null, null);
     let noteTimer: ReturnType<typeof setTimeout> | undefined;
@@ -157,6 +168,15 @@ export function useSiteFrame(props: SiteFrameOptions): SiteFrame {
           if (handlers.current.selected) {
             toFrame({ type: 'select', ref: handlers.current.selected });
           }
+          // A new load holds no proposal: the one waiting goes to it.
+          proposalSent.current = null;
+          if (handlers.current.proposal) {
+            proposalSent.current = JSON.stringify(handlers.current.proposal);
+            toFrame({ type: 'proposal', ops: handlers.current.proposal });
+          }
+          return;
+        case 'proposal':
+          setProposal({ shown: m.shown === true, refused: m.refused === true });
           return;
         case 'status':
           if (m.status === 'unavailable') clearTimeout(loadTimer);
@@ -220,6 +240,14 @@ export function useSiteFrame(props: SiteFrameOptions): SiteFrame {
     if (ready.current) toFrame({ type: 'select', ref: props.selected });
   }, [props.selected]);
 
+  // Per proposal, by content: shown while its card waits, taken back (null) when it is answered.
+  const proposalKey = props.proposal ? JSON.stringify(props.proposal) : null;
+  useEffect(() => {
+    if (!ready.current || proposalSent.current === proposalKey) return;
+    proposalSent.current = proposalKey;
+    toFrame({ type: 'proposal', ops: props.proposal ?? null });
+  }, [proposalKey]);
+
   return {
     frameRef: outer,
     src,
@@ -229,6 +257,7 @@ export function useSiteFrame(props: SiteFrameOptions): SiteFrame {
     note,
     live,
     capabilities,
+    proposal,
     reload: () => setFrameKey((k) => k + 1),
     scrollTo: (ref, place) => {
       if (ready.current) toFrame({ type: 'scroll', ref, ...(place ?? {}) });

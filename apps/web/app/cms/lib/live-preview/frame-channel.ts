@@ -12,6 +12,7 @@ import type {
   Capability,
   LiveFields,
   LiveGap,
+  LivePatchOp,
   LiveRect,
 } from '@contentworker/sdk-core/live-preview';
 import type { LiveEdits } from './ops';
@@ -76,6 +77,11 @@ export type EditorMessage =
   /** The form's focused field or block on the page, or none. */
   | { readonly type: 'select'; readonly ref: string | null }
   /**
+   * Coworker's proposal for the entry while its card waits for an answer: the dry run's applied
+   * ops, which the page shows as ghosts. Null takes it back.
+   */
+  | { readonly type: 'proposal'; readonly ops: readonly LivePatchOp[] | null }
+  /**
    * Bring a marked element into the page's view, selecting nothing (`scroll`): centred, or its top
    * (`start`) or bottom (`end`) edge `inset` pixels of the frame clear of the frame's edge.
    */
@@ -92,6 +98,8 @@ export type FrameMessage =
   | { readonly type: 'status'; readonly status: SiteStatus; readonly detail?: string }
   /** The page couldn't take an edit, so it was sent the whole entry: a quiet note, not a state. */
   | { readonly type: 'note'; readonly kind: string }
+  /** Whether the page shows Coworker's proposal now, and whether it refused the last one. */
+  | { readonly type: 'proposal'; readonly shown: boolean; readonly refused?: boolean }
   /** A marked element clicked in the page: its ref, already checked by the frame. */
   | { readonly type: 'pick'; readonly ref: string }
   /** For the canvas: the page's boxes, in the frame's own coordinates (null: none to draw). */

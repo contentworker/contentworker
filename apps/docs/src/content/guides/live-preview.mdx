@@ -67,6 +67,17 @@ over it. It edits the same draft as the form.
   shortcuts list (<kbd>?</kbd>).
 - **Device** widths render your page at 1280, 768 or 390 pixels wide, scaled to fit, as in the
   Site view.
+- **Ask Coworker to fill this.** With [Coworker](/guides/coworker/) on, the dock also offers to
+  ask Coworker to fill that place, wherever it offers blocks (never a full or locked slot, or a
+  place inside a locked region). Coworker is asked for the same blocks the dock lists there,
+  within the slot's bounds, and answers with a block patch on a confirm card. While the card
+  waits, your page shows the proposed blocks as ghosts (if your page accepts `proposals`, see
+  [Extensions](#extensions)), marked **Proposed** on the canvas and listed as proposed in Layers;
+  nothing is saved. **Not now** takes them off the page; **Confirm** saves the patch (held to the
+  version it was made for) and the canvas reads the entry again. Anything outside the slot you
+  asked about is refused, on the card and when it runs. Asking waits while the canvas has unsaved edits: save
+  the draft first. The entry editor's Site view shows the same ghosts while a Coworker card for
+  that entry waits.
 
 Every change is a block patch (the same key-addressed operations as
 [`PATCH …/entries/:id/blocks`](/reference/rest-api/)), applied in the admin and sent to your

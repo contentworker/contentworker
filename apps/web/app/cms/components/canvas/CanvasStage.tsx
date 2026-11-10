@@ -1,8 +1,9 @@
 /**
  * The canvas: the customer's own page in the Site frame, with the editor's overlays drawn over it
  * (never a copy of the page): the seams where a block can go, the block under the pointer and the
- * selected one. Every box comes from the page's `layout` (or a click's own box), moved into the
- * frame's coordinates by the frame, so the overlays line up at any device width.
+ * selected one, the locked regions, and Coworker's ghost blocks while its proposal waits (marked
+ * "Proposed" in words). Every box comes from the page's `layout` (or a click's own box), moved into
+ * the frame's coordinates by the frame, so the overlays line up at any device width.
  *
  * The overlay is for the pointer. The keyboard and screen readers reach every block and seam from
  * Layers (the page inside the frame isn't navigable from here), so the seams are out of the tab
@@ -15,6 +16,8 @@ import type { RefObject } from 'react';
 import { slotFill } from '~/cms/lib/canvas/model';
 import type { Seam } from '~/cms/lib/canvas/seams';
 import { useMedia } from '~/cms/lib/device';
+import type { GhostKind } from '~/cms/lib/live-preview/proposals';
+import { GhostMark } from './GhostMark';
 
 export interface CanvasStageProps {
   readonly frameRef: RefObject<HTMLIFrameElement | null>;
@@ -30,6 +33,12 @@ export interface CanvasStageProps {
   readonly selected: LiveRect | null;
   /** The locked regions the page shows: each one's outline, around all of its blocks. */
   readonly regions?: readonly { readonly id: string; readonly rect: LiveRect }[];
+  /** Coworker's ghost blocks the page draws while its proposal waits: each marked as proposed. */
+  readonly ghosts?: readonly {
+    readonly key: string;
+    readonly kind: GhostKind;
+    readonly rect: LiveRect;
+  }[];
   readonly onChooseSeam: (seam: Seam) => void;
   readonly children?: React.ReactNode;
 }
@@ -54,6 +63,9 @@ export function CanvasStage(props: CanvasStageProps) {
       <div aria-hidden="true" className="pointer-events-none absolute inset-0 overflow-hidden">
         {props.regions?.map((r) => (
           <RegionMark key={r.id} rect={r.rect} />
+        ))}
+        {props.ghosts?.map((g) => (
+          <GhostMark key={g.key} kind={g.kind} rect={g.rect} />
         ))}
         {props.hovered ? <Box rect={props.hovered} /> : null}
         {props.selected ? <Box rect={props.selected} selected /> : null}
