@@ -82,6 +82,9 @@ function check(): void {
     }
     // A React user type-checks with React's types; Vue ships its own.
     if (peers.has('react')) peers.add('@types/react');
+    // `@contentworker/sdk/next` imports nothing from Next.js (the caller passes its `draftMode`
+    // in), so it is checked without it installed: that is the proof.
+    peers.delete('next');
     run(
       'npm',
       [

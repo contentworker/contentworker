@@ -28,6 +28,7 @@ api serves, so give it the api host. The Delivery clients share a model (`Delive
 | Edge functions, constrained devices, single-locale, minimal payload | `@contentworker/sdk/edge`         |
 | React Native apps with offline sync                                 | `@contentworker/sdk/react-native` |
 | Programmatic authoring/publishing (writes)                          | `@contentworker/sdk/management`   |
+| Next.js draft mode (route handler + a client that follows it)       | `@contentworker/sdk/next`         |
 | Types for entry fields                                              | `@contentworker/sdk/codegen`      |
 | Rendering rich text to HTML, Markdown or plain text (any framework) | `@contentworker/sdk/rich-text`    |
 
@@ -163,6 +164,58 @@ client.bookmark: string | undefined     // read-your-writes position (preview); 
   appear; an item whose link doesn't resolve is dropped and its children lifted. See
   [the guide](https://docs.contentworker.app/guides/menus/).
 
+### Live updates: `client.live()`
+
+`client.live(options)` (`packages/sdk/core/src/live.ts`) follows the Live Content API, the
+server-sent event stream at `GET <baseUrl>/delivery/<space>/<env>/live` (served on the delivery
+and api hosts). It reads the stream with `fetch` and the client's key as a bearer header
+(`EventSource` can't send one), so the key's scope is the server's to apply: its space, and only
+content its role may read (`liveEventFor`). A preview client connects to the same delivery path,
+since there is no preview stream: it hears of publishes, not draft saves.
+
+```ts
+const live = client.live({
+  types: ['entry.published', 'entry.unpublished'], // server-side filter (?types=)
+  entryIds: [entry.id],                            // client-side filters; either one matching passes
+  contentTypes: ['post'],
+  onEvent(event) { /* LiveEvent, typed by `type` */ },
+  onStatus(status) { /* 'connecting' | 'open' | 'reconnecting' | 'closed' */ },
+  onError(err) { /* transient while reconnecting; final once closed */ },
+  retry: { minMs: 1000, maxMs: 30_000 },           // the defaults
+  signal,                                          // optional AbortSignal
+});
+live.close();
+```
+
+- `LiveEvent` is a union over the stream's types: `entry.published` (`entryId`,
+  `contentTypeApiId`, `version`, locale-keyed `fields`), `entry.unpublished`,
+  `entries.published_bulk` (`action`, `entryIds`), `asset.published` / `asset.unpublished`,
+  `content_type.published` / `content_type.deleted`, `release.published` (`entryIds`) and
+  `environment_alias.changed`, each with `id`, `scope` and `occurredAt`. `ping` heartbeats are
+  not delivered; a frame whose data isn't JSON is skipped.
+- Filters (`liveEventMatches`): a bulk job or release passes `entryIds` when it names one of them,
+  and always passes `contentTypes` (it names entries, not their types); an alias change always
+  passes.
+- Reconnects with exponential backoff and full jitter, from `minMs` to `maxMs`, after a network
+  failure, a 408, 429 or 5xx (a `Retry-After` is followed, up to ten minutes), or the stream's end:
+  the server ends each stream after `LIVE_STREAM_MAX_MS` (10 minutes) so the key is authorized
+  again. The backoff resets once a stream opens. A 401, 403, 404 or other 4xx, or an answer that
+  isn't `text/event-stream`, closes it for good with a `DeliveryError` (a revoked key is never
+  retried in a loop).
+- `createSseParser()` is the incremental `text/event-stream` parser it uses (CRLF, LF or CR line
+  ends, chunks split anywhere, a leading BOM, comments, multi-line `data`, `id`, `retry`).
+- `followEntry(client, id, { locale?, include?, delayMs? }, onState)` and
+  `followEntries(client, query, { delayMs? }, onState)` (`live-query.ts`) are the framework-free
+  form of the hooks below: a read, then the same read a moment (`delayMs`, default 1000) after a
+  matching change, once per burst, with one read in flight at a time. Delivery purges its cache in
+  batches, some seconds after a publish is announced, so a change-driven read that still answers
+  the old version (the same `publishedAt`; for a list, the same answer) reads again after 2, 4, 8
+  and 16 times `delayMs`, then gives up until the next change. Each change-driven read clears the
+  client's own response cache (`cacheTtlMs`) first. `onState` gets
+  `LiveState<T> = { data?, error?, loading, live, removed }`; a refetch keeps the data it had, and
+  `error` takes the stream's final failure (a refused key), not the ones it reconnects after.
+  An `onEvent` that throws is reported through `onError`; the stream reads on.
+
 Shapes:
 
 ```ts
@@ -215,6 +268,13 @@ Hooks (all return `AsyncState<T> = { data?: T; error?: Error; loading: boolean }
 - `useDeliveryClient()` — the injected client
 - `useEditable()` — returns `editable(entry, field, locale?)`, which spreads the inline-edit mark
   onto an element (see [Inline editing](#inline-editing))
+- `useLiveEntry<F>(id, { locale?, include?, delayMs? })` and `useLiveEntries<F>(query?, { delayMs? })`
+  — `useEntry` and `useEntries` kept current over `client.live()` (`followEntry` /
+  `followEntries`): read again a moment after the entry (or an entry of `query.contentType`, or
+  any, without one) is published, or a release or bulk job ships. They return
+  `LiveAsyncState<T>`: `AsyncState<T>` plus `live` (the stream is open) and `removed` (the entry
+  was unpublished; `data` is cleared). `useLiveEntries` compares the query by content, so a fresh
+  object each render doesn't resubscribe.
 
 `<InlineEditor adminUrl onEdit defaultEnabled toggle />` mounts the click-to-edit overlay and
 renders no markup. `<Image asset sizes? width? rendition? locale? priority? …img />` renders
@@ -254,6 +314,9 @@ Composables (all return `AsyncRefs<T> = { data, error, loading }` as refs):
 - `useAsset(id, { locale? })`
 - `useSemanticSearch(query, { topK? })` — returns `[]` for an empty query (no request)
 - `useDeliveryClient()` — the injected client
+- `useLiveEntry<F>(id, { locale?, include?, delayMs? })` and `useLiveEntries<F>(query?, { delayMs? })`
+  — as in React, returning `LiveRefs<T>`: `AsyncRefs<T>` plus `live` and `removed` refs; a reactive
+  input that changes closes the stream and opens one for the new input
 
 `<CwImage :asset sizes width rendition locale priority />` renders `imageProps` as an `<img>`
 (`srcset`, `fetchpriority` as attributes), nothing while `asset` is unset; fallthrough `alt`,
@@ -266,6 +329,67 @@ previous data. Query tracking is top-level: replace the query or its nested
 `filters`/`order` arrays (or pass a getter) — in-place mutation of a nested element is
 not observed. For server-fetched Nuxt data, wrap the client's promise methods in
 `useAsyncData` instead.
+
+## `@contentworker/sdk/next` — Next.js draft mode
+
+`packages/sdk/core/src/next.ts`, re-exported as `@contentworker/sdk/next`. It imports nothing from
+Next.js: the caller passes `draftMode` from `next/headers` (sync in Next.js 14, async from 15;
+both work), so `next` is only an optional peer dependency (`>=14`). See
+[Connect a frontend](https://docs.contentworker.app/guides/connect-a-frontend/).
+
+```ts
+// app/api/draft/route.ts
+import { draftMode } from 'next/headers';
+import { createDraftRoute } from '@contentworker/sdk/next';
+
+export const GET = createDraftRoute({
+  baseUrl: 'https://api.your-workspace.contentworker.app', // the Preview API's host
+  space: 'your-space',
+  environment: 'main',
+  draftMode,
+  resolvePath: (entry) => `/blog/${entry.fields.slug}`,
+});
+```
+
+- Set the content type's preview URL to
+  `https://<site>/api/draft?entry={id}&token={token}&locale={locale}`.
+- `createDraftRoute({ baseUrl, space, environment, draftMode, resolvePath?, fetch? })` →
+  `(request: Request) => Promise<Response>`. It checks the per-entry preview token with
+  `GET <baseUrl>/preview/<space>/<env>/entries/<entry>?preview_token=…` (no key: the token is the
+  grant), then calls `(await draftMode()).enable()` and answers `307` to `resolvePath(entry)`, else
+  the link's `path`, else `/`. A target that would leave the site (`//host`, `/\host`, a scheme,
+  control characters) becomes `/` (`safeRedirectPath`). A refused token (401, 403 or 404 from
+  Preview) answers 401 and leaves draft mode off; a link without `entry` or `token`, 400; a
+  Preview API that fails or can't be reached, 502. Every answer is `cache-control: no-store` and
+  `referrer-policy: no-referrer`, and none echoes the token.
+- `createExitDraftRoute({ draftMode, path? })` turns draft mode off and redirects to the request's
+  `path` (when it is on the site), else `path`, else `/`.
+- `createDraftClient({ draftMode, delivery, preview })` → `() => Promise<DeliveryClient>`: a
+  Preview client (`preview: true`, the preview key, `preview.baseUrl` or the delivery one) while
+  draft mode is on, else the Delivery client; each is made once. Draft mode is site-wide: one
+  entry's link turns on Preview reads for every page, until Next.js's cookie goes (past the
+  token's expiry), so the Preview key should be bound to a role reading only what the site
+  previews.
+
+```ts
+// lib/contentworker.ts (server only)
+import { draftMode } from 'next/headers';
+import { createDraftClient } from '@contentworker/sdk/next';
+
+export const getClient = createDraftClient({
+  draftMode,
+  delivery: {
+    baseUrl: 'https://cdn.your-workspace.contentworker.app',
+    space: 'your-space',
+    environment: 'main',
+    token: process.env.CONTENTWORKER_DELIVERY_KEY!,
+  },
+  preview: {
+    baseUrl: 'https://api.your-workspace.contentworker.app',
+    token: process.env.CONTENTWORKER_PREVIEW_KEY!,
+  },
+});
+```
 
 ## `@contentworker/sdk/edge` — tiny single-locale client
 
@@ -394,6 +518,7 @@ cma.approvals.count()                                 // what waits on a person
 cma.contentTypes.list() / .get(apiId) / .create(draft) / .publish(apiId) / .entryCounts()
 cma.contentTypes.fieldValues(apiId, field, { locale?, limit?, cursor? }): Promise<FieldValuesPage>
 cma.contentTypes.dependents(apiId) / .delete(apiId, { purgeEntries? }) / .clone(apiId, { apiId, name })
+cma.contentTypes.setPreview(apiId, urlTemplate | null)  // the preview URL alone (PUT …/content-types/:apiId/preview)
                                                       // create on an existing apiId revises it
 
 cma.entries.list({ contentType?, locale?, limit?, skip?, order?, query? })  // Preview: drafts included
@@ -483,6 +608,7 @@ cma.spaces.starters() / .starterInstall(spaceId, environmentId, install)
 cma.environments.list() / .create(id, name)           // space-level
 cma.environments.aliases.list() / .set(alias, envId) / .delete(alias)
 cma.apiKeys.list() / .create({ kind, name }) / .revoke(id)   // admin scope
+cma.frontend.connect({ name?, roleId?, preview?, previewRoleId? })  // keys + config for a frontend (POST …/frontend-connections), admin scope
 ```
 
 - Entry `fields` use the Management shape: field apiId → locale → value

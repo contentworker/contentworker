@@ -8,6 +8,7 @@
 import { bookmarkTracker } from './bookmark.js';
 import { CONTENT_REF_ATTRIBUTE, formatContentRef } from './content-ref.js';
 import { imageProps } from './image.js';
+import { type LiveOptions, type LiveSubscription, openLive } from './live.js';
 import type { DeliveredRedirect, RedirectMatch } from './redirects.js';
 
 export type Fields = Record<string, unknown>;
@@ -718,6 +719,31 @@ export function createDeliveryClient(opts: ClientOptions) {
       };
     },
 
+    /**
+     * Follows published changes as they happen, over the Live Content API's event stream:
+     *
+     * ```ts
+     * const live = client.live({ entryIds: [entry.id], onEvent: () => refresh() });
+     * // later: live.close();
+     * ```
+     *
+     * Reconnects with backoff after a failure or the stream's end (the server ends each stream
+     * every ten minutes, so the key is authorized again), and stops for good when the key is
+     * refused. The key decides what arrives: its space, and only content its role may read. A
+     * preview client follows the same stream: it hears of publishes, not of draft saves.
+     */
+    live(o: LiveOptions): LiveSubscription {
+      return openLive(
+        {
+          url: `${opts.baseUrl.replace(/\/$/, '')}/delivery/${opts.space}/${opts.environment}/live`,
+          token: opts.token,
+          fetch: doFetch,
+          toError: deliveryError,
+        },
+        o,
+      );
+    },
+
     /** Clears the in-memory response cache. */
     clearCache: () => cache.clear(),
   };
@@ -868,4 +894,31 @@ export {
   imageProps,
   localizedText,
 } from './image.js';
+export {
+  createSseParser,
+  type LiveAssetPublished,
+  type LiveAssetUnpublished,
+  type LiveContentTypeDeleted,
+  type LiveContentTypePublished,
+  type LiveEntriesPublishedBulk,
+  type LiveEntryPublished,
+  type LiveEntryUnpublished,
+  type LiveEnvironmentAliasChanged,
+  type LiveEvent,
+  type LiveEventType,
+  type LiveOptions,
+  type LiveReleasePublished,
+  type LiveScope,
+  type LiveStatus,
+  type LiveSubscription,
+  liveEventMatches,
+  type SseMessage,
+} from './live.js';
+export {
+  type Following,
+  type FollowOptions,
+  followEntries,
+  followEntry,
+  type LiveState,
+} from './live-query.js';
 export type { DeliveredRedirect, RedirectMatch } from './redirects.js';

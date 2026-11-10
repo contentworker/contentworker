@@ -4,7 +4,11 @@ import {
   type DeliveryClient,
   type EntryQuery,
   type Fields,
+  type FollowOptions,
+  followEntries,
+  followEntry,
   imageProps,
+  type LiveState,
   type SearchHit,
 } from '@contentworker/sdk-core';
 /**
@@ -36,6 +40,7 @@ import {
   ref,
   shallowRef,
   toValue,
+  type WatchStopHandle,
   watchEffect,
 } from 'vue';
 
@@ -208,6 +213,85 @@ export function useEntries<F extends Fields = Fields>(
   return useAsync(client, (c) => c.listEntries<F>({ ...toValue(query) }));
 }
 
+export interface LiveRefs<T> extends AsyncRefs<T> {
+  /** The live stream is open: changes arrive as they happen. */
+  readonly live: Ref<boolean>;
+  /** The entry was unpublished (`data` is cleared); a later publish brings it back. */
+  readonly removed: Ref<boolean>;
+}
+
+/**
+ * Keeps a followed read (`followEntry` / `followEntries`) in refs, restarting it when a reactive
+ * input changes and stopping it with the enclosing scope. Starts on mount (client-side), like
+ * {@link useAsync}: nothing listens or fetches during SSR.
+ */
+function useFollowing<T>(
+  start: (onState: (state: LiveState<T>) => void) => { close(): void },
+): LiveRefs<T> {
+  const data = shallowRef<T | undefined>(undefined);
+  const error = shallowRef<Error | undefined>(undefined);
+  const loading = ref(true);
+  const live = ref(false);
+  const removed = ref(false);
+  let stop: WatchStopHandle | undefined;
+
+  const begin = () => {
+    stop = watchEffect((onCleanup) => {
+      const following = start((state) => {
+        data.value = state.data;
+        error.value = state.error;
+        loading.value = state.loading;
+        live.value = state.live;
+        removed.value = state.removed;
+      });
+      onCleanup(() => following.close());
+    });
+  };
+
+  if (getCurrentInstance()) onMounted(begin);
+  else if (typeof window !== 'undefined') begin();
+  if (getCurrentScope()) onScopeDispose(() => stop?.());
+  return { data, error, loading, live, removed };
+}
+
+/**
+ * Fetches a single published entry and keeps it current: read again a moment after each publish
+ * (its own, or a release or bulk job that includes it); an unpublish clears `data` and sets
+ * `removed`. Re-subscribes when inputs change.
+ */
+export function useLiveEntry<F extends Fields = Fields>(
+  id: MaybeRefOrGetter<string>,
+  opts: FollowOptions & {
+    locale?: MaybeRefOrGetter<string | undefined>;
+    include?: MaybeRefOrGetter<number | undefined>;
+  } = {},
+): LiveRefs<DeliveredEntry<F>> {
+  const client = useDeliveryClient();
+  return useFollowing((onState) =>
+    followEntry<F>(
+      client,
+      toValue(id),
+      { locale: toValue(opts.locale), include: toValue(opts.include), delayMs: opts.delayMs },
+      onState,
+    ),
+  );
+}
+
+/**
+ * Lists published entries and keeps the list current: read again a moment after an entry of
+ * `query.contentType` (any type, without one) is published or unpublished, or a release or bulk
+ * job ships. Re-subscribes when the query changes (tracked as {@link useEntries} tracks it).
+ */
+export function useLiveEntries<F extends Fields = Fields>(
+  query: MaybeRefOrGetter<EntryQuery> = {},
+  opts: FollowOptions = {},
+): LiveRefs<{ items: DeliveredEntry<F>[]; total: number }> {
+  const client = useDeliveryClient();
+  return useFollowing((onState) =>
+    followEntries<F>(client, { ...toValue(query) }, { delayMs: opts.delayMs }, onState),
+  );
+}
+
 /** Semantic search over published content; an empty query yields []. */
 export function useSemanticSearch(
   query: MaybeRefOrGetter<string>,
@@ -227,8 +311,14 @@ export type {
   DeliveredEntry,
   DeliveryClient,
   EntryQuery,
+  FollowOptions,
   ImageProps,
   ImagePropsOptions,
+  LiveEvent,
+  LiveOptions,
+  LiveState,
+  LiveStatus,
+  LiveSubscription,
   SearchHit,
 } from '@contentworker/sdk-core';
 export {

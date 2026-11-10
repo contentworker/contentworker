@@ -10,6 +10,7 @@ const entries = [
   'index',
   'inline-edit',
   'live-preview',
+  'next',
   'redirects',
   'webhooks',
   'rich-text',
