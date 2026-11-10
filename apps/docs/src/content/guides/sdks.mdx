@@ -360,9 +360,9 @@ same output is served at `GET …/content-types?format=typescript`.
 
 Each block of a blocks field gets a type too (`HeroBlock`, its slots typed as lists of the blocks
 they allow), and `BlockTypes` maps every block id to its type, for
-[`<Blocks>`](/guides/blocks-from-code/#rendering-blocks). `contentworker types` takes them from the
-block catalog in force, or from the file `--blocks` names; before the first push (and over
-`?format=typescript`) they come from the blocks fields' block types.
+[`<Blocks>`](/guides/blocks-from-code/#rendering-blocks). They come from the block catalog in force
+(`contentworker types --blocks <file>` takes them from a blocks file instead), and before the
+first push from the blocks fields' block types.
 
 :::caution[Upgrade before labelling options]
 A field's `in` list can hold `{ value, label }` options. SDK releases from before that throw when

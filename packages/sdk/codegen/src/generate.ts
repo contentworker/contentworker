@@ -87,8 +87,8 @@ export interface GenerateOptions {
   /** Header comment noting provenance (defaults to a generic banner). */
   readonly banner?: string;
   /**
-   * The block catalog, for the block types (`BlockTypes`). Absent, they come from the content
-   * types' blocks fields' variants.
+   * The block catalog, for the block types (`BlockTypes`): its blocks are typed from it, and every
+   * other block (a blocks field the catalog doesn't target) from the content types' variants.
    */
   readonly blockCatalog?: BlockCatalogInput;
 }
@@ -211,11 +211,7 @@ export function generateTypes(
     );
   }
 
-  sections.push(
-    ...renderBlockTypes(
-      opts.blockCatalog ? catalogShapes(opts.blockCatalog) : variantShapes(contentTypes),
-    ),
-  );
+  sections.push(...renderBlockTypes(blockShapes(contentTypes, opts.blockCatalog)));
 
   return sections.join('\n');
 }
@@ -246,6 +242,22 @@ function variantsOf(field: FieldInput): readonly VariantInput[] | undefined {
 
 /** A list from JSON the generator didn't check, or none. */
 const list = <T>(v: readonly T[] | undefined): readonly T[] => (Array.isArray(v) ? v : []);
+
+/**
+ * The catalog's blocks, then every variant of a blocks field the catalog doesn't define (by id or
+ * former id): a model can hold blocks fields of its own beside the ones a catalog fills.
+ */
+function blockShapes(
+  contentTypes: readonly ContentTypeInput[],
+  catalog: BlockCatalogInput | undefined,
+): BlockShape[] {
+  const variants = variantShapes(contentTypes);
+  if (!catalog) return variants;
+  const fromCatalog = catalogShapes(catalog);
+  // A former id of a catalog block is that block, not one of the model's own.
+  const defined = new Set(fromCatalog.flatMap((b) => [b.id, ...list(b.aliases)]));
+  return [...fromCatalog, ...variants.filter((v) => !defined.has(v.id))];
+}
 
 function catalogShapes(catalog: BlockCatalogInput): BlockShape[] {
   return list(catalog.blocks).map((b) => ({

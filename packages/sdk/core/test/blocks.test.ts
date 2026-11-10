@@ -60,6 +60,29 @@ describe('resolveBlocks', () => {
     expect(blocks[1]?.slot('cards').blocks.map((b) => b.type)).toEqual(['card', 'card']);
   });
 
+  it("reads aliases only in a catalog block's own slots, not in a blocks prop of its own", () => {
+    const [grid] = resolveBlocks(
+      [
+        {
+          _type: 'grid',
+          _key: 'g',
+          cards: [{ _type: 'tile', _key: 't1' }],
+          // Not a slot the catalog gives grid: its variants are the content model's own.
+          extras: [{ _type: 'tile', _key: 't2' }],
+        },
+      ],
+      { catalog },
+    ).blocks;
+    expect(grid?.slot('cards').blocks[0]?.type).toBe('card');
+    expect(grid?.slot('extras').blocks[0]?.type).toBe('tile');
+  });
+
+  it('refuses a preview ref whose field is not a path, rather than marking nothing', () => {
+    expect(() => resolveBlocks(body, { preview: { ...ref, field: 'body]' } })).toThrow(
+      'preview.field is not a field path: body]',
+    );
+  });
+
   it('prefers a block with the id over one that lists it as an alias', () => {
     const { blocks } = resolveBlocks([{ _type: 'hero', _key: 'a' }], {
       catalog: { blocks: [{ id: 'banner', aliases: ['hero'] }, { id: 'hero' }] },

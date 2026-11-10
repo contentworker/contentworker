@@ -221,18 +221,22 @@ Each component gets:
 | `ghost`      | In a live preview, `inserted`, `changed` or `removed` for a block Coworker proposes          |
 | `index`      | Its place among its siblings                                                                |
 
-- **Renamed blocks.** Pass `catalog` (your blocks file, or what `GET …/block-catalog` answers), or
-  the field's `variants` from its content type, and a block stored under a former id renders with
-  the component for its current one, its `block._type` set to that id.
+- **Renamed blocks.** For a field the catalog targets, pass `catalog` (your blocks file, or what
+  `GET …/block-catalog` answers); for any other blocks field, its `variants` from its content type.
+  A block stored under a former id then renders with the component for its current one, its
+  `block._type` set to that id.
 - **Unknown blocks.** A block no component is given for (one a newer catalog added, say) renders
   with `fallback` if you pass one, else not at all. A value that isn't a block (no `_type`) is
   skipped; a value that isn't a list renders the empty element.
 - **Slots.** A slot holding nothing still renders its element, so the canvas has somewhere to offer
   a seam.
+- **Server components.** `<Blocks>` uses no hooks, so it renders in a server component, and so do
+  the block components it renders. `slots` and `fieldAttrs` are functions, which can't be passed to
+  a `'use client'` component: put the client parts inside a block's component instead.
 
-In Vue, a block's component declares a `block` prop, and its slots are Vue slots, with `as` and
-attributes as slot props. The block's preview marks fall through onto its root element, and
-`useBlock()` gives `ghost`, `index` and `fieldAttrs`:
+In Vue, a block's component declares a `block` prop (or reads it from `useBlock()`), and its slots
+are Vue slots, with `as` and attributes as slot props. The block's preview marks fall through onto
+its root element, and `useBlock()` gives `block`, `ghost`, `index` and `fieldAttrs`:
 
 ```vue
 <!-- Grid.vue -->
@@ -279,7 +283,8 @@ const { items } = renderBlocks<BlockTypes, string>(entry.fields.sections, {
 
 ### In a live preview
 
-Pass `preview`, the field as a [live preview](/guides/live-preview/) ref, and every block, slot and
+Pass `preview`, the field as a [live preview](/guides/live-preview/) ref (a `field` that isn't a
+field path, such as `sections]`, is refused with an error), and every block, slot and
 field carries the marks the admin selects and draws seams from: `data-cw-ref` on each block
 (`sections[<key>]`) and field (`sections[<key>].heading`), and `data-cw-slot` on the element holding
 each slot's blocks (`sections`, `sections[<key>].cards`). Pass `ghosts` (`view.ghosts`) and a

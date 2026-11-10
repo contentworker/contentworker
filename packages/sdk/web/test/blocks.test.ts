@@ -166,6 +166,23 @@ describe('<Blocks>', () => {
     expect(without.querySelectorAll('section')).toHaveLength(2);
   });
 
+  it('gives slots as plain own properties, never answering a serializer or thenable probe', () => {
+    let seen: BlockComponentProps<GridBlock>['slots'] | undefined;
+    const grab = (props: BlockComponentProps<GridBlock>) => {
+      seen = props.slots;
+      return null;
+    };
+    html(createElement(Blocks<BlockTypes>, { value: body, components: { grid: grab }, catalog }));
+    const slots = seen as unknown as Record<string, unknown>;
+    expect(Object.keys(slots)).toEqual(['cards']);
+    for (const probe of ['then', 'toJSON', 'constructor', '$$typeof', '@@iterator', '__proto__']) {
+      expect(slots[probe], probe).toBeUndefined();
+    }
+    expect(JSON.stringify({ slots })).toBe('{"slots":{}}');
+    // A slot no catalog names and the block doesn't hold still renders its (empty) element.
+    expect(typeof slots.aside).toBe('function');
+  });
+
   it('renders a former id as its block only when given the catalog', () => {
     const without = html(createElement(Blocks<BlockTypes>, { value: body, components }));
     expect(without.querySelector('.banner')).toBeNull();

@@ -92,9 +92,10 @@ export interface BlockVariantLike {
 
 export interface ResolveBlocksOptions {
   /**
-   * The catalog, so a block stored under a former id renders as its block, and a slot that holds
-   * nothing yet is still known. Delivery and Preview's REST APIs serve each block as stored until
-   * its entry is saved again.
+   * The catalog, for a blocks field it targets: a block stored under a former id renders as its
+   * block, and a slot that holds nothing yet is still known. Delivery and Preview's REST APIs serve
+   * each block as stored until its entry is saved again. For any other blocks field, pass its
+   * `variants`.
    */
   readonly catalog?: BlockCatalogLike;
   /** Or the blocks field's variants from its content type; the catalog wins when both are given. */
@@ -194,8 +195,9 @@ function catalogScope(catalog: BlockCatalogLike): Scope {
       const slots = list(b.slots).map((s) => s.apiId);
       return { type: b.id, def: { slots } };
     },
-    // A catalog names blocks once, whatever slot they sit in.
-    slotScope: () => scope,
+    // A catalog names blocks once, whatever slot they sit in; a field that isn't one of the block's
+    // slots (a blocks prop of its own) holds variants the catalog doesn't define.
+    slotScope: (def, slot) => (def?.slots.includes(slot) ? scope : UNTYPED),
   };
   return scope;
 }
@@ -358,7 +360,10 @@ export function resolveBlocks(value: unknown, options: ResolveBlocksOptions = {}
   const preview = options.preview || undefined;
   const ctx: Context = { ghosts: ghostsByKey(options.ghosts), preview };
   // A ref's field may already be a path (rendering one slot of a block on its own).
-  return resolveList(value, scope, ctx, preview ? parseFieldPath(preview.field) : undefined);
+  const root = preview ? parseFieldPath(preview.field) : undefined;
+  // Marks that silently vanish would leave the canvas with no seams and no reason why.
+  if (preview && !root) throw new Error(`preview.field is not a field path: ${preview.field}`);
+  return resolveList(value, scope, ctx, root);
 }
 
 /** A slot as {@link renderBlocks} hands it to a component: its mark and its rendered blocks. */

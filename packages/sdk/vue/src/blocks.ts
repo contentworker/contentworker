@@ -31,7 +31,7 @@ import {
   type VNode,
 } from 'vue';
 
-/** A component per block id: `BlockComponents<BlockTypes>`. Each declares a `block` prop. */
+/** A component per block id: `BlockComponents<BlockTypes>`. Each declares a `block` prop, or reads `useBlock()`. */
 export type BlockComponents<M extends BlockTypeMap<M> = Record<string, UnknownBlock>> = {
   readonly [K in keyof M]?: Component;
 };
@@ -85,6 +85,19 @@ function renderSlot(resolved: ResolvedBlocks, render: Render, props: SlotProps =
   return h(as, { ...rest, ...resolved.attrs }, children);
 }
 
+/**
+ * Whether a component is given `block` as a prop: one that declares it, or a functional component
+ * declaring no props (which gets every attribute as one). Any other would have it fall through
+ * onto its root element as `block="[object Object]"`, so one that reads `useBlock()` instead isn't
+ * given it.
+ */
+function takesBlock(component: Component): boolean {
+  const props = (component as { props?: unknown }).props;
+  if (Array.isArray(props)) return props.includes('block');
+  if (props && typeof props === 'object') return Object.hasOwn(props, 'block');
+  return typeof component === 'function';
+}
+
 /** One block: provides its context, and renders its component with its slots. */
 const Block = defineComponent({
   name: 'CwBlock',
@@ -119,7 +132,11 @@ const Block = defineComponent({
           (slotProps?: SlotProps) => renderSlot(unit.slot(name), render, slotProps),
         ]),
       );
-      return h(component, { block: unit.block, ...unit.attrs }, slots);
+      return h(
+        component,
+        takesBlock(component) ? { block: unit.block, ...unit.attrs } : unit.attrs,
+        slots,
+      );
     };
   },
 });

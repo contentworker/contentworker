@@ -235,7 +235,10 @@ block's or variant's `aliases` is rendered as that block when `catalog` or `vari
 nothing renders its empty element), and `attrs` / `fieldAttrs(name)` are the block's and a field's
 live preview marks, empty unless `preview` (a `ContentRef` naming the blocks field) is given. A
 block with no component renders with `fallback`, else nothing; an element that isn't a block is
-skipped. No hooks: it renders on the server and in server components. See
+skipped. No hooks: it renders on the server and in server components, where the block components
+are server components too (`slots` and `fieldAttrs` are functions, so they can't be passed into a
+`'use client'` component). React's own probes (`then`, `toJSON`, `constructor`, …) and names that
+aren't field apiIds read as `undefined` on `slots`; any field name gives a slot function. See
 [`@contentworker/sdk/blocks`](#contentworkersdkblocks--blocks-fields-framework-free).
 
 ## `@contentworker/sdk/vue` — Vue 3 composables
@@ -273,7 +276,8 @@ Composables (all return `AsyncRefs<T> = { data, error, loading }` as refs):
 `class` and `style` win or merge. The same helpers as `@contentworker/sdk/react` are re-exported.
 
 `<CwBlocks :value :components :fallback :catalog :variants :ghosts :preview as>` is `<Blocks>` for
-Vue. Each block's component declares a `block` prop; its preview marks (`data-cw-ref`,
+Vue. Each block's component declares a `block` prop (a stateful component that doesn't is not
+given it, so it can't fall through as an attribute; it reads `useBlock().block`); its preview marks (`data-cw-ref`,
 `data-cw-ghost`) fall through onto its root element; its slots are Vue slots, called with `as` and
 attributes as slot props (`<slot name="cards" as="ul" class="cards" />`); and `useBlock()` inside it
 returns `{ block, index, ghost, attrs, fieldAttrs }`. Vue needs a slot's name before rendering, so a
@@ -355,8 +359,9 @@ What `<Blocks>` and `<CwBlocks>` are built on, for any other renderer (the front
 strings, DOM nodes):
 
 - `resolveBlocks(value, { catalog?, variants?, ghosts?, preview? })` → `{ path, attrs, blocks }`.
-  Each block: `type` (current id; `catalog` wins over `variants`, an exact id over an alias, and a
-  variants slot resolves with its own nested variants), `storedType`, `key`, `renderKey`, `index`,
+  Each block: `type` (current id; `catalog` wins over `variants`, an exact id over an alias, a
+  variants slot resolves with its own nested variants, and a catalog applies only inside the slots
+  its blocks declare), `storedType`, `key`, `renderKey`, `index`,
   `block` (a copy with `_type` set to `type` when it differs), `ghost` (from `ghosts` by `_key`;
   `inserted` over `removed` over `changed`), `path`, `attrs`, `fieldAttrs(name)`, `slotNames` (the
   definition's slots plus any field holding a non-empty list of blocks) and `slot(name)` (resolved
@@ -370,7 +375,8 @@ strings, DOM nodes):
   `data-cw-ref` on each block (`body[k1]`) and field (`body[k1].heading`), formatted with
   `formatFieldPath` and `formatContentRef` exactly as `refAttrs` and `slotAttrs` would, and
   `data-cw-ghost` (`GHOST_ATTRIBUTE`) on a ghost. A block with no `_key` has no path, so neither it
-  nor anything inside it is marked. Without `preview` every attrs object is empty.
+  nor anything inside it is marked. Without `preview` every attrs object is empty; a `preview`
+  whose `field` doesn't parse as a path throws.
 
 ## `@contentworker/sdk/react-native` — offline Delivery sync
 
@@ -692,11 +698,13 @@ For each content type it emits two interfaces plus shared helpers and lookup map
 - `<Id>Block` per block id and `BlockTypes` (id → block type) with `BlockId`, for
   `BlockComponents<BlockTypes>` and `renderBlocks<BlockTypes, R>`: `{ _type: '<id>'; _key: string;
   …props }`, each slot a list of the blocks it allows (required when its `min` is above 0), doc
-  comments naming the block and its former ids. From `generateTypes(types, { blockCatalog })` when
-  given a catalog (`contentworker types` passes the catalog in force, or `--blocks <file>`; the
-  workspace `contentworker-codegen` takes `--blocks` or fetches `…/block-catalog`, a 404 meaning
-  none); otherwise from every blocks field's variants at any depth, an id two fields define apart
-  typed as either shape. `?format=typescript` and MCP's types output take the variants.
+  comments naming the block and its former ids. A catalog's blocks are typed from
+  `generateTypes(types, { blockCatalog })` (`contentworker types` passes the catalog in force, or
+  `--blocks <file>`; the workspace `contentworker-codegen` takes a JSON `--blocks` or fetches
+  `…/block-catalog`, a 404 meaning none); every other block, from the blocks fields' variants at
+  any depth (a variant whose id is a catalog block's id or former id is that block), an id two
+  fields define apart typed as either shape. `?format=typescript` and MCP's `model_typescript` pass the catalog in
+  force too (`findBlockCatalog`), so all three give the same block types.
 
 Pass the shape as the type argument, e.g. `client.getEntry<ArticleFields>(id, { locale })`.
 

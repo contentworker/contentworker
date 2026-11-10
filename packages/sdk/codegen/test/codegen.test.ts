@@ -420,12 +420,32 @@ describe('@contentworker/sdk-codegen block types', () => {
     expect(fromVariants).toBe(blockSection(fromCatalog).replace(' — The top of a page.', ''));
   });
 
-  it('prefers the catalog to the variants when given both', () => {
-    const source = generateTypes([PAGE], {
-      blockCatalog: { blocks: [{ id: 'only', fields: [] }] },
-    });
-    expect(source).toContain('export type BlockTypes = {\n  only: OnlyBlock;\n};');
-    expect(source).not.toContain('BannerBlock');
+  it('types catalog blocks from the catalog, and blocks of other fields from their variants', () => {
+    const article: ContentTypeInput = {
+      apiId: 'article',
+      fields: [
+        {
+          apiId: 'sidebar',
+          type: 'Array',
+          items: {
+            type: 'Component',
+            variants: [
+              // A block the catalog also defines: the catalog's shape wins.
+              { apiId: 'card', fields: [] },
+              { apiId: 'callout', fields: [{ apiId: 'text', type: 'Text' }] },
+            ],
+          },
+        },
+      ],
+    };
+    const source = generateTypes([PAGE, article], { blockCatalog: CATALOG });
+    expect(source).toContain(
+      'export type BlockTypes = {\n  banner: BannerBlock;\n  grid: GridBlock;\n  card: CardBlock;\n  quote: QuoteBlock;\n  callout: CalloutBlock;\n};',
+    );
+    expect(source).toContain(
+      "export type CardBlock = {\n  _type: 'card';\n  _key: string;\n  title: string;\n};",
+    );
+    expect(source).toContain("export type CalloutBlock = {\n  _type: 'callout';");
   });
 
   it('types an id two fields define apart as either shape', () => {
@@ -704,11 +724,16 @@ describe('@contentworker/sdk-codegen CLI', () => {
     const { main } = await import('../src/cli.js');
     await main(['--input', input, '--blocks', blocks, '--out', out]);
     const written = await readFile(out, 'utf8');
-    expect(written).toContain('export type BlockTypes = {\n  only: OnlyBlock;\n};');
+    expect(written).toContain(
+      'export type BlockTypes = {\n  only: OnlyBlock;\n  banner: BannerBlock;',
+    );
 
     await writeFile(blocks, JSON.stringify({ items: [] }));
     await expect(main(['--input', input, '--blocks', blocks])).rejects.toThrow(
       'has no "blocks" list',
+    );
+    await expect(main(['--input', input, '--blocks', 'contentworker.blocks.ts'])).rejects.toThrow(
+      '--blocks takes a JSON file',
     );
   });
 });

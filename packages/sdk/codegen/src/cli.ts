@@ -95,6 +95,10 @@ export async function loadBlockCatalog(
   fetchImpl: typeof fetch = globalThis.fetch,
 ): Promise<BlockCatalogInput | undefined> {
   if (args.blocks) {
+    // A TypeScript or JavaScript blocks file is `contentworker types --blocks`'s to read.
+    if (!args.blocks.endsWith('.json')) {
+      throw new Error(`--blocks takes a JSON file; use contentworker types for ${args.blocks}`);
+    }
     const parsed = JSON.parse(await readFile(args.blocks, 'utf8')) as { blocks?: unknown };
     if (!Array.isArray(parsed.blocks)) throw new Error(`${args.blocks} has no "blocks" list`);
     return parsed as BlockCatalogInput;

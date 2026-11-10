@@ -2,7 +2,9 @@
  * `<Blocks>`: a blocks field rendered with a React component per block id, over
  * `@contentworker/sdk-core/blocks`. Each component gets its block (typed by codegen's
  * `BlockTypes`) and its slots as functions rendering the slot's blocks with the same components.
- * No hooks, so it renders on the server and in server components alike.
+ * No hooks, so it renders on the server and in server components alike. There, the block
+ * components are server components too: `slots` and `fieldAttrs` are functions, which can't be
+ * passed into a `'use client'` component, so put the client parts inside a block's component.
  */
 import type { ContentRef } from '@contentworker/sdk-core';
 import {
@@ -88,6 +90,21 @@ export type BlocksProps<M extends BlockTypeMap<M> = Record<string, UnknownBlock>
 };
 
 type AnyComponent = ComponentType<BlockComponentProps<UnknownBlock>>;
+
+/** What a field apiId looks like: a letter, then letters, digits or `_`. */
+const FIELD_NAME = /^[A-Za-z][A-Za-z0-9_]*$/;
+/** Names that look like fields but are probed on any object: never a slot by accident. */
+const PROBED = new Set([
+  'then',
+  'toJSON',
+  'constructor',
+  'toString',
+  'toLocaleString',
+  'valueOf',
+  'hasOwnProperty',
+  'isPrototypeOf',
+  'propertyIsEnumerable',
+]);
 type Components = Readonly<Record<string, AnyComponent | undefined>>;
 
 function renderSlot(
@@ -102,17 +119,23 @@ function renderSlot(
     const component =
       (Object.hasOwn(components, unit.type) ? components[unit.type] : undefined) ?? fallback;
     if (!component) continue;
-    const made = new Map<string, SlotRender>();
-    // Any name resolves, so a slot holding nothing yet still renders the element its mark is on.
-    const slots = new Proxy({} as Record<string, SlotRender>, {
-      get(_target, name) {
+    const render =
+      (name: string): SlotRender =>
+      (p = {}) =>
+        renderSlot(unit.slot(name), components, fallback, p);
+    // The known slots are own properties, so whatever enumerates props sees exactly those.
+    const known: Record<string, SlotRender> = {};
+    for (const name of unit.slotNames) known[name] = render(name);
+    // Any other name a field could have still resolves, so a slot holding nothing yet (and named by
+    // no catalog) renders the element its mark is on. Only field names: `then`, `toJSON` and the
+    // like, which serializers and thenable checks probe, stay undefined.
+    const slots = new Proxy(known, {
+      get(target, name) {
         if (typeof name !== 'string') return undefined;
-        let render = made.get(name);
-        if (!render) {
-          render = (p = {}) => renderSlot(unit.slot(name), components, fallback, p);
-          made.set(name, render);
-        }
-        return render;
+        if (Object.hasOwn(target, name)) return target[name];
+        if (!FIELD_NAME.test(name) || PROBED.has(name)) return undefined;
+        target[name] = render(name);
+        return target[name];
       },
     });
     children.push(

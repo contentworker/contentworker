@@ -178,6 +178,37 @@ describe('<CwBlocks>', () => {
     app.unmount();
   });
 
+  it('gives block as a prop only to a component that takes it', async () => {
+    const ViaContext = defineComponent({
+      setup() {
+        const context = useBlock<CardBlock>();
+        return () => h('li', { class: 'context' }, context.block.title);
+      },
+    });
+    const Functional = (props: { block?: CardBlock }) =>
+      h('li', { class: 'fn' }, props.block?.title);
+    const host = document.createElement('div');
+    const app = createApp({
+      render: () =>
+        h(CwBlocks, {
+          value: [
+            { _type: 'a', _key: 'a', title: 'A' },
+            { _type: 'b', _key: 'b', title: 'B' },
+          ],
+          components: { a: ViaContext, b: Functional },
+          preview: ref1,
+        }),
+    });
+    app.mount(host);
+    await nextTick();
+    const [a, b] = [...host.querySelectorAll('li')];
+    expect([a?.textContent, b?.textContent]).toEqual(['A', 'B']);
+    expect(a?.hasAttribute('block')).toBe(false);
+    // The preview mark still falls through onto the root.
+    expect(parseContentRef(a?.getAttribute('data-cw-ref'))?.field).toBe('body[a]');
+    app.unmount();
+  });
+
   it('refuses useBlock outside a block', () => {
     const app = createApp({
       setup() {
