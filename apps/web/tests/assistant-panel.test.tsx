@@ -57,13 +57,21 @@ const chat = vi.hoisted(() => ({
   messages: [] as UIMessage[],
   addToolApprovalResponse: vi.fn(),
   body: undefined as undefined | (() => unknown),
+  prepare: undefined as
+    | undefined
+    | ((r: { messages: { role: string; metadata?: unknown }[] }) => { body?: unknown }),
+  sendMessage: vi.fn(),
 }));
 vi.mock('@cloudflare/ai-chat/react', () => ({
-  useAgentChat: (options: { body?: () => unknown }) => {
+  useAgentChat: (options: {
+    body?: () => unknown;
+    prepareSendMessagesRequest?: typeof chat.prepare;
+  }) => {
     chat.body = options.body;
+    chat.prepare = options.prepareSendMessagesRequest;
     return {
       messages: chat.messages,
-      sendMessage: vi.fn(),
+      sendMessage: chat.sendMessage,
       regenerate: vi.fn(),
       status: 'ready',
       stop: vi.fn(),
@@ -77,7 +85,7 @@ vi.mock('@cloudflare/ai-chat/react', () => ({
   },
 }));
 
-const { AssistantProvider, useAssistantEdit } = await import('~/cms/lib/assistant');
+const { AssistantProvider, useAssistant, useAssistantEdit } = await import('~/cms/lib/assistant');
 const { AssistantPanel } = await import('~/cms/components/assistant/panel');
 const { ActionCard, EditLine, ReadLine, entryHref, turnErrorText, whenLabel } = await import(
   '~/cms/components/assistant/parts'
@@ -86,8 +94,10 @@ const { ApiError } = await import('~/cms/lib/management');
 
 type Edit = ReturnType<typeof useAssistantEdit>;
 let edit!: Edit;
+let assistantNow!: ReturnType<typeof useAssistant>;
 function Page() {
   edit = useAssistantEdit();
+  assistantNow = useAssistant();
   return null;
 }
 
@@ -269,6 +279,37 @@ describe('a page’s edits through the panel', () => {
   it('connects to the person’s own agent', () => {
     renderPanel();
     expect(socket.options).toMatchObject({ agent: 'assistant-agent', name: 'usr_1' });
+  });
+
+  it('sends a question a page asks with its own page (a slot to fill) with that page alone', async () => {
+    renderPanel();
+    chat.sendMessage.mockReset();
+    const page = {
+      kind: 'entry' as const,
+      entryId: 'e1',
+      contentType: 'page',
+      label: 'Home',
+      fill: {
+        field: 'body',
+        locale: 'en-US',
+        slot: 'Body',
+        blocks: [{ type: 'cta', name: 'Call to action', fields: [] }],
+        count: 0,
+        around: [],
+      },
+    };
+    act(() => assistantNow.ask('Fill Body', page));
+    await waitFor(() =>
+      expect(chat.sendMessage).toHaveBeenCalledWith({ text: 'Fill Body', metadata: { page } }),
+    );
+    // Its request carries that page, in the header's scope; any other message, the page in front.
+    expect(chat.prepare?.({ messages: [{ role: 'user', metadata: { page } }] })).toEqual({
+      body: {
+        context: { scope: { spaceId: 'sp_1', environmentId: 'main', locale: 'en-US' }, page },
+      },
+    });
+    expect(chat.prepare?.({ messages: [{ role: 'user' }] })).toEqual({});
+    expect(chat.prepare?.({ messages: [{ role: 'assistant', metadata: { page } }] })).toEqual({});
   });
 
   it('sends an instant edit as one act, with the scope and page, and hands the page its output', async () => {
@@ -1700,6 +1741,149 @@ describe('a model’s block patch', () => {
     show(patch({ ops: [remove] }));
     await screen.findByRole('button', { name: 'Try again' });
     expect(confirm().disabled).toBe(true);
+  });
+  describe('asked to fill a slot (the canvas’s Ask Coworker to fill this)', () => {
+    const fill = {
+      field: 'body',
+      locale: 'en-US',
+      after: 'k-hero',
+      slot: 'Body',
+      blocks: [
+        { type: 'cta', name: 'Call to action', fields: [{ apiId: 'label', name: 'Label' }] },
+      ],
+      count: 3,
+      around: ['Hero “Welcome”'],
+    };
+    const insert = {
+      op: 'insert',
+      field: 'body',
+      locale: 'en-US',
+      after: 'k-hero',
+      block: { _type: 'cta', label: 'Proposed by Coworker' },
+    };
+    const added = { _type: 'cta', _key: 'n-1', label: 'Proposed by Coworker' };
+    const applied = [{ ...insert, after: undefined, index: 1, block: added }];
+    const asked = (part: never, respond = vi.fn()) => {
+      let seen: ReturnType<typeof useAssistant> | undefined;
+      function Probe() {
+        seen = useAssistant();
+        return null;
+      }
+      const card = (p: never) => (
+        <MemoryRouter>
+          <AssistantProvider>
+            <Probe />
+            <ActionCard
+              part={p}
+              respond={respond}
+              actionKey="m1:0"
+              direct={false}
+              turn={{ ...here, fill }}
+            />
+          </AssistantProvider>
+        </MemoryRouter>
+      );
+      const view = render(card(part));
+      return {
+        respond,
+        proposals: () => [...(seen?.proposals.values() ?? [])],
+        again: (p: never) => view.rerender(card(p)),
+        unmount: view.unmount,
+      };
+    };
+
+    it('refuses a step outside the slot in words, before any dry run, and shows no ghosts', async () => {
+      const t = asked(patch({ ops: [insert, remove] }));
+      await screen.findByText('Step 2 goes outside Body');
+      expect(
+        screen.getByText(/You asked Coworker to fill Body at one place\. This step changes/),
+      ).toBeTruthy();
+      hold('You can’t confirm this: step 2 goes outside the slot you asked it to fill.');
+      expect(client.checkBlockPatch).not.toHaveBeenCalled();
+      expect(t.proposals()).toEqual([]);
+    });
+
+    it('reads the slot from the turn as the agent writes it, in the conversation itself', async () => {
+      chat.messages = [
+        {
+          id: 'm1',
+          role: 'assistant',
+          // The agent's start metadata: the scope, and the fill beside it.
+          metadata: { source: 'mock', at: Date.now(), scope: here, fill },
+          parts: [patch({ ops: [insert, remove] })],
+        },
+      ];
+      renderPanel();
+      act(() => socket.options.onOpen?.());
+      await screen.findByText('Step 2 goes outside Body');
+      expect(confirm().disabled).toBe(true);
+      expect(client.checkBlockPatch).not.toHaveBeenCalled();
+    });
+
+    it('shows a patch that keeps to the slot as ghosts while it asks, and takes them back on Not now', async () => {
+      client.checkBlockPatch.mockResolvedValue(
+        checked(
+          { 'en-US': [heroBlock, added, ctaBlock, sectionBlock], de: fields.body.de },
+          applied,
+        ),
+      );
+      const t = asked(patch({ ops: [insert] }));
+      await waitFor(() => expect(confirm().disabled).toBe(false));
+      expect(t.proposals()).toEqual([
+        { entryId: 'e1', spaceId: 'sp_1', environmentId: 'main', ops: applied, state: 'pending' },
+      ]);
+      fireEvent.click(notNow());
+      expect(t.respond).toHaveBeenCalledWith(expect.anything(), false);
+      await waitFor(() => expect(t.proposals()[0]?.state).toBe('declined'));
+      t.unmount();
+    });
+
+    it('keeps them through Confirm until the save lands, then says it was saved', async () => {
+      client.checkBlockPatch.mockResolvedValue(
+        checked(
+          { 'en-US': [heroBlock, added, ctaBlock, sectionBlock], de: fields.body.de },
+          applied,
+        ),
+      );
+      const part = patch({ ops: [insert] });
+      const t = asked(part);
+      await waitFor(() => expect(confirm().disabled).toBe(false));
+      fireEvent.click(confirm());
+      expect(t.respond).toHaveBeenCalledWith(expect.anything(), true);
+      await waitFor(() => expect(t.proposals()[0]?.state).toBe('saving'));
+      // The confirmed call runs (the agent's patch, held to its version): its output arrives.
+      t.again({
+        ...(part as object),
+        state: 'output-available',
+        approval: { id: 'call_1', approved: true },
+        output: { entry: { id: 'e1' } },
+      } as never);
+      await waitFor(() => expect(t.proposals()[0]?.state).toBe('saved'));
+      // Its ops are the dry run's, never the model's: the save itself is the call, run on Confirm.
+      expect(t.proposals()[0]?.ops).toEqual(applied);
+      t.unmount();
+    });
+
+    it('takes them back when the save fails', async () => {
+      client.checkBlockPatch.mockResolvedValue(
+        checked(
+          { 'en-US': [heroBlock, added, ctaBlock, sectionBlock], de: fields.body.de },
+          applied,
+        ),
+      );
+      const part = patch({ ops: [insert] });
+      const t = asked(part);
+      await waitFor(() => expect(t.proposals()[0]?.state).toBe('pending'));
+      fireEvent.click(confirm());
+      t.again({
+        ...(part as object),
+        state: 'output-error',
+        approval: { id: 'call_1', approved: true },
+        errorText: 'Conflict',
+      } as never);
+      await waitFor(() => expect(t.proposals()[0]?.state).toBe('declined'));
+      t.unmount();
+    });
   });
 });
 

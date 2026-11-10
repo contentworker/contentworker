@@ -14,6 +14,7 @@ import {
 import {
   ASSISTANT_TOOLS,
   type AssistantContext,
+  type AssistantFill,
   isAssistantTool,
   isSetupScope,
   normalizeSlug,
@@ -267,6 +268,47 @@ export function mockBlockMove(id: string, outline: unknown): Step | null {
   return null;
 }
 
+/** The words the canvas's "Ask Coworker to fill this" sends, with the slot in the page context. */
+const FILL_SLOT = /^fill\b/;
+
+/** What the mock writes into a block it proposes: plain words, the same every time. */
+export const MOCK_FILL_TEXT = 'Proposed by Coworker';
+
+/**
+ * The block patch "fill this slot" asks for, from the outline the mock read for it: one block of
+ * the first type the slot takes, put in at the slot's place, its first text field filled in, held
+ * to the version outlined. Null when the outline has no version, or the slot is full.
+ */
+export function mockFill(id: string, fill: AssistantFill, outline: unknown): Step | null {
+  const o = outline as { version?: unknown } | null;
+  const type = fill.blocks[0];
+  if (typeof o?.version !== 'number' || !type) return null;
+  if (fill.max !== undefined && fill.count >= fill.max) return null;
+  const text = type.fields[0];
+  const place = fill.after
+    ? { after: fill.after }
+    : fill.before
+      ? { before: fill.before }
+      : { index: 0 };
+  return {
+    tool: 'entry_blocks_patch',
+    input: {
+      id,
+      expectedVersion: o.version,
+      ops: [
+        {
+          op: 'insert',
+          field: fill.field,
+          locale: fill.locale,
+          ...(fill.parent ? { parent: fill.parent } : {}),
+          ...place,
+          block: { _type: type.type, ...(text ? { [text.apiId]: MOCK_FILL_TEXT } : {}) },
+        },
+      ],
+    },
+  };
+}
+
 /** Picks one tool from the words used, or says what it understands. */
 export function mockStep(text: string, context: AssistantContext, tools: Set<string>): Step {
   if (isSetupScope(context.scope)) return mockSetupStep(text, tools);
@@ -277,7 +319,10 @@ export function mockStep(text: string, context: AssistantContext, tools: Set<str
   const pick = (tool: string, input: Record<string, unknown>): Step =>
     tools.has(tool) ? { tool, input } : { text: 'That isn’t something I can do here.' };
 
-  // A block move needs the entry's keys and version: outline it first (`mockBlockMove` follows).
+  // Filling a slot, and a block move, need the entry's keys and version: outline it first
+  // (`mockFill` and `mockBlockMove` follow).
+  if (entryId && page.kind === 'entry' && page.fill && FILL_SLOT.test(t))
+    return pick('entry_blocks_outline', { id: entryId });
   if (entryId && MOVE_FIRST_BLOCK.test(t)) return pick('entry_blocks_outline', { id: entryId });
   if (entryId && /\bunpublish\b/.test(t)) return pick('entries_unpublish', { id: entryId });
   if (entryId && /\bpublish\b/.test(t)) return pick('entries_publish', { id: entryId });
@@ -387,17 +432,23 @@ export function mockModel(context: AssistantContext): Model {
     const results = lastToolResults(options.prompt);
     // The outline a block move asked for becomes the move itself, held to the outlined version.
     const outlined = results?.length === 1 ? results[0] : undefined;
+    const asked = lastUserText(options.prompt).toLowerCase();
     if (
       outlined?.toolName === 'entry_blocks_outline' &&
       context.page.kind === 'entry' &&
-      tools.has('entry_blocks_patch') &&
-      MOVE_FIRST_BLOCK.test(lastUserText(options.prompt).toLowerCase())
+      tools.has('entry_blocks_patch')
     ) {
       const out = outlined.output;
       const value =
         out.type === 'json' ? out.value : out.type === 'text' ? unwrapped(out.value) : null;
-      const move = mockBlockMove(context.page.entryId, value);
-      if (move) return move;
+      const { entryId, fill } = context.page;
+      const step =
+        fill && FILL_SLOT.test(asked)
+          ? mockFill(entryId, fill, value)
+          : MOVE_FIRST_BLOCK.test(asked)
+            ? mockBlockMove(entryId, value)
+            : null;
+      if (step) return step;
     }
     if (results) {
       return {

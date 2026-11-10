@@ -339,11 +339,13 @@ None blocks a release.
 Built on Blocks and the frontend runtime. Layouts stay a typed tree; rich text stays a
 `RichTextDocument`; styling is design tokens and enum props, never raw CSS.
 
-- [ ] **Live preview channel.** `@contentworker/sdk/live-preview`: the admin frames the customer's
-  frontend and pushes unsaved form state as patches; clicks select fields back. Spec (proposed):
+- [x] **Live preview channel.** `@contentworker/sdk/live-preview`: the admin frames the customer's
+  frontend and pushes unsaved form state as patches; clicks select fields back. Spec:
   [`docs/specs/live-preview-channel.md`](docs/specs/live-preview-channel.md). The page side
-  (`connectPreview`) and the admin side (the entry editor's Site view) are in place; Coworker's
-  proposals as ghost blocks are next.
+  (`connectPreview`), the admin side (the entry editor's Site view and the canvas) and Coworker's
+  proposals as ghost blocks are in place: while a Coworker block-patch card waits for an answer,
+  the page shows its blocks as ghosts (`proposals`, `proposed: true`), the admin marks them
+  "Proposed", Not now takes them back and Confirm saves through the card.
 - [ ] **Blocks renderers.** `<Blocks components={…} />` for React, Vue and the frontend runtime, typed
   by codegen.
 - [ ] **Layout patches.** `patchBlocks` with key-addressed create, update, move and remove, for
@@ -367,10 +369,12 @@ Built on Blocks and the frontend runtime. Layouts stay a typed tree; rich text s
 - [ ] **Canvas editor.** A toolbox, selection overlay and undo in `apps/web` over the preview channel.
   The canvas (`/content/:typeId/:entryId/canvas`) is in place: seams from the page's `layout`, a
   dock offering exactly what a slot takes, an inspector (Content, Data, Look), Layers as the
-  keyboard path, undo by inverse block-patch ops, and a save held to `expectedVersion`. Still to
-  come: Coworker's "Fill this slot" and ghost proposals (`host.propose` is the seam), dragging
-  blocks with a fine pointer, block thumbnails (the admin's `img-src` takes no other origin), and
-  per-breakpoint overrides.
+  keyboard path, undo by inverse block-patch ops, a save held to `expectedVersion`, and
+  Coworker's "Ask Coworker to fill this" at a seam (the slot's allowed blocks, bounds and the
+  blocks around it, quoted to the model; the card holds the patch to that slot) with its proposal
+  shown as ghosts on the page and in Layers until it is confirmed or declined. Still to come:
+  dragging blocks with a fine pointer, block thumbnails (the admin's `img-src` takes no other
+  origin), and per-breakpoint overrides.
 - [ ] **Frontend SDK extras.** `client.live()` and `useLiveEntry`, a Next.js draft-mode helper, a
   preview URL template per content type, and a "connect a frontend" screen that mints a delivery key
   and prints its config.

@@ -138,7 +138,13 @@ menu at the sidebar's foot (the More sheet on a phone). Settings sections are ad
   drawing outlines). Seams between blocks from the page's `layout`, a dock offering exactly what a
   slot takes (`cms/lib/canvas/`), an inspector, Layers, and undo by inverse block-patch ops. It
   saves through `PUT …/entries/:id` with `expectedVersion`. Reached from the entry editor's
-  Form | Canvas switch; full-bleed, outside the content layout. See DESIGN.md.
+  Form | Canvas switch; full-bleed, outside the content layout. See DESIGN.md. With Coworker on,
+  the dock offers Ask Coworker to fill this (`cms/lib/canvas/fill.ts`): an `ask` whose page
+  carries the slot (`AssistantFill`) for that message alone. A Coworker block-patch card that
+  waits publishes its dry run's applied ops (`setProposal`, read with `useProposedBlocks`); the
+  canvas and the Site view send them over the channel as `proposed` ops (the host's
+  `setProposal`), mark the ghosts "Proposed" (`GhostMark`) and list them in Layers, and read the
+  entry again once the card's save lands.
 - **Approvals** (`/approvals`): the editorial workflow task inbox.
 - **Releases** (`/releases`): bundle entries and assets, publish as a unit, schedule.
 - **Workflows** (`/workflows`, `/workflows/:id`): editorial workflow definitions and the graph

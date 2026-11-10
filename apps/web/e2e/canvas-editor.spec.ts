@@ -337,3 +337,75 @@ test('the rules set in Build → Blocks narrow the dock and lock a slot on the c
   await expect(page.getByRole('group', { name: 'Cards · 1 of 2 · locked' })).toBeAttached();
   await scan(page, testInfo, 'rules');
 });
+
+test('Coworker fills a seam: its proposal shows as ghosts, Not now takes them off, Confirm saves it', async ({
+  page,
+  request,
+}, testInfo) => {
+  const title = `Fill ${testInfo.workerIndex} ${Date.now()}`;
+  const { id, site } = await openCanvas(page, request, title);
+  const version = async () => {
+    const res = await api(request, 'GET', `${MGMT}/entries/${id}`);
+    return ((await res.json()) as { entry: { currentVersion: number } }).entry.currentVersion;
+  };
+  const created = await version();
+
+  // Ask from the dock at the seam after the hero: the mock model outlines the entry, then proposes
+  // one block there (`mockFill`), which the card reads from the api's dry run.
+  const ask = async () => {
+    await page.locator('[data-seam="body#1"]').click();
+    await page.getByRole('button', { name: 'Ask Coworker to fill this' }).click();
+    const panel = page.getByRole('complementary', { name: 'Coworker' });
+    // The conversation is shared with tests running beside this one: this entry's card only.
+    const card = panel.getByRole('region', { name: 'Change blocks' }).filter({ hasText: title });
+    await expect(card.getByText('Coworker suggests this')).toBeVisible({ timeout: 15_000 });
+    await expect(card.getByRole('button', { name: 'Confirm' })).toBeEnabled();
+    return card;
+  };
+  const ghost = site.locator('[data-cw-proposed]');
+  const blocks = site.locator('#app > [data-cw-slot] > section');
+
+  const first = await ask();
+  // The page renders the proposal as a ghost after the hero; the canvas marks it in words.
+  await expect(ghost).toHaveCount(1);
+  await expect(ghost).toHaveText('Proposed by Coworker');
+  await expect(blocks.nth(1)).toHaveAttribute('data-cw-proposed', 'inserted');
+  await expect(page.locator('[data-ghost-outline="inserted"]')).toContainText('Proposed');
+  await expect(page.getByText(/Coworker’s proposal is on the page, marked Proposed/)).toBeVisible();
+  await page.getByRole('button', { name: 'Layers' }).click();
+  await expect(page.getByRole('list', { name: 'Proposed for Main' })).toContainText('Proposed');
+  // Nothing is unsaved on the canvas: a proposal isn't the draft.
+  await expect(page.getByText('Unsaved changes')).toHaveCount(0);
+  await scan(page, testInfo, 'ghosts');
+  // With Layers and Coworker both beside it, the page is drawn too small to aim at a seam.
+  await page.getByRole('button', { name: 'Layers' }).click();
+
+  // Not now: the ghost goes from the page, and nothing was saved.
+  await first.getByRole('button', { name: 'Not now' }).click();
+  await expect(first).toHaveCount(0);
+  await expect(ghost).toHaveCount(0);
+  await expect(page.locator('[data-ghost-outline]')).toHaveCount(0);
+  expect(await version()).toBe(created);
+
+  // Asked again and confirmed: saved through the patch, held to its version, and the canvas reads
+  // the entry again, the block now the page's own.
+  const second = await ask();
+  await expect(ghost).toHaveCount(1);
+  await second.getByRole('button', { name: 'Confirm' }).click();
+  await expect(page.getByText(`v${created + 1}`)).toBeVisible({ timeout: 15_000 });
+  await expect(ghost).toHaveCount(0);
+  await expect(blocks.nth(1)).toHaveText('Proposed by Coworker');
+  await page.getByRole('button', { name: 'Layers' }).click();
+  await expect(
+    page.getByRole('tree', { name: 'Main blocks' }).getByRole('treeitem', { level: 1 }),
+  ).toHaveCount(4);
+  await expect(page.getByRole('list', { name: 'Proposed for Main' })).toHaveCount(0);
+  expect(await version()).toBe(created + 1);
+  const saved = await api(request, 'GET', `/preview/${SPACE}/main/entries?sys.id=${id}&limit=1`);
+  const { items } = (await saved.json()) as {
+    items: { fields: { body: Record<string, Record<string, unknown>[]> } }[];
+  };
+  const body = items[0]?.fields.body['en-US'] ?? [];
+  expect(body[0]?._key).toBe('h1');
+  expect(Object.values(body[1] ?? {})).toContain('Proposed by Coworker');
+});

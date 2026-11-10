@@ -2,6 +2,7 @@ import {
   type AssistantContext,
   type AssistantPage,
   isSetupScope,
+  readAssistantFill,
   SETUP_SCOPE,
 } from '@contentworker/domain';
 
@@ -44,8 +45,16 @@ function readPage(raw: unknown): AssistantPage {
   const p = (raw ?? {}) as Record<string, unknown>;
   const contentType =
     typeof p.contentType === 'string' && ID.test(p.contentType) ? p.contentType : '';
-  if (p.kind === 'entry' && typeof p.entryId === 'string' && ID.test(p.entryId) && contentType)
-    return { kind: 'entry', entryId: p.entryId, contentType, label: label(p.label, p.entryId) };
+  if (p.kind === 'entry' && typeof p.entryId === 'string' && ID.test(p.entryId) && contentType) {
+    const fill = readAssistantFill(p.fill);
+    return {
+      kind: 'entry',
+      entryId: p.entryId,
+      contentType,
+      label: label(p.label, p.entryId),
+      ...(fill ? { fill } : {}),
+    };
+  }
   if (p.kind === 'content-type' && contentType)
     return { kind: 'content-type', contentType, label: label(p.label, contentType) };
   return { kind: 'everything' };

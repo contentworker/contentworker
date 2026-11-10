@@ -6,7 +6,7 @@
  * failure, and reads in the past tense ("Not published"), so it still makes sense later.
  */
 
-import { ASSISTANT_TOOLS, isAssistantTool } from '@contentworker/domain';
+import { ASSISTANT_TOOLS, isAssistantTool, readAssistantFill } from '@contentworker/domain';
 import { Button } from '@contentworker/ui/button';
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@contentworker/ui/card';
 import { Collapsible, CollapsibleContent } from '@contentworker/ui/collapsible';
@@ -29,7 +29,7 @@ import { Link, useNavigate } from 'react-router';
 import { Confirmation, ConfirmationActions } from '~/components/ai-elements/confirmation';
 import { MessageAction, MessageResponse } from '~/components/ai-elements/message';
 import { Mark } from '~/components/mark';
-import { useAssistantIfAny } from '../../lib/assistant';
+import { type ProposedBlocks, useAssistantIfAny } from '../../lib/assistant';
 import { metaOf } from '../../lib/assistant-client';
 import { useClient } from '../../lib/client-context';
 import type { Connection, SpaceStarterInfo } from '../../lib/management';
@@ -340,6 +340,8 @@ export function isDestructive(part: Part): boolean {
 export interface TurnScope {
   readonly spaceId?: unknown;
   readonly environmentId?: unknown;
+  /** The slot the turn was asked to fill, as the agent read it (`readAssistantFill`). */
+  readonly fill?: unknown;
 }
 
 /**
@@ -508,10 +510,13 @@ export function ActionCard({
   );
   // A model's proposal (other than a publish, read above) shows what it would change. A page's card
   // needs no reading: the page made it from what the person was looking at.
-  const proposal = useMemo(
-    () => (asking && !direct && target === null ? proposalOf(part) : null),
-    [asking, direct, target, part],
-  );
+  const proposal = useMemo(() => {
+    const p = asking && !direct && target === null ? proposalOf(part) : null;
+    if (p?.kind !== 'blocks') return p;
+    // A turn asked to fill one slot holds its block patch to that slot.
+    const fill = readAssistantFill(turn?.fill);
+    return fill ? { ...p, fill } : p;
+  }, [asking, direct, target, part, turn]);
   const proposalPlace = useMemo(() => {
     if (!proposal) return undefined;
     const p = placeOf(part, conn, direct, turn);
@@ -570,12 +575,54 @@ export function ActionCard({
   }, [asking]);
   const confirmButton = useRef<HTMLButtonElement>(null);
   useHandFocus(confirmOff && !sent, confirmButton, safe, () => focusWithin.current);
+  /** What this person answered here, if they did. */
+  const [said, setSaid] = useState<boolean | null>(null);
   const answer = (approved: boolean) => {
     if (approved && confirmOff) return;
     holder.current?.focus({ preventScroll: true });
     setSent(true);
+    setSaid(approved);
     respond(part, approved);
   };
+
+  // A block patch whose dry run would save as it stands shows on its entry's page as ghosts
+  // (`useProposedBlocks`): while it asks, and on Confirm until its save lands; Not now, a failed
+  // save or a newer request replacing it takes them back. Only ever what the dry run applied.
+  const setGhosts = useAssistantIfAny()?.setProposal;
+  const ghost = useRef<Omit<ProposedBlocks, 'state'> | null>(null);
+  if (asking && said === null) {
+    ghost.current =
+      proposal?.kind === 'blocks' && proposed.status === 'ready' && proposed.applied
+        ? {
+            entryId: proposal.entryId,
+            spaceId: conn.space,
+            environmentId: conn.environment,
+            ops: proposed.applied,
+          }
+        : null;
+  }
+  const approved = (part.approval as { approved?: boolean } | undefined)?.approved;
+  const ghostState: ProposedBlocks['state'] | null = !ghost.current
+    ? null
+    : asking && said === null
+      ? 'pending'
+      : replaced ||
+          said === false ||
+          approved === false ||
+          part.state === 'output-error' ||
+          part.state === 'output-denied'
+        ? 'declined'
+        : part.state === 'output-available'
+          ? 'saved'
+          : 'saving';
+  const ghostKey = ghostState ? JSON.stringify([ghostState, ghost.current]) : null;
+  // Keyed on the ghosts by content (ghostKey).
+  useEffect(() => {
+    if (!setGhosts) return;
+    const g = ghost.current;
+    setGhosts(actionKey, g && ghostState ? { ...g, state: ghostState } : null);
+  }, [ghostKey, setGhosts, actionKey]);
+  useEffect(() => () => setGhosts?.(actionKey, null), [setGhosts, actionKey]);
 
   return (
     // biome-ignore lint/a11y/noStaticElementInteractions: it only notices focus; it is no control.

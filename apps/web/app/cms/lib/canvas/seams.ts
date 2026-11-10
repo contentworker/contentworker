@@ -16,6 +16,7 @@ import {
 } from '@contentworker/sdk-core';
 import type { LiveRect } from '@contentworker/sdk-core/live-preview';
 import type { FrameGeometry } from '../live-preview/frame-channel';
+import type { GhostKind } from '../live-preview/proposals';
 import {
   type CanvasPlace,
   type CanvasSlot,
@@ -109,6 +110,28 @@ export function blockRects(
     if (key !== undefined && !out.has(key)) out.set(key, box.rect);
   }
   return out;
+}
+
+/**
+ * The page's boxes for Coworker's ghost blocks, by key: a block ref of this entry whose key the
+ * proposal names (`ghosts`), whether or not the entry holds it yet. Matched by key alone, so a page
+ * can't draw a proposal's mark on a block the proposal doesn't name.
+ */
+export function ghostRects(
+  geometry: FrameGeometry | null,
+  ghosts: ReadonlyMap<string, GhostKind>,
+  ctx: RefContext,
+): { key: string; kind: GhostKind; rect: LiveRect }[] {
+  if (ghosts.size === 0) return [];
+  const out = new Map<string, { key: string; kind: GhostKind; rect: LiveRect }>();
+  for (const box of geometry?.blocks ?? []) {
+    const path = ownPath(box.ref, ctx);
+    const parsed = path ? parseFieldPath(path) : undefined;
+    const key = parsed?.steps.flatMap((s) => ('key' in s ? [s.key] : [])).at(-1);
+    const kind = key !== undefined ? ghosts.get(key) : undefined;
+    if (key !== undefined && kind && !out.has(key)) out.set(key, { key, kind, rect: box.rect });
+  }
+  return [...out.values()];
 }
 
 /**

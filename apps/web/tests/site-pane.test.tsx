@@ -4,7 +4,7 @@
 // a page that isn't connected, an SDK too old or too new, a page that doesn't show the entry or
 // moved away, answered from another origin, refused the entry, never loaded or can't be shown, and
 // a quiet note when the page refused an edit. Only the frame's own window is heard.
-import type { ContentType, EntryFields } from '@contentworker/domain';
+import type { BlockOp, ContentType, EntryFields } from '@contentworker/domain';
 import type { Capability } from '@contentworker/sdk-core/live-preview';
 import { act, cleanup, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -31,7 +31,11 @@ const onPick = vi.fn();
 function pane(
   fields: EntryFields = { title: { 'en-US': 'Home' } },
   locale = 'en-US',
-  over: { selected?: string | null; allowed?: readonly Capability[] | null } = {},
+  over: {
+    selected?: string | null;
+    allowed?: readonly Capability[] | null;
+    proposal?: readonly BlockOp[] | null;
+  } = {},
 ) {
   return (
     <SitePane
@@ -46,6 +50,7 @@ function pane(
       selected={over.selected ?? null}
       split={false}
       onPick={onPick}
+      proposal={over.proposal ?? null}
     />
   );
 }
@@ -269,5 +274,50 @@ describe('the Site pane', () => {
     fromFrame({ type: 'session', entries: ['e1'], capabilities: ['select'] });
     fromFrame({ type: 'pick', ref: 'the-ref' });
     expect(onPick).toHaveBeenCalledWith('the-ref', ['e1']);
+  });
+
+  it('sends Coworker’s waiting proposal to the frame, says it is on the page, and takes it back', () => {
+    const ghost: BlockOp[] = [
+      {
+        op: 'insert',
+        field: 'body',
+        locale: 'en-US',
+        index: 0,
+        block: { _type: 'cta', _key: 'g1', label: 'Proposed' },
+      },
+    ];
+    const proposing = [...ADMIN_CAPABILITIES, 'proposals'] as Capability[];
+    const view = render(pane(undefined, undefined, { allowed: proposing, proposal: ghost }));
+    const spy = spyFrame();
+    ready();
+    // Sent once the frame is up, after the entry.
+    expect(posted(spy, 'proposal')).toEqual([
+      expect.objectContaining({ type: 'proposal', ops: ghost }),
+    ]);
+    status('live');
+    fromFrame({ type: 'session', entries: ['e1'], capabilities: proposing });
+    fromFrame({ type: 'proposal', shown: true });
+    expect(screen.getByText(/Coworker’s proposal is on the page, marked Proposed/)).toBeTruthy();
+    // Not now: the card takes it back.
+    view.rerender(pane(undefined, undefined, { allowed: proposing, proposal: null }));
+    expect(posted(spy, 'proposal').at(-1)).toMatchObject({ ops: null });
+    fromFrame({ type: 'proposal', shown: false });
+    expect(screen.queryByText(/Coworker’s proposal/)).toBeNull();
+  });
+
+  it('says when the page can’t show a proposal, so the card is where to review it', () => {
+    const ghost: BlockOp[] = [{ op: 'remove', field: 'body', locale: 'en-US', key: 'k1' }];
+    render(pane(undefined, undefined, { proposal: ghost }));
+    ready();
+    status('live');
+    fromFrame({ type: 'session', entries: ['e1'], capabilities: ADMIN_CAPABILITIES });
+    expect(screen.getByText(/doesn’t show proposals on the page/)).toBeTruthy();
+    fromFrame({
+      type: 'session',
+      entries: ['e1'],
+      capabilities: [...ADMIN_CAPABILITIES, 'proposals'],
+    });
+    fromFrame({ type: 'proposal', shown: false, refused: true });
+    expect(screen.getByText(/The page couldn’t show Coworker’s proposal/)).toBeTruthy();
   });
 });
