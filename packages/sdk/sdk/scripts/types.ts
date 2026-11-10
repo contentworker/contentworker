@@ -37,6 +37,7 @@ const PACKAGES: Record<string, string> = {
 /** Each published subpath and the workspace module it re-exports. */
 const ENTRIES: Record<string, string> = {
   index: '@contentworker/sdk-core',
+  blocks: '@contentworker/sdk-core/blocks',
   'inline-edit': '@contentworker/sdk-core/inline-edit',
   'live-preview': '@contentworker/sdk-core/live-preview',
   redirects: '@contentworker/sdk-core/redirects',
