@@ -76,6 +76,7 @@ const ROUTES: readonly (readonly [name: string, path: string])[] = [
   ['taxonomy', '/taxonomy'],
   ['settings: space access', '/settings/team'],
   ['settings: api keys', '/settings/api-keys'],
+  ['settings: connect a frontend', '/settings/frontend'],
   ['settings: connected apps', '/settings/connected-apps'],
   ['settings: roles', '/settings/roles'],
   ['settings: webhooks', '/settings/webhooks'],

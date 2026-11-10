@@ -120,7 +120,8 @@ preview.close();
 
 `connectPreview` does nothing unless the page is in a frame and `adminOrigin` is set, so you can
 call it on every page. `adminOrigin` must be the admin's exact origin (https; http only on
-`localhost`) and must differ from your page's own origin. Your page keeps its own scrolling in the
+`localhost`) and must differ from your page's own origin. **Settings → Connect a frontend** prints
+it, and checks that a page connects ([Connect a frontend](/guides/connect-a-frontend/)). Your page keeps its own scrolling in the
 frame: sticky headers, full-height heroes and lazy loading behave as on the live site.
 
 `emit('page', …)` tells the admin which entries the page renders, so it knows whose state to

@@ -182,3 +182,34 @@ export function previewTemplateVariesByLocale(
   const named = new Set(previewTemplateFields(template));
   return fields.some((f) => named.has(f.apiId) && f.localized);
 }
+
+/**
+ * Where a frontend reaches this deployment, from the admin's origin: by the fleet's convention
+ * (`scripts/fleet.ts`, `hosts()`), Delivery answers on `cdn.<domain>` and the api (Preview, and the
+ * live stream) on `api.<domain>`. On a local stack everything is the one origin: the web Worker
+ * forwards bearer `/delivery/*` and `/preview/*` calls to the Workers behind it.
+ */
+export interface FrontendEndpoints {
+  /** The admin, which frames the site for live preview (`connectPreview`'s `adminOrigin`). */
+  readonly admin: string;
+  /** The Delivery API's origin, for `createDeliveryClient`'s `baseUrl` and `CONTENTWORKER`. */
+  readonly delivery: string;
+  /** The api's origin: Preview (drafts) and the Next.js draft route's `baseUrl`. */
+  readonly preview: string;
+}
+
+const ONE_ORIGIN_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
+
+/** The endpoints for an admin origin, or undefined when it isn't an http(s) URL. */
+export function frontendEndpoints(adminOrigin: string): FrontendEndpoints | undefined {
+  const url = parseAbsoluteUrl(adminOrigin);
+  if (!url || (url.protocol !== 'https:' && url.protocol !== 'http:')) return undefined;
+  const host = `${url.hostname}${url.port ? `:${url.port}` : ''}`;
+  const admin = `${url.protocol}//${host}`;
+  // A bare host (no dot) can't carry the cdn. and api. prefixes either: it is one origin.
+  if (ONE_ORIGIN_HOSTS.has(url.hostname) || !url.hostname.includes('.')) {
+    return { admin, delivery: admin, preview: admin };
+  }
+  const at = (prefix: string) => `${url.protocol}//${prefix}.${host}`;
+  return { admin, delivery: at('cdn'), preview: at('api') };
+}

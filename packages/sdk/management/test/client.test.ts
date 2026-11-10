@@ -224,6 +224,51 @@ describe('@contentworker/sdk-management client', () => {
     expect(JSON.parse(String(calls[1]?.init?.body))).toEqual({ targetEnvironmentId: 'main' });
   });
 
+  it('sets a content type’s preview URL alone, and connects a frontend', async () => {
+    const fetchImpl = fakeFetch((url, init) => {
+      calls.push({ url, init });
+      return url.endsWith('/frontend-connections')
+        ? {
+            space: 's1',
+            environment: 'main',
+            deliveryKey: { id: 'k1', token: 'cwk_cda_x' },
+            previewUrls: [],
+          }
+        : { apiId: 'post' };
+    });
+    const client = createManagementClient({ ...base, fetch: fetchImpl });
+
+    await client.contentTypes.setPreview(
+      'post',
+      'https://site.test/api/draft?entry={id}&token={token}',
+    );
+    expect(calls[0]?.url).toBe(
+      'https://cms.test/spaces/s1/environments/main/content-types/post/preview',
+    );
+    expect(calls[0]?.init?.method).toBe('PUT');
+    expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({
+      urlTemplate: 'https://site.test/api/draft?entry={id}&token={token}',
+    });
+    await client.contentTypes.setPreview('post', null);
+    expect(JSON.parse(String(calls[1]?.init?.body))).toEqual({ urlTemplate: null });
+
+    const connection = await client.frontend.connect({
+      name: 'Site',
+      preview: true,
+      roleId: 'r-site',
+      previewRoleId: 'r-preview',
+    });
+    expect(connection.deliveryKey.token).toBe('cwk_cda_x');
+    expect(calls[2]?.url).toBe('https://cms.test/spaces/s1/environments/main/frontend-connections');
+    expect(calls[2]?.init?.method).toBe('POST');
+    expect(JSON.parse(String(calls[2]?.init?.body))).toEqual({
+      name: 'Site',
+      preview: true,
+      roleId: 'r-site',
+      previewRoleId: 'r-preview',
+    });
+  });
+
   it('resolves void for 204 responses', async () => {
     const fetchImpl = fakeFetch((url, init) => {
       calls.push({ url, init });

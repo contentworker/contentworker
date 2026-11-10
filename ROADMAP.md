@@ -386,7 +386,11 @@ Built on Blocks and the frontend runtime. Layouts stay a typed tree; rich text s
   `/block-config/effective`: the dock and Add offer only the allowed blocks, and both judge a save
   as the server will. Exports, snapshot imports and environment clones carry the catalog in force
   and its config (each restarting at version 1 in the copy; an import names what no longer passes
-  the push and set checks in its report).
+  the push and set checks in its report). Promotions copy both, pinned on both sides, and wait for
+  approval when they change which blocks go where, a slot's counts or locks, or remove blocks a
+  type holds; environment compare reports how they differ, as a promotion judges it (a merge
+  never copies them). Release note: after a rollback past this, reject waiting promotions
+  requested with blocks (older code applies them without the blocks).
 - [ ] **Canvas editor.** A toolbox, selection overlay and undo in `apps/web` over the preview channel.
   The canvas (`/content/:typeId/:entryId/canvas`) is in place: seams from the page's `layout`, a
   dock offering exactly what a slot takes, an inspector (Content, Data, Look), Layers as the
@@ -396,9 +400,18 @@ Built on Blocks and the frontend runtime. Layouts stay a typed tree; rich text s
   shown as ghosts on the page and in Layers until it is confirmed or declined. Still to come:
   dragging blocks with a fine pointer, block thumbnails (the admin's `img-src` takes no other
   origin), and per-breakpoint overrides.
-- [ ] **Frontend SDK extras.** `client.live()` and `useLiveEntry`, a Next.js draft-mode helper, a
-  preview URL template per content type, and a "connect a frontend" screen that mints a delivery key
-  and prints its config.
+- [x] **Frontend SDK extras.** `client.live()` over the live stream (reconnecting with backoff,
+  stopping when the key is refused) with `useLiveEntry` / `useLiveEntries` for React and Vue; a
+  Next.js draft-mode helper (`@contentworker/sdk/next`: a route that checks the preview token, and a
+  client that, in draft mode, reads only the preview link's entry with the link's own token, and
+  everything else from Delivery, so a site needs no Preview key); the preview URL template per
+  content type, now settable alone (`PUT …/content-types/:apiId/preview`,
+  `model_set_content_type_preview`); and Settings →
+  Connect a frontend, which mints a Delivery key (and a Preview key) through `connectFrontend`
+  (`POST …/frontend-connections`, `frontend_connect`), prints the config for the frontend runtime,
+  the SDK, Next.js and live preview, sets the preview URLs, and checks a page connects through the
+  Site frame. Ships to sites in the next SDK release. `@contentworker/frontend` doesn't take an
+  admin origin yet, so a runtime site doesn't connect for live preview.
 
 #### Follow-ups for M6
 

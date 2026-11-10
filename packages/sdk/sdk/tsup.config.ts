@@ -11,6 +11,7 @@ const entries = [
   'blocks',
   'inline-edit',
   'live-preview',
+  'next',
   'redirects',
   'webhooks',
   'rich-text',

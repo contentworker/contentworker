@@ -827,6 +827,18 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   **Settings** is a sheet (from the side; the bottom on a phone) whose form is drawn from its
   manifest's fields: a secret shows an `idle` Set or Not set stamp with Set/Replace and Clear,
   never a value; a refusal sits beside its field and takes focus.
+  **Connect a frontend** (Access) is four cards: the keys (a row of Name, a Delivery key role and
+  Create key; under it an "Also create a Preview key" checkbox named by `aria-label`, and when
+  ticked, on a line of its own, a Preview key role, so ticking moves nothing; once minted, a
+  "Create other keys…" that asks in place first), whose tokens show once in an Alert, each in
+  mono with an outline copy button named for it; Configuration, `Tabs` of the ways a site reads
+  (Frontend runtime, SDK, Next.js, Live preview), each a muted line held to the measure and
+  `CodeBlock`s with a title and copy button; Preview URLs, a labelled mono input per content
+  type, its refusal beneath it as an alert tied by `aria-describedby`, focus back on the input; and Check the connection, a type select
+  and an outline Check connection whose answer is an `ok` "Connected" stamp with the page's origin,
+  or an Alert saying why not (destructive for an SDK it can't speak with). The check's frame is
+  off screen, `aria-hidden` and `inert`, and goes once the page answers; picking another type
+  waits for the button.
   **Trash** (Workspace) is one section: a segmented Keep until deleted / Delete after a while
   (off by default), and when on a "Days in the trash" field (1 to 3650; an out-of-range value is
   said under it, tied to it by `aria-describedby`), with a muted line saying what happens (an

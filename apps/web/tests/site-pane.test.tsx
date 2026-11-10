@@ -186,6 +186,10 @@ describe('the Site pane', () => {
     expect(screen.getByRole('link', { name: 'Set up live preview' }).getAttribute('href')).toBe(
       LIVE_PREVIEW_GUIDE,
     );
+    // And the screen that prints the page's config and checks it connects.
+    expect(screen.getByRole('link', { name: /^Connect a frontend/ }).getAttribute('href')).toBe(
+      '/settings/frontend',
+    );
     expect(frame()).toBeTruthy();
     expect(
       (screen.getByRole('radio', { name: 'View' }) as HTMLElement).getAttribute('aria-checked'),

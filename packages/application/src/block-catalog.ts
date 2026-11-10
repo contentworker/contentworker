@@ -267,8 +267,8 @@ export async function pushBlockCatalog(
   return { ...result, applied: true };
 }
 
-/** A thumbnail naming an asset names one in the scope. */
-async function assertThumbnailAssets(
+/** A thumbnail naming an asset names one in the scope. A promotion checks it before it waits. */
+export async function assertThumbnailAssets(
   ctx: AppContext,
   scope: Scope,
   blocks: readonly BlockManifest[],

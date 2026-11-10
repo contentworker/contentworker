@@ -70,7 +70,11 @@ export async function seedEverySection(ctx: AppContext, blob: BlobStore, scope: 
     name: 'Main',
     items: [{ label: 'Home', link: { type: 'url', url: '/' } }],
   });
-  // A blocks field for the catalog to target, and a config narrowing what it allows.
+  await seedBlocks(ctx, scope);
+}
+
+/** A blocks field for the catalog to target, and a config narrowing what it allows. */
+export async function seedBlocks(ctx: AppContext, scope: Scope) {
   await createContentType(ctx, SYSTEM_CALLER, scope, {
     apiId: 'page',
     name: 'Page',

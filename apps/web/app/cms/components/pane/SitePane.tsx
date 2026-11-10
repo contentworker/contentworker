@@ -211,7 +211,19 @@ export function SiteNotice({
               appear here as you type once the page calls{' '}
               <span className="font-mono">connectPreview</span>.
             </p>
-            <GuideLink />
+            <p className="flex flex-wrap gap-x-4">
+              {/* The screen that prints the page's config and checks it connects: in a new tab,
+                  so the edit in hand isn't left. */}
+              <a
+                href="/settings/frontend"
+                target="_blank"
+                rel="noreferrer"
+                className="font-medium text-link hover:underline"
+              >
+                Connect a frontend<span className="sr-only"> (opens in a new tab)</span>
+              </a>
+              <GuideLink />
+            </p>
           </AlertDescription>
         </Alert>
       );

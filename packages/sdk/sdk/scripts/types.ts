@@ -40,6 +40,7 @@ const ENTRIES: Record<string, string> = {
   blocks: '@contentworker/sdk-core/blocks',
   'inline-edit': '@contentworker/sdk-core/inline-edit',
   'live-preview': '@contentworker/sdk-core/live-preview',
+  next: '@contentworker/sdk-core/next',
   redirects: '@contentworker/sdk-core/redirects',
   webhooks: '@contentworker/sdk-core/webhooks',
   'rich-text': '@contentworker/sdk-rich-text',

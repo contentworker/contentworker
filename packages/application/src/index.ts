@@ -54,6 +54,7 @@ export * from './events/dispatch';
 export * from './events/relay';
 export * from './events/retention';
 export * from './field-values';
+export * from './frontend-connection';
 export * from './functions';
 export * from './generation';
 export * from './hooks';
