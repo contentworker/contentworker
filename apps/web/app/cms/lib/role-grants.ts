@@ -1,5 +1,5 @@
 /**
- * The role editor's content grants: which of the five actions a grant holds, and the grant that
+ * The role editor's content grants: which of the six actions a grant holds, and the grant that
  * holding a different set means. The API keeps `delete` and `unpublish` implied (by `write` or
  * `publish`, and by `publish`) unless a grant withholds them, so a box ticked here is either a
  * listed action or the absence of a withhold.
@@ -22,6 +22,7 @@ export const CONTENT_ACTION_LABELS: Record<ContentAction, { label: string; hint:
   read: { label: 'Read', hint: 'See drafts and history' },
   write: { label: 'Write', hint: 'Create and edit drafts' },
   publish: { label: 'Publish', hint: 'Make changes live' },
+  lock: { label: 'Lock', hint: 'Lock and unlock regions of an entry’s blocks' },
   delete: { label: 'Delete', hint: 'Move to the trash, and purge with Publish' },
   unpublish: { label: 'Unpublish', hint: 'Take live entries down' },
 };

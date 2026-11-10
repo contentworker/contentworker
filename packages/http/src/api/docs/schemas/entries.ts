@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { blockLock } from './block-locks';
 
 export const localizedValue = z
   .record(z.string().describe('BCP-47 locale tag'), z.unknown())
@@ -50,6 +51,13 @@ export const entry = z.object({
   currentVersion: z.int(),
   publishedVersion: z.int().optional(),
   ...authorship,
+  blockLocks: z
+    .array(blockLock)
+    .optional()
+    .describe(
+      'The locked regions of its blocks (GET /entries/{id}/block-locks); absent when it holds ' +
+        'none. Management reads only: Delivery and Preview never return them',
+    ),
   fields: entryFields.optional(),
 });
 

@@ -1,4 +1,4 @@
-import { type Principal, SCOPES, scopesForKind } from '@contentworker/domain';
+import { type Principal, rolePresetDefinition, SCOPES, scopesForKind } from '@contentworker/domain';
 import { FixedClock, InMemoryContentStore, SequenceIdGenerator } from '@contentworker/test-kit';
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
@@ -87,12 +87,23 @@ describe('minting and widening API keys', () => {
         roleId: await presetRoleId(ctx, S, 'manager'),
       })
     ).apiKey;
-    // Narrower scopes, and the same grants: allowed.
+    // Narrower scopes, and grants that hold less (an editor doesn't lock): allowed.
     await expect(assignApiKeyRole(ctx, S, key.id, 'editor', NO_SSO, pat)).resolves.toBeDefined();
-    // Other grants, even narrower ones, count as a change it may not make (grants aren't ordered).
-    await expect(assignApiKeyRole(ctx, S, key.id, 'approver', NO_SSO, pat)).rejects.toThrow(
-      /widen/,
-    );
+    await expect(assignApiKeyRole(ctx, S, key.id, 'approver', NO_SSO, pat)).resolves.toBeDefined();
+    // Back up to grants that hold more: refused, even with no new scope.
+    const reader = await createRole(ctx, S, {
+      name: 'Approver who writes',
+      scopes: rolePresetDefinition('approver').scopes,
+      contentGrants: rolePresetDefinition('editor').contentGrants,
+    });
+    await expect(assignApiKeyRole(ctx, S, key.id, reader.id, NO_SSO, pat)).rejects.toThrow(/widen/);
+    // Grants on another type, even narrower-looking ones, are a change, not a narrowing.
+    const typed = await createRole(ctx, S, {
+      name: 'Approver of posts',
+      scopes: rolePresetDefinition('approver').scopes,
+      contentGrants: [{ contentTypeApiId: 'post', actions: ['read'] }],
+    });
+    await expect(assignApiKeyRole(ctx, S, key.id, typed.id, NO_SSO, pat)).rejects.toThrow(/widen/);
     // Wider scopes: refused, over either use-case.
     await expect(assignApiKeyRole(ctx, S, key.id, 'admin', NO_SSO, pat)).rejects.toThrow(/widen/);
     await expect(

@@ -140,13 +140,18 @@ export async function diffVersions(
  * fields against the current content type, so a restore can't reintroduce a
  * value the model no longer accepts. With `expectedVersion`, refused (409) when the entry has
  * moved past the version the caller saw.
+ *
+ * A copy, so the block config doesn't judge it; but it is held to the locked regions the entry
+ * holds now (422 `region_locked`, `region_frozen`), unless `restorer` holds `lock` on its type: one
+ * who could lift the lock may restore through it (owner decision, 2026-11-09). Without a
+ * `restorer`, nobody vouches for `lock`, and the regions judge it.
  */
 export async function restoreVersion(
   ctx: AppContext,
   scope: Scope,
   entryId: string,
   version: number,
-  opts: ExpectedVersion = {},
+  opts: ExpectedVersion & { readonly restorer?: Principal } = {},
 ): Promise<EntryView> {
   if (opts.expectedVersion !== undefined) {
     const found = await ctx.store.entries.get(scope, entryId);
@@ -156,5 +161,8 @@ export async function restoreVersion(
   const target = await getVersion(ctx, scope, entryId, version);
   // The old version whole, as it was stored (see `EntryWriteOptions.copy`): a field its rules now
   // disable takes its old value back rather than refusing the restore.
-  return updateEntry(ctx, scope, entryId, target.fields, { copy: true });
+  return updateEntry(ctx, scope, entryId, target.fields, {
+    copy: true,
+    regionsUnless: opts.restorer ?? null,
+  });
 }

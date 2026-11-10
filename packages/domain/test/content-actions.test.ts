@@ -3,12 +3,14 @@ import {
   assertCanGrant,
   authorizeContent,
   authorizeTrash,
+  blockLocksFor,
   CONTENT_ACTIONS,
   type ContentAction,
   type ContentTypeGrant,
   canAccessContentType,
   ENTRY_OPERATION_ACTIONS,
   grantedActions,
+  grantsNoWider,
   type ListedContentAction,
   type Principal,
   ROLE_PRESET_DEFINITIONS,
@@ -70,16 +72,23 @@ describe('finer content actions: delete and unpublish', () => {
     }
   });
 
-  it('gives every preset all five actions on every type, unchanged', () => {
+  it('gives every writing preset the five content actions on every type, and lock to managers up', () => {
     for (const def of ROLE_PRESET_DEFINITIONS) {
       const [grant] = def.contentGrants;
       expect(grant?.deniedActions).toBeUndefined();
       const held = grantedActions(grant as ContentTypeGrant);
+      const locks = def.preset === 'manager' || def.preset === 'admin';
       const expected: ContentAction[] = def.contentGrants.some((g) => g.actions.includes('write'))
-        ? [...CONTENT_ACTIONS]
+        ? CONTENT_ACTIONS.filter((a) => a !== 'lock' || locks)
         : ['read'];
       expect([...held].sort(), def.preset).toEqual([...expected].sort());
     }
+  });
+
+  it('never implies lock: a grant holds it only when it lists it', () => {
+    const all: ContentTypeGrant = { contentTypeApiId: '*', actions: ['read', 'write', 'publish'] };
+    expect(grantedActions(all).has('lock')).toBe(false);
+    expect(grantedActions({ ...all, actions: [...all.actions, 'lock'] }).has('lock')).toBe(true);
   });
 
   it('implies delete from write or publish and unpublish from publish', () => {
@@ -209,5 +218,98 @@ describe('finer content actions: delete and unpublish', () => {
         grant([{ contentTypeApiId: 'page', actions: ['read', 'write'] }]),
       ]),
     ).not.toThrow();
+  });
+});
+
+describe('grantsNoWider', () => {
+  const g = (actions: ListedContentAction[], rest: Partial<ContentTypeGrant> = {}) => ({
+    contentTypeApiId: '*',
+    actions,
+    ...rest,
+  });
+
+  it('allows the same grants, and the same grants holding fewer actions', () => {
+    expect(grantsNoWider([g(['read', 'write'])], [g(['read', 'write'])])).toBe(true);
+    expect(grantsNoWider([g(['read', 'write'])], [g(['read', 'write', 'lock'])])).toBe(true);
+    expect(grantsNoWider([g(['read'])], [g(['read', 'write', 'publish'])])).toBe(true);
+    expect(grantsNoWider(undefined, [])).toBe(true);
+  });
+
+  it('refuses more actions, or an implied one a denial held back', () => {
+    expect(grantsNoWider([g(['read', 'write', 'lock'])], [g(['read', 'write'])])).toBe(false);
+    // Fewer listed, but no longer denying delete: write now deletes.
+    expect(
+      grantsNoWider(
+        [g(['read', 'write'])],
+        [g(['read', 'write', 'publish'], { deniedActions: ['delete'] })],
+      ),
+    ).toBe(false);
+    expect(
+      grantsNoWider(
+        [g(['read', 'write'], { deniedActions: ['delete'] })],
+        [g(['read', 'write', 'publish'], { deniedActions: ['delete'] })],
+      ),
+    ).toBe(true);
+  });
+
+  it('refuses dropping a denial the held grant names, even with publish gone', () => {
+    expect(
+      grantsNoWider(
+        [g(['read', 'write'])],
+        [g(['read', 'write', 'publish'], { deniedActions: ['unpublish'] })],
+      ),
+    ).toBe(false);
+    expect(
+      grantsNoWider(
+        [g(['read', 'write'], { deniedActions: ['unpublish'] })],
+        [g(['read', 'write', 'publish'], { deniedActions: ['unpublish'] })],
+      ),
+    ).toBe(true);
+  });
+
+  it('refuses fewer or more grants (no grants is unrestricted), another type, or other field rules', () => {
+    expect(grantsNoWider([], [g(['read'])])).toBe(false);
+    expect(
+      grantsNoWider([g(['read']), g(['read'], { contentTypeApiId: 'post' })], [g(['read'])]),
+    ).toBe(false);
+    expect(grantsNoWider([g(['read'], { contentTypeApiId: 'post' })], [g(['read'])])).toBe(false);
+    expect(grantsNoWider([g(['read'])], [g(['read'], { deniedFields: ['secret'] })])).toBe(false);
+    expect(
+      grantsNoWider([g(['read', 'write'])], [g(['read', 'write'], { readOnlyFields: ['slug'] })]),
+    ).toBe(false);
+    expect(
+      grantsNoWider(
+        [g(['read'], { deniedFields: ['b', 'a'] })],
+        [g(['read', 'write'], { deniedFields: ['a', 'b'] })],
+      ),
+    ).toBe(true);
+  });
+});
+
+describe('blockLocksFor', () => {
+  const locks = [
+    { field: 'body', keys: ['a'], lockedBy: 'user:1' },
+    { field: 'secret', keys: ['b'], lockedBy: 'user:1' },
+  ];
+  it('keeps every lock, and who locked it, for a writer', () => {
+    expect(blockLocksFor({ kind: 'key', scopes: [SCOPES.contentWrite] }, 'page', locks)).toEqual(
+      locks,
+    );
+  });
+  it('drops who locked it for a reader that doesn’t see who wrote what', () => {
+    expect(blockLocksFor({ kind: 'key', scopes: [SCOPES.previewRead] }, 'page', locks)).toEqual([
+      { field: 'body', keys: ['a'] },
+      { field: 'secret', keys: ['b'] },
+    ]);
+  });
+  it('drops the locks on a field the grant denies', () => {
+    const principal = {
+      kind: 'key' as const,
+      scopes: [SCOPES.contentWrite],
+      contentGrants: [
+        { contentTypeApiId: 'page', actions: ['read' as const], deniedFields: ['secret'] },
+      ],
+    };
+    expect(blockLocksFor(principal, 'page', locks)).toEqual([locks[0]]);
   });
 });

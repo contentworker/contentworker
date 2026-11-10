@@ -57,14 +57,20 @@ describe('role presets', () => {
     expect(scopes.admin).toEqual([...(scopes.manager ?? []), SCOPES.spaceAdmin]);
     // Admin holds every scope there is.
     expect(new Set(scopes.admin)).toEqual(new Set(Object.values(SCOPES)));
-    // Every preset reaches every content type: viewers and approvers read, editors and up write.
+    // Every preset reaches every content type: viewers and approvers read, editors and up write,
+    // managers and admins also lock regions of an entry's blocks.
     const grants = Object.fromEntries(
       ROLE_PRESET_DEFINITIONS.map((d) => [d.preset, d.contentGrants]),
     );
     expect(grants.viewer).toEqual([{ contentTypeApiId: '*', actions: ['read'] }]);
     expect(grants.approver).toEqual([{ contentTypeApiId: '*', actions: ['read'] }]);
-    for (const p of ['editor', 'manager', 'admin']) {
-      expect(grants[p]).toEqual([{ contentTypeApiId: '*', actions: ['read', 'write', 'publish'] }]);
+    expect(grants.editor).toEqual([
+      { contentTypeApiId: '*', actions: ['read', 'write', 'publish'] },
+    ]);
+    for (const p of ['manager', 'admin']) {
+      expect(grants[p]).toEqual([
+        { contentTypeApiId: '*', actions: ['read', 'write', 'publish', 'lock'] },
+      ]);
     }
   });
 

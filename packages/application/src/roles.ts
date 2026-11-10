@@ -2,6 +2,7 @@ import {
   type ContentTypeGrant,
   DelegatedKeyMintError,
   grantsAdmin,
+  grantsNoWider,
   IMPLIED_CONTENT_ACTIONS,
   isDelegatedBearer,
   LISTED_CONTENT_ACTIONS,
@@ -86,12 +87,13 @@ export async function createRole(
 /**
  * A delegated bearer (an OAuth or personal access token) can't widen an active API key by editing
  * the role it is bound to, as it can't by re-roling the key (`assignApiKeyRole`): new scopes, or
- * changed content grants, are refused while any such key holds the role. Narrowing scopes is not.
+ * content grants that aren't a narrowing of the held ones (`grantsNoWider`), are refused while any
+ * such key holds the role. Narrowing scopes or a grant's actions is not.
  */
 async function refuseWideningKeys(ctx: AppContext, existing: Role, input: RoleInput) {
   const widens =
     input.scopes.some((s) => !existing.scopes.includes(s)) ||
-    JSON.stringify(input.contentGrants ?? []) !== JSON.stringify(existing.contentGrants ?? []);
+    !grantsNoWider(input.contentGrants, existing.contentGrants);
   if (!widens) return;
   const keys = await ctx.store.auth.list(existing.spaceId);
   if (keys.some((k) => k.roleId === existing.id && !k.revoked)) throw new DelegatedKeyMintError();

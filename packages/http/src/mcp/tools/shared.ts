@@ -122,8 +122,11 @@ export const entryFields = z
 export const grantShape = z.object({
   contentTypeApiId: z.string().describe("content type apiId, or '*' for all"),
   actions: z
-    .array(z.enum(['read', 'write', 'publish']))
-    .describe('write also grants delete (trash, purge); publish also grants delete and unpublish'),
+    .array(z.enum(['read', 'write', 'publish', 'lock']))
+    .describe(
+      'write also grants delete (trash, purge); publish also grants delete and unpublish; lock ' +
+        'locks and unlocks regions of an entry’s blocks',
+    ),
   deniedActions: z
     .array(z.enum(['delete', 'unpublish']))
     .optional()

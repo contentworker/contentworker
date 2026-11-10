@@ -41,19 +41,26 @@ export function scopesForKind(kind: ApiKeyKind): PermissionScope[] {
 }
 
 /**
- * Content-level actions a role can grant per content type. `read`, `write` and `publish` are listed
- * on a grant; `delete` (trash and purge) and `unpublish` are finer actions a grant holds by
- * implication and can withhold ({@link ContentTypeGrant.deniedActions}).
+ * Content-level actions a role can grant per content type. `read`, `write`, `publish` and `lock`
+ * are listed on a grant; `delete` (trash and purge) and `unpublish` are finer actions a grant holds
+ * by implication and can withhold ({@link ContentTypeGrant.deniedActions}). `lock` locks and
+ * unlocks regions of an entry's blocks (`block-locks.ts`), whoever locked them; a grant holds it
+ * only when it lists it, so no grant stored before it existed gains it.
  */
-export type ContentAction = 'read' | 'write' | 'publish' | 'delete' | 'unpublish';
+export type ContentAction = 'read' | 'write' | 'publish' | 'lock' | 'delete' | 'unpublish';
 
 /** The actions a grant lists. */
-export type ListedContentAction = 'read' | 'write' | 'publish';
+export type ListedContentAction = 'read' | 'write' | 'publish' | 'lock';
 
 /** The actions a grant holds by implication unless it withholds them. */
 export type ImpliedContentAction = 'delete' | 'unpublish';
 
-export const LISTED_CONTENT_ACTIONS: readonly ListedContentAction[] = ['read', 'write', 'publish'];
+export const LISTED_CONTENT_ACTIONS: readonly ListedContentAction[] = [
+  'read',
+  'write',
+  'publish',
+  'lock',
+];
 export const IMPLIED_CONTENT_ACTIONS: readonly ImpliedContentAction[] = ['delete', 'unpublish'];
 export const CONTENT_ACTIONS: readonly ContentAction[] = [
   ...LISTED_CONTENT_ACTIONS,
@@ -121,6 +128,37 @@ export function grantedActions(grant: ContentTypeGrant): ReadonlySet<ContentActi
     if (canHoldAction(grant.actions, action) && !withheld.has(action)) held.add(action);
   }
   return held;
+}
+
+/**
+ * Whether `next` grants nothing `held` doesn't: the same grants, one for one and in order, each on
+ * the same content type with the same field rules, holding a subset of the held grant's actions
+ * (implied ones included) and keeping every denial the held grant names. Anything else counts as a
+ * change, not a narrowing: grants aren't ordered against each other, and no grants at all is
+ * unrestricted, so fewer grants can mean more. Lets a delegated bearer move a key from a role
+ * that locks to one that doesn't (Manager to Editor) without being able to widen it.
+ */
+export function grantsNoWider(
+  next: readonly ContentTypeGrant[] | undefined,
+  held: readonly ContentTypeGrant[] | undefined,
+): boolean {
+  const a = next ?? [];
+  const b = held ?? [];
+  if (a.length !== b.length) return false;
+  const sameSet = (x?: readonly string[], y?: readonly string[]) =>
+    JSON.stringify([...(x ?? [])].sort()) === JSON.stringify([...(y ?? [])].sort());
+  return a.every((g, i) => {
+    const h = b[i];
+    if (!h || g.contentTypeApiId !== h.contentTypeApiId) return false;
+    if (!sameSet(g.deniedFields, h.deniedFields) || !sameSet(g.readOnlyFields, h.readOnlyFields)) {
+      return false;
+    }
+    // A denial is read on its own, not only through grantedActions (trash and bulk jobs read
+    // `unpublish` directly), so every one the held grant names must survive.
+    if (!(h.deniedActions ?? []).every((a) => g.deniedActions?.includes(a))) return false;
+    const mine = grantedActions(h);
+    return [...grantedActions(g)].every((action) => mine.has(action));
+  });
 }
 
 /**
@@ -499,12 +537,59 @@ export function assertAuthorIdQuery(
   }
 }
 
-/** An entry without who wrote it, for a principal that doesn't see that ({@link seesAuthorIds}). */
+/** A locked region as a reader sees it: `lockedBy` is a person's id, like `createdBy`. */
+interface ReadableBlockLock {
+  readonly field: string;
+  readonly lockedBy?: unknown;
+}
+
+/**
+ * The locks this principal may read: none on a field its grant denies (a lock's keys would say
+ * which blocks a hidden field holds), and without `lockedBy` for one that doesn't see who wrote
+ * what ({@link seesAuthorIds}). Unchanged for everyone else.
+ */
+export function blockLocksFor<L extends ReadableBlockLock>(
+  principal: Pick<Principal, 'kind' | 'scopes' | 'contentGrants'>,
+  contentTypeApiId: string,
+  locks: readonly L[],
+): readonly (L | Omit<L, 'lockedBy'>)[] {
+  const denied = principal.contentGrants
+    ? (grantFor(principal as Principal, contentTypeApiId)?.deniedFields ?? [])
+    : [];
+  const readable = denied.length ? locks.filter((l) => !denied.includes(l.field)) : locks;
+  if (seesAuthorIds(principal)) return readable;
+  return readable.map(({ lockedBy: _by, ...rest }) => rest);
+}
+
+/**
+ * An entry without who wrote it, for a principal that doesn't see that ({@link seesAuthorIds}),
+ * and with only the locks it may read ({@link blockLocksFor}).
+ */
 export function withAuthorIdsFor<
-  T extends { readonly createdBy?: unknown; readonly updatedBy?: unknown },
->(principal: Pick<Principal, 'kind' | 'scopes'>, entry: T): T | Omit<T, 'createdBy' | 'updatedBy'> {
-  if (seesAuthorIds(principal)) return entry;
-  const { createdBy: _c, updatedBy: _u, ...rest } = entry;
+  T extends {
+    readonly createdBy?: unknown;
+    readonly updatedBy?: unknown;
+    readonly contentTypeApiId?: unknown;
+    readonly blockLocks?: unknown;
+  },
+>(
+  principal: Pick<Principal, 'kind' | 'scopes'> & Partial<Pick<Principal, 'contentGrants'>>,
+  entry: T,
+): T | Omit<T, 'createdBy' | 'updatedBy'> {
+  const locks = entry.blockLocks;
+  const locked =
+    Array.isArray(locks) && typeof entry.contentTypeApiId === 'string'
+      ? {
+          ...entry,
+          blockLocks: blockLocksFor(
+            principal,
+            entry.contentTypeApiId,
+            locks as readonly ReadableBlockLock[],
+          ),
+        }
+      : entry;
+  if (seesAuthorIds(principal)) return locked;
+  const { createdBy: _c, updatedBy: _u, ...rest } = locked;
   return rest;
 }
 

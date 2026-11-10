@@ -4,7 +4,9 @@ import {
   authorize,
   authorizeContent,
   blockConfigIssues,
+  blockVariants,
   type ContentType,
+  EMPTY_BLOCK_CONFIG,
   type EntryFields,
   NotFoundError,
   normalizeSlugFields,
@@ -16,7 +18,7 @@ import {
   ValidationError,
   validateEntryFields,
 } from '@contentworker/domain';
-import type { ImportSource, SourceRecord } from '@contentworker/ports';
+import type { EntryWithFields, ImportSource, SourceRecord } from '@contentworker/ports';
 import { loadBlockRules } from './block-config';
 import type { AppContext } from './context';
 import { createEntry, updateEntry } from './entries';
@@ -461,8 +463,9 @@ const STORED_PAGE = 100;
  * Adds to each record's issues what the block config refuses in it, so the analysis shows what the
  * run would refuse: an import is new content from the caller, judged as the create or update it
  * is (`EntryWriteOptions.imported`). A skipped record is judged as the create it would have been,
- * as validation judges it. Reads nothing for a type the config doesn't touch, and for updates the
- * fields they replace, a page of entries per statement.
+ * as validation judges it. An update is also held to the locked regions the entry holds (a new
+ * entry holds none). Reads nothing for a type with no blocks field, and for updates the entries
+ * they replace, a page of entries per statement.
  */
 async function planBlockConfig(
   ctx: AppContext,
@@ -471,27 +474,29 @@ async function planBlockConfig(
   planned: PlannedRecord[],
   locales: readonly string[],
 ): Promise<void> {
+  if (!contentType.fields.some((f) => blockVariants(f) !== undefined)) return;
   const rules = await loadBlockRules(ctx, scope, contentType);
-  if (!rules) return;
   const updates = planned.flatMap((p) =>
     p.action === 'update' && p.entryId && p.issues.length === 0 ? [p.entryId] : [],
   );
-  const stored = new Map<string, EntryFields>();
+  if (!rules && updates.length === 0) return;
+  const stored = new Map<string, EntryWithFields>();
   for (let i = 0; i < updates.length; i += STORED_PAGE) {
     for (const e of await ctx.store.entries.getMany(scope, updates.slice(i, i + STORED_PAGE))) {
-      stored.set(e.entry.id, e.fields);
+      stored.set(e.entry.id, e);
     }
   }
   planned.forEach((p, i) => {
     if (p.issues.length > 0) return;
-    const before = p.action === 'update' && p.entryId ? stored.get(p.entryId) : undefined;
+    const held = p.action === 'update' && p.entryId ? stored.get(p.entryId) : undefined;
     const found = blockConfigIssues(
       contentType,
-      rules.catalog,
-      rules.config,
-      before,
+      rules?.catalog ?? null,
+      rules?.config ?? EMPTY_BLOCK_CONFIG,
+      held?.fields,
       p.fields,
       locales,
+      held?.entry.blockLocks,
     );
     if (found.length > 0) {
       planned[i] = { ...p, issues: found.map((f) => `${f.field}: ${f.message}`) };

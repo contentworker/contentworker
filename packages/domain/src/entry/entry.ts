@@ -1,3 +1,4 @@
+import type { BlockLock } from '../content-type/block-locks';
 import { InvalidStateError } from '../errors';
 import type { EntryFields, EntryStatus } from '../types';
 
@@ -30,6 +31,12 @@ export interface Entry {
    * id. Read it as `effectivePosition`.
    */
   readonly position?: string | null;
+  /**
+   * The locked regions of its blocks (`block-locks.ts`): entry state, not content. Written only by
+   * a lock set and kept by the store through every save, so a version restore keeps the locks held
+   * now; absent when it holds none. Never in a version, a published row, Delivery or Preview.
+   */
+  readonly blockLocks?: readonly BlockLock[];
 }
 
 /** An immutable point-in-time snapshot of an entry's field values. */

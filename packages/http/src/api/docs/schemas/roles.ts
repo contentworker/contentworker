@@ -3,8 +3,11 @@ import { z } from 'zod';
 export const contentGrant = z.object({
   contentTypeApiId: z.string().describe("A content type's apiId, or '*' for every type"),
   actions: z
-    .array(z.enum(['read', 'write', 'publish']))
-    .describe('`write` also grants `delete`; `publish` also grants `delete` and `unpublish`'),
+    .array(z.enum(['read', 'write', 'publish', 'lock']))
+    .describe(
+      '`write` also grants `delete`; `publish` also grants `delete` and `unpublish`; `lock` ' +
+        'locks and unlocks regions of an entry’s blocks, and is only ever listed',
+    ),
   deniedActions: z
     .array(z.enum(['delete', 'unpublish']))
     .optional()

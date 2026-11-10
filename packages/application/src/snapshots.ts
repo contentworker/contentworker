@@ -9,6 +9,7 @@ import {
   assetCollectionName,
   assetFolderName,
   assetFolderPath,
+  type BlockLock,
   type Concept,
   type ConceptScheme,
   type ContentType,
@@ -108,6 +109,11 @@ export interface SnapshotEntry {
   readonly createdAt?: string;
   readonly createdBy?: string;
   readonly firstPublishedAt?: string;
+  /**
+   * Its locked regions: only in a clone's own export (`ExportOptions.blockLocks`), and only a
+   * clone writes them (`ImportOptions.keepCreators`). An export file never carries a lock.
+   */
+  readonly blockLocks?: readonly BlockLock[];
 }
 
 /**
@@ -182,6 +188,8 @@ const isV2 = (w: SnapshotWorkflow): w is SnapshotWorkflowV2 =>
 export interface ExportOptions {
   /** Cap on entries per content type. Omit for everything. */
   readonly limit?: number;
+  /** Include each entry's locked regions: a clone's export only, never a file someone keeps. */
+  readonly blockLocks?: boolean;
 }
 
 /**
@@ -243,6 +251,9 @@ export async function exportSnapshot(
       ...(r.entry.createdAt ? { createdAt: r.entry.createdAt } : {}),
       ...(r.entry.createdBy ? { createdBy: r.entry.createdBy } : {}),
       ...(r.entry.firstPublishedAt ? { firstPublishedAt: r.entry.firstPublishedAt } : {}),
+      ...(options.blockLocks && r.entry.blockLocks?.length
+        ? { blockLocks: r.entry.blockLocks }
+        : {}),
     })),
     assets: await allAssets(ctx, scope),
     assetFolders: await ctx.store.assetFolders.list(scope),
@@ -730,6 +741,8 @@ export interface StagedSnapshotEntry {
   readonly concepts: readonly string[];
   /** The source entry's authorship, when the snapshot carries it. */
   readonly authorship?: Pick<SnapshotEntry, 'createdAt' | 'createdBy' | 'firstPublishedAt'>;
+  /** The source entry's locked regions: a clone carries them. */
+  readonly blockLocks?: readonly BlockLock[];
 }
 
 /** A publication an import makes: the entry, and the draft to lay on top of a changed one. */
@@ -740,7 +753,8 @@ export interface StagedSnapshotPublication {
 
 /**
  * A changed entry starts from its live version (when publishing); the draft goes on top later.
- * Its creator comes along only with `keepCreator` (a clone, {@link ImportOptions.keepCreators}).
+ * Its creator, and its locked regions, come along only with `keepCreator` (a clone,
+ * {@link ImportOptions.keepCreators}).
  */
 export function stagedEntry(
   entry: SnapshotEntry,
@@ -764,6 +778,7 @@ export function stagedEntry(
           },
         }
       : {}),
+    ...(keepCreator && entry.blockLocks?.length ? { blockLocks: entry.blockLocks } : {}),
   };
 }
 
@@ -952,6 +967,7 @@ export async function createSnapshotEntry(
         fields: entry.fields,
         id: entry.id,
         ...(entry.authorship ? { authorship: entry.authorship } : {}),
+        ...(entry.blockLocks ? { blockLocks: entry.blockLocks } : {}),
       },
       { copy: true },
     );
@@ -1208,7 +1224,7 @@ export async function cloneEnvironment(
   target: Scope,
   options: ImportOptions = {},
 ): Promise<ImportReport> {
-  return importSnapshot(ctx, target, await exportSnapshot(ctx, source), {
+  return importSnapshot(ctx, target, await exportSnapshot(ctx, source, { blockLocks: true }), {
     ...options,
     filesFrom: source.spaceId,
     keepCreators: true,

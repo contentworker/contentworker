@@ -28,6 +28,7 @@ export * from './audit';
 export * from './auth';
 export * from './block-catalog';
 export * from './block-config';
+export * from './block-locks';
 export * from './block-patches';
 export * from './branching';
 export * from './bulk';

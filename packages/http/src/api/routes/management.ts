@@ -29,6 +29,7 @@ import { contentTypesRoutes } from './management/content-types';
 import { deploymentRoutes } from './management/deployment';
 import { docsRoutes } from './management/docs';
 import { entriesRoutes } from './management/entries';
+import { entryBlockLocksRoutes } from './management/entry-block-locks';
 import { entryTaxonomyRoutes } from './management/entry-taxonomy';
 import { environmentAliasesRoutes } from './management/environment-aliases';
 import { environmentMergeRoutes } from './management/environment-merge';
@@ -78,6 +79,7 @@ const AREAS: readonly ((deps: AuthDeps) => Hono<AuthVars>)[] = [
   blockCatalogRoutes,
   blockConfigRoutes,
   entriesRoutes,
+  entryBlockLocksRoutes,
   trashRoutes,
   aiContentRoutes,
   functionsRoutes,

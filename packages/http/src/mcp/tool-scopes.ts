@@ -103,6 +103,8 @@ export const TOOL_SCOPES: Readonly<Record<string, readonly PermissionScope[]>> =
   content_search: [SCOPES.searchRead],
   content_semantic_search: [SCOPES.searchRead],
   embed_resolve: [SCOPES.contentWrite],
+  entries_block_locks_get: [SCOPES.previewRead],
+  entries_block_locks_set: [SCOPES.contentWrite],
   entries_bulk_action: [SCOPES.contentPublish],
   entries_create: [SCOPES.contentWrite],
   entries_diff_versions: [SCOPES.previewRead],

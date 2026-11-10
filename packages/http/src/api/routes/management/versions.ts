@@ -115,7 +115,7 @@ export function versionsRoutes(deps: AuthDeps): Hono<AuthVars> {
           scopeOf(c),
           c.req.param('id'),
           Number(c.req.param('version')),
-          expectedVersionOf(c),
+          { ...expectedVersionOf(c), restorer: principal },
         ),
       );
     },

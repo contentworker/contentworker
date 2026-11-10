@@ -235,6 +235,11 @@ export const entries = sqliteTable(
     /** The entry's place in its type's manual order (0034_entry_position), written only by a move;
      *  null sorts by `id`. Read as `COALESCE(position, id)`. */
     position: text('position'),
+    /** The locked regions of its blocks (0038_entry_block_locks) as JSON, written only by a lock
+     *  set; null when it holds none. Never copied to `entry_published`. Plain text, read by
+     *  `blockLocksOf`: on a replica behind the migration an unqualified read answers the column's
+     *  own name (the joined entry read names it unqualified for that; a qualified one fails). */
+    blockLocks: text('block_locks'),
   },
   (t) => [
     primaryKey({ columns: [t.spaceId, t.environmentId, t.id] }),

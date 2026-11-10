@@ -1,7 +1,9 @@
 # Locked regions
 
-Status: **proposed**, decisions made 2026-11-09 (M6, "Locked regions on the canvas" in
-`ROADMAP.md`). Nothing here is built.
+Status: **backend built**, decisions made 2026-11-09 (M6, "Locked regions on the canvas" in
+`ROADMAP.md`). The model, enforcement, store, `lock` action and both surfaces are in place
+(`packages/domain/src/content-type/block-locks.ts`, `0038_entry_block_locks`); the canvas and the
+entry form are not yet.
 This file sits in `docs/specs/`, which the docs embed does not read (it takes `docs/*.md` only),
 so MCP clients never mistake it for a description of shipped behaviour.
 
@@ -24,7 +26,8 @@ entry of a content type. A region is content: it belongs to one entry.
 - **One check on every write path.** `assertBlockConfigAllows`
   (`packages/application/src/block-config.ts`) runs from `prepareFields` on new edits, imports
   included, over REST, MCP and Coworker's `patchBlocks` alike. Copies (snapshot restore, clone,
-  promotion, duplicate, version restore) are not judged.
+  promotion, duplicate, version restore) are not judged by the block config; a version restore is
+  judged by the locked regions (see Enforcement).
 - **Stable identity.** Every block carries a `_key` that survives moves, so a lock can name
   blocks by key rather than by position.
 - **The canvas and the form honour a locked slot**: no seams, no move, duplicate or remove, and
@@ -87,9 +90,21 @@ compared, with each issue naming the region's first `_key`:
 | A run's blocks reordered or split across slots             | `region_locked`               |
 | With `subtree`: any slot inside a locked block changed     | `region_locked`               |
 | With `freeze: 'all'`: any field inside the region changed  | `region_frozen`               |
+| A locked block's `_key` held by more than one block        | `region_locked`               |
 
-- The same rules as today: new edits are judged, copies are not. A clone carries its source's
-  locks; a version restore keeps the locks held now.
+- The same rules as today: new edits are judged, copies are not, with one exception: a **version
+  restore is held to the locks the entry holds now**, by the regions only (the block config's
+  rules still don't judge it), unless the restorer holds `lock` on the type, who could lift the
+  lock anyway (owner decision, 2026-11-09). A restore never brings old locks back. Promotion,
+  snapshot import and environment merge stay unjudged. A clone carries its source's locks.
+- A key is unique per array, not per tree, so a copy of a locked block could keep its key and
+  stand in for it. A save holding a locked key on two blocks is refused, and a key two blocks
+  hold can't be locked (`lock_ambiguous`). With each locked key on one block, a run that moved
+  whole is the same run, wherever it went.
+- A save and a lock set guard each other: a lock set holds to the `currentVersion` it read, and a
+  judged save to the locks it was judged against; whichever commits second is a `409`.
+- A lock on a field the caller's grant denies or makes read-only can't be made, changed or lifted
+  by them (`403 content:lock:<type>.<field>`), and leaving it out of the list doesn't lift it.
 - Coworker's `patchBlocks` is refused with the same issues, so a proposal names the lock it ran
   into instead of failing silently.
 - Imports judge regions only on entries that exist and hold locks; a new entry from an import has
@@ -136,7 +151,9 @@ Made by the owner on 2026-11-09, each as proposed:
    or a copy dropped them) shows as stale, as the block config shows stale rules, and never blocks
    a save. Anyone with `lock` can clear it.
 5. **Versions.** Locks are not in the entry's version history, and a restore doesn't bring old
-   locks back. Locks are current state; the audit log records every lock and unlock.
+   locks back. Locks are current state; the audit log records every lock and unlock. Amended
+   2026-11-09: a version restore is held to the locks held now unless the restorer holds `lock`
+   (see Enforcement).
 
 ## Out of scope
 

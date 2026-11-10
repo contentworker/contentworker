@@ -221,7 +221,8 @@ changing a block's type under its key (`block_not_allowed_here`), changing a loc
 saveable as long as the save leaves those blocks where they are, and a slot over its new `max` can
 shrink one block at a time. A locked page can still be filled in a locale it has no blocks in yet.
 Snapshot restores, environment clones and promotions, and restoring an entry's earlier version
-carry content as it is, so a restored version can bring back blocks from before a lock.
+carry content as it is, so a restored version can bring back blocks from before a slot lock (a
+[locked region](#locking-regions-of-an-entry) still holds a restore).
 
 Pushing a new catalog is never blocked by the config. Parts of the config naming what the catalog
 no longer has are listed as `stale` in the effective rules and ignored until the config is set
@@ -268,6 +269,44 @@ place. Both judge a save as the server will before sending it, and a refusal sho
 slot or field it names. A lock holds only what is stored: a block placed in this edit, or a new
 entry, is filled as it comes, as the server allows.
 
+## Locking regions of an entry
+
+The config's `locked` holds a slot on every entry of a type. To hold part of one entry instead (a
+page's approved hero and legal footer, with the rest open), lock a region of its blocks: one block,
+or a run of neighbouring blocks in one slot, named by their `_key`s.
+
+```json
+{
+  "expectedVersion": 4,
+  "locks": [
+    { "field": "body", "keys": ["<hero key>"], "depth": "subtree" },
+    { "field": "body", "keys": ["<legal key>", "<links key>"], "freeze": "all" }
+  ]
+}
+```
+
+`PUT …/entries/:id/block-locks` replaces the entry's whole list (a lock left out is unlocked) and
+makes no version. `depth` is `subtree` (the blocks and everything inside them, the default) or
+`self` (their own slots stay open); `freeze` is `structure` (no add, remove, move or swap; fields
+stay editable, the default) or `all` (fields frozen too). The keys must be a run the entry holds,
+and a block belongs to at most one region (`lock_overlaps`). Setting locks needs the `lock` action
+on the entry's content type, which the Manager and Administrator roles hold; anyone with it may
+unlock, whoever locked.
+
+From then on a save that removes, swaps, reorders or splits a region's blocks, or inserts one among
+them, is a `422` `region_locked`; with `subtree` so is any change to the blocks inside, and with
+`freeze: 'all'` a change to a field is `region_frozen`. This holds with or without a block config,
+from the editor, the API, MCP, a block patch or an import. A lock holds in every locale that has
+its blocks. A lock whose blocks are gone is listed as `stale` and blocks nothing. Restoring an
+earlier version keeps the locks held now and is held to them, unless you hold `lock` on the type
+(you could lift the lock anyway); an environment clone carries them. A key two blocks hold can't
+be locked (`lock_ambiguous`), and a save that gives a locked block's key to a second block is
+refused. A lock on a field your role denies or makes read-only is yours neither to set nor lift. Delivery and
+Preview never return locks. Every lock and unlock is in the audit log.
+
+The canvas and the entry form don't show or set locks yet; until they do, a refused save names the
+region by its first key.
+
 ## The API and MCP
 
 | Method | Path                                 | Scope            | Does                                           |
@@ -280,18 +319,21 @@ entry, is filled as it comes, as the server allows.
 | GET    | `…/block-config`                     | `preview:read`   | The block config; version 0 before the first set |
 | PUT    | `…/block-config`                     | `content:manage` | Replace `{ expectedVersion, targets, blocks }` |
 | GET    | `…/block-config/effective`           | `preview:read`   | Every target and slot's rules, and `stale` config parts |
+| GET    | `…/entries/:id/block-locks`          | `preview:read`   | An entry's locked regions, and which are stale |
+| PUT    | `…/entries/:id/block-locks`          | `content:write` + `lock` | Replace `{ locks, expectedVersion? }` |
 
 `…` is `/spaces/:space/environments/:env`. A push answers what it did, or would do with `dryRun`:
 `previousVersion`, `version`, `changes`, `contentTypes`, `destructive`, `inUse` (what it would
 remove that entries hold) and `warnings`. Send the dry run's `previousVersion` as
 `expectedVersion` to be refused (`409`) if another push lands first. A refused push carries the
 same result in the error's `details`. From code, the management SDK has
-`cma.blockCatalog.{get, version, versions, push, usage}` and `cma.blockConfig.{get, set, effective}`
+`cma.blockCatalog.{get, version, versions, push, usage}`, `cma.blockConfig.{get, set, effective}`
+and `cma.entries.blockLocks.{get, set}`
 ([SDKs](/guides/sdks/)).
 
 Agents get the same through MCP: `blocks_catalog_get`, `blocks_catalog_versions`, `blocks_usage`,
-`blocks_catalog_push` (with `dryRun`), `blocks_config_get`, `blocks_config_effective` and
-`blocks_config_set`, under the same scopes ([MCP](/guides/mcp/)).
+`blocks_catalog_push` (with `dryRun`), `blocks_config_get`, `blocks_config_effective`,
+`blocks_config_set`, `entries_block_locks_get` and `entries_block_locks_set`, under the same scopes ([MCP](/guides/mcp/)).
 
 The admin's Build → Blocks screen lists the catalog in force, read-only, and sets the block config
 ([Setting it in the admin](#setting-it-in-the-admin)).

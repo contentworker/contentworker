@@ -72,7 +72,10 @@ export function registerVersionTools(server: McpServer, t: ToolContext): void {
   server.registerTool(
     'entries_restore_version',
     {
-      description: 'Restore an older version by copying its fields into a new draft version.',
+      description:
+        'Restore an older version by copying its fields into a new draft version. Held to the ' +
+        'entry’s locked regions as they are now (refused with region_locked or region_frozen) ' +
+        'unless you hold the lock action on its type; the locks themselves are never restored.',
       inputSchema: toolSchema('entries_restore_version', () =>
         z.object({
           id: z.string(),
@@ -96,6 +99,7 @@ export function registerVersionTools(server: McpServer, t: ToolContext): void {
       return ok(
         await restoreVersion(ctx, scopeOf(args), args.id, args.version, {
           expectedVersion: args.expectedVersion,
+          restorer: principal,
         }),
       );
     },

@@ -12,6 +12,7 @@ import {
 import {
   BLOCK_CATALOG_LIMITS,
   BLOCK_CONFIG_LIMITS,
+  BLOCK_LOCK_LIMITS,
   FIELD_GUIDANCE_LIMITS,
   MAX_ASSET_RIGHTS_TEXT,
   MAX_CANONICAL_URL_LENGTH,
@@ -45,6 +46,7 @@ import type { Context } from 'hono';
 import { z } from 'zod';
 import * as blockCatalogDocs from './docs/schemas/block-catalog';
 import * as blockConfigDocs from './docs/schemas/block-config';
+import * as blockLockDocs from './docs/schemas/block-locks';
 import { blockPatchShape } from './docs/schemas/blocks';
 import {
   contentTypeDetails,
@@ -370,7 +372,7 @@ export const createPatBody = z.object({
 });
 const contentGrant = z.object({
   contentTypeApiId: z.string().max(128),
-  actions: z.array(z.enum(['read', 'write', 'publish'])).max(3),
+  actions: z.array(z.enum(['read', 'write', 'publish', 'lock'])).max(4),
   // `delete` comes with write or publish and `unpublish` with publish; naming one here withholds it.
   deniedActions: z
     .array(z.enum(['delete', 'unpublish']))
@@ -1019,4 +1021,20 @@ export const blockConfigSetBody = z.object({
     .array(blockConfigDocs.blockNarrowing)
     .max(BLOCK_CONFIG_LIMITS.blocks)
     .describe('Narrowings of blocks’ slots, wherever the block is placed'),
+});
+
+/**
+ * A set of an entry's locks: the whole list. Whether the keys are a run the entry holds, and
+ * whether two regions overlap, is the domain's check (`locks[1].keys`); here the outline.
+ */
+export const blockLocksSetBody = z.object({
+  expectedVersion: z
+    .int()
+    .min(1)
+    .optional()
+    .describe('The entry’s currentVersion the locks were chosen from; another is a 409'),
+  locks: z
+    .array(blockLockDocs.blockLockInput)
+    .max(BLOCK_LOCK_LIMITS.locks)
+    .describe('Every lock the entry is to hold; one left out is unlocked'),
 });
