@@ -14,7 +14,8 @@ npm install @contentworker/sdk
 
 ## 1. Read content
 
-Create a Content Delivery API key (**Settings → API keys**, scope `delivery:read`), keep it on the
+Create a Content Delivery API key (**Settings → Connect a frontend** makes one and prints this
+config for your space; see [Connect a frontend](/guides/connect-a-frontend/)), keep it on the
 server, and read published entries:
 
 ```ts
@@ -95,7 +96,7 @@ Everything else is optional and works the same in any stack:
 | The CMS's redirects, slug changes too  | `@contentworker/sdk/redirects` ([redirects](/guides/redirects/)) |
 | Header and footer navigation           | `client.menu(handle)` ([navigation menus](/guides/menus/))           |
 | Typed entry fields                     | `contentworker types` ([SDKs](/guides/sdks/#typed-content))          |
-| Live updates without polling           | The live stream ([reading content](/guides/reading-content/))        |
+| Live updates without polling           | `useLiveEntry`, `client.live()` ([SDKs](/guides/sdks/#live-updates)) |
 
 ## Or start from the ready-made frontend
 
