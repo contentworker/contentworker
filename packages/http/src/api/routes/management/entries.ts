@@ -1,4 +1,5 @@
 import {
+  assetSearchDeps,
   canvasToEntry,
   createEntry,
   createPreviewLink,
@@ -37,6 +38,8 @@ import { actingCtx, BASE, entryAccess, scopeOf } from './shared';
 export function entriesRoutes(deps: AuthDeps): Hono<AuthVars> {
   const { ctx, hasher, ai } = deps;
   const { guardEntry } = entryAccess(ctx);
+  // Drafted blocks find their images as the asset search route does.
+  const assetSearch = deps.assetSearch ?? assetSearchDeps(deps.rag);
   const app = new Hono<AuthVars>();
 
   // --- entries ------------------------------------------------------------
@@ -113,8 +116,6 @@ export function entriesRoutes(deps: AuthDeps): Hono<AuthVars> {
       return c.json(await validateEntry(ctx, scopeOf(c), { contentTypeApiId, fields }));
     },
   );
-  // AI-draft an entry's fields. Generated values pass the same validators a
-  // human write does, so an agent can't produce an entry a person couldn't.
   app.post(
     `${BASE}/entries/:id/move`,
     doc('Entries', 'Move an entry in its content type’s manual order', {
@@ -139,17 +140,47 @@ export function entriesRoutes(deps: AuthDeps): Hono<AuthVars> {
     },
   );
 
-  app.post(`${BASE}/entries/generate`, requireScope(SCOPES.contentWrite), async (c) => {
-    const body = await parseBody(c, draftEntryBody);
-    authorizeContent(c.get('principal'), 'write', body.contentTypeApiId);
-    return c.json(await draftEntry(ctx, ai, scopeOf(c), body));
-  });
+  // AI-draft an entry's fields. Generated values pass the same validators a
+  // human write does, so an agent can't produce an entry a person couldn't.
+  app.post(
+    `${BASE}/entries/generate`,
+    doc('Entries', 'Draft an entry’s fields with AI', {
+      body: draftEntryBody,
+      ok: entryDocs.draftResult,
+      description:
+        'Asks the model for the type’s scalar fields (text, numbers, booleans, dates) and its ' +
+        'top-level blocks fields (composed from the blocks the block rules allow there, images ' +
+        'found in the asset library by what they show), then judges the answer as a create ' +
+        'would, except that it isn’t required to fill what it can’t (rich text, links, slugs, ' +
+        'locations). Nothing is saved: create the entry with the answer. 422 when the draft ' +
+        'breaks a rule; 429 over the space’s AI budget. To fill one blocks field or slot of an ' +
+        'existing entry, use `POST …/entries/blocks/generate`.',
+    }),
+    requireScope(SCOPES.contentWrite),
+    async (c) => {
+      const body = await parseBody(c, draftEntryBody);
+      authorizeContent(c.get('principal'), 'write', body.contentTypeApiId);
+      return c.json(await draftEntry(ctx, ai, scopeOf(c), body, { assets: assetSearch }));
+    },
+  );
   // Canvas: map free-form prose into structured fields (same validation gate).
-  app.post(`${BASE}/entries/canvas`, requireScope(SCOPES.contentWrite), async (c) => {
-    const body = await parseBody(c, canvasBody);
-    authorizeContent(c.get('principal'), 'write', body.contentTypeApiId);
-    return c.json(await canvasToEntry(ctx, ai, scopeOf(c), body));
-  });
+  app.post(
+    `${BASE}/entries/canvas`,
+    doc('Entries', 'Map prose into an entry’s fields with AI', {
+      body: canvasBody,
+      ok: entryDocs.draftResult,
+      description:
+        'Maps free-form prose into the type’s fields, keeping the author’s wording where it ' +
+        'fits a field, with the same fields, checks and answer as `POST …/entries/generate`. ' +
+        'The prose is treated as content, never as instructions. Nothing is saved.',
+    }),
+    requireScope(SCOPES.contentWrite),
+    async (c) => {
+      const body = await parseBody(c, canvasBody);
+      authorizeContent(c.get('principal'), 'write', body.contentTypeApiId);
+      return c.json(await canvasToEntry(ctx, ai, scopeOf(c), body, { assets: assetSearch }));
+    },
+  );
   // Rich text's external media: a pasted URL becomes an `embed` node's data. Scoped like a
   // content write, since that is the only thing the answer is for.
   app.post(

@@ -78,6 +78,24 @@ blocks inside it in the same patch. A refused op names its index; nothing is sav
 send the patch again. A `409` means someone saved since you read: outline again. The answer's
 `inverse` undoes the patch, and it saves a draft, so publish afterwards.
 
+To lay out a page (or a section of one) from blocks, work from the outline to the patch:
+
+1. Outline the entry (`entry_blocks_outline`) and read what each place takes:
+   `blocks_config_effective` (the blocks, `min`/`max`, `locked`) and `blocks_catalog_get` (what
+   each block is for). Read `entries_block_locks_get`: a locked region's blocks, and a locked
+   slot's, are not yours to change.
+2. Compose: `entry_blocks_generate` with the field (and `parent: {key, slot}` for a slot) and a
+   prompt. It offers the model only the blocks the place takes, finds images in the asset library
+   by what they show (`unresolvedImages` lists those it couldn't), and answers the insert ops and
+   `expectedVersion` without saving. Or write the ops yourself from the catalog, with images from
+   `assets_search` as `{ id, linkType: "Asset" }`.
+3. Check with `entry_blocks_validate` (the generated ops already passed it once; check again after
+   you change them), then send them with `entry_blocks_patch`. For a new entry, pass `contentType`
+   instead of an id and create the entry with the answer's `fields`.
+
+`generate_draft` drafts a whole entry, its top-level blocks fields included; rich text, links and
+slugs are left for you to fill.
+
 ## Editorial workflows
 
 A workflow is a published graph (approvals, waits for events, AI checks, publish). Runs act as

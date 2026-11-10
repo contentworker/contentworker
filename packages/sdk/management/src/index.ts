@@ -793,6 +793,39 @@ export interface BlockPatchCheck {
   readonly skippedHooks: readonly string[];
 }
 
+/**
+ * What to compose with AI (`entries.generateBlocks`): one place, an entry's blocks field
+ * (`entryId`), a slot of one of its blocks (`parent`), or a new entry's field (`contentTypeApiId`).
+ */
+export type GenerateBlocksRequest = {
+  readonly field: string;
+  readonly prompt: string;
+  readonly parent?: { readonly key: string; readonly slot: string };
+  readonly locale?: string;
+  readonly tier?: 'flagship' | 'balanced' | 'fast';
+} & (
+  | { readonly entryId: string; readonly contentTypeApiId?: never }
+  | { readonly contentTypeApiId: string; readonly entryId?: never }
+);
+
+/** Composed blocks, as the patch that would add them; nothing is saved. */
+export interface GeneratedBlocks {
+  readonly contentTypeApiId: string;
+  readonly entryId: string | null;
+  /** Pass to `patchBlocks` with `ops`. Null for a new entry. */
+  readonly expectedVersion: number | null;
+  readonly locale: string;
+  /** One insert per block, at the end of the place. */
+  readonly ops: readonly BlockOp[];
+  /** The field as the ops leave it; for a new entry, the value to create it with. */
+  readonly fields: EntryFields;
+  /** Images the asset library had no answer for: those fields are left empty. */
+  readonly unresolvedImages: readonly { readonly path: string; readonly query: string }[];
+  /** What else a save would be refused for, outside the field (a new entry's other required fields). */
+  readonly issues: readonly { readonly field: string; readonly message: string }[];
+  readonly usage: { readonly inputTokens: number; readonly outputTokens: number };
+}
+
 /** One block in an entry's outline (`entries.outlineBlocks`). */
 export interface BlockOutline {
   readonly key: string | null;
@@ -2118,6 +2151,14 @@ export function createManagementClient(opts: ManagementClientOptions) {
        */
       checkBlocks: (id: string, change: { expectedVersion: number; ops: readonly BlockOp[] }) =>
         post<BlockPatchCheck>(`${envBase}/entries/blocks/validate`, { entryId: id, ...change }),
+      /**
+       * Composes blocks for one place with AI, from the blocks the block rules allow there, with
+       * images found in the asset library. Answers the insert ops (send them with `patchBlocks`
+       * at `expectedVersion`), judged as `checkBlocks` judges them; nothing is saved. A 422 for a
+       * locked or full place, or an answer that breaks a rule in the field.
+       */
+      generateBlocks: (request: GenerateBlocksRequest) =>
+        post<GeneratedBlocks>(`${envBase}/entries/blocks/generate`, request),
       /** The entry's blocks fields as a tree of keys, types and labels, to build a patch from. */
       outlineBlocks: (id: string, opts: { field?: string; locale?: string } = {}) =>
         get<BlocksOutline>(`${envBase}/entries/${e(id)}/blocks`, {
