@@ -102,7 +102,14 @@ describe('Connect a frontend', () => {
     expect(await screen.findByLabelText('wrangler.jsonc')).toBeTruthy();
     expect(document.body.textContent).not.toContain('cwk_');
 
+    // Ticking adds the Preview key's role on a line of its own: the row with Create stays as it was.
+    const create = screen.getByRole('button', { name: 'Create key' });
+    const row = create.parentElement;
+    const before = row?.innerHTML;
     fireEvent.click(screen.getByRole('checkbox', { name: 'Also create a Preview key' }));
+    const previewRole = screen.getByRole('combobox', { name: 'Preview key role' });
+    expect(row?.contains(previewRole)).toBe(false);
+    expect(row?.innerHTML.replace('Create keys', 'Create key')).toBe(before);
     fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Marketing' } });
     fireEvent.click(screen.getByRole('button', { name: 'Create keys' }));
     await screen.findByText(/Copy these keys now/);

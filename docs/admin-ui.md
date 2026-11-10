@@ -169,7 +169,8 @@ menu at the sidebar's foot (the More sheet on a phone). Settings sections are ad
   `connectFrontend` (once shown, minting others asks in place first), its tokens shown once
   in an Alert with copy buttons and held only in the screen's state; prints the config as tabs
   (frontend runtime `wrangler.jsonc` vars and `wrangler secret put`, the SDK's env and client, the
-  Next.js draft route and client, `connectPreview` with this admin’s origin), from the answer's
+  Next.js draft route and client, which need only the Delivery key, `connectPreview` with this
+  admin’s origin), from the answer's
   `endpoints` (before minting, from this origin by the same rule, `frontendEndpoints`) and never a
   token outside an env snippet (`cms/lib/frontend-config.ts`); a preview URL row per content type, as the
   API lists them, checked by

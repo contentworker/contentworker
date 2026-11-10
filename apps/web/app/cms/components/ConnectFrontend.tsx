@@ -48,7 +48,6 @@ import {
   NEXT_DRAFT_TEMPLATE,
   nextClient,
   nextDraftRoute,
-  PREVIEW_KEY_PLACEHOLDER,
   RUNTIME_SECRET_COMMAND,
   runtimeVars,
   sdkClient,
@@ -150,9 +149,9 @@ function KeysSection(props: {
       title="Connect a frontend"
       description={
         <>
-          A Delivery key reads published content; a Preview key reads drafts, for a site’s draft
-          mode. The config below reads <span className="font-mono">{conn.environment}</span>. Keys
-          are listed, and revoked, under{' '}
+          A Delivery key reads published content; a Preview key reads drafts, for a server that
+          reads them itself. A preview link reads its own entry without one. The config below reads{' '}
+          <span className="font-mono">{conn.environment}</span>. Keys are listed, and revoked, under{' '}
           <Link to="/settings/api-keys" className="font-medium text-link hover:underline">
             API keys
           </Link>
@@ -177,25 +176,32 @@ function KeysSection(props: {
             )}
           </ConfirmButton>
         ) : (
-          <form className="flex flex-wrap items-end gap-3" onSubmit={create}>
-            <div className="space-y-1.5">
-              <Label htmlFor={nameId}>Name</Label>
-              <Input
-                id={nameId}
-                className="w-56"
-                placeholder="Frontend"
-                maxLength={100}
-                value={name}
-                onChange={(e) => setName(e.target.value)}
+          // The Preview key's options go on lines of their own under the row, so ticking it moves
+          // nothing a pointer may be on its way to.
+          <form className="space-y-3" onSubmit={create}>
+            <div className="flex flex-wrap items-end gap-3">
+              <div className="space-y-1.5">
+                <Label htmlFor={nameId}>Name</Label>
+                <Input
+                  id={nameId}
+                  className="w-56"
+                  placeholder="Frontend"
+                  maxLength={100}
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                />
+              </div>
+              <RoleSelect
+                label="Delivery key role"
+                roles={roles}
+                value={roleId}
+                onValueChange={setRoleId}
               />
+              <Button type="submit" disabled={busy} className="min-w-28">
+                {busy ? 'Creating…' : withPreview ? 'Create keys' : 'Create key'}
+              </Button>
             </div>
-            <RoleSelect
-              label="Delivery key role"
-              roles={roles}
-              value={roleId}
-              onValueChange={setRoleId}
-            />
-            <Label className="flex h-9 items-center gap-2 font-normal">
+            <Label className="flex w-fit items-center gap-2 font-normal">
               {/* A Radix checkbox in a wrapping label gets no name in a real browser: named here. */}
               <Checkbox
                 aria-label="Also create a Preview key"
@@ -203,18 +209,20 @@ function KeysSection(props: {
                 onCheckedChange={(c) => setWithPreview(c === true)}
               />
               <span>Also create a Preview key</span>
+              <span className="text-muted-foreground">
+                (a server that reads drafts itself; Next.js draft mode needs none)
+              </span>
             </Label>
             {withPreview ? (
-              <RoleSelect
-                label="Preview key role"
-                roles={roles}
-                value={previewRoleId}
-                onValueChange={setPreviewRoleId}
-              />
+              <div className="ps-6">
+                <RoleSelect
+                  label="Preview key role"
+                  roles={roles}
+                  value={previewRoleId}
+                  onValueChange={setPreviewRoleId}
+                />
+              </div>
             ) : null}
-            <Button type="submit" disabled={busy}>
-              {busy ? 'Creating…' : withPreview ? 'Create keys' : 'Create key'}
-            </Button>
           </form>
         )}
       </div>
@@ -347,18 +355,14 @@ function ConfigSection({ input }: { input: FrontendConfigInput | undefined }) {
           </TabsContent>
           <TabsContent value="next" className="space-y-3 pt-3">
             <p className="max-w-measure text-muted-foreground text-sm">
-              Draft mode reads Preview with the Preview key. Point each type’s preview URL at the
-              route, as <span className="break-all font-mono">{NEXT_DRAFT_TEMPLATE}</span>.
+              A preview link turns draft mode on for its one entry: that entry reads as it is now,
+              with the link’s own token, and everything else as published. No Preview key. Point
+              each type’s preview URL at the route, as{' '}
+              <span className="break-all font-mono">{NEXT_DRAFT_TEMPLATE}</span>.
             </p>
-            <Snippet title=".env.local" code={sdkEnv(input, true)} />
+            <Snippet title=".env.local" code={sdkEnv(input, false)} />
             <Snippet title="Draft route" code={nextDraftRoute(input)} />
             <Snippet title="Client" code={nextClient(input)} />
-            {!input.previewToken ? (
-              <p className="max-w-measure text-muted-foreground text-ui">
-                Create the keys with “Also create a Preview key” to fill in{' '}
-                {PREVIEW_KEY_PLACEHOLDER}.
-              </p>
-            ) : null}
           </TabsContent>
           <TabsContent value="live" className="space-y-3 pt-3">
             <p className="max-w-measure text-muted-foreground text-sm">

@@ -281,7 +281,13 @@ test('Connect a frontend checks a page connects, and its screen has no accessibi
   await expect(page.getByRole('heading', { name: 'Connect a frontend' })).toBeVisible();
 
   // Minted once: the tokens show in the alert and fill the config, and the screen still scans.
+  // Ticking the Preview key moves nothing: its role goes on a line of its own.
+  const createButton = page.getByRole('button', { name: /^Create key/ });
+  const before = await createButton.boundingBox();
   await page.getByRole('checkbox', { name: 'Also create a Preview key' }).click();
+  await expect(page.getByRole('combobox', { name: 'Preview key role' })).toBeVisible();
+  const after = await createButton.boundingBox();
+  expect({ x: after?.x, y: after?.y }).toEqual({ x: before?.x, y: before?.y });
   await page.getByRole('button', { name: 'Create keys' }).click();
   await expect(page.getByText('Copy these keys now')).toBeVisible();
   await page.getByRole('tab', { name: 'SDK' }).click();
