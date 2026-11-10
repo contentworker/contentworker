@@ -109,7 +109,7 @@ export interface HiddenFieldsIssue extends FieldIssue {
  * (`blockAtPath`), since `body[1].label` says nothing once the patch has moved the blocks; and
  * those in fields it can't read folded into one issue that counts the fields.
  */
-function withBlocks(
+export function visibleBlockIssues(
   err: unknown,
   contentType: ContentType,
   fields: EntryFields,
@@ -262,7 +262,7 @@ export async function patchEntryBlocks(
     after,
     before,
   ).catch((err: unknown) => {
-    throw withBlocks(err, contentType, after, config.defaultLocale, options.unreadable);
+    throw visibleBlockIssues(err, contentType, after, config.defaultLocale, options.unreadable);
   });
   return { ...view, keys: prepared.keys, inverse: undoFor(prepared, view.fields) };
 }
@@ -311,7 +311,7 @@ export async function checkEntryBlocks(
     { entryId: id, fields: prepared.after },
     options.unwritable ? { unwritable: options.unwritable } : {},
   ).catch((err: unknown) => {
-    throw withBlocks(
+    throw visibleBlockIssues(
       err,
       prepared.contentType,
       prepared.after,

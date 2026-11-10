@@ -114,6 +114,7 @@ A use-case's `tier` input overrides these defaults.
 | `content-ai`: `summarizeEntry`, `suggestEntryTags`            | `fast`                                                                                                                                                          |
 | `media-ai`: alt text, asset auto-tag                          | `fast`                                                                                                                                                          |
 | `draftEntry`, `canvasToEntry` (`generation.ts`), `auditEntry` | `balanced`                                                                                                                                                      |
+| `generateBlocks` (`layout-generation.ts`)                     | `flagship`                                                                                                                                                      |
 | `ai-actions` (`runAIAction`)                                  | the action's own `tier` (default `balanced`)                                                                                                                    |
 | `workflow-copilot` (`workflow_copilot`)                       | `balanced`                                                                                                                                                      |
 | Workflow AI nodes (`workflow-nodes/ai.ts`)                    | `fast` for `ai.classify`, `ai.summarize`, `ai.suggest_tags`, `ai.moderate`, `ai.enrich`; `balanced` for `ai.router`, `ai.assess`, `ai.translate`, `ai.autofill` |
@@ -152,9 +153,14 @@ interface DraftEntryInput {
 ```
 
 - It builds a strict JSON Schema (`additionalProperties: false`) from the content type's
-  **scalar** fields (`Symbol`, `Text`, `Integer`, `Number`, `Boolean`, `Date` — not links or
-  rich text), asks the provider for structured output, then **validates the result against the
-  content model** with the same `validateEntryFields` path as human writes. Each property's
+  **scalar** fields (`Symbol`, `Text`, `Integer`, `Number`, `Boolean`, `Date`:
+  `draftableFieldSchema` in the domain) and its **top-level blocks fields** (`blocksFieldSchema`,
+  below), asks the provider for structured output, then **validates the result against the
+  content model** with the same `validateEntryFields` path as human writes, and its blocks against
+  the block config as a create's are (`assertBlockConfigAllows`). Fields it doesn't fill (rich
+  text, links, slugs, locations) aren't judged required (`ValidationContext.unfilled`): a draft is
+  a proposal, and the save that follows judges them. A draft with a blocks field gets
+  `LAYOUT_MAX_TOKENS` (8192) instead of 4096. Each property's
   `description` is `describeFieldForModel(field)`: the name, then the field's guidance as one
   capped line, labelled as describing the field and wrapped in `<user_content>` (delimiter tags in
   it, spaced or nested, are stripped until none is left: `stripDelimiters`; the system prompt
@@ -167,7 +173,71 @@ interface DraftEntryInput {
   one that is read-only. Autofill refuses such a field; `ai.enrich`, translation and the agent
   runtime skip them.
 - Generated values are wrapped in the space's default locale.
-- Returns `{ contentTypeApiId, fields, usage }`. Pair it with `createEntry` to actually author.
+- Returns `{ contentTypeApiId, fields, unresolvedImages, issues, usage }`. Pair it with `createEntry` to
+  actually author. `canvasToEntry` is the same with prose as the source, delimited as data.
+
+### Layout-aware generation
+
+`generateBlocks(ctx, ai, scope, input, options)` (`packages/application/src/layout-generation.ts`)
+composes blocks for one place: an entry's blocks field (`entryId`), a slot of one of its blocks
+(`parent: { key, slot }`), or a new entry's field (`contentTypeApiId`). REST
+`POST …/entries/blocks/generate`, MCP `entry_blocks_generate` (audited, not `readOnlyHint`: it
+spends a flagship call), SDK `entries.generateBlocks`; gated like the patch
+(`authorizeBlockGeneration`).
+
+- **The schema** (`blocksSchemaFor`, `packages/domain/src/content-type/blocks-schema.ts`): one
+  variant per block the place takes once the block config is laid over the catalog
+  (`effectiveBlockRules`; the content model's variants when no catalog targets the type), each an
+  object with `_type` as a `const`, its scalar fields, and its slots recursing with their own
+  allowed children down to `MAX_COMPONENT_DEPTH`. A slot is located by the steps down to it from
+  the outline (each ancestor's `_type` and slot), so a block that sits at two depths is judged
+  where it is. `min` and `max` (the rules' and the field's `size`, less the blocks the place
+  holds) become `minItems` and `maxItems`. No `_key`: the patch mints them. Block descriptions,
+  field guidance and every name (type, field, block) are author text: delimited or stripped of
+  delimiters and capped (`describeBlockForModel`, `describeFieldForModel`, `nameForModel`).
+- **What isn't offered:** rich text, entry links, lists of links, plain components and
+  repeaters, JSON and locations inside blocks, a slot the rules lock, and an image the field's
+  MIME rule doesn't take (`acceptsImages`). A block that *requires* one of them, or a required
+  slot that offers nothing, is not offered at all, so every block in a schema can pass a save.
+- **Images:** a block's single `Link` to an `Asset` that takes images is asked for as
+  `{ "$asset": { "query": "a lighthouse at dusk" } }`, only for a caller that may read the
+  library (`preview:read`: `imageSearchFor`); without it no image is asked for, and a block whose
+  image is required isn't offered. Requests are found by walking the answer with the content
+  model (`assetRequestSites`); at most 20 lookups (`MAX_IMAGE_REQUESTS`, one cap for a whole
+  draft), four at a time, within the call's remaining time. Each runs `searchAssets` with
+  `kind: image` and takes the first hit the field's MIME rule allows; a request with none leaves
+  the field out and is listed in `unresolvedImages` by path.
+- **A required image unresolved** doesn't refuse the answer: it comes back with
+  `required: true` in `unresolvedImages`, an `image_required` issue at its path, and
+  `ready: false`. Choose an image (`assets_search`) and set it in that op's block before patching.
+- **Locks, before the model:** a place the rules lock, one that is full, or one inside a locked
+  region (a probe insert judged by `blockConfigIssues` for `slot_locked`, `region_locked`,
+  `region_frozen`) is refused with `422` and no model call.
+- **The call:** `flagship` tier by default, `LAYOUT_MAX_TOKENS`, through `generateWithBudget`
+  (budget, `AI_MODE=mock`) with its cap inside the budget wrapper: `max(AI_TIMEOUT_MS, 60 s)`.
+  Past it, the space is charged `maxTokens` (an abandoned call settles nothing, and may still
+  bill) and the call fails with `AiUnavailableError`, HTTP `503 ai_unavailable`, retryable. An
+  answer that doesn't `conforms` to the schema (`anyOf`, `oneOf` and `const` included) is a
+  `422 bad_generation`.
+- **Judged as the patch:** the blocks become one `insert` op each, at the end of the place, and
+  go through `checkEntryBlocks` (for a new entry, a create's `validateEntry`). An issue in the
+  field refuses the answer (`422`); issues elsewhere in the entry (a new entry's other required
+  fields; fields the caller can't read only counted) come back in `issues`. Since a save stops at
+  its first refusal, whenever issues elsewhere are kept the block config (`blockConfigIssues`)
+  and the asset MIME rules (`assertAssetMimeTypes`) judge the generated field too, and refuse it
+  as they would a save.
+- Returns `{ contentTypeApiId, entryId, expectedVersion, locale, ready, ops, fields,
+  unresolvedImages, issues, usage }`; `ready` is true when the ops (or the new entry's field)
+  save as they are. Nothing is saved. Each call records an agent run (`workflow: 'generate'`),
+  `completed`, or `failed` with its usage when the answer is refused after the call.
+
+Drafts and Canvas share the schema, the image lookup and the timeout: a draft with a blocks field
+is held to the same cap and `LAYOUT_MAX_TOKENS`. Each answered field is checked against the
+schema it was sent (`conforms`): a key the schema didn't ask for is dropped, and a value outside
+it (a block naming an asset id instead of asking for an image) refuses the draft. Blocks are
+held to the block config and asset MIME rules as a create's are, a required image unresolved
+comes back as an `image_required` issue in the draft's `issues`, and a refused draft is a
+`failed` run.
 
 The rule: _an agent can never produce an entry a person couldn't_ — generation output is rejected
 if it fails validation.

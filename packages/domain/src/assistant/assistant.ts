@@ -98,6 +98,14 @@ export const ASSISTANT_TOOLS = {
   entries_query: read('Find entries', 'Found entries'),
   entries_get: read('Read an entry', 'Read an entry'),
   entry_blocks_outline: read('Outline an entry’s blocks', 'Outlined an entry’s blocks'),
+  // Composing a layout: what the blocks are, what the rules allow, what is locked, then a draft
+  // of the patch, checked, before entry_blocks_patch proposes it.
+  blocks_catalog_get: read('Read the block catalog', 'Read the block catalog'),
+  blocks_config_effective: read('Read the block rules', 'Read the block rules'),
+  entries_block_locks_get: read('Read an entry’s locked regions', 'Read the locked regions'),
+  entry_blocks_generate: read('Compose blocks', 'Composed blocks'),
+  entry_blocks_validate: read('Check a block change', 'Checked a block change'),
+  assets_search: read('Search assets', 'Searched assets'),
   entries_suggest: read('Suggest entries', 'Suggested entries'),
   content_search: read('Search content', 'Searched content'),
   entries_list_versions: read('List an entry’s versions', 'Listed an entry’s versions'),

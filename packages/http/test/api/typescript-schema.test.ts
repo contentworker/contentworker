@@ -129,6 +129,82 @@ describe('serving the content model as TypeScript', () => {
     expect(source).toContain('hero?: { heading: string };');
   });
 
+  it('types the blocks from the catalog in force, as contentworker types does', async () => {
+    expect(await (await fetchTypes()).text()).not.toContain('BlockTypes');
+    const created = await app.request(`${M}/content-types`, {
+      method: 'POST',
+      headers: cma,
+      body: JSON.stringify({
+        apiId: 'page',
+        name: 'Page',
+        displayField: 'title',
+        fields: [
+          {
+            apiId: 'title',
+            name: 'Title',
+            type: 'Symbol',
+            localized: false,
+            required: false,
+            position: 0,
+          },
+          {
+            apiId: 'body',
+            name: 'Body',
+            type: 'Array',
+            localized: false,
+            required: false,
+            position: 1,
+            items: {
+              type: 'Component',
+              variants: [
+                {
+                  apiId: 'hero',
+                  name: 'Hero',
+                  fields: [
+                    {
+                      apiId: 'heading',
+                      name: 'Heading',
+                      type: 'Symbol',
+                      localized: false,
+                      required: false,
+                      position: 0,
+                    },
+                  ],
+                },
+              ],
+            },
+          },
+        ],
+      }),
+    });
+    expect(created.status, await created.clone().text()).toBe(201);
+    expect(await (await fetchTypes()).text()).toContain(
+      'export type BlockTypes = {\n  hero: HeroBlock;\n};',
+    );
+    const push = await app.request(`${M}/block-catalog`, {
+      method: 'POST',
+      headers: cma,
+      body: JSON.stringify({
+        publish: false,
+        allowDestructive: true,
+        targets: [{ contentTypeApiId: 'page', field: 'body' }],
+        blocks: [
+          {
+            id: 'banner',
+            name: 'Banner',
+            aliases: ['hero'],
+            description: 'The top.',
+            fields: [{ apiId: 'heading', name: 'Heading', type: 'Symbol' }],
+          },
+        ],
+      }),
+    });
+    expect(push.status).toBe(200);
+    const source = await (await fetchTypes()).text();
+    expect(source).toContain('/** Banner (`banner`) — formerly `hero` — The top. */');
+    expect(source).toContain('export type BlockTypes = {\n  banner: BannerBlock;\n};');
+  });
+
   it('parses as TypeScript', async () => {
     const source = await (await fetchTypes()).text();
     // Only syntax: `noCheck` skips type-checking, and pretending

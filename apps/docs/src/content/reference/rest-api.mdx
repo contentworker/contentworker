@@ -69,6 +69,7 @@ that entries still hold lists each one and its entries in `details.fieldsInUse` 
 | 422 | `validation_failed`, `hook_rejected` | Validation failed (`issues` lists each field), or a hook or plugin refused the change on policy grounds (`hook_rejected`, with the reason as `message`) |
 | 429 | `rate_limited` | Too many requests for the key or address (the response carries `Retry-After`, in seconds), or an AI budget or a reindex cooldown for the space was hit; retry later |
 | 501 | `not_configured` | The workspace doesn't have an optional capability this call needs, such as a video host or image transformer |
+| 503 | `ai_unavailable` | The AI model didn't answer in time (composing blocks, or a draft with blocks); nothing was written, retry |
 | 500 | `internal`, `secret_unreadable` | A server fault; retry later and report it if it persists |
 
 The 413 and the request-rate 429 are written before a route runs, so their body is flat,
