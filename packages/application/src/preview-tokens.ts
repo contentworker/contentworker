@@ -109,6 +109,20 @@ export async function principalFromPreviewToken(
   entryId: string,
   token: string | undefined,
 ): Promise<Principal | null> {
+  return (await previewTokenGrant(ctx, hasher, scope, entryId, token))?.principal ?? null;
+}
+
+/**
+ * What a preview link token grants: the read-only principal for its one entry, and when the token
+ * stops working, so a frontend can keep what it holds from it no longer than that.
+ */
+export async function previewTokenGrant(
+  ctx: AppContext,
+  hasher: Hasher,
+  scope: Scope,
+  entryId: string,
+  token: string | undefined,
+): Promise<{ readonly principal: Principal; readonly expiresAt: Date } | null> {
   if (!token) return null;
   const record = await ctx.store.previewTokens.findByHash(hasher.hash(token));
   if (!record || record.revoked) return null;
@@ -123,15 +137,18 @@ export async function principalFromPreviewToken(
 
   const view = await getEntry(ctx, scope, entryId);
   return {
-    spaceId: scope.spaceId,
-    kind: 'cpa',
-    scopes: scopesForKind('cpa'),
-    contentGrants: [
-      {
-        contentTypeApiId: view.entry.contentTypeApiId,
-        actions: ['read'],
-      },
-    ],
+    principal: {
+      spaceId: scope.spaceId,
+      kind: 'cpa',
+      scopes: scopesForKind('cpa'),
+      contentGrants: [
+        {
+          contentTypeApiId: view.entry.contentTypeApiId,
+          actions: ['read'],
+        },
+      ],
+    },
+    expiresAt: record.expiresAt,
   };
 }
 

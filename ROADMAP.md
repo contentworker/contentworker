@@ -375,8 +375,10 @@ Built on Blocks and the frontend runtime. Layouts stay a typed tree; rich text s
 - [x] **Frontend SDK extras.** `client.live()` over the live stream (reconnecting with backoff,
   stopping when the key is refused) with `useLiveEntry` / `useLiveEntries` for React and Vue; a
   Next.js draft-mode helper (`@contentworker/sdk/next`: a route that checks the preview token, and a
-  client that reads Preview in draft mode); the preview URL template per content type, now settable
-  alone (`PUT …/content-types/:apiId/preview`, `model_set_content_type_preview`); and Settings →
+  client that, in draft mode, reads only the preview link's entry with the link's own token, and
+  everything else from Delivery, so a site needs no Preview key); the preview URL template per
+  content type, now settable alone (`PUT …/content-types/:apiId/preview`,
+  `model_set_content_type_preview`); and Settings →
   Connect a frontend, which mints a Delivery key (and a Preview key) through `connectFrontend`
   (`POST …/frontend-connections`, `frontend_connect`), prints the config for the frontend runtime,
   the SDK, Next.js and live preview, sets the preview URLs, and checks a page connects through the

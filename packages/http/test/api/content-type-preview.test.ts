@@ -106,6 +106,12 @@ describe('content type preview URL template over HTTP', () => {
       { 'Content-Type': 'application/json' } as typeof cma,
     );
     expect(read.status, await read.clone().text()).toBe(200);
+    // And says when the token stops working, as the link does, so a frontend holds it no longer.
+    const { expiresAt } = link as unknown as { expiresAt: string };
+    expect(read.headers.get('x-cw-preview-expires')).toBe(expiresAt);
+    // A bearer read says nothing of the kind.
+    const bearer = await send(`/preview/s1/main/entries/${entry.id}`, 'GET');
+    expect(bearer.headers.get('x-cw-preview-expires')).toBeNull();
     // A locale the space doesn't have is refused.
     const bad = await send(`${M}/entries/${entry.id}/preview-link`, 'POST', { locale: 'de' });
     expect(bad.status).toBe(422);

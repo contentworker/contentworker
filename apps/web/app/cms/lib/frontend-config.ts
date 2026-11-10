@@ -90,22 +90,26 @@ export function nextDraftRoute(i: FrontendConfigInput): string {
   ].join('\n');
 }
 
-/** Next.js: a client that reads Preview while draft mode is on, and Delivery otherwise. */
+/**
+ * Next.js: a client that, in draft mode, reads the one entry the preview link named with that
+ * link's token, and everything else from Delivery. No Preview key.
+ */
 export function nextClient(i: FrontendConfigInput): string {
   return [
     '// lib/contentworker.ts',
-    "import { draftMode } from 'next/headers';",
+    "import { cookies, draftMode } from 'next/headers';",
     "import { createDraftClient } from '@contentworker/sdk/next';",
     '',
     'export const getClient = createDraftClient({',
     '  draftMode,',
+    '  cookies,',
     '  delivery: {',
     `    baseUrl: ${quote(i.endpoints.delivery)},`,
     `    space: ${quote(i.space)},`,
     `    environment: ${quote(i.environment)},`,
     '    token: process.env.CONTENTWORKER_DELIVERY_KEY!,',
     '  },',
-    `  preview: { baseUrl: ${quote(i.endpoints.preview)}, token: process.env.CONTENTWORKER_PREVIEW_KEY! },`,
+    `  preview: { baseUrl: ${quote(i.endpoints.preview)} },`,
     '});',
   ].join('\n');
 }

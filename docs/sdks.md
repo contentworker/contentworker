@@ -333,8 +333,8 @@ not observed. For server-fetched Nuxt data, wrap the client's promise methods in
 ## `@contentworker/sdk/next` — Next.js draft mode
 
 `packages/sdk/core/src/next.ts`, re-exported as `@contentworker/sdk/next`. It imports nothing from
-Next.js: the caller passes `draftMode` from `next/headers` (sync in Next.js 14, async from 15;
-both work), so `next` is only an optional peer dependency (`>=14`). See
+Next.js: the caller passes `draftMode` and `cookies` from `next/headers` (sync in Next.js 14,
+async from 15; both work), so `next` is only an optional peer dependency (`>=14`). See
 [Connect a frontend](https://docs.contentworker.app/guides/connect-a-frontend/).
 
 ```ts
@@ -356,38 +356,47 @@ export const GET = createDraftRoute({
 - `createDraftRoute({ baseUrl, space, environment, draftMode, resolvePath?, fetch? })` →
   `(request: Request) => Promise<Response>`. It checks the per-entry preview token with
   `GET <baseUrl>/preview/<space>/<env>/entries/<entry>?preview_token=…` (no key: the token is the
-  grant), then calls `(await draftMode()).enable()` and answers `307` to `resolvePath(entry)`, else
-  the link's `path`, else `/`. A target that would leave the site (`//host`, `/\host`, a scheme,
-  control characters) becomes `/` (`safeRedirectPath`). A refused token (401, 403 or 404 from
-  Preview) answers 401 and leaves draft mode off; a link without `entry` or `token`, 400; a
-  Preview API that fails or can't be reached, 502. Every answer is `cache-control: no-store` and
-  `referrer-policy: no-referrer`, and none echoes the token.
-- `createExitDraftRoute({ draftMode, path? })` turns draft mode off and redirects to the request's
-  `path` (when it is on the site), else `path`, else `/`.
-- `createDraftClient({ draftMode, delivery, preview })` → `() => Promise<DeliveryClient>`: a
-  Preview client (`preview: true`, the preview key, `preview.baseUrl` or the delivery one) while
-  draft mode is on, else the Delivery client; each is made once. Draft mode is site-wide: one
-  entry's link turns on Preview reads for every page, until Next.js's cookie goes (past the
-  token's expiry), so the Preview key should be bound to a role reading only what the site
-  previews.
+  grant), works out the target (`resolvePath(entry)`, else the link's `path`, else `/`; one that
+  would leave the site — `//host`, `/\host`, a scheme, control characters — becomes `/`,
+  `safeRedirectPath`), then sets the draft cookie and calls `(await draftMode()).enable()` and
+  answers `307`. The cookie is `cw_draft=<entry>~<token>` (`DRAFT_COOKIE`; `readDraftCookie` reads
+  it), `Path=/; HttpOnly; Secure; SameSite=Lax`, with `Max-Age` the token's remaining life from the
+  Preview API's `x-cw-preview-expires` header, at most 3600 (`DRAFT_COOKIE_MAX_AGE`); a token with
+  none left answers 401. Being `SameSite=Lax`, a browser neither keeps nor sends it in a frame from
+  another site, so the editor's Site view of a site on another registrable domain than the admin
+  shows the entry published; the token reads are `cache: 'no-store'`. A refused token (401, 403 or 404 from Preview) answers 401 and sets
+  nothing; a link without `entry` or `token`, 400; a Preview API that fails or can't be reached,
+  502. Every answer is `cache-control: no-store` and `referrer-policy: no-referrer`, none echoes the
+  token, and the redirect's URL carries none.
+- `createExitDraftRoute({ draftMode, path? })` turns draft mode off, clears the cookie
+  (`Max-Age=0`) and redirects to the request's `path` (when it is on the site), else `path`, else
+  `/`.
+- `createDraftClient({ draftMode, cookies, delivery, preview? })` → `() => Promise<DraftClient>`.
+  Outside draft mode, or without a readable cookie, it is the Delivery client (made once) with
+  `draft: null`. In draft mode it is the Delivery client too, except for the cookie's entry: `getEntry`
+  of it, and it in its place in `listEntries`, `query()` and `getSingleton` (also a never-published
+  singleton of its type), is read from `<preview.baseUrl or delivery.baseUrl>/preview/…/entries/<id>`
+  with `preview_token` and no key, once per locale per request; `editable()` marks only it;
+  `draft` is `{ entryId }` and `getDraftEntry({ locale? })` reads it for a page that finds its
+  entry another way. Every other entry, and what the draft links to, reads published from
+  Delivery. A token the Preview API refuses (expired, revoked) reads the entry published again.
+  The site needs no Preview key for draft mode.
 
 ```ts
 // lib/contentworker.ts (server only)
-import { draftMode } from 'next/headers';
+import { cookies, draftMode } from 'next/headers';
 import { createDraftClient } from '@contentworker/sdk/next';
 
 export const getClient = createDraftClient({
   draftMode,
+  cookies,
   delivery: {
     baseUrl: 'https://cdn.your-workspace.contentworker.app',
     space: 'your-space',
     environment: 'main',
     token: process.env.CONTENTWORKER_DELIVERY_KEY!,
   },
-  preview: {
-    baseUrl: 'https://api.your-workspace.contentworker.app',
-    token: process.env.CONTENTWORKER_PREVIEW_KEY!,
-  },
+  preview: { baseUrl: 'https://api.your-workspace.contentworker.app' },
 });
 ```
 

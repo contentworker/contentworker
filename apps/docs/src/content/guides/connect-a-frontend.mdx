@@ -11,8 +11,8 @@ Agents and scripts do the same through the API and MCP ([below](#from-the-api-or
 ## 1. Create the keys
 
 Name the site and choose **Create key**. You get a Delivery key, which reads published content
-(`delivery:read`, `search:read`). Tick **Also create a Preview key** for a site with a draft mode:
-it reads drafts too (`preview:read`). Pick a role for either key to narrow what it reads to that
+(`delivery:read`, `search:read`). Tick **Also create a Preview key** only for a server that reads
+drafts itself: it reads them too (`preview:read`). A Next.js draft mode needs none (below). Pick a role for either key to narrow what it reads to that
 role's content grants. A role-bound key takes the role's scopes too, so a Delivery key's role may
 hold only `delivery:read` and `search:read`, and a Preview key's role also `preview:read` (the
 Viewer preset fits a Preview key); a role that holds more is refused.
@@ -60,13 +60,15 @@ export const client = createDeliveryClient({
 });
 ```
 
-**Next.js.** `@contentworker/sdk/next` turns a preview link into draft mode: a route handler checks
-the link's token and turns draft mode on, and a client reads Preview while it is on. It needs both
-keys, as `CONTENTWORKER_DELIVERY_KEY` and `CONTENTWORKER_PREVIEW_KEY`.
-[SDKs](/guides/sdks/#nextjs-draft-mode) has the route and the client. Draft mode is site-wide:
-anyone who opens one entry's preview link reads every page with the Preview key until Next.js's
-draft-mode cookie goes, so give the Preview key a role that reads only the types your site
-previews.
+**Next.js.** `@contentworker/sdk/next` turns a preview link into draft mode for that link's entry:
+a route handler checks the link's token, keeps the entry and the token in an HttpOnly cookie for no
+longer than the token has left (an hour at most), and turns draft mode on. While it is on, the
+client reads that one entry as it is now, with the link's own token, and everything else as
+published. It needs only the Delivery key, as `CONTENTWORKER_DELIVERY_KEY`: no Preview key, so a
+preview link shows its entry and nothing more. The cookie is `SameSite=Lax`: when your site is on
+another domain than the admin, the editor's Site view (a frame) shows the entry as published, so
+open the preview link in its own tab. [SDKs](/guides/sdks/#nextjs-draft-mode) has the route and the
+client.
 
 **Live preview.** The editor's Site view frames your page; `connectPreview` lets the page connect
 to your admin and show edits as they are typed. The screen prints your admin's origin:
@@ -131,7 +133,7 @@ The screen calls two Management routes, and each has an MCP tool:
 
 | Route                                                         | MCP tool                         | Does                                                                                                                                  |
 | ------------------------------------------------------------- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| `POST /spaces/:space/environments/:env/frontend-connections`  | `frontend_connect`               | Mints the Delivery key (and with `preview: true` the Preview key), and answers the tokens once with the hosts and every preview URL |
+| `POST /spaces/:space/environments/:env/frontend-connections`  | `frontend_connect`               | Mints the Delivery key (and with `preview: true` a Preview key, for a server that reads drafts itself), and answers the tokens once with the hosts and every preview URL |
 | `PUT /spaces/:space/environments/:env/content-types/:apiId/preview` | `model_set_content_type_preview` | Sets one type's preview URL (`{ "urlTemplate": null }` clears it), changing nothing else                                           |
 
 From `@contentworker/sdk/management`, they are `cma.frontend.connect({ name, roleId, preview, previewRoleId })`

@@ -454,38 +454,45 @@ export const GET = createDraftRoute({
 });
 ```
 
-It checks the link's preview token with the Preview API, turns draft mode on and redirects to the
-page; a refused or expired token gets a 401 and draft mode stays off. A redirect that would leave
-your site goes to `/` instead, and nothing it answers is cached or carries the token on.
-`createExitDraftRoute({ draftMode })` turns it off again. Draft mode is site-wide in Next.js: once
-on, every page reads with the Preview key until its cookie goes, whichever entry's link turned it
-on, so bind the Preview key to a role that reads only what your site previews. Pages read through
-`createDraftClient`, which answers a Preview client while draft mode is on:
+It checks the link's preview token with the Preview API, then keeps the entry and the token in
+an HttpOnly cookie (`cw_draft`: `Secure`, `SameSite=Lax`, for no longer than the token has left
+and an hour at most), turns draft mode on and redirects to the page, the token gone from the URL.
+A refused or expired token gets a 401 and changes nothing. A redirect that would leave your site
+goes to `/` instead, and nothing it answers is cached. `createExitDraftRoute({ draftMode })` turns
+draft mode off and clears the cookie. Being `SameSite=Lax`, the cookie isn't kept in a frame from
+another site: the editor's Site view of a site on another domain than the admin shows the entry
+as published, so open its preview link in a tab.
+
+Draft mode reads only that entry. Pages read through `createDraftClient`: outside draft mode it is
+your Delivery client; in draft mode it is still Delivery, except for the link's entry, which reads
+as it is now with the link's own token (by `getEntry`, and in its place in `listEntries`,
+`query()` and `getSingleton`). Every other entry, and what the draft links to, reads published. No
+Preview key is involved, so a preview link shows its own entry and nothing else, and once its token
+expires the entry reads published again:
 
 ```ts
 // lib/contentworker.ts
-import { draftMode } from 'next/headers';
+import { cookies, draftMode } from 'next/headers';
 import { createDraftClient } from '@contentworker/sdk/next';
 
 export const getClient = createDraftClient({
   draftMode,
+  cookies,
   delivery: {
     baseUrl: 'https://cdn.your-workspace.contentworker.app',
     space: 'your-space',
     environment: 'main',
     token: process.env.CONTENTWORKER_DELIVERY_KEY!,
   },
-  preview: {
-    baseUrl: 'https://api.your-workspace.contentworker.app',
-    token: process.env.CONTENTWORKER_PREVIEW_KEY!,
-  },
+  preview: { baseUrl: 'https://api.your-workspace.contentworker.app' },
 });
 
 // In a page: const entry = await (await getClient()).getEntry(id);
+// A page that finds its entry by a slug not yet published: (await getClient()).getDraftEntry().
 ```
 
-[Connect a frontend](/guides/connect-a-frontend/) mints both keys and prints this setup for your
-space.
+[Connect a frontend](/guides/connect-a-frontend/) mints the Delivery key and prints this setup for
+your space.
 
 ## Next steps
 

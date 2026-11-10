@@ -3,7 +3,9 @@ import {
   createDraftClient,
   createDraftRoute,
   createExitDraftRoute,
+  DRAFT_COOKIE,
   type DraftModeHandle,
+  readDraftCookie,
   safeRedirectPath,
 } from '../src/next.js';
 
@@ -61,10 +63,39 @@ describe('createDraftRoute', () => {
       `https://api.test/preview/s1/main/entries/e1?preview_token=${TOKEN}&locale=de-DE`,
     ]);
     expect(new Headers(p.inits[0]?.headers).get('authorization')).toBeNull();
+    // A read carrying the token is never cached.
+    expect(p.inits[0]?.cache).toBe('no-store');
     expect(dm.handle.enable).toHaveBeenCalledOnce();
     expect(res.status).toBe(307);
     expect(res.headers.get('location')).toBe('https://site.test/blog/hello');
     expectNoStore(res);
+    // The entry and its token go in an HttpOnly cookie, never in the URL the page gets.
+    expect(res.headers.get('set-cookie')).toBe(
+      `${DRAFT_COOKIE}=e1~${TOKEN}; Path=/; Max-Age=3600; HttpOnly; Secure; SameSite=Lax`,
+    );
+    expect(res.headers.get('location')).not.toContain(TOKEN);
+    expect(await res.text()).toBe('');
+  });
+
+  it('keeps the cookie no longer than the token has left, an hour at most', async () => {
+    const at = (ms: number) => () =>
+      new Response(JSON.stringify(entry), {
+        headers: { 'x-cw-preview-expires': new Date(Date.now() + ms).toISOString() },
+      });
+    const life = async (ms: number) => {
+      const res = await createDraftRoute({
+        ...opts,
+        draftMode: fakeDraftMode().draftMode,
+        fetch: preview(at(ms)).fetch,
+      })(link(`entry=e1&token=${TOKEN}`));
+      return { res, cookie: res.headers.get('set-cookie') };
+    };
+    expect((await life(10 * 60_000)).cookie).toMatch(/Max-Age=(599|600);/);
+    expect((await life(72 * 3600_000)).cookie).toMatch(/Max-Age=3600;/);
+    // A token that has run out by now turns nothing on.
+    const spent = await life(-1000);
+    expect(spent.res.status).toBe(401);
+    expect(spent.cookie).toBeNull();
   });
 
   it('works with a synchronous draftMode (Next.js 14)', async () => {
@@ -136,6 +167,7 @@ describe('createDraftRoute', () => {
       const res = await route(link(`entry=e1&token=${TOKEN}`));
       expect(res.status).toBe(401);
       expect(dm.handle.enable).not.toHaveBeenCalled();
+      expect(res.headers.get('set-cookie')).toBeNull();
       expect(await res.text()).not.toContain(TOKEN);
       expectNoStore(res);
     },
@@ -187,6 +219,10 @@ describe('createExitDraftRoute', () => {
     expect(res.status).toBe(307);
     expect(res.headers.get('location')).toBe('https://site.test/blog');
     expectNoStore(res);
+    // The draft cookie goes with draft mode.
+    expect(res.headers.get('set-cookie')).toBe(
+      `${DRAFT_COOKIE}=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax`,
+    );
     const asked = await route(new Request('https://site.test/api/draft/exit?path=//evil.test'));
     expect(asked.headers.get('location')).toBe('https://site.test/blog');
     const back = await route(new Request('https://site.test/api/draft/exit?path=/post/1'));
@@ -210,18 +246,66 @@ describe('safeRedirectPath', () => {
   });
 });
 
+describe('readDraftCookie', () => {
+  it.each([
+    [`e1~${TOKEN}`, { entryId: 'e1', token: TOKEN }],
+    ['e%7E1~a~b', { entryId: 'e~1', token: 'a~b' }],
+    ['', null],
+    [undefined, null],
+    ['~tok', null],
+    ['e1~', null],
+    ['e1', null],
+    ['e1~%0a', null],
+    ['e1~%zz', null],
+  ])('%s', (value, want) => {
+    expect(readDraftCookie(value)).toEqual(want);
+  });
+});
+
 describe('createDraftClient', () => {
-  it('answers a Preview client with the preview key while draft mode is on, else Delivery; each made once', async () => {
+  const published = (id: string, title: string) => ({
+    id,
+    contentType: 'post',
+    fields: { title },
+    publishedAt: '2026-01-01T00:00:00.000Z',
+  });
+
+  function site(o: { cookie?: string; draft?: () => Response } = {}) {
     const dm = fakeDraftMode();
     const urls: string[] = [];
-    const auth: string[] = [];
+    const auth: (string | null)[] = [];
+    const caches: (RequestCache | undefined)[] = [];
     const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
-      urls.push(String(input));
-      auth.push(new Headers(init?.headers).get('authorization') ?? '');
-      return new Response(JSON.stringify(entry));
+      const url = String(input);
+      urls.push(url);
+      auth.push(new Headers(init?.headers).get('authorization'));
+      if (url.includes('/preview/')) caches.push(init?.cache);
+      if (url.includes('/preview/')) {
+        return (
+          o.draft?.() ??
+          new Response(JSON.stringify({ ...published('e1', 'Draft title'), status: 'changed' }))
+        );
+      }
+      if (url.includes('/entries/e1')) return new Response(JSON.stringify(published('e1', 'Live')));
+      if (url.includes('/entries/e2')) {
+        return new Response(JSON.stringify(published('e2', 'Other')));
+      }
+      if (url.includes('/singletons/home')) {
+        return new Response('{"error":{"code":"not_found"}}', { status: 404 });
+      }
+      return new Response(
+        JSON.stringify({ items: [published('e1', 'Live'), published('e2', 'Other')], total: 2 }),
+      );
     }) as unknown as typeof fetch;
+    const jar = new Map<string, string>(o.cookie === undefined ? [] : [[DRAFT_COOKIE, o.cookie]]);
     const getClient = createDraftClient({
       draftMode: dm.draftMode,
+      cookies: async () => ({
+        get: (name: string) => {
+          const value = jar.get(name);
+          return value === undefined ? undefined : { value };
+        },
+      }),
       delivery: {
         baseUrl: 'https://cdn.test',
         space: 's1',
@@ -229,22 +313,93 @@ describe('createDraftClient', () => {
         token: 'cda',
         fetch: fetchImpl,
       },
-      preview: { baseUrl: 'https://api.test', token: 'cpa' },
+      preview: { baseUrl: 'https://api.test' },
     });
-    const delivery = await getClient();
-    await delivery.getEntry('e1');
-    expect(await getClient()).toBe(delivery);
-    dm.handle.isEnabled = true;
-    const draft = await getClient();
-    expect(draft).not.toBe(delivery);
-    expect(await getClient()).toBe(draft);
-    await draft.getEntry('e1');
-    expect(urls).toEqual([
-      'https://cdn.test/delivery/s1/main/entries/e1',
-      'https://api.test/preview/s1/main/entries/e1',
+    return { dm, urls, auth, caches, getClient };
+  }
+
+  it('is the Delivery client outside draft mode, made once', async () => {
+    const s = site({ cookie: `e1~${TOKEN}` });
+    const client = await s.getClient();
+    expect(client.draft).toBeNull();
+    expect((await client.getEntry('e1')).fields).toEqual({ title: 'Live' });
+    expect(await client.getDraftEntry()).toBeNull();
+    expect(client.editable({ id: 'e1', contentType: 'post' }, 'title')).toEqual({});
+    expect(await s.getClient()).toBe(client);
+    expect(s.urls).toEqual(['https://cdn.test/delivery/s1/main/entries/e1']);
+  });
+
+  it('in draft mode reads only the cookie’s entry with its token, every other one published', async () => {
+    const s = site({ cookie: `e1~${TOKEN}` });
+    s.dm.handle.isEnabled = true;
+    const client = await s.getClient();
+    expect(client.draft).toEqual({ entryId: 'e1' });
+    expect((await client.getEntry('e1', { locale: 'en-US' })).fields).toEqual({
+      title: 'Draft title',
+    });
+    // A second entry reads published, from Delivery, with the Delivery key.
+    expect((await client.getEntry('e2')).fields).toEqual({ title: 'Other' });
+    // In a list the draft takes its own place; the rest stay as delivered.
+    const { items } = await client.listEntries({ contentType: 'post', locale: 'en-US' });
+    expect(items.map((e) => e.fields.title)).toEqual(['Draft title', 'Other']);
+    const viaQuery = await client.query().contentType('post').locale('en-US').fetch();
+    expect(viaQuery.items[0]?.fields.title).toBe('Draft title');
+    // One preview read per locale, without a key; nothing read with a Preview key.
+    expect(s.urls.filter((u) => u.includes('/preview/'))).toEqual([
+      `https://api.test/preview/s1/main/entries/e1?preview_token=${TOKEN}&locale=en-US`,
     ]);
-    expect(auth).toEqual(['Bearer cda', 'Bearer cpa']);
-    expect(draft.editable(entry, 'title')).not.toEqual({});
-    expect(delivery.editable(entry, 'title')).toEqual({});
+    expect(s.caches).toEqual(['no-store']);
+    s.urls.forEach((u, i) => {
+      expect(s.auth[i]).toBe(u.includes('/preview/') ? null : 'Bearer cda');
+    });
+    // Only the draft entry is marked for the editor.
+    expect(client.editable({ id: 'e1', contentType: 'post' }, 'title')).not.toEqual({});
+    expect(client.editable({ id: 'e2', contentType: 'post' }, 'title')).toEqual({});
+  });
+
+  it('answers a never-published singleton with the draft when it is that type’s', async () => {
+    const s = site({
+      cookie: `h1~${TOKEN}`,
+      draft: () => new Response(JSON.stringify({ id: 'h1', contentType: 'home', fields: {} })),
+    });
+    s.dm.handle.isEnabled = true;
+    const client = await s.getClient();
+    expect((await client.getSingleton('home')).id).toBe('h1');
+  });
+
+  it('reads published again once the token stops working', async () => {
+    const s = site({
+      cookie: `e1~${TOKEN}`,
+      draft: () => new Response('{"error":"expired"}', { status: 401 }),
+    });
+    s.dm.handle.isEnabled = true;
+    const client = await s.getClient();
+    expect((await client.getEntry('e1')).fields).toEqual({ title: 'Live' });
+    expect(await client.getDraftEntry()).toBeNull();
+  });
+
+  it('reads published in draft mode without a cookie, or with one it can’t read', async () => {
+    for (const cookie of [undefined, 'garbage']) {
+      const s = site(cookie === undefined ? {} : { cookie });
+      s.dm.handle.isEnabled = true;
+      const client = await s.getClient();
+      expect(client.draft).toBeNull();
+      expect((await client.getEntry('e1')).fields).toEqual({ title: 'Live' });
+      expect(s.urls.some((u) => u.includes('/preview/'))).toBe(false);
+    }
+  });
+
+  it('never puts the token in a published read, an error or a log', async () => {
+    const spies = [vi.spyOn(console, 'log'), vi.spyOn(console, 'warn'), vi.spyOn(console, 'error')];
+    const s = site({ cookie: `e1~${TOKEN}`, draft: () => new Response('oops', { status: 500 }) });
+    s.dm.handle.isEnabled = true;
+    const client = await s.getClient();
+    await client.getEntry('e1');
+    await client.listEntries();
+    for (const u of s.urls.filter((x) => !x.includes('/preview/'))) expect(u).not.toContain(TOKEN);
+    for (const spy of spies) {
+      expect(JSON.stringify(spy.mock.calls)).not.toContain(TOKEN);
+      spy.mockRestore();
+    }
   });
 });

@@ -8,7 +8,7 @@ import {
   listPreviewAssets,
   listPreviewEntryPage,
   parseEntryQuery,
-  principalFromPreviewToken,
+  previewTokenGrant,
   SUGGEST_DEFAULT_LIMIT,
   SUGGEST_MAX_LIMIT,
   secureTokenEqual,
@@ -51,6 +51,9 @@ const scopeOf = (c: Context<AuthVars>): Scope => ({
 
 const BASE = '/preview/:space/:env';
 
+/** On an entry read with a preview token: when the token stops working (ISO 8601). */
+export const PREVIEW_EXPIRES_HEADER = 'x-cw-preview-expires';
+
 const ADMIN: Principal = {
   spaceId: '*',
   kind: 'admin',
@@ -64,17 +67,13 @@ async function resolvePreviewPrincipal(
 ): Promise<Principal> {
   const previewToken = c.req.query('preview_token');
   if (previewToken) {
-    const fromToken = await principalFromPreviewToken(
-      deps.ctx,
-      deps.hasher,
-      scopeOf(c),
-      entryId,
-      previewToken,
-    );
-    if (!fromToken) {
+    const grant = await previewTokenGrant(deps.ctx, deps.hasher, scopeOf(c), entryId, previewToken);
+    if (!grant) {
       throw new HTTPException(401, { message: 'Invalid or expired preview token' });
     }
-    return fromToken;
+    // When the token stops working, so a frontend keeps what it holds from it no longer.
+    c.header(PREVIEW_EXPIRES_HEADER, grant.expiresAt.toISOString());
+    return grant.principal;
   }
 
   const web = await resolveWebPrincipal(deps, c);
@@ -285,7 +284,10 @@ export function previewRoutes(deps: AuthDeps): Hono<AuthVars> {
   app.get(
     `${BASE}/entries/:id`,
     doc('Preview', 'Get a draft/current entry', {
-      description: 'Accepts a bearer token or a shareable ?preview_token= minted from the entry.',
+      description:
+        'Accepts a bearer token or a shareable ?preview_token= minted from the entry. Read with a ' +
+        "preview token, the answer's `x-cw-preview-expires` header is when the token stops " +
+        'working (ISO 8601).',
       query: { locale: 'Resolve one locale', preview_token: 'Shareable preview token' },
     }),
     environmentMiddleware(deps),

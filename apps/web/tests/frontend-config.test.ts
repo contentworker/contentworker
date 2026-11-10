@@ -78,6 +78,14 @@ describe('the SDK and Next.js config', () => {
     expect(nextClient(deployed)).toContain('createDraftClient');
   });
 
+  it('gives Next.js draft mode no Preview key: the link’s own token reads its entry', () => {
+    const code = nextClient(deployed);
+    expect(code).not.toContain('CONTENTWORKER_PREVIEW_KEY');
+    expect(code).toContain("import { cookies, draftMode } from 'next/headers';");
+    expect(code).toContain('  cookies,');
+    expect(code).toContain("preview: { baseUrl: 'https://api.acme.contentworker.app' }");
+  });
+
   it('quotes a value that could end its string', () => {
     const odd = { ...deployed, environment: "it's" };
     expect(sdkClient(odd)).toContain("environment: 'it\\'s'");

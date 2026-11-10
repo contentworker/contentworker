@@ -14,14 +14,15 @@ export function registerFrontendTools(server: McpServer, t: ToolContext): void {
     {
       description:
         'Connect a frontend to this space and environment: mints a Delivery API key (and, with ' +
-        'preview: true, a Preview API key for a draft mode) and answers them with the endpoints ' +
+        'preview: true, a Preview API key, only for a server that reads drafts itself) and answers ' +
+        'them with the endpoints ' +
         "the frontend's config names (Delivery's origin, the api's origin, the admin origin for " +
         "live preview's adminOrigin) and each content type's preview URL template. The tokens " +
         'are shown ONCE, in this result: hand them to whoever configures the site now (as ' +
         'secrets: never in a URL or a committed file), or revoke the keys. Set a missing preview ' +
-        'URL with model_set_content_type_preview. A Next.js draft mode reads every page with the ' +
-        'Preview key once any preview link turns it on, so give a previewRoleId that reads only ' +
-        'the types the site previews. A role may hold no scope beyond its key kind (roleId: ' +
+        'URL with model_set_content_type_preview. A Next.js site on @contentworker/sdk/next needs ' +
+        "no Preview key: its draft mode reads the preview link's one entry with the link's own " +
+        'token, everything else from Delivery. A role may hold no scope beyond its key kind (roleId: ' +
         'delivery:read, search:read; previewRoleId: also preview:read). Refused to an OAuth or ' +
         'personal access token.',
       inputSchema: toolSchema('frontend_connect', () => connectFrontendBody.extend(scopeArgs)),
