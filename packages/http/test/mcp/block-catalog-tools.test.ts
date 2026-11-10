@@ -200,4 +200,25 @@ describe('block catalog tools (MCP), on the HTTP routes’ use-cases', () => {
     expect((await read('blocks_catalog_get')).isError).toBe(false);
     expect((await read('blocks_usage')).isError).toBe(false);
   });
+
+  it('types the blocks in model_typescript from the catalog in force, else the variants', async () => {
+    const { deps } = await withPage();
+    const call = await connect(deps, {
+      ...manager,
+      scopes: [...manager.scopes, SCOPES.contentPublish],
+    });
+    const before = (await call('model_typescript')).text;
+    expect(before).toContain('export type BlockTypes = {\n  hero: HeroBlock;\n};');
+
+    const described = [{ ...BLOCKS[0], description: 'The top of a page.' }, BLOCKS[1]];
+    expect(
+      (await call('blocks_catalog_push', { blocks: described, targets: TARGETS })).isError,
+    ).toBe(false);
+    const after = (await call('model_typescript')).text;
+    // Only the catalog carries a block's description.
+    expect(after).toContain('/** Hero (`hero`) — The top of a page. */');
+    expect(after).toContain(
+      'export type BlockTypes = {\n  hero: HeroBlock;\n  quote: QuoteBlock;\n};',
+    );
+  });
 });

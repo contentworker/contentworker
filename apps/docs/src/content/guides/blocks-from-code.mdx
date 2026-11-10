@@ -135,7 +135,8 @@ The push reports it as renamed rather than removed and added, and nothing is str
 stored as `"_type": "hero"` keep validating and reading as `banner` in the editor, and each takes
 `banner` on its entry's next save. GraphQL serves them as `banner` right away. The REST Delivery and
 Preview APIs return each block as stored, so until an entry is saved again a block can still
-carry the old id: have your renderer map aliases too, from the catalog (`GET …/block-catalog`).
+carry the old id: give the [renderer](#rendering-blocks) the catalog, and it renders such a block
+as `banner`.
 
 A former id is never reused: a push that brings `hero` back as a different block while the catalog
 in force lists it as an alias is refused. Removing a block outright and later pushing a new one
@@ -168,6 +169,146 @@ entries: change those entries first, or keep the old id in `aliases` if it is a 
 Each changed content type is revised with the content model's own checks and, unless
 `--no-publish`, published. Every changed type and the new catalog version are written together, so
 a push lands whole or not at all.
+
+## Rendering blocks
+
+`@contentworker/sdk/react` has `<Blocks>` and `@contentworker/sdk/vue` has `<CwBlocks>`: give
+either a blocks field's value and a component for each block id, and it renders each block with
+its component, in order, keyed by its `_key`, inside one element (`as`, a `div` by default, which
+takes the other attributes you give). A block's slots render with the same components.
+
+Generate the types first. `contentworker types` types each block from the catalog in force
+(`BannerBlock`, `GridBlock`, …, a slot typed as a list of the blocks it allows) and maps every id
+to its type in `BlockTypes`:
+
+```sh
+npx contentworker types --out src/generated/content-types.ts
+```
+
+```tsx
+import { type BlockComponents, Blocks, type DeliveredEntry } from '@contentworker/sdk/react';
+import type { BlockTypes, PageFields } from './generated/content-types';
+import catalog from '../contentworker.blocks.json';
+
+const components: BlockComponents<BlockTypes> = {
+  banner: ({ block, attrs, fieldAttrs }) => (
+    <section {...attrs}>
+      <h1 {...fieldAttrs('heading')}>{block.heading}</h1>
+    </section>
+  ),
+  grid: ({ block, attrs, slots }) => (
+    <section {...attrs}>
+      <h2>{block.title}</h2>
+      {slots.cards({ as: 'ul', className: 'cards' })}
+    </section>
+  ),
+  card: ({ block, attrs }) => <li {...attrs}>{block.title}</li>,
+};
+
+export function Page({ entry }: { entry: DeliveredEntry<PageFields> }) {
+  return <Blocks value={entry.fields.sections} components={components} catalog={catalog} as="main" />;
+}
+```
+
+Each component gets:
+
+| Prop         | Is                                                                                          |
+| ------------ | ------------------------------------------------------------------------------------------- |
+| `block`      | The block, typed by `BlockTypes`, with `_type` its current id                               |
+| `slots`      | A function per slot, rendering its blocks in an element: `slots.cards({ as: 'ul' })`         |
+| `attrs`      | Spread onto the block's root element. Empty, except in a [preview](#in-a-live-preview)       |
+| `fieldAttrs` | `fieldAttrs('heading')`, spread onto the element showing that field. Empty, except in a preview |
+| `ghost`      | In a live preview, `inserted`, `changed` or `removed` for a block Coworker proposes          |
+| `index`      | Its place among its siblings                                                                |
+
+- **Renamed blocks.** For a field the catalog targets, pass `catalog` (your blocks file, or what
+  `GET …/block-catalog` answers); for any other blocks field, its `variants` from its content type.
+  A block stored under a former id then renders with the component for its current one, its
+  `block._type` set to that id.
+- **Unknown blocks.** A block no component is given for (one a newer catalog added, say) renders
+  with `fallback` if you pass one, else not at all. A value that isn't a block (no `_type`) is
+  skipped; a value that isn't a list renders the empty element.
+- **Slots.** A slot holding nothing still renders its element, so the canvas has somewhere to offer
+  a seam.
+- **Server components.** `<Blocks>` uses no hooks, so it renders in a server component, and so do
+  the block components it renders. `slots` and `fieldAttrs` are functions, which can't be passed to
+  a `'use client'` component: put the client parts inside a block's component instead.
+
+In Vue, a block's component declares a `block` prop (or reads it from `useBlock()`), and its slots
+are Vue slots, with `as` and attributes as slot props. The block's preview marks fall through onto
+its root element, and `useBlock()` gives `block`, `ghost`, `index` and `fieldAttrs`:
+
+```vue
+<!-- Grid.vue -->
+<script setup lang="ts">
+import { useBlock } from '@contentworker/sdk/vue';
+import type { GridBlock } from './generated/content-types';
+defineProps<{ block: GridBlock }>();
+const { fieldAttrs } = useBlock<GridBlock>();
+</script>
+
+<template>
+  <section>
+    <h2 v-bind="fieldAttrs('title')">{{ block.title }}</h2>
+    <slot name="cards" as="ul" class="cards" />
+  </section>
+</template>
+```
+
+```vue
+<CwBlocks :value="entry.fields.sections" :components="{ banner: Banner, grid: Grid, card: Card }" :catalog="catalog" as="main" />
+```
+
+Vue needs a slot's name before it renders, so it knows a slot from the catalog or variants, or
+from the blocks it holds: pass one of them for empty slots to render.
+
+For another framework, or a renderer of your own (strings, DOM nodes), `@contentworker/sdk/blocks`
+does the same with plain functions. `renderBlocks` calls one per block id and returns the results
+with the top level's marks; `resolveBlocks` returns the resolved tree to walk yourself.
+
+```ts
+import { renderBlocks } from '@contentworker/sdk/blocks';
+
+const escapeHtml = (text: string) =>
+  text.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+
+const { items } = renderBlocks<BlockTypes, string>(entry.fields.sections, {
+  catalog,
+  components: {
+    banner: ({ block }) => `<section><h1>${escapeHtml(block.heading)}</h1></section>`,
+    grid: ({ slot }) => `<ul>${slot('cards').items.join('')}</ul>`,
+  },
+});
+```
+
+### In a live preview
+
+Pass `preview`, the field as a [live preview](/guides/live-preview/) ref (a `field` that isn't a
+field path, such as `sections]`, is refused with an error), and every block, slot and
+field carries the marks the admin selects and draws seams from: `data-cw-ref` on each block
+(`sections[<key>]`) and field (`sections[<key>].heading`), and `data-cw-slot` on the element holding
+each slot's blocks (`sections`, `sections[<key>].cards`). Pass `ghosts` (`view.ghosts`) and a
+proposed block also carries `data-cw-ghost`, to style it by. Without `preview`, nothing is marked,
+so the same components ship to production.
+
+```tsx
+<Blocks
+  value={live.entries[entry.id]?.view.withProposals.sections ?? entry.fields.sections}
+  components={components}
+  catalog={catalog}
+  ghosts={live.entries[entry.id]?.view.ghosts}
+  preview={
+    live.active && {
+      space: 'your-space',
+      environment: 'main',
+      entryId: entry.id,
+      contentType: entry.contentType,
+      locale: 'en-US',
+      field: 'sections',
+    }
+  }
+/>
+```
 
 ## Versions
 

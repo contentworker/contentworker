@@ -308,6 +308,17 @@ export async function getBlockCatalog(
   return catalog;
 }
 
+/**
+ * The catalog in force, or undefined before the first push: for readers that fall back to the
+ * content types' own variants (the content model as TypeScript), where no catalog isn't an error.
+ */
+export async function findBlockCatalog(
+  ctx: AppContext,
+  scope: Scope,
+): Promise<BlockCatalog | undefined> {
+  return (await ctx.store.blockCatalogs.latest(scope)) ?? undefined;
+}
+
 /** Versions listed per page, at most. */
 export const MAX_BLOCK_CATALOG_VERSIONS_PAGE = 100;
 

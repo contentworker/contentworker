@@ -558,6 +558,34 @@ export const blockPatchBody = z.object(blockPatchShape);
  * names it, so the audit row of a check that wrote nothing is never read as the entry's activity.
  */
 export const blockPatchCheckBody = z.object({ entryId: zId, ...blockPatchShape });
+/**
+ * Blocks composed for one place (`generateBlocks`): an entry's field or a slot of one of its
+ * blocks, or a new entry's field. Shared with the MCP tool, so both take the same request.
+ */
+export const generateBlocksShape = {
+  field: zId.describe('A top-level blocks field of the type'),
+  prompt: zText.describe('What to compose, as you would ask an editor'),
+  entryId: zId
+    .optional()
+    .describe('The entry to add blocks to (or contentTypeApiId for a new one)'),
+  contentTypeApiId: zId
+    .optional()
+    .describe('A new entry of this type: answers the field to create it with'),
+  parent: z
+    .object({
+      key: z.string().min(1).max(128).describe('The _key of the block whose slot to fill'),
+      slot: zId.describe('The slot (a blocks field of that block)'),
+    })
+    .optional()
+    .describe('A slot of one of the entry’s blocks; absent, the field’s top level'),
+  locale: zLocale.optional().describe('The locale to compose for (default: the default locale)'),
+  tier: zTier.optional().describe('Model tier (default flagship)'),
+};
+export const generateBlocksBody = z
+  .object(generateBlocksShape)
+  .refine((b) => (b.entryId === undefined) !== (b.contentTypeApiId === undefined), {
+    message: 'Give entryId (an entry’s blocks) or contentTypeApiId (a new entry), not both',
+  });
 export const translateBody = z.object({
   targetLocale: zLocale,
   sourceLocale: zLocale.optional(),

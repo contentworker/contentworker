@@ -19,7 +19,7 @@ and the agent run log needs `space:admin`. Features run through the same routes 
 
 | Feature          | What it does                                                         | API (`POST …/entries/…`)     |
 | ---------------- | -------------------------------------------------------------------- | ---------------------------- |
-| **Generate**     | Drafts a new entry of a type from a prompt                           | `…/generate`                 |
+| **Generate**     | Drafts a new entry of a type from a prompt, its blocks fields too    | `…/generate`                 |
 | **Canvas**       | Turns free-form prose into a structured entry, field by field        | `…/canvas`                   |
 | **Translate**    | Translates an entry's localized fields into another locale           | `…/{id}/translate`           |
 | **Summarize**    | Writes a summary, optionally into a field                            | `…/{id}/summarize`           |
@@ -34,6 +34,26 @@ nothing AI-generated is published without someone (or a workflow) publishing it.
 
 On assets, **Generate alt text** describes an image for accessibility, and **Suggest tags** proposes
 tags. See [Media and assets](/guides/media/#generate-alt-text-and-tags-with-ai).
+
+### Compose blocks
+
+`POST …/entries/blocks/generate` (MCP `entry_blocks_generate`) composes blocks for one place on
+a page: an entry's blocks field, a slot of one of its blocks (`parent: { key, slot }`), or a new
+entry's field (`contentTypeApiId` instead of `entryId`). The model is offered only the blocks your
+[block rules](/reference/field-types/#blocks) allow there, with their fields, slots and counts.
+An image is asked for by what it shows and filled with the first matching image in your asset
+library (for a key that may read the library), never into a field whose file types exclude
+images; one it can't find is left empty and listed in `unresolvedImages`. A block that needs
+something AI doesn't write (rich text, a link to another entry) isn't offered. Rich text inside
+blocks is not generated.
+
+The answer is a block patch, checked exactly as `POST …/entries/blocks/validate` checks one:
+send its `ops` with its `expectedVersion` to `PATCH …/entries/{id}/blocks` to save them. A place
+that is locked, by the rules or a locked region, or full, is refused before the model is asked;
+an answer that breaks a rule in the field is refused too, so you're never handed blocks a save
+would turn down. The one exception is a required image the library has no match for: the blocks
+come back with `ready: false` and an `image_required` issue naming the field, for you to choose
+one. A model that doesn't answer in time is a `503` you can retry.
 
 ### AI actions
 

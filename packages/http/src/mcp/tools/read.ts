@@ -1,7 +1,9 @@
 import {
+  assetSearchDeps,
   canvasToEntry,
   countEntriesByContentType,
   draftEntry,
+  findBlockCatalog,
   findDuplicates,
   getContentType,
   getDeliveredSingleton,
@@ -9,6 +11,7 @@ import {
   getPreviewSingleton,
   getSchedulerStatus,
   hybridSearch,
+  imageSearchFor,
   listContentTypes,
   listFieldValues,
   listPreviewEntryPage,
@@ -40,13 +43,15 @@ import {
   ValidationError,
   withAuthorIdsFor,
 } from '@contentworker/domain';
-import { generateTypes } from '@contentworker/sdk-codegen';
+import { type BlockCatalogInput, generateTypes } from '@contentworker/sdk-codegen';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { ok, scopeArgs, scopeOf, type ToolContext, toolSchema } from './shared';
 
 export function registerReadTools(server: McpServer, t: ToolContext): void {
   const { deps, ctx, ai, rag, principal, guard } = t;
+  // Drafted blocks find their images as assets_search does.
+  const assetSearch = deps.assetSearch ?? assetSearchDeps(rag);
   // --- read / query / search ---------------------------------------------
   server.registerTool(
     'model_list_content_types',
@@ -116,7 +121,9 @@ export function registerReadTools(server: McpServer, t: ToolContext): void {
     {
       description:
         'The content model as a TypeScript module: one type per content type, in both the ' +
-        'delivery (locale-flattened) and management (locale-keyed) shapes, plus lookup maps. ' +
+        'delivery (locale-flattened) and management (locale-keyed) shapes, plus lookup maps, and ' +
+        'one type per block with `BlockTypes` (from the block catalog in force, else the blocks ' +
+        "fields' variants). " +
         'Generated from the live model, so an agent writing code against this space can type ' +
         'it correctly without installing anything or guessing field names.',
       inputSchema: toolSchema('model_typescript', () => z.object(scopeArgs)),
@@ -124,8 +131,10 @@ export function registerReadTools(server: McpServer, t: ToolContext): void {
     },
     async (args) => {
       guard(SCOPES.previewRead, scopeOf(args));
-      const types = await listContentTypes(ctx, scopeOf(args));
       const scope = scopeOf(args);
+      const types = await listContentTypes(ctx, scope);
+      // The block types follow the catalog in force, as `contentworker types` does.
+      const blockCatalog = await findBlockCatalog(ctx, scope);
       // Text, not JSON: the value is source a caller pastes into a file, and
       // wrapping it in a JSON string only makes it something to unescape.
       return {
@@ -134,6 +143,7 @@ export function registerReadTools(server: McpServer, t: ToolContext): void {
             type: 'text' as const,
             text: generateTypes(types as unknown as Parameters<typeof generateTypes>[0], {
               banner: `Generated from ${scope.spaceId}/${scope.environmentId}. Do not edit by hand.`,
+              blockCatalog: blockCatalog as unknown as BlockCatalogInput | undefined,
             }),
           },
         ],
@@ -562,8 +572,12 @@ export function registerReadTools(server: McpServer, t: ToolContext): void {
     'generate_draft',
     {
       description:
-        'Generate draft field values for a content type from a prompt. Validated against ' +
-        'the content model before being returned. Pair with entries_create to author it.',
+        'Generate draft field values for a content type from a prompt: its scalar fields and ' +
+        'its top-level blocks fields (composed from the blocks the block rules allow, images ' +
+        'found in the asset library; unresolvedImages lists any it could not find). Rich text, ' +
+        'links and slugs are left for you. Validated against the content model before being ' +
+        'returned; nothing is saved. Pair with entries_create to author it. For one blocks ' +
+        'field or slot of an existing entry, use entry_blocks_generate.',
       inputSchema: toolSchema('generate_draft', () =>
         z.object({
           contentType: z.string(),
@@ -576,12 +590,16 @@ export function registerReadTools(server: McpServer, t: ToolContext): void {
     },
     async (args) => {
       guard(SCOPES.contentWrite, scopeOf(args));
+      // As the route: a draft is for a type the caller may write.
+      authorizeContent(principal, 'write', args.contentType);
       return ok(
-        await draftEntry(ctx, ai, scopeOf(args), {
-          contentTypeApiId: args.contentType,
-          prompt: args.prompt,
-          tier: args.tier,
-        }),
+        await draftEntry(
+          ctx,
+          ai,
+          scopeOf(args),
+          { contentTypeApiId: args.contentType, prompt: args.prompt, tier: args.tier },
+          { assets: imageSearchFor(principal, assetSearch) },
+        ),
       );
     },
   );
@@ -604,12 +622,15 @@ export function registerReadTools(server: McpServer, t: ToolContext): void {
     },
     async (args) => {
       guard(SCOPES.contentWrite, scopeOf(args));
+      authorizeContent(principal, 'write', args.contentType);
       return ok(
-        await canvasToEntry(ctx, ai, scopeOf(args), {
-          contentTypeApiId: args.contentType,
-          prose: args.prose,
-          tier: args.tier,
-        }),
+        await canvasToEntry(
+          ctx,
+          ai,
+          scopeOf(args),
+          { contentTypeApiId: args.contentType, prose: args.prose, tier: args.tier },
+          { assets: imageSearchFor(principal, assetSearch) },
+        ),
       );
     },
   );

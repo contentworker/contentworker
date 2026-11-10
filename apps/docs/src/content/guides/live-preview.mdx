@@ -189,6 +189,11 @@ round-trips. `formatFieldPath` and `parseFieldPath` from `@contentworker/sdk` bu
 and `refAttrs(ref)` from `@contentworker/sdk/live-preview` gives the attribute to spread. A ref
 with a path opens in the admin's entry form on its top-level field.
 
+A blocks field rendered with `<Blocks>` (React) or `<CwBlocks>` (Vue) is marked for you: pass it the
+field's ref as `preview` and `view.ghosts` as `ghosts`, and every block, field and slot carries its
+mark, and each ghost `data-cw-ghost` (see
+[Rendering blocks](/guides/blocks-from-code/#in-a-live-preview)).
+
 ## Editing in the frame
 
 While the admin has editing on, a click on a marked element selects it in the admin instead of
