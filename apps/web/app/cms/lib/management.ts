@@ -16,12 +16,16 @@ import type {
   AuditDetail,
   BlockCatalog,
   BlockConfig,
+  BlockLock,
+  BlockLockDepth,
+  BlockLockFreeze,
   BlockNarrowing,
   BlockOp,
   BlockOutline,
   Comment,
   Concept,
   ConceptScheme,
+  ContentAction,
   ContentType,
   ContentTypeDraft,
   ContentTypeGrant,
@@ -239,6 +243,39 @@ export interface PrincipalInfo {
   readonly restricted?: boolean;
   /** In a space (`GET /spaces/:space/auth/me`): the bulk jobs over entries this role may start. */
   readonly bulkJobs?: readonly ('publish' | 'unpublish' | 'trash' | 'restore' | 'purge')[];
+  /**
+   * In a space: the content actions its role holds per content type a grant names (`types`), and
+   * on every other type (`others`), as the api resolves them (`contentActionsFor`).
+   */
+  readonly contentActions?: {
+    readonly types: Readonly<Record<string, readonly ContentAction[]>>;
+    readonly others: readonly ContentAction[];
+  };
+}
+
+/**
+ * A locked region as the api returns it: `lockedBy` is left out for a reader who doesn't see who
+ * wrote what.
+ */
+export type EntryBlockLock = Omit<BlockLock, 'lockedBy'> & { readonly lockedBy?: string };
+
+/** A lock as a set sends it: who and when are the server's. */
+export interface BlockLockInput {
+  readonly field: string;
+  readonly keys: readonly string[];
+  readonly depth: BlockLockDepth;
+  readonly freeze: BlockLockFreeze;
+}
+
+/** An entry's locked regions (`GET …/entries/:id/block-locks`). */
+export interface EntryBlockLocks {
+  readonly entryId: string;
+  readonly contentTypeApiId: string;
+  /** The entry's `currentVersion`, which a set is held to. */
+  readonly version: number;
+  readonly locks: readonly EntryBlockLock[];
+  /** Locks whose blocks no locale holds any more: shown, never blocking a save. */
+  readonly stale: readonly EntryBlockLock[];
 }
 
 export interface ManagementClientOptions {
@@ -1817,6 +1854,25 @@ export function createManagementClient(
      */
     getBlocksOutline(id: string): Promise<EntryBlocksOutline> {
       return req('GET', `${mgmt}/entries/${encodeURIComponent(id)}/blocks`);
+    },
+    /** The entry's locked regions, and which are stale. */
+    getEntryBlockLocks(id: string): Promise<EntryBlockLocks> {
+      return req('GET', `${mgmt}/entries/${encodeURIComponent(id)}/block-locks`);
+    },
+    /**
+     * Replaces the entry's locked regions with `locks` (one left out is unlocked), held to
+     * `expectedVersion`: a save made since is a 409. Makes no version. 403 without the `lock`
+     * action on the type; 422 naming each lock that isn't a run of stored blocks or overlaps.
+     */
+    setEntryBlockLocks(
+      id: string,
+      locks: readonly BlockLockInput[],
+      expectedVersion: number,
+    ): Promise<EntryBlockLocks & { readonly unchanged: boolean }> {
+      return req('PUT', `${mgmt}/entries/${encodeURIComponent(id)}/block-locks`, {
+        locks,
+        expectedVersion,
+      });
     },
     /**
      * A block patch's dry run (`POST …/entries/blocks/validate`): the fields the save would store

@@ -10,6 +10,7 @@
  */
 import type { LiveRect } from '@contentworker/sdk-core/live-preview';
 import { cn } from '@contentworker/ui/lib/utils';
+import { Lock } from 'lucide-react';
 import type { RefObject } from 'react';
 import { slotFill } from '~/cms/lib/canvas/model';
 import type { Seam } from '~/cms/lib/canvas/seams';
@@ -27,6 +28,8 @@ export interface CanvasStageProps {
   readonly chosenSeam: string | null;
   readonly hovered: LiveRect | null;
   readonly selected: LiveRect | null;
+  /** The locked regions the page shows: each one's outline, around all of its blocks. */
+  readonly regions?: readonly { readonly id: string; readonly rect: LiveRect }[];
   readonly onChooseSeam: (seam: Seam) => void;
   readonly children?: React.ReactNode;
 }
@@ -49,6 +52,9 @@ export function CanvasStage(props: CanvasStageProps) {
         className="block size-full border-0"
       />
       <div aria-hidden="true" className="pointer-events-none absolute inset-0 overflow-hidden">
+        {props.regions?.map((r) => (
+          <RegionMark key={r.id} rect={r.rect} />
+        ))}
         {props.hovered ? <Box rect={props.hovered} /> : null}
         {props.selected ? <Box rect={props.selected} selected /> : null}
         {props.seams.map((seam) => (
@@ -77,6 +83,25 @@ function Box({ rect, selected }: { rect: LiveRect; selected?: boolean }) {
       )}
       style={{ left: rect.x, top: rect.y, width: rect.w, height: rect.h }}
     />
+  );
+}
+
+/**
+ * A locked region's outline: a quiet grey edge around its blocks with a lock at its top corner, on
+ * a paper chip so it holds against the customer's page. Grey, not a status hue: a lock is a fact of
+ * the page, not something wrong with it. Who locked it is said in Layers and the inspector.
+ */
+function RegionMark({ rect }: { rect: LiveRect }) {
+  return (
+    <div
+      data-region-outline
+      className="absolute rounded-sm border border-muted-foreground/60"
+      style={{ left: rect.x, top: rect.y, width: rect.w, height: rect.h }}
+    >
+      <span className="absolute -top-2.5 left-1.5 inline-flex size-5 items-center justify-center rounded-full border bg-background text-muted-foreground shadow-sm">
+        <Lock className="size-3" />
+      </span>
+    </div>
   );
 }
 

@@ -11,6 +11,12 @@
  * (`blockConfigIssues`), so a refusal is said on the block or slot it is about before a save, or
  * after one when the config changed meanwhile. Blocks stored before the config stay as they are.
  *
+ * The entry's locked regions (`GET …/entries/:id/block-locks`, `cms/lib/block-locks.ts`) hold the
+ * same way: no seams inside a run or a block locked with everything inside, a lock on the region's
+ * outline and in Layers, and its blocks keep their place. Someone with the `lock` action on the
+ * type locks the selected block (or a run shift-selected in Layers) from the inspector, and
+ * unlocks one there; each is its own request, held to the version the canvas has, never the save.
+ *
  * It edits the same draft as the entry form. Every change is a block-patch op applied here with
  * the domain's `applyBlockPatch` and kept with its inverse for undo (`cms/lib/canvas/history.ts`);
  * the page re-renders each one before anything is saved, over the live preview channel (the Site
@@ -23,6 +29,7 @@
 import {
   type BlockConfigIssue,
   type BlockOp,
+  blockVariants,
   type ComponentVariant,
   type EntryFields,
   SCOPES,
@@ -46,7 +53,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@contentworker/ui/
 import { Skeleton } from '@contentworker/ui/skeleton';
 import { useQueryClient } from '@tanstack/react-query';
 import { ListTree, Redo2, Undo2 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Link, useBlocker, useNavigate, useParams } from 'react-router';
 import { CanvasStage } from '~/cms/components/canvas/CanvasStage';
 import { Dock } from '~/cms/components/canvas/Dock';
@@ -58,6 +65,16 @@ import { DEVICES, SiteNotice, useDevice } from '~/cms/components/pane/SitePane';
 import { useSiteFrame } from '~/cms/components/pane/use-site-frame';
 import { ResponsiveSheetContent } from '~/cms/components/responsive-sheet';
 import { StatusBadge, ToneBadge } from '~/cms/components/status';
+import type { ActorDirectory } from '~/cms/lib/authorship';
+import {
+  canLock,
+  lockedLine,
+  lockId,
+  lockRefusal,
+  regionRefusal,
+  withLock,
+  withoutLock,
+} from '~/cms/lib/block-locks';
 import { configRefusal, rulesOver } from '~/cms/lib/block-rules';
 import { canvasChecks } from '~/cms/lib/canvas/checks';
 import {
@@ -88,9 +105,16 @@ import {
   parentBlock,
   placeAfter,
   removeOp,
+  runBetween,
   setPropOp,
 } from '~/cms/lib/canvas/model';
-import { blockKeyOfRef, blockRects, type RefContext, seamsFrom } from '~/cms/lib/canvas/seams';
+import {
+  blockKeyOfRef,
+  blockRects,
+  type RefContext,
+  regionRects,
+  seamsFrom,
+} from '~/cms/lib/canvas/seams';
 import { useClient } from '~/cms/lib/client-context';
 import { useMedia, WIDE } from '~/cms/lib/device';
 import {
@@ -100,6 +124,7 @@ import {
 } from '~/cms/lib/live-preview/frame-channel';
 import { capabilitiesFor, SELECT_ONLY } from '~/cms/lib/live-preview/host';
 import { refForField } from '~/cms/lib/live-preview/pick';
+import { ApiError, type BlockLockInput, type EntryBlockLock } from '~/cms/lib/management';
 import { useEntryPickers } from '~/cms/lib/pickers';
 import {
   useContentTypesQuery,
@@ -131,6 +156,17 @@ export const CANVAS_SHORTCUTS: ShortcutGroup = {
     { keys: ['Mod', 'Shift', 'Z'], label: 'Redo', chord: true },
     { keys: ['Mod', 'S'], label: 'Save draft', chord: true },
     { keys: ['Esc'], label: 'Close the dock, or deselect' },
+  ],
+};
+
+/** The same, for someone who may lock: Shift with an arrow takes a neighbour into a run. */
+export const CANVAS_LOCK_SHORTCUTS: ShortcutGroup = {
+  ...CANVAS_SHORTCUTS,
+  items: [
+    ...CANVAS_SHORTCUTS.items.slice(0, 4),
+    { keys: ['Shift', '↑'], label: 'Take the block above in too, to lock them together' },
+    { keys: ['Shift', '↓'], label: 'Take the block below in too, to lock them together' },
+    ...CANVAS_SHORTCUTS.items.slice(4),
   ],
 };
 
@@ -202,7 +238,6 @@ function Canvas({
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const keys = useQueryKeys();
-  usePageShortcuts(CANVAS_SHORTCUTS);
   const wide = useMedia(WIDE);
   const tablet = useMedia(TABLET);
 
@@ -221,6 +256,14 @@ function Canvas({
   );
   const rules = rulesOver(rulesQuery.data, catalog);
   const access = useScopedQuery(['space-access'], () => client.getSpaceAccess(), { silent: true });
+  // The entry's locked regions: read with the canvas, again after each save and each lock set.
+  const locksKey = [conn.space, conn.environment, 'block-locks', entryId];
+  const locksQuery = useScopedQuery(
+    ['block-locks', entryId],
+    () => client.getEntryBlockLocks(entryId),
+    { silent: true, staleTime: 0 },
+  );
+  const locks = locksQuery.data?.locks;
   const workflowState = useScopedQuery(
     ['workflow-state', entryId],
     () => client.getEntryWorkflowState(entryId),
@@ -258,6 +301,10 @@ function Canvas({
   docRef.current = doc;
 
   const [selected, setSelected] = useState<string | null>(null);
+  /** Where a shift-selection started: with `selected` in one slot, the run a Lock takes. */
+  const [anchor, setAnchor] = useState<string | null>(null);
+  /** Why the last lock or unlock was refused, in the inspector's words. */
+  const [lockRefused, setLockRefused] = useState<readonly string[]>([]);
   const [dockAt, setDockAt] = useState<{ path: string; index: number } | null>(null);
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [layersOpen, setLayersOpen] = useState(false);
@@ -282,8 +329,8 @@ function Canvas({
   const fields = doc?.fields ?? (entryQuery.data?.fields as EntryFields | undefined) ?? {};
   const storedFields = doc?.base.fields;
   const under = useMemo<CanvasRules>(
-    () => ({ rules, stored: storedFields }),
-    [rules, storedFields],
+    () => ({ rules, stored: storedFields, ...(locks ? { locks } : {}) }),
+    [rules, storedFields, locks],
   );
   const tree = useMemo(
     () => (contentType ? canvasTree(contentType, fields, locale, defaultLocale, under) : []),
@@ -306,6 +353,10 @@ function Canvas({
         ? 'published'
         : null;
   const editable = review === null && !!scopes;
+  // Locking isn't editing the draft: offered in review too, but not where the canvas can't arrange.
+  const locking = review !== 'narrow' && canLock(access.data, typeId);
+  usePageShortcuts(locking ? CANVAS_LOCK_SHORTCUTS : CANVAS_SHORTCUTS);
+  const chosenRun = runBetween(tree, anchor, selected);
   const allowed = scopes ? capabilitiesFor(scopes) : access.isError ? SELECT_ONLY : undefined;
 
   const refCtx: RefContext = {
@@ -348,6 +399,7 @@ function Canvas({
       if (!pageEntries.includes(entryId)) return;
       const key = blockKeyOfRef(ref, treeRef.current, refCtx);
       if (!key) return;
+      setAnchor(null);
       setSelected(key);
       setDockAt(null);
       setInspectorOpen(true);
@@ -465,6 +517,59 @@ function Canvas({
   const setProp = (b: CanvasBlock, prop: string, value: unknown) =>
     apply([setPropOp(b, prop, value)], `Edited ${b.name}`, `${b.key}:${prop}`);
 
+  // --- locks --------------------------------------------------------------------------------
+  /** Takes `key` into the selection with what's selected: a run, when they share a slot. */
+  const extend = (key: string) => {
+    setAnchor((a) => a ?? selected ?? key);
+    setSelected(key);
+    setDockAt(null);
+  };
+  /**
+   * Sends the whole new list, held to the version the canvas has: a lock names stored blocks, so
+   * one made over a save someone else made since is a 409, and the canvas reads the entry again.
+   */
+  const setLocks = (next: BlockLockInput[], done: string) =>
+    run(async () => {
+      const d = docRef.current;
+      if (!d) return;
+      setLockRefused([]);
+      try {
+        const saved = await client.setEntryBlockLocks(entryId, next, d.base.version);
+        queryClient.setQueryData(locksKey, saved);
+        void queryClient.invalidateQueries({ queryKey: keys.entryActivityPages(entryId) });
+        setAnchor(null);
+        setSaid(done);
+        toast.success(done);
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 409) {
+          void locksQuery.refetch();
+          if (dirtyRef.current) {
+            setLockRefused([
+              'Someone saved this entry since the canvas opened it. Save the draft to see theirs, then lock again.',
+            ]);
+          } else {
+            loadTheirs();
+            setLockRefused([
+              'Someone changed this entry since the canvas opened it: it was read again. Try again.',
+            ]);
+          }
+          return;
+        }
+        const words = lockRefusal(err);
+        if (words.length > 0) {
+          setLockRefused(words);
+          return;
+        }
+        throw err;
+      }
+    });
+  const lock = (l: BlockLockInput) =>
+    setLocks(
+      withLock(locks ?? [], l),
+      l.keys.length > 1 ? `Locked ${l.keys.length} blocks` : 'Locked',
+    );
+  const unlock = (l: EntryBlockLock) => setLocks(withoutLock(locks ?? [], l), 'Unlocked');
+
   /** The checks are the right column's with nothing selected; below lg, the panel sheet's. */
   const showChecks = () => {
     setSelected(null);
@@ -488,6 +593,7 @@ function Canvas({
           locale,
           previous: d.base.fields,
           blocks: { catalog, rules },
+          ...(locks ? { locks } : {}),
         },
       );
       if (blocking.length > 0) {
@@ -519,6 +625,8 @@ function Canvas({
         void queryClient.invalidateQueries({ queryKey: keys.entry(entryId) });
         void queryClient.invalidateQueries({ queryKey: keys.entryActivityPages(entryId) });
         void queryClient.invalidateQueries({ queryKey: keys.entriesRoot });
+        // A save can leave a lock stale (its blocks gone): read which are now.
+        void locksQuery.refetch();
         toast.success('Draft updated');
       } catch (err) {
         const stale = staleSave(err);
@@ -526,13 +634,18 @@ function Canvas({
           setConflict(stale);
           return;
         }
-        // The config changed since the canvas read it: said on the blocks and slots it names.
+        // The config, or a lock, changed since the canvas read it: said on the blocks and slots
+        // it names, with the locks read again so the canvas holds what the server does.
         const issues = configRefusal(err);
         if (issues.length > 0) {
           setRefused({ fields: d.fields, issues });
           showChecks();
+          const what = issues.length === 1 ? 'a change' : `${issues.length} changes`;
+          if (regionRefusal(issues)) void locksQuery.refetch();
           toast.error(
-            `The block config refused ${issues.length === 1 ? 'a change' : `${issues.length} changes`}: see the checks`,
+            regionRefusal(issues)
+              ? `A locked region refused ${what}: see the checks`
+              : `The block config refused ${what}: see the checks`,
           );
           return;
         }
@@ -620,16 +733,28 @@ function Canvas({
         if (!block || !editable) return;
         e.preventDefault();
         if (!canRemove(block)) {
-          setSaid(`${block.slot.name} is locked: ${block.name} keeps its place`);
+          setSaid(
+            block.lock
+              ? `${block.name} is locked: it keeps its place`
+              : `${block.slot.name} is locked: ${block.name} keeps its place`,
+          );
           return;
         }
         remove(block);
         return;
       case 'ArrowDown':
       case 'ArrowUp': {
+        if (e.shiftKey && block && locking) {
+          // Takes the neighbour in the same slot in too: a run to lock.
+          const sibling = block.slot.blocks[block.index + (e.key === 'ArrowDown' ? 1 : -1)];
+          e.preventDefault();
+          if (sibling) extend(sibling.key);
+          return;
+        }
         const next = e.key === 'ArrowDown' ? order[at + 1] : at > 0 ? order[at - 1] : undefined;
         if (!next && at >= 0) return;
         e.preventDefault();
+        setAnchor(null);
         setSelected((next ?? order[0])?.key ?? null);
         return;
       }
@@ -693,7 +818,19 @@ function Canvas({
   // --- what's drawn -----------------------------------------------------------------------------
   const seams = editable && hasLayout ? seamsFrom(geometry, tree, refCtx) : [];
   const rects = blockRects(geometry, tree, refCtx);
+  const regions = regionRects(tree, rects);
   const selectedRect = block ? (rects.get(block.key) ?? null) : null;
+  /** Who's who for "Locked by …": the team isn't read here, so a teammate reads as one. */
+  const directory = { me: access.data?.subject };
+  // Locks name stored blocks: a change to the blocks waits for its save before anything locks.
+  const blocksDirty =
+    !!doc &&
+    !!contentType &&
+    contentType.fields.some(
+      (f) =>
+        blockVariants(f) !== undefined &&
+        JSON.stringify(doc.fields[f.apiId]) !== JSON.stringify(doc.base.fields[f.apiId]),
+    );
   const hoverKey = hover ? blockKeyOfRef(hover.ref, tree, refCtx) : undefined;
   const hoverRect =
     hover && hoverKey && hoverKey !== selected ? (rects.get(hoverKey) ?? hover.rect) : null;
@@ -705,6 +842,7 @@ function Canvas({
           locale,
           previous: doc.base.fields,
           blocks: { catalog, rules },
+          ...(locks ? { locks } : {}),
           // Until the next edit: the refusal was of these fields.
           refused: refused?.fields === doc.fields ? refused.issues : [],
         })
@@ -777,24 +915,54 @@ function Canvas({
       inSheet={!wide}
       kept={kept.has(block.key)}
       onKeep={() => setKept((k) => new Set(k).add(block.key))}
+      directory={directory}
+      {...(locking
+        ? {
+            locking: {
+              run: chosenRun,
+              ...(blocksDirty
+                ? {
+                    held: 'Save the draft first: a lock holds the blocks as they are saved.',
+                  }
+                : {}),
+              busy,
+              refused: lockRefused,
+              onLock: lock,
+              onUnlock: unlock,
+            },
+          }
+        : {})}
     />
   ) : null;
   const pageBody = (
     <PagePanel
       checks={checks}
       onSelect={(key) => {
+        setAnchor(null);
         setSelected(key);
         setInspectorOpen(true);
       }}
       editable={editable}
       formPath={formPath}
+      stale={locksQuery.data?.stale ?? []}
+      fieldName={(apiId) => contentType?.fields.find((f) => f.apiId === apiId)?.name ?? apiId}
+      onClear={
+        locking ? (l) => setLocks(withoutLock(locks ?? [], l), 'Cleared the lock') : undefined
+      }
+      busy={busy}
+      directory={directory}
+      refused={block ? [] : lockRefused}
     />
   );
   const layersBody = (
     <Layers
       slots={tree}
       selected={selected}
+      run={locking && chosenRun.length > 1 ? chosenRun.map((b) => b.key) : undefined}
+      onExtend={locking ? extend : undefined}
+      directory={directory}
       onSelect={(key) => {
+        setAnchor(null);
         setSelected(key);
         setDockAt(null);
       }}
@@ -953,6 +1121,7 @@ function Canvas({
             chosenSeam={chosenSeam}
             hovered={editable || site.live ? hoverRect : null}
             selected={selectedRect}
+            regions={regions}
             onChooseSeam={(seam) => openDock(seam)}
           >
             {loading ? (
@@ -1147,7 +1316,20 @@ function PagePanel(props: {
   onSelect: (key: string) => void;
   editable: boolean;
   formPath: string;
+  /** Locks whose blocks are gone: they hold nothing, and someone with `lock` clears them. */
+  stale: readonly EntryBlockLock[];
+  onClear?: (lock: EntryBlockLock) => void;
+  busy: boolean;
+  directory: ActorDirectory;
+  /** Why the last lock set was refused, when no block is selected to say it on. */
+  refused: readonly string[];
+  /** A blocks field's name, by its apiId. */
+  fieldName: (apiId: string) => string;
 }) {
+  const staleId = useId();
+  /** "1 block in Main", "2 blocks in Main". */
+  const what = (l: EntryBlockLock) =>
+    `${l.keys.length === 1 ? '1 block' : `${l.keys.length} blocks`} in ${props.fieldName(l.field)}`;
   return (
     <div className="flex flex-col gap-4">
       <div>
@@ -1189,6 +1371,50 @@ function PagePanel(props: {
           Choose a seam between blocks to see what fits there, or a block to edit it. Press{' '}
           <kbd className="font-mono">/</kbd> to add after the selected block.
         </p>
+      ) : null}
+      {props.stale.length > 0 ? (
+        <section aria-labelledby={staleId} className="flex flex-col gap-2">
+          <h3 id={staleId} className="caption">
+            Locks with nothing to hold
+          </h3>
+          <p className="max-w-measure text-muted-foreground text-xs">
+            Their blocks are gone, so they lock nothing and never stop a save.
+          </p>
+          <ul className="flex flex-col gap-1">
+            {props.stale.map((l) => (
+              <li
+                key={lockId(l)}
+                className="flex items-center justify-between gap-2 rounded-lg bg-secondary/40 px-2 py-1.5 text-sm"
+              >
+                <span className="min-w-0">
+                  <span className="block truncate">{what(l)}</span>
+                  <span className="block text-muted-foreground text-xs">
+                    {lockedLine(l, props.directory)}
+                  </span>
+                </span>
+                {props.onClear ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    disabled={props.busy}
+                    aria-label={`Clear the lock on ${what(l)}`}
+                    onClick={() => props.onClear?.(l)}
+                  >
+                    Clear
+                  </Button>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+      {props.refused.length > 0 ? (
+        <ul role="alert" className="flex flex-col gap-1 text-destructive text-xs">
+          {props.refused.map((m) => (
+            <li key={m}>{m}</li>
+          ))}
+        </ul>
       ) : null}
     </div>
   );

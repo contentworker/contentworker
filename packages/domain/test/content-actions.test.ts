@@ -8,6 +8,7 @@ import {
   type ContentAction,
   type ContentTypeGrant,
   canAccessContentType,
+  contentActionsFor,
   ENTRY_OPERATION_ACTIONS,
   grantedActions,
   grantsNoWider,
@@ -311,5 +312,42 @@ describe('blockLocksFor', () => {
       ],
     };
     expect(blockLocksFor(principal, 'page', locks)).toEqual([locks[0]]);
+  });
+});
+
+describe('contentActionsFor', () => {
+  it('holds every action on every type without grants', () => {
+    expect(contentActionsFor({})).toEqual({ types: {}, others: CONTENT_ACTIONS });
+  });
+  it('resolves each type as authorizeContent does: its own grant, else the first `*`', () => {
+    const grants: ContentTypeGrant[] = [
+      { contentTypeApiId: 'page', actions: ['read', 'write', 'lock'] },
+      {
+        contentTypeApiId: '*',
+        actions: ['read', 'write', 'publish'],
+        deniedActions: ['unpublish'],
+      },
+      // A second grant for a type already named never applies.
+      { contentTypeApiId: 'page', actions: ['read'] },
+      { contentTypeApiId: '*', actions: ['read'] },
+    ];
+    const view = contentActionsFor({ contentGrants: grants });
+    expect(view).toEqual({
+      types: { page: ['read', 'write', 'lock', 'delete'] },
+      others: ['read', 'write', 'publish', 'delete'],
+    });
+    const principal = roleWith(...grants);
+    for (const type of ['page', 'post']) {
+      for (const action of CONTENT_ACTIONS) {
+        expect((view.types[type] ?? view.others).includes(action), `${type} ${action}`).toBe(
+          canAccessContentType(principal, action, type),
+        );
+      }
+    }
+  });
+  it('holds nothing on a type no grant names without a `*` grant', () => {
+    expect(
+      contentActionsFor({ contentGrants: [{ contentTypeApiId: 'page', actions: ['read'] }] }),
+    ).toEqual({ types: { page: ['read'] }, others: [] });
   });
 });

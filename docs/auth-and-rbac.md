@@ -640,9 +640,11 @@ interface Principal {
 - **`GET /auth/me`** returns the resolved principal summary; **`GET /spaces/:space/auth/me`**
   returns it resolved in that space (a person's role is per space), with `restricted` true when the
   role carries per-content-type grants (every space member's role does; deployment admins and
-  plain keys don't), `bulkJobs` (the bulk jobs over entries it may start there, see below), and
-  `403` for a caller with no standing in that space. The admin reads it before offering the bulk
-  trash, restore and delete jobs. Neither has an MCP tool: an MCP client already knows its own
+  plain keys don't), `bulkJobs` (the bulk jobs over entries it may start there, see below),
+  `contentActions` (`contentActionsFor`: the actions its grants hold per content type a grant
+  names, `types`, and on every other type, `others`; with no grants, every action on every type),
+  and `403` for a caller with no standing in that space. The admin reads it before offering the
+  bulk trash, restore and delete jobs, and before offering Lock on an entry's blocks (`lock`). Neither has an MCP tool: an MCP client already knows its own
   token.
 - **Bulk jobs over entries** (`POST …/bulk/jobs`, its report and cancel, and the matching MCP
   tools) can't be authorized entry by entry, and a report names entries of every type, so

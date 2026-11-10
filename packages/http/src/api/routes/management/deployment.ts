@@ -4,7 +4,12 @@ import {
   revokeEverythingFor,
   setSchedulerAlertRecipients,
 } from '@contentworker/application';
-import { entryBulkJobsFor, ForbiddenError, inScope } from '@contentworker/domain';
+import {
+  contentActionsFor,
+  entryBulkJobsFor,
+  ForbiddenError,
+  inScope,
+} from '@contentworker/domain';
 import { type Context, Hono } from 'hono';
 import { type AuthDeps, type AuthVars, principalMiddleware } from '../../auth';
 import { doc } from '../../docs/openapi';
@@ -115,6 +120,9 @@ export function deploymentRoutes(deps: AuthDeps): Hono<AuthVars> {
         // The bulk jobs over entries this role may start here (`canRunEntryBulkJob`), as the
         // bulk job routes decide: the admin offers only these.
         bulkJobs: entryBulkJobsFor(principal),
+        // What its grants let it do per content type, as the use-cases resolve them: the admin
+        // offers Lock on a type's entries only where it holds `lock`.
+        contentActions: contentActionsFor(principal),
       });
     },
   );

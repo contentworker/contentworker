@@ -2,7 +2,8 @@
  * What stands between the canvas and a save (and so a publish): a block whose type the code no
  * longer provides, a required slot with too few blocks, every other issue validation finds in the
  * blocks fields, and what the block config refuses of the edit (a block placed where it isn't
- * allowed, a locked slot changed, a count pushed past the config's bounds), each pointed at the
+ * allowed, a locked slot changed, a count pushed past the config's bounds) or a locked region
+ * of the entry's (its blocks moved or removed, its frozen content edited), each pointed at the
  * block it falls in so a click selects it. Judged by the domain's own `validateEntryFields` and
  * `blockConfigIssues`, as the save will judge it; a refusal the server sends back anyway (a config
  * set since the canvas read it) is pointed at the same way (`configChecks`).
@@ -18,6 +19,7 @@ import {
   validateEntryFields,
 } from '@contentworker/domain';
 import { configIssues } from '../block-rules';
+import type { EntryBlockLock } from '../management';
 import { type CanvasSlot, flattenBlocks, flattenSlots } from './model';
 
 export interface CanvasCheck {
@@ -46,6 +48,8 @@ export function canvasChecks(
     };
     /** What the server's block config refused of the last save, until the next edit. */
     readonly refused?: readonly BlockConfigIssue[];
+    /** The entry's locked regions, which the save is judged against too. */
+    readonly locks?: readonly EntryBlockLock[];
   },
 ): CanvasCheck[] {
   const out: CanvasCheck[] = [];
@@ -117,6 +121,7 @@ export function canvasChecks(
         config.previous,
         fields,
         config.locales,
+        config.locks,
       )
     : [];
   const seen = new Set(out.map((c) => c.id));
@@ -155,6 +160,20 @@ export function configChecks(
     const id = `config:${issue.code}:${issue.field}:${locale}`;
     if (locale !== config.locale && locale !== config.defaultLocale) {
       return { id, message: `${issue.locale ? `${issue.locale}: ` : ''}${issue.message}`, inForm };
+    }
+    if (issue.code === 'region_locked' || issue.code === 'region_frozen') {
+      // Named by the region's first block, which may be gone from the edit: its name then is the
+      // one it had.
+      const block = issue.key ? blocks.find((b) => b.key === issue.key) : undefined;
+      const name = block?.name ?? 'A locked block';
+      return {
+        id,
+        message:
+          issue.code === 'region_frozen'
+            ? `${name} is locked and its content can’t be edited. Undo the change to save`
+            : `${name} is locked: its blocks can’t be added, removed or moved. Undo the change to save`,
+        ...(block ? { blockKey: block.key } : {}),
+      };
     }
     if (issue.code === 'block_not_allowed_here') {
       const block = issue.key ? blocks.find((b) => b.key === issue.key) : undefined;

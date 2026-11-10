@@ -147,6 +147,42 @@ describe('the web principal (x-cw-principal)', () => {
     expect(await (await me('s1', 'admin')).json()).toMatchObject({ restricted: false });
   });
 
+  it('says what a member’s role may do per content type, so the admin offers only that', async () => {
+    const { ctx, rag, blob, ai } = wire(config);
+    const app2 = createApp(ctx, config, rag, blob, ai);
+    const locker = await createRole(ctx, 's1', {
+      name: 'Locks pages',
+      scopes: ['content:write', 'preview:read'],
+      contentGrants: [
+        { contentTypeApiId: 'page', actions: ['read', 'write', 'lock'] },
+        { contentTypeApiId: '*', actions: ['read', 'write'] },
+      ],
+    } as Parameters<typeof createRole>[2]);
+    await addMember(ctx, 's1', { email: 'member@example.com', role: locker.id });
+    await findMemberForSignIn(ctx, 's1', 'usr_member', 'member@example.com');
+    const me = async (who: 'admin' | 'member') => {
+      const target = '/spaces/s1/auth/me';
+      return app2.request(target, {
+        headers: {
+          'x-cw-principal': await signPrincipal(KEY, person(who), principalTarget('GET', target)),
+        },
+      });
+    };
+    expect(await (await me('member')).json()).toMatchObject({
+      contentActions: {
+        types: { page: ['read', 'write', 'lock', 'delete'] },
+        others: ['read', 'write', 'delete'],
+      },
+    });
+    // A deployment admin holds every action on every type.
+    expect(await (await me('admin')).json()).toMatchObject({
+      contentActions: {
+        types: {},
+        others: ['read', 'write', 'publish', 'lock', 'delete', 'unpublish'],
+      },
+    });
+  });
+
   it('lets a member with the Administrator preset run bulk jobs over entries, and not a narrower one', async () => {
     const { ctx, rag, blob, ai } = wire(config);
     const app2 = createApp(ctx, config, rag, blob, ai);

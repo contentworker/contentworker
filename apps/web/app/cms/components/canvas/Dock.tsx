@@ -4,7 +4,9 @@
  * captions, each its name and a line of its description, scrolling sideways when they don't fit,
  * so the page above (and the chosen seam) stays in view. Picking one puts it in the page at once
  * (unsaved). A full slot says so and offers nothing, as does a locked one (the canvas draws no seam
- * there, but Add in Layers or the inspector can still ask). Thumbnails aren't drawn: the admin's
+ * there, but Add in Layers or the inspector can still ask), and so does a place inside a locked
+ * region: in a slot of a block locked with everything inside, or between two blocks of a locked
+ * run (`/` after one of them can still ask). Thumbnails aren't drawn: the admin's
  * `img-src` takes no other origin, so each block is its name.
  *
  * One tab stop: ← → (and ↑ ↓) move across the cards, Home and End go to either end, Enter or Space
@@ -16,7 +18,7 @@ import { cn } from '@contentworker/ui/lib/utils';
 import { X } from 'lucide-react';
 import { useEffect, useId, useRef, useState } from 'react';
 import { dockGroups } from '~/cms/lib/canvas/dock';
-import { type CanvasPlace, slotCount } from '~/cms/lib/canvas/model';
+import { type CanvasPlace, placeLockedBy, slotCount } from '~/cms/lib/canvas/model';
 
 export interface DockProps {
   readonly place: CanvasPlace;
@@ -30,7 +32,8 @@ export interface DockProps {
 export function Dock({ place, catalog, onInsert, onClose, inSheet }: DockProps) {
   const titleId = useId();
   const { slot, index } = place;
-  const groups = dockGroups(slot, catalog);
+  const lockedBy = placeLockedBy(place);
+  const groups = lockedBy ? [] : dockGroups(slot, catalog);
   const items = groups.flatMap((g) => g.items);
   const row = useRef<HTMLDivElement>(null);
   const box = useRef<HTMLElement>(null);
@@ -124,6 +127,12 @@ export function Dock({ place, catalog, onInsert, onClose, inSheet }: DockProps) 
         <p className="max-w-measure px-4 pb-3 text-sm">
           {slot.name} is locked: its blocks stay as they are, in their order. What’s inside them can
           still be edited.
+        </p>
+      ) : lockedBy ? (
+        <p className="max-w-measure px-4 pb-3 text-sm">
+          {slot.sealedBy
+            ? `${slot.name} is in a locked region: its blocks stay as they are, in their order.`
+            : 'This is between blocks that are locked together: nothing can go between them. Choose a place before or after them.'}
         </p>
       ) : slot.full ? (
         <p className="max-w-measure px-4 pb-3 text-sm">

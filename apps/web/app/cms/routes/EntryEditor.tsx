@@ -58,6 +58,7 @@ import { PublishConfirm } from '../components/entries/PublishConfirm';
 import { SaveConflictDialog } from '../components/entries/SaveConflictDialog';
 import { GenerateEntryDialog } from '../components/GenerateEntryDialog';
 import { orDirect, useAssistantEdit, usePageContext } from '../lib/assistant';
+import { regionRefusal } from '../lib/block-locks';
 import { configRefusal, rulesOver } from '../lib/block-rules';
 import { canvasAvailable } from '../lib/canvas/model';
 import { useClient } from '../lib/client-context';
@@ -248,6 +249,12 @@ export function EntryEditor() {
         : undefined,
     [blockRules, blockCatalog, storedFields],
   );
+  // The entry's locked regions: their blocks keep their place on the form's cards too.
+  const blockLocks = useScopedQuery(
+    ['block-locks', entryId],
+    () => client.getEntryBlockLocks(entryId as string),
+    { silent: true, enabled: isEdit && hasBlocks && !!entryId, staleTime: 0 },
+  );
   /** What the server's block config refused of the last save, for the form to show in place. */
   const [refused, setRefused] = useState<{
     seq: number;
@@ -399,16 +406,23 @@ export function EntryEditor() {
           toast.success('Entry created');
           return;
         }
+        // A save can leave a lock stale (its blocks gone): read which are now.
+        if (entryId) void blockLocks.refetch();
         toast.success('Draft updated');
         // Named as just saved: this render's title is from before the save.
         if (chainPublish) await publish(view.entry, titleOf(fields) ?? about);
       } catch (err) {
-        // The config changed since the form read it: its issues land on the fields they name.
+        // The config, or a lock, changed since the form read it: its issues land on the fields
+        // they name, with the locks read again so the form holds what the server does.
         const issues = configRefusal(err);
         if (issues.length > 0) {
           setRefused((r) => ({ seq: (r?.seq ?? 0) + 1, issues }));
+          const what = issues.length === 1 ? 'a change' : `${issues.length} changes`;
+          if (regionRefusal(issues)) void blockLocks.refetch();
           toast.error(
-            `The block config refused ${issues.length === 1 ? 'a change' : `${issues.length} changes`}: see the fields marked`,
+            regionRefusal(issues)
+              ? `A locked region refused ${what}: see the blocks marked`
+              : `The block config refused ${what}: see the fields marked`,
           );
           return;
         }
@@ -863,6 +877,8 @@ export function EntryEditor() {
               mergePatch={patchState.patch}
               onValuesChange={onValuesChange}
               blockRules={formBlockRules}
+              blockLocks={blockLocks.data?.locks}
+              directory={directory}
               serverIssues={refused}
               onSave={save}
               onCancel={() => navigate(backTo)}
