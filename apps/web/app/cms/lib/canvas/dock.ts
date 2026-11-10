@@ -2,11 +2,12 @@
  * What the dock offers at a seam: exactly the blocks the slot takes for a new block (its field's
  * variants, which a catalog push writes from each slot's `allowedChildren` and each target's
  * blocks, narrowed by the block config: `CanvasSlot.offers`), named, grouped and described as the
- * block catalog has them. A slot that is full, or locked, offers nothing. Blocks a slot takes that
+ * block catalog has them. A slot that is full, or locked (by the config or a locked region),
+ * offers nothing. Blocks a slot takes that
  * the catalog doesn't describe (a field modelled by hand) are listed by their variant's name alone.
  */
 import type { BlockCatalog, ComponentVariant } from '@contentworker/domain';
-import type { CanvasSlot } from './model';
+import { type CanvasSlot, slotHeld } from './model';
 
 export interface DockItem {
   readonly variant: ComponentVariant;
@@ -24,7 +25,7 @@ export function dockGroups(
   slot: CanvasSlot,
   catalog: BlockCatalog | null | undefined,
 ): DockGroup[] {
-  if (slot.full || slot.locked) return [];
+  if (slot.full || slotHeld(slot)) return [];
   const byId = new Map((catalog?.blocks ?? []).map((b) => [b.id, b]));
   const groups = new Map<string, DockItem[]>();
   for (const variant of slot.offers) {

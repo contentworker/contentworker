@@ -929,7 +929,19 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   A full slot says so and offers nothing. The block config narrows what the dock offers; a slot
   it locks draws no seams, its name reads "· locked" with a `Lock` icon in Layers and the
   inspector, and its blocks show no move, duplicate or remove (a muted line says the block keeps
-  its place); the config's refusals are checks on the block or slot, as validation's are. Its first block takes focus, and the block put in hands
+  its place); the config's refusals are checks on the block or slot, as validation's are. A
+  **locked region** of the entry (one block, or a run of neighbours in one slot) draws no seams
+  between its blocks or inside a block locked with everything inside, a quiet grey outline round
+  its blocks with a `Lock` on a paper chip at its corner (grey: a lock is a fact, not a status),
+  a `Lock` on its rows in Layers with "Locked by … · date" under its first ("Locked · date" when
+  who isn't shown), and the inspector's muted lock line; its blocks show no move, duplicate or
+  remove, and with the content frozen its settings read only. Someone with the type's `lock`
+  action sees **Lock** in the inspector (a vertical `Segmented` "This block and everything
+  inside" / "Only this block", an "Also freeze the content" checkbox, an outline `sm` button;
+  shift-click or Shift with ↑ ↓ in Layers takes neighbours in one slot into the run), and
+  **Unlock** on a locked block. A lock waits for unsaved block changes, saying why; a refused one
+  is said under the button in plain words; stale locks are listed under the Checks with Clear.
+  The entry form's block cards carry the same lock line. Its first block takes focus, and the block put in hands
   focus to the inspector's heading; closing it hands focus back to what opened it. The inspector's tabs are Content (the
   block's own fields, the entry form's editors), Data (references) and Look (props limited to
   listed values, four or fewer as a segmented control, more as a select; never free CSS); a block

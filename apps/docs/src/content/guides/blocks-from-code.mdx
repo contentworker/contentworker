@@ -304,8 +304,16 @@ be locked (`lock_ambiguous`), and a save that gives a locked block's key to a se
 refused. A lock on a field your role denies or makes read-only is yours neither to set nor lift. Delivery and
 Preview never return locks. Every lock and unlock is in the audit log.
 
-The canvas and the entry form don't show or set locks yet; until they do, a refused save names the
-region by its first key.
+In the admin, lock from the canvas: select a block (shift-click a neighbour in Layers, or press
+Shift with ↑ or ↓, to take a run of blocks in one slot), and in its settings choose **This block and
+everything inside** or **Only this block**, tick **Also freeze the content** if its words should
+stay as they are too, and press **Lock**. Lock and **Unlock** show only to someone holding `lock`
+on the type, and wait for unsaved block changes to be saved (a lock names saved blocks). A locked
+region has an outline with a lock on the page and a lock in Layers, with who locked it and when;
+its blocks can't be moved, duplicated or removed, nothing can be added between or inside them, and
+with the content frozen their settings read only. The entry form shows the same on the blocks'
+cards. Stale locks are listed under the canvas's Checks, with **Clear**. A save the server refuses
+for a region is said on the locked block.
 
 ## The API and MCP
 

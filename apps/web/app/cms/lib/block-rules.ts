@@ -18,8 +18,10 @@ import {
   type BlockCatalog,
   type BlockConfig,
   type BlockConfigIssue,
+  type BlockLock,
   type BlockNarrowing,
   blockConfigIssues,
+  blockLockIssues,
   blockVariants,
   type ComponentVariant,
   type ContentType,
@@ -31,7 +33,7 @@ import {
   type TargetNarrowing,
   variantOf,
 } from '@contentworker/domain';
-import { ApiError } from './management';
+import { ApiError, type EntryBlockLock } from './management';
 
 /** Where a slot is, as the rules name it: a target's top level, or one block's slot. */
 export type SlotWhere =
@@ -222,9 +224,10 @@ export function configOf(
 }
 
 /**
- * What the config refuses of a save from `before` (undefined for a create) to `after`, judged as
- * the server will. Nothing when the rules aren't over this catalog (one pushed since they were
- * read): the server still judges it.
+ * What the config and the entry's locked regions refuse of a save from `before` (undefined for a
+ * create) to `after`, judged as the server will. The config judges nothing when the rules aren't
+ * over this catalog (one pushed since they were read): the server still judges it. The regions
+ * are the entry's, so they are judged with or without a catalog.
  */
 export function configIssues(
   contentType: ContentType,
@@ -233,9 +236,14 @@ export function configIssues(
   before: EntryFields | undefined,
   after: EntryFields,
   locales?: readonly LocaleCode[],
+  regions: readonly EntryBlockLock[] = [],
 ): BlockConfigIssue[] {
-  if (!catalog || !rules || rules.catalogVersion !== catalog.version) return [];
-  return blockConfigIssues(contentType, catalog, configOf(rules), before, after, locales);
+  // Who locked a region is no part of judging it: a reader that isn't shown it judges the same.
+  const locks = regions as readonly BlockLock[];
+  if (!catalog || !rules || rules.catalogVersion !== catalog.version) {
+    return blockLockIssues(contentType, locks, before, after, locales);
+  }
+  return blockConfigIssues(contentType, catalog, configOf(rules), before, after, locales, locks);
 }
 
 const CODES: ReadonlySet<string> = new Set(BLOCK_CONFIG_ISSUE_CODES);

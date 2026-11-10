@@ -16,7 +16,14 @@ import {
 } from '@contentworker/sdk-core';
 import type { LiveRect } from '@contentworker/sdk-core/live-preview';
 import type { FrameGeometry } from '../live-preview/frame-channel';
-import { type CanvasPlace, type CanvasSlot, findSlot, flattenBlocks } from './model';
+import {
+  type CanvasPlace,
+  type CanvasSlot,
+  findSlot,
+  flattenBlocks,
+  placeLockedBy,
+  slotHeld,
+} from './model';
 
 /** What a ref must name to be this entry's. */
 export interface RefContext {
@@ -63,7 +70,8 @@ export function blockKeyOfRef(
 
 /**
  * The seams the page's geometry draws, matched to the entry's slots; unknown ones are dropped, and
- * so is every seam of a locked slot: nothing goes in there, or moves in.
+ * so is every seam of a locked slot (the config's, or one inside a locked region) and every seam
+ * between two blocks of a locked run: nothing goes in there, or moves in.
  */
 export function seamsFrom(
   geometry: FrameGeometry | null,
@@ -76,10 +84,10 @@ export function seamsFrom(
   for (const box of geometry.slots) {
     const path = ownPath(box.ref, ctx);
     const slot = path ? findSlot(slots, canonical(path)) : undefined;
-    if (!slot || slot.locked) continue;
+    if (!slot || slotHeld(slot)) continue;
     for (const gap of box.gaps) {
       const index = placeOf(slot, gap);
-      if (index === undefined) continue;
+      if (index === undefined || placeLockedBy({ slot, index })) continue;
       const id = `${slot.path}#${index}`;
       if (seen.has(id)) continue;
       seen.add(id);
@@ -101,6 +109,37 @@ export function blockRects(
     if (key !== undefined && !out.has(key)) out.set(key, box.rect);
   }
   return out;
+}
+
+/**
+ * Each locked region's box on the page: around every one of its own blocks the page draws (a run's
+ * blocks are neighbours, so the box is theirs alone). A region none of whose blocks is drawn has
+ * none.
+ */
+export function regionRects(
+  slots: readonly CanvasSlot[],
+  rects: ReadonlyMap<string, LiveRect>,
+): { id: string; rect: LiveRect }[] {
+  const boxes = new Map<number, LiveRect>();
+  for (const b of flattenBlocks(slots)) {
+    const r = b.lock?.own ? rects.get(b.key) : undefined;
+    if (!r || !b.lock) continue;
+    const at = b.lock.region.index;
+    const was = boxes.get(at);
+    if (!was) {
+      boxes.set(at, r);
+      continue;
+    }
+    const x = Math.min(was.x, r.x);
+    const y = Math.min(was.y, r.y);
+    boxes.set(at, {
+      x,
+      y,
+      w: Math.max(was.x + was.w, r.x + r.w) - x,
+      h: Math.max(was.y + was.h, r.y + r.h) - y,
+    });
+  }
+  return [...boxes].map(([index, rect]) => ({ id: `region-${index}`, rect }));
 }
 
 /**

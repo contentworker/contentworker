@@ -443,6 +443,37 @@ export function entryBulkJobsFor(principal: Principal): EntryBulkJobKind[] {
   return ENTRY_BULK_JOB_KINDS.filter((kind) => canRunEntryBulkJob(principal, kind));
 }
 
+/**
+ * The content actions a principal holds, per content type, as `authorizeContent` resolves them:
+ * `types` for each type a grant names (the first grant naming it), `others` for every type none
+ * names (the first `*` grant's, or none without one). A principal with no grants holds every
+ * action on every type (its scopes still gate them). What the admin reads before offering an
+ * action only some roles may take on a type, such as locking a region of an entry's blocks.
+ */
+export interface ContentActionsByType {
+  readonly types: Readonly<Record<string, readonly ContentAction[]>>;
+  readonly others: readonly ContentAction[];
+}
+
+export function contentActionsFor(
+  principal: Pick<Principal, 'contentGrants'>,
+): ContentActionsByType {
+  const grants = principal.contentGrants;
+  if (!grants) return { types: {}, others: [...CONTENT_ACTIONS] };
+  const held = (g: ContentTypeGrant) => {
+    const set = grantedActions(g);
+    return CONTENT_ACTIONS.filter((a) => set.has(a));
+  };
+  const types: Record<string, readonly ContentAction[]> = {};
+  for (const g of grants) {
+    if (g.contentTypeApiId !== '*' && !Object.hasOwn(types, g.contentTypeApiId)) {
+      types[g.contentTypeApiId] = held(g);
+    }
+  }
+  const wildcard = grants.find((g) => g.contentTypeApiId === '*');
+  return { types, others: wildcard ? held(wildcard) : [] };
+}
+
 /** Whether `principal`'s grant on `contentTypeApiId` denies a field or makes one read-only. */
 export function hasFieldRules(principal: Principal, contentTypeApiId: string): boolean {
   if (!principal.contentGrants) return false;

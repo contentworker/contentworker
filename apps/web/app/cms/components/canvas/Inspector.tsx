@@ -11,6 +11,12 @@
  * canvas at once; nothing saves until Save draft. A block the code no longer provides can't be
  * edited, only kept as it is or removed. A block in a slot the block config locks keeps its place:
  * no move, duplicate or remove, and its settings stay editable.
+ *
+ * A block in a locked region of the entry (`cms/lib/block-locks.ts`) keeps its place the same way,
+ * and says who locked it; with the content frozen its settings read only. For someone with the
+ * `lock` action on the type, the inspector offers **Lock** on the selected block (or the run
+ * selected with it in one slot), **Unlock** on a locked one. A lock is its own request, not the
+ * draft's save: it is keyed to stored blocks, so it waits for unsaved block changes to be saved.
  */
 import {
   type FieldDefinition,
@@ -22,20 +28,25 @@ import {
 } from '@contentworker/domain';
 import { Alert, AlertDescription, AlertTitle } from '@contentworker/ui/alert';
 import { Button } from '@contentworker/ui/button';
+import { Checkbox } from '@contentworker/ui/checkbox';
 import { Label } from '@contentworker/ui/label';
 import { Segmented, SegmentedItem } from '@contentworker/ui/segmented';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@contentworker/ui/tabs';
-import { ArrowDown, ArrowUp, Copy, Lock, Plus, Trash2 } from 'lucide-react';
-import { useId } from 'react';
+import { ArrowDown, ArrowUp, Copy, Lock, LockOpen, Plus, Trash2 } from 'lucide-react';
+import { useId, useState } from 'react';
 import { FieldInput, type Pickers, type PickOption } from '~/cms/components/EntryForm';
 import { RequiredMark } from '~/cms/components/required-mark';
+import type { ActorDirectory } from '~/cms/lib/authorship';
+import { lockedLine, lockSays } from '~/cms/lib/block-locks';
 import {
   type CanvasBlock,
   type CanvasSlot,
   canDuplicate,
   canMove,
   slotFill,
+  slotHeld,
 } from '~/cms/lib/canvas/model';
+import type { BlockLockInput, EntryBlockLock } from '~/cms/lib/management';
 
 export type InspectorTab = 'content' | 'data' | 'look';
 
@@ -79,6 +90,22 @@ export interface InspectorProps {
   /** A block removed from code was kept as it is: the notice stops asking. */
   readonly kept: boolean;
   readonly onKeep: () => void;
+  /** Who's who, for "Locked by …". */
+  readonly directory?: ActorDirectory;
+  /** Lock and Unlock, for someone with the `lock` action on the type; absent for anyone else. */
+  readonly locking?: LockingProps;
+}
+
+export interface LockingProps {
+  /** The blocks a Lock takes: the selected one, and the neighbours shift-selected with it. */
+  readonly run: readonly CanvasBlock[];
+  /** Why nothing can be locked now (unsaved block changes), or undefined. */
+  readonly held?: string;
+  readonly busy: boolean;
+  /** Why the last lock or unlock was refused, in the inspector's words. */
+  readonly refused: readonly string[];
+  readonly onLock: (lock: BlockLockInput) => void;
+  readonly onUnlock: (lock: EntryBlockLock) => void;
 }
 
 export function Inspector(props: InspectorProps) {
@@ -107,12 +134,24 @@ export function Inspector(props: InspectorProps) {
         </p>
       </div>
 
-      {readOnly ? null : block.slot.locked ? (
+      {block.lock ? (
+        // Said in review too: why the page holds still is worth knowing either way.
+        <div data-block-lock className="flex max-w-measure flex-col gap-1 text-xs">
+          <p className="flex items-start gap-1.5 text-muted-foreground">
+            <Lock aria-hidden="true" className="mt-0.5 size-3 shrink-0" />
+            {lockSays(block.lock, block.name)}
+          </p>
+          <p className="pl-4.5 text-muted-foreground">
+            {lockedLine(block.lock.region.lock, props.directory)}
+          </p>
+        </div>
+      ) : readOnly ? null : block.slot.locked ? (
         <p className="flex max-w-measure items-start gap-1.5 text-muted-foreground text-xs">
           <Lock aria-hidden="true" className="mt-0.5 size-3 shrink-0" />
           {where} is locked: this block keeps its place. Its settings can still be edited.
         </p>
-      ) : (
+      ) : null}
+      {readOnly || block.lock || block.slot.locked ? null : (
         <div className="flex flex-wrap gap-1">
           <Button
             type="button"
@@ -182,6 +221,10 @@ export function Inspector(props: InspectorProps) {
                     {where} is locked, so it can’t be removed here: an admin can unlock it in Build
                     → Blocks.
                   </p>
+                ) : block.lock ? (
+                  <p className="w-full">
+                    It is in a locked region, so it can’t be removed here until it is unlocked.
+                  </p>
                 ) : (
                   <Button type="button" size="sm" variant="outline" onClick={props.onRemove}>
                     Remove
@@ -225,10 +268,10 @@ export function Inspector(props: InspectorProps) {
           {block.slots.map((slot) => (
             <div key={slot.path} className="flex items-center justify-between gap-2 text-sm">
               <span className="inline-flex items-center gap-1.5">
-                {slot.locked ? <Lock aria-hidden="true" className="size-3" /> : null}
+                {slotHeld(slot) ? <Lock aria-hidden="true" className="size-3" /> : null}
                 {slotFill(slot)}
               </span>
-              {slot.locked ? null : (
+              {slotHeld(slot) ? null : (
                 <Button
                   type="button"
                   size="sm"
@@ -243,6 +286,145 @@ export function Inspector(props: InspectorProps) {
           ))}
         </div>
       ) : null}
+
+      {props.locking && block.variant ? (
+        // Keyed by block: the choices start over for each one.
+        <LockPanel key={block.key} block={block} directory={props.directory} {...props.locking} />
+      ) : null}
+    </section>
+  );
+}
+
+/**
+ * Lock on a block (or the run shift-selected with it), Unlock on one a region names. A block inside
+ * another's region is that region's: it is unlocked from there.
+ */
+function LockPanel(props: LockingProps & { block: CanvasBlock; directory?: ActorDirectory }) {
+  const { block, run } = props;
+  const headingId = useId();
+  const freezeId = useId();
+  const reasonId = useId();
+  const [depth, setDepth] = useState<'subtree' | 'self'>('subtree');
+  const [freeze, setFreeze] = useState(false);
+  const mark = block.lock;
+  if (mark && !mark.own) return null;
+  const errors =
+    props.refused.length > 0 ? (
+      <ul role="alert" className="flex flex-col gap-1 text-destructive text-xs">
+        {props.refused.map((m) => (
+          <li key={m}>{m}</li>
+        ))}
+      </ul>
+    ) : null;
+
+  if (mark) {
+    const { lock } = mark.region;
+    const many = lock.keys.length > 1;
+    return (
+      <section aria-labelledby={headingId} className="flex flex-col gap-2">
+        <h3 id={headingId} className="caption">
+          Lock
+        </h3>
+        <p className="max-w-measure text-muted-foreground text-xs">
+          {many
+            ? `Locked with ${lock.keys.length - 1} ${lock.keys.length === 2 ? 'neighbour' : 'neighbours'}: unlocking frees them all.`
+            : 'Unlocking lets editors move, remove and add blocks here again.'}
+        </p>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="self-start"
+          disabled={props.busy}
+          onClick={() => props.onUnlock(lock)}
+        >
+          <LockOpen aria-hidden="true" /> Unlock
+        </Button>
+        {errors}
+      </section>
+    );
+  }
+
+  const blocks = run.length > 0 ? run : [block];
+  const many = blocks.length > 1;
+  // A block already in a region, or holding a region inside it, can't be in another.
+  const taken = blocks.find((b) => b.lock);
+  const reason = props.held ?? (taken ? `${taken.name} is already in a locked region.` : undefined);
+  return (
+    <section aria-labelledby={headingId} className="flex flex-col gap-3">
+      <div className="flex flex-col gap-1">
+        <h3 id={headingId} className="caption">
+          Lock
+        </h3>
+        <p className="max-w-measure text-muted-foreground text-xs">
+          {many
+            ? `${blocks.length} blocks together: ${blocks.map((b) => b.name).join(', ')}.`
+            : `${
+                depth === 'subtree'
+                  ? 'Keeps this block where it is, and the blocks inside it as they are, until it is unlocked.'
+                  : 'Keeps this block where it is until it is unlocked; blocks inside it can still change.'
+              } Shift-click a neighbour in Layers to lock several together.`}
+        </p>
+      </div>
+      <Segmented
+        aria-label="What the lock holds"
+        orientation="vertical"
+        value={depth}
+        onValueChange={(v) => setDepth(v as 'subtree' | 'self')}
+        className="w-full grid-flow-row auto-rows-fr rounded-2xl"
+      >
+        <SegmentedItem
+          value="subtree"
+          className="justify-start rounded-xl whitespace-normal text-left"
+        >
+          {many ? 'These blocks and everything inside' : 'This block and everything inside'}
+        </SegmentedItem>
+        <SegmentedItem
+          value="self"
+          className="justify-start rounded-xl whitespace-normal text-left"
+        >
+          {many ? 'Only these blocks' : 'Only this block'}
+        </SegmentedItem>
+      </Segmented>
+      <div className="flex items-start gap-2">
+        <Checkbox
+          id={freezeId}
+          aria-label="Also freeze the content"
+          checked={freeze}
+          onCheckedChange={(on) => setFreeze(on === true)}
+          className="mt-0.5"
+        />
+        <div className="flex flex-col gap-0.5">
+          <Label htmlFor={freezeId}>Also freeze the content</Label>
+          <p className="max-w-measure text-muted-foreground text-xs">
+            No one can edit what it says either.
+          </p>
+        </div>
+      </div>
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        className="self-start"
+        disabled={props.busy || reason !== undefined}
+        aria-describedby={reason ? reasonId : undefined}
+        onClick={() =>
+          props.onLock({
+            field: block.slot.address.field,
+            keys: blocks.map((b) => b.key),
+            depth,
+            freeze: freeze ? 'all' : 'structure',
+          })
+        }
+      >
+        <Lock aria-hidden="true" /> {many ? `Lock ${blocks.length} blocks` : 'Lock'}
+      </Button>
+      {reason ? (
+        <p id={reasonId} className="max-w-measure text-muted-foreground text-xs">
+          {reason}
+        </p>
+      ) : null}
+      {errors}
     </section>
   );
 }
@@ -254,7 +436,8 @@ function Prop(props: InspectorProps & { field: FieldDefinition }) {
   if (state.hidden) return null;
   const value = block.value[f.apiId];
   const options = normalizeOptions(f.validations?.in, f.type);
-  const disabled = readOnly || state.disabled;
+  // A frozen region's content reads only, as a disabling rule's does.
+  const disabled = readOnly || state.disabled || !!block.lock?.frozen;
   if (tabOf(f) === 'look' && options.length > 0 && options.length <= SEGMENTS) {
     return (
       <div className="flex flex-col gap-1.5">
