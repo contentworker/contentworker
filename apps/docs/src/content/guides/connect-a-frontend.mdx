@@ -1,0 +1,152 @@
+---
+title: Connect a frontend
+description: Mint a site's keys, paste its config, point each content type's preview URL at it, and check that its pages connect for live preview, from one screen or one API call.
+---
+
+**Settings → Connect a frontend** (under Access) is everything a site needs to read a space, on one
+page. It makes the keys, prints the config for the way your site reads content, sets where each
+content type's drafts are shown, and checks that a page connects to the editor's live preview.
+Agents and scripts do the same through the API and MCP ([below](#from-the-api-or-an-agent)).
+
+## 1. Create the keys
+
+Name the site and choose **Create key**. You get a Delivery key, which reads published content
+(`delivery:read`, `search:read`). Tick **Also create a Preview key** only for a server that reads
+drafts itself: it reads them too (`preview:read`). A Next.js draft mode needs none (below). Pick a role for either key to narrow what it reads to that
+role's content grants. A role-bound key takes the role's scopes too, so a Delivery key's role may
+hold only `delivery:read` and `search:read`, and a Preview key's role also `preview:read` (the
+Viewer preset fits a Preview key); a role that holds more is refused.
+
+The tokens are shown once, in the screen and filled into the config below it. Copy them before
+you leave the page: only their hashes are stored. Both are listed, and revoked, under
+**Settings → API keys** as `<name> (delivery)` and `<name> (preview)`. Creating keys needs
+`space:admin`.
+
+Keep both keys on a server, as secrets: never in client code, a committed file or a URL.
+
+## 2. Paste the config
+
+The config reads the environment chosen in the header, and names your deployment's hosts: Delivery
+at `cdn.<your domain>`, the api (Preview, and the draft route) at `api.<your domain>`, and the
+admin at `<your domain>`. Pick the tab for your site.
+
+**Frontend runtime.** A site on `@contentworker/frontend` is configured by one setting,
+`CONTENTWORKER`, in its `wrangler.jsonc`:
+
+```jsonc
+"vars": {
+  "CONTENTWORKER": "https://cdn.your-workspace.contentworker.app/your-space/main",
+  "CONTENTWORKER_LOCALE": "en-US"
+}
+```
+
+Then store the Delivery key as a secret, pasting it when wrangler asks, so it never lands in your
+shell history:
+
+```sh
+npx wrangler secret put CONTENTWORKER_KEY
+```
+
+**SDK.** Any JavaScript runtime reads with a Delivery client:
+
+```ts
+import { createDeliveryClient } from '@contentworker/sdk';
+
+export const client = createDeliveryClient({
+  baseUrl: 'https://cdn.your-workspace.contentworker.app',
+  space: 'your-space',
+  environment: 'main',
+  token: process.env.CONTENTWORKER_DELIVERY_KEY!,
+});
+```
+
+**Next.js.** `@contentworker/sdk/next` turns a preview link into draft mode for that link's entry:
+a route handler checks the link's token, keeps the entry and the token in an HttpOnly cookie for no
+longer than the token has left (an hour at most), and turns draft mode on. While it is on, the
+client reads that one entry as it is now, with the link's own token, and everything else as
+published. It needs only the Delivery key, as `CONTENTWORKER_DELIVERY_KEY`: no Preview key, so a
+preview link shows its entry and nothing more. It works top-level and in the editor's Site view and
+canvas, on another domain than the admin too: the cookie is kept per top-level site
+(`SameSite=None; Partitioned`), so a draft opened in the admin's frame stays there. A browser that
+blocks third-party cookies shows the entry published in the frame; open the link in a tab there.
+Send `Content-Security-Policy: frame-ancestors 'self' https://your-workspace.contentworker.app`
+(your admin's origin) so only your admin can frame the site.
+[SDKs](/guides/sdks/#nextjs-draft-mode) has the route and the client.
+
+**Live preview.** The editor's Site view frames your page; `connectPreview` lets the page connect
+to your admin and show edits as they are typed. The screen prints your admin's origin:
+
+```ts
+import { connectPreview } from '@contentworker/sdk/live-preview';
+
+connectPreview({
+  adminOrigin: 'https://your-workspace.contentworker.app',
+  onState(entryId, locale, fields) {
+    // Render the unsaved values in place of the delivered ones.
+  },
+});
+```
+
+[Live preview](/guides/live-preview/) covers what the page reports and the React hook.
+
+## 3. Set the preview URLs
+
+Each content type gets a row for its preview URL: where your site shows a draft of one of its entries, and the page the editor frames.
+It needs `{token}`, and can use `{id}`, `{locale}`, `{space}`, `{environment}` and a field, as
+`{field:slug}`.
+
+| Your site                    | Preview URL                                                                 |
+| ---------------------------- | --------------------------------------------------------------------------- |
+| `@contentworker/frontend`    | `https://your-site.example/__preview?entry={id}&token={token}`              |
+| Next.js with the draft route | `https://your-site.example/api/draft?entry={id}&token={token}&locale={locale}` |
+| Anything else                | Your own draft page; `#token={token}` keeps the token out of its server logs |
+
+**Save** sets that type's preview URL and nothing else: no other change to the type goes with it,
+and a published type stays published (Delivery never serves the preview URL). It is checked as you
+save: https only (http for `localhost` on a local stack), the host fixed, `{token}` present.
+Setting it needs `content:manage`, and read on the type, since it decides where that type's
+preview tokens go. The same setting is in the content type's own dialog.
+
+## 4. Check the connection
+
+**Check connection** opens the most recent entry of the type you pick on its preview URL, out of
+sight, through the same frame the editor's Site view uses, and says how the page answered:
+
+- **Connected**: the page called `connectPreview` with this admin's origin. The editor will show
+  edits on it as they're typed.
+- **The site's SDK is too old** (or **too new**): the page's `@contentworker/sdk` shares no live
+  preview version with this admin. Update the SDK.
+- **Not connected**: the page loaded but never offered to connect (no `connectPreview`, or the
+  wrong `adminOrigin`), it didn't load at all (is the site up, and does it let this admin frame
+  it?), or it answered from another address than its preview URL names.
+
+The check sends the page nothing: it is accepted with no capabilities, so it can't be sent an
+edit or asked to select anything.
+
+## Live updates
+
+A site that renders in the browser can stay current without polling. `useLiveEntry` and
+`useLiveEntries` (`@contentworker/sdk/react` and `@contentworker/sdk/vue`) read again when an entry
+is published, and `client.live()` follows the live stream directly. Each uses the client's key, so
+it hears only of what that key may read. See [SDKs](/guides/sdks/#live-updates).
+
+## From the API or an agent
+
+The screen calls two Management routes, and each has an MCP tool:
+
+| Route                                                         | MCP tool                         | Does                                                                                                                                  |
+| ------------------------------------------------------------- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /spaces/:space/environments/:env/frontend-connections`  | `frontend_connect`               | Mints the Delivery key (and with `preview: true` a Preview key, for a server that reads drafts itself), and answers the tokens once with the hosts and every preview URL |
+| `PUT /spaces/:space/environments/:env/content-types/:apiId/preview` | `model_set_content_type_preview` | Sets one type's preview URL (`{ "urlTemplate": null }` clears it), changing nothing else                                           |
+
+From `@contentworker/sdk/management`, they are `cma.frontend.connect({ name, roleId, preview, previewRoleId })`
+and `cma.contentTypes.setPreview(apiId, urlTemplate)`. A personal access token or an OAuth token
+can't connect a frontend: like any key minting, it is refused to a token a person handed to a
+program.
+
+## Next steps
+
+- [Build your own frontend](/guides/your-own-frontend/): reading content, rendering rich text and
+  refreshing on publish.
+- [Live preview](/guides/live-preview/): what the page reports, and the canvas.
+- [API keys and access](/guides/api-keys/): kinds, scopes and roles.

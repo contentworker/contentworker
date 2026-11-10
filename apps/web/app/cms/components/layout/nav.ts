@@ -94,6 +94,7 @@ export const SETTINGS_GROUPS: readonly SettingsGroup[] = [
     sections: [
       { id: 'team', label: 'Space access' },
       { id: 'api-keys', label: 'API keys' },
+      { id: 'frontend', label: 'Connect a frontend' },
       { id: 'roles', label: 'Roles' },
       { id: 'connected-apps', label: 'Connected apps' },
     ],

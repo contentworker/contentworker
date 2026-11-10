@@ -678,6 +678,12 @@ interface ContentType {
   `createContentType`, `updateContentType` and `cloneContentType` take a required caller as their
   second argument (`ContentTypeCaller`): the request's principal (the HTTP route and MCP tool pass
   theirs), or `SYSTEM_CALLER` for seeding and snapshot import, which are authorized as a whole.
+  `setContentTypePreview(ctx, caller, scope, apiId, urlTemplate | null)` sets the template alone,
+  held to the version it read; a published type stays published (its `content_type.published`
+  event rides in the unit), one with unpublished changes stays a draft. `frontendEndpoints(origin)`
+  is where a frontend reaches the deployment from the admin's origin: `cdn.<host>` for Delivery,
+  `api.<host>` for Preview, and the one origin on `localhost`, `127.0.0.1` or a dotless host;
+  `connectFrontend` answers it with the keys it mints.
   Anything else is refused before a read (`assertContentTypeCaller`), so the check fails closed.
   `authorizePreviewChange` holds a principal to `read` on the type when it sets a template other
   than the stored one: it decides where that type's preview tokens go.

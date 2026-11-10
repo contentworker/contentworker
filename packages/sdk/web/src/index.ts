@@ -5,8 +5,12 @@ import {
   type DeliveryClient,
   type EntryQuery,
   type Fields,
+  type FollowOptions,
+  followEntries,
+  followEntry,
   type ImagePropsOptions,
   imageProps,
+  type LiveState,
   type SearchHit,
 } from '@contentworker/sdk-core';
 import { mountInlineEditor } from '@contentworker/sdk-core/inline-edit';
@@ -132,6 +136,61 @@ export function useEntries<F extends Fields = Fields>(
     [query.contentType, query.locale, query.include, query.limit, query.skip],
   );
 }
+
+/** What {@link useLiveEntry} and {@link useLiveEntries} hold: the read, and whether it is live. */
+export type LiveAsyncState<T> = LiveState<T>;
+
+/**
+ * Fetches a single published entry and keeps it current: it is read again a moment after each
+ * publish (its own, or a release or bulk job that includes it), and an unpublish clears `data`
+ * and sets `removed`. `live` says the stream is open. Inert during SSR.
+ *
+ * ```tsx
+ * const { data: post, removed } = useLiveEntry<PostFields>(id, { locale: 'en-US' });
+ * ```
+ */
+export function useLiveEntry<F extends Fields = Fields>(
+  id: string,
+  opts: FollowOptions & { locale?: string; include?: number } = {},
+): LiveAsyncState<DeliveredEntry<F>> {
+  const client = useDeliveryClient();
+  const [state, setState] = useState<LiveAsyncState<DeliveredEntry<F>>>(INITIAL);
+  const { locale, include, delayMs } = opts;
+  useEffect(() => {
+    const following = followEntry<F>(client, id, { locale, include, delayMs }, setState);
+    return () => following.close();
+  }, [client, id, locale, include, delayMs]);
+  return state;
+}
+
+/**
+ * Lists published entries and keeps the list current: it is read again a moment after an entry
+ * of `query.contentType` (any type, without one) is published or unpublished, or a release or
+ * bulk job ships. Inert during SSR.
+ */
+export function useLiveEntries<F extends Fields = Fields>(
+  query: EntryQuery = {},
+  opts: FollowOptions = {},
+): LiveAsyncState<{ items: DeliveredEntry<F>[]; total: number }> {
+  const client = useDeliveryClient();
+  const [state, setState] =
+    useState<LiveAsyncState<{ items: DeliveredEntry<F>[]; total: number }>>(INITIAL);
+  // By content: a query object made fresh each render must not resubscribe.
+  const key = JSON.stringify(query);
+  const { delayMs } = opts;
+  useEffect(() => {
+    const following = followEntries<F>(
+      client,
+      JSON.parse(key) as EntryQuery,
+      { delayMs },
+      setState,
+    );
+    return () => following.close();
+  }, [client, key, delayMs]);
+  return state;
+}
+
+const INITIAL = { loading: true, live: false, removed: false } as const;
 
 /** Semantic search over published content. */
 /**
@@ -316,8 +375,14 @@ export type {
   DeliveredEntry,
   DeliveryClient,
   EntryQuery,
+  FollowOptions,
   ImageProps,
   ImagePropsOptions,
+  LiveEvent,
+  LiveOptions,
+  LiveState,
+  LiveStatus,
+  LiveSubscription,
   SearchHit,
 } from '@contentworker/sdk-core';
 export {

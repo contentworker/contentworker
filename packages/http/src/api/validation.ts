@@ -463,6 +463,31 @@ export const contentTypeBody = z.object({
 });
 /** A content type's copy: its new apiId and name. */
 export const cloneContentTypeBody = z.object({ apiId: zId, name: zShort });
+export const contentTypePreviewBody = z.object({
+  urlTemplate: contentTypePreview.shape.urlTemplate
+    .nullable()
+    .describe('The preview URL template (see `preview` on a content type), or null to clear it'),
+});
+export const connectFrontendBody = z.object({
+  name: z
+    .string()
+    .max(100)
+    .optional()
+    .describe('Names the keys: `<name> (delivery)`, `<name> (preview)`. Default `Frontend`'),
+  roleId: zId
+    .optional()
+    .describe(
+      'Bind the Delivery key to this role, to narrow what it reads; the role may hold only ' +
+        '`delivery:read` and `search:read` (422 otherwise)',
+    ),
+  previewRoleId: zId
+    .optional()
+    .describe('The same for the Preview key; its role may also hold `preview:read`'),
+  preview: z
+    .boolean()
+    .optional()
+    .describe('Also mint a Content Preview API key, for a frontend’s draft mode'),
+});
 export const createEntryBody = z.object({
   contentTypeApiId: zId,
   fields: zFieldValues.optional(),

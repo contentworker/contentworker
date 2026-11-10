@@ -106,6 +106,12 @@ describe('content type preview URL template over HTTP', () => {
       { 'Content-Type': 'application/json' } as typeof cma,
     );
     expect(read.status, await read.clone().text()).toBe(200);
+    // And says when the token stops working, as the link does, so a frontend holds it no longer.
+    const { expiresAt } = link as unknown as { expiresAt: string };
+    expect(read.headers.get('x-cw-preview-expires')).toBe(expiresAt);
+    // A bearer read says nothing of the kind.
+    const bearer = await send(`/preview/s1/main/entries/${entry.id}`, 'GET');
+    expect(bearer.headers.get('x-cw-preview-expires')).toBeNull();
     // A locale the space doesn't have is refused.
     const bad = await send(`${M}/entries/${entry.id}/preview-link`, 'POST', { locale: 'de' });
     expect(bad.status).toBe(422);
@@ -174,10 +180,66 @@ describe('content type preview URL template over HTTP', () => {
     expect(await res.text()).not.toContain('Unknown locale');
   });
 
+  it('sets and clears the template alone, keeping a published type published', async () => {
+    const { send } = setup();
+    const { preview: _p, ...bare } = post;
+    expect((await send(`${M}/content-types`, 'POST', bare)).status).toBe(201);
+    expect((await send(`${M}/content-types/post/published`, 'POST')).status).toBe(200);
+    const set = await send(`${M}/content-types/post/preview`, 'PUT', { urlTemplate: TEMPLATE });
+    expect(set.status, await set.clone().text()).toBe(200);
+    expect(await set.json()).toMatchObject({
+      status: 'published',
+      preview: { urlTemplate: TEMPLATE },
+      fields: [{ apiId: 'title' }, { apiId: 'slug' }],
+    });
+    const cleared = await send(`${M}/content-types/post/preview`, 'PUT', { urlTemplate: null });
+    expect(await cleared.json()).not.toHaveProperty('preview');
+    // The domain's check and the body's shape both answer 422; an unknown type 404.
+    const bad = await send(`${M}/content-types/post/preview`, 'PUT', {
+      urlTemplate: 'https://site.example/p/{id}',
+    });
+    expect(bad.status).toBe(422);
+    expect((await send(`${M}/content-types/post/preview`, 'PUT', {})).status).toBe(422);
+    const missing = await send(`${M}/content-types/nope/preview`, 'PUT', { urlTemplate: null });
+    expect(missing.status).toBe(404);
+    // A Delivery key can't change the model.
+    const cda = { Authorization: 'Bearer cda', 'Content-Type': 'application/json' };
+    const refused = await send(
+      `${M}/content-types/post/preview`,
+      'PUT',
+      { urlTemplate: null },
+      cda,
+    );
+    expect(refused.status).toBe(403);
+    // A modeller whose grant leaves the type out can't point its tokens somewhere, only clear it.
+    const admin = { Authorization: 'Bearer admin', 'Content-Type': 'application/json' };
+    const role = (await (
+      await send(
+        '/spaces/s1/roles',
+        'POST',
+        {
+          name: 'model-pages',
+          scopes: ['content:manage', 'preview:read'],
+          contentGrants: [{ contentTypeApiId: 'page', actions: ['read', 'write'] }],
+        },
+        admin,
+      )
+    ).json()) as { id: string };
+    const key = (await (
+      await send('/spaces/s1/api-keys', 'POST', { kind: 'cma', roleId: role.id }, admin)
+    ).json()) as { token: string };
+    const modeller = { Authorization: `Bearer ${key.token}`, 'Content-Type': 'application/json' };
+    const path = `${M}/content-types/post/preview`;
+    expect((await send(path, 'PUT', { urlTemplate: TEMPLATE }, modeller)).status).toBe(403);
+    const clear = await send(path, 'PUT', { urlTemplate: null }, modeller);
+    expect(clear.status, await clear.clone().text()).toBe(200);
+  });
+
   it('documents the setting and the preview link’s frontendUrl in the OpenAPI spec', async () => {
     const { app } = setup();
     const spec = JSON.stringify(await (await app.request('/openapi.json')).json());
     expect(spec).toContain('/spaces/{space}/environments/{env}/entries/{id}/preview-link');
+    expect(spec).toContain('/spaces/{space}/environments/{env}/content-types/{apiId}/preview');
     expect(spec).toContain('frontendUrl');
     expect(spec).toContain('urlTemplate');
   });

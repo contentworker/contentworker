@@ -72,10 +72,12 @@ It is an `https` URL with a plain host name (no wildcard, no placeholder in the 
 credentials). Plain `http` to `localhost` or `127.0.0.1` is accepted only on a local stack
 (`pnpm dev`), never on a deployment. In the content type dialog it is the **Preview URL** field;
 over the API and MCP it is `preview: { urlTemplate }` on `POST …/content-types` and
-`model_create_content_type` (`null` clears it). Setting or changing it needs read access to the
+`model_create_content_type` (`null` clears it). **Settings → Connect a frontend** sets it per type
+alone, through `PUT …/content-types/:apiId/preview` (`model_set_content_type_preview`), which
+changes nothing else and keeps a published type published. Setting or changing it needs read access to the
 type's entries as well as `content:manage`, because it decides where their preview tokens go; a
 promotion that adds or changes it asks for approval for the same reason. It is editor-only:
-Delivery never serves it. The admin doesn't frame your site yet; that comes with live preview.
+Delivery never serves it. The entry editor's Site view frames it for [live preview](/guides/live-preview/).
 
 ### Singletons
 

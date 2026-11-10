@@ -36,6 +36,10 @@
       "types": "./src/live-preview.ts",
       "default": "./src/live-preview.ts"
     },
+    "./next": {
+      "types": "./src/next.ts",
+      "default": "./src/next.ts"
+    },
     "./redirects": {
       "types": "./src/redirects.ts",
       "default": "./src/redirects.ts"
@@ -87,10 +91,14 @@
     "lint": "biome check ."
   },
   "peerDependencies": {
+    "next": ">=14",
     "react": "^18 || ^19",
     "vue": "^3.3"
   },
   "peerDependenciesMeta": {
+    "next": {
+      "optional": true
+    },
     "react": {
       "optional": true
     },
@@ -139,6 +147,11 @@
         "types": "./dist/live-preview.d.ts",
         "import": "./dist/live-preview.js",
         "require": "./dist/live-preview.cjs"
+      },
+      "./next": {
+        "types": "./dist/next.d.ts",
+        "import": "./dist/next.js",
+        "require": "./dist/next.cjs"
       },
       "./redirects": {
         "types": "./dist/redirects.d.ts",

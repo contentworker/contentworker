@@ -396,9 +396,18 @@ Built on Blocks and the frontend runtime. Layouts stay a typed tree; rich text s
   come: Coworker's "Fill this slot" and ghost proposals (`host.propose` is the seam), dragging
   blocks with a fine pointer, block thumbnails (the admin's `img-src` takes no other origin), and
   per-breakpoint overrides.
-- [ ] **Frontend SDK extras.** `client.live()` and `useLiveEntry`, a Next.js draft-mode helper, a
-  preview URL template per content type, and a "connect a frontend" screen that mints a delivery key
-  and prints its config.
+- [x] **Frontend SDK extras.** `client.live()` over the live stream (reconnecting with backoff,
+  stopping when the key is refused) with `useLiveEntry` / `useLiveEntries` for React and Vue; a
+  Next.js draft-mode helper (`@contentworker/sdk/next`: a route that checks the preview token, and a
+  client that, in draft mode, reads only the preview link's entry with the link's own token, and
+  everything else from Delivery, so a site needs no Preview key); the preview URL template per
+  content type, now settable alone (`PUT …/content-types/:apiId/preview`,
+  `model_set_content_type_preview`); and Settings →
+  Connect a frontend, which mints a Delivery key (and a Preview key) through `connectFrontend`
+  (`POST …/frontend-connections`, `frontend_connect`), prints the config for the frontend runtime,
+  the SDK, Next.js and live preview, sets the preview URLs, and checks a page connects through the
+  Site frame. Ships to sites in the next SDK release. `@contentworker/frontend` doesn't take an
+  admin origin yet, so a runtime site doesn't connect for live preview.
 
 #### Follow-ups for M6
 

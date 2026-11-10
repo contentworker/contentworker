@@ -128,6 +128,7 @@ export default defineConfig({
           items: [
             { label: 'API keys and access', slug: 'guides/api-keys' },
             { label: 'Build your own frontend', slug: 'guides/your-own-frontend' },
+            { label: 'Connect a frontend', slug: 'guides/connect-a-frontend' },
             { label: 'Reading content', slug: 'guides/reading-content' },
             { label: 'Delivering assets', slug: 'guides/delivering-assets' },
             { label: 'Webhooks', slug: 'guides/webhooks' },
