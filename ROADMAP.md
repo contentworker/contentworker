@@ -476,8 +476,9 @@ Built on Blocks and the frontend runtime. Layouts stay a typed tree; rich text s
   Connect a frontend, which mints a Delivery key (and a Preview key) through `connectFrontend`
   (`POST …/frontend-connections`, `frontend_connect`), prints the config for the frontend runtime,
   the SDK, Next.js and live preview, sets the preview URLs, and checks a page connects through the
-  Site frame. Ships to sites in the next SDK release. `@contentworker/frontend` doesn't take an
-  admin origin yet, so a runtime site doesn't connect for live preview.
+  Site frame. Ships to sites in the next SDK release. Runtime sites connect for live preview
+  from `@contentworker/frontend` 0.5.0 (contentworker/site #7): `/__preview` pages may be framed
+  only by the admin's origin (`CONTENTWORKER_ADMIN`, else the deployment's own domain).
 
 #### Follow-ups for M6
 
@@ -499,8 +500,9 @@ From the live preview spec and a review of a second implementation of its channe
   locks), and so are the canvas (Lock and Unlock in the inspector, runs by shift-select, no seams
   inside a region, the lock on its outline and in Layers, stale locks cleared from the Checks) and
   the entry form (the lock on the blocks' cards, frozen fields read only).
-- [ ] **Token values checked everywhere.** The frontend runtime runs `isSafeTokenValue` on every
-  value it writes into a CSS custom property, not only on live preview patches.
+- [x] **Token values checked everywhere.** The frontend runtime runs `isSafeTokenValue` on every
+  value it writes into a CSS custom property, on every render, public or preview, not only on live
+  preview patches (`ctx.cssVars`, `@contentworker/frontend` 0.5.0).
 - [x] **Block config as code.** Build → Blocks' Rules card switches between Rules, **Code** and
   **Narrowed from code**. Code is the config as `PUT …/block-config` takes it (`{ targets, blocks }`,
   normalized, in the catalog's order), read-only JSON with line numbers, folding and Copy. Narrowed
