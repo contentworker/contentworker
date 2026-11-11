@@ -136,8 +136,18 @@ export interface SpaceMember {
 /** Normalizes an email for storage and comparison. */
 export const normalizeEmail = (email: string): string => email.trim().toLowerCase();
 
-/** A plausible email: one `@`, something on each side, a dot in the domain, no spaces. */
-export const isEmail = (email: string): boolean => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+/**
+ * A plausible email: one `@`, something on each side, a dot in the domain with something on each
+ * side of it, no whitespace. Linear on any input: the pattern's two runs both stop at `@`, so they
+ * never compete for characters, and the dot is found by index. (The single pattern this replaces,
+ * `^[^\s@]+@[^\s@]+\.[^\s@]+$`, let its domain run and the dot compete, which is quadratic on a
+ * long run of dots; it answered every input exactly as this does.)
+ */
+export function isEmail(email: string): boolean {
+  if (!/^[^\s@]+@[^\s@]+$/.test(email)) return false;
+  const domain = email.slice(email.indexOf('@') + 1);
+  return domain.slice(1, -1).includes('.');
+}
 
 /**
  * Refused because it would leave the space with no active administrator: the last admin can't

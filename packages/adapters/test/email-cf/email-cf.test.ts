@@ -83,5 +83,11 @@ describe('createCfEmailSender', () => {
     expect(() => createCfEmailSender(fakeBinding().binding, { from: 'not-an-address' })).toThrow(
       /EMAIL_FROM/,
     );
+    for (const from of ['<a>@example.com', 'a@example.', `a@${'.'.repeat(100_000)}>`]) {
+      expect(() => createCfEmailSender(fakeBinding().binding, { from })).toThrow(/EMAIL_FROM/);
+    }
+    expect(() =>
+      createCfEmailSender(fakeBinding().binding, { from: 'news@mail.example.com' }),
+    ).not.toThrow();
   });
 });

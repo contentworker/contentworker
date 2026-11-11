@@ -155,7 +155,18 @@ export function generatePassword(): string {
 
 export const normalizeEmail = (email: string) => email.trim().toLowerCase();
 
-export const isEmail = (email: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+/**
+ * A plausible email: one `@`, something on each side, a dot in the domain with something on each
+ * side of it, no whitespace. The same check as `isEmail` in `@contentworker/domain`, kept here
+ * because this package depends on nothing. Linear on any input: the pattern's two runs both stop
+ * at `@`, and the dot is found by index. (`^[^\s@]+@[^\s@]+\.[^\s@]+$`, which this replaces with
+ * the same answers, was quadratic on a long run of dots.)
+ */
+export function isEmail(email: string): boolean {
+  if (!/^[^\s@]+@[^\s@]+$/.test(email)) return false;
+  const domain = email.slice(email.indexOf('@') + 1);
+  return domain.slice(1, -1).includes('.');
+}
 
 const COMMON = new Set([
   'password',

@@ -314,13 +314,13 @@ Found while building and reviewing M1 and M2. None blocks a release.
   again before each chunk, so a trash or purge job stops when its starter loses access.
 - [ ] **Audit promotion and cross-space clone.** Check both against per-type and field rules, as
   imports, snapshots and merge now are.
-- [ ] **Delegated bearers and people.** Refuse invitations and member role changes from personal
+- [x] **Delegated bearers and people.** Refuse invitations and member role changes from personal
   access tokens and OAuth tokens, so a short-lived token can't create a lasting admin.
 - [ ] **Environment-wide checks in the use-cases.** Move `authorizeEveryContentType` from the HTTP
   routes and MCP tools into the use-cases with a required principal, so a new surface can't skip it.
 - [ ] **Admin saves for read-only roles.** The editor sends every field, so a role with
   `readOnlyFields` probably gets a 403 on save. Confirm it, and send only what the role may write.
-- [ ] **Linear email checks.** Replace the quadratic pattern in `isEmail` (`domain/auth/team.ts`) and
+- [x] **Linear email checks.** Replace the quadratic pattern in `isEmail` (`domain/auth/team.ts`) and
   `security/credentials.ts`, as the `email` preset already was.
 - [x] **Role version check.** A `version` on every role and an optional `expectedVersion` on
   `PUT /roles/:id` and `role_update` (a stale one is a `409` naming the version in force), with the

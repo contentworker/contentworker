@@ -97,7 +97,7 @@ export function registerRoleTools(server: McpServer, t: ToolContext): void {
               ? { expectedVersion: args.expectedVersion }
               : {}),
           },
-          deps.accessPolicy,
+          deps.accessPolicy ?? { sso: false },
           t.principal,
         ),
       );
@@ -157,7 +157,8 @@ export function registerRoleTools(server: McpServer, t: ToolContext): void {
     {
       description:
         'Give an API key (keyId) or a person (memberId) one of the role presets. Refused when it ' +
-        'would leave the space with no administrator.',
+        'would leave the space with no administrator. With a personal access token or OAuth ' +
+        "token, refused for a person's role, and for a key's when it would widen the key.",
       inputSchema: toolSchema('role_preset_assign', () =>
         z.object({
           preset: z.enum(ROLE_PRESETS),

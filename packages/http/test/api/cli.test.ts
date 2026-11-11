@@ -41,7 +41,12 @@ async function boot() {
     name: 'Editor',
     scopes: [SCOPES.contentWrite, SCOPES.contentPublish, SCOPES.previewRead, SCOPES.deliveryRead],
   });
-  await addMember(wired.ctx, 's1', { email: PERSON.email, name: PERSON.name, role: role.id });
+  await addMember(
+    wired.ctx,
+    's1',
+    { email: PERSON.email, name: PERSON.name, role: role.id },
+    'system',
+  );
 
   /** What the admin's gateway adds for a signed-in person: a principal signed for this path. */
   const asPerson = async (path: string, init: RequestInit = {}) => {

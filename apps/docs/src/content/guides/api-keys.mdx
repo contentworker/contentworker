@@ -121,6 +121,12 @@ you ask for are intersected with your own, and the raw token is shown once. If t
 later narrowed, the token narrows with it. `GET /spaces/{space}/personal-access-tokens` lists them,
 and they revoke through the API-key routes.
 
+A personal access token, or an app connected with OAuth, also can't give anyone lasting access,
+whatever its scopes: it can't invite people, add someone to a team, change a person's role,
+re-enable a disabled person, widen a role someone holds, or turn SSO-only sign-in off. It gets a
+403 saying to sign in to the admin instead. It can still rename, disable or remove a person, since
+that only takes access away.
+
 AI clients connecting over MCP get a token a different way, through an approval screen; see
 [MCP server](/guides/mcp/#connect-with-oauth).
 

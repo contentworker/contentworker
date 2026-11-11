@@ -54,7 +54,14 @@ describe('a role save held to its version', () => {
     expect((await cloneRole(ctx, S, role.id)).version).toBe(1);
     expect((await ensureRolePresets(ctx, S)).every((r) => r.version === 1)).toBe(true);
 
-    const saved = await updateRole(ctx, S, role.id, edit({ name: 'Authors' }));
+    const saved = await updateRole(
+      ctx,
+      S,
+      role.id,
+      edit({ name: 'Authors' }),
+      { sso: false },
+      'system',
+    );
     expect(saved.version).toBe(2);
     expect(await getRole(ctx, S, role.id)).toMatchObject({ name: 'Authors', version: 2 });
     expect((await listRoles(ctx, S)).find((r) => r.id === role.id)?.version).toBe(2);
@@ -62,13 +69,15 @@ describe('a role save held to its version', () => {
 
   it('refuses a stale expectedVersion with the version in force, writing nothing', async () => {
     const role = await createRole(ctx, S, edit());
-    await updateRole(ctx, S, role.id, edit({ name: 'Theirs' }));
+    await updateRole(ctx, S, role.id, edit({ name: 'Theirs' }), { sso: false }, 'system');
 
     const stale = await updateRole(
       ctx,
       S,
       role.id,
       edit({ name: 'Mine', scopes: [SCOPES.previewRead], expectedVersion: 1 }),
+      { sso: false },
+      'system',
     ).catch((e: unknown) => e);
     expect(stale).toBeInstanceOf(ConflictError);
     expect(stale).toMatchObject({ code: 'conflict', details: { version: 2 } });
@@ -81,9 +90,23 @@ describe('a role save held to its version', () => {
 
   it('saves with the version in force, and with none (a client that sends no version)', async () => {
     const role = await createRole(ctx, S, edit());
-    const matched = await updateRole(ctx, S, role.id, edit({ name: 'Two', expectedVersion: 1 }));
+    const matched = await updateRole(
+      ctx,
+      S,
+      role.id,
+      edit({ name: 'Two', expectedVersion: 1 }),
+      { sso: false },
+      'system',
+    );
     expect(matched.version).toBe(2);
-    const unversioned = await updateRole(ctx, S, role.id, edit({ name: 'Three' }));
+    const unversioned = await updateRole(
+      ctx,
+      S,
+      role.id,
+      edit({ name: 'Three' }),
+      { sso: false },
+      'system',
+    );
     expect(unversioned.version).toBe(3);
     expect(await getRole(ctx, S, role.id)).toMatchObject({ name: 'Three', version: 3 });
   });
@@ -99,13 +122,18 @@ describe('a role save held to its version', () => {
       const read = await get(spaceId, id);
       if (!raced) {
         raced = true;
-        await updateRole(ctx, S, role.id, edit({ name: 'First' }));
+        await updateRole(ctx, S, role.id, edit({ name: 'First' }), { sso: false }, 'system');
       }
       return read;
     };
-    const lost = await updateRole(ctx, S, role.id, edit({ name: 'Second' })).catch(
-      (e: unknown) => e,
-    );
+    const lost = await updateRole(
+      ctx,
+      S,
+      role.id,
+      edit({ name: 'Second' }),
+      { sso: false },
+      'system',
+    ).catch((e: unknown) => e);
     expect(lost).toBeInstanceOf(ConflictError);
     expect(lost).toMatchObject({ details: { version: 2 } });
     expect(await get(S, role.id)).toMatchObject({ name: 'First', version: 2 });
@@ -114,7 +142,7 @@ describe('a role save held to its version', () => {
   it('still refuses a delegated bearer widening a held role, and the last admin, first', async () => {
     const role = await createRole(ctx, S, edit());
     await createApiKey(ctx, hasher, { issuer: 'system', spaceId: S, kind: 'cma', roleId: role.id });
-    await updateRole(ctx, S, role.id, edit({ name: 'Moved on' }));
+    await updateRole(ctx, S, role.id, edit({ name: 'Moved on' }), { sso: false }, 'system');
     const oauth: Principal = {
       spaceId: S,
       kind: 'user',
@@ -147,11 +175,18 @@ describe('a role save held to its version', () => {
     });
     // Stale and demoting the last admin: the last-admin refusal.
     await expect(
-      updateRole(ctx, S, adminRole, {
-        name: 'Administrator',
-        scopes: [SCOPES.previewRead],
-        expectedVersion: 7,
-      }),
+      updateRole(
+        ctx,
+        S,
+        adminRole,
+        {
+          name: 'Administrator',
+          scopes: [SCOPES.previewRead],
+          expectedVersion: 7,
+        },
+        { sso: false },
+        'system',
+      ),
     ).rejects.toBeInstanceOf(LastAdminError);
     expect((await getRole(ctx, S, adminRole)).version).toBe(1);
     expect((await getRole(ctx, S, role.id)).version).toBe(2);

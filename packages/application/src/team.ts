@@ -11,6 +11,7 @@ import {
   type ApiKeyKind,
   ConflictError,
   DelegatedKeyMintError,
+  DelegatedPeopleError,
   grantsAdmin,
   grantsNoWider,
   holdsScope,
@@ -44,6 +45,22 @@ export interface AccessPolicy {
 }
 
 export const NO_SSO: AccessPolicy = { sso: false };
+
+/**
+ * Who gives a person access: the caller's principal (the routes and tools), or `system` for the
+ * platform's own flows (seeding). Required, so no caller skips {@link refuseDelegated}.
+ */
+export type PeopleActor = Principal | 'system';
+
+/**
+ * Refuses a delegated bearer (an OAuth access token, a personal access token) giving a person
+ * access that outlives the token: what it grants is a seat on the team, not a credential, so the
+ * way `assertMayMintKeys` (auth.ts) bounds a token's keys doesn't reach it. Taking access away
+ * (disabling or removing someone) is not refused; the last-admin rule still holds there.
+ */
+function refuseDelegated(actor: PeopleActor, action: string): void {
+  if (actor !== 'system' && isDelegatedBearer(actor)) throw new DelegatedPeopleError(action);
+}
 
 // ---- per-space access settings ------------------------------------------------------------------
 
@@ -85,14 +102,19 @@ export async function writeAccessSettings(
 /**
  * Turns SSO-only sign-in on or off. Turning it on needs SSO configured and an administrator who
  * signs in with it, so it can't lock every admin out (the setup code is still the way back).
+ * Turning it off brings the setup administrator credential back, so a delegated bearer can't,
+ * even when it is off already: deciding on the stored value would race a person turning it on.
  */
 export async function setSsoOnly(
   ctx: AppContext,
   spaceId: string,
   ssoOnly: boolean,
   policy: AccessPolicy,
+  actor: PeopleActor,
 ): Promise<AccessSettings> {
-  if (ssoOnly) {
+  if (!ssoOnly) {
+    refuseDelegated(actor, 'turn off single sign-on only');
+  } else {
     if (!policy.sso) {
       throw new ValidationError([
         { field: 'ssoOnly', message: 'Single sign-on is not configured on this deployment' },
@@ -327,12 +349,17 @@ export async function resolveRoleRef(ctx: AppContext, spaceId: string, ref: stri
   return role;
 }
 
-/** Adds a person to the team with a role. They sign in with SSO; their email links them. */
+/**
+ * Adds a person to the team with a role. They sign in with SSO; their email links them. Refused to
+ * a delegated bearer: a token that expires must not leave someone on the team who doesn't.
+ */
 export async function addMember(
   ctx: AppContext,
   spaceId: string,
   input: AddMemberInput,
+  actor: PeopleActor,
 ): Promise<SpaceMember> {
+  refuseDelegated(actor, 'add a person to the team');
   const email = normalizeEmail(input.email ?? '');
   if (!isEmail(email)) {
     throw new ValidationError([{ field: 'email', message: 'A valid email address is required' }]);
@@ -363,13 +390,18 @@ export interface UpdateMemberInput {
   readonly name?: string;
 }
 
-/** Changes a person's role, name or whether they may sign in. Keeps the last admin. */
+/**
+ * Changes a person's role, name or whether they may sign in. Keeps the last admin. A delegated
+ * bearer may rename or disable someone, but not change their role (either way: a person's role is
+ * a named person's decision, unlike a key's, which a program may narrow) or let them sign in again.
+ */
 export async function updateMember(
   ctx: AppContext,
   spaceId: string,
   id: string,
   input: UpdateMemberInput,
   policy: AccessPolicy,
+  actor: PeopleActor,
 ): Promise<SpaceMember> {
   const existing = await ctx.store.members.get(spaceId, id);
   if (!existing) throw new NotFoundError('Member', id);
@@ -377,6 +409,10 @@ export async function updateMember(
     input.role !== undefined
       ? (await resolveRoleRef(ctx, spaceId, input.role)).id
       : existing.roleId;
+  if (roleId !== existing.roleId) refuseDelegated(actor, 'change a person’s role');
+  if (existing.disabled && input.disabled === false) {
+    refuseDelegated(actor, 'let a disabled person sign in again');
+  }
   const next: SpaceMember = {
     ...existing,
     roleId,
@@ -499,7 +535,7 @@ export async function assignRolePreset(
   }
   return 'keyId' in target
     ? assignApiKeyRole(ctx, spaceId, target.keyId, preset, policy, issuer)
-    : updateMember(ctx, spaceId, target.memberId, { role: preset }, policy);
+    : updateMember(ctx, spaceId, target.memberId, { role: preset }, policy, issuer);
 }
 
 // ---- the team, as one read ------------------------------------------------------------------------
