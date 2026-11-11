@@ -230,8 +230,12 @@ check first.
    (`blocks`), and another push or set on either side fails the apply with a 409 before anything
    is written; so does (with a 422) an entry made since that holds a block the push would remove.
    After a rollback of the Workers past this change, reject waiting promotions requested with
-   blocks: older code would apply them without their blocks. Promotions take a role without content-type or field restrictions (`403`
-   otherwise), since they write and publish whole entries across types. An entry that a workflow
+   blocks: older code would apply them without their blocks. Requesting a promotion takes a role
+   holding `read`, `write` and `publish` on every content type alike with no field rules (no
+   per-type grants, or one full `*` grant), as merging entries does: it copies entries whole,
+   hidden and read-only fields included, with content types and blocks. Anything narrower is a
+   `403` (`content:read+write+publish:* (on every content type, every field)`) before anything is
+   written. An entry that a workflow
    gates in the target (`gatesPublish`) goes as a draft, and the reasons say which workflow: that
    workflow's run publishes it there, not the promotion. A gate added after the request leaves that
    entry a draft too (`result.gated`) rather than failing the rest.
@@ -273,7 +277,20 @@ check first.
    - an API key, or an application acting for a person (an MCP or OAuth client, an agent), can
      request a promotion but not decide one;
    - approving one with content types or blocks also takes `content:manage`;
+   - deciding takes the same role on every content type as requesting, `403` with the same message
+     otherwise, and the promotion stays `awaiting_approval`;
    - both environments must still exist when it's approved.
+
+   The approver's grants are the ones in force when it applies: the apply runs in the approval's
+   request, written as the approver. The requester's were checked when it was requested, and a
+   requester who has lost access since doesn't stop it: an API key's request names only its kind,
+   so there is no one to check again, and the approver, held to the same rule, approves exactly
+   the pinned versions. Reject it instead to stop it.
+
+   Reading one (`GET …/promotions`, `GET …/promotions/:id`, `promotion_list`, `promotion_get`)
+   takes `read` on every content type it names (its content types and its entries'), with no
+   field hidden: its risk reasons describe what it copies. The list leaves out the others; a get
+   answers `403` (`content:read:<type>`, or `content:read:<type>.<field>` for a hidden field).
 
    Approving moves it to `applying` with a compare-and-set, so it applies exactly once. The
    request, the decision and the outcome are each written to the audit log.

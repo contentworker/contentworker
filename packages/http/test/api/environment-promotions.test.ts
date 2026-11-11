@@ -221,6 +221,73 @@ describe('promotions over HTTP', () => {
     expect(((await listed.json()) as { items: P[] }).items).toEqual([]);
   });
 
+  it('holds requesting and reading to per-type grants and field rules', async () => {
+    const keyFor = async (contentGrants: unknown[]) => {
+      const role = await app.request('/spaces/s1/roles', {
+        method: 'POST',
+        headers: admin,
+        body: JSON.stringify({
+          name: `r${Math.random()}`,
+          scopes: ['content:manage', 'content:publish', 'content:write', 'preview:read'],
+          contentGrants,
+        }),
+      });
+      expect(role.status).toBe(201);
+      const { id } = (await role.json()) as { id: string };
+      const key = await app.request('/spaces/s1/api-keys', {
+        method: 'POST',
+        headers: admin,
+        body: JSON.stringify({ kind: 'cma', roleId: id }),
+      });
+      const { token } = (await key.json()) as { token: string };
+      return { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+    };
+    const everyType =
+      'Missing required scope "content:read+write+publish:* (on every content type, every field)"';
+    const request = (headers: Record<string, string>) =>
+      app.request('/spaces/s1/promotions', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ source: 'staging', target: 'main', entries: [entryId] }),
+      });
+    // `note` in full, nothing else writable; then every type, with a read-only field.
+    for (const grants of [
+      [
+        { contentTypeApiId: 'note', actions: ['read', 'write', 'publish'] },
+        { contentTypeApiId: '*', actions: ['read'] },
+      ],
+      [{ contentTypeApiId: '*', actions: ['read', 'write', 'publish'], readOnlyFields: ['title'] }],
+    ]) {
+      const refused = await request(await keyFor(grants));
+      expect(refused.status).toBe(403);
+      expect(await refused.json()).toMatchObject({
+        error: { code: 'forbidden', message: everyType },
+      });
+    }
+    const none = await app.request('/spaces/s1/promotions', { headers: admin });
+    expect(((await none.json()) as { items: P[] }).items).toEqual([]);
+
+    // A role holding every type alike may request one.
+    const wide = await keyFor([{ contentTypeApiId: '*', actions: ['read', 'write', 'publish'] }]);
+    const requested = await request(wide);
+    expect(requested.status).toBe(201);
+    const { id } = (await requested.json()) as P;
+
+    // One that can't read every field of `note` doesn't see it.
+    const hidden = await keyFor([
+      { contentTypeApiId: '*', actions: ['read', 'write', 'publish'], deniedFields: ['title'] },
+    ]);
+    const listed = await app.request('/spaces/s1/promotions', { headers: hidden });
+    expect(((await listed.json()) as { items: P[] }).items).toEqual([]);
+    const got = await app.request(`/spaces/s1/promotions/${id}`, { headers: hidden });
+    expect(got.status).toBe(403);
+    expect(await got.json()).toMatchObject({
+      error: { code: 'forbidden', message: 'Missing required scope "content:read:note.title"' },
+    });
+    const seen = await app.request('/spaces/s1/promotions', { headers: wide });
+    expect(((await seen.json()) as { items: P[] }).items.map((p) => p.id)).toEqual([id]);
+  });
+
   it('refuses a delivery key', async () => {
     const res = await app.request('/spaces/s1/promotions', {
       method: 'POST',

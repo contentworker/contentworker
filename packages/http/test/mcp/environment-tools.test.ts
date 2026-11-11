@@ -406,6 +406,98 @@ describe('promotions over MCP', () => {
     expect(approved).toMatchObject({ status: 'completed', decidedBy: 'grace' });
   });
 
+  it('holds requesting, approving and reading to per-type grants and field rules', async () => {
+    const deps = makeDeps();
+    await createSpace(deps.ctx, { spaceId: 'space-1', name: 'S', defaultLocale: 'en-US' });
+    await createEnvironment(deps.ctx, 'space-1', 'staging');
+    for (const environmentId of ['staging', 'main']) {
+      for (const apiId of ['note', 'page']) {
+        const scope = { spaceId: 'space-1', environmentId };
+        await createContentType(deps.ctx, SYSTEM_CALLER, scope, {
+          apiId,
+          name: apiId,
+          displayField: 'title',
+          fields: [
+            {
+              apiId: 'title',
+              name: 'Title',
+              type: 'Symbol',
+              localized: false,
+              required: true,
+              position: 0,
+            },
+          ],
+        } as Parameters<typeof createContentType>[3]);
+        await publishContentType(deps.ctx, scope, apiId);
+      }
+    }
+    const staging = { spaceId: 'space-1', environmentId: 'staging' };
+    const { entry } = await createEntry(deps.ctx, staging, {
+      contentTypeApiId: 'page',
+      fields: { title: { 'en-US': 'Hello' } },
+    });
+    const person = (subject: string, contentGrants?: Principal['contentGrants']): Principal => ({
+      spaceId: 'space-1',
+      kind: 'user',
+      subject,
+      scopes: [...scopesForKind('cma')],
+      ...(contentGrants ? { contentGrants } : {}),
+    });
+    // Writes `note` only; reads every type.
+    const noteWriter = person('nina', [
+      { contentTypeApiId: 'note', actions: ['read', 'write', 'publish'] },
+      { contentTypeApiId: '*', actions: ['read'] },
+    ]);
+    const noteReader = person('rita', [{ contentTypeApiId: 'note', actions: ['read'] }]);
+    const wide = person('wendy', [
+      { contentTypeApiId: '*', actions: ['read', 'write', 'publish'] },
+    ]);
+    const everyType =
+      'Missing required scope "content:read+write+publish:* (on every content type, every field)"';
+    const text = (r: Awaited<ReturnType<Client['callTool']>>) =>
+      (r.content as { text: string }[])[0]?.text ?? '';
+    const args = { space: 'space-1', source: 'staging', target: 'main', entries: [entry.id] };
+
+    const nina = await connect(deps, noteWriter);
+    const refused = await nina.callTool({ name: 'promotion_request', arguments: args });
+    expect(refused.isError).toBe(true);
+    expect(text(refused)).toBe(everyType);
+    expect(await deps.ctx.store.promotions.list('space-1', {})).toEqual([]);
+
+    const ada = await connect(deps, person('ada'));
+    const requested = JSON.parse(
+      text(await ada.callTool({ name: 'promotion_request', arguments: args })),
+    );
+    expect(requested.status).toBe('awaiting_approval');
+    const notApproved = await nina.callTool({
+      name: 'promotion_approve',
+      arguments: { space: 'space-1', id: requested.id },
+    });
+    expect(text(notApproved)).toBe(everyType);
+
+    const rita = await connect(deps, noteReader);
+    const listed = JSON.parse(
+      text(await rita.callTool({ name: 'promotion_list', arguments: { space: 'space-1' } })),
+    );
+    expect(listed).toEqual([]);
+    const hidden = await rita.callTool({
+      name: 'promotion_get',
+      arguments: { space: 'space-1', id: requested.id },
+    });
+    expect(text(hidden)).toBe('Missing required scope "content:read:page"');
+
+    const wendy = await connect(deps, wide);
+    const approved = JSON.parse(
+      text(
+        await wendy.callTool({
+          name: 'promotion_approve',
+          arguments: { space: 'space-1', id: requested.id },
+        }),
+      ),
+    );
+    expect(approved).toMatchObject({ status: 'completed', decidedBy: 'wendy' });
+  });
+
   it('refuses, with REST’s 422 body, a content type that drops a block variant the target’s entries use', async () => {
     const deps = makeDeps();
     await createSpace(deps.ctx, { spaceId: 'space-1', name: 'S', defaultLocale: 'en-US' });

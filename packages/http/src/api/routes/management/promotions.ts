@@ -50,7 +50,7 @@ export function promotionsRoutes(deps: AuthDeps): Hono<AuthVars> {
     async (c) => {
       const status = c.req.query('status');
       return c.json({
-        items: await listPromotions(ctx, c.req.param('space'), {
+        items: await listPromotions(ctx, c.get('principal'), c.req.param('space'), {
           ...(status && (PROMOTION_STATUSES as readonly string[]).includes(status)
             ? { status: status as PromotionStatus }
             : {}),
@@ -62,7 +62,8 @@ export function promotionsRoutes(deps: AuthDeps): Hono<AuthVars> {
     '/spaces/:space/promotions/:id',
     doc('Spaces & environments', 'Get a promotion, with its risk check and result'),
     requireScope(SCOPES.contentPublish),
-    async (c) => c.json(await getPromotion(ctx, c.req.param('space'), c.req.param('id'))),
+    async (c) =>
+      c.json(await getPromotion(ctx, c.get('principal'), c.req.param('space'), c.req.param('id'))),
   );
   app.post(
     '/spaces/:space/promotions/:id/approve',
