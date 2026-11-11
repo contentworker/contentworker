@@ -671,7 +671,12 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   link's allowed file types. A list field gains **Items** beside its Type (Symbol, Text, Integer,
   Number, Date; a new list starts as Symbol); a list of links or components has none. **Layout** is drawn as Fields
   is, its title beside Add tab; each tab a row (its name, a ghost Remove), and each field row gains
-  Tab and Group selects once a tab exists.
+  Tab and Group selects once a tab exists. A save is held to the version the dialog opened (0 for
+  a new type); refused because someone saved the type since, the form stays open with its edits
+  and a warning Alert above the footer says so ("This content type changed since you opened it",
+  their version named, or that it may be one's own save that didn't confirm), with outline Copy my
+  changes as JSON and Load the latest (the type read again, these edits discarded). A new type
+  whose API ID someone took meanwhile says that instead, with only the copy.
 - **Releases, Workflows, Taxonomy:** `PageHeader` with the page's one "New …" (a `Plus` and the
   noun), then a catalog. Publishing a release confirms in an alert dialog, naming
   what goes live and what to look at first (never-published entries, members in the trash).

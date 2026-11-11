@@ -135,6 +135,41 @@ describe('@contentworker/sdk-management client', () => {
     });
   });
 
+  it('saves a content type held to the version read, and surfaces the 409 as a conflict', async () => {
+    const draft = { apiId: 'article', name: 'Article', displayField: 'title', fields: [] };
+    const fetchImpl = fakeFetch((url, init) => {
+      calls.push({ url, init });
+      const sent = JSON.parse(String(init?.body)) as { expectedVersion?: number };
+      if (sent.expectedVersion === 1) {
+        return new Response(
+          JSON.stringify({
+            error: {
+              code: 'conflict',
+              message: 'Content type "article" is at version 2, not 1',
+              details: { version: 2, expectedVersion: 1 },
+            },
+          }),
+          { status: 409, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      return { ...draft, version: 3 };
+    });
+    const client = createManagementClient({ ...base, fetch: fetchImpl });
+
+    const err = await client.contentTypes.create(draft, { expectedVersion: 1 }).catch((e) => e);
+    expect(err).toBeInstanceOf(ManagementError);
+    expect(err).toMatchObject({ status: 409, code: 'conflict' });
+    expect((err as ManagementError).error?.details).toEqual({ version: 2, expectedVersion: 1 });
+
+    await client.contentTypes.create(draft, { expectedVersion: 2 });
+    await client.contentTypes.create(draft);
+    expect(calls.map((c) => c.init?.method)).toEqual(['POST', 'POST', 'POST']);
+    expect(calls[0]?.url).toBe('https://cms.test/spaces/s1/environments/main/content-types');
+    expect(JSON.parse(String(calls[1]?.init?.body))).toEqual({ ...draft, expectedVersion: 2 });
+    // Left out, the body is the draft alone: the save goes over whatever is stored.
+    expect(JSON.parse(String(calls[2]?.init?.body))).toEqual(draft);
+  });
+
   it('unwraps { items } list envelopes', async () => {
     const fetchImpl = fakeFetch((url) => {
       calls.push({ url });

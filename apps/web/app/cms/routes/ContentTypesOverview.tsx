@@ -87,11 +87,11 @@ export function ContentTypesOverview() {
     countsQuery.data?.find((c) => c.contentType === apiId);
 
   // A failure goes back to the dialog, which keeps the form and says what happened.
-  const save = async (draft: ContentTypeDraft) => {
+  const save = async (draft: ContentTypeDraft, opts: { expectedVersion: number }) => {
     let failed: unknown;
     await run(async () => {
       try {
-        await client.saveContentType(draft);
+        await client.saveContentType(draft, opts);
         // The draft has landed by now, so a refused publish doesn't mean nothing was saved.
         await client.publishContentType(draft.apiId).catch((err) => {
           throw new Error(`The draft saved but wasn’t published: ${apiErrorMessage(err)}`);
@@ -304,13 +304,21 @@ export function ContentTypesOverview() {
         />
       )}
 
-      {/* Key on the target so the form seeds fresh each time it opens. */}
+      {/* Key on the target and its version, so the form seeds fresh each time it opens, and
+          again on the latest version when a stale save loads it. */}
       <ContentTypeDialog
-        key={`${dialog.open}:${dialog.initial?.apiId ?? 'new'}`}
+        key={`${dialog.open}:${dialog.initial?.apiId ?? 'new'}:${dialog.initial?.version ?? 0}`}
         open={dialog.open}
         onOpenChange={(open) => setDialog((d) => ({ ...d, open }))}
         initial={dialog.initial}
         onSave={save}
+        onLoadLatest={async () => {
+          const apiId = dialog.initial?.apiId;
+          if (!apiId) return;
+          const latest = await client.getContentType(apiId);
+          setDialog({ open: true, initial: latest });
+          reload();
+        }}
       />
     </div>
   );

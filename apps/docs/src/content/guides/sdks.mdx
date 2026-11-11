@@ -238,7 +238,9 @@ preview client, as it is now). The management client's content type draft takes 
 [preview URL](/guides/content-modeling/#preview-url) (`preview: { urlTemplate }`;
 `cma.entries.previewLink(id, { locale })` returns it filled as `frontendUrl`), and
 `cma.contentTypes.{dependents, delete, clone}` check, delete (`{ purgeEntries: true }` starts the
-job that deletes its entries first) and copy a type.
+job that deletes its entries first) and copy a type. `cma.contentTypes.create(draft, { expectedVersion })`
+holds a revision to the `version` you read: a save someone made since is a `409` (`isConflict`),
+and nothing is saved, so their changes are never overwritten unseen.
 
 **Saved views.** `cma.savedViews.{list, get, run, create, update, delete}` manages the named entries queries the
 admin's views menu offers; `run(id, { limit, cursor, locale })` returns one page of a view's

@@ -118,10 +118,11 @@ Everything below is built and tested on v2.
   per version today) and identical bodies can share an object.
 - [ ] **Required plugins.** A per-plugin `required` flag so a plugin whose refusal is load-bearing
   blocks the write when it throws or times out, instead of being skipped.
-- [ ] **Refuse a stale content-type save.** A save sends every detail field, so a dialog opened
-  before someone else's save overwrites it (`group`, `description`, `agentInstructions`). Check
-  the type the caller read against the stored one and answer `409` when it changed, on both
-  surfaces.
+- [x] **Refuse a stale content-type save.** A save sends every detail field, so a dialog opened
+  before someone else's save overwrote it (`group`, `description`, `agentInstructions`). A save
+  now carries the `expectedVersion` it read (REST, MCP, the management SDK and `model apply`) and
+  is refused with a `409` naming the stored version when it changed; the admin's dialog keeps the
+  edits and offers to load the latest or copy them.
 - [ ] **Extension runtime: apps as packages.** Grow sandboxed plugins into installable packages
   that bring their own operations, workflow nodes, content types and admin UI, so integrations
   ship as packages on the runtime rather than in core. Seven PRs, each usable on its own:

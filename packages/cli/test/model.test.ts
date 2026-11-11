@@ -291,6 +291,39 @@ describe('model apply', () => {
     });
   });
 
+  it('holds each save to the version the plan read: 0 for a new type', async () => {
+    const { h, writes, file } = await setup([live(article, 7)]);
+    await writeFile(file, renderModel([{ ...article, name: 'Story' }, page], 'json'));
+    expect((await h.run('model', 'apply', file, '--yes', '--no-publish')).code).toBe(EXIT.ok);
+    const sent = writes.map((w) => JSON.parse(w.body ?? '{}'));
+    expect(sent.map((b) => [b.apiId, b.expectedVersion])).toEqual([
+      ['article', 7],
+      ['page', 0],
+    ]);
+  });
+
+  it('fails with the api’s 409 when the type changed after the plan was read', async () => {
+    const { h, file } = await setup([live(article)]);
+    h.io.fetch = (async (_input: string | URL | Request, init?: RequestInit) =>
+      init?.method === 'POST'
+        ? status(409, {
+            error: {
+              code: 'conflict',
+              message:
+                'Content type "article" is at version 4, not 3: it changed after it was read.',
+              details: { version: 4, expectedVersion: 3 },
+            },
+          })
+        : new Response(JSON.stringify({ items: [live(article)] }), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          })) as typeof fetch;
+    await writeFile(file, renderModel([{ ...article, name: 'Story' }], 'json'));
+    const out = await h.run('model', 'apply', file, '--yes');
+    expect(out.code).toBe(EXIT.failure);
+    expect(out.stderr).toContain('is at version 4, not 3');
+  });
+
   it('asks on a terminal, and does nothing on no', async () => {
     const { h, writes, file } = await setup([live(article)], { interactive: true, answers: ['n'] });
     await writeFile(file, renderModel([{ ...article, name: 'Story' }], 'json'));

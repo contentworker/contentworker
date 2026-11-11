@@ -1757,9 +1757,16 @@ export function createManagementClient(
     getContentType(apiId: string): Promise<ContentType> {
       return req('GET', `${mgmt}/content-types/${apiId}`);
     },
-    /** Create or update a content type (the route is idempotent on apiId). */
-    saveContentType(draft: ContentTypeDraft): Promise<ContentType> {
-      return req('POST', `${mgmt}/content-types`, draft);
+    /**
+     * Create or update a content type (the route is idempotent on apiId). With `expectedVersion`
+     * (the `version` the edits started from, 0 for a new type), a save made since is a 409 naming
+     * the stored `version`, and nothing is saved.
+     */
+    saveContentType(
+      draft: ContentTypeDraft,
+      opts: { readonly expectedVersion?: number } = {},
+    ): Promise<ContentType> {
+      return req('POST', `${mgmt}/content-types`, { ...draft, ...opts });
     },
     publishContentType(apiId: string): Promise<ContentType> {
       return req('POST', `${mgmt}/content-types/${apiId}/published`);

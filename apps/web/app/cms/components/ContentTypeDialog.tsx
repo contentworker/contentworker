@@ -27,6 +27,7 @@ import {
   UNIQUE_FIELD_TYPES,
   ValidationError,
 } from '@contentworker/domain';
+import { Alert, AlertDescription, AlertTitle } from '@contentworker/ui/alert';
 import { Button } from '@contentworker/ui/button';
 import { Checkbox } from '@contentworker/ui/checkbox';
 import {
@@ -50,10 +51,12 @@ import {
 } from '@contentworker/ui/select';
 import { Textarea } from '@contentworker/ui/textarea';
 import { Plus, Trash2 } from 'lucide-react';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { CopyButton } from '~/cms/components/copy-button';
 import { DiscardAsk, GuardCancel, useDiscardGuard } from '~/cms/components/discard-guard';
 import { toApiId } from '../lib/api-id';
 import { CONTENT_TYPE_ICONS, contentTypeIcon } from '../lib/content-type-icons';
+import { ApiError, apiErrorMessage } from '../lib/management';
 import {
   BlockVariantsEditor,
   newVariant,
@@ -527,15 +530,32 @@ function tabApiId(name: string, taken: readonly string[]): string {
 }
 
 /**
+ * The version a stale save's 409 names (`details.version`, from `expectedVersion`), or undefined
+ * for any other error: a conflict that names none (a field entries still hold) is another refusal.
+ */
+function staleVersion(err: unknown): number | undefined {
+  if (!(err instanceof ApiError) || err.status !== 409 || err.code !== 'conflict') return;
+  const v = (err.body as { error?: { details?: { version?: unknown } } } | undefined)?.error
+    ?.details?.version;
+  return typeof v === 'number' ? v : undefined;
+}
+
+/**
  * Create or edit a content type and its fields. The save route is idempotent on
  * apiId, so the same dialog serves both (pass `initial` to edit). On save the
  * type is published so entries can be authored immediately.
+ *
+ * A save sends the whole definition, held to the version the form opened from (0 for a new one):
+ * a save someone made since is refused, and the form stays as it is, with the way on (load the
+ * latest, losing these edits, or copy them first).
  */
 export function ContentTypeDialog(props: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   initial?: ContentType;
-  onSave: (draft: ContentTypeDraft) => Promise<void>;
+  onSave: (draft: ContentTypeDraft, opts: { expectedVersion: number }) => Promise<void>;
+  /** Reads the type again and opens the form on it: what typed here is discarded. */
+  onLoadLatest?: () => Promise<void>;
 }) {
   const editing = Boolean(props.initial);
   const seed = props.initial
@@ -579,6 +599,14 @@ export function ContentTypeDialog(props: {
   const [layoutTouched, setLayoutTouched] = useState(false);
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
+  // A save refused as stale: the version it is at now, and the refused definition, to copy.
+  const [stale, setStale] = useState<{ version: number; draft: string }>();
+  const [loading, setLoading] = useState(false);
+  const staleRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    // Above the pinned footer, as DialogError is: in view wherever Save was pressed from.
+    if (stale) staleRef.current?.scrollIntoView?.({ block: 'nearest' });
+  }, [stale]);
 
   // Everything a person can have changed, against how the form opened: a schema is long work, and
   // a press outside the dialog must not throw it away.
@@ -659,30 +687,48 @@ export function ContentTypeDialog(props: {
         return;
       }
     }
+    const draft: ContentTypeDraft = {
+      apiId: finalApiId,
+      name: name.trim(),
+      displayField,
+      fields: definitions,
+      // Cleared with null: left out, a saved pattern would stay.
+      urlPattern: urlPattern.trim() || null,
+      preview: previewTemplate.trim() ? { urlTemplate: previewTemplate.trim() } : null,
+      singleton,
+      group: group.trim() || null,
+      description: description.trim() || null,
+      agentInstructions: agentInstructions.trim() || null,
+      icon: icon || null,
+      ...(layoutTouched
+        ? { layout: layoutFromRows(tabs, namedFields, props.initial?.layout) }
+        : {}),
+    };
+    setStale(undefined);
     setBusy(true);
     try {
-      await props.onSave({
-        apiId: finalApiId,
-        name: name.trim(),
-        displayField,
-        fields: definitions,
-        // Cleared with null: left out, a saved pattern would stay.
-        urlPattern: urlPattern.trim() || null,
-        preview: previewTemplate.trim() ? { urlTemplate: previewTemplate.trim() } : null,
-        singleton,
-        group: group.trim() || null,
-        description: description.trim() || null,
-        agentInstructions: agentInstructions.trim() || null,
-        icon: icon || null,
-        ...(layoutTouched
-          ? { layout: layoutFromRows(tabs, namedFields, props.initial?.layout) }
-          : {}),
-      });
+      // Every detail goes back, so the save is held to the version these edits started from.
+      await props.onSave(draft, { expectedVersion: props.initial?.version ?? 0 });
       props.onOpenChange(false);
     } catch (err) {
-      setError(guard.saveFailed(err));
+      const message = guard.saveFailed(err);
+      const version = staleVersion(err);
+      if (version === undefined) setError(message);
+      else setStale({ version, draft: JSON.stringify(draft, null, 2) });
     } finally {
       setBusy(false);
+    }
+  };
+
+  const loadLatest = async () => {
+    if (!props.onLoadLatest) return;
+    setLoading(true);
+    try {
+      await props.onLoadLatest();
+    } catch (err) {
+      setError(`The latest version couldn’t be loaded: ${apiErrorMessage(err)}`);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -1219,6 +1265,41 @@ export function ContentTypeDialog(props: {
             ))}
           </fieldset>
 
+          {stale && (
+            <Alert ref={staleRef} variant="warning">
+              <AlertTitle className="line-clamp-none">
+                {editing
+                  ? 'This content type changed since you opened it'
+                  : `A content type “${apiId || toApiId(name)}” already exists`}
+              </AlertTitle>
+              <AlertDescription>
+                <p>
+                  {editing
+                    ? guard.unconfirmed
+                      ? `It’s at v${stale.version} now: that may be your own save that didn’t confirm, or someone else’s. Your changes here weren’t saved.`
+                      : `Someone else saved it as v${stale.version}, so your changes weren’t saved: saving them would undo theirs.`
+                    : 'Someone made it after you opened this form, so yours wasn’t created. Give yours another API ID, or copy your edits.'}
+                  {editing && props.onLoadLatest
+                    ? ' Load the latest to edit it (your changes here are discarded), or copy your changes first.'
+                    : null}
+                </p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <CopyButton text={stale.draft} label="Copy my changes as JSON" />
+                  {editing && props.onLoadLatest ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={loading}
+                      onClick={loadLatest}
+                    >
+                      {loading ? 'Loading…' : 'Load the latest'}
+                    </Button>
+                  ) : null}
+                </div>
+              </AlertDescription>
+            </Alert>
+          )}
           {error && <DialogError>{error}</DialogError>}
 
           <DialogFooter>

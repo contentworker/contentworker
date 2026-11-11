@@ -154,6 +154,11 @@ export interface TypePlan {
   readonly action: 'create' | 'update' | 'unchanged';
   readonly changes: readonly Change[];
   readonly draft: ContentTypeDraft;
+  /**
+   * The version the plan was made against (0: the space has no such type). The apply is held to
+   * it, so a save someone made after the plan was shown is refused rather than overwritten.
+   */
+  readonly version: number;
 }
 
 export interface Plan {
@@ -178,6 +183,7 @@ export function planModel(
         apiId: draft.apiId,
         action: 'create',
         draft,
+        version: 0,
         changes: [
           {
             path: draft.apiId,
@@ -217,6 +223,7 @@ export function planModel(
       apiId: draft.apiId,
       action: changes.length ? 'update' : 'unchanged',
       draft,
+      version: live.version,
       changes,
     };
   });

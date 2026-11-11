@@ -14,7 +14,9 @@ still served over REST and GraphQL.
 
 1. **Look before you create.** `model_list_content_types`, then `model_get_content_type` for any
    type that looks close. `model_create_content_type` creates _or updates_ by `apiId`, so reusing an
-   existing `apiId` replaces that definition.
+   existing `apiId` replaces that definition. When updating, pass the `version` you read as
+   `expectedVersion` (0 when creating): if someone saved the type since, the call is refused as a
+   `conflict` naming the stored `version`, nothing is saved, and you read it again before retrying.
 2. **Define the type** with `model_create_content_type`:
    - `apiId` — stable machine name (`blogPost`); it is what entries and code refer to.
    - `displayField` — the field `entries_suggest` matches on and admins see as the title. Point it
