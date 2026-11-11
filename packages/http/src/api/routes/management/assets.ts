@@ -116,7 +116,10 @@ export function assetsRoutes(deps: AuthDeps): Hono<AuthVars> {
         throw new NotConfiguredError('asset ingest', 'Bind ASSET_EVENTS_QUEUE to reindex assets');
       }
       const { all } = await parseBody(c, assetReindexBody);
-      return c.json(await startAssetReindex(ctx, scopeOf(c), { all: all === true }), 202);
+      return c.json(
+        await startAssetReindex(actingCtx(ctx, c), scopeOf(c), { all: all === true }),
+        202,
+      );
     },
   );
   app.post(

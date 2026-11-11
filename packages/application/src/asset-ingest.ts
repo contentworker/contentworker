@@ -32,7 +32,7 @@ import { runWithBudget } from './ai-budget';
 import { type AssetSearchDeps, embedAssetForSearch, indexAssetText } from './asset-search';
 import { allAssets, assetFileKey, assetTextKey, parseAssetObjectKey } from './assets';
 import type { BulkChunkOutcome } from './bulk-jobs';
-import { startBulkJob } from './bulk-jobs';
+import { readableBulkJob, startBulkJob } from './bulk-jobs';
 import type { AppContext } from './context';
 import { autoTagAsset, generateAltText, NoAltTextError } from './media-ai';
 
@@ -272,7 +272,7 @@ export async function startAssetReindex(
   const running = (
     await ctx.store.bulkJobs.listJobs(scope, { limit: RUNNING_REINDEX_LOOKBACK })
   ).find((j) => j.action === 'asset_reindex' && j.status === 'running');
-  if (running) return { assets: running.totalItems, job: running, running: true };
+  if (running) return { assets: running.totalItems, job: readableBulkJob(running), running: true };
   const ids = (await allAssets(ctx, scope))
     .filter((a) => !a.file.video)
     .filter((a) => opts.all || a.ingestStatus === undefined || a.ingestStatus === 'error')

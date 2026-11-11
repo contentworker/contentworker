@@ -2068,6 +2068,10 @@ export class InMemoryContentStore implements ContentStore {
     findByHash: async (hashedToken) =>
       [...this.apiKeyData.values()].find((k) => k.hashedToken === hashedToken && !k.revoked) ??
       null,
+    get: async (spaceId, id) => {
+      const key = this.apiKeyData.get(id);
+      return key?.spaceId === spaceId ? key : null;
+    },
     list: async (spaceId) => [...this.apiKeyData.values()].filter((k) => k.spaceId === spaceId),
     revoke: async (id) => {
       const existing = this.apiKeyData.get(id);

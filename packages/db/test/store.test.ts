@@ -646,6 +646,13 @@ describe('D1 store (contract)', () => {
       (await store.auth.list(spaceId)).find((k) => k.id === apiKey.id)?.roleId,
     ).toBeUndefined();
 
+    // A key by id: only in its own space, and still there once revoked (a job's starter check
+    // tells a revoked key from one it never knew).
+    expect(await store.auth.get(spaceId, apiKey.id)).toMatchObject({ id: apiKey.id, spaceId });
+    expect(await store.auth.get(`other-${spaceId}`, apiKey.id)).toBeNull();
+    await store.auth.revoke(apiKey.id);
+    expect(await store.auth.get(spaceId, apiKey.id)).toMatchObject({ revoked: true });
+
     await store.members.delete(spaceId, ada.id, 2);
     expect(await store.members.get(spaceId, ada.id)).toBeNull();
 

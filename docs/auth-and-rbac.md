@@ -568,9 +568,10 @@ Semantics:
   - It doesn't constrain a principal that also holds `space:admin`: that principal can edit roles
     (its own included) and mint keys, so withholding `delete` from an administrator is advice, not
     a control.
-  - Scheduled actions, workflow runs and import jobs are authorized when they are created or
-    started. Withdrawing a permission later doesn't cancel them; cancel the scheduled action
-    (`DELETE …/scheduled-actions/{id}`), the run or the job to revoke what they would do.
+  - Scheduled actions and workflow runs are authorized when they are created or started.
+    Withdrawing a permission later doesn't cancel them; cancel the scheduled action
+    (`DELETE …/scheduled-actions/{id}`) or the run to revoke what they would do. Bulk jobs are
+    checked again before each chunk (see "Bulk jobs re-check their starter" below).
   - A write-only grant (no `publish`, so no `unpublish`) can still trash a live entry, which
     unpublishes it. Only an explicit `deniedActions: ['unpublish']` stops that.
 - **Role edits are live at once.** `createRole`, `updateRole` and `deleteRole` drop the space's
@@ -821,8 +822,37 @@ interface Principal {
   and none of the fields sent denied or read-only to the role. Its report and cancel go by that
   type as a single-type import's do, and the job as read back (status, list, report) names the
   fields it sets but never holds their values, which only an entry's reads, masked by the role,
-  return. The grants are checked when the job starts, not again as
-  its chunks run; the saves are authored by whoever started it.
+  return. The grants are checked when the job starts and again before each chunk (below); the
+  saves are authored by whoever started it.
+- **Bulk jobs re-check their starter.** A job
+  records who started it as `config.startedBy` (`persistJob`, from the request's context, never
+  from the request body): `{ kind: 'key', keyId }` for an API key, OAuth token, personal access
+  token or setup token (the key row, never the token), `{ kind: 'member', memberId }` for a person
+  signed in to the admin, or `{ kind: 'deployment' }` for the admin and MCP tokens and a deployment
+  admin acting in a space whose team they are not on. Before each chunk, before it is claimed,
+  `runBulkChunk` resolves the starter again from the store (`starterLostAccess`,
+  `packages/application/src/job-starter.ts`; one resolution per chunk): the key by id in the job's
+  space through the same rules `authenticate` applies (`principalForApiKey`: revoked, expired, a
+  deleted role, a delegated token's person disabled or off the team, SSO-only for setup tokens),
+  or the membership (removed, disabled, no role, a deleted role). The resolved principal must
+  still pass the job's start rule (`authorizeJobContinues`): the start route's scopes
+  (`content:publish` for entry jobs and asset publish, unpublish and archive; `content:manage`,
+  `content:write` and `content:publish` for a content type's delete; `content:write` for a field
+  edit or a single-type import; `content:manage` for a snapshot, clone or space export import;
+  `assets:write` for asset move, tag and reindex) and its content grants (`canRunEntryBulkJob` on
+  every type for an entry job, so a grant narrowed for any type stops it; `write` on the type and
+  every field sent for a field edit; `write` on the type and on every field its records set for an
+  import (`config.fieldNames`); every type for a snapshot import). A starter that fails either is stopped: the job turns `cancelled` with
+  `config.cancelReason: 'starter_lost_access'` and `config.cancelDetail` saying why, nothing more
+  runs on their behalf (a chunk already running finishes, as with a cancel), staged work is
+  discarded, a content type's delete records `typeDeletion: { deleted: false, reason }`, and the
+  audit trail gets one `bulk_job.starter_lost_access` row by `system` naming the job. The
+  `deployment` starter, jobs the system starts (a starter install, the scheduler, a reindex after
+  the engine starts on its own), and job rows written before the record keep
+  running, as before. The application can't see a person's deployment role (the admin web app
+  keeps it), so a deployment admin's job in a space whose team they are not on runs to the end
+  even if they are demoted or their account is disabled meanwhile; cancel it. A job a job starts (a clone's create job, a snapshot's publishing job)
+  carries the same starter; the asset reindex a snapshot import starts is the system's. `config.startedBy` is never in a job as read back.
 - **Preview links** — `POST …/entries/:id/preview-link` mints an expiring token; CPA
   `GET …/entries/:id?preview_token=…` accepts it without a bearer header.
 - **OAuth 2.1** — when `OAUTH_ISSUER` is set, MCP clients obtain tokens through

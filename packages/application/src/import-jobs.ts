@@ -53,6 +53,12 @@ interface StagedChunk {
 export interface ImportJobConfig extends Record<string, unknown> {
   readonly contentTypeApiId: string;
   readonly locale: string;
+  /**
+   * The fields its staged records set, every one writable by the starter when it started: asked
+   * of the starter again before each chunk (`authorizeJobContinues`), so a field made read-only
+   * since stops the job. Absent on a job started before it was recorded.
+   */
+  readonly fieldNames?: readonly string[];
 }
 
 export interface StartImportJobResult {
@@ -142,6 +148,7 @@ export async function startImportJob(
   const config: ImportJobConfig = {
     contentTypeApiId: contentType.apiId,
     locale: analysis.locale,
+    fieldNames: [...new Set(writable.flatMap((p) => Object.keys(p.fields)))],
   };
   const job = await persistJob(
     ctx,

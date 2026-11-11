@@ -658,6 +658,11 @@ which is valid to store. See [Rich text](./domain-model.md#rich-text).
 | GET    | `…/bulk/jobs/:id/report`                  | `content:write`   | Per-item failures                                                           |
 | POST   | `…/bulk/jobs/:id/cancel`                  | `content:publish` | Cancel a job                                                                |
 
+A running job also stops by itself when whoever started it loses access (a key revoked or
+expired, a person disabled, removed or re-roled, a grant narrowed): before each chunk it is
+`cancelled` with `config.cancelReason: "starter_lost_access"` and `config.cancelDetail` saying
+why ([Auth & RBAC](./auth-and-rbac.md), "Bulk jobs re-check their starter"). `status` gains no value.
+
 Reads of a job are `content:write` so that whoever can start an import can watch it. Starting,
 reading the report of, or cancelling a job needs a role holding its actions on every content type
 (`403` otherwise), because the report exposes entry ids across content types. An import job goes by

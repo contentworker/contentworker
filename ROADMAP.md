@@ -310,8 +310,10 @@ in-browser model, page-per-language translation, and rich text or styles stored 
 
 Found while building and reviewing M1 and M2. None blocks a release.
 
-- [ ] **Re-check a running job's starter.** Record who started a bulk job and check their access
-  again before each chunk, so a trash or purge job stops when its starter loses access.
+- [x] **Re-check a running job's starter.** A bulk job records who started it (`config.startedBy`:
+  a key id, a membership id, or the deployment) and resolves them again before each chunk, so a
+  trash or purge job whose key is revoked, or whose person is disabled or re-roled, stops as
+  `cancelled` (`starter_lost_access`) and is audited; system jobs and older rows run as before.
 - [x] **Audit promotion and cross-space clone.** Requesting, approving and rejecting a promotion
   take every content type alike with no field rules, as merge does, and `lock` to copy entries
   (a merge of entries takes `lock` too)

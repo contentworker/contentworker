@@ -3863,6 +3863,13 @@ function makeAuthRepo(x: Exec): AuthRepo {
         .where(and(eq(schema.apiKeys.hashedToken, hashedToken), eq(schema.apiKeys.revoked, false)));
       return row ? toApiKey(row) : null;
     },
+    async get(spaceId, id) {
+      const [row] = await db
+        .select()
+        .from(schema.apiKeys)
+        .where(and(eq(schema.apiKeys.spaceId, spaceId), eq(schema.apiKeys.id, id)));
+      return row ? toApiKey(row) : null;
+    },
     async list(spaceId) {
       const rows = await db
         .select()
