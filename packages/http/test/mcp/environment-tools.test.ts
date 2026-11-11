@@ -406,6 +406,74 @@ describe('promotions over MCP', () => {
     expect(approved).toMatchObject({ status: 'completed', decidedBy: 'grace' });
   });
 
+  it('refuses, with REST’s 422 body, a content type that drops a block variant the target’s entries use', async () => {
+    const deps = makeDeps();
+    await createSpace(deps.ctx, { spaceId: 'space-1', name: 'S', defaultLocale: 'en-US' });
+    await createEnvironment(deps.ctx, 'space-1', 'staging');
+    const symbol = (apiId: string) => ({
+      apiId,
+      name: apiId,
+      type: 'Symbol',
+      localized: false,
+      required: false,
+      position: 0,
+    });
+    const hero = { apiId: 'hero', name: 'Hero', fields: [symbol('heading')] };
+    const cta = { apiId: 'cta', name: 'CTA', fields: [symbol('label')] };
+    for (const [environmentId, variants] of [
+      ['staging', [hero]],
+      ['main', [hero, cta]],
+    ] as const) {
+      const scope = { spaceId: 'space-1', environmentId };
+      await createContentType(deps.ctx, SYSTEM_CALLER, scope, {
+        apiId: 'page',
+        name: 'Page',
+        displayField: 'title',
+        fields: [
+          { ...symbol('title'), required: true },
+          {
+            ...symbol('body'),
+            position: 1,
+            type: 'Array',
+            items: { type: 'Component', variants: [...variants] },
+          },
+        ],
+      } as Parameters<typeof createContentType>[3]);
+      await publishContentType(deps.ctx, scope, 'page');
+    }
+    const { entry } = await createEntry(
+      deps.ctx,
+      { spaceId: 'space-1', environmentId: 'main' },
+      {
+        contentTypeApiId: 'page',
+        fields: {
+          title: { 'en-US': 'Home' },
+          body: { 'en-US': [{ _type: 'cta', label: 'Secret launch copy' }] },
+        },
+      },
+    );
+    const ada = await connect(deps, {
+      spaceId: 'space-1',
+      kind: 'user',
+      subject: 'ada',
+      scopes: [...scopesForKind('cma')],
+    });
+    const r = await ada.callTool({
+      name: 'promotion_request',
+      arguments: { space: 'space-1', source: 'staging', target: 'main', contentTypes: ['page'] },
+    });
+    expect(r.isError).toBe(true);
+    const text = (r.content as { text: string }[])[0]?.text ?? '{}';
+    expect(JSON.parse(text).error.issues).toEqual([
+      {
+        field: 'contentTypes',
+        message: `The content type "page" can't go to main: it removes a block variant 1 entry there still uses: body: cta (entry ${entry.id}). Change or clear those values there first, or leave "page" out of the promotion`,
+      },
+    ]);
+    expect(text).not.toContain('Secret launch copy');
+    expect(await deps.ctx.store.promotions.list('space-1')).toEqual([]);
+  });
+
   it('carries the block catalog and config with a selection when asked to', async () => {
     const deps = makeDeps();
     await createSpace(deps.ctx, { spaceId: 'space-1', name: 'S', defaultLocale: 'en-US' });

@@ -30,6 +30,7 @@ import {
   type ContentTypeWarning,
   describeRemovedInUse,
   prepareContentTypeSave,
+  type RemovedContentInUse,
   removedContentInUse,
   SYSTEM_CALLER,
   tightenedRulesInUse,
@@ -60,6 +61,18 @@ export interface PushBlockCatalogInput {
   readonly allowDestructive?: boolean;
   /** Publish each type it changes (default); false leaves each as a draft revision. */
   readonly publish?: boolean;
+}
+
+/** What only the application passes a push; no surface does. */
+export interface PushBlockCatalogOptions {
+  /**
+   * What a revision removes that entries still hold, in place of `removedContentInUse`: a
+   * promotion leaves out the copies it replaces right after the push (see `promotion.ts`).
+   */
+  readonly inUse?: (
+    current: ContentType,
+    next: Pick<ContentType, 'fields'>,
+  ) => Promise<RemovedContentInUse>;
 }
 
 /** A content type a push changes. */
@@ -130,6 +143,7 @@ export async function pushBlockCatalog(
   caller: ContentTypeCaller,
   scope: Scope,
   input: PushBlockCatalogInput,
+  opts: PushBlockCatalogOptions = {},
 ): Promise<BlockCatalogPush> {
   assertContentTypeCaller(caller);
   const publish = input.publish !== false;
@@ -167,7 +181,10 @@ export async function pushBlockCatalog(
   const inUse: BlocksInUse[] = [];
   const warnings: ContentTypeWarning[] = [];
   for (const { current, next } of revisions) {
-    const held = await removedContentInUse(ctx, scope, current, next);
+    const held = await (opts.inUse ?? ((c, n) => removedContentInUse(ctx, scope, c, n)))(
+      current,
+      next,
+    );
     for (const v of held.variantsInUse) {
       inUse.push({
         contentTypeApiId: current.apiId,

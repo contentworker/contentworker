@@ -21,6 +21,7 @@ import {
   createSpace,
   getEffectiveBlockRules,
   publishContentType,
+  publishEntry,
   pushBlockCatalog,
   requestPromotion,
   SYSTEM_CALLER,
@@ -277,6 +278,73 @@ describe('promoting blocks between environments', () => {
       },
     ]);
     expect(await store.promotions.list(spaceId)).toEqual([]);
+  });
+
+  describe('when the entries holding what the catalog removes are the ones promoted', () => {
+    const id = 'e-quoted';
+    const grid = (child: object) => ({
+      title: { 'en-US': 'Quoted' },
+      body: { 'en-US': [{ _type: 'grid', _key: 'g1', items: [{ _key: 'c1', ...child }] }] },
+    });
+    beforeEach(async () => {
+      // The same entry on both sides: qa's copy holds the quote, staging's has moved to a card.
+      await createEntry(ctx, qa, {
+        contentTypeApiId: 'page',
+        id,
+        fields: grid({ _type: 'quote', text: 'Hello' }),
+      });
+      await createEntry(ctx, staging, {
+        contentTypeApiId: 'page',
+        id,
+        fields: grid({ _type: 'card', title: 'Hello' }),
+      });
+      await pushBlockCatalog(ctx, admin, staging, {
+        blocks: [
+          BLOCKS[0],
+          { ...BLOCKS[1], slots: [{ ...BLOCKS[1]?.slots?.[0], allowedChildren: ['card'] }] },
+          BLOCKS[2],
+        ],
+        targets: TARGETS,
+        allowDestructive: true,
+      });
+    });
+
+    it('lets the catalog go: the copy it would strand is the one the promotion replaces', async () => {
+      const p = await requestPromotion(ctx, admin, spaceId, {
+        source: 'staging',
+        target: 'qa',
+        entries: [id],
+        blocks: true,
+      });
+      expect(p.status).toBe('awaiting_approval');
+      const done = await approvePromotion(ctx, approver, spaceId, p.id);
+      expect(done).toMatchObject({
+        status: 'completed',
+        result: { entries: [id], blocks: { catalog: true, config: false } },
+      });
+      expect((await store.blockCatalogs.latest(qa))?.version).toBe(2);
+      expect((await store.entries.get(qa, id))?.fields).toEqual(
+        grid({ _type: 'card', title: 'Hello' }),
+      );
+    });
+
+    it('still refuses when the copy arrives as a draft over a published one holding it', async () => {
+      await publishEntry(ctx, qa, id);
+      const err = await requestPromotion(ctx, admin, spaceId, {
+        source: 'staging',
+        target: 'qa',
+        entries: [id],
+        blocks: true,
+      }).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(ValidationError);
+      expect((err as ValidationError).issues).toEqual([
+        {
+          field: 'blocks',
+          message: `The block catalog can't go to qa: it removes what entries there still hold (page.body[grid].items: quote (entry ${id})); change those entries first. Request with blocks: false to promote the rest`,
+        },
+      ]);
+      expect(await store.promotions.list(spaceId)).toEqual([]);
+    });
   });
 
   it('names a removal no entry holds, and applies it once approved', async () => {
