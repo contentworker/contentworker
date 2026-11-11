@@ -175,6 +175,45 @@ describe('environment-wide tools as a role', () => {
     }
   });
 
+  it('refuses each with the code and message the routes answer', async () => {
+    const everyType = (actions: string) =>
+      `Missing required scope "content:${actions}:* (on every content type, every field)"`;
+    const calls: [string, Record<string, unknown>, string][] = [
+      ['environment_export', main, everyType('read')],
+      [
+        'environment_import',
+        { ...empty, snapshot: await snapshot(), dryRun: true },
+        everyType('write+publish'),
+      ],
+      [
+        'environment_clone',
+        { ...main, targetEnvironment: 'empty', dryRun: true },
+        everyType('read+write+publish'),
+      ],
+      [
+        'space_export_analyze',
+        { ...empty, payload: JSON.stringify(spaceExportFixture()) },
+        everyType('write+publish'),
+      ],
+      [
+        'space_export_analyze',
+        { ...empty, payload: '{}', addLocales: true },
+        'Missing required scope "space:admin"',
+      ],
+      [
+        'environments_merge',
+        { space: SPACE, source: 'main', target: 'empty', entries: ['x'] },
+        everyType('read+write'),
+      ],
+    ];
+    for (const [tool, args, message] of calls) {
+      const result = await call(narrow, tool, args);
+      expect(result.isError, tool).toBe(true);
+      // A refusal without details reaches an MCP client as its message, REST's `error.message`.
+      expect(result.text, tool).toBe(message);
+    }
+  });
+
   it('asks for publish only when the import publishes', async () => {
     const noPublish = role([{ contentTypeApiId: '*', actions: ['read', 'write'] }]);
     const args = { ...empty, snapshot: await snapshot(), dryRun: true };

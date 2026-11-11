@@ -238,7 +238,10 @@ describe('entry authorship', () => {
     const id = await note(as('ada'), 'Travels');
     await publishEntry(as('ada'), main, id);
     clock.advance(HOUR);
-    await cloneEnvironment(as('grace'), main, { spaceId: 's1', environmentId: 'copy' });
+    await cloneEnvironment(as('grace'), SYSTEM_CALLER, main, {
+      spaceId: 's1',
+      environmentId: 'copy',
+    });
     expect(
       (await store.entries.get({ spaceId: 's1', environmentId: 'copy' }, id))?.entry,
     ).toMatchObject({
@@ -248,13 +251,13 @@ describe('entry authorship', () => {
     });
 
     // An uploaded file names whoever it likes: the importer is credited, the instants are kept.
-    const snapshot = await exportSnapshot(base, main);
+    const snapshot = await exportSnapshot(base, SYSTEM_CALLER, main);
     const forged = {
       ...snapshot,
       entries: snapshot.entries.map((e) => ({ ...e, createdBy: 'someone-else' })),
     };
     const upload = { spaceId: 's1', environmentId: 'upload' };
-    await importSnapshot(as('grace'), upload, forged);
+    await importSnapshot(as('grace'), SYSTEM_CALLER, upload, forged);
     expect((await store.entries.get(upload, id))?.entry).toMatchObject({
       createdBy: 'grace',
       createdAt: '2026-05-01T09:00:00.000Z',
@@ -266,7 +269,7 @@ describe('entry authorship', () => {
     const id = await note(as('ada'), 'Merged');
     await publishEntry(as('ada'), main, id);
     clock.advance(HOUR);
-    await mergeEnvironments(as('grace'), 's1', 'main', 'staging', { entries: [id] });
+    await mergeEnvironments(as('grace'), SYSTEM_CALLER, 's1', 'main', 'staging', { entries: [id] });
     expect((await store.entries.get(staging, id))?.entry).toMatchObject({
       createdAt: '2026-05-01T09:00:00.000Z',
       createdBy: 'ada',
@@ -275,7 +278,7 @@ describe('entry authorship', () => {
     });
     // Merged again onto the copy it made: the target's own authorship stays, grace changed it.
     await updateEntry(as('ada'), main, id, { title: { 'en-US': 'Merged again' } });
-    await mergeEnvironments(as('grace'), 's1', 'main', 'staging', { entries: [id] });
+    await mergeEnvironments(as('grace'), SYSTEM_CALLER, 's1', 'main', 'staging', { entries: [id] });
     expect((await store.entries.get(staging, id))?.entry).toMatchObject({
       createdBy: 'ada',
       updatedBy: 'grace',
@@ -285,7 +288,7 @@ describe('entry authorship', () => {
 
   it('refuses a snapshot whose authorship is malformed, before writing anything', async () => {
     await note(as('ada'), 'Dated');
-    const snapshot = await exportSnapshot(base, main);
+    const snapshot = await exportSnapshot(base, SYSTEM_CALLER, main);
     const upload = { spaceId: 's1', environmentId: 'upload' };
     for (const bad of [
       { createdAt: 'yesterday' },
@@ -294,9 +297,9 @@ describe('entry authorship', () => {
       { createdAt: 12 },
     ]) {
       const broken = { ...snapshot, entries: snapshot.entries.map((e) => ({ ...e, ...bad })) };
-      await expect(importSnapshot(as('grace'), upload, broken as never)).rejects.toThrow(
-        ValidationError,
-      );
+      await expect(
+        importSnapshot(as('grace'), SYSTEM_CALLER, upload, broken as never),
+      ).rejects.toThrow(ValidationError);
     }
     expect(await store.contentTypes.list(upload)).toEqual([]);
   });

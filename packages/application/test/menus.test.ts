@@ -471,12 +471,12 @@ describe('menus', () => {
         { id: 'news', link: { type: 'term', termKind: 'tag', termId: tag.id } },
       ],
     });
-    const snapshot = await exportSnapshot(ctx, scope);
+    const snapshot = await exportSnapshot(ctx, SYSTEM_CALLER, scope);
     expect(snapshot.menus?.map((m) => m.handle)).toEqual(['main']);
 
     const copy = { spaceId: 'site', environmentId: 'copy' };
     await createEnvironment(ctx, 'site', 'copy');
-    await cloneEnvironment(ctx, scope, copy);
+    await cloneEnvironment(ctx, SYSTEM_CALLER, scope, copy);
     const delivered = await getDeliveredMenu(ctx, copy, 'main');
     expect(delivered.items.map((i) => [i.id, i.label])).toEqual([
       ['about', 'About about'],
@@ -487,6 +487,7 @@ describe('menus', () => {
     await expect(
       importSnapshot(
         ctx,
+        SYSTEM_CALLER,
         { spaceId: 'site', environmentId: 'bad' },
         {
           ...snapshot,

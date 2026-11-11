@@ -399,10 +399,10 @@ describe('redirects', () => {
 
   it('travels with an environment snapshot and a clone', async () => {
     await createRedirect(ctx, scope, { source: '/a', destination: '/b', note: 'keep' });
-    const snapshot = await exportSnapshot(ctx, scope);
+    const snapshot = await exportSnapshot(ctx, SYSTEM_CALLER, scope);
     expect(snapshot.redirects?.map((r) => r.source)).toEqual(['/a']);
     await createEnvironment(ctx, 'site', 'copy');
-    await cloneEnvironment(ctx, scope, { spaceId: 'site', environmentId: 'copy' });
+    await cloneEnvironment(ctx, SYSTEM_CALLER, scope, { spaceId: 'site', environmentId: 'copy' });
     expect(
       (await listRedirects(ctx, { spaceId: 'site', environmentId: 'copy' })).items,
     ).toMatchObject([{ source: '/a', destination: '/b', note: 'keep' }]);
@@ -411,6 +411,7 @@ describe('redirects', () => {
     await expect(
       importSnapshot(
         ctx,
+        SYSTEM_CALLER,
         { spaceId: 'site', environmentId: 'bad' },
         {
           ...snapshot,

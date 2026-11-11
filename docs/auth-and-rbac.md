@@ -501,7 +501,15 @@ Semantics:
   matching MCP tools, need `content:manage` and `authorizeEveryContentType`: no per-type grants, or
   a single `*` grant holding those actions and restricting no field. The Manager and Administrator
   presets qualify. `POST …/merge` (`environments_merge`) needs the same, with `read` and `write`,
-  when it copies entries; copying only content types needs just `content:manage`.
+  when it copies entries; copying only content types needs just `content:manage`. The use-cases
+  make these checks themselves (`exportSnapshot`, `importSnapshot`, `startSnapshotImport`,
+  `cloneEnvironment`, `startEnvironmentClone`, `mergeEnvironments`, `analyzeSpaceExport`,
+  `startSpaceExportImport`, through `authorizeEnvironmentWide` in `environment-access.ts`), each
+  taking a required caller: the request's principal, or `SYSTEM_CALLER` for work already
+  authorized as a whole (a clone's own export and import, a job's prepare chunk). Anything else
+  fails closed, so a new surface can't reach one without the check. The use-cases also check
+  `content:manage` in a clone's target space and `space:admin` for a space export import's
+  `addLocales`.
   `GET …/compare` (`environments_compare`) lists only the content types the role can read and
   their entries.
 - **Release note.** A custom role with `content:manage` and a `*` grant of `read` and `write` but

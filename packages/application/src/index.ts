@@ -49,6 +49,7 @@ export * from './entry-fields-bulk';
 export * from './entry-order';
 export * from './entry-query';
 export * from './entry-trash-bulk';
+export * from './environment-access';
 export * from './environment-purge';
 export * from './events/consume';
 export * from './events/dispatch';

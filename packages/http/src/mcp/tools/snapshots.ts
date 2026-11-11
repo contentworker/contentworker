@@ -6,7 +6,7 @@ import {
   startEnvironmentClone,
   startSnapshotImport,
 } from '@contentworker/application';
-import { authorizeEveryContentType, SCOPES } from '@contentworker/domain';
+import { SCOPES } from '@contentworker/domain';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { snapshotBody } from '../../api/validation';
@@ -28,9 +28,7 @@ export function registerSnapshotTools(server: McpServer, t: ToolContext): void {
     },
     async (args) => {
       guard(SCOPES.contentManage, scopeOf(args));
-      // Every entry of every type, every field: a role limited to some types or fields can't.
-      authorizeEveryContentType(principal, ['read']);
-      return ok(await exportSnapshot(ctx, scopeOf(args), { limit: args.limit }));
+      return ok(await exportSnapshot(ctx, principal, scopeOf(args), { limit: args.limit }));
     },
   );
 
@@ -62,14 +60,9 @@ export function registerSnapshotTools(server: McpServer, t: ToolContext): void {
         publish: args.publish,
         reindexAssets: Boolean(deps.assetIngest),
       };
-      // As the route: it writes (and publishes) entries of every type the snapshot defines.
-      authorizeEveryContentType(
-        principal,
-        args.publish !== false ? ['write', 'publish'] : ['write'],
-      );
       if (args.dryRun || !deps.blob)
-        return ok(await importSnapshot(ctx, target, snapshot, options));
-      return ok(await startSnapshotImport(ctx, deps.blob, target, snapshot, options));
+        return ok(await importSnapshot(ctx, principal, target, snapshot, options));
+      return ok(await startSnapshotImport(ctx, principal, deps.blob, target, snapshot, options));
     },
   );
 
@@ -101,23 +94,16 @@ export function registerSnapshotTools(server: McpServer, t: ToolContext): void {
         spaceId: args.targetSpace ?? from.spaceId,
         environmentId: args.targetEnvironment,
       };
-      // Authorized separately: cloning into a space the caller cannot manage
-      // would be a tenancy hole.
-      guard(SCOPES.contentManage, to);
-      // An export of the source and an import into the target, on every content type alike.
-      authorizeEveryContentType(
-        principal,
-        args.publish !== false ? ['read', 'write', 'publish'] : ['read', 'write'],
-      );
+      // The use-case authorizes the target space and every content type (`authorizeClone`).
       const options = {
         dryRun: args.dryRun,
         publish: args.publish,
         reindexAssets: Boolean(deps.assetIngest),
       };
       if (args.dryRun || !deps.blob) {
-        return ok(await cloneEnvironment(ctx, from, to, options));
+        return ok(await cloneEnvironment(ctx, principal, from, to, options));
       }
-      return ok(await startEnvironmentClone(ctx, from, to, options));
+      return ok(await startEnvironmentClone(ctx, principal, from, to, options));
     },
   );
 }

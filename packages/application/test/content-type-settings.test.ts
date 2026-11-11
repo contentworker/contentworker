@@ -139,7 +139,9 @@ describe('asset MIME types on asset links', () => {
       fields: { title: { en: 'Brochure' }, file: { en: { id: png, linkType: 'Asset' } } },
     });
     expect(
-      await issuesOf(mergeEnvironments(ctx, 's1', 'staging', 'main', { entries: [entry.id] })),
+      await issuesOf(
+        mergeEnvironments(ctx, SYSTEM_CALLER, 's1', 'staging', 'main', { entries: [entry.id] }),
+      ),
     ).toEqual([`file: Asset ${png} is not a file type this field takes (application/pdf)`]);
     expect(await ctx.store.entries.get(scope, entry.id)).toBeNull();
   });
@@ -184,8 +186,8 @@ describe('content type details through the use-cases', () => {
     });
 
     await createEnvironment(ctx, 's1', 'copy');
-    const snapshot = await exportSnapshot(ctx, scope);
-    await importSnapshot(ctx, { spaceId: 's1', environmentId: 'copy' }, snapshot);
+    const snapshot = await exportSnapshot(ctx, SYSTEM_CALLER, scope);
+    await importSnapshot(ctx, SYSTEM_CALLER, { spaceId: 's1', environmentId: 'copy' }, snapshot);
     expect(
       await getContentType(ctx, { spaceId: 's1', environmentId: 'copy' }, 'article'),
     ).toMatchObject({ ...details, fields: [{ apiId: 'title' }, { format: 'date' }] });

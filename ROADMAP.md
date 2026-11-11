@@ -316,8 +316,10 @@ Found while building and reviewing M1 and M2. None blocks a release.
   imports, snapshots and merge now are.
 - [x] **Delegated bearers and people.** Refuse invitations and member role changes from personal
   access tokens and OAuth tokens, so a short-lived token can't create a lasting admin.
-- [ ] **Environment-wide checks in the use-cases.** Move `authorizeEveryContentType` from the HTTP
-  routes and MCP tools into the use-cases with a required principal, so a new surface can't skip it.
+- [x] **Environment-wide checks in the use-cases.** Snapshot export and import, clone, merge and
+  space export import check `authorizeEveryContentType` (and a clone's target space, and
+  `addLocales`) in the use-case, with a required caller (`SYSTEM_CALLER` for work already
+  authorized), so a new surface can't skip it.
 - [ ] **Admin saves for read-only roles.** The editor sends every field, so a role with
   `readOnlyFields` probably gets a 403 on save. Confirm it, and send only what the role may write.
 - [x] **Linear email checks.** Replace the quadratic pattern in `isEmail` (`domain/auth/team.ts`) and

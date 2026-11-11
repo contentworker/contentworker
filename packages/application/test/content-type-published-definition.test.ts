@@ -170,11 +170,11 @@ describe('a draft revision of a live type', () => {
       urlPattern: '/o/{slug}',
       fields,
     });
-    await mergeEnvironments(ctx, 's1', 'copy', 'main', { contentTypes: ['page'] });
+    await mergeEnvironments(ctx, SYSTEM_CALLER, 's1', 'copy', 'main', { contentTypes: ['page'] });
     expect(await delivered()).toMatchObject({ name: 'Page', urlPattern: '/{slug}' });
 
     await publishContentType(ctx, copy, 'page');
-    await mergeEnvironments(ctx, 's1', 'copy', 'main', { contentTypes: ['page'] });
+    await mergeEnvironments(ctx, SYSTEM_CALLER, 's1', 'copy', 'main', { contentTypes: ['page'] });
     expect(await delivered()).toMatchObject({ name: 'Other', urlPattern: '/o/{slug}' });
   });
 });
@@ -298,7 +298,7 @@ describe('copying a live type with a draft', () => {
   };
 
   it('carries the published definition in the snapshot', async () => {
-    const snapshot = await exportSnapshot(ctx, scope);
+    const snapshot = await exportSnapshot(ctx, SYSTEM_CALLER, scope);
     expect(snapshot.contentTypes[0]?.published).toMatchObject({
       urlPattern: '/{slug}',
       version: 1,
@@ -308,22 +308,24 @@ describe('copying a live type with a draft', () => {
 
   it('leaves a type with no draft as it was in the snapshot', async () => {
     await publishContentType(ctx, scope, 'page');
-    expect((await exportSnapshot(ctx, scope)).contentTypes[0]).not.toHaveProperty('published');
+    expect((await exportSnapshot(ctx, SYSTEM_CALLER, scope)).contentTypes[0]).not.toHaveProperty(
+      'published',
+    );
   });
 
   it('restores both through an import', async () => {
-    await importSnapshot(ctx, copy, await exportSnapshot(ctx, scope));
+    await importSnapshot(ctx, SYSTEM_CALLER, copy, await exportSnapshot(ctx, SYSTEM_CALLER, scope));
     await expectBoth();
   });
 
   it('restores both through a clone', async () => {
-    await cloneEnvironment(ctx, scope, copy);
+    await cloneEnvironment(ctx, SYSTEM_CALLER, scope, copy);
     await expectBoth();
   });
 
   it('writes the model again without going back through the published definition', async () => {
-    const snapshot = await exportSnapshot(ctx, scope);
-    await importSnapshot(ctx, copy, snapshot);
+    const snapshot = await exportSnapshot(ctx, SYSTEM_CALLER, scope);
+    await importSnapshot(ctx, SYSTEM_CALLER, copy, snapshot);
     await createEntry(ctx, copy, {
       contentTypeApiId: 'page',
       fields: { title: { 'en-US': 'a' }, subtitle: { 'en-US': 'held' } },
@@ -342,15 +344,15 @@ describe('copying a live type with a draft', () => {
     });
     await publishContentType(ctx, scope, 'home');
     await updateContentType(ctx, SYSTEM_CALLER, scope, 'home', { singleton: false });
-    await cloneEnvironment(ctx, scope, copy);
+    await cloneEnvironment(ctx, SYSTEM_CALLER, scope, copy);
     const { contentTypes = [] } = await deliveryReads(ctx).read(copy, { contentTypes: true });
     expect(contentTypes.find((t) => t.apiId === 'home')?.singleton).toBe(true);
     expect((await getContentType(ctx, copy, 'home')).singleton).toBeUndefined();
   });
 
   it('restores a snapshot written before these were kept, as a plain draft', async () => {
-    const snapshot = await exportSnapshot(ctx, scope);
-    await importSnapshot(ctx, copy, {
+    const snapshot = await exportSnapshot(ctx, SYSTEM_CALLER, scope);
+    await importSnapshot(ctx, SYSTEM_CALLER, copy, {
       ...snapshot,
       contentTypes: snapshot.contentTypes.map(({ published: _old, ...ct }) => ct),
     });
@@ -366,7 +368,7 @@ describe('a clone of a draft that cleared the URL pattern', () => {
       urlPattern: null,
       fields: [field('title', 'Symbol', 0)],
     });
-    await cloneEnvironment(ctx, scope, copy);
+    await cloneEnvironment(ctx, SYSTEM_CALLER, scope, copy);
     const working = await getContentType(ctx, copy, 'page');
     expect(working.urlPattern).toBeUndefined();
     expect(working.fields.map((f) => f.apiId)).toEqual(['title']);
@@ -375,7 +377,7 @@ describe('a clone of a draft that cleared the URL pattern', () => {
 
   it('keeps the draft’s clearing when the slug stays', async () => {
     await updateContentType(ctx, SYSTEM_CALLER, scope, 'page', { urlPattern: null });
-    await cloneEnvironment(ctx, scope, copy);
+    await cloneEnvironment(ctx, SYSTEM_CALLER, scope, copy);
     expect((await getContentType(ctx, copy, 'page')).urlPattern).toBeUndefined();
   });
 });
@@ -558,9 +560,9 @@ describe('a snapshot of a draft the write path would take', () => {
   });
 
   it('passes a dry run, and imports both definitions', async () => {
-    const snapshot = await exportSnapshot(ctx, scope);
-    await importSnapshot(ctx, copy, snapshot, { dryRun: true });
-    await importSnapshot(ctx, copy, snapshot);
+    const snapshot = await exportSnapshot(ctx, SYSTEM_CALLER, scope);
+    await importSnapshot(ctx, SYSTEM_CALLER, copy, snapshot, { dryRun: true });
+    await importSnapshot(ctx, SYSTEM_CALLER, copy, snapshot);
     const types = async (at: typeof scope) => [
       (await delivered(at))?.fields.find((f) => f.apiId === 'rating')?.type,
       (await getContentType(ctx, at, 'page')).fields.find((f) => f.apiId === 'rating')?.type,
@@ -570,13 +572,13 @@ describe('a snapshot of a draft the write path would take', () => {
   });
 
   it('clones', async () => {
-    await cloneEnvironment(ctx, scope, copy);
+    await cloneEnvironment(ctx, SYSTEM_CALLER, scope, copy);
     expect((await delivered(copy))?.status).toBe('published');
     expect((await getContentType(ctx, copy, 'page')).status).toBe('draft');
   });
 
   it('drops the rule from the copy’s draft, as normalizing any snapshot drops an unusable one', async () => {
-    await importSnapshot(ctx, copy, await exportSnapshot(ctx, scope));
+    await importSnapshot(ctx, SYSTEM_CALLER, copy, await exportSnapshot(ctx, SYSTEM_CALLER, scope));
     const tierOf = (ct: { fields: readonly FieldDefinition[] } | undefined) =>
       ct?.fields.find((f) => f.apiId === 'tier');
     expect(tierOf(await delivered(copy))?.rules).toHaveLength(1);
@@ -601,12 +603,14 @@ describe('a snapshot with a definition that can’t be written', () => {
   ];
 
   it('refuses a bad block in the type, writing nothing', async () => {
-    const snapshot = await exportSnapshot(ctx, scope);
+    const snapshot = await exportSnapshot(ctx, SYSTEM_CALLER, scope);
     const bad = {
       ...snapshot,
       contentTypes: snapshot.contentTypes.map((ct) => ({ ...ct, fields: crafted })),
     };
-    const refused = await importSnapshot(ctx, copy, bad).catch((err: unknown) => err);
+    const refused = await importSnapshot(ctx, SYSTEM_CALLER, copy, bad).catch(
+      (err: unknown) => err,
+    );
     expect(refused).toBeInstanceOf(ValidationError);
     expect(JSON.stringify((refused as ValidationError).issues)).toContain('page');
     expect(await store.contentTypes.list(copy)).toEqual([]);
@@ -614,30 +618,34 @@ describe('a snapshot with a definition that can’t be written', () => {
 
   it('refuses a bad block in the published definition, writing nothing', async () => {
     await updateContentType(ctx, SYSTEM_CALLER, scope, 'page', { name: 'Two' });
-    const snapshot = await exportSnapshot(ctx, scope);
+    const snapshot = await exportSnapshot(ctx, SYSTEM_CALLER, scope);
     const bad = {
       ...snapshot,
       contentTypes: snapshot.contentTypes.map((ct) =>
         ct.published ? { ...ct, published: { ...ct.published, fields: crafted } } : ct,
       ),
     };
-    await expect(importSnapshot(ctx, copy, bad)).rejects.toBeInstanceOf(ValidationError);
+    await expect(importSnapshot(ctx, SYSTEM_CALLER, copy, bad)).rejects.toBeInstanceOf(
+      ValidationError,
+    );
     expect(await store.contentTypes.list(copy)).toEqual([]);
   });
 
   it('refuses a bad block in the draft over a good published definition', async () => {
     await updateContentType(ctx, SYSTEM_CALLER, scope, 'page', { name: 'Two' });
-    const snapshot = await exportSnapshot(ctx, scope);
+    const snapshot = await exportSnapshot(ctx, SYSTEM_CALLER, scope);
     const bad = {
       ...snapshot,
       contentTypes: snapshot.contentTypes.map((ct) => ({ ...ct, fields: crafted })),
     };
-    await expect(importSnapshot(ctx, copy, bad)).rejects.toBeInstanceOf(ValidationError);
+    await expect(importSnapshot(ctx, SYSTEM_CALLER, copy, bad)).rejects.toBeInstanceOf(
+      ValidationError,
+    );
     expect(await store.contentTypes.list(copy)).toEqual([]);
   });
 
   it('ignores `published` on a published row, as the write does', async () => {
-    const snapshot = await exportSnapshot(ctx, scope);
+    const snapshot = await exportSnapshot(ctx, SYSTEM_CALLER, scope);
     const stray = {
       ...snapshot,
       contentTypes: snapshot.contentTypes.map((ct) => ({
@@ -645,19 +653,19 @@ describe('a snapshot with a definition that can’t be written', () => {
         published: { name: 'x', displayField: 'title', fields: crafted, version: 1 },
       })),
     };
-    await importSnapshot(ctx, copy, stray);
+    await importSnapshot(ctx, SYSTEM_CALLER, copy, stray);
     expect((await delivered(copy))?.fields.map((f) => f.apiId)).toEqual(['title', 'slug']);
   });
 
   it('reports it on a dry run', async () => {
-    const snapshot = await exportSnapshot(ctx, scope);
+    const snapshot = await exportSnapshot(ctx, SYSTEM_CALLER, scope);
     const bad = {
       ...snapshot,
       contentTypes: snapshot.contentTypes.map((ct) => ({ ...ct, fields: crafted })),
     };
-    await expect(importSnapshot(ctx, copy, bad, { dryRun: true })).rejects.toBeInstanceOf(
-      ValidationError,
-    );
+    await expect(
+      importSnapshot(ctx, SYSTEM_CALLER, copy, bad, { dryRun: true }),
+    ).rejects.toBeInstanceOf(ValidationError);
     expect(await store.contentTypes.list(copy)).toEqual([]);
   });
 });
