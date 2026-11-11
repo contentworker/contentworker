@@ -1,5 +1,6 @@
 import {
   authorizeContent,
+  deniedFieldsFor,
   InvalidStateError,
   NotFoundError,
   type Principal,
@@ -11,6 +12,7 @@ import {
 } from '@contentworker/domain';
 import type { ContentStoreTx } from '@contentworker/ports';
 import type { AppContext } from './context';
+import { hidingUnreadable } from './hidden-fields';
 import { assertReleaseUngated, loadPublishGuard, type PublishGrant } from './publish-gate';
 import { publishEntryTx, unpublishEntryTx } from './publishing';
 
@@ -128,15 +130,16 @@ export async function deleteRelease(ctx: AppContext, scope: Scope, id: string): 
  * Authorizes `principal` to ship a release's members as it would ship each one: `publish` on the
  * type of every publish member and `unpublish` on every unpublish member's (one narrow batch read
  * of their types). No-op for an unrestricted principal. A member that no longer exists is left to
- * the publish loop's NotFoundError.
+ * the publish loop's NotFoundError. Returns the members' types it read (entry id → type; empty
+ * when it read none), so the publish loop can fold a refusal without reading them again.
  */
 export async function authorizeReleaseMembers(
   reader: Pick<ContentStoreTx, 'entries'>,
   scope: Scope,
   items: readonly ReleaseItem[],
   principal: Principal | undefined,
-): Promise<void> {
-  if (!principal?.contentGrants || items.length === 0) return;
+): Promise<ReadonlyMap<string, string>> {
+  if (!principal?.contentGrants || items.length === 0) return new Map();
   const types = await reader.entries.contentTypesOf(
     scope,
     items.map((i) => i.entityId),
@@ -145,6 +148,7 @@ export async function authorizeReleaseMembers(
     const type = types.get(item.entityId);
     if (type) authorizeContent(principal, item.action, type);
   }
+  return types;
 }
 
 /**
@@ -160,7 +164,8 @@ export async function authorizeReleaseMembers(
  *
  * Given the `principal` shipping it, its role must grant each member's action on that member's
  * type ({@link authorizeReleaseMembers}); the scheduler, which ships a release on its own, passes
- * none.
+ * none. A member's refusal is the principal's to read, so issues in fields its role denies on that
+ * member's type (a link someone else left dangling) are counted, not named (`hidden-fields.ts`).
  */
 export async function publishRelease(
   ctx: AppContext,
@@ -173,7 +178,7 @@ export async function publishRelease(
     if (!release) throw new NotFoundError('Release', id);
     const items = await tx.releases.listItems(scope, id);
     if (items.length === 0) throw new InvalidStateError('Cannot publish an empty release');
-    await authorizeReleaseMembers(tx, scope, items, opts.principal);
+    const types = await authorizeReleaseMembers(tx, scope, items, opts.principal);
 
     const guard = await loadPublishGuard(tx.workflowGraphs, scope, opts.grant);
     await assertReleaseUngated(tx, scope, id, items, guard);
@@ -183,7 +188,11 @@ export async function publishRelease(
     const entryIds: string[] = [];
     for (const item of items) {
       if (item.action === 'publish') {
-        await publishEntryTx(ctx, tx, scope, item.entityId, {}, guard);
+        const type = types.get(item.entityId);
+        const unreadable = opts.principal && type ? deniedFieldsFor(opts.principal, type) : [];
+        await hidingUnreadable(unreadable, () =>
+          publishEntryTx(ctx, tx, scope, item.entityId, {}, guard),
+        );
       } else {
         await unpublishEntryTx(ctx, tx, scope, item.entityId);
       }

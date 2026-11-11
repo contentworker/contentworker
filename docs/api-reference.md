@@ -532,6 +532,14 @@ message }`, which counts the fields without naming them, their values or a link'
 block patch's does. A `409` for a unique value such a field holds that another entry already uses
 says so without the field, the value or the other entry: `details` is
 `{ conflicts, hidden: n }`, `conflicts` listing only those in fields the caller can read.
+Shipping a release (`POST …/releases/:id/published`, `releases_publish`) folds a member's `422` by
+what the caller's role denies on that member's type, and a workflow run's `content.publish` and
+`content.publish_release` nodes fold their failure reason by the run's principal, as
+`content.validate` folds its `issues` output and summary. The other
+publish paths list no issues at all, so there is nothing to fold: bulk publish
+(`POST …/bulk/entries/publish`, `entries_bulk_action`) and a bulk publish job's report give each
+failed entry `One or more fields are invalid`, and so does a scheduled publish's `error` (it
+fires as the system).
 
 **Publish gating.** When the latest published version of a workflow has `gatesPublish` on and a run
 of it can publish (a `trigger.manual` trigger and a `content.publish` or `content.publish_release`
@@ -736,7 +744,7 @@ the link's path for at most 12 hours and never past the expiry. The MCP tools ar
 | DELETE | `…/releases/:id`                 | `content:write`   | Delete draft release                                                                     |
 | POST   | `…/releases/:id/items`           | `content:write`   | Add entity to release                                                                    |
 | DELETE | `…/releases/:id/items/:entityId` | `content:write`   | Remove item                                                                              |
-| POST   | `…/releases/:id/published`       | `content:publish` | Publish release bundle                                                                   |
+| POST   | `…/releases/:id/published`       | `content:publish` | Publish release bundle; a member's `422` counts issues in fields your role denies on its type (`code: "hidden"`) |
 
 ### Scheduled actions
 

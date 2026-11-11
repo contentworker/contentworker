@@ -57,7 +57,14 @@ over it. It edits the same draft as the form.
 - **The inspector** edits the selected block: **Content** (its own fields, with the form's
   editors), **Data** (references to entries and assets) and **Look** (props limited to listed
   values, as segmented controls or a select; never free CSS). Move, duplicate and remove are
-  there too. A block's slots are filled from the page's seams, or from **Add to …** here.
+  there too, and **Move to** takes the block to the end of another slot that takes it. A block's
+  slots are filled from the page's seams, or from **Add to …** here.
+- **Dragging.** With a mouse or trackpad, the selected block has a grip at its corner: drag it to
+  a seam of its own slot, or of another slot in the same blocks field that takes it. The seams it
+  may go to stand out, the nearest takes the insertion line, and a place it can't go says why
+  ("Cards doesn't take Hero", a full slot, a locked one, the block config). Letting go is one move,
+  undone with ⌘Z; Esc puts it back. On a touch screen there is no grip: Move up, Move down and Move
+  to in the inspector, and ⌘↑ ⌘↓ from Layers, do the same.
 - **Layers** opens on demand: every block as an outline, slot by slot. It is also the full
   keyboard and screen-reader path to every block (the page itself isn't navigable from the
   admin): ↑ and ↓ move through the page, ← to the block holding this one, → into it, Enter opens

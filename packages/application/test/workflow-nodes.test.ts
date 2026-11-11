@@ -25,12 +25,18 @@ import {
   createSpace,
   createTag,
   executeWorkflowNode,
+  getEntry,
   INTERPRETED_NODE_TYPES,
   loadRunEntry,
   type NodeResult,
+  publishContentType,
+  purgeEntry,
   resumeWorkflowNode,
   SYSTEM_CALLER,
   setEntryMetadata,
+  trashEntry,
+  updateContentType,
+  updateEntry,
   WORKFLOW_COMPENSATIONS,
   WORKFLOW_EXECUTORS,
   type WorkflowNodeDeps,
@@ -255,6 +261,99 @@ describe('workflow node executors', () => {
       effectKey: 'n#1',
     });
     expect(undo).toBe('Cancelled the scheduled publish');
+  });
+
+  it('content.validate counts, never names, an issue in a field the run’s principal can’t read', async () => {
+    // `summary` becomes required and the entry has none.
+    const def = (await ctx.store.contentTypes.get(scope, 'post'))?.fields ?? [];
+    await updateContentType(ctx, SYSTEM_CALLER, scope, 'post', {
+      fields: def.map((f) => (f.apiId === 'summary' ? { ...f, required: true } : f)),
+    });
+    await publishContentType(ctx, scope, 'post');
+    const noSummaryRead: Principal = {
+      ...editor,
+      subject: 'nsr@example.com',
+      contentGrants: [
+        { contentTypeApiId: 'post', actions: ['read', 'write'], deniedFields: ['summary'] },
+      ],
+    };
+
+    const hidden = await exec('content.validate', {}, noSummaryRead);
+    expect(hidden.branches).toEqual(['invalid']);
+    expect(hidden.output).toEqual({
+      valid: false,
+      issues: [expect.objectContaining({ field: '', code: 'hidden', hidden: 1 })],
+    });
+    expect(hidden.summary).toBe(
+      '1 problem: 1 field you can’t read isn’t valid; someone who can read it has to fix it first',
+    );
+    expect(JSON.stringify(hidden.output)).not.toContain('summary');
+    // A principal who reads the field is told which one.
+    const named = await exec('content.validate');
+    expect(named.output).toEqual({
+      valid: false,
+      issues: [expect.objectContaining({ field: 'summary' })],
+    });
+    expect(named.summary).toMatch(/^1 problem: summary /);
+  });
+
+  it('content.publish counts, never names, a failure in a field the run’s principal can’t read', async () => {
+    // `source` links an entry deleted since: the publish fails on it.
+    const def = (await ctx.store.contentTypes.get(scope, 'post'))?.fields ?? [];
+    await updateContentType(ctx, SYSTEM_CALLER, scope, 'post', {
+      fields: [
+        ...def,
+        {
+          apiId: 'source',
+          name: 'Source',
+          type: 'Link',
+          localized: false,
+          required: false,
+          position: 3,
+          linkType: 'Entry',
+        },
+      ],
+    });
+    await publishContentType(ctx, scope, 'post');
+    const source = await createEntry(ctx, scope, {
+      contentTypeApiId: 'post',
+      fields: { title: { 'en-US': 'Source' } },
+    });
+    const { fields } = await getEntry(ctx, scope, entryId);
+    await updateEntry(ctx, scope, entryId, {
+      ...fields,
+      source: { 'en-US': { id: source.entry.id, linkType: 'Entry' } },
+    });
+    await trashEntry(ctx, scope, source.entry.id);
+    await purgeEntry(ctx, scope, source.entry.id);
+    const noSource: Principal = {
+      ...editor,
+      subject: 'ns@example.com',
+      contentGrants: [
+        {
+          contentTypeApiId: 'post',
+          actions: ['read', 'write', 'publish'],
+          deniedFields: ['source'],
+        },
+      ],
+    };
+
+    const hidden = await exec('content.publish', {}, noSource);
+    expect(hidden.failed).toBe(
+      '1 field you can’t read isn’t valid; someone who can read it has to fix it first',
+    );
+    expect(hidden.failed).not.toContain(source.entry.id);
+    // A run whose principal reads the field says what to fix.
+    expect((await exec('content.publish')).failed).toBe(
+      `source Linked entry "${source.entry.id}" does not exist`,
+    );
+    // Shipping it in a release is folded the same way.
+    const release = await createRelease(ctx, scope, { title: 'Spring' });
+    await addEntryToRelease(ctx, scope, release.id, { entityId: entryId });
+    const shipped = await exec('content.publish_release', { releaseId: release.id }, noSource);
+    expect(shipped.failed).toMatch(/^1 field you can’t read/);
+    expect(shipped.failed).not.toContain('source');
+    expect((await ctx.store.entries.get(scope, entryId))?.entry.publishedVersion).toBeNull();
   });
 
   it('content.add_to_release / publish_release use the release use-cases', async () => {

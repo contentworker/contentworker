@@ -209,4 +209,51 @@ describe('scheduled publishing', () => {
     expect(action?.status).toBe('failed');
     expect(action?.error).toBeTruthy();
   });
+  it('records a dangling link as the generic refusal, naming no field or target', async () => {
+    // Fired as the system, with no reader's grants to fold by: the stored error is the
+    // ValidationError's own message, which names neither, so any role may read the schedule.
+    await seedDraft(ctx, 'Unused');
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
+      apiId: 'story',
+      name: 'Story',
+      displayField: 'title',
+      fields: [
+        {
+          apiId: 'title',
+          name: 'Title',
+          type: 'Symbol',
+          localized: false,
+          required: true,
+          position: 0,
+        },
+        {
+          apiId: 'source',
+          name: 'Source',
+          type: 'Link',
+          localized: false,
+          required: false,
+          position: 1,
+          linkType: 'Entry',
+        },
+      ],
+    });
+    await publishContentType(ctx, scope, 'story');
+    const story = await createEntry(ctx, scope, {
+      contentTypeApiId: 'story',
+      fields: {
+        title: { 'en-US': 'Story' },
+        source: { 'en-US': { id: 'gone-entry', linkType: 'Entry' } },
+      },
+    });
+    await scheduleAction(ctx, scope, {
+      action: 'publish',
+      entityType: 'Entry',
+      entityId: story.entry.id,
+      scheduledFor: T0,
+    });
+
+    expect(await runDueScheduledActions(ctx)).toEqual({ executed: 0, failed: 1 });
+    const [action] = await ctx.store.scheduledActions.list(scope);
+    expect(action?.error).toBe('One or more fields are invalid');
+  });
 });
