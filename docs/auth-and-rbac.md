@@ -834,8 +834,13 @@ save's `422` counts field issues in fields the caller can't read the same way, i
 `{ field: "", code: "hidden", hidden: n }` issue after the others, so a stored value it may not see
 is never named by its path or message: an entry's create, update and their dry run
 (`…/entries/validate`, `entries_validate`), its SEO save and its publish (a dangling link, without
-its target) as much as a block patch, on both surfaces. A `409` for a unique value one of those
-fields holds is counted the same way (`details.hidden`), without the field, the value or the
+its target) as much as a block patch, on both surfaces. Shipping a release folds each member's
+refusal by the shipper's role on that member's type (`…/releases/:id/published`,
+`releases_publish`), and a workflow run's `content.publish` and `content.publish_release` nodes fold
+their failure reason by the run's principal, who reads it. Bulk publish, a bulk publish job's
+report and a scheduled publish's `error` never list issues (each says
+`One or more fields are invalid`), so they have nothing to fold. A `409` for a unique value one of
+those fields holds is counted the same way (`details.hidden`), without the field, the value or the
 entry holding it.
 
 ## Scope → operation map

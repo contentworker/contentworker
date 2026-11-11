@@ -5,6 +5,7 @@
 
 import {
   type DomainEvent,
+  deniedFieldsFor,
   durationMs,
   type EntryFields,
   evaluateLogic,
@@ -99,10 +100,15 @@ export const CONTENT_EXECUTORS: Record<string, Exec> = {
     const alreadyLive =
       current !== null && current.entry.publishedVersion === current.entry.currentVersion;
     // The run's grant: a workflow that gates publishing lets its own runs publish what it covers.
+    // The refusal becomes the run's reason, read as the run's principal: issues in fields its role
+    // denies are counted, not named.
     const published = alreadyLive
       ? current.entry
       : await publishEntry(i.ctx, i.scope, i.entryId, {
           grant: grantWorkflowRunPublish(i.workflowId, i.runId),
+          unreadable: current
+            ? deniedFieldsFor(i.actor.principal, current.entry.contentTypeApiId)
+            : [],
         });
     return {
       output: {
