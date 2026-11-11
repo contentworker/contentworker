@@ -33,6 +33,7 @@ import {
   purgeEntry,
   resumeWorkflowNode,
   SYSTEM_CALLER,
+  setAiSettings,
   setEntryMetadata,
   trashEntry,
   updateContentType,
@@ -458,6 +459,26 @@ describe('workflow node executors', () => {
     );
   });
 
+  it('content.notify checks an interpolated recipient in linear time', async () => {
+    for (const [owner, ok] of [
+      ['a@.b.c', true],
+      ['<ed>@example.com', false],
+      ['ed@example.', false],
+      ['ed@@example.com', false],
+    ] as const) {
+      const r = await exec('content.notify', { to: ['{{vars.owner}}'] }, editor, { owner });
+      expect([owner, r.failed === undefined]).toEqual([owner, ok]);
+    }
+    // Run data can carry text: a long run of dots that fails at the end took the old pattern
+    // seconds.
+    const started = performance.now();
+    const r = await exec('content.notify', { to: ['{{vars.owner}}'] }, editor, {
+      owner: `a@${'.'.repeat(100_000)}>`,
+    });
+    expect(r.failed).toMatch(/not an email/);
+    expect(performance.now() - started).toBeLessThan(200);
+  });
+
   it('content.webhook posts an interpolated payload, refusing private targets', async () => {
     const r = await exec('content.webhook', { url: 'https://hooks.example.com/x' });
     expect(r.output).toEqual({ url: 'https://hooks.example.com/x', status: 200 });
@@ -503,6 +524,27 @@ describe('workflow node executors', () => {
       const r = await exec(type, { targetLocale: 'de-DE', field: 'summary' });
       expect(r.output, type).toMatchObject({ source: 'heuristic', fallback: 'mock' });
     }
+  });
+
+  it('with the space’s workflow AI off, asks no model and fails closed: moderation flags, routing is careful', async () => {
+    await setAiSettings(ctx, SYSTEM_CALLER, scope.spaceId, {
+      expectedVersion: 0,
+      capabilities: { workflows: { enabled: false }, translation: { enabled: false } },
+    });
+    const ai = new StubAIProvider(() => ({ flagged: false, categories: [], route: 'publish' }));
+    ctx = { ...ctx, ai: { mode: 'live', timeoutMs: 1000 } };
+    deps = { ...deps, ai };
+    const moderate = await exec('ai.moderate');
+    expect(moderate.branches).toEqual(['flagged']);
+    expect(moderate.output).toMatchObject({ source: 'heuristic', unchecked: true });
+    expect(String((moderate.output as { fallback?: string }).fallback)).toMatch(/^disabled/);
+    const router = await exec('ai.router', { routes: ['publish', 'needs_review'] });
+    expect(router.branches).toEqual(['needs_review']);
+    // A node over a use-case (translation, here off too) records a no-op instead of retrying.
+    const translated = await exec('ai.translate', { targetLocale: 'de-DE' });
+    expect(translated.failed).toBeUndefined();
+    expect(String((translated.output as { fallback?: string }).fallback)).toMatch(/^disabled/);
+    expect(ai.requests).toHaveLength(0);
   });
 
   it('runs the AI use-cases as the run’s principal: a denied field never reaches the model', async () => {

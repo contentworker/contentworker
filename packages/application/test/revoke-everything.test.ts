@@ -28,6 +28,7 @@ function setup() {
       subject,
       roleId: 'r',
       disabled: false,
+      version: 1,
       createdAt: at,
       updatedAt: at,
     });

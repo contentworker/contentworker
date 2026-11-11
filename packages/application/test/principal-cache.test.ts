@@ -73,13 +73,20 @@ describe('authenticateCached', () => {
     expect((await authenticateCached(c, hasher, token)).contentGrants?.[0]?.deniedActions).toBe(
       undefined,
     );
-    await updateRole(c, 's1', role.id, {
-      name: 'Writer',
-      scopes: ['content:write'],
-      contentGrants: [
-        { contentTypeApiId: '*', actions: ['read', 'write'], deniedActions: ['delete'] },
-      ],
-    });
+    await updateRole(
+      c,
+      's1',
+      role.id,
+      {
+        name: 'Writer',
+        scopes: ['content:write'],
+        contentGrants: [
+          { contentTypeApiId: '*', actions: ['read', 'write'], deniedActions: ['delete'] },
+        ],
+      },
+      { sso: false },
+      'system',
+    );
     expect((await authenticateCached(c, hasher, token)).contentGrants?.[0]?.deniedActions).toEqual([
       'delete',
     ]);

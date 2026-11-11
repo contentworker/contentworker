@@ -1,6 +1,7 @@
 import {
   type AgentReview,
   type AgentSchedule,
+  type AiSettings,
   type ApiKey,
   type Asset,
   type AssetCollection,
@@ -8,6 +9,7 @@ import {
   type AssetIngestStatus,
   type AssetRendition,
   type AssetZipJob,
+  aiCapabilitiesFrom,
   assetKind,
   type BlockCatalog,
   type BlockCatalogSummary,
@@ -77,6 +79,7 @@ import type {
   AgentScheduleRepo,
   AIActionDefinition,
   AIActionRepo,
+  AiSettingsRepo,
   AppExtension,
   AppExtensionRepo,
   ArchivableVersion,
@@ -3770,36 +3773,49 @@ function makeAppExtensionRepo(x: Exec): AppExtensionRepo {
   };
 }
 
+/** Roles are the space's. Each save rides its version's compare-and-set. */
 function makeRoleRepo(x: Exec): RoleRepo {
   const db = x.db;
+  const t = schema.roles;
   return {
     async save(role) {
       const values = {
-        spaceId: role.spaceId,
-        id: role.id,
         name: role.name,
         description: role.description,
         scopes: [...role.scopes],
         contentGrants: [...role.contentGrants],
         preset: role.preset ?? null,
+        version: role.version,
         updatedAt: new Date(),
       };
-      await x.write(
-        db
-          .insert(schema.roles)
-          .values(values)
-          .onConflictDoUpdate({
-            target: [schema.roles.spaceId, schema.roles.id],
-            set: {
-              name: values.name,
-              description: values.description,
-              scopes: values.scopes,
-              contentGrants: values.contentGrants,
-              preset: values.preset,
-              updatedAt: values.updatedAt,
-            },
-          }),
-      );
+      // Version 1 inserts, and loses on the primary key or the (space, preset) index; each later
+      // version updates only while the row is at the version before it. Either way a lost race
+      // changes no row, which fails the unit.
+      if (role.version === 1) {
+        const insert = db
+          .insert(t)
+          .values({ spaceId: role.spaceId, id: role.id, ...values })
+          .onConflictDoNothing();
+        if (x.inUnit) {
+          await x.write(insert);
+          x.expectChanged(1);
+        } else if ((await insert.returning({ id: t.id })).length === 0) {
+          throw new TransactionConflictError();
+        }
+        return;
+      }
+      const update = db
+        .update(t)
+        .set(values)
+        .where(
+          and(eq(t.spaceId, role.spaceId), eq(t.id, role.id), eq(t.version, role.version - 1)),
+        );
+      if (x.inUnit) {
+        await x.write(update);
+        x.expectChanged(1);
+      } else if ((await update.returning({ id: t.id })).length === 0) {
+        throw new TransactionConflictError();
+      }
     },
     async get(spaceId, id) {
       const [row] = await db
@@ -3848,6 +3864,13 @@ function makeAuthRepo(x: Exec): AuthRepo {
         .select()
         .from(schema.apiKeys)
         .where(and(eq(schema.apiKeys.hashedToken, hashedToken), eq(schema.apiKeys.revoked, false)));
+      return row ? toApiKey(row) : null;
+    },
+    async get(spaceId, id) {
+      const [row] = await db
+        .select()
+        .from(schema.apiKeys)
+        .where(and(eq(schema.apiKeys.spaceId, spaceId), eq(schema.apiKeys.id, id)));
       return row ? toApiKey(row) : null;
     },
     async list(spaceId) {
@@ -3991,38 +4014,59 @@ function makeInviteRepo(x: Exec): InviteRepo {
   };
 }
 
+/** The people on a team. Each save and removal rides the person's version compare-and-set. */
 function makeMemberRepo(x: Exec): MemberRepo {
   const db = x.db;
   const m = schema.spaceMembers;
   return {
     async save(member) {
       const values = {
-        spaceId: member.spaceId,
-        id: member.id,
         email: member.email,
         name: member.name ?? null,
         subject: member.subject ?? null,
         roleId: member.roleId,
         disabled: member.disabled,
-        createdAt: new Date(member.createdAt),
+        version: member.version,
         updatedAt: new Date(member.updatedAt),
       };
-      await x.write(
-        db
+      // Version 1 inserts, and loses on the primary key or the (space, email) index. A later
+      // version only ever updates, while the row is at the version before it: the update path
+      // never inserts, so a save read before the person was removed can't bring them back.
+      // Either way a lost race changes no row, which fails the unit.
+      if (member.version === 1) {
+        const insert = db
           .insert(m)
-          .values(values)
-          .onConflictDoUpdate({
-            target: [m.spaceId, m.id],
-            set: {
-              email: values.email,
-              name: values.name,
-              subject: values.subject,
-              roleId: values.roleId,
-              disabled: values.disabled,
-              updatedAt: values.updatedAt,
-            },
-          }),
-      );
+          .values({
+            spaceId: member.spaceId,
+            id: member.id,
+            createdAt: new Date(member.createdAt),
+            ...values,
+          })
+          .onConflictDoNothing();
+        if (x.inUnit) {
+          await x.write(insert);
+          x.expectChanged(1);
+        } else if ((await insert.returning({ id: m.id })).length === 0) {
+          throw new TransactionConflictError();
+        }
+        return;
+      }
+      const update = db
+        .update(m)
+        .set(values)
+        .where(
+          and(
+            eq(m.spaceId, member.spaceId),
+            eq(m.id, member.id),
+            eq(m.version, member.version - 1),
+          ),
+        );
+      if (x.inUnit) {
+        await x.write(update);
+        x.expectChanged(1);
+      } else if ((await update.returning({ id: m.id })).length === 0) {
+        throw new TransactionConflictError();
+      }
     },
     async get(spaceId, id) {
       const [row] = await db
@@ -4046,8 +4090,16 @@ function makeMemberRepo(x: Exec): MemberRepo {
         .orderBy(asc(m.createdAt));
       return rows.map(toMember);
     },
-    async delete(spaceId, id) {
-      await x.write(db.delete(m).where(and(eq(m.spaceId, spaceId), eq(m.id, id))));
+    async delete(spaceId, id, version) {
+      const remove = db
+        .delete(m)
+        .where(and(eq(m.spaceId, spaceId), eq(m.id, id), eq(m.version, version)));
+      if (x.inUnit) {
+        await x.write(remove);
+        x.expectChanged(1);
+      } else if ((await remove.returning({ id: m.id })).length === 0) {
+        throw new TransactionConflictError();
+      }
     },
   };
 }
@@ -6814,6 +6866,53 @@ function makeBlockConfigRepo(x: Exec): BlockConfigRepo {
   };
 }
 
+/** A space's AI settings: one row, its version the compare-and-set every set rides with. */
+function makeAiSettingsRepo(x: Exec): AiSettingsRepo {
+  const db = x.db;
+  const t = schema.spaceAiSettings;
+  return {
+    async get(spaceId) {
+      const [row] = await db.select().from(t).where(eq(t.spaceId, spaceId));
+      if (!row) return null;
+      return {
+        version: row.version,
+        capabilities: aiCapabilitiesFrom(row.document.capabilities ?? {}),
+        updatedAt: row.updatedAt.toISOString(),
+        updatedBy: row.updatedBy,
+      } satisfies AiSettings;
+    },
+    async save(spaceId, settings) {
+      const document = { capabilities: { ...settings.capabilities } };
+      const updatedAt = new Date(settings.updatedAt ?? 0);
+      // The first set inserts and loses to another first set on the primary key; each later one
+      // updates only while the row is at the version it read. A lost race changes no row.
+      if (settings.version === 1) {
+        const insert = db
+          .insert(t)
+          .values({ spaceId, version: 1, document, updatedBy: settings.updatedBy, updatedAt })
+          .onConflictDoNothing();
+        if (x.inUnit) {
+          await x.write(insert);
+          x.expectChanged(1);
+        } else if ((await insert.returning({ version: t.version })).length === 0) {
+          throw new TransactionConflictError();
+        }
+        return;
+      }
+      const update = db
+        .update(t)
+        .set({ version: settings.version, document, updatedBy: settings.updatedBy, updatedAt })
+        .where(and(eq(t.spaceId, spaceId), eq(t.version, settings.version - 1)));
+      if (x.inUnit) {
+        await x.write(update);
+        x.expectChanged(1);
+      } else if ((await update.returning({ version: t.version })).length === 0) {
+        throw new TransactionConflictError();
+      }
+    },
+  };
+}
+
 /** Saved views are the space's: every read and write keys on `scope.spaceId` alone. */
 function makeSavedViewRepo(x: Exec): SavedViewRepo {
   const db = x.db;
@@ -7574,6 +7673,7 @@ function makeTx(x: Exec, scanLimit: number, versionBodies?: BlobStore): ContentS
     menus: makeMenuRepo(x),
     blockCatalogs: makeBlockCatalogRepo(x),
     blockConfigs: makeBlockConfigRepo(x),
+    roles: { save: makeRoleRepo(x).save },
     bulkJobs: makeBulkJobRepo(x),
     workflowRuns: makeWorkflowRunRepo(x),
     workflowTasks: makeWorkflowTaskRepo(x),
@@ -7638,6 +7738,7 @@ export function createD1Store(d1: D1Like, options: D1StoreOptions = {}): Content
     menus: makeMenuRepo(x),
     blockCatalogs: makeBlockCatalogRepo(x),
     blockConfigs: makeBlockConfigRepo(x),
+    aiSettings: makeAiSettingsRepo(x),
     savedViews: makeSavedViewRepo(x),
     bulkJobs: makeBulkJobRepo(x),
     outbox: makeOutboxRepo(x),
@@ -7841,6 +7942,7 @@ const toRole = (r: RoleRow): Role => ({
   scopes: r.scopes,
   contentGrants: r.contentGrants,
   ...(r.preset ? { preset: r.preset } : {}),
+  version: r.version,
 });
 
 type MemberRow = typeof schema.spaceMembers.$inferSelect;
@@ -7852,6 +7954,7 @@ const toMember = (r: MemberRow): SpaceMember => ({
   ...(r.subject ? { subject: r.subject } : {}),
   roleId: r.roleId,
   disabled: r.disabled,
+  version: r.version,
   createdAt: r.createdAt.toISOString(),
   updatedAt: r.updatedAt.toISOString(),
 });

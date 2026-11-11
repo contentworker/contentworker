@@ -105,6 +105,70 @@ describe('promotions over HTTP', () => {
     expect(one.status).toBe(200);
   });
 
+  it('answers a request that stopped after a write with a 409 carrying its failed record', async () => {
+    await app.request('/spaces/s1/environments', {
+      method: 'POST',
+      headers: admin,
+      body: JSON.stringify({ id: 'qa' }),
+    });
+    await app.request('/spaces/s1/merge', {
+      method: 'POST',
+      headers: admin,
+      body: JSON.stringify({ source: 'staging', target: 'qa', contentTypes: ['note'] }),
+    });
+    const second = await app.request(`${STAGING}/entries`, {
+      method: 'POST',
+      headers: admin,
+      body: JSON.stringify({ contentTypeApiId: 'note', fields: { title: { 'en-US': 'Two' } } }),
+    });
+    const secondId = ((await second.json()) as { entry: { id: string } }).entry.id;
+    // The second write fails once the first has landed: partway.
+    const store = wired.ctx.store;
+    const create = store.entries.create.bind(store.entries);
+    let writes = 0;
+    store.entries.create = async (...args) => {
+      if (++writes === 2) throw new Error('boom');
+      return create(...args);
+    };
+    // Into qa, which needs no approval: it applies in the request.
+    const res = await app.request('/spaces/s1/promotions', {
+      method: 'POST',
+      headers: cma,
+      body: JSON.stringify({ source: 'staging', target: 'qa', entries: [entryId, secondId] }),
+    });
+    store.entries.create = create;
+    // Half-promoted is never a 2xx: automation that checks the status stops here.
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as {
+      error: { code: string; message: string; promotion: P & { error?: string } };
+    };
+    expect(body.error.code).toBe('promotion_failed');
+    const p = body.error.promotion;
+    expect(p).toMatchObject({ status: 'failed', error: 'boom', result: { entries: [entryId] } });
+    const one = await app.request(`/spaces/s1/promotions/${p.id}`, { headers: admin });
+    expect(await one.json()).toMatchObject({ status: 'failed', error: 'boom' });
+  });
+
+  it('lets its requester withdraw a waiting promotion, recorded as rejected by them', async () => {
+    const req = await app.request('/spaces/s1/promotions', {
+      method: 'POST',
+      headers: admin,
+      body: JSON.stringify({ source: 'staging', target: 'main', entries: [entryId] }),
+    });
+    const p = (await req.json()) as P;
+    expect(p.status).toBe('awaiting_approval');
+    const res = await app.request(`/spaces/s1/promotions/${p.id}/reject`, {
+      method: 'POST',
+      headers: admin,
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      status: 'rejected',
+      requestedBy: 'admin-token',
+      decidedBy: 'admin-token',
+    });
+  });
+
   it('copies the block catalog and config with a selection when the body asks for them', async () => {
     await seedBlocks(wired.ctx, { spaceId: 's1', environmentId: 'staging' });
     const req = await app.request('/spaces/s1/promotions', {
@@ -219,6 +283,86 @@ describe('promotions over HTTP', () => {
     expect(JSON.stringify(body)).not.toContain('Secret launch copy');
     const listed = await app.request('/spaces/s1/promotions', { headers: admin });
     expect(((await listed.json()) as { items: P[] }).items).toEqual([]);
+  });
+
+  it('holds requesting and reading to per-type grants and field rules', async () => {
+    const keyFor = async (contentGrants: unknown[]) => {
+      const role = await app.request('/spaces/s1/roles', {
+        method: 'POST',
+        headers: admin,
+        body: JSON.stringify({
+          name: `r${Math.random()}`,
+          scopes: ['content:manage', 'content:publish', 'content:write', 'preview:read'],
+          contentGrants,
+        }),
+      });
+      expect(role.status).toBe(201);
+      const { id } = (await role.json()) as { id: string };
+      const key = await app.request('/spaces/s1/api-keys', {
+        method: 'POST',
+        headers: admin,
+        body: JSON.stringify({ kind: 'cma', roleId: id }),
+      });
+      const { token } = (await key.json()) as { token: string };
+      return { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+    };
+    const everyType =
+      'Missing required scope "content:read+write+publish:* (on every content type, every field)"';
+    const request = (headers: Record<string, string>) =>
+      app.request('/spaces/s1/promotions', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ source: 'staging', target: 'main', entries: [entryId] }),
+      });
+    // `note` in full, nothing else writable; then every type, with a read-only field.
+    for (const grants of [
+      [
+        { contentTypeApiId: 'note', actions: ['read', 'write', 'publish'] },
+        { contentTypeApiId: '*', actions: ['read'] },
+      ],
+      [{ contentTypeApiId: '*', actions: ['read', 'write', 'publish'], readOnlyFields: ['title'] }],
+    ]) {
+      const refused = await request(await keyFor(grants));
+      expect(refused.status).toBe(403);
+      expect(await refused.json()).toMatchObject({
+        error: { code: 'forbidden', message: everyType },
+      });
+    }
+    const none = await app.request('/spaces/s1/promotions', { headers: admin });
+    expect(((await none.json()) as { items: P[] }).items).toEqual([]);
+
+    // Entries go over the target's locked regions: without `lock`, refused too.
+    const noLock = await request(
+      await keyFor([{ contentTypeApiId: '*', actions: ['read', 'write', 'publish'] }]),
+    );
+    expect(noLock.status).toBe(403);
+    expect(await noLock.json()).toMatchObject({
+      error: {
+        code: 'forbidden',
+        message:
+          'Missing required scope "content:read+write+publish+lock:* (on every content type, every field)"',
+      },
+    });
+
+    // A role holding every type alike may request one.
+    const wide = await keyFor([
+      { contentTypeApiId: '*', actions: ['read', 'write', 'publish', 'lock'] },
+    ]);
+    const requested = await request(wide);
+    expect(requested.status).toBe(201);
+    const { id } = (await requested.json()) as P;
+
+    // One that can't read every field of `note` doesn't see it.
+    const hidden = await keyFor([
+      { contentTypeApiId: '*', actions: ['read', 'write', 'publish'], deniedFields: ['title'] },
+    ]);
+    const listed = await app.request('/spaces/s1/promotions', { headers: hidden });
+    expect(((await listed.json()) as { items: P[] }).items).toEqual([]);
+    // Not found, as the list leaves it out.
+    const got = await app.request(`/spaces/s1/promotions/${id}`, { headers: hidden });
+    expect(got.status).toBe(404);
+    const seen = await app.request('/spaces/s1/promotions', { headers: wide });
+    expect(((await seen.json()) as { items: P[] }).items.map((p) => p.id)).toEqual([id]);
   });
 
   it('refuses a delivery key', async () => {

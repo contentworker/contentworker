@@ -42,6 +42,7 @@ const member = (invite: MemberInvite, subject: string): SpaceMember => ({
   subject,
   roleId: 'r-editor',
   disabled: false,
+  version: 1,
   createdAt: NOW.toISOString(),
   updatedAt: NOW.toISOString(),
 });

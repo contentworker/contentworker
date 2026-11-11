@@ -6,7 +6,7 @@ import {
   startEnvironmentClone,
   startSnapshotImport,
 } from '@contentworker/application';
-import { authorize, authorizeEveryContentType, SCOPES } from '@contentworker/domain';
+import { SCOPES } from '@contentworker/domain';
 import { Hono } from 'hono';
 import { type AuthDeps, type AuthVars, requireScope } from '../../auth';
 import { doc } from '../../docs/openapi';
@@ -30,11 +30,9 @@ export function snapshotsRoutes(deps: AuthDeps): Hono<AuthVars> {
     // authority as managing the model, not merely reading drafts.
     requireScope(SCOPES.contentManage),
     async (c) => {
-      // Every entry of every type, every field: a role limited to some types or fields can't.
-      authorizeEveryContentType(c.get('principal'), ['read']);
       const limit = c.req.query('limit');
       return c.json(
-        await exportSnapshot(ctx, scopeOf(c), {
+        await exportSnapshot(ctx, c.get('principal'), scopeOf(c), {
           limit: limit ? Number(limit) : undefined,
         }),
       );
@@ -62,18 +60,26 @@ export function snapshotsRoutes(deps: AuthDeps): Hono<AuthVars> {
         // Run inline (no blob store): the imported assets go through ingest once written.
         reindexAssets: Boolean(deps.assetIngest),
       };
-      // It writes entries of every type the snapshot defines (and publishes them), so the role
-      // must hold that on every type alike; one limited to some types or fields is refused.
-      authorizeEveryContentType(
-        c.get('principal'),
-        options.publish ? ['write', 'publish'] : ['write'],
-      );
+      const principal = c.get('principal');
       if (options.dryRun || !blob) {
-        const report = await importSnapshot(actingCtx(ctx, c), scopeOf(c), snapshot, options);
+        const report = await importSnapshot(
+          actingCtx(ctx, c),
+          principal,
+          scopeOf(c),
+          snapshot,
+          options,
+        );
         return c.json(report, report.dryRun ? 200 : 201);
       }
       return c.json(
-        await startSnapshotImport(actingCtx(ctx, c), blob, scopeOf(c), snapshot, options),
+        await startSnapshotImport(
+          actingCtx(ctx, c),
+          principal,
+          blob,
+          scopeOf(c),
+          snapshot,
+          options,
+        ),
         202,
       );
     },
@@ -94,28 +100,21 @@ export function snapshotsRoutes(deps: AuthDeps): Hono<AuthVars> {
     requireScope(SCOPES.contentManage),
     async (c) => {
       const body = await parseBody(c, cloneBody);
-      // The target space is authorized separately: cloning into a space the
-      // caller cannot manage would be a tenancy hole.
-      authorize(
-        c.get('principal'),
-        SCOPES.contentManage,
-        body.targetSpaceId ?? c.req.param('space'),
-      );
+      // The use-case authorizes the target space and every content type (`authorizeClone`).
+      const principal = c.get('principal');
       const target = {
         spaceId: body.targetSpaceId ?? (c.req.param('space') as string),
         environmentId: body.targetEnvironmentId,
       };
       const options = { publish: body.publish !== false, reindexAssets: Boolean(deps.assetIngest) };
-      // An export of the source and an import into the target: both halves' authority, on every
-      // content type alike.
-      authorizeEveryContentType(
-        c.get('principal'),
-        options.publish ? ['read', 'write', 'publish'] : ['read', 'write'],
-      );
-      if (!blob)
-        return c.json(await cloneEnvironment(actingCtx(ctx, c), scopeOf(c), target, options), 201);
+      if (!blob) {
+        return c.json(
+          await cloneEnvironment(actingCtx(ctx, c), principal, scopeOf(c), target, options),
+          201,
+        );
+      }
       return c.json(
-        await startEnvironmentClone(actingCtx(ctx, c), scopeOf(c), target, options),
+        await startEnvironmentClone(actingCtx(ctx, c), principal, scopeOf(c), target, options),
         202,
       );
     },

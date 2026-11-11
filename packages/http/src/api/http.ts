@@ -1,5 +1,7 @@
 import {
+  AiCapabilityDisabledError,
   AiUnavailableError,
+  AppOperationFailedError,
   AssetInUseError,
   AssetRightsError,
   ConflictError,
@@ -8,6 +10,7 @@ import {
   LastAdminError,
   NotConfiguredError,
   NotFoundError,
+  PromotionFailedError,
   PublishGatedError,
   RateLimitedError,
   SecretUnreadableError,
@@ -39,6 +42,15 @@ export function toHttpError(err: unknown): { status: number; body: unknown } {
       },
     };
   }
+  // A promotion whose apply stopped partway: not a success (something is half-promoted) and not
+  // a refusal (something changed). A conflict with what the request expected, carrying the record
+  // (`failed`, its error and what it wrote), so automation fails and a client can show it.
+  if (err instanceof PromotionFailedError) {
+    return {
+      status: 409,
+      body: { error: { code: err.code, message: err.message, promotion: err.promotion } },
+    };
+  }
   // Still linked from entries: the links come back, so a client can show or clear them.
   if (err instanceof AssetInUseError) {
     return {
@@ -60,6 +72,15 @@ export function toHttpError(err: unknown): { status: number; body: unknown } {
           ...(err.details as Record<string, string>),
         },
       },
+    };
+  }
+  // The space's administrators turned the capability off: a conflict with how the space is
+  // configured (409), not the model being down (503, retryable) nor the caller's permissions (403).
+  // The body names the capability, so a client can say which one and where to turn it on.
+  if (err instanceof AiCapabilityDisabledError) {
+    return {
+      status: 409,
+      body: { error: { code: err.code, message: err.message, capability: err.capability } },
     };
   }
   // Would leave the space with no administrator: a conflict with the space's state.
@@ -107,6 +128,9 @@ export function toHttpError(err: unknown): { status: number; body: unknown } {
     };
   }
   if (err instanceof NotConfiguredError) return { status: 501, body: errBody(err) };
+  // A plugin operation broke (threw, timed out, answered off-schema): the upstream failed, not
+  // the request, so 502.
+  if (err instanceof AppOperationFailedError) return { status: 502, body: errBody(err) };
   // A stored secret no configured key opens is a server-side fault (a lost
   // DATA_KEY, or tampering), never the client's. The message names only where
   // the value lives.

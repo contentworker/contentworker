@@ -105,7 +105,7 @@ describe('the web principal (x-cw-principal)', () => {
         },
       });
     expect(((await (await asMember()).json()) as { items: unknown[] }).items).toEqual([]);
-    await addMember(ctx, 's1', { email: 'member@example.com', role: 'viewer' });
+    await addMember(ctx, 's1', { email: 'member@example.com', role: 'viewer' }, 'system');
     await findMemberForSignIn(ctx, 's1', 'usr_member', 'member@example.com');
     const items = ((await (await asMember()).json()) as { items: { id: string }[] }).items;
     expect(items.map((i) => i.id)).toEqual(['s1']);
@@ -121,8 +121,8 @@ describe('the web principal (x-cw-principal)', () => {
       scopes: ['content:write', 'content:publish', 'preview:read'],
       contentGrants: [{ contentTypeApiId: 'post', actions: ['read', 'write', 'publish'] }],
     } as Parameters<typeof createRole>[2]);
-    await addMember(ctx, 's1', { email: 'member@example.com', role: limited.id });
-    await addMember(ctx, 's2', { email: 'member@example.com', role: 'editor' });
+    await addMember(ctx, 's1', { email: 'member@example.com', role: limited.id }, 'system');
+    await addMember(ctx, 's2', { email: 'member@example.com', role: 'editor' }, 'system');
     await findMemberForSignIn(ctx, 's1', 'usr_member', 'member@example.com');
     await findMemberForSignIn(ctx, 's2', 'usr_member', 'member@example.com');
     const me = async (space: string, who: 'admin' | 'member' = 'member') => {
@@ -158,7 +158,7 @@ describe('the web principal (x-cw-principal)', () => {
         { contentTypeApiId: '*', actions: ['read', 'write'] },
       ],
     } as Parameters<typeof createRole>[2]);
-    await addMember(ctx, 's1', { email: 'member@example.com', role: locker.id });
+    await addMember(ctx, 's1', { email: 'member@example.com', role: locker.id }, 'system');
     await findMemberForSignIn(ctx, 's1', 'usr_member', 'member@example.com');
     const me = async (who: 'admin' | 'member') => {
       const target = '/spaces/s1/auth/me';
@@ -183,6 +183,44 @@ describe('the web principal (x-cw-principal)', () => {
     });
   });
 
+  it('names the fields a member’s role hides or makes read-only per type, so the form leaves them be', async () => {
+    const { ctx, rag, blob, ai } = wire(config);
+    const app2 = createApp(ctx, config, rag, blob, ai);
+    const ruled = await createRole(ctx, 's1', {
+      name: 'Writes posts, not their slugs',
+      scopes: ['content:write', 'preview:read'],
+      contentGrants: [
+        {
+          contentTypeApiId: 'post',
+          actions: ['read', 'write'],
+          deniedFields: ['budget'],
+          readOnlyFields: ['slug'],
+        },
+        { contentTypeApiId: '*', actions: ['read'], readOnlyFields: ['owner'] },
+      ],
+    } as Parameters<typeof createRole>[2]);
+    await addMember(ctx, 's1', { email: 'member@example.com', role: ruled.id }, 'system');
+    await findMemberForSignIn(ctx, 's1', 'usr_member', 'member@example.com');
+    const me = async (who: 'admin' | 'member') => {
+      const target = '/spaces/s1/auth/me';
+      return app2.request(target, {
+        headers: {
+          'x-cw-principal': await signPrincipal(KEY, person(who), principalTarget('GET', target)),
+        },
+      });
+    };
+    expect(await (await me('member')).json()).toMatchObject({
+      fieldRules: {
+        types: { post: { deniedFields: ['budget'], readOnlyFields: ['slug'] } },
+        others: { deniedFields: [], readOnlyFields: ['owner'] },
+      },
+    });
+    // A deployment admin has no field rules anywhere.
+    expect(await (await me('admin')).json()).toMatchObject({
+      fieldRules: { types: {}, others: { deniedFields: [], readOnlyFields: [] } },
+    });
+  });
+
   it('lets a member with the Administrator preset run bulk jobs over entries, and not a narrower one', async () => {
     const { ctx, rag, blob, ai } = wire(config);
     const app2 = createApp(ctx, config, rag, blob, ai);
@@ -191,8 +229,8 @@ describe('the web principal (x-cw-principal)', () => {
       scopes: ['content:write', 'content:publish', 'preview:read'],
       contentGrants: [{ contentTypeApiId: 'post', actions: ['read', 'write', 'publish'] }],
     } as Parameters<typeof createRole>[2]);
-    await addMember(ctx, 's1', { email: 'admin-member@example.com', role: 'admin' });
-    await addMember(ctx, 's1', { email: 'member@example.com', role: limited.id });
+    await addMember(ctx, 's1', { email: 'admin-member@example.com', role: 'admin' }, 'system');
+    await addMember(ctx, 's1', { email: 'member@example.com', role: limited.id }, 'system');
     const adminMember = { ...person('member'), sub: 'usr_adm', email: 'admin-member@example.com' };
     await findMemberForSignIn(ctx, 's1', 'usr_adm', 'admin-member@example.com');
     await findMemberForSignIn(ctx, 's1', 'usr_member', 'member@example.com');
@@ -234,7 +272,7 @@ describe('the web principal (x-cw-principal)', () => {
         },
       ],
     } as Parameters<typeof createRole>[2]);
-    await addMember(ctx, 's1', { email: 'keeper@example.com', role: noUnpublish.id });
+    await addMember(ctx, 's1', { email: 'keeper@example.com', role: noUnpublish.id }, 'system');
     await findMemberForSignIn(ctx, 's1', 'usr_keep', 'keeper@example.com');
     const keeper = { ...person('member'), sub: 'usr_keep', email: 'keeper@example.com' };
     expect((await call(keeper, 'POST', jobs, { action: 'trash', entryIds: ids })).status).toBe(403);

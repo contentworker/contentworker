@@ -168,7 +168,9 @@ describe('a draft revision of a live content type on D1', () => {
     await createEnvironment(ctx, scope.spaceId, 'staging');
     const staging = { ...scope, environmentId: 'staging' };
     await createContentType(ctx, SYSTEM_CALLER, staging, { ...definition, urlPattern: '/{slug}' });
-    await mergeEnvironments(ctx, scope.spaceId, 'staging', 'main', { contentTypes: ['page'] });
+    await mergeEnvironments(ctx, SYSTEM_CALLER, scope.spaceId, 'staging', 'main', {
+      contentTypes: ['page'],
+    });
     expect(await listDeliveredRoutes(ctx, scope)).toEqual([
       { contentType: 'page', urlPattern: '/{slug}' },
     ]);
@@ -381,11 +383,15 @@ describe('the definition kept for a live type', () => {
       ...definition,
       urlPattern: '/s/{slug}',
     });
-    await mergeEnvironments(ctx, scope.spaceId, 'staging', 'main', { contentTypes: ['page'] });
+    await mergeEnvironments(ctx, SYSTEM_CALLER, scope.spaceId, 'staging', 'main', {
+      contentTypes: ['page'],
+    });
     expect((await delivered(ctx, scope))?.urlPattern).toBe('/{slug}');
 
     await publishContentType(ctx, staging, 'page');
-    await mergeEnvironments(ctx, scope.spaceId, 'staging', 'main', { contentTypes: ['page'] });
+    await mergeEnvironments(ctx, SYSTEM_CALLER, scope.spaceId, 'staging', 'main', {
+      contentTypes: ['page'],
+    });
     expect(await kept(scope)).toBeNull();
     expect((await delivered(ctx, scope))?.urlPattern).toBe('/s/{slug}');
   });
@@ -515,21 +521,21 @@ describe('copying a live type with a draft', () => {
 
   it('keeps both definitions through a clone', async () => {
     const { ctx, scope, target } = await source();
-    await cloneEnvironment(ctx, scope, target);
+    await cloneEnvironment(ctx, SYSTEM_CALLER, scope, target);
     await expectLiveWithDraft(ctx, target);
   });
 
   it('keeps both definitions through a snapshot', async () => {
     const { ctx, scope, target } = await source();
-    const snapshot = JSON.parse(JSON.stringify(await exportSnapshot(ctx, scope)));
-    await importSnapshot(ctx, target, snapshot);
+    const snapshot = JSON.parse(JSON.stringify(await exportSnapshot(ctx, SYSTEM_CALLER, scope)));
+    await importSnapshot(ctx, SYSTEM_CALLER, target, snapshot);
     await expectLiveWithDraft(ctx, target);
   });
 
   it('restores a snapshot from before these were kept as a plain draft', async () => {
     const { ctx, scope, target } = await source();
-    const snapshot = await exportSnapshot(ctx, scope);
-    await importSnapshot(ctx, target, {
+    const snapshot = await exportSnapshot(ctx, SYSTEM_CALLER, scope);
+    await importSnapshot(ctx, SYSTEM_CALLER, target, {
       ...snapshot,
       contentTypes: snapshot.contentTypes.map(({ published: _old, ...ct }) => ct),
     });

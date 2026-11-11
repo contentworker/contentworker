@@ -264,6 +264,25 @@ export interface ContentTypeDraft {
   readonly preview?: ContentTypePreview | null;
 }
 
+/**
+ * An operation an installed plugin offers (manifest v2), as `apps.operations()` lists it: only the
+ * ones the client's token may invoke, with the JSON Schema of their input and output.
+ */
+export interface AppOperation {
+  /** The plugin id, e.g. `com.example.seo`. */
+  readonly plugin: string;
+  readonly pluginName: string;
+  readonly pluginVersion: string;
+  readonly name: string;
+  readonly title: string;
+  readonly description: string;
+  /** The scope a caller holds to invoke it. */
+  readonly requires: string;
+  readonly mode: 'sync';
+  readonly input: Readonly<Record<string, unknown>>;
+  readonly output?: Readonly<Record<string, unknown>>;
+}
+
 /** A redirect: a front end (or an edge Worker) applies it; contentworker serves no site. */
 export interface Redirect {
   readonly id: string;
@@ -530,6 +549,63 @@ export interface BlockConfigSetInput {
 export interface BlockConfigSet {
   readonly config: BlockConfig;
   /** The config was already this: nothing written. */
+  readonly unchanged: boolean;
+}
+
+/**
+ * The space's AI capabilities, each one an id an administrator reads in Settings → AI. Turned off,
+ * the requests that need one are refused with 409 `ai_capability_disabled`.
+ */
+export type AiCapability =
+  | 'drafting'
+  | 'layout'
+  | 'assistant'
+  | 'field-assist'
+  | 'translation'
+  | 'media'
+  | 'search'
+  | 'agents'
+  | 'workflows';
+
+/** One capability's settings. */
+export interface AiCapabilitySetting {
+  readonly enabled: boolean;
+  /** The tier its calls run on; null: each call site's own default. */
+  readonly tier: 'flagship' | 'balanced' | 'fast' | null;
+  /** Plain text added after the built-in prompt as quoted guidance; null: none. */
+  readonly guidance: string | null;
+}
+
+/** A space's AI settings. Version 0, everything on, before the first set. */
+export interface AiSettings {
+  readonly version: number;
+  readonly capabilities: Readonly<Record<AiCapability, AiCapabilitySetting>>;
+  readonly updatedAt: string | null;
+  readonly updatedBy: string | null;
+}
+
+export interface AiSettingsSetInput {
+  /** The version you read (0 before the first set): another one is a 409. */
+  readonly expectedVersion: number;
+  /**
+   * Each capability named is replaced whole (tier and guidance back to null when left out); the
+   * rest stay as they are.
+   */
+  readonly capabilities: Partial<
+    Record<
+      AiCapability,
+      {
+        readonly enabled: boolean;
+        readonly tier?: AiCapabilitySetting['tier'];
+        readonly guidance?: string | null;
+      }
+    >
+  >;
+}
+
+export interface AiSettingsSet {
+  readonly settings: AiSettings;
+  /** The settings were already this: nothing written. */
   readonly unchanged: boolean;
 }
 
@@ -1516,6 +1592,45 @@ export interface ApiKeySummary {
   readonly lastUsedAt?: string;
 }
 
+/** What a role lets its holders do with one content type (`*`: every type). */
+export interface ContentGrant {
+  readonly contentTypeApiId: string;
+  /** `write` also grants `delete`; `publish` also grants `delete` and `unpublish`. */
+  readonly actions: readonly ('read' | 'write' | 'publish' | 'lock')[];
+  /** Finer actions the grant withholds. */
+  readonly deniedActions?: readonly ('delete' | 'unpublish')[];
+  /** Masked on read, refused on write. */
+  readonly deniedFields?: readonly string[];
+  /** Readable, refused on write. */
+  readonly readOnlyFields?: readonly string[];
+}
+
+/** A role in the space: scopes plus per-content-type grants. Needs space:admin. */
+export interface Role {
+  readonly id: string;
+  readonly spaceId: string;
+  readonly name: string;
+  readonly description?: string;
+  readonly scopes: readonly string[];
+  readonly contentGrants: readonly ContentGrant[];
+  /** Set on the built-in roles seeded into every space. */
+  readonly preset?: 'viewer' | 'approver' | 'editor' | 'manager' | 'admin';
+  /** 1 when created, one more at each save: send it back as `expectedVersion`. */
+  readonly version: number;
+}
+
+export interface RoleInput {
+  readonly name: string;
+  readonly description?: string;
+  readonly scopes: readonly string[];
+  readonly contentGrants?: readonly ContentGrant[];
+}
+
+export interface RoleUpdateInput extends RoleInput {
+  /** The version you edited from: a save made since is a 409. Absent: saved over whatever is there. */
+  readonly expectedVersion?: number;
+}
+
 export interface CreateApiKeyInput {
   readonly kind: ApiKeyKind;
   readonly name?: string;
@@ -1682,12 +1797,31 @@ export interface PreviewEntry extends EntryAuthorship {
   readonly fields: Readonly<Record<string, unknown>>;
 }
 
+/** A page of the Preview list; pass `nextCursor` back as `cursor` for the next. */
+export interface EntryPage {
+  items: PreviewEntry[];
+  /** Entries on this page. */
+  total: number;
+  nextCursor?: string;
+}
+
 /** The Preview list's parameters (`GET /preview/:space/:env/entries`). */
 export interface EntryListQuery {
   readonly contentType?: string;
   readonly locale?: string;
   /** At most 100. */
   readonly limit?: number;
+  /**
+   * The previous page's `nextCursor`, with the same filters and order. It walks the list's own
+   * order; in the default order an entry edited between two pages is never skipped.
+   */
+  readonly cursor?: string;
+  /**
+   * Entries to pass over before this page. The Preview list takes no offset, so the client walks
+   * the cursor past them, a request per 100.
+   *
+   * @deprecated Page with `cursor` (the previous page's `nextCursor`).
+   */
   readonly skip?: number;
   /** Sort keys, e.g. `-sys.updatedAt` or `fields.title`. */
   readonly order?: string;
@@ -1852,6 +1986,39 @@ export function createManagementClient(opts: ManagementClientOptions) {
   }
 
   const e = encodeURIComponent;
+
+  const entryPage = (query: EntryListQuery) =>
+    get<EntryPage>(`${root}/preview/${e(opts.space)}/${e(opts.environment)}/entries`, {
+      content_type: query.contentType,
+      locale: query.locale,
+      limit: query.limit,
+      cursor: query.cursor,
+      order: query.order,
+      query: query.query,
+      'sys.createdBy': query.createdBy,
+      'sys.updatedBy': query.updatedBy,
+    });
+
+  async function listEntries(query: EntryListQuery = {}): Promise<EntryPage> {
+    // The Preview list refuses an offset (a cursor walks keys), so a `skip` is walked here: pages
+    // of up to 100 are read and dropped until that many entries are behind the cursor.
+    const { skip, ...rest } = query;
+    let cursor = rest.cursor;
+    const seen = new Set<string>();
+    for (let left = cursor ? 0 : (skip ?? 0); left > 0; ) {
+      const page = await entryPage({ ...rest, cursor, limit: Math.min(left, 100) });
+      if (!page.nextCursor) return { items: [], total: 0 };
+      // A cursor that comes back again would walk forever; the server never does that.
+      if (seen.has(page.nextCursor)) {
+        throw new Error(`Management API returned cursor ${page.nextCursor} twice`);
+      }
+      seen.add(page.nextCursor);
+      left -= page.items.length;
+      cursor = page.nextCursor;
+    }
+    return entryPage({ ...rest, cursor });
+  }
+
   /** A signed URL may be root-relative (a deployment without MEDIA_BASE_URL): resolve it here. */
   const absolute = (url: string) => (/^https?:\/\//.test(url) ? url : `${root}${url}`);
   /** A signed URL without its query: the signature is a write capability, never for a log. */
@@ -2004,8 +2171,13 @@ export function createManagementClient(opts: ManagementClientOptions) {
     contentTypes: {
       list: () => items(get<{ items: ContentType[] }>(`${envBase}/content-types`)),
       get: (apiId: string) => get<ContentType>(`${envBase}/content-types/${e(apiId)}`),
-      /** Creates a content type, or revises the one with this `apiId` (a new draft version). */
-      create: (draft: ContentTypeDraft) => post<ContentType>(`${envBase}/content-types`, draft),
+      /**
+       * Creates a content type, or revises the one with this `apiId` (a new draft version). A
+       * revision sends the whole definition: with `expectedVersion` (the `version` you read, 0 to
+       * create only), a save made since is a 409 and nothing is saved.
+       */
+      create: (draft: ContentTypeDraft, opts: { readonly expectedVersion?: number } = {}) =>
+        post<ContentType>(`${envBase}/content-types`, { ...draft, ...opts }),
       publish: (apiId: string) =>
         post<ContentType>(`${envBase}/content-types/${e(apiId)}/published`),
       /** Entries per content type, by status, from one grouped count. */
@@ -2082,6 +2254,21 @@ export function createManagementClient(opts: ManagementClientOptions) {
       effective: () => get<EffectiveBlockRules>(`${envBase}/block-config/effective`),
     },
 
+    /**
+     * The space's AI settings, per capability: on or off, its model tier and the guidance added
+     * to its prompt. The space's, whatever environment the client is for. Reading needs
+     * preview:read; setting needs space:admin.
+     */
+    aiSettings: {
+      /** The settings in force; version 0, everything on, before the first set. */
+      get: () => get<AiSettings>(`${spaceBase}/ai-settings`),
+      /**
+       * Sets the capabilities named. 422 for an unknown capability or tier, or guidance over 2000
+       * characters; 409 for a stale version (`isConflict`; `error.details.version` is the version in force).
+       */
+      set: (input: AiSettingsSetInput) => put<AiSettingsSet>(`${spaceBase}/ai-settings`, input),
+    },
+
     /** Navigation menus: delivery data a front end renders (content:manage to change them). */
     menus: {
       list: async () => (await get<{ items: MenuSummary[] }>(`${envBase}/menus`)).items,
@@ -2140,6 +2327,18 @@ export function createManagementClient(opts: ManagementClientOptions) {
       delete: (id: string, o: { readonly revision?: number } = {}) =>
         del<void>(`${envBase}/saved-views/${e(id)}`, { revision: o.revision }),
     },
+    /**
+     * App operations: what installed plugins offer by name. `invoke` answers 403 without the
+     * scope an operation requires, 422 for input off its schema, 502 when the plugin fails.
+     */
+    apps: {
+      operations: () => get<{ items: AppOperation[] }>(`${envBase}/apps/operations`),
+      invoke: <T = unknown>(
+        plugin: string,
+        operation: string,
+        input: Readonly<Record<string, unknown>> = {},
+      ) => post<{ output: T }>(`${envBase}/apps/${e(plugin)}/operations/${e(operation)}`, input),
+    },
     /** Redirects: delivery data a front end applies (content:manage to change them). */
     redirects: {
       /** By source; `q` searches source, destination and note. */
@@ -2193,21 +2392,16 @@ export function createManagementClient(opts: ManagementClientOptions) {
     entries: {
       /**
        * One page of entries as they are now, drafts included, from the Preview API (the same
-       * origin): `total` counts this page, so page with `skip` until one comes back short.
+       * origin): `total` counts this page; pass `nextCursor` back as `cursor` for the next.
        */
-      list: (query: EntryListQuery = {}) =>
-        get<{ items: PreviewEntry[]; total: number }>(
-          `${root}/preview/${e(opts.space)}/${e(opts.environment)}/entries`,
-          {
-            content_type: query.contentType,
-            locale: query.locale,
-            limit: query.limit,
-            skip: query.skip,
-            order: query.order,
-            query: query.query,
-            'sys.createdBy': query.createdBy,
-            'sys.updatedBy': query.updatedBy,
-          },
+      list: listEntries,
+      /**
+       * Every entry the query matches, following `nextCursor` a page (`limit`) at a time as the
+       * loop asks for more: `for await (const entry of cma.entries.iterate({ contentType })) …`.
+       */
+      iterate: (query: EntryListQuery = {}): AsyncGenerator<PreviewEntry, void, undefined> =>
+        pages(query.cursor, (cursor) =>
+          listEntries(cursor ? { ...query, cursor, skip: undefined } : query),
         ),
       create: (input: { contentTypeApiId: string; fields: EntryFields }) =>
         post<EntryView>(`${envBase}/entries`, input),
@@ -2803,6 +2997,23 @@ export function createManagementClient(opts: ManagementClientOptions) {
        */
       connect: (input: ConnectFrontendInput = {}) =>
         post<FrontendConnection>(`${envBase}/frontend-connections`, input),
+    },
+
+    /** The space's roles (space:admin). Keys and people holding one pick up a change live. */
+    roles: {
+      list: () => items(get<{ items: Role[] }>(`${spaceBase}/roles`)),
+      get: (id: string) => get<Role>(`${spaceBase}/roles/${e(id)}`),
+      /** 422 for an unknown scope or action. */
+      create: (input: RoleInput) => post<Role>(`${spaceBase}/roles`, input),
+      /**
+       * Replaces the whole role as its next version. With `expectedVersion`, a save made since is
+       * a 409 (`isConflict`; `error.details.version` is the version in force); 409 `last_admin`
+       * when it would leave the space with no administrator.
+       */
+      update: (id: string, input: RoleUpdateInput) =>
+        put<Role>(`${spaceBase}/roles/${e(id)}`, input),
+      /** Refused for a built-in role, and while an active key or a person holds it. */
+      delete: (id: string) => del<void>(`${spaceBase}/roles/${e(id)}`),
     },
 
     apiKeys: {

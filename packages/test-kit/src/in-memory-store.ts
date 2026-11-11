@@ -1,6 +1,7 @@
 import {
   type AgentReview,
   type AgentSchedule,
+  type AiSettings,
   type ApiKey,
   type Asset,
   type AssetCollection,
@@ -72,6 +73,7 @@ import type {
   AgentScheduleRepo,
   AIActionDefinition,
   AIActionRepo,
+  AiSettingsRepo,
   AppExtension,
   AppExtensionRepo,
   ArchivableVersion,
@@ -2068,6 +2070,10 @@ export class InMemoryContentStore implements ContentStore {
     findByHash: async (hashedToken) =>
       [...this.apiKeyData.values()].find((k) => k.hashedToken === hashedToken && !k.revoked) ??
       null,
+    get: async (spaceId, id) => {
+      const key = this.apiKeyData.get(id);
+      return key?.spaceId === spaceId ? key : null;
+    },
     list: async (spaceId) => [...this.apiKeyData.values()].filter((k) => k.spaceId === spaceId),
     revoke: async (id) => {
       const existing = this.apiKeyData.get(id);
@@ -2087,20 +2093,24 @@ export class InMemoryContentStore implements ContentStore {
     },
   };
 
-  private readonly roleData = new Map<string, Role>();
+  private readonly roleData = new JournaledMap<string, Role>();
 
   readonly roles: RoleRepo = {
     save: async (role) => {
-      // Mirrors the adapter's unique (space, preset) index.
+      const key = `${role.spaceId}::${role.id}`;
+      // As the D1 store's compare-and-set: version 1 is a new row, a later one replaces the
+      // version before it; and as its unique (space, preset) index.
+      const held = this.roleData.get(key)?.version ?? 0;
+      if (held !== role.version - 1) throw new TransactionConflictError();
       if (
         role.preset &&
         [...this.roleData.values()].some(
           (r) => r.spaceId === role.spaceId && r.preset === role.preset && r.id !== role.id,
         )
       ) {
-        throw new Error(`Preset role "${role.preset}" already exists in ${role.spaceId}`);
+        throw new TransactionConflictError();
       }
-      this.roleData.set(`${role.spaceId}::${role.id}`, role);
+      this.roleData.set(key, role);
     },
     get: async (spaceId, id) => this.roleData.get(`${spaceId}::${id}`) ?? null,
     list: async (spaceId) => [...this.roleData.values()].filter((r) => r.spaceId === spaceId),
@@ -2113,22 +2123,28 @@ export class InMemoryContentStore implements ContentStore {
 
   readonly members: MemberRepo = {
     save: async (member) => {
-      // Mirrors the adapter's unique (space, email) index.
+      const key = `${member.spaceId}::${member.id}`;
+      // As the D1 store's compare-and-set: version 1 is a new row, a later one replaces the
+      // version before it (never a removed row); and as its unique (space, email) index.
+      const held = this.memberData.get(key)?.version ?? 0;
+      if (held !== member.version - 1) throw new TransactionConflictError();
       if (
         [...this.memberData.values()].some(
           (m) => m.spaceId === member.spaceId && m.email === member.email && m.id !== member.id,
         )
       ) {
-        throw new Error(`A member with email ${member.email} already exists in ${member.spaceId}`);
+        throw new TransactionConflictError();
       }
-      this.memberData.set(`${member.spaceId}::${member.id}`, member);
+      this.memberData.set(key, member);
     },
     get: async (spaceId, id) => this.memberData.get(`${spaceId}::${id}`) ?? null,
     getByEmail: async (spaceId, email) =>
       [...this.memberData.values()].find((m) => m.spaceId === spaceId && m.email === email) ?? null,
     list: async (spaceId) => [...this.memberData.values()].filter((m) => m.spaceId === spaceId),
-    delete: async (spaceId, id) => {
-      this.memberData.delete(`${spaceId}::${id}`);
+    delete: async (spaceId, id, version) => {
+      const key = `${spaceId}::${id}`;
+      if (this.memberData.get(key)?.version !== version) throw new TransactionConflictError();
+      this.memberData.delete(key);
     },
   };
 
@@ -2978,6 +2994,19 @@ export class InMemoryContentStore implements ContentStore {
     },
   };
 
+  /** spaceId → the space's AI settings. */
+  private readonly aiSettingsData = new Map<string, AiSettings>();
+
+  readonly aiSettings: AiSettingsRepo = {
+    get: async (spaceId) => this.aiSettingsData.get(spaceId) ?? null,
+    save: async (spaceId, settings) => {
+      // As the D1 store's compare-and-set: the row must be at the version before this one.
+      const held = this.aiSettingsData.get(spaceId)?.version ?? 0;
+      if (held !== settings.version - 1) throw new TransactionConflictError();
+      this.aiSettingsData.set(spaceId, settings);
+    },
+  };
+
   /** `space::id` → view: saved views are the space's, whatever environment asks. */
   private readonly savedViewData = new Map<string, SavedView>();
 
@@ -3482,6 +3511,7 @@ export class InMemoryContentStore implements ContentStore {
       this.promotionData,
       this.inviteData,
       this.memberData,
+      this.roleData,
       this.contentTypeData,
       this.publishedSingletonData,
       this.publishedDefinitionData,
@@ -3548,6 +3578,7 @@ export class InMemoryContentStore implements ContentStore {
         menus: this.menus,
         blockCatalogs: this.blockCatalogs,
         blockConfigs: this.blockConfigs,
+        roles: this.roles,
         bulkJobs: this.bulkJobs,
         workflowRuns: this.workflowRuns,
         workflowTasks: this.workflowTasks,

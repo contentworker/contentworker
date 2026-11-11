@@ -37,6 +37,7 @@ import {
   BULK_TOPIC,
   createHasher,
   createPluginHookDispatcher,
+  createPluginOperationRunner,
   EVENTS_TOPIC,
   type FakeAdapterBinding,
   type PublishAgentsConfig,
@@ -90,6 +91,7 @@ import { doCostGuardFromEnv } from './do/cost-guard';
 import { createShardedSearchIndex, DEFAULT_SEARCH_SHARDS } from './do/search-shard';
 import { type EdgeEnv, withJurisdiction } from './env';
 import { newId } from './ids';
+import { makeMetrics } from './metrics';
 import { CloudflareWorkflowEngine, CloudflareWorkflowsAgentRuntime } from './workflows';
 
 const clock = { now: () => new Date() };
@@ -231,6 +233,8 @@ export function wireEdge(rawEnv: EdgeEnv, options: EdgeWireOptions = {}): EdgeWi
       ? { deliveryListTtlSeconds: posNum(env.DELIVERY_LIST_TTL_SECONDS) as number }
       : {}),
     costGuard,
+    // The same counters the Workers emit, for what a use-case should make an alert of.
+    metrics: makeMetrics(env.METRICS),
     ai: aiContext,
     // A local stack (no D1, or REQUIRE_SECURE_SECRETS=false, as `pnpm dev` sets) may preview on a
     // plain-http dev server; a deployment, whose templates require secure secrets, never.
@@ -259,32 +263,38 @@ export function wireEdge(rawEnv: EdgeEnv, options: EdgeWireOptions = {}): EdgeWi
       : {}),
   };
 
-  const ctx: AppContext = env.PLUGIN_LOADER
+  // One sandbox runtime for both ways plugin code runs: hooks on the write path, and operations
+  // a caller asks for by name.
+  const pluginRuntime = env.PLUGIN_LOADER
+    ? createWorkerLoaderRuntime(env.PLUGIN_LOADER, {
+        onError: (message, detail) => console.error(message, { detail: String(detail) }),
+        // A plugin reaching outside its grant: logged, and put on the
+        // space's audit trail so an operator sees it, not just the plugin.
+        onDenied: async (denial) => {
+          console.warn('plugin capability denied', denial);
+          await recordPluginCapabilityDenial(baseCtx, denial);
+        },
+      })
+    : undefined;
+  const pluginOptions = {
+    // No principal override: each plugin acts as exactly the scopes its
+    // approved capabilities imply (narrowed to the caller's, for an operation).
+    onError: (message: string, detail: unknown) =>
+      console.error(message, { detail: String(detail) }),
+    // Backs `network:request`. The isolate itself has no network, so
+    // this is the only way out and it checks the allowlist first.
+    fetcher: createRemoteFetcher(),
+  };
+  const appOperations = pluginRuntime
+    ? createPluginOperationRunner(baseCtx, blob, pluginRuntime, pluginOptions)
+    : undefined;
+  const ctx: AppContext = pluginRuntime
     ? {
         ...baseCtx,
         // Built over `baseCtx`, which has no hooks: a plugin's own capability
         // calls therefore cannot re-enter the plugin chain.
-        hooks: createPluginHookDispatcher(
-          baseCtx,
-          blob,
-          createWorkerLoaderRuntime(env.PLUGIN_LOADER, {
-            onError: (message, detail) => console.error(message, { detail: String(detail) }),
-            // A plugin reaching outside its grant: logged, and put on the
-            // space's audit trail so an operator sees it, not just the plugin.
-            onDenied: async (denial) => {
-              console.warn('plugin capability denied', denial);
-              await recordPluginCapabilityDenial(baseCtx, denial);
-            },
-          }),
-          {
-            // No principal override: each plugin acts as exactly the scopes its
-            // approved capabilities imply.
-            onError: (message, detail) => console.error(message, { detail: String(detail) }),
-            // Backs `network:request`. The isolate itself has no network, so
-            // this is the only way out and it checks the allowlist first.
-            fetcher: createRemoteFetcher(),
-          },
-        ),
+        hooks: createPluginHookDispatcher(baseCtx, blob, pluginRuntime, pluginOptions),
+        ...(appOperations ? { appOperations } : {}),
       }
     : // No Worker Loader means no isolate to run plugins in, so the hook seam
       // stays unwired: installed plugins simply do not execute. Running

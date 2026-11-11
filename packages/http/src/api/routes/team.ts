@@ -19,6 +19,7 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import { type AuthDeps, type AuthVars, requireScope } from '../auth';
 import { doc } from '../docs/openapi';
+import * as teamDocs from '../docs/schemas/team';
 import { parseBody, zId, zShort } from '../validation';
 
 /** A role id, or a preset name (`viewer`, `approver`, `editor`, `manager`, `admin`). */
@@ -33,6 +34,11 @@ export const updateMemberBody = z.object({
   role: zRoleRef.optional(),
   disabled: z.boolean().optional(),
   name: zShort.optional(),
+  expectedVersion: z
+    .int()
+    .min(1)
+    .optional()
+    .describe('The version the person was read at; another is a 409. Absent: made over any'),
 });
 export const keyRoleBody = z.object({ role: zRoleRef.nullable() });
 export const cloneRoleBody = z.object({ name: zShort.optional() });
@@ -83,19 +89,37 @@ export function teamRoutes(deps: AuthDeps): Hono<AuthVars> {
     doc('Auth', 'Add a person to the team', {
       body: addMemberBody,
       status: 201,
-      description: 'They sign in with SSO; their email links them on first sign-in.',
+      ok: teamDocs.member,
+      description:
+        'They sign in with SSO; their email links them on first sign-in, and start at ' +
+        '`version` 1. Refused with 403 to a personal access token or an OAuth token: sign ' +
+        'in to the admin to add someone.',
     }),
     admin,
     async (c) =>
-      c.json(await addMember(ctx, c.req.param('space'), await parseBody(c, addMemberBody)), 201),
+      c.json(
+        await addMember(
+          ctx,
+          c.req.param('space'),
+          await parseBody(c, addMemberBody),
+          c.get('principal'),
+        ),
+        201,
+      ),
   );
 
   app.patch(
     '/spaces/:space/members/:id',
     doc('Auth', 'Change a person’s role, name or access', {
       body: updateMemberBody,
+      ok: teamDocs.member,
       description:
-        'Refused with 409 `last_admin` when it would leave the space with no administrator.',
+        'Only the fields given change, and the person is saved as their next `version`, so a ' +
+        'change can’t undo one saved after it was read. With `expectedVersion`, 409 `conflict` ' +
+        '(naming the `version` in force) when they were saved since; without it, the change is ' +
+        'made over whatever is stored. Refused with 409 `last_admin` when it would leave the ' +
+        'space with no administrator, and with 403 to a personal access token or an OAuth ' +
+        'token changing their role or re-enabling them, both before a stale version.',
     }),
     admin,
     async (c) =>
@@ -106,6 +130,7 @@ export function teamRoutes(deps: AuthDeps): Hono<AuthVars> {
           c.req.param('id'),
           await parseBody(c, updateMemberBody),
           policy,
+          c.get('principal'),
         ),
       ),
   );
@@ -150,12 +175,15 @@ export function teamRoutes(deps: AuthDeps): Hono<AuthVars> {
       body: accessSettingsBody,
       description:
         '`ssoOnly`: people sign in only through SSO, and the administrator credential setup ' +
-        'created stops working. Needs SSO configured and an administrator on the team.',
+        'created stops working. Needs SSO configured and an administrator on the team. Turning ' +
+        'it off is refused with 403 to a personal access token or an OAuth token.',
     }),
     admin,
     async (c) => {
       const body = await parseBody(c, accessSettingsBody);
-      return c.json(await setSsoOnly(ctx, c.req.param('space'), body.ssoOnly, policy));
+      return c.json(
+        await setSsoOnly(ctx, c.req.param('space'), body.ssoOnly, policy, c.get('principal')),
+      );
     },
   );
 

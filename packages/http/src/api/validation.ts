@@ -45,6 +45,7 @@ import {
 import { STARTERS } from '@contentworker/seed';
 import type { Context } from 'hono';
 import { z } from 'zod';
+import * as aiSettingsDocs from './docs/schemas/ai-settings';
 import * as blockCatalogDocs from './docs/schemas/block-catalog';
 import * as blockConfigDocs from './docs/schemas/block-config';
 import * as blockLockDocs from './docs/schemas/block-locks';
@@ -321,6 +322,9 @@ export const cloneBody = z.object({
 });
 // The manifest's inner shape is validated by the domain, which rejects rather
 // than repairs — this only guards the envelope and bounds the bundle size.
+/** A plugin operation's input: a JSON object, checked against the operation's own schema. */
+export const appOperationInputBody = z.record(z.string(), z.unknown());
+
 export const installPluginBody = z.object({
   manifest: z.object({}).loose(),
   bundle: z.string().min(1).max(2_000_000),
@@ -398,6 +402,14 @@ export const roleBody = z.object({
   scopes: z.array(z.string().max(64)).max(64),
   contentGrants: z.array(contentGrant).max(500).optional(),
 });
+/** A role replaced whole, optionally held to the version it was edited from. */
+export const roleUpdateBody = roleBody.extend({
+  expectedVersion: z
+    .int()
+    .min(1)
+    .optional()
+    .describe('The version the role was edited from; another is a 409. Absent: saved over any'),
+});
 // The deep field shape (nested fields, validations, options, messages, guidance and rules) is
 // validated by the domain at every depth. The guidance keys are named here so the request
 // documents them, without caps or types: a revision may carry a value stored before guidance was
@@ -460,6 +472,15 @@ export const contentTypeBody = z.object({
     .describe(
       'Holds at most one entry (site settings, a home page), served at GET …/singletons/:apiId. ' +
         'Turning it on is refused while the type has more than one entry. Left out, unchanged.',
+    ),
+  expectedVersion: z
+    .int()
+    .min(0)
+    .optional()
+    .describe(
+      'The version the definition was edited from (0: read as not existing, so create only). ' +
+        'Another is a 409 naming the stored `version`, and nothing is saved. Left out, the save ' +
+        'goes over whatever is stored.',
     ),
 });
 /** A content type's copy: its new apiId and name. */
@@ -605,7 +626,7 @@ export const generateBlocksShape = {
     .optional()
     .describe('A slot of one of the entry’s blocks; absent, the field’s top level'),
   locale: zLocale.optional().describe('The locale to compose for (default: the default locale)'),
-  tier: zTier.optional().describe('Model tier (default flagship)'),
+  tier: zTier.optional().describe("Model tier (default: the space's layout tier, else flagship)"),
 };
 export const generateBlocksBody = z
   .object(generateBlocksShape)
@@ -1074,6 +1095,24 @@ export const blockCatalogPushBody = z.object({
     .boolean()
     .optional()
     .describe('Publish each changed type (default true); false leaves draft revisions'),
+});
+
+/**
+ * An AI settings set. Whether each key is a capability, and each guidance within its length once
+ * normalized, is the domain's check (`capabilities.media.guidance`); here the outline.
+ */
+export const aiSettingsSetBody = z.object({
+  expectedVersion: z
+    .int()
+    .min(0)
+    .describe('The version the settings were read at (0 before the first set); another is a 409'),
+  capabilities: z
+    .record(z.string().max(100), aiSettingsDocs.aiCapabilityInput)
+    .refine((c) => Object.keys(c).length <= 50, { message: 'At most 50 capabilities' })
+    .describe(
+      'By capability id: each one named is replaced whole (tier and guidance back to null when ' +
+        'left out); the rest are left as they are',
+    ),
 });
 
 /**

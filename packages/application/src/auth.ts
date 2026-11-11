@@ -140,9 +140,7 @@ export async function authenticate(
   if (!key) throw new UnauthorizedError();
   // Expired keys fail closed (e.g. an orphaned OIDC-delegated key whose session
   // lapsed). Checked here so both stores enforce it uniformly.
-  if (key.expiresAt && new Date(key.expiresAt).getTime() <= ctx.clock.now().getTime()) {
-    throw new UnauthorizedError('API key has expired');
-  }
+  if (isExpired(ctx, key)) throw new UnauthorizedError('API key has expired');
   // Best-effort last-used tracking — must not block authentication, and throttled: written at
   // most once per LAST_USED_RESOLUTION_MS per key, so a busy delivery key costs no write on the
   // hot path (D1 has a single writer; a write per read would serialize the whole read load).
@@ -150,6 +148,21 @@ export async function authenticate(
   if (!key.lastUsedAt || now.getTime() - Date.parse(key.lastUsedAt) >= LAST_USED_RESOLUTION_MS) {
     void ctx.store.auth.touchLastUsed(key.id, now).catch(() => {});
   }
+  return principalForApiKey(ctx, key);
+}
+
+const isExpired = (ctx: AppContext, key: ApiKey): boolean =>
+  !!key.expiresAt && new Date(key.expiresAt).getTime() <= ctx.clock.now().getTime();
+
+/**
+ * The principal a stored key acts as now, or UnauthorizedError: what `authenticate` answers once
+ * it has found the key, and what a bulk job's chunk asks again of the key that started it
+ * (`job-starter.ts`), so the two can never disagree. Reads only: a revoked or expired key, a
+ * disabled or removed person behind a delegated token, or a deleted role all refuse.
+ */
+export async function principalForApiKey(ctx: AppContext, key: ApiKey): Promise<Principal> {
+  if (key.revoked) throw new UnauthorizedError();
+  if (isExpired(ctx, key)) throw new UnauthorizedError('API key has expired');
   // A setup-issued administrator credential is a person's sign-in, so it stops
   // working while the space requires SSO (a recovery code turns that off).
   if (key.issuance === 'setup' && (await readAccessSettings(ctx, key.spaceId)).ssoOnly) {
@@ -184,6 +197,7 @@ export async function authenticate(
       ...identity,
       scopes: intersectScopes(key.scopes, role.scopes),
       contentGrants: role.contentGrants,
+      keyId: key.id,
     };
   }
 
@@ -201,9 +215,10 @@ export async function authenticate(
       ...identity,
       scopes,
       contentGrants: role.contentGrants,
+      keyId: key.id,
     };
   }
-  return { spaceId: key.spaceId, ...identity, scopes: key.scopes };
+  return { spaceId: key.spaceId, ...identity, scopes: key.scopes, keyId: key.id };
 }
 
 export async function listApiKeys(ctx: AppContext, spaceId: string): Promise<ApiKey[]> {

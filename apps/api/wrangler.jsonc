@@ -100,8 +100,6 @@
       "script_name": "contentworker-engine"
     }
   ],
-  // `send_email` (EMAIL) is added per deployment by scripts/fleet.ts when the deployment sets an
-  // Email Sending sender (EMAIL_FROM); a bound EMAIL without a sender is refused at boot.
 
   // ---- Vars (secrets: DATA_KEY, TOKEN_PEPPER, SETUP_TOKEN, ADMIN_TOKEN, MCP_TOKEN,
   // MEDIA_SIGNING_SECRET, STREAM_WEBHOOK_SECRET, PRINCIPAL_KEY) -----------
@@ -147,8 +145,6 @@
     "OAUTH_ISSUER": "",
     "OAUTH_RESOURCE": "",
     "OAUTH_ACCESS_TOKEN_TTL_SECONDS": "3600",
-    "OAUTH_REFRESH_TOKEN_TTL_SECONDS": "2592000",
-    "EMAIL_FROM": "",
-    "EMAIL_FROM_NAME": ""
+    "OAUTH_REFRESH_TOKEN_TTL_SECONDS": "2592000"
   }
 }

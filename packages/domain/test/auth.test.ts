@@ -70,6 +70,35 @@ describe('granular RBAC: content grants', () => {
     expect(() => assertWritableFields(editor, 'post', { slug: {} })).toThrow(/slug/);
   });
 
+  it('lets a read-only field through an update only at its stored value', () => {
+    const stored = {
+      slug: { 'en-US': { path: 'a', parts: [1, 2] } },
+      internalNotes: { 'en-US': 'secret' },
+    };
+    // The same value, its keys in another order.
+    const same = { title: {}, slug: { 'en-US': { parts: [1, 2], path: 'a' } } };
+    expect(() => assertWritableFields(editor, 'post', same, stored)).not.toThrow();
+    expect(() =>
+      assertWritableFields(editor, 'post', { slug: { 'en-US': { path: 'b' } } }, stored),
+    ).toThrow(/slug/);
+    // A locale left out is no write: the save keeps the stored field whole.
+    const localized = { slug: { 'en-US': 'a', 'de-DE': 'b' } };
+    expect(() =>
+      assertWritableFields(editor, 'post', { slug: { 'de-DE': 'b' } }, localized),
+    ).not.toThrow();
+    expect(() =>
+      assertWritableFields(editor, 'post', { slug: { 'fr-FR': 'b' } }, localized),
+    ).toThrow(/slug/);
+    // Nothing stored: any value is a write, null included.
+    expect(() => assertWritableFields(editor, 'post', { slug: { 'en-US': null } }, {})).toThrow(
+      /slug/,
+    );
+    // A denied field is refused at its stored value too: the caller could guess it otherwise.
+    expect(() =>
+      assertWritableFields(editor, 'post', { internalNotes: { 'en-US': 'secret' } }, stored),
+    ).toThrow(/internalNotes/);
+  });
+
   it('coarse authorize is unchanged by grants', () => {
     expect(() => authorize(editor, SCOPES.contentWrite, 's1')).not.toThrow();
     expect(() => authorize(editor, SCOPES.spaceAdmin, 's1')).toThrow();

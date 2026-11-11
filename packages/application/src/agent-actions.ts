@@ -10,6 +10,7 @@ import { recordAgentRun } from './agent-audit';
 import { generateWithBudget } from './ai-budget';
 import { conforms } from './ai-json';
 import { UNTRUSTED_CONTENT_GUARD, wrapUntrusted } from './ai-prompt';
+import { aiCapability, requireAiCapability } from './ai-settings';
 import { type EntryAiOptions, readEntryForAi } from './content-ai';
 import type { AppContext } from './context';
 import { unpublishEntry } from './publishing';
@@ -143,6 +144,7 @@ export async function auditEntry(
   input: AuditEntryInput,
   opts: EntryAiOptions,
 ): Promise<AuditEntryResult> {
+  const policy = await requireAiCapability(ctx, scope, 'agents');
   const { fields, contentTypeApiId, unreadable } = await readEntryForAi(ctx, scope, entryId, {
     ...opts,
     apply: input.createTasks === true,
@@ -153,9 +155,11 @@ export async function auditEntry(
   const locale = config?.defaultLocale ?? 'en-US';
 
   const result = await generateWithBudget(ctx, ai, scope, {
-    system: `You are a meticulous content editor. Audit the entry for gaps, inconsistencies, missing required information, and quality issues. Return concrete, actionable findings. Use severity "error" for blocking problems, "warning" for quality issues, "info" for nits. ${UNTRUSTED_CONTENT_GUARD}`,
+    system: policy.system(
+      `You are a meticulous content editor. Audit the entry for gaps, inconsistencies, missing required information, and quality issues. Return concrete, actionable findings. Use severity "error" for blocking problems, "warning" for quality issues, "info" for nits. ${UNTRUSTED_CONTENT_GUARD}`,
+    ),
     prompt: `Content type: ${ct.name}.\nFields:\n${wrapUntrusted(describeEntry(ct, fields, locale, unreadable))}\n\nList the findings.`,
-    tier: input.tier ?? 'balanced',
+    tier: policy.tier('balanced', input.tier),
     maxTokens: 2048,
     outputSchema: {
       type: 'object',
@@ -281,7 +285,11 @@ export async function runPublishAgents(
   config: PublishAgentsConfig,
 ): Promise<PublishAgentRunSummary[]> {
   const workflows: ('enrich' | 'moderate')[] = [];
-  if (config.enrich) workflows.push('enrich');
+  // The space can turn its enrichment agent off; moderation is the deployment's own control
+  // (AGENTS_MODERATE, AGENTS_MODERATE_BLOCKING), so a space's AI settings never switch it off.
+  if (config.enrich && (await aiCapability(ctx, scope, 'agents')).enabled) {
+    workflows.push('enrich');
+  }
   if (config.moderate) workflows.push('moderate');
 
   const runs: PublishAgentRunSummary[] = [];

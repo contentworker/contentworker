@@ -1,6 +1,7 @@
 import type {
   AgentReview,
   AgentSchedule,
+  AiSettings,
   ApiKey,
   Asset,
   AssetCollection,
@@ -151,6 +152,7 @@ export interface ContentStore {
   readonly menus: MenuRepo;
   readonly blockCatalogs: BlockCatalogRepo;
   readonly blockConfigs: BlockConfigRepo;
+  readonly aiSettings: AiSettingsRepo;
   readonly savedViews: SavedViewRepo;
   readonly audit: AuditRepo;
   readonly aiActions: AIActionRepo;
@@ -407,6 +409,22 @@ export interface BlockConfigRepo {
    * inside a unit; thrown outside one).
    */
   save(scope: Scope, config: BlockConfig): Promise<void>;
+}
+
+/**
+ * A space's AI settings: one row per space (not per environment), rewritten whole at each set, its
+ * `version` the compare-and-set a set rides with. Version 0 is the settings of a space never
+ * configured, which has no row. Read on every AI call (one statement by primary key); written only
+ * by an administrator's set, never on a read path.
+ */
+export interface AiSettingsRepo {
+  /** The settings, or null before the first set. */
+  get(spaceId: string): Promise<AiSettings | null>;
+  /**
+   * Writes `settings` at its version while the stored one is at the version before it (no row, for
+   * version 1). Another set that wrote first is a `TransactionConflictError`.
+   */
+  save(spaceId: string, settings: AiSettings): Promise<void>;
 }
 
 /**
@@ -1097,6 +1115,8 @@ export interface AuthRepo {
   createApiKey(key: ApiKey): Promise<void>;
   /** Resolve an API key by the hash of its presented token. */
   findByHash(hashedToken: string): Promise<ApiKey | null>;
+  /** One key of a space by id, revoked or not; null when the space holds no such key. */
+  get(spaceId: string, id: string): Promise<ApiKey | null>;
   list(spaceId: string): Promise<ApiKey[]>;
   revoke(id: string): Promise<void>;
   /** Best-effort stamp of last successful use (does not fail auth). */
@@ -1258,8 +1278,11 @@ export interface OAuthGrantRepo {
 /** Custom roles (granular RBAC) — space-scoped, referenced by API keys. */
 export interface RoleRepo {
   /**
-   * Creates or replaces (by id) a role. A second role with the same `preset` in a space is
-   * refused (the adapter's unique index), so racing seeds can't duplicate a preset.
+   * Writes `role` at its version. Version 1 creates it: refused when the id is taken, or when the
+   * space already has a role with the same `preset` (the adapter's unique index), so racing seeds
+   * can't duplicate a preset. A later version replaces it only while the stored one is at the
+   * version before. A lost race is a `TransactionConflictError` (at commit, inside a unit; thrown
+   * outside one).
    */
   save(role: Role): Promise<void>;
   get(spaceId: string, id: string): Promise<Role | null>;
@@ -1269,12 +1292,22 @@ export interface RoleRepo {
 
 /** The people on a space's team (see `SpaceMember`). Email is unique within a space. */
 export interface MemberRepo {
-  /** Creates or replaces (by id). A second member with the same email in a space is refused. */
+  /**
+   * Writes `member` at its version. Version 1 adds them: refused when the id is taken, or when the
+   * space already has someone with the same email. A later version replaces them only while the
+   * stored row is at the version before, and never inserts: a save made from a read taken before
+   * the person was removed changes nothing. A lost race is a `TransactionConflictError` (at
+   * commit, inside a unit; thrown outside one).
+   */
   save(member: SpaceMember): Promise<void>;
   get(spaceId: string, id: string): Promise<SpaceMember | null>;
   getByEmail(spaceId: string, email: string): Promise<SpaceMember | null>;
   list(spaceId: string): Promise<SpaceMember[]>;
-  delete(spaceId: string, id: string): Promise<void>;
+  /**
+   * Removes the person while they are at `version`, the one the caller read and checked. Gone
+   * already, or saved since, is a `TransactionConflictError`, as for `save`.
+   */
+  delete(spaceId: string, id: string, version: number): Promise<void>;
 }
 
 /**
@@ -1396,6 +1429,8 @@ export interface ContentStoreTx {
   readonly blockCatalogs: BlockCatalogRepo;
   /** A config is written at its version's compare-and-set. */
   readonly blockConfigs: BlockConfigRepo;
+  /** A role is replaced at its version's compare-and-set. */
+  readonly roles: Pick<RoleRepo, 'save'>;
   readonly bulkJobs: BulkJobRepo;
   /** Run and task rows change in the same transaction as the outbox events they announce. */
   readonly workflowRuns: WorkflowRunRepo;
@@ -1410,6 +1445,7 @@ export interface ContentStoreTx {
    * it, or as the team places it grants (`members.save`).
    */
   readonly invites: Pick<InviteRepo, 'create' | 'replace'>;
+  /** A person is added or replaced at their version's compare-and-set. */
   readonly members: Pick<MemberRepo, 'save'>;
 }
 

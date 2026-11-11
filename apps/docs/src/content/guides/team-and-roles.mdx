@@ -99,6 +99,38 @@ A role can be named by id or by preset (`viewer`, `approver`, `editor`, `manager
 roles are created and edited at `/spaces/{space}/roles`; see [Roles](/guides/api-keys/#roles). The
 MCP server has `role_presets_list`, `team_list` and `role_preset_assign`.
 
+Giving someone access is a person's act. A personal access token or an app connected with OAuth
+gets a 403 adding a person, changing a person's role, turning someone back on, widening a role
+someone holds, turning off `ssoOnly` or creating or resending an invitation, whatever its scopes:
+sign in to the admin to do those. A token can still rename, turn off or remove a person.
+
+Every person has a `version`, 1 when added and one more at each change, which `GET /team`, `POST
+/members` and `PATCH /members/{id}` return. A `PATCH` changes only the fields you send, and never
+undoes a change someone else made after you read the person: if an admin turned their access off
+in between, a rename keeps it off, and if they were removed, the answer is a `404` and they stay
+removed. To have your change refused instead when anything changed since you read the person, send
+the `version` you read as `expectedVersion` (also on `role_preset_assign` with a `memberId`): the
+answer is a `409` naming the version in force, with nothing changed.
+
+## What a restricted role sees
+
+A custom role can [hide a field or make it read-only](/guides/api-keys/#roles) on a content type.
+Someone with that role sees the entry form as their role allows:
+
+- A **hidden** field isn't shown at all, and the form doesn't ask for it even when it's required:
+  saving keeps whatever it holds.
+- A **read-only** field shows its value, read-only, with "Your role can't change this field" under
+  it. It stays in the tab order so a screen reader still reads it. Saving keeps its value; a
+  required one that holds a value never stops a save.
+- **Generate**, **Canvas** mapping and **AI assist** only offer and fill the fields the role can
+  change.
+- Field rules apply to a whole field, so a read-only or hidden **Blocks** field covers every block
+  in it: the canvas opens for review, says which field the role can't change, and links to the
+  form for the rest.
+
+The admin reads these rules from the API (`GET /spaces/{space}/auth/me`, `fieldRules`), and the
+API still refuses a change to a field the role can't write, whatever sends it.
+
 ## The last administrator
 
 A space that has an administrator always keeps one. The last one can't be demoted, turned off,

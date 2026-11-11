@@ -84,6 +84,7 @@ const ROUTES: readonly (readonly [name: string, path: string])[] = [
   ['settings: redirects', '/settings/redirects'],
   ['settings: menus', '/settings/menus'],
   ['settings: trash', '/settings/trash'],
+  ['settings: ai', '/settings/ai'],
   ['settings: ai actions', '/settings/ai-actions'],
   ['settings: functions', '/settings/functions'],
   ['settings: extensions', '/settings/extensions'],
@@ -593,6 +594,83 @@ test('a role’s content access sheet has no accessibility violations', async ({
   await scan(page, testInfo);
 });
 
+// Promotions: a waiting promotion's record, opened from its row by pointer and by keyboard (its
+// reasons, the risk check, what it pins, Withdraw for its requester), withdrawn, then the Promote
+// card once Compare has listed what differs (the environment selects, the checkbox groups).
+test('a promotion’s record and the Promote card have no accessibility violations', async ({
+  page,
+  request,
+}, testInfo) => {
+  const env = `promo${Date.now()}`;
+  const made = await api(request, 'POST', `/spaces/${SPACE}/environments`, { id: env, name: env });
+  expect(made.ok(), await made.text()).toBe(true);
+  const merged = await api(request, 'POST', `/spaces/${SPACE}/merge`, {
+    source: 'main',
+    target: env,
+    contentTypes: ['article'],
+    entries: [],
+  });
+  expect(merged.ok(), await merged.text()).toBe(true);
+  const entry = await api(request, 'POST', `/spaces/${SPACE}/environments/${env}/entries`, {
+    contentTypeApiId: 'article',
+    fields: { title: { 'en-US': 'Promoted for the scan' } },
+  });
+  expect(entry.ok(), await entry.text()).toBe(true);
+  const { entry: created } = (await entry.json()) as { entry: { id: string } };
+  // Into main, so it waits for someone else's approval.
+  const asked = await api(request, 'POST', `/spaces/${SPACE}/promotions`, {
+    source: env,
+    target: 'main',
+    entries: [created.id],
+    blocks: false,
+  });
+  expect(asked.ok(), await asked.text()).toBe(true);
+  const { id } = (await asked.json()) as { id: string };
+
+  // The whole row opens the record: a press on its meta line, away from the title, and Enter on
+  // its one button, named for the promotion.
+  await openCms(page, '/settings/environments');
+  const open = page.getByRole('button', {
+    name: new RegExp(
+      `^Open promotion ${env} → main, 1 entry, awaiting approval, requested by you `,
+    ),
+  });
+  const row = page.getByRole('listitem').filter({ has: open });
+  await row.scrollIntoViewIfNeeded();
+  const box = await row.boundingBox();
+  if (!box) throw new Error('the row has no box');
+  // Scrolled in, then pressed on its meta line, past the title: the stretched button takes it.
+  await row.click({ position: { x: box.width * 0.6, y: box.height - 10 } });
+  const sheet = page.getByRole('dialog');
+  await expect(sheet.getByText('Why it needs approval')).toBeVisible();
+  await expect(page).toHaveURL(new RegExp(`promotion=${id}`));
+  await page.keyboard.press('Escape');
+  await expect(sheet).toBeHidden();
+  await open.focus();
+  await page.keyboard.press('Enter');
+  // Its requester's view: Withdraw instead of a decision.
+  await expect(sheet.getByRole('button', { name: 'Withdraw request' })).toBeVisible();
+  await scan(page, testInfo);
+
+  await sheet.getByRole('button', { name: 'Withdraw request' }).click();
+  await expect(sheet.getByText('Withdraw this request?')).toBeVisible();
+  await sheet.getByRole('button', { name: 'Withdraw request' }).click();
+  await expect(sheet.getByText(/^Withdrawn by you,/)).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(sheet).toBeHidden();
+  await expect(
+    page.getByRole('button', {
+      name: new RegExp(`^Open promotion ${env} → main, 1 entry, withdrawn, requested by you `),
+    }),
+  ).toBeVisible();
+  await page.getByRole('combobox', { name: 'Source environment to promote from' }).click();
+  await page.getByRole('option', { name: env, exact: true }).click();
+  // The second Compare: Compare & merge's comes first.
+  await page.getByRole('button', { name: 'Compare', exact: true }).nth(1).click();
+  await expect(page.getByRole('group', { name: /^Entries/ })).toBeVisible();
+  await scan(page, testInfo);
+});
+
 // An unpublished asset's share dialog: the warning in place of the form, over the sheet.
 test('the share dialog for an unpublished asset has no accessibility violations', async ({
   page,
@@ -768,6 +846,38 @@ test('the content type dialog has no accessibility violations', async ({ page },
     .first()
     .click();
   await expect(page.getByRole('dialog')).toBeVisible();
+  await scan(page, testInfo);
+});
+
+test('the content type dialog refusing a stale save has no accessibility violations', async ({
+  page,
+  request,
+}, testInfo) => {
+  const stamp = Date.now();
+  const type = {
+    apiId: `axestale${stamp}`,
+    name: `Axe stale ${stamp}`,
+    displayField: 'title',
+    fields: [
+      {
+        apiId: 'title',
+        name: 'Title',
+        type: 'Symbol',
+        localized: false,
+        required: true,
+        position: 0,
+      },
+    ],
+  };
+  expect((await api(request, 'POST', `${MGMT}/content-types`, type)).status()).toBeLessThan(300);
+  await openCms(page, '/content');
+  await page.getByRole('button', { name: `Edit “${type.name}”` }).click();
+  const dialog = page.getByRole('dialog', { name: 'Edit content type' });
+  await expect(dialog).toBeVisible();
+  const theirs = { ...type, description: 'Theirs' };
+  expect((await api(request, 'POST', `${MGMT}/content-types`, theirs)).status()).toBeLessThan(300);
+  await dialog.getByRole('button', { name: 'Save changes' }).click();
+  await expect(dialog.getByRole('alert')).toContainText('changed since you opened it');
   await scan(page, testInfo);
 });
 
@@ -1108,6 +1218,42 @@ test('plugin capability checkboxes are named in a real browser', async ({ page }
     await expect(page.getByRole('checkbox', { name: label })).toBeVisible();
   }
   await expect(page.getByRole('checkbox', { name: 'Call external services' })).toBeEnabled();
+});
+
+test('the plugin consent screen lists operations with no accessibility violations', async ({
+  page,
+}, testInfo) => {
+  await openCms(page, '/settings/plugins');
+  await page.getByRole('button', { name: 'Install plugin' }).click();
+  await page.getByLabel(/manifest/i).setInputFiles({
+    name: 'plugin.json',
+    mimeType: 'application/json',
+    buffer: Buffer.from(
+      JSON.stringify({
+        manifestVersion: 2,
+        id: 'com.example.ops-a11y',
+        name: 'Operations probe',
+        version: '1.0.0',
+        capabilities: ['content:read'],
+        allowedHosts: [],
+        hooks: [],
+        entrypoint: 'index.js',
+        operations: [
+          {
+            name: 'audit',
+            title: 'Audit titles',
+            description: 'Lists entries with weak titles.',
+            requires: 'preview:read',
+            input: { type: 'object', properties: {} },
+          },
+        ],
+      }),
+    ),
+  });
+  const offered = page.getByRole('region', { name: 'It offers people and agents:' });
+  await expect(offered).toBeVisible();
+  await expect(offered.getByText('Audit titles')).toBeVisible();
+  await scan(page, testInfo);
 });
 
 test('the plugin settings sheet has no accessibility violations', async ({

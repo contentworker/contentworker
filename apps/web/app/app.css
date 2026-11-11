@@ -791,6 +791,57 @@
   }
 }
 
+/* A read-only field in the entry form (EntryForm's `data-readonly`: `role` when the person's role
+   holds it, `rule` while a rule on its siblings does): it shows its value but takes no edit, so
+   it gives up the input's fill for a dashed edge and its text goes muted, where an editable field
+   keeps both. Every control the field draws: text, number, date and select inputs, a picker's
+   search, a checkbox, rich text. It sits outside the cascade layers
+   on purpose, like the touch-size rule above, so it outranks the controls' own `bg-input/50` and
+   `border-transparent` utilities; the rules after it give back what it must not take (focus, an
+   error's red, a ticked box's brand). The edge is three quarters of the muted ink: 3:1 on paper,
+   card and muted, both themes, as a field's edge must be. */
+[data-readonly]
+  :is(
+    input:not([type="checkbox"], [type="radio"], [type="hidden"]),
+    textarea,
+    select,
+    [data-slot="checkbox"],
+    [data-slot="rich-text"]
+  ) {
+  background-color: transparent;
+  border: 1px dashed color-mix(in oklab, var(--muted-foreground) 75%, transparent);
+  color: var(--muted-foreground);
+}
+[data-readonly] [data-slot="rich-text"] .ProseMirror {
+  color: var(--muted-foreground);
+}
+/* Nothing to open: the select's chevron goes with the fill. */
+[data-readonly] [data-slot="native-select-icon"] {
+  visibility: hidden;
+}
+/* A ticked box keeps its brand inside the dashed edge, and the fieldset's fade isn't doubled. */
+[data-readonly] [data-slot="checkbox"] {
+  opacity: 1;
+}
+[data-readonly] [data-slot="checkbox"]:is([data-checked], [data-state="checked"]) {
+  background-color: var(--brand);
+  color: var(--brand-foreground);
+}
+/* A refusal still draws in red, and focus in the ring's colour. */
+[data-readonly] :is(input, textarea, select, [data-slot])[aria-invalid="true"] {
+  border-color: var(--destructive);
+}
+[data-readonly] :is(input, textarea, select, .ProseMirror):focus-visible {
+  border-color: var(--ring);
+}
+
+/* Rich text draws its focus on its box (the editable area draws no outline of its own), as the
+   inputs do: the ring's edge and its 30% halo. */
+[data-slot="rich-text"]:has(.ProseMirror:focus-visible) {
+  border-color: var(--ring);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--ring) 30%, transparent);
+}
+
 /* A page that is slow to arrive: a link-blue rule sweeping under the top bar (shell.tsx), held
    still where motion is reduced. */
 @keyframes cw-pending {

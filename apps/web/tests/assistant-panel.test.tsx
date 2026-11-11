@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const home = { space: 'sp_1', environment: 'main', locale: 'en-US' };
 let conn = home;
 const client = vi.hoisted(() => ({
+  getAiSettings: vi.fn<() => Promise<unknown>>(),
   diffVersions: vi.fn<(id: string, from: unknown, to: unknown) => Promise<unknown>>(),
   getEntry: vi.fn<(id: string) => Promise<unknown>>(),
   listContentTypes: vi.fn(async () => [] as unknown[]),
@@ -166,6 +167,32 @@ beforeEach(() => {
   localStorage.clear();
 });
 afterEach(() => vi.useRealTimers());
+
+describe('with Coworker turned off for the space', () => {
+  it('says so in place of the message box and its suggestions, naming Settings → AI', async () => {
+    const { DEFAULT_AI_SETTINGS } = await import('@contentworker/domain');
+    client.getAiSettings.mockResolvedValue({
+      ...DEFAULT_AI_SETTINGS,
+      version: 1,
+      capabilities: {
+        ...DEFAULT_AI_SETTINGS.capabilities,
+        assistant: { enabled: false, tier: null, guidance: null },
+      },
+    });
+    scopeState = 'ready';
+    chat.messages = [];
+    queries.clear();
+    renderPanel();
+    await screen.findByText('Coworker is off for this space');
+    expect(screen.queryByRole('textbox', { name: 'Message Coworker' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'How do releases work?' })).toBeNull();
+    expect(
+      screen.getAllByText(/A space administrator can turn it on in Settings → AI/).length,
+    ).toBeGreaterThan(0);
+    client.getAiSettings.mockReset();
+    queries.clear();
+  });
+});
 
 describe('first run with no space yet', () => {
   const inRouter = (ui: React.ReactNode) =>
@@ -868,6 +895,31 @@ describe('a card’s focus', () => {
       </>,
     );
     expect(document.activeElement).toBe(field);
+  });
+
+  it('asks for focus again when it could not take it the first time', async () => {
+    // First render: the card may not take focus (its page hasn't claimed it direct, and focus is in a
+    // field). Marking the ask spent then would leave the safe choice unfocused for good.
+    const view = render(
+      <MemoryRouter>
+        {/* biome-ignore lint/a11y/noAutofocus: the field has focus when the card arrives */}
+        <input aria-label="Somewhere else" autoFocus />
+        <ActionCard part={card()} respond={vi.fn()} actionKey="m1:0" direct={false} />
+      </MemoryRouter>,
+    );
+    const field = screen.getByRole('textbox', { name: 'Somewhere else' });
+    await screen.findByRole('button', { name: 'Not now' });
+    expect(document.activeElement).toBe(field);
+    field.blur();
+    view.rerender(
+      <MemoryRouter>
+        <input aria-label="Somewhere else" />
+        <ActionCard part={card()} respond={vi.fn()} actionKey="m1:0" direct />
+      </MemoryRouter>,
+    );
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Not now' })),
+    );
   });
 
   it('takes focus on a cold open only once the panel has opened', async () => {

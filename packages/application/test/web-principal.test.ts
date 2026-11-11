@@ -24,7 +24,7 @@ const admin = { sub: 'usr_9', email: 'boss@example.com', role: 'admin' as const 
 describe('principalForWebUser', () => {
   it('resolves a team member to their role in the space', async () => {
     const ctx = await setup();
-    await addMember(ctx, 's1', { email: 'ed@example.com', name: 'Ed', role: 'viewer' });
+    await addMember(ctx, 's1', { email: 'ed@example.com', name: 'Ed', role: 'viewer' }, 'system');
     const p = await principalForWebUser(ctx, 's1', member);
     expect(p).toMatchObject({ spaceId: 's1', kind: 'user', subject: 'usr_1' });
     expect(p.scopes).toContain(SCOPES.previewRead);
@@ -34,8 +34,13 @@ describe('principalForWebUser', () => {
   it('refuses a member who is not on the team, or is disabled', async () => {
     const ctx = await setup();
     await expect(principalForWebUser(ctx, 's1', member)).rejects.toBeInstanceOf(ForbiddenError);
-    const m = await addMember(ctx, 's1', { email: 'ed@example.com', name: 'Ed', role: 'editor' });
-    await updateMember(ctx, 's1', m.id, { disabled: true }, NO_SSO);
+    const m = await addMember(
+      ctx,
+      's1',
+      { email: 'ed@example.com', name: 'Ed', role: 'editor' },
+      'system',
+    );
+    await updateMember(ctx, 's1', m.id, { disabled: true }, NO_SSO, 'system');
     await expect(principalForWebUser(ctx, 's1', member)).rejects.toBeInstanceOf(ForbiddenError);
   });
 

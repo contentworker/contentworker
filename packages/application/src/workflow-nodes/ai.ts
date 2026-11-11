@@ -12,6 +12,7 @@
  */
 
 import {
+  AiCapabilityDisabledError,
   type AssessAnswers,
   type AssessQuestions,
   assessBranch,
@@ -37,6 +38,7 @@ import { decide } from '../ai-decide';
 import { generateJson } from '../ai-json';
 import { describeFieldForModel, UNTRUSTED_CONTENT_GUARD, wrapUntrusted } from '../ai-prompt';
 import { type AiProvenance, isUncheckedFallback } from '../ai-provenance';
+import { aiCapability } from '../ai-settings';
 import { autofillField, suggestEntryTags, summarizeEntry, translateEntry } from '../content-ai';
 import { moderationQuestions, moderationThreshold, moderationVerdict } from '../moderation';
 import { defaultLocaleOf, guard, isRecord, loadRunEntry, num, runForModel, str } from './support';
@@ -53,7 +55,16 @@ function aiOf(i: ExecInput): AIProvider {
   );
 }
 
-const call = (i: ExecInput, prompt: string) => ({ prompt, retry: i.retriesLeft });
+/**
+ * A model call's options in a run: its prompt id, retried while the step has attempts left, under
+ * the space's `workflows` setting (turned off, the node's heuristic answers, recorded as a
+ * `disabled` fallback; its tier stands in for the node's).
+ */
+const call = async (i: ExecInput, prompt: string) => ({
+  prompt,
+  retry: i.retriesLeft,
+  policy: await aiCapability(i.ctx, i.scope, 'workflows'),
+});
 
 /** The decision model the run can use: the node deps', else the context's. */
 const decisionsOf = (i: ExecInput) => i.deps.decisions ?? i.ctx.decisions;
@@ -134,6 +145,8 @@ async function viaUseCase<T>(
     const reason = err instanceof Error ? err.message : String(err);
     // A budget refusal or a provider failure on the last attempt: answer, don't block the run.
     if (err instanceof RateLimitedError) return noop(heuristic(`budget: ${reason}`));
+    // The space turned this capability off (translation, writing help): nothing to retry.
+    if (err instanceof AiCapabilityDisabledError) return noop(heuristic(`disabled: ${reason}`));
     if (i.retriesLeft) throw err;
     return noop(heuristic(reason));
   }
@@ -296,7 +309,7 @@ export const AI_EXECUTORS: Record<string, Exec> = {
           },
         },
         {
-          ...call(i, 'workflow.classify'),
+          ...(await call(i, 'workflow.classify')),
           fallback: () => {
             const hit = keywordLabel();
             const label = hit ?? (labels[0] as string);
@@ -335,7 +348,7 @@ export const AI_EXECUTORS: Record<string, Exec> = {
         },
       },
       {
-        ...call(i, 'workflow.classify'),
+        ...(await call(i, 'workflow.classify')),
         fallback: () => {
           const hit = keywordLabel();
           return { label: hit ?? (labels[0] as string), confidence: hit ? 0.7 : 0.3 };
@@ -413,7 +426,7 @@ export const AI_EXECUTORS: Record<string, Exec> = {
           },
         },
         {
-          ...call(i, 'workflow.router'),
+          ...(await call(i, 'workflow.router')),
           fallback: () => ({ route: choiceAnswer(allowed, allowed[0] as string, 0.5) }),
         },
       );
@@ -488,7 +501,7 @@ export const AI_EXECUTORS: Record<string, Exec> = {
         },
       },
       {
-        ...call(i, 'workflow.router'),
+        ...(await call(i, 'workflow.router')),
         fallback: () => ({
           route: allowed[0] as string,
           reason: 'Routine entry; nothing unusual stands out.',
@@ -596,7 +609,7 @@ export const AI_EXECUTORS: Record<string, Exec> = {
           questions: toDecisionQuestions(questions),
         },
         {
-          ...call(i, 'workflow.assess'),
+          ...(await call(i, 'workflow.assess')),
           fallback: () => fromAssessAnswers(assessHeuristic(questions, state)),
         },
       );
@@ -622,7 +635,7 @@ export const AI_EXECUTORS: Record<string, Exec> = {
         },
       },
       {
-        ...call(i, 'workflow.assess'),
+        ...(await call(i, 'workflow.assess')),
         fallback: () => ({ answers: assessHeuristic(questions, state) }),
       },
     );
@@ -753,7 +766,7 @@ export const AI_EXECUTORS: Record<string, Exec> = {
         i.scope,
         { state: text || '(no text)', tier: 'fast', questions },
         {
-          ...call(i, 'workflow.moderate'),
+          ...(await call(i, 'workflow.moderate')),
           fallback: () => {
             const hit = new Set(
               keywordHits().map((t) => MODERATION_TERM_CATEGORY[t] ?? 'other_unsafe'),
@@ -814,7 +827,7 @@ export const AI_EXECUTORS: Record<string, Exec> = {
         },
       },
       {
-        ...call(i, 'workflow.moderate'),
+        ...(await call(i, 'workflow.moderate')),
         fallback: () => {
           const hits = keywordHits();
           return { flagged: hits.length > 0, categories: hits.length ? ['keyword'] : [] };
@@ -879,12 +892,16 @@ export const AI_EXECUTORS: Record<string, Exec> = {
     for (const f of empty)
       properties[f.apiId] = { type: 'string', description: describeFieldForModel(f) };
     const text = entryText(run);
+    const opts = await call(i, 'workflow.enrich');
     const r = await generateJson<Record<string, unknown>>(
       i.ctx,
       aiOf(i),
       i.scope,
       {
-        system: `You work on CMS entries. Generate concise, natural values for the requested fields, consistent with the provided context. ${UNTRUSTED_CONTENT_GUARD}`,
+        // Values it writes take the space's workflow guidance; the deciding nodes above don't.
+        system: opts.policy.system(
+          `You work on CMS entries. Generate concise, natural values for the requested fields, consistent with the provided context. ${UNTRUSTED_CONTENT_GUARD}`,
+        ),
         prompt: `Context:\n${wrapUntrusted(text || '(no text)')}\n\nGenerate values for: ${empty
           .map((f) => f.name)
           .join(', ')}.`,
@@ -897,7 +914,7 @@ export const AI_EXECUTORS: Record<string, Exec> = {
           additionalProperties: false,
         },
       },
-      { ...call(i, 'workflow.enrich'), fallback: () => ({}) },
+      { ...opts, fallback: () => ({}) },
     );
     const generated: EntryFields = {};
     for (const f of empty) {

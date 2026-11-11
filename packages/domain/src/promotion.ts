@@ -1,3 +1,5 @@
+import { DomainError, type FieldIssue } from './errors';
+
 /**
  * Promoting content from one environment to another (staging → main, say).
  *
@@ -65,6 +67,9 @@ export interface PromotionAssessment {
   readonly fallback?: string;
 }
 
+/** The decision model's risk levels, `PromotionAssessment.risk` 0 … 3. */
+export const PROMOTION_RISK_LEVELS = ['Routine', 'Minor', 'Significant', 'High-risk'] as const;
+
 export interface PromotionRisk {
   /** The target is `main` or an alias points at it. */
   readonly protectedTarget: boolean;
@@ -87,6 +92,34 @@ export interface PromotionResult {
   readonly gated: readonly string[];
   /** Whether the target's block catalog and config changed: absent when it carried neither. */
   readonly blocks?: { readonly catalog: boolean; readonly config: boolean };
+  /**
+   * On a failed apply, why the target refused an entry: each issue with the entry and its type
+   * (`error` names the entry alone). Only a principal that reads every field of the promotion's
+   * types reads the record (`canReadPromotion`), so the issues need no hiding per reader.
+   */
+  readonly issues?: readonly PromotionIssue[];
+}
+
+/** A field issue the target raised against a promoted entry, as a failed apply records it. */
+export interface PromotionIssue extends FieldIssue {
+  readonly entryId: string;
+  readonly contentTypeApiId: string;
+}
+
+/**
+ * An apply that stopped after a write landed in the target: the promotion is `failed`, with its
+ * `error` and what it wrote. Not a success (something is half-promoted), and not a refusal
+ * (something changed): the error carries the record, so a caller can see what was written.
+ */
+export class PromotionFailedError extends DomainError {
+  readonly promotion: Promotion;
+  constructor(promotion: Promotion) {
+    super(
+      'promotion_failed',
+      `Promotion ${promotion.id} stopped partway: ${promotion.error ?? 'it failed'}`,
+    );
+    this.promotion = promotion;
+  }
 }
 
 export interface Promotion {

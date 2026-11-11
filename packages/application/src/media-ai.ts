@@ -4,6 +4,7 @@ import { recordAgentRun } from './agent-audit';
 import { generateWithBudget } from './ai-budget';
 import { answerStrings, conformingAnswer } from './ai-json';
 import { UNTRUSTED_CONTENT_GUARD, wrapUntrusted } from './ai-prompt';
+import { requireAiCapability } from './ai-settings';
 import { getAsset, setAssetMetadata } from './assets';
 import type { AppContext } from './context';
 import { createTag, listTags } from './taxonomy';
@@ -60,6 +61,7 @@ export async function generateAltText(
   id: string,
   input: GenerateAltTextInput = {},
 ): Promise<AltTextResult> {
+  const policy = await requireAiCapability(ctx, scope, 'media');
   const asset = await getAsset(ctx, scope, id);
   assertImage(asset.file.contentType);
   const config = await ctx.store.spaces.getConfig(scope);
@@ -86,9 +88,9 @@ export async function generateAltText(
     .join('\n');
 
   const result = await generateWithBudget(ctx, ai, scope, {
-    system,
+    system: policy.system(system),
     prompt,
-    tier: input.tier ?? 'fast',
+    tier: policy.tier('fast', input.tier),
     maxTokens: 256,
     outputSchema: ALT_TEXT_SCHEMA,
   });
@@ -159,6 +161,7 @@ export async function autoTagAsset(
   id: string,
   input: AutoTagInput = {},
 ): Promise<AutoTagResult> {
+  const policy = await requireAiCapability(ctx, scope, 'media');
   const asset = await getAsset(ctx, scope, id);
   assertImage(asset.file.contentType);
   const config = await ctx.store.spaces.getConfig(scope);
@@ -183,9 +186,9 @@ export async function autoTagAsset(
     .join('\n');
 
   const result = await generateWithBudget(ctx, ai, scope, {
-    system,
+    system: policy.system(system),
     prompt,
-    tier: input.tier ?? 'fast',
+    tier: policy.tier('fast', input.tier),
     maxTokens: 512,
     outputSchema: AUTO_TAG_SCHEMA,
   });

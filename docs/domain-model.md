@@ -1638,6 +1638,20 @@ exact event type. `coversEnvironment(webhook, environmentId)` is true when the w
 space-wide (`environmentId: null`) or scoped to that environment; dispatch and every webhook read
 under a scope apply it. Delivery attempts are recorded as `WebhookDelivery` rows for observability.
 
+## AI settings
+
+`AiSettings` (`packages/domain/src/ai/ai-settings.ts`): a space's settings per AI capability
+(`AI_CAPABILITIES`: `drafting`, `layout`, `assistant`, `field-assist`, `translation`, `media`,
+`search`, `agents`, `workflows`), each `{ enabled, tier, guidance }` (`AiCapabilitySetting`), with
+the document's `version`, `updatedAt` and `updatedBy`. Space-scoped: one row in
+`space_ai_settings`, version 0 and every capability on (`DEFAULT_AI_SETTINGS`) before the first set.
+A stored document that predates a capability reads it at its default (`aiCapabilitiesFrom`).
+`applyAiSettingsInput` checks a set (each named capability replaced whole; 422 for an unknown id or
+tier, or guidance over `AI_GUIDANCE_MAX_CHARS` once `normalizeAiGuidance` has run), and
+`diffAiSettings` names the parts a set changed for its audit row. A capability turned off refuses
+with `AiCapabilityDisabledError` (`ai_capability_disabled`, HTTP 409). What each capability covers
+and how the use-cases apply it: [AI settings per capability](./ai-agents-and-search.md#ai-settings-per-capability).
+
 ## Domain events
 
 `DomainEvent` (`packages/domain/src/events.ts`) is a discriminated union appended to the

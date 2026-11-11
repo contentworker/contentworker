@@ -500,10 +500,10 @@ describe('publish gating', () => {
     await saveWorkflowDraft(ctx, scope, wf, { gatesPublish: true });
     await publishWorkflowVersion(ctx, scope, wf);
 
-    const snapshot = await exportSnapshot(ctx, scope);
+    const snapshot = await exportSnapshot(ctx, SYSTEM_CALLER, scope);
     await createEnvironment(ctx, 'blog', 'copy');
     const copy = { spaceId: 'blog', environmentId: 'copy' };
-    await importSnapshot(ctx, copy, snapshot);
+    await importSnapshot(ctx, SYSTEM_CALLER, copy, snapshot);
     expect(await live(copy, id)).toBeTruthy();
     // And in the copy, the gate holds for ordinary publishes.
     const { entry } = await createEntry(ctx, copy, {

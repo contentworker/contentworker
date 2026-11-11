@@ -58,7 +58,7 @@ import {
 } from '~/cms/lib/block-config-draft';
 import { useClient } from '~/cms/lib/client-context';
 import { plural } from '~/cms/lib/format';
-import { ApiError, apiErrorMessage, type TeamPerson } from '~/cms/lib/management';
+import { ApiError, apiErrorMessage, conflictVersion, type TeamPerson } from '~/cms/lib/management';
 import { useInvalidate, useScopedQuery } from '~/cms/lib/queries';
 import { useToast } from '~/cms/lib/toast';
 
@@ -182,9 +182,7 @@ export function BlockRules({ catalog, placeName, blockName, people }: BlockRules
         // Read again, shown as they are now: the change is made again over theirs.
         reseed.current = true;
         await invalidate(['block-config']);
-        const now = (err.body as { error?: { details?: { version?: unknown } } } | undefined)?.error
-          ?.details?.version;
-        setOvertaken(typeof now === 'number' ? now : (config.version ?? 0) + 1);
+        setOvertaken(conflictVersion(err) ?? (config.version ?? 0) + 1);
         return;
       }
       const issues = (

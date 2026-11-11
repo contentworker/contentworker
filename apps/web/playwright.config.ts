@@ -17,8 +17,8 @@ const DEVICES = ['iphone', 'iphone-landscape', 'ipad', 'ipad-landscape', 'deskto
 /**
  * CI runs the suite in three jobs at once, each on its own server, named by `E2E_PART`:
  * `webkit` (the iPhone, iPad and desktop projects, then the projects that sign the first admin
- * up: `auth`, `invites` and `oauth`), `axe` (the accessibility sweep and the modal focus specs,
- * the desktop project's too) and `cms` (every other CMS spec, so a new one lands here). A fourth
+ * up: `auth`, `invites`, `field-access` and `oauth`), `axe` (the accessibility sweep and the
+ * modal focus specs, the desktop project's too) and `cms` (every other CMS spec, so a new one lands here). A fourth
  * job for the sign-in projects alone spent more on its runner's setup (checkout, install, the
  * browser's system libraries, a server start) than on its tests, so they ride at the end of
  * `webkit`, which waits for its device projects as the whole suite does. Unset, the whole suite
@@ -50,6 +50,8 @@ export default defineConfig({
   use: {
     baseURL: `http://localhost:${PORT}`,
     trace: 'retain-on-failure',
+    // Smooth scrolls only add timing: a click or a check made mid-scroll finds the page moving.
+    reducedMotion: 'reduce',
   },
   projects: [
     {
@@ -64,6 +66,8 @@ export default defineConfig({
         'modals-phone.spec.ts',
         // The rules' diff is one column on a phone.
         'block-config-code.spec.ts',
+        // The Access sheet comes from the bottom: its conflict and reload in reach.
+        'role-save-conflict.spec.ts',
       ],
       use: { ...devices['iPhone 15'] },
     },
@@ -97,7 +101,7 @@ export default defineConfig({
       testMatch:
         PART === 'axe'
           ? AXE
-          : /(cms|workflows|space-access|first-space|block-patch-card|accessibility|contrast-settle|modal-focus|live-preview|canvas-editor|canvas-drag|locked-regions|entry-save-conflict|block-config-code)\.spec\.ts/,
+          : /(cms|workflows|space-access|first-space|block-patch-card|accessibility|contrast-settle|modal-focus|live-preview|canvas-editor|canvas-drag|locked-regions|entry-save-conflict|role-save-conflict|block-config-code|ai-settings)\.spec\.ts/,
       testIgnore: PART === 'cms' ? AXE : undefined,
       use: { ...devices['Desktop Chrome'] },
     },
@@ -113,6 +117,15 @@ export default defineConfig({
       // signs in and accepts. Its own people, so it runs beside `oauth`.
       name: 'invites',
       testMatch: 'invites.spec.ts',
+      dependencies: ['auth'],
+      use: { ...devices['Desktop Chrome'] },
+    },
+    {
+      // A person whose role hides one field and makes another read-only, joined from an
+      // invitation once sign-in is on: what they see in the entry form, and that a save goes
+      // through. Its own people, so it runs beside `invites` and `oauth`.
+      name: 'field-access',
+      testMatch: 'field-access.spec.ts',
       dependencies: ['auth'],
       use: { ...devices['Desktop Chrome'] },
     },

@@ -1,6 +1,9 @@
 import type {
   AgentReview,
   AgentReviewStatus,
+  AiCapability,
+  AiCapabilitySetting,
+  AiSettings,
   Asset,
   AssetCollection,
   AssetFolder,
@@ -36,12 +39,15 @@ import type {
   EntryVersion,
   EntryWorkflowState,
   FieldDiff,
+  FieldRulesByType,
   FilterOp,
   FrontendEndpoints,
   GraphIssue,
   Menu,
   MenuItemInput,
   MenuLink,
+  Promotion,
+  PromotionStatus,
   Redirect,
   RedirectChain,
   RedirectInput,
@@ -252,6 +258,12 @@ export interface PrincipalInfo {
     readonly types: Readonly<Record<string, readonly ContentAction[]>>;
     readonly others: readonly ContentAction[];
   };
+  /**
+   * In a space: the fields its role hides (`deniedFields`) or makes read-only (`readOnlyFields`)
+   * per content type a grant names, and on every other type, as the api resolves them
+   * (`fieldRulesFor`). Names only.
+   */
+  readonly fieldRules?: FieldRulesByType;
 }
 
 /**
@@ -741,7 +753,14 @@ export interface RoleSummary {
   readonly scopes: readonly string[];
   /** Per content type; `deniedActions` withholds the delete and unpublish write and publish bring. */
   readonly contentGrants: readonly ContentTypeGrant[];
+  /** One more at each save: sent back as `expectedVersion`, so a save over someone else's is a 409. */
+  readonly version: number;
 }
+
+/** A role replaced whole; with `expectedVersion`, refused (409) if it was saved since. */
+export type RoleUpdate = Partial<Omit<RoleSummary, 'id' | 'version'>> & {
+  readonly expectedVersion?: number;
+};
 
 export interface PreviewLinkResult {
   /** The entry on the Preview API. */
@@ -1042,6 +1061,8 @@ export interface InstalledPluginSummary {
   readonly needsReapproval?: boolean;
   readonly allowedHosts: readonly string[];
   readonly hooks: readonly string[];
+  /** What it offers callers by name (manifest v2), and the scope each one requires. */
+  readonly operations?: readonly PluginOperationSummary[];
   readonly checksum: string;
   readonly enabled: boolean;
   readonly installedAt: string;
@@ -1157,6 +1178,12 @@ export interface TrashSettings {
   readonly retentionDays: number | null;
 }
 
+/** What `PUT /spaces/:space/ai-settings` takes: each capability named is replaced whole. */
+export interface AiSettingsInput {
+  readonly expectedVersion: number;
+  readonly capabilities: Partial<Record<AiCapability, AiCapabilitySetting>>;
+}
+
 /** What `POST …/assets/bulk` runs over a selection of assets, as a job. */
 export type AssetBulkRequest =
   | { readonly action: 'move'; readonly ids: readonly string[]; readonly folderId: string | null }
@@ -1267,8 +1294,18 @@ export interface InspectedPluginPackage {
   readonly bundleBytes: number;
 }
 
+/** One operation a plugin offers, as its summary and its manifest both describe it. */
+export interface PluginOperationSummary {
+  readonly name: string;
+  readonly title: string;
+  readonly description: string;
+  /** The scope a caller holds to invoke it. */
+  readonly requires: string;
+}
+
 /** The manifest half of a plugin package, as authored. */
 export interface PluginManifestInput {
+  readonly manifestVersion?: number;
   readonly id: string;
   readonly name: string;
   readonly version: string;
@@ -1277,6 +1314,7 @@ export interface PluginManifestInput {
   readonly allowedHosts?: readonly string[];
   readonly hooks: readonly string[];
   readonly entrypoint: string;
+  readonly operations?: readonly PluginOperationSummary[];
 }
 
 /**
@@ -1368,20 +1406,50 @@ export class ApiError extends Error {
 }
 
 /**
+ * The version a save held to `expectedVersion` was refused over: the 409's `details.version`, the
+ * version stored now (0 when there is none). Undefined for any other error, a conflict that names
+ * no version (a value taken, a field entries still hold) included.
+ */
+export function conflictVersion(err: unknown): number | undefined {
+  if (!(err instanceof ApiError) || err.status !== 409 || err.code !== 'conflict') return undefined;
+  const v = (err.body as { error?: { details?: { version?: unknown } } } | undefined)?.error
+    ?.details?.version;
+  return typeof v === 'number' ? v : undefined;
+}
+
+/**
  * The fields a 422 named (`error.issues[].field`, e.g. `rights.expiresAt`), each with its first
  * message, so a form can say what is wrong beside the field. Empty for any other failure.
  */
 export function apiFieldIssues(err: unknown): Record<string, string> {
-  if (!(err instanceof ApiError) || err.status !== 422) return {};
-  const issues = (err.body as { error?: { issues?: unknown } } | undefined)?.error?.issues;
   const out: Record<string, string> = {};
-  if (!Array.isArray(issues)) return out;
-  for (const issue of issues as { field?: unknown; message?: unknown }[]) {
-    if (typeof issue.field === 'string' && typeof issue.message === 'string') {
-      out[issue.field] ??= issue.message;
-    }
-  }
+  for (const issue of apiIssues(err)) out[issue.field] ??= issue.message;
   return out;
+}
+
+/**
+ * Every issue a 422 named, in its order, for a screen that lists them all: a refusal can name one
+ * field many times (a merge's `contentTypes`, once per type it can't take). Empty otherwise.
+ */
+export function apiIssues(err: unknown): { field: string; message: string }[] {
+  if (!(err instanceof ApiError) || err.status !== 422) return [];
+  const issues = (err.body as { error?: { issues?: unknown } } | undefined)?.error?.issues;
+  if (!Array.isArray(issues)) return [];
+  return (issues as { field?: unknown; message?: unknown }[]).flatMap((issue) =>
+    typeof issue.field === 'string' && typeof issue.message === 'string'
+      ? [{ field: issue.field, message: issue.message }]
+      : [],
+  );
+}
+
+/**
+ * The promotion a request or approval stopped partway, when that is what the API answered (409
+ * `promotion_failed`, the record in `error.promotion`): something was written, so it is neither a
+ * success nor a refusal. Undefined for any other failure.
+ */
+export function failedPromotionOf(err: unknown): Promotion | undefined {
+  if (!(err instanceof ApiError) || err.status !== 409 || err.code !== 'promotion_failed') return;
+  return (err.body as { error?: { promotion?: Promotion } } | undefined)?.error?.promotion;
 }
 
 /** True when the API refused because the caller's role lacks the scope (403). */
@@ -1722,6 +1790,46 @@ export function createManagementClient(
     }): Promise<MergeResult> {
       return req('POST', `${spaceBase}/merge`, input, undefined, LARGE_LIMIT);
     },
+    /**
+     * The space's promotions, newest first (the 50 most recent; the API pages no further), or only
+     * those in one `status`. Needs content:publish.
+     */
+    async listPromotions(status?: PromotionStatus): Promise<Promotion[]> {
+      const qs = status ? `?status=${encodeURIComponent(status)}` : '';
+      return (await req<{ items: Promotion[] }>('GET', `${spaceBase}/promotions${qs}`)).items;
+    },
+    /** One promotion: what it pins, its risk check, and its decision and outcome. */
+    getPromotion(id: string): Promise<Promotion> {
+      return req('GET', `${spaceBase}/promotions/${encodeURIComponent(id)}`);
+    },
+    /**
+     * Requests a promotion source→target. The API pins what it copies and runs its risk check:
+     * one that needs no approval is applied in this request (`completed` or `failed`), one that
+     * does comes back `awaiting_approval`. A refusal (nothing would be safe to copy) is a 422.
+     */
+    requestPromotion(input: {
+      source: string;
+      target: string;
+      contentTypes?: string[];
+      entries?: string[];
+      blocks?: boolean;
+    }): Promise<Promotion> {
+      return req('POST', `${spaceBase}/promotions`, input, undefined, LARGE_LIMIT);
+    },
+    /** Approves a waiting promotion and applies it in this request (not by its requester). */
+    approvePromotion(id: string): Promise<Promotion> {
+      return req(
+        'POST',
+        `${spaceBase}/promotions/${encodeURIComponent(id)}/approve`,
+        undefined,
+        undefined,
+        LARGE_LIMIT,
+      );
+    },
+    /** Rejects a waiting promotion; nothing is copied. */
+    rejectPromotion(id: string): Promise<Promotion> {
+      return req('POST', `${spaceBase}/promotions/${encodeURIComponent(id)}/reject`);
+    },
     /** A page of the space's append-only audit trail, newest first (requires space:admin). */
     listAuditLog(
       query: AuditLogFilters & { limit?: number; cursor?: string } = {},
@@ -1757,9 +1865,16 @@ export function createManagementClient(
     getContentType(apiId: string): Promise<ContentType> {
       return req('GET', `${mgmt}/content-types/${apiId}`);
     },
-    /** Create or update a content type (the route is idempotent on apiId). */
-    saveContentType(draft: ContentTypeDraft): Promise<ContentType> {
-      return req('POST', `${mgmt}/content-types`, draft);
+    /**
+     * Create or update a content type (the route is idempotent on apiId). With `expectedVersion`
+     * (the `version` the edits started from, 0 for a new type), a save made since is a 409 naming
+     * the stored `version`, and nothing is saved.
+     */
+    saveContentType(
+      draft: ContentTypeDraft,
+      opts: { readonly expectedVersion?: number } = {},
+    ): Promise<ContentType> {
+      return req('POST', `${mgmt}/content-types`, { ...draft, ...opts });
     },
     publishContentType(apiId: string): Promise<ContentType> {
       return req('POST', `${mgmt}/content-types/${apiId}/published`);
@@ -1843,6 +1958,24 @@ export function createManagementClient(
       const entry = r.items.find((e) => e.id === id);
       if (!entry) throw new ApiError(404, `Entry ${id} was not found`);
       return entry;
+    },
+
+    /**
+     * Entries by id, their current (draft) versions, 100 to a request (`sys.id[in]` on the list
+     * route, as {@link getEntry} reads one): what a list of links names past the pickers' page.
+     * An id not in the environment is absent.
+     */
+    async getEntriesByIds(ids: readonly string[]): Promise<PreviewEntry[]> {
+      const out: PreviewEntry[] = [];
+      for (let i = 0; i < ids.length; i += 100) {
+        const part = ids.slice(i, i + 100);
+        const r = await req<{ items: PreviewEntry[] }>(
+          'GET',
+          `${preview}/entries?sys.id[in]=${part.map(encodeURIComponent).join(',')}&limit=${part.length}`,
+        );
+        out.push(...r.items);
+      }
+      return out;
     },
 
     /**
@@ -2878,10 +3011,12 @@ export function createManagementClient(
     getRole(id: string): Promise<RoleSummary> {
       return req('GET', `${spaceBase}/roles/${encodeURIComponent(id)}`);
     },
-    createRole(input: Omit<RoleSummary, 'id'> & { name: string }): Promise<RoleSummary> {
+    createRole(
+      input: Omit<RoleSummary, 'id' | 'version'> & { name: string },
+    ): Promise<RoleSummary> {
       return req('POST', `${spaceBase}/roles`, input);
     },
-    updateRole(id: string, input: Partial<RoleSummary>): Promise<RoleSummary> {
+    updateRole(id: string, input: RoleUpdate): Promise<RoleSummary> {
       return req('PUT', `${spaceBase}/roles/${encodeURIComponent(id)}`, input);
     },
     deleteRole(id: string): Promise<void> {
@@ -3382,6 +3517,15 @@ export function createManagementClient(
     setWorkflowSettings(input: { separateDuties: boolean }): Promise<{ separateDuties: boolean }> {
       return req('PUT', `${mgmt}/workflow-settings`, input);
     },
+    /** The space's AI settings, per capability (preview:read). Version 0, all on, before a set. */
+    getAiSettings(): Promise<AiSettings> {
+      return req('GET', `${spaceBase}/ai-settings`);
+    },
+    /** Sets the capabilities named, held to `expectedVersion` (space:admin; 409 when stale). */
+    setAiSettings(input: AiSettingsInput): Promise<{ settings: AiSettings; unchanged: boolean }> {
+      return req('PUT', `${spaceBase}/ai-settings`, input);
+    },
+
     getTrashSettings(): Promise<TrashSettings> {
       return req('GET', `${mgmt}/trash-settings`);
     },

@@ -573,11 +573,18 @@ describe('D1 store (contract)', () => {
     expect(principal.scopes).toEqual(['content:write', 'preview:read']);
     expect(principal.contentGrants?.[0]?.deniedFields).toEqual(['views']);
 
-    await updateRole(ctx, spaceId, role.id, {
-      name: 'Editor',
-      scopes: ['preview:read'],
-      contentGrants: [{ contentTypeApiId: '*', actions: ['read'] }],
-    });
+    await updateRole(
+      ctx,
+      spaceId,
+      role.id,
+      {
+        name: 'Editor',
+        scopes: ['preview:read'],
+        contentGrants: [{ contentTypeApiId: '*', actions: ['read'] }],
+      },
+      { sso: false },
+      'system',
+    );
     const after = await authenticate(ctx, hasher, token);
     expect(after.scopes).toEqual(['preview:read']);
     expect(after.contentGrants?.[0]?.contentTypeApiId).toBe('*');
@@ -599,11 +606,16 @@ describe('D1 store (contract)', () => {
     await expect(store.roles.save(dupe)).rejects.toThrow();
 
     // People: unique email per space, linked subject, role.
-    const ada = await addMember(ctx, spaceId, { email: 'ada@example.com', role: 'editor' });
+    const ada = await addMember(
+      ctx,
+      spaceId,
+      { email: 'ada@example.com', role: 'editor' },
+      'system',
+    );
     await expect(
-      addMember(ctx, spaceId, { email: 'ada@example.com', role: 'viewer' }),
+      addMember(ctx, spaceId, { email: 'ada@example.com', role: 'viewer' }, 'system'),
     ).rejects.toThrow();
-    await store.members.save({ ...ada, subject: 'sub-1' });
+    await store.members.save({ ...ada, subject: 'sub-1', version: 2 });
     expect(await store.members.getByEmail(spaceId, 'ada@example.com')).toMatchObject({
       id: ada.id,
       subject: 'sub-1',
@@ -634,7 +646,14 @@ describe('D1 store (contract)', () => {
       (await store.auth.list(spaceId)).find((k) => k.id === apiKey.id)?.roleId,
     ).toBeUndefined();
 
-    await store.members.delete(spaceId, ada.id);
+    // A key by id: only in its own space, and still there once revoked (a job's starter check
+    // tells a revoked key from one it never knew).
+    expect(await store.auth.get(spaceId, apiKey.id)).toMatchObject({ id: apiKey.id, spaceId });
+    expect(await store.auth.get(`other-${spaceId}`, apiKey.id)).toBeNull();
+    await store.auth.revoke(apiKey.id);
+    expect(await store.auth.get(spaceId, apiKey.id)).toMatchObject({ revoked: true });
+
+    await store.members.delete(spaceId, ada.id, 2);
     expect(await store.members.get(spaceId, ada.id)).toBeNull();
 
     // Deployment settings: compare-and-set.

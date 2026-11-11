@@ -72,7 +72,8 @@ Everything below is built and tested on v2.
   approvals with separation of duties, the copilot).
 - **AI.** Generation, canvas authoring, translate, summarize, autofill, tags, governed AI
   actions, the enrich/moderate/curate/repurpose agents and the review watcher on durable
-  workflows, agent schedules and reviews, per-space budgets (a stateful edge object), provenance,
+  workflows, agent schedules and reviews, per-space budgets (a stateful edge object), per-space
+  AI settings per capability (on or off, tier, fenced guidance), provenance,
   related and duplicate detection, hybrid and semantic search, RAG.
 - **Integration.** Signed webhooks with a delivery log, event-triggered functions, app
   extensions, sandboxed plugins in isolated edge workers (with per-plugin `kv:storage` and
@@ -118,17 +119,23 @@ Everything below is built and tested on v2.
   per version today) and identical bodies can share an object.
 - [ ] **Required plugins.** A per-plugin `required` flag so a plugin whose refusal is load-bearing
   blocks the write when it throws or times out, instead of being skipped.
-- [ ] **Refuse a stale content-type save.** A save sends every detail field, so a dialog opened
-  before someone else's save overwrites it (`group`, `description`, `agentInstructions`). Check
-  the type the caller read against the stored one and answer `409` when it changed, on both
-  surfaces.
+- [x] **Refuse a stale content-type save.** A save sends every detail field, so a dialog opened
+  before someone else's save overwrote it (`group`, `description`, `agentInstructions`). A save
+  now carries the `expectedVersion` it read (REST, MCP, the management SDK and `model apply`) and
+  is refused with a `409` naming the stored version when it changed; the admin's dialog keeps the
+  edits and offers to load the latest or copy them.
 - [ ] **Extension runtime: apps as packages.** Grow sandboxed plugins into installable packages
   that bring their own operations, workflow nodes, content types and admin UI, so integrations
   ship as packages on the runtime rather than in core. Seven PRs, each usable on its own:
   1. ~~**Asset scopes.**~~ Shipped: `assets:read` and `assets:write`, implied by `preview:read`
      and `content:write` when scopes resolve, so no stored key, role or token changes.
   2. **Manifest v2 and operations.** Schema validation, the approval screen, sync operations, and
-     REST, OpenAPI and MCP generated from one manifest.
+     REST, OpenAPI and MCP generated from one manifest. Shipped: manifest v2 with typed sync
+     operations (`app_operations_list`, `app_operation_invoke`, `POST …/apps/:plugin/operations/:op`,
+     a per-space OpenAPI document), run with the plugin's grant narrowed to the caller's, and a
+     hook's fetch capped at its remaining budget. Still planned: `async` operations on a durable
+     workflow returning a job id, and deployment-level connections with host-managed token
+     exchange (`caps.connection.fetch`).
   3. **Content models from packages.** Managed and seeded types with an owner, install and upgrade
      with a compatibility check; uninstall leaves every entry in place.
   4. **Workflow nodes.** App node types (`app:<package>/<node>`), the `poll` result, `external`
@@ -304,26 +311,45 @@ in-browser model, page-per-language translation, and rich text or styles stored 
 
 Found while building and reviewing M1 and M2. None blocks a release.
 
-- [ ] **Re-check a running job's starter.** Record who started a bulk job and check their access
-  again before each chunk, so a trash or purge job stops when its starter loses access.
-- [ ] **Audit promotion and cross-space clone.** Check both against per-type and field rules, as
-  imports, snapshots and merge now are.
-- [ ] **Delegated bearers and people.** Refuse invitations and member role changes from personal
+- [x] **Re-check a running job's starter.** A bulk job records who started it (`config.startedBy`:
+  a key id, a membership id, or the deployment) and resolves them again before each chunk, so a
+  trash or purge job whose key is revoked, or whose person is disabled or re-roled, stops as
+  `cancelled` (`starter_lost_access`) and is audited; system jobs and older rows run as before.
+- [x] **Audit promotion and cross-space clone.** Requesting, approving and rejecting a promotion
+  take every content type alike with no field rules, as merge does, and `lock` to copy entries
+  (a merge of entries takes `lock` too)
+  (the approver's grants are the ones in force at apply); a role limited per type sees only the promotions whose types it can
+  read in full; a clone checks its target space in the use-case.
+- [x] **Delegated bearers and people.** Refuse invitations and member role changes from personal
   access tokens and OAuth tokens, so a short-lived token can't create a lasting admin.
-- [ ] **Environment-wide checks in the use-cases.** Move `authorizeEveryContentType` from the HTTP
-  routes and MCP tools into the use-cases with a required principal, so a new surface can't skip it.
-- [ ] **Admin saves for read-only roles.** The editor sends every field, so a role with
-  `readOnlyFields` probably gets a 403 on save. Confirm it, and send only what the role may write.
-- [ ] **Linear email checks.** Replace the quadratic pattern in `isEmail` (`domain/auth/team.ts`) and
+- [x] **Environment-wide checks in the use-cases.** Snapshot export and import, clone, merge and
+  space export import check `authorizeEveryContentType` (and a clone's target space, and
+  `addLocales`) in the use-case, with a required caller (`SYSTEM_CALLER` for work already
+  authorized), so a new surface can't skip it.
+- [x] **Admin saves for read-only roles.** Confirmed: the editor sends every field it read, so a
+  role with `readOnlyFields` got a 403 on save. An update and its dry run now pass the stored
+  fields to `assertWritableFields`, which lets a read-only field through when every locale sent
+  holds its stored value (the save keeps it anyway); a changed value, or a denied field at any
+  value, is still refused. REST and MCP alike, so the form and canvas need no change.
+- [x] **Linear email checks.** Replace the quadratic pattern in `isEmail` (`domain/auth/team.ts`) and
   `security/credentials.ts`, as the `email` preset already was.
-- [ ] **Role version check.** A revision on `PUT /roles/:id`, closing the last read-then-write window
-  in the Access sheet.
-- [ ] **SDK paging.** `entries.list` sends `skip`, which the Preview list refuses; use `cursor` and
+- [x] **Role version check.** A `version` on every role and an optional `expectedVersion` on
+  `PUT /roles/:id` and `role_update` (a stale one is a `409` naming the version in force), with the
+  save a compare-and-set on it, so the Access sheet's save can't undo someone else's.
+- [x] **Person version check.** A `version` on every team member, with each save, removal and SSO
+  first-sign-in link a compare-and-set on it (the update never inserts, so a removed person stays
+  removed), and an optional `expectedVersion` on `PATCH /members/:id` and `role_preset_assign`, so
+  a change that read someone before an admin disabled, demoted or removed them can't undo it.
+- [x] **SDK paging.** `entries.list` sends `skip`, which the Preview list refuses; use `cursor` and
   return `nextCursor`.
 - [ ] **Flaky browser tests.** Find the cause of the webhook dialog, webhook deliveries and asset
   library tests that fail under a full parallel run and pass alone.
-- [ ] **Unused api email config.** Drop `EMAIL_FROM`, `EMAIL_FROM_NAME` and the `send_email` comment
-  from `apps/api/wrangler.jsonc`; nothing on the api sends email.
+- [x] **Unused api email config.** Dropped `EMAIL_FROM`, `EMAIL_FROM_NAME` and the `send_email`
+  comment from `apps/api/wrangler.jsonc`: the fleet binds `EMAIL` only on the engine and web, so
+  the api's `makeEmail` never had a sender to read them for.
+- [ ] **Last admin across rows.** Two demotions, disables or removals of the last two admins, made
+  at once, can both land: each member's compare-and-set guards only its own row. A team-level
+  version, bumped in the same unit as every write that changes who is an admin, would close it.
 
 #### Follow-ups from first-run onboarding
 
@@ -378,7 +404,7 @@ None blocks a release.
 
 - [ ] **AI projects.** Reusable instructions, reader and writer personas, and reference assets (their
   extracted text), with a tool to read a reference file; selectable in generation, canvas and agents.
-- [ ] **AI settings per capability.** Per space: enabled, `ModelTier`, and guidance appended to the
+- [x] **AI settings per capability.** Per space: enabled, `ModelTier`, and guidance appended to the
   built-in prompt.
 - [ ] **Change summaries.** A narrative summary of a version diff, over the existing deterministic
   diff.
@@ -521,6 +547,11 @@ From the live preview spec and a review of a second implementation of its channe
   is on, ignored parts listed where they lie. With unsaved edits both show the draft, marked
   Unsaved: the exact request before Save. CodeMirror 6 (`@codemirror/*`, `@lezer/highlight`) is a
   lazy chunk fetched when a code view opens; no route ships it.
+- [ ] **Merge holds to the locks it read.** A merge's entry write (`applyEntry` in
+  `packages/application/src/branching.ts`) doesn't carry the block-lock guard `saveEntryDraft`
+  does, so a lock set between the merge's read and its write is overwritten without a `409`. Not
+  a hole (the merger holds `lock` and could lift it), but a lost race should be a conflict. Pass
+  the guard, with a test that sets a lock mid-merge.
 
 Checked against the merged channel and not needed:
 - **An admin-started reconnect.** The frame route creates its host before it gives the iframe a

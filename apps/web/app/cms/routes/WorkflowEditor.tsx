@@ -46,6 +46,7 @@ import { useEditHistory } from '~/cms/components/workflow/history';
 import { Inspector, type InspectorOptions } from '~/cms/components/workflow/Inspector';
 import { Palette } from '~/cms/components/workflow/Palette';
 import { ProposalBanner, type WorkflowProposal } from '~/cms/components/workflow/ProposalBanner';
+import { useAiCapability } from '~/cms/lib/ai-settings';
 import { useAssistantIfAny } from '~/cms/lib/assistant';
 import { useClient } from '~/cms/lib/client-context';
 import { useMedia, WIDE } from '~/cms/lib/device';
@@ -170,6 +171,8 @@ function Editor({ loaded }: { loaded: WorkflowSummary }) {
   const [working, setWorking] = useState<null | 'save' | 'publish'>(null);
   const [proposal, setProposal] = useState<WorkflowProposal | null>(null);
   const [copilotOpen, setCopilotOpen] = useState(false);
+  // The copilot drafts with the model: not offered while the space has workflow AI off.
+  const copilot = useAiCapability('workflows');
   /** The draft (as JSON) the open Publish question is about; null when it isn't open. */
   const [publishFor, setPublishFor] = useState<string | null>(null);
   const [refusal, setRefusal] = useState<readonly GraphIssue[] | null>(null);
@@ -505,15 +508,17 @@ function Editor({ loaded }: { loaded: WorkflowSummary }) {
                 {notice.text}
               </span>
             ) : null}
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={() => setCopilotOpen(true)}
-              disabled={!!proposal}
-            >
-              Change with AI
-            </Button>
+            {copilot ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => setCopilotOpen(true)}
+                disabled={!!proposal}
+              >
+                Change with AI
+              </Button>
+            ) : null}
             <div className="flex">
               <Button
                 type="button"

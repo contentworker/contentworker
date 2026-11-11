@@ -114,6 +114,23 @@ async function setup(principal: Principal = writer) {
 }
 
 describe('a restricted writer over MCP', () => {
+  it('reads its own field rules by name, never the values, and is refused outside its space', async () => {
+    const { call } = await setup();
+    const me = await call('auth_me', {});
+    expect(me.isError, me.text).toBe(false);
+    expect(JSON.parse(me.text)).toMatchObject({
+      spaceId: SPACE,
+      restricted: true,
+      fieldRules: {
+        types: { listing: { deniedFields: ['internalNotes'], readOnlyFields: ['price'] } },
+        others: { deniedFields: [], readOnlyFields: [] },
+      },
+      contentActions: { types: { listing: ['read', 'write', 'delete'] }, others: [] },
+    });
+    expect(me.text).not.toContain('secret');
+    expect((await call('auth_me', { space: 'elsewhere' })).isError).toBe(true);
+  });
+
   it('keeps the fields it may not write when it saves, and answers without the hidden ones', async () => {
     const { ctx, id, call } = await setup();
     const edit = { title: { 'en-US': 'B' } };
@@ -249,6 +266,27 @@ describe('a restricted writer over MCP', () => {
     });
     expect(res.isError).toBe(true);
     expect(res.text).toContain('listing.price');
+  });
+
+  it('saves every field it read, the read-only ones sent back unchanged', async () => {
+    const { ctx, call, id } = await setup();
+    const edit = { title: { 'en-US': 'B' }, price: { 'en-US': 100 } };
+    for (const tool of ['entries_validate', 'entries_update']) {
+      const res = await call(tool, { id, fields: edit });
+      expect(res.isError, `${tool}: ${res.text}`).toBe(false);
+    }
+    expect((await getEntry(ctx, scope, id)).fields).toEqual({
+      title: { 'en-US': 'B' },
+      internalNotes: { 'en-US': 'secret' },
+      price: { 'en-US': 100 },
+    });
+    // The hidden field, even at its stored value, is still a write the role may not make.
+    const hidden = await call('entries_update', {
+      id,
+      fields: { ...edit, internalNotes: { 'en-US': 'secret' } },
+    });
+    expect(hidden.isError).toBe(true);
+    expect((await getEntry(ctx, scope, id)).entry.currentVersion).toBe(2);
   });
 
   it('duplicates without the fields it may not read; the copy keeps them', async () => {

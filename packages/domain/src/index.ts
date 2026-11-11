@@ -1,4 +1,5 @@
 export * from './agents/agent-review';
+export * from './ai/ai-settings';
 export * from './asset/asset';
 export * from './asset/collection';
 export * from './asset/delivered';
@@ -37,6 +38,7 @@ export * from './errors';
 export * from './events';
 export * from './locale';
 export * from './menu/menu';
+export * from './plugin/operations';
 export * from './plugin/plugin';
 export * from './plugin/settings';
 export * from './promotion';

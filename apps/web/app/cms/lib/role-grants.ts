@@ -13,7 +13,7 @@ import {
   type ImpliedContentAction,
   type ListedContentAction,
 } from '@contentworker/domain';
-import { type RoleSummary, SaveRefusedError } from './management';
+import { ApiError, type RoleSummary, type RoleUpdate } from './management';
 
 export { CONTENT_ACTIONS } from '@contentworker/domain';
 
@@ -96,28 +96,32 @@ export const sameGrants = (a: readonly ContentTypeGrant[], b: readonly ContentTy
 
 /**
  * Saves a role's content grants and nothing else. The API replaces a role whole, so the name,
- * description and scopes are re-read just before writing, not taken from when the sheet opened; and
- * if someone changed the grants meanwhile, nothing is written and the reason says to reopen it,
- * rather than silently undoing their change.
+ * description and scopes go back as the sheet loaded them, held to the version it loaded: if
+ * anyone saved the role since, the API refuses (409) and writes nothing, rather than this save
+ * silently undoing their change. {@link roleChanged} reads that refusal.
  */
-export async function saveRoleGrants(
-  client: {
-    getRole(id: string): Promise<RoleSummary>;
-    updateRole(id: string, input: Partial<RoleSummary>): Promise<RoleSummary>;
-  },
+export function saveRoleGrants(
+  client: { updateRole(id: string, input: RoleUpdate): Promise<RoleSummary> },
   opened: RoleSummary,
   grants: readonly ContentTypeGrant[],
 ): Promise<RoleSummary> {
-  const current = await client.getRole(opened.id);
-  if (!sameGrants(current.contentGrants, opened.contentGrants)) {
-    throw new SaveRefusedError(
-      `${current.name}’s content access changed while you were editing it. Close this and open it again to see the change.`,
-    );
-  }
   return client.updateRole(opened.id, {
-    name: current.name,
-    ...(current.description ? { description: current.description } : {}),
-    scopes: current.scopes,
+    name: opened.name,
+    ...(opened.description ? { description: opened.description } : {}),
+    scopes: opened.scopes,
     contentGrants: grants,
+    expectedVersion: opened.version,
   });
+}
+
+/**
+ * A role save refused because someone saved the role after it was loaded (409 `conflict`, from
+ * `expectedVersion`): the version it is at now. Undefined for any other failure, a 409
+ * `last_admin` among them.
+ */
+export function roleChanged(err: unknown): { readonly version: number } | undefined {
+  if (!(err instanceof ApiError) || err.status !== 409 || err.code !== 'conflict') return undefined;
+  const details = (err.body as { error?: { details?: { version?: unknown } } } | undefined)?.error
+    ?.details;
+  return typeof details?.version === 'number' ? { version: details.version } : undefined;
 }

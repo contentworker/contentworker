@@ -33,8 +33,9 @@ vi.mock('~/cms/lib/queries', () => ({
   },
 }));
 
-// Its own screen, on its own client.
+// Their own screens, on their own client.
 vi.mock('~/cms/components/BranchMerge', () => ({ BranchMerge: () => null }));
+vi.mock('~/cms/components/promotions/Promotions', () => ({ Promotions: () => null }));
 
 const { Settings } = await import('~/cms/components/Settings');
 const { ToastProvider } = await import('~/cms/lib/toast');
@@ -51,6 +52,7 @@ const preset = {
   preset: 'editor',
   scopes: ['content:write'],
   contentGrants: [{ contentTypeApiId: '*', actions: ['read', 'write'] }],
+  version: 1,
 };
 const custom = { ...preset, id: 'r-custom', name: 'Reviewer', preset: undefined };
 
@@ -161,6 +163,71 @@ describe('Settings → Roles', () => {
     expect(client.deleteRole).not.toHaveBeenCalled();
     fireEvent.click(within(ask).getByRole('button', { name: 'Cancel' }));
     await waitFor(() => expect(document.activeElement).toBe(more));
+  });
+
+  it('keeps the Access sheet and its edits when someone saved the role first, then reloads it', async () => {
+    const client = fakeClient();
+    const { ApiError } = await import('~/cms/lib/management');
+    // Someone else's save since the list loaded: the role is at version 2, publishing too.
+    const theirs = {
+      ...custom,
+      version: 2,
+      contentGrants: [{ contentTypeApiId: '*', actions: ['read', 'write', 'publish'] }],
+    };
+    const updateRole = vi.fn(async () => {
+      throw new ApiError(409, 'PUT → 409', {
+        error: {
+          code: 'conflict',
+          message: 'The role is at version 2, not 1',
+          details: { version: 2 },
+        },
+      });
+    });
+    const getRole = vi.fn(async () => theirs);
+    Object.assign(client, { updateRole, getRole });
+    open(client, 'roles');
+    fireEvent.click(await screen.findByRole('button', { name: 'Content access for Reviewer' }));
+    const sheet = await screen.findByRole('dialog', { name: 'Content access: Reviewer' });
+    const remove = within(sheet).getByRole('checkbox', { name: 'Delete Every type' });
+    fireEvent.click(remove);
+    expect(remove.getAttribute('aria-checked')).toBe('false');
+    fireEvent.click(within(sheet).getByRole('button', { name: 'Save access' }));
+
+    const alert = await within(sheet).findByRole('alert');
+    expect(alert.textContent).toContain('Someone else changed this role');
+    await waitFor(() => expect(document.activeElement).toBe(alert));
+    expect(alert.textContent).toContain('your changes weren’t saved');
+    // Sent once, at the version the sheet opened with; the sheet stays, the box as it was left.
+    expect(updateRole).toHaveBeenCalledTimes(1);
+    expect(updateRole).toHaveBeenCalledWith(
+      'r-custom',
+      expect.objectContaining({ expectedVersion: 1 }),
+    );
+    expect(screen.getByRole('dialog', { name: 'Content access: Reviewer' })).toBe(sheet);
+    expect(remove.getAttribute('aria-checked')).toBe('false');
+    expect(
+      (within(sheet).getByRole('button', { name: 'Save access' }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+
+    fireEvent.click(within(sheet).getByRole('button', { name: 'Reload role' }));
+    await waitFor(() => expect(getRole).toHaveBeenCalledWith('r-custom'));
+    // Their role, a fresh draft in the same sheet: their Publish held, no refusal, nothing dirty.
+    await waitFor(() =>
+      expect(
+        within(sheet)
+          .getByRole('checkbox', { name: 'Publish Every type' })
+          .getAttribute('aria-checked'),
+      ).toBe('true'),
+    );
+    expect(screen.getByRole('dialog', { name: 'Content access: Reviewer' })).toBe(sheet);
+    expect(within(sheet).queryByRole('alert')).toBeNull();
+    expect(
+      within(sheet)
+        .getByRole('checkbox', { name: 'Delete Every type' })
+        .getAttribute('aria-checked'),
+    ).toBe('true');
+    // Reload role went with the refusal: focus is on the reloaded role, not adrift.
+    expect(sheet.contains(document.activeElement)).toBe(true);
   });
 });
 

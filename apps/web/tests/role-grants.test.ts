@@ -1,10 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { RoleSummary } from '~/cms/lib/management';
+import { ApiError, type RoleSummary } from '~/cms/lib/management';
 import {
   actionAvailable,
   actionNeeds,
   describeGrants,
   heldActions,
+  roleChanged,
   saveRoleGrants,
   setAction,
 } from '~/cms/lib/role-grants';
@@ -74,29 +75,36 @@ describe('the role editor’s content actions', () => {
     expect(actionNeeds('write')).toBeUndefined();
   });
 
-  it('saves only the grants, over the role as it is now, and refuses when they moved', async () => {
+  it('saves only the grants, the rest as loaded, held to the version the sheet loaded', async () => {
     const opened: RoleSummary = {
       id: 'r1',
       name: 'Editor',
       scopes: ['content:write'],
       contentGrants: [{ contentTypeApiId: '*', actions: ['read', 'write'] }],
+      version: 4,
     };
     const next = [{ contentTypeApiId: '*', actions: ['read' as const] }];
-    // Renamed and given a scope by someone else since the sheet opened: both survive.
-    const renamed = { ...opened, name: 'Writers', scopes: ['content:write', 'preview:read'] };
-    const client = { getRole: vi.fn(async () => renamed), updateRole: vi.fn(async () => renamed) };
+    const client = { updateRole: vi.fn(async () => ({ ...opened, version: 5 })) };
     await saveRoleGrants(client, opened, next);
+    // One request: the version, not a re-read, keeps it from undoing someone else's save.
+    expect(client.updateRole).toHaveBeenCalledTimes(1);
     expect(client.updateRole).toHaveBeenCalledWith('r1', {
-      name: 'Writers',
-      scopes: ['content:write', 'preview:read'],
+      name: 'Editor',
+      scopes: ['content:write'],
       contentGrants: next,
+      expectedVersion: 4,
     });
-    // Its grants changed meanwhile: nothing is written.
-    const moved = {
-      getRole: vi.fn(async () => ({ ...opened, contentGrants: next })),
-      updateRole: vi.fn(),
-    };
-    await expect(saveRoleGrants(moved, opened, next)).rejects.toThrow(/changed while you were/);
-    expect(moved.updateRole).not.toHaveBeenCalled();
+  });
+
+  it('reads a stale-version 409 as the role changed, and nothing else', () => {
+    const body = (code: string, details?: unknown) => ({ error: { code, message: 'm', details } });
+    expect(roleChanged(new ApiError(409, 'PUT → 409', body('conflict', { version: 6 })))).toEqual({
+      version: 6,
+    });
+    // The last administrator, a 409 of its own, and any other failure are not.
+    expect(roleChanged(new ApiError(409, 'PUT → 409', body('last_admin')))).toBeUndefined();
+    expect(roleChanged(new ApiError(409, 'PUT → 409', body('conflict')))).toBeUndefined();
+    expect(roleChanged(new ApiError(422, 'PUT → 422', body('validation_failed')))).toBeUndefined();
+    expect(roleChanged(new TypeError('Failed to fetch'))).toBeUndefined();
   });
 });

@@ -8,6 +8,7 @@ import {
   getPreviewEntry,
   publishContentType,
   SYSTEM_CALLER,
+  setAiSettings,
   updateEntry,
 } from '@contentworker/application';
 import { authDbOf, sessions, users } from '@contentworker/db/auth';
@@ -20,6 +21,7 @@ import {
 import {
   ADMINS_SET_UP,
   ALREADY_ANSWERED,
+  ASSISTANT_OFF,
   ASSISTANT_RATE,
   answeredOnly,
   CARD_CHANGED,
@@ -869,6 +871,27 @@ describe('a model turn (the mock model)', () => {
       errorText:
         'This isn’t filling Body. You asked Coworker to fill Body at one place. This change is to something else, so it can’t be confirmed.',
     });
+    panel.close();
+  });
+
+  it('answers that Coworker is off, without a model, where the space turned it off', async () => {
+    const spaceId = 'asst-off';
+    await seedSpace(spaceId);
+    await setAiSettings(ctx(), SYSTEM_CALLER, spaceId, {
+      expectedVersion: 0,
+      capabilities: { assistant: { enabled: false } },
+    });
+    const ada = await person('ada_off');
+    const panel = await socket(ada);
+    const chunks = await panel.ask('List the content types', contextIn(spaceId));
+    expect(JSON.stringify(chunks)).toContain(ASSISTANT_OFF.slice(0, 40));
+    // No tool ran: the turn never reached a model.
+    const parts = (await messagesOf(ada)).flatMap((m) => m.parts) as { type: string }[];
+    expect(parts.some((x) => x.type.startsWith('tool-'))).toBe(false);
+    // Another space is unaffected.
+    await panel.ask('List the content types', contextIn(SPACE_B));
+    const after = (await messagesOf(ada)).flatMap((m) => m.parts) as { type: string }[];
+    expect(after.some((x) => x.type === 'tool-model_list_content_types')).toBe(true);
     panel.close();
   });
 

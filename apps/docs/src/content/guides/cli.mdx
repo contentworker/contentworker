@@ -50,7 +50,7 @@ In CI, skip the file: set `CONTENTWORKER_TOKEN` and `CONTENTWORKER_URL` (and
 | `model export [--out file]`          | The content types, as JSON or TypeScript                               | `preview:read`      |
 | `model apply <file>`                 | Diff a model file against the space, then apply it                     | `content:manage`    |
 | `blocks push [file]`                 | Diff a blocks file (default `contentworker.blocks.json`) against the block catalog, then push it | `content:manage` |
-| `entries list`                       | Entries as they are now, drafts included (`--content-type`, `--limit`, `--skip`, `--order`, `--query`, `--locale`) | `preview:read` |
+| `entries list`                       | Entries as they are now, drafts included (`--content-type`, `--limit`, `--cursor`, `--order`, `--query`, `--locale`) | `preview:read` |
 | `entries get <id>`                   | One entry and its draft fields                                         | `preview:read`      |
 | `entries create`                     | A draft (`--content-type`, `--fields`)                                 | `content:write`     |
 | `entries update <id>`                | A new draft version; merges `--fields` into the draft by field and locale (`--replace` sends them as the whole draft) | `content:write` |

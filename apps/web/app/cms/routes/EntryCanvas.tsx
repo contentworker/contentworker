@@ -143,6 +143,7 @@ import {
 } from '~/cms/lib/canvas/seams';
 import { useClient } from '~/cms/lib/client-context';
 import { useMedia, WIDE } from '~/cms/lib/device';
+import { fieldAccessFor, withoutHiddenFields, writableFields } from '~/cms/lib/field-access';
 import type { FrameGeometry } from '~/cms/lib/live-preview/frame-channel';
 import { capabilitiesFor, SELECT_ONLY } from '~/cms/lib/live-preview/host';
 import { refForField } from '~/cms/lib/live-preview/pick';
@@ -211,7 +212,7 @@ type Judged =
   | (Extract<DropVerdict, { kind: 'move' }> & { readonly applied: Applied & { ok: true } });
 
 /** Why the canvas reviews rather than edits, in the words it says so with. */
-type ReviewReason = 'narrow' | 'role' | 'published';
+type ReviewReason = 'narrow' | 'role' | 'fields' | 'published';
 
 export function EntryCanvas() {
   const { typeId, entryId } = useParams();
@@ -275,7 +276,7 @@ function Canvas({
   const tablet = useMedia(TABLET);
 
   const typesQuery = useContentTypesQuery();
-  const contentType = typesQuery.data?.find((t) => t.apiId === typeId);
+  const storedType = typesQuery.data?.find((t) => t.apiId === typeId);
   const cfg = useSpaceConfigQuery().data;
   const entryQuery = useEntryQuery(entryId);
   const catalog = useScopedQuery(['block-catalog'], () => client.getBlockCatalog(), {
@@ -290,6 +291,22 @@ function Canvas({
   );
   const rules = rulesOver(rulesQuery.data, catalog);
   const access = useScopedQuery(['space-access'], () => client.getSpaceAccess(), { silent: true });
+  // The fields this person's role hides or makes read-only (`cms/lib/field-access.ts`): a hidden
+  // one isn't drawn, and a save sends neither (the api keeps what they hold).
+  const fieldAccess = useMemo(() => fieldAccessFor(access.data, typeId), [access.data, typeId]);
+  const contentType = useMemo(
+    () => storedType && withoutHiddenFields(storedType, fieldAccess),
+    [storedType, fieldAccess],
+  );
+  // Field rules name top-level fields only, so one over a blocks field covers every block in it:
+  // a role that may not change one of the type's blocks fields reviews the canvas, and edits what
+  // it may in the form. Only the ones it can read are named.
+  const ruledBlocks = (storedType?.fields ?? []).filter(
+    (f) =>
+      blockVariants(f) !== undefined &&
+      (fieldAccess.readOnly.has(f.apiId) || fieldAccess.hidden.has(f.apiId)),
+  );
+  const ruledNames = ruledBlocks.filter((f) => !fieldAccess.hidden.has(f.apiId)).map((f) => f.name);
   // The entry's locked regions: read with the canvas, again after each save and each lock set.
   const locksKey = [conn.space, conn.environment, 'block-locks', entryId];
   const locksQuery = useScopedQuery(
@@ -408,9 +425,11 @@ function Canvas({
     ? 'narrow'
     : scopes && !canWrite
       ? 'role'
-      : published
-        ? 'published'
-        : null;
+      : ruledBlocks.length > 0
+        ? 'fields'
+        : published
+          ? 'published'
+          : null;
   const editable = review === null && !!scopes;
   // Locking isn't editing the draft: offered in review too, but not where the canvas can't arrange.
   const locking = review !== 'narrow' && canLock(access.data, typeId);
@@ -810,7 +829,13 @@ function Canvas({
       // prop) go before the save, as the save drops them: the canvas makes none by mistake, and
       // an undo across several saves may bring back a block that holds them.
       const send = (type: ContentType) =>
-        client.updateEntry(entryId, withoutStaleOverrides(type, d.fields), { expectedVersion });
+        client.updateEntry(
+          entryId,
+          writableFields(withoutStaleOverrides(type, d.fields), fieldAccess),
+          {
+            expectedVersion,
+          },
+        );
       try {
         let saved: Awaited<ReturnType<typeof send>>;
         try {
@@ -1347,6 +1372,7 @@ function Canvas({
         geometryNote={geometryNote}
         onStartDraft={() => setDraftStarted(true)}
         formPath={formPath}
+        ruledFields={ruledNames}
       />
       {site.status.status === 'loading' || site.status.status === 'live' ? null : (
         <div className="border-b px-4 py-3 sm:px-5">
@@ -1538,6 +1564,9 @@ function titleOf(
   return typeof v === 'string' && v.trim() ? v : null;
 }
 
+/** Field names in a sentence: "Main, Sidebar and Footer". */
+const LIST = new Intl.ListFormat('en', { type: 'conjunction' });
+
 /** Why the canvas reviews instead of editing, and what's happening to the entry, in place. */
 function Notices(props: {
   review: ReviewReason | null;
@@ -1545,6 +1574,8 @@ function Notices(props: {
   geometryNote: string | null;
   onStartDraft: () => void;
   formPath: string;
+  /** The blocks fields the person's role makes read-only, by name (none named when hidden). */
+  ruledFields: readonly string[];
 }) {
   const lines: React.ReactNode[] = [];
   if (props.review === 'narrow') {
@@ -1558,6 +1589,29 @@ function Notices(props: {
       <span key="role">
         Your role can read this entry but not edit it: the canvas is for review here.
       </span>,
+    );
+  } else if (props.review === 'fields') {
+    lines.push(
+      props.ruledFields.length ? (
+        <span key="fields">
+          Your role can’t change {LIST.format(props.ruledFields)}: the canvas is for review here.
+          Edit the other fields in{' '}
+          <Link to={props.formPath} className="underline underline-offset-2">
+            the form
+          </Link>
+          .
+        </span>
+      ) : (
+        // Every blocks field ruled is one the role can't read: nothing of them is drawn.
+        <span key="fields">
+          Your role can’t see this entry’s blocks, so there is nothing to arrange here. Edit the
+          fields you can in{' '}
+          <Link to={props.formPath} className="underline underline-offset-2">
+            the form
+          </Link>
+          .
+        </span>
+      ),
     );
   } else if (props.review === 'published') {
     lines.push(

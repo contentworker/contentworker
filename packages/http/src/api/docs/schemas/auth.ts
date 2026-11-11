@@ -2,6 +2,15 @@ import { z } from 'zod';
 
 const contentAction = z.enum(['read', 'write', 'publish', 'lock', 'delete', 'unpublish']);
 
+const fieldRules = z.object({
+  deniedFields: z
+    .array(z.string())
+    .describe('Top-level fields masked on read and refused on write: not shown'),
+  readOnlyFields: z
+    .array(z.string())
+    .describe('Top-level fields readable but refused on write: an update keeps what they hold'),
+});
+
 export const principal = z.object({
   spaceId: z.string().describe('Space id, or `*` for the admin token'),
   kind: z.enum(['cma', 'cda', 'cpa', 'admin', 'user']),
@@ -25,6 +34,17 @@ export const spacePrincipal = principal.extend({
     .describe(
       'The content actions this role holds per content type; with no grants, every action ' +
         'on every type (the scopes still gate them)',
+    ),
+  fieldRules: z
+    .object({
+      types: z
+        .record(z.string(), fieldRules)
+        .describe('Per content type a grant names: the fields it restricts there'),
+      others: fieldRules.describe('On every type no grant names: the `*` grant’s field rules'),
+    })
+    .describe(
+      'The fields this role may not read or change, per content type, by name only; with no ' +
+        'grants, none',
     ),
 });
 

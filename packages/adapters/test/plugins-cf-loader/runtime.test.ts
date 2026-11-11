@@ -1,7 +1,9 @@
-import type { PluginInvocation } from '@contentworker/ports';
+import type { PluginInvocation, PluginOperationInvocation } from '@contentworker/ports';
 import { describe, expect, it, vi } from 'vitest';
 import {
   createWorkerLoaderRuntime,
+  HOST_MODULE,
+  hostModule,
   type WorkerLoaderBinding,
 } from '../../src/plugins-cf-loader/index';
 
@@ -48,7 +50,11 @@ describe('isolation settings', () => {
     // Verified against a real workerd: with this set, fetch() inside the
     // isolate throws rather than escaping.
     expect(loads[0]?.config.globalOutbound).toBeNull();
-    expect(loads[0]?.config.modules).toEqual({ 'index.js': 'export class Plugin {}' });
+    // The author's bundle as written, imported by the host's wrapper, which is the main module.
+    const modules = loads[0]?.config.modules as Record<string, string>;
+    expect(modules['index.js']).toBe('export class Plugin {}');
+    expect(loads[0]?.config.mainModule).toBe(HOST_MODULE);
+    expect(modules[HOST_MODULE]).toContain(`import * as authored from "./index.js"`);
   });
 
   it('keys the isolate by checksum, so changed bytes cannot reuse a warm one', async () => {
@@ -56,7 +62,10 @@ describe('isolation settings', () => {
     const runtime = createWorkerLoaderRuntime(binding);
     await runtime.invoke(invocation({ checksum: 'aaa' }), {});
     await runtime.invoke(invocation({ checksum: 'bbb' }), {});
-    expect(loads.map((l) => l.id)).toEqual(['com.example.one@aaa', 'com.example.one@bbb']);
+    expect(loads.map((l) => l.id)).toEqual([
+      '-/com.example.one@aaa#h1',
+      '-/com.example.one@bbb#h1',
+    ]);
   });
 
   it('pins the plugin compatibility date independently of the host', async () => {
@@ -325,5 +334,170 @@ describe('capability enforcement', () => {
     });
     const { caps } = await capsFor(invocation({ capabilities: [] }), {}, onDenied);
     await expect(caps.content?.list?.()).rejects.toThrow(/capability_denied/);
+  });
+});
+
+describe('operations', () => {
+  const opInvocation = (
+    over: Partial<PluginOperationInvocation> = {},
+  ): PluginOperationInvocation => ({
+    pluginId: 'com.example.one',
+    bundle: 'export class Plugin {}',
+    entrypoint: 'index.js',
+    checksum: 'abc123',
+    operation: 'render',
+    input: { title: 'hi' },
+    capabilities: ['content:read'],
+    allowedHosts: [],
+    ...over,
+  });
+
+  it('calls runOperation in the same severed isolate and returns what it returned', async () => {
+    const seen: unknown[] = [];
+    const { binding, loads } = fakeLoader({
+      runOperation: async (name: unknown, input: unknown) => {
+        seen.push(name, input);
+        return { html: 'ok' };
+      },
+    });
+    const runtime = createWorkerLoaderRuntime(binding);
+    expect(await runtime.runOperation?.(opInvocation(), {})).toEqual({ html: 'ok' });
+    expect(seen).toEqual(['render', { title: 'hi' }]);
+    expect(loads[0]?.config.globalOutbound).toBeNull();
+    expect(loads[0]?.id).toBe('-/com.example.one@abc123#h1');
+  });
+
+  it('gates capabilities as for a hook, and names the operation in a denial', async () => {
+    const onDenied = vi.fn(async () => {});
+    const { binding } = fakeLoader({
+      runOperation: async (
+        _n: unknown,
+        _i: unknown,
+        caps: Record<string, Record<string, () => Promise<unknown>>>,
+      ) => caps.content?.create?.(),
+    });
+    const runtime = createWorkerLoaderRuntime(binding, { onDenied });
+    await expect(
+      runtime.runOperation?.(opInvocation(), { content: { create: async () => 'written' } }),
+    ).rejects.toThrow(/capability_denied/);
+    expect(onDenied).toHaveBeenCalledWith(
+      expect.objectContaining({ operation: 'render', reason: 'not-granted' }),
+    );
+  });
+
+  it('refuses a plugin that declares operations but does not implement them', async () => {
+    const { binding } = fakeLoader({});
+    await expect(
+      createWorkerLoaderRuntime(binding).runOperation?.(opInvocation(), {}),
+    ).rejects.toThrow(/does not implement runOperation/);
+  });
+
+  it('times out at the operation ceiling', async () => {
+    const { binding } = fakeLoader({ runOperation: () => new Promise(() => {}) });
+    const runtime = createWorkerLoaderRuntime(binding, { operationTimeoutMs: 20 });
+    await expect(runtime.runOperation?.(opInvocation(), {})).rejects.toThrow(/exceeded/);
+  });
+});
+
+/**
+ * A real entrypoint is an RPC stub: every property is callable, and `method.call` is not
+ * `Function.prototype.call` but a remote method named "call", whose arguments must clone (an
+ * entrypoint does not). Calling `handler.call(entrypoint, …)` meant no plugin ever ran.
+ */
+describe('calling a real entrypoint stub', () => {
+  function stubLoader(impl: Record<string, (...a: unknown[]) => Promise<unknown>>) {
+    const entrypoint: Record<string, unknown> = new Proxy(
+      {},
+      {
+        get(_t, name: string) {
+          const fn = (...args: unknown[]) => impl[name]?.(...args);
+          (fn as unknown as { call: unknown }).call = () => {
+            throw new Error(
+              'DataCloneError: Entrypoints to dynamically-loaded workers cannot be transferred',
+            );
+          };
+          return fn;
+        },
+      },
+    );
+    const binding: WorkerLoaderBinding = {
+      get: () => ({
+        getEntrypoint: () => entrypoint as Record<string, (...a: unknown[]) => Promise<unknown>>,
+      }),
+    };
+    return binding;
+  }
+
+  it('runs a hook as a method of the stub', async () => {
+    const binding = stubLoader({ onEntryBeforeSave: async () => ({ veto: { reason: 'no' } }) });
+    const result = await createWorkerLoaderRuntime(binding).invoke(invocation(), {});
+    expect(result).toMatchObject({ veto: { reason: 'no' } });
+  });
+
+  it('runs an operation as a method of the stub', async () => {
+    const binding = stubLoader({ runOperation: async (name) => ({ ran: name }) });
+    const out = await createWorkerLoaderRuntime(binding).runOperation?.(
+      {
+        pluginId: 'p',
+        bundle: '',
+        entrypoint: 'index.js',
+        checksum: 'c',
+        operation: 'render',
+        input: {},
+        capabilities: [],
+        allowedHosts: [],
+      },
+      {},
+    );
+    expect(out).toEqual({ ran: 'render' });
+  });
+});
+
+describe('the host wrapper', () => {
+  it('is a WorkerEntrypoint named Plugin delegating every hook and runOperation', () => {
+    const source = hostModule('src/plugin.js');
+    expect(source).toContain("import { WorkerEntrypoint } from 'cloudflare:workers';");
+    expect(source).toContain('import * as authored from "./src/plugin.js";');
+    expect(source).toContain('export class Plugin extends WorkerEntrypoint');
+    for (const m of [
+      'onEntryBeforeSave',
+      'onEntryBeforePublish',
+      'onEntryBeforeTrash',
+      'onEntryBeforePurge',
+      'onAssetBeforeCreate',
+      'runOperation',
+    ]) {
+      expect(source).toContain(`async ${m}(...args)`);
+    }
+  });
+});
+
+describe('isolation between spaces and calls', () => {
+  it('gives one plugin in two spaces two isolates', async () => {
+    const { binding, loads } = fakeLoader({ onEntryBeforeSave: async () => undefined });
+    const runtime = createWorkerLoaderRuntime(binding);
+    await runtime.invoke(invocation({ scope: { spaceId: 'a', environmentId: 'main' } }), {});
+    await runtime.invoke(invocation({ scope: { spaceId: 'b', environmentId: 'main' } }), {});
+    expect(loads.map((l) => l.id)).toEqual([
+      'a/com.example.one@abc123#h1',
+      'b/com.example.one@abc123#h1',
+    ]);
+  });
+
+  it('refuses every capability once the call it served is over', async () => {
+    let late: Promise<unknown> | undefined;
+    const { binding } = fakeLoader({
+      onEntryBeforeSave: async (
+        _p: unknown,
+        caps: Record<string, Record<string, () => Promise<unknown>>>,
+      ) => {
+        late = new Promise((r) => setTimeout(r, 40)).then(() => caps.content?.list?.());
+        return new Promise(() => {});
+      },
+    });
+    const runtime = createWorkerLoaderRuntime(binding, { timeoutMs: 10 });
+    const host = { content: { list: async () => ['entry'] } };
+    await expect(runtime.invoke(invocation(), host)).rejects.toThrow(/exceeded/);
+    await expect(late).rejects.toThrow(/call this plugin was serving is over/);
   });
 });

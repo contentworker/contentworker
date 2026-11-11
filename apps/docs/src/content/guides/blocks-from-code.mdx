@@ -632,7 +632,9 @@ them, is a `422` `region_locked`; with `subtree` so is any change to the blocks 
 from the editor, the API, MCP, a block patch or an import. A lock holds in every locale that has
 its blocks. A lock whose blocks are gone is listed as `stale` and blocks nothing. Restoring an
 earlier version keeps the locks held now and is held to them, unless you hold `lock` on the type
-(you could lift the lock anyway); an environment clone carries them. A key two blocks hold can't
+(you could lift the lock anyway); an environment clone carries them. A promotion carrying entries
+and an environment merge of entries copy them over the target's locks unjudged, so they take
+`lock` on every content type. A key two blocks hold can't
 be locked (`lock_ambiguous`), and a save that gives a locked block's key to a second block is
 refused. A lock on a field your role denies or makes read-only is yours neither to set nor lift. Delivery and
 Preview never return locks. Every lock and unlock is in the audit log.

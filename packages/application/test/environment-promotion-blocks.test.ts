@@ -4,6 +4,7 @@ import {
   checkBlockCatalog,
   type FieldDefinition,
   type Principal,
+  PromotionFailedError,
   SCOPES,
   ValidationError,
 } from '@contentworker/domain';
@@ -222,7 +223,7 @@ describe('promoting blocks between environments', () => {
     expect(p.blocks).toMatchObject({ catalogVersion: 2, targetCatalogVersion: 1 });
     expect(p.status).not.toBe('awaiting_approval');
     expect(p.risk.reasons.join('\n')).not.toContain('stale');
-    const done = await getPromotion(ctx, spaceId, p.id);
+    const done = await getPromotion(ctx, admin, spaceId, p.id);
     expect(done.status).toBe('completed');
     expect((await store.blockCatalogs.latest(qa))?.breakpoints).toEqual(breakpoints);
     expect((await store.contentTypes.get(qa, 'page'))?.fields[1]?.items?.breakpoints).toEqual(
@@ -577,6 +578,33 @@ describe('promoting blocks between environments', () => {
     ]);
     const done = await approvePromotion(ctx, approver, spaceId, p.id);
     expect(done.result?.blocks).toEqual({ catalog: true, config: false });
+  });
+
+  it('answers a catalog that landed before the config write failed with an error carrying the record', async () => {
+    await pushBlockCatalog(ctx, admin, staging, { blocks: [...BLOCKS, BANNER], targets: TARGETS });
+    await setBlockConfig(ctx, admin, staging, { expectedVersion: 0, ...NARROWING });
+    // The blocks alone, so the catalog push is the first write that lands.
+    const p = await requestPromotion(ctx, admin, spaceId, {
+      source: 'staging',
+      target: 'qa',
+      contentTypes: [],
+      entries: [],
+      blocks: true,
+    });
+    const save = store.blockConfigs.save.bind(store.blockConfigs);
+    store.blockConfigs.save = async () => {
+      throw new Error('config write lost');
+    };
+    const err = await approvePromotion(ctx, approver, spaceId, p.id).catch((e: unknown) => e);
+    store.blockConfigs.save = save;
+    expect(err).toBeInstanceOf(PromotionFailedError);
+    expect((err as PromotionFailedError).promotion).toMatchObject({
+      id: p.id,
+      status: 'failed',
+      error: 'config write lost',
+      result: { blocks: { catalog: true, config: false } },
+    });
+    expect((await store.blockCatalogs.latest(qa))?.version).toBe(2);
   });
 
   it('fails the apply, writing nothing, when the target moved after the request', async () => {

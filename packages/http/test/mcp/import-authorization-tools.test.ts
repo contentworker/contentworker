@@ -175,6 +175,45 @@ describe('environment-wide tools as a role', () => {
     }
   });
 
+  it('refuses each with the code and message the routes answer', async () => {
+    const everyType = (actions: string) =>
+      `Missing required scope "content:${actions}:* (on every content type, every field)"`;
+    const calls: [string, Record<string, unknown>, string][] = [
+      ['environment_export', main, everyType('read')],
+      [
+        'environment_import',
+        { ...empty, snapshot: await snapshot(), dryRun: true },
+        everyType('write+publish'),
+      ],
+      [
+        'environment_clone',
+        { ...main, targetEnvironment: 'empty', dryRun: true },
+        everyType('read+write+publish'),
+      ],
+      [
+        'space_export_analyze',
+        { ...empty, payload: JSON.stringify(spaceExportFixture()) },
+        everyType('write+publish'),
+      ],
+      [
+        'space_export_analyze',
+        { ...empty, payload: '{}', addLocales: true },
+        'Missing required scope "space:admin"',
+      ],
+      [
+        'environments_merge',
+        { space: SPACE, source: 'main', target: 'empty', entries: ['x'] },
+        everyType('read+write+lock'),
+      ],
+    ];
+    for (const [tool, args, message] of calls) {
+      const result = await call(narrow, tool, args);
+      expect(result.isError, tool).toBe(true);
+      // A refusal without details reaches an MCP client as its message, REST's `error.message`.
+      expect(result.text, tool).toBe(message);
+    }
+  });
+
   it('asks for publish only when the import publishes', async () => {
     const noPublish = role([{ contentTypeApiId: '*', actions: ['read', 'write'] }]);
     const args = { ...empty, snapshot: await snapshot(), dryRun: true };
@@ -198,7 +237,9 @@ describe('environment-wide tools as a role', () => {
 
 describe('merge, compare and job tools as a role', () => {
   const narrow = role([{ contentTypeApiId: 'post', actions: ['read', 'write'] }]);
-  const wide = role([{ contentTypeApiId: '*', actions: ['read', 'write'] }]);
+  const wide = role([{ contentTypeApiId: '*', actions: ['read', 'write', 'lock'] }]);
+  /** Every type alike, publishing too, but no lock (the Editor preset's grant). */
+  const noLock = role([{ contentTypeApiId: '*', actions: ['read', 'write', 'publish'] }]);
   const envs = { source: 'main', target: 'empty', space: SPACE };
   const entryOf = async (contentTypeApiId: string) =>
     (
@@ -221,6 +262,25 @@ describe('merge, compare and job tools as a role', () => {
       entries,
     });
     expect(merged.isError).toBe(false);
+  });
+
+  it("takes lock to merge entries, which go over the target's locked regions", async () => {
+    const entries = [await entryOf('page')];
+    const refused = await call(noLock, 'environments_merge', {
+      ...envs,
+      contentTypes: ['page'],
+      entries,
+    });
+    expect(refused.isError).toBe(true);
+    expect(refused.text).toBe(
+      'Missing required scope "content:read+write+lock:* (on every content type, every field)"',
+    );
+    // Refused before anything is written, the content types included.
+    const empty = { spaceId: SPACE, environmentId: 'empty' };
+    expect(await deps.ctx.store.contentTypes.list(empty)).toEqual([]);
+    // Content types alone copy no entry: no lock needed.
+    const model = await call(noLock, 'environments_merge', { ...envs, contentTypes: ['page'] });
+    expect(model.isError).toBe(false);
   });
 
   it('shows a narrow role only the types it can read in a comparison', async () => {

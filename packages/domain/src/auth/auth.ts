@@ -1,3 +1,4 @@
+import { sameValue } from '../entry/sequence-diff';
 import { DomainError } from '../errors';
 import { ANY_FIELD, type QueryNode, queryNodeFilters } from '../query/query';
 import type { RolePreset } from './team';
@@ -218,6 +219,11 @@ export interface Role {
    * one is an ordinary custom role.
    */
   readonly preset?: RolePreset;
+  /**
+   * 1 when created, one more at each save: the compare-and-set a save rides with, and what a
+   * client sends back as `expectedVersion` to have a save over someone else's refused.
+   */
+  readonly version: number;
 }
 
 /**
@@ -278,6 +284,17 @@ export interface Principal {
    * one; absent for an operator key, the admin token and a signed-in person.
    */
   readonly issuance?: Exclude<TokenIssuance, 'key'>;
+  /**
+   * The API key row this principal came from (an operator key, or a person's OAuth, personal or
+   * setup token), so work it starts can resolve the key again later (a bulk job's chunks). Never
+   * a token; absent for the admin token and a signed-in person.
+   */
+  readonly keyId?: string;
+  /**
+   * The team membership a signed-in person acts through in `spaceId`, for the same reason. Absent
+   * for a deployment admin who is not on the space's team, and for every bearer.
+   */
+  readonly memberId?: string;
 }
 
 /**
@@ -318,6 +335,23 @@ export class DelegatedKeyMintError extends DomainError {
       'forbidden',
       "An OAuth or personal access token can't mint an API key or widen one; sign in to the " +
         'admin, or use an operator key',
+    );
+  }
+}
+
+/**
+ * A delegated bearer (see {@link isDelegatedBearer}) tried to give a person lasting access: invite
+ * someone, add them to a team, change their role, let them sign in again, or widen a role they
+ * hold. The token expires; the access it would grant doesn't, so only a person signed in to the
+ * admin (or an operator key) does it. A 403, like a missing scope; `details.reason` tells a client
+ * which refusal this is.
+ */
+export class DelegatedPeopleError extends DomainError {
+  constructor(action: string) {
+    super(
+      'forbidden',
+      `A personal access token or OAuth token can't ${action}; sign in to the admin to do this`,
+      { reason: 'delegated_bearer' },
     );
   }
 }
@@ -513,6 +547,45 @@ export function contentActionsFor(
   return { types, others: wildcard ? held(wildcard) : [] };
 }
 
+/** The fields one grant restricts: by name only, never what they hold. */
+export interface FieldRules {
+  /** Masked on read and refused on write ({@link ContentTypeGrant.deniedFields}). */
+  readonly deniedFields: readonly string[];
+  /** Readable, but refused on write ({@link ContentTypeGrant.readOnlyFields}). */
+  readonly readOnlyFields: readonly string[];
+}
+
+/**
+ * The field rules a principal's grants hold, per content type, resolved as {@link grantFor}
+ * resolves them and shaped as {@link contentActionsFor}: `types` for each type a grant names (the
+ * first grant naming it), `others` for every type none names (the first `*` grant's). No rules
+ * anywhere for a principal with no grants. What the admin reads before drawing an entry's form, so
+ * it never offers a field the save would refuse.
+ */
+export interface FieldRulesByType {
+  readonly types: Readonly<Record<string, FieldRules>>;
+  readonly others: FieldRules;
+}
+
+const NO_FIELD_RULES: FieldRules = { deniedFields: [], readOnlyFields: [] };
+
+export function fieldRulesFor(principal: Pick<Principal, 'contentGrants'>): FieldRulesByType {
+  const grants = principal.contentGrants;
+  if (!grants) return { types: {}, others: NO_FIELD_RULES };
+  const rules = (g: ContentTypeGrant): FieldRules => ({
+    deniedFields: [...new Set(g.deniedFields ?? [])],
+    readOnlyFields: [...new Set(g.readOnlyFields ?? [])],
+  });
+  const types: Record<string, FieldRules> = {};
+  for (const g of grants) {
+    if (g.contentTypeApiId !== '*' && !Object.hasOwn(types, g.contentTypeApiId)) {
+      types[g.contentTypeApiId] = rules(g);
+    }
+  }
+  const wildcard = grants.find((g) => g.contentTypeApiId === '*');
+  return { types, others: wildcard ? rules(wildcard) : NO_FIELD_RULES };
+}
+
 /** Whether `principal`'s grant on `contentTypeApiId` denies a field or makes one read-only. */
 export function hasFieldRules(principal: Principal, contentTypeApiId: string): boolean {
   if (!principal.contentGrants) return false;
@@ -693,14 +766,35 @@ export function unwritableFieldsFor(
 /**
  * Enforces field-level write rules: writing a denied or read-only field
  * throws ForbiddenError. No-op for unrestricted principals.
+ *
+ * With `stored` (an update, against the entry as it is), a read-only field whose every sent
+ * locale holds exactly its stored value is no write, so a client that sends back what it read
+ * (the admin's entry form and canvas) can save; the update keeps the stored field whole regardless
+ * (`unwritable`), so a locale left out is no write either. A denied field is refused even then:
+ * the caller can't read it, and accepting an unchanged value would let it guess one, a save at a
+ * time.
  */
 export function assertWritableFields(
   principal: Principal,
   contentTypeApiId: string,
   fields: Record<string, unknown>,
+  stored?: Record<string, unknown>,
 ): void {
-  const [blocked] = unwritableFields(principal, contentTypeApiId, fields);
+  const denied = stored ? deniedFieldsFor(principal, contentTypeApiId) : [];
+  const blocked = unwritableFields(principal, contentTypeApiId, fields).find(
+    (apiId) => !stored || denied.includes(apiId) || !unchangedLocales(fields[apiId], stored[apiId]),
+  );
   if (blocked) throw new ForbiddenError(`content:write:${contentTypeApiId}.${blocked}`);
+}
+
+/** Whether every locale `sent` carries holds the value `kept` stores for it. */
+function unchangedLocales(sent: unknown, kept: unknown): boolean {
+  const isRecord = (v: unknown): v is Record<string, unknown> =>
+    !!v && typeof v === 'object' && !Array.isArray(v);
+  if (!isRecord(sent) || !isRecord(kept)) return false;
+  return Object.entries(sent).every(
+    ([locale, value]) => Object.hasOwn(kept, locale) && sameValue(value, kept[locale]),
+  );
 }
 
 /**

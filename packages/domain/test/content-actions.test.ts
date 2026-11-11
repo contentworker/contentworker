@@ -10,7 +10,9 @@ import {
   canAccessContentType,
   contentActionsFor,
   ENTRY_OPERATION_ACTIONS,
+  fieldRulesFor,
   grantedActions,
+  grantFor,
   grantsNoWider,
   type ListedContentAction,
   type Principal,
@@ -349,5 +351,54 @@ describe('contentActionsFor', () => {
     expect(
       contentActionsFor({ contentGrants: [{ contentTypeApiId: 'page', actions: ['read'] }] }),
     ).toEqual({ types: { page: ['read'] }, others: [] });
+  });
+});
+
+describe('fieldRulesFor', () => {
+  it('restricts no field without grants', () => {
+    expect(fieldRulesFor({})).toEqual({
+      types: {},
+      others: { deniedFields: [], readOnlyFields: [] },
+    });
+  });
+  it('resolves each type as grantFor does: its own grant, else the first `*`', () => {
+    const grants: ContentTypeGrant[] = [
+      {
+        contentTypeApiId: 'page',
+        actions: ['read', 'write'],
+        deniedFields: ['salary'],
+        readOnlyFields: ['slug', 'slug'],
+      },
+      { contentTypeApiId: '*', actions: ['read', 'write'], readOnlyFields: ['owner'] },
+      // A second grant for a type already named never applies.
+      { contentTypeApiId: 'page', actions: ['read'], deniedFields: ['title'] },
+      { contentTypeApiId: '*', actions: ['read'], deniedFields: ['title'] },
+    ];
+    const view = fieldRulesFor({ contentGrants: grants });
+    expect(view).toEqual({
+      types: { page: { deniedFields: ['salary'], readOnlyFields: ['slug'] } },
+      others: { deniedFields: [], readOnlyFields: ['owner'] },
+    });
+    const principal = roleWith(...grants);
+    for (const type of ['page', 'post']) {
+      const grant = grantFor(principal, type);
+      const rules = view.types[type] ?? view.others;
+      expect(rules.deniedFields).toEqual(grant?.deniedFields ?? []);
+      expect(new Set(rules.readOnlyFields)).toEqual(new Set(grant?.readOnlyFields ?? []));
+    }
+  });
+  it('names a type a grant names even when it restricts no field there', () => {
+    expect(
+      fieldRulesFor({
+        contentGrants: [
+          { contentTypeApiId: 'page', actions: ['read', 'write'] },
+          { contentTypeApiId: '*', actions: ['read'], deniedFields: ['salary'] },
+        ],
+      }),
+    ).toEqual({
+      // The `*` grant's rules don't reach a type with a grant of its own.
+      types: { page: { deniedFields: [], readOnlyFields: [] } },
+      others: { deniedFields: ['salary'], readOnlyFields: [] },
+    });
   });
 });

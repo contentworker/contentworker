@@ -84,7 +84,7 @@ describe('exporting an environment', () => {
     const { entry } = await createEntry(ctx, source, article('One'));
     await setEntryMetadata(ctx, source, entry.id, { tags: [tag.id], concepts: [] });
 
-    const snapshot = await exportSnapshot(ctx, source);
+    const snapshot = await exportSnapshot(ctx, SYSTEM_CALLER, source);
     expect(snapshot.snapshotVersion).toBe(SNAPSHOT_VERSION);
     expect(snapshot.source).toEqual(source);
     expect(snapshot.contentTypes.map((c) => c.apiId)).toEqual(['article']);
@@ -105,21 +105,21 @@ describe('exporting an environment', () => {
       list(scope, { ...query, limit: query.limit ?? 100 });
     for (let i = 0; i < 250; i++) await createEntry(ctx, source, article(`Post ${i}`));
 
-    const snapshot = await exportSnapshot(ctx, source);
+    const snapshot = await exportSnapshot(ctx, SYSTEM_CALLER, source);
     expect(snapshot.entries).toHaveLength(250);
     expect(new Set(snapshot.entries.map((e) => e.id)).size).toBe(250);
   });
 
   it('serializes to JSON without loss', async () => {
     await createEntry(ctx, source, article('One'));
-    const snapshot = await exportSnapshot(ctx, source);
+    const snapshot = await exportSnapshot(ctx, SYSTEM_CALLER, source);
     // A snapshot is a file people move around; it has to survive the trip.
     expect(JSON.parse(JSON.stringify(snapshot))).toEqual(snapshot);
   });
 
   it('404s on an unknown space', async () => {
     await expect(
-      exportSnapshot(ctx, { spaceId: 'nope', environmentId: 'main' }),
+      exportSnapshot(ctx, SYSTEM_CALLER, { spaceId: 'nope', environmentId: 'main' }),
     ).rejects.toBeInstanceOf(NotFoundError);
   });
 });
@@ -127,9 +127,9 @@ describe('exporting an environment', () => {
 describe('importing a snapshot', () => {
   it('reports what it would do without writing anything, when asked to dry run', async () => {
     await createEntry(ctx, source, article('One'));
-    const snapshot = await exportSnapshot(ctx, source);
+    const snapshot = await exportSnapshot(ctx, SYSTEM_CALLER, source);
 
-    const report = await importSnapshot(ctx, target, snapshot, { dryRun: true });
+    const report = await importSnapshot(ctx, SYSTEM_CALLER, target, snapshot, { dryRun: true });
     expect(report).toMatchObject({ dryRun: true, contentTypes: 1, entries: 1 });
     // Nothing landed.
     expect(await store.contentTypes.list(target)).toHaveLength(0);
@@ -143,7 +143,12 @@ describe('importing a snapshot', () => {
       agentInstructions: 'Stay factual.',
     } as Parameters<typeof createContentType>[3]);
     await publishContentType(ctx, source, 'article');
-    await importSnapshot(ctx, target, await exportSnapshot(ctx, source));
+    await importSnapshot(
+      ctx,
+      SYSTEM_CALLER,
+      target,
+      await exportSnapshot(ctx, SYSTEM_CALLER, source),
+    );
     expect((await store.contentTypes.get(target, 'article'))?.agentInstructions).toBe(
       'Stay factual.',
     );
@@ -152,9 +157,9 @@ describe('importing a snapshot', () => {
   it('replays the model and entries into an empty environment', async () => {
     await createEntry(ctx, source, article('One'));
     await createEntry(ctx, source, article('Two'));
-    const snapshot = await exportSnapshot(ctx, source);
+    const snapshot = await exportSnapshot(ctx, SYSTEM_CALLER, source);
 
-    const report = await importSnapshot(ctx, target, snapshot);
+    const report = await importSnapshot(ctx, SYSTEM_CALLER, target, snapshot);
     expect(report).toMatchObject({ dryRun: false, contentTypes: 1, entries: 2 });
     expect((await store.contentTypes.list(target)).map((c) => c.apiId)).toEqual(['article']);
     const entries = await listPreviewEntries(ctx, target, {});
@@ -168,7 +173,12 @@ describe('importing a snapshot', () => {
     await publishEntry(ctx, source, entry.id);
     await createEntry(ctx, source, article('Draft only'));
 
-    const report = await importSnapshot(ctx, target, await exportSnapshot(ctx, source));
+    const report = await importSnapshot(
+      ctx,
+      SYSTEM_CALLER,
+      target,
+      await exportSnapshot(ctx, SYSTEM_CALLER, source),
+    );
     expect(report.published).toBe(1);
 
     // Published through the real use-case, so delivery serves it — the point of
@@ -186,7 +196,12 @@ describe('importing a snapshot', () => {
     await publishEntry(ctx, source, entry.id);
     const before = (await store.outbox.readPending(100)).length;
 
-    await importSnapshot(ctx, target, await exportSnapshot(ctx, source));
+    await importSnapshot(
+      ctx,
+      SYSTEM_CALLER,
+      target,
+      await exportSnapshot(ctx, SYSTEM_CALLER, source),
+    );
     const after = await store.outbox.readPending(100);
     expect(after.slice(before).filter((e) => e.type === 'entry.published')).toHaveLength(1);
   });
@@ -196,7 +211,7 @@ describe('importing a snapshot', () => {
     await publishEntry(ctx, source, e.entry.id);
     await updateEntry(ctx, source, e.entry.id, { title: { 'en-US': 'Draft title' } });
 
-    await cloneEnvironment(ctx, source, target);
+    await cloneEnvironment(ctx, SYSTEM_CALLER, source, target);
 
     const live = await getPublishedEntry(ctx, target, e.entry.id, { locale: 'en-US' });
     expect(live.fields.title).toBe('Live title');
@@ -209,9 +224,15 @@ describe('importing a snapshot', () => {
     const { entry } = await createEntry(ctx, source, article('Live'));
     await publishEntry(ctx, source, entry.id);
 
-    const report = await importSnapshot(ctx, target, await exportSnapshot(ctx, source), {
-      publish: false,
-    });
+    const report = await importSnapshot(
+      ctx,
+      SYSTEM_CALLER,
+      target,
+      await exportSnapshot(ctx, SYSTEM_CALLER, source),
+      {
+        publish: false,
+      },
+    );
     expect(report.published).toBe(0);
     expect(await store.entries.listPublished(target, {})).toHaveLength(0);
   });
@@ -221,7 +242,12 @@ describe('importing a snapshot', () => {
     const { entry } = await createEntry(ctx, source, article('Tagged'));
     await setEntryMetadata(ctx, source, entry.id, { tags: [tag.id], concepts: [] });
 
-    await importSnapshot(ctx, target, await exportSnapshot(ctx, source));
+    await importSnapshot(
+      ctx,
+      SYSTEM_CALLER,
+      target,
+      await exportSnapshot(ctx, SYSTEM_CALLER, source),
+    );
     const tags = await store.taxonomy.listTags(target);
     expect(tags).toHaveLength(1);
 
@@ -240,7 +266,12 @@ describe('importing a snapshot', () => {
     };
     await createAsset(ctx, blob as never, source, { fileName: 'a.png', contentType: 'image/png' });
 
-    const report = await importSnapshot(ctx, target, await exportSnapshot(ctx, source));
+    const report = await importSnapshot(
+      ctx,
+      SYSTEM_CALLER,
+      target,
+      await exportSnapshot(ctx, SYSTEM_CALLER, source),
+    );
     // Binaries stay in the source bucket; an operator should be told, not
     // left to discover it.
     expect(report.skipped.join(' ')).toContain('asset');
@@ -309,7 +340,7 @@ describe('importing a snapshot', () => {
     await publishEntry(ctx, source, root.entry.id);
     await publishEntry(ctx, source, child.entry.id);
 
-    await cloneEnvironment(ctx, source, target);
+    await cloneEnvironment(ctx, SYSTEM_CALLER, source, target);
 
     // Same id, published in the target, its links resolved there.
     const copied = await getPublishedEntry(ctx, target, child.entry.id, {
@@ -331,7 +362,7 @@ describe('importing a snapshot', () => {
       fileName: 'a.png',
       contentType: 'image/png',
     });
-    const snapshot = await exportSnapshot(ctx, source);
+    const snapshot = await exportSnapshot(ctx, SYSTEM_CALLER, source);
     // Forged: another space's key for this id, and a version past anything committed.
     const forged = {
       ...snapshot,
@@ -341,7 +372,7 @@ describe('importing a snapshot', () => {
         version: 999,
       })),
     };
-    await importSnapshot(ctx, target, forged);
+    await importSnapshot(ctx, SYSTEM_CALLER, target, forged);
     const imported = await getAsset(ctx, target, asset.id);
     expect(imported.r2Key).toBeUndefined();
     expect(assetFileKey(target, imported).startsWith('s1/copy/')).toBe(true);
@@ -349,7 +380,7 @@ describe('importing a snapshot', () => {
     // A clone keeps its source's keys: the caller can read that space.
     const other = { spaceId: 's1', environmentId: 'clone' };
     await createEnvironment(ctx, 's1', 'clone');
-    await cloneEnvironment(ctx, source, other);
+    await cloneEnvironment(ctx, SYSTEM_CALLER, source, other);
     expect(assetFileKey(other, await getAsset(ctx, other, asset.id))).toBe(
       assetFileKey(source, asset),
     );
@@ -369,7 +400,7 @@ describe('importing a snapshot', () => {
     await publishAsset(ctx, source, asset.id);
     const e = await createEntry(ctx, source, article('After the asset'));
     await publishEntry(ctx, source, e.entry.id);
-    const snapshot = await exportSnapshot(ctx, source);
+    const snapshot = await exportSnapshot(ctx, SYSTEM_CALLER, source);
     const lapsed = {
       ...snapshot,
       assets: snapshot.assets.map((a) => ({
@@ -377,7 +408,7 @@ describe('importing a snapshot', () => {
         rights: { expiresAt: '2000-01-01T00:00:00.000Z' },
       })),
     };
-    const report = await importSnapshot(ctx, target, lapsed);
+    const report = await importSnapshot(ctx, SYSTEM_CALLER, target, lapsed);
     expect((await getAsset(ctx, target, asset.id)).status).toBe('draft');
     expect(report.skipped.some((s) => s.includes(asset.id))).toBe(true);
     // The rest of the import went on: the entry after it is published.
@@ -387,7 +418,7 @@ describe('importing a snapshot', () => {
   it('refuses a snapshot that would fail part-way before writing anything, so a retry works', async () => {
     const e = await createEntry(ctx, source, article('Linked'));
     await publishEntry(ctx, source, e.entry.id);
-    const snapshot = await exportSnapshot(ctx, source);
+    const snapshot = await exportSnapshot(ctx, SYSTEM_CALLER, source);
     // A published entry linking an entry the snapshot doesn't carry (purged after publishing),
     // and a draft the content model rejects.
     const broken = {
@@ -424,26 +455,32 @@ describe('importing a snapshot', () => {
       ],
     };
 
-    const failure = await importSnapshot(ctx, target, broken as never).catch((err) => err);
+    const failure = await importSnapshot(ctx, SYSTEM_CALLER, target, broken as never).catch(
+      (err) => err,
+    );
     expect(failure).toBeInstanceOf(ValidationError);
     const messages = (failure as ValidationError).issues.map((i) => i.message).join('\n');
     expect(messages).toContain(`Entry ${e.entry.id}: links entry "gone"`);
     expect(messages).toContain('Entry bad:');
     // Nothing was written: the target is still empty, so a corrected snapshot imports.
     expect(await ctx.store.contentTypes.list(target)).toEqual([]);
-    expect(await importSnapshot(ctx, target, snapshot)).toMatchObject({ entries: 1 });
+    expect(await importSnapshot(ctx, SYSTEM_CALLER, target, snapshot)).toMatchObject({
+      entries: 1,
+    });
   });
 
   it('refuses an entry id that is not an id, naming its position and writing nothing', async () => {
     await createEntry(ctx, source, article('Kept'));
-    const snapshot = await exportSnapshot(ctx, source);
+    const snapshot = await exportSnapshot(ctx, SYSTEM_CALLER, source);
     const prose = 'the launch moves to march, tell nobody';
     const broken = {
       ...snapshot,
       entries: [...snapshot.entries, { ...(snapshot.entries[0] as object), id: prose }],
     };
 
-    const failure = await importSnapshot(ctx, target, broken as never).catch((err) => err);
+    const failure = await importSnapshot(ctx, SYSTEM_CALLER, target, broken as never).catch(
+      (err) => err,
+    );
 
     expect(failure).toBeInstanceOf(ValidationError);
     const messages = (failure as ValidationError).issues.map((i) => i.message).join('\n');
@@ -455,9 +492,11 @@ describe('importing a snapshot', () => {
   it('keeps ids of the accepted shape when importing', async () => {
     await createEntry(ctx, source, { ...article('Kept'), id: 'legacy_Entry-1' });
 
-    const snapshot = await exportSnapshot(ctx, source);
+    const snapshot = await exportSnapshot(ctx, SYSTEM_CALLER, source);
 
-    expect(await importSnapshot(ctx, target, snapshot)).toMatchObject({ entries: 1 });
+    expect(await importSnapshot(ctx, SYSTEM_CALLER, target, snapshot)).toMatchObject({
+      entries: 1,
+    });
     expect(await store.entries.get(target, 'legacy_Entry-1')).toBeTruthy();
   });
 
@@ -471,29 +510,32 @@ describe('importing a snapshot', () => {
     await seedModel(target);
     // Merging two content models is a different and much harder operation.
     await expect(
-      importSnapshot(ctx, target, await exportSnapshot(ctx, source)),
+      importSnapshot(ctx, SYSTEM_CALLER, target, await exportSnapshot(ctx, SYSTEM_CALLER, source)),
     ).rejects.toBeInstanceOf(ValidationError);
   });
 
   it('refuses a target environment that does not exist, writing nothing', async () => {
     const typo = { spaceId: 's1', environmentId: 'cpoy' };
     await expect(
-      importSnapshot(ctx, typo, await exportSnapshot(ctx, source)),
+      importSnapshot(ctx, SYSTEM_CALLER, typo, await exportSnapshot(ctx, SYSTEM_CALLER, source)),
     ).rejects.toBeInstanceOf(NotFoundError);
     expect(await store.contentTypes.list(typo)).toEqual([]);
   });
 
   it('refuses a snapshot it cannot read', async () => {
-    const snapshot = { ...(await exportSnapshot(ctx, source)), snapshotVersion: 99 };
-    await expect(importSnapshot(ctx, target, snapshot)).rejects.toBeInstanceOf(ValidationError);
+    const snapshot = { ...(await exportSnapshot(ctx, SYSTEM_CALLER, source)), snapshotVersion: 99 };
+    await expect(importSnapshot(ctx, SYSTEM_CALLER, target, snapshot)).rejects.toBeInstanceOf(
+      ValidationError,
+    );
   });
 
   it('refuses an unknown target space', async () => {
     await expect(
       importSnapshot(
         ctx,
+        SYSTEM_CALLER,
         { spaceId: 'nope', environmentId: 'main' },
-        await exportSnapshot(ctx, source),
+        await exportSnapshot(ctx, SYSTEM_CALLER, source),
       ),
     ).rejects.toBeInstanceOf(NotFoundError);
   });
@@ -501,12 +543,14 @@ describe('importing a snapshot', () => {
   it('rejects content the current model would refuse', async () => {
     // A snapshot is not a back door: entries go through createEntry, so one
     // that fails today's validation fails the import loudly.
-    const snapshot = await exportSnapshot(ctx, source);
+    const snapshot = await exportSnapshot(ctx, SYSTEM_CALLER, source);
     const broken = {
       ...snapshot,
       entries: [{ id: 'x', contentTypeApiId: 'article', status: 'draft', fields: {} }],
     };
-    await expect(importSnapshot(ctx, target, broken)).rejects.toBeInstanceOf(ValidationError);
+    await expect(importSnapshot(ctx, SYSTEM_CALLER, target, broken)).rejects.toBeInstanceOf(
+      ValidationError,
+    );
   });
 });
 
@@ -528,7 +572,8 @@ describe('workflows in snapshots', () => {
     await publishWorkflowVersion(ctx, source, workflow.id);
     await saveWorkflowDraft(ctx, source, workflow.id, { description: 'unpublished edit' });
 
-    const [exported] = (await exportSnapshot(ctx, source)).workflows as SnapshotWorkflowV2[];
+    const [exported] = (await exportSnapshot(ctx, SYSTEM_CALLER, source))
+      .workflows as SnapshotWorkflowV2[];
     expect(exported).toMatchObject({
       format: 2,
       name: 'Review (edited)',
@@ -550,7 +595,12 @@ describe('workflows in snapshots', () => {
     await publishWorkflowVersion(ctx, source, workflow.id);
     await saveWorkflowDraft(ctx, source, workflow.id, { description: 'draft only' });
 
-    const report = await importSnapshot(ctx, target, await exportSnapshot(ctx, source));
+    const report = await importSnapshot(
+      ctx,
+      SYSTEM_CALLER,
+      target,
+      await exportSnapshot(ctx, SYSTEM_CALLER, source),
+    );
     expect(report.workflows).toBe(1);
     const [imported] = await listWorkflows(ctx, target);
     expect(imported).toMatchObject({ name: 'Review', description: 'draft only', latestVersion: 1 });
@@ -560,10 +610,10 @@ describe('workflows in snapshots', () => {
 
   it('still imports format 1 (legacy steps) by converting and publishing v1', async () => {
     const snapshot = {
-      ...(await exportSnapshot(ctx, source)),
+      ...(await exportSnapshot(ctx, SYSTEM_CALLER, source)),
       workflows: [{ id: 'old', name: 'Legacy', steps: STEPS }],
     };
-    await importSnapshot(ctx, target, snapshot);
+    await importSnapshot(ctx, SYSTEM_CALLER, target, snapshot);
     const [imported] = await listWorkflows(ctx, target);
     expect(imported).toMatchObject({ name: 'Legacy', steps: STEPS, latestVersion: 1 });
     expect(imported?.graph).toEqual(legacyStepsToGraph({ steps: STEPS }));
@@ -571,13 +621,14 @@ describe('workflows in snapshots', () => {
 
   it('exports legacy-defined workflows as format 2 too', async () => {
     await defineWorkflow(ctx, source, { name: 'Legacy', steps: STEPS });
-    const [exported] = (await exportSnapshot(ctx, source)).workflows as SnapshotWorkflowV2[];
+    const [exported] = (await exportSnapshot(ctx, SYSTEM_CALLER, source))
+      .workflows as SnapshotWorkflowV2[];
     expect(exported).toMatchObject({ format: 2, steps: STEPS });
     expect(exported?.versions).toHaveLength(1);
   });
 
   it('skips, and names, a version that no longer validates', async () => {
-    const snapshot = await exportSnapshot(ctx, source);
+    const snapshot = await exportSnapshot(ctx, SYSTEM_CALLER, source);
     const good = editorialReviewWorkflow().graph;
     const broken: SnapshotWorkflowV2 = {
       format: 2,
@@ -600,7 +651,10 @@ describe('workflows in snapshots', () => {
         },
       ],
     };
-    const report = await importSnapshot(ctx, target, { ...snapshot, workflows: [broken] });
+    const report = await importSnapshot(ctx, SYSTEM_CALLER, target, {
+      ...snapshot,
+      workflows: [broken],
+    });
     expect(report.skipped.join(' ')).toMatch(/workflow "W" version 1/);
     const [imported] = await listWorkflows(ctx, target);
     expect(imported).toMatchObject({ latestVersion: null, graph: good });
@@ -629,7 +683,7 @@ describe('asset folders in snapshots', () => {
     const logos = await createAssetFolder(ctx, source, { name: 'Logos', parentId: brand.id });
     const logo = await upload('logo.png', logos.id);
 
-    await cloneEnvironment(ctx, source, target);
+    await cloneEnvironment(ctx, SYSTEM_CALLER, source, target);
 
     expect(await listAssetFolders(ctx, target)).toEqual(await listAssetFolders(ctx, source));
     expect((await getAsset(ctx, target, logo.id)).folderId).toBe(logos.id);
@@ -639,7 +693,7 @@ describe('asset folders in snapshots', () => {
     const old = await upload('old.png');
     await archiveAsset(ctx, source, old.id);
 
-    await cloneEnvironment(ctx, source, target);
+    await cloneEnvironment(ctx, SYSTEM_CALLER, source, target);
 
     const copied = await getAsset(ctx, target, old.id);
     expect(copied.status).toBe('draft');
@@ -649,9 +703,9 @@ describe('asset folders in snapshots', () => {
   it('still imports a snapshot written before folders, its assets at the root', async () => {
     const brand = await createAssetFolder(ctx, source, { name: 'Brand' });
     const filed = await upload('filed.png', brand.id);
-    const { assetFolders: _dropped, ...older } = await exportSnapshot(ctx, source);
+    const { assetFolders: _dropped, ...older } = await exportSnapshot(ctx, SYSTEM_CALLER, source);
 
-    await importSnapshot(ctx, target, older);
+    await importSnapshot(ctx, SYSTEM_CALLER, target, older);
 
     expect(await listAssetFolders(ctx, target)).toEqual([]);
     const copied = await getAsset(ctx, target, filed.id);
@@ -659,7 +713,7 @@ describe('asset folders in snapshots', () => {
   });
 
   it('refuses, before writing, a folder whose parent the snapshot lacks', async () => {
-    const snapshot = await exportSnapshot(ctx, source);
+    const snapshot = await exportSnapshot(ctx, SYSTEM_CALLER, source);
     const orphan = {
       id: 'orphan',
       name: 'Orphan',
@@ -669,7 +723,7 @@ describe('asset folders in snapshots', () => {
       updatedAt: '2026-01-01T00:00:00.000Z',
     };
     await expect(
-      importSnapshot(ctx, target, { ...snapshot, assetFolders: [orphan] }),
+      importSnapshot(ctx, SYSTEM_CALLER, target, { ...snapshot, assetFolders: [orphan] }),
     ).rejects.toBeInstanceOf(ValidationError);
     expect(await store.contentTypes.list(target)).toEqual([]);
   });
@@ -680,7 +734,7 @@ describe('cloning an environment', () => {
     const { entry } = await createEntry(ctx, source, article('Live'));
     await publishEntry(ctx, source, entry.id);
 
-    const report = await cloneEnvironment(ctx, source, target);
+    const report = await cloneEnvironment(ctx, SYSTEM_CALLER, source, target);
     expect(report).toMatchObject({ contentTypes: 1, entries: 1, published: 1 });
     expect(await listPreviewEntries(ctx, target, {})).toHaveLength(1);
     expect(await store.entries.listPublished(target, {})).toHaveLength(1);
@@ -691,13 +745,15 @@ describe('cloning an environment', () => {
     await createEntry(ctx, source, article('One'));
 
     const other = { spaceId: 's2', environmentId: 'main' };
-    await expect(cloneEnvironment(ctx, source, other)).resolves.toMatchObject({ entries: 1 });
+    await expect(cloneEnvironment(ctx, SYSTEM_CALLER, source, other)).resolves.toMatchObject({
+      entries: 1,
+    });
     expect(await listPreviewEntries(ctx, other, {})).toHaveLength(1);
   });
 
   it('leaves the source untouched', async () => {
     await createEntry(ctx, source, article('One'));
-    await cloneEnvironment(ctx, source, target);
+    await cloneEnvironment(ctx, SYSTEM_CALLER, source, target);
     expect(await listPreviewEntries(ctx, source, {})).toHaveLength(1);
   });
 });

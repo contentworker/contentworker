@@ -45,6 +45,7 @@ import {
   UNTRUSTED_CONTENT_GUARD,
   wrapUntrusted,
 } from './ai-prompt';
+import { requireAiCapability } from './ai-settings';
 import { type AssetSearchDeps, MAX_ASSET_QUERY_LENGTH, searchAssets } from './asset-search';
 import { getBlockConfig } from './block-config';
 import {
@@ -369,6 +370,7 @@ export async function generateBlocks(
     refuse('parent', 'bad_parent', 'A slot is a block’s: give the entryId that holds it');
   }
 
+  const policy = await requireAiCapability(ctx, scope, 'layout');
   // Reads first: the entry (when there is one), its type, the space, the rules.
   let entry: Entry | undefined;
   let stored: EntryFields = {};
@@ -498,9 +500,9 @@ export async function generateBlocks(
     ai,
     scope,
     {
-      system,
+      system: policy.system(system),
       prompt,
-      tier: input.tier ?? 'flagship',
+      tier: policy.tier('flagship', input.tier),
       maxTokens: LAYOUT_MAX_TOKENS,
       outputSchema: built.schema,
     },

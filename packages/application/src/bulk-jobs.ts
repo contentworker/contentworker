@@ -21,8 +21,10 @@ import {
   ENTRY_TRASH_BULK_ACTIONS,
   TransactionConflictError,
 } from '@contentworker/ports';
-import { type AppContext, withActor } from './context';
+import { recordAudit } from './audit';
+import { type AppContext, withActor, withStarter } from './context';
 import { discardStagedJob, importChunkKey } from './job-staging';
+import { jobStarter, STARTER_LOST_ACCESS, starterLostAccess } from './job-starter';
 import { publishEntriesTx, unpublishEntriesTx } from './publishing';
 
 /** Entry ids processed per chunk (one transaction + one coalesced event each). */
@@ -187,8 +189,15 @@ export async function persistJob(
   now: string,
 ): Promise<BulkJob> {
   // Its chunks run later, on a consumer with no principal: whoever started the job is recorded with
-  // it, so what they write is theirs (see `jobActor`).
+  // it, so what they write is theirs (see `jobActor`), and so each chunk can ask whether they still
+  // may (`starterLostAccess`). Only ever from the context, never from what a caller sent.
   if (ctx.actor !== undefined) job = { ...job, config: { ...job.config, actor: ctx.actor } };
+  const { startedBy: _sent, ...config } = job.config ?? {};
+  job = { ...job, config: ctx.starter ? { ...config, startedBy: ctx.starter } : config };
+  if (Object.keys(job.config ?? {}).length === 0) {
+    const { config: _empty, ...bare } = job;
+    job = bare;
+  }
   await ctx.store.withTransaction(async (tx) => {
     await tx.bulkJobs.createJob(scope, job);
     await tx.bulkJobs.createChunks(scope, chunks);
@@ -203,7 +212,7 @@ export async function persistJob(
       })),
     );
   });
-  return job;
+  return withoutStarter(job);
 }
 
 export interface RunBulkChunkResult {
@@ -301,6 +310,11 @@ export interface BulkChunkDeps {
     chunk: BulkJobChunk,
   ) => Promise<BulkChunkOutcome>;
   /**
+   * Where a job stopped mid-way keeps its unrun chunks' staged work, discarded when its starter's
+   * access ends (as `cancelBulkJob` does). Absent, that work is left for its retention.
+   */
+  readonly blob?: BlobStore;
+  /**
    * Runs one phase of a space starter's background install (`@contentworker/seed`), injected
    * because the starter's content lives above this layer. Absent, the chunk stays claimable.
    */
@@ -316,9 +330,9 @@ export interface BulkChunkDeps {
 export const jobActor = (job: BulkJob): string | undefined =>
   typeof job.config?.actor === 'string' ? job.config.actor : undefined;
 
-/** `ctx` writing as whoever started `job`. */
+/** `ctx` writing as whoever started `job`, and starting any job of its own as them too. */
 export const actingForJob = (ctx: AppContext, job: BulkJob): AppContext =>
-  withActor(ctx, jobActor(job));
+  withStarter(withActor(ctx, jobActor(job)), jobStarter(job));
 
 export async function runBulkChunk(
   ctx: AppContext,
@@ -333,6 +347,15 @@ export async function runBulkChunk(
   const job = await ctx.store.bulkJobs.getJob(scope, jobId);
   if (!job) return { outcome: 'skipped' };
   if (job.status !== 'running') return { outcome: 'skipped' };
+
+  // Whoever started the job must still be able to, before each chunk: a trash or purge job stops
+  // when its key is revoked or its person loses the role, rather than finishing on their behalf.
+  // Checked before the claim, so the chunk is never counted as attempted.
+  const lost = await starterLostAccess(ctx, scope, job);
+  if (lost !== null) {
+    await stopForLostStarter(ctx, scope, job, lost, deps.blob);
+    return { outcome: 'skipped' };
+  }
 
   const now = ctx.clock.now();
   const staleBefore = new Date(now.getTime() - BULK_CHUNK_STALE_SECONDS * 1000);
@@ -487,7 +510,10 @@ async function finalizeIfDone(ctx: AppContext, scope: Scope, job: BulkJob): Prom
           succeeded: 0,
           failed: 0,
           createdAt: nowIso,
-          config: next.config,
+          // Started by whoever started the first, so its chunks check the same starter.
+          config: finalized.config?.startedBy
+            ? { ...next.config, startedBy: finalized.config.startedBy }
+            : next.config,
         });
         await tx.bulkJobs.createChunks(
           scope,
@@ -576,11 +602,21 @@ export async function resumeStalledBulkJobs(
  * names of the fields it sets remain, as `config.fieldNames`.
  */
 export function readableBulkJob(job: BulkJob): BulkJob {
-  job = withoutChain(job);
+  job = withoutStarter(withoutChain(job));
   if (job.action !== 'set_fields' || job.config?.fields === undefined) return job;
   const { fields, ...config } = job.config;
   const fieldNames = fields && typeof fields === 'object' ? Object.keys(fields) : [];
   return { ...job, config: { ...config, fieldNames } };
+}
+
+/**
+ * The starter reference (`startedBy`: a key or membership id) is the machinery's, to check access again; a
+ * reader already has the job's `config.actor`.
+ */
+function withoutStarter(job: BulkJob): BulkJob {
+  if (job.config?.startedBy === undefined) return job;
+  const { startedBy: _startedBy, ...config } = job.config;
+  return { ...job, config };
 }
 
 /**
@@ -654,20 +690,7 @@ export async function cancelBulkJob(
   // The stop and, for a content type's delete, its outcome commit together: the type stays, and
   // its readers are told so as a completed job's are (`finishContentTypeDeletion`), never left
   // waiting for an outcome that never comes.
-  const job = await ctx.store
-    .withTransaction(async (tx) => {
-      const stopped = await tx.bulkJobs.finalizeJob(scope, id, 'cancelled', ctx.clock.now());
-      if (stopped?.action !== 'content_type_delete') return stopped;
-      await tx.bulkJobs.mergeConfig(scope, id, { typeDeletion: STOPPED });
-      return { ...stopped, config: { ...stopped.config, typeDeletion: STOPPED } };
-    })
-    .catch((err: unknown) => {
-      // Another finalizer won at commit: the job is terminal, read below as it is.
-      if (err instanceof TransactionConflictError) return null;
-      throw err;
-    });
-  // Its unrun chunks' staged work, and that of the job it would have started, are never read now.
-  if (job && deps.blob) await discardStagedJob(deps.blob, scope, job, { nextStarted: false });
+  const job = await stopJob(ctx, scope, id, STOPPED, {}, deps.blob);
   if (!job) {
     const existing = await ctx.store.bulkJobs.getJob(scope, id);
     if (!existing) throw new NotFoundError('BulkJob', id);
@@ -675,7 +698,10 @@ export async function cancelBulkJob(
     const recorded = (existing.config as { typeDeletion?: unknown } | undefined)?.typeDeletion;
     if (existing.action === 'content_type_delete' && existing.status === 'cancelled' && !recorded) {
       await ctx.store.bulkJobs.mergeConfig(scope, id, { typeDeletion: STOPPED });
-      return { ...existing, config: { ...existing.config, typeDeletion: STOPPED } };
+      return readableBulkJob({
+        ...existing,
+        config: { ...existing.config, typeDeletion: STOPPED },
+      });
     }
     return readableBulkJob(existing); // already terminal — cancel is idempotent
   }
@@ -684,6 +710,76 @@ export async function cancelBulkJob(
 
 /** A stopped content type delete's outcome: the type stays. */
 const STOPPED = { deleted: false, reason: 'the job was stopped' } as const;
+
+/**
+ * Cancels a running job (a compare-and-set on `running`), recording `patch` in its config and, for
+ * a content type's delete, `typeDeletion` with it, in one unit; then discards the staged work it
+ * will never read. Null when the job was not running, or another finalizer won at commit.
+ */
+async function stopJob(
+  ctx: AppContext,
+  scope: Scope,
+  id: string,
+  typeDeletion: { readonly deleted: false; readonly reason: string },
+  patch: Readonly<Record<string, unknown>>,
+  blob: BlobStore | undefined,
+): Promise<BulkJob | null> {
+  const job = await ctx.store
+    .withTransaction(async (tx) => {
+      const stopped = await tx.bulkJobs.finalizeJob(scope, id, 'cancelled', ctx.clock.now());
+      if (!stopped) return null;
+      const recorded = {
+        ...patch,
+        ...(stopped.action === 'content_type_delete' ? { typeDeletion } : {}),
+      };
+      if (Object.keys(recorded).length === 0) return stopped;
+      await tx.bulkJobs.mergeConfig(scope, id, recorded);
+      return { ...stopped, config: { ...stopped.config, ...recorded } };
+    })
+    .catch((err: unknown) => {
+      // Another finalizer won at commit: the job is terminal, read by the caller as it is.
+      if (err instanceof TransactionConflictError) return null;
+      throw err;
+    });
+  // Its unrun chunks' staged work, and that of the job it would have started, are never read now.
+  if (job && blob) await discardStagedJob(blob, scope, job, { nextStarted: false });
+  return job;
+}
+
+/**
+ * Stops `job` because its starter can no longer run it: cancelled with
+ * `config.cancelReason: 'starter_lost_access'` and the reason in words, and an audit row by the
+ * system naming the job. Only the stop that wins the compare-and-set audits, so a redelivered
+ * chunk (or a racing one) records it once.
+ */
+async function stopForLostStarter(
+  ctx: AppContext,
+  scope: Scope,
+  job: BulkJob,
+  detail: string,
+  blob: BlobStore | undefined,
+): Promise<void> {
+  const stopped = await stopJob(
+    ctx,
+    scope,
+    job.id,
+    { deleted: false, reason: 'the job was stopped: its starter lost access' },
+    { cancelReason: STARTER_LOST_ACCESS, cancelDetail: detail },
+    blob,
+  );
+  if (!stopped) return;
+  await recordAudit(ctx, {
+    spaceId: scope.spaceId,
+    environmentId: scope.environmentId,
+    actor: 'system',
+    action: `bulk_job.${STARTER_LOST_ACCESS}`,
+    targetType: 'bulk_job',
+    targetId: job.id,
+    status: 403,
+  }).catch(() => {
+    /* the job is stopped either way; auditing must not turn the stop into a retry */
+  });
+}
 
 /**
  * Runs an import, asset, entry trash, field edit or starter chunk and folds its outcome into the

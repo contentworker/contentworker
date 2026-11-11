@@ -38,6 +38,7 @@
 ^packages/application/src/(generation|content-ai|media-ai|ai-actions|ai-budget|rag|semantics|search-index)\.ts$	guides/ai docs/ai-agents-and-search.md	prose
 ^packages/adapters/src/(ai-workers|vector-vectorize)/	guides/ai docs/ai-agents-and-search.md docs/configuration.md	prose
 ^packages/(agent-runtime/src/|application/src/agent-[a-z-]+\.ts$)	guides/ai docs/ai-agents-and-search.md	prose
+^packages/(domain/src/ai/ai-settings\.ts$|application/src/ai-settings\.ts$|http/src/mcp/tools/ai-settings\.ts$|http/src/api/routes/management/ai-settings\.ts$|db/migrations/0043_space_ai_settings\.sql$)|^apps/web/app/cms/components/AiSettings\.tsx$	guides/ai docs/ai-agents-and-search.md docs/domain-model.md docs/api-reference.md docs/mcp.md	prose
 ^packages/http/src/mcp/(server\.ts$|audit\.ts$|tools/)	guides/mcp docs/mcp.md	prose
 ^packages/http/skills/	guides/mcp docs/mcp.md	prose
 #
@@ -46,6 +47,7 @@
 ^packages/domain/src/(webhook/|events\.ts$)	guides/webhooks docs/events-and-webhooks.md	prose
 ^packages/application/src/events/	docs/events-and-webhooks.md docs/consistency.md	prose
 ^packages/(application/src/plugin[a-z-]*\.ts$|domain/src/plugin/|adapters/src/plugins-cf-loader/)	guides/extending docs/plugins.md	prose
+^(packages/application/src/app-operations\.ts$|packages/http/src/(api/routes/management|mcp/tools)/apps\.ts$|packages/http/src/api/docs/(app-operations-openapi|schemas/apps)\.ts$)	guides/extending docs/plugins.md docs/api-reference.md docs/mcp.md	prose
 ^(packages/application/src/(functions|app-extensions)\.ts$|packages/http/src/(api/routes/management|mcp/tools)/(functions|app-extensions|plugins)\.ts$|packages/adapters/src/http-effects/function-invoker\.ts$|apps/web/app/cms/components/(Functions|AppExtensions|ExtensionFrame|Plugins|PluginSettingsSheet)\.tsx$)	guides/extending	prose
 #
 # Auth, roles, keys:

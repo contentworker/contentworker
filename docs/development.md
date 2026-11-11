@@ -443,6 +443,25 @@ a deploy and after a rollback. A `detail` that isn't valid JSON indexes only its
 failing the append. The migration backfills the rows already written. Nothing deletes from it, as
 nothing deletes audit history; deleting an environment leaves it.
 
+`0043_space_ai_settings.sql` adds `space_ai_settings` (`space_id` primary key, `version`,
+`document`, `updated_by`, `updated_at`): a space's AI settings, per capability on or off, its tier
+and its guidance, as one JSON document rewritten whole at each set, its `version` the
+compare-and-set (see [AI settings per capability](./ai-agents-and-search.md#ai-settings-per-capability)).
+A new table: code deployed before it never reads it, and a space with no row reads as every
+capability on, as before.
+
+`0042_member_versions.sql` adds `space_members.version` (integer, default 1, not null), so every
+existing person reads as version 1. Each save writes the next version while the row is at the one
+before, and never inserts past version 1, so a change read before a removal can't bring the row
+back; a removal deletes only the version it read. Code deployed before it never names the column:
+its upsert keeps the version a row has, and a person it adds starts at 1.
+
+`0041_role_versions.sql` adds `roles.version` (integer, default 1, not null), so every existing
+role reads as version 1. Each save writes the next version while the row is at the one before (the
+compare-and-set `PUT /spaces/:space/roles/:id` rides with, and its optional `expectedVersion` is
+checked against). Code deployed before it never names the column: its upsert keeps the version a
+row has, and a role it creates starts at 1.
+
 `0039_promotion_blocks.sql` adds the nullable `environment_promotions.blocks`, the block catalog
 and config a promotion copies as JSON (`{ catalogVersion, configVersion, targetCatalogVersion,
 targetConfigVersion }`, the source's and the target's versions when it was requested). No backfill:

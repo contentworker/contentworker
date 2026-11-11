@@ -115,7 +115,7 @@ describe('saved views over HTTP', () => {
       [nosy, noSalary.id],
       [pagesOnly, memos.id],
     ] as const) {
-      await addMember(ctx, 's1', { email: person.email, role });
+      await addMember(ctx, 's1', { email: person.email, role }, 'system');
       await findMemberForSignIn(ctx, 's1', person.sub, person.email);
     }
   });
@@ -216,7 +216,7 @@ describe('saved views over HTTP', () => {
 
   it('lets only a shared view’s creator stop sharing it, as a fresh read shows', async () => {
     const shared = await create(lead, { name: 'Team', visibility: 'shared' });
-    await addMember(ctx, 's1', { email: 'rival@example.com', role: 'manager' });
+    await addMember(ctx, 's1', { email: 'rival@example.com', role: 'manager' }, 'system');
     await findMemberForSignIn(ctx, 's1', 'rival', 'rival@example.com');
     const rival = who('rival');
 
@@ -247,7 +247,7 @@ describe('saved views over HTTP', () => {
       scopes: ['preview:read', 'content:manage'],
       contentGrants: [{ contentTypeApiId: '*', actions: ['read'], deniedFields: ['salary'] }],
     } as Parameters<typeof createRole>[2]);
-    await addMember(ctx, 's1', { email: 'hide2@example.com', role: role.id });
+    await addMember(ctx, 's1', { email: 'hide2@example.com', role: role.id }, 'system');
     await findMemberForSignIn(ctx, 's1', 'hide2', 'hide2@example.com');
 
     const res = await call(who('hide2'), 'PATCH', `/saved-views/${shared.id}`, {

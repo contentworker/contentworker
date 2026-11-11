@@ -11,7 +11,8 @@ person who installed it could not. Everything below exists to make that true.
 ## The three things a plugin is
 
 1. **A manifest** — id, version, requested capabilities, egress allowlist, hooks, entrypoint, and
-   optionally the settings an operator fills in.
+   optionally the settings an operator fills in and, at `manifestVersion: 2`, the
+   [operations](#operations) it offers callers.
 2. **A bundle** — one ES module, stored in the blob store, addressed by SHA-256 checksum.
 3. **A grant** — the capability list a human actually approved, which may be _less_ than the
    manifest asked for and can never be more.
@@ -85,6 +86,9 @@ feature-detect without calling something and getting refused.
   someone approves the new list. An upgrade cannot be a way to acquire capabilities quietly.
 - A capability the previous version also asked for was already decided. If it was declined, it
   stays declined: asking again in a new release does not reopen the question.
+- An upgrade that offers callers a new [operation](#operations), or changes the scope an existing
+  one `requires`, lands disabled as well: who may trigger the plugin is part of what was approved
+  (`operationsWiden`). Dropping an operation or editing its description or schemas does not.
 - An upgrade that asks for _less_ silently drops the difference.
 - Any approval that **grows** the effective grant lands the plugin disabled. This covers an upgrade
   and an approval made on an installed plugin alike. Narrowing a grant, or keeping it the same,
@@ -146,8 +150,10 @@ separate v8 isolate with no bindings and no ambient authority.
   from the old ones.
 - The plugin's compatibility date is pinned separately from the host's: a plugin should not change
   behaviour because the platform's date moved.
-- The host bounds how long it waits (default 2 s, so a plugin cannot hold an editor's save open);
-  the runtime bounds CPU, memory and subrequests.
+- The host bounds how long it waits (default 2 s for a hook, so a plugin cannot hold an editor's
+  save open; 10 s for an [operation](#operations)); the runtime bounds CPU, memory and subrequests.
+  A `caps.network.fetch` never outlives its invocation: it is capped at the smaller of the fetch
+  limits below and what remains of the hook's or operation's budget, and refused once that is spent.
 - The adapter **re-derives** what the isolate receives from the invocation's effective grant. It
   does not trust the object the host passed in. For each method in the capability → method map,
   the plugin gets the host implementation only if the method's capability is granted _and_ the
@@ -179,6 +185,113 @@ Without the `PLUGIN_LOADER` binding the hook seam stays unwired and installed pl
 execute. There is no in-host fallback: running untrusted code in the host isolate is not a
 degraded mode of isolation, it is the absence of it.
 
+## Operations
+
+A hook runs inside someone else's write; an **operation** is a named, typed call a client or agent
+makes on purpose (`POST …/apps/:plugin/operations/:operation`, or MCP's `app_operation_invoke`).
+A manifest with operations declares `"manifestVersion": 2`; without the field a manifest is version
+1 and cannot carry `operations` (refused with a 422). The declaration is the single source for the
+REST route, the OpenAPI documents and the MCP tools, so both surfaces stay equal.
+
+```json
+{
+  "manifestVersion": 2,
+  "id": "com.example.seo",
+  "name": "SEO helper",
+  "version": "1.3.0",
+  "capabilities": ["content:read", "network:request"],
+  "allowedHosts": ["api.example.com"],
+  "hooks": [],
+  "entrypoint": "index.js",
+  "operations": [
+    {
+      "name": "scoreEntry",
+      "title": "Score an entry",
+      "description": "Scores one entry's title and description for search.",
+      "requires": "preview:read",
+      "input": {
+        "type": "object",
+        "properties": { "entryId": { "type": "string", "minLength": 1 } },
+        "required": ["entryId"]
+      },
+      "output": {
+        "type": "object",
+        "properties": { "score": { "type": "integer", "minimum": 0, "maximum": 100 } },
+        "required": ["score"]
+      }
+    }
+  ]
+}
+```
+
+| Field         | Rule                                                                                      |
+| ------------- | ----------------------------------------------------------------------------------------- |
+| `name`        | A lowercase letter, then letters, digits or `_` (64 at most); unique in the manifest       |
+| `title`, `description` | Required. They reach the consent screen, the OpenAPI document and an agent's tool choice |
+| `requires`    | A permission scope (`SCOPES`): what a caller must hold to invoke it. Not `delivery:read` or `search:read`, which public delivery keys hold |
+| `input`       | An `object` schema                                                                        |
+| `output`      | Optional schema, checked before the result is returned; absent, any JSON value is returned |
+| `mode`        | `sync`, the default and the only mode. `async` (a durable job) is planned, not built      |
+
+At most 32 operations per manifest. Schemas are a small JSON Schema subset, validated by hand in
+the domain (`operationSchemaIssues`) so what a human approves is what is checked: `object`
+(`properties`, `required`), `array` (`items`, `maxItems`), `string` (`enum`, `minLength`,
+`maxLength`), `number` and `integer` (`minimum`, `maximum`) and `boolean`, each with an optional
+`description`, nested at most 8 deep. Objects are closed: a property that is not declared is a
+validation error, not ignored. Any other keyword (`$ref`, `oneOf`, `pattern`, `format`) is refused
+at install and upgrade.
+
+**Invoking.** The use-case (`invokeAppOperation`) finds the plugin and the operation; one that is
+unknown, belongs to a disabled plugin or to one awaiting re-approval is `404`. It then checks the
+caller holds `requires` (`403`), checks the body against `input` (`422`, `issues[].field` under
+`input`) and runs the plugin. Input and output are each JSON of at most 64 KiB. A plugin that
+throws, runs past its time, returns more than 64 KiB or answers outside `output` raises
+`AppOperationFailedError`, which the HTTP API answers with `502`: the plugin's fault, not the
+caller's. Without a plugin runtime (no `PLUGIN_LOADER`) the answer is `501`.
+
+**The grant is narrowed to the caller.** An operation runs with `operationGrant`: the plugin's
+effective grant, less every capability whose scope the caller does not hold. It runs as a
+principal holding only the scopes that narrowed grant implies, under the caller's content-type
+grants, so a plugin granted `content:write` cannot write for a caller who cannot, and no operation
+is a confused deputy. `network:request` and `kv:storage` imply no scope and stay: the operator
+approved them for the plugin, bounded as ever by `allowedHosts` and the plugin's own key space.
+`caps.granted` lists the narrowed grant. Capabilities refused during an operation are denied and
+audited as for a hook, and the denial names the operation instead of a hook.
+
+The use-cases don't check per-type grants (the routes do), so the capabilities do it for an
+operation: `content.create`, `content.update` and `content.publish` need `write` or `publish` on
+the entry's type in the caller's grants (and `create` refuses a field the caller may not write),
+and `content.list`, `content.get` and `content.listPublished` drop types the caller can't read and
+mask its denied fields. The narrowing covers what the plugin does during the call. Data it stored
+earlier (in `kv:storage`, say, from a hook running with its full grant) is the plugin's, and an
+operation can return it.
+
+An operation may not require `delivery:read` or `search:read`: those keys ship inside public front
+ends, and an operation runs plugin code with the operator's network access, storage and secrets.
+A plugin's error message is redacted (credentials in URLs, bearer and API tokens) before it
+reaches the caller.
+
+**Time.** A hook is held to 2 s by default; an operation gets 10 s, being the caller's own
+request. Longer work belongs in an `async` operation, which is planned. When the host stops
+waiting, every capability the plugin was handed refuses from then on: a plugin that outlives its
+call can't go on writing after the caller has its `502` or the save went ahead.
+
+**Isolates.** A plugin's isolate is keyed by space, plugin id, bundle checksum and the host
+wrapper's version (`isolateKey`), so one plugin installed in two spaces never shares module state
+between them. The isolate's main module is a host wrapper (`hostModule`) that exposes the
+`WorkerEntrypoint` Worker Loader requires and delegates each hook and `runOperation` to the
+author's plain `Plugin` class.
+
+**Discovery.** `GET …/apps/operations` lists, for a caller, every operation of every enabled plugin
+that caller may invoke, with its schemas; a plugin awaiting re-approval offers none. A plugin
+summary (`GET /spaces/:space/plugins`) carries `operations` (name, title, description, `requires`,
+`mode`). `GET /spaces/:space/apps/openapi.json` is an OpenAPI 3.1 document with one path per
+operation the caller may invoke, generated from the manifests for client generators. MCP has two
+generic tools rather than one per operation: `app_operations_list` and `app_operation_invoke`.
+Neither has a scope of its own (both are in `UNSCOPED_TOOLS`): each operation's `requires` is
+checked in the use-case. Routes and tools are in [API reference](./api-reference.md#app-operations)
+and [MCP](./mcp.md).
+
 ## Writing a plugin
 
 One ES module exporting a class named `Plugin`, with a method per hook:
@@ -203,6 +316,25 @@ export class Plugin {
 | `entry:beforeTrash`   | `onEntryBeforeTrash`   |
 | `entry:beforePurge`   | `onEntryBeforePurge`   |
 | `asset:beforeCreate`  | `onAssetBeforeCreate`  |
+
+A plugin that declares operations also implements `runOperation(name, input, caps)` on the same
+`Plugin` class. It returns the operation's output, or throws to fail it:
+
+```js
+export class Plugin {
+  async runOperation(name, input, caps) {
+    if (name === 'scoreEntry') {
+      const entry = await caps.content.get(input.entryId);
+      return { score: Math.min(100, (entry.fields?.title?.['en-US'] ?? '').length) };
+    }
+    throw new Error(`unknown operation ${name}`);
+  }
+}
+```
+
+The module runs in the same severed isolate as a hook and receives `caps` as an argument, so the
+gate is the same. A manifest that declares operations while the class has no `runOperation` fails
+the call (`502`); unlike a hook there is no write to let through.
 
 Return nothing to pass through, `{ payload }` to replace it, or `{ veto: { reason, issues } }` to
 refuse. Anything unrecognised is treated as pass-through, so a plugin returning junk cannot corrupt
@@ -335,7 +467,8 @@ Space-admin scope (`space:admin`). HTTP has every operation; MCP has five of the
 | Uninstall             | `DELETE /spaces/:space/plugins/:id`            |
 
 A plugin summary carries `requestedCapabilities` (the manifest), `approvedCapabilities` (the human
-decision), `grantedCapabilities` (the effective grant, what it runs with) and `needsReapproval`.
+decision), `grantedCapabilities` (the effective grant, what it runs with), `needsReapproval` and
+`operations` (what it offers callers).
 
 **Approve capabilities** records a fresh decision without changing the code. Use it to re-approve a
 flagged plugin, to narrow a grant, or to grant something the manifest asked for that was declined
@@ -343,7 +476,8 @@ earlier. The same checks as an install apply: nothing beyond the manifest, and n
 approver's own scopes. A grant that grows lands the plugin disabled.
 
 MCP exposes `plugins_list`, `plugin_set_enabled`, `plugin_approve_capabilities`,
-`plugin_get_settings` and `plugin_set_settings`. The settings tools call the same use-cases as the
+`plugin_get_settings` and `plugin_set_settings` for managing; invoking a plugin's operations is
+`app_operations_list` and `app_operation_invoke`, which need no `space:admin`. The settings tools call the same use-cases as the
 routes. The approve tool
 calls the same use-case in **narrow-only** mode. An agent may confirm a grant (which clears a legacy
 plugin's flag) or reduce it, and is refused if it tries to widen it. Granting authority to code

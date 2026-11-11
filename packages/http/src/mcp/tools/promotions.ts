@@ -29,7 +29,10 @@ export function registerPromotionTools(server: McpServer, t: ToolContext): void 
         'blocks removed, or the risk check flagged it), and someone other than you approves it ' +
         'with promotion_approve. Omit contentTypes and entries to promote everything that ' +
         'differs (at most 200 entries), the block catalog and block config included; blocks: ' +
-        'true adds them to a selection.',
+        'true adds them to a selection. A refusal copies nothing (a record, if one was made, is ' +
+        '`failed`). One that applies at once and stops after a write is an error result ' +
+        '(`promotion_failed`) carrying the record in `error.promotion`: `failed`, its `error`, ' +
+        'what it wrote (`result`) and what the target refused (`result.issues`).',
       inputSchema: toolSchema('promotion_request', () =>
         z.object({
           source: z.string(),
@@ -75,7 +78,9 @@ export function registerPromotionTools(server: McpServer, t: ToolContext): void 
     async (args) => {
       const spaceId = args.space ?? DEFAULT_SPACE;
       guard(SCOPES.contentPublish, { spaceId, environmentId: DEFAULT_ENV });
-      return ok(await listPromotions(ctx, spaceId, args.status ? { status: args.status } : {}));
+      return ok(
+        await listPromotions(ctx, principal, spaceId, args.status ? { status: args.status } : {}),
+      );
     },
   );
 
@@ -91,7 +96,7 @@ export function registerPromotionTools(server: McpServer, t: ToolContext): void 
     async (args) => {
       const spaceId = args.space ?? DEFAULT_SPACE;
       guard(SCOPES.contentPublish, { spaceId, environmentId: DEFAULT_ENV });
-      return ok(await getPromotion(ctx, spaceId, args.id));
+      return ok(await getPromotion(ctx, principal, spaceId, args.id));
     },
   );
 
@@ -99,7 +104,9 @@ export function registerPromotionTools(server: McpServer, t: ToolContext): void 
     'promotion_approve',
     {
       description:
-        'Approve a promotion waiting for approval, and apply it. Refused for whoever requested it.',
+        'Approve a promotion waiting for approval, and apply it. Refused for whoever requested ' +
+        'it; a refusal copies nothing (the record may be `failed`). An apply that stops after a ' +
+        'write is an error result (`promotion_failed`) carrying the record in `error.promotion`.',
       inputSchema: toolSchema('promotion_approve', () =>
         z.object({ id: z.string(), space: z.string().optional() }),
       ),
@@ -114,7 +121,9 @@ export function registerPromotionTools(server: McpServer, t: ToolContext): void 
   server.registerTool(
     'promotion_reject',
     {
-      description: 'Reject a promotion waiting for approval; nothing is copied.',
+      description:
+        'Reject a promotion waiting for approval; nothing is copied. A person who requested it ' +
+        '(not an API key or an app acting for them) may reject it too, withdrawing the request.',
       inputSchema: toolSchema('promotion_reject', () =>
         z.object({ id: z.string(), space: z.string().optional() }),
       ),

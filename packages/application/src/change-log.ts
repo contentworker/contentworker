@@ -1,4 +1,5 @@
 import {
+  type AiSettingsChange,
   type AuditDetail,
   type BlockConfigChange,
   type BlockLockChange,
@@ -25,6 +26,8 @@ export interface ChangeLog {
   noteBlockConfig(change: BlockConfigChange): void;
   /** Records a committed set of an entry's locks: the regions locked and unlocked. */
   noteBlockLocks(change: BlockLockChange): void;
+  /** Records a committed set of the space's AI settings: the parts it changed. */
+  noteAiSettings(change: AiSettingsChange): void;
   /** What has been noted, or undefined when nothing was. */
   detail(): AuditDetail | undefined;
   clear(): void;
@@ -46,6 +49,7 @@ export function createChangeLog(): ChangeLog {
   const entries = new Map<string, EntryChange>();
   let blockConfig: BlockConfigChange | undefined;
   let blockLocks: BlockLockChange | undefined;
+  let aiSettings: AiSettingsChange | undefined;
   let incomplete = false;
   return {
     note(entryId, summarize) {
@@ -68,12 +72,18 @@ export function createChangeLog(): ChangeLog {
     noteBlockLocks(change) {
       blockLocks = change;
     },
+    noteAiSettings(change) {
+      aiSettings = change;
+    },
     detail() {
-      if (entries.size === 0 && !blockConfig && !blockLocks && !incomplete) return undefined;
+      if (entries.size === 0 && !blockConfig && !blockLocks && !aiSettings && !incomplete) {
+        return undefined;
+      }
       return {
         entries: [...entries.values()],
         ...(blockConfig ? { blockConfig } : {}),
         ...(blockLocks ? { blockLocks } : {}),
+        ...(aiSettings ? { aiSettings } : {}),
         ...(incomplete ? { truncated: true } : {}),
       };
     },
@@ -81,6 +91,7 @@ export function createChangeLog(): ChangeLog {
       entries.clear();
       blockConfig = undefined;
       blockLocks = undefined;
+      aiSettings = undefined;
       incomplete = false;
     },
   };

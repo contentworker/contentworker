@@ -244,6 +244,12 @@ Follow it at
 `POST …/bulk/jobs/{id}/cancel`. The MCP tools are `bulk_job_start`, `bulk_job_status`,
 `bulk_job_report` and `bulk_job_cancel`.
 
+A job runs as whoever started it, and checks before each batch that they still could start it:
+if their key is revoked or expired, they are disabled or removed from the team, or their role
+loses the scopes or the grants the job needs, it stops. Its status turns `cancelled` with
+`config.cancelReason: "starter_lost_access"`, the entries already done stay done, the rest are not
+touched, and the audit log records it. Jobs started with the admin or MCP token keep running.
+
 Each content type also has a manual order. Read it with `order=sys.position` (newest entries go
 at the end), and move an entry with `POST …/entries/{id}/move`, sending `{ "after": "<id>" }` or
 `{ "before": "<id>" }` (`null` for first or last). A move takes effect at once, published or not,

@@ -1,9 +1,16 @@
-import { type Principal, principalActorId } from '@contentworker/domain';
+import {
+  type InstalledPlugin,
+  type PluginOperation,
+  type Principal,
+  principalActorId,
+  type Scope,
+} from '@contentworker/domain';
 import type {
   Cache,
   Clock,
   ContentStore,
   CostGuard,
+  Counter,
   DecisionModel,
   HookDispatcher,
   IdGenerator,
@@ -14,6 +21,7 @@ import type {
 } from '@contentworker/ports';
 import type { AiCallRecord } from './ai-provenance';
 import type { ChangeLog } from './change-log';
+import { type JobStarter, jobStarterOf } from './job-starter';
 
 /** `live` calls the model; `mock` answers every `generateJson` from its heuristic. */
 export type AiMode = 'live' | 'mock';
@@ -34,6 +42,12 @@ export interface AppContext {
    */
   readonly actor?: string;
   /**
+   * Who a bulk job started through this context is started by, by reference (`job-starter.ts`):
+   * recorded with the job so each chunk can check their access again. Set with `actor` by
+   * `actingAs`, and carried by `actingForJob` into the jobs a job starts; absent → the system's.
+   */
+  readonly starter?: JobStarter;
+  /**
    * Where this request's entry saves note what they changed, for its audit row. Like `actor`, never
    * set at the composition root: a surface that writes an audit row sets one per request. Absent →
    * nothing is collected and no diff runs (a queue consumer, a seed, a plugin's capability call).
@@ -41,6 +55,8 @@ export interface AppContext {
   readonly changes?: ChangeLog;
   /** Optional delivery cache; when absent, reads go straight to the store. */
   readonly cache?: Cache;
+  /** Operational counters (absent in tests and local tools): what an alert should watch. */
+  readonly metrics?: Counter;
   /**
    * TTL for delivery cache entries, seconds. A garbage-collection bound only —
    * tag-version invalidation stays the correctness mechanism — so backends
@@ -84,6 +100,11 @@ export interface AppContext {
    * the write path is untouched, not that an empty dispatch runs.
    */
   readonly hooks?: HookDispatcher;
+  /**
+   * Runs plugin operations in the sandbox. Absent where nothing can sandbox plugin code (no
+   * Worker Loader): operations then answer that they are not configured.
+   */
+  readonly appOperations?: AppOperationRunner;
   /**
    * Image transformation service (Cloudflare Images on edge). Absent → the
    * built-in query-param URL convention (`?w=&h=&fit=&fm=&q=`), which an
@@ -136,4 +157,25 @@ export const actorOf = (ctx: AppContext): string | null => ctx.actor ?? null;
 
 /** `ctx` acting for the principal of a request: its audit identity is the writes' author. */
 export const actingAs = (ctx: AppContext, principal: Principal): AppContext =>
-  withActor(ctx, principalActorId(principal));
+  withStarter(withActor(ctx, principalActorId(principal)), jobStarterOf(principal));
+
+/** `ctx` starting jobs as `starter` (see {@link AppContext.starter}). */
+export function withStarter(ctx: AppContext, starter: JobStarter | undefined): AppContext {
+  if (ctx.starter === starter) return ctx;
+  if (starter === undefined) {
+    const { starter: _starter, ...rest } = ctx;
+    return rest;
+  }
+  return { ...ctx, starter };
+}
+
+/** Runs one plugin operation for a caller; `createPluginOperationRunner` builds the real one. */
+export interface AppOperationRunner {
+  run(
+    plugin: InstalledPlugin,
+    operation: PluginOperation,
+    input: unknown,
+    scope: Scope,
+    caller: Principal,
+  ): Promise<unknown>;
+}
