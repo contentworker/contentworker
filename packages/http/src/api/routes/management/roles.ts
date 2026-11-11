@@ -47,7 +47,7 @@ export function rolesRoutes(deps: AuthDeps): Hono<AuthVars> {
         'Keys and people holding it pick the change up live; the role is saved as its next ' +
         '`version`. 409 (naming the `version` in force) when `expectedVersion` is stale or another ' +
         'save commits first; without `expectedVersion` it saves over whatever is stored. An OAuth ' +
-        'or personal access token widening a role an active key holds (403) and leaving the space ' +
+        'or personal access token widening a role an active key or a person holds (403) and leaving the space ' +
         `with no administrator (409 \`last_admin\`) are refused before a stale version. ${GRANT_RULES}`,
       body: roleUpdateBody,
       ok: roleDocs.role,
@@ -60,7 +60,7 @@ export function rolesRoutes(deps: AuthDeps): Hono<AuthVars> {
           c.req.param('space'),
           c.req.param('id'),
           await parseBody(c, roleUpdateBody),
-          deps.accessPolicy,
+          deps.accessPolicy ?? { sso: false },
           c.get('principal'),
         ),
       ),

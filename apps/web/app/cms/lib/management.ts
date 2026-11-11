@@ -1049,6 +1049,8 @@ export interface InstalledPluginSummary {
   readonly needsReapproval?: boolean;
   readonly allowedHosts: readonly string[];
   readonly hooks: readonly string[];
+  /** What it offers callers by name (manifest v2), and the scope each one requires. */
+  readonly operations?: readonly PluginOperationSummary[];
   readonly checksum: string;
   readonly enabled: boolean;
   readonly installedAt: string;
@@ -1274,8 +1276,18 @@ export interface InspectedPluginPackage {
   readonly bundleBytes: number;
 }
 
+/** One operation a plugin offers, as its summary and its manifest both describe it. */
+export interface PluginOperationSummary {
+  readonly name: string;
+  readonly title: string;
+  readonly description: string;
+  /** The scope a caller holds to invoke it. */
+  readonly requires: string;
+}
+
 /** The manifest half of a plugin package, as authored. */
 export interface PluginManifestInput {
+  readonly manifestVersion?: number;
   readonly id: string;
   readonly name: string;
   readonly version: string;
@@ -1284,6 +1296,7 @@ export interface PluginManifestInput {
   readonly allowedHosts?: readonly string[];
   readonly hooks: readonly string[];
   readonly entrypoint: string;
+  readonly operations?: readonly PluginOperationSummary[];
 }
 
 /**

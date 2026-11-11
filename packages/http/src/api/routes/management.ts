@@ -13,6 +13,7 @@ import { aiActionsRoutes } from './management/ai-actions';
 import { aiContentRoutes } from './management/ai-content';
 import { apiKeysRoutes } from './management/api-keys';
 import { appExtensionsRoutes } from './management/app-extensions';
+import { appsRoutes } from './management/apps';
 import { assetCollectionsRoutes } from './management/asset-collections';
 import { assetFoldersRoutes } from './management/asset-folders';
 import { assetItemRoutes } from './management/asset-item';
@@ -76,6 +77,7 @@ const AREAS: readonly ((deps: AuthDeps) => Hono<AuthVars>)[] = [
   importsRoutes,
   spaceExportRoutes,
   pluginsRoutes,
+  appsRoutes,
   rolesRoutes,
   contentTypesRoutes,
   blockCatalogRoutes,

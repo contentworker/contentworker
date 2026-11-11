@@ -321,6 +321,9 @@ export const cloneBody = z.object({
 });
 // The manifest's inner shape is validated by the domain, which rejects rather
 // than repairs — this only guards the envelope and bounds the bundle size.
+/** A plugin operation's input: a JSON object, checked against the operation's own schema. */
+export const appOperationInputBody = z.record(z.string(), z.unknown());
+
 export const installPluginBody = z.object({
   manifest: z.object({}).loose(),
   bundle: z.string().min(1).max(2_000_000),

@@ -138,8 +138,7 @@ describe('the asset library over HTTP', () => {
     const list = async (qs: string) =>
       json<{ items: AssetBody[] }>(await app.request(`${M}/assets?${qs}`, { headers: cpa }));
 
-    // Two uploads in one millisecond tie on createdAt and fall to id order, and a UUIDv7's bits
-    // after its timestamp are random: the hash picks the pair, not which comes first.
+    // Both match; the two uploads can share a millisecond, so their order is not the point here.
     expect(
       (await list(`contentHash=${hash}&sort=createdAt&order=asc`)).items.map((x) => x.id).sort(),
     ).toEqual([a.id, b.id].sort());

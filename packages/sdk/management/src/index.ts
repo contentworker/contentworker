@@ -264,6 +264,25 @@ export interface ContentTypeDraft {
   readonly preview?: ContentTypePreview | null;
 }
 
+/**
+ * An operation an installed plugin offers (manifest v2), as `apps.operations()` lists it: only the
+ * ones the client's token may invoke, with the JSON Schema of their input and output.
+ */
+export interface AppOperation {
+  /** The plugin id, e.g. `com.example.seo`. */
+  readonly plugin: string;
+  readonly pluginName: string;
+  readonly pluginVersion: string;
+  readonly name: string;
+  readonly title: string;
+  readonly description: string;
+  /** The scope a caller holds to invoke it. */
+  readonly requires: string;
+  readonly mode: 'sync';
+  readonly input: Readonly<Record<string, unknown>>;
+  readonly output?: Readonly<Record<string, unknown>>;
+}
+
 /** A redirect: a front end (or an edge Worker) applies it; contentworker serves no site. */
 export interface Redirect {
   readonly id: string;
@@ -1721,12 +1740,31 @@ export interface PreviewEntry extends EntryAuthorship {
   readonly fields: Readonly<Record<string, unknown>>;
 }
 
+/** A page of the Preview list; pass `nextCursor` back as `cursor` for the next. */
+export interface EntryPage {
+  items: PreviewEntry[];
+  /** Entries on this page. */
+  total: number;
+  nextCursor?: string;
+}
+
 /** The Preview list's parameters (`GET /preview/:space/:env/entries`). */
 export interface EntryListQuery {
   readonly contentType?: string;
   readonly locale?: string;
   /** At most 100. */
   readonly limit?: number;
+  /**
+   * The previous page's `nextCursor`, with the same filters and order. It walks the list's own
+   * order; in the default order an entry edited between two pages is never skipped.
+   */
+  readonly cursor?: string;
+  /**
+   * Entries to pass over before this page. The Preview list takes no offset, so the client walks
+   * the cursor past them, a request per 100.
+   *
+   * @deprecated Page with `cursor` (the previous page's `nextCursor`).
+   */
   readonly skip?: number;
   /** Sort keys, e.g. `-sys.updatedAt` or `fields.title`. */
   readonly order?: string;
@@ -1891,6 +1929,39 @@ export function createManagementClient(opts: ManagementClientOptions) {
   }
 
   const e = encodeURIComponent;
+
+  const entryPage = (query: EntryListQuery) =>
+    get<EntryPage>(`${root}/preview/${e(opts.space)}/${e(opts.environment)}/entries`, {
+      content_type: query.contentType,
+      locale: query.locale,
+      limit: query.limit,
+      cursor: query.cursor,
+      order: query.order,
+      query: query.query,
+      'sys.createdBy': query.createdBy,
+      'sys.updatedBy': query.updatedBy,
+    });
+
+  async function listEntries(query: EntryListQuery = {}): Promise<EntryPage> {
+    // The Preview list refuses an offset (a cursor walks keys), so a `skip` is walked here: pages
+    // of up to 100 are read and dropped until that many entries are behind the cursor.
+    const { skip, ...rest } = query;
+    let cursor = rest.cursor;
+    const seen = new Set<string>();
+    for (let left = cursor ? 0 : (skip ?? 0); left > 0; ) {
+      const page = await entryPage({ ...rest, cursor, limit: Math.min(left, 100) });
+      if (!page.nextCursor) return { items: [], total: 0 };
+      // A cursor that comes back again would walk forever; the server never does that.
+      if (seen.has(page.nextCursor)) {
+        throw new Error(`Management API returned cursor ${page.nextCursor} twice`);
+      }
+      seen.add(page.nextCursor);
+      left -= page.items.length;
+      cursor = page.nextCursor;
+    }
+    return entryPage({ ...rest, cursor });
+  }
+
   /** A signed URL may be root-relative (a deployment without MEDIA_BASE_URL): resolve it here. */
   const absolute = (url: string) => (/^https?:\/\//.test(url) ? url : `${root}${url}`);
   /** A signed URL without its query: the signature is a write capability, never for a log. */
@@ -2184,6 +2255,18 @@ export function createManagementClient(opts: ManagementClientOptions) {
       delete: (id: string, o: { readonly revision?: number } = {}) =>
         del<void>(`${envBase}/saved-views/${e(id)}`, { revision: o.revision }),
     },
+    /**
+     * App operations: what installed plugins offer by name. `invoke` answers 403 without the
+     * scope an operation requires, 422 for input off its schema, 502 when the plugin fails.
+     */
+    apps: {
+      operations: () => get<{ items: AppOperation[] }>(`${envBase}/apps/operations`),
+      invoke: <T = unknown>(
+        plugin: string,
+        operation: string,
+        input: Readonly<Record<string, unknown>> = {},
+      ) => post<{ output: T }>(`${envBase}/apps/${e(plugin)}/operations/${e(operation)}`, input),
+    },
     /** Redirects: delivery data a front end applies (content:manage to change them). */
     redirects: {
       /** By source; `q` searches source, destination and note. */
@@ -2237,21 +2320,16 @@ export function createManagementClient(opts: ManagementClientOptions) {
     entries: {
       /**
        * One page of entries as they are now, drafts included, from the Preview API (the same
-       * origin): `total` counts this page, so page with `skip` until one comes back short.
+       * origin): `total` counts this page; pass `nextCursor` back as `cursor` for the next.
        */
-      list: (query: EntryListQuery = {}) =>
-        get<{ items: PreviewEntry[]; total: number }>(
-          `${root}/preview/${e(opts.space)}/${e(opts.environment)}/entries`,
-          {
-            content_type: query.contentType,
-            locale: query.locale,
-            limit: query.limit,
-            skip: query.skip,
-            order: query.order,
-            query: query.query,
-            'sys.createdBy': query.createdBy,
-            'sys.updatedBy': query.updatedBy,
-          },
+      list: listEntries,
+      /**
+       * Every entry the query matches, following `nextCursor` a page (`limit`) at a time as the
+       * loop asks for more: `for await (const entry of cma.entries.iterate({ contentType })) …`.
+       */
+      iterate: (query: EntryListQuery = {}): AsyncGenerator<PreviewEntry, void, undefined> =>
+        pages(query.cursor, (cursor) =>
+          listEntries(cursor ? { ...query, cursor, skip: undefined } : query),
         ),
       create: (input: { contentTypeApiId: string; fields: EntryFields }) =>
         post<EntryView>(`${envBase}/entries`, input),

@@ -1120,6 +1120,20 @@ Writes are audited. MCP: `views_list`, `views_get`, `views_run`, `views_create`,
 | GET    | `…/agent-runs`         | `space:admin`    | List agent run audit records        |
 | GET    | `…/agent-runs/usage`   | `space:admin`    | Token usage aggregates              |
 
+### App operations
+
+Named, typed calls that installed plugins offer (manifest v2; see [Plugins](./plugins.md#operations)).
+No route-level scope: each operation declares the scope it `requires`, and the use-case checks it.
+
+| Method | Path                                      | Scope                    | Description |
+| ------ | ----------------------------------------- | ------------------------ | ----------- |
+| GET    | `…/apps/operations`                       | any principal of the space | `{ items }`: every operation of every enabled plugin the caller may invoke (its `requires` held), each with `plugin`, `pluginName`, `pluginVersion`, `name`, `title`, `description`, `requires`, `mode` (`sync`), `input` and `output` (JSON Schema subset). A plugin awaiting re-approval offers none |
+| POST   | `…/apps/:plugin/operations/:operation`    | the operation's `requires` | The body is the operation's input; → `{ output }`. `403` without the scope, `404` for an unknown or disabled operation (or plugin), `422` when the input does not match its schema (or exceeds 64 KiB), `501` where plugin code does not run, `502` (`app_operation_failed`) when the plugin throws, runs past 10 s or answers outside its `output` schema. The plugin runs with its grant narrowed to the caller's scopes |
+| GET    | `/spaces/:space/apps/openapi.json`        | any principal of the space | An OpenAPI 3.1 document with one path per operation the caller may invoke, generated from the manifests |
+
+`GET /spaces/:space/plugins` summaries carry `operations` (name, title, description, `requires`,
+`mode`). MCP: `app_operations_list` and `app_operation_invoke`.
+
 ### Webhooks
 
 | Method | Path                        | Scope         | Description    |

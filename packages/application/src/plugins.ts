@@ -10,6 +10,7 @@ import {
   NotFoundError,
   newlyRequestedCapabilities,
   normalizeInstalledPlugin,
+  operationsWiden,
   type PluginCapability,
   type PluginCapabilityDenial,
   type PluginManifest,
@@ -172,7 +173,10 @@ export async function upgradePlugin(
 
   // A grant that grows stops the plugin: the operator re-enables once they
   // have seen what changed. Narrowing or keeping it does not.
-  const widens = approved.some((c) => !currentGrant.includes(c));
+  // So does one that offers callers a new operation, or changes who may call one.
+  const widens =
+    approved.some((c) => !currentGrant.includes(c)) ||
+    operationsWiden(current.manifest.operations, input.manifest.operations);
   const { needsReapproval: _legacy, ...base } = raw;
   const upgraded: InstalledPlugin = {
     ...base,

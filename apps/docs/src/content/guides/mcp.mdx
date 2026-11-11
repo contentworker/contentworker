@@ -48,7 +48,7 @@ environments its token can reach.
 
 ## Tools
 
-There are 248 in all; your client lists the ones your token's scopes can use, with their descriptions
+There are 250 in all; your client lists the ones your token's scopes can use, with their descriptions
 and input schemas, when it connects. Each tool checks the token's scopes and role grants before it runs, and writes go
 through the same validation, versioning and events as a person's.
 
@@ -74,6 +74,7 @@ through the same validation, versioning and events as a person's.
 | Releases | `releases_create`, `releases_add_entry`, `releases_get`, `releases_list`, `releases_publish`, `schedule_action` |
 | Team and roles | `team_list`, `role_presets_list`, `role_preset_assign`, `roles_list`, `role_create`, `role_update`, `role_delete`, `invites_list`, `invite_get`, `invite_create`, `invite_resend`, `invite_revoke` |
 | Plugins | `plugins_list`, `plugin_set_enabled`, `plugin_approve_capabilities`, `plugin_get_settings`, `plugin_set_settings` |
+| App operations | `app_operations_list`, `app_operation_invoke`: list and call what installed plugins offer, limited to the operations your key's scopes allow (see [Functions, plugins and extensions](/guides/extending/#call-a-plugins-operations)) |
 | Webhooks | `webhooks_list`, `webhook_create`, `webhook_update`, `webhook_delete`, `webhook_deliveries`, `webhook_test`, `webhook_resend` (`space:admin`; see [Webhooks](/guides/webhooks/#test-and-resend)) |
 | Functions | `functions_list`, `function_create`, `function_delete` |
 | App extensions | `app_extensions_list`, `app_extension_create`, `app_extension_delete` |
@@ -87,7 +88,10 @@ through the same validation, versioning and events as a person's.
 A personal access token can't be minted over MCP: an agent can't mint itself a longer-lived
 credential. Mint one in the admin or over the REST API. For the same reason the API key tools
 refuse a personal access token or an OAuth token minting a key or widening one; they need
-`space:admin`, which an app connected with OAuth is never granted anyway.
+`space:admin`, which an app connected with OAuth is never granted anyway. Likewise
+`role_preset_assign` refuses such a token a person's role, `role_update` refuses it widening a role
+someone holds, and `invite_create` and `invite_resend` refuse it outright
+([Team and roles](/guides/team-and-roles/#space-access)).
 
 Every tool call that changes something is written to the space's audit log, like a REST write, as
 `MCP <tool>` (`MCP entries_update`) with who made it, the environment and the target id, and for

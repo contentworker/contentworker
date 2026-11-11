@@ -305,6 +305,49 @@ describe('consent', () => {
   });
 });
 
+describe('operations', () => {
+  const WITH_OPS = {
+    ...MANIFEST,
+    manifestVersion: 2,
+    hooks: [],
+    operations: [
+      {
+        name: 'audit',
+        title: 'Audit titles',
+        description: 'Lists entries with weak titles.',
+        requires: 'preview:read',
+        input: { type: 'object', properties: {} },
+      },
+    ],
+  };
+
+  it('shows what a plugin offers and who may call each, before it is installed', async () => {
+    renderWith(<Plugins client={fakeClient()} />);
+    await openInstall(WITH_OPS);
+    const offered = screen.getByRole('region', { name: 'It offers people and agents:' });
+    expect(within(offered).getByText('Audit titles')).toBeTruthy();
+    expect(within(offered).getByText(/callable by anyone who can read drafts/i)).toBeTruthy();
+    expect(within(offered).getByText(/no more access than the person or agent/i)).toBeTruthy();
+    // It runs on no save, so the screen does not claim it intercepts one.
+    expect(screen.queryByText(/can refuse it/i)).toBeNull();
+  });
+
+  it('names the operations an installed plugin offers on its row', async () => {
+    renderWith(
+      <Plugins
+        client={fakeClient([
+          plugin({
+            operations: [
+              { name: 'audit', title: 'Audit titles', description: 'd', requires: 'preview:read' },
+            ],
+          }),
+        ])}
+      />,
+    );
+    expect(await screen.findByText('Offers: Audit titles')).toBeTruthy();
+  });
+});
+
 describe('network access', () => {
   const NETWORKY = {
     ...MANIFEST,
@@ -619,6 +662,87 @@ describe('approving capabilities on an installed plugin', () => {
     expect(client.upgradePlugin.mock.calls[0]?.[1]).toMatchObject({
       approvedCapabilities: ['content:read', 'taxonomy:read'],
     });
+  });
+
+  describe('operations on upgrade', () => {
+    const audit = {
+      name: 'audit',
+      title: 'Audit titles',
+      description: 'd',
+      requires: 'preview:read',
+    };
+    const op = (o: Record<string, unknown>) => ({
+      ...audit,
+      input: { type: 'object', properties: {} },
+      ...o,
+    });
+    const upgradeTo = async (operations: Record<string, unknown>[]) => {
+      renderWith(
+        <Plugins
+          client={withApproval([plugin({ enabled: true, hooks: [], operations: [audit] })])}
+        />,
+      );
+      await fromMore(/upgrade/i);
+      upload(
+        /new manifest/i,
+        fileOf(
+          'plugin.json',
+          JSON.stringify({
+            ...MANIFEST,
+            manifestVersion: 2,
+            version: '2.0.0',
+            capabilities: ['content:read'],
+            hooks: [],
+            operations,
+          }),
+          'application/json',
+        ),
+      );
+      upload(/new bundle/i, fileOf('index.js', 'export class Plugin {} // v2', 'text/javascript'));
+      return screen.findByRole('region', { name: 'It offers people and agents:' });
+    };
+
+    it('marks a new operation and a changed scope, and says the upgrade installs disabled', async () => {
+      const offered = await upgradeTo([
+        op({ requires: 'content:write' }),
+        op({ name: 'fix', title: 'Fix titles' }),
+      ]);
+      expect(within(offered).getAllByText('New')).toHaveLength(2);
+      expect(screen.getByText(/offers 2 operations callers could not use before/i)).toBeTruthy();
+      expect(screen.getByRole('button', { name: /upgrade disabled/i })).toBeTruthy();
+    });
+
+    it('marks nothing and keeps it running when only titles or descriptions change', async () => {
+      const offered = await upgradeTo([
+        op({ title: 'Audit every title', description: 'New words' }),
+      ]);
+      expect(within(offered).queryByText('New')).toBeNull();
+      expect(screen.getByRole('button', { name: /^upgrade$/i })).toBeTruthy();
+    });
+
+    it('names an operation the upgrade drops', async () => {
+      await upgradeTo([op({ name: 'fix', title: 'Fix titles' })]);
+      expect(screen.getByText(/no longer offers: audit/i)).toBeTruthy();
+    });
+
+    it('shows an unknown scope verbatim, as an id', async () => {
+      const offered = await upgradeTo([op({ requires: 'custom:scope' })]);
+      expect(within(offered).getByText('custom:scope').tagName).toBe('CODE');
+    });
+  });
+
+  it('says a plugin with operations and no hooks runs when called', async () => {
+    renderWith(
+      <Plugins
+        client={withApproval([
+          plugin({
+            hooks: [],
+            operations: [{ name: 'a', title: 'A', description: 'd', requires: 'preview:read' }],
+          }),
+        ])}
+      />,
+    );
+    expect(await screen.findByText('Runs when called')).toBeTruthy();
   });
 
   it('refuses a manifest for a different plugin', async () => {

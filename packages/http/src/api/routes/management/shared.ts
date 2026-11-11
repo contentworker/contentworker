@@ -56,6 +56,14 @@ export const pluginSummary = (p: InstalledPlugin) => ({
   needsReapproval: p.needsReapproval === true,
   allowedHosts: p.manifest.allowedHosts,
   hooks: p.manifest.hooks,
+  // What it offers callers (manifest v2): who may call each is part of what was approved.
+  operations: (p.manifest.operations ?? []).map((op) => ({
+    name: op.name,
+    title: op.title,
+    description: op.description,
+    requires: op.requires,
+    mode: op.mode ?? 'sync',
+  })),
   checksum: p.checksum,
   enabled: p.enabled,
   installedAt: p.installedAt,

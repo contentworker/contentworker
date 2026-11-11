@@ -38,7 +38,11 @@ export interface CfEmailSenderOptions {
   readonly maxRecipients?: number;
 }
 
-const ADDRESS = /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/;
+/** something@something.tld, no spaces or angle brackets; linear (the dot is found by index). */
+function isAddress(email: string): boolean {
+  if (!/^[^\s@<>]+@[^\s@<>]+$/.test(email)) return false;
+  return email.slice(email.indexOf('@') + 2, -1).includes('.');
+}
 
 /** Builds an `EmailSender` over the `send_email` binding. Throws on an unusable `from`. */
 export function createCfEmailSender(
@@ -46,7 +50,7 @@ export function createCfEmailSender(
   options: CfEmailSenderOptions,
 ): EmailSender {
   const from = options.from.trim();
-  if (!ADDRESS.test(from)) {
+  if (!isAddress(from)) {
     throw new Error(`EMAIL_FROM must be an email address on an onboarded domain (got "${from}")`);
   }
   const sender: string | SendEmailAddress = options.fromName?.trim()

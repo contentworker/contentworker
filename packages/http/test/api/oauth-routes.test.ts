@@ -87,8 +87,15 @@ async function sessionCookie(
   const existing = (await ctx.store.members.list('s1')).find(
     (m) => m.email === 'admin@example.com',
   );
-  if (existing) await updateMember(ctx, 's1', existing.id, { role: role.id }, { sso: true });
-  else await addMember(ctx, 's1', { email: 'admin@example.com', name: 'Admin', role: role.id });
+  if (existing)
+    await updateMember(ctx, 's1', existing.id, { role: role.id }, { sso: true }, 'system');
+  else
+    await addMember(
+      ctx,
+      's1',
+      { email: 'admin@example.com', name: 'Admin', role: role.id },
+      'system',
+    );
   return `principal:${JSON.stringify({ sub: 'usr_admin', email: 'admin@example.com', name: 'Admin', role: 'member' })}`;
 }
 
@@ -306,7 +313,12 @@ describe('OAuth authorization endpoint', () => {
     // can't approve with it, even for a space they are on themselves.
     const cookie = await sessionCookie(ctx);
     const role = await createRole(ctx, 's1', { name: 'other', scopes: [SCOPES.deliveryRead] });
-    await addMember(ctx, 's1', { email: 'other@example.com', name: 'Other', role: role.id });
+    await addMember(
+      ctx,
+      's1',
+      { email: 'other@example.com', name: 'Other', role: role.id },
+      'system',
+    );
     const other = `principal:${JSON.stringify({ sub: 'usr_other', email: 'other@example.com', name: 'Other', role: 'member' })}`;
     const { body: client } = await register(app);
     const consent = await app.request(authorizeUrl(client.client_id as string), {
@@ -610,6 +622,110 @@ describe('Personal access tokens', () => {
       body: JSON.stringify({ name: 'forever', scopes: [SCOPES.spaceAdmin] }),
     });
     expect(patFromPat.status).toBe(403);
+  });
+
+  it("refuses a personal access token or an OAuth token a person's access, unlike the person", async () => {
+    const { app, ctx } = makeApp();
+    await createSpace(ctx, { spaceId: 's1', name: 'One', defaultLocale: 'en-US' }).catch(() => {});
+    const cookie = await sessionCookie(ctx, [SCOPES.spaceAdmin, SCOPES.deliveryRead]);
+    const minted = await app.request('/spaces/s1/personal-access-tokens', {
+      method: 'POST',
+      headers: { Cookie: cookie, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'ci', scopes: [SCOPES.spaceAdmin], expiresInDays: 7 }),
+    });
+    const { token: pat } = (await minted.json()) as { token: string };
+    const { tokens } = await fullFlow(app, cookie);
+    const send = (method: string, path: string, auth: Record<string, string>, body: unknown) =>
+      app.request(path, {
+        method,
+        headers: { ...auth, 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+    const grace = (await (
+      await send(
+        'POST',
+        '/spaces/s1/members',
+        { Cookie: cookie },
+        {
+          email: 'grace@example.com',
+          role: 'viewer',
+        },
+      )
+    ).json()) as { id: string };
+
+    // The personal access token holds space:admin, so only delegation refuses it.
+    const asPat = { Authorization: `Bearer ${pat}` };
+    const added = await send('POST', '/spaces/s1/members', asPat, {
+      email: 'mallory@example.com',
+      role: 'admin',
+    });
+    expect(added.status).toBe(403);
+    expect(await added.json()).toMatchObject({
+      error: {
+        code: 'forbidden',
+        message: expect.stringMatching(
+          /^A personal access token or OAuth token can't add a person to the team; sign in/,
+        ),
+        details: { reason: 'delegated_bearer' },
+      },
+    });
+    const promoted = await send('PATCH', `/spaces/s1/members/${grace.id}`, asPat, {
+      role: 'admin',
+    });
+    expect(promoted.status).toBe(403);
+    expect(JSON.stringify(await promoted.json())).toContain("can't change a person’s role");
+    // Renaming is not access.
+    expect(
+      (await send('PATCH', `/spaces/s1/members/${grace.id}`, asPat, { name: 'Grace H' })).status,
+    ).toBe(200);
+    // An OAuth app can't be granted space:admin at all (`maxClientScopes`), so its token stops at
+    // the scope check; the use-cases refuse it too (packages/application delegated-people tests).
+    const asApp = { Authorization: `Bearer ${tokens.access_token}` };
+    expect(
+      (await send('POST', '/spaces/s1/members', asApp, { email: 'm@example.com', role: 'admin' }))
+        .status,
+    ).toBe(403);
+    expect(
+      (await send('PATCH', `/spaces/s1/members/${grace.id}`, asApp, { role: 'admin' })).status,
+    ).toBe(403);
+    expect(await ctx.store.members.getByEmail('s1', 'mallory@example.com')).toBeNull();
+    // The person who holds the same scopes, signed in, still can.
+    expect(
+      (
+        await send(
+          'PATCH',
+          `/spaces/s1/members/${grace.id}`,
+          { Cookie: cookie },
+          { role: 'editor' },
+        )
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await send(
+          'POST',
+          '/spaces/s1/members',
+          { Cookie: cookie },
+          {
+            email: 'lin@example.com',
+            role: 'viewer',
+          },
+        )
+      ).status,
+    ).toBe(201);
+    // So does the admin token.
+    expect(
+      (
+        await send(
+          'PATCH',
+          `/spaces/s1/members/${grace.id}`,
+          { Authorization: 'Bearer admin' },
+          {
+            role: 'viewer',
+          },
+        )
+      ).status,
+    ).toBe(200);
   });
 
   it('drops scopes the caller does not hold', async () => {

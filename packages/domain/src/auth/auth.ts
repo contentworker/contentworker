@@ -327,6 +327,23 @@ export class DelegatedKeyMintError extends DomainError {
   }
 }
 
+/**
+ * A delegated bearer (see {@link isDelegatedBearer}) tried to give a person lasting access: invite
+ * someone, add them to a team, change their role, let them sign in again, or widen a role they
+ * hold. The token expires; the access it would grant doesn't, so only a person signed in to the
+ * admin (or an operator key) does it. A 403, like a missing scope; `details.reason` tells a client
+ * which refusal this is.
+ */
+export class DelegatedPeopleError extends DomainError {
+  constructor(action: string) {
+    super(
+      'forbidden',
+      `A personal access token or OAuth token can't ${action}; sign in to the admin to do this`,
+      { reason: 'delegated_bearer' },
+    );
+  }
+}
+
 /** True if the principal may act in `targetSpace`. Admin (`*`) may act anywhere. */
 export function inScope(principal: Principal, targetSpaceId: string): boolean {
   return principal.spaceId === '*' || principal.spaceId === targetSpaceId;

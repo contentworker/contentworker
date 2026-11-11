@@ -86,11 +86,18 @@ describe('role versions on D1', () => {
       .bind(spaceId, id)
       .run();
     expect(await getRole(ctx, spaceId, id)).toMatchObject({ name: 'Old', version: 1 });
-    const saved = await updateRole(ctx, spaceId, id, {
-      name: 'New',
-      scopes: ['preview:read'],
-      expectedVersion: 1,
-    });
+    const saved = await updateRole(
+      ctx,
+      spaceId,
+      id,
+      {
+        name: 'New',
+        scopes: ['preview:read'],
+        expectedVersion: 1,
+      },
+      { sso: false },
+      'system',
+    );
     expect(saved.version).toBe(2);
     expect(await getRole(ctx, spaceId, id)).toMatchObject({ name: 'New', version: 2 });
   });
@@ -98,16 +105,37 @@ describe('role versions on D1', () => {
   it('refuses a stale save through the use-case, writing nothing', async () => {
     const { ctx, spaceId } = harness();
     const made = await createRole(ctx, spaceId, { name: 'Writers', scopes: ['preview:read'] });
-    await updateRole(ctx, spaceId, made.id, { name: 'Theirs', scopes: ['preview:read'] });
+    await updateRole(
+      ctx,
+      spaceId,
+      made.id,
+      { name: 'Theirs', scopes: ['preview:read'] },
+      { sso: false },
+      'system',
+    );
     await expect(
-      updateRole(ctx, spaceId, made.id, {
-        name: 'Mine',
-        scopes: ['delivery:read'],
-        expectedVersion: 1,
-      }),
+      updateRole(
+        ctx,
+        spaceId,
+        made.id,
+        {
+          name: 'Mine',
+          scopes: ['delivery:read'],
+          expectedVersion: 1,
+        },
+        { sso: false },
+        'system',
+      ),
     ).rejects.toMatchObject({ code: 'conflict', details: { version: 2 } });
     await expect(
-      updateRole(ctx, spaceId, made.id, { name: 'Mine', scopes: [], expectedVersion: 1 }),
+      updateRole(
+        ctx,
+        spaceId,
+        made.id,
+        { name: 'Mine', scopes: [], expectedVersion: 1 },
+        { sso: false },
+        'system',
+      ),
     ).rejects.toBeInstanceOf(ConflictError);
     expect(await getRole(ctx, spaceId, made.id)).toMatchObject({ name: 'Theirs', version: 2 });
   });
