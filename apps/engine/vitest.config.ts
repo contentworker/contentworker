@@ -24,6 +24,11 @@ export default defineConfig(async () => ({
     // file of a run passes on a cold cache, every later one dies with "Worker exited unexpectedly".
     // Without the filesystem cache there is no snapshot; modules are fetched one at a time.
     fsModuleCache: false,
+    // Every test file gets its own workerd (~3 s to start, plus its share of the runner). Left at
+    // vitest's default (one per core, 24 files here), CI's 4 cores run a dozen of them at once
+    // while turbo runs the other packages' suites alongside, and the suite crawls. Two at a time
+    // on CI; locally the default.
+    maxWorkers: process.env.CI ? 2 : undefined,
   },
   plugins: [
     // TC39 decorators (`@callable()` on the assistant), which Vite's Oxc transform doesn't lower.

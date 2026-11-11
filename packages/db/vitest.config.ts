@@ -24,6 +24,11 @@ export default defineConfig(async () => {
       include: ['test/**/*.test.ts'],
       setupFiles: ['./test/setup.ts'],
       testTimeout: 30_000,
+      // Every test file gets its own workerd (~3 s to start, plus its share of the runner). Left at
+      // vitest's default (one per core, 47 files here), CI's 4 cores run a dozen of them at once
+      // while turbo runs the other packages' suites alongside, and the suite crawls. Two at a time
+      // on CI; locally the default.
+      maxWorkers: process.env.CI ? 2 : undefined,
     },
   };
 });
