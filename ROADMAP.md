@@ -323,8 +323,11 @@ Found while building and reviewing M1 and M2. None blocks a release.
   space export import check `authorizeEveryContentType` (and a clone's target space, and
   `addLocales`) in the use-case, with a required caller (`SYSTEM_CALLER` for work already
   authorized), so a new surface can't skip it.
-- [ ] **Admin saves for read-only roles.** The editor sends every field, so a role with
-  `readOnlyFields` probably gets a 403 on save. Confirm it, and send only what the role may write.
+- [x] **Admin saves for read-only roles.** Confirmed: the editor sends every field it read, so a
+  role with `readOnlyFields` got a 403 on save. An update and its dry run now pass the stored
+  fields to `assertWritableFields`, which lets a read-only field through when every locale sent
+  holds its stored value (the save keeps it anyway); a changed value, or a denied field at any
+  value, is still refused. REST and MCP alike, so the form and canvas need no change.
 - [x] **Linear email checks.** Replace the quadratic pattern in `isEmail` (`domain/auth/team.ts`) and
   `security/credentials.ts`, as the `email` preset already was.
 - [x] **Role version check.** A `version` on every role and an optional `expectedVersion` on

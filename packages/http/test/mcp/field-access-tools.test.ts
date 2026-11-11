@@ -251,6 +251,27 @@ describe('a restricted writer over MCP', () => {
     expect(res.text).toContain('listing.price');
   });
 
+  it('saves every field it read, the read-only ones sent back unchanged', async () => {
+    const { ctx, call, id } = await setup();
+    const edit = { title: { 'en-US': 'B' }, price: { 'en-US': 100 } };
+    for (const tool of ['entries_validate', 'entries_update']) {
+      const res = await call(tool, { id, fields: edit });
+      expect(res.isError, `${tool}: ${res.text}`).toBe(false);
+    }
+    expect((await getEntry(ctx, scope, id)).fields).toEqual({
+      title: { 'en-US': 'B' },
+      internalNotes: { 'en-US': 'secret' },
+      price: { 'en-US': 100 },
+    });
+    // The hidden field, even at its stored value, is still a write the role may not make.
+    const hidden = await call('entries_update', {
+      id,
+      fields: { ...edit, internalNotes: { 'en-US': 'secret' } },
+    });
+    expect(hidden.isError).toBe(true);
+    expect((await getEntry(ctx, scope, id)).entry.currentVersion).toBe(2);
+  });
+
   it('duplicates without the fields it may not read; the copy keeps them', async () => {
     const { ctx, call, id } = await setup();
     const res = await call('entries_duplicate', { id });

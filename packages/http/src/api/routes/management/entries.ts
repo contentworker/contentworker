@@ -96,10 +96,10 @@ export function entriesRoutes(deps: AuthDeps): Hono<AuthVars> {
         let unreadable: readonly string[] = [];
         let type = '';
         if (principal.contentGrants) {
-          const { entry } = await getEntry(ctx, scopeOf(c), body.entryId);
-          type = entry.contentTypeApiId;
+          const stored = await getEntry(ctx, scopeOf(c), body.entryId);
+          type = stored.entry.contentTypeApiId;
           authorizeContent(principal, 'write', type);
-          assertWritableFields(principal, type, fields);
+          assertWritableFields(principal, type, fields, stored.fields);
           unwritable = unwritableFieldsFor(principal, type);
           unreadable = deniedFieldsFor(principal, type);
         }

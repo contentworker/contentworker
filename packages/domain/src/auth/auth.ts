@@ -1,3 +1,4 @@
+import { sameValue } from '../entry/sequence-diff';
 import { DomainError } from '../errors';
 import { ANY_FIELD, type QueryNode, queryNodeFilters } from '../query/query';
 import type { RolePreset } from './team';
@@ -715,14 +716,35 @@ export function unwritableFieldsFor(
 /**
  * Enforces field-level write rules: writing a denied or read-only field
  * throws ForbiddenError. No-op for unrestricted principals.
+ *
+ * With `stored` (an update, against the entry as it is), a read-only field whose every sent
+ * locale holds exactly its stored value is no write, so a client that sends back what it read
+ * (the admin's entry form and canvas) can save; the update keeps the stored field whole regardless
+ * (`unwritable`), so a locale left out is no write either. A denied field is refused even then:
+ * the caller can't read it, and accepting an unchanged value would let it guess one, a save at a
+ * time.
  */
 export function assertWritableFields(
   principal: Principal,
   contentTypeApiId: string,
   fields: Record<string, unknown>,
+  stored?: Record<string, unknown>,
 ): void {
-  const [blocked] = unwritableFields(principal, contentTypeApiId, fields);
+  const denied = stored ? deniedFieldsFor(principal, contentTypeApiId) : [];
+  const blocked = unwritableFields(principal, contentTypeApiId, fields).find(
+    (apiId) => !stored || denied.includes(apiId) || !unchangedLocales(fields[apiId], stored[apiId]),
+  );
   if (blocked) throw new ForbiddenError(`content:write:${contentTypeApiId}.${blocked}`);
+}
+
+/** Whether every locale `sent` carries holds the value `kept` stores for it. */
+function unchangedLocales(sent: unknown, kept: unknown): boolean {
+  const isRecord = (v: unknown): v is Record<string, unknown> =>
+    !!v && typeof v === 'object' && !Array.isArray(v);
+  if (!isRecord(sent) || !isRecord(kept)) return false;
+  return Object.entries(sent).every(
+    ([locale, value]) => Object.hasOwn(kept, locale) && sameValue(value, kept[locale]),
+  );
 }
 
 /**
