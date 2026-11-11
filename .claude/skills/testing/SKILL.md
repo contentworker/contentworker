@@ -72,7 +72,10 @@ sweep; `login.spec.ts` (`auth`) last, in Chromium, because signing up the first 
 sign-in on.
 
 1. Browsers once: `pnpm --filter @contentworker/web exec playwright install webkit chromium`.
-2. Run: `pnpm --filter @contentworker/web e2e` (or `-- <spec> --project cms`). Run it in the
+2. Run: `pnpm --filter @contentworker/web e2e` (or `-- <spec> --project cms`). The port derives
+   from the checkout, so worktrees can run at once; a server already on it fails the run
+   (`E2E_REUSE=1` opts in to reusing your own). Shared content types go through `saveContentType`
+   (`e2e/cms.ts`), never a bare POST that two workers can race. Run it in the
    background if it may exceed two minutes; never leave a server running after.
 3. On a failure, read `apps/web/test-results/**/error-context.md` and the failing step's console
    before theorising. A thrown page error is an app bug. axe violations: report the rule id, the

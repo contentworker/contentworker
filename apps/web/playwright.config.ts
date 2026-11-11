@@ -1,8 +1,11 @@
 import { defineConfig, devices } from '@playwright/test';
-import { guestPort } from './e2e/live-guest/port';
+import { adminPort, guestPort } from './e2e/live-guest/port';
 
-// E2E_PORT runs a second suite beside one already on 5390 (another worktree's), with its own server.
-const PORT = Number(process.env.E2E_PORT) || 5390;
+// The port derives from this checkout's path, so worktrees running at once each get their own
+// server (see e2e/live-guest/port.ts). A server already on it is an error, never silently reused,
+// unless E2E_REUSE=1 asks for it (a warm server of your own, on a database it already holds).
+const PORT = adminPort();
+const REUSE = process.env.E2E_REUSE === '1' && !process.env.CI;
 const state = '.wrangler/e2e';
 
 /**
@@ -132,7 +135,7 @@ export default defineConfig({
         `CONTENTWORKER_E2E=1 PORT=${PORT} react-router dev`,
       ].join(' && '),
       url: `http://localhost:${PORT}/health`,
-      reuseExistingServer: !process.env.CI,
+      reuseExistingServer: REUSE,
       timeout: 180_000,
       stdout: 'ignore',
     },
@@ -140,7 +143,7 @@ export default defineConfig({
     {
       command: `LIVE_GUEST_ADMIN=http://localhost:${PORT} LIVE_GUEST_PORT=${guestPort()} vite --config e2e/live-guest/vite.config.ts`,
       url: `http://localhost:${guestPort()}/`,
-      reuseExistingServer: !process.env.CI,
+      reuseExistingServer: REUSE,
       timeout: 60_000,
       stdout: 'ignore',
     },
