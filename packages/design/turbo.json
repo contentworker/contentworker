@@ -1,0 +1,20 @@
+{
+  "$schema": "https://turborepo.dev/schema.json",
+  "extends": ["//"],
+  "tasks": {
+    // test/tokens.test.ts compares the tokens with the admin's CSS and status component, the UI
+    // components and the docs site's sources, none of them in this package: without these inputs
+    // an edit there would hit the cache and skip the check. The docs site's theme.css is generated
+    // by this package's own `generate` and stays out of the hash.
+    "test": {
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/apps/web/app/app.css",
+        "$TURBO_ROOT$/apps/web/app/components/status.tsx",
+        "$TURBO_ROOT$/apps/docs/src/**",
+        "!$TURBO_ROOT$/apps/docs/src/styles/theme.css",
+        "$TURBO_ROOT$/packages/ui/src/**"
+      ]
+    }
+  }
+}

@@ -237,14 +237,27 @@ names the request.
   run (the build is `wrangler deploy --dry-run` for engine, media, api and delivery), then the
   tests on their own (including the engine's durable workflow runs in the local runtime with
   `AI_MODE=mock`),
-  `pnpm test:fleet`, `pnpm test:toolkit`, and `pnpm audit --prod --audit-level high`.
+  `pnpm test:fleet`, `pnpm test:toolkit`, and `pnpm audit --prod --audit-level high`. Turbo's task
+  cache is kept between runs (`.turbo/cache`, restored and saved with `actions/cache`), so a
+  package no change touched replays its lint, type check, build and tests. What a task's hash
+  covers is declared in `turbo.json` (the root files every package reads, the `transit` task that
+  carries a dependency's files down the whole graph) and the packages' own `turbo.json` (a suite
+  that reads another package's files, the docs embed's `docs/*.md`); `scripts/turbo-cache.test.ts`
+  changes each such file in a scratch copy and checks the hash moves. Pull requests and the merge
+  queue read the cache; a push to `main` (which gates `release`), the nightly and the manual run
+  do not read it, so they run every task, and they all write it.
 - **devices**: the web app's Playwright suite in WebKit (iPhone, iPad, desktop) and Chromium
-  against an offline dev server (`apps/web/e2e`), in four jobs at once, each with its own server:
-  `devices (webkit)`, `devices (axe)`, `devices (cms)` and `devices (sign-in)`, split by `E2E_PART`
-  in `apps/web/playwright.config.ts`. A job named `devices` sums them up as the required check.
+  against an offline dev server (`apps/web/e2e`), in three jobs at once, each with its own server:
+  `devices (webkit)` (which ends with the sign-in specs), `devices (axe)` and `devices (cms)`,
+  split by `E2E_PART` in `apps/web/playwright.config.ts`. A job named `devices` sums them up as the required check.
   They run on pull requests, nightly on `main` and by hand (`gh workflow run ci.yml`), not on the
   push a merge makes: the pull request already ran them. The `changes` job also skips them for a
-  pull request that only touches `docs/`, `apps/docs/`, `.claude/` or top-level Markdown.
+  pull request that changes nothing the admin or its dev server loads. `scripts/device-paths.ts`
+  derives that set: `apps/web` and the Workers its dev server runs beside it (the
+  `auxiliaryWorkers` in `apps/web/vite.config.ts`), every workspace package they depend on, the
+  files outside a package that feed a generated embed (`docs/*.md`), the lockfile, workspace file
+  and root configs, and `ci.yml`; unit-test files and READMEs in those packages are left out
+  (`node scripts/device-paths.ts list` prints it).
 - **release** (push to `main` only): needs only `verify`, so deploys do not wait for `devices`. It
   dispatches `release.yml` in the private `contentworker/fleet` repository with the commit sha, using
   the repository secret `FLEET_DISPATCH_TOKEN` (a fine-grained token with Actions write on that

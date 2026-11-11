@@ -33,12 +33,37 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      - id: node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
+
+      # Turbo's task cache, kept between runs so a package that no change touched skips its lint,
+      # type check, build and tests. A hit replays a pass without running the task, so it is only
+      # as good as the task's hash: turbo.json and the packages' own turbo.json name every file a
+      # task reads from outside its package, and scripts/turbo-cache.test.ts proves each by
+      # changing the file and watching the hash move. Even so, the cache is never read on the runs
+      # that decide a release or check main itself:
+      #   - a push to main gates `release`, and the nightly and manual runs are the independent
+      #     check of main; both run every task from scratch (a hash we forgot to widen can't turn
+      #     into a deployed commit). They still write the cache, which seeds the pull requests;
+      #   - a pull request and the merge queue read it. Neither deploys anything, and the push that
+      #     follows a merge re-runs everything.
+      # The key holds the runner OS, node version and lockfile (the lockfile is in turbo's global
+      # hash, so another lockfile's entries could never hit) and the commit, since a cache entry
+      # can't be overwritten; the restore key takes the newest entry for the same lockfile, so
+      # a run starts from main's (or the same pull request's earlier) results.
+      - name: Restore the turbo cache
+        if: ${{ github.event_name == 'pull_request' || github.event_name == 'merge_group' }}
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .turbo/cache
+          key: turbo-${{ runner.os }}-node${{ steps.node.outputs.node-version }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
+          restore-keys: |
+            turbo-${{ runner.os }}-node${{ steps.node.outputs.node-version }}-${{ hashFiles('pnpm-lock.yaml') }}-
 
       # One turbo run, so the three checks share the runner's cores instead of taking turns.
       # `--continue` keeps going past a failure, so a red build reports all of its problems in one
@@ -47,6 +72,8 @@ jobs:
       # uploaded).
       - name: Lint, type-check and build
         if: ${{ !cancelled() }}
+        env:
+          TURBO_CACHE_DIR: .turbo/cache
         run: pnpm turbo run lint check-types build --continue
 
       # Two turbo runs, not one, so the suites with timing budgets don't share the runner. With one
@@ -58,11 +85,15 @@ jobs:
       # package's suite lands in the node run unless it is added to the second filter.
       - name: Test (node suites)
         if: ${{ !cancelled() }}
+        env:
+          TURBO_CACHE_DIR: .turbo/cache
         run: >-
           pnpm turbo run test --continue
           --filter='!@contentworker/db' --filter='!@contentworker/engine' --filter='!@contentworker/media'
       - name: Test (workerd suites)
         if: ${{ !cancelled() }}
+        env:
+          TURBO_CACHE_DIR: .turbo/cache
         run: >-
           pnpm turbo run test --continue
           --filter=@contentworker/db --filter=@contentworker/engine --filter=@contentworker/media
@@ -83,13 +114,30 @@ jobs:
         if: ${{ !cancelled() }}
         run: pnpm audit --prod --audit-level high
 
-  # Whether to run the device tests. A pull request runs them unless it only touches paths the
-  # admin and its dev server never read: the docs and docs site, the .claude toolkit and top-level
-  # Markdown (one too big for the files API, 3000 files, runs them). A push to main does not: its
-  # pull request already ran them, and `release` never waited for them. The nightly and manual runs
-  # and the merge queue run them. A nightly run skips them when main has no commit newer than the
-  # last nightly's window (25 h): the previous night already ran them on the same code. (`verify`
-  # still runs nightly for the dependency audit, which can go red with no commit.)
+      # Every run saves what it ran (turbo caches only tasks that passed), a failed one too, so a
+      # re-run starts from the tasks that already passed.
+      - name: Save the turbo cache
+        if: ${{ !cancelled() }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .turbo/cache
+          key: turbo-${{ runner.os }}-node${{ steps.node.outputs.node-version }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
+
+  # Whether to run the device tests. A pull request runs them only when it changes something the
+  # admin and its dev server load: apps/web and the four Workers its dev server runs beside it
+  # (api, engine, media, delivery), every workspace package any of them depends on, the files
+  # outside a package that feed a generated embed, the lockfile, workspace file and root configs,
+  # and this workflow. The list is not kept by hand: scripts/device-paths.ts derives it from the
+  # `auxiliaryWorkers` in apps/web/vite.config.ts, the packages' `workspace:` dependencies and the
+  # turbo inputs of each `generate` task, and scripts/device-paths.test.ts holds it equal to
+  # turbo's own dependency graph. Unit-test files and READMEs inside those packages are left out
+  # (the dev server never loads them), and so is everything else: the docs site, the SDKs the
+  # admin doesn't use, the fleet scripts, the .claude toolkit. (A change too big for the files
+  # API, 3000 files, runs them.) A push to main does not: its pull request already ran them, and
+  # `release` never waited for them. The nightly and manual runs and the merge queue run them. A
+  # nightly run skips them when main has no commit newer than the last nightly's window (25 h):
+  # the previous night already ran them on the same code. (`verify` still runs nightly for the
+  # dependency audit, which can go red with no commit.)
   changes:
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -99,6 +147,13 @@ jobs:
     outputs:
       devices: ${{ steps.paths.outputs.devices }}
     steps:
+      # Only the path filter needs the repository, and only a pull request uses it.
+      - if: ${{ github.event_name == 'pull_request' }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - if: ${{ github.event_name == 'pull_request' }}
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
       - id: paths
         env:
           GH_TOKEN: ${{ github.token }}
@@ -130,19 +185,25 @@ jobs:
               ;;
           esac
           files=$(gh api "repos/$REPO/pulls/$PR/files" --paginate --jq '.[].filename')
-          if [ "$(wc -l <<<"$files")" -ge 3000 ] \
-            || grep -qvE '^(docs/|apps/docs/|\.claude/|[^/]+\.md$)' <<<"$files"; then
+          if [ "$(wc -l <<<"$files")" -ge 3000 ]; then
+            echo "3000 changed files or more: running the device tests"
+            echo "devices=true" >> "$GITHUB_OUTPUT"
+          elif hit=$(node scripts/device-paths.ts match <<<"$files"); then
+            echo "$hit is loaded by the admin or its dev server: running the device tests"
             echo "devices=true" >> "$GITHUB_OUTPUT"
           else
-            echo "Only docs or toolkit files changed: skipping the device tests"
+            echo "Nothing the admin or its dev server loads changed: skipping the device tests"
             echo "devices=false" >> "$GITHUB_OUTPUT"
           fi
 
   # The web app in WebKit as an iPhone and an iPad, both ways up, and a desktop: layout, safe
   # areas, touch targets and the on-screen keyboard (apps/web/e2e). The dev server runs offline
   # (mock AI, no remote bindings, its own seeded database), so no Cloudflare account is needed.
-  # Four jobs at once, each on its own server, split by E2E_PART (apps/web/playwright.config.ts)
-  # into near-equal shares of the suite's time; `devices` below is the one required check.
+  # Three jobs at once, each on its own server, split by E2E_PART (apps/web/playwright.config.ts)
+  # into near-equal shares of the suite's time; `devices` below is the one required check. (There
+  # were four: the sign-in specs had a job to themselves, and its runner's setup cost more than
+  # their two minutes of tests. They now run at the end of `webkit`, about two minutes longer than
+  # the other two, and the slowest part stays near 12 of its 20 minutes.)
   device-tests:
     name: devices (${{ matrix.part }})
     needs: changes
@@ -152,7 +213,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        part: [webkit, axe, cms, sign-in]
+        part: [webkit, axe, cms]
     env:
       E2E_PART: ${{ matrix.part }}
     steps:

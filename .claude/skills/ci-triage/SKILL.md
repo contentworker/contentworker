@@ -7,7 +7,7 @@ allowed-tools: Bash(gh run list *) Bash(gh run view *) Bash(gh pr checks *) Bash
 
 # Triage a CI failure
 
-Workflows: `.github/workflows/ci.yml` (on every push and PR: `verify`; on PRs, nightly and by hand: `devices`, as four `devices (<part>)` jobs; on `main`
+Workflows: `.github/workflows/ci.yml` (on every push and PR: `verify`; on PRs, nightly and by hand: `devices`, as three `devices (<part>)` jobs; on `main`
 also `release`, which dispatches the commit to the private `contentworker/fleet` repo, where `release.yml`
 runs `plan` and the rings `staging` → `internal` → `canary` → `general`, each calling
 `deploy.yml` once per deployment; read those runs there with `gh run list --repo contentworker/fleet`). `deploy.yml` runs `scripts/deploy.sh`, whose log groups carry the
