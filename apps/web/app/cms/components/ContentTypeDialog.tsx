@@ -56,7 +56,7 @@ import { CopyButton } from '~/cms/components/copy-button';
 import { DiscardAsk, GuardCancel, useDiscardGuard } from '~/cms/components/discard-guard';
 import { toApiId } from '../lib/api-id';
 import { CONTENT_TYPE_ICONS, contentTypeIcon } from '../lib/content-type-icons';
-import { ApiError, apiErrorMessage } from '../lib/management';
+import { apiErrorMessage, conflictVersion } from '../lib/management';
 import {
   BlockVariantsEditor,
   newVariant,
@@ -530,14 +530,27 @@ function tabApiId(name: string, taken: readonly string[]): string {
 }
 
 /**
- * The version a stale save's 409 names (`details.version`, from `expectedVersion`), or undefined
- * for any other error: a conflict that names none (a field entries still hold) is another refusal.
+ * A save that landed and a publish after it that didn't: `saved` is the type as stored, so the form
+ * goes on from its version (a retry held to the version it opened would be refused as stale).
  */
-function staleVersion(err: unknown): number | undefined {
-  if (!(err instanceof ApiError) || err.status !== 409 || err.code !== 'conflict') return;
-  const v = (err.body as { error?: { details?: { version?: unknown } } } | undefined)?.error
-    ?.details?.version;
-  return typeof v === 'number' ? v : undefined;
+export class SavedNotPublishedError extends Error {
+  constructor(
+    readonly saved: ContentType,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+interface ContentTypeDialogProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  initial?: ContentType;
+  onSave: (draft: ContentTypeDraft, opts: { expectedVersion: number }) => Promise<void>;
+  /** Reads the type again: the form opens on it, and what was typed here is discarded. */
+  onLoadLatest?: () => Promise<ContentType>;
+  /** The API IDs already taken, so a new type's clash is said beside API ID before it's sent. */
+  takenApiIds?: readonly string[];
 }
 
 /**
@@ -547,16 +560,55 @@ function staleVersion(err: unknown): number | undefined {
  *
  * A save sends the whole definition, held to the version the form opened from (0 for a new one):
  * a save someone made since is refused, and the form stays as it is, with the way on (load the
- * latest, losing these edits, or copy them first).
+ * latest, losing these edits, or copy them first). Loading the latest seeds the form again inside
+ * the same dialog, so closing still hands focus back to what opened it.
  */
-export function ContentTypeDialog(props: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  initial?: ContentType;
-  onSave: (draft: ContentTypeDraft, opts: { expectedVersion: number }) => Promise<void>;
-  /** Reads the type again and opens the form on it: what typed here is discarded. */
-  onLoadLatest?: () => Promise<void>;
-}) {
+export function ContentTypeDialog(props: ContentTypeDialogProps) {
+  const [initial, setInitial] = useState(props.initial);
+  const [loaded, setLoaded] = useState<string>();
+  // The form's own leave guard: the dialog's close goes through it.
+  const guardRef = useRef<((open: boolean) => void) | null>(null);
+  const load = props.onLoadLatest;
+  return (
+    <Dialog
+      open={props.open}
+      onOpenChange={(open) => (guardRef.current ?? props.onOpenChange)(open)}
+    >
+      <DialogContent className="sm:max-w-2xl">
+        <ContentTypeForm
+          key={initial?.version ?? 0}
+          {...props}
+          initial={initial}
+          guardRef={guardRef}
+          focusName={loaded !== undefined}
+          {...(load
+            ? {
+                onLoadLatest: async () => {
+                  const latest = await load();
+                  setInitial(latest);
+                  setLoaded(`Loaded v${latest.version}. Your edits here were discarded.`);
+                  return latest;
+                },
+              }
+            : {})}
+        />
+        {/* A live region without the status role: the leave guard's "Still saving" is the
+            dialog's status. */}
+        <p className="sr-only" aria-live="polite">
+          {loaded}
+        </p>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function ContentTypeForm(
+  props: ContentTypeDialogProps & {
+    guardRef: React.RefObject<((open: boolean) => void) | null>;
+    /** Seeded again on the latest version: the first field takes focus. */
+    focusName: boolean;
+  },
+) {
   const editing = Boolean(props.initial);
   const seed = props.initial
     ? fromContentType(props.initial)
@@ -599,14 +651,23 @@ export function ContentTypeDialog(props: {
   const [layoutTouched, setLayoutTouched] = useState(false);
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
-  // A save refused as stale: the version it is at now, and the refused definition, to copy.
-  const [stale, setStale] = useState<{ version: number; draft: string }>();
+  // The version a save is held to: the one opened, or the one a save stored when its publish failed.
+  const [base, setBase] = useState(props.initial?.version ?? 0);
+  // A save refused as stale: the version stored now (0: none), the apiId it was for, and the
+  // refused definition, to copy.
+  const [stale, setStale] = useState<{ version: number; apiId: string; draft: string }>();
   const [loading, setLoading] = useState(false);
   const staleRef = useRef<HTMLDivElement>(null);
+  const nameRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
     // Above the pinned footer, as DialogError is: in view wherever Save was pressed from.
     if (stale) staleRef.current?.scrollIntoView?.({ block: 'nearest' });
   }, [stale]);
+  // Seeded again on the latest version, focus starts over at the top, where the Load button was.
+  const { focusName } = props;
+  useEffect(() => {
+    if (focusName) nameRef.current?.focus();
+  }, [focusName]);
 
   // Everything a person can have changed, against how the form opened: a schema is long work, and
   // a press outside the dialog must not throw it away.
@@ -631,6 +692,15 @@ export function ContentTypeDialog(props: {
     dirty: form !== opened,
     onOpenChange: props.onOpenChange,
   });
+  props.guardRef.current = guard.onOpenChange;
+
+  const finalApiId = apiId || toApiId(name);
+  // A new type's API ID another type already has: said beside the field, before anything is sent.
+  const clash = !editing && finalApiId !== '' && props.takenApiIds?.includes(finalApiId) === true;
+  // Refused as stale, Save would only be refused again: the Alert's actions are the way on, or, for
+  // a new type, another API ID.
+  const saveBlocked = stale !== undefined && (editing || stale.apiId === finalApiId);
+  const deleted = editing && stale?.version === 0;
 
   const setField = (i: number, patch: Partial<FieldRow>) =>
     setFields((prev) => prev.map((f, idx) => (idx === i ? { ...f, ...patch } : f)));
@@ -642,13 +712,21 @@ export function ContentTypeDialog(props: {
   };
   const namedTabs = tabs.filter((t) => t.name.trim());
 
-  const submit = async (e: React.FormEvent) => {
+  const submit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!saveBlocked) void save(base);
+  };
+
+  /** Checks the form and saves it held to `expectedVersion` (0: create only). */
+  const save = async (expectedVersion: number) => {
     setError(undefined);
     setPreviewError(undefined);
-    const finalApiId = apiId || toApiId(name);
     if (!name.trim() || !isValidApiId(finalApiId)) {
       setError('A name and a valid API ID (letter, then letters/numbers/_) are required.');
+      return;
+    }
+    if (clash) {
+      document.getElementById('ct-apiid')?.focus();
       return;
     }
     if (namedFields.length === 0) {
@@ -708,13 +786,15 @@ export function ContentTypeDialog(props: {
     setBusy(true);
     try {
       // Every detail goes back, so the save is held to the version these edits started from.
-      await props.onSave(draft, { expectedVersion: props.initial?.version ?? 0 });
+      await props.onSave(draft, { expectedVersion });
       props.onOpenChange(false);
     } catch (err) {
       const message = guard.saveFailed(err);
-      const version = staleVersion(err);
+      // The save landed: what is tried next goes over the version it stored, not the one opened.
+      if (err instanceof SavedNotPublishedError) setBase(err.saved.version);
+      const version = conflictVersion(err);
       if (version === undefined) setError(message);
-      else setStale({ version, draft: JSON.stringify(draft, null, 2) });
+      else setStale({ version, apiId: finalApiId, draft: JSON.stringify(draft, null, 2) });
     } finally {
       setBusy(false);
     }
@@ -722,6 +802,7 @@ export function ContentTypeDialog(props: {
 
   const loadLatest = async () => {
     if (!props.onLoadLatest) return;
+    setError(undefined);
     setLoading(true);
     try {
       await props.onLoadLatest();
@@ -733,591 +814,607 @@ export function ContentTypeDialog(props: {
   };
 
   return (
-    <Dialog open={props.open} onOpenChange={guard.onOpenChange}>
-      <DialogContent className="sm:max-w-2xl">
-        <DialogHeader>
-          <DialogTitle>{editing ? 'Edit content type' : 'New content type'}</DialogTitle>
-          <DialogDescription>
-            Define the schema for a class of entries. Saving publishes it so you can author entries.
-          </DialogDescription>
-        </DialogHeader>
+    <>
+      <DialogHeader>
+        <DialogTitle>{editing ? 'Edit content type' : 'New content type'}</DialogTitle>
+        <DialogDescription>
+          Define the schema for a class of entries. Saving publishes it so you can author entries.
+        </DialogDescription>
+      </DialogHeader>
 
-        <form onSubmit={submit} className="space-y-4">
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label htmlFor="ct-name">Name</Label>
-              <Input
-                id="ct-name"
-                value={name}
-                placeholder="Blog Post"
-                onChange={(e) => {
-                  setName(e.target.value);
-                  if (!apiIdTouched) setApiId(toApiId(e.target.value));
-                }}
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="ct-apiid">API ID</Label>
-              <Input
-                id="ct-apiid"
-                value={apiId}
-                placeholder="blogPost"
-                disabled={editing}
-                className="font-mono"
-                onChange={(e) => {
-                  setApiIdTouched(true);
-                  setApiId(e.target.value);
-                }}
-              />
-            </div>
+      <form onSubmit={submit} className="space-y-4">
+        <div className="grid grid-cols-2 gap-3">
+          <div className="space-y-1.5">
+            <Label htmlFor="ct-name">Name</Label>
+            <Input
+              ref={nameRef}
+              id="ct-name"
+              value={name}
+              placeholder="Blog Post"
+              onChange={(e) => {
+                setName(e.target.value);
+                if (!apiIdTouched) setApiId(toApiId(e.target.value));
+              }}
+            />
           </div>
-
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div className="space-y-1.5">
-              <Label htmlFor="ct-group">Group</Label>
-              <Input
-                id="ct-group"
-                value={group}
-                placeholder="Editorial"
-                maxLength={CONTENT_TYPE_LIMITS.group}
-                aria-describedby="ct-group-hint"
-                onChange={(e) => setGroup(e.target.value)}
-              />
-              <p id="ct-group-hint" className="max-w-measure text-muted-foreground text-xs">
-                The content nav lists types under their group. Optional.
+          <div className="space-y-1.5">
+            <Label htmlFor="ct-apiid">API ID</Label>
+            <Input
+              id="ct-apiid"
+              value={apiId}
+              placeholder="blogPost"
+              disabled={editing}
+              className="font-mono"
+              aria-invalid={clash ? true : undefined}
+              aria-describedby={clash ? 'ct-apiid-taken' : undefined}
+              onChange={(e) => {
+                setApiIdTouched(true);
+                setApiId(e.target.value);
+              }}
+            />
+            {clash && (
+              <p id="ct-apiid-taken" className="text-destructive text-ui">
+                Another content type has this API ID.
               </p>
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="ct-icon">Icon</Label>
-              <NativeSelect
-                id="ct-icon"
-                wrapperClassName="w-full"
-                value={icon}
-                onChange={(e) => setIcon(e.target.value)}
-              >
-                <NativeSelectOption value="">None</NativeSelectOption>
-                {Object.keys(CONTENT_TYPE_ICONS).map((n) => (
-                  <NativeSelectOption key={n} value={n}>
-                    {iconLabel(n)}
-                  </NativeSelectOption>
-                ))}
-                {icon && !contentTypeIcon(icon) && (
-                  <NativeSelectOption value={icon}>{`${icon} (not drawn here)`}</NativeSelectOption>
-                )}
-              </NativeSelect>
-            </div>
+            )}
           </div>
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-2">
           <div className="space-y-1.5">
-            <Label htmlFor="ct-description">Description</Label>
-            <Textarea
-              id="ct-description"
-              rows={2}
-              value={description}
-              maxLength={CONTENT_TYPE_LIMITS.description}
-              placeholder="What this type is for"
-              onChange={(e) => setDescription(e.target.value)}
+            <Label htmlFor="ct-group">Group</Label>
+            <Input
+              id="ct-group"
+              value={group}
+              placeholder="Editorial"
+              maxLength={CONTENT_TYPE_LIMITS.group}
+              aria-describedby="ct-group-hint"
+              onChange={(e) => setGroup(e.target.value)}
             />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="ct-agent-instructions">Agent instructions</Label>
-            <Textarea
-              id="ct-agent-instructions"
-              rows={3}
-              value={agentInstructions}
-              maxLength={CONTENT_TYPE_LIMITS.agentInstructions}
-              placeholder="Keep titles under eight words. Never invent quotes."
-              aria-describedby="ct-agent-instructions-hint"
-              onChange={(e) => setAgentInstructions(e.target.value)}
-            />
-            <p
-              id="ct-agent-instructions-hint"
-              className="max-w-measure text-muted-foreground text-xs"
-            >
-              How agents should write these entries. Agents, the assistant included, read this with
-              the content type; it is never delivered. Optional.
+            <p id="ct-group-hint" className="max-w-measure text-muted-foreground text-xs">
+              The content nav lists types under their group. Optional.
             </p>
           </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="ct-icon">Icon</Label>
+            <NativeSelect
+              id="ct-icon"
+              wrapperClassName="w-full"
+              value={icon}
+              onChange={(e) => setIcon(e.target.value)}
+            >
+              <NativeSelectOption value="">None</NativeSelectOption>
+              {Object.keys(CONTENT_TYPE_ICONS).map((n) => (
+                <NativeSelectOption key={n} value={n}>
+                  {iconLabel(n)}
+                </NativeSelectOption>
+              ))}
+              {icon && !contentTypeIcon(icon) && (
+                <NativeSelectOption value={icon}>{`${icon} (not drawn here)`}</NativeSelectOption>
+              )}
+            </NativeSelect>
+          </div>
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="ct-description">Description</Label>
+          <Textarea
+            id="ct-description"
+            rows={2}
+            value={description}
+            maxLength={CONTENT_TYPE_LIMITS.description}
+            placeholder="What this type is for"
+            onChange={(e) => setDescription(e.target.value)}
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="ct-agent-instructions">Agent instructions</Label>
+          <Textarea
+            id="ct-agent-instructions"
+            rows={3}
+            value={agentInstructions}
+            maxLength={CONTENT_TYPE_LIMITS.agentInstructions}
+            placeholder="Keep titles under eight words. Never invent quotes."
+            aria-describedby="ct-agent-instructions-hint"
+            onChange={(e) => setAgentInstructions(e.target.value)}
+          />
+          <p
+            id="ct-agent-instructions-hint"
+            className="max-w-measure text-muted-foreground text-xs"
+          >
+            How agents should write these entries. Agents, the assistant included, read this with
+            the content type; it is never delivered. Optional.
+          </p>
+        </div>
 
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <Label>Fields</Label>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setFields((f) => [...f, newField()])}
+            >
+              <Plus className="size-4" /> Add field
+            </Button>
+          </div>
           <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <Label>Fields</Label>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => setFields((f) => [...f, newField()])}
-              >
-                <Plus className="size-4" /> Add field
-              </Button>
-            </div>
-            <div className="space-y-2">
-              {fields.map((f, i) => (
-                // biome-ignore lint/suspicious/noArrayIndexKey: field rows have no stable id pre-save
-                <div key={i} className="flex flex-wrap items-end gap-2 rounded-lg border p-2">
-                  <div className="flex-1 space-y-1">
-                    {/* The <span> is a visual heading only — it labels nothing
+            {fields.map((f, i) => (
+              // biome-ignore lint/suspicious/noArrayIndexKey: field rows have no stable id pre-save
+              <div key={i} className="flex flex-wrap items-end gap-2 rounded-lg border p-2">
+                <div className="flex-1 space-y-1">
+                  {/* The <span> is a visual heading only — it labels nothing
                         programmatically, and these rows repeat, so each input
                         names itself and says which field it belongs to. */}
-                    <span className="text-xs text-muted-foreground">Name</span>
-                    <Input
-                      aria-label={`Name for field ${i + 1}`}
-                      value={f.name}
-                      placeholder="Title"
-                      onChange={(e) =>
-                        setField(i, {
-                          name: e.target.value,
-                          ...(f.apiIdTouched ? {} : { apiId: toApiId(e.target.value) }),
-                        })
-                      }
-                    />
-                  </div>
-                  <div className="w-32 space-y-1">
-                    <span className="text-xs text-muted-foreground">API ID</span>
-                    <Input
-                      aria-label={`API ID for ${f.name || `field ${i + 1}`}`}
-                      value={f.apiId}
-                      className="font-mono text-xs"
-                      onChange={(e) => setField(i, { apiId: e.target.value, apiIdTouched: true })}
-                    />
-                  </div>
-                  <div className="w-28 space-y-1">
-                    <span className="text-xs text-muted-foreground">Type</span>
-                    <Select
-                      value={f.blocks ? BLOCKS : f.type}
-                      onValueChange={(v) =>
-                        setField(
-                          i,
-                          v === BLOCKS
-                            ? { type: 'Array', blocks: f.blocks ?? [newVariant()] }
-                            : {
-                                type: v as FieldType,
-                                blocks: undefined,
-                                // A new list holds short text until told otherwise.
-                                ...(v === 'Array' ? { itemType: f.itemType ?? 'Symbol' } : {}),
-                              },
-                        )
-                      }
+                  <span className="text-xs text-muted-foreground">Name</span>
+                  <Input
+                    aria-label={`Name for field ${i + 1}`}
+                    value={f.name}
+                    placeholder="Title"
+                    onChange={(e) =>
+                      setField(i, {
+                        name: e.target.value,
+                        ...(f.apiIdTouched ? {} : { apiId: toApiId(e.target.value) }),
+                      })
+                    }
+                  />
+                </div>
+                <div className="w-32 space-y-1">
+                  <span className="text-xs text-muted-foreground">API ID</span>
+                  <Input
+                    aria-label={`API ID for ${f.name || `field ${i + 1}`}`}
+                    value={f.apiId}
+                    className="font-mono text-xs"
+                    onChange={(e) => setField(i, { apiId: e.target.value, apiIdTouched: true })}
+                  />
+                </div>
+                <div className="w-28 space-y-1">
+                  <span className="text-xs text-muted-foreground">Type</span>
+                  <Select
+                    value={f.blocks ? BLOCKS : f.type}
+                    onValueChange={(v) =>
+                      setField(
+                        i,
+                        v === BLOCKS
+                          ? { type: 'Array', blocks: f.blocks ?? [newVariant()] }
+                          : {
+                              type: v as FieldType,
+                              blocks: undefined,
+                              // A new list holds short text until told otherwise.
+                              ...(v === 'Array' ? { itemType: f.itemType ?? 'Symbol' } : {}),
+                            },
+                      )
+                    }
+                  >
+                    <SelectTrigger
+                      aria-label={`Type for ${f.name || f.apiId || 'field'}`}
+                      size="sm"
+                      className="w-full"
                     >
-                      <SelectTrigger
-                        aria-label={`Type for ${f.name || f.apiId || 'field'}`}
-                        size="sm"
-                        className="w-full"
-                      >
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {FIELD_TYPES.filter(
-                          (t) =>
-                            (!UNBUILDABLE_TYPES.includes(t) || f.type === t) &&
-                            // A type has one Seo field: offered until another row is one.
-                            (t !== 'Seo' ||
-                              f.type === 'Seo' ||
-                              !fields.some((g) => g.type === 'Seo')),
-                        ).map((t) => (
-                          <SelectItem key={t} value={t}>
-                            {t}
-                          </SelectItem>
-                        ))}
-                        <SelectItem value={BLOCKS}>{BLOCKS}</SelectItem>
-                      </SelectContent>
-                    </Select>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {FIELD_TYPES.filter(
+                        (t) =>
+                          (!UNBUILDABLE_TYPES.includes(t) || f.type === t) &&
+                          // A type has one Seo field: offered until another row is one.
+                          (t !== 'Seo' ||
+                            f.type === 'Seo' ||
+                            !fields.some((g) => g.type === 'Seo')),
+                      ).map((t) => (
+                        <SelectItem key={t} value={t}>
+                          {t}
+                        </SelectItem>
+                      ))}
+                      <SelectItem value={BLOCKS}>{BLOCKS}</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                {choosesItems(f) && (
+                  <div className="w-28 space-y-1">
+                    <span className="text-xs text-muted-foreground">Items</span>
+                    <NativeSelect
+                      size="sm"
+                      aria-label={`Items for ${f.name || f.apiId || 'field'}`}
+                      wrapperClassName="w-full"
+                      value={f.itemType ?? ''}
+                      onChange={(e) => setField(i, { itemType: e.target.value as ArrayItemType })}
+                    >
+                      {!f.itemType && <NativeSelectOption value="">Any (JSON)</NativeSelectOption>}
+                      {SCALAR_ITEM_TYPES.map((t) => (
+                        <NativeSelectOption key={t} value={t}>
+                          {t}
+                        </NativeSelectOption>
+                      ))}
+                    </NativeSelect>
                   </div>
-                  {choosesItems(f) && (
-                    <div className="w-28 space-y-1">
-                      <span className="text-xs text-muted-foreground">Items</span>
-                      <NativeSelect
-                        size="sm"
-                        aria-label={`Items for ${f.name || f.apiId || 'field'}`}
-                        wrapperClassName="w-full"
-                        value={f.itemType ?? ''}
-                        onChange={(e) => setField(i, { itemType: e.target.value as ArrayItemType })}
-                      >
-                        {!f.itemType && (
-                          <NativeSelectOption value="">Any (JSON)</NativeSelectOption>
-                        )}
-                        {SCALAR_ITEM_TYPES.map((t) => (
-                          <NativeSelectOption key={t} value={t}>
-                            {t}
-                          </NativeSelectOption>
-                        ))}
-                      </NativeSelect>
-                    </div>
-                  )}
-                  {/* A wrapping label does not name a <button role="checkbox">
+                )}
+                {/* A wrapping label does not name a <button role="checkbox">
                       (see Settings.tsx). The names spell the abbreviations out:
                       "Req" and "Loc" are fine to read in a dense row but poor to
                       hear, and they repeat per field, so each says which one. */}
-                  <Label className="h-9 gap-1.5 font-normal">
-                    <Checkbox
-                      aria-label={`${f.name || f.apiId || 'Field'}: required`}
-                      checked={f.required}
-                      onCheckedChange={(c) => setField(i, { required: c === true })}
-                    />
-                    Req
-                  </Label>
-                  <Label className="h-9 gap-1.5 font-normal">
-                    <Checkbox
-                      aria-label={`${f.name || f.apiId || 'Field'}: localized`}
-                      checked={f.localized}
-                      onCheckedChange={(c) => setField(i, { localized: c === true })}
-                    />
-                    Loc
-                  </Label>
-                  {/* Only offered where it can be enforced — the server refuses
+                <Label className="h-9 gap-1.5 font-normal">
+                  <Checkbox
+                    aria-label={`${f.name || f.apiId || 'Field'}: required`}
+                    checked={f.required}
+                    onCheckedChange={(c) => setField(i, { required: c === true })}
+                  />
+                  Req
+                </Label>
+                <Label className="h-9 gap-1.5 font-normal">
+                  <Checkbox
+                    aria-label={`${f.name || f.apiId || 'Field'}: localized`}
+                    checked={f.localized}
+                    onCheckedChange={(c) => setField(i, { localized: c === true })}
+                  />
+                  Loc
+                </Label>
+                {/* Only offered where it can be enforced — the server refuses
                       `unique` on types with no single comparable value. */}
-                  {UNIQUE_FIELD_TYPES.includes(f.type) && (
-                    <Label className="h-9 gap-1.5 font-normal">
-                      <Checkbox
-                        aria-label={`${f.name || f.apiId || 'Field'}: unique`}
-                        checked={f.unique === true}
-                        onCheckedChange={(c) => setField(i, { unique: c === true })}
-                      />
-                      Uniq
-                    </Label>
+                {UNIQUE_FIELD_TYPES.includes(f.type) && (
+                  <Label className="h-9 gap-1.5 font-normal">
+                    <Checkbox
+                      aria-label={`${f.name || f.apiId || 'Field'}: unique`}
+                      checked={f.unique === true}
+                      onCheckedChange={(c) => setField(i, { unique: c === true })}
+                    />
+                    Uniq
+                  </Label>
+                )}
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  aria-expanded={f.guidanceOpen}
+                  aria-controls={`ct-field-${i}-guidance`}
+                  // Collapsed, the button still says the field has guidance, so it is
+                  // not mistaken for one without.
+                  aria-label={`Guidance for ${f.name || f.apiId || `field ${i + 1}`}${
+                    !f.guidanceOpen && hasGuidance(f) ? ', set' : ''
+                  }`}
+                  onClick={() => setField(i, { guidanceOpen: !f.guidanceOpen })}
+                >
+                  Guidance
+                  {!f.guidanceOpen && hasGuidance(f) && (
+                    <span aria-hidden="true" className="text-muted-foreground">
+                      · set
+                    </span>
                   )}
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  aria-expanded={f.rulesOpen}
+                  aria-controls={`ct-field-${i}-rules`}
+                  aria-label={`Rules for ${f.name || f.apiId || `field ${i + 1}`}${
+                    !f.rulesOpen && hasRules(f) ? ', set' : ''
+                  }`}
+                  onClick={() => setField(i, { rulesOpen: !f.rulesOpen })}
+                >
+                  Rules
+                  {!f.rulesOpen && hasRules(f) && (
+                    <span aria-hidden="true" className="text-muted-foreground">
+                      · set
+                    </span>
+                  )}
+                </Button>
+                {settingsKind(f) && (
                   <Button
                     type="button"
                     variant="ghost"
                     size="sm"
-                    aria-expanded={f.guidanceOpen}
-                    aria-controls={`ct-field-${i}-guidance`}
-                    // Collapsed, the button still says the field has guidance, so it is
-                    // not mistaken for one without.
-                    aria-label={`Guidance for ${f.name || f.apiId || `field ${i + 1}`}${
-                      !f.guidanceOpen && hasGuidance(f) ? ', set' : ''
+                    aria-expanded={f.settingsOpen}
+                    aria-controls={`ct-field-${i}-settings`}
+                    aria-label={`Settings for ${f.name || f.apiId || `field ${i + 1}`}${
+                      !f.settingsOpen && hasSettings(f) ? ', set' : ''
                     }`}
-                    onClick={() => setField(i, { guidanceOpen: !f.guidanceOpen })}
+                    onClick={() => setField(i, { settingsOpen: !f.settingsOpen })}
                   >
-                    Guidance
-                    {!f.guidanceOpen && hasGuidance(f) && (
+                    Settings
+                    {!f.settingsOpen && hasSettings(f) && (
                       <span aria-hidden="true" className="text-muted-foreground">
                         · set
                       </span>
                     )}
                   </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    aria-expanded={f.rulesOpen}
-                    aria-controls={`ct-field-${i}-rules`}
-                    aria-label={`Rules for ${f.name || f.apiId || `field ${i + 1}`}${
-                      !f.rulesOpen && hasRules(f) ? ', set' : ''
-                    }`}
-                    onClick={() => setField(i, { rulesOpen: !f.rulesOpen })}
-                  >
-                    Rules
-                    {!f.rulesOpen && hasRules(f) && (
-                      <span aria-hidden="true" className="text-muted-foreground">
-                        · set
-                      </span>
-                    )}
-                  </Button>
-                  {settingsKind(f) && (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      aria-expanded={f.settingsOpen}
-                      aria-controls={`ct-field-${i}-settings`}
-                      aria-label={`Settings for ${f.name || f.apiId || `field ${i + 1}`}${
-                        !f.settingsOpen && hasSettings(f) ? ', set' : ''
-                      }`}
-                      onClick={() => setField(i, { settingsOpen: !f.settingsOpen })}
-                    >
-                      Settings
-                      {!f.settingsOpen && hasSettings(f) && (
-                        <span aria-hidden="true" className="text-muted-foreground">
-                          · set
-                        </span>
-                      )}
-                    </Button>
-                  )}
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    aria-label="Remove field"
-                    onClick={() => setFields((prev) => prev.filter((_, idx) => idx !== i))}
-                  >
-                    <Trash2 className="size-4" />
-                  </Button>
-                  {f.guidanceOpen && (
-                    <FieldGuidance
-                      id={`ct-field-${i}-guidance`}
-                      fieldLabel={f.name || f.apiId || `field ${i + 1}`}
-                      row={f}
-                      onChange={(patch) => setField(i, patch)}
-                    />
-                  )}
-                  {f.rulesOpen && (
-                    <FieldRules
-                      id={`ct-field-${i}-rules`}
-                      fieldLabel={f.name || f.apiId || `field ${i + 1}`}
-                      row={f}
-                      siblings={namedFields.filter((g) => g !== f)}
-                      onChange={(rules) => setField(i, { rules, rulesTouched: true })}
-                    />
-                  )}
-                  {f.settingsOpen && settingsKind(f) && (
-                    <FieldSettings
-                      id={`ct-field-${i}-settings`}
-                      fieldLabel={f.name || f.apiId || `field ${i + 1}`}
-                      kind={settingsKind(f) as 'date' | 'text' | 'asset'}
-                      value={f.settings}
-                      onChange={(patch) =>
-                        setField(i, {
-                          settings: { ...f.settings, ...patch },
-                          settingsTouched: true,
-                        })
-                      }
-                    />
-                  )}
-                  {namedTabs.length > 0 && (
-                    <div className="flex basis-full flex-wrap items-center gap-2">
-                      <NativeSelect
-                        size="sm"
-                        aria-label={`Tab for ${f.name || f.apiId || `field ${i + 1}`}`}
-                        value={f.tab}
-                        onChange={(e) => placeField(i, { tab: e.target.value })}
-                      >
-                        <NativeSelectOption value="">
-                          First tab, after placed fields
-                        </NativeSelectOption>
-                        {namedTabs.map((t) => (
-                          <NativeSelectOption key={t.apiId} value={t.apiId}>
-                            {t.name}
-                          </NativeSelectOption>
-                        ))}
-                      </NativeSelect>
-                      {f.tab && (
-                        <Input
-                          className="h-8 w-44"
-                          aria-label={`Group for ${f.name || f.apiId || `field ${i + 1}`}`}
-                          placeholder="Group (optional)"
-                          maxLength={LAYOUT_LIMITS.name}
-                          value={f.group}
-                          onChange={(e) => placeField(i, { group: e.target.value })}
-                        />
-                      )}
-                    </div>
-                  )}
-                  {f.blocks && (
-                    <BlockVariantsEditor
-                      fieldLabel={f.name || f.apiId || `field ${i + 1}`}
-                      value={f.blocks}
-                      onChange={(blocks) => setField(i, { blocks })}
-                    />
-                  )}
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="space-y-1.5">
-            <Label htmlFor="ct-display">Display field</Label>
-            <Select value={displayField} onValueChange={setDisplayField}>
-              <SelectTrigger id="ct-display" className="w-64">
-                <SelectValue placeholder="Pick a field" />
-              </SelectTrigger>
-              <SelectContent>
-                {namedFields.map((f) => (
-                  <SelectItem key={f.apiId} value={f.apiId}>
-                    {f.name} ({f.apiId})
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div className="space-y-1.5">
-            <Label htmlFor="ct-url">URL pattern</Label>
-            <Input
-              id="ct-url"
-              className="max-w-lg font-mono"
-              placeholder="/blog/{slug}"
-              autoCapitalize="off"
-              autoCorrect="off"
-              spellCheck={false}
-              aria-describedby="ct-url-hint"
-              value={urlPattern}
-              onChange={(e) => setUrlPattern(e.target.value)}
-            />
-            <p id="ct-url-hint" className="max-w-measure text-muted-foreground text-ui">
-              Where entries live on your site: {'{id}'}, {'{locale}'} or a Slug field’s API ID.
-              Publishing a changed slug then redirects the old path. Optional.
-            </p>
-          </div>
-
-          <div className="space-y-1.5">
-            <Label htmlFor="ct-preview">Preview URL</Label>
-            <Input
-              ref={previewRef}
-              id="ct-preview"
-              inputMode="url"
-              className="max-w-lg font-mono"
-              placeholder="https://example.com/__preview?entry={id}#token={token}"
-              autoCapitalize="off"
-              autoCorrect="off"
-              spellCheck={false}
-              maxLength={MAX_PREVIEW_TEMPLATE_LENGTH}
-              aria-invalid={previewError ? true : undefined}
-              aria-describedby={
-                previewError ? 'ct-preview-error ct-preview-hint' : 'ct-preview-hint'
-              }
-              value={previewTemplate}
-              onChange={(e) => {
-                setPreviewTemplate(e.target.value);
-                setPreviewError(undefined);
-              }}
-            />
-            {previewError && (
-              <p id="ct-preview-error" className="max-w-measure text-destructive text-ui">
-                {previewError}
-              </p>
-            )}
-            <p id="ct-preview-hint" className="max-w-measure text-muted-foreground text-ui">
-              Your site’s draft view, which Copy preview link fills in. Needs {'{token}'}; can use{' '}
-              {'{id}'}, {'{locale}'} or {'{field:slug}'}. Optional.
-            </p>
-          </div>
-
-          <div className="space-y-1.5">
-            <Label className="gap-2 font-normal">
-              <Checkbox
-                aria-labelledby="ct-singleton-label"
-                aria-describedby="ct-singleton-hint"
-                checked={singleton}
-                onCheckedChange={(c) => setSingleton(c === true)}
-              />
-              <span id="ct-singleton-label">One entry only (singleton)</span>
-            </Label>
-            <p id="ct-singleton-hint" className="max-w-measure text-muted-foreground text-ui">
-              For site settings or a home page: the content type holds a single entry, opened
-              straight from the sidebar, and the delivery API serves it by the type’s API ID. A type
-              that already has more than one entry can’t become one.
-            </p>
-          </div>
-
-          {/* Drawn as Fields is: its title beside its Add button. */}
-          <fieldset className="space-y-2" aria-labelledby="ct-layout-title">
-            <div className="flex items-center justify-between">
-              <span id="ct-layout-title" className="font-medium text-sm leading-none">
-                Layout
-              </span>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={tabs.length >= LAYOUT_LIMITS.tabs}
-                onClick={() => {
-                  const name = tabs.length === 0 ? 'Content' : `Tab ${tabs.length + 1}`;
-                  setTabs((prev) => [
-                    ...prev,
-                    {
-                      apiId: tabApiId(
-                        name,
-                        prev.map((x) => x.apiId),
-                      ),
-                      name,
-                    },
-                  ]);
-                  setLayoutTouched(true);
-                }}
-              >
-                <Plus className="size-4" /> Add tab
-              </Button>
-            </div>
-            <p className="max-w-measure text-muted-foreground text-ui">
-              Arrange the entry form into tabs, then pick each field’s tab and group above. Only
-              editors see it. Fields on no tab follow on the first.
-            </p>
-            {tabs.map((t, ti) => (
-              <div key={t.apiId} className="flex items-center gap-2">
-                <Input
-                  className="max-w-xs"
-                  aria-label={`Name of tab ${ti + 1}`}
-                  value={t.name}
-                  maxLength={LAYOUT_LIMITS.name}
-                  onChange={(e) => {
-                    setTabs((prev) =>
-                      prev.map((x, k) => (k === ti ? { ...x, name: e.target.value } : x)),
-                    );
-                    setLayoutTouched(true);
-                  }}
-                />
+                )}
                 <Button
                   type="button"
                   variant="ghost"
                   size="icon"
-                  aria-label={`Remove tab ${t.name || ti + 1}`}
-                  onClick={() => {
-                    setTabs((prev) => prev.filter((_, k) => k !== ti));
-                    setFields((prev) =>
-                      prev.map((f) => (f.tab === t.apiId ? { ...f, tab: '', group: '' } : f)),
-                    );
-                    setLayoutTouched(true);
-                  }}
+                  aria-label="Remove field"
+                  onClick={() => setFields((prev) => prev.filter((_, idx) => idx !== i))}
                 >
                   <Trash2 className="size-4" />
                 </Button>
+                {f.guidanceOpen && (
+                  <FieldGuidance
+                    id={`ct-field-${i}-guidance`}
+                    fieldLabel={f.name || f.apiId || `field ${i + 1}`}
+                    row={f}
+                    onChange={(patch) => setField(i, patch)}
+                  />
+                )}
+                {f.rulesOpen && (
+                  <FieldRules
+                    id={`ct-field-${i}-rules`}
+                    fieldLabel={f.name || f.apiId || `field ${i + 1}`}
+                    row={f}
+                    siblings={namedFields.filter((g) => g !== f)}
+                    onChange={(rules) => setField(i, { rules, rulesTouched: true })}
+                  />
+                )}
+                {f.settingsOpen && settingsKind(f) && (
+                  <FieldSettings
+                    id={`ct-field-${i}-settings`}
+                    fieldLabel={f.name || f.apiId || `field ${i + 1}`}
+                    kind={settingsKind(f) as 'date' | 'text' | 'asset'}
+                    value={f.settings}
+                    onChange={(patch) =>
+                      setField(i, {
+                        settings: { ...f.settings, ...patch },
+                        settingsTouched: true,
+                      })
+                    }
+                  />
+                )}
+                {namedTabs.length > 0 && (
+                  <div className="flex basis-full flex-wrap items-center gap-2">
+                    <NativeSelect
+                      size="sm"
+                      aria-label={`Tab for ${f.name || f.apiId || `field ${i + 1}`}`}
+                      value={f.tab}
+                      onChange={(e) => placeField(i, { tab: e.target.value })}
+                    >
+                      <NativeSelectOption value="">
+                        First tab, after placed fields
+                      </NativeSelectOption>
+                      {namedTabs.map((t) => (
+                        <NativeSelectOption key={t.apiId} value={t.apiId}>
+                          {t.name}
+                        </NativeSelectOption>
+                      ))}
+                    </NativeSelect>
+                    {f.tab && (
+                      <Input
+                        className="h-8 w-44"
+                        aria-label={`Group for ${f.name || f.apiId || `field ${i + 1}`}`}
+                        placeholder="Group (optional)"
+                        maxLength={LAYOUT_LIMITS.name}
+                        value={f.group}
+                        onChange={(e) => placeField(i, { group: e.target.value })}
+                      />
+                    )}
+                  </div>
+                )}
+                {f.blocks && (
+                  <BlockVariantsEditor
+                    fieldLabel={f.name || f.apiId || `field ${i + 1}`}
+                    value={f.blocks}
+                    onChange={(blocks) => setField(i, { blocks })}
+                  />
+                )}
               </div>
             ))}
-          </fieldset>
+          </div>
+        </div>
 
-          {stale && (
-            <Alert ref={staleRef} variant="warning">
-              <AlertTitle className="line-clamp-none">
-                {editing
-                  ? 'This content type changed since you opened it'
-                  : `A content type “${apiId || toApiId(name)}” already exists`}
-              </AlertTitle>
-              <AlertDescription>
-                <p>
-                  {editing
-                    ? guard.unconfirmed
-                      ? `It’s at v${stale.version} now: that may be your own save that didn’t confirm, or someone else’s. Your changes here weren’t saved.`
-                      : `Someone else saved it as v${stale.version}, so your changes weren’t saved: saving them would undo theirs.`
-                    : 'Someone made it after you opened this form, so yours wasn’t created. Give yours another API ID, or copy your edits.'}
-                  {editing && props.onLoadLatest
-                    ? ' Load the latest to edit it (your changes here are discarded), or copy your changes first.'
-                    : null}
-                </p>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  <CopyButton text={stale.draft} label="Copy my changes as JSON" />
-                  {editing && props.onLoadLatest ? (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      disabled={loading}
-                      onClick={loadLatest}
-                    >
-                      {loading ? 'Loading…' : 'Load the latest'}
-                    </Button>
-                  ) : null}
-                </div>
-              </AlertDescription>
-            </Alert>
+        <div className="space-y-1.5">
+          <Label htmlFor="ct-display">Display field</Label>
+          <Select value={displayField} onValueChange={setDisplayField}>
+            <SelectTrigger id="ct-display" className="w-64">
+              <SelectValue placeholder="Pick a field" />
+            </SelectTrigger>
+            <SelectContent>
+              {namedFields.map((f) => (
+                <SelectItem key={f.apiId} value={f.apiId}>
+                  {f.name} ({f.apiId})
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div className="space-y-1.5">
+          <Label htmlFor="ct-url">URL pattern</Label>
+          <Input
+            id="ct-url"
+            className="max-w-lg font-mono"
+            placeholder="/blog/{slug}"
+            autoCapitalize="off"
+            autoCorrect="off"
+            spellCheck={false}
+            aria-describedby="ct-url-hint"
+            value={urlPattern}
+            onChange={(e) => setUrlPattern(e.target.value)}
+          />
+          <p id="ct-url-hint" className="max-w-measure text-muted-foreground text-ui">
+            Where entries live on your site: {'{id}'}, {'{locale}'} or a Slug field’s API ID.
+            Publishing a changed slug then redirects the old path. Optional.
+          </p>
+        </div>
+
+        <div className="space-y-1.5">
+          <Label htmlFor="ct-preview">Preview URL</Label>
+          <Input
+            ref={previewRef}
+            id="ct-preview"
+            inputMode="url"
+            className="max-w-lg font-mono"
+            placeholder="https://example.com/__preview?entry={id}#token={token}"
+            autoCapitalize="off"
+            autoCorrect="off"
+            spellCheck={false}
+            maxLength={MAX_PREVIEW_TEMPLATE_LENGTH}
+            aria-invalid={previewError ? true : undefined}
+            aria-describedby={previewError ? 'ct-preview-error ct-preview-hint' : 'ct-preview-hint'}
+            value={previewTemplate}
+            onChange={(e) => {
+              setPreviewTemplate(e.target.value);
+              setPreviewError(undefined);
+            }}
+          />
+          {previewError && (
+            <p id="ct-preview-error" className="max-w-measure text-destructive text-ui">
+              {previewError}
+            </p>
           )}
-          {error && <DialogError>{error}</DialogError>}
+          <p id="ct-preview-hint" className="max-w-measure text-muted-foreground text-ui">
+            Your site’s draft view, which Copy preview link fills in. Needs {'{token}'}; can use{' '}
+            {'{id}'}, {'{locale}'} or {'{field:slug}'}. Optional.
+          </p>
+        </div>
 
-          <DialogFooter>
-            <DiscardAsk
-              guard={guard}
-              message={
-                editing ? `Discard your changes to ${seed.name}?` : 'Discard this content type?'
-              }
+        <div className="space-y-1.5">
+          <Label className="gap-2 font-normal">
+            <Checkbox
+              aria-labelledby="ct-singleton-label"
+              aria-describedby="ct-singleton-hint"
+              checked={singleton}
+              onCheckedChange={(c) => setSingleton(c === true)}
+            />
+            <span id="ct-singleton-label">One entry only (singleton)</span>
+          </Label>
+          <p id="ct-singleton-hint" className="max-w-measure text-muted-foreground text-ui">
+            For site settings or a home page: the content type holds a single entry, opened straight
+            from the sidebar, and the delivery API serves it by the type’s API ID. A type that
+            already has more than one entry can’t become one.
+          </p>
+        </div>
+
+        {/* Drawn as Fields is: its title beside its Add button. */}
+        <fieldset className="space-y-2" aria-labelledby="ct-layout-title">
+          <div className="flex items-center justify-between">
+            <span id="ct-layout-title" className="font-medium text-sm leading-none">
+              Layout
+            </span>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={tabs.length >= LAYOUT_LIMITS.tabs}
+              onClick={() => {
+                const name = tabs.length === 0 ? 'Content' : `Tab ${tabs.length + 1}`;
+                setTabs((prev) => [
+                  ...prev,
+                  {
+                    apiId: tabApiId(
+                      name,
+                      prev.map((x) => x.apiId),
+                    ),
+                    name,
+                  },
+                ]);
+                setLayoutTouched(true);
+              }}
             >
-              <GuardCancel guard={guard} />
-              <Button type="submit" disabled={busy}>
-                {busy ? 'Saving…' : editing ? 'Save changes' : 'Create content type'}
+              <Plus className="size-4" /> Add tab
+            </Button>
+          </div>
+          <p className="max-w-measure text-muted-foreground text-ui">
+            Arrange the entry form into tabs, then pick each field’s tab and group above. Only
+            editors see it. Fields on no tab follow on the first.
+          </p>
+          {tabs.map((t, ti) => (
+            <div key={t.apiId} className="flex items-center gap-2">
+              <Input
+                className="max-w-xs"
+                aria-label={`Name of tab ${ti + 1}`}
+                value={t.name}
+                maxLength={LAYOUT_LIMITS.name}
+                onChange={(e) => {
+                  setTabs((prev) =>
+                    prev.map((x, k) => (k === ti ? { ...x, name: e.target.value } : x)),
+                  );
+                  setLayoutTouched(true);
+                }}
+              />
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                aria-label={`Remove tab ${t.name || ti + 1}`}
+                onClick={() => {
+                  setTabs((prev) => prev.filter((_, k) => k !== ti));
+                  setFields((prev) =>
+                    prev.map((f) => (f.tab === t.apiId ? { ...f, tab: '', group: '' } : f)),
+                  );
+                  setLayoutTouched(true);
+                }}
+              >
+                <Trash2 className="size-4" />
               </Button>
-            </DiscardAsk>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
+            </div>
+          ))}
+        </fieldset>
+
+        {stale && (
+          <Alert ref={staleRef} variant="warning">
+            <AlertTitle className="line-clamp-none">
+              {!editing
+                ? `There’s already a content type “${stale.apiId}”`
+                : deleted
+                  ? 'This content type was deleted since you opened it'
+                  : 'This content type changed since you opened it'}
+            </AlertTitle>
+            <AlertDescription>
+              <p>
+                {!editing
+                  ? 'There’s already a content type with this API ID, so yours wasn’t created. Give yours another API ID, or copy your edits.'
+                  : deleted
+                    ? 'Your changes weren’t saved. Create it again from this form, or copy your version first.'
+                    : guard.unconfirmed
+                      ? `It’s at v${stale.version} now: that may be your own save that didn’t confirm, or someone else’s. Your changes here weren’t saved.`
+                      : `Someone else saved it as v${stale.version}, so your changes weren’t saved: saving them would undo theirs.`}
+                {editing && !deleted && props.onLoadLatest
+                  ? ' Load the latest to edit it (your changes here are discarded), or copy your version first.'
+                  : null}
+              </p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                <CopyButton text={stale.draft} label="Copy my version as JSON" />
+                {deleted ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={busy}
+                    onClick={() => void save(0)}
+                  >
+                    Create it again
+                  </Button>
+                ) : editing && props.onLoadLatest ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={loading}
+                    onClick={loadLatest}
+                  >
+                    {loading ? 'Loading…' : 'Load the latest'}
+                  </Button>
+                ) : null}
+              </div>
+            </AlertDescription>
+          </Alert>
+        )}
+        {error && <DialogError>{error}</DialogError>}
+
+        <DialogFooter>
+          <DiscardAsk
+            guard={guard}
+            message={
+              editing ? `Discard your changes to ${seed.name}?` : 'Discard this content type?'
+            }
+          >
+            <GuardCancel guard={guard} />
+            <Button type="submit" disabled={busy || saveBlocked}>
+              {busy ? 'Saving…' : editing ? 'Save changes' : 'Create content type'}
+            </Button>
+          </DiscardAsk>
+        </DialogFooter>
+      </form>
+    </>
   );
 }
 

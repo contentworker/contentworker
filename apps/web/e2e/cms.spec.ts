@@ -1603,7 +1603,8 @@ test('a content type saved by someone else while the dialog is open is refused, 
   };
   expect((await api(request, 'POST', `${MGMT}/content-types`, type)).status()).toBeLessThan(300);
   await openCms(page, '/content');
-  await page.getByRole('button', { name: `Edit “${name}”` }).click();
+  const edit = page.getByRole('button', { name: `Edit “${name}”` });
+  await edit.click();
   const dialog = page.getByRole('dialog', { name: 'Edit content type' });
   await dialog.getByLabel('Group').fill('Mine');
 
@@ -1618,18 +1619,28 @@ test('a content type saved by someone else while the dialog is open is refused, 
   const alert = dialog.getByRole('alert').filter({ hasText: 'changed since you opened it' });
   await expect(alert).toBeVisible();
   await expect(dialog.getByLabel('Group')).toHaveValue('Mine');
+  // Saving again would only be refused again.
+  await expect(dialog.getByRole('button', { name: 'Save changes' })).toBeDisabled();
   // Nothing of this save landed: theirs stands.
   const stored = await (await api(request, 'GET', `${MGMT}/content-types/${apiId}`)).json();
   expect(stored).toMatchObject({ version: 2, description: 'Theirs' });
   expect(stored.group).toBeUndefined();
 
+  // Loaded in the same dialog: Name takes focus, and the load is said.
   await alert.getByRole('button', { name: 'Load the latest' }).click();
-  const reopened = page.getByRole('dialog', { name: 'Edit content type' });
-  await expect(reopened.getByLabel('Description')).toHaveValue('Theirs');
-  await expect(reopened.getByLabel('Group')).toHaveValue('');
-  await reopened.getByLabel('Group').fill('Mine');
-  await reopened.getByRole('button', { name: 'Save changes' }).click();
-  await expect(reopened).toBeHidden();
+  await expect(dialog.getByLabel('Description')).toHaveValue('Theirs');
+  await expect(dialog.getByLabel('Group')).toHaveValue('');
+  await expect(dialog.getByLabel('Name', { exact: true })).toBeFocused();
+  await expect(dialog.getByText('Loaded v2. Your edits here were discarded.')).toBeAttached();
+  // Untouched since the load, it closes at once, and focus goes back to the row's Edit.
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeHidden();
+  await expect(edit).toBeFocused();
+
+  await edit.click();
+  await dialog.getByLabel('Group').fill('Mine');
+  await dialog.getByRole('button', { name: 'Save changes' }).click();
+  await expect(dialog).toBeHidden();
   const saved = await (await api(request, 'GET', `${MGMT}/content-types/${apiId}`)).json();
   expect(saved).toMatchObject({ group: 'Mine', description: 'Theirs' });
 });

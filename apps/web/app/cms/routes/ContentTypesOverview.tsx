@@ -25,7 +25,7 @@ import {
   DeleteContentTypeDialog,
 } from '~/cms/components/ContentTypeActions';
 import { ContentTypeDeleteJobCard } from '~/cms/components/ContentTypeDeleteJob';
-import { ContentTypeDialog } from '~/cms/components/ContentTypeDialog';
+import { ContentTypeDialog, SavedNotPublishedError } from '~/cms/components/ContentTypeDialog';
 import { LoadingStatus } from '~/cms/components/loading';
 import { Empty, PageHeader } from '~/cms/components/page';
 import { StatusBadge } from '~/cms/components/status';
@@ -91,10 +91,15 @@ export function ContentTypesOverview() {
     let failed: unknown;
     await run(async () => {
       try {
-        await client.saveContentType(draft, opts);
-        // The draft has landed by now, so a refused publish doesn't mean nothing was saved.
+        const saved = await client.saveContentType(draft, opts);
+        // The draft has landed by now, so a refused publish doesn't mean nothing was saved, and
+        // the dialog goes on from the version it stored.
         await client.publishContentType(draft.apiId).catch((err) => {
-          throw new Error(`The draft saved but wasn’t published: ${apiErrorMessage(err)}`);
+          reload();
+          throw new SavedNotPublishedError(
+            saved,
+            `The draft saved but wasn’t published: ${apiErrorMessage(err)}`,
+          );
         });
         reload();
         toast.success(`Content type “${draft.name}” saved`);
@@ -104,6 +109,8 @@ export function ContentTypesOverview() {
     });
     if (failed !== undefined) throw failed;
   };
+
+  const editingApiId = dialog.initial?.apiId;
 
   const publish = (ct: ContentType) =>
     run(async () => {
@@ -304,21 +311,24 @@ export function ContentTypesOverview() {
         />
       )}
 
-      {/* Key on the target and its version, so the form seeds fresh each time it opens, and
-          again on the latest version when a stale save loads it. */}
+      {/* Key on the target so the form seeds fresh each time it opens; loading the latest after a
+          stale save seeds it again inside the same dialog. */}
       <ContentTypeDialog
-        key={`${dialog.open}:${dialog.initial?.apiId ?? 'new'}:${dialog.initial?.version ?? 0}`}
+        key={`${dialog.open}:${dialog.initial?.apiId ?? 'new'}`}
         open={dialog.open}
         onOpenChange={(open) => setDialog((d) => ({ ...d, open }))}
         initial={dialog.initial}
         onSave={save}
-        onLoadLatest={async () => {
-          const apiId = dialog.initial?.apiId;
-          if (!apiId) return;
-          const latest = await client.getContentType(apiId);
-          setDialog({ open: true, initial: latest });
-          reload();
-        }}
+        takenApiIds={types.map((t) => t.apiId)}
+        {...(editingApiId
+          ? {
+              onLoadLatest: async () => {
+                const latest = await client.getContentType(editingApiId);
+                reload();
+                return latest;
+              },
+            }
+          : {})}
       />
     </div>
   );
