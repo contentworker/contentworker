@@ -618,8 +618,10 @@ export function EntryForm(props: {
       document.getElementById(`field-${pendingFocus.apiId}`);
     if (!el) return;
     const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-    el.scrollIntoView?.({ block: 'center', behavior: reduce ? 'auto' : 'smooth' });
+    // Focus first: it lands now, whatever the scroll does after (a smooth one moves the page for a
+    // while, and a click or a check made meanwhile must already find the field focused).
     el.focus({ preventScroll: true });
+    el.scrollIntoView?.({ block: 'center', behavior: reduce ? 'auto' : 'smooth' });
     // A block has no focus style of its own (a click on its padding shouldn't ring it): the pick
     // marks it until focus moves on.
     if (el.dataset.blockKey !== undefined) {

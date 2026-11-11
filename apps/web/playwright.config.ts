@@ -50,6 +50,8 @@ export default defineConfig({
   use: {
     baseURL: `http://localhost:${PORT}`,
     trace: 'retain-on-failure',
+    // Smooth scrolls only add timing: a click or a check made mid-scroll finds the page moving.
+    reducedMotion: 'reduce',
   },
   projects: [
     {

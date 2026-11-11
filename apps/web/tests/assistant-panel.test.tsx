@@ -870,6 +870,31 @@ describe('a card’s focus', () => {
     expect(document.activeElement).toBe(field);
   });
 
+  it('asks for focus again when it could not take it the first time', async () => {
+    // First render: the card may not take focus (its page hasn't claimed it direct, and focus is in a
+    // field). Marking the ask spent then would leave the safe choice unfocused for good.
+    const view = render(
+      <MemoryRouter>
+        {/* biome-ignore lint/a11y/noAutofocus: the field has focus when the card arrives */}
+        <input aria-label="Somewhere else" autoFocus />
+        <ActionCard part={card()} respond={vi.fn()} actionKey="m1:0" direct={false} />
+      </MemoryRouter>,
+    );
+    const field = screen.getByRole('textbox', { name: 'Somewhere else' });
+    await screen.findByRole('button', { name: 'Not now' });
+    expect(document.activeElement).toBe(field);
+    field.blur();
+    view.rerender(
+      <MemoryRouter>
+        <input aria-label="Somewhere else" />
+        <ActionCard part={card()} respond={vi.fn()} actionKey="m1:0" direct />
+      </MemoryRouter>,
+    );
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Not now' })),
+    );
+  });
+
   it('takes focus on a cold open only once the panel has opened', async () => {
     // The card's message beats the page's answer: it is in the conversation, in an inert panel.
     socket.call.mockImplementation(async (method) => {
