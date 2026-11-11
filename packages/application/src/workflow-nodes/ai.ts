@@ -545,7 +545,15 @@ export const AI_EXECUTORS: Record<string, Exec> = {
     return viaUseCase(
       i,
       'workflow.summarize',
-      () => summarizeEntry(i.ctx, aiOf(i), i.scope, i.entryId, { tier: 'fast' }),
+      () =>
+        summarizeEntry(
+          i.ctx,
+          aiOf(i),
+          i.scope,
+          i.entryId,
+          { tier: 'fast' },
+          { principal: i.actor.principal },
+        ),
       (value, p) => ({
         vars: { [into]: value.summary },
         output: { summary: value.summary, ...p },
@@ -625,11 +633,18 @@ export const AI_EXECUTORS: Record<string, Exec> = {
       i,
       'workflow.translate',
       () =>
-        translateEntry(i.ctx, aiOf(i), i.scope, i.entryId, {
-          targetLocale,
-          ...(sourceLocale ? { sourceLocale } : {}),
-          apply: true,
-        }),
+        translateEntry(
+          i.ctx,
+          aiOf(i),
+          i.scope,
+          i.entryId,
+          {
+            targetLocale,
+            ...(sourceLocale ? { sourceLocale } : {}),
+            apply: true,
+          },
+          { principal: i.actor.principal },
+        ),
       async (value, p) => ({
         output: { targetLocale, translatedFields: value.translatedFields, applied: true, ...p },
         summary: `Translated ${value.translatedFields.length} field(s) into ${targetLocale}`,
@@ -655,7 +670,15 @@ export const AI_EXECUTORS: Record<string, Exec> = {
     return viaUseCase(
       i,
       'workflow.autofill',
-      () => autofillField(i.ctx, aiOf(i), i.scope, i.entryId, { field, locale, apply: true }),
+      () =>
+        autofillField(
+          i.ctx,
+          aiOf(i),
+          i.scope,
+          i.entryId,
+          { field, locale, apply: true },
+          { principal: i.actor.principal },
+        ),
       async (value, p) => ({
         output: { field, locale, value: value.value, applied: value.applied, ...p },
         summary: `${field}: ${JSON.stringify(value.value).slice(0, 60)}`,
@@ -675,7 +698,15 @@ export const AI_EXECUTORS: Record<string, Exec> = {
     return viaUseCase(
       i,
       'workflow.suggest_tags',
-      () => suggestEntryTags(i.ctx, aiOf(i), i.scope, i.entryId, { apply }),
+      () =>
+        suggestEntryTags(
+          i.ctx,
+          aiOf(i),
+          i.scope,
+          i.entryId,
+          { apply },
+          { principal: i.actor.principal },
+        ),
       async (value, p) => {
         const names = new Map(
           (await i.ctx.store.taxonomy.listTags(i.scope)).map((t) => [t.id, t.name]),

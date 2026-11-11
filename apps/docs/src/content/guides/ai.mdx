@@ -32,6 +32,13 @@ The editing features take `"apply": true` to save the result as a new draft vers
 away; without it, they return the proposal for you to accept. Either way the result is a draft:
 nothing AI-generated is published without someone (or a workflow) publishing it.
 
+These features act with your role, as an edit does. Translate, summarize, autofill and suggest
+tags need read access to the entry's content type, and write access too when they apply; on a type
+you can't read they answer `403`, as reading the entry would. The model is never shown a field your
+role hides from you, and the answer never contains one; when a result is applied, the fields you
+may not write keep their values. Autofill refuses a field your role hides, and applying into a
+read-only field is refused. A workflow's AI nodes are held to the role the run acts as.
+
 On assets, **Generate alt text** describes an image for accessibility, and **Suggest tags** proposes
 tags. See [Media and assets](/guides/media/#generate-alt-text-and-tags-with-ai).
 
@@ -70,7 +77,8 @@ or:
 | Delete | `DELETE …/ai-actions/{id}` | |
 
 Like the built-in editing features, a run returns a proposal unless `apply` is true, and then
-saves a draft.
+saves a draft. A run against an entry follows the same role rules: a field your role hides is
+an empty `{{field.…}}` variable, and an action whose target field you can't write can't apply.
 
 ## Search
 

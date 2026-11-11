@@ -12,6 +12,7 @@ import {
   RecordingEmailSender,
   RecordingWebhookSender,
   SequenceIdGenerator,
+  StubAIProvider,
   StubDecisionModel,
 } from '@contentworker/test-kit';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -403,6 +404,28 @@ describe('workflow node executors', () => {
       const r = await exec(type, { targetLocale: 'de-DE', field: 'summary' });
       expect(r.output, type).toMatchObject({ source: 'heuristic', fallback: 'mock' });
     }
+  });
+
+  it('runs the AI use-cases as the run’s principal: a denied field never reaches the model', async () => {
+    const noBody: Principal = {
+      ...editor,
+      subject: 'nb@example.com',
+      contentGrants: [
+        { contentTypeApiId: 'post', actions: ['read', 'write'], deniedFields: ['body'] },
+      ],
+    };
+    const ai = new StubAIProvider((req) =>
+      req.outputSchema ? { summary: 'Short', value: 'Filled' } : 'x',
+    );
+    ctx = { ...ctx, ai: { mode: 'live', timeoutMs: 1000 } };
+    deps = { ...deps, ai };
+    expect((await exec('ai.summarize', {}, noBody)).vars).toEqual({ summary: 'Short' });
+    const filled = await exec('ai.autofill', { field: 'summary' }, noBody);
+    expect(filled.output).toMatchObject({ field: 'summary', value: 'Filled', applied: true });
+    expect(ai.requests).toHaveLength(2);
+    for (const r of ai.requests) expect(r.prompt).not.toContain('A short news story.');
+    const stored = await ctx.store.entries.get(scope, entryId);
+    expect(stored?.fields.body).toEqual({ 'en-US': 'A short news story.' });
   });
 
   it('gating AI nodes fail closed when the model is unavailable outside mock mode', async () => {

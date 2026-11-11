@@ -515,6 +515,19 @@ the kept value of a denied field never comes back to the writer. HTTP `PUT …/e
 `…/entries/validate`, MCP `entries_update` and `entries_validate`, and a plugin's `content.update`
 all pass it.
 
+The AI operations over one entry are held to the same grants, in the use-cases themselves so every
+caller is: `translateEntry`, `summarizeEntry`, `autofillField`, `suggestEntryTags`,
+`applyEntryTags` and `runAIAction` take `{ principal }` and load the entry through
+`readEntryForAi`. It answers 404 for a missing entry and `authorizeContent` 403 without `read` on
+its type (plus `write` when the run applies), as `GET …/entries/:id` does, then masks the denied
+fields (`maskDeniedFields`) before anything is shown to the model or returned, the
+no-text-to-translate answer included. An apply saves with `unwritable`, so denied and read-only
+fields keep their stored values; `assertAiTargetField` refuses autofilling a denied field and
+writing a summary, autofill or AI action output into one the role can't write, before the model
+is asked. The REST routes (`…/translate`, `…/summarize`, `…/autofill`, `…/suggest-tags`,
+`…/apply-tags`, `…/ai-actions/:id/run`), their MCP tools (and so the assistant) and the workflow
+AI nodes (as the run's principal) all pass it.
+
 ## API keys at rest
 
 ```ts

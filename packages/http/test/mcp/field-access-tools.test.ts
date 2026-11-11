@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { InProcessAgentRuntime, makeActivities } from '@contentworker/agent-runtime';
 import {
   type AppContext,
+  createAIAction,
   createContentType,
   createEntry,
   createSpace,
@@ -46,8 +47,16 @@ const reader: Principal = {
   ...writer,
   contentGrants: [{ contentTypeApiId: 'listing', actions: ['read'] }],
 };
+// Holds the coarse write scope, and a role over another type only.
+const outsider: Principal = {
+  ...writer,
+  contentGrants: [{ contentTypeApiId: 'page', actions: ['read', 'write'] }],
+};
 
 async function setup(principal: Principal = writer) {
+  const model = new StubAIProvider((req) =>
+    req.outputSchema ? { value: 'Filled', summary: 'S' } : 'Out',
+  );
   const ctx: AppContext = {
     store: new InMemoryContentStore(),
     clock: new FixedClock(),
@@ -56,7 +65,7 @@ async function setup(principal: Principal = writer) {
   };
   const deps: McpDeps = {
     ctx,
-    ai: new StubAIProvider(() => ({})),
+    ai: model,
     rag: { embeddings: new LocalEmbeddingsProvider(8), vectors: new InMemoryVectorStore() },
     hasher: { hash: (v) => createHash('sha256').update(v).digest('hex') },
     adminToken: 'admin',
@@ -99,7 +108,7 @@ async function setup(principal: Principal = writer) {
     const text = r.content?.find((c) => c.type === 'text')?.text ?? 'null';
     return { isError: r.isError === true, text };
   };
-  return { ctx, id: entry.id, call };
+  return { ctx, id: entry.id, call, model };
 }
 
 describe('a restricted writer over MCP', () => {
@@ -160,5 +169,90 @@ describe('a restricted writer over MCP', () => {
     expect(res.isError).toBe(true);
     expect(res.text).toContain('content:write:listing');
     expect(await ctx.store.entries.list(scope, { contentTypeApiId: 'listing' })).toHaveLength(1);
+  });
+
+  describe('AI runs over an entry', () => {
+    const action = (ctx: AppContext, targetField: string) =>
+      createAIAction(ctx, scope, {
+        name: 'Rewrite',
+        promptTemplate: '{{field.title}} / {{field.internalNotes}}',
+        targetField,
+      });
+
+    it('refuses every run on a type the role can’t read', async () => {
+      const { ctx, call, id, model } = await setup(outsider);
+      const { id: actionId } = await action(ctx, 'title');
+      const runs: [string, Record<string, unknown>][] = [
+        ['entry_translate', { id, targetLocale: 'en-US' }],
+        ['entry_summarize', { id }],
+        ['entry_autofill_field', { id, field: 'title' }],
+        ['entry_suggest_tags', { id }],
+        ['entry_apply_tags', { id, newTags: ['x'] }],
+        ['ai_action_run', { id: actionId, entryId: id }],
+      ];
+      for (const [tool, args] of runs) {
+        const res = await call(tool, args);
+        expect(res.isError, tool).toBe(true);
+        expect(res.text, tool).toContain('content:read:listing');
+        expect(res.text, tool).not.toContain('secret');
+      }
+      expect(model.requests).toHaveLength(0);
+    });
+
+    it('never shows a denied field to the model or in the answer, and applies around it', async () => {
+      const { ctx, call, id, model } = await setup();
+      // No localized field, so nothing to translate: the answer comes straight from the entry.
+      const translated = await call('entry_translate', { id, targetLocale: 'en-US', apply: true });
+      expect(translated.isError, translated.text).toBe(false);
+      expect(JSON.parse(translated.text).fields).toEqual({
+        title: { 'en-US': 'A' },
+        price: { 'en-US': 100 },
+      });
+
+      expect((await call('entry_summarize', { id })).isError).toBe(false);
+      const intoPrice = await call('entry_summarize', { id, targetField: 'price', apply: true });
+      expect(intoPrice.isError).toBe(true);
+      expect(intoPrice.text).toContain('listing.price');
+
+      const denied = await call('entry_autofill_field', { id, field: 'internalNotes' });
+      expect(denied.isError).toBe(true);
+      const filled = await call('entry_autofill_field', { id, field: 'title', apply: true });
+      expect(filled.isError, filled.text).toBe(false);
+
+      const { id: actionId } = await action(ctx, 'title');
+      const ran = await call('ai_action_run', { id: actionId, entryId: id, apply: true });
+      expect(ran.isError, ran.text).toBe(false);
+      const { id: notesAction } = await action(ctx, 'internalNotes');
+      expect(
+        (await call('ai_action_run', { id: notesAction, entryId: id, apply: true })).isError,
+      ).toBe(true);
+
+      expect(model.requests.length).toBeGreaterThan(0);
+      for (const r of model.requests) expect(`${r.system}\n${r.prompt}`).not.toContain('secret');
+      const stored = await getEntry(ctx, scope, id);
+      expect(stored.fields).toEqual({
+        title: { 'en-US': 'Out' },
+        internalNotes: { 'en-US': 'secret' },
+        price: { 'en-US': 100 },
+      });
+    });
+
+    it('refuses an apply to a role that only reads the type', async () => {
+      const { ctx, call, id, model } = await setup(reader);
+      const res = await call('entry_autofill_field', { id, field: 'title', apply: true });
+      expect(res.isError).toBe(true);
+      expect(res.text).toContain('content:write:listing');
+      expect(model.requests).toHaveLength(0);
+      expect((await getEntry(ctx, scope, id)).entry.currentVersion).toBe(1);
+    });
+
+    it('still runs for an unrestricted caller', async () => {
+      const { ctx, call, id } = await setup({ ...writer, contentGrants: undefined });
+      const res = await call('entry_translate', { id, targetLocale: 'en-US' });
+      expect(res.isError, res.text).toBe(false);
+      expect(JSON.parse(res.text).fields.internalNotes).toEqual({ 'en-US': 'secret' });
+      const { id: actionId } = await action(ctx, 'title');
+      expect((await call('ai_action_run', { id: actionId, entryId: id })).isError).toBe(false);
+    });
   });
 });

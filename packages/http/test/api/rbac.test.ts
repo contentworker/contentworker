@@ -1,4 +1,5 @@
 import type { ApiConfig } from '@contentworker/platform/config';
+import type { StubAIProvider } from '@contentworker/test-kit';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from '../../src/api/app';
 import { testConfig } from './config';
@@ -33,12 +34,14 @@ const symbolField = (apiId: string, position: number) => ({
 
 describe('granular RBAC over HTTP', () => {
   let app: ReturnType<typeof createApp>;
+  let model: StubAIProvider;
   let editor: Record<string, string>;
   let postId: string;
   let pageId: string;
 
   beforeEach(async () => {
     const { ctx, rag, blob, ai } = wire(config);
+    model = ai as StubAIProvider;
     app = createApp(ctx, config, rag, blob, ai);
 
     // Model two types; publish both.
@@ -172,6 +175,103 @@ describe('granular RBAC over HTTP', () => {
       await app.request(`${M}/entries/${postId}`, { headers: admin })
     ).json()) as { fields: Record<string, unknown> };
     expect(again.fields.internalNotes).toEqual({ 'en-US': 'secret' });
+  });
+
+  describe('AI runs over an entry', () => {
+    const post = (path: string, headers: Record<string, string>, body: unknown) =>
+      app.request(`${M}${path}`, { method: 'POST', headers, body: JSON.stringify(body) });
+    const prompts = () => model.requests.map((r) => `${r.system}\n${r.prompt}`).join('\n');
+    const stored = async (id: string) =>
+      (
+        (await (await app.request(`${M}/entries/${id}`, { headers: admin })).json()) as {
+          fields: Record<string, unknown>;
+        }
+      ).fields;
+    const retitle = async (promptTemplate: string, targetField = 'title') => {
+      const res = await post('/ai-actions', admin, {
+        name: 'Retitle',
+        promptTemplate,
+        targetField,
+      });
+      expect(res.status).toBe(201);
+      return ((await res.json()) as { id: string }).id;
+    };
+
+    it('refuses every run on a type the role can’t read, as GET …/entries/:id does', async () => {
+      expect((await app.request(`${M}/entries/${pageId}`, { headers: editor })).status).toBe(403);
+      const actionId = await retitle('{{field.title}}');
+      const runs: [string, unknown][] = [
+        [`/entries/${pageId}/translate`, { targetLocale: 'en-US' }],
+        [`/entries/${pageId}/summarize`, {}],
+        [`/entries/${pageId}/autofill`, { field: 'title' }],
+        [`/entries/${pageId}/suggest-tags`, {}],
+        [`/entries/${pageId}/apply-tags`, { newTags: ['x'] }],
+        [`/ai-actions/${actionId}/run`, { entryId: pageId }],
+      ];
+      for (const [path, body] of runs) {
+        const res = await post(path, editor, body);
+        expect(res.status, path).toBe(403);
+        expect(await res.text(), path).not.toContain('secret');
+      }
+      expect(model.requests).toHaveLength(0);
+      // A missing entry is a 404, as the read answers.
+      expect((await post('/entries/nope/summarize', editor, {})).status).toBe(404);
+    });
+
+    it('never shows a denied field to the model or in the answer, and applies around it', async () => {
+      // No localized field, so nothing to translate: the answer comes straight from the entry.
+      const translated = await post(`/entries/${postId}/translate`, editor, {
+        targetLocale: 'en-US',
+        apply: true,
+      });
+      expect(translated.status, await translated.clone().text()).toBe(200);
+      const body = (await translated.json()) as { fields: object; applied: boolean };
+      expect(body.applied).toBe(false);
+      expect(body.fields).toEqual({ title: { 'en-US': 'A post' } });
+
+      const summarized = await post(`/entries/${postId}/summarize`, editor, {});
+      expect(summarized.status, await summarized.clone().text()).toBe(200);
+
+      expect(
+        (await post(`/entries/${postId}/autofill`, editor, { field: 'internalNotes' })).status,
+      ).toBe(403);
+      const filled = await post(`/entries/${postId}/autofill`, editor, {
+        field: 'title',
+        apply: true,
+      });
+      expect(filled.status, await filled.clone().text()).toBe(200);
+
+      const actionId = await retitle('{{field.title}} / {{field.internalNotes}}');
+      const ran = await post(`/ai-actions/${actionId}/run`, editor, {
+        entryId: postId,
+        apply: true,
+      });
+      expect(ran.status, await ran.clone().text()).toBe(200);
+      const notesAction = await retitle('{{field.title}}', 'internalNotes');
+      const overwrite = await post(`/ai-actions/${notesAction}/run`, editor, {
+        entryId: postId,
+        apply: true,
+      });
+      expect(overwrite.status).toBe(403);
+
+      expect(model.requests.length).toBeGreaterThan(0);
+      expect(prompts()).not.toContain('secret');
+      expect((await stored(postId)).internalNotes).toEqual({ 'en-US': 'secret' });
+    });
+
+    it('still runs for an unrestricted caller, over every type and field', async () => {
+      const res = await post(`/entries/${pageId}/translate`, admin, { targetLocale: 'en-US' });
+      expect(res.status).toBe(200);
+      expect(((await res.json()) as { fields: object }).fields).toEqual({
+        title: { 'en-US': 'A page' },
+        internalNotes: { 'en-US': 'secret' },
+      });
+      const actionId = await retitle('{{field.internalNotes}}');
+      expect((await post(`/ai-actions/${actionId}/run`, admin, { entryId: pageId })).status).toBe(
+        200,
+      );
+      expect(prompts()).toContain('secret');
+    });
   });
 
   it('duplicates for a writer without the fields it may not read; the copy keeps them', async () => {

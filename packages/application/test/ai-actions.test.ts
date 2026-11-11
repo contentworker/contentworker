@@ -1,4 +1,4 @@
-import { NotFoundError } from '@contentworker/domain';
+import { ForbiddenError, NotFoundError, type Principal, SCOPES } from '@contentworker/domain';
 import {
   FixedClock,
   InMemoryContentStore,
@@ -132,5 +132,101 @@ describe('runAIAction', () => {
   it('throws for an unknown action', async () => {
     const ai = new StubAIProvider(() => 'x');
     await expect(runAIAction(ctx, ai, scope, 'nope')).rejects.toThrow(NotFoundError);
+  });
+
+  describe('for a restricted principal', () => {
+    const grant = (actions: ('read' | 'write')[], contentTypeApiId = 'post'): Principal => ({
+      spaceId: 'blog',
+      kind: 'cma',
+      scopes: [SCOPES.contentWrite],
+      contentGrants: [{ contentTypeApiId, actions, deniedFields: ['body'] }],
+    });
+    const newPost = async () =>
+      (
+        await createEntry(ctx, scope, {
+          contentTypeApiId: 'post',
+          fields: { title: { 'en-US': 'Draft' }, body: { 'en-US': 'secret body' } },
+        })
+      ).entry.id;
+
+    it('never renders a field the role denies, and the apply keeps it', async () => {
+      const entryId = await newPost();
+      const action = await createAIAction(ctx, scope, {
+        name: 'Retitle',
+        promptTemplate: 'Title for: {{field.title}} / {{field.body}}',
+        targetField: 'title',
+      });
+      const ai = new StubAIProvider(() => 'New title');
+      const result = await runAIAction(
+        ctx,
+        ai,
+        scope,
+        action.id,
+        { entryId, apply: true },
+        { principal: grant(['read', 'write']) },
+      );
+      expect(result.applied).toBe(true);
+      expect(ai.requests[0]?.prompt).toBe('Title for: Draft / ');
+      const { fields } = await getEntry(ctx, scope, entryId);
+      expect(fields).toEqual({ title: { 'en-US': 'New title' }, body: { 'en-US': 'secret body' } });
+    });
+
+    it('refuses a run over a type the role can’t read, or an apply it can’t write', async () => {
+      const entryId = await newPost();
+      const action = await createAIAction(ctx, scope, {
+        name: 'Retitle',
+        promptTemplate: '{{field.title}}',
+        targetField: 'title',
+      });
+      const ai = new StubAIProvider(() => 'x');
+      await expect(
+        runAIAction(ctx, ai, scope, action.id, { entryId }, { principal: grant(['read'], 'page') }),
+      ).rejects.toThrow(ForbiddenError);
+      await expect(
+        runAIAction(
+          ctx,
+          ai,
+          scope,
+          action.id,
+          { entryId, apply: true },
+          { principal: grant(['read']) },
+        ),
+      ).rejects.toThrow('content:write:post');
+      expect(ai.requests).toHaveLength(0);
+      // A read-only run is the reader's to make.
+      const dry = await runAIAction(
+        ctx,
+        ai,
+        scope,
+        action.id,
+        { entryId },
+        { principal: grant(['read']) },
+      );
+      expect(dry.applied).toBe(false);
+    });
+
+    it('refuses an action whose target field the role denies', async () => {
+      const entryId = await newPost();
+      const action = await createAIAction(ctx, scope, {
+        name: 'Rebody',
+        promptTemplate: '{{field.title}}',
+        targetField: 'body',
+      });
+      const ai = new StubAIProvider(() => 'overwritten');
+      await expect(
+        runAIAction(
+          ctx,
+          ai,
+          scope,
+          action.id,
+          { entryId, apply: true },
+          { principal: grant(['read', 'write']) },
+        ),
+      ).rejects.toThrow('content:read:post.body');
+      expect(ai.requests).toHaveLength(0);
+      expect((await getEntry(ctx, scope, entryId)).fields.body).toEqual({
+        'en-US': 'secret body',
+      });
+    });
   });
 });

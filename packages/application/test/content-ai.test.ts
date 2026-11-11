@@ -1,4 +1,4 @@
-import { ValidationError } from '@contentworker/domain';
+import { ForbiddenError, type Principal, SCOPES, ValidationError } from '@contentworker/domain';
 import {
   FixedClock,
   InMemoryContentStore,
@@ -304,5 +304,169 @@ describe('applyEntryTags', () => {
   it('rejects an unknown entry without creating tags', async () => {
     await expect(applyEntryTags(ctx, scope, 'missing', { newTags: ['x'] })).rejects.toThrow();
     expect(await listTags(ctx, scope)).toHaveLength(0);
+  });
+});
+
+describe('AI runs over an entry as a restricted principal', () => {
+  let ctx: AppContext;
+  let id: string;
+  // Reads and writes posts, but may not read `body` and may not write `summary`.
+  const editor: Principal = {
+    spaceId: 'blog',
+    kind: 'cma',
+    scopes: [SCOPES.contentWrite],
+    contentGrants: [
+      {
+        contentTypeApiId: 'post',
+        actions: ['read', 'write'],
+        deniedFields: ['body'],
+        readOnlyFields: ['summary'],
+      },
+    ],
+  };
+  const reader: Principal = {
+    ...editor,
+    contentGrants: [{ contentTypeApiId: 'post', actions: ['read'] }],
+  };
+  const outsider: Principal = {
+    ...editor,
+    contentGrants: [{ contentTypeApiId: 'page', actions: ['read', 'write'] }],
+  };
+  const SECRET = 'A short article about greetings.';
+  const prompts = (ai: StubAIProvider) => ai.requests.map((r) => `${r.system}\n${r.prompt}`);
+
+  beforeEach(async () => {
+    ({ ctx } = setup());
+    await seed(ctx);
+    id = await newPost(ctx);
+  });
+
+  it('refuses every run on a type the role can’t read, before any model call', async () => {
+    const ai = new StubAIProvider(() => ({ summary: 's', value: 'v' }));
+    const as = { principal: outsider };
+    await expect(translateEntry(ctx, ai, scope, id, { targetLocale: 'fr-FR' }, as)).rejects.toThrow(
+      ForbiddenError,
+    );
+    await expect(summarizeEntry(ctx, ai, scope, id, {}, as)).rejects.toThrow(ForbiddenError);
+    await expect(autofillField(ctx, ai, scope, id, { field: 'summary' }, as)).rejects.toThrow(
+      ForbiddenError,
+    );
+    await expect(suggestEntryTags(ctx, ai, scope, id, {}, as)).rejects.toThrow(ForbiddenError);
+    await expect(applyEntryTags(ctx, scope, id, { newTags: ['x'] }, as)).rejects.toThrow(
+      ForbiddenError,
+    );
+    expect(ai.requests).toHaveLength(0);
+    expect(await listTags(ctx, scope)).toHaveLength(0);
+    // A missing entry is still a 404, not a 403.
+    await expect(summarizeEntry(ctx, ai, scope, 'nope', {}, as)).rejects.toThrow(/not found/i);
+  });
+
+  it('refuses an apply to a role that only reads the type, and runs without one', async () => {
+    const ai = new StubAIProvider(() => ({ title: 'Bonjour', body: 'x' }));
+    await expect(
+      translateEntry(
+        ctx,
+        ai,
+        scope,
+        id,
+        { targetLocale: 'fr-FR', apply: true },
+        { principal: reader },
+      ),
+    ).rejects.toThrow('content:write:post');
+    expect(ai.requests).toHaveLength(0);
+    const dry = await translateEntry(
+      ctx,
+      ai,
+      scope,
+      id,
+      { targetLocale: 'fr-FR' },
+      { principal: reader },
+    );
+    expect(dry.translatedFields.sort()).toEqual(['body', 'title']);
+    expect((await getEntry(ctx, scope, id)).entry.currentVersion).toBe(1);
+  });
+
+  it('translates without showing or returning a denied field, and the apply keeps it', async () => {
+    const ai = new StubAIProvider(() => ({ title: 'Bonjour le monde' }));
+    const result = await translateEntry(
+      ctx,
+      ai,
+      scope,
+      id,
+      { targetLocale: 'fr-FR', apply: true },
+      { principal: editor },
+    );
+    expect(prompts(ai).join('\n')).not.toContain(SECRET);
+    expect(result.translatedFields).toEqual(['title']);
+    expect(result.fields).not.toHaveProperty('body');
+    const { fields } = await getEntry(ctx, scope, id);
+    expect(fields.title).toEqual({ 'en-US': 'Hello World', 'fr-FR': 'Bonjour le monde' });
+    expect(fields.body).toEqual({ 'en-US': SECRET });
+  });
+
+  it('answers a translation with nothing to translate without the denied field', async () => {
+    const ai = new StubAIProvider(() => ({}));
+    // Nothing is written in fr-FR, so there is nothing to translate from it: no model call.
+    const result = await translateEntry(
+      ctx,
+      ai,
+      scope,
+      id,
+      { targetLocale: 'en-US', sourceLocale: 'fr-FR' },
+      { principal: editor },
+    );
+    expect(ai.requests).toHaveLength(0);
+    expect(result.translatedFields).toEqual([]);
+    expect(result.fields).toEqual({ title: { 'en-US': 'Hello World' } });
+  });
+
+  it('summarizes without the denied field, and refuses to write a read-only one', async () => {
+    const ai = new StubAIProvider(() => ({ summary: 'A greeting.' }));
+    const result = await summarizeEntry(ctx, ai, scope, id, {}, { principal: editor });
+    expect(result.summary).toBe('A greeting.');
+    expect(prompts(ai).join('\n')).not.toContain(SECRET);
+    await expect(
+      summarizeEntry(
+        ctx,
+        ai,
+        scope,
+        id,
+        { targetField: 'summary', apply: true },
+        { principal: editor },
+      ),
+    ).rejects.toThrow('content:write:post.summary');
+    expect(ai.requests).toHaveLength(1);
+  });
+
+  it('autofills without the denied field, never fills one, and the apply keeps it', async () => {
+    const ai = new StubAIProvider(() => ({ value: 'Bonjour' }));
+    await expect(
+      autofillField(ctx, ai, scope, id, { field: 'body' }, { principal: editor }),
+    ).rejects.toThrow('content:read:post.body');
+    await expect(
+      autofillField(ctx, ai, scope, id, { field: 'summary', apply: true }, { principal: editor }),
+    ).rejects.toThrow('content:write:post.summary');
+    expect(ai.requests).toHaveLength(0);
+
+    const result = await autofillField(
+      ctx,
+      ai,
+      scope,
+      id,
+      { field: 'title', apply: true },
+      { principal: editor },
+    );
+    expect(result.applied).toBe(true);
+    expect(prompts(ai).join('\n')).not.toContain(SECRET);
+    const { fields } = await getEntry(ctx, scope, id);
+    expect(fields.title?.['en-US']).toBe('Bonjour');
+    expect(fields.body).toEqual({ 'en-US': SECRET });
+  });
+
+  it('suggests tags without showing the model a denied field', async () => {
+    const ai = new StubAIProvider(() => ({ existingTags: [], newTags: ['greetings'] }));
+    const result = await suggestEntryTags(ctx, ai, scope, id, {}, { principal: editor });
+    expect(result.newTags).toEqual(['greetings']);
+    expect(prompts(ai).join('\n')).not.toContain(SECRET);
   });
 });
