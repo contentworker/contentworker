@@ -38,6 +38,7 @@ import {
   publishedSnapshot,
   replaceAssetFile,
   restoreAssetVersion,
+  SYSTEM_CALLER,
   withReadUrl,
 } from '../src/index';
 
@@ -511,7 +512,7 @@ describe('deleting a versioned asset', () => {
     const key = assetFileKey(scope, asset);
     const outlet = { spaceId: 'outlet', environmentId: 'main' };
     await createSpace(h.ctx, { spaceId: 'outlet', name: 'Outlet', defaultLocale: 'en-US' });
-    await cloneEnvironment(h.ctx, scope, outlet);
+    await cloneEnvironment(h.ctx, SYSTEM_CALLER, scope, outlet);
     // A clone keeps its source's keys rather than copying the bytes.
     expect(assetFileKey(outlet, await getAsset(h.ctx, outlet, asset.id))).toBe(key);
     await archiveAsset(h.ctx, scope, asset.id);

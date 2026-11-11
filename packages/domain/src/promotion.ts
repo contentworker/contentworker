@@ -93,8 +93,9 @@ export interface PromotionResult {
   /** Whether the target's block catalog and config changed: absent when it carried neither. */
   readonly blocks?: { readonly catalog: boolean; readonly config: boolean };
   /**
-   * On a failed apply, why the target refused an entry: each issue with the entry and its type,
-   * so a reader is shown only the fields their role may read (`error` names the entry alone).
+   * On a failed apply, why the target refused an entry: each issue with the entry and its type
+   * (`error` names the entry alone). Only a principal that reads every field of the promotion's
+   * types reads the record (`canReadPromotion`), so the issues need no hiding per reader.
    */
   readonly issues?: readonly PromotionIssue[];
 }

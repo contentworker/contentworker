@@ -406,6 +406,99 @@ describe('promotions over MCP', () => {
     expect(approved).toMatchObject({ status: 'completed', decidedBy: 'grace' });
   });
 
+  it('holds requesting, approving and reading to per-type grants and field rules', async () => {
+    const deps = makeDeps();
+    await createSpace(deps.ctx, { spaceId: 'space-1', name: 'S', defaultLocale: 'en-US' });
+    await createEnvironment(deps.ctx, 'space-1', 'staging');
+    for (const environmentId of ['staging', 'main']) {
+      for (const apiId of ['note', 'page']) {
+        const scope = { spaceId: 'space-1', environmentId };
+        await createContentType(deps.ctx, SYSTEM_CALLER, scope, {
+          apiId,
+          name: apiId,
+          displayField: 'title',
+          fields: [
+            {
+              apiId: 'title',
+              name: 'Title',
+              type: 'Symbol',
+              localized: false,
+              required: true,
+              position: 0,
+            },
+          ],
+        } as Parameters<typeof createContentType>[3]);
+        await publishContentType(deps.ctx, scope, apiId);
+      }
+    }
+    const staging = { spaceId: 'space-1', environmentId: 'staging' };
+    const { entry } = await createEntry(deps.ctx, staging, {
+      contentTypeApiId: 'page',
+      fields: { title: { 'en-US': 'Hello' } },
+    });
+    const person = (subject: string, contentGrants?: Principal['contentGrants']): Principal => ({
+      spaceId: 'space-1',
+      kind: 'user',
+      subject,
+      scopes: [...scopesForKind('cma')],
+      ...(contentGrants ? { contentGrants } : {}),
+    });
+    // Writes `note` only; reads every type.
+    const noteWriter = person('nina', [
+      { contentTypeApiId: 'note', actions: ['read', 'write', 'publish'] },
+      { contentTypeApiId: '*', actions: ['read'] },
+    ]);
+    const noteReader = person('rita', [{ contentTypeApiId: 'note', actions: ['read'] }]);
+    const wide = person('wendy', [
+      { contentTypeApiId: '*', actions: ['read', 'write', 'publish', 'lock'] },
+    ]);
+    const everyType =
+      'Missing required scope "content:read+write+publish:* (on every content type, every field)"';
+    const text = (r: Awaited<ReturnType<Client['callTool']>>) =>
+      (r.content as { text: string }[])[0]?.text ?? '';
+    const args = { space: 'space-1', source: 'staging', target: 'main', entries: [entry.id] };
+
+    const nina = await connect(deps, noteWriter);
+    const refused = await nina.callTool({ name: 'promotion_request', arguments: args });
+    expect(refused.isError).toBe(true);
+    expect(text(refused)).toBe(everyType);
+    expect(await deps.ctx.store.promotions.list('space-1', {})).toEqual([]);
+
+    const ada = await connect(deps, person('ada'));
+    const requested = JSON.parse(
+      text(await ada.callTool({ name: 'promotion_request', arguments: args })),
+    );
+    expect(requested.status).toBe('awaiting_approval');
+    const notApproved = await nina.callTool({
+      name: 'promotion_approve',
+      arguments: { space: 'space-1', id: requested.id },
+    });
+    expect(text(notApproved)).toBe(everyType);
+
+    const rita = await connect(deps, noteReader);
+    const listed = JSON.parse(
+      text(await rita.callTool({ name: 'promotion_list', arguments: { space: 'space-1' } })),
+    );
+    expect(listed).toEqual([]);
+    const hidden = await rita.callTool({
+      name: 'promotion_get',
+      arguments: { space: 'space-1', id: requested.id },
+    });
+    // Not found, as the list leaves it out.
+    expect(text(hidden)).toBe(`Promotion "${requested.id}" was not found`);
+
+    const wendy = await connect(deps, wide);
+    const approved = JSON.parse(
+      text(
+        await wendy.callTool({
+          name: 'promotion_approve',
+          arguments: { space: 'space-1', id: requested.id },
+        }),
+      ),
+    );
+    expect(approved).toMatchObject({ status: 'completed', decidedBy: 'wendy' });
+  });
+
   it('makes an approval that stopped partway an error carrying the record, and lets a requester withdraw', async () => {
     const deps = makeDeps();
     await createSpace(deps.ctx, { spaceId: 'space-1', name: 'S', defaultLocale: 'en-US' });
@@ -437,14 +530,16 @@ describe('promotions over MCP', () => {
           fields: { title: { 'en-US': title } },
         })
       ).entry.id;
-    const person = (subject: string): Principal => ({
+    const person = (subject: string, contentGrants?: Principal['contentGrants']): Principal => ({
       spaceId: 'space-1',
       kind: 'user',
       subject,
       scopes: [...scopesForKind('cma')],
+      ...(contentGrants ? { contentGrants } : {}),
     });
-    const body = (r: Awaited<ReturnType<Client['callTool']>>) =>
-      JSON.parse((r.content as { text: string }[])[0]?.text ?? '{}');
+    const text = (r: Awaited<ReturnType<Client['callTool']>>) =>
+      (r.content as { text: string }[])[0]?.text ?? '';
+    const body = (r: Awaited<ReturnType<Client['callTool']>>) => JSON.parse(text(r) || '{}');
     const ada = await connect(deps, person('ada'));
     const grace = await connect(deps, person('grace'));
     const ask = async (entries: string[]) =>
@@ -481,15 +576,34 @@ describe('promotions over MCP', () => {
       },
     });
 
-    // Withdrawn: the requester rejects their own.
+    // Withdrawn: the requester rejects their own, needing no decide rights. Their role reads the
+    // type but no longer writes it; someone else with that role is held to deciding's checks.
     const mine = await ask([await make('Second thoughts')]);
+    const readOnly = [{ contentTypeApiId: 'note', actions: ['read' as const] }];
+    const nora = await connect(deps, person('nora', readOnly));
+    const notHers = await nora.callTool({
+      name: 'promotion_reject',
+      arguments: { space: 'space-1', id: mine.id },
+    });
+    expect(notHers.isError).toBe(true);
+    expect(text(notHers)).toBe(
+      'Missing required scope "content:read+write+publish:* (on every content type, every field)"',
+    );
+    const adaNarrowed = await connect(deps, person('ada', readOnly));
     const withdrawn = body(
-      await ada.callTool({
+      await adaNarrowed.callTool({
         name: 'promotion_reject',
         arguments: { space: 'space-1', id: mine.id },
       }),
     );
     expect(withdrawn).toMatchObject({ status: 'rejected', requestedBy: 'ada', decidedBy: 'ada' });
+    // Only while it waits: a second withdrawal finds it decided.
+    const again = await adaNarrowed.callTool({
+      name: 'promotion_reject',
+      arguments: { space: 'space-1', id: mine.id },
+    });
+    expect(again.isError).toBe(true);
+    expect(text(again)).toContain('not awaiting approval');
   });
 
   it('refuses, with REST’s 422 body, a content type that drops a block variant the target’s entries use', async () => {
@@ -566,14 +680,16 @@ describe('promotions over MCP', () => {
     await createEnvironment(deps.ctx, 'space-1', 'staging');
     await createEnvironment(deps.ctx, 'space-1', 'qa');
     await seedBlocks(deps.ctx, { spaceId: 'space-1', environmentId: 'staging' });
-    const person = (subject: string): Principal => ({
+    const person = (subject: string, contentGrants?: Principal['contentGrants']): Principal => ({
       spaceId: 'space-1',
       kind: 'user',
       subject,
       scopes: [...scopesForKind('cma')],
+      ...(contentGrants ? { contentGrants } : {}),
     });
-    const body = (r: Awaited<ReturnType<Client['callTool']>>) =>
-      JSON.parse((r.content as { text: string }[])[0]?.text ?? '{}');
+    const text = (r: Awaited<ReturnType<Client['callTool']>>) =>
+      (r.content as { text: string }[])[0]?.text ?? '';
+    const body = (r: Awaited<ReturnType<Client['callTool']>>) => JSON.parse(text(r) || '{}');
     const ada = await connect(deps, person('ada'));
     const args = { space: 'space-1', source: 'staging', target: 'qa', contentTypes: ['page'] };
     const without = body(await ada.callTool({ name: 'promotion_request', arguments: args }));

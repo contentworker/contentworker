@@ -1,10 +1,5 @@
 import { analyzeSpaceExport, startSpaceExportImport } from '@contentworker/application';
-import {
-  authorizeEveryContentType,
-  SCOPES,
-  type Scope,
-  ValidationError,
-} from '@contentworker/domain';
+import { SCOPES, ValidationError } from '@contentworker/domain';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { spaceExportImportBody } from '../../api/validation';
@@ -25,18 +20,13 @@ export function registerSpaceExportTools(server: McpServer, t: ToolContext): voi
       .describe("add the export's locales the space lacks (needs space:admin)"),
     ...scopeArgs,
   };
-  /** The reader, and the input with `addLocales` only for a caller who may change the space. */
-  const spaceExport = (
-    args: { payload: string; publish?: boolean; addLocales?: boolean } & Scope,
-  ) => {
+  /** The reader and the input; the use-case holds the caller to `addLocales` and every type. */
+  const spaceExport = (args: { payload: string; publish?: boolean; addLocales?: boolean }) => {
     if (!deps.spaceExportReader) {
       throw new ValidationError([
         { field: 'payload', message: 'This deployment cannot read space exports' },
       ]);
     }
-    if (args.addLocales) guard(SCOPES.spaceAdmin, args);
-    // As the route: it writes (and publishes) entries of every type the export defines.
-    authorizeEveryContentType(principal, args.publish !== false ? ['write', 'publish'] : ['write']);
     return {
       reader: deps.spaceExportReader,
       input: {
@@ -62,8 +52,8 @@ export function registerSpaceExportTools(server: McpServer, t: ToolContext): voi
     async (args) => {
       const target = scopeOf(args);
       guard(SCOPES.contentManage, target);
-      const { reader, input } = spaceExport({ ...args, ...target });
-      return ok(await analyzeSpaceExport(ctx, target, reader, input));
+      const { reader, input } = spaceExport(args);
+      return ok(await analyzeSpaceExport(ctx, principal, target, reader, input));
     },
   );
 
@@ -82,7 +72,7 @@ export function registerSpaceExportTools(server: McpServer, t: ToolContext): voi
     async (args) => {
       const target = scopeOf(args);
       guard(SCOPES.contentManage, target);
-      const { reader, input } = spaceExport({ ...args, ...target });
+      const { reader, input } = spaceExport(args);
       if (!deps.blob) {
         throw new ValidationError([
           {
@@ -91,7 +81,7 @@ export function registerSpaceExportTools(server: McpServer, t: ToolContext): voi
           },
         ]);
       }
-      return ok(await startSpaceExportImport(ctx, deps.blob, target, reader, input));
+      return ok(await startSpaceExportImport(ctx, principal, deps.blob, target, reader, input));
     },
   );
 }

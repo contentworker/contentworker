@@ -72,8 +72,8 @@ export const promotion = z.looseObject({
         )
         .optional()
         .describe(
-          'On a failed apply, what the target refused, per entry and field; fields the reader ' +
-            "can't read are counted in one issue, never named",
+          'On a failed apply, what the target refused, per entry and field (only a reader who ' +
+            'reads every field of its types reads the promotion)',
         ),
     })
     .optional()

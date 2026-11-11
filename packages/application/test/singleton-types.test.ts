@@ -287,7 +287,9 @@ describe('singleton types', () => {
     const fromStaging = await settings(h, 'Staging', staging);
     await settings(h, 'Main');
     await expect(
-      mergeEnvironments(h.ctx, 'site', 'staging', 'main', { entries: [fromStaging.entry.id] }),
+      mergeEnvironments(h.ctx, SYSTEM_CALLER, 'site', 'staging', 'main', {
+        entries: [fromStaging.entry.id],
+      }),
     ).rejects.toBeInstanceOf(ConflictError);
     expect((await h.store.entries.list(scope, { contentTypeApiId: 'settings' })).length).toBe(1);
   });
@@ -300,7 +302,9 @@ describe('singleton types', () => {
     await settings(h, 'A');
     await settings(h, 'B');
     await expect(
-      mergeEnvironments(h.ctx, 'site', 'staging', 'main', { contentTypes: ['settings'] }),
+      mergeEnvironments(h.ctx, SYSTEM_CALLER, 'site', 'staging', 'main', {
+        contentTypes: ['settings'],
+      }),
     ).rejects.toBeInstanceOf(ConflictError);
     expect('singleton' in (await getContentType(h.ctx, scope, 'settings'))).toBe(false);
   });
@@ -318,13 +322,18 @@ describe('singleton types across environments', () => {
   });
 
   it('keeps the flag through a clone, an export and import, and a promotion back', async () => {
-    await cloneEnvironment(h.ctx, scope, staging);
+    await cloneEnvironment(h.ctx, SYSTEM_CALLER, scope, staging);
     expect((await getContentType(h.ctx, staging, 'settings')).singleton).toBe(true);
     // The rule holds in the clone: its one entry came with it.
     await expect(settings(h, 'Second', staging)).rejects.toBeInstanceOf(ConflictError);
 
     await createEnvironment(h.ctx, 'site', 'qa');
-    await importSnapshot(h.ctx, qa, await exportSnapshot(h.ctx, scope));
+    await importSnapshot(
+      h.ctx,
+      SYSTEM_CALLER,
+      qa,
+      await exportSnapshot(h.ctx, SYSTEM_CALLER, scope),
+    );
     expect((await getContentType(h.ctx, qa, 'settings')).singleton).toBe(true);
 
     // Promoted back after an edit, production's type stays a singleton.
@@ -364,7 +373,9 @@ describe('singleton types across environments', () => {
       contentTypeApiId: 'settings',
       fields: { title: { 'en-US': 'Staging' }, code: { 'en-US': 'k1' } },
     });
-    await mergeEnvironments(h.ctx, 'site', 'staging', 'main', { entries: [fromStaging.entry.id] });
+    await mergeEnvironments(h.ctx, SYSTEM_CALLER, 'site', 'staging', 'main', {
+      entries: [fromStaging.entry.id],
+    });
 
     const held = await h.store.entries.findUniqueConflicts(scope, [
       singletonClaim('settings'),
@@ -380,7 +391,9 @@ describe('singleton types across environments', () => {
     await settingsType(h, staging, false);
     const before = h.store.allEvents().length;
     // Main's settings is a published singleton with one entry; staging's is an ordinary one.
-    await mergeEnvironments(h.ctx, 'site', 'staging', 'main', { contentTypes: ['settings'] });
+    await mergeEnvironments(h.ctx, SYSTEM_CALLER, 'site', 'staging', 'main', {
+      contentTypes: ['settings'],
+    });
     const announced = h.store
       .allEvents()
       .slice(before)
@@ -530,7 +543,7 @@ describe('merging entries with unique values', () => {
     await product(staging, 'b', 'prod-a');
     const b = await product(staging, 'a', 'prod-b');
     // Selected new-first: the merge still applies the existing entry first.
-    await mergeEnvironments(h.ctx, 'site', 'staging', 'main', {
+    await mergeEnvironments(h.ctx, SYSTEM_CALLER, 'site', 'staging', 'main', {
       entries: [b.entry.id, a.entry.id],
     });
     expect(await holder('a')).toEqual(['prod-b']);
@@ -542,7 +555,7 @@ describe('merging entries with unique values', () => {
     const ok = await product(staging, 'fresh', 'st-ok');
     const taken = await product(staging, 'x', 'st-taken');
     const before = (await h.store.entries.list(scope, { contentTypeApiId: 'product' })).length;
-    const refused = mergeEnvironments(h.ctx, 'site', 'staging', 'main', {
+    const refused = mergeEnvironments(h.ctx, SYSTEM_CALLER, 'site', 'staging', 'main', {
       entries: [ok.entry.id, taken.entry.id],
     });
     await expect(refused).rejects.toBeInstanceOf(ConflictError);
@@ -558,7 +571,9 @@ describe('merging entries with unique values', () => {
     await trashEntry(h.ctx, staging, 'st-d1');
     await product(staging, 'dup', 'st-d2');
     await expect(
-      mergeEnvironments(h.ctx, 'site', 'staging', 'main', { entries: ['st-d1', 'st-d2'] }),
+      mergeEnvironments(h.ctx, SYSTEM_CALLER, 'site', 'staging', 'main', {
+        entries: ['st-d1', 'st-d2'],
+      }),
     ).rejects.toThrow(/entry st-d2 would take sku "dup", which entry st-d1 holds/);
     expect(await h.store.entries.get(scope, 'st-d1')).toBeNull();
   });
@@ -575,7 +590,9 @@ describe('merging entries with unique values', () => {
       fields: { title: { 'en-US': 'From staging' } },
       id: first.entry.id,
     });
-    await mergeEnvironments(h.ctx, 'site', 'staging', 'main', { entries: [first.entry.id] });
+    await mergeEnvironments(h.ctx, SYSTEM_CALLER, 'site', 'staging', 'main', {
+      entries: [first.entry.id],
+    });
     const merged = await h.store.entries.get(scope, first.entry.id);
     expect(merged?.entry.status).toBe('archived');
     expect(merged?.fields.title).toEqual({ 'en-US': 'From staging' });

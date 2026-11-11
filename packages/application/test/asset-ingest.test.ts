@@ -46,6 +46,7 @@ import {
   publishAsset,
   reingestAsset,
   runAssetIngest,
+  SYSTEM_CALLER,
   searchAssets,
   setAssetMetadata,
   startAssetIngestForObject,
@@ -657,9 +658,15 @@ describe('importing and cloning assets', () => {
       aiSuggestions: { altText: ['en-US'] },
     });
 
-    await importSnapshot(t.ctx, target, await exportSnapshot(t.ctx, scope), {
-      reindexAssets: true,
-    });
+    await importSnapshot(
+      t.ctx,
+      SYSTEM_CALLER,
+      target,
+      await exportSnapshot(t.ctx, SYSTEM_CALLER, scope),
+      {
+        reindexAssets: true,
+      },
+    );
     const copied = await getAsset(t.ctx, target, b.id);
     expect(copied.ingestStatus).toBeUndefined();
     expect(copied.ingestError).toBeUndefined();
@@ -675,7 +682,12 @@ describe('importing and cloning assets', () => {
     await createEnvironment(t.ctx, 'shop', 'copy', 'Copy');
     const target = { spaceId: 'shop', environmentId: 'copy' };
     await t.upload('a.png', 'image/png', 'a');
-    await importSnapshot(t.ctx, target, await exportSnapshot(t.ctx, scope));
+    await importSnapshot(
+      t.ctx,
+      SYSTEM_CALLER,
+      target,
+      await exportSnapshot(t.ctx, SYSTEM_CALLER, scope),
+    );
     expect(await t.store.bulkJobs.listJobs(target)).toEqual([]);
   });
 

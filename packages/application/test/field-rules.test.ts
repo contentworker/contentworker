@@ -251,7 +251,12 @@ describe('conditional field rules on whole-entry copies', () => {
     // A snapshot goes into an empty environment.
     await createEnvironment(ctx, 's2', 'fresh');
     const fresh = { spaceId: 's2', environmentId: 'fresh' };
-    const report = await importSnapshot(ctx, fresh, await exportSnapshot(ctx, main));
+    const report = await importSnapshot(
+      ctx,
+      SYSTEM_CALLER,
+      fresh,
+      await exportSnapshot(ctx, SYSTEM_CALLER, main),
+    );
     expect(report).toMatchObject({ entries: 1 });
     expect((await ctx.store.entries.getPublished(fresh, id))?.fields.reference).toEqual({
       en: 'REF-9',

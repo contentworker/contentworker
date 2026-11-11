@@ -230,8 +230,14 @@ check first.
    (`blocks`), and another push or set on either side fails the apply with a 409 before anything
    is written; so does (with a 422) an entry made since that holds a block the push would remove.
    After a rollback of the Workers past this change, reject waiting promotions requested with
-   blocks: older code would apply them without their blocks. Promotions take a role without content-type or field restrictions (`403`
-   otherwise), since they write and publish whole entries across types. An entry that a workflow
+   blocks: older code would apply them without their blocks. Requesting a promotion takes a role
+   holding `read`, `write` and `publish` on every content type alike with no field rules (no
+   per-type grants, or one full `*` grant), as merging entries does: it copies entries whole,
+   hidden and read-only fields included, with content types and blocks. Anything narrower is a
+   `403` (`content:read+write+publish:* (on every content type, every field)`) before anything is
+   written. One that carries entries also takes `lock` on every type, since the copy replaces the
+   target's locked regions (`content:read+write+publish+lock:* …`): the Manager preset qualifies,
+   the Editor preset doesn't. An entry that a workflow
    gates in the target (`gatesPublish`) goes as a draft, and the reasons say which workflow: that
    workflow's run publishes it there, not the promotion. A gate added after the request leaves that
    entry a draft too (`result.gated`) rather than failing the rest.
@@ -274,8 +280,24 @@ check first.
    `decidedBy` is then the requester.
    - an API key, or an application acting for a person (an MCP or OAuth client, an agent), can
      request a promotion but not decide or withdraw one;
-   - approving one with content types or blocks also takes `content:manage`;
+   - approving or rejecting one with content types or blocks also takes `content:manage`;
+   - deciding takes the same role on every content type as requesting (approving one with entries,
+     `lock` too), `403` with the same message otherwise, and the promotion stays
+     `awaiting_approval`;
+   - withdrawing: the requester may reject their own while it is `awaiting_approval`, without
+     `content:manage` or the role deciding takes, since they passed the request's checks;
    - both environments must still exist when it's approved.
+
+   The approver's grants are the ones in force when it applies: the apply runs in the approval's
+   request, written as the approver. The requester's were checked when it was requested, and a
+   requester who has lost access since doesn't stop it: an API key's request names only its kind,
+   so there is no one to check again, and the approver, held to the same rule, approves exactly
+   the pinned versions. Reject it instead to stop it.
+
+   Reading one (`GET …/promotions`, `GET …/promotions/:id`, `promotion_list`, `promotion_get`)
+   takes `read` on every content type it names (its content types and its entries'), with no
+   field hidden: its risk reasons describe what it copies. The list leaves out the others, and a
+   get answers `404` for them, as for a promotion that doesn't exist.
 
    Approving moves it to `applying` with a compare-and-set, so it applies exactly once. The
    request, the decision and the outcome are each written to the audit log.
@@ -291,8 +313,8 @@ check first.
    what it wrote in `result`), so automation that checks the status stops and a client can see
    what changed. The MCP tools answer an error result with the same body. When the target refused
    an entry, `error` names the entry and `result.issues` lists each issue (entry, type, field,
-   locale, message); a reader whose role can't read a field sees its issues counted in one, never
-   named, as a refused save says them. A fault (not a refusal) that stops it partway is logged and
+   locale, message); only a reader whose role reads every field of its types reads the record
+   (above), so none of them is hidden from its reader. A fault (not a refusal) that stops it partway is logged and
    counted (`contentworker_promotion_apply_errors_total`). An apply that dies partway without saying so (the
    Worker evicted mid-request) would leave it `applying`: the engine's hourly `stale-promotions`
    sweep marks one still `applying` an hour after it started (its approval, or its request when
@@ -442,7 +464,9 @@ own, and only by a `user` principal (a signed-in person, or one of their persona
 that carries no OAuth client: API keys, the admin token and OAuth-issued tokens get `403`. It has no
 MCP tool. The team (`…/team`, `…/members`, `…/role-presets`, `…/roles/:id/clone`,
 `…/api-keys/:id/role`, `…/access-settings`) is in
-[Auth & RBAC](./auth-and-rbac.md#space-access-the-team). Plugin routes (`/spaces/:space/plugins*`,
+[Auth & RBAC](./auth-and-rbac.md#space-access-the-team); a person carries a `version`, and
+`PATCH …/members/:id` takes an optional `expectedVersion` (stale is `409` with `details.version`,
+see [a person's version](./auth-and-rbac.md#a-persons-version)). Plugin routes (`/spaces/:space/plugins*`,
 all `space:admin`) are in [Plugins](./plugins.md#managing-plugins).
 
 `DELETE /deployment/people/:subject/credentials` revokes every OAuth grant and token, personal

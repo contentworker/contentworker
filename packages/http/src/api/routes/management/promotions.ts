@@ -1,7 +1,7 @@
 import {
   approvePromotion,
+  getPromotion,
   listPromotions,
-  readPromotion,
   rejectPromotion,
   requestPromotion,
 } from '@contentworker/application';
@@ -72,7 +72,7 @@ export function promotionsRoutes(deps: AuthDeps): Hono<AuthVars> {
     }),
     requireScope(SCOPES.contentPublish),
     async (c) =>
-      c.json(await readPromotion(ctx, c.get('principal'), c.req.param('space'), c.req.param('id'))),
+      c.json(await getPromotion(ctx, c.get('principal'), c.req.param('space'), c.req.param('id'))),
   );
   app.post(
     '/spaces/:space/promotions/:id/approve',

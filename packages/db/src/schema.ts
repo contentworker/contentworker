@@ -701,6 +701,8 @@ export const spaceMembers = sqliteTable(
     subject: text('subject'),
     roleId: text('role_id').notNull(),
     disabled: integer('disabled', { mode: 'boolean' }).notNull().default(false),
+    // Bumped on every save: the compare-and-set a save rides with (0042_member_versions).
+    version: integer('version').notNull().default(1),
     createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull().default(NOW_MS),
     updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull().default(NOW_MS),
   },

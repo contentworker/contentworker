@@ -223,7 +223,7 @@ describe('promoting blocks between environments', () => {
     expect(p.blocks).toMatchObject({ catalogVersion: 2, targetCatalogVersion: 1 });
     expect(p.status).not.toBe('awaiting_approval');
     expect(p.risk.reasons.join('\n')).not.toContain('stale');
-    const done = await getPromotion(ctx, spaceId, p.id);
+    const done = await getPromotion(ctx, admin, spaceId, p.id);
     expect(done.status).toBe('completed');
     expect((await store.blockCatalogs.latest(qa))?.breakpoints).toEqual(breakpoints);
     expect((await store.contentTypes.get(qa, 'page'))?.fields[1]?.items?.breakpoints).toEqual(

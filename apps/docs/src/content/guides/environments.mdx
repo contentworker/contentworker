@@ -125,10 +125,17 @@ a block type or change a field's type, the blocks editors may place, or their co
 would change, or the AI risk check suggests a review. Then it waits as `awaiting_approval`, with
 the reasons, until someone else approves (`POST …/promotions/:id/approve`) or rejects it. Deciding
 takes a person (in the admin, or with their own token), not an API key or an assistant acting for
-you. An entry a workflow **gates publishing** for in the target arrives as a draft, and that
-workflow publishes it. If a content type changes in the source while a promotion waits, or the
-block catalog or config changes in either environment, approving it fails, so request a new one.
-A promotion that fails partway keeps what it already wrote, and the request or approval that ran it answers `409` (`promotion_failed`) with its record, `failed`, in `error.promotion`: the error, what it wrote, and what the target refused. A refusal copies nothing (when a check that runs as it applies refuses it, the record is `failed` too). A person who requested a waiting promotion (not an API key or an app acting for them) can withdraw it by rejecting it (in the admin, **Withdraw request**). One whose apply stopped without
+you. Requesting and deciding both take a role with `read`, `write` and `publish` on every content
+type and no field rules, since a promotion copies entries whole. Requesting or approving one that
+carries entries takes `lock` too, since they replace the target's locked regions (the Manager
+preset qualifies, the Editor preset doesn't). A role limited per type sees only the promotions whose every type it can read.
+Withdraw: the requester may reject their own while it waits (in the admin, **Withdraw request**),
+without `content:manage` or the role deciding takes; a person, not an API key or an app acting for
+them.
+An entry a workflow **gates publishing** for in the target arrives as a draft, and that workflow
+publishes it. If a content type changes in the source while a promotion waits, or the block
+catalog or config changes in either environment, approving it fails, so request a new one.
+A promotion that fails partway keeps what it already wrote, and the request or approval that ran it answers `409` (`promotion_failed`) with its record, `failed`, in `error.promotion`: the error, what it wrote, and what the target refused. A refusal copies nothing (when a check that runs as it applies refuses it, the record is `failed` too). One whose apply stopped without
 finishing (the request cut off) is marked `failed` an hour after it started applying; compare the
 environments and request a new one for the rest.
 

@@ -203,7 +203,10 @@ beforeEach(async () => {
 describe('analyzing a space export', () => {
   it('reports what would happen, and writes nothing', async () => {
     const source = reader();
-    const report = await analyzeSpaceExport(ctx, scope, source, { payload, addLocales: true });
+    const report = await analyzeSpaceExport(ctx, SYSTEM_CALLER, scope, source, {
+      payload,
+      addLocales: true,
+    });
 
     expect(source.payloads).toEqual([payload]);
     expect(report).toMatchObject({
@@ -233,16 +236,22 @@ describe('analyzing a space export', () => {
   });
 
   it('names what stops the import: missing locales without addLocales, another default, a model already there', async () => {
-    const missing = await analyzeSpaceExport(ctx, scope, reader(), { payload });
+    const missing = await analyzeSpaceExport(ctx, SYSTEM_CALLER, scope, reader(), { payload });
     expect(missing.executable).toBe(false);
     expect(missing.problems).toEqual([
       'This space has no de-DE locale(s). A space admin can import with addLocales to add them, or add them to the space first.',
     ]);
 
-    const german = await analyzeSpaceExport(ctx, scope, reader({ defaultLocale: 'de-DE' }), {
-      payload,
-      addLocales: true,
-    });
+    const german = await analyzeSpaceExport(
+      ctx,
+      SYSTEM_CALLER,
+      scope,
+      reader({ defaultLocale: 'de-DE' }),
+      {
+        payload,
+        addLocales: true,
+      },
+    );
     expect(german.problems[0]).toMatch(/default locale is de-DE; this space's is en-US/);
 
     await createContentType(ctx, SYSTEM_CALLER, scope, {
@@ -260,12 +269,18 @@ describe('analyzing a space export', () => {
         },
       ],
     });
-    const occupied = await analyzeSpaceExport(ctx, scope, reader(), { payload, addLocales: true });
+    const occupied = await analyzeSpaceExport(ctx, SYSTEM_CALLER, scope, reader(), {
+      payload,
+      addLocales: true,
+    });
     expect(occupied.problems).toEqual([
       'Environment "import" already defines 1 content type(s); import into an empty environment',
     ]);
     await expect(
-      startSpaceExportImport(ctx, blob, scope, reader(), { payload, addLocales: true }),
+      startSpaceExportImport(ctx, SYSTEM_CALLER, blob, scope, reader(), {
+        payload,
+        addLocales: true,
+      }),
     ).rejects.toBeInstanceOf(ValidationError);
     expect(blob.keys()).toEqual([]);
   });
@@ -278,7 +293,9 @@ describe('analyzing a space export', () => {
         throw new Error('Not valid JSON');
       },
     };
-    await expect(analyzeSpaceExport(ctx, scope, broken, { payload: '{' })).rejects.toMatchObject({
+    await expect(
+      analyzeSpaceExport(ctx, SYSTEM_CALLER, scope, broken, { payload: '{' }),
+    ).rejects.toMatchObject({
       issues: [
         { field: 'payload', message: 'Space export (JSON) could not be read: Not valid JSON' },
       ],
@@ -289,7 +306,7 @@ describe('analyzing a space export', () => {
 describe('importing a space export as a job', () => {
   it('adds the locales, writes the model, copies the files, creates and then publishes', async () => {
     const remote = fetcher();
-    const started = await startSpaceExportImport(ctx, blob, scope, reader(), {
+    const started = await startSpaceExportImport(ctx, SYSTEM_CALLER, blob, scope, reader(), {
       payload,
       addLocales: true,
     });
@@ -351,7 +368,7 @@ describe('importing a space export as a job', () => {
       status: 503,
       bytes: new Uint8Array(),
     });
-    const started = await startSpaceExportImport(ctx, blob, scope, reader(), {
+    const started = await startSpaceExportImport(ctx, SYSTEM_CALLER, blob, scope, reader(), {
       payload,
       addLocales: true,
     });
@@ -385,7 +402,7 @@ describe('importing a space export as a job', () => {
 
   it('reports a file that cannot be had, and leaves publishing to a clean run', async () => {
     const remote = fetcher({});
-    const started = await startSpaceExportImport(ctx, blob, scope, reader(), {
+    const started = await startSpaceExportImport(ctx, SYSTEM_CALLER, blob, scope, reader(), {
       payload,
       addLocales: true,
     });
@@ -423,7 +440,7 @@ describe('importing a space export as a job', () => {
         };
       },
     };
-    const started = await startSpaceExportImport(ctx, blob, scope, local, {
+    const started = await startSpaceExportImport(ctx, SYSTEM_CALLER, blob, scope, local, {
       payload,
       addLocales: true,
     });
@@ -434,7 +451,7 @@ describe('importing a space export as a job', () => {
   });
 
   it('leaves a chunk that needs a fetcher for a consumer that has one', async () => {
-    const started = await startSpaceExportImport(ctx, blob, scope, reader(), {
+    const started = await startSpaceExportImport(ctx, SYSTEM_CALLER, blob, scope, reader(), {
       payload,
       addLocales: true,
     });
@@ -449,7 +466,10 @@ describe('importing a space export as a job', () => {
   });
 
   it('touches only the environment it imports into', async () => {
-    await startSpaceExportImport(ctx, blob, scope, reader(), { payload, addLocales: true });
+    await startSpaceExportImport(ctx, SYSTEM_CALLER, blob, scope, reader(), {
+      payload,
+      addLocales: true,
+    });
     await drain(fetcher());
     expect(await store.contentTypes.list(other)).toEqual([]);
     expect(await store.entries.list(other, {})).toEqual([]);

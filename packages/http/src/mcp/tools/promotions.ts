@@ -1,7 +1,7 @@
 import {
   approvePromotion,
+  getPromotion,
   listPromotions,
-  readPromotion,
   rejectPromotion,
   requestPromotion,
 } from '@contentworker/application';
@@ -96,7 +96,7 @@ export function registerPromotionTools(server: McpServer, t: ToolContext): void 
     async (args) => {
       const spaceId = args.space ?? DEFAULT_SPACE;
       guard(SCOPES.contentPublish, { spaceId, environmentId: DEFAULT_ENV });
-      return ok(await readPromotion(ctx, principal, spaceId, args.id));
+      return ok(await getPromotion(ctx, principal, spaceId, args.id));
     },
   );
 
