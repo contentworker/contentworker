@@ -173,7 +173,7 @@ export function registerAgentTools(server: McpServer, t: ToolContext): void {
           ctx,
           scopeOf(args),
           args.id,
-          { approve: true, decidedBy: principalActorId(principal) },
+          { approve: true, decidedBy: principalActorId(principal), principal },
           { signalReview: deps.signalReview },
         ),
       );

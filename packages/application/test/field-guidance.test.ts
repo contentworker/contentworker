@@ -28,6 +28,7 @@ import {
 
 const source = { spaceId: 's1', environmentId: 'main' };
 const target = { spaceId: 's1', environmentId: 'copy' };
+const SYS = { principal: SYSTEM_CALLER } as const;
 
 const field = (over: Partial<FieldDefinition>): FieldDefinition => ({
   apiId: 'title',
@@ -246,7 +247,7 @@ describe('guidance in prompts', () => {
       fields: { title: { 'en-US': 'Flat' } },
     });
     const ai = new StubAIProvider(() => ({ value: 'Bright and quiet.' }));
-    await autofillField(ctx, ai, source, entry.id, { field: 'title' });
+    await autofillField(ctx, ai, source, entry.id, { field: 'title' }, SYS);
     const request = ai.requests[0];
     expect(request?.system).toContain(UNTRUSTED_CONTENT_GUARD);
     expect(request?.prompt).toContain(

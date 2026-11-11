@@ -1051,6 +1051,8 @@ export interface AssetListQuery {
   readonly folder?: string;
   /** Omitted hides archived assets; `all` includes them. */
   readonly status?: AssetStatus | 'all';
+  /** A file's SHA-256 (hex): the assets with exactly these bytes, once ingest has hashed them. */
+  readonly contentHash?: string;
   readonly sort?: 'updatedAt' | 'createdAt' | 'size';
   readonly order?: 'asc' | 'desc';
 }

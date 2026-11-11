@@ -128,6 +128,15 @@ change first and pushes against the version it showed. `--allow-destructive` let
 or props, `--no-publish` leaves the changed types as drafts. See
 [Blocks from code](/guides/blocks-from-code/).
 
+A thumbnail given as `{ "url": "https://…" }` or `{ "file": "thumbs/hero.png" }` (a path from the
+blocks file's folder) is imported into the environment's assets and pushed as `{ "assetId": "…" }`,
+the only kind the admin draws. The URL must be `https`; the image must be AVIF, GIF, JPEG, PNG, SVG or
+WebP and at most 2 MiB, or the push stops with `thumbnail_refused` before anything is uploaded or
+pushed. Each image is hashed and looked up first, so an image an asset already holds is reused, not
+uploaded again. `--dry-run` uploads nothing and lists what it would import. The import needs
+`assets:read` (the lookup) and `assets:write` (the upload; both come with `preview:read` and
+`content:write`) beside the push's own scopes.
+
 ## Import a file
 
 ```sh

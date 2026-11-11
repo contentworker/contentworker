@@ -85,7 +85,7 @@ whole field: a block type the field had that the catalog doesn't provide is remo
 | `name`           | What editors see. Change it freely: content never depends on it                                           |
 | `group`          | The heading the block is listed under                                                                     |
 | `description`    | Up to 1,000 characters                                                                                    |
-| `thumbnail`      | `{ "assetId": "…" }` for an asset in the environment, or `{ "url": "https://…" }`                          |
+| `thumbnail`      | `{ "assetId": "…" }` for an asset in the environment; the CLI imports `{ "url": "https://…" }` or `{ "file": "…" }` as one (see [Thumbnails](#thumbnails)) |
 | `aliases`        | Ids the block had before (see [Renaming a block](#renaming-a-block))                                      |
 | `fields`         | The block's props, as [field definitions](/reference/field-types/)                                         |
 | `slots`          | Named places that hold other blocks                                                                       |
@@ -96,12 +96,37 @@ A catalog holds at most 200 blocks, a block at most 10 slots, and the catalog at
 characters as JSON. A thumbnail URL must be `https` without credentials; data URLs and inline
 markup are refused, and an `assetId` must name an asset in the environment.
 
-Prefer `{ "assetId": "…" }` for a thumbnail. The admin shows an asset thumbnail beside the block's
-name wherever editors pick a block: the canvas dock, the entry form's Add block menu and Build →
-Blocks. It doesn't draw a `{ "url": "…" }` thumbnail, because the admin loads images only from its
-own origin; a URL thumbnail is kept in the catalog for your own tooling, and the admin lists that
-block by its name. A thumbnail whose asset is archived, deleted or not an image shows the name
-too.
+### Thumbnails
+
+The admin shows a block's thumbnail beside its name wherever editors pick a block: the canvas dock,
+the entry form's Add block menu and Build → Blocks. It draws only `{ "assetId": "…" }` thumbnails,
+because it loads images only from its own origin. So give the image however is handy, and
+`contentworker blocks push` makes it an asset:
+
+```json
+{ "id": "hero", "name": "Hero", "thumbnail": { "url": "https://cdn.example.com/blocks/hero.png" }, "fields": [] }
+{ "id": "quote", "name": "Quote", "thumbnail": { "file": "thumbs/quote.webp" }, "fields": [] }
+```
+
+- `{ "url": "…" }` must be `https` (a redirect must stay `https`); `{ "file": "…" }` is a path from
+  the blocks file's folder.
+- The image must be AVIF, GIF, JPEG, PNG, SVG or WebP (the response's `Content-Type`, or the
+  file's extension) and at most 2 MiB. Anything else stops the push with `thumbnail_refused`,
+  naming the block, before anything is uploaded or pushed.
+- The CLI hashes each image (SHA-256) and looks for an asset with those bytes
+  (`GET …/assets?contentHash=`). It reuses one it finds; otherwise, once the push is confirmed, it
+  uploads the image as a draft asset named `<block>-thumbnail.<ext>`. Pushing again reuses that
+  asset rather than uploading the image again. (An asset's hash is written a few seconds after its
+  upload, so a push straight after another may upload a copy, which the library marks as a
+  duplicate.)
+- The catalog stores `{ "assetId": "…" }`, so thumbnails are versioned with it, and `--dry-run`
+  uploads nothing: it lists the images it would import.
+- Importing needs `assets:read` (the lookup) and `assets:write` (the upload) beside the push's
+  own scopes; `preview:read` and `content:write` grant them.
+
+The server never fetches a thumbnail. It still accepts a `{ "url": "…" }` that another client
+pushes, keeping it for that tooling, but the admin lists such a block by its name. A thumbnail whose
+asset is archived, deleted or not an image shows the name too.
 
 ### Props
 

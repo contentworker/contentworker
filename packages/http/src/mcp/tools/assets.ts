@@ -52,7 +52,8 @@ export function registerAssetTools(server: McpServer, t: ToolContext): void {
         'List the asset library in a space/environment, one page at a time: filter by kind, ' +
         'content type, tag, folder and status (archived assets are left out unless asked for), ' +
         'sort, and pass nextCursor back as cursor for the next page. ids looks up to 100 assets ' +
-        'at once (with the other filters; ids not in the space are left out).',
+        'at once (with the other filters; ids not in the space are left out). contentHash ' +
+        '(SHA-256 hex) finds the assets that already hold a file, once ingest has hashed them.',
       inputSchema: toolSchema('assets_list', () =>
         z.object({
           limit: z.number().int().positive().max(100).optional(),
@@ -72,6 +73,11 @@ export function registerAssetTools(server: McpServer, t: ToolContext): void {
             .optional()
             .describe('assets filed in this folder; null for those in no folder'),
           status: z.enum(['draft', 'published', 'archived', 'all']).optional(),
+          contentHash: z
+            .string()
+            .regex(/^[0-9a-fA-F]{64}$/)
+            .optional()
+            .describe('SHA-256 of a file (hex): the assets with exactly these bytes'),
           sort: z.enum(['updatedAt', 'createdAt', 'size']).optional(),
           order: z.enum(['asc', 'desc']).optional(),
           ...scopeArgs,
@@ -94,6 +100,7 @@ export function registerAssetTools(server: McpServer, t: ToolContext): void {
               ...(args.tag ? { tag: args.tag } : {}),
               ...(args.folderId !== undefined ? { folderId: args.folderId } : {}),
               ...(args.status ? { status: args.status } : {}),
+              ...(args.contentHash ? { contentHash: args.contentHash.toLowerCase() } : {}),
             },
             ...(args.sort || args.order
               ? { sort: { field: args.sort ?? 'updatedAt', direction: args.order ?? 'desc' } }

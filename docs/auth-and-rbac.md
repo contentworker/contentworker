@@ -538,6 +538,50 @@ the kept value of a denied field never comes back to the writer. HTTP `PUT …/e
 `…/entries/validate`, MCP `entries_update` and `entries_validate`, and a plugin's `content.update`
 all pass it.
 
+The AI operations over one entry are held to the same grants, in the use-cases themselves so every
+caller is: `translateEntry`, `summarizeEntry`, `autofillField`, `suggestEntryTags`,
+`applyEntryTags`, `runAIAction`, `auditEntry` and `moderateEntry` take `{ principal }`, which is
+required: the request's principal, or `SYSTEM_CALLER` for a run no role bounds (anything else
+fails closed). They load the entry through `readEntryForAi`. It answers 404 for a missing entry and
+`authorizeContent` 403 without `read` on its type (plus `write` when the run applies, or when an
+audit creates tasks), as `GET …/entries/:id` does, then masks the denied fields
+(`maskDeniedFields`) before anything is shown to the model or returned, the no-text-to-translate
+answer included. An audit's prompt doesn't name a denied field, and on-demand moderation
+classifies only the readable fields (`deniedFields` on the agent run). An apply saves with
+`unwritable` and `unreadable`, so denied and read-only fields keep their stored values and a
+refusal counts their issues instead of naming them; `assertAiTargetField` refuses autofilling a
+denied field and writing a summary, autofill or AI action output into one the role can't write,
+before the model is asked. Tagging is the one exception to `POST …/taxonomy/tags` needing
+`content:manage`: `apply-tags` and an applied tag suggestion add new names to the vocabulary for
+any caller that may write the entry (`content:write` and `write` on its type), so an editor can coin
+the tags it applies. The REST routes (`…/translate`, `…/summarize`, `…/autofill`,
+`…/suggest-tags`, `…/apply-tags`, `…/audit`, `…/moderate`, `…/ai-actions/:id/run`), their MCP
+tools (and so the assistant) and the workflow AI nodes (as the run's principal) all pass it. The
+pre-publish moderation gate (`moderateBeforePublish`) passes `SYSTEM_CALLER`: it judges every
+field, so a writer can't hide content from it in a field it may not read.
+
+The workflow AI nodes that don't go through those use-cases (`ai.classify`, `ai.router`,
+`ai.assess`, `ai.moderate`, `ai.enrich`, and the `ai.summarize` fallback) build their prompts,
+decision state and heuristics from `runForModel`: the run's entry without the fields the run's
+principal may not read, and without its title when the display field is one of them. In the run's
+vars and earlier nodes' outputs, any string that contains a denied field's stored text (4
+characters or more) is replaced by `(hidden)`; text derived from a denied field without quoting it
+(a paraphrase by a node that ran as someone else) isn't recognised. `ai.enrich` fills only empty
+fields the principal may write, and an auto-apply saves with `unwritable` and `unreadable`.
+Approving an agent review over REST or MCP applies the proposal as the approver's role allows
+(`applyProposedFields` with the approver: `unwritable` and `unreadable`); a workflow task's
+decision applies it as proposed, since the proposal holds only fields the run's principal may write.
+
+The other entry-by-id routes take the same grants: `PUT …/entries/:id/metadata` and MCP
+`entries_set_metadata` need `write` on the type; `…/workflow/transition` and MCP
+`workflow_transition` need `read` (not `write`: an approver's role reads the types it moves along);
+every comment and task operation needs `read` on the entry's type, on both surfaces: listing,
+commenting and creating a task on the entry, and resolving, reopening, reassigning or deleting a
+task or deleting a comment (judged by the entry it is on, via `taskEntryId` / `commentEntryId`); and
+`GET …/entries/:id/embedding`, `…/related` and `…/duplicates` (MCP `content_related`,
+`content_duplicates`) need `read` and match only on the fields the caller may read, since a vector
+over a denied field would let it test guesses of that field's value by similarity.
+
 ## API keys at rest
 
 ```ts

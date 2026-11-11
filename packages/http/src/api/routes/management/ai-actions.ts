@@ -33,6 +33,7 @@ export function aiActionsRoutes(deps: AuthDeps): Hono<AuthVars> {
         scopeOf(c),
         c.req.param('id'),
         await parseBody(c, runAiActionBody),
+        { principal: c.get('principal') },
       ),
     ),
   );

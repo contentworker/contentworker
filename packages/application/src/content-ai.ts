@@ -1,10 +1,17 @@
 import {
+  assertWritableFields,
+  authorizeContent,
   type ContentType,
+  deniedFieldsFor,
   type EntryFields,
   type FieldDefinition,
+  ForbiddenError,
   fieldStates,
+  maskDeniedFields,
   NotFoundError,
+  type Principal,
   type Scope,
+  unwritableFieldsFor,
   ValidationError,
 } from '@contentworker/domain';
 import type { AIProvider, DecisionQuestion, ModelTier } from '@contentworker/ports';
@@ -12,6 +19,7 @@ import { recordAgentRun } from './agent-audit';
 import { decideWithBudget, generateWithBudget } from './ai-budget';
 import { answerStrings, conformingAnswer } from './ai-json';
 import { describeFieldForModel, UNTRUSTED_CONTENT_GUARD, wrapUntrusted } from './ai-prompt';
+import { SYSTEM_CALLER } from './content-types';
 import type { AppContext } from './context';
 import { getEntry, updateEntry } from './entries';
 import { createTag, getEntryMetadata, listTags, setEntryMetadata } from './taxonomy';
@@ -21,17 +29,107 @@ const TEXT_TYPES = new Set(['Symbol', 'Text']);
 /** Scalar field types an autofill can produce. */
 const SCALAR_TYPES = new Set(['Symbol', 'Text', 'Integer', 'Number', 'Boolean', 'Date']);
 
+/**
+ * Who an AI run over an entry acts for: the request's principal, or {@link SYSTEM_CALLER} for a
+ * run nobody's role bounds (the pre-publish moderation gate, which must judge every field). It is
+ * required, so a caller can't skip the checks by leaving it out: it has to name the system.
+ */
+export type EntryAiCaller = Principal | typeof SYSTEM_CALLER;
+
+/**
+ * A principal with content grants is held to its role on the entry's type, as an edit is: it
+ * reads the entry, writes it too when the run applies its result, and neither shows the model a
+ * field its role denies nor gets one back.
+ */
+export interface EntryAiOptions {
+  readonly principal: EntryAiCaller;
+}
+
+/**
+ * The principal whose grants bound a run, or undefined for the system. Anything else (a caller the
+ * type system was talked out of) fails closed rather than running unrestricted.
+ */
+export function aiPrincipal(caller: EntryAiCaller): Principal | undefined {
+  if (caller === SYSTEM_CALLER) return undefined;
+  const shaped =
+    typeof caller === 'object' &&
+    caller !== null &&
+    typeof caller.kind === 'string' &&
+    Array.isArray(caller.scopes);
+  if (!shaped) throw new ForbiddenError('An AI run acts for a principal or the system caller');
+  return caller;
+}
+
+/** An entry as an AI run may use it, for the principal it acts for. */
+export interface EntryForAi {
+  /** The fields the principal may read: all a model is shown and a result carries. */
+  readonly fields: EntryFields;
+  /** The fields as stored, for the field rules, which judge the entry whole. */
+  readonly stored: EntryFields;
+  readonly contentTypeApiId: string;
+  /** The fields the principal may not write, which an applied result keeps at their stored values. */
+  readonly unwritable: readonly string[];
+  /** Those it may not read either: a refused save counts their issues instead of naming them. */
+  readonly unreadable: readonly string[];
+}
+
+/**
+ * Loads an entry for an AI run and authorizes it: 404 when it doesn't exist, 403 when the
+ * principal's role can't read its type (or write it, when the run will `apply`), as `GET …/entries/:id`
+ * and `PUT` answer. One rule for every caller: the REST routes, the MCP tools and workflow nodes.
+ */
+export async function readEntryForAi(
+  ctx: AppContext,
+  scope: Scope,
+  id: string,
+  opts: EntryAiOptions & { readonly apply: boolean },
+): Promise<EntryForAi> {
+  const principal = aiPrincipal(opts.principal);
+  const { entry, fields } = await getEntry(ctx, scope, id);
+  const type = entry.contentTypeApiId;
+  if (!principal) {
+    return { fields, stored: fields, contentTypeApiId: type, unwritable: [], unreadable: [] };
+  }
+  authorizeContent(principal, opts.apply ? ['read', 'write'] : 'read', type);
+  return {
+    fields: maskDeniedFields(principal, type, fields),
+    stored: fields,
+    contentTypeApiId: type,
+    unwritable: unwritableFieldsFor(principal, type),
+    unreadable: deniedFieldsFor(principal, type),
+  };
+}
+
+/**
+ * Refuses a run that would write `field`, or (to a role that denies it) produce a value for it,
+ * before any model is asked.
+ */
+export function assertAiTargetField(
+  caller: EntryAiCaller,
+  contentTypeApiId: string,
+  field: string,
+  apply: boolean,
+): void {
+  const principal = aiPrincipal(caller);
+  if (!principal) return;
+  if (deniedFieldsFor(principal, contentTypeApiId).includes(field)) {
+    throw new ForbiddenError(`content:read:${contentTypeApiId}.${field}`);
+  }
+  if (apply) assertWritableFields(principal, contentTypeApiId, { [field]: true });
+}
+
 async function loadEntryForAi(
   ctx: AppContext,
   scope: Scope,
   id: string,
-): Promise<{ fields: EntryFields; ct: ContentType; defaultLocale: string; locales: string[] }> {
-  const { entry, fields } = await getEntry(ctx, scope, id);
-  const ct = await ctx.store.contentTypes.get(scope, entry.contentTypeApiId);
-  if (!ct) throw new NotFoundError('ContentType', entry.contentTypeApiId);
+  opts: EntryAiOptions & { readonly apply: boolean },
+): Promise<EntryForAi & { ct: ContentType; defaultLocale: string; locales: string[] }> {
+  const read = await readEntryForAi(ctx, scope, id, opts);
+  const ct = await ctx.store.contentTypes.get(scope, read.contentTypeApiId);
+  if (!ct) throw new NotFoundError('ContentType', read.contentTypeApiId);
   const config = await ctx.store.spaces.getConfig(scope);
   if (!config) throw new NotFoundError('Space', scope.spaceId);
-  return { fields, ct, defaultLocale: config.defaultLocale, locales: [...config.locales] };
+  return { ...read, ct, defaultLocale: config.defaultLocale, locales: [...config.locales] };
 }
 
 /** Collects readable text from an entry's text fields in a given locale. */
@@ -81,8 +179,11 @@ export async function translateEntry(
   scope: Scope,
   id: string,
   input: TranslateEntryInput,
+  opts: EntryAiOptions,
 ): Promise<TranslateResult> {
-  const { fields, ct, defaultLocale, locales } = await loadEntryForAi(ctx, scope, id);
+  const apply = input.apply === true;
+  const { fields, stored, ct, defaultLocale, locales, unwritable, unreadable } =
+    await loadEntryForAi(ctx, scope, id, { ...opts, apply });
   const source = input.sourceLocale ?? defaultLocale;
   if (!locales.includes(input.targetLocale)) {
     throw new ValidationError([
@@ -91,10 +192,12 @@ export async function translateEntry(
   }
 
   const source_texts: Record<string, string> = {};
-  // A field its rules hide or disable in the target locale takes no translation.
-  const states = fieldStates(ct.fields, fields, input.targetLocale, defaultLocale);
+  // A field its rules hide or disable in the target locale takes no translation, and nor does
+  // one an apply couldn't save. A denied field isn't in `fields`, so the model never sees it.
+  const states = fieldStates(ct.fields, stored, input.targetLocale, defaultLocale);
   for (const f of ct.fields) {
     if (!TEXT_TYPES.has(f.type) || !f.localized) continue;
+    if (apply && unwritable.includes(f.apiId)) continue;
     const state = states.get(f.apiId);
     if (state?.hidden || state?.disabled) continue;
     const value = fields[f.apiId]?.[source];
@@ -137,8 +240,9 @@ export async function translateEntry(
   }
 
   let applied = false;
-  if (input.apply && translatedFields.length > 0) {
-    await updateEntry(ctx, scope, id, merged);
+  if (apply && translatedFields.length > 0) {
+    // `merged` holds only what the caller may read; `unwritable` keeps the rest as stored.
+    await updateEntry(ctx, scope, id, merged, { unwritable, unreadable });
     applied = true;
   }
   await recordAgentRun(ctx, scope, {
@@ -181,9 +285,15 @@ export async function summarizeEntry(
   ai: AIProvider,
   scope: Scope,
   id: string,
-  input: SummarizeEntryInput = {},
+  input: SummarizeEntryInput,
+  opts: EntryAiOptions,
 ): Promise<SummarizeResult> {
-  const { fields, ct, defaultLocale } = await loadEntryForAi(ctx, scope, id);
+  const apply = Boolean(input.apply && input.targetField);
+  const { fields, ct, defaultLocale, contentTypeApiId, unwritable, unreadable } =
+    await loadEntryForAi(ctx, scope, id, { ...opts, apply });
+  if (apply && input.targetField) {
+    assertAiTargetField(opts.principal, contentTypeApiId, input.targetField, true);
+  }
   const locale = input.locale ?? defaultLocale;
   const text = collectText(ct, fields, locale, defaultLocale);
   if (!text.trim()) {
@@ -205,10 +315,10 @@ export async function summarizeEntry(
   if (!summary) throw new ValidationError([{ field: 'summary', message: 'No summary produced' }]);
 
   let applied = false;
-  if (input.apply && input.targetField) {
+  if (apply && input.targetField) {
     const merged: EntryFields = { ...fields };
     merged[input.targetField] = { ...merged[input.targetField], [locale]: summary };
-    await updateEntry(ctx, scope, id, merged);
+    await updateEntry(ctx, scope, id, merged, { unwritable, unreadable });
     applied = true;
   }
   await recordAgentRun(ctx, scope, {
@@ -258,11 +368,15 @@ export async function autofillField(
   scope: Scope,
   id: string,
   input: AutofillFieldInput,
+  opts: EntryAiOptions,
 ): Promise<AutofillResult> {
-  const { fields, ct, defaultLocale } = await loadEntryForAi(ctx, scope, id);
+  const apply = input.apply === true;
+  const { fields, stored, ct, defaultLocale, contentTypeApiId, unwritable, unreadable } =
+    await loadEntryForAi(ctx, scope, id, { ...opts, apply });
   const locale = input.locale ?? defaultLocale;
   const def = ct.fields.find((f) => f.apiId === input.field);
   if (!def) throw new NotFoundError('Field', input.field);
+  assertAiTargetField(opts.principal, contentTypeApiId, def.apiId, apply);
   if (!SCALAR_TYPES.has(def.type)) {
     throw new ValidationError([
       { field: input.field, message: `Cannot autofill a ${def.type} field` },
@@ -270,7 +384,7 @@ export async function autofillField(
   }
   // The rules read the entry as stored: a value for a field they hide would be content nobody
   // sees, and a disabled one would be refused on save anyway.
-  const state = fieldStates(ct.fields, fields, locale, defaultLocale).get(def.apiId);
+  const state = fieldStates(ct.fields, stored, locale, defaultLocale).get(def.apiId);
   if (state?.hidden || state?.disabled) {
     throw new ValidationError([
       {
@@ -307,10 +421,10 @@ export async function autofillField(
   }
 
   let applied = false;
-  if (input.apply) {
+  if (apply) {
     const merged: EntryFields = { ...fields };
     merged[input.field] = { ...merged[input.field], [locale]: value };
-    await updateEntry(ctx, scope, id, merged); // validated like a human edit
+    await updateEntry(ctx, scope, id, merged, { unwritable, unreadable }); // validated like a human edit
     applied = true;
   }
   await recordAgentRun(ctx, scope, {
@@ -353,9 +467,13 @@ export async function suggestEntryTags(
   ai: AIProvider,
   scope: Scope,
   id: string,
-  input: SuggestEntryTagsInput = {},
+  input: SuggestEntryTagsInput,
+  opts: EntryAiOptions,
 ): Promise<SuggestEntryTagsResult> {
-  const { fields, ct, defaultLocale } = await loadEntryForAi(ctx, scope, id);
+  const { fields, ct, defaultLocale } = await loadEntryForAi(ctx, scope, id, {
+    ...opts,
+    apply: input.apply === true,
+  });
   const text = collectText(ct, fields, defaultLocale, defaultLocale);
   const existing = await listTags(ctx, scope);
   // Set when the decision model has already ruled on every existing tag (and found none).
@@ -438,6 +556,8 @@ async function finishTagSuggestion(
 ): Promise<SuggestEntryTagsResult> {
   let applied = false;
   if (input.apply) {
+    // New names join the vocabulary on write alone: the one way to add a tag without
+    // `content:manage` (`POST …/taxonomy/tags`), so an editor can coin the tags it applies.
     const createdIds: string[] = [];
     for (const name of newTags) createdIds.push((await createTag(ctx, scope, { name })).id);
     const current = await getEntryMetadata(ctx, scope, id);
@@ -482,10 +602,12 @@ export async function applyEntryTags(
   scope: Scope,
   id: string,
   input: ApplyEntryTagsInput,
+  opts: EntryAiOptions,
 ): Promise<ApplyEntryTagsResult> {
   // Validate everything BEFORE the createTag writes: a stale review (unknown
-  // entry or deleted tag id) must fail without orphaning new vocabulary tags.
-  if (!(await ctx.store.entries.get(scope, id))) throw new NotFoundError('Entry', id);
+  // entry or deleted tag id, or a role that can't write the entry) must fail
+  // without orphaning new vocabulary tags.
+  await readEntryForAi(ctx, scope, id, { ...opts, apply: true });
   const existing = await listTags(ctx, scope);
   const byId = new Set(existing.map((t) => t.id));
   for (const tagId of input.tagIds ?? []) {
@@ -493,7 +615,7 @@ export async function applyEntryTags(
   }
   const byName = new Map(existing.map((t) => [t.name.toLowerCase(), t]));
 
-  const createdTags: { id: string; name: string }[] = [];
+  const toCreate: string[] = [];
   const reusedIds: string[] = [];
   const seen = new Set<string>();
   for (const raw of input.newTags ?? []) {
@@ -502,8 +624,12 @@ export async function applyEntryTags(
     seen.add(name.toLowerCase());
     const match = byName.get(name.toLowerCase());
     if (match) reusedIds.push(match.id);
-    else createdTags.push(await createTag(ctx, scope, { name }));
+    else toCreate.push(name);
   }
+  // A name the vocabulary lacks becomes a new tag on write alone: the one way to add a tag
+  // without `content:manage`, so an editor can coin the tags it applies.
+  const createdTags: { id: string; name: string }[] = [];
+  for (const name of toCreate) createdTags.push(await createTag(ctx, scope, { name }));
 
   const current = await getEntryMetadata(ctx, scope, id);
   const currentTags = current?.tags ?? [];

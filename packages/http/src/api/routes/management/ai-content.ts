@@ -23,6 +23,8 @@ export function aiContentRoutes(deps: AuthDeps): Hono<AuthVars> {
   const app = new Hono<AuthVars>();
 
   // --- AI content operations over an entry -------------------------------
+  // Each use-case authorizes the entry for the principal (read, and write when it applies) and
+  // keeps the fields its role denies away from the model and out of the answer.
   app.post(`${BASE}/entries/:id/translate`, requireScope(SCOPES.contentWrite), async (c) =>
     c.json(
       await translateEntry(
@@ -31,6 +33,7 @@ export function aiContentRoutes(deps: AuthDeps): Hono<AuthVars> {
         scopeOf(c),
         c.req.param('id'),
         await parseBody(c, translateBody),
+        { principal: c.get('principal') },
       ),
     ),
   );
@@ -42,6 +45,7 @@ export function aiContentRoutes(deps: AuthDeps): Hono<AuthVars> {
         scopeOf(c),
         c.req.param('id'),
         await parseBody(c, summarizeBody),
+        { principal: c.get('principal') },
       ),
     ),
   );
@@ -53,6 +57,7 @@ export function aiContentRoutes(deps: AuthDeps): Hono<AuthVars> {
         scopeOf(c),
         c.req.param('id'),
         await parseBody(c, autofillBody),
+        { principal: c.get('principal') },
       ),
     ),
   );
@@ -64,6 +69,7 @@ export function aiContentRoutes(deps: AuthDeps): Hono<AuthVars> {
         scopeOf(c),
         c.req.param('id'),
         await parseBody(c, tierOnlyBody),
+        { principal: c.get('principal') },
       ),
     ),
   );
@@ -75,6 +81,7 @@ export function aiContentRoutes(deps: AuthDeps): Hono<AuthVars> {
         scopeOf(c),
         c.req.param('id'),
         await parseBody(c, applyTagsBody),
+        { principal: c.get('principal') },
       ),
     ),
   );

@@ -9,8 +9,9 @@ import type { AIActionDefinition, AIProvider, ModelTier } from '@contentworker/p
 import { recordAgentRun } from './agent-audit';
 import { generateWithBudget } from './ai-budget';
 import { UNTRUSTED_CONTENT_GUARD } from './ai-prompt';
+import { assertAiTargetField, type EntryAiOptions, readEntryForAi } from './content-ai';
 import type { AppContext } from './context';
-import { getEntry, updateEntry } from './entries';
+import { updateEntry } from './entries';
 
 const VAR_RE = /\{\{\s*([\w.]+)\s*\}\}/g;
 
@@ -100,25 +101,36 @@ export interface RunAIActionResult {
  * variables (plus the target entry's fields as `{{field.<apiId>}}`), calls the
  * AI provider, and — with `apply` and a `targetField` — writes the result back
  * through the same validators a human edit uses. Every run hits the cost ledger.
+ * The entry is read as `opts.principal` may read it (`readEntryForAi`): a field its role denies
+ * is never a variable, so the model can't echo it back.
  */
 export async function runAIAction(
   ctx: AppContext,
   ai: AIProvider,
   scope: Scope,
   id: string,
-  input: RunAIActionInput = {},
+  input: RunAIActionInput,
+  opts: EntryAiOptions,
 ): Promise<RunAIActionResult> {
   const action = await getAIAction(ctx, scope, id);
 
   const values: Record<string, string> = { ...input.variables };
   let entryFields: EntryFields | undefined;
+  let unwritable: readonly string[] = [];
+  let unreadable: readonly string[] = [];
   let locale = input.locale;
   if (input.entryId) {
-    const { entry, fields } = await getEntry(ctx, scope, input.entryId);
+    const apply = Boolean(input.apply && action.targetField);
+    const read = await readEntryForAi(ctx, scope, input.entryId, { ...opts, apply });
+    if (apply && action.targetField) {
+      assertAiTargetField(opts.principal, read.contentTypeApiId, action.targetField, true);
+    }
+    const fields = read.fields;
     entryFields = fields;
+    unwritable = read.unwritable;
+    unreadable = read.unreadable;
     const config = await ctx.store.spaces.getConfig(scope);
     locale = locale ?? config?.defaultLocale;
-    void entry;
     if (locale) {
       for (const [apiId, localized] of Object.entries(fields)) {
         const value = localized[locale];
@@ -140,7 +152,7 @@ export async function runAIAction(
   if (input.apply && action.targetField && input.entryId && entryFields && locale) {
     const merged: EntryFields = { ...entryFields };
     merged[action.targetField] = { ...merged[action.targetField], [locale]: output };
-    await updateEntry(ctx, scope, input.entryId, merged);
+    await updateEntry(ctx, scope, input.entryId, merged, { unwritable, unreadable });
     applied = true;
   }
 

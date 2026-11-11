@@ -46,11 +46,18 @@ export function registerAiContentTools(server: McpServer, t: ToolContext): void 
     async (args) => {
       guard(SCOPES.contentWrite, scopeOf(args));
       return ok(
-        await translateEntry(ctx, ai, scopeOf(args), args.id, {
-          targetLocale: args.targetLocale,
-          sourceLocale: args.sourceLocale,
-          apply: args.apply,
-        }),
+        await translateEntry(
+          ctx,
+          ai,
+          scopeOf(args),
+          args.id,
+          {
+            targetLocale: args.targetLocale,
+            sourceLocale: args.sourceLocale,
+            apply: args.apply,
+          },
+          { principal },
+        ),
       );
     },
   );
@@ -73,12 +80,19 @@ export function registerAiContentTools(server: McpServer, t: ToolContext): void 
     async (args) => {
       guard(SCOPES.contentWrite, scopeOf(args));
       return ok(
-        await summarizeEntry(ctx, ai, scopeOf(args), args.id, {
-          locale: args.locale,
-          maxWords: args.maxWords,
-          targetField: args.targetField,
-          apply: args.apply,
-        }),
+        await summarizeEntry(
+          ctx,
+          ai,
+          scopeOf(args),
+          args.id,
+          {
+            locale: args.locale,
+            maxWords: args.maxWords,
+            targetField: args.targetField,
+            apply: args.apply,
+          },
+          { principal },
+        ),
       );
     },
   );
@@ -103,12 +117,19 @@ export function registerAiContentTools(server: McpServer, t: ToolContext): void 
     async (args) => {
       guard(SCOPES.contentWrite, scopeOf(args));
       return ok(
-        await autofillField(ctx, ai, scopeOf(args), args.id, {
-          field: args.field,
-          locale: args.locale,
-          instructions: args.instructions,
-          apply: args.apply,
-        }),
+        await autofillField(
+          ctx,
+          ai,
+          scopeOf(args),
+          args.id,
+          {
+            field: args.field,
+            locale: args.locale,
+            instructions: args.instructions,
+            apply: args.apply,
+          },
+          { principal },
+        ),
       );
     },
   );
@@ -125,7 +146,16 @@ export function registerAiContentTools(server: McpServer, t: ToolContext): void 
     },
     async (args) => {
       guard(SCOPES.contentWrite, scopeOf(args));
-      return ok(await suggestEntryTags(ctx, ai, scopeOf(args), args.id, { apply: args.apply }));
+      return ok(
+        await suggestEntryTags(
+          ctx,
+          ai,
+          scopeOf(args),
+          args.id,
+          { apply: args.apply },
+          { principal },
+        ),
+      );
     },
   );
 
@@ -147,10 +177,16 @@ export function registerAiContentTools(server: McpServer, t: ToolContext): void 
     async (args) => {
       guard(SCOPES.contentWrite, scopeOf(args));
       return ok(
-        await applyEntryTags(ctx, scopeOf(args), args.id, {
-          tagIds: args.tagIds,
-          newTags: args.newTags,
-        }),
+        await applyEntryTags(
+          ctx,
+          scopeOf(args),
+          args.id,
+          {
+            tagIds: args.tagIds,
+            newTags: args.newTags,
+          },
+          { principal },
+        ),
       );
     },
   );
@@ -174,11 +210,18 @@ export function registerAiContentTools(server: McpServer, t: ToolContext): void 
     async (args) => {
       guard(SCOPES.contentWrite, scopeOf(args));
       return ok(
-        await auditEntry(ctx, ai, scopeOf(args), args.id, {
-          createTasks: args.createTasks,
-          taskSeverity: args.taskSeverity,
-          assignee: args.assignee,
-        }),
+        await auditEntry(
+          ctx,
+          ai,
+          scopeOf(args),
+          args.id,
+          {
+            createTasks: args.createTasks,
+            taskSeverity: args.taskSeverity,
+            assignee: args.assignee,
+          },
+          { principal },
+        ),
       );
     },
   );
@@ -193,7 +236,7 @@ export function registerAiContentTools(server: McpServer, t: ToolContext): void 
     },
     async (args) => {
       guard(SCOPES.contentWrite, scopeOf(args));
-      return ok(await moderateEntry(ctx, agents, scopeOf(args), args.id));
+      return ok(await moderateEntry(ctx, agents, scopeOf(args), args.id, { principal }));
     },
   );
 

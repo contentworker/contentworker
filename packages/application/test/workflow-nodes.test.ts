@@ -12,6 +12,7 @@ import {
   RecordingEmailSender,
   RecordingWebhookSender,
   SequenceIdGenerator,
+  StubAIProvider,
   StubDecisionModel,
 } from '@contentworker/test-kit';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -403,6 +404,117 @@ describe('workflow node executors', () => {
       const r = await exec(type, { targetLocale: 'de-DE', field: 'summary' });
       expect(r.output, type).toMatchObject({ source: 'heuristic', fallback: 'mock' });
     }
+  });
+
+  it('runs the AI use-cases as the run’s principal: a denied field never reaches the model', async () => {
+    const noBody: Principal = {
+      ...editor,
+      subject: 'nb@example.com',
+      contentGrants: [
+        { contentTypeApiId: 'post', actions: ['read', 'write'], deniedFields: ['body'] },
+      ],
+    };
+    const ai = new StubAIProvider((req) =>
+      req.outputSchema ? { summary: 'Short', value: 'Filled' } : 'x',
+    );
+    ctx = { ...ctx, ai: { mode: 'live', timeoutMs: 1000 } };
+    deps = { ...deps, ai };
+    expect((await exec('ai.summarize', {}, noBody)).vars).toEqual({ summary: 'Short' });
+    const filled = await exec('ai.autofill', { field: 'summary' }, noBody);
+    expect(filled.output).toMatchObject({ field: 'summary', value: 'Filled', applied: true });
+    expect(ai.requests).toHaveLength(2);
+    for (const r of ai.requests) expect(r.prompt).not.toContain('A short news story.');
+    const stored = await ctx.store.entries.get(scope, entryId);
+    expect(stored?.fields.body).toEqual({ 'en-US': 'A short news story.' });
+  });
+
+  describe('an AI node shows the model only what the run’s role may read', () => {
+    const SECRET = 'A short news story.';
+    const deny = (deniedFields: string[], readOnlyFields: string[] = []): Principal => ({
+      ...editor,
+      subject: 'masked@example.com',
+      contentGrants: [
+        { contentTypeApiId: 'post', actions: ['read', 'write'], deniedFields, readOnlyFields },
+      ],
+    });
+    // Answers any schema with a value of each property's type, so every node gets a usable reply.
+    const schemaAnswer = (req: { outputSchema?: unknown }) => {
+      const props =
+        (req.outputSchema as { properties?: Record<string, { type?: string; enum?: string[] }> })
+          ?.properties ?? {};
+      const out: Record<string, unknown> = {};
+      for (const [k, d] of Object.entries(props)) {
+        out[k] =
+          d.enum?.[0] ??
+          ({ number: 0.9, integer: 1, boolean: false, array: [], object: {} } as const)[
+            d.type as 'number'
+          ] ??
+          'Generated';
+      }
+      return req.outputSchema ? out : 'Generated';
+    };
+    const live = () => {
+      const ai = new StubAIProvider(schemaAnswer);
+      ctx = { ...ctx, ai: { mode: 'live', timeoutMs: 1000 } };
+      deps = { ...deps, ai };
+      return ai;
+    };
+    const seen = (ai: StubAIProvider) =>
+      ai.requests.map((r) => `${r.system ?? ''}\n${r.prompt}`).join('\n');
+
+    it.each([
+      ['ai.classify', { labels: ['news', 'other'] }],
+      ['ai.router', { routes: ['publish', 'needs_review'], instructions: 'Pick one' }],
+      ['ai.assess', withDefaults('ai.assess', {})],
+      ['ai.moderate', {}],
+      ['ai.summarize', {}],
+    ])('%s', async (type, config) => {
+      const ai = live();
+      const r = await exec(type, config, deny(['body']));
+      expect(r.failed, JSON.stringify(r)).toBeUndefined();
+      expect(ai.requests.length, type).toBeGreaterThan(0);
+      expect(seen(ai)).not.toContain(SECRET);
+      expect(JSON.stringify(r)).not.toContain(SECRET);
+    });
+
+    it.each([
+      ['ai.router', { routes: ['publish', 'needs_review'], instructions: 'Pick one' }],
+      ['ai.assess', withDefaults('ai.assess', {})],
+    ])('%s hides a var that copied a denied field, and keeps the rest', async (type, config) => {
+      const ai = live();
+      const vars = { copied: `Body was: ${SECRET}`, note: 'keep me' };
+      const r = await exec(type, config, deny(['body']), vars);
+      expect(r.failed, JSON.stringify(r)).toBeUndefined();
+      expect(seen(ai)).not.toContain(SECRET);
+      expect(seen(ai)).toContain('keep me');
+      expect(seen(ai)).toContain('(hidden)');
+    });
+
+    it('builds the summary fallback from the masked entry, without a denied title', async () => {
+      // Mock mode answers from the heuristic; it reads the entry the role may read.
+      expect((await exec('ai.summarize', {}, deny(['body']))).vars).toEqual({
+        summary: 'Spring news',
+      });
+      const r = await exec('ai.summarize', {}, deny(['title', 'body']));
+      expect(r.vars).toEqual({ summary: 'No text to summarize.' });
+      expect(JSON.stringify(r)).not.toMatch(/Spring news|short news story/);
+    });
+
+    it('enriches only fields the role may write, and the apply keeps the rest', async () => {
+      const ai = live();
+      const skipped = await exec('ai.enrich', { awaitReview: false }, deny(['body'], ['summary']));
+      expect(skipped.summary).toBe('Nothing to enrich');
+      expect(ai.requests).toHaveLength(0);
+
+      const r = await exec('ai.enrich', { awaitReview: false }, deny(['body']));
+      expect(r.output).toMatchObject({ proposed: { summary: { 'en-US': 'Generated' } } });
+      expect(seen(ai)).not.toContain(SECRET);
+      const stored = await ctx.store.entries.get(scope, entryId);
+      expect(stored?.fields).toMatchObject({
+        summary: { 'en-US': 'Generated' },
+        body: { 'en-US': SECRET },
+      });
+    });
   });
 
   it('gating AI nodes fail closed when the model is unavailable outside mock mode', async () => {
