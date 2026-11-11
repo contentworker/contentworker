@@ -28,6 +28,10 @@
  * tab edits, each override an `update` op setting the block's `_responsive` whole (`setOverrideOp`),
  * so it undoes and saves as any edit. An override the server refuses is a check on its block.
  *
+ * A block moves by its grip on the page with a fine pointer (a drag to a seam), and from the
+ * inspector (Move up, Move down, Move to) and Layers (⌘↑ ⌘↓) with the keyboard or a finger; each
+ * is one `move` op held to the same judgement as the dock and the save (`cms/lib/canvas/drag.ts`).
+ *
  * At lg it edits: Layers (on demand) | the page | the inspector. From md it edits by tap, the dock,
  * the inspector and Layers in sheets. Below md it is review-only, and says so in place.
  */
@@ -83,11 +87,19 @@ import {
   withLock,
   withoutLock,
 } from '~/cms/lib/block-locks';
-import { configRefusal, overrideRefusal, rulesOver } from '~/cms/lib/block-rules';
+import { configIssues, configRefusal, overrideRefusal, rulesOver } from '~/cms/lib/block-rules';
 import { widthPresets } from '~/cms/lib/breakpoints';
 import { canvasChecks, type RefusedIssue } from '~/cms/lib/canvas/checks';
-import { fillAsk, fillFor, proposedLayers } from '~/cms/lib/canvas/fill';
 import {
+  canDrag,
+  type DropVerdict,
+  judgeDrop,
+  configRefusal as moveRefusal,
+  moveTargets,
+} from '~/cms/lib/canvas/drag';
+import { fillAsk, fillFor, proposedLayers, slotTitle } from '~/cms/lib/canvas/fill';
+import {
+  type Applied,
   applyOps,
   type CanvasHistory,
   type CanvasStep,
@@ -142,7 +154,12 @@ import {
   useScopedQuery,
   useSpaceConfigQuery,
 } from '~/cms/lib/queries';
-import { plainKeyAllowed, type ShortcutGroup, usePageShortcuts } from '~/cms/lib/shortcuts';
+import {
+  plainKeyAllowed,
+  type ShortcutGroup,
+  useFinePointer,
+  usePageShortcuts,
+} from '~/cms/lib/shortcuts';
 import { staleSave } from '~/cms/lib/stale-save';
 import { useToast } from '~/cms/lib/toast';
 
@@ -185,6 +202,11 @@ const newKey = () => crypto.randomUUID();
 const DOCK_HEIGHT = 160;
 /** The room a chosen seam keeps from the edge of the page's view, or from the dock. */
 const SEAM_ROOM = 24;
+
+/** A move judged against the draft: a drop verdict, carrying the applied edit when it may land. */
+type Judged =
+  | Exclude<DropVerdict, { kind: 'move' }>
+  | (Extract<DropVerdict, { kind: 'move' }> & { readonly applied: Applied & { ok: true } });
 
 /** Why the canvas reviews rather than edits, in the words it says so with. */
 type ReviewReason = 'narrow' | 'role' | 'published';
@@ -353,6 +375,7 @@ function Canvas({
   const breakpoints = catalog?.breakpoints?.length ? catalog.breakpoints : ownBreakpoints;
   const presets = useMemo(() => widthPresets(breakpoints), [breakpoints]);
   const [preset, setPreset] = useWidthPreset(presets);
+  const fine = useFinePointer();
   const dirty = !!doc && JSON.stringify(doc.fields) !== JSON.stringify(doc.base.fields);
   const dirtyRef = useRef(dirty);
   dirtyRef.current = dirty;
@@ -465,6 +488,16 @@ function Canvas({
   const hasLayout = site.capabilities.includes('layout');
 
   // --- edits --------------------------------------------------------------------------------
+  /** Takes an applied edit in: the draft, its history step, and the live region's words. */
+  const commit = useCallback((r: Applied & { ok: true }, burst?: string): CanvasStep | null => {
+    const d = docRef.current;
+    if (!d) return null;
+    const next = { ...d, fields: r.fields, history: record(d.history, r.step) };
+    docRef.current = next;
+    setDoc(next);
+    if (!burst) setSaid(r.step.label);
+    return r.step;
+  }, []);
   const apply = useCallback(
     (ops: readonly BlockOp[], label: string, burst?: string): CanvasStep | null => {
       const d = docRef.current;
@@ -474,13 +507,9 @@ function Canvas({
         toast.error(r.issues[0]?.message ?? 'That change can’t be made here');
         return null;
       }
-      const next = { ...d, fields: r.fields, history: record(d.history, r.step) };
-      docRef.current = next;
-      setDoc(next);
-      if (!burst) setSaid(label);
-      return r.step;
+      return commit(r, burst);
     },
-    [contentType, toast],
+    [contentType, toast, commit],
   );
 
   const travel = (way: 'undo' | 'redo') => {
@@ -604,6 +633,63 @@ function Canvas({
   const setProp = (b: CanvasBlock, prop: string, value: unknown) =>
     apply([setPropOp(b, prop, value)], `Edited ${b.name}`, `${b.key}:${prop}`);
   /** One prop's override at one breakpoint; a Reset is a step of its own. */
+  /**
+   * Where `b` may move to `at`: judged first as the dock judges a place (`judgeDrop`), then the
+   * moved draft as the save will (the block config and the entry's locks), so a seam shows the
+   * reason before the drop and Move to lists only what lands. Kept per draft, block and place: a
+   * drag asks for every seam on every pointer move.
+   */
+  const judged = useRef<{ fields: EntryFields | null; verdicts: Map<string, Judged> }>({
+    fields: null,
+    verdicts: new Map(),
+  });
+  const judgeMove = (b: CanvasBlock, at: CanvasPlace): Judged => {
+    const d = docRef.current;
+    if (!d || !contentType) return { kind: 'refused', reason: `${b.name} can’t go there` };
+    if (judged.current.fields !== d.fields) {
+      judged.current = { fields: d.fields, verdicts: new Map() };
+    }
+    const id = `${b.key}|${at.slot.path}#${at.index}`;
+    const kept = judged.current.verdicts.get(id);
+    if (kept) return kept;
+    const verdict = ((): Judged => {
+      const first = judgeDrop(b, at);
+      if (first.kind !== 'move') return first;
+      // Named as Move to lists it: "Section “Features” › Items".
+      const label =
+        at.slot.path === b.slot.path
+          ? first.label
+          : `Moved ${b.name} to ${slotTitle(tree, at.slot)}`;
+      const r = applyOps(contentType, d.fields, [first.op], newKey, { label, at: Date.now() });
+      if (!r.ok) {
+        return { kind: 'refused', reason: r.issues[0]?.message ?? `${b.name} can’t go there` };
+      }
+      const issue = moveRefusal(
+        (f) => configIssues(contentType, catalog, rules, d.base.fields, f, locales, locks),
+        d.fields,
+        r.fields,
+      );
+      if (issue) return { kind: 'refused', reason: `${b.name} can’t go there: ${issue.message}` };
+      return { kind: 'move', op: first.op, label, applied: r };
+    })();
+    judged.current.verdicts.set(id, verdict);
+    return verdict;
+  };
+  /** Moves `b` to `at` as one `move` op; refused, it says why (in place and aloud) and stays. */
+  const moveTo = (b: CanvasBlock, at: CanvasPlace): boolean => {
+    if (!editable) return false;
+    const verdict = judgeMove(b, at);
+    if (verdict.kind === 'home') return false;
+    if (verdict.kind === 'refused') {
+      setSaid(verdict.reason);
+      toast.error(verdict.reason);
+      return false;
+    }
+    commit({ ...verdict.applied, step: { ...verdict.applied.step, at: Date.now() } });
+    setSelected(b.key);
+    return true;
+  };
+
   const setOverride = (b: CanvasBlock, bp: string, prop: string, value: unknown) => {
     const name = b.slot.breakpoints.find((x) => x.id === bp)?.name ?? bp;
     apply(
@@ -949,6 +1035,24 @@ function Canvas({
   const regions = regionRects(tree, rects);
   const ghostBoxes = site.proposal.shown ? ghostRects(geometry, ghosts, refCtx) : [];
   const selectedRect = block ? (rects.get(block.key) ?? null) : null;
+  // The grip, for a fine pointer only (iPadOS drag is unreliable): touch and keyboard move blocks
+  // from the inspector and Layers. Never while Coworker's proposal shows on the page.
+  const drag =
+    fine && editable && hasLayout && block && selectedRect && canDrag(block) && !site.proposal.shown
+      ? {
+          key: block.key,
+          name: block.name,
+          rect: selectedRect,
+          judge: (seam: CanvasPlace) => judgeMove(block, seam),
+          onStart: () => {
+            setDockAt(null);
+            setHover(null);
+          },
+          onDrop: (seam: CanvasPlace) => void moveTo(block, seam),
+          onRefused: (reason: string) => setSaid(reason),
+          onCancel: () => setSaid(`${block.name} stays where it was`),
+        }
+      : undefined;
   /** Who's who for "Locked by …": the team isn't read here, so a teammate reads as one. */
   const directory = { me: access.data?.subject };
   // Locks name stored blocks: a change to the blocks waits for its save before anything locks.
@@ -1046,6 +1150,15 @@ function Canvas({
       preset={preset}
       onOverride={(bp, prop, value) => setOverride(block, bp, prop, value)}
       onMove={(by) => move(block, by)}
+      moveTargets={moveTargets(tree, block)
+        .filter(
+          (t) => judgeMove(block, { slot: t.slot, index: t.slot.blocks.length }).kind === 'move',
+        )
+        .map((t) => ({ path: t.slot.path, name: slotTitle(tree, t.slot) }))}
+      onMoveTo={(path) => {
+        const slot = findSlot(tree, path);
+        return slot ? moveTo(block, { slot, index: slot.blocks.length }) : false;
+      }}
       onDuplicate={() => duplicate(block)}
       onRemove={() => remove(block)}
       onAdd={(slot) => openDock({ slot, index: slot.blocks.length })}
@@ -1255,6 +1368,7 @@ function Canvas({
             regions={regions}
             ghosts={ghostBoxes}
             onChooseSeam={(seam) => openDock(seam)}
+            {...(drag ? { drag } : {})}
           >
             {loading ? (
               <>

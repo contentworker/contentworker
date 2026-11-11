@@ -17,7 +17,9 @@
  * here and in Layers). Each change is one `update` op (`setPropOp`) on the block, applied on the
  * canvas at once; nothing saves until Save draft. A block the code no longer provides can't be
  * edited, only kept as it is or removed. A block in a slot the block config locks keeps its place:
- * no move, duplicate or remove, and its settings stay editable.
+ * no move, duplicate or remove, and its settings stay editable. Move to takes a block to the end of
+ * another slot that takes it (`moveTargets`): what a drag on the page does, for the keyboard and a
+ * finger.
  *
  * A block in a locked region of the entry (`cms/lib/block-locks.ts`) keeps its place the same way,
  * and says who locked it; with the content frozen its settings read only. For someone with the
@@ -38,11 +40,27 @@ import {
 import { Alert, AlertDescription, AlertTitle } from '@contentworker/ui/alert';
 import { Button } from '@contentworker/ui/button';
 import { Checkbox } from '@contentworker/ui/checkbox';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuTrigger,
+} from '@contentworker/ui/dropdown-menu';
 import { Label } from '@contentworker/ui/label';
 import { Segmented, SegmentedItem } from '@contentworker/ui/segmented';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@contentworker/ui/tabs';
-import { ArrowDown, ArrowUp, Copy, Lock, LockOpen, Plus, Trash2 } from 'lucide-react';
-import { useId, useState } from 'react';
+import {
+  ArrowDown,
+  ArrowUp,
+  Copy,
+  CornerDownRight,
+  Lock,
+  LockOpen,
+  Plus,
+  Trash2,
+} from 'lucide-react';
+import { useId, useRef, useState } from 'react';
 import { FieldInput, type Pickers, type PickOption } from '~/cms/components/EntryForm';
 import { RequiredMark } from '~/cms/components/required-mark';
 import type { ActorDirectory } from '~/cms/lib/authorship';
@@ -110,6 +128,10 @@ export interface InspectorProps {
   /** Gives `prop` its own value at breakpoint `bp`, or (undefined) lets it inherit again. */
   readonly onOverride?: (bp: string, prop: string, value: unknown) => void;
   readonly onMove: (by: -1 | 1) => void;
+  /** The other slots it may move to (at their end), named as Move to lists them. */
+  readonly moveTargets?: readonly { readonly path: string; readonly name: string }[];
+  /** Moves it to the end of that slot; false when it was refused (and said why). */
+  readonly onMoveTo?: (path: string) => boolean;
   readonly onDuplicate: () => void;
   readonly onRemove: () => void;
   readonly onAdd: (slot: CanvasSlot) => void;
@@ -148,6 +170,9 @@ export function Inspector(props: InspectorProps) {
   const tabs = (['content', 'data', 'look'] as const).filter((t) => byTab(t).length > 0);
   const tab = tabs.includes(props.tab) ? props.tab : (tabs[0] ?? 'content');
   const where = block.slot.name;
+  /** Move to moved the block: focus goes to its heading as the menu closes, not to the trigger. */
+  const movedTo = useRef(false);
+  const heading = useRef<HTMLHeadingElement>(null);
 
   return (
     <section aria-labelledby={headingId} className="flex flex-col gap-4">
@@ -155,6 +180,7 @@ export function Inspector(props: InspectorProps) {
         {/* Focus lands here when a block arrives from the dock: the dock it came from is gone. */}
         <h2
           id={headingId}
+          ref={heading}
           tabIndex={-1}
           data-inspector-heading
           className="section-title outline-none"
@@ -207,6 +233,43 @@ export function Inspector(props: InspectorProps) {
           >
             <ArrowDown aria-hidden="true" />
           </Button>
+          {props.moveTargets && props.moveTargets.length > 0 ? (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label={`Move ${block.name} to another slot`}
+                  title="Move to another slot"
+                >
+                  <CornerDownRight aria-hidden="true" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent
+                align="start"
+                aria-label={`Move ${block.name} to the end of`}
+                onCloseAutoFocus={(e) => {
+                  if (!movedTo.current) return;
+                  movedTo.current = false;
+                  e.preventDefault();
+                  heading.current?.focus();
+                }}
+              >
+                <DropdownMenuLabel className="caption">Move to the end of</DropdownMenuLabel>
+                {props.moveTargets.map((t) => (
+                  <DropdownMenuItem
+                    key={t.path}
+                    onSelect={() => {
+                      movedTo.current = props.onMoveTo?.(t.path) === true;
+                    }}
+                  >
+                    {t.name}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          ) : null}
           <Button
             type="button"
             variant="ghost"
