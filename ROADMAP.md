@@ -153,6 +153,42 @@ Everything below is built and tested on v2.
     `caps.connection.fetch` with auth injected and never sees the secret. Sync operations get
     about 10 s; longer work is declared `async` and runs on a durable workflow that returns a
     job id.
+- [ ] **Attribute-based access to assets (ABAC).** Administrators govern assets by the attributes
+  each one carries (classification, brand, region, client, license, kind), not by the folder it
+  sits in. Roles gain asset grants beside their content grants: each grant has an effect
+  (`allow` or `deny`), actions (`read`, `download` of the original, `write`, `publish`,
+  `delete`) and a condition, a small JSON expression over asset attributes (`all`, `any`,
+  `not`, `eq`, `in`, `contains`, `exists`, before and after for dates). A role without asset
+  grants stays unrestricted, so no stored role changes; a space policy can add deny rules every
+  role but Administrator obeys (no one reads an asset whose license expired). Changing a governed
+  attribute needs the policy to allow the asset both before and after, so no one relabels an
+  asset out of a rule. One domain decision, `assetAccess(principal, asset, action)`, and a
+  compiler from a condition to D1 filters serve both surfaces. Six PRs, each usable on its own:
+  1. **Asset metadata schema.** Typed, validated custom asset fields per environment in place of
+     free-form `metadata.fields`, with expression indexes on the governed ones and an admin
+     editor. Rules need typed attributes to be written against.
+  2. **Policy and Management reads.** The grant model, the evaluator and the condition compiler,
+     `asset_grants` on roles (an expand-only migration), enforced on asset get and list over REST
+     and MCP, paging and counts filtered in the query (within the 100-parameter cap).
+  3. **Every other asset path.** Search (over-fetched, then filtered, with facets and totals
+     counted after filtering), versions, usage, zips, collections, share links, bulk jobs, and
+     the AI paths (alt text, image search for layouts, RAG, Coworker). An entry that links an
+     asset the reader can't see shows a restricted stub, with no title or file.
+  4. **Delivery, Preview and media.** Asset grants join the visibility profile the delivery cache
+     is keyed by. A restricted published asset leaves the public canonical URL: the media gate
+     marks it signed-only and it is served through short-lived signed URLs, as draft reads are.
+  5. **Admin.** A rule builder under Roles, a "test as role" preview of which assets match, and
+     who can see an asset on its detail screen; policy changes and denied reads in the audit log.
+  6. **Person attributes.** Conditions on the reader as well as the asset (department or region
+     from SCIM or OIDC, as in `user.region == asset.region`).
+
+  Open before step 2, with the option recommended first: whether rules apply to roles only to
+  start (recommended, person attributes in step 6) or to person attributes from the start;
+  whether a restricted asset's published file becomes signed-only (recommended, the only way the
+  rules hold against someone holding the URL) or stays public; whether asset grants deny by
+  default once a role has any (recommended, an allowlist) or allow by default (a denylist); and
+  whether a key with content grants keeps reading no assets unless its asset grants allow them
+  (recommended, nothing widens) or that rule is relaxed.
 - [ ] **Plugin copilot: plugins from a prompt.** Describe a rule in plain language ("refuse to
   publish an article without a hero image and alt text") and get a draft plugin (manifest, bundle,
   an explanation and suggested test cases) to test against real entries and install through the
