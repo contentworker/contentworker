@@ -26,6 +26,34 @@ function fakeRun(answer: unknown) {
   return { run, calls };
 }
 
+/**
+ * A chat completion as `@cf/deepseek-ai/deepseek-v4.1-flash-1017` documents it (its
+ * sync-output.json): OpenAI's `choices` and `usage`, with reasoning counted in
+ * `completion_tokens_details` and never returned in the message.
+ */
+function deepseekAnswer(content: string | null, finish = 'stop') {
+  return {
+    id: 'chatcmpl-1',
+    object: 'chat.completion',
+    created: 1_794_000_000,
+    model: '@cf/deepseek-ai/deepseek-v4.1-flash-1017',
+    choices: [
+      {
+        index: 0,
+        message: { role: 'assistant', content, refusal: null },
+        finish_reason: finish,
+      },
+    ],
+    usage: {
+      prompt_tokens: 41,
+      completion_tokens: 230,
+      total_tokens: 271,
+      prompt_tokens_details: { cached_tokens: 0 },
+      completion_tokens_details: { reasoning_tokens: 214 },
+    },
+  };
+}
+
 afterEach(() => {
   vi.useRealTimers();
 });
@@ -39,9 +67,19 @@ describe('workers-ai provider — tier mapping', () => {
     await ai.generate({ prompt: 'p', maxTokens: 16, tier: 'fast' });
     expect(calls.map((c) => c.model)).toEqual([
       '@cf/meta/llama-3.3-70b-instruct-fp8-fast',
-      '@cf/moonshotai/kimi-k2.6',
+      '@cf/deepseek-ai/deepseek-v4.1-flash-1017',
       '@cf/zai-org/glm-4.7-flash',
     ]);
+  });
+
+  it('defaults no tier to a model past its announced deprecation', () => {
+    // Workers AI's 2026-11-05 changelog: these answer HTTP 410 from 2026-11-20.
+    const gone = [
+      '@cf/moonshotai/kimi-k2.6',
+      '@cf/moonshotai/kimi-k2.7-code',
+      '@cf/zai-org/glm-5.2',
+    ];
+    for (const model of Object.values(WORKERS_AI_MODEL_BY_TIER)) expect(gone).not.toContain(model);
   });
 
   it('honours per-tier overrides read from WORKERS_AI_MODEL_<TIER>', async () => {
@@ -95,6 +133,55 @@ describe('workers-ai provider — request shape', () => {
     expect(JSON.parse(res.text)).toEqual({ title: 'T' });
   });
 
+  it("wraps the schema in OpenAI's envelope for chat-completions models", async () => {
+    const { run, calls } = fakeRun(deepseekAnswer('{"title":"T"}'));
+    await createWorkersAIProvider({ run }).generate({
+      prompt: 'p',
+      maxTokens: 64,
+      tier: 'flagship',
+      outputSchema: schema,
+    });
+    await createWorkersAIProvider({ run }).generate({
+      prompt: 'p',
+      maxTokens: 64,
+      tier: 'fast',
+      outputSchema: schema,
+    });
+    for (const call of calls) {
+      expect(call.input.response_format).toEqual({
+        type: 'json_schema',
+        json_schema: { name: 'output', schema },
+      });
+    }
+  });
+
+  it('keeps the bare schema for an override to a native JSON-mode model', async () => {
+    const { run, calls } = fakeRun({ response: { title: 'T' } });
+    const ai = createWorkersAIProvider({
+      run,
+      models: { flagship: '@cf/openai/gpt-oss-120b', fast: '@cf/meta/llama-3.1-8b-instruct-fast' },
+    });
+    await ai.generate({ prompt: 'p', maxTokens: 64, tier: 'flagship', outputSchema: schema });
+    await ai.generate({ prompt: 'p', maxTokens: 64, tier: 'fast', outputSchema: schema });
+    expect(calls.map((c) => c.input.response_format)).toEqual([
+      { type: 'json_schema', json_schema: schema },
+      { type: 'json_schema', json_schema: schema },
+    ]);
+  });
+
+  it('reads the flagship answer: content as a JSON string, reasoning tokens in the usage', async () => {
+    const { run } = fakeRun(deepseekAnswer('{"title":"Flagship"}'));
+    const res = await createWorkersAIProvider({ run }).generate({
+      prompt: 'p',
+      maxTokens: 512,
+      tier: 'flagship',
+      outputSchema: schema,
+    });
+    expect(res.object).toEqual({ title: 'Flagship' });
+    // completion_tokens already counts the reasoning tokens; they are not added twice.
+    expect(res.usage).toEqual({ inputTokens: 41, outputTokens: 230 });
+  });
+
   it('reads chat-completions answers from choices[0].message.content (fenced JSON too)', async () => {
     const { run } = fakeRun({
       choices: [{ message: { content: '```json\n{"title":"F"}\n```' }, finish_reason: 'stop' }],
@@ -118,6 +205,38 @@ describe('workers-ai provider — request shape', () => {
 });
 
 describe('workers-ai provider — tool calling', () => {
+  it('reads the flagship tool calls (typed function calls, string arguments, null content)', async () => {
+    const { run } = fakeRun({
+      ...deepseekAnswer(null, 'tool_calls'),
+      choices: [
+        {
+          index: 0,
+          message: {
+            role: 'assistant',
+            content: null,
+            refusal: null,
+            tool_calls: [
+              {
+                id: 'call_7f',
+                type: 'function',
+                function: { name: 'search', arguments: '{"q":"pricing"}' },
+              },
+            ],
+          },
+          finish_reason: 'tool_calls',
+        },
+      ],
+    });
+    const res = await createWorkersAIProvider({ run }).generate({
+      prompt: 'find pricing',
+      maxTokens: 256,
+      tier: 'flagship',
+      tools: [{ name: 'search', inputSchema: { type: 'object' } }],
+    });
+    expect(res.text).toBe('');
+    expect(res.toolCalls).toEqual([{ id: 'call_7f', name: 'search', input: { q: 'pricing' } }]);
+  });
+
   it('sends history and tools in OpenAI shape and returns the model tool calls', async () => {
     const { run, calls } = fakeRun({
       choices: [

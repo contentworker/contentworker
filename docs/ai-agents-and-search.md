@@ -39,9 +39,15 @@ binding, so it needs no credentials, and maps tier → model (overridable per ti
 
 | Tier       | Default model                              |
 | ---------- | ------------------------------------------ |
-| `flagship` | `@cf/moonshotai/kimi-k2.6`                 |
+| `flagship` | `@cf/deepseek-ai/deepseek-v4.1-flash-1017` |
 | `balanced` | `@cf/meta/llama-3.3-70b-instruct-fp8-fast` |
 | `fast`     | `@cf/zai-org/glm-4.7-flash`                |
+
+A structured call (`outputSchema`) sends `response_format: json_schema`: the schema itself to the
+models on Workers AI's own JSON mode (the Llama family, gpt-oss), and OpenAI's
+`{ name, schema }` envelope to every other model, which is the shape the flagship and `fast`
+defaults document. Check a model's planned deprecation date in the Workers AI catalog before
+pinning it with an override.
 
 With `AI_GATEWAY_ID` set (the fleet renders one gateway per deployment), calls route through
 the AI gateway via the binding's `gateway` option; the gateway applies its rate limit,
