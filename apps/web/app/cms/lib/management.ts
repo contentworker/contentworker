@@ -819,6 +819,8 @@ export const PERMISSION_SCOPES = [
   { value: 'content:write', label: 'Create and edit content' },
   { value: 'content:publish', label: 'Publish content' },
   { value: 'content:manage', label: 'Change content types' },
+  { value: 'assets:read', label: 'Read assets' },
+  { value: 'assets:write', label: 'Upload and edit assets' },
   { value: 'space:admin', label: 'Administer the space' },
   { value: 'workflow:approve', label: 'Decide workflow approvals' },
 ] as const;

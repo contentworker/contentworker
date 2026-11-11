@@ -12,6 +12,7 @@ import {
   moveEntry,
   publishContentType,
   publishEntry,
+  SYSTEM_CALLER,
   setContentTypePreview,
   unpublishEntry,
   updateEntry,
@@ -495,7 +496,10 @@ export function registerWriteTools(server: McpServer, t: ToolContext): void {
       guard(SCOPES.contentPublish, scopeOf(args));
       const type = await guardEntry(scopeOf(args), args.id, 'publish');
       if (deps.moderateBeforePublish) {
-        const verdict = await moderateEntry(ctx, agents, scopeOf(args), args.id);
+        // The gate judges every field: a writer must not be able to hide anything from it.
+        const verdict = await moderateEntry(ctx, agents, scopeOf(args), args.id, {
+          principal: SYSTEM_CALLER,
+        });
         if (verdict.flagged) {
           throw new ValidationError([
             {

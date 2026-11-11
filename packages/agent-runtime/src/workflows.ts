@@ -324,7 +324,15 @@ export async function moderateWorkflow(
       usage: ZERO,
     };
   }
-  const { flagged, categories, usage } = await act.classify(input.scope, loaded.text);
+  const denied = input.deniedFields ?? [];
+  const text = denied.length
+    ? Object.entries(loaded.fields)
+        .filter(([apiId]) => !denied.includes(apiId))
+        .flatMap(([, localized]) => Object.values(localized))
+        .filter((v): v is string => typeof v === 'string')
+        .join('\n')
+    : loaded.text;
+  const { flagged, categories, usage } = await act.classify(input.scope, text);
   if (flagged) {
     await act.record(input.scope, input.entryId, `moderation hold: ${categories.join(', ')}`);
     return {

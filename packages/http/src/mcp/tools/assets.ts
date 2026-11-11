@@ -52,7 +52,8 @@ export function registerAssetTools(server: McpServer, t: ToolContext): void {
         'List the asset library in a space/environment, one page at a time: filter by kind, ' +
         'content type, tag, folder and status (archived assets are left out unless asked for), ' +
         'sort, and pass nextCursor back as cursor for the next page. ids looks up to 100 assets ' +
-        'at once (with the other filters; ids not in the space are left out).',
+        'at once (with the other filters; ids not in the space are left out). contentHash ' +
+        '(SHA-256 hex) finds the assets that already hold a file, once ingest has hashed them.',
       inputSchema: toolSchema('assets_list', () =>
         z.object({
           limit: z.number().int().positive().max(100).optional(),
@@ -72,6 +73,11 @@ export function registerAssetTools(server: McpServer, t: ToolContext): void {
             .optional()
             .describe('assets filed in this folder; null for those in no folder'),
           status: z.enum(['draft', 'published', 'archived', 'all']).optional(),
+          contentHash: z
+            .string()
+            .regex(/^[0-9a-fA-F]{64}$/)
+            .optional()
+            .describe('SHA-256 of a file (hex): the assets with exactly these bytes'),
           sort: z.enum(['updatedAt', 'createdAt', 'size']).optional(),
           order: z.enum(['asc', 'desc']).optional(),
           ...scopeArgs,
@@ -80,7 +86,7 @@ export function registerAssetTools(server: McpServer, t: ToolContext): void {
       annotations: { readOnlyHint: true },
     },
     async (args) => {
-      guard(SCOPES.previewRead, scopeOf(args));
+      guard(SCOPES.assetsRead, scopeOf(args));
       return ok(
         await signedPage(
           scopeOf(args),
@@ -94,6 +100,7 @@ export function registerAssetTools(server: McpServer, t: ToolContext): void {
               ...(args.tag ? { tag: args.tag } : {}),
               ...(args.folderId !== undefined ? { folderId: args.folderId } : {}),
               ...(args.status ? { status: args.status } : {}),
+              ...(args.contentHash ? { contentHash: args.contentHash.toLowerCase() } : {}),
             },
             ...(args.sort || args.order
               ? { sort: { field: args.sort ?? 'updatedAt', direction: args.order ?? 'desc' } }
@@ -162,7 +169,7 @@ export function registerAssetTools(server: McpServer, t: ToolContext): void {
           ),
         );
       }
-      guard(SCOPES.previewRead, scopeOf(args));
+      guard(SCOPES.assetsRead, scopeOf(args));
       const page = await searchAssets(ctx, assetSearch, scopeOf(args), query);
       return ok({
         ...page,
@@ -182,7 +189,7 @@ export function registerAssetTools(server: McpServer, t: ToolContext): void {
       annotations: { readOnlyHint: true },
     },
     async (args) => {
-      guard(SCOPES.previewRead, scopeOf(args));
+      guard(SCOPES.assetsRead, scopeOf(args));
       return ok(await signedOne(scopeOf(args), await getAsset(ctx, scopeOf(args), args.id)));
     },
   );
@@ -226,7 +233,7 @@ export function registerAssetTools(server: McpServer, t: ToolContext): void {
       inputSchema: toolSchema('asset_reingest', () => z.object({ id: z.string(), ...scopeArgs })),
     },
     async (args) => {
-      guard(SCOPES.contentWrite, scopeOf(args));
+      guard(SCOPES.assetsWrite, scopeOf(args));
       if (!deps.assetIngest) {
         throw new NotConfiguredError('asset ingest', 'Bind ASSET_EVENTS_QUEUE to re-run ingest');
       }
@@ -252,7 +259,7 @@ export function registerAssetTools(server: McpServer, t: ToolContext): void {
       ),
     },
     async (args) => {
-      guard(SCOPES.contentWrite, scopeOf(args));
+      guard(SCOPES.assetsWrite, scopeOf(args));
       if (!deps.assetIngest) {
         throw new NotConfiguredError('asset ingest', 'Bind ASSET_EVENTS_QUEUE to reindex assets');
       }
@@ -297,7 +304,7 @@ export function registerAssetTools(server: McpServer, t: ToolContext): void {
       annotations: { readOnlyHint: true },
     },
     async (args) => {
-      guard(SCOPES.previewRead, scopeOf(args));
+      guard(SCOPES.assetsRead, scopeOf(args));
       // As the REST route: a key with content grants reads no assets.
       if (principal.contentGrants) return ok({ items: [], total: 0 });
       const page = await listPreviewAssets(
@@ -338,7 +345,7 @@ export function registerAssetTools(server: McpServer, t: ToolContext): void {
       annotations: { readOnlyHint: true },
     },
     async (args) => {
-      guard(SCOPES.previewRead, scopeOf(args));
+      guard(SCOPES.assetsRead, scopeOf(args));
       if (principal.contentGrants) {
         throw new ForbiddenError('assets (a key with content grants reads no assets)');
       }
@@ -367,7 +374,7 @@ export function registerAssetTools(server: McpServer, t: ToolContext): void {
       ),
     },
     async (args) => {
-      guard(SCOPES.contentWrite, scopeOf(args));
+      guard(SCOPES.assetsWrite, scopeOf(args));
       return ok(await moveAssets(ctx, scopeOf(args), { ids: args.ids, folderId: args.folderId }));
     },
   );
@@ -393,7 +400,7 @@ export function registerAssetTools(server: McpServer, t: ToolContext): void {
       inputSchema: toolSchema('asset_restore', () => z.object({ id: z.string(), ...scopeArgs })),
     },
     async (args) => {
-      guard(SCOPES.contentWrite, scopeOf(args));
+      guard(SCOPES.assetsWrite, scopeOf(args));
       return ok(await signedOne(scopeOf(args), await restoreAsset(ctx, scopeOf(args), args.id)));
     },
   );
@@ -432,7 +439,7 @@ export function registerAssetTools(server: McpServer, t: ToolContext): void {
       annotations: { readOnlyHint: true },
     },
     async (args) => {
-      guard(SCOPES.previewRead, scopeOf(args));
+      guard(SCOPES.assetsRead, scopeOf(args));
       return ok(await listAssetFolders(ctx, scopeOf(args)));
     },
   );
@@ -451,7 +458,7 @@ export function registerAssetTools(server: McpServer, t: ToolContext): void {
       ),
     },
     async (args) => {
-      guard(SCOPES.contentWrite, scopeOf(args));
+      guard(SCOPES.assetsWrite, scopeOf(args));
       return ok(
         await createAssetFolder(ctx, scopeOf(args), { name: args.name, parentId: args.parentId }),
       );
@@ -474,7 +481,7 @@ export function registerAssetTools(server: McpServer, t: ToolContext): void {
       ),
     },
     async (args) => {
-      guard(SCOPES.contentWrite, scopeOf(args));
+      guard(SCOPES.assetsWrite, scopeOf(args));
       return ok(
         await updateAssetFolder(ctx, scopeOf(args), args.id, {
           ...(args.name !== undefined ? { name: args.name } : {}),
@@ -493,7 +500,7 @@ export function registerAssetTools(server: McpServer, t: ToolContext): void {
       ),
     },
     async (args) => {
-      guard(SCOPES.contentWrite, scopeOf(args));
+      guard(SCOPES.assetsWrite, scopeOf(args));
       await deleteAssetFolder(ctx, scopeOf(args), args.id);
       return ok({ deleted: args.id });
     },

@@ -1,3 +1,4 @@
+import { ForbiddenError, type Principal, SCOPES } from '@contentworker/domain';
 import {
   FixedClock,
   InMemoryContentStore,
@@ -23,6 +24,14 @@ import {
 } from '../src/index';
 
 const scope = { spaceId: 'blog', environmentId: 'main' };
+const SYS = { principal: SYSTEM_CALLER } as const;
+/** A role over posts that may not read `body`; `actions` decides read or write. */
+const role = (actions: ('read' | 'write')[], contentTypeApiId = 'post'): Principal => ({
+  spaceId: 'blog',
+  kind: 'cma',
+  scopes: [SCOPES.contentWrite],
+  contentGrants: [{ contentTypeApiId, actions, deniedFields: ['body'] }],
+});
 
 function setup() {
   const store = new InMemoryContentStore();
@@ -81,7 +90,7 @@ describe('auditEntry', () => {
 
   it('returns structured findings without creating tasks by default', async () => {
     const ai = new StubAIProvider(() => FINDINGS);
-    const result = await auditEntry(ctx, ai, scope, entryId);
+    const result = await auditEntry(ctx, ai, scope, entryId, {}, SYS);
     expect(result.findings).toHaveLength(3);
     expect(result.taskIds).toEqual([]);
     expect(await listTasks(ctx, scope, entryId)).toHaveLength(0);
@@ -89,11 +98,18 @@ describe('auditEntry', () => {
 
   it('emits a work-package task per finding at/above the severity threshold', async () => {
     const ai = new StubAIProvider(() => FINDINGS);
-    const result = await auditEntry(ctx, ai, scope, entryId, {
-      createTasks: true,
-      taskSeverity: 'warning',
-      assignee: 'editor@example.com',
-    });
+    const result = await auditEntry(
+      ctx,
+      ai,
+      scope,
+      entryId,
+      {
+        createTasks: true,
+        taskSeverity: 'warning',
+        assignee: 'editor@example.com',
+      },
+      SYS,
+    );
     // error + warning qualify; info does not.
     expect(result.taskIds).toHaveLength(2);
     const tasks = await listTasks(ctx, scope, entryId);
@@ -104,10 +120,17 @@ describe('auditEntry', () => {
 
   it('only creates tasks for errors when taskSeverity=error', async () => {
     const ai = new StubAIProvider(() => FINDINGS);
-    const result = await auditEntry(ctx, ai, scope, entryId, {
-      createTasks: true,
-      taskSeverity: 'error',
-    });
+    const result = await auditEntry(
+      ctx,
+      ai,
+      scope,
+      entryId,
+      {
+        createTasks: true,
+        taskSeverity: 'error',
+      },
+      SYS,
+    );
     expect(result.taskIds).toHaveLength(1);
   });
 
@@ -120,16 +143,41 @@ describe('auditEntry', () => {
         { severity: 'warning', message: 'Too short', suggestedAction: 'Expand it', extra: 1 },
       ],
     }));
-    const result = await auditEntry(ctx, ai, scope, entryId, { createTasks: true });
+    const result = await auditEntry(ctx, ai, scope, entryId, { createTasks: true }, SYS);
     // Only the well-formed warning is a finding, and only it becomes a task.
     expect(result.findings.map((f) => f.message)).toEqual(['Too short']);
     expect(result.taskIds).toHaveLength(1);
+  });
+
+  it('audits only what the role may read, and needs write on the type to create tasks', async () => {
+    const ai = new StubAIProvider(() => FINDINGS);
+    await expect(
+      auditEntry(ctx, ai, scope, entryId, {}, { principal: role(['read', 'write'], 'page') }),
+    ).rejects.toThrow(ForbiddenError);
+    await expect(
+      auditEntry(ctx, ai, scope, entryId, { createTasks: true }, { principal: role(['read']) }),
+    ).rejects.toThrow('content:write:post');
+    expect(ai.requests).toHaveLength(0);
+    expect(await listTasks(ctx, scope, entryId)).toHaveLength(0);
+
+    const result = await auditEntry(ctx, ai, scope, entryId, {}, { principal: role(['read']) });
+    expect(result.findings).toHaveLength(3);
+    const prompt = ai.requests[0]?.prompt ?? '';
+    expect(prompt).toContain('Hi');
+    // Neither the value nor the field itself is shown.
+    expect(prompt).not.toContain('Short.');
+    expect(prompt).not.toContain('body');
   });
 });
 
 /** AgentRunner double: canned outcome per workflow, records every invocation. */
 function fakeRunner(outcomes: Partial<Record<string, AgentRunOutcome>> = {}) {
-  const calls: { workflow: string; entryId: string; autoApply?: boolean }[] = [];
+  const calls: {
+    workflow: string;
+    entryId: string;
+    autoApply?: boolean;
+    deniedFields?: readonly string[];
+  }[] = [];
   const clean: AgentRunOutcome = {
     status: 'completed',
     decisions: ['clean'],
@@ -137,7 +185,12 @@ function fakeRunner(outcomes: Partial<Record<string, AgentRunOutcome>> = {}) {
   };
   const runner: AgentRunner = {
     run: async (workflow, input) => {
-      calls.push({ workflow, entryId: input.entryId, autoApply: input.autoApply });
+      calls.push({
+        workflow,
+        entryId: input.entryId,
+        autoApply: input.autoApply,
+        ...(input.deniedFields ? { deniedFields: input.deniedFields } : {}),
+      });
       return outcomes[workflow] ?? clean;
     },
   };
@@ -174,7 +227,7 @@ describe('moderateEntry', () => {
 
   it('reports a clean entry and records the run in the ledger', async () => {
     const { runner, calls } = fakeRunner();
-    const result = await moderateEntry(ctx, runner, scope, entryId);
+    const result = await moderateEntry(ctx, runner, scope, entryId, SYS);
     expect(result).toMatchObject({ entryId, status: 'completed', flagged: false });
     expect(calls).toEqual([{ workflow: 'moderate', entryId, autoApply: undefined }]);
     const runs = await listAgentRuns(ctx, scope);
@@ -190,14 +243,34 @@ describe('moderateEntry', () => {
         usage: { inputTokens: 10, outputTokens: 5 },
       },
     });
-    const result = await moderateEntry(ctx, runner, scope, entryId);
+    const result = await moderateEntry(ctx, runner, scope, entryId, SYS);
     expect(result.flagged).toBe(true);
     expect(result.decisions).toEqual(['flagged: violence']);
   });
 
+  it('moderates for a role only what it may read, and nothing of a type it can’t', async () => {
+    const { runner, calls } = fakeRunner();
+    await expect(
+      moderateEntry(ctx, runner, scope, entryId, { principal: role(['read'], 'page') }),
+    ).rejects.toThrow(ForbiddenError);
+    expect(calls).toHaveLength(0);
+    await moderateEntry(ctx, runner, scope, entryId, { principal: role(['read']) });
+    expect(calls).toEqual([
+      { workflow: 'moderate', entryId, autoApply: undefined, deniedFields: ['body'] },
+    ]);
+  });
+
+  it('refuses a call that names neither a principal nor the system', async () => {
+    const { runner, calls } = fakeRunner();
+    await expect(moderateEntry(ctx, runner, scope, entryId, {} as never)).rejects.toThrow(
+      ForbiddenError,
+    );
+    expect(calls).toHaveLength(0);
+  });
+
   it('rejects an unknown entry without invoking the runner', async () => {
     const { runner, calls } = fakeRunner();
-    await expect(moderateEntry(ctx, runner, scope, 'missing')).rejects.toThrow(/not found/i);
+    await expect(moderateEntry(ctx, runner, scope, 'missing', SYS)).rejects.toThrow(/not found/i);
     expect(calls).toEqual([]);
   });
 });

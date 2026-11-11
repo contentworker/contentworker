@@ -34,6 +34,7 @@ import {
   assertQueryRespectsFieldRules,
   authorizeContent,
   canAccessContentType,
+  deniedFieldsFor,
   FILTER_OPS,
   maskDeniedFields,
   parseQueryWhere,
@@ -49,7 +50,7 @@ import { z } from 'zod';
 import { ok, scopeArgs, scopeOf, type ToolContext, toolSchema } from './shared';
 
 export function registerReadTools(server: McpServer, t: ToolContext): void {
-  const { deps, ctx, ai, rag, principal, guard } = t;
+  const { deps, ctx, ai, rag, principal, guard, authorizeEntryRead } = t;
   // Drafted blocks find their images as assets_search does.
   const assetSearch = deps.assetSearch ?? assetSearchDeps(rag);
   // --- read / query / search ---------------------------------------------
@@ -481,7 +482,14 @@ export function registerReadTools(server: McpServer, t: ToolContext): void {
     },
     async (args) => {
       guard(SCOPES.searchRead, scopeOf(args));
-      return ok(await relatedEntries(rag, ctx, scopeOf(args), args.id, { topK: args.topK }));
+      // As the route: read on the entry's type, matched on the text the role may read.
+      const type = await authorizeEntryRead(scopeOf(args), args.id);
+      return ok(
+        await relatedEntries(rag, ctx, scopeOf(args), args.id, {
+          topK: args.topK,
+          unreadable: deniedFieldsFor(principal, type),
+        }),
+      );
     },
   );
 
@@ -500,8 +508,12 @@ export function registerReadTools(server: McpServer, t: ToolContext): void {
     },
     async (args) => {
       guard(SCOPES.searchRead, scopeOf(args));
+      const type = await authorizeEntryRead(scopeOf(args), args.id);
       return ok(
-        await findDuplicates(rag, ctx, scopeOf(args), args.id, { threshold: args.threshold }),
+        await findDuplicates(rag, ctx, scopeOf(args), args.id, {
+          threshold: args.threshold,
+          unreadable: deniedFieldsFor(principal, type),
+        }),
       );
     },
   );

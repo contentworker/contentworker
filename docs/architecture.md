@@ -380,7 +380,7 @@ Migration `0016_asset_collections` adds five environment-scoped tables (mirrored
   `packages/domain/src/asset/collection.ts`) are named, ordered, many-to-many sets of assets: at most
   `MAX_COLLECTION_ITEMS` (1,000) members, a change of at most `MAX_COLLECTION_CHANGE` (500) ids per
   call, passed to the store as one JSON parameter. An add past the cap is refused whole (`409`).
-  `content:write` changes them, `preview:read` reads them. Every change emits
+  `assets:write` changes them, `assets:read` reads them. Every change emits
   `asset_collection.changed`. Deleting an asset removes its memberships in the same unit and emits
   one `asset_collection.changed` per collection it leaves (at most 100). Export, import and clone
   carry collections (`snapshots.ts`), keeping the members whose asset the snapshot carries or the
@@ -432,7 +432,7 @@ Migration `0016_asset_collections` adds five environment-scoped tables (mirrored
   entry) and is kept a day. `GET …/asset-zips/:id` adds a `downloadUrl`, a 15-minute signed URL
   (`READ_URL_TTL_SECONDS`), once the job has `completed`. The sweep `expired-zips` (at most 100 a
   sweep), the `zips/` lifecycle rule (2 days) and an environment purge remove archives.
-  `preview:read` requests and reads them.
+  `assets:read` requests and reads them.
 
 ### Asset ingest and search
 

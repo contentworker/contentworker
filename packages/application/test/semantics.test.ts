@@ -100,4 +100,13 @@ describe('content semantics', () => {
     expect(rep.vector).toHaveLength(512);
     expect(rep.modelId).toBe('local-hash-v1');
   });
+
+  it('embeds only the fields the caller may read', async () => {
+    const id = await addArticle('Vectors', 'secret salary figures');
+    const masked = await getEntryEmbedding(rag, ctx, scope, id, { unreadable: ['body'] });
+    const titleOnly = (await rag.embeddings.embed(['Vectors'], { taskType: 'document' }))[0];
+    expect(masked.vector).toEqual(titleOnly);
+    const whole = await getEntryEmbedding(rag, ctx, scope, id);
+    expect(whole.vector).not.toEqual(titleOnly);
+  });
 });

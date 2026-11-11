@@ -423,15 +423,17 @@ export interface UndeclaredOverrideIssue extends FieldIssue {
  * locale. That one came from stored content (a block moved, duplicated, re-inserted by an undo,
  * copied to another locale, carried back by a client), so it passes and the save drops it.
  * `after` is the edit as sent, before that drop; a `_responsive` or breakpoint value that isn't a
- * map is validation's to refuse.
+ * map is validation's to refuse. `alsoCarried` are more stored versions whose overrides count as
+ * carried too: the one before `before`, for an undo that spans a save (`prepareFields`).
  */
 export function undeclaredOverrides(
   contentType: { readonly fields: readonly FieldDefinition[] },
   after: EntryFields,
   before: EntryFields | undefined,
+  alsoCarried: readonly EntryFields[] = [],
 ): UndeclaredOverrideIssue[] {
   const issues: UndeclaredOverrideIssue[] = [];
-  const carried = carriedOverrides(contentType, before);
+  const carried = carriedOverrides(contentType, [before, ...alsoCarried]);
   for (const top of contentType.fields) {
     for (const [locale, value] of Object.entries(after[top.apiId] ?? {})) {
       walkBlocks(top, value, top.apiId, [], (variant, item, at, breakpoints) => {
@@ -503,15 +505,25 @@ export function undeclaredOverrides(
 const carriedKey = (block: string, bp: string, prop: string) => `${block}\u0000${bp}\u0000${prop}`;
 
 /**
- * Every override the stored entry holds, anywhere: block type (its current id), breakpoint and
+ * Every override the stored versions hold, anywhere: block type (its current id), breakpoint and
  * prop, and the same with the value, for telling a stale override from a new one.
  */
 function carriedOverrides(
   contentType: { readonly fields: readonly FieldDefinition[] },
-  before: EntryFields | undefined,
+  versions: readonly (EntryFields | undefined)[],
 ): Set<string> {
   const carried = new Set<string>();
-  if (!before) return carried;
+  for (const before of versions) {
+    if (before) addCarried(contentType, before, carried);
+  }
+  return carried;
+}
+
+function addCarried(
+  contentType: { readonly fields: readonly FieldDefinition[] },
+  before: EntryFields,
+  carried: Set<string>,
+): void {
   for (const top of contentType.fields) {
     for (const value of Object.values(before[top.apiId] ?? {})) {
       walkBlocks(top, value, top.apiId, [], (variant, item) => {
@@ -531,7 +543,6 @@ function carriedOverrides(
       });
     }
   }
-  return carried;
 }
 
 /**

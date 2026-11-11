@@ -25,7 +25,7 @@ export function assetRenditionsRoutes(deps: AuthDeps): Hono<AuthVars> {
       ok: renditionDocs.assetRenditionList,
       description: 'The space’s presets (the same in every environment), by name.',
     }),
-    requireScope(SCOPES.previewRead),
+    requireScope(SCOPES.assetsRead),
     async (c) => c.json({ items: await listAssetRenditions(ctx, scopeOf(c)) }),
   );
   app.post(
@@ -48,7 +48,7 @@ export function assetRenditionsRoutes(deps: AuthDeps): Hono<AuthVars> {
   app.get(
     `${BASE}/asset-renditions/:name`,
     doc('Assets', 'Get a rendition preset', { ok: renditionDocs.assetRendition }),
-    requireScope(SCOPES.previewRead),
+    requireScope(SCOPES.assetsRead),
     async (c) => c.json(await getAssetRendition(ctx, scopeOf(c), c.req.param('name'))),
   );
   app.put(

@@ -67,6 +67,21 @@ Design points:
   the dry run's `previousVersion`, so a push landing in between is a `409`, not an overwrite.
   `--no-publish` sends `publish: false`. `model apply`'s plan reads a variant whose `aliases` hold a
   removed apiId as a rename, not a destructive removal.
+- **`blocks push` imports URL and file thumbnails (`thumbnails.ts`).** The admin draws only
+  `{ assetId }` thumbnails (its `img-src` is its own origin), so before the dry run `planThumbnails`
+  reads each `{ url }` (https only, no credentials, a redirect must stay https; 30 s timeout) and
+  each `{ file }` (a path from the blocks file's folder), each source once. It refuses
+  (`thumbnail_refused`, naming `blocks[id].thumbnail`) anything over `MAX_THUMBNAIL_BYTES` (2 MiB,
+  checked against `content-length` and while streaming), a non-2xx answer, or a type outside
+  AVIF, GIF, JPEG, PNG, SVG and WebP (the response's `content-type`; a file's extension). It hashes
+  each image (SHA-256) and looks it up with `GET …/assets?contentHash=&kind=image` (archived left
+  out, oldest first): a hit is reused. Nothing is uploaded until the plan passes its refusals and is
+  confirmed; then each image no asset holds is uploaded once, as a draft named
+  `<block>-thumbnail.<ext>`, and the push sends `{ assetId }`. The dry run's plan carries a pending
+  URL as `{ url }` and a pending file as no thumbnail. Dedupe rides on ingest's `contentHash`, which
+  lands seconds after an upload: a second push inside that window uploads a copy, which ingest marks
+  `duplicateOf` the first. The server never fetches a thumbnail, and still accepts `{ url }` from
+  other clients; the admin just doesn't draw it.
 - **`entries list`** reads Preview (`GET /preview/:space/:env/entries`), since the Management API
   has no entry list; `entries update` merges by field and locale before the `PUT`, because the API
   replaces the whole draft.

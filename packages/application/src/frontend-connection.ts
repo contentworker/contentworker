@@ -3,6 +3,7 @@ import {
   canAccessContentType,
   type FrontendEndpoints,
   frontendEndpoints,
+  holdsScope,
   NotFoundError,
   type Principal,
   scopesForKind,
@@ -130,8 +131,8 @@ async function assertRoleFits(
   if (!roleId) return;
   const role = await ctx.store.roles.get(spaceId, roleId);
   if (!role) throw new NotFoundError('Role', roleId);
-  const allowed = new Set<string>(scopesForKind(kind));
-  const beyond = role.scopes.filter((s) => !allowed.has(s));
+  const allowed = scopesForKind(kind);
+  const beyond = role.scopes.filter((s) => !holdsScope(allowed, s));
   if (beyond.length > 0) {
     throw new ValidationError([
       {

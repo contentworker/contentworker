@@ -1020,14 +1020,12 @@ describe('what a client sends is held to what the assistant made', () => {
 describe('failures, rate and retention', () => {
   it('keeps an internal error’s words out of the card and the conversation', async () => {
     const ada = await person('ada_internal');
+    // A real entry, so the tool gets past its read check to the store.
+    const id = await entryIn(SPACE_A, 'With tasks');
     // No other test reads tasks: without its table, listing them fails inside the store.
     await env.DB.prepare('drop table if exists tasks').run();
     const panel = await socket(ada);
-    const res = await panel.call('act', [
-      'tasks_list',
-      { entryId: 'any-entry' },
-      contextIn(SPACE_A),
-    ]);
+    const res = await panel.call('act', ['tasks_list', { entryId: id }, contextIn(SPACE_A)]);
     expect(res).toMatchObject({ success: false, error: NOT_THROUGH });
     const line = (await messagesOf(ada))
       .flatMap((m) => m.parts)

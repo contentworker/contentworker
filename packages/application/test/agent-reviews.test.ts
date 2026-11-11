@@ -1,3 +1,4 @@
+import { type Principal, SCOPES, ValidationError } from '@contentworker/domain';
 import { FixedClock, InMemoryContentStore, SequenceIdGenerator } from '@contentworker/test-kit';
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
@@ -10,6 +11,7 @@ import {
   listAgentReviews,
   SYSTEM_CALLER,
   settleReviewOutcome,
+  updateContentType,
 } from '../src/index';
 
 const scope = { spaceId: 'hitl', environmentId: 'main' };
@@ -205,6 +207,63 @@ describe('agent reviews (HITL)', () => {
     const after = await ctx.store.agentReviews.get(scope, review.id);
     expect(after?.status).toBe('approved');
     expect(after?.appliedAt).toBeUndefined(); // compensation rolled it back
+  });
+
+  it('applies an approval as the approver’s role allows, counting issues it can’t read', async () => {
+    // A required field added after the entry was saved: the apply's save fails on it.
+    await updateContentType(ctx, SYSTEM_CALLER, scope, 'post', {
+      name: 'Post',
+      displayField: 'title',
+      fields: [
+        {
+          apiId: 'title',
+          name: 'Title',
+          type: 'Symbol',
+          localized: false,
+          required: true,
+          position: 0,
+        },
+        {
+          apiId: 'summary',
+          name: 'Summary',
+          type: 'Text',
+          localized: false,
+          required: false,
+          position: 1,
+        },
+        {
+          apiId: 'notes',
+          name: 'Notes',
+          type: 'Text',
+          localized: false,
+          required: true,
+          position: 2,
+        },
+      ],
+    });
+    const approver: Principal = {
+      spaceId: 'hitl',
+      kind: 'user',
+      subject: 'ann@example.com',
+      scopes: [SCOPES.contentWrite],
+      contentGrants: [
+        { contentTypeApiId: 'post', actions: ['read', 'write'], deniedFields: ['notes'] },
+      ],
+    };
+    const { reviewId } = await proposeReview();
+    const err = await decideAgentReview(ctx, scope, reviewId, {
+      approve: true,
+      principal: approver,
+    }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ValidationError);
+    expect((err as ValidationError).issues).toEqual([
+      expect.objectContaining({ field: '', code: 'hidden', hidden: 1 }),
+    ]);
+    // Without a role in the way, the same refusal names the field.
+    const again = await decideAgentReview(ctx, scope, reviewId, { approve: true }).catch(
+      (e: unknown) => e,
+    );
+    expect(JSON.stringify((again as ValidationError).issues)).toContain('notes');
   });
 
   it('re-drives an approved-but-unapplied review instead of conflicting', async () => {

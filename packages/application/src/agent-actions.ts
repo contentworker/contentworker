@@ -10,8 +10,8 @@ import { recordAgentRun } from './agent-audit';
 import { generateWithBudget } from './ai-budget';
 import { conforms } from './ai-json';
 import { UNTRUSTED_CONTENT_GUARD, wrapUntrusted } from './ai-prompt';
+import { type EntryAiOptions, readEntryForAi } from './content-ai';
 import type { AppContext } from './context';
-import { getEntry } from './entries';
 import { unpublishEntry } from './publishing';
 import { createTask } from './tasks';
 
@@ -24,7 +24,13 @@ import { createTask } from './tasks';
 export interface AgentRunner {
   run(
     workflow: 'enrich' | 'moderate' | 'curate' | 'repurpose',
-    input: { readonly scope: Scope; readonly entryId: string; readonly autoApply?: boolean },
+    input: {
+      readonly scope: Scope;
+      readonly entryId: string;
+      readonly autoApply?: boolean;
+      /** Fields the run must not read (the caller's denied fields); only `moderate` takes it. */
+      readonly deniedFields?: readonly string[];
+    },
   ): Promise<AgentRunOutcome>;
   /**
    * Optional (durable runtimes only): starts the whole on-publish agent pass
@@ -91,9 +97,16 @@ export interface AuditEntryResult {
 
 const SEVERITY_RANK: Record<FindingSeverity, number> = { info: 0, warning: 1, error: 2 };
 
-function describeEntry(ct: ContentType, fields: EntryFields, locale: string): string {
+/** The fields the caller may read, as the model is shown them: a denied one is not even named. */
+function describeEntry(
+  ct: ContentType,
+  fields: EntryFields,
+  locale: string,
+  unreadable: readonly string[],
+): string {
   const lines: string[] = [];
   for (const f of ct.fields) {
+    if (unreadable.includes(f.apiId)) continue;
     const value = fields[f.apiId]?.[locale];
     const shown =
       value === undefined ? '(empty)' : typeof value === 'string' ? value : JSON.stringify(value);
@@ -119,23 +132,29 @@ const FINDING_SCHEMA = {
  * practices, returning structured findings (gaps, inconsistencies, quality
  * issues). With `createTasks`, emits a task ("work package") per qualifying
  * finding via the P13 collaboration layer. Recorded in the agent cost ledger.
+ * Held to `opts.principal`'s role (`readEntryForAi`): read on the type, write too when it creates
+ * tasks, and the model sees only the fields the role may read.
  */
 export async function auditEntry(
   ctx: AppContext,
   ai: AIProvider,
   scope: Scope,
   entryId: string,
-  input: AuditEntryInput = {},
+  input: AuditEntryInput,
+  opts: EntryAiOptions,
 ): Promise<AuditEntryResult> {
-  const { entry, fields } = await getEntry(ctx, scope, entryId);
-  const ct = await ctx.store.contentTypes.get(scope, entry.contentTypeApiId);
-  if (!ct) throw new NotFoundError('ContentType', entry.contentTypeApiId);
+  const { fields, contentTypeApiId, unreadable } = await readEntryForAi(ctx, scope, entryId, {
+    ...opts,
+    apply: input.createTasks === true,
+  });
+  const ct = await ctx.store.contentTypes.get(scope, contentTypeApiId);
+  if (!ct) throw new NotFoundError('ContentType', contentTypeApiId);
   const config = await ctx.store.spaces.getConfig(scope);
   const locale = config?.defaultLocale ?? 'en-US';
 
   const result = await generateWithBudget(ctx, ai, scope, {
     system: `You are a meticulous content editor. Audit the entry for gaps, inconsistencies, missing required information, and quality issues. Return concrete, actionable findings. Use severity "error" for blocking problems, "warning" for quality issues, "info" for nits. ${UNTRUSTED_CONTENT_GUARD}`,
-    prompt: `Content type: ${ct.name}.\nFields:\n${wrapUntrusted(describeEntry(ct, fields, locale))}\n\nList the findings.`,
+    prompt: `Content type: ${ct.name}.\nFields:\n${wrapUntrusted(describeEntry(ct, fields, locale, unreadable))}\n\nList the findings.`,
     tier: input.tier ?? 'balanced',
     maxTokens: 2048,
     outputSchema: {
@@ -198,16 +217,26 @@ export interface ModerateEntryResult {
  * Agent Action: runs the `moderate` workflow against an entry on demand —
  * classifies its text and records a hold when flagged. Recorded in the agent
  * cost ledger like every other run.
+ *
+ * Held to `opts.principal`'s role: read on the type, and only the fields it may read are
+ * classified, since the verdict and its categories say what the text holds. The pre-publish gate
+ * passes `SYSTEM_CALLER` instead: a gate that skipped the fields its caller can't read would
+ * let a writer hide anything there.
  */
 export async function moderateEntry(
   ctx: AppContext,
   agents: AgentRunner,
   scope: Scope,
   entryId: string,
+  opts: EntryAiOptions,
 ): Promise<ModerateEntryResult> {
-  // Surface a 404 for unknown entries instead of the workflow's soft 'skipped'.
-  await getEntry(ctx, scope, entryId);
-  const r = await agents.run('moderate', { scope, entryId });
+  // Surfaces a 404 for unknown entries instead of the workflow's soft 'skipped'.
+  const { unreadable } = await readEntryForAi(ctx, scope, entryId, { ...opts, apply: false });
+  const r = await agents.run('moderate', {
+    scope,
+    entryId,
+    ...(unreadable.length ? { deniedFields: unreadable } : {}),
+  });
   await recordAgentRun(ctx, scope, {
     workflow: 'moderate',
     entryId,

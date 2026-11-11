@@ -52,6 +52,9 @@ export function workflowManagementRoutes(deps: AuthDeps): Hono<AuthVars> {
     requireScope(SCOPES.previewRead),
     async (c) => {
       const body = await parseBody(c, transitionBody);
+      // Only an entry whose type the role reads can be moved between steps (404, then 403, as a
+      // read). Not write: an approver's role reads the types it approves, and moves entries along.
+      await authorizeEntryRead(c, c.req.param('id'));
       return c.json(
         await transitionEntry(
           ctx,

@@ -16,8 +16,45 @@ export const SCOPES = {
   spaceAdmin: 'space:admin', // manage API keys
   /** Decide workflow approvals (the Approver preset and up). */
   workflowApprove: 'workflow:approve',
+  /** Read assets, drafts included: files, metadata, folders, collections, renditions, usage. */
+  assetsRead: 'assets:read',
+  /** Upload, replace, edit, organize and restore assets (publishing stays `content:publish`). */
+  assetsWrite: 'assets:write',
 } as const;
 export type PermissionScope = (typeof SCOPES)[keyof typeof SCOPES];
+
+/**
+ * Scopes a principal holds by implication: `assets:read` comes with `preview:read`, and
+ * `assets:write` with `content:write`. They split asset access out of the content scopes without
+ * changing any stored key, role or token: everything that could reach assets before still can,
+ * and a new key or role can now be granted asset access alone. Resolved at the decision point
+ * ({@link holdsScope}), never written back, so a scope set is stored as it was granted.
+ */
+export const IMPLIED_SCOPES: Readonly<
+  Partial<Record<PermissionScope, readonly PermissionScope[]>>
+> = {
+  [SCOPES.assetsRead]: [SCOPES.previewRead],
+  [SCOPES.assetsWrite]: [SCOPES.contentWrite],
+};
+
+/**
+ * The scopes both sets grant, implication included: `a`'s scopes that `b` holds, then `b`'s that
+ * `a` holds. A consented scope set capped by a role, or the reverse: consent to `preview:read`
+ * capped by a role granting only `assets:read` leaves `assets:read`.
+ */
+export function intersectScopes(a: readonly string[], b: readonly string[]): string[] {
+  const out = new Set<string>();
+  for (const s of a) if (holdsScope(b, s)) out.add(s);
+  for (const s of b) if (holdsScope(a, s)) out.add(s);
+  return [...out];
+}
+
+/** True when `scopes` grants `scope`, directly or by implication ({@link IMPLIED_SCOPES}). */
+export function holdsScope(scopes: readonly string[], scope: string): boolean {
+  if (scopes.includes(scope)) return true;
+  const by = IMPLIED_SCOPES[scope as PermissionScope];
+  return by !== undefined && by.some((s) => scopes.includes(s));
+}
 
 /** Default scope set granted to each key kind. */
 export function scopesForKind(kind: ApiKeyKind): PermissionScope[] {
@@ -32,6 +69,8 @@ export function scopesForKind(kind: ApiKeyKind): PermissionScope[] {
         SCOPES.searchRead,
         SCOPES.spaceAdmin,
         SCOPES.workflowApprove,
+        SCOPES.assetsRead,
+        SCOPES.assetsWrite,
       ];
     case 'cda':
       return [SCOPES.deliveryRead, SCOPES.searchRead];
@@ -297,7 +336,7 @@ export function authorize(
   scope: PermissionScope,
   targetSpaceId: string,
 ): void {
-  if (!inScope(principal, targetSpaceId) || !principal.scopes.includes(scope)) {
+  if (!inScope(principal, targetSpaceId) || !holdsScope(principal.scopes, scope)) {
     throw new ForbiddenError(scope);
   }
 }

@@ -1,4 +1,5 @@
 import type { ApiConfig } from '@contentworker/platform/config';
+import type { StubAIProvider } from '@contentworker/test-kit';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from '../../src/api/app';
 import { testConfig } from './config';
@@ -33,12 +34,14 @@ const symbolField = (apiId: string, position: number) => ({
 
 describe('granular RBAC over HTTP', () => {
   let app: ReturnType<typeof createApp>;
+  let model: StubAIProvider;
   let editor: Record<string, string>;
   let postId: string;
   let pageId: string;
 
   beforeEach(async () => {
     const { ctx, rag, blob, ai } = wire(config);
+    model = ai as StubAIProvider;
     app = createApp(ctx, config, rag, blob, ai);
 
     // Model two types; publish both.
@@ -172,6 +175,215 @@ describe('granular RBAC over HTTP', () => {
       await app.request(`${M}/entries/${postId}`, { headers: admin })
     ).json()) as { fields: Record<string, unknown> };
     expect(again.fields.internalNotes).toEqual({ 'en-US': 'secret' });
+  });
+
+  describe('AI runs over an entry', () => {
+    const post = (path: string, headers: Record<string, string>, body: unknown) =>
+      app.request(`${M}${path}`, { method: 'POST', headers, body: JSON.stringify(body) });
+    const prompts = () => model.requests.map((r) => `${r.system}\n${r.prompt}`).join('\n');
+    const stored = async (id: string) =>
+      (
+        (await (await app.request(`${M}/entries/${id}`, { headers: admin })).json()) as {
+          fields: Record<string, unknown>;
+        }
+      ).fields;
+    const retitle = async (promptTemplate: string, targetField = 'title') => {
+      const res = await post('/ai-actions', admin, {
+        name: 'Retitle',
+        promptTemplate,
+        targetField,
+      });
+      expect(res.status).toBe(201);
+      return ((await res.json()) as { id: string }).id;
+    };
+
+    it('refuses every run on a type the role can’t read, as GET …/entries/:id does', async () => {
+      expect((await app.request(`${M}/entries/${pageId}`, { headers: editor })).status).toBe(403);
+      const actionId = await retitle('{{field.title}}');
+      const runs: [string, unknown][] = [
+        [`/entries/${pageId}/translate`, { targetLocale: 'en-US' }],
+        [`/entries/${pageId}/summarize`, {}],
+        [`/entries/${pageId}/autofill`, { field: 'title' }],
+        [`/entries/${pageId}/suggest-tags`, {}],
+        [`/entries/${pageId}/apply-tags`, { newTags: ['x'] }],
+        [`/ai-actions/${actionId}/run`, { entryId: pageId }],
+      ];
+      for (const [path, body] of runs) {
+        const res = await post(path, editor, body);
+        expect(res.status, path).toBe(403);
+        expect(await res.text(), path).not.toContain('secret');
+      }
+      expect(model.requests).toHaveLength(0);
+      // A missing entry is a 404, as the read answers.
+      expect((await post('/entries/nope/summarize', editor, {})).status).toBe(404);
+    });
+
+    it('never shows a denied field to the model or in the answer, and applies around it', async () => {
+      // No localized field, so nothing to translate: the answer comes straight from the entry.
+      const translated = await post(`/entries/${postId}/translate`, editor, {
+        targetLocale: 'en-US',
+        apply: true,
+      });
+      expect(translated.status, await translated.clone().text()).toBe(200);
+      const body = (await translated.json()) as { fields: object; applied: boolean };
+      expect(body.applied).toBe(false);
+      expect(body.fields).toEqual({ title: { 'en-US': 'A post' } });
+
+      const summarized = await post(`/entries/${postId}/summarize`, editor, {});
+      expect(summarized.status, await summarized.clone().text()).toBe(200);
+
+      expect(
+        (await post(`/entries/${postId}/autofill`, editor, { field: 'internalNotes' })).status,
+      ).toBe(403);
+      const filled = await post(`/entries/${postId}/autofill`, editor, {
+        field: 'title',
+        apply: true,
+      });
+      expect(filled.status, await filled.clone().text()).toBe(200);
+
+      const actionId = await retitle('{{field.title}} / {{field.internalNotes}}');
+      const ran = await post(`/ai-actions/${actionId}/run`, editor, {
+        entryId: postId,
+        apply: true,
+      });
+      expect(ran.status, await ran.clone().text()).toBe(200);
+      const notesAction = await retitle('{{field.title}}', 'internalNotes');
+      const overwrite = await post(`/ai-actions/${notesAction}/run`, editor, {
+        entryId: postId,
+        apply: true,
+      });
+      expect(overwrite.status).toBe(403);
+
+      expect(model.requests.length).toBeGreaterThan(0);
+      expect(prompts()).not.toContain('secret');
+      expect((await stored(postId)).internalNotes).toEqual({ 'en-US': 'secret' });
+    });
+
+    it('audits and moderates only entries the role reads, and never shows a denied field', async () => {
+      for (const path of [`/entries/${pageId}/audit`, `/entries/${pageId}/moderate`]) {
+        const res = await post(path, editor, {});
+        expect(res.status, path).toBe(403);
+      }
+      expect(model.requests).toHaveLength(0);
+      // The dev stub answers no findings list (422); what matters is what it was shown.
+      const audited = await post(`/entries/${postId}/audit`, editor, {});
+      expect(audited.status, await audited.clone().text()).not.toBe(403);
+      expect(model.requests.length).toBeGreaterThan(0);
+      expect(prompts()).not.toContain('secret');
+      expect(prompts()).not.toContain('internalNotes');
+      expect((await post(`/entries/${postId}/moderate`, editor, {})).status).toBe(200);
+    });
+
+    it('tags only entries the role writes; a writer may coin vocabulary tags', async () => {
+      const put = (id: string, headers: Record<string, string>) =>
+        app.request(`${M}/entries/${id}/metadata`, {
+          method: 'PUT',
+          headers,
+          body: JSON.stringify({ tags: [], concepts: [] }),
+        });
+      expect((await put(pageId, editor)).status).toBe(403);
+      expect((await put(postId, editor)).status).toBe(200);
+
+      // Without content:manage: the one way to add a tag that POST …/taxonomy/tags would refuse.
+      const fresh = await post(`/entries/${postId}/apply-tags`, editor, { newTags: ['fresh'] });
+      expect(fresh.status, await fresh.clone().text()).toBe(200);
+      expect((await post('/taxonomy/tags', editor, { name: 'direct' })).status).toBe(403);
+      const tag = await post('/taxonomy/tags', admin, { name: 'news' });
+      expect(tag.status).toBe(201);
+      const { id: tagId } = (await tag.json()) as { id: string };
+      const reused = await post(`/entries/${postId}/apply-tags`, editor, { tagIds: [tagId] });
+      expect(reused.status, await reused.clone().text()).toBe(200);
+    });
+
+    it('comments and keeps tasks only on entries of a type the role reads', async () => {
+      const json = async (res: Response) => (await res.json()) as { id: string };
+      const comment = await json(await post(`/entries/${pageId}/comments`, admin, { body: 'hi' }));
+      const task = await json(await post(`/entries/${pageId}/tasks`, admin, { body: 'do' }));
+      const send = (method: string, path: string, body?: unknown) =>
+        app.request(`${M}${path}`, {
+          method,
+          headers: editor,
+          ...(body ? { body: JSON.stringify(body) } : {}),
+        });
+      const refused: [string, string, unknown?][] = [
+        ['POST', `/entries/${pageId}/comments`, { body: 'x' }],
+        ['DELETE', `/comments/${comment.id}`],
+        ['POST', `/entries/${pageId}/tasks`, { body: 'x' }],
+        ['PUT', `/tasks/${task.id}`, { status: 'resolved' }],
+        ['DELETE', `/tasks/${task.id}`],
+      ];
+      for (const [method, path, body] of refused) {
+        expect((await send(method, path, body)).status, `${method} ${path}`).toBe(403);
+      }
+      // Nothing was written or removed.
+      const listed = (await (
+        await app.request(`${M}/entries/${pageId}/tasks`, { headers: admin })
+      ).json()) as { items: { status: string }[] };
+      expect(listed.items).toEqual([expect.objectContaining({ status: 'open' })]);
+      expect((await send('POST', `/entries/${postId}/comments`, { body: 'ok' })).status).toBe(201);
+      const own = await json(await send('POST', `/entries/${postId}/tasks`, { body: 'ok' }));
+      expect((await send('PUT', `/tasks/${own.id}`, { status: 'resolved' })).status).toBe(200);
+      expect((await send('DELETE', `/tasks/${own.id}`)).status).toBe(204);
+    });
+
+    it('moves only entries of a type the role reads between workflow steps', async () => {
+      const move = (id: string) =>
+        post(`/entries/${id}/workflow/transition`, editor, { workflowId: 'wf', toStepId: 's' });
+      expect((await move(pageId)).status).toBe(403);
+      // Past the grant check: the (unknown) workflow is what refuses it.
+      expect((await move(postId)).status).toBe(404);
+    });
+
+    it('embeds only the text the role may read', async () => {
+      const created = await app.request('/spaces/s1/roles', {
+        method: 'POST',
+        headers: admin,
+        body: JSON.stringify({
+          name: 'Post searcher',
+          scopes: ['search:read', 'preview:read'],
+          contentGrants: [
+            { contentTypeApiId: 'post', actions: ['read'], deniedFields: ['internalNotes'] },
+          ],
+        }),
+      });
+      const role = (await created.json()) as { id: string };
+      const keyRes = await app.request('/spaces/s1/api-keys', {
+        method: 'POST',
+        headers: admin,
+        body: JSON.stringify({ kind: 'cma', roleId: role.id }),
+      });
+      const { token } = (await keyRes.json()) as { token: string };
+      const searcher = { Authorization: `Bearer ${token}` };
+      const vector = async (id: string, headers: Record<string, string>) => {
+        const res = await app.request(`${M}/entries/${id}/embedding`, { headers });
+        return { status: res.status, body: (await res.json()) as { vector?: number[] } };
+      };
+      expect((await vector(pageId, searcher)).status).toBe(403);
+      for (const kind of ['related', 'duplicates']) {
+        const at = (id: string) => app.request(`${M}/entries/${id}/${kind}`, { headers: searcher });
+        expect((await at(pageId)).status, kind).toBe(403);
+        expect((await at(postId)).status, kind).toBe(200);
+      }
+      const masked = await vector(postId, searcher);
+      expect(masked.status).toBe(200);
+      const whole = await vector(postId, admin);
+      expect(masked.body.vector).toHaveLength(whole.body.vector?.length ?? -1);
+      expect(masked.body.vector).not.toEqual(whole.body.vector);
+    });
+
+    it('still runs for an unrestricted caller, over every type and field', async () => {
+      const res = await post(`/entries/${pageId}/translate`, admin, { targetLocale: 'en-US' });
+      expect(res.status).toBe(200);
+      expect(((await res.json()) as { fields: object }).fields).toEqual({
+        title: { 'en-US': 'A page' },
+        internalNotes: { 'en-US': 'secret' },
+      });
+      const actionId = await retitle('{{field.internalNotes}}');
+      expect((await post(`/ai-actions/${actionId}/run`, admin, { entryId: pageId })).status).toBe(
+        200,
+      );
+      expect(prompts()).toContain('secret');
+    });
   });
 
   it('counts an issue in a field the writer may not read, never naming it', async () => {

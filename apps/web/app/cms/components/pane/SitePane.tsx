@@ -8,7 +8,7 @@
  * editor's: nothing here writes.
  */
 
-import type { BlockOp, ContentType, EntryFields } from '@contentworker/domain';
+import type { BlockOp, Breakpoint, ContentType, EntryFields } from '@contentworker/domain';
 import type { Capability } from '@contentworker/sdk-core/live-preview';
 import { Alert, AlertDescription, AlertTitle } from '@contentworker/ui/alert';
 import { Button } from '@contentworker/ui/button';
@@ -19,7 +19,8 @@ import { Monitor, Smartphone, Tablet } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { ProposalLine } from '~/cms/components/canvas/ProposalLine';
 import { LoadingStatus } from '~/cms/components/loading';
-import { DEVICE_WIDTHS, type Device, type SiteStatus } from '~/cms/lib/live-preview/frame-channel';
+import { byBreakpoint, defaultPreset, type WidthPreset, widthPresets } from '~/cms/lib/breakpoints';
+import type { SiteStatus } from '~/cms/lib/live-preview/frame-channel';
 import { ghostOps } from '~/cms/lib/live-preview/proposals';
 import { useSiteFrame } from './use-site-frame';
 
@@ -27,11 +28,7 @@ import { useSiteFrame } from './use-site-frame';
 export const LIVE_PREVIEW_GUIDE = 'https://docs.contentworker.app/guides/live-preview/';
 
 const DEVICE_KEY = 'cw.entry-pane.device';
-export const DEVICES: readonly { value: Device; label: string; icon: typeof Monitor }[] = [
-  { value: 'desktop', label: 'Desktop', icon: Monitor },
-  { value: 'tablet', label: 'Tablet', icon: Tablet },
-  { value: 'phone', label: 'Phone', icon: Smartphone },
-];
+const DEVICE_ICONS = { desktop: Monitor, tablet: Tablet, phone: Smartphone } as const;
 
 export interface SitePaneProps {
   readonly spaceId: string;
@@ -54,6 +51,11 @@ export interface SitePaneProps {
   /** A marked element clicked in the page, and the entries the page said it renders. */
   readonly onPick: (ref: string, pageEntries: readonly string[]) => void;
   /**
+   * The catalog's breakpoints: the frame's widths are Base and one per breakpoint when it declares
+   * any (`widthPresets`), else Desktop, Tablet and Phone.
+   */
+  readonly breakpoints?: readonly Breakpoint[];
+  /**
    * The block patch a Coworker card for this entry proposes, while it waits: the page shows its
    * blocks as ghosts, outlined as proposed. Nothing here saves it; the card does, on Confirm.
    */
@@ -63,13 +65,14 @@ export interface SitePaneProps {
 }
 
 export function SitePane(props: SitePaneProps) {
-  const [device, setDevice] = useDevice();
+  const presets = useMemo(() => widthPresets(props.breakpoints), [props.breakpoints]);
+  const [preset, setPreset] = useWidthPreset(presets);
   const [mode, setMode] = useState<'edit' | 'view'>('edit');
   const shownOps = useMemo(
     () => (props.proposal ? ghostOps(props.proposal) : null),
     [props.proposal],
   );
-  const site = useSiteFrame({ ...props, mode, device, proposal: shownOps });
+  const site = useSiteFrame({ ...props, mode, width: preset.width, proposal: shownOps });
   const { status, origin, note, live, reload } = site;
   // What clicks do now: View until the page answers, whatever was chosen.
   const effectiveMode = live ? mode : 'view';
@@ -80,22 +83,7 @@ export function SitePane(props: SitePaneProps) {
   return (
     <section aria-label="Site" className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <Segmented
-          aria-label="Device width"
-          value={device}
-          onValueChange={(v) => setDevice(v as Device)}
-        >
-          {DEVICES.map(({ value, label, icon: Icon }) => (
-            <SegmentedItem
-              key={value}
-              value={value}
-              aria-label={`${label}, ${DEVICE_WIDTHS[value]} pixels`}
-              title={`${label} (${DEVICE_WIDTHS[value]}px)`}
-            >
-              <Icon aria-hidden="true" />
-            </SegmentedItem>
-          ))}
-        </Segmented>
+        <WidthSwitch presets={presets} value={preset} onChange={setPreset} />
         <Segmented
           aria-label="Clicks in the page"
           // What clicks do now: View until the page answers, whatever was chosen.
@@ -341,24 +329,68 @@ const UNAVAILABLE: Record<string, string> = {
   error: 'The preview link couldn’t be made just now.',
 };
 
-/** The device width, remembered per browser; Desktop until someone picks another. */
-export function useDevice(): [Device, (d: Device) => void] {
-  const [device, setDevice] = useState<Device>('desktop');
+/**
+ * The frame's width: the three devices as icons, or Base and the catalog's breakpoints by name,
+ * each with its width in its accessible name.
+ */
+export function WidthSwitch(props: {
+  presets: readonly WidthPreset[];
+  value: WidthPreset;
+  onChange: (id: string) => void;
+}) {
+  return (
+    <Segmented aria-label="Device width" value={props.value.id} onValueChange={props.onChange}>
+      {props.presets.map((p) => {
+        const Icon = p.device ? DEVICE_ICONS[p.device] : null;
+        return (
+          <SegmentedItem
+            key={p.id}
+            value={p.id}
+            aria-label={`${p.label}, ${p.width} pixels`}
+            title={`${p.label} (${p.width}px)`}
+            className={Icon ? undefined : 'max-w-32'}
+          >
+            {Icon ? <Icon aria-hidden="true" /> : <span className="truncate">{p.label}</span>}
+          </SegmentedItem>
+        );
+      })}
+    </Segmented>
+  );
+}
+
+/**
+ * The frame's width preset. With the catalog's breakpoints it opens on Base every time and is never
+ * remembered: a breakpoint picked yesterday must not have today's first Look edit write an
+ * override. Without them, the device is remembered per browser, Desktop until someone picks another.
+ */
+export function useWidthPreset(
+  presets: readonly WidthPreset[],
+): [WidthPreset, (id: string) => void] {
+  const [kept, setKept] = useState<string | null>(null);
+  const [picked, setPicked] = useState<string | null>(null);
   useEffect(() => {
     try {
-      const kept = localStorage.getItem(DEVICE_KEY);
-      if (kept === 'tablet' || kept === 'phone') setDevice(kept);
+      setKept(localStorage.getItem(DEVICE_KEY));
     } catch {
       // Storage blocked: Desktop.
     }
   }, []);
+  const breakpoints = byBreakpoint(presets);
+  const fallback = defaultPreset(presets);
+  const preset =
+    presets.find((p) => p.id === picked) ??
+    (breakpoints ? undefined : presets.find((p) => p.id === kept)) ??
+    fallback;
   return [
-    device,
-    (d) => {
-      setDevice(d);
+    preset,
+    (id) => {
+      setPicked(id);
+      // A breakpoint is chosen for this canvas only; the device memory stays as it was.
+      if (breakpoints) return;
+      setKept(id);
       try {
-        if (d === 'desktop') localStorage.removeItem(DEVICE_KEY);
-        else localStorage.setItem(DEVICE_KEY, d);
+        if (id === fallback.id) localStorage.removeItem(DEVICE_KEY);
+        else localStorage.setItem(DEVICE_KEY, id);
       } catch {
         // Storage blocked: the choice lasts for this page.
       }

@@ -41,6 +41,16 @@ export async function listComments(
   return ctx.store.comments.listForEntry(scope, entryId);
 }
 
+/**
+ * The entry a comment is on (404 when the comment is gone), so a caller can be held to its grant
+ * on that entry's type before it deletes the comment.
+ */
+export async function commentEntryId(ctx: AppContext, scope: Scope, id: string): Promise<string> {
+  const comment = await ctx.store.comments.get(scope, id);
+  if (!comment) throw new NotFoundError('Comment', id);
+  return comment.entryId;
+}
+
 export async function deleteComment(ctx: AppContext, scope: Scope, id: string): Promise<void> {
   if (!(await ctx.store.comments.get(scope, id))) throw new NotFoundError('Comment', id);
   await ctx.store.comments.delete(scope, id);

@@ -29,6 +29,7 @@ import {
   SCOPES,
   stringList,
   UNSURE,
+  unwritableFieldsFor,
 } from '@contentworker/domain';
 import type { AIProvider, DecisionAnswer, DecisionQuestion } from '@contentworker/ports';
 import { applyProposedFields, createAgentReview } from '../agent-reviews';
@@ -38,7 +39,7 @@ import { describeFieldForModel, UNTRUSTED_CONTENT_GUARD, wrapUntrusted } from '.
 import { type AiProvenance, isUncheckedFallback } from '../ai-provenance';
 import { autofillField, suggestEntryTags, summarizeEntry, translateEntry } from '../content-ai';
 import { moderationQuestions, moderationThreshold, moderationVerdict } from '../moderation';
-import { defaultLocaleOf, guard, isRecord, loadRunEntry, num, str } from './support';
+import { defaultLocaleOf, guard, isRecord, loadRunEntry, num, runForModel, str } from './support';
 import type { Exec, ExecInput, NodeResult, Resume } from './types';
 
 /** The model is mandatory for these nodes' live mode; the heuristic still answers without it. */
@@ -261,8 +262,9 @@ function assessResult(
 export const AI_EXECUTORS: Record<string, Exec> = {
   'ai.classify': async (i) => {
     guard(i, SCOPES.previewRead, 'read');
+    const run = await runForModel(i);
     const labels = stringList(i.config.labels, ['other']);
-    const text = entryText(i.run);
+    const text = entryText(run);
     const keywordLabel = () => {
       const lower = text.toLowerCase();
       return labels.find((l) => lower.includes(l.replace(/_/g, ' ').toLowerCase()));
@@ -351,6 +353,7 @@ export const AI_EXECUTORS: Record<string, Exec> = {
 
   'ai.router': async (i) => {
     guard(i, SCOPES.previewRead, 'read');
+    const run = await runForModel(i);
     const routes = stringList(i.config.routes, ['publish', 'needs_review']);
     const careful = routes.at(-1) as string;
     const instructions = str(i.config.instructions, 'Decide how this entry should be reviewed.');
@@ -394,9 +397,9 @@ export const AI_EXECUTORS: Record<string, Exec> = {
           // The entry is untrusted and goes in the state; the author's instructions are the
           // question, and the guarded routes its only possible answers.
           state: JSON.stringify({
-            entry: i.run.entry,
-            vars: i.run.vars,
-            completed: i.run.nodes,
+            entry: run.entry,
+            vars: run.vars,
+            completed: run.nodes,
           }).slice(0, STATE_CHARS),
           tier: 'balanced',
           questions: {
@@ -471,7 +474,7 @@ export const AI_EXECUTORS: Record<string, Exec> = {
           `## Workflow instructions\n${instructions.slice(0, 4000)}`,
         ].join('\n\n'),
         prompt: wrapUntrusted(
-          JSON.stringify({ entry: i.run.entry, vars: i.run.vars, completed: i.run.nodes }).slice(
+          JSON.stringify({ entry: run.entry, vars: run.vars, completed: run.nodes }).slice(
             0,
             20_000,
           ),
@@ -537,15 +540,24 @@ export const AI_EXECUTORS: Record<string, Exec> = {
 
   'ai.summarize': async (i) => {
     guard(i, SCOPES.previewRead, 'read');
+    const run = await runForModel(i);
     const into = str(i.config.into, 'summary');
     const fallbackSummary = () => {
-      const text = (i.run.entry.title || entryText(i.run)).replace(/\s+/g, ' ').trim();
+      const text = (run.entry.title || entryText(run)).replace(/\s+/g, ' ').trim();
       return text.length > 160 ? `${text.slice(0, 157)}…` : text || 'No text to summarize.';
     };
     return viaUseCase(
       i,
       'workflow.summarize',
-      () => summarizeEntry(i.ctx, aiOf(i), i.scope, i.entryId, { tier: 'fast' }),
+      () =>
+        summarizeEntry(
+          i.ctx,
+          aiOf(i),
+          i.scope,
+          i.entryId,
+          { tier: 'fast' },
+          { principal: i.actor.principal },
+        ),
       (value, p) => ({
         vars: { [into]: value.summary },
         output: { summary: value.summary, ...p },
@@ -564,13 +576,14 @@ export const AI_EXECUTORS: Record<string, Exec> = {
 
   'ai.assess': async (i) => {
     guard(i, SCOPES.previewRead, 'read');
+    const run = await runForModel(i);
     const issues = assessQuestionsIssues(i.config.questions);
     if (issues.length) return { failed: `Assess: the questions are not valid (${issues[0]})` };
     const questions = i.config.questions as AssessQuestions;
     const state =
       i.config.state === 'entry'
-        ? { entry: i.run.entry }
-        : { entry: i.run.entry, vars: i.run.vars, completed: i.run.nodes };
+        ? { entry: run.entry }
+        : { entry: run.entry, vars: run.vars, completed: run.nodes };
     const decisions = decisionsOf(i);
     if (decisions && Object.keys(questions).length <= 64) {
       const r = await decide(
@@ -625,11 +638,18 @@ export const AI_EXECUTORS: Record<string, Exec> = {
       i,
       'workflow.translate',
       () =>
-        translateEntry(i.ctx, aiOf(i), i.scope, i.entryId, {
-          targetLocale,
-          ...(sourceLocale ? { sourceLocale } : {}),
-          apply: true,
-        }),
+        translateEntry(
+          i.ctx,
+          aiOf(i),
+          i.scope,
+          i.entryId,
+          {
+            targetLocale,
+            ...(sourceLocale ? { sourceLocale } : {}),
+            apply: true,
+          },
+          { principal: i.actor.principal },
+        ),
       async (value, p) => ({
         output: { targetLocale, translatedFields: value.translatedFields, applied: true, ...p },
         summary: `Translated ${value.translatedFields.length} field(s) into ${targetLocale}`,
@@ -655,7 +675,15 @@ export const AI_EXECUTORS: Record<string, Exec> = {
     return viaUseCase(
       i,
       'workflow.autofill',
-      () => autofillField(i.ctx, aiOf(i), i.scope, i.entryId, { field, locale, apply: true }),
+      () =>
+        autofillField(
+          i.ctx,
+          aiOf(i),
+          i.scope,
+          i.entryId,
+          { field, locale, apply: true },
+          { principal: i.actor.principal },
+        ),
       async (value, p) => ({
         output: { field, locale, value: value.value, applied: value.applied, ...p },
         summary: `${field}: ${JSON.stringify(value.value).slice(0, 60)}`,
@@ -675,7 +703,15 @@ export const AI_EXECUTORS: Record<string, Exec> = {
     return viaUseCase(
       i,
       'workflow.suggest_tags',
-      () => suggestEntryTags(i.ctx, aiOf(i), i.scope, i.entryId, { apply }),
+      () =>
+        suggestEntryTags(
+          i.ctx,
+          aiOf(i),
+          i.scope,
+          i.entryId,
+          { apply },
+          { principal: i.actor.principal },
+        ),
       async (value, p) => {
         const names = new Map(
           (await i.ctx.store.taxonomy.listTags(i.scope)).map((t) => [t.id, t.name]),
@@ -698,7 +734,8 @@ export const AI_EXECUTORS: Record<string, Exec> = {
 
   'ai.moderate': async (i) => {
     guard(i, SCOPES.previewRead, 'read');
-    const text = entryText(i.run);
+    const run = await runForModel(i);
+    const text = entryText(run);
     const rules = str(i.config.instructions).trim();
     const keywordHits = () => {
       const lower = text.toLowerCase();
@@ -810,6 +847,7 @@ export const AI_EXECUTORS: Record<string, Exec> = {
   'ai.enrich': async (i) => {
     const awaitReview = i.config.awaitReview !== false;
     guard(i, SCOPES.contentWrite, 'write');
+    const run = await runForModel(i);
     const ct = await i.ctx.store.contentTypes.get(i.scope, i.run.entry.contentTypeApiId);
     if (!ct) return { failed: 'Enrich: the entry’s content type is missing' };
     const locale = await defaultLocaleOf(i.ctx, i.scope);
@@ -824,8 +862,14 @@ export const AI_EXECUTORS: Record<string, Exec> = {
       const s = states.get(apiId);
       return !s?.hidden && !s?.disabled;
     };
+    // Nor any the run's role can't write (or read): it could neither save nor see the value.
+    const unwritable = unwritableFieldsFor(i.actor.principal, ct.apiId);
     const empty = ct.fields.filter(
-      (f) => TEXT_TYPES.has(f.type) && !filled(f.apiId) && open(f.apiId),
+      (f) =>
+        TEXT_TYPES.has(f.type) &&
+        !filled(f.apiId) &&
+        open(f.apiId) &&
+        !unwritable.includes(f.apiId),
     );
     const settled = awaitReview ? 'approved' : 'applied';
     if (!empty.length) {
@@ -834,7 +878,7 @@ export const AI_EXECUTORS: Record<string, Exec> = {
     const properties: Record<string, unknown> = {};
     for (const f of empty)
       properties[f.apiId] = { type: 'string', description: describeFieldForModel(f) };
-    const text = entryText(i.run);
+    const text = entryText(run);
     const r = await generateJson<Record<string, unknown>>(
       i.ctx,
       aiOf(i),
@@ -871,7 +915,7 @@ export const AI_EXECUTORS: Record<string, Exec> = {
       };
     }
     if (!awaitReview) {
-      await applyProposedFields(i.ctx, i.scope, i.entryId, proposed);
+      await applyProposedFields(i.ctx, i.scope, i.entryId, proposed, i.actor.principal);
       return {
         branches: ['applied'],
         output: { proposed, applied: true, ...prov(r) },

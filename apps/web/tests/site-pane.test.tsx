@@ -81,6 +81,7 @@ const status = (s: string, detail?: string) =>
 beforeEach(() => vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] }));
 afterEach(() => {
   cleanup();
+  localStorage.clear();
   vi.useRealTimers();
   vi.clearAllMocks();
 });
@@ -98,7 +99,7 @@ describe('the Site pane', () => {
     const spy = spyFrame();
     ready();
     const [first, second] = posted(spy);
-    expect(first).toMatchObject({ type: 'view', device: 'desktop', allowed: ADMIN_CAPABILITIES });
+    expect(first).toMatchObject({ type: 'view', width: 1280, allowed: ADMIN_CAPABILITIES });
     expect(second).toMatchObject({
       type: 'entry',
       entry: { entryId: 'e1', locale: 'en-US', fields: { title: 'Home' } },
@@ -133,7 +134,47 @@ describe('the Site pane', () => {
     act(() => screen.getByRole('radio', { name: 'View' }).click());
     expect(posted(spy, 'view').at(-1)).toMatchObject({ editing: false });
     act(() => screen.getByRole('radio', { name: 'Phone, 390 pixels' }).click());
-    expect(posted(spy, 'view').at(-1)).toMatchObject({ device: 'phone' });
+    expect(posted(spy, 'view').at(-1)).toMatchObject({ width: 390 });
+  });
+
+  it('opens on the device it was left on, without breakpoints', () => {
+    localStorage.setItem('cw.entry-pane.device', 'phone');
+    render(pane());
+    expect(
+      screen.getByRole('radio', { name: 'Phone, 390 pixels' }).getAttribute('aria-checked'),
+    ).toBe('true');
+  });
+
+  it('offers Base and the catalog’s breakpoints as its widths, always opening on Base', () => {
+    localStorage.setItem('cw.entry-pane.device', 'md');
+    render(
+      <SitePane
+        spaceId="s1"
+        environmentId="main"
+        entryId="e1"
+        contentType={type}
+        fields={{ title: { 'en-US': 'Home' } }}
+        locale="en-US"
+        defaultLocale="en-US"
+        allowed={ADMIN_CAPABILITIES}
+        selected={null}
+        split={false}
+        onPick={onPick}
+        breakpoints={[
+          { id: 'md', name: 'Tablet', minWidth: 768 },
+          { id: 'lg', name: 'Desktop', minWidth: 1280 },
+        ]}
+      />,
+    );
+    const spy = spyFrame();
+    ready();
+    const widths = screen.getByRole('radiogroup', { name: 'Device width' });
+    expect(
+      [...widths.querySelectorAll('[role="radio"]')].map((r) => r.getAttribute('aria-label')),
+    ).toEqual(['Base, 390 pixels', 'Tablet, 768 pixels', 'Desktop, 1280 pixels']);
+    expect(posted(spy, 'view').at(-1)).toMatchObject({ width: 390 });
+    act(() => screen.getByRole('radio', { name: 'Tablet, 768 pixels' }).click());
+    expect(posted(spy, 'view').at(-1)).toMatchObject({ width: 768 });
   });
 
   it('sends the form’s focused field to be outlined, and none to clear it', () => {

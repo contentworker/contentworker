@@ -1,7 +1,8 @@
 import { readFile, writeFile } from 'node:fs/promises';
-import { basename, extname, resolve } from 'node:path';
+import { basename, dirname, extname, resolve } from 'node:path';
 import { type BlockCatalogInput, generateTypes } from '@contentworker/sdk-codegen';
 import {
+  type BlockCatalogPush,
   type EntryFields,
   type ImportAnalysis,
   type ImportInput,
@@ -28,6 +29,7 @@ import {
 } from './oauth.js';
 import { apiErrorText, CliError, EXIT, pairs, type Result, table, usageError } from './output.js';
 import { clientFor, profileName, type Session, type Target, trimUrl, whoAmI } from './session.js';
+import { planThumbnails, renderThumbnails, type ThumbnailPlan } from './thumbnails.js';
 
 /** The API version this CLI is written against (`info.version` of the api's `/openapi.json`). */
 export const API_VERSION = '0.1.0';
@@ -470,13 +472,30 @@ const blocksPush: Command = {
   },
   async run(ctx) {
     const file = ctx.args[0] ?? DEFAULT_BLOCKS_FILE;
-    const input = pushInput(await loadBlocks(file, ctx.io.cwd));
+    const blocksFile = await loadBlocks(file, ctx.io.cwd);
     const cma = await ctx.client();
     const publish = ctx.values.publish !== false;
+    // URL and file thumbnails become assets, the only kind the admin draws. Read and looked up by
+    // hash now; anything not found is uploaded only once the push is going ahead.
+    const thumbnails = await planThumbnails(blocksFile.blocks, {
+      cma,
+      fetch: ctx.io.fetch,
+      dir: dirname(resolve(ctx.io.cwd, file)),
+    });
+    const pending = thumbnails.imports.some((i) => i.action === 'pending');
+    const shown = (push: BlockCatalogPush, t: ThumbnailPlan) =>
+      [renderPush(push), ...renderThumbnails(t.imports)].join('\n');
     // The server works the change out: the same checks the push itself makes.
-    const plan = await cma.blockCatalog.push({ ...input, publish, dryRun: true });
-    if (bool(ctx, 'dry-run') || plan.unchanged) {
-      return { json: { ...plan, applied: false }, human: renderPush(plan) };
+    const plan = await cma.blockCatalog.push({
+      ...pushInput(blocksFile, thumbnails.blocks()),
+      publish,
+      dryRun: true,
+    });
+    if (bool(ctx, 'dry-run') || (plan.unchanged && !pending)) {
+      return {
+        json: { ...plan, applied: false, thumbnails: thumbnails.imports },
+        human: shown(plan, thumbnails),
+      };
     }
     if (plan.inUse.length > 0) {
       throw new CliError(
@@ -497,21 +516,25 @@ const blocksPush: Command = {
       );
     }
     const session = await ctx.session();
-    if (!ctx.json) ctx.io.stderr(renderPush(plan));
+    if (!ctx.json) ctx.io.stderr(shown(plan, thumbnails));
     await confirm(
       ctx,
       `Push block catalog version ${plan.version} to ${session.space}/${session.environment}?`,
     );
+    const imported = await thumbnails.upload();
     // Against the version just shown: a push that landed since is refused (409), not overwritten.
     const done = await cma.blockCatalog.push({
-      ...input,
+      ...pushInput(blocksFile, imported.blocks()),
       publish,
       expectedVersion: plan.previousVersion,
       allowDestructive: bool(ctx, 'allow-destructive'),
     });
+    const fresh = imported.imports.filter((i) => i.action === 'imported').length;
     return {
-      json: done,
-      human: `Pushed block catalog version ${done.version}: ${done.contentTypes.length} content type(s) changed.`,
+      json: { ...done, thumbnails: imported.imports },
+      human:
+        `Pushed block catalog version ${done.version}: ${done.contentTypes.length} content type(s) changed.` +
+        (fresh ? ` Imported ${fresh} thumbnail(s) as assets.` : ''),
     };
   },
 };

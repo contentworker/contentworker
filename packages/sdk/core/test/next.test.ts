@@ -210,6 +210,60 @@ describe('createDraftRoute', () => {
     },
   );
 
+  // What browsers send (Sec-Fetch-Site, -Mode, -Dest) for the ways a draft link is opened.
+  const fetchMeta = (site: string, mode: string, dest?: string) => ({
+    'sec-fetch-site': site,
+    'sec-fetch-mode': mode,
+    ...(dest ? { 'sec-fetch-dest': dest } : {}),
+  });
+
+  it.each([
+    ['opened on the site itself', fetchMeta('same-origin', 'navigate', 'document')],
+    ['opened top-level from the admin', fetchMeta('cross-site', 'navigate', 'document')],
+    ['framed by the admin', fetchMeta('cross-site', 'navigate', 'iframe')],
+    ['framed by the admin on the same site', fetchMeta('same-site', 'navigate', 'iframe')],
+    ['typed into the address bar', fetchMeta('none', 'navigate', 'document')],
+    ['navigated by a browser that sends no Sec-Fetch-Dest', fetchMeta('cross-site', 'navigate')],
+    ['sent with no Sec-Fetch headers at all', {}],
+  ])('opens a link %s', async (_n, headers) => {
+    const dm = fakeDraftMode();
+    const res = await createDraftRoute({
+      ...opts,
+      draftMode: dm.draftMode,
+      fetch: preview(ok).fetch,
+    })(new Request(`https://site.test/api/draft?entry=e1&token=${TOKEN}`, { headers }));
+    expect(res.status).toBe(307);
+    expect(dm.handle.enable).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ["another site's no-cors fetch", fetchMeta('cross-site', 'no-cors', 'empty')],
+    ["another site's cors fetch", fetchMeta('cross-site', 'cors', 'empty')],
+    ["another site's image", fetchMeta('cross-site', 'no-cors', 'image')],
+    [
+      'a no-cors request from a browser that sends no Sec-Fetch-Dest',
+      fetchMeta('cross-site', 'no-cors'),
+    ],
+    ['a same-origin fetch', fetchMeta('same-origin', 'cors', 'empty')],
+    ['a websocket', fetchMeta('cross-site', 'websocket', 'websocket')],
+    [
+      'a non-navigation that claims to be a document',
+      fetchMeta('cross-site', 'no-cors', 'document'),
+    ],
+  ])('refuses %s, reading nothing and setting nothing', async (_n, headers) => {
+    const dm = fakeDraftMode();
+    const p = preview(ok);
+    const res = await createDraftRoute({ ...opts, draftMode: dm.draftMode, fetch: p.fetch })(
+      new Request(`https://site.test/api/draft?entry=e1&token=${TOKEN}`, { headers }),
+    );
+    expect(res.status).toBe(403);
+    expect(p.urls).toHaveLength(0);
+    expect(dm.handle.enable).not.toHaveBeenCalled();
+    expect(res.headers.get('set-cookie')).toBeNull();
+    expect(await res.text()).not.toContain(TOKEN);
+    expectNoStore(res);
+  });
+
   it.each(['token=x', 'entry=e1', ''])(
     'answers 400 for a link missing its entry or token (%s)',
     async (qs) => {
@@ -277,6 +331,34 @@ describe('createExitDraftRoute, opened as something else', () => {
     expect(res.status).toBe(403);
     expect(dm.handle.disable).not.toHaveBeenCalled();
     expect(res.headers.get('set-cookie')).toBeNull();
+  });
+
+  it.each(['no-cors', 'cors'])("refuses another site's %s request", async (mode) => {
+    const dm = fakeDraftMode();
+    dm.handle.isEnabled = true;
+    const res = await createExitDraftRoute({ draftMode: dm.draftMode })(
+      new Request('https://site.test/api/draft/exit', {
+        headers: { 'sec-fetch-site': 'cross-site', 'sec-fetch-mode': mode },
+      }),
+    );
+    expect(res.status).toBe(403);
+    expect(dm.handle.disable).not.toHaveBeenCalled();
+  });
+
+  it("turns draft mode off when the admin's frame navigates to it", async () => {
+    const dm = fakeDraftMode();
+    dm.handle.isEnabled = true;
+    const res = await createExitDraftRoute({ draftMode: dm.draftMode })(
+      new Request('https://site.test/api/draft/exit', {
+        headers: {
+          'sec-fetch-site': 'cross-site',
+          'sec-fetch-mode': 'navigate',
+          'sec-fetch-dest': 'iframe',
+        },
+      }),
+    );
+    expect(res.status).toBe(307);
+    expect(dm.handle.disable).toHaveBeenCalledOnce();
   });
 });
 

@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { ok, scopeArgs, scopeOf, type ToolContext, toolSchema } from './shared';
 
 export function registerAiActionTools(server: McpServer, t: ToolContext): void {
-  const { ctx, ai, guard } = t;
+  const { ctx, ai, guard, principal } = t;
   // --- AI Actions (templated, governed operations) -----------------------
   server.registerTool(
     'ai_actions_list',
@@ -71,12 +71,19 @@ export function registerAiActionTools(server: McpServer, t: ToolContext): void {
     async (args) => {
       guard(SCOPES.contentWrite, scopeOf(args));
       return ok(
-        await runAIAction(ctx, ai, scopeOf(args), args.id, {
-          entryId: args.entryId,
-          variables: args.variables,
-          locale: args.locale,
-          apply: args.apply,
-        }),
+        await runAIAction(
+          ctx,
+          ai,
+          scopeOf(args),
+          args.id,
+          {
+            entryId: args.entryId,
+            variables: args.variables,
+            locale: args.locale,
+            apply: args.apply,
+          },
+          { principal },
+        ),
       );
     },
   );
