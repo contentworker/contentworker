@@ -62,7 +62,8 @@ API:
 ```ts
 client.getEntry<F>(id, { locale?, include? }): Promise<DeliveredEntry<F>>
 client.getSingleton<F>(contentType, { locale?, include? }): Promise<DeliveredEntry<F>> // a singleton type's one entry; 404 DeliveryError otherwise
-client.listEntries<F>(query?): Promise<{ items: DeliveredEntry<F>[]; total: number; nextCursor? }>
+client.listEntries<F>(query?): Promise<EntryPage<F>>     // { items, total, nextCursor? }
+client.iterateEntries<F>(query?): AsyncGenerator<DeliveredEntry<F>>  // every page
 client.search(query, { topK? }): Promise<SearchHit[]>
 client.getAsset(id, { locale? }): Promise<DeliveredAsset>
 client.listAssets({ limit?, cursor?, skip?, kind?, tag?, folder?, locale? }): Promise<AssetPage>
@@ -90,8 +91,11 @@ client.bookmark: string | undefined     // read-your-writes position (preview); 
 - `EntryQuery` = `{ contentType?, locale?, include?, limit?, skip?, cursor?, since?, filters?, where?, linksToEntry?, order?, select?, search?, tags? }`.
   `where` (an `EntryWhere` tree of `and`/`or` groups) is sent as the `where` parameter's JSON,
   `linksToEntry` as `links_to_entry`; a filter `field` may be a component path (`seo.title`).
-  Delivery pages with `skip`; Preview (`preview: true`) pages with `cursor`, the last page's
-  `nextCursor`, and refuses `skip` (`422`).
+  Delivery pages with `skip` (and answers no cursor); Preview (`preview: true`) pages with
+  `cursor`, the last page's `nextCursor`. Preview's lists take no offset (the entry list refuses
+  one with a `422`), so a preview client never sends `skip`: it walks the cursor past that many
+  entries or assets first, a request per 100, and answers an empty page past the end. `skip` is
+  deprecated on a preview client; page with `cursor`. The builder has `.cursor(nextCursor)`.
   `tags` (slugs) sends `metadata.tags.slug[in]`, and a filter on `metadata.*` is sent unprefixed.
 - `DeliveredTag` = `{ id, slug, label, labels?, description, count, countsByContentType }`;
   `DeliveredConcept` adds `schemeId` and `broaderId`.
@@ -104,10 +108,12 @@ client.bookmark: string | undefined     // read-your-writes position (preview); 
 - Failed requests throw `DeliveryError` with the `status`, the API's error `code` when the body
   names one (`{ error: { code, message } }`; the delivery gateway's `{ error: '…' }` refusals have
   none), the parsed `body` (`undefined` if it wasn't JSON) and the server's message in `message`.
-- `iterateAssets(query)` and `iterateCollection(id, opts)` are `async` generators: each fetches a
-  page (`limit`) when the loop needs the next item and follows `nextCursor` to the last page, so
-  `break` stops fetching. A `skip` applies to the first page only, and a cursor the server
-  repeats (the starting `cursor` included) throws a plain `Error` rather than looping.
+- `iterateEntries(query)`, `iterateAssets(query)` and `iterateCollection(id, opts)` are `async`
+  generators: each fetches a page (`limit`) when the loop needs the next item and follows
+  `nextCursor` to the last page, so `break` stops fetching. A `skip` applies to the first page
+  only, and a cursor the server repeats (the starting `cursor` included) throws a plain `Error`
+  rather than looping. On Delivery, which answers no entry cursor, `iterateEntries` advances
+  `skip` by `limit` (100 by default) until a page comes back short.
 - `getAsset` / `listAssets` read `/assets` (or `/preview/…/assets` with `preview: true`) and return
   the delivered asset shape (see [API reference](./api-reference.md#delivery-api-cda));
   `AssetPage` is `{ items, total, nextCursor? }`, and a `cursor` wins over `skip`.
@@ -262,7 +268,8 @@ function App() {
 Hooks (all return `AsyncState<T> = { data?: T; error?: Error; loading: boolean }`):
 
 - `useEntry<F>(id, { locale?, include? })`
-- `useEntries<F>(query?)`
+- `useEntries<F>(query?)` — an `EntryPage`; a new `cursor` (Preview's `nextCursor`) or `skip`
+  (Delivery) in the query reads that page
 - `useAsset(id, { locale? })`
 - `useSemanticSearch(query, { topK? })` — returns `[]` for an empty query (no request)
 - `useDeliveryClient()` — the injected client
@@ -326,7 +333,8 @@ const { data, error, loading } = useEntry(() => props.id, { locale: 'en-US' });
 Composables (all return `AsyncRefs<T> = { data, error, loading }` as refs):
 
 - `useEntry<F>(id, { locale?, include? })`
-- `useEntries<F>(query?)`
+- `useEntries<F>(query?)` — an `EntryPage`; a new `cursor` (Preview's `nextCursor`) or `skip`
+  (Delivery) in the query reads that page
 - `useAsset(id, { locale? })`
 - `useSemanticSearch(query, { topK? })` — returns `[]` for an empty query (no request)
 - `useDeliveryClient()` — the injected client
@@ -596,7 +604,9 @@ cma.contentTypes.dependents(apiId) / .delete(apiId, { purgeEntries? }) / .clone(
 cma.contentTypes.setPreview(apiId, urlTemplate | null)  // the preview URL alone (PUT …/content-types/:apiId/preview)
                                                       // create on an existing apiId revises it
 
-cma.entries.list({ contentType?, locale?, limit?, skip?, order?, query? })  // Preview: drafts included
+cma.entries.list({ contentType?, locale?, limit?, cursor?, order?, query?, createdBy?, updatedBy? }) → EntryPage
+                                                      // Preview: drafts included; { items, total, nextCursor? }
+cma.entries.iterate(query?) → AsyncGenerator<PreviewEntry>  // follows nextCursor as the loop reads
 cma.entries.create({ contentTypeApiId, fields })      // fields are locale-keyed
 cma.entries.get(id) / .update(id, fields, { expectedVersion? })  // update = new draft version; 409 if saved since
 cma.entries.publish(id, { expectedVersion? }) / .unpublish(id, { expectedVersion? })
@@ -703,8 +713,11 @@ cma.frontend.connect({ name?, roleId?, preview?, previewRoleId? })  // keys + co
 - `assets.startReplace` + `commitFile` is the single-PUT replace one step at a time; past 100 MiB,
   `uploads.startReplace` and `uploads.complete` (which commits). A replace another commit beat is a
   `409`.
-- `iterate`, `collections.iterate` and `collections.iterateAssets` fetch a page (`limit`) at a time
-  as the loop reads; break out and no further page is fetched. Share links and zips aren't paged.
+- `entries.list` pages with `cursor` (the last page's `nextCursor`). Its deprecated `skip` is never
+  sent (the Preview list refuses an offset): the client walks the cursor past that many entries
+  first, a request per 100.
+- `entries.iterate`, `assets.iterate`, `collections.iterate` and `collections.iterateAssets` fetch a
+  page (`limit`) at a time as the loop reads; break out and no further page is fetched. Share links and zips aren't paged.
 - `bulkJobs.cancel` stops a job taking new work: chunks not started are skipped, one already running
   finishes, and nothing done is rolled back. Cancelling a finished job returns it unchanged.
 - `contentTypes.create(draft)` takes `urlPattern` (e.g. `/blog/{slug}`; `null` clears it), which makes

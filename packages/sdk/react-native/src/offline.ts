@@ -62,16 +62,14 @@ export function createOfflineDelivery<F extends Fields = Fields>(opts: OfflineOp
     async sync(): Promise<SyncResult> {
       const since = (await storage.getItem(cursorKey)) ?? undefined;
       const fetched: DeliveredEntry<F>[] = [];
-      for (let skip = 0; ; skip += pageSize) {
-        const { items } = await client.listEntries<F>({
-          contentType,
-          locale,
-          since,
-          limit: pageSize,
-          skip,
-        });
-        fetched.push(...items);
-        if (items.length < pageSize) break;
+      // Delivery pages by offset, a preview client by cursor: the client knows which.
+      for await (const entry of client.iterateEntries<F>({
+        contentType,
+        locale,
+        since,
+        limit: pageSize,
+      })) {
+        fetched.push(entry);
       }
 
       const index = new Set(await readIndex());

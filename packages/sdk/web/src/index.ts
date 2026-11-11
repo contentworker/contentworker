@@ -3,6 +3,7 @@ import {
   type DeliveredAsset,
   type DeliveredEntry,
   type DeliveryClient,
+  type EntryPage,
   type EntryQuery,
   type Fields,
   type FollowOptions,
@@ -126,15 +127,17 @@ export function Image(props: ImageComponentProps): ReactElement | null {
   });
 }
 
-/** Lists published entries. */
+/**
+ * Lists published entries (from a preview client: as they are now). For the next page, pass the
+ * answer's `nextCursor` back as `cursor` (Preview) or raise `skip` (Delivery).
+ */
 export function useEntries<F extends Fields = Fields>(
   query: EntryQuery = {},
-): AsyncState<{ items: DeliveredEntry<F>[]; total: number }> {
+): AsyncState<EntryPage<F>> {
   const client = useDeliveryClient();
-  return useAsync(
-    () => client.listEntries<F>(query),
-    [query.contentType, query.locale, query.include, query.limit, query.skip],
-  );
+  // By content: a new cursor, filter or order is a new read; a fresh but equal object is not.
+  const key = JSON.stringify(query);
+  return useAsync(() => client.listEntries<F>(JSON.parse(key) as EntryQuery), [client, key]);
 }
 
 /** What {@link useLiveEntry} and {@link useLiveEntries} hold: the read, and whether it is live. */
@@ -171,10 +174,9 @@ export function useLiveEntry<F extends Fields = Fields>(
 export function useLiveEntries<F extends Fields = Fields>(
   query: EntryQuery = {},
   opts: FollowOptions = {},
-): LiveAsyncState<{ items: DeliveredEntry<F>[]; total: number }> {
+): LiveAsyncState<EntryPage<F>> {
   const client = useDeliveryClient();
-  const [state, setState] =
-    useState<LiveAsyncState<{ items: DeliveredEntry<F>[]; total: number }>>(INITIAL);
+  const [state, setState] = useState<LiveAsyncState<EntryPage<F>>>(INITIAL);
   // By content: a query object made fresh each render must not resubscribe.
   const key = JSON.stringify(query);
   const { delayMs } = opts;
@@ -374,6 +376,7 @@ export type {
   DeliveredAsset,
   DeliveredEntry,
   DeliveryClient,
+  EntryPage,
   EntryQuery,
   FollowOptions,
   ImageProps,

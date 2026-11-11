@@ -72,6 +72,26 @@ const byAuthor = await client
   .fetch();
 ```
 
+Delivery pages entries with `skip`; a preview client (`preview: true`) pages with `cursor`, the
+previous page's `nextCursor`. `iterateEntries(query)` reads every page either way, a page at a
+time as your loop asks:
+
+```ts
+const first = await preview.listEntries({ contentType: 'article', limit: 50 });
+const next = await preview.listEntries({
+  contentType: 'article',
+  limit: 50,
+  cursor: first.nextCursor,
+});
+
+for await (const entry of client.iterateEntries({ contentType: 'article' })) {
+  // every published article
+}
+```
+
+Preview takes no offset, so `skip` on a preview client is deprecated: the client walks the cursor
+past that many entries first, a request per 100 of them.
+
 `listTags`, `getTag`, `listConcepts` and `getConcept` read the [taxonomy](/guides/reading-content/#tags-and-concepts):
 each term's slug, label in your locale, description and how many published entries carry it.
 `tagged(...slugs)` on a query (or `tags: [...]` on `listEntries`) keeps the entries carrying any
@@ -330,7 +350,8 @@ playback URLs on a hosted video), `metadata` (`altText`, `tags`, `focalPoint`, `
 `cma.bulkJobs.get`, and stop it with `cma.bulkJobs.cancel`, which lets a running batch finish and
 undoes nothing), and the `folders`, `collections`, `shareLinks`, `zips` and `renditions`
 namespaces. `iterate`, `collections.iterate` and `collections.iterateAssets` follow `nextCursor` as
-the loop reads. A Delivery client reads a collection's published assets with
+the loop reads, as does `cma.entries.iterate`; `cma.entries.list` returns one page of entries,
+drafts included, and pages with `cursor`. A Delivery client reads a collection's published assets with
 `client.getCollection(id, { limit, cursor, locale })`.
 
 ### Errors

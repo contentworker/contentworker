@@ -45,6 +45,32 @@ describe('entries', () => {
     expect((await h.run('entries', 'list', '--limit', 'ten')).code).toBe(EXIT.usage);
   });
 
+  it('pages with --cursor and names the next page', async () => {
+    const h = await harness(
+      {
+        'GET /preview/s1/main/entries': (call) =>
+          new URL(call.url).searchParams.get('cursor') === 'c1'
+            ? {
+                items: [{ id: 'e2', contentType: 'article', status: 'draft', version: 1 }],
+                total: 1,
+              }
+            : {
+                items: [{ id: 'e1', contentType: 'article', status: 'draft', version: 1 }],
+                total: 1,
+                nextCursor: 'c1',
+              },
+      },
+      { env: ENV },
+    );
+    const first = await h.run('entries', 'list', '--limit', '1');
+    expect(first.stdout).toBe(
+      'ID  CONTENTTYPE  STATUS  VERSION\ne1  article      draft   1\n\nNext page: --cursor c1',
+    );
+    const second = await h.run('entries', 'list', '--limit', '1', '--cursor', 'c1');
+    expect(second.stdout).toBe('ID  CONTENTTYPE  STATUS  VERSION\ne2  article      draft   1');
+    expect(new URL(h.calls[1]?.url ?? '').search).toBe('?limit=1&cursor=c1');
+  });
+
   it('update merges into the current draft by field and locale unless --replace', async () => {
     const puts: unknown[] = [];
     const h = await harness(

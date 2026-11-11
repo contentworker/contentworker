@@ -1,4 +1,4 @@
-import type { DeliveredEntry, DeliveryClient } from '@contentworker/sdk-core';
+import { createDeliveryClient, type DeliveredEntry } from '@contentworker/sdk-core';
 import { describe, expect, it } from 'vitest';
 import { createOfflineDelivery, InMemoryStorage } from '../src/index.js';
 
@@ -9,20 +9,38 @@ const entry = (id: string, publishedAt: string): DeliveredEntry => ({
   publishedAt,
 });
 
-/** A fake Delivery client honoring `since` + skip/limit over a mutable dataset. */
-function fakeClient(data: DeliveredEntry[]): DeliveryClient {
-  return {
-    async listEntries(
-      q: { since?: string; limit?: number; skip?: number; contentType?: string } = {},
-    ) {
-      let items = data.filter((e) => !q.contentType || e.contentType === q.contentType);
-      if (q.since) items = items.filter((e) => e.publishedAt > (q.since as string));
-      items = items
-        .sort((a, b) => (a.publishedAt < b.publishedAt ? -1 : 1))
-        .slice(q.skip ?? 0, (q.skip ?? 0) + (q.limit ?? 100));
-      return { items, total: items.length };
-    },
-  } as unknown as DeliveryClient;
+/**
+ * A client over a fake API holding a mutable dataset, honoring `since` and `limit`: Delivery
+ * pages by `skip`; Preview by `cursor`, refusing `skip` as the real list does.
+ */
+function fakeClient(data: DeliveredEntry[], o: { preview?: boolean; urls?: string[] } = {}) {
+  return createDeliveryClient({
+    baseUrl: 'https://cms.test',
+    space: 's1',
+    environment: 'main',
+    token: 't',
+    preview: o.preview ?? false,
+    fetch: (async (input: string | URL | Request) => {
+      const url = new URL(String(input));
+      o.urls?.push(url.pathname + url.search);
+      const q = url.searchParams;
+      if (o.preview && q.has('skip')) return Response.json({}, { status: 422 });
+      const since = q.get('since');
+      const type = q.get('content_type');
+      const all = data
+        .filter((e) => (!type || e.contentType === type) && (!since || e.publishedAt > since))
+        .sort((a, b) => (a.publishedAt < b.publishedAt ? -1 : 1));
+      const from = Number((o.preview ? q.get('cursor') : q.get('skip')) ?? 0);
+      const limit = Number(q.get('limit') ?? 100);
+      const items = all.slice(from, from + limit);
+      const more = o.preview && from + limit < all.length;
+      return Response.json({
+        items,
+        total: items.length,
+        ...(more ? { nextCursor: String(from + limit) } : {}),
+      });
+    }) as typeof fetch,
+  });
 }
 
 describe('@contentworker/sdk-react-native offline delivery', () => {
@@ -73,6 +91,25 @@ describe('@contentworker/sdk-react-native offline delivery', () => {
     const r = await store.sync();
     expect(r.synced).toBe(25);
     expect(await store.list()).toHaveLength(25);
+  });
+
+  it('pages a preview client by cursor, never by skip', async () => {
+    const data = Array.from({ length: 15 }, (_, i) =>
+      entry(`e${i}`, `2026-02-${String(i + 1).padStart(2, '0')}T00:00:00Z`),
+    );
+    const urls: string[] = [];
+    const store = createOfflineDelivery({
+      client: fakeClient(data, { preview: true, urls }),
+      storage: new InMemoryStorage(),
+      contentType: 'article',
+      pageSize: 10,
+    });
+    const r = await store.sync();
+    expect(r.synced).toBe(15);
+    expect(urls).toEqual([
+      '/preview/s1/main/entries?content_type=article&limit=10',
+      '/preview/s1/main/entries?content_type=article&limit=10&cursor=10',
+    ]);
   });
 
   it('reset clears the local cache and cursor', async () => {

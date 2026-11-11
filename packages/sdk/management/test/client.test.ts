@@ -773,7 +773,7 @@ describe('entries.list and imports', () => {
     await cma.entries.list({
       contentType: 'article',
       limit: 20,
-      skip: 40,
+      cursor: 'c1',
       order: '-sys.updatedAt',
     });
     await cma.entries.list();
@@ -782,11 +782,68 @@ describe('entries.list and imports', () => {
     expect(Object.fromEntries(first.searchParams)).toEqual({
       content_type: 'article',
       limit: '20',
-      skip: '40',
+      cursor: 'c1',
       order: '-sys.updatedAt',
     });
     // No empty parameters: an absent filter is not a filter for ''.
     expect(calls[1]).toBe('https://cms.test/preview/s1/main/entries');
+  });
+
+  it('never sends skip to Preview: it walks the cursor past that many entries', async () => {
+    const calls: string[] = [];
+    // A list of 250 entries, paged by an offset cursor.
+    const cma = createManagementClient({
+      ...base,
+      fetch: fakeFetch((url) => {
+        calls.push(url);
+        const q = new URL(url).searchParams;
+        const from = Number(q.get('cursor') ?? 0);
+        const limit = Number(q.get('limit') ?? 100);
+        const to = Math.min(from + limit, 250);
+        return {
+          items: Array.from({ length: to - from }, (_, i) => ({ id: `e${from + i}` })),
+          total: to - from,
+          ...(to < 250 ? { nextCursor: String(to) } : {}),
+        };
+      }),
+    });
+    const page = await cma.entries.list({ limit: 10, skip: 120 });
+    expect(page.items.map((e) => e.id)).toEqual(
+      Array.from({ length: 10 }, (_, i) => `e${120 + i}`),
+    );
+    expect(page.nextCursor).toBe('130');
+    expect(calls.map((u) => new URL(u).search)).toEqual([
+      '?limit=100',
+      '?limit=20&cursor=100',
+      '?limit=10&cursor=120',
+    ]);
+    expect(calls.some((u) => u.includes('skip'))).toBe(false);
+    // Past the end: an empty page.
+    expect((await cma.entries.list({ skip: 400 })).items).toEqual([]);
+  });
+
+  it('iterates every entry across pages, following nextCursor', async () => {
+    const calls: string[] = [];
+    const pages: Record<string, unknown> = {
+      first: { items: [{ id: 'e1' }, { id: 'e2' }], total: 2, nextCursor: 'c2' },
+      c2: { items: [{ id: 'e3' }], total: 1 },
+    };
+    const cma = createManagementClient({
+      ...base,
+      fetch: fakeFetch((url) => {
+        calls.push(url);
+        return pages[new URL(url).searchParams.get('cursor') ?? 'first'];
+      }),
+    });
+    const ids: string[] = [];
+    for await (const entry of cma.entries.iterate({ contentType: 'article', limit: 2 })) {
+      ids.push(entry.id);
+    }
+    expect(ids).toEqual(['e1', 'e2', 'e3']);
+    expect(calls).toEqual([
+      'https://cms.test/preview/s1/main/entries?content_type=article&limit=2',
+      'https://cms.test/preview/s1/main/entries?content_type=article&limit=2&cursor=c2',
+    ]);
   });
 
   it('posts the same input to analyze, run and start', async () => {

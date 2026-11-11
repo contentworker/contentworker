@@ -476,6 +476,11 @@ describe('createDraftClient', () => {
     expect(items.map((e) => e.fields.title)).toEqual(['Draft title', 'Other']);
     const viaQuery = await client.query().contentType('post').locale('en-US').fetch();
     expect(viaQuery.items[0]?.fields.title).toBe('Draft title');
+    const iterated: unknown[] = [];
+    for await (const e of client.iterateEntries({ contentType: 'post', locale: 'en-US' })) {
+      iterated.push(e.fields.title);
+    }
+    expect(iterated).toEqual(['Draft title', 'Other']);
     // One preview read per locale, without a key; nothing read with a Preview key.
     expect(s.urls.filter((u) => u.includes('/preview/'))).toEqual([
       `https://api.test/preview/s1/main/entries/e1?preview_token=${TOKEN}&locale=en-US`,

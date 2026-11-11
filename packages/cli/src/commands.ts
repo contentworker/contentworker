@@ -549,7 +549,7 @@ const entriesList: Command = {
     'content-type': { type: 'string', description: 'Only entries of this type' },
     locale: { type: 'string', description: 'Resolve fields to this locale' },
     limit: { type: 'string', description: 'Page size, at most 100' },
-    skip: { type: 'string', description: 'Entries to skip' },
+    cursor: { type: 'string', description: 'The nextCursor of the previous page' },
     order: { type: 'string', description: 'Sort keys, e.g. -sys.updatedAt' },
     query: { type: 'string', description: 'Full-text match' },
   },
@@ -558,13 +558,15 @@ const entriesList: Command = {
       contentType: str(ctx, 'content-type'),
       locale: str(ctx, 'locale'),
       limit: int(ctx, 'limit'),
-      skip: int(ctx, 'skip'),
+      cursor: str(ctx, 'cursor'),
       order: str(ctx, 'order'),
       query: str(ctx, 'query'),
     });
     return {
       json: page,
-      human: table(page.items, ['id', 'contentType', 'status', 'version']),
+      human:
+        table(page.items, ['id', 'contentType', 'status', 'version']) +
+        (page.nextCursor ? `\n\nNext page: --cursor ${page.nextCursor}` : ''),
     };
   },
 };

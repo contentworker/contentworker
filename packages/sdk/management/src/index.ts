@@ -1721,12 +1721,31 @@ export interface PreviewEntry extends EntryAuthorship {
   readonly fields: Readonly<Record<string, unknown>>;
 }
 
+/** A page of the Preview list; pass `nextCursor` back as `cursor` for the next. */
+export interface EntryPage {
+  items: PreviewEntry[];
+  /** Entries on this page. */
+  total: number;
+  nextCursor?: string;
+}
+
 /** The Preview list's parameters (`GET /preview/:space/:env/entries`). */
 export interface EntryListQuery {
   readonly contentType?: string;
   readonly locale?: string;
   /** At most 100. */
   readonly limit?: number;
+  /**
+   * The previous page's `nextCursor`, with the same filters and order. It walks the list's own
+   * order; in the default order an entry edited between two pages is never skipped.
+   */
+  readonly cursor?: string;
+  /**
+   * Entries to pass over before this page. The Preview list takes no offset, so the client walks
+   * the cursor past them, a request per 100.
+   *
+   * @deprecated Page with `cursor` (the previous page's `nextCursor`).
+   */
   readonly skip?: number;
   /** Sort keys, e.g. `-sys.updatedAt` or `fields.title`. */
   readonly order?: string;
@@ -1891,6 +1910,33 @@ export function createManagementClient(opts: ManagementClientOptions) {
   }
 
   const e = encodeURIComponent;
+
+  const entryPage = (query: EntryListQuery) =>
+    get<EntryPage>(`${root}/preview/${e(opts.space)}/${e(opts.environment)}/entries`, {
+      content_type: query.contentType,
+      locale: query.locale,
+      limit: query.limit,
+      cursor: query.cursor,
+      order: query.order,
+      query: query.query,
+      'sys.createdBy': query.createdBy,
+      'sys.updatedBy': query.updatedBy,
+    });
+
+  async function listEntries(query: EntryListQuery = {}): Promise<EntryPage> {
+    // The Preview list refuses an offset (a cursor walks keys), so a `skip` is walked here: pages
+    // of up to 100 are read and dropped until that many entries are behind the cursor.
+    const { skip, ...rest } = query;
+    let cursor = rest.cursor;
+    for (let left = cursor ? 0 : (skip ?? 0); left > 0; ) {
+      const page = await entryPage({ ...rest, cursor, limit: Math.min(left, 100) });
+      if (!page.nextCursor) return { items: [], total: 0 };
+      left -= page.items.length;
+      cursor = page.nextCursor;
+    }
+    return entryPage({ ...rest, cursor });
+  }
+
   /** A signed URL may be root-relative (a deployment without MEDIA_BASE_URL): resolve it here. */
   const absolute = (url: string) => (/^https?:\/\//.test(url) ? url : `${root}${url}`);
   /** A signed URL without its query: the signature is a write capability, never for a log. */
@@ -2237,21 +2283,16 @@ export function createManagementClient(opts: ManagementClientOptions) {
     entries: {
       /**
        * One page of entries as they are now, drafts included, from the Preview API (the same
-       * origin): `total` counts this page, so page with `skip` until one comes back short.
+       * origin): `total` counts this page; pass `nextCursor` back as `cursor` for the next.
        */
-      list: (query: EntryListQuery = {}) =>
-        get<{ items: PreviewEntry[]; total: number }>(
-          `${root}/preview/${e(opts.space)}/${e(opts.environment)}/entries`,
-          {
-            content_type: query.contentType,
-            locale: query.locale,
-            limit: query.limit,
-            skip: query.skip,
-            order: query.order,
-            query: query.query,
-            'sys.createdBy': query.createdBy,
-            'sys.updatedBy': query.updatedBy,
-          },
+      list: listEntries,
+      /**
+       * Every entry the query matches, following `nextCursor` a page (`limit`) at a time as the
+       * loop asks for more: `for await (const entry of cma.entries.iterate({ contentType })) …`.
+       */
+      iterate: (query: EntryListQuery = {}): AsyncGenerator<PreviewEntry, void, undefined> =>
+        pages(query.cursor, (cursor) =>
+          listEntries(cursor ? { ...query, cursor, skip: undefined } : query),
         ),
       create: (input: { contentTypeApiId: string; fields: EntryFields }) =>
         post<EntryView>(`${envBase}/entries`, input),
