@@ -406,7 +406,7 @@ describe('promotions over MCP', () => {
     expect(approved).toMatchObject({ status: 'completed', decidedBy: 'grace' });
   });
 
-  it('answers an approval that stopped partway with the failed record, and lets a requester withdraw', async () => {
+  it('makes an approval that stopped partway an error carrying the record, and lets a requester withdraw', async () => {
     const deps = makeDeps();
     await createSpace(deps.ctx, { spaceId: 'space-1', name: 'S', defaultLocale: 'en-US' });
     await createEnvironment(deps.ctx, 'space-1', 'staging');
@@ -469,12 +469,16 @@ describe('promotions over MCP', () => {
       arguments: { space: 'space-1', id: partway.id },
     });
     deps.ctx.store.entries.create = create;
-    expect(approved.isError).toBeFalsy();
-    expect(body(approved)).toMatchObject({
-      status: 'failed',
-      error: 'boom',
-      decidedBy: 'grace',
-      result: { entries: [lands] },
+    // An error result, as REST's 409, carrying the record.
+    expect(approved.isError).toBe(true);
+    expect(body(approved).error).toMatchObject({
+      code: 'promotion_failed',
+      promotion: {
+        status: 'failed',
+        error: 'boom',
+        decidedBy: 'grace',
+        result: { entries: [lands] },
+      },
     });
 
     // Withdrawn: the requester rejects their own.

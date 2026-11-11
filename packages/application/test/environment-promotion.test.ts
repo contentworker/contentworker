@@ -3,6 +3,8 @@ import {
   ForbiddenError,
   NotFoundError,
   type Principal,
+  type Promotion,
+  PromotionFailedError,
   SCOPES,
   ValidationError,
   WorkflowBuilder,
@@ -26,10 +28,12 @@ import {
   deleteEnvironmentAlias,
   failStalePromotions,
   getPromotion,
+  listPromotions,
   PROMOTION_APPLY_TIMEOUT_MS,
   publishContentType,
   publishEntry,
   publishWorkflowVersion,
+  readPromotion,
   rejectPromotion,
   requestPromotion,
   SYSTEM_CALLER,
@@ -92,6 +96,18 @@ beforeEach(async () => {
   await createEnvironment(ctx, spaceId, 'qa');
   for (const scope of [staging, main, qa]) await seedModel(scope);
 });
+
+/** The record a promotion that stopped after a write carries in its error. */
+async function failedOf(run: Promise<unknown>): Promise<Promotion> {
+  const err = await run.then(
+    () => {
+      throw new Error('expected the apply to stop partway');
+    },
+    (e: unknown) => e,
+  );
+  expect(err).toBeInstanceOf(PromotionFailedError);
+  return (err as PromotionFailedError).promotion;
+}
 
 const events = async (type: string) =>
   (await store.outbox.readPending(1000)).filter((e) => e.type === type);
@@ -419,7 +435,7 @@ describe('promoting content between environments', () => {
     );
   });
 
-  it('answers a request that applied partway and failed with its failed record', async () => {
+  it('answers a request that applied partway with an error carrying its failed record', async () => {
     const a = await createEntry(ctx, staging, {
       contentTypeApiId: 'note',
       fields: { title: { 'en-US': 'First' } },
@@ -435,12 +451,15 @@ describe('promoting content between environments', () => {
       if (++writes === 2) throw new Error('boom');
       return create(...args);
     };
-    // Into qa, which needs no approval: it applies in the request.
-    const p = await requestPromotion(ctx, ada, spaceId, {
-      source: 'staging',
-      target: 'qa',
-      entries: [a.entry.id, b.entry.id],
-    });
+    // Into qa, which needs no approval: it applies in the request. Half-promoted is an error, not a
+    // success, and it carries the record.
+    const p = await failedOf(
+      requestPromotion(ctx, ada, spaceId, {
+        source: 'staging',
+        target: 'qa',
+        entries: [a.entry.id, b.entry.id],
+      }),
+    );
     store.entries.create = create;
     expect(p).toMatchObject({
       status: 'failed',
@@ -477,15 +496,110 @@ describe('promoting content between environments', () => {
       expect.objectContaining({ message: expect.stringMatching(new RegExp(`^Entry ${bare}: `)) }),
     ]);
 
-    // After one landed: the failed record, its error in the issue's words.
-    const p = await requestPromotion(ctx, ada, spaceId, {
-      source: 'staging',
-      target: 'qa',
-      entries: [full, bare],
-    });
+    // After one landed: the failed record names the entry, and keeps its issues, structured.
+    const p = await failedOf(
+      requestPromotion(ctx, ada, spaceId, {
+        source: 'staging',
+        target: 'qa',
+        entries: [full, bare],
+      }),
+    );
     expect(p).toMatchObject({ status: 'failed', result: { entries: [full] } });
-    expect(p.error).toMatch(new RegExp(`^Entry ${bare}: `));
-    expect(p.error).not.toBe('One or more fields are invalid');
+    expect(p.error).toBe(`The target qa refused entry ${bare} (1 issue)`);
+    expect(p.result?.issues).toEqual([
+      expect.objectContaining({ entryId: bare, contentTypeApiId: 'note', field: 'body' }),
+    ]);
+    expect(p.result?.issues?.[0]?.message).not.toMatch(/^Entry /);
+
+    // Read by a role that can't read `body`: that issue folds into a count, never named. The
+    // record's own error names only the entry.
+    const limited: Principal = {
+      ...ada,
+      contentGrants: [{ contentTypeApiId: '*', actions: ['read'], deniedFields: ['body'] }],
+    };
+    const seen = await readPromotion(ctx, limited, spaceId, p.id);
+    expect(seen.result?.issues).toEqual([
+      expect.objectContaining({ entryId: bare, field: '', code: 'hidden', hidden: 1 }),
+    ]);
+    expect(JSON.stringify(seen)).not.toContain('"field":"body"');
+    expect((await listPromotions(ctx, limited, spaceId))[0]?.result?.issues).toEqual(
+      seen.result?.issues,
+    );
+    // Unrestricted, every issue as recorded.
+    expect((await readPromotion(ctx, ada, spaceId, p.id)).result?.issues).toEqual(p.result?.issues);
+  });
+
+  it('records a refusal on the publish path, after the entry was written, with the entry named', async () => {
+    const { entry } = await createEntry(ctx, staging, {
+      contentTypeApiId: 'note',
+      fields: { title: { 'en-US': 'Live' } },
+    });
+    await publishEntry(ctx, staging, entry.id);
+    // The write lands; the publish is refused.
+    const put = store.entries.putPublished.bind(store.entries);
+    store.entries.putPublished = async () => {
+      throw new ValidationError([{ field: 'title', locale: 'en-US', message: 'Too long' }]);
+    };
+    const p = await failedOf(
+      requestPromotion(ctx, ada, spaceId, { source: 'staging', target: 'qa', entries: [entry.id] }),
+    );
+    store.entries.putPublished = put;
+    expect(p).toMatchObject({
+      status: 'failed',
+      error: `The target qa refused entry ${entry.id} (1 issue)`,
+      result: {
+        entries: [entry.id],
+        published: [],
+        issues: [
+          {
+            entryId: entry.id,
+            contentTypeApiId: 'note',
+            field: 'title',
+            locale: 'en-US',
+            message: 'Too long',
+          },
+        ],
+      },
+    });
+  });
+
+  it('counts and logs a fault that stops an apply after a write', async () => {
+    const counted: { metric: string; labels?: Record<string, string> }[] = [];
+    const metered: AppContext = {
+      ...ctx,
+      metrics: { count: (metric, _v, labels) => counted.push({ metric, labels }) },
+    };
+    const make = async (title: string) =>
+      (
+        await createEntry(ctx, staging, {
+          contentTypeApiId: 'note',
+          fields: { title: { 'en-US': title } },
+        })
+      ).entry.id;
+    const ids = [await make('One'), await make('Two')];
+    const create = store.entries.create.bind(store.entries);
+    let writes = 0;
+    store.entries.create = async (...args) => {
+      if (++writes === 2) throw new Error('fetch https://user:abc123secret@db.example/x failed');
+      return create(...args);
+    };
+    const logged: unknown[][] = [];
+    const error = console.error;
+    console.error = (...args: unknown[]) => logged.push(args);
+    try {
+      const p = await failedOf(
+        requestPromotion(metered, ada, spaceId, { source: 'staging', target: 'qa', entries: ids }),
+      );
+      expect(p.status).toBe('failed');
+    } finally {
+      console.error = error;
+      store.entries.create = create;
+    }
+    expect(counted).toEqual([
+      { metric: 'contentworker_promotion_apply_errors_total', labels: { stage: 'partway' } },
+    ]);
+    expect(logged).toHaveLength(1);
+    expect(JSON.stringify(logged)).not.toContain('abc123secret');
   });
 
   it('fails, copying nothing of it, when a content type changed after the request', async () => {
@@ -824,8 +938,8 @@ describe('promoting a content type that would strand blocks in the target', () =
       contentTypes: ['page'],
       entries: [b.entry.id, a.entry.id],
     });
-    // Stopped partway: the approval answers with the failed record, not an error.
-    const answered = await approvePromotion(ctx, managers, spaceId, p.id);
+    // Stopped partway: the approval is an error carrying the failed record.
+    const answered = await failedOf(approvePromotion(ctx, managers, spaceId, p.id));
     expect(answered).toMatchObject({ id: p.id, status: 'failed', error: expect.any(String) });
     expect(answered).toEqual(await store.promotions.get(spaceId, p.id));
     expect(await store.promotions.get(spaceId, p.id)).toMatchObject({

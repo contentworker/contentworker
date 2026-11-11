@@ -1394,6 +1394,16 @@ export function apiIssues(err: unknown): { field: string; message: string }[] {
   );
 }
 
+/**
+ * The promotion a request or approval stopped partway, when that is what the API answered (409
+ * `promotion_failed`, the record in `error.promotion`): something was written, so it is neither a
+ * success nor a refusal. Undefined for any other failure.
+ */
+export function failedPromotionOf(err: unknown): Promotion | undefined {
+  if (!(err instanceof ApiError) || err.status !== 409 || err.code !== 'promotion_failed') return;
+  return (err.body as { error?: { promotion?: Promotion } } | undefined)?.error?.promotion;
+}
+
 /** True when the API refused because the caller's role lacks the scope (403). */
 export const isForbidden = (err: unknown): boolean => err instanceof ApiError && err.status === 403;
 

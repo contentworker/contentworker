@@ -881,7 +881,8 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   answers, the picker closes, so the same promotion isn't filed twice. A refusal (nothing was
   written) is a destructive Alert, "Nothing was promoted into main", listing the API's issues grouped
   by what they name (Content types, Entries, Blocks), with the selection kept. One that applied at
-  once and stopped partway comes back as its record, `failed`, and shows as "The promotion failed".
+  once and stopped partway comes back as the API's 409 carrying its record, `failed`, and shows as
+  "The promotion failed".
   **Promotions** is a catalog of the 50 most recent, newest first, filtered by a Segmented All /
   Awaiting approval (asked of the API). A press anywhere on a row opens its record: its source →
   target is the row's one button, stretched over it, named for the promotion ("Open promotion
@@ -895,8 +896,9 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   destructive Alert in the API's words, the stale sweep's included. Approve and promote… shows only
   to someone who may approve: never its requester, and with content types or blocks, content:manage
   as well. It confirms in the ink `ConfirmDialog`, which holds until the answer and says a refusal
-  (403, 409) in the API's words. Reject asks in place. An apply that stopped partway comes back as the
-  record, so the confirm closes on "The promotion failed". Its requester gets Withdraw request
+  (403, 409) in the API's words. Reject asks in place. An apply that stopped partway answers 409 with the
+  record, so the confirm closes on "The promotion failed", and the record lists what the target
+  refused (entry, field, locale, message). Its requester, a person, gets Withdraw request
   instead, asking in place; the API records it as their rejection, and the record, list and history
   read Withdrawn. Someone who may not decide reads why, in a muted line ("You requested it, so
   someone else approves or rejects it. You can withdraw it."). Once decided, focus goes

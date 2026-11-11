@@ -305,7 +305,11 @@ export function usePromotionViewer(): PromotionViewer {
   };
   const has = (scope: string) => access?.scopes.includes(scope) === true;
   const unrestricted = !!access && !access.restricted;
+  // Deciding or withdrawing takes a person or the admin token, never an API key; the admin is
+  // always a person, but the API's answer says which.
+  const person = access?.kind === 'user' || access?.kind === 'admin';
   const canReject = (p: Pick<Promotion, 'requestedBy'>) =>
+    person &&
     unrestricted &&
     has('content:publish') &&
     // A person decides (the admin's every call is one): never whoever asked for it.
@@ -317,6 +321,7 @@ export function usePromotionViewer(): PromotionViewer {
     canRequest: unrestricted && has('content:publish') && has('content:manage'),
     canReject,
     canWithdraw: (p) =>
+      person &&
       unrestricted &&
       has('content:publish') &&
       !!access?.subject &&

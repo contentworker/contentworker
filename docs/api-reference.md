@@ -269,10 +269,11 @@ check first.
    reasons and the probabilities (`risk`).
 3. **Deciding.** A promotion that needs no approval applies at once (`completed`). One that does
    waits as `awaiting_approval` (event `promotion.awaiting_approval`). It's then approved or
-   rejected by a person, or the deployment admin token, other than whoever requested it (who may
-   reject it too, withdrawing it: `decidedBy` is then the requester):
+   rejected by a person, or the deployment admin token, other than whoever requested it. A person
+   who requested it (not an API key or an app acting for them) may reject it too, withdrawing it:
+   `decidedBy` is then the requester.
    - an API key, or an application acting for a person (an MCP or OAuth client, an agent), can
-     request a promotion but not decide one;
+     request a promotion but not decide or withdraw one;
    - approving one with content types or blocks also takes `content:manage`;
    - both environments must still exist when it's approved.
 
@@ -283,11 +284,16 @@ check first.
    for a person's edits. Afterwards it checks that the target holds the pinned fields
    (`result.mismatched`) and emits `environment.promoted`. A failure marks it `failed` with the
    error; whatever was applied before it stays. A check the apply runs before it writes anything
-   (a pin that moved, an entry that would be stranded) answers as a refusal, `409` or `422`,
-   though the record is `failed` too. A failure once writing began answers with the record
-   itself: the request (`201`) or approval (`200`) returns the promotion `failed`, with its
-   `error` and what it wrote (`result`), so a client can tell "nothing changed" from "stopped
-   partway". The MCP tools return the same record. An apply that dies partway without saying so (the
+   (a pin that moved, an entry that would be stranded), or a first write the target refuses,
+   answers as a refusal, `409` or `422` with its issues, though the record is `failed` too. A
+   failure once a write has landed is never a success: the request or approval answers `409`
+   `promotion_failed`, the error carrying the record in `error.promotion` (`failed`, its `error`,
+   what it wrote in `result`), so automation that checks the status stops and a client can see
+   what changed. The MCP tools answer an error result with the same body. When the target refused
+   an entry, `error` names the entry and `result.issues` lists each issue (entry, type, field,
+   locale, message); a reader whose role can't read a field sees its issues counted in one, never
+   named, as a refused save says them. A fault (not a refusal) that stops it partway is logged and
+   counted (`contentworker_promotion_apply_errors_total`). An apply that dies partway without saying so (the
    Worker evicted mid-request) would leave it `applying`: the engine's hourly `stale-promotions`
    sweep marks one still `applying` an hour after it started (its approval, or its request when
    it needed none) `failed`, with an error saying so, and audits `promotion.failed` as `system`.

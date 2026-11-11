@@ -3,8 +3,8 @@ import { z } from 'zod';
 
 /**
  * A promotion's record: what it pins, its risk check, and its decision and outcome. A request or
- * approval whose apply stopped partway answers with this too, `failed` with its `error` and what
- * it wrote (`result`); a refusal before anything is written is an error response instead.
+ * approval whose apply stopped after a write answers 409 `promotion_failed` with this record in
+ * `error.promotion` (`failed`, its `error`, what it wrote); a refusal copies nothing.
  */
 export const promotion = z.looseObject({
   id: z.string(),
@@ -60,6 +60,21 @@ export const promotion = z.looseObject({
       published: z.array(z.string()),
       mismatched: z.array(z.string()),
       gated: z.array(z.string()),
+      issues: z
+        .array(
+          z.looseObject({
+            entryId: z.string(),
+            contentTypeApiId: z.string(),
+            field: z.string(),
+            locale: z.string().optional(),
+            message: z.string(),
+          }),
+        )
+        .optional()
+        .describe(
+          'On a failed apply, what the target refused, per entry and field; fields the reader ' +
+            "can't read are counted in one issue, never named",
+        ),
     })
     .optional()
     .describe('What the apply wrote; on a failed one, what it wrote before it stopped'),

@@ -105,7 +105,7 @@ describe('promotions over HTTP', () => {
     expect(one.status).toBe(200);
   });
 
-  it('answers a request that applied at once and stopped partway with its failed record', async () => {
+  it('answers a request that stopped after a write with a 409 carrying its failed record', async () => {
     await app.request('/spaces/s1/environments', {
       method: 'POST',
       headers: admin,
@@ -137,8 +137,13 @@ describe('promotions over HTTP', () => {
       body: JSON.stringify({ source: 'staging', target: 'qa', entries: [entryId, secondId] }),
     });
     store.entries.create = create;
-    expect(res.status).toBe(201);
-    const p = (await res.json()) as P & { error?: string };
+    // Half-promoted is never a 2xx: automation that checks the status stops here.
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as {
+      error: { code: string; message: string; promotion: P & { error?: string } };
+    };
+    expect(body.error.code).toBe('promotion_failed');
+    const p = body.error.promotion;
     expect(p).toMatchObject({ status: 'failed', error: 'boom', result: { entries: [entryId] } });
     const one = await app.request(`/spaces/s1/promotions/${p.id}`, { headers: admin });
     expect(await one.json()).toMatchObject({ status: 'failed', error: 'boom' });

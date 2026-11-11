@@ -8,6 +8,7 @@ import {
   LastAdminError,
   NotConfiguredError,
   NotFoundError,
+  PromotionFailedError,
   PublishGatedError,
   RateLimitedError,
   SecretUnreadableError,
@@ -37,6 +38,15 @@ export function toHttpError(err: unknown): { status: number; body: unknown } {
           ...(err.details !== undefined ? { details: err.details } : {}),
         },
       },
+    };
+  }
+  // A promotion whose apply stopped partway: not a success (something is half-promoted) and not
+  // a refusal (something changed). A conflict with what the request expected, carrying the record
+  // (`failed`, its error and what it wrote), so automation fails and a client can show it.
+  if (err instanceof PromotionFailedError) {
+    return {
+      status: 409,
+      body: { error: { code: err.code, message: err.message, promotion: err.promotion } },
     };
   }
   // Still linked from entries: the links come back, so a client can show or clear them.

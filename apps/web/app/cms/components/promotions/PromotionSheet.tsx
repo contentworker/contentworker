@@ -13,7 +13,7 @@ import { StatusBadge, ToneBadge } from '~/cms/components/status';
 import { When } from '~/cms/components/when';
 import { type ActorDirectory, actorLabel } from '~/cms/lib/authorship';
 import { plural } from '~/cms/lib/format';
-import { ApiError, apiErrorMessage, refusedSave } from '~/cms/lib/management';
+import { ApiError, apiErrorMessage, failedPromotionOf, refusedSave } from '~/cms/lib/management';
 import { useClient, useLocalRun } from '../../lib/client-context';
 import { useInvalidate, useScopedQuery } from '../../lib/queries';
 import {
@@ -125,8 +125,8 @@ function Record({ promotion: p }: { promotion: Promotion }) {
 
   /**
    * Approves from the confirm, which holds until the answer and says a refusal (in the API's
-   * words) or no answer itself. An apply that stopped partway answers with the record, `failed`:
-   * the confirm closes on it and the record says what happened. A refusal wrote nothing, though a
+   * words) or no answer itself. An apply that stopped partway answers 409 with the record,
+   * `failed`: the confirm closes on it and the record says what happened. A refusal wrote nothing, though a
    * check the apply ran first may have failed the record: it is read again either way.
    */
   const approve = async () => {
@@ -134,8 +134,11 @@ function Record({ promotion: p }: { promotion: Promotion }) {
     try {
       await client.approvePromotion(p.id);
     } catch (err) {
-      if (refusedSave(err)) await reread();
-      throw err;
+      // Stopped after a write: approved, and failed partway. The record (read again) says so.
+      if (!failedPromotionOf(err)) {
+        if (refusedSave(err)) await reread();
+        throw err;
+      }
     }
     decided.current = true;
     await reread();
@@ -445,6 +448,31 @@ function Outcome({ promotion: p }: { promotion: Promotion }) {
             keyOf={(id) => id}
             render={(id) => <span className="font-mono text-xs">{id}</span>}
           />
+        </div>
+      ) : null}
+      {r.issues?.length ? (
+        <div className="space-y-1.5">
+          <p className="text-sm">What {p.target} refused:</p>
+          <ul aria-label="What the target refused" className="list-disc space-y-1 ps-4 text-sm">
+            {r.issues.map((i, n) => (
+              // Keyed by position: two issues may read the same, and the list never reorders.
+              <li key={n}>
+                <span className="font-mono text-xs" title={i.entryId}>
+                  {i.contentTypeApiId} · {shortId(i.entryId)}
+                </span>
+                {i.field ? (
+                  <>
+                    {' '}
+                    <span className="font-mono text-xs">
+                      {i.field}
+                      {i.locale ? ` (${i.locale})` : ''}
+                    </span>
+                  </>
+                ) : null}
+                : {i.message}
+              </li>
+            ))}
+          </ul>
         </div>
       ) : null}
       {r.mismatched.length > 0 ? (

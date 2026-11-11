@@ -4,6 +4,7 @@ import type {
   Clock,
   ContentStore,
   CostGuard,
+  Counter,
   DecisionModel,
   HookDispatcher,
   IdGenerator,
@@ -41,6 +42,8 @@ export interface AppContext {
   readonly changes?: ChangeLog;
   /** Optional delivery cache; when absent, reads go straight to the store. */
   readonly cache?: Cache;
+  /** Operational counters (absent in tests and local tools): what an alert should watch. */
+  readonly metrics?: Counter;
   /**
    * TTL for delivery cache entries, seconds. A garbage-collection bound only —
    * tag-version invalidation stays the correctness mechanism — so backends

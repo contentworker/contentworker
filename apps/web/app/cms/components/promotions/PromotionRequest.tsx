@@ -17,7 +17,12 @@ import { Section } from '~/cms/components/page';
 import { ToneBadge } from '~/cms/components/status';
 import { humanize, plural, type Tone } from '~/cms/lib/format';
 import { useClient, useLocalRun } from '../../lib/client-context';
-import type { ChangeKind, Environment, EnvironmentComparison } from '../../lib/management';
+import {
+  type ChangeKind,
+  type Environment,
+  type EnvironmentComparison,
+  failedPromotionOf,
+} from '../../lib/management';
 import { useInvalidate } from '../../lib/queries';
 import {
   copiesLine,
@@ -102,8 +107,8 @@ export function PromotionRequest(props: {
 
   /**
    * Sends the request (from the confirm, which holds until it answers). A refusal is said under
-   * the button, grouped; anything else (a 5xx, no answer) stays in the confirm, which says it may
-   * have gone through. Answered, the picker closes: the answer is the news, and pressing Request
+   * the button, grouped; one that stopped partway comes back as its failed record; anything else
+   * (a 5xx, no answer) stays in the confirm, which says it may have gone through. Answered, the picker closes: the answer is the news, and pressing Request
    * again would file the same promotion twice.
    */
   const request = async () => {
@@ -122,6 +127,17 @@ export function PromotionRequest(props: {
       setEntries(new Set());
       setBlocks(true);
     } catch (err) {
+      // Applied at once and stopped after a write: the API's 409 carries the failed record, which
+      // is the answer (something was written), not a refusal.
+      const failed = failedPromotionOf(err);
+      if (failed) {
+        setOutcome({ kind: 'answered', promotion: failed });
+        setDiff(null);
+        setTypes(new Set());
+        setEntries(new Set());
+        setBlocks(true);
+        return;
+      }
       const refusal = refusalOf(err);
       if (!refusal || refusal.kind === 'unconfirmed') throw err;
       setOutcome({ kind: 'refused', target, refusal });

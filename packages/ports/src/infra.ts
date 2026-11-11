@@ -927,3 +927,11 @@ export interface AssetIngestStarter {
   /** `true` when this call started the run; `false` when a run under that id already existed. */
   start(instanceId: string, params: AssetIngestParams): Promise<boolean>;
 }
+
+/**
+ * An operational counter (a metric with labels). The edge backs it with Analytics Engine when the
+ * deployment binds one, else a structured log line; never let a count break the work it counts.
+ */
+export interface Counter {
+  count(metric: string, value?: number, labels?: Record<string, string>): void;
+}

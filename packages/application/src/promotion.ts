@@ -5,12 +5,15 @@ import {
   type CarriedBlockConfig,
   ConflictError,
   type ContentType,
+  DomainError,
+  deniedFieldsFor,
   diffBlockCatalogs,
   EMPTY_BLOCK_CONFIG,
   type EntryFields,
   effectiveBlockConfig,
   effectiveBlockRules,
   extractReferences,
+  type FieldIssue,
   ForbiddenError,
   InvalidStateError,
   MAX_PROMOTION_CONTENT_TYPES,
@@ -23,6 +26,8 @@ import {
   type PromotedEntry,
   type Promotion,
   type PromotionAssessment,
+  PromotionFailedError,
+  type PromotionIssue,
   type PromotionResult,
   type PromotionRisk,
   type PromotionStatus,
@@ -36,6 +41,7 @@ import {
   ValidationError,
 } from '@contentworker/domain';
 import type { DecisionAnswer } from '@contentworker/ports';
+import { redactCredentials } from '@contentworker/redaction';
 import { decide } from './ai-decide';
 import { wrapUntrusted } from './ai-prompt';
 import { isUncheckedFallback } from './ai-provenance';
@@ -53,6 +59,7 @@ import {
 } from './content-types';
 import { type AppContext, withActor } from './context';
 import { createEntry, updateEntry } from './entries';
+import { hideUnreadableIssues } from './hidden-fields';
 import { loadPublishGuard } from './publish-gate';
 import { publishEntry } from './publishing';
 import { resolveEnvironment, resolveWritableEnvironment } from './spaces';
@@ -354,12 +361,47 @@ export async function getPromotion(
   return found;
 }
 
+/** A promotion as `principal` reads it: a failed apply's issues only in fields they may read. */
+export async function readPromotion(
+  ctx: AppContext,
+  principal: Principal,
+  spaceId: string,
+  id: string,
+): Promise<Promotion> {
+  return promotionFor(principal, await getPromotion(ctx, spaceId, id));
+}
+
+/** The space's promotions as `principal` reads them (`readPromotion`), newest first. */
 export async function listPromotions(
   ctx: AppContext,
+  principal: Principal,
   spaceId: string,
   opts: { readonly status?: PromotionStatus; readonly limit?: number } = {},
 ): Promise<Promotion[]> {
-  return ctx.store.promotions.list(spaceId, opts);
+  return (await ctx.store.promotions.list(spaceId, opts)).map((p) => promotionFor(principal, p));
+}
+
+/**
+ * A failed apply's issues as `principal` may read them. Reading promotions takes only
+ * content:publish, so a role limited to some fields reads them too; an issue in a field it can't
+ * read would say what that field holds. Those fold, per entry, into one issue that counts them
+ * (`hideUnreadableIssues`, as a save's refusal does), and `error` never names a field.
+ */
+export function promotionFor(principal: Principal, p: Promotion): Promotion {
+  const issues = p.result?.issues;
+  if (!p.result || !issues?.length || !principal.contentGrants) return p;
+  const byEntry = new Map<string, PromotionIssue[]>();
+  for (const i of issues) byEntry.set(i.entryId, [...(byEntry.get(i.entryId) ?? []), i]);
+  const shown: PromotionIssue[] = [];
+  for (const [entryId, own] of byEntry) {
+    const contentTypeApiId = own[0]?.contentTypeApiId ?? '';
+    const folded = hideUnreadableIssues(
+      new ValidationError(own),
+      deniedFieldsFor(principal, contentTypeApiId),
+    ) as ValidationError;
+    shown.push(...folded.issues.map((i) => ({ ...i, entryId, contentTypeApiId })));
+  }
+  return { ...p, result: { ...p.result, issues: shown } };
 }
 
 /**
@@ -547,11 +589,11 @@ async function applyPromotion(base: AppContext, promotion: Promotion): Promise<P
       const fields = pinned.get(e.entryId) as EntryFields;
       // The source's pinned version, copied whole (see `EntryWriteOptions.copy`).
       if (await ctx.store.entries.get(target, e.entryId)) {
-        await named(e.entryId, () => updateEntry(ctx, target, e.entryId, fields, { copy: true }));
+        await named(e, () => updateEntry(ctx, target, e.entryId, fields, { copy: true }));
       } else {
         // A new entry in the target is the source's, promoted: it keeps who created it and when.
         const from = (await ctx.store.entries.get(source, e.entryId))?.entry;
-        await named(e.entryId, () =>
+        await named(e, () =>
           createEntry(
             ctx,
             target,
@@ -582,7 +624,7 @@ async function applyPromotion(base: AppContext, promotion: Promotion): Promise<P
         result.gated.push(e.entryId);
         return;
       }
-      await named(e.entryId, () => publishEntry(ctx, target, e.entryId));
+      await named(e, () => publishEntry(ctx, target, e.entryId));
       result.published.push(e.entryId);
     };
     for (const e of first) await write(e);
@@ -617,42 +659,82 @@ async function applyPromotion(base: AppContext, promotion: Promotion): Promise<P
     });
     return await finish({ status: 'completed', result: done });
   } catch (err) {
+    const refused = err instanceof EntryRefusedError ? err : undefined;
+    const unexpected = !(err instanceof DomainError);
     const failed = await finish({
       status: 'failed',
-      result: { ...result, mismatched: [] },
-      error: failureText(err),
+      result: {
+        ...result,
+        mismatched: [],
+        ...(refused ? { issues: refused.recorded } : {}),
+      },
+      error: failureText(err, promotion.target),
     });
     // Stopped before anything landed in the target (a check, or the first write refused): a
-    // refusal, said as one with its issues, though the record is failed too. Stopped partway:
-    // the record is the answer, naming the cause and what was written, so the request or approval
-    // that ran the apply returns it rather than an error a caller would read as "nothing happened".
+    // refusal, said as one with its issues, though the record is failed too.
     if (!wrote) throw err;
-    return failed;
+    // Stopped partway: something is half-promoted. A fault (not a refusal) is logged and counted,
+    // since the answer below is the record, not a 500 an alert would see.
+    if (unexpected) {
+      ctx.metrics?.count('contentworker_promotion_apply_errors_total', 1, { stage: 'partway' });
+      console.error('promotion apply failed partway', {
+        promotionId: promotion.id,
+        spaceId: promotion.spaceId,
+        error: redactCredentials(err instanceof Error ? err.message : String(err)).slice(0, 500),
+      });
+    }
+    // Neither a success nor a refusal: an error that carries the record, so a caller sees what
+    // was written (REST answers 409, MCP an error result, each with the record).
+    throw new PromotionFailedError(failed);
   }
 }
 
 /**
- * Runs one entry's write or publish, naming the entry in a validation refusal's issues: the
- * failed record keeps only text, and "One or more fields are invalid" says neither which entry nor
- * what to change.
+ * A promoted entry's write or publish the target refused (a field rule, a link): a validation
+ * refusal whose issues name the entry, for a caller who gets it as one, and keep the entry and its
+ * type with the issues as they were, for the failed record (folded per reader when it is read).
  */
-async function named<T>(entryId: string, run: () => Promise<T>): Promise<T> {
-  try {
-    return await run();
-  } catch (err) {
-    if (!(err instanceof ValidationError)) throw err;
-    throw new ValidationError(
-      err.issues.map((i) => ({ ...i, message: `Entry ${entryId}: ${i.message}` })),
-    );
+class EntryRefusedError extends ValidationError {
+  readonly entryId: string;
+  readonly recorded: readonly PromotionIssue[];
+  constructor(e: PromotedEntry, issues: readonly FieldIssue[]) {
+    super(issues.map((i) => ({ ...i, message: `Entry ${e.entryId}: ${i.message}` })));
+    this.entryId = e.entryId;
+    this.recorded = issues.map((i) => ({
+      entryId: e.entryId,
+      contentTypeApiId: e.contentTypeApiId,
+      field: i.field,
+      ...(i.locale !== undefined ? { locale: i.locale } : {}),
+      message: i.message,
+    }));
   }
 }
 
-/** What a failed record says of its cause: a refusal's issues in its own words, else its message. */
-function failureText(err: unknown): string {
+/** Runs one entry's write or publish, naming the entry in what the target refuses. */
+async function named<T>(e: PromotedEntry, run: () => Promise<T>): Promise<T> {
+  try {
+    return await run();
+  } catch (err) {
+    if (!(err instanceof ValidationError) || err instanceof EntryRefusedError) throw err;
+    throw new EntryRefusedError(e, err.issues);
+  }
+}
+
+/**
+ * What a failed record says of its cause, for every reader alike. An entry the target refused is
+ * named, not its fields: those are in `result.issues`, shown per reader. Another refusal keeps its
+ * words; a fault its message, redacted (it may quote a URL or a token).
+ */
+function failureText(err: unknown, target: string): string {
+  if (err instanceof EntryRefusedError) {
+    const n = err.recorded.length;
+    return `The target ${target} refused entry ${err.entryId} (${n} ${n === 1 ? 'issue' : 'issues'})`;
+  }
   if (err instanceof ValidationError && err.issues.length > 0) {
     return err.issues.map((i) => i.message).join('; ');
   }
-  return err instanceof Error ? err.message : String(err);
+  if (err instanceof DomainError) return err.message;
+  return redactCredentials(err instanceof Error ? err.message : String(err)).slice(0, 500);
 }
 
 /** Whether every entry an entry links to is in the target already, so publishing it now holds. */

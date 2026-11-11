@@ -113,6 +113,8 @@ interface Setup {
   decide?: { status: number; body: unknown };
   /** Who the session is. */
   subject?: string;
+  /** The session's principal kind (`user` for a signed-in person). */
+  kind?: string;
   scopes?: string[];
   compare?: unknown;
   url?: string;
@@ -142,7 +144,7 @@ function setup(opts: Setup = {}) {
     if (url === `${SPACE}/auth/me`) {
       return json({
         spaceId: 'space-1',
-        kind: 'user',
+        kind: opts.kind ?? 'user',
         subject: opts.subject ?? 'usr_me',
         scopes: opts.scopes ?? ['content:publish', 'content:manage'],
       });
@@ -327,12 +329,18 @@ describe('Requesting a promotion', () => {
     expect(screen.getByText('2 of 2 selected')).toBeTruthy();
   });
 
-  it('says one that applied at once and stopped partway failed, from the record the API answers', async () => {
+  it('says one that applied at once and stopped partway failed, from the record in the API’s 409', async () => {
     const error = 'Entry entry-aaaaaaaa-1 takes the slug "spring", which entry-x holds in main';
     setup({
       request: {
-        status: 201,
-        body: { ...completed, id: 'p-partway', target: 'main', status: 'failed', error },
+        status: 409,
+        body: {
+          error: {
+            code: 'promotion_failed',
+            message: `Promotion p-partway stopped partway: ${error}`,
+            promotion: { ...completed, id: 'p-partway', target: 'main', status: 'failed', error },
+          },
+        },
       },
     });
     await compare();
@@ -597,35 +605,64 @@ describe('A promotion’s record', () => {
     );
   });
 
-  it('shows an approval whose apply stopped partway as failed, from the record the API answers', async () => {
-    const error = 'Entry entry-bbbbbbbb-2 takes the slug "spring", which entry-x holds in main';
+  it('shows an approval whose apply stopped partway as failed, from the record in the API’s 409', async () => {
+    const error = 'The target main refused entry entry-bbbbbbbb-2 (1 issue)';
+    const failedRecord = {
+      ...waiting,
+      status: 'failed',
+      decidedBy: 'usr_me',
+      decidedAt: ago(0),
+      completedAt: ago(0),
+      error,
+      result: {
+        contentTypes: ['article'],
+        entries: ['entry-aaaaaaaa-1'],
+        published: [],
+        mismatched: [],
+        gated: [],
+        issues: [
+          {
+            entryId: 'entry-bbbbbbbb-2',
+            contentTypeApiId: 'article',
+            field: 'slug',
+            locale: 'en-US',
+            message: 'Already used by another entry',
+          },
+        ],
+      },
+    };
     setup({
       url: '/settings/environments?promotion=p-wait',
       decide: {
-        status: 200,
+        status: 409,
         body: {
-          ...waiting,
-          status: 'failed',
-          decidedBy: 'usr_me',
-          decidedAt: ago(0),
-          completedAt: ago(0),
-          error,
-          result: {
-            contentTypes: ['article'],
-            entries: ['entry-aaaaaaaa-1'],
-            published: [],
-            mismatched: [],
-            gated: [],
+          error: {
+            code: 'promotion_failed',
+            message: `Promotion p-wait stopped partway: ${error}`,
+            promotion: failedRecord,
           },
         },
       },
+      afterDecide: failedRecord,
     });
     const sheet = await screen.findByRole('dialog');
     await approve(sheet);
     expect(await within(sheet).findByText('The promotion failed')).toBeTruthy();
     expect(within(sheet).getByText(error)).toBeTruthy();
     expect(within(sheet).getByRole('region', { name: 'Written before it stopped' })).toBeTruthy();
+    const refused = within(sheet).getByRole('list', { name: 'What the target refused' });
+    expect(refused.textContent).toContain('slug (en-US)');
+    expect(refused.textContent).toContain('Already used by another entry');
+    // The confirm closed on it: not a refusal.
     await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+  });
+
+  it('offers neither Reject nor Withdraw to a session that isn’t a person', async () => {
+    setup({ url: '/settings/environments?promotion=p-wait', kind: 'cma', subject: 'usr_other' });
+    const sheet = await screen.findByRole('dialog');
+    await within(sheet).findByText('Why it needs approval');
+    expect(within(sheet).queryByRole('button', { name: 'Withdraw request' })).toBeNull();
+    expect(within(sheet).queryByRole('button', { name: 'Reject' })).toBeNull();
   });
 
   it('says a 403 approval refusal in the API’s words', async () => {

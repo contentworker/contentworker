@@ -128,7 +128,7 @@ takes a person (in the admin, or with their own token), not an API key or an ass
 you. An entry a workflow **gates publishing** for in the target arrives as a draft, and that
 workflow publishes it. If a content type changes in the source while a promotion waits, or the
 block catalog or config changes in either environment, approving it fails, so request a new one.
-A promotion that fails partway keeps what it already wrote, and the request or approval that ran it answers with its record, `failed`, with the error and what it wrote; a refusal answers as an error and copies nothing (when a check that runs as it applies refuses it, the record is `failed` too). Whoever requested a waiting promotion can withdraw it by rejecting it (in the admin, **Withdraw request**). One whose apply stopped without
+A promotion that fails partway keeps what it already wrote, and the request or approval that ran it answers `409` (`promotion_failed`) with its record, `failed`, in `error.promotion`: the error, what it wrote, and what the target refused. A refusal copies nothing (when a check that runs as it applies refuses it, the record is `failed` too). A person who requested a waiting promotion (not an API key or an app acting for them) can withdraw it by rejecting it (in the admin, **Withdraw request**). One whose apply stopped without
 finishing (the request cut off) is marked `failed` an hour after it started applying; compare the
 environments and request a new one for the rest.
 
