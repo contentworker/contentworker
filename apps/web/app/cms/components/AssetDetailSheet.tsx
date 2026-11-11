@@ -36,7 +36,7 @@ import { ResponsiveSheetContent } from '~/cms/components/responsive-sheet';
 import { StatusBadge, StatusDot, ToneBadge } from '~/cms/components/status';
 import { coarse, useMedia } from '~/cms/lib/device';
 import { useClient } from '../lib/client-context';
-import type { ImageTransform } from '../lib/management';
+import { type ImageTransform, sameOriginUpload } from '../lib/management';
 import { useToast } from '../lib/toast';
 
 /** The sheet's tabs, Details first: where an asset opens. */
@@ -444,7 +444,7 @@ export function AssetDetailSheet(props: {
                     ) : (
                       // Named by the control around it; the alt text is edited below.
                       <img
-                        src={asset.file.url}
+                        src={sameOriginUpload(asset.file.url)}
                         alt=""
                         onError={() => setImageFailed(true)}
                         className="w-full"

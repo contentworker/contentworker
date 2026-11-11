@@ -10,6 +10,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { useState } from 'react';
+import { sameOriginUpload } from '../lib/management';
 
 /** A file-type icon for the fallback tile, from the MIME type. */
 export function fileTypeIcon(contentType: string): LucideIcon {
@@ -24,10 +25,17 @@ export function fileTypeIcon(contentType: string): LucideIcon {
 /**
  * The URL to show as an asset's thumbnail: the image itself, or a hosted
  * video's poster frame. `null` when there is nothing visual to show yet.
+ *
+ * An image is drawn from its same-origin `/media/…` path: in a deployment the
+ * API signs it absolute on its own host (`MEDIA_BASE_URL`, `api.<domain>`),
+ * which the admin's `img-src 'self'` refuses. The signature covers the path and
+ * query, and the web Worker's gateway forwards `/media/`, so it is the same read.
  */
 export function previewUrl(asset: Asset): string | null {
   if (asset.file.video) return asset.file.video.thumbnailUrl ?? null;
-  if (asset.file.contentType.startsWith('image/') && asset.file.url) return asset.file.url;
+  if (asset.file.contentType.startsWith('image/') && asset.file.url) {
+    return sameOriginUpload(asset.file.url);
+  }
   return null;
 }
 
