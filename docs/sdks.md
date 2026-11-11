@@ -391,9 +391,12 @@ export const GET = createDraftRoute({
   top-level site: it works top-level and framed by the admin (the Site view, the canvas) from
   another site, and a draft opened in the admin's frame is never sent on a direct visit (where a
   browser blocks third-party cookies, Next's own draft cookie isn't kept in the frame, so it shows
-  published). A request whose `Sec-Fetch-Dest` is anything but `document`, `iframe` or `frame`
-  answers 403 before anything is read (no header: let through), on the exit route too: defence
-  against a link used as a subresource, not against being sent someone's preview link. Sites should
+  published). A request that isn't a navigation to a page or a frame — `Sec-Fetch-Mode` other than
+  `navigate`, or `Sec-Fetch-Dest` other than `document`, `iframe` or `frame` — answers 403 before
+  anything is read (a header not sent: let through; the token is the real check), on the exit
+  route too: defence against a link used as a subresource (another site's `no-cors` or `cors`
+  request), not against being sent someone's preview link. `Sec-Fetch-Site` isn't consulted: the
+  admin opens and frames the site cross-site, and a non-navigation is refused from any site. Sites should
   send `frame-ancestors 'self' <admin origin>`. The token reads are `cache: 'no-store'`. A refused
   token (401, 403 or 404 from Preview) answers 401 and sets nothing; a link without `entry` or `token`, 400; a Preview API that fails or can't be reached,
   502. Every answer is `cache-control: no-store` and `referrer-policy: no-referrer`, none echoes the
