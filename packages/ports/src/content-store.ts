@@ -1447,6 +1447,8 @@ export interface ContentStoreTx {
   readonly invites: Pick<InviteRepo, 'create' | 'replace'>;
   /** A person is added or replaced at their version's compare-and-set. */
   readonly members: Pick<MemberRepo, 'save'>;
+  /** The AI settings are set with the events that act on a change (search turned on or off). */
+  readonly aiSettings: Pick<AiSettingsRepo, 'save'>;
 }
 
 /** Promotion fields a status change may set. */
@@ -2452,6 +2454,13 @@ export type BulkJobAction =
    */
   | 'set_fields'
   /**
+   * Brings an environment's semantic search in line with the space's `search` setting after it is
+   * turned on or off: its ids are `entry:<id>` and `asset:<id>`, each re-embedded (on) or its
+   * vectors deleted (off), by the setting in force when the chunk runs. `config` holds the
+   * `enabled` and `settingsVersion` that started it (`search-reindex.ts`).
+   */
+  | 'search_reindex'
+  /**
    * One phase of a starter's background install (`@contentworker/seed`): `config` names the
    * starter, the install and the phase, and the next phase's job as `next`.
    */
@@ -2544,8 +2553,8 @@ export interface ScopedBulkChunkRef {
 export interface BulkJobRepo {
   createJob(scope: Scope, job: BulkJob): Promise<void>;
   getJob(scope: Scope, id: string): Promise<BulkJob | null>;
-  /** Jobs newest-first. */
-  listJobs(scope: Scope, opts?: { limit?: number }): Promise<BulkJob[]>;
+  /** Jobs newest-first; only those of `action` when given. */
+  listJobs(scope: Scope, opts?: { limit?: number; action?: BulkJobAction }): Promise<BulkJob[]>;
   /** Batch-inserts pending chunks (multi-row). */
   createChunks(scope: Scope, chunks: readonly BulkJobChunk[]): Promise<void>;
   /** Chunks of a job, in chunkId order (for the compliance report). */

@@ -629,8 +629,8 @@ guidance added to its built-in prompt. One space-scoped row, versioned. See
 
 | Method | Path                         | Scope          | Notes                                                                                                                                                                                                                                       |
 | ------ | ---------------------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| GET    | `/spaces/:space/ai-settings` | `preview:read` | `{ version, capabilities: { <id>: { enabled, tier, guidance } }, updatedAt, updatedBy }`; version 0, every capability on with `tier` and `guidance` null, before the first set                                                               |
-| PUT    | `/spaces/:space/ai-settings` | `space:admin`  | `{ expectedVersion, capabilities }` → `{ settings, unchanged }`: each capability named is replaced whole (`tier`, `guidance` null when left out), the rest kept. `422` for an unknown capability or tier or guidance over 2 000 characters; `409` with `details.version` for a stale `expectedVersion` or a set that lost the race |
+| GET    | `/spaces/:space/ai-settings` | `preview:read` | `{ version, maxTier, capabilities: { <id>: { enabled, tier, guidance, effectiveTier } }, updatedAt, updatedBy }`; version 0, every capability on with `tier` and `guidance` null, before the first set. `maxTier` is the deployment's cap (`AI_MAX_TIER`; `flagship` is none), `effectiveTier` the tier held to it                                                               |
+| PUT    | `/spaces/:space/ai-settings` | `space:admin`  | `{ expectedVersion, capabilities }` → `{ settings, unchanged }`: each capability named is replaced whole (`tier`, `guidance` null when left out), the rest kept. `422` for an unknown capability or tier or guidance over 2 000 characters; `409` with `details.version` for a stale `expectedVersion` or a set that lost the race. A tier above `maxTier` is kept and reported as its `effectiveTier`. Turning `search` on or off starts a `search_reindex` job in every environment |
 
 A capability turned off refuses the requests that need it with `409`
 `{ error: { code: "ai_capability_disabled", message, capability } }`; background work skips it. A
@@ -657,6 +657,7 @@ target `ai_settings` (the new version) and `detail.aiSettings` naming the parts 
 | GET    | `…/entries/:id/embedding`    | `search:read`    | Embedding vector metadata (a role needs read on the type; the vector covers only the fields it may read)            |
 | GET    | `…/search/index`             | `content:manage` | Lexical index health for the environment (`?content_type`): indexed documents against published entries, as `drift` |
 | POST   | `…/search/reindex`           | `content:manage` | Request a background reindex of published entries `{ contentTypeApiId? }` (`202`; `429` if requested too soon)      |
+| GET    | `…/search/reindex-job`       | `content:manage` | `{ job }`: the environment's latest `search_reindex` bulk job (turning `search` on or off starts one), or null      |
 
 ### Entries: versioning and bulk
 

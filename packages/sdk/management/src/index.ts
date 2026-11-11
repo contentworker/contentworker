@@ -574,11 +574,21 @@ export interface AiCapabilitySetting {
   readonly tier: 'flagship' | 'balanced' | 'fast' | null;
   /** Plain text added after the built-in prompt as quoted guidance; null: none. */
   readonly guidance: string | null;
+  /**
+   * `tier` held to the deployment's `maxTier`: the tier its calls actually run on (null when
+   * `tier` is).
+   */
+  readonly effectiveTier: 'flagship' | 'balanced' | 'fast' | null;
 }
 
 /** A space's AI settings. Version 0, everything on, before the first set. */
 export interface AiSettings {
   readonly version: number;
+  /**
+   * The most capable tier the deployment runs (`flagship`: no cap). A capability's tier above it
+   * is kept as set, and runs on this one.
+   */
+  readonly maxTier: 'flagship' | 'balanced' | 'fast';
   readonly capabilities: Readonly<Record<AiCapability, AiCapabilitySetting>>;
   readonly updatedAt: string | null;
   readonly updatedBy: string | null;
@@ -2267,6 +2277,12 @@ export function createManagementClient(opts: ManagementClientOptions) {
        * characters; 409 for a stale version (`isConflict`; `error.details.version` is the version in force).
        */
       set: (input: AiSettingsSetInput) => put<AiSettingsSet>(`${spaceBase}/ai-settings`, input),
+      /**
+       * This environment's latest search reindex, or null: turning `search` on or off starts one
+       * in every environment (content:manage). Poll it while `status` is `running`.
+       */
+      searchReindexJob: async () =>
+        (await get<{ job: BulkJob | null }>(`${envBase}/search/reindex-job`)).job,
     },
 
     /** Navigation menus: delivery data a front end renders (content:manage to change them). */

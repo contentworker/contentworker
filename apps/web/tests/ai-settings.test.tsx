@@ -39,6 +39,7 @@ function fakeClient(
   const client = {
     getSpaceAccess: vi.fn(async () => ({ spaceId: 'blog', kind: 'user', scopes })),
     getAiSettings: vi.fn(async () => stored),
+    getSearchReindexJob: vi.fn(async (): Promise<unknown> => null),
     setAiSettings: vi.fn(
       async (input: { expectedVersion: number; capabilities: Record<string, unknown> }) => {
         if (input.expectedVersion !== stored.version) {
@@ -215,5 +216,86 @@ describe('Settings → AI', () => {
     expect(screen.queryByRole('switch')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
     await screen.findByRole('switch', { name: 'Drafting' });
+  });
+
+  it('shows the deployment’s tier cap: tiers above it can’t be chosen, and one set above it says what it runs on', async () => {
+    const capped = {
+      ...DEFAULT_AI_SETTINGS,
+      version: 1,
+      maxTier: 'balanced',
+      capabilities: {
+        ...DEFAULT_AI_SETTINGS.capabilities,
+        drafting: { enabled: true, tier: 'flagship', guidance: null, effectiveTier: 'balanced' },
+      },
+    } as unknown as AiSettings;
+    renderPage(fakeClient(capped));
+    await screen.findByRole('switch', { name: 'Drafting' });
+    // Chosen before the cap was lowered: kept as set, and the row says what it runs on.
+    expect(
+      within(rowOf('Drafting')).getByText('Runs on Balanced: this deployment caps AI at Balanced.'),
+    ).toBeTruthy();
+    expect(
+      within(rowOf('Translation')).getByText(
+        'What each feature uses on its own. Capped at Balanced by this deployment.',
+      ),
+    ).toBeTruthy();
+    fireEvent.click(screen.getByRole('combobox', { name: 'Model tier Translation' }));
+    await waitFor(() => expect(screen.getAllByRole('option').length).toBe(4));
+    const option = (name: RegExp) => screen.getByRole('option', { name });
+    expect(option(/^Flagship/).getAttribute('aria-disabled')).toBe('true');
+    expect(option(/^Flagship/).textContent).toContain('Above this deployment’s cap (Balanced)');
+    expect(option(/^Balanced/).getAttribute('aria-disabled')).not.toBe('true');
+    expect(option(/^Fast/).getAttribute('aria-disabled')).not.toBe('true');
+  });
+
+  it('says nothing of a cap on a deployment without one', async () => {
+    renderPage(fakeClient({ ...DEFAULT_AI_SETTINGS, maxTier: 'flagship' } as AiSettings));
+    await screen.findByRole('switch', { name: 'Drafting' });
+    expect(screen.queryByText(/Capped at|caps AI at/)).toBeNull();
+  });
+
+  it('says how far the search reindex has got while one runs, to those who may follow it', async () => {
+    const client = fakeClient(DEFAULT_AI_SETTINGS, [
+      'space:admin',
+      'content:manage',
+      'preview:read',
+    ]);
+    client.getSearchReindexJob.mockResolvedValue({
+      id: 'j1',
+      action: 'search_reindex',
+      status: 'running',
+      totalItems: 250,
+      totalChunks: 3,
+      completedChunks: 1,
+      succeeded: 100,
+      failed: 0,
+      config: { enabled: true, settingsVersion: 1 },
+    });
+    renderPage(client);
+    expect(
+      await within(await waitFor(() => rowOf('Semantic search'))).findByText(
+        'Reindexing search: 40%',
+      ),
+    ).toBeTruthy();
+  });
+
+  it('says the reindex is starting after a save that turns search off, until its job appears', async () => {
+    const client = fakeClient(DEFAULT_AI_SETTINGS, [
+      'space:admin',
+      'content:manage',
+      'preview:read',
+    ]);
+    renderPage(client);
+    fireEvent.click(await screen.findByRole('switch', { name: 'Semantic search' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await screen.findByText('AI settings saved');
+    expect(await screen.findByText('Reindexing search: starting…')).toBeTruthy();
+  });
+
+  it('never asks after the reindex without content:manage', async () => {
+    const client = fakeClient();
+    renderPage(client);
+    await screen.findByRole('switch', { name: 'Semantic search' });
+    expect(client.getSearchReindexJob).not.toHaveBeenCalled();
   });
 });

@@ -151,11 +151,14 @@ export async function embedAssetForSearch(
   blob: BlobStore | undefined,
   scope: Scope,
   assetId: string,
+  /** Whether search is on, when the caller has read it already (a reindex chunk, once for all). */
+  opts: { readonly searchOn?: boolean } = {},
 ): Promise<boolean> {
   if (!deps.embeddings || !deps.vectors) return false;
   // Semantic search turned off: the text never reaches the embeddings model, and the asset's
   // vectors go, so no stale text is left to match.
-  if (!(await aiCapability(ctx, scope, 'search')).enabled) {
+  const on = opts.searchOn ?? (await aiCapability(ctx, scope, 'search')).enabled;
+  if (!on) {
     await deps.vectors.deleteAsset(scope, assetId, 'library');
     await deps.vectors.deleteAsset(scope, assetId, 'published');
     return false;

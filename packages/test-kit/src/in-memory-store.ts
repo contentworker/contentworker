@@ -3359,6 +3359,7 @@ export class InMemoryContentStore implements ContentStore {
       return [...this.bulkJobData.entries()]
         .filter(([k]) => k.startsWith(prefix))
         .map(([, v]) => v)
+        .filter((j) => !opts?.action || j.action === opts.action)
         .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id))
         .slice(0, opts?.limit ?? 50);
     },
@@ -3587,6 +3588,7 @@ export class InMemoryContentStore implements ContentStore {
         promotions: this.promotions,
         invites: this.invites,
         members: this.members,
+        aiSettings: this.aiSettings,
       });
       for (const [m, journal] of journals) m.commit(journal);
       return result;

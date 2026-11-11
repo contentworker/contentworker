@@ -25,6 +25,7 @@ export type DomainEvent =
   | AssetShareLinkChangedEvent
   | AssetZipRequestedEvent
   | SearchReindexRequestedEvent
+  | SearchToggledEvent
   | BulkChunkDueEvent
   | EntriesPublishedBulkEvent
   | BulkJobCompletedEvent
@@ -348,6 +349,22 @@ export interface SearchReindexRequestedEvent extends BaseEvent {
 }
 
 /**
+ * The space's `search` AI capability was turned on or off: one per environment of the space,
+ * appended with the settings' new version. A control event, not a fact: the consumer starts the
+ * environment's `search_reindex` bulk job (embedding what is published, or deleting its vectors),
+ * superseding one still running. A redelivery finds the job it started; an event a later toggle
+ * overtook starts nothing.
+ */
+export interface SearchToggledEvent extends BaseEvent {
+  readonly type: 'search.toggled';
+  readonly enabled: boolean;
+  /** The AI settings' version this toggle made. */
+  readonly settingsVersion: number;
+  /** Who turned it, as the audit trail names them: the job's chunks are attributed to them. */
+  readonly actor?: string;
+}
+
+/**
  * A bulk-job chunk is ready to run. A control event, not a state-change fact:
  * consumers CAS-claim the chunk so a redelivered event is a no-op. Routed to
  * the dedicated bulk topic so chunk processing never starves entry delivery.
@@ -384,7 +401,8 @@ export interface BulkJobCompletedEvent extends BaseEvent {
    * Which kind of job finished. An import creates drafts; it publishes nothing. An asset reindex
    * sent assets through ingest again. Trash, restore and purge moved entries into, out of, or
    * permanently out of the trash. A content type delete removed a type's entries; the type itself
-   * goes on this event. A field edit saved new drafts of one type's entries. A starter install
+   * goes on this event. A field edit saved new drafts of one type's entries. A search reindex
+   * brought an environment's embeddings in line with the space's search setting. A starter install
    * ran one phase of a space starter's background install (`config.install` names the install).
    */
   readonly action:
@@ -402,6 +420,7 @@ export interface BulkJobCompletedEvent extends BaseEvent {
     | 'asset_archive'
     | 'content_type_delete'
     | 'set_fields'
+    | 'search_reindex'
     | 'starter_install';
   readonly total: number;
   readonly succeeded: number;

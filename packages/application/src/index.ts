@@ -93,6 +93,7 @@ export * from './scheduler-alerts';
 export * from './scheduler-health';
 export * from './scheduling';
 export * from './search-index';
+export * from './search-reindex';
 export * from './secret-sealer';
 export * from './secrets-at-rest';
 export * from './semantics';

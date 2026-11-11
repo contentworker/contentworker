@@ -2925,7 +2925,11 @@ function makeBulkJobRepo(x: Exec): BulkJobRepo {
       const rows = await db
         .select()
         .from(schema.bulkJobs)
-        .where(scopeFilter(schema.bulkJobs, scope))
+        .where(
+          opts?.action
+            ? and(scopeFilter(schema.bulkJobs, scope), eq(schema.bulkJobs.action, opts.action))
+            : scopeFilter(schema.bulkJobs, scope),
+        )
         .orderBy(desc(schema.bulkJobs.createdAt), desc(schema.bulkJobs.id))
         .limit(opts?.limit ?? 50);
       return rows.map(toJob);
@@ -7681,6 +7685,7 @@ function makeTx(x: Exec, scanLimit: number, versionBodies?: BlobStore): ContentS
     outbox: makeOutboxRepo(x),
     invites: makeInviteRepo(x),
     members: makeMemberRepo(x),
+    aiSettings: { save: makeAiSettingsRepo(x).save },
   };
 }
 

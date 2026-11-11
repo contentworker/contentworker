@@ -12,6 +12,9 @@ import { useScopedQuery } from './queries';
 /** The query key every reader of the space's AI settings shares, so a save refreshes them all. */
 export const AI_SETTINGS_KEY = ['ai-settings'] as const;
 
+/** The query key of this environment's latest search reindex job (Settings → AI's search row). */
+export const SEARCH_REINDEX_KEY = ['search-reindex-job'] as const;
+
 /** Where an administrator turns a capability back on: what a hidden action's reason says. */
 export const TURN_ON_HINT = 'A space administrator can turn it on in Settings → AI.';
 

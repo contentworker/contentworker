@@ -1,4 +1,10 @@
-import { RateLimitedError, type Scope } from '@contentworker/domain';
+import {
+  capModelTier,
+  isAiModelTier,
+  MODEL_TIERS,
+  RateLimitedError,
+  type Scope,
+} from '@contentworker/domain';
 import type { AIProvider, GenerateRequest, ModelTier } from '@contentworker/ports';
 import type { FakeAdapterBinding } from './adapter-guard';
 import { generateWithBudget, withTimeout } from './ai-budget';
@@ -10,18 +16,28 @@ import type { AiMode, AppContext } from './context';
 export const DEFAULT_AI_TIMEOUT_MS = 20_000;
 
 /**
- * Parses AI_MODE / AI_TIMEOUT_MS, shared by every composition root so the
+ * Parses AI_MODE / AI_TIMEOUT_MS / AI_MAX_TIER, shared by every composition root so the
  * defaults never drift. Anything but `mock` is live; a missing or non-positive
- * timeout falls back to {@link DEFAULT_AI_TIMEOUT_MS}.
+ * timeout falls back to {@link DEFAULT_AI_TIMEOUT_MS}. An empty or missing AI_MAX_TIER is no cap
+ * (as `flagship` is); anything but a tier is refused at boot, since a cap mistyped into no cap
+ * would lift the deployment's price ceiling per call.
  */
 export function aiRuntimeConfig(env: Record<string, string | undefined> = {}): {
   mode: AiMode;
   timeoutMs: number;
+  maxTier?: ModelTier;
 } {
   const timeout = Number(env.AI_TIMEOUT_MS);
+  const max = env.AI_MAX_TIER?.trim();
+  if (max && !isAiModelTier(max)) {
+    throw new Error(
+      `AI_MAX_TIER must be one of ${MODEL_TIERS.join(', ')}, or empty (got "${max}")`,
+    );
+  }
   return {
     mode: env.AI_MODE === 'mock' ? 'mock' : 'live',
     timeoutMs: Number.isFinite(timeout) && timeout > 0 ? timeout : DEFAULT_AI_TIMEOUT_MS,
+    ...(max && max !== 'flagship' ? { maxTier: max as ModelTier } : {}),
   };
 }
 
@@ -216,9 +232,10 @@ export async function generateJson<T>(
   req: GenerateRequest & { outputSchema: Record<string, unknown> },
   opts: GenerateJsonOptions<T>,
 ): Promise<GenerateJsonResult<T>> {
+  // Held to the deployment's cap either way, so the provenance names the tier that answered.
   const tier: ModelTier = opts.policy
     ? opts.policy.tier(req.tier ?? 'balanced')
-    : (req.tier ?? 'balanced');
+    : capModelTier(req.tier ?? 'balanced', ctx.ai?.maxTier);
   const started = ctx.clock.now().getTime();
   const elapsed = () => ctx.clock.now().getTime() - started;
   const log = (record: Omit<AiCallRecord, 'type' | 'ms'>) =>

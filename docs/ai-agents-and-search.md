@@ -161,19 +161,82 @@ API is what refuses. The drafting and canvas dialogs default to **Space default*
 tier.
 
 **Search** stops on both sides: the point of turning it off is that content stops going to the
-embeddings model. Vectors already stored stay until their entry or asset is republished,
-unpublished or reindexed (each drops them). Delivery's `/search` and GraphQL `search` don't read the
-setting, so the public read path takes no extra statement; they serve what the index still holds,
-and their semantic leg still embeds the reader's query. Turning search off also stops reading the
-text of uploaded documents and recordings, so new ones are found by their name and metadata only.
-Turn search back on and request a reindex (`POST …/search/reindex`) to fill it again.
+embeddings model. Delivery's `/search` and GraphQL `search` don't read the setting, so the public
+read path takes no extra statement; they serve what the index still holds (until the reindex below
+deletes it), and their semantic leg still embeds the reader's query. Turning search off also stops
+reading the text of uploaded documents and recordings, so new ones are found by their name and
+metadata only.
+
+**Turning search on or off reindexes it** (`packages/application/src/search-reindex.ts`). A set that
+changes `search.enabled` appends one `search.toggled` per environment of the space, in the same unit
+as the settings row (`tx.aiSettings.save` with `tx.outbox.appendMany`), so the setting and its
+reindex commit together or not at all. The event is routed to the bulk topic; its consumer starts
+the environment's `search_reindex` bulk job over every published entry (`entry:<id>`, up to
+`MAX_REINDEX_ENTRIES`) and every asset (`asset:<id>`, as many), in chunks of
+`SEARCH_REINDEX_CHUNK_SIZE` (100). Off, a chunk deletes each entry's vectors and both of each
+asset's corpora; on, it embeds the chunk's published entries together (`indexEntriesEmbeddings`:
+every entry's chunks in every locale in one `embed` call, which the adapter sends 100 texts at a
+time, so a chunk is a few embeddings requests rather than one per entry and locale; the account's
+embeddings rate limit is shared by every deployment on it) and each asset again
+(`embedAssetForSearch`), never a draft. A failed embeddings or vector call fails the chunk, which is
+released and retried whole (it is idempotent) and failed for good after its attempts. Each chunk reads
+the setting in force when it runs, not the one that started the job, so a chunk of an overtaken job
+can only bring the index nearer the setting. The lexical leg isn't touched: it never reaches a
+model.
+
+- **Superseding.** A toggle while a job runs cancels it (`cancelBulkJob`) and starts another. An
+  event a later toggle overtook (the setting no longer what it asked for) starts nothing, and a
+  redelivered one finds the job it started (by `config.settingsVersion`).
+- **Whose job.** The system's: no starter is recorded, so its chunks don't re-check anyone's access
+  (`starterLostAccess`). It realizes the space's setting, which stays in force whoever set it; were
+  it stopped when that person lost access, the index would be left half way between on and off.
+  Who turned it is on the job as `config.actor`, and in the settings' audit row. Cancelling one
+  takes `space:admin` besides the cancel route's `content:publish` (`authorizeBulkJobAccess`: the
+  bulk job cancel route and `bulk_job_cancel` answer 403 to anyone else), so a lesser role can't leave a setting half
+  applied; its report takes `content:manage`, as following it does.
+- **Following it.** `GET …/search/reindex-job` and MCP `search_reindex_job` (`content:manage`)
+  answer the environment's latest one (looked up by action, however many other jobs ran since); its
+  report and cancel are the bulk job routes'. The admin's Settings → AI
+  says "Reindexing search: 40%" on the search row while it runs.
+- **Cost.** Embeddings aren't metered by `CostGuardDO` (they never were: they run on every publish,
+  at a fraction of a generation's cost), and search has no tier, so neither the budget nor
+  `AI_MAX_TIER` bounds this job; its size is bounded instead, as above. Assets uploaded while search
+  was off had no text read from them: the job embeds their name and metadata, and a reindex of the
+  assets (`POST …/assets/reindex` with `all`) reads their text, running ingest's other steps (alt
+  text and tags, under `media`) again too.
+- **Not covered.** A deployment with no vectors bound (no `EMBEDDINGS_PROVIDER`) starts no job.
+  Entries beyond `MAX_REINDEX_ENTRIES` in one environment wait for their next publish (or `POST
+  …/search/reindex`).
 
 **Tier.** `policy.tier(callSiteDefault, requested)` answers the request's own tier, else the space's,
-else the call site's default ([the table above](#which-tier-each-use-case-asks-for)). The tier then
-goes through the AI adapter's tier → model mapping (`WORKERS_AI_MODEL_BY_TIER`, the
-`WORKERS_AI_MODEL_*` overrides) and AI Gateway like any other call, and `CostGuardDO` meters it the
-same; Coworker maps it with the same table, with the fast tier behind it. An AI action names its
-own tier, which stands.
+else the call site's default ([the table above](#which-tier-each-use-case-asks-for)), held to the
+deployment's cap (below). The tier then goes through the AI adapter's tier → model mapping
+(`WORKERS_AI_MODEL_BY_TIER`, the `WORKERS_AI_MODEL_*` overrides) and AI Gateway like any other call,
+and `CostGuardDO` meters it the same; Coworker maps it with the same table, with the fast tier
+behind it. An AI action names its own tier, which stands under the cap.
+
+**The deployment's tier cap.** `CostGuardDO` counts requests and tokens, not price, so a space that
+pins background work (agents, workflows, media) to `flagship` would cost several times what it did
+at `fast` without tripping anything. `AI_MAX_TIER` (`balanced` or `fast`; `flagship` or empty is no
+cap; anything else fails at boot; the registry's `aiMaxTier`) is the deployment's price ceiling per
+call: the effective tier of every generation and decision call is the lower of the cap and the tier it resolved to
+(`capModelTier`, order `fast` < `balanced` < `flagship`). It is one cap for every capability, not a
+split by interactive and background work: the space's per-capability tiers already express that
+split, the budget windows already separate background spend (`AI_AGENT_*`), and a second var would
+only be a second place to forget. It applies to every source of a tier alike: a request's own
+`tier`, the space's setting, and the call site's default, including the `flagship` defaults of page
+layouts and Coworker (a cap with exceptions isn't a ceiling; layouts on `balanced` are still
+validated against their schema and fall back as before). It is applied in `policy.tier` and in the
+non-policy branches of `generateJson` and `decide`, so a result's provenance names the tier that
+answered, and once more at the budget wrappers (`generateWithBudget`, `decideWithBudget`) for a
+call site that names its tier outright. Embeddings have no tier, so the cap doesn't reach them.
+
+A space's tier above the cap is **accepted and kept**, not refused: a cap lowered after a space chose
+its tiers would otherwise refuse every later save of the settings until each tier was lowered by
+hand, and the choice comes back if the cap is raised. `GET`/`PUT …/ai-settings` and the MCP tools
+report `maxTier` and, per capability, `effectiveTier` (the tier held to the cap; null when the tier
+is the call site's default). The admin's tier select disables the tiers above the cap and says
+"Capped at Balanced by this deployment"; a row set above it says what it runs on.
 
 **Guidance** is plain text, at most `AI_GUIDANCE_MAX_CHARS` (2 000) characters after line endings
 are normalized and the ends trimmed. It is written by a space administrator but runs in other

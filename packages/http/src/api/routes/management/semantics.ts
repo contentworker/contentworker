@@ -1,6 +1,7 @@
 import {
   findDuplicates,
   getEntryEmbedding,
+  getSearchReindexJob,
   moderateEntry,
   publishEntry,
   relatedEntries,
@@ -13,6 +14,7 @@ import { deniedFieldsFor, SCOPES, ValidationError } from '@contentworker/domain'
 import { Hono } from 'hono';
 import { type AuthDeps, type AuthVars, requireScope } from '../../auth';
 import { doc } from '../../docs/openapi';
+import * as bulkDocs from '../../docs/schemas/bulk';
 import * as entryDocs from '../../docs/schemas/entries';
 import { parseBody, reindexBody } from '../../validation';
 import { actingCtx, BASE, entryAccess, expectedVersionOf, scopeOf } from './shared';
@@ -98,6 +100,21 @@ export function semanticsRoutes(deps: AuthDeps): Hono<AuthVars> {
       });
       return c.json(result, 202);
     },
+  );
+  app.get(
+    `${BASE}/search/reindex-job`,
+    doc('AI & agents', 'Follow the search reindex', {
+      ok: bulkDocs.searchReindexJob,
+      description:
+        'Turning the `search` AI capability on or off (PUT /spaces/{space}/ai-settings) starts a ' +
+        'search reindex in every environment: on, published entries and assets are embedded ' +
+        'again; off, their vectors are deleted. This is the latest one in this environment, or ' +
+        'null. A toggle while one runs cancels it and starts another. Its report and cancel are ' +
+        'the bulk job routes’.',
+    }),
+    // content:manage, as the index health and reindex routes: it reports operational posture.
+    requireScope(SCOPES.contentManage),
+    async (c) => c.json({ job: await getSearchReindexJob(ctx, scopeOf(c)) }),
   );
   app.post(
     `${BASE}/entries/:id/published`,

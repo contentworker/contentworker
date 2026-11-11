@@ -16,6 +16,7 @@ import type {
   IdGenerator,
   ImageTransformer,
   MediaPathSigner,
+  ModelTier,
   PasswordHasher,
   VideoHost,
 } from '@contentworker/ports';
@@ -88,11 +89,14 @@ export interface AppContext {
    * heuristic without calling it (AI_MODE), `timeoutMs` caps each call
    * (AI_TIMEOUT_MS, default 20 000), and `log` receives one record per call
    * (composition roots bind it to the telemetry logger). Absent → live, 20 s,
-   * no call log.
+   * no call log. `maxTier` is the deployment's tier cap (AI_MAX_TIER): every generation and
+   * decision call runs on at most that tier, whatever asked for more (a request, a space's
+   * settings, a call site's default). Absent → no cap.
    */
   readonly ai?: {
     readonly mode: AiMode;
     readonly timeoutMs: number;
+    readonly maxTier?: ModelTier;
     readonly log?: (record: AiCallRecord) => void;
   };
   /**
