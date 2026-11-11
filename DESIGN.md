@@ -937,9 +937,10 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   all and Select none, and scrolls in place past eight rows. When it scrolls it takes focus, so the
   keyboard can scroll it. Under the lists sit an "Include the block catalog and block config"
   checkbox and Request promotion…, which confirms in a modal in ink (a promotion that needs no
-  approval publishes at once). A role without content:manage and content:publish gets the button
-  disabled, with a muted line tied to it saying what the role lacks. The answer sits under the
-  button, in a live region that is always mounted: a success Alert (what it copied, what went as
+  approval publishes at once). A role without content:manage and content:publish, or narrower than
+  read, write and publish on every content type (with entries selected, `lock` there too), gets the
+  button disabled, with a muted line tied to it saying what the role lacks. The answer sits under
+  the button, in a live region that is always mounted: a success Alert (what it copied, what went as
   drafts) or a warning Alert "Waiting for approval" with the reasons and the risk check. Once it
   answers, the picker closes, so the same promotion isn't filed twice. A refusal (nothing was
   written) is a destructive Alert, "Nothing was promoted into main", listing the API's issues grouped
@@ -956,16 +957,21 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   applying, the list and the record read again every few seconds. **The record** is a sheet
   (`?promotion=<id>`) with one sr-only status region that says where it stands as that changes.
   Drawn below it: applying, which says an apply still running an hour on is marked failed; failed, a
-  destructive Alert in the API's words, the stale sweep's included. Approve and promote… shows only
-  to someone who may approve: never its requester, and with content types or blocks, content:manage
-  as well. It confirms in the ink `ConfirmDialog`, which holds until the answer and says a refusal
-  (403, 409) in the API's words. Reject asks in place. An apply that stopped partway answers 409 with the
+  destructive Alert in the API's words, the stale sweep's included. Approve and promote… and Reject
+  show only to someone the API would let decide, by the domain's own rules over the role's grants
+  as `auth/me` resolves them (`cms/lib/promotion-access.ts`): never its requester; a person holding
+  read, write and publish on every content type with no field rules; with content types or blocks,
+  content:manage for either; with entries, `lock` on every type to approve (Reject stays). Approve
+  confirms in the ink `ConfirmDialog`, which holds until the answer and says a refusal (403, 409)
+  in the API's words. Reject asks in place. An apply that stopped partway answers 409 with the
   record, so the confirm closes on "The promotion failed", and the record lists what the target
   refused (entry, field, locale, message). Its requester, a person, gets Withdraw request
   instead, asking in place; the API records it as their rejection, and the record, list and history
-  read Withdrawn. Someone who may not decide reads why, in a muted line ("You requested it, so
-  someone else approves or rejects it. You can withdraw it."). Once decided, focus goes
-  to the record's standing. After that come why it needs approval and the model's view (an `ai` "The
+  read Withdrawn. Withdrawing asks no decide rights. Someone who may not decide reads why, in a
+  muted line ("You requested it, so someone else approves or rejects it. You can withdraw it.", or
+  what the role lacks: the every-type grants, managing content, or locking for approving entries).
+  Once decided, focus goes to the record's standing. After that come why it needs approval and the
+  model's view (an `ai` "The
   model" stamp, or "A fallback" with why), and what it copies. Each entry there is an `idle` Goes
   live or As a draft, and `ok` Live only once a completed apply published it. They show a few at a
   time with Show all, which hands focus to the first row it brought. Last come what it did and its
