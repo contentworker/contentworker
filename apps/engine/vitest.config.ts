@@ -74,6 +74,12 @@ export default defineConfig(async () => ({
             name: 'contentworker-asset-zip-test',
             className: 'AssetZipTestWorkflow',
           },
+          // Async plugin operations over the test's store and a fake plugin runner
+          // (test/fixtures/app-operation.ts).
+          APP_OPERATION_WF: {
+            name: 'contentworker-app-operation-test',
+            className: 'AppOperationTestWorkflow',
+          },
         },
         bindings: {
           AUTH_RATE_LIMIT_MAX: '3',

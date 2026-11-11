@@ -21,7 +21,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import type { McpDeps } from '../../src/mcp/deps';
 import { buildServer } from '../../src/mcp/server';
 
-/** App operations over MCP: two generic tools, the same use-cases as REST. */
+/** App operations over MCP: generic tools, the same use-cases as REST. */
 
 const SPACE = 'space-1';
 const admin: Principal = { spaceId: '*', kind: 'admin', scopes: Object.values(SCOPES) };
@@ -43,6 +43,14 @@ const manifest: PluginManifest = {
       description: 'Upper-cases text',
       requires: SCOPES.previewRead,
       input: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] },
+    },
+    {
+      name: 'tally',
+      title: 'Tally',
+      description: 'Counts, in the background',
+      requires: SCOPES.previewRead,
+      mode: 'async',
+      input: { type: 'object', properties: {} },
     },
     {
       name: 'wipe',
@@ -105,7 +113,7 @@ describe('app_operations_list', () => {
     const res = await call(viewer, 'app_operations_list', {});
     expect(res.isError).toBe(false);
     const { items } = JSON.parse(res.text) as { items: { name: string; input: unknown }[] };
-    expect(items.map((i) => i.name)).toEqual(['shout']);
+    expect(items.map((i) => i.name)).toEqual(['shout', 'tally']);
     expect(items[0]?.input).toEqual(manifest.operations?.[0]?.input);
   });
 });
@@ -128,5 +136,23 @@ describe('app_operation_invoke', () => {
       input: {},
     });
     expect(res.isError).toBe(true);
+  });
+});
+
+describe('async operations over MCP', () => {
+  it('returns a job from app_operation_invoke, readable with the job tools', async () => {
+    const res = await call(viewer, 'app_operation_invoke', {
+      plugin: manifest.id,
+      operation: 'tally',
+      input: {},
+    });
+    expect(res.isError).toBe(false);
+    const { job } = JSON.parse(res.text) as { job: { id: string; status: string } };
+    expect(job.status).toBe('pending');
+    const got = await call(viewer, 'app_operation_job_get', { id: job.id });
+    expect(JSON.parse(got.text)).toMatchObject({ id: job.id, operation: 'tally' });
+    const listed = await call(viewer, 'app_operation_jobs_list', {});
+    expect((JSON.parse(listed.text) as { items: { id: string }[] }).items).toHaveLength(1);
+    expect((await call(viewer, 'app_operation_job_get', { id: 'nope' })).isError).toBe(true);
   });
 });

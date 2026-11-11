@@ -24,6 +24,7 @@ export type DomainEvent =
   | TaxonomyChangedEvent
   | AssetShareLinkChangedEvent
   | AssetZipRequestedEvent
+  | AppOperationRequestedEvent
   | SearchReindexRequestedEvent
   | SearchToggledEvent
   | BulkChunkDueEvent
@@ -238,6 +239,12 @@ export interface AssetShareLinkChangedEvent extends BaseEvent {
 /** A zip download was asked for: the engine starts the Workflow that builds it (`jobId`). */
 export interface AssetZipRequestedEvent extends BaseEvent {
   readonly type: 'asset_zip.requested';
+  readonly jobId: string;
+}
+
+/** An async plugin operation was accepted: the engine starts the Workflow that runs it (`jobId`). */
+export interface AppOperationRequestedEvent extends BaseEvent {
+  readonly type: 'app_operation.requested';
   readonly jobId: string;
 }
 

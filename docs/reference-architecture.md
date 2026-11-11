@@ -93,7 +93,8 @@ entrypoints.
     parts through a multipart upload and start ingest the same way on completion. The api also
     creates direct uploads to the video streaming service for video. A zip download is a fourth
     durable workflow, `AssetZipWorkflow` (`ASSET_ZIP_WF`), started from `asset_zip.requested` and
-    writing the archive to object storage one 8 MiB part per step.
+    writing the archive to object storage one 8 MiB part per step. An async plugin operation is a fifth,
+    `AppOperationWorkflow` (`APP_OPERATION_WF`), started from `app_operation.requested`.
 13. **api and delivery reach the engine's classes through `script_name` bindings.** The api binds
     `LiveHubDO`, `RateLimiterDO`, `CostGuardDO`, `SearchShardDO` and `AssistantAgent`, plus the
     `AgentWorkflow` and `EditorialWorkflow` workflows. The delivery worker binds `LiveHubDO` and
@@ -113,21 +114,21 @@ and they are listed here instead:
 
 ### Which worker binds what (from `apps/*/wrangler.jsonc`)
 
-| Binding                                              |        web        |                     api                     |               delivery                |         media          |                         engine                         |
-| ---------------------------------------------------- | :---------------: | :-----------------------------------------: | :-----------------------------------: | :--------------------: | :----------------------------------------------------: |
-| Database `DB`                                        | yes (auth tables) |                     yes                     |        yes (replica sessions)         | yes (replica sessions) |                          yes                           |
-| Key-value `KV_CACHE`                                 |                   |                     yes                     |                  yes                  |          yes           |                          yes                           |
-| Object storage `MEDIA_BUCKET`                        |                   |                     yes                     |                  yes                  |          yes           |                          yes                           |
-| Vector index `VECTORIZE`                             |                   |                     yes                     |                  yes                  |                        |                          yes                           |
-| Edge inference `AI` (AI gateway via `AI_GATEWAY_ID`) |                   |                     yes                     |                  yes                  |                        |                          yes                           |
-| Image transforms `IMAGES`                            |                   |                     yes                     |                                       |          yes           |                          yes                           |
-| Video streaming `STREAM`                             |                   |                     yes                     |                                       |                        |                          yes                           |
-| Plugin isolates `PLUGIN_LOADER`                      |                   |                     yes                     |                                       |                        |                          yes                           |
-| Service bindings                                     | `API`, `DELIVERY` |                                             |                                       |                        |                                                        |
-| Stateful objects                                     |                   |             5, by `script_name`             | `LIVE_HUB`, `SEARCH` by `script_name` |                        |                       owns all 5                       |
-| Durable workflows                                    |                   | `AGENT_WF`, `EDITORIAL_WF` by `script_name` |                                       |                        |   owns all 4, adds `ASSET_INGEST_WF`, `ASSET_ZIP_WF`   |
-| Queue producer                                       |                   |     events, bulk, agents, asset-events      |                                       |                        | events, bulk, agents, purge, media-purge, asset-events |
-| Queue consumer                                       |                   |                                             |             purge (+ DLQ)             |  media-purge (+ DLQ)   |      events, bulk, agents, asset-events (+ DLQs)       |
+| Binding                                              |        web        |                     api                     |               delivery                |         media          |                                 engine                                 |
+| ---------------------------------------------------- | :---------------: | :-----------------------------------------: | :-----------------------------------: | :--------------------: | :--------------------------------------------------------------------: |
+| Database `DB`                                        | yes (auth tables) |                     yes                     |        yes (replica sessions)         | yes (replica sessions) |                                  yes                                   |
+| Key-value `KV_CACHE`                                 |                   |                     yes                     |                  yes                  |          yes           |                                  yes                                   |
+| Object storage `MEDIA_BUCKET`                        |                   |                     yes                     |                  yes                  |          yes           |                                  yes                                   |
+| Vector index `VECTORIZE`                             |                   |                     yes                     |                  yes                  |                        |                                  yes                                   |
+| Edge inference `AI` (AI gateway via `AI_GATEWAY_ID`) |                   |                     yes                     |                  yes                  |                        |                                  yes                                   |
+| Image transforms `IMAGES`                            |                   |                     yes                     |                                       |          yes           |                                  yes                                   |
+| Video streaming `STREAM`                             |                   |                     yes                     |                                       |                        |                                  yes                                   |
+| Plugin isolates `PLUGIN_LOADER`                      |                   |                     yes                     |                                       |                        |                                  yes                                   |
+| Service bindings                                     | `API`, `DELIVERY` |                                             |                                       |                        |                                                                        |
+| Stateful objects                                     |                   |             5, by `script_name`             | `LIVE_HUB`, `SEARCH` by `script_name` |                        |                               owns all 5                               |
+| Durable workflows                                    |                   | `AGENT_WF`, `EDITORIAL_WF` by `script_name` |                                       |                        | owns all 5, adds `ASSET_INGEST_WF`, `ASSET_ZIP_WF`, `APP_OPERATION_WF` |
+| Queue producer                                       |                   |     events, bulk, agents, asset-events      |                                       |                        |         events, bulk, agents, purge, media-purge, asset-events         |
+| Queue consumer                                       |                   |                                             |             purge (+ DLQ)             |  media-purge (+ DLQ)   |              events, bulk, agents, asset-events (+ DLQs)               |
 
 ## Publish to deliver
 

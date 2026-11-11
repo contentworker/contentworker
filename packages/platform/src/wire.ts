@@ -50,6 +50,7 @@ import { createD1Store } from '@contentworker/db';
 import { type ApiKeyKind, type OutboxEntry, scopesForKind } from '@contentworker/domain';
 import type {
   AIProvider,
+  AppOperationJobStarter,
   AssetGate,
   AssetIngestQueue,
   AssetIngestStarter,
@@ -83,6 +84,7 @@ import {
   StubAIProvider,
   StubDecisionModel,
 } from '@contentworker/test-kit';
+import { CloudflareAppOperationJobStarter } from './app-operations';
 import { CloudflareAssetIngestStarter } from './asset-ingest';
 import { CloudflareAssetZipStarter } from './asset-zip';
 import { type ApiConfig, loadConfig } from './config';
@@ -123,6 +125,8 @@ export interface EdgeWired {
   readonly assetIngestStarter?: AssetIngestStarter;
   /** Starts zip builds (the engine's ASSET_ZIP_WF); absent elsewhere. */
   readonly assetZipStarter?: AssetZipStarter;
+  /** Starts async plugin operation jobs (the engine's APP_OPERATION_WF); absent elsewhere. */
+  readonly appOperationJobStarter?: AppOperationJobStarter;
   readonly ai: AIProvider;
   /** Decision model (Clef on Workers AI): typed questions in, probabilities out. */
   readonly decisions: DecisionModel;
@@ -328,6 +332,9 @@ export function wireEdge(rawEnv: EdgeEnv, options: EdgeWireOptions = {}): EdgeWi
       : {}),
     ...(env.ASSET_ZIP_WF
       ? { assetZipStarter: new CloudflareAssetZipStarter(env.ASSET_ZIP_WF) }
+      : {}),
+    ...(env.APP_OPERATION_WF
+      ? { appOperationJobStarter: new CloudflareAppOperationJobStarter(env.APP_OPERATION_WF) }
       : {}),
     ai,
     decisions,

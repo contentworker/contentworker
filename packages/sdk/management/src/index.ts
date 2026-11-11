@@ -278,9 +278,30 @@ export interface AppOperation {
   readonly description: string;
   /** The scope a caller holds to invoke it. */
   readonly requires: string;
-  readonly mode: 'sync';
+  /** `async`: call it with `apps.start` and read the output from the job. */
+  readonly mode: 'sync' | 'async';
   readonly input: Readonly<Record<string, unknown>>;
   readonly output?: Readonly<Record<string, unknown>>;
+}
+
+/**
+ * An async app operation's job, as `apps.start` returns it and `apps.job` reads it. Kept a day;
+ * `output` is set once `completed`, `error` once `failed`.
+ */
+export interface AppOperationJob<T = unknown> {
+  readonly id: string;
+  readonly plugin: string;
+  readonly pluginVersion: string;
+  readonly operation: string;
+  readonly status: 'pending' | 'running' | 'completed' | 'failed';
+  readonly input: unknown;
+  readonly output?: T;
+  readonly error?: string;
+  readonly createdBy: string;
+  readonly createdAt: string;
+  readonly startedAt?: string;
+  readonly completedAt?: string;
+  readonly expiresAt: string;
 }
 
 /** A redirect: a front end (or an edge Worker) applies it; contentworker serves no site. */
@@ -2372,8 +2393,10 @@ export function createManagementClient(opts: ManagementClientOptions) {
         del<void>(`${envBase}/saved-views/${e(id)}`, { revision: o.revision }),
     },
     /**
-     * App operations: what installed plugins offer by name. `invoke` answers 403 without the
-     * scope an operation requires, 422 for input off its schema, 502 when the plugin fails.
+     * App operations: what installed plugins offer by name. `invoke` calls a sync operation and
+     * `start` an async one (both answer 403 without the scope an operation requires, 422 for
+     * input off its schema); a sync call is 502 when the plugin fails, and an async one's job
+     * says `failed`. `start` is 409 while ten jobs are pending or running in the environment.
      */
     apps: {
       operations: () => get<{ items: AppOperation[] }>(`${envBase}/apps/operations`),
@@ -2382,6 +2405,17 @@ export function createManagementClient(opts: ManagementClientOptions) {
         operation: string,
         input: Readonly<Record<string, unknown>> = {},
       ) => post<{ output: T }>(`${envBase}/apps/${e(plugin)}/operations/${e(operation)}`, input),
+      start: <T = unknown>(
+        plugin: string,
+        operation: string,
+        input: Readonly<Record<string, unknown>> = {},
+      ) =>
+        post<{ job: AppOperationJob<T> }>(
+          `${envBase}/apps/${e(plugin)}/operations/${e(operation)}`,
+          input,
+        ),
+      job: <T = unknown>(id: string) => get<AppOperationJob<T>>(`${envBase}/apps/jobs/${e(id)}`),
+      jobs: () => get<{ items: AppOperationJob[] }>(`${envBase}/apps/jobs`),
     },
     /** Redirects: delivery data a front end applies (content:manage to change them). */
     redirects: {

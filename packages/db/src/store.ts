@@ -3,6 +3,7 @@ import {
   type AgentSchedule,
   type AiSettings,
   type ApiKey,
+  type AppOperationJob,
   type Asset,
   type AssetCollection,
   type AssetFolder,
@@ -82,6 +83,7 @@ import type {
   AiSettingsRepo,
   AppExtension,
   AppExtensionRepo,
+  AppOperationJobRepo,
   ArchivableVersion,
   AssetCollectionRepo,
   AssetFilters,
@@ -2616,6 +2618,125 @@ function makeAssetShareLinkRepo(x: Exec): AssetShareLinkRepo {
   };
 }
 
+type AppOperationJobRow = typeof schema.appOperationJobs.$inferSelect;
+const toAppOperationJob = (r: AppOperationJobRow): AppOperationJob => ({
+  id: r.id,
+  plugin: r.pluginId,
+  pluginVersion: r.pluginVersion,
+  checksum: r.checksum,
+  operation: r.operation,
+  requires: r.requires,
+  status: r.status,
+  input: r.input,
+  ...(r.output !== null ? { output: JSON.parse(r.output) as unknown } : {}),
+  ...(r.error !== null ? { error: r.error } : {}),
+  caller: r.caller,
+  createdBy: r.createdBy,
+  createdAt: r.createdAt.toISOString(),
+  ...(r.startedAt ? { startedAt: r.startedAt.toISOString() } : {}),
+  ...(r.completedAt ? { completedAt: r.completedAt.toISOString() } : {}),
+  expiresAt: r.expiresAt.toISOString(),
+});
+
+function makeAppOperationJobRepo(x: Exec): AppOperationJobRepo {
+  const db = x.db;
+  const j = schema.appOperationJobs;
+  return {
+    async get(scope, id) {
+      const [row] = await db
+        .select()
+        .from(j)
+        .where(and(scopeFilter(j, scope), eq(j.id, id)));
+      return row ? toAppOperationJob(row) : null;
+    },
+    async list(scope, limit) {
+      const rows = await db
+        .select()
+        .from(j)
+        .where(scopeFilter(j, scope))
+        .orderBy(desc(j.createdAt), desc(j.id))
+        .limit(Math.min(Math.max(1, limit), MAX_ASSET_PAGE));
+      return rows.map(toAppOperationJob);
+    },
+    async countKept(scope, at, cap) {
+      // Counted over at most `cap` rows of the (scope, created_at) index, never the whole table.
+      const kept = db
+        .select({ id: j.id })
+        .from(j)
+        .where(and(scopeFilter(j, scope), gt(j.expiresAt, at)))
+        .limit(Math.max(1, cap))
+        .as('kept');
+      const [row] = await db.select({ n: sql<number>`count(*)` }).from(kept);
+      return Number(row?.n ?? 0);
+    },
+    async countActive(scope, since, cap) {
+      const active = db
+        .select({ id: j.id })
+        .from(j)
+        .where(
+          and(
+            scopeFilter(j, scope),
+            inArray(j.status, ['pending', 'running']),
+            gt(j.createdAt, since),
+          ),
+        )
+        .limit(Math.max(1, cap))
+        .as('active');
+      const [row] = await db.select({ n: sql<number>`count(*)` }).from(active);
+      return Number(row?.n ?? 0);
+    },
+    async create(scope, job) {
+      await x.write(
+        db.insert(j).values({
+          spaceId: scope.spaceId,
+          environmentId: scope.environmentId,
+          id: job.id,
+          pluginId: job.plugin,
+          pluginVersion: job.pluginVersion,
+          checksum: job.checksum,
+          operation: job.operation,
+          requires: job.requires,
+          status: job.status,
+          input: job.input,
+          output: job.output !== undefined ? JSON.stringify(job.output) : null,
+          error: job.error ?? null,
+          caller: job.caller,
+          createdBy: job.createdBy,
+          createdAt: new Date(job.createdAt),
+          startedAt: job.startedAt ? new Date(job.startedAt) : null,
+          completedAt: job.completedAt ? new Date(job.completedAt) : null,
+          expiresAt: new Date(job.expiresAt),
+        }),
+      );
+    },
+    async update(scope, id, patch) {
+      const set: Partial<typeof j.$inferInsert> = {};
+      if (patch.status !== undefined) set.status = patch.status;
+      if ('output' in patch) set.output = JSON.stringify(patch.output ?? null);
+      if (patch.error !== undefined) set.error = patch.error;
+      if (patch.startedAt !== undefined) set.startedAt = new Date(patch.startedAt);
+      if (patch.completedAt !== undefined) set.completedAt = new Date(patch.completedAt);
+      if (Object.keys(set).length === 0) return;
+      await x.write(
+        db
+          .update(j)
+          .set(set)
+          .where(and(scopeFilter(j, scope), eq(j.id, id))),
+      );
+    },
+    async deleteExpired(at, limit) {
+      // One statement per batch: the sweep never makes a write per row on the one writer.
+      const rows = await db
+        .delete(j)
+        .where(
+          sql`rowid IN (SELECT rowid FROM ${j} WHERE ${j.expiresAt} <= ${at.getTime()} LIMIT ${Math.max(1, Math.min(limit, MAX_ASSET_PAGE))})`,
+        )
+        .returning({ id: j.id });
+      return rows.length;
+    },
+  };
+}
+
 type AssetZipJobRow = typeof schema.assetZipJobs.$inferSelect;
 const toZipJob = (r: AssetZipJobRow): AssetZipJob => ({
   id: r.id,
@@ -4900,6 +5021,7 @@ const ENVIRONMENT_SCOPED_TABLES = [
   schema.assetCollectionItems,
   schema.assetShareLinks,
   schema.assetZipJobs,
+  schema.appOperationJobs,
   schema.assetUploads,
   schema.references,
   schema.agentRuns,
@@ -7667,6 +7789,7 @@ function makeTx(x: Exec, scanLimit: number, versionBodies?: BlobStore): ContentS
     assetCollections: makeAssetCollectionRepo(x),
     assetShareLinks: makeAssetShareLinkRepo(x),
     assetZips: makeAssetZipJobRepo(x),
+    appOperationJobs: makeAppOperationJobRepo(x),
     assetUploads: makeAssetUploadRepo(x),
     assetRenditions: makeAssetRenditionRepo(x),
     references: makeReferenceRepo(x),
@@ -7706,6 +7829,7 @@ export function createD1Store(d1: D1Like, options: D1StoreOptions = {}): Content
     assetCollections: makeAssetCollectionRepo(x),
     assetShareLinks: makeAssetShareLinkRepo(x),
     assetZips: makeAssetZipJobRepo(x),
+    appOperationJobs: makeAppOperationJobRepo(x),
     assetUploads: makeAssetUploadRepo(x),
     assetRenditions: makeAssetRenditionRepo(x),
     references: makeReferenceRepo(x),

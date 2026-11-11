@@ -224,14 +224,14 @@ REST route, the OpenAPI documents and the MCP tools, so both surfaces stay equal
 }
 ```
 
-| Field                  | Rule                                                                                                                                       |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `name`                 | A lowercase letter, then letters, digits or `_` (64 at most); unique in the manifest                                                       |
-| `title`, `description` | Required. They reach the consent screen, the OpenAPI document and an agent's tool choice                                                   |
-| `requires`             | A permission scope (`SCOPES`): what a caller must hold to invoke it. Not `delivery:read` or `search:read`, which public delivery keys hold |
-| `input`                | An `object` schema                                                                                                                         |
-| `output`               | Optional schema, checked before the result is returned; absent, any JSON value is returned                                                 |
-| `mode`                 | `sync`, the default and the only mode. `async` (a durable job) is planned, not built                                                       |
+| Field                  | Rule                                                                                                                                                  |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`                 | A lowercase letter, then letters, digits or `_` (64 at most); unique in the manifest                                                                  |
+| `title`, `description` | Required. They reach the consent screen, the OpenAPI document and an agent's tool choice                                                              |
+| `requires`             | A permission scope (`SCOPES`): what a caller must hold to invoke it. Not `delivery:read` or `search:read`, which public delivery keys hold            |
+| `input`                | An `object` schema                                                                                                                                    |
+| `output`               | Optional schema, checked before the result is returned; absent, any JSON value is returned                                                            |
+| `mode`                 | `sync` (the default: answered within the request) or `async` (accepted as a job and run in the background; see [Async operations](#async-operations)) |
 
 At most 32 operations per manifest. Schemas are a small JSON Schema subset, validated by hand in
 the domain (`operationSchemaIssues`) so what a human approves is what is checked: `object`
@@ -247,7 +247,8 @@ caller holds `requires` (`403`), checks the body against `input` (`422`, `issues
 `input`) and runs the plugin. Input and output are each JSON of at most 64 KiB. A plugin that
 throws, runs past its time, returns more than 64 KiB or answers outside `output` raises
 `AppOperationFailedError`, which the HTTP API answers with `502`: the plugin's fault, not the
-caller's. Without a plugin runtime (no `PLUGIN_LOADER`) the answer is `501`.
+caller's. Without a plugin runtime (no `PLUGIN_LOADER`) the answer is `501`. An `async` operation passes the
+same checks, then is accepted as a job instead of run (below).
 
 **The grant is narrowed to the caller.** An operation runs with `operationGrant`: the plugin's
 effective grant, less every capability whose scope the caller does not hold. It runs as a
@@ -272,8 +273,8 @@ A plugin's error message is redacted (credentials in URLs, bearer and API tokens
 reaches the caller.
 
 **Time.** A hook is held to 2 s by default; an operation gets 10 s, being the caller's own
-request. Longer work belongs in an `async` operation, which is planned. When the host stops
-waiting, every capability the plugin was handed refuses from then on: a plugin that outlives its
+request. Longer work belongs in an [`async` operation](#async-operations), which gets 5 minutes.
+When the host stops waiting, every capability the plugin was handed refuses from then on: a plugin that outlives its
 call can't go on writing after the caller has its `502` or the save went ahead.
 
 **Isolates.** A plugin's isolate is keyed by space, plugin id, bundle checksum and the host
@@ -286,11 +287,62 @@ author's plain `Plugin` class.
 that caller may invoke, with its schemas; a plugin awaiting re-approval offers none. A plugin
 summary (`GET /spaces/:space/plugins`) carries `operations` (name, title, description, `requires`,
 `mode`). `GET /spaces/:space/apps/openapi.json` is an OpenAPI 3.1 document with one path per
-operation the caller may invoke, generated from the manifests for client generators. MCP has two
-generic tools rather than one per operation: `app_operations_list` and `app_operation_invoke`.
-Neither has a scope of its own (both are in `UNSCOPED_TOOLS`): each operation's `requires` is
+operation the caller may invoke, generated from the manifests for client generators. MCP has generic
+tools rather than one per operation: `app_operations_list`, `app_operation_invoke` and, for async
+jobs, `app_operation_job_get` and `app_operation_jobs_list`.
+None has a scope of its own (all are in `UNSCOPED_TOOLS`): each operation's `requires` is
 checked in the use-case. Routes and tools are in [API reference](./api-reference.md#app-operations)
 and [MCP](./mcp.md).
+
+### Async operations
+
+An operation declared `"mode": "async"` answers `202` with `{ job }` at once and runs in the
+background; the caller polls the job (`GET …/apps/jobs/:id`, `GET …/apps/jobs`, MCP
+`app_operation_job_get` and `app_operation_jobs_list`, the management SDK's `apps.start`,
+`apps.job` and `apps.jobs`). The domain model is `AppOperationJob`
+(`packages/domain/src/plugin/operation-jobs.ts`), stored in `app_operation_jobs` (migration
+`0044_app_operation_jobs`, environment-scoped, cleared with its environment).
+
+- **Accepting.** `invokeAppOperation` writes the job (`pending`) and an `app_operation.requested`
+  event in one unit, after the sync checks (scope, input schema, runtime). An environment holds at
+  most 10 jobs pending or running (`MAX_ACTIVE_APP_JOBS`) and 1,000 kept (below); past either, the
+  next is a `409`.
+- **Running.** The events consumer starts `AppOperationWorkflow` (`APP_OPERATION_WF`,
+  `contentworker-app-operation`, one instance per job), or fails the job when the binding is
+  absent. `runAppOperationJob` has three steps: `claim` (retried like any step) checks the job and
+  its plugin and marks it `running`; `run` (never retried, because the plugin may have had effects
+  outside, with a 10-minute step timeout) calls the plugin, and a run that errors out, the step
+  itself failing included, is the job's failure; `record` writes the outcome and is retried
+  without running the plugin again. A step the Workflows engine restarts mid-run can still call
+  the plugin twice (steps run at least once), so an operation with outside effects should be
+  safe to repeat. The plugin gets `ASYNC_OPERATION_TIMEOUT_MS` (5 minutes)
+  of wall time for the call and every capability it makes.
+- **Same code, same grant.** The job pins the plugin's checksum and keeps a snapshot of the caller's
+  scopes and content grants (never shown to callers). The run fails, without calling the plugin,
+  when the plugin has since been disabled, removed, awaiting re-approval or upgraded to other code,
+  or no longer declares the operation as `async`. Otherwise the plugin's grant is narrowed to the
+  snapshot as a sync call's is narrowed to the live caller. Output is checked against `output`, and
+  an error message is redacted, as for a sync call; a failure is the job's `failed` status and
+  `error`, never a `502`.
+- **Status.** `pending`, `running`, `completed` (with `output`) or `failed` (with `error`). A job
+  not started within 10 minutes of acceptance (`APP_JOB_START_DEADLINE_MS`) fails with "The
+  operation did not start in time" without running, because the caller's access was copied at
+  acceptance and is too old to trust; a job still pending past that deadline reads `failed` with
+  the same error. A job still running 15 minutes after it started (the budget plus 10 minutes,
+  `APP_JOB_STALE_MS`) reads `failed` ("The operation did not finish in time"). The count toward
+  the 10 looks back 25 minutes from acceptance (`APP_JOB_ACTIVE_WINDOW_MS`), the longest a job can
+  stay active.
+- **Visibility.** A job is readable by the admin token, and by anyone who could have produced it
+  (`appJobVisibleTo`): holding the operation's `requires` and every scope the job's caller held;
+  for a caller with content grants, only the same caller with the same grants. Anyone else gets a
+  `404`. Listings return the latest 50 the caller may read.
+- **Retention.** A job and its output are kept 1 day (`APP_JOB_RETENTION_SECONDS`); the hourly
+  `expired-app-operation-jobs` sweep (`sweepExpiredAppOperationJobs`) deletes them 100 per statement
+  until none is left, at most 5,000 a tick. An environment keeps at most 1,000 unexpired jobs
+  (`MAX_KEPT_APP_JOBS`); a further invoke is a `409` until older ones expire.
+
+The admin's consent screen notes "Runs in the background, for up to 5 minutes." for an `async`
+operation.
 
 ## Writing a plugin
 
@@ -477,7 +529,8 @@ approver's own scopes. A grant that grows lands the plugin disabled.
 
 MCP exposes `plugins_list`, `plugin_set_enabled`, `plugin_approve_capabilities`,
 `plugin_get_settings` and `plugin_set_settings` for managing; invoking a plugin's operations is
-`app_operations_list` and `app_operation_invoke`, which need no `space:admin`. The settings tools call the same use-cases as the
+`app_operations_list` and `app_operation_invoke` (with `app_operation_job_get` and
+`app_operation_jobs_list` for async jobs), which need no `space:admin`. The settings tools call the same use-cases as the
 routes. The approve tool
 calls the same use-case in **narrow-only** mode. An agent may confirm a grant (which clears a legacy
 plugin's flag) or reduce it, and is refused if it tries to widen it. Granting authority to code

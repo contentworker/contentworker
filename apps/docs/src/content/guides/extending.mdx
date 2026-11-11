@@ -128,9 +128,9 @@ curl -s -X POST "$API/spaces/$SPACE/environments/main/apps/com.example.seo/opera
   -d '{ "entryId": "01J..." }'
 ```
 
-The answer is `{ "output": … }`. `403` means the key lacks the operation's scope, `404` that the
+The answer is `{ "output": … }` for a synchronous operation. `403` means the key lacks the operation's scope, `404` that the
 operation doesn't exist or its plugin is disabled, and `422` that the input doesn't match the
-declared schema. `502` means the plugin failed: it threw, ran past 10 seconds or answered outside its
+declared schema. `502` means a synchronous plugin failed: it threw, ran past 10 seconds or answered outside its
 output schema. Input and output are JSON of at most 64 KiB.
 
 An operation runs with the plugin's approved capabilities narrowed to the caller's scopes: a plugin
@@ -153,10 +153,28 @@ export class Plugin {
 Input and output schemas use a small JSON Schema subset: `object`, `array`, `string`, `number`,
 `integer` and `boolean`, closed objects, at most 8 levels deep, and at most 32 operations per
 plugin. `GET /spaces/:space/apps/openapi.json` returns an OpenAPI 3.1 document for the operations
-the key may call, for generating a client. Operations run synchronously; long-running (asynchronous)
-operations are planned.
+the key may call, for generating a client.
 
-The [MCP server](/guides/mcp/) has `app_operations_list` and `app_operation_invoke`, which need no
+#### Long-running operations
+
+An operation declared `"mode": "async"` is accepted at once and runs in the background for up to 5
+minutes. Calling it answers `202` with `{ "job": … }` (a job with `id` and `status`: `pending`,
+`running`, `completed` or `failed`); poll the job until it finishes:
+
+```sh
+curl -s "$API/spaces/$SPACE/environments/main/apps/jobs/$JOB_ID" -H "Authorization: Bearer $KEY"
+```
+
+A completed job carries `output` (checked against the declared output schema) and a failed one
+`error`. `GET …/apps/jobs` lists the latest 50. The plugin runs with its grant narrowed to the
+scopes your key held when you called it, so a job is only readable by a key that could have called
+it. A job fails, without running, if the plugin is disabled, removed, upgraded to other code or
+not started within 10 minutes. An environment runs at most 10 jobs at once and keeps at most 1,000;
+past either, calling is `409`. Jobs and their output are kept for a day. The
+management SDK has `apps.start`, `apps.job` and `apps.jobs`.
+
+The [MCP server](/guides/mcp/) has `app_operations_list`, `app_operation_invoke` and, for async jobs,
+`app_operation_job_get` and `app_operation_jobs_list`, which need no
 scope of their own: each operation's scope is checked when it is called.
 
 ## Manage plugins

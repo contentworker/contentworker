@@ -32,6 +32,7 @@ import {
   startRequestedAssetIngest,
   sweepAbandonedMultipartUploads,
   sweepAbandonedUploads,
+  sweepExpiredAppOperationJobs,
   sweepExpiredTrash,
   sweepExpiredZips,
 } from '@contentworker/application';
@@ -73,6 +74,7 @@ import {
 import { runInLanes } from './lanes';
 import { newPurgePlan, planPurges, sendPurges } from './purges';
 import { AgentWorkflow } from './workflows/agent-workflow';
+import { AppOperationWorkflow } from './workflows/app-operation-workflow';
 import { AssetIngestWorkflow } from './workflows/asset-ingest-workflow';
 import { AssetZipWorkflow } from './workflows/asset-zip-workflow';
 import { EditorialWorkflow } from './workflows/editorial-workflow';
@@ -84,6 +86,7 @@ const payloadOf = (m: { body: unknown }): unknown => m.body;
 // Durable Object and Workflow; the api and delivery Workers bind them by script name.
 export {
   AgentWorkflow,
+  AppOperationWorkflow,
   AssetIngestWorkflow,
   AssetZipWorkflow,
   AssistantAgent,
@@ -175,6 +178,8 @@ async function consumeEvents(batch: MessageBatch, env: EdgeEnv, wired: EdgeWired
     ...(wired.assetIngest ? { assetIngest: wired.assetIngest } : {}),
     // Zip downloads: `asset_zip.requested` starts the job's Workflow.
     ...(wired.assetZipStarter ? { assetZip: wired.assetZipStarter } : {}),
+    // Async plugin operations: `app_operation.requested` starts the job's Workflow.
+    ...(wired.appOperationJobStarter ? { appOperationJobs: wired.appOperationJobStarter } : {}),
     bus: env.LIVE_HUB ? createDoEventBus(env.LIVE_HUB) : undefined,
     onLiveError: (err) => console.error('live publish error', err),
     // Inline agents only when no contentworker-agents queue is bound (dev/demo parity).
@@ -568,6 +573,18 @@ export default {
             }
           },
           (err) => console.error('expired zip sweep failed', redactCredentials(err)),
+        );
+        // Async plugin operation jobs past their retention: the job and its output go.
+        await sweep(
+          tick,
+          CRON_JOBS.expiredAppJobs,
+          async () => {
+            const swept = await sweepExpiredAppOperationJobs(wired.ctx);
+            if (swept.removed > 0) {
+              console.log(JSON.stringify({ msg: 'expired operation jobs swept', ...swept }));
+            }
+          },
+          (err) => console.error('expired operation job sweep failed', redactCredentials(err)),
         );
         // Entries in the trash past their space's retention window, purged as "Delete
         // permanently" would (never forced: a published link keeps one). Off unless a space set a
