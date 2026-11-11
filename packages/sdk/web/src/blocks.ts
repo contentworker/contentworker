@@ -12,9 +12,11 @@ import {
   type BlockCatalogLike,
   type BlockGhost,
   type BlockGhosts,
+  type BlockOverrides,
   type BlockTypeMap,
   type BlockValue,
   type BlockVariantLike,
+  type BreakpointLike,
   type FieldAttrs,
   type ResolvedBlocks,
   resolveBlocks,
@@ -49,6 +51,8 @@ export type SlotNames<B> = string extends keyof B
 export interface BlockComponentProps<B extends BlockValue = UnknownBlock> {
   /** The block, `_type` its current id: a block stored under a former id reads as this one. */
   readonly block: B;
+  /** Its per-breakpoint overrides as they apply (stale ones left out); `responsiveProp` reads one. */
+  readonly responsive?: BlockOverrides;
   readonly index: number;
   /** Set in a live preview for a block Coworker proposes: draw it as a ghost. */
   readonly ghost: BlockGhost | undefined;
@@ -78,6 +82,8 @@ export type BlocksProps<M extends BlockTypeMap<M> = Record<string, UnknownBlock>
   readonly catalog?: BlockCatalogLike;
   /** Or the field's variants from its content type. */
   readonly variants?: readonly BlockVariantLike[];
+  /** With `variants`, the field's breakpoints (`items.breakpoints`). */
+  readonly breakpoints?: readonly BreakpointLike[];
   /** `view.ghosts` from a live preview. */
   readonly ghosts?: BlockGhosts;
   /**
@@ -142,6 +148,7 @@ function renderSlot(
       createElement(component, {
         key: unit.renderKey,
         block: unit.block,
+        responsive: unit.responsive,
         index: unit.index,
         ghost: unit.ghost,
         attrs: unit.attrs,
@@ -173,7 +180,17 @@ function renderSlot(
 export function Blocks<M extends BlockTypeMap<M> = Record<string, UnknownBlock>>(
   props: BlocksProps<M>,
 ): ReactElement {
-  const { value, components, fallback, catalog, variants, ghosts, preview, ...element } = props;
-  const resolved = resolveBlocks(value, { catalog, variants, ghosts, preview });
+  const {
+    value,
+    components,
+    fallback,
+    catalog,
+    variants,
+    breakpoints,
+    ghosts,
+    preview,
+    ...element
+  } = props;
+  const resolved = resolveBlocks(value, { catalog, variants, breakpoints, ghosts, preview });
   return renderSlot(resolved, components as Components, fallback, element);
 }

@@ -120,11 +120,11 @@ repeater is unchanged: its elements carry neither key.
   so a block keeps its identity across edits and reorders. Validation does not require `_key`
   (an AI draft or an import dry-run is judged on content), but a present key must be a non-empty
   string used once in the field value: a duplicate is refused at `body[i]`.
-- **`_responsive` is let through and dropped.** A block's per-breakpoint overrides
-  (`docs/specs/breakpoint-overrides.md`) aren't declared by any field yet: validation passes the
-  key over on any block, whatever it holds, and `assignBlockKeys` drops it on every save, copies
-  included. It ships ahead of the overrides themselves, so a rollback past them never leaves an
-  entry that can't be saved, only one that loses its overrides on its next save.
+- **`_responsive` holds a block's per-breakpoint overrides** (see
+  [Per-breakpoint overrides](#block-catalogs) under Block catalogs). The release before them let
+  the key through on any block and dropped it on every save, copies included, so a rollback past
+  them never leaves an entry that can't be saved, only one that loses its overrides on its next
+  save. Overrides ship after it, never in the same release.
 - **`_key` is unique per list, not per tree.** Validation refuses a key repeated within one field
   value at one level, but the same key at two depths (a section pasted inside itself with its
   keys) is stored. Keys minted on write never collide; a caller's can.
@@ -1263,14 +1263,16 @@ interface BlockManifest {
   fields: FieldDefinition[]; // props, the content model's vocabulary
   slots?: { apiId: string; name: string; help?: string; allowedChildren: string[]; min?: number; max?: number }[];
   allowedParents?: string[];
+  responsive?: string[]; // props that take per-breakpoint overrides
 }
 
 interface BlockCatalog {
   version: number; // 1, then one more per push that changes something
-  hash: string; // SHA-256 of the canonical { blocks, targets }
+  hash: string; // SHA-256 of the canonical { blocks, targets, breakpoints? }
   blocks: BlockManifest[];
   targets: { contentTypeApiId: string; field: string; blocks?: string[] }[];
-  changes: { added: string[]; changed: string[]; removed: string[]; renamed: { from: string; to: string }[] };
+  breakpoints: { id: string; name: string; minWidth: number }[]; // [] when none
+  changes: { added: string[]; changed: string[]; removed: string[]; renamed: { from: string; to: string }[]; breakpoints?: true };
   pushedAt: string;
   pushedBy: string | null; // auditActor of the caller; null for SYSTEM_CALLER
 }
@@ -1296,6 +1298,12 @@ interface BlockCatalog {
   another block, is refused.
 - **Usage** (`blocksUsed`) is the set of block ids an entry's values use at any depth and locale,
   an aliased `_type` counting as its variant.
+- **Breakpoints and `responsive`** (`checkBreakpoints`, `checkResponsive` in `responsive.ts`): at
+  most 6 breakpoints, each `id` an apiId other than `base`, `minWidth` a whole number from 1 to
+  10,000 strictly increasing; each `responsive` name a top-level token (Symbol, Integer or Number
+  with `validations.in`) or Boolean prop, refused by place (`blocks[hero].responsive[1]`). The hash
+  covers breakpoints only when there are some, so a catalog pushed before them keeps its hash.
+  Stored in `block_catalogs.breakpoints` (0040, null for none).
 
 The use-cases (`packages/application/src/block-catalog.ts`): `pushBlockCatalog(ctx, caller, scope,
 input)` checks the catalog, refuses a stale `expectedVersion` (`409`, `details.version`), checks
@@ -1309,6 +1317,50 @@ is a `TransactionConflictError` at commit, surfaced as `409`) in one unit. A con
 a target type between the read and the commit is not guarded, as for any content type save.
 `getBlockCatalog`, `listBlockCatalogVersions` and `getBlockUsage` (a keyset scan of up to
 `MAX_BLOCK_USAGE_SCAN` entries per type, `complete: false` past it) read only.
+
+**Per-breakpoint overrides** (`packages/domain/src/content-type/responsive.ts`,
+`docs/specs/breakpoint-overrides.md`). The push writes the catalog's breakpoints onto each target
+field (`items.breakpoints`, top-level blocks fields only; a slot's blocks fields take their
+field's) and each block's `responsive` onto its variant (`ComponentVariant.responsive`), so
+validation needs only the content type; a target's breakpoint change is a field change
+(`BlockFieldChange.breakpoints`). A block holds its overrides beside its props in `_responsive`
+(`{ lg: { size: 'xl' } }`), not localized.
+
+- **Stale.** An override is stale when its breakpoint isn't declared any more, its prop isn't in
+  the variant's `responsive`, or its value is no longer one its prop takes (a push narrowed `in`
+  or retyped the prop). `assignBlockKeys` drops stale overrides and empty maps on every save
+  (`cleanOverrides`, with `overrideValueProblem` for values), so a save never fails over one; a
+  frozen region compares overrides without them, so the drop is no edit. Validation judges only
+  the shape (a non-map, `base` or a malformed id), so stored-content checks (snapshots, merges,
+  compare, restores) stay tolerant.
+- **New edits.** A create, update, block patch or import (the path that runs
+  `assertBlockConfigAllows`) is first judged by `undeclaredOverrides`, as sent: an override of
+  `base`, a malformed or undeclared breakpoint, or a prop not in `responsive` is refused
+  (`override_undeclared`, at `body[0]._responsive.xl`, with the block's `key`), and a value its
+  prop doesn't take is refused (`override_invalid`, at `body[0]._responsive.lg.size`). Unless the
+  stored version the edit replaces already holds that block type, breakpoint and prop (and, for a
+  value, that value) anywhere, in any field and locale: then it is stale, carried by a move, a
+  duplicate, an undo, a locale copy or a client sending the entry back, and the save drops it.
+  Copies aren't judged; an environment merge drops the target's stale ones before it stores
+  (`withoutStaleOverrides`).
+- **Reports.** `narrowsOverrides` says whether a revision can strand any; `staleOverrideUses`
+  finds them per block, breakpoint and prop; `staleOverridesOf` (application) counts them over the
+  current version of each entry outside the trash, up to `MAX_STALE_OVERRIDE_SCAN` per type. The
+  push and its dry run report them in `staleOverrides`; a content type update returns them as
+  `warnings`; a promotion adds a risk line, and so waits for approval, for each target type whose
+  stored definition the promotion's types (and catalog, when it copies one) would strand any,
+  leaving out the target entries it replaces, and for the promoted entries' own overrides the type
+  the target is left with doesn't declare. An import's analysis and the generation gate judge
+  overrides as the save does (`undeclaredOverrides`). `narrowsOverrides` compares a prop's type
+  and its set of option values, so relabelling or reordering options scans nothing.
+- **Patches.** A block patch `update` sets or unsets `_responsive` whole, on a variant with
+  `responsive`.
+- **Reads.** Delivery serves `_responsive` as stored. GraphQL gives a block with responsive props
+  `_responsive: <BlockType>Responsive` (one nullable field per breakpoint of its props, a value
+  its prop doesn't take served as null), its types named after every existing one so none is
+  renamed; codegen types `_responsive` and exports `breakpoints`; the SDK's `resolveBlocks` and
+  `responsiveProp` give only declared overrides, and only token values when the catalog or
+  variants give the props.
 
 Variant **aliases** (`ComponentVariant.aliases`) belong to the content model, not only the
 catalog: `variantOf` and validation resolve a former apiId to its variant, `assignBlockKeys`

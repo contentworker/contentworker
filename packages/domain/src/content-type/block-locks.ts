@@ -11,6 +11,7 @@ import {
   RESPONSIVE_KEY,
   variantOf,
 } from './field';
+import { breakpointIdsOf, cleanOverrides } from './responsive';
 
 /**
  * Locked regions (docs/specs/locked-regions.md): part of one entry's blocks that editors can't
@@ -183,19 +184,27 @@ const shape = (item: unknown, variants: readonly ComponentVariant[]): unknown =>
   });
 
 /**
- * A block's content as a frozen region compares it: `_type` resolved, and with `self` its slots
- * left out (they stay open).
+ * A block's content as a frozen region compares it: `_type` resolved, its overrides without the
+ * stale ones (`breakpoints` the field's), and with `self` its slots left out (they stay open). So
+ * a save that renames `_type` or drops a stale override is no edit, as neither is the editor's.
  */
-function content(item: unknown, variants: readonly ComponentVariant[], slots: boolean): unknown {
+function content(
+  item: unknown,
+  variants: readonly ComponentVariant[],
+  slots: boolean,
+  breakpoints: readonly string[],
+): unknown {
   if (!isObject(item)) return item;
   const out: Record<string, unknown> = { ...item, [BLOCK_TYPE_KEY]: typeOf(variants, item) };
-  // The save drops a block's overrides (`RESPONSIVE_KEY`): that is no edit of a frozen region.
-  delete out[RESPONSIVE_KEY];
+  const variant = variantOf(variants, item);
+  if (variant && out[RESPONSIVE_KEY] !== undefined) {
+    out[RESPONSIVE_KEY] = cleanOverrides(variant, out[RESPONSIVE_KEY], breakpoints);
+  }
   for (const s of slotsOf(variants, item)) {
     const children = out[s.apiId];
     if (!slots) delete out[s.apiId];
     else if (Array.isArray(children)) {
-      out[s.apiId] = children.map((c) => content(c, s.variants, true));
+      out[s.apiId] = children.map((c) => content(c, s.variants, true, breakpoints));
     }
   }
   return out;
@@ -204,13 +213,17 @@ function content(item: unknown, variants: readonly ComponentVariant[], slots: bo
 interface TopField {
   readonly apiId: string;
   readonly variants: readonly ComponentVariant[];
+  /** The ids its blocks take overrides at, its slots' blocks included. */
+  readonly breakpoints: readonly string[];
 }
 
 /** The top-level blocks field `apiId` of the type, if it is one. */
 function topField(contentType: ContentType, apiId: string): TopField | undefined {
   const def = contentType.fields.find((f) => f.apiId === apiId);
   const variants = def ? blockVariants(def) : undefined;
-  return def && variants ? { apiId: def.apiId, variants } : undefined;
+  return def && variants
+    ? { apiId: def.apiId, variants, breakpoints: breakpointIdsOf(def) }
+    : undefined;
 }
 
 /** The locales of `fields[field]`, each with its value. */
@@ -501,8 +514,8 @@ export function blockLockIssues(
         const slots = lock.depth === 'subtree';
         const edited = pairs.find(
           (p) =>
-            canonicalJson(content(p.before, was.variants, slots)) !==
-            canonicalJson(content(p.after, at.variants, slots)),
+            canonicalJson(content(p.before, was.variants, slots, def.breakpoints)) !==
+            canonicalJson(content(p.after, at.variants, slots, def.breakpoints)),
         );
         if (edited) report('region_frozen', edited.path, FROZEN);
       }

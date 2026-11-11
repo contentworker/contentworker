@@ -19,10 +19,13 @@ import {
   createEntry,
   createEnvironment,
   createSpace,
+  getContentType,
   getEffectiveBlockRules,
+  getPromotion,
   publishContentType,
   publishEntry,
   pushBlockCatalog,
+  rejectPromotion,
   requestPromotion,
   SYSTEM_CALLER,
   setBlockConfig,
@@ -188,6 +191,209 @@ describe('promoting blocks between environments', () => {
       blocks: (await rulesOf(staging)).blocks,
     });
     await expect(heroPage(qa)).rejects.toBeInstanceOf(ValidationError);
+  });
+
+  it('copies breakpoints with the catalog, and entries with their overrides', async () => {
+    const breakpoints = [{ id: 'lg', name: 'Desktop', minWidth: 1280 }];
+    const toned = BLOCKS.map((b) =>
+      b.id === 'hero'
+        ? {
+            ...b,
+            responsive: ['tone'],
+            fields: [
+              ...b.fields,
+              { apiId: 'tone', name: 'Tone', type: 'Symbol', validations: { in: ['a', 'b'] } },
+            ],
+          }
+        : b,
+    );
+    await pushBlockCatalog(ctx, admin, staging, { blocks: toned, targets: TARGETS, breakpoints });
+    const { entry } = await createEntry(ctx, staging, {
+      contentTypeApiId: 'page',
+      fields: {
+        title: { 'en-US': 'Home' },
+        body: {
+          'en-US': [{ _type: 'hero', _key: 'h1', tone: 'a', _responsive: { lg: { tone: 'b' } } }],
+        },
+      },
+    });
+    const p = await requestPromotion(ctx, admin, spaceId, { source: 'staging', target: 'qa' });
+    // A breakpoint change that strands nothing in the target needs no approval.
+    expect(p.blocks).toMatchObject({ catalogVersion: 2, targetCatalogVersion: 1 });
+    expect(p.status).not.toBe('awaiting_approval');
+    expect(p.risk.reasons.join('\n')).not.toContain('stale');
+    const done = await getPromotion(ctx, spaceId, p.id);
+    expect(done.status).toBe('completed');
+    expect((await store.blockCatalogs.latest(qa))?.breakpoints).toEqual(breakpoints);
+    expect((await store.contentTypes.get(qa, 'page'))?.fields[1]?.items?.breakpoints).toEqual(
+      breakpoints,
+    );
+    expect((await store.entries.get(qa, entry.id))?.fields.body?.['en-US']?.[0]).toMatchObject({
+      _responsive: { lg: { tone: 'b' } },
+    });
+  });
+
+  it('asks for approval when the catalog makes the target’s overrides stale', async () => {
+    const breakpoints = [
+      { id: 'md', name: 'Tablet', minWidth: 768 },
+      { id: 'lg', name: 'Desktop', minWidth: 1280 },
+    ];
+    const toned = BLOCKS.map((b) =>
+      b.id === 'hero'
+        ? {
+            ...b,
+            responsive: ['tone'],
+            fields: [
+              ...b.fields,
+              { apiId: 'tone', name: 'Tone', type: 'Symbol', validations: { in: ['a', 'b'] } },
+            ],
+          }
+        : b,
+    );
+    for (const s of [staging, qa]) {
+      await pushBlockCatalog(ctx, admin, s, { blocks: toned, targets: TARGETS, breakpoints });
+    }
+    for (const key of ['h1', 'h2']) {
+      await createEntry(ctx, qa, {
+        contentTypeApiId: 'page',
+        fields: {
+          title: { 'en-US': key },
+          body: {
+            'en-US': [{ _type: 'hero', _key: key, tone: 'a', _responsive: { lg: { tone: 'b' } } }],
+          },
+        },
+      });
+    }
+    // Staging drops lg: promoted, the target's two blocks lose their lg override on next save.
+    await pushBlockCatalog(ctx, admin, staging, {
+      blocks: toned,
+      targets: TARGETS,
+      breakpoints: breakpoints.slice(0, 1),
+    });
+    const p = await requestPromotion(ctx, admin, spaceId, { source: 'staging', target: 'qa' });
+    expect(p.status).toBe('awaiting_approval');
+    expect(p.risk.reasons).toContain(
+      'The block catalog makes 2 blocks\' overrides stale in the target\'s content type "page" (lg: tone)',
+    );
+    const done = await approvePromotion(ctx, approver, spaceId, p.id);
+    expect(done.status).toBe('completed');
+    expect((await store.blockCatalogs.latest(qa))?.breakpoints).toEqual(breakpoints.slice(0, 1));
+  });
+
+  it('judges a copied content type’s breakpoints too, and skips the entries it replaces', async () => {
+    const breakpoints = [
+      { id: 'md', name: 'Tablet', minWidth: 768 },
+      { id: 'lg', name: 'Desktop', minWidth: 1280 },
+    ];
+    const toned = BLOCKS.map((b) =>
+      b.id === 'hero'
+        ? {
+            ...b,
+            responsive: ['tone'],
+            fields: [
+              ...b.fields,
+              { apiId: 'tone', name: 'Tone', type: 'Symbol', validations: { in: ['a', 'b'] } },
+            ],
+          }
+        : b,
+    );
+    for (const s of [staging, qa]) {
+      await pushBlockCatalog(ctx, admin, s, { blocks: toned, targets: TARGETS, breakpoints });
+    }
+    const withLg = (title: string) => ({
+      contentTypeApiId: 'page',
+      id: `e-${title}`,
+      fields: {
+        title: { 'en-US': title },
+        body: {
+          'en-US': [{ _type: 'hero', _key: 'h1', tone: 'a', _responsive: { lg: { tone: 'b' } } }],
+        },
+      },
+    });
+    // `shared` is in both: a promotion of it writes over qa's copy. `own` is only qa's.
+    await createEntry(ctx, staging, withLg('shared'));
+    await createEntry(ctx, qa, withLg('shared'));
+    await createEntry(ctx, qa, withLg('own'));
+    // Staging's type drops lg by hand: no catalog is copied, only the type.
+    const page = await getContentType(ctx, staging, 'page');
+    await updateContentType(ctx, SYSTEM_CALLER, staging, 'page', {
+      fields: page.fields.map((f) =>
+        f.apiId === 'body' && f.items
+          ? { ...f, items: { ...f.items, breakpoints: breakpoints.slice(0, 1) } }
+          : f,
+      ),
+    });
+    await publishContentType(ctx, staging, 'page');
+    const line = (n: string) =>
+      `The block catalog makes ${n} overrides stale in the target's content type "page" (lg: tone)`;
+
+    // With `shared` copied over, only `own` loses its override.
+    const one = await requestPromotion(ctx, admin, spaceId, {
+      source: 'staging',
+      target: 'qa',
+      contentTypes: ['page'],
+      entries: ['e-shared'],
+    });
+    expect(one.blocks).toBeUndefined();
+    expect(one.status).toBe('awaiting_approval');
+    expect(one.risk.reasons).toContain(line("1 block's"));
+    await rejectPromotion(ctx, approver, spaceId, one.id);
+
+    const both = await requestPromotion(ctx, admin, spaceId, {
+      source: 'staging',
+      target: 'qa',
+      contentTypes: ['page'],
+    });
+    expect(both.risk.reasons).toContain(line("2 blocks'"));
+  });
+
+  it('asks for approval when promoted entries carry overrides the target doesn’t declare', async () => {
+    const toned = BLOCKS.map((b) =>
+      b.id === 'hero'
+        ? {
+            ...b,
+            responsive: ['tone'],
+            fields: [
+              ...b.fields,
+              { apiId: 'tone', name: 'Tone', type: 'Symbol', validations: { in: ['a', 'b'] } },
+            ],
+          }
+        : b,
+    );
+    // The two environments' breakpoints have diverged: staging has xl, qa doesn't.
+    const md = { id: 'md', name: 'Tablet', minWidth: 768 };
+    await pushBlockCatalog(ctx, admin, staging, {
+      blocks: toned,
+      targets: TARGETS,
+      breakpoints: [md, { id: 'xl', name: 'Wide', minWidth: 1600 }],
+    });
+    await pushBlockCatalog(ctx, admin, qa, { blocks: toned, targets: TARGETS, breakpoints: [md] });
+    const { entry } = await createEntry(ctx, staging, {
+      contentTypeApiId: 'page',
+      fields: {
+        title: { 'en-US': 'Home' },
+        body: {
+          'en-US': [
+            {
+              _type: 'hero',
+              _key: 'h1',
+              tone: 'a',
+              _responsive: { xl: { tone: 'b' }, md: { tone: 'b' } },
+            },
+          ],
+        },
+      },
+    });
+    // Entries only: no type and no catalog copied, so the copy lands on qa's type and loses xl.
+    const p = await requestPromotion(ctx, admin, spaceId, {
+      source: 'staging',
+      target: 'qa',
+      entries: [entry.id],
+    });
+    expect(p.status).toBe('awaiting_approval');
+    expect(p.risk.reasons).toContain(
+      "The promoted entries carry 1 block's overrides the target's content type \"page\" doesn't declare (xl: tone)",
+    );
   });
 
   it('copies a config alone, and only when asked for alongside a selection', async () => {

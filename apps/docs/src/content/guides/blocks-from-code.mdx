@@ -90,6 +90,7 @@ whole field: a block type the field had that the catalog doesn't provide is remo
 | `fields`         | The block's props, as [field definitions](/reference/field-types/)                                         |
 | `slots`          | Named places that hold other blocks                                                                       |
 | `allowedParents` | The only blocks whose slots may hold this one; such a block never goes at a target's top level            |
+| `responsive`     | Props that take a different value from a breakpoint up (see [Per-breakpoint overrides](#per-breakpoint-overrides)) |
 
 A catalog holds at most 200 blocks, a block at most 10 slots, and the catalog at most 1,000,000
 characters as JSON. A thumbnail URL must be `https` without credentials; data URLs and inline
@@ -134,6 +135,97 @@ blocks it holds.
 
 The push answers `422` naming each problem by its place in the file (`blocks[hero].fields.tone`,
 `blocks[grid].slots.cards.allowedChildren`), all of them at once.
+
+## Per-breakpoint overrides
+
+A token prop can take a different value from some screen width up: a hero that is `size: md` on
+phones and `size: xl` on desktops, a grid with one column on phones and three from tablets, a
+banner hidden on phones. Breakpoints are your site's CSS, so they are declared in the blocks file,
+mobile-first, beside `blocks` and `targets`:
+
+```json
+{
+  "breakpoints": [
+    { "id": "md", "name": "Tablet", "minWidth": 768 },
+    { "id": "lg", "name": "Desktop", "minWidth": 1280 }
+  ],
+  "targets": [{ "contentTypeApiId": "page", "field": "sections" }],
+  "blocks": [
+    {
+      "id": "hero",
+      "name": "Hero",
+      "responsive": ["size", "hidden"],
+      "fields": [
+        { "apiId": "size", "name": "Size", "type": "Symbol", "validations": { "in": ["sm", "md", "xl"] } },
+        { "apiId": "hidden", "name": "Hidden", "type": "Boolean" }
+      ]
+    }
+  ]
+}
+```
+
+- **Breakpoints.** An `id` is a letter, then letters, digits or `_`, and never `base`. `minWidth` is
+  a whole number of CSS pixels from 1 to 10,000, strictly increasing down the list. At most 6. The
+  bare prop applies below the first breakpoint; each breakpoint applies from its `minWidth` up until
+  the next one overrides it. A push without `breakpoints` has none, and removes any the catalog had.
+- **`responsive`.** Each name is a top-level prop of the block that is a token (a Symbol, Integer
+  or Number with `validations.in`) or a Boolean. Anything else is refused by its place in the file
+  (`blocks[hero].responsive[1]`). A block without `responsive` takes no overrides.
+
+The push writes the breakpoints onto each target field (`items.breakpoints`; the blocks fields in
+its blocks' slots take the same ones) and `responsive` onto each block's variant, so an entry save
+is checked against the content type alone. A content type the catalog doesn't target has no
+breakpoints and keeps no overrides.
+
+### How they are stored
+
+Overrides sit beside the props, in `_responsive`, keyed by breakpoint id:
+
+```json
+{
+  "_type": "hero",
+  "_key": "…",
+  "size": "md",
+  "_responsive": { "lg": { "size": "xl" }, "md": { "hidden": false } }
+}
+```
+
+The bare prop stays the base, required as before, so a frontend that knows nothing of breakpoints
+renders the base and keeps working. `_responsive` isn't localized; an empty map, or a breakpoint
+with no props, is removed on save. Delivery serves `_responsive` as stored, and only on blocks
+someone gave an override. In GraphQL, a block with responsive props has a `_responsive` field
+(`PageSectionsHeroResponsive`), one nullable field per breakpoint holding the props, a value that
+isn't one of its prop's tokens served as `null`. An `update`
+[block patch](/reference/field-types/#blocks) sets or unsets `_responsive` as a whole.
+
+### Stale overrides
+
+A push can remove a breakpoint, remove a prop from `responsive`, or narrow a prop's `in` (or
+retype it), while entries still hold overrides for it. Those overrides are stale. They never fail
+a save: each entry drops them on its next save, the way a renamed block takes its new id, and
+reads serve them as stored until then. The push (and its dry run) reports them in
+`staleOverrides`, by content type, block, breakpoint and prop, with how many blocks and entries
+carry one (the current version of each entry outside the trash, up to 2,000 entries per type;
+`complete: false` past that); it doesn't refuse the push. Editing the content type by hand
+reports them the same way, as `warnings`. A
+[promotion](/guides/environments/#promote-changes-to-the-live-environment) whose content types or
+catalog would make the target's overrides stale waits for approval, saying how many blocks and
+which breakpoints and props (entries the promotion itself writes over don't count), and so does
+one whose entries carry overrides the target's type doesn't declare, which their copies there
+lose.
+
+An undeclared override is only stale when the entry already had it. In an edit (a create, an
+update, a block patch, an import, and an import's analysis), an override of `base`, of a
+breakpoint the field doesn't
+declare, or of a prop not in the block's `responsive` is refused with `422` and the code
+`override_undeclared`, naming the block and breakpoint (`sections[0]._responsive.xl`); a value its
+prop doesn't take is refused as `override_invalid` (`sections[0]._responsive.lg.size`). Unless the
+version the edit replaces already holds an override of that block type, breakpoint and prop (with
+that value), in any field or locale: then it was carried, by moving, duplicating or copying a
+block, undoing a change or sending the entry back, and the save drops it. So a typo is caught, and
+stored overrides never block a save. Copies (snapshot restores, clones, promotions, version
+restores) carry what was stored and aren't judged; an environment merge drops the overrides the
+target's type doesn't take before it stores the entry.
 
 ## Renaming a block
 
@@ -233,6 +325,7 @@ Each component gets:
 | `fieldAttrs` | `fieldAttrs('heading')`, spread onto the element showing that field. Empty, except in a preview |
 | `ghost`      | In a live preview, `inserted`, `changed` or `removed` for a block Coworker proposes          |
 | `index`      | Its place among its siblings                                                                |
+| `responsive` | Its [per-breakpoint overrides](#per-breakpoint-overrides), stale ones left out              |
 
 - **Renamed blocks.** For a field the catalog targets, pass `catalog` (your blocks file, or what
   `GET …/block-catalog` answers); for any other blocks field, its `variants` from its content type.
@@ -294,6 +387,34 @@ const { items } = renderBlocks<BlockTypes, string>(entry.fields.sections, {
 });
 ```
 
+### Per-breakpoint values
+
+Each resolved block carries `responsive`: its overrides in breakpoint order, with any the catalog
+no longer declares left out, and, when the catalog's blocks (or the `variants`) carry their
+`fields`, any value that isn't one of its prop's tokens. `responsiveProp(block, prop, catalog)`
+reads one prop at every width, `{ base: 'md', lg: 'xl' }`. Applying it is your CSS: a class per
+breakpoint, a custom property per media query, or a container query. A server-rendered page can't
+know the screen's width, so the SDK never picks one value.
+
+Treat an override value as you treat the bare prop: match it against the token list before it goes
+into a class name, a `style` attribute or any other markup, never interpolate it as it is.
+Delivery serves `_responsive` as stored, so a value written by hand, or one a later push narrowed
+out, reaches a page until the entry is saved again.
+
+```tsx
+import { responsiveProp } from '@contentworker/sdk/react';
+
+const sizeClasses = (block: HeroBlock) =>
+  Object.entries(responsiveProp(block, 'size', catalog))
+    .map(([bp, size]) => (bp === 'base' ? `size-${size}` : `${bp}:size-${size}`))
+    .join(' ');
+```
+
+`contentworker types` types each block's `_responsive` (`readonly lg?: { readonly size?: 'sm' |
+'md' | 'xl' }`) and exports `breakpoints`, the list as declared. For a blocks field the catalog
+doesn't target, pass `variants` and `breakpoints` (the field's `items.breakpoints`) instead of
+`catalog`.
+
 ### In a live preview
 
 Pass `preview`, the field as a [live preview](/guides/live-preview/) ref (a `field` that isn't a
@@ -327,8 +448,10 @@ so the same components ship to production.
 
 Every push that changes something stores a new version: version 1 first, then one more each time,
 with who pushed it, when, and which blocks it added, changed, removed and renamed. A version also
-carries a hash of its blocks and targets, so pushing the catalog in force again changes nothing
-and writes nothing: it is safe to run `blocks push` on every deploy.
+carries a hash of its blocks, targets and breakpoints, so pushing the catalog in force again
+changes nothing and writes nothing: it is safe to run `blocks push` on every deploy. A changed
+breakpoints list is a change (`changes.breakpoints: true`), and so it is for an environment
+compare and a promotion, which copies the breakpoints with the catalog.
 
 ## Block usage
 
@@ -482,7 +605,7 @@ for a region is said on the locked block.
 | Method | Path                                 | Scope            | Does                                           |
 | ------ | ------------------------------------ | ---------------- | ---------------------------------------------- |
 | GET    | `…/block-catalog`                    | `preview:read`   | The catalog in force; `404` before the first push |
-| POST   | `…/block-catalog`                    | `content:manage` (+ `content:publish` to publish) | Push `{ blocks, targets, dryRun?, expectedVersion?, allowDestructive?, publish? }` |
+| POST   | `…/block-catalog`                    | `content:manage` (+ `content:publish` to publish) | Push `{ blocks, targets, breakpoints?, dryRun?, expectedVersion?, allowDestructive?, publish? }` |
 | GET    | `…/block-catalog/versions`           | `preview:read`   | Versions newest first, without their blocks (`?limit`, `?before`) |
 | GET    | `…/block-catalog/versions/:version`  | `preview:read`   | One version                                    |
 | GET    | `…/block-catalog/usage`              | `preview:read`   | Entries using each block, per content type     |
@@ -494,7 +617,7 @@ for a region is said on the locked block.
 
 `…` is `/spaces/:space/environments/:env`. A push answers what it did, or would do with `dryRun`:
 `previousVersion`, `version`, `changes`, `contentTypes`, `destructive`, `inUse` (what it would
-remove that entries hold) and `warnings`. Send the dry run's `previousVersion` as
+remove that entries hold), `staleOverrides` (overrides it strands) and `warnings`. Send the dry run's `previousVersion` as
 `expectedVersion` to be refused (`409`) if another push lands first. A refused push carries the
 same result in the error's `details`. From code, the management SDK has
 `cma.blockCatalog.{get, version, versions, push, usage}`, `cma.blockConfig.{get, set, effective}`
@@ -510,4 +633,5 @@ The admin's Build → Blocks screen lists the catalog in force, read-only, and s
 
 ## Not yet
 
-- Per-breakpoint overrides of token props.
+- Editing per-breakpoint overrides on the canvas (width presets from the catalog's breakpoints,
+  the Look tab at the breakpoint in view). The API, MCP, SDK and Delivery support them today.

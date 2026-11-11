@@ -26,6 +26,7 @@ import { MAX_FIELD_RULES, ruleProblem, ruleTarget } from './field-rules';
 import { type ContentTypeLayout, checkLayout } from './layout';
 import { isPatternPreset, PATTERN_PRESETS, presetRegexp } from './patterns';
 import { type ContentTypePreview, checkPreviewTemplate } from './preview';
+import { checkBreakpoints, checkResponsive } from './responsive';
 
 /** What a define or revision may allow, by deployment rather than by type. */
 export interface ContentTypeOptions {
@@ -643,6 +644,19 @@ function assertVariantsValid(
       if (aliased.has(alias as string)) fail(`Alias "${alias}" is listed twice`, at);
       aliased.add(alias as string);
     }
+  }
+  // Overrides: the breakpoints on a top-level blocks field (a catalog push writes them), and each
+  // variant's `responsive` props, by the catalog's own rules.
+  const firstIssue = (field: string, message: string): never => fail(message, field);
+  const breakpoints: unknown = f.items?.breakpoints;
+  if (breakpoints !== undefined) {
+    if (depth > 0) {
+      fail('Breakpoints go on a top-level blocks field; the blocks inside it take the same ones');
+    }
+    checkBreakpoints(breakpoints, `${where}.breakpoints`, firstIssue);
+  }
+  for (const v of variants as readonly ComponentVariant[]) {
+    checkResponsive(v.responsive, v.fields, `${where}[${v.apiId}].responsive`, firstIssue);
   }
 }
 

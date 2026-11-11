@@ -9,10 +9,11 @@ import {
 } from '../src/index';
 
 /**
- * Before any field declares breakpoints, a block's `_responsive` (its per-breakpoint overrides,
- * docs/specs/breakpoint-overrides.md) never fails a save: validation lets it through on any
- * block, whatever it holds, and the save drops it. That is what a rollback past the overrides
- * lands on: entries lose their overrides on the next save, and every one of them still saves.
+ * On a blocks field that declares no breakpoints, a block's stored `_responsive` (its
+ * per-breakpoint overrides, docs/specs/breakpoint-overrides.md) never fails a save: validation
+ * lets a well-formed one through on any block, and the save drops it. The release before
+ * overrides were kept did the same for any `_responsive` at all, which is what a rollback lands
+ * on: entries lose their overrides on the next save, and every one of them still saves.
  */
 
 const symbol = (apiId: string, position = 0) => ({
@@ -74,14 +75,25 @@ const stored = body([
   {
     _type: 'section',
     _key: 's',
-    _responsive: 'not even a map',
-    items: [{ _type: 'hero', _key: 'b', _responsive: { base: { size: 1 } } }],
+    _responsive: { md: { label: 'x' } },
+    items: [{ _type: 'hero', _key: 'b', _responsive: { xl: { size: 1 } } }],
   },
 ]);
 
 describe('a block’s _responsive before anything declares breakpoints', () => {
-  it('never fails validation, whatever it holds, while any other _ key still does', () => {
+  it('never fails validation when well formed, while any other _ key still does', () => {
     expect(validateEntryFields(PAGE, stored, VCTX)).toEqual([]);
+    // What can never be an override is refused: a map that isn't one, `base`.
+    expect(
+      validateEntryFields(
+        PAGE,
+        body([
+          { _type: 'hero', _responsive: 'big' },
+          { _type: 'hero', _responsive: { base: {} } },
+        ]),
+        VCTX,
+      ).map((i) => i.field),
+    ).toEqual(['body[0]._responsive', 'body[1]._responsive.base']);
     expect(
       validateEntryFields(PAGE, body([{ _type: 'hero', _style: { color: 'red' } }]), VCTX),
     ).toMatchObject([{ field: 'body[0]._style' }]);

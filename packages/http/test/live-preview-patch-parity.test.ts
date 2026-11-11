@@ -47,7 +47,9 @@ const HERO: ComponentVariant = {
   fields: [
     field({ apiId: 'heading', type: 'Symbol' }),
     field({ apiId: 'tagline', type: 'Symbol', position: 1 }),
+    field({ apiId: 'size', type: 'Symbol', position: 2, validations: { in: ['sm', 'xl'] } }),
   ],
+  responsive: ['size'],
 };
 const CTA: ComponentVariant = {
   apiId: 'cta',
@@ -212,6 +214,13 @@ const ACCEPTED: Record<string, Accepted> = {
   },
   'an update that sets and unsets': {
     ops: [{ op: 'update', ...at, key: 'h2', set: { tagline: 'Really' }, unset: ['heading'] }],
+  },
+  'an update that sets a block’s per-breakpoint overrides, then unsets them': {
+    ops: [
+      { op: 'update', ...at, key: 'h2', set: { _responsive: { lg: { size: 'xl' } } } },
+      { op: 'update', ...at, key: 'h1', set: { _responsive: { md: { size: 'sm' } } } },
+      { op: 'update', ...at, key: 'h1', unset: ['_responsive'] },
+    ],
   },
   'a move into a slot, and back out after a sibling': {
     ops: [

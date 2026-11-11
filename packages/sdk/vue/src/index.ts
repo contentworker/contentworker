@@ -334,10 +334,15 @@ export type {
   BlockCatalogLike,
   BlockGhost,
   BlockGhosts,
+  BlockOverrides,
   BlockValue,
   BlockVariantLike,
+  BreakpointLike,
   FieldAttrs,
+  PropLike,
+  ResponsiveValue,
   SlotAttrs,
   UnknownBlock,
 } from '@contentworker/sdk-core/blocks';
+export { responsiveProp } from '@contentworker/sdk-core/blocks';
 export { type BlockComponents, type BlockContext, CwBlocks, useBlock } from './blocks.js';

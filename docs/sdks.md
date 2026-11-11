@@ -496,18 +496,26 @@ const html = toHtml(entry.fields.body, {
 What `<Blocks>` and `<CwBlocks>` are built on, for any other renderer (the frontend runtime, HTML
 strings, DOM nodes):
 
-- `resolveBlocks(value, { catalog?, variants?, ghosts?, preview? })` → `{ path, attrs, blocks }`.
+- `resolveBlocks(value, { catalog?, variants?, breakpoints?, ghosts?, preview? })` → `{ path, attrs, blocks }`.
   Each block: `type` (current id; `catalog` wins over `variants`, an exact id over an alias, a
   variants slot resolves with its own nested variants, and a catalog applies only inside the slots
   its blocks declare), `storedType`, `key`, `renderKey`, `index`,
-  `block` (a copy with `_type` set to `type` when it differs), `ghost` (from `ghosts` by `_key`;
+  `block` (a copy with `_type` set to `type` when it differs), `responsive` (its `_responsive` in
+  breakpoint order, only the catalog's breakpoints, or `breakpoints` with `variants`, and only the
+  props its definition lists in `responsive`, with a value that isn't one of its prop's tokens left
+  out when the catalog's blocks or the variants carry `fields`; as stored when nothing declares
+  them; `{}` when none), `ghost` (from `ghosts` by `_key`;
   `inserted` over `removed` over `changed`), `path`, `attrs`, `fieldAttrs(name)`, `slotNames` (the
   definition's slots plus any field holding a non-empty list of blocks) and `slot(name)` (resolved
   on first call). Not a list renders nothing; an element without a string `_type` is skipped.
 - `renderBlocks<BlockTypes, R>(value, { components, fallback?, …resolve options })` →
-  `{ attrs, items: R[] }`, calling `components[type]({ block, index, ghost, attrs, fieldAttrs,
-  slot })` (`slot(name)` → `{ attrs, items }`); own properties only, so a `_type` of `toString` never
-  calls an inherited function.
+  `{ attrs, items: R[] }`, calling `components[type]({ block, responsive, index, ghost, attrs,
+  fieldAttrs, slot })` (`slot(name)` → `{ attrs, items }`); own properties only, so a `_type` of
+  `toString` never calls an inherited function. `<Blocks>` and `useBlock()` give `responsive` too.
+- `responsiveProp(block, prop, catalog)` → `{ base, <breakpoint>… }`: the bare prop, then each
+  declared breakpoint overriding it, in order; with the catalog, only a prop its block lists in
+  `responsive` and, when the block carries `fields`, only a value among its tokens; with just a
+  breakpoints list, no prop check. Never one value for "this width".
 - Preview marks, only when `preview` (a `ContentRef` whose `field` names the blocks field, or a path
   to a slot) is given: `data-cw-slot` on the element holding each list (`body`, `body[k1].cards`),
   `data-cw-ref` on each block (`body[k1]`) and field (`body[k1].heading`), formatted with
@@ -839,7 +847,9 @@ For each content type it emits two interfaces plus shared helpers and lookup map
 - `<Id>Block` per block id and `BlockTypes` (id → block type) with `BlockId`, for
   `BlockComponents<BlockTypes>` and `renderBlocks<BlockTypes, R>`: `{ _type: '<id>'; _key: string;
   …props }`, each slot a list of the blocks it allows (required when its `min` is above 0), doc
-  comments naming the block and its former ids. A catalog's blocks are typed from
+  comments naming the block and its former ids, and with breakpoints and `responsive` props
+  `_responsive?: { readonly md?: { readonly size?: 'sm' | … } }`; the module then also exports
+  `breakpoints` (`as const`) and `BreakpointId`. A catalog's blocks are typed from
   `generateTypes(types, { blockCatalog })` (`contentworker types` passes the catalog in force, or
   `--blocks <file>`; the workspace `contentworker-codegen` takes a JSON `--blocks` or fetches
   `…/block-catalog`, a 404 meaning none); every other block, from the blocks fields' variants at

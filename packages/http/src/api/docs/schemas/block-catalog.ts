@@ -1,4 +1,4 @@
-import { BLOCK_CATALOG_LIMITS } from '@contentworker/domain';
+import { BLOCK_CATALOG_LIMITS, BREAKPOINT_LIMITS } from '@contentworker/domain';
 import { z } from 'zod';
 
 // --- block catalog (blocks from code) -------------------------------------------------------------
@@ -48,7 +48,31 @@ export const blockManifest = z.object({
     .array(z.string())
     .optional()
     .describe('Only these blocks’ slots may hold it (and never the top level)'),
+  responsive: z
+    .array(z.string())
+    .optional()
+    .describe(
+      'Props that take per-breakpoint overrides (stored in `_responsive`): top-level tokens (a ' +
+        'Symbol, Integer or Number with validations.in) or Booleans',
+    ),
 });
+
+export const breakpoint = z.object({
+  id: z
+    .string()
+    .describe('A letter, then letters, digits or _; never `base`. The key in `_responsive`'),
+  name: z.string().describe('What editors see: "Tablet"'),
+  minWidth: z
+    .int()
+    .min(BREAKPOINT_LIMITS.minWidth)
+    .max(BREAKPOINT_LIMITS.maxWidth)
+    .describe('CSS pixels it applies from; strictly increasing in list order'),
+});
+
+export const breakpoints = z
+  .array(breakpoint)
+  .max(BREAKPOINT_LIMITS.count)
+  .describe('The site’s CSS breakpoints, mobile-first: the bare props apply below the first');
 
 export const blockCatalogTarget = z.object({
   contentTypeApiId: z.string(),
@@ -64,12 +88,14 @@ export const blockCatalogChanges = z.object({
   changed: z.array(z.string()),
   removed: z.array(z.string()),
   renamed: z.array(z.object({ from: z.string(), to: z.string() })),
+  breakpoints: z.literal(true).optional().describe('Present when the breakpoints list changed'),
 });
 
 const versionFields = {
   version: z.int().describe('1 for the first push, then one more per push that changed something'),
-  hash: z.string().describe('SHA-256 of the canonical blocks and targets'),
+  hash: z.string().describe('SHA-256 of the canonical blocks, targets and breakpoints'),
   targets: z.array(blockCatalogTarget),
+  breakpoints,
   changes: blockCatalogChanges.describe('What this version changed from the one before'),
   pushedAt: z.iso.datetime(),
   pushedBy: z.string().nullable(),
@@ -90,6 +116,7 @@ const blockFieldChange = z.object({
   changed: z.array(z.string()),
   removed: z.array(z.string()),
   renamed: z.array(z.object({ from: z.string(), to: z.string() })),
+  breakpoints: z.literal(true).optional().describe('The push changes the field’s breakpoints'),
 });
 
 export const blockCatalogPush = z.object({
@@ -120,6 +147,22 @@ export const blockCatalogPush = z.object({
       }),
     )
     .describe('What it would remove that entries still hold: a push with any is refused'),
+  staleOverrides: z
+    .array(
+      z.object({
+        contentTypeApiId: z.string(),
+        block: z.string(),
+        breakpoint: z.string(),
+        prop: z.string(),
+        blocks: z.int().describe('Blocks carrying the override'),
+        entries: z.int(),
+        complete: z.boolean().describe('False when the type had more entries than the count reads'),
+      }),
+    )
+    .describe(
+      'Overrides the push makes stale (their breakpoint or prop removed): reported, never ' +
+        'refused; each is dropped on its entry’s next save',
+    ),
   warnings: z.array(z.object({ field: z.string(), entries: z.int(), message: z.string() })),
 });
 

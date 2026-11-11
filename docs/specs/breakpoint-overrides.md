@@ -1,7 +1,18 @@
 # Per-breakpoint overrides
 
-Status: **decided** 2026-11-10, not built (M6, "Layout model" in `ROADMAP.md`). Overrides sit
-beside the props in a `_responsive` key, and the owner took all five proposals under Decisions.
+Status: **decided** 2026-11-10, **backend built**; the canvas (below) is still to come (M6,
+"Layout model" in `ROADMAP.md`). Overrides sit beside the props in a `_responsive` key, and the
+owner took all five proposals under Decisions. Built: the push checks and stores breakpoints and
+`responsive` (`packages/domain/src/content-type/responsive.ts`, `block-catalog.ts`,
+`packages/application/src/block-catalog.ts`, migration `0040_block_catalog_breakpoints`), carrying
+them onto the target field (`items.breakpoints`) and the variant; validation and the stale drop
+(`validation/validate.ts`, `assignBlockKeys` in `field-values.ts`); block patches and frozen regions
+(`block-patch.ts`, `block-locks.ts`); the push's `staleOverrides`; REST, MCP, the management SDK
+and the CLI; GraphQL (`packages/graphql-gen`); codegen (`packages/sdk/codegen`); and the
+renderers (`resolveBlocks`' `responsive` and `responsiveProp` in `packages/sdk/core/src/blocks.ts`).
+Release order: a tolerance release goes first (validation lets `_responsive` through on any block,
+every save drops it), and the overrides ship after it, so a rollback past them never leaves an
+entry that can't be saved, only one that loses its overrides on its next save.
 This file sits in `docs/specs/`, which the docs embed does not read (it takes `docs/*.md` only),
 so MCP clients never mistake it for a description of shipped behaviour.
 
@@ -87,21 +98,36 @@ is refused at push, with its place in the file (`blocks[hero].responsive[1]`). A
 
 ### Stale overrides
 
-A push can remove a breakpoint, or a prop from `responsive`, while stored blocks still carry
-overrides for it. Those overrides are **stale**:
+A push can remove a breakpoint, remove a prop from `responsive`, or narrow a prop's `in` (or
+retype it), while stored blocks still carry overrides for it. Those overrides are **stale**:
 
 - A save never fails over them: they are dropped from the block on its entry's next save, the
-  way a renamed block takes its new id.
+  way a renamed block takes its new id. An override nothing declares (or whose value its prop
+  doesn't take) is stale when the stored version the save replaces already holds that block type,
+  breakpoint and prop (and value), in any field and locale, so a move, a duplicate, an undo, a
+  locale copy or a client sending the entry back all save; one an edit brings new is a mistake and
+  is refused (`override_undeclared`, `override_invalid`; decided 2026-11-10 after review).
 - Reads serve them as stored until then; the renderer helper ignores ids the catalog doesn't
-  declare.
+  declare, and GraphQL and the SDK leave out a value that isn't one of its prop's tokens.
 - The push (and its dry run) reports how many blocks carry overrides it makes stale, by
   breakpoint and prop, as it reports block usage for removed blocks. It does not refuse the push.
+  A content type update reports them as warnings.
 
 ## Enforcement
 
-- **Validation** (`validate.ts`): `_responsive` is allowed on a block whose variant has
-  `responsive`; each key must be a declared breakpoint (or stale, see above), each prop in the
-  variant's list, each value valid for that prop. Any other `_`-prefixed key is refused as now.
+- **Validation** (`validate.ts`): judges the shape only (a non-map, `base` or a malformed id), so
+  stored-content checks (snapshots, merges, compare, restores) stay tolerant. Any other
+  `_`-prefixed key is refused as now. A new edit (create, update, block patch, import) is judged
+  first, as sent, by `undeclaredOverrides` against the version it replaces: `base`, a malformed
+  or undeclared breakpoint, or a prop not in the variant's `responsive` is `override_undeclared`
+  at `body[0]._responsive.xl`; a value its prop doesn't take is `override_invalid` at the prop;
+  both only when the stored version doesn't already hold it (see Stale overrides).
+- **Merges** drop the overrides the target's type doesn't take before they store an entry.
+- **Promotions** wait for approval when their content types or catalog would make the target's
+  stored overrides stale (entries the promotion replaces aside), naming how many blocks and which
+  breakpoints and props, and when the promoted entries carry overrides the target's type doesn't
+  declare; a change that strands nothing needs none. Relabelling or reordering a prop's options
+  strands nothing and scans nothing.
 - **Block patch**: an `update` op may `set` or `unset` `_responsive` as a whole; its inverse is the
   old map. Live preview's `blocks.patch` carries it unchanged (no protocol version bump).
 - **Locks**: a frozen region (`freeze: true`) refuses `_responsive` changes like any content
@@ -115,7 +141,8 @@ overrides for it. Those overrides are **stale**:
 - **REST / MCP / SDK**: no new endpoints. The push body, `GET /blocks/catalog` and
   `blocks_catalog_get` carry `breakpoints` and each block's `responsive`; entries carry
   `_responsive`; `patchBlocks` and `entries_blocks_patch` set it.
-- **GraphQL**: a block type with responsive props gains a `responsive` field of type
+- **GraphQL**: a block type with responsive props gains a `_responsive` field (named for the
+  stored key, so no prop added later can take it) of type
   `<BlockType>Responsive`, with one nullable field per breakpoint holding the overridable props.
   Additive; no type is renamed.
 - **Codegen**: each block type gets `_responsive?: { readonly md?: { readonly size?: 'sm' | … } }`

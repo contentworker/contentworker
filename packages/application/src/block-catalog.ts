@@ -7,6 +7,7 @@ import {
   type BlockCatalogTarget,
   type BlockFieldChange,
   type BlockManifest,
+  type Breakpoint,
   blocksUsed,
   ConflictError,
   type ContentType,
@@ -32,7 +33,9 @@ import {
   prepareContentTypeSave,
   type RemovedContentInUse,
   removedContentInUse,
+  type StaleOverrides,
   SYSTEM_CALLER,
+  staleOverridesOf,
   tightenedRulesInUse,
 } from './content-types';
 import type { AppContext } from './context';
@@ -49,10 +52,15 @@ import type { AppContext } from './context';
  * not at all. It needs `content:manage`, checked by the surfaces.
  */
 
-/** What `pushBlockCatalog` takes. `blocks` and `targets` are checked here, whatever sent them. */
+/**
+ * What `pushBlockCatalog` takes. `blocks`, `targets` and `breakpoints` are checked here, whatever
+ * sent them.
+ */
 export interface PushBlockCatalogInput {
   readonly blocks: unknown;
   readonly targets: unknown;
+  /** The site's CSS breakpoints, mobile-first; absent, none (a push without them removes them). */
+  readonly breakpoints?: unknown;
   /** Work out and return the push, change nothing. */
   readonly dryRun?: boolean;
   /** The version the push was made against (0 before the first): another one is a conflict. */
@@ -113,15 +121,23 @@ export interface BlockCatalogPush {
   readonly destructive: boolean;
   /** What it would remove that entries hold: a push with any is refused. */
   readonly inUse: readonly BlocksInUse[];
+  /** The overrides it makes stale: reported, never refused. */
+  readonly staleOverrides: readonly StaleOverrides[];
   readonly warnings: readonly ContentTypeWarning[];
 }
 
-/** SHA-256 of the canonical catalog: what tells an unchanged push from a new version. */
+/**
+ * SHA-256 of the canonical catalog: what tells an unchanged push from a new version. Breakpoints
+ * count only when there are some, so a catalog pushed before they existed keeps its hash.
+ */
 export function blockCatalogHash(
   blocks: readonly BlockManifest[],
   targets: readonly BlockCatalogTarget[],
+  breakpoints: readonly Breakpoint[] = [],
 ): string {
-  return createHash('sha256').update(canonicalJson({ blocks, targets })).digest('hex');
+  return createHash('sha256')
+    .update(canonicalJson({ blocks, targets, ...(breakpoints.length ? { breakpoints } : {}) }))
+    .digest('hex');
 }
 
 /**
@@ -151,10 +167,13 @@ export async function pushBlockCatalog(
   if (publish && caller !== SYSTEM_CALLER) {
     authorize(caller, SCOPES.contentPublish, scope.spaceId);
   }
-  const { blocks, targets } = checkBlockCatalog(input);
+  const { blocks, targets, breakpoints } = checkBlockCatalog(input);
   const latest = await ctx.store.blockCatalogs.latest(scope);
   const previousVersion = latest?.version ?? 0;
-  const changes = diffBlockCatalogs(latest?.blocks ?? null, blocks);
+  const changes = diffBlockCatalogs(latest?.blocks ?? null, blocks, {
+    before: latest?.breakpoints ?? [],
+    after: breakpoints,
+  });
   await assertThumbnailAssets(ctx, scope, blocks);
 
   const types = new Map<string, ContentType>();
@@ -162,7 +181,7 @@ export async function pushBlockCatalog(
     const type = await ctx.store.contentTypes.get(scope, apiId);
     if (type) types.set(apiId, type);
   }
-  const revisions = planCatalogTypes(blocks, targets, types).flatMap((plan) => {
+  const revisions = planCatalogTypes(blocks, targets, types, breakpoints).flatMap((plan) => {
     const current = types.get(plan.contentTypeApiId) as ContentType;
     const revised = reviseContentType(
       current,
@@ -203,8 +222,12 @@ export async function pushBlockCatalog(
     }
     warnings.push(...(await tightenedRulesInUse(ctx, scope, current, next)));
   }
+  const staleOverrides: StaleOverrides[] = [];
+  for (const { current, next } of revisions) {
+    staleOverrides.push(...(await staleOverridesOf(ctx, scope, current, next)).overrides);
+  }
 
-  const hash = blockCatalogHash(blocks, targets);
+  const hash = blockCatalogHash(blocks, targets, breakpoints);
   const unchanged = latest?.hash === hash && revisions.length === 0;
   // Checked after `unchanged`: a retried push whose first try landed is a no-op, not a conflict.
   if (
@@ -236,6 +259,7 @@ export async function pushBlockCatalog(
     })),
     destructive,
     inUse,
+    staleOverrides,
     warnings,
   };
   if (input.dryRun || unchanged) return result;
@@ -266,6 +290,7 @@ export async function pushBlockCatalog(
     hash,
     blocks,
     targets,
+    breakpoints,
     changes,
     pushedAt: ctx.clock.now().toISOString(),
     pushedBy: caller === SYSTEM_CALLER ? null : auditActor(caller),

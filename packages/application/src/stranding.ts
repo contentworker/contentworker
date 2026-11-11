@@ -141,6 +141,8 @@ export interface ReplacedCopies {
   readonly operation: CopyingOperation;
   /** The copied entries a removal was let off for, which the operation must replace first. */
   relied(): ReadonlySet<string>;
+  /** Whether the operation writes over this target entry with the source's copy. */
+  replaces(entryId: string): boolean;
   /** Takes the replaced copies out of `held`, found over `befores` against `after`. */
   letOff(
     held: Held,
@@ -163,6 +165,7 @@ export function replacedCopies(
   return {
     operation: rule.operation,
     relied: () => relied,
+    replaces: (entryId) => copied.has(entryId),
     async letOff(held, befores, after) {
       const all = [...held.variants.values(), ...held.fields.values()];
       const holders = [...new Set(all.flatMap((s) => [...s]))].filter((id) => copied.has(id));

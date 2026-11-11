@@ -7,9 +7,11 @@ import {
   blockVariants,
   type ComponentVariant,
   type FieldDefinition,
+  RESPONSIVE_KEY,
   variantOf,
 } from './field';
 import { mayHoldBlocks } from './field-values';
+import { responsivePropsOf } from './responsive';
 
 /**
  * Key-addressed edits to a blocks field: insert, update, move, remove and duplicate one block,
@@ -70,7 +72,9 @@ export interface InsertBlockOp extends BlockOpTarget, BlockPlace {
 /**
  * Sets or clears named fields of one block; the fields it doesn't name keep their values. A field
  * that holds blocks is refused: its children change through the structural ops, so their keys
- * survive.
+ * survive. A block whose variant has `responsive` props also takes `_responsive`, its
+ * per-breakpoint overrides, set or unset as a whole map (the save checks it and drops what is
+ * stale).
  */
 export interface UpdateBlockOp extends BlockOpTarget {
   readonly op: 'update';
@@ -738,6 +742,14 @@ function applyOne(tree: Tree, op: BlockOp, newKey: () => string): Step {
       if (names.length === 0)
         throw new OpRefused('nothing_to_update', 'Nothing to update: give set or unset');
       for (const name of names) {
+        if (name === RESPONSIVE_KEY) {
+          if (responsivePropsOf(variant).length > 0) continue;
+          throw new OpRefused(
+            'unknown_field',
+            `"${variant.apiId}" blocks take no per-breakpoint overrides (no responsive props)`,
+            tree.resolve(op.key),
+          );
+        }
         const f = variant.fields.find((d) => d.apiId === name);
         if (!f)
           throw new OpRefused(

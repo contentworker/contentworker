@@ -22,6 +22,7 @@ const CATALOG: BlockCatalog = {
   pushedAt: '2026-11-07T10:00:00.000Z',
   pushedBy: 'dev@example.com',
   targets: [{ contentTypeApiId: 'page', field: 'body' }],
+  breakpoints: [],
   changes: { added: [], changed: [], removed: [], renamed: [] },
   blocks: [
     {

@@ -142,6 +142,15 @@ to action), declare one `Array` field whose `items` lists the shapes as `variant
   which refuses the push), then push with `expectedVersion` set to the dry run's
   `previousVersion`. Check `blocks_usage` before removing a block. Style props are tokens (a
   `Symbol` with `validations.in`), never CSS.
+- A catalog's `breakpoints` (the site's CSS, mobile-first) and a block's `responsive` props let a
+  token or Boolean prop take another value from a width up, stored on the block as
+  `_responsive: { lg: { size: "xl" } }` beside the bare prop, which stays the base. Set one with an
+  `update` block patch of `_responsive` as a whole; a breakpoint or prop the catalog doesn't
+  declare is refused (`override_undeclared`), and so is a value that isn't one of the prop's tokens
+  (`override_invalid`), unless the entry already held that override (then it is stale and the save
+  drops it, so sending a stored entry back, or moving or copying its blocks, always saves). A push
+  that removes a breakpoint or a responsive prop, or narrows a prop's tokens, reports
+  `staleOverrides`; tell the user, since those overrides are dropped on each entry's next save.
 
 ## Rules worth knowing
 

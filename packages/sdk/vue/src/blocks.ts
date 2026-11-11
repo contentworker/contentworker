@@ -11,9 +11,11 @@ import {
   type BlockCatalogLike,
   type BlockGhost,
   type BlockGhosts,
+  type BlockOverrides,
   type BlockTypeMap,
   type BlockValue,
   type BlockVariantLike,
+  type BreakpointLike,
   type FieldAttrs,
   type ResolvedBlock,
   type ResolvedBlocks,
@@ -40,6 +42,8 @@ export type BlockComponents<M extends BlockTypeMap<M> = Record<string, UnknownBl
 export interface BlockContext<B extends BlockValue = UnknownBlock> {
   /** The block, `_type` its current id: a block stored under a former id reads as this one. */
   readonly block: B;
+  /** Its per-breakpoint overrides as they apply (stale ones left out); `responsiveProp` reads one. */
+  readonly responsive?: BlockOverrides;
   readonly index: number;
   /** Set in a live preview for a block Coworker proposes: draw it as a ghost. */
   readonly ghost: BlockGhost | undefined;
@@ -113,6 +117,9 @@ const Block = defineComponent({
       get block() {
         return props.unit.block;
       },
+      get responsive() {
+        return props.unit.responsive;
+      },
       get index() {
         return props.unit.index;
       },
@@ -161,6 +168,8 @@ export const CwBlocks = defineComponent({
     fallback: { type: [Object, Function] as PropType<Component>, default: undefined },
     catalog: { type: Object as PropType<BlockCatalogLike>, default: undefined },
     variants: { type: Array as PropType<readonly BlockVariantLike[]>, default: undefined },
+    /** With `variants`, the field's breakpoints (`items.breakpoints`). */
+    breakpoints: { type: Array as PropType<readonly BreakpointLike[]>, default: undefined },
     ghosts: { type: Object as PropType<BlockGhosts>, default: undefined },
     /** The field as a live preview ref. Given, blocks, slots and fields carry their marks. */
     preview: {
@@ -174,6 +183,7 @@ export const CwBlocks = defineComponent({
       const resolved = resolveBlocks(props.value, {
         catalog: props.catalog,
         variants: props.variants,
+        breakpoints: props.breakpoints,
         ghosts: props.ghosts,
         preview: props.preview,
       });

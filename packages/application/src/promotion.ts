@@ -30,6 +30,7 @@ import {
   removedVariants,
   SCOPES,
   type Scope,
+  staleOverrideUses,
   ValidationError,
 } from '@contentworker/domain';
 import type { DecisionAnswer } from '@contentworker/ports';
@@ -46,6 +47,7 @@ import {
   removedContentInUse,
   SYSTEM_CALLER,
   saveContentTypeOver,
+  staleOverridesOf,
 } from './content-types';
 import { type AppContext, withActor } from './context';
 import { createEntry, updateEntry } from './entries';
@@ -712,6 +714,16 @@ async function assessPromotion(
     ? await assessPromotedBlocks(ctx, target, types, blocks, replaced)
     : [];
   reasons.push(...blockChanges);
+  const staleLines = await staleOverrideLines(
+    ctx,
+    source,
+    target,
+    types,
+    entries,
+    blocks?.catalog ?? null,
+    replaced,
+  );
+  reasons.push(...staleLines);
 
   let assessment: PromotionAssessment | undefined;
   let aiRequires = false;
@@ -790,7 +802,11 @@ async function assessPromotion(
     }
   }
 
-  const ruled = protectedTarget || Object.keys(typeChanges).length > 0 || blockChanges.length > 0;
+  const ruled =
+    protectedTarget ||
+    Object.keys(typeChanges).length > 0 ||
+    blockChanges.length > 0 ||
+    staleLines.length > 0;
   return {
     protectedTarget,
     reasons,
@@ -892,6 +908,7 @@ async function assessPromotedBlocks(
       ...(changes.removed.length ? [`removes ${quotedIds(changes.removed)}`] : []),
       ...(changes.changed.length ? [`changes ${quotedIds(changes.changed)}`] : []),
       ...changes.renamed.map((r) => `renames "${r.from}" to "${r.to}"`),
+      ...(changes.breakpoints ? ['changes the breakpoints'] : []),
     ];
     if (said.length > 0) lines.unshift(`The block catalog ${said.join('; ')}`);
   }
@@ -927,8 +944,11 @@ async function checkPromotedCatalog(
   let plans: ReturnType<typeof planCatalogTypes>;
   let changes: ReturnType<typeof diffBlockCatalogs>;
   try {
-    changes = diffBlockCatalogs(targetCatalog?.blocks ?? null, catalog.blocks);
-    plans = planCatalogTypes(catalog.blocks, catalog.targets, types);
+    changes = diffBlockCatalogs(targetCatalog?.blocks ?? null, catalog.blocks, {
+      before: targetCatalog?.breakpoints ?? [],
+      after: catalog.breakpoints,
+    });
+    plans = planCatalogTypes(catalog.blocks, catalog.targets, types, catalog.breakpoints);
     await assertThumbnailAssets(ctx, target, catalog.blocks);
   } catch (err) {
     if (!(err instanceof ValidationError)) throw err;
@@ -970,6 +990,117 @@ async function checkPromotedCatalog(
     throw new ValidationError([...refused.issues, ...trashed]);
   }
   return { lines, changes };
+}
+
+/**
+ * The risk lines for the overrides the promotion makes stale in the target: per type the target
+ * holds, from its stored definition to the one the promotion leaves (the copied type, else its
+ * own, each revised by the catalog push when the catalog is copied too), over the target's
+ * entries the promotion doesn't replace. Stale overrides never block a save, but each entry drops
+ * them on its next one, which changes what its pages render: that is the approver's to accept.
+ * Checked whether or not the catalog is copied, since a copied type alone can strand them.
+ */
+async function staleOverrideLines(
+  ctx: AppContext,
+  source: Scope,
+  target: Scope,
+  promoted: readonly ContentType[],
+  entries: readonly PromotedEntry[],
+  catalog: BlockCatalog | null,
+  replaced: ReplacedCopies,
+): Promise<string[]> {
+  const copied = new Map(promoted.map((t) => [t.apiId, t]));
+  const apiIds = new Set([
+    ...copied.keys(),
+    ...(catalog?.targets.map((t) => t.contentTypeApiId) ?? []),
+    ...entries.map((e) => e.contentTypeApiId),
+  ]);
+  const stored = new Map<string, ContentType>();
+  const leaves = new Map<string, ContentType>();
+  for (const apiId of apiIds) {
+    const held = await ctx.store.contentTypes.get(target, apiId);
+    if (held) stored.set(apiId, held);
+    const left = copied.get(apiId) ?? held;
+    if (left) leaves.set(apiId, left);
+  }
+  let plans: ReturnType<typeof planCatalogTypes> = [];
+  if (catalog) {
+    try {
+      plans = planCatalogTypes(catalog.blocks, catalog.targets, leaves, catalog.breakpoints);
+    } catch (err) {
+      // A catalog the target can't take is refused by its own check.
+      if (!(err instanceof ValidationError)) throw err;
+    }
+  }
+  const lines: string[] = [];
+  for (const [apiId, before] of stored) {
+    const left = leaves.get(apiId) as ContentType;
+    const fields = plans.find((p) => p.contentTypeApiId === apiId)?.fields ?? left.fields;
+    const stale = await staleOverridesOf(
+      ctx,
+      target,
+      before,
+      { ...left, fields: [...fields] },
+      { skip: replaced.replaces },
+    );
+    if (stale.blocks > 0) lines.push(describeStale(apiId, stale));
+  }
+  // The promoted copies themselves: overrides their source type declares that the type the target
+  // is left with doesn't, which the copy's save there drops.
+  const carried = new Map<string, { blocks: number; where: Map<string, Set<string>> }>();
+  const sourceTypes = new Map<string, ContentType | null>();
+  for (const e of entries) {
+    const left = leaves.get(e.contentTypeApiId);
+    if (!left) continue;
+    if (!sourceTypes.has(e.contentTypeApiId)) {
+      sourceTypes.set(
+        e.contentTypeApiId,
+        await ctx.store.contentTypes.get(source, e.contentTypeApiId),
+      );
+    }
+    const from = sourceTypes.get(e.contentTypeApiId);
+    const version = from ? await ctx.store.entries.getVersion(source, e.entryId, e.version) : null;
+    if (!from || !version) continue;
+    const fields =
+      plans.find((p) => p.contentTypeApiId === e.contentTypeApiId)?.fields ?? left.fields;
+    const uses = staleOverrideUses(from.fields, fields, version.fields);
+    if (uses.length === 0) continue;
+    const held = carried.get(e.contentTypeApiId) ?? { blocks: 0, where: new Map() };
+    held.blocks += new Set(uses.map((u) => u.site)).size;
+    for (const u of uses) {
+      held.where.set(u.breakpoint, (held.where.get(u.breakpoint) ?? new Set()).add(u.prop));
+    }
+    carried.set(e.contentTypeApiId, held);
+  }
+  for (const [apiId, { blocks, where }] of carried) {
+    const listed = [...where].map(([bp, props]) => `${bp}: ${[...props].join(', ')}`);
+    lines.push(
+      `The promoted entries carry ${blocks} ${blocks === 1 ? "block's" : "blocks'"} overrides ` +
+        `the target's content type "${apiId}" doesn't declare (${listed.join('; ')})`,
+    );
+  }
+  return lines;
+}
+
+/**
+ * `The block catalog makes 3 blocks' overrides stale in the target's content type "page" (lg:
+ * size, hidden; md: size)`: a block counted once however many of its overrides go stale. The
+ * entries are the target's, whichever type definition strands them.
+ */
+function describeStale(
+  apiId: string,
+  { overrides, blocks }: Awaited<ReturnType<typeof staleOverridesOf>>,
+): string {
+  const byBreakpoint = new Map<string, string[]>();
+  for (const s of overrides) {
+    byBreakpoint.set(s.breakpoint, [...(byBreakpoint.get(s.breakpoint) ?? []), s.prop]);
+  }
+  const where = [...byBreakpoint].map(([bp, props]) => `${bp}: ${[...new Set(props)].join(', ')}`);
+  const atLeast = overrides.some((s) => !s.complete) ? 'at least ' : '';
+  return (
+    `The block catalog makes ${atLeast}${blocks} ${blocks === 1 ? "block's" : "blocks'"} overrides ` +
+    `stale in the target's content type "${apiId}" (${where.join('; ')})`
+  );
 }
 
 /**
@@ -1077,6 +1208,7 @@ async function applyPromotedBlocks(
     {
       blocks: catalog.blocks,
       targets: catalog.targets,
+      breakpoints: catalog.breakpoints,
       allowDestructive: true,
       expectedVersion: pinned.targetCatalogVersion,
     },

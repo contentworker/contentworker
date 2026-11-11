@@ -117,6 +117,76 @@ async function withPage() {
 }
 
 describe('block catalog tools (MCP), on the HTTP routes’ use-cases', () => {
+  it('pushes breakpoints and responsive props, reads them back, and reports stale overrides', async () => {
+    const { ctx, deps, scope } = await withPage();
+    const call = await connect(deps, {
+      ...manager,
+      scopes: [...manager.scopes, SCOPES.contentPublish],
+    });
+    const hero = {
+      id: 'hero',
+      name: 'Hero',
+      responsive: ['size'],
+      fields: [
+        { apiId: 'heading', name: 'Heading', type: 'Symbol' },
+        { apiId: 'size', name: 'Size', type: 'Symbol', validations: { in: ['sm', 'md', 'xl'] } },
+      ],
+    };
+    const breakpoints = [
+      { id: 'md', name: 'Tablet', minWidth: 768 },
+      { id: 'lg', name: 'Desktop', minWidth: 1280 },
+    ];
+    const pushed = await call('blocks_catalog_push', {
+      blocks: [hero],
+      targets: TARGETS,
+      breakpoints,
+    });
+    expect(pushed.isError).toBe(false);
+    const got = (await call('blocks_catalog_get')).body as {
+      breakpoints: unknown;
+      blocks: { responsive?: string[] }[];
+    };
+    expect(got.breakpoints).toEqual(breakpoints);
+    expect(got.blocks[0]?.responsive).toEqual(['size']);
+
+    await createEntry(ctx, scope, {
+      contentTypeApiId: 'page',
+      fields: {
+        title: { 'en-US': 'Home' },
+        body: { 'en-US': [{ _type: 'hero', size: 'md', _responsive: { lg: { size: 'xl' } } }] },
+      },
+    });
+    const dry = await call('blocks_catalog_push', {
+      blocks: [hero],
+      targets: TARGETS,
+      breakpoints: breakpoints.slice(0, 1),
+      dryRun: true,
+    });
+    expect(dry.body).toMatchObject({
+      changes: { breakpoints: true },
+      staleOverrides: [
+        { contentTypeApiId: 'page', block: 'hero', breakpoint: 'lg', prop: 'size', blocks: 1 },
+      ],
+    });
+  });
+
+  it('refuses a push of breakpoints to a principal with only content:write', async () => {
+    const { deps } = await withPage();
+    const writer: Principal = {
+      spaceId: SPACE,
+      kind: 'cma',
+      scopes: [SCOPES.previewRead, SCOPES.contentWrite],
+    };
+    const call = await connect(deps, writer);
+    const pushed = await call('blocks_catalog_push', {
+      blocks: BLOCKS,
+      targets: TARGETS,
+      breakpoints: [{ id: 'lg', name: 'Desktop', minWidth: 1280 }],
+    });
+    expect(pushed.isError).toBe(true);
+    expect(pushed.text).toMatch(/content:manage/);
+  });
+
   it('dry-runs, pushes against the reviewed version, and reads the catalog, versions and usage', async () => {
     const { ctx, deps, scope } = await withPage();
     const call = await connect(deps, {

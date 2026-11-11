@@ -991,6 +991,21 @@ describe('drafting an entry with blocks', () => {
     expect(schema).not.toContain('"const":"essay"');
   });
 
+  it('refuses a draft whose blocks carry per-breakpoint overrides', async () => {
+    // Generation doesn't produce overrides: the schema never offers `_responsive`, and the gate
+    // judges one as a save would.
+    const ai = new StubAIProvider(() => ({
+      title: 'Hello',
+      body: [{ _type: 'quote', text: 'Short', _responsive: { lg: { text: 'Long' } } }],
+    }));
+    expect(JSON.stringify(ai.requests[0]?.outputSchema ?? {})).not.toContain('_responsive');
+    const refused = await issues(
+      draftEntry(ctx, ai, scope, { contentTypeApiId: 'page', prompt: 'x' }),
+    );
+    expect(refused.length).toBeGreaterThan(0);
+    expect(JSON.stringify(ai.requests[0]?.outputSchema)).not.toContain('_responsive');
+  });
+
   it('refuses a draft whose blocks don’t fit the schema, as a failed run', async () => {
     const ai = new StubAIProvider(() => ({ title: 'Hello', body: [{ _type: 'quote' }] }));
     const refused = await issues(

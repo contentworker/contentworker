@@ -13,6 +13,7 @@ import type {
   BlockCatalogTarget,
   BlockManifest,
   BlockNarrowing,
+  Breakpoint,
   ContentTypeGrant,
   ContentTypeLayout,
   DomainEvent,
@@ -1374,6 +1375,8 @@ export const blockCatalogs = sqliteTable(
     blocks: text('blocks', { mode: 'json' }).$type<BlockManifest[]>().notNull(),
     blockCount: integer('block_count').notNull(),
     targets: text('targets', { mode: 'json' }).$type<BlockCatalogTarget[]>().notNull(),
+    /** The breakpoints it declares (0040_block_catalog_breakpoints); null before them: none. */
+    breakpoints: text('breakpoints', { mode: 'json' }).$type<Breakpoint[]>(),
     changes: text('changes', { mode: 'json' }).$type<BlockCatalogChanges>().notNull(),
     pushedBy: text('pushed_by'),
     pushedAt: integer('pushed_at', { mode: 'timestamp_ms' }).notNull(),
