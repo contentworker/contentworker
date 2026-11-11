@@ -4,6 +4,7 @@ import {
   listComments,
   listTasks,
   resolveTask,
+  taskEntryId,
   transitionEntry,
 } from '@contentworker/application';
 import { SCOPES } from '@contentworker/domain';
@@ -46,6 +47,8 @@ export function registerCollaborationTools(server: McpServer, t: ToolContext): v
     },
     async (args) => {
       guard(SCOPES.contentWrite, scopeOf(args));
+      // Read on the entry's type, as comments_list and the REST routes ask.
+      await authorizeEntryRead(scopeOf(args), args.entryId);
       return ok(
         await addComment(ctx, scopeOf(args), {
           entryId: args.entryId,
@@ -86,6 +89,7 @@ export function registerCollaborationTools(server: McpServer, t: ToolContext): v
     },
     async (args) => {
       guard(SCOPES.contentWrite, scopeOf(args));
+      await authorizeEntryRead(scopeOf(args), args.entryId);
       return ok(
         await createTask(ctx, scopeOf(args), {
           entryId: args.entryId,
@@ -104,6 +108,7 @@ export function registerCollaborationTools(server: McpServer, t: ToolContext): v
     },
     async (args) => {
       guard(SCOPES.contentWrite, scopeOf(args));
+      await authorizeEntryRead(scopeOf(args), await taskEntryId(ctx, scopeOf(args), args.id));
       return ok(await resolveTask(ctx, scopeOf(args), args.id));
     },
   );

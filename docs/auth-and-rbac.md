@@ -528,10 +528,10 @@ classifies only the readable fields (`deniedFields` on the agent run). An apply 
 `unwritable` and `unreadable`, so denied and read-only fields keep their stored values and a
 refusal counts their issues instead of naming them; `assertAiTargetField` refuses autofilling a
 denied field and writing a summary, autofill or AI action output into one the role can't write,
-before the model is asked. A tag suggestion or reviewed apply creates a new vocabulary tag only for
-a caller with `content:manage`, as `POST …/taxonomy/tags` does: `apply-tags` with a new name is
-refused (403) without it, and an applied suggestion assigns the existing tags and leaves the new
-names as suggestions. The REST routes (`…/translate`, `…/summarize`, `…/autofill`,
+before the model is asked. Tagging is the one exception to `POST …/taxonomy/tags` needing
+`content:manage`: `apply-tags` and an applied tag suggestion add new names to the vocabulary for
+any caller that may write the entry (`content:write` and `write` on its type), so an editor can coin
+the tags it applies. The REST routes (`…/translate`, `…/summarize`, `…/autofill`,
 `…/suggest-tags`, `…/apply-tags`, `…/audit`, `…/moderate`, `…/ai-actions/:id/run`), their MCP
 tools (and so the assistant) and the workflow AI nodes (as the run's principal) all pass it. The
 pre-publish moderation gate (`moderateBeforePublish`) passes `SYSTEM_CALLER`: it judges every
@@ -540,16 +540,24 @@ field, so a writer can't hide content from it in a field it may not read.
 The workflow AI nodes that don't go through those use-cases (`ai.classify`, `ai.router`,
 `ai.assess`, `ai.moderate`, `ai.enrich`, and the `ai.summarize` fallback) build their prompts,
 decision state and heuristics from `runForModel`: the run's entry without the fields the run's
-principal may not read, and without its title when the display field is one of them. `ai.enrich`
-fills only empty fields the principal may write, and an auto-apply saves with `unwritable` and
-`unreadable`.
+principal may not read, and without its title when the display field is one of them. In the run's
+vars and earlier nodes' outputs, any string that contains a denied field's stored text (4
+characters or more) is replaced by `(hidden)`; text derived from a denied field without quoting it
+(a paraphrase by a node that ran as someone else) isn't recognised. `ai.enrich` fills only empty
+fields the principal may write, and an auto-apply saves with `unwritable` and `unreadable`.
+Approving an agent review over REST or MCP applies the proposal as the approver's role allows
+(`applyProposedFields` with the approver: `unwritable` and `unreadable`); a workflow task's
+decision applies it as proposed, since the proposal holds only fields the run's principal may write.
 
 The other entry-by-id routes take the same grants: `PUT …/entries/:id/metadata` and MCP
 `entries_set_metadata` need `write` on the type; `…/workflow/transition` and MCP
 `workflow_transition` need `read` (not `write`: an approver's role reads the types it moves along);
-MCP `comments_list` and `tasks_list` need `read`, as their routes do; and `GET …/entries/:id/embedding`
-needs `read` and embeds only the fields the caller may read, since a vector over a denied field
-would let it test guesses of that field's value by similarity.
+every comment and task operation needs `read` on the entry's type, on both surfaces: listing,
+commenting and creating a task on the entry, and resolving, reopening, reassigning or deleting a
+task or deleting a comment (judged by the entry it is on, via `taskEntryId` / `commentEntryId`); and
+`GET …/entries/:id/embedding`, `…/related` and `…/duplicates` (MCP `content_related`,
+`content_duplicates`) need `read` and match only on the fields the caller may read, since a vector
+over a denied field would let it test guesses of that field's value by similarity.
 
 ## API keys at rest
 

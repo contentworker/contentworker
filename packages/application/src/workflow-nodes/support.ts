@@ -55,8 +55,12 @@ export async function loadRunEntry(
  * The run as a model may be shown it, for the run's principal: the entry without the fields its
  * role denies, and without its title when the display field is one of them. Every AI node builds
  * its prompt, its decision state and its heuristic fallback from this, never from `i.run`, so what
- * a node outputs (and the node-runs log keeps) can't carry a denied value either. The vars and
- * completed nodes are passed as they are: they hold what earlier nodes produced from this view.
+ * a node outputs (and the node-runs log keeps) can't carry a denied value either.
+ *
+ * The vars and earlier nodes' outputs can hold values other nodes copied out of the entry (a
+ * `content.*` node's output, an interpolated var). Any string among them that contains a denied
+ * field's stored text is replaced by {@link HIDDEN}. Text derived from a denied field without
+ * quoting it (a model's paraphrase in a node that ran as someone else) is not recognised.
  */
 export async function runForModel(
   i: Pick<ExecInput, 'ctx' | 'scope' | 'actor' | 'run'>,
@@ -65,12 +69,32 @@ export async function runForModel(
   const denied = deniedFieldsFor(i.actor.principal, type);
   if (denied.length === 0) return i.run;
   const ct = await i.ctx.store.contentTypes.get(i.scope, type);
-  const fields = maskDeniedFields(i.actor.principal, type, i.run.entry.fields ?? {});
+  const stored = i.run.entry.fields ?? {};
+  const secrets = denied
+    .flatMap((apiId) => Object.values(stored[apiId] ?? {}))
+    .flatMap((v) =>
+      typeof v === 'string' ? [v] : v === null || v === undefined ? [] : [JSON.stringify(v)],
+    )
+    .map((v) => v.trim())
+    .filter((v) => v.length >= MIN_SECRET_CHARS);
+  const scrub = (value: unknown): unknown =>
+    interpolateDeep(value, (text) => (secrets.some((v) => text.includes(v)) ? HIDDEN : text));
+  const fields = maskDeniedFields(i.actor.principal, type, stored);
+  const base = {
+    ...i.run,
+    vars: scrub(i.run.vars) as RunContext['vars'],
+    nodes: scrub(i.run.nodes) as RunContext['nodes'],
+  };
   if (!ct || denied.includes(ct.displayField)) {
-    return { ...i.run, entry: { ...i.run.entry, fields, title: '' }, ref: i.run.entry.id };
+    return { ...base, entry: { ...i.run.entry, fields, title: '' }, ref: i.run.entry.id };
   }
-  return { ...i.run, entry: { ...i.run.entry, fields } };
+  return { ...base, entry: { ...i.run.entry, fields } };
 }
+
+/** What stands in, in a model's view of the run, for a value that quotes a denied field. */
+export const HIDDEN = '(hidden)';
+/** Shorter stored values ("yes", a number) would match too much unrelated text to scrub on. */
+const MIN_SECRET_CHARS = 4;
 
 /**
  * The same checks the API applies to a person making this call: the coarse scope in the run's

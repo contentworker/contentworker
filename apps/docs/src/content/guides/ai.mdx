@@ -37,9 +37,9 @@ entry's content type, and write access too when it applies a result (or, for an 
 tasks); on a type you can't read they answer `403`, as reading the entry would. The model is never
 shown a field your role hides from you, and the answer never contains one; when a result is
 applied, the fields you may not write keep their values. Autofill refuses a field your role hides,
-and applying into a read-only field is refused. Suggest tags and applying reviewed tags add new
-names to your taxonomy only if you can manage content (`content:manage`); without it, existing tags
-are applied and new names stay suggestions. A workflow's AI nodes are held to the role the run acts
+and applying into a read-only field is refused. Suggest tags and applying reviewed tags can add new
+names to your taxonomy for anyone who may edit the entry, even without access to manage the
+taxonomy itself. A workflow's AI nodes are held to the role the run acts
 as, and fill only fields that role may write. Moderation before publish is the exception: it reads
 every field, so nothing can be hidden from it.
 

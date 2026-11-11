@@ -274,7 +274,7 @@ describe('granular RBAC over HTTP', () => {
       expect((await post(`/entries/${postId}/moderate`, editor, {})).status).toBe(200);
     });
 
-    it('tags only entries the role writes, and adds no vocabulary without content:manage', async () => {
+    it('tags only entries the role writes; a writer may coin vocabulary tags', async () => {
       const put = (id: string, headers: Record<string, string>) =>
         app.request(`${M}/entries/${id}/metadata`, {
           method: 'PUT',
@@ -284,14 +284,46 @@ describe('granular RBAC over HTTP', () => {
       expect((await put(pageId, editor)).status).toBe(403);
       expect((await put(postId, editor)).status).toBe(200);
 
+      // Without content:manage: the one way to add a tag that POST …/taxonomy/tags would refuse.
       const fresh = await post(`/entries/${postId}/apply-tags`, editor, { newTags: ['fresh'] });
-      expect(fresh.status).toBe(403);
-      expect(await fresh.text()).toContain('content:manage');
+      expect(fresh.status, await fresh.clone().text()).toBe(200);
+      expect((await post('/taxonomy/tags', editor, { name: 'direct' })).status).toBe(403);
       const tag = await post('/taxonomy/tags', admin, { name: 'news' });
       expect(tag.status).toBe(201);
       const { id: tagId } = (await tag.json()) as { id: string };
       const reused = await post(`/entries/${postId}/apply-tags`, editor, { tagIds: [tagId] });
       expect(reused.status, await reused.clone().text()).toBe(200);
+    });
+
+    it('comments and keeps tasks only on entries of a type the role reads', async () => {
+      const json = async (res: Response) => (await res.json()) as { id: string };
+      const comment = await json(await post(`/entries/${pageId}/comments`, admin, { body: 'hi' }));
+      const task = await json(await post(`/entries/${pageId}/tasks`, admin, { body: 'do' }));
+      const send = (method: string, path: string, body?: unknown) =>
+        app.request(`${M}${path}`, {
+          method,
+          headers: editor,
+          ...(body ? { body: JSON.stringify(body) } : {}),
+        });
+      const refused: [string, string, unknown?][] = [
+        ['POST', `/entries/${pageId}/comments`, { body: 'x' }],
+        ['DELETE', `/comments/${comment.id}`],
+        ['POST', `/entries/${pageId}/tasks`, { body: 'x' }],
+        ['PUT', `/tasks/${task.id}`, { status: 'resolved' }],
+        ['DELETE', `/tasks/${task.id}`],
+      ];
+      for (const [method, path, body] of refused) {
+        expect((await send(method, path, body)).status, `${method} ${path}`).toBe(403);
+      }
+      // Nothing was written or removed.
+      const listed = (await (
+        await app.request(`${M}/entries/${pageId}/tasks`, { headers: admin })
+      ).json()) as { items: { status: string }[] };
+      expect(listed.items).toEqual([expect.objectContaining({ status: 'open' })]);
+      expect((await send('POST', `/entries/${postId}/comments`, { body: 'ok' })).status).toBe(201);
+      const own = await json(await send('POST', `/entries/${postId}/tasks`, { body: 'ok' }));
+      expect((await send('PUT', `/tasks/${own.id}`, { status: 'resolved' })).status).toBe(200);
+      expect((await send('DELETE', `/tasks/${own.id}`)).status).toBe(204);
     });
 
     it('moves only entries of a type the role reads between workflow steps', async () => {
@@ -327,6 +359,11 @@ describe('granular RBAC over HTTP', () => {
         return { status: res.status, body: (await res.json()) as { vector?: number[] } };
       };
       expect((await vector(pageId, searcher)).status).toBe(403);
+      for (const kind of ['related', 'duplicates']) {
+        const at = (id: string) => app.request(`${M}/entries/${id}/${kind}`, { headers: searcher });
+        expect((await at(pageId)).status, kind).toBe(403);
+        expect((await at(postId)).status, kind).toBe(200);
+      }
       const masked = await vector(postId, searcher);
       expect(masked.status).toBe(200);
       const whole = await vector(postId, admin);

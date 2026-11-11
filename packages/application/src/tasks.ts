@@ -39,6 +39,14 @@ export async function listTasks(ctx: AppContext, scope: Scope, entryId: string):
   return ctx.store.tasks.listForEntry(scope, entryId);
 }
 
+/**
+ * The entry a task is on (404 when the task is gone), so a caller can be held to its grant on that
+ * entry's type before it changes or deletes the task.
+ */
+export async function taskEntryId(ctx: AppContext, scope: Scope, id: string): Promise<string> {
+  return (await loadTask(ctx, scope, id)).entryId;
+}
+
 async function loadTask(ctx: AppContext, scope: Scope, id: string): Promise<Task> {
   const task = await ctx.store.tasks.get(scope, id);
   if (!task) throw new NotFoundError('Task', id);

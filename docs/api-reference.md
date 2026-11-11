@@ -577,11 +577,11 @@ which is valid to store. See [Rich text](./domain-model.md#rich-text).
 | POST   | `…/entries/:id/summarize`    | `content:write`  | Summarize entry text                                                                                                |
 | POST   | `…/entries/:id/autofill`     | `content:write`  | Fill empty fields                                                                                                   |
 | POST   | `…/entries/:id/suggest-tags` | `content:write`  | Suggest taxonomy tags                                                                                               |
-| POST   | `…/entries/:id/apply-tags`   | `content:write`  | Persist a reviewed tag suggestion (a new tag name needs `content:manage`, as `POST …/taxonomy/tags`)                |
+| POST   | `…/entries/:id/apply-tags`   | `content:write`  | Persist a reviewed tag suggestion; a new name joins the vocabulary on write alone (the one exception to `POST …/taxonomy/tags`) |
 | POST   | `…/entries/:id/audit`        | `content:write`  | AI content audit                                                                                                    |
 | POST   | `…/entries/:id/moderate`     | `content:write`  | Run moderation agent                                                                                                |
-| GET    | `…/entries/:id/related`      | `search:read`    | Semantically related entries                                                                                        |
-| GET    | `…/entries/:id/duplicates`   | `search:read`    | Near-duplicate detection                                                                                            |
+| GET    | `…/entries/:id/related`      | `search:read`    | Semantically related entries (a role needs read on the type; matched on the fields it may read)                     |
+| GET    | `…/entries/:id/duplicates`   | `search:read`    | Near-duplicate detection (a role needs read on the type; matched on the fields it may read)                         |
 | GET    | `…/entries/:id/embedding`    | `search:read`    | Embedding vector metadata (a role needs read on the type; the vector covers only the fields it may read)            |
 | GET    | `…/search/index`             | `content:manage` | Lexical index health for the environment (`?content_type`): indexed documents against published entries, as `drift` |
 | POST   | `…/search/reindex`           | `content:manage` | Request a background reindex of published entries `{ contentTypeApiId? }` (`202`; `429` if requested too soon)      |
@@ -775,6 +775,8 @@ Human-in-the-loop decisions on agent proposals; see
 | PUT    | `…/tasks/:id`            | `content:write` | Update task status/assignee |
 | DELETE | `…/tasks/:id`            | `content:write` | Delete task                 |
 
+Every comment and task route, and the MCP `comments_*` and `tasks_*` tools, also need a role to read the entry's content type: for an update or delete, the entry the comment or task is on. Otherwise they answer 403, or 404 when the entry is gone.
+
 ### Workflows
 
 | Method | Path                                | Scope            | Description                                                                                                                                                                                                                                                                                                                                                              |
@@ -829,7 +831,7 @@ caller can't read. A run never exposes its starter's resolved principal, only `s
 | PUT    | `…/taxonomy/concepts/:id/broader` | `content:manage` | Set broader concept                                                                                                |
 | DELETE | `…/taxonomy/concepts/:id`         | `content:manage` | Delete concept (and its usage counts)                                                                              |
 | GET    | `…/taxonomy/tags`                 | `preview:read`   | List tags, each with `usage: { count, byContentType }`                                                             |
-| POST   | `…/taxonomy/tags`                 | `content:manage` | Create tag: `{ name, slug?, description?, labels? }`                                                               |
+| POST   | `…/taxonomy/tags`                 | `content:manage` | Create tag: `{ name, slug?, description?, labels? }` (`apply-tags` and an applied suggestion also add tags, on `content:write`) |
 | PATCH  | `…/taxonomy/tags/:id`             | `content:manage` | Change `name`, `slug`, `description`, `labels`; only the keys sent                                                 |
 | DELETE | `…/taxonomy/tags/:id`             | `content:manage` | Delete tag (and its usage counts)                                                                                  |
 | POST   | `…/taxonomy/repair`               | `content:manage` | Recount published usage from the published entries and give a slug to any term without one → `{ slugsAssigned }` |

@@ -3,12 +3,14 @@ import {
   agentActor,
   ConflictError,
   canAccessContentType,
+  deniedFieldsFor,
   maskDeniedFields,
   NotFoundError,
+  unwritableFieldsFor,
 } from '@contentworker/domain';
 import { recordAgentRun } from './agent-audit';
 import { type AppContext, withActor } from './context';
-import { type EntryWriteOptions, updateEntry } from './entries';
+import { updateEntry } from './entries';
 
 /** Default watcher wait for a human decision before it stands down: 7 days. */
 export const DEFAULT_REVIEW_TIMEOUT_MS = 7 * 24 * 60 * 60 * 1000;
@@ -17,17 +19,23 @@ export const DEFAULT_REVIEW_TIMEOUT_MS = 7 * 24 * 60 * 60 * 1000;
  * Merges proposed values into the entry's current fields and saves a new
  * draft version (validated by the core) — the single apply implementation
  * shared by the agent activities and the decision use-case. Returns false
- * when the entry no longer exists.
+ * when the entry no longer exists. Given the principal it applies for (a workflow node's run, an
+ * approver), the save keeps the fields that role may not write and counts, never names, issues in
+ * the ones it may not read.
  */
 export async function applyProposedFields(
   ctx: AppContext,
   scope: Scope,
   entryId: string,
   proposed: EntryFields,
-  options: Pick<EntryWriteOptions, 'unwritable' | 'unreadable'> = {},
+  as?: Principal,
 ): Promise<boolean> {
   const found = await ctx.store.entries.get(scope, entryId);
   if (!found) return false;
+  const type = found.entry.contentTypeApiId;
+  const options = as
+    ? { unwritable: unwritableFieldsFor(as, type), unreadable: deniedFieldsFor(as, type) }
+    : {};
   const merged: EntryFields = { ...found.fields };
   for (const [apiId, localized] of Object.entries(proposed)) {
     merged[apiId] = { ...(merged[apiId] ?? {}), ...localized };
@@ -110,6 +118,7 @@ async function applyReviewOnce(
   ctx: AppContext,
   scope: Scope,
   review: AgentReview,
+  approver?: Principal,
 ): Promise<boolean> {
   const at = ctx.clock.now().toISOString();
   if (!(await ctx.store.agentReviews.markApplied(scope, review.id, at))) return false;
@@ -119,7 +128,7 @@ async function applyReviewOnce(
     ctx.actor !== undefined ? ctx : withActor(ctx, review.decidedBy ?? agentActor(review.workflow));
   let applied = false;
   try {
-    applied = await applyProposedFields(acting, scope, review.entryId, review.proposed);
+    applied = await applyProposedFields(acting, scope, review.entryId, review.proposed, approver);
   } catch (err) {
     await ctx.store.agentReviews.clearApplied(scope, review.id).catch(() => {});
     throw err;
@@ -175,7 +184,16 @@ export async function decideAgentReview(
   ctx: AppContext,
   scope: Scope,
   id: string,
-  input: { approve: boolean; decidedBy?: string },
+  input: {
+    approve: boolean;
+    decidedBy?: string;
+    /**
+     * The approver, when a request decides (REST, MCP): a direct apply is saved as its role
+     * allows (`applyProposedFields`). A workflow task's decision leaves it out: the proposal
+     * holds only fields the run's own principal may write.
+     */
+    principal?: Principal;
+  },
   deps: DecideReviewDeps = {},
 ): Promise<DecideReviewResult> {
   const review = await ctx.store.agentReviews.get(scope, id);
@@ -191,7 +209,7 @@ export async function decideAgentReview(
     // Idempotent re-drive: an approval that decided but failed to apply
     // (crash, validation error) may be retried until the apply lands.
     if (input.approve && review.status === 'approved' && !review.appliedAt && !review.awaiting) {
-      const applied = await applyReviewOnce(ctx, scope, review);
+      const applied = await applyReviewOnce(ctx, scope, review, input.principal);
       return { review, applied, signaled: false };
     }
     throw new ConflictError('Review was already decided');
@@ -212,7 +230,7 @@ export async function decideAgentReview(
   }
   let applied = false;
   if (!signaled && input.approve) {
-    applied = await applyReviewOnce(ctx, scope, decided);
+    applied = await applyReviewOnce(ctx, scope, decided, input.principal);
   }
   if (!input.approve) {
     // Rejections are side-effect-free: decide owns their single ledger record.

@@ -498,32 +498,25 @@ describe('AI runs over an entry as a restricted principal', () => {
     expect(fields.body).toEqual({ 'en-US': SECRET });
   });
 
-  it('adds to the tag vocabulary only for a role with content:manage', async () => {
-    const { id: news } = await createTag(ctx, scope, { name: 'news' });
-    // Assigning an existing tag needs only write on the entry.
-    expect(
-      (await applyEntryTags(ctx, scope, id, { tagIds: [news] }, { principal: editor })).tagIds,
-    ).toEqual([news]);
-    await expect(
-      applyEntryTags(ctx, scope, id, { newTags: ['fresh'] }, { principal: editor }),
-    ).rejects.toThrow('content:manage');
-    expect((await listTags(ctx, scope)).map((t) => t.name)).toEqual(['news']);
-
-    // A suggestion applied for the editor assigns what exists and leaves new names as suggestions.
-    const ai = new StubAIProvider(() => ({ existingTags: ['news'], newTags: ['greetings'] }));
-    const r = await suggestEntryTags(ctx, ai, scope, id, { apply: true }, { principal: editor });
-    expect(r).toMatchObject({ tagIds: [news], newTags: ['greetings'], applied: true });
-    expect((await listTags(ctx, scope)).map((t) => t.name)).toEqual(['news']);
-
-    const manager = { ...editor, scopes: [SCOPES.contentWrite, SCOPES.contentManage] };
+  it('lets a writer of the entry add vocabulary tags without content:manage', async () => {
+    // The one exception to `POST …/taxonomy/tags` needing content:manage: an editor coins the
+    // tags it applies. Write on the entry's type is still required (above).
     const made = await applyEntryTags(
       ctx,
       scope,
       id,
       { newTags: ['fresh'] },
-      { principal: manager },
+      { principal: editor },
     );
     expect(made.createdTags.map((t) => t.name)).toEqual(['fresh']);
+    const ai = new StubAIProvider(() => ({ existingTags: [], newTags: ['greetings'] }));
+    const r = await suggestEntryTags(ctx, ai, scope, id, { apply: true }, { principal: editor });
+    expect(r.applied).toBe(true);
+    expect((await listTags(ctx, scope)).map((t) => t.name).sort()).toEqual(['fresh', 'greetings']);
+    await expect(
+      applyEntryTags(ctx, scope, id, { newTags: ['more'] }, { principal: reader }),
+    ).rejects.toThrow('content:write:post');
+    expect((await listTags(ctx, scope)).map((t) => t.name)).not.toContain('more');
   });
 
   it('fails closed for a call that names neither a principal nor the system', async () => {

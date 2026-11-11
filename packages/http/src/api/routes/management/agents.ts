@@ -77,7 +77,11 @@ export function agentsRoutes(deps: AuthDeps): Hono<AuthVars> {
         actingCtx(ctx, c),
         scopeOf(c),
         c.req.param('id'),
-        { approve: true, decidedBy: principalActorId(c.get('principal')) },
+        {
+          approve: true,
+          decidedBy: principalActorId(c.get('principal')),
+          principal: c.get('principal'),
+        },
         { signalReview: deps.signalReview },
       ),
     );

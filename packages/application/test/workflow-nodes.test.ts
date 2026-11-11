@@ -477,6 +477,19 @@ describe('workflow node executors', () => {
       expect(JSON.stringify(r)).not.toContain(SECRET);
     });
 
+    it.each([
+      ['ai.router', { routes: ['publish', 'needs_review'], instructions: 'Pick one' }],
+      ['ai.assess', withDefaults('ai.assess', {})],
+    ])('%s hides a var that copied a denied field, and keeps the rest', async (type, config) => {
+      const ai = live();
+      const vars = { copied: `Body was: ${SECRET}`, note: 'keep me' };
+      const r = await exec(type, config, deny(['body']), vars);
+      expect(r.failed, JSON.stringify(r)).toBeUndefined();
+      expect(seen(ai)).not.toContain(SECRET);
+      expect(seen(ai)).toContain('keep me');
+      expect(seen(ai)).toContain('(hidden)');
+    });
+
     it('builds the summary fallback from the masked entry, without a denied title', async () => {
       // Mock mode answers from the heuristic; it reads the entry the role may read.
       expect((await exec('ai.summarize', {}, deny(['body']))).vars).toEqual({

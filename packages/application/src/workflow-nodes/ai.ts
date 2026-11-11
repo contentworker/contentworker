@@ -17,7 +17,6 @@ import {
   assessBranch,
   assessQuestionsIssues,
   clampAnswers,
-  deniedFieldsFor,
   describeAnswers,
   type EntryFields,
   eventTypeFor,
@@ -916,10 +915,7 @@ export const AI_EXECUTORS: Record<string, Exec> = {
       };
     }
     if (!awaitReview) {
-      await applyProposedFields(i.ctx, i.scope, i.entryId, proposed, {
-        unwritable,
-        unreadable: deniedFieldsFor(i.actor.principal, ct.apiId),
-      });
+      await applyProposedFields(i.ctx, i.scope, i.entryId, proposed, i.actor.principal);
       return {
         branches: ['applied'],
         output: { proposed, applied: true, ...prov(r) },

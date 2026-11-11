@@ -6,6 +6,7 @@ import {
   createContentType,
   createEntry,
   createSpace,
+  createTask,
   getEntry,
   publishContentType,
   SYSTEM_CALLER,
@@ -337,7 +338,7 @@ describe('a restricted writer over MCP', () => {
     });
 
     it('refuses the entry-by-id tools on a type the role can’t reach', async () => {
-      const { call, id, model } = await setup(outsider);
+      const { ctx, call, id, model } = await setup(outsider);
       const reads: [string, Record<string, unknown>][] = [
         ['entry_audit', { id }],
         ['entry_moderate', { id }],
@@ -350,13 +351,43 @@ describe('a restricted writer over MCP', () => {
         expect(res.isError, tool).toBe(true);
         expect(res.text, tool).toContain('content:read:listing');
       }
+      const { id: taskId } = await createTask(ctx, scope, { entryId: id, body: 'do' });
+      const writes: [string, Record<string, unknown>][] = [
+        ['comments_add', { entryId: id, body: 'x' }],
+        ['tasks_create', { entryId: id, body: 'x' }],
+        ['tasks_resolve', { id: taskId }],
+      ];
+      for (const [tool, args] of writes) {
+        const res = await call(tool, args);
+        expect(res.isError, tool).toBe(true);
+        expect(res.text, tool).toContain('content:read:listing');
+      }
+      expect((await ctx.store.tasks.get(scope, taskId))?.status).toBe('open');
+      expect(await ctx.store.comments.listForEntry(scope, id)).toHaveLength(0);
       const tagged = await call('entries_set_metadata', { entryId: id, tags: [] });
       expect(tagged.isError).toBe(true);
       expect(tagged.text).toContain('content:write:listing');
       expect(model.requests).toHaveLength(0);
     });
 
-    it('audits without the denied field, and adds no tag vocabulary without content:manage', async () => {
+    it('finds related entries only for a role that reads the type', async () => {
+      const { call, id } = await setup({
+        ...outsider,
+        scopes: [...outsider.scopes, SCOPES.searchRead],
+      });
+      for (const tool of ['content_related', 'content_duplicates']) {
+        const res = await call(tool, { id });
+        expect(res.isError, tool).toBe(true);
+        expect(res.text, tool).toContain('content:read:listing');
+      }
+      const { call: asWriter, id: own } = await setup({
+        ...writer,
+        scopes: [...writer.scopes, SCOPES.searchRead],
+      });
+      expect((await asWriter('content_related', { id: own })).isError).toBe(false);
+    });
+
+    it('audits without the denied field, and lets a writer coin vocabulary tags', async () => {
       const { call, id, model } = await setup();
       await call('entry_audit', { id });
       expect(model.requests).toHaveLength(1);
@@ -365,8 +396,10 @@ describe('a restricted writer over MCP', () => {
       );
       expect((await call('entry_moderate', { id })).isError).toBe(false);
       const fresh = await call('entry_apply_tags', { id, newTags: ['fresh'] });
-      expect(fresh.isError).toBe(true);
-      expect(fresh.text).toContain('content:manage');
+      expect(fresh.isError, fresh.text).toBe(false);
+      expect(JSON.parse(fresh.text).createdTags).toEqual([
+        expect.objectContaining({ name: 'fresh' }),
+      ]);
       expect((await call('comments_list', { entryId: id })).isError).toBe(false);
     });
 

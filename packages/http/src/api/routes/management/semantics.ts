@@ -23,29 +23,31 @@ export function semanticsRoutes(deps: AuthDeps): Hono<AuthVars> {
   const app = new Hono<AuthVars>();
 
   // --- content semantics (vector-backed) ---------------------------------
+  // Related, duplicates and the embedding match on the text the caller may read: a match made
+  // over a denied field would let it test guesses of that field's value by similarity.
   app.get(`${BASE}/entries/:id/related`, requireScope(SCOPES.searchRead), async (c) => {
-    await guardEntry(c, c.req.param('id'), 'read');
+    const type = await authorizeEntryRead(c, c.req.param('id'));
     const topK = c.req.query('top_k');
     return c.json({
       items: await relatedEntries(rag, ctx, scopeOf(c), c.req.param('id'), {
         topK: topK ? Number(topK) : undefined,
         locale: c.req.query('locale'),
+        unreadable: deniedFieldsFor(c.get('principal'), type),
       }),
     });
   });
   app.get(`${BASE}/entries/:id/duplicates`, requireScope(SCOPES.searchRead), async (c) => {
-    await guardEntry(c, c.req.param('id'), 'read');
+    const type = await authorizeEntryRead(c, c.req.param('id'));
     const threshold = c.req.query('threshold');
     return c.json({
       items: await findDuplicates(rag, ctx, scopeOf(c), c.req.param('id'), {
         threshold: threshold ? Number(threshold) : undefined,
         locale: c.req.query('locale'),
+        unreadable: deniedFieldsFor(c.get('principal'), type),
       }),
     });
   });
   app.get(`${BASE}/entries/:id/embedding`, requireScope(SCOPES.searchRead), async (c) => {
-    // The vector is made from the text the caller may read: one over a denied field would let it
-    // test guesses of that field's value by similarity.
     const type = await authorizeEntryRead(c, c.req.param('id'));
     return c.json(
       await getEntryEmbedding(rag, ctx, scopeOf(c), c.req.param('id'), {

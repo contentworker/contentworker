@@ -30,10 +30,16 @@ export async function relatedEntries(
   ctx: AppContext,
   scope: Scope,
   entryId: string,
-  opts: { topK?: number; minScore?: number; locale?: string } = {},
+  opts: {
+    topK?: number;
+    minScore?: number;
+    locale?: string;
+    /** Fields the caller may not read: left out of the text the match is made from. */
+    unreadable?: readonly string[];
+  } = {},
 ): Promise<SearchHit[]> {
   const topK = opts.topK ?? 5;
-  const { text } = await entryText(ctx, scope, entryId, opts.locale);
+  const { text } = await entryText(ctx, scope, entryId, opts.locale, opts.unreadable);
   if (!text.trim()) return [];
   const hits = await semanticSearch(deps, scope, text, {
     topK: topK + 1,
@@ -56,13 +62,19 @@ export async function findDuplicates(
   ctx: AppContext,
   scope: Scope,
   entryId: string,
-  opts: { threshold?: number; topK?: number; locale?: string } = {},
+  opts: {
+    threshold?: number;
+    topK?: number;
+    locale?: string;
+    unreadable?: readonly string[];
+  } = {},
 ): Promise<DuplicateMatch[]> {
   const threshold = opts.threshold ?? 0.9;
   const related = await relatedEntries(deps, ctx, scope, entryId, {
     topK: opts.topK ?? 10,
     minScore: threshold,
     locale: opts.locale,
+    ...(opts.unreadable ? { unreadable: opts.unreadable } : {}),
   });
   return related.map((h) => ({ ...h, isDuplicate: true as const }));
 }

@@ -10,7 +10,6 @@ import {
   maskDeniedFields,
   NotFoundError,
   type Principal,
-  SCOPES,
   type Scope,
   unwritableFieldsFor,
   ValidationError,
@@ -117,15 +116,6 @@ export function assertAiTargetField(
     throw new ForbiddenError(`content:read:${contentTypeApiId}.${field}`);
   }
   if (apply) assertWritableFields(principal, contentTypeApiId, { [field]: true });
-}
-
-/**
- * Whether the caller may add names to the tag vocabulary, as `POST …/taxonomy/tags` asks:
- * `content:manage`. Assigning existing tags to an entry needs only write on it.
- */
-function mayCreateTags(caller: EntryAiCaller): boolean {
-  const principal = aiPrincipal(caller);
-  return !principal || principal.scopes.includes(SCOPES.contentManage);
 }
 
 async function loadEntryForAi(
@@ -515,7 +505,7 @@ export async function suggestEntryTags(
       });
     }
     if (picked.length > 0) {
-      return finishTagSuggestion(ctx, scope, id, input, opts, picked, [], {
+      return finishTagSuggestion(ctx, scope, id, input, picked, [], {
         inputTokens,
         outputTokens: 0,
       });
@@ -548,7 +538,7 @@ export async function suggestEntryTags(
         .map((n) => byName.get(n.toLowerCase())?.id)
         .filter((v): v is string => Boolean(v));
   const newTags = obj.newTags.map((n) => n.trim()).filter((n) => n && !byName.has(n.toLowerCase()));
-  return finishTagSuggestion(ctx, scope, id, input, opts, tagIds, newTags, result.usage);
+  return finishTagSuggestion(ctx, scope, id, input, tagIds, newTags, result.usage);
 }
 
 /** Probability at which a decision model's yes picks an existing tag. */
@@ -560,19 +550,16 @@ async function finishTagSuggestion(
   scope: Scope,
   id: string,
   input: SuggestEntryTagsInput,
-  opts: EntryAiOptions,
   tagIds: readonly string[],
   newTags: readonly string[],
   usage: Usage,
 ): Promise<SuggestEntryTagsResult> {
   let applied = false;
   if (input.apply) {
-    // New names join the vocabulary only for a caller that may create tags (`content:manage`);
-    // for anyone else the existing ones are applied and the new ones stay suggestions.
+    // New names join the vocabulary on write alone: the one way to add a tag without
+    // `content:manage` (`POST …/taxonomy/tags`), so an editor can coin the tags it applies.
     const createdIds: string[] = [];
-    if (mayCreateTags(opts.principal)) {
-      for (const name of newTags) createdIds.push((await createTag(ctx, scope, { name })).id);
-    }
+    for (const name of newTags) createdIds.push((await createTag(ctx, scope, { name })).id);
     const current = await getEntryMetadata(ctx, scope, id);
     const allTags = Array.from(new Set([...(current?.tags ?? []), ...tagIds, ...createdIds]));
     // setEntryMetadata replaces the whole record — carry concepts through.
@@ -639,11 +626,8 @@ export async function applyEntryTags(
     if (match) reusedIds.push(match.id);
     else toCreate.push(name);
   }
-  // A name the vocabulary lacks is a new tag, which `POST …/taxonomy/tags` gives only to
-  // `content:manage`: refused whole, before anything is written.
-  if (toCreate.length > 0 && !mayCreateTags(opts.principal)) {
-    throw new ForbiddenError(`${SCOPES.contentManage} (to create the tags ${toCreate.join(', ')})`);
-  }
+  // A name the vocabulary lacks becomes a new tag on write alone: the one way to add a tag
+  // without `content:manage`, so an editor can coin the tags it applies.
   const createdTags: { id: string; name: string }[] = [];
   for (const name of toCreate) createdTags.push(await createTag(ctx, scope, { name }));
 
