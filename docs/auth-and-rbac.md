@@ -517,16 +517,39 @@ all pass it.
 
 The AI operations over one entry are held to the same grants, in the use-cases themselves so every
 caller is: `translateEntry`, `summarizeEntry`, `autofillField`, `suggestEntryTags`,
-`applyEntryTags` and `runAIAction` take `{ principal }` and load the entry through
-`readEntryForAi`. It answers 404 for a missing entry and `authorizeContent` 403 without `read` on
-its type (plus `write` when the run applies), as `GET …/entries/:id` does, then masks the denied
-fields (`maskDeniedFields`) before anything is shown to the model or returned, the
-no-text-to-translate answer included. An apply saves with `unwritable`, so denied and read-only
-fields keep their stored values; `assertAiTargetField` refuses autofilling a denied field and
-writing a summary, autofill or AI action output into one the role can't write, before the model
-is asked. The REST routes (`…/translate`, `…/summarize`, `…/autofill`, `…/suggest-tags`,
-`…/apply-tags`, `…/ai-actions/:id/run`), their MCP tools (and so the assistant) and the workflow
-AI nodes (as the run's principal) all pass it.
+`applyEntryTags`, `runAIAction`, `auditEntry` and `moderateEntry` take `{ principal }`, which is
+required: the request's principal, or `SYSTEM_CALLER` for a run no role bounds (anything else
+fails closed). They load the entry through `readEntryForAi`. It answers 404 for a missing entry and
+`authorizeContent` 403 without `read` on its type (plus `write` when the run applies, or when an
+audit creates tasks), as `GET …/entries/:id` does, then masks the denied fields
+(`maskDeniedFields`) before anything is shown to the model or returned, the no-text-to-translate
+answer included. An audit's prompt doesn't name a denied field, and on-demand moderation
+classifies only the readable fields (`deniedFields` on the agent run). An apply saves with
+`unwritable` and `unreadable`, so denied and read-only fields keep their stored values and a
+refusal counts their issues instead of naming them; `assertAiTargetField` refuses autofilling a
+denied field and writing a summary, autofill or AI action output into one the role can't write,
+before the model is asked. A tag suggestion or reviewed apply creates a new vocabulary tag only for
+a caller with `content:manage`, as `POST …/taxonomy/tags` does: `apply-tags` with a new name is
+refused (403) without it, and an applied suggestion assigns the existing tags and leaves the new
+names as suggestions. The REST routes (`…/translate`, `…/summarize`, `…/autofill`,
+`…/suggest-tags`, `…/apply-tags`, `…/audit`, `…/moderate`, `…/ai-actions/:id/run`), their MCP
+tools (and so the assistant) and the workflow AI nodes (as the run's principal) all pass it. The
+pre-publish moderation gate (`moderateBeforePublish`) passes `SYSTEM_CALLER`: it judges every
+field, so a writer can't hide content from it in a field it may not read.
+
+The workflow AI nodes that don't go through those use-cases (`ai.classify`, `ai.router`,
+`ai.assess`, `ai.moderate`, `ai.enrich`, and the `ai.summarize` fallback) build their prompts,
+decision state and heuristics from `runForModel`: the run's entry without the fields the run's
+principal may not read, and without its title when the display field is one of them. `ai.enrich`
+fills only empty fields the principal may write, and an auto-apply saves with `unwritable` and
+`unreadable`.
+
+The other entry-by-id routes take the same grants: `PUT …/entries/:id/metadata` and MCP
+`entries_set_metadata` need `write` on the type; `…/workflow/transition` and MCP
+`workflow_transition` need `read` (not `write`: an approver's role reads the types it moves along);
+MCP `comments_list` and `tasks_list` need `read`, as their routes do; and `GET …/entries/:id/embedding`
+needs `read` and embeds only the fields the caller may read, since a vector over a denied field
+would let it test guesses of that field's value by similarity.
 
 ## API keys at rest
 

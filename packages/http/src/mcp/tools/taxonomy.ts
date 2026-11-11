@@ -18,7 +18,7 @@ import { z } from 'zod';
 import { ok, scopeArgs, scopeOf, type ToolContext, toolSchema } from './shared';
 
 export function registerTaxonomyTools(server: McpServer, t: ToolContext): void {
-  const { ctx, guard } = t;
+  const { ctx, guard, guardEntry } = t;
   // --- taxonomy ----------------------------------------------------------
   // What a tag or concept carries beside its label (the HTTP bodies' fields).
   const termArgs = {
@@ -263,6 +263,8 @@ export function registerTaxonomyTools(server: McpServer, t: ToolContext): void {
     },
     async (args) => {
       guard(SCOPES.contentWrite, scopeOf(args));
+      // Tagging an entry is an edit of it: write on its type, as PUT …/entries/:id/metadata asks.
+      await guardEntry(scopeOf(args), args.entryId, 'write');
       return ok(
         await setEntryMetadata(ctx, scopeOf(args), args.entryId, {
           tags: args.tags,

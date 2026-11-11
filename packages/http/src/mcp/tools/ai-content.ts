@@ -210,11 +210,18 @@ export function registerAiContentTools(server: McpServer, t: ToolContext): void 
     async (args) => {
       guard(SCOPES.contentWrite, scopeOf(args));
       return ok(
-        await auditEntry(ctx, ai, scopeOf(args), args.id, {
-          createTasks: args.createTasks,
-          taskSeverity: args.taskSeverity,
-          assignee: args.assignee,
-        }),
+        await auditEntry(
+          ctx,
+          ai,
+          scopeOf(args),
+          args.id,
+          {
+            createTasks: args.createTasks,
+            taskSeverity: args.taskSeverity,
+            assignee: args.assignee,
+          },
+          { principal },
+        ),
       );
     },
   );
@@ -229,7 +236,7 @@ export function registerAiContentTools(server: McpServer, t: ToolContext): void 
     },
     async (args) => {
       guard(SCOPES.contentWrite, scopeOf(args));
-      return ok(await moderateEntry(ctx, agents, scopeOf(args), args.id));
+      return ok(await moderateEntry(ctx, agents, scopeOf(args), args.id, { principal }));
     },
   );
 

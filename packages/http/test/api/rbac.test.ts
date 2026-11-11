@@ -259,6 +259,81 @@ describe('granular RBAC over HTTP', () => {
       expect((await stored(postId)).internalNotes).toEqual({ 'en-US': 'secret' });
     });
 
+    it('audits and moderates only entries the role reads, and never shows a denied field', async () => {
+      for (const path of [`/entries/${pageId}/audit`, `/entries/${pageId}/moderate`]) {
+        const res = await post(path, editor, {});
+        expect(res.status, path).toBe(403);
+      }
+      expect(model.requests).toHaveLength(0);
+      // The dev stub answers no findings list (422); what matters is what it was shown.
+      const audited = await post(`/entries/${postId}/audit`, editor, {});
+      expect(audited.status, await audited.clone().text()).not.toBe(403);
+      expect(model.requests.length).toBeGreaterThan(0);
+      expect(prompts()).not.toContain('secret');
+      expect(prompts()).not.toContain('internalNotes');
+      expect((await post(`/entries/${postId}/moderate`, editor, {})).status).toBe(200);
+    });
+
+    it('tags only entries the role writes, and adds no vocabulary without content:manage', async () => {
+      const put = (id: string, headers: Record<string, string>) =>
+        app.request(`${M}/entries/${id}/metadata`, {
+          method: 'PUT',
+          headers,
+          body: JSON.stringify({ tags: [], concepts: [] }),
+        });
+      expect((await put(pageId, editor)).status).toBe(403);
+      expect((await put(postId, editor)).status).toBe(200);
+
+      const fresh = await post(`/entries/${postId}/apply-tags`, editor, { newTags: ['fresh'] });
+      expect(fresh.status).toBe(403);
+      expect(await fresh.text()).toContain('content:manage');
+      const tag = await post('/taxonomy/tags', admin, { name: 'news' });
+      expect(tag.status).toBe(201);
+      const { id: tagId } = (await tag.json()) as { id: string };
+      const reused = await post(`/entries/${postId}/apply-tags`, editor, { tagIds: [tagId] });
+      expect(reused.status, await reused.clone().text()).toBe(200);
+    });
+
+    it('moves only entries of a type the role reads between workflow steps', async () => {
+      const move = (id: string) =>
+        post(`/entries/${id}/workflow/transition`, editor, { workflowId: 'wf', toStepId: 's' });
+      expect((await move(pageId)).status).toBe(403);
+      // Past the grant check: the (unknown) workflow is what refuses it.
+      expect((await move(postId)).status).toBe(404);
+    });
+
+    it('embeds only the text the role may read', async () => {
+      const created = await app.request('/spaces/s1/roles', {
+        method: 'POST',
+        headers: admin,
+        body: JSON.stringify({
+          name: 'Post searcher',
+          scopes: ['search:read', 'preview:read'],
+          contentGrants: [
+            { contentTypeApiId: 'post', actions: ['read'], deniedFields: ['internalNotes'] },
+          ],
+        }),
+      });
+      const role = (await created.json()) as { id: string };
+      const keyRes = await app.request('/spaces/s1/api-keys', {
+        method: 'POST',
+        headers: admin,
+        body: JSON.stringify({ kind: 'cma', roleId: role.id }),
+      });
+      const { token } = (await keyRes.json()) as { token: string };
+      const searcher = { Authorization: `Bearer ${token}` };
+      const vector = async (id: string, headers: Record<string, string>) => {
+        const res = await app.request(`${M}/entries/${id}/embedding`, { headers });
+        return { status: res.status, body: (await res.json()) as { vector?: number[] } };
+      };
+      expect((await vector(pageId, searcher)).status).toBe(403);
+      const masked = await vector(postId, searcher);
+      expect(masked.status).toBe(200);
+      const whole = await vector(postId, admin);
+      expect(masked.body.vector).toHaveLength(whole.body.vector?.length ?? -1);
+      expect(masked.body.vector).not.toEqual(whole.body.vector);
+    });
+
     it('still runs for an unrestricted caller, over every type and field', async () => {
       const res = await post(`/entries/${pageId}/translate`, admin, { targetLocale: 'en-US' });
       expect(res.status).toBe(200);

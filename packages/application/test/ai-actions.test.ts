@@ -22,6 +22,7 @@ import {
 } from '../src/index';
 
 const scope = { spaceId: 'blog', environmentId: 'main' };
+const SYS = { principal: SYSTEM_CALLER } as const;
 
 function setup() {
   const store = new InMemoryContentStore();
@@ -111,7 +112,14 @@ describe('runAIAction', () => {
       seenPrompt = req.prompt;
       return 'Cats: A Complete Guide';
     });
-    const result = await runAIAction(ctx, ai, scope, action.id, { entryId: entry.id, apply: true });
+    const result = await runAIAction(
+      ctx,
+      ai,
+      scope,
+      action.id,
+      { entryId: entry.id, apply: true },
+      SYS,
+    );
     expect(seenPrompt).toContain('A post about cats.');
     expect(result.applied).toBe(true);
     const { fields } = await getEntry(ctx, scope, entry.id);
@@ -124,14 +132,21 @@ describe('runAIAction', () => {
       promptTemplate: 'Slogan for {{brand}}',
     });
     const ai = new StubAIProvider(() => 'Just do it');
-    const result = await runAIAction(ctx, ai, scope, action.id, { variables: { brand: 'Acme' } });
+    const result = await runAIAction(
+      ctx,
+      ai,
+      scope,
+      action.id,
+      { variables: { brand: 'Acme' } },
+      SYS,
+    );
     expect(result.output).toBe('Just do it');
     expect(result.applied).toBe(false);
   });
 
   it('throws for an unknown action', async () => {
     const ai = new StubAIProvider(() => 'x');
-    await expect(runAIAction(ctx, ai, scope, 'nope')).rejects.toThrow(NotFoundError);
+    await expect(runAIAction(ctx, ai, scope, 'nope', {}, SYS)).rejects.toThrow(NotFoundError);
   });
 
   describe('for a restricted principal', () => {

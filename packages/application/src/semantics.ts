@@ -1,4 +1,4 @@
-import type { Scope } from '@contentworker/domain';
+import type { EntryFields, Scope } from '@contentworker/domain';
 import type { AppContext } from './context';
 import { getEntry } from './entries';
 import { extractTextByLocale, type RagDeps, type SearchHit, semanticSearch } from './rag';
@@ -9,9 +9,13 @@ async function entryText(
   scope: Scope,
   entryId: string,
   locale?: string,
+  unreadable: readonly string[] = [],
 ): Promise<{ text: string; locale?: string }> {
   const { fields } = await getEntry(ctx, scope, entryId); // throws NotFoundError
-  const byLocale = extractTextByLocale(fields);
+  const readable: EntryFields = unreadable.length
+    ? Object.fromEntries(Object.entries(fields).filter(([apiId]) => !unreadable.includes(apiId)))
+    : fields;
+  const byLocale = extractTextByLocale(readable);
   const chosen = locale ?? Object.keys(byLocale)[0];
   return { text: chosen ? (byLocale[chosen] ?? '') : '', locale: chosen };
 }
@@ -80,9 +84,13 @@ export async function getEntryEmbedding(
   ctx: AppContext,
   scope: Scope,
   entryId: string,
-  opts: { locale?: string } = {},
+  opts: {
+    locale?: string;
+    /** Fields the caller may not read (`deniedFieldsFor`): left out of the embedded text. */
+    unreadable?: readonly string[];
+  } = {},
 ): Promise<SemanticRepresentation> {
-  const { text, locale } = await entryText(ctx, scope, entryId, opts.locale);
+  const { text, locale } = await entryText(ctx, scope, entryId, opts.locale, opts.unreadable);
   const base = {
     entryId,
     locale,

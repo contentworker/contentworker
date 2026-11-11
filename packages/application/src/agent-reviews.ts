@@ -8,7 +8,7 @@ import {
 } from '@contentworker/domain';
 import { recordAgentRun } from './agent-audit';
 import { type AppContext, withActor } from './context';
-import { updateEntry } from './entries';
+import { type EntryWriteOptions, updateEntry } from './entries';
 
 /** Default watcher wait for a human decision before it stands down: 7 days. */
 export const DEFAULT_REVIEW_TIMEOUT_MS = 7 * 24 * 60 * 60 * 1000;
@@ -24,6 +24,7 @@ export async function applyProposedFields(
   scope: Scope,
   entryId: string,
   proposed: EntryFields,
+  options: Pick<EntryWriteOptions, 'unwritable' | 'unreadable'> = {},
 ): Promise<boolean> {
   const found = await ctx.store.entries.get(scope, entryId);
   if (!found) return false;
@@ -31,7 +32,7 @@ export async function applyProposedFields(
   for (const [apiId, localized] of Object.entries(proposed)) {
     merged[apiId] = { ...(merged[apiId] ?? {}), ...localized };
   }
-  await updateEntry(ctx, scope, entryId, merged);
+  await updateEntry(ctx, scope, entryId, merged, options);
   return true;
 }
 

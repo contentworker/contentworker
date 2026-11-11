@@ -336,6 +336,40 @@ describe('a restricted writer over MCP', () => {
       });
     });
 
+    it('refuses the entry-by-id tools on a type the role can’t reach', async () => {
+      const { call, id, model } = await setup(outsider);
+      const reads: [string, Record<string, unknown>][] = [
+        ['entry_audit', { id }],
+        ['entry_moderate', { id }],
+        ['comments_list', { entryId: id }],
+        ['tasks_list', { entryId: id }],
+        ['workflow_transition', { entryId: id, workflowId: 'wf', toStepId: 's' }],
+      ];
+      for (const [tool, args] of reads) {
+        const res = await call(tool, args);
+        expect(res.isError, tool).toBe(true);
+        expect(res.text, tool).toContain('content:read:listing');
+      }
+      const tagged = await call('entries_set_metadata', { entryId: id, tags: [] });
+      expect(tagged.isError).toBe(true);
+      expect(tagged.text).toContain('content:write:listing');
+      expect(model.requests).toHaveLength(0);
+    });
+
+    it('audits without the denied field, and adds no tag vocabulary without content:manage', async () => {
+      const { call, id, model } = await setup();
+      await call('entry_audit', { id });
+      expect(model.requests).toHaveLength(1);
+      expect(`${model.requests[0]?.system}\n${model.requests[0]?.prompt}`).not.toMatch(
+        /secret|internalNotes/,
+      );
+      expect((await call('entry_moderate', { id })).isError).toBe(false);
+      const fresh = await call('entry_apply_tags', { id, newTags: ['fresh'] });
+      expect(fresh.isError).toBe(true);
+      expect(fresh.text).toContain('content:manage');
+      expect((await call('comments_list', { entryId: id })).isError).toBe(false);
+    });
+
     it('refuses an apply to a role that only reads the type', async () => {
       const { ctx, call, id, model } = await setup(reader);
       const res = await call('entry_autofill_field', { id, field: 'title', apply: true });

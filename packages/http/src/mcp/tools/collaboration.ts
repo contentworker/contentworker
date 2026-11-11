@@ -12,7 +12,7 @@ import { z } from 'zod';
 import { ok, scopeArgs, scopeOf, type ToolContext, toolSchema } from './shared';
 
 export function registerCollaborationTools(server: McpServer, t: ToolContext): void {
-  const { ctx, principal, guard } = t;
+  const { ctx, principal, guard, authorizeEntryRead } = t;
   // --- collaboration: comments, tasks, workflow --------------------------
   server.registerTool(
     'comments_list',
@@ -25,6 +25,7 @@ export function registerCollaborationTools(server: McpServer, t: ToolContext): v
     },
     async (args) => {
       guard(SCOPES.previewRead, scopeOf(args));
+      await authorizeEntryRead(scopeOf(args), args.entryId);
       return ok(await listComments(ctx, scopeOf(args), args.entryId));
     },
   );
@@ -65,6 +66,7 @@ export function registerCollaborationTools(server: McpServer, t: ToolContext): v
     },
     async (args) => {
       guard(SCOPES.previewRead, scopeOf(args));
+      await authorizeEntryRead(scopeOf(args), args.entryId);
       return ok(await listTasks(ctx, scopeOf(args), args.entryId));
     },
   );
@@ -123,6 +125,8 @@ export function registerCollaborationTools(server: McpServer, t: ToolContext): v
     },
     async (args) => {
       guard(SCOPES.previewRead, scopeOf(args));
+      // As the route: only an entry whose type the role reads can be moved between steps.
+      await authorizeEntryRead(scopeOf(args), args.entryId);
       return ok(
         await transitionEntry(
           ctx,

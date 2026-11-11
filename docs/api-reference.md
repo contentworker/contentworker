@@ -577,12 +577,12 @@ which is valid to store. See [Rich text](./domain-model.md#rich-text).
 | POST   | `…/entries/:id/summarize`    | `content:write`  | Summarize entry text                                                                                                |
 | POST   | `…/entries/:id/autofill`     | `content:write`  | Fill empty fields                                                                                                   |
 | POST   | `…/entries/:id/suggest-tags` | `content:write`  | Suggest taxonomy tags                                                                                               |
-| POST   | `…/entries/:id/apply-tags`   | `content:write`  | Persist a reviewed tag suggestion                                                                                   |
+| POST   | `…/entries/:id/apply-tags`   | `content:write`  | Persist a reviewed tag suggestion (a new tag name needs `content:manage`, as `POST …/taxonomy/tags`)                |
 | POST   | `…/entries/:id/audit`        | `content:write`  | AI content audit                                                                                                    |
 | POST   | `…/entries/:id/moderate`     | `content:write`  | Run moderation agent                                                                                                |
 | GET    | `…/entries/:id/related`      | `search:read`    | Semantically related entries                                                                                        |
 | GET    | `…/entries/:id/duplicates`   | `search:read`    | Near-duplicate detection                                                                                            |
-| GET    | `…/entries/:id/embedding`    | `search:read`    | Embedding vector metadata                                                                                           |
+| GET    | `…/entries/:id/embedding`    | `search:read`    | Embedding vector metadata (a role needs read on the type; the vector covers only the fields it may read)            |
 | GET    | `…/search/index`             | `content:manage` | Lexical index health for the environment (`?content_type`): indexed documents against published entries, as `drift` |
 | POST   | `…/search/reindex`           | `content:manage` | Request a background reindex of published entries `{ contentTypeApiId? }` (`202`; `429` if requested too soon)      |
 
@@ -617,7 +617,7 @@ space export job.
 | Method | Path                     | Scope           | Description              |
 | ------ | ------------------------ | --------------- | ------------------------ |
 | GET    | `…/entries/:id/metadata` | `preview:read`  | Tags + concepts on entry |
-| PUT    | `…/entries/:id/metadata` | `content:write` | Set tags/concepts        |
+| PUT    | `…/entries/:id/metadata` | `content:write` | Set tags/concepts (a role needs write on the type) |
 
 ### Manual order
 
@@ -790,7 +790,7 @@ Human-in-the-loop decisions on agent proposals; see
 | POST   | `…/workflows/validate`              | `preview:read`   | Validate `{ graph }` without saving → `{ ok, errors, warnings }`                                                                                                                                                                                                                                                                                                         |
 | POST   | `…/workflows/copilot`               | `content:manage` | Propose a graph from `{ prompt, graph?, contentTypes? }`. Read-only (never saves); answers `{ graph, explanation, errors, warnings, changes, summary, provenance }`                                                                                                                                                                                                      |
 | GET    | `…/entries/:id/workflow`            | `preview:read`   | Entry workflow state (legacy steps)                                                                                                                                                                                                                                                                                                                                      |
-| POST   | `…/entries/:id/workflow/transition` | `preview:read`   | Transition step (legacy; step scope enforced in use-case)                                                                                                                                                                                                                                                                                                                |
+| POST   | `…/entries/:id/workflow/transition` | `preview:read`   | Transition step (legacy; step scope enforced in use-case; a role needs read on the type)                                                                                                                                                                                                                                                                                                                |
 
 #### Workflow runs and tasks
 

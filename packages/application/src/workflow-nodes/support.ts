@@ -3,8 +3,11 @@ import {
   authorize,
   authorizeContent,
   type ContentAction,
+  deniedFieldsFor,
+  maskDeniedFields,
   NotFoundError,
   type PermissionScope,
+  type RunContext,
   type RunEntry,
   type Scope,
 } from '@contentworker/domain';
@@ -46,6 +49,27 @@ export async function loadRunEntry(
     tagIds,
     title,
   };
+}
+
+/**
+ * The run as a model may be shown it, for the run's principal: the entry without the fields its
+ * role denies, and without its title when the display field is one of them. Every AI node builds
+ * its prompt, its decision state and its heuristic fallback from this, never from `i.run`, so what
+ * a node outputs (and the node-runs log keeps) can't carry a denied value either. The vars and
+ * completed nodes are passed as they are: they hold what earlier nodes produced from this view.
+ */
+export async function runForModel(
+  i: Pick<ExecInput, 'ctx' | 'scope' | 'actor' | 'run'>,
+): Promise<RunContext> {
+  const type = i.run.entry.contentTypeApiId;
+  const denied = deniedFieldsFor(i.actor.principal, type);
+  if (denied.length === 0) return i.run;
+  const ct = await i.ctx.store.contentTypes.get(i.scope, type);
+  const fields = maskDeniedFields(i.actor.principal, type, i.run.entry.fields ?? {});
+  if (!ct || denied.includes(ct.displayField)) {
+    return { ...i.run, entry: { ...i.run.entry, fields, title: '' }, ref: i.run.entry.id };
+  }
+  return { ...i.run, entry: { ...i.run.entry, fields } };
 }
 
 /**

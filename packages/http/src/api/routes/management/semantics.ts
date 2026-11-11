@@ -5,6 +5,7 @@ import {
   publishEntry,
   relatedEntries,
   requestReindex,
+  SYSTEM_CALLER,
   searchIndexHealth,
   unpublishEntry,
 } from '@contentworker/application';
@@ -18,7 +19,7 @@ import { actingCtx, BASE, entryAccess, expectedVersionOf, scopeOf } from './shar
 
 export function semanticsRoutes(deps: AuthDeps): Hono<AuthVars> {
   const { ctx, rag, agents } = deps;
-  const { guardEntry } = entryAccess(ctx);
+  const { guardEntry, authorizeEntryRead } = entryAccess(ctx);
   const app = new Hono<AuthVars>();
 
   // --- content semantics (vector-backed) ---------------------------------
@@ -42,13 +43,17 @@ export function semanticsRoutes(deps: AuthDeps): Hono<AuthVars> {
       }),
     });
   });
-  app.get(`${BASE}/entries/:id/embedding`, requireScope(SCOPES.searchRead), async (c) =>
-    c.json(
+  app.get(`${BASE}/entries/:id/embedding`, requireScope(SCOPES.searchRead), async (c) => {
+    // The vector is made from the text the caller may read: one over a denied field would let it
+    // test guesses of that field's value by similarity.
+    const type = await authorizeEntryRead(c, c.req.param('id'));
+    return c.json(
       await getEntryEmbedding(rag, ctx, scopeOf(c), c.req.param('id'), {
         locale: c.req.query('locale'),
+        unreadable: deniedFieldsFor(c.get('principal'), type),
       }),
-    ),
-  );
+    );
+  });
   app.get(
     `${BASE}/search/index`,
     doc('AI & agents', 'Report lexical search index health', {
@@ -117,7 +122,10 @@ export function semanticsRoutes(deps: AuthDeps): Hono<AuthVars> {
       // post-publish moderation retracting a flagged entry instead. Do not
       // read this flag as "flagged content can never reach delivery".
       if (deps.moderateBeforePublish) {
-        const verdict = await moderateEntry(actingCtx(ctx, c), agents, scopeOf(c), id);
+        // The gate judges every field: a writer must not be able to hide anything from it.
+        const verdict = await moderateEntry(actingCtx(ctx, c), agents, scopeOf(c), id, {
+          principal: SYSTEM_CALLER,
+        });
         if (verdict.flagged) {
           throw new ValidationError([
             {

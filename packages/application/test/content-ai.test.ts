@@ -28,6 +28,7 @@ import {
 } from '../src/index';
 
 const scope = { spaceId: 'blog', environmentId: 'main' };
+const SYS = { principal: SYSTEM_CALLER } as const;
 
 function setup() {
   const store = new InMemoryContentStore();
@@ -89,7 +90,14 @@ describe('translateEntry', () => {
   it('translates localized text fields into the target locale and applies', async () => {
     const id = await newPost(ctx);
     const ai = new StubAIProvider(() => ({ title: 'Bonjour le monde', body: 'Un court article.' }));
-    const result = await translateEntry(ctx, ai, scope, id, { targetLocale: 'fr-FR', apply: true });
+    const result = await translateEntry(
+      ctx,
+      ai,
+      scope,
+      id,
+      { targetLocale: 'fr-FR', apply: true },
+      SYS,
+    );
     expect(result.translatedFields.sort()).toEqual(['body', 'title']);
     expect(result.applied).toBe(true);
     const { fields } = await getEntry(ctx, scope, id);
@@ -100,9 +108,9 @@ describe('translateEntry', () => {
   it('rejects an unknown target locale', async () => {
     const id = await newPost(ctx);
     const ai = new StubAIProvider(() => ({}));
-    await expect(translateEntry(ctx, ai, scope, id, { targetLocale: 'de-DE' })).rejects.toThrow(
-      ValidationError,
-    );
+    await expect(
+      translateEntry(ctx, ai, scope, id, { targetLocale: 'de-DE' }, SYS),
+    ).rejects.toThrow(ValidationError);
   });
 });
 
@@ -116,10 +124,17 @@ describe('summarizeEntry', () => {
   it('summarizes and can write into a target field', async () => {
     const id = await newPost(ctx);
     const ai = new StubAIProvider(() => ({ summary: 'Greetings article.' }));
-    const result = await summarizeEntry(ctx, ai, scope, id, {
-      targetField: 'summary',
-      apply: true,
-    });
+    const result = await summarizeEntry(
+      ctx,
+      ai,
+      scope,
+      id,
+      {
+        targetField: 'summary',
+        apply: true,
+      },
+      SYS,
+    );
     expect(result.summary).toBe('Greetings article.');
     const { fields } = await getEntry(ctx, scope, id);
     expect(fields.summary?.['en-US']).toBe('Greetings article.');
@@ -129,7 +144,7 @@ describe('summarizeEntry', () => {
     const id = await newPost(ctx);
     for (const answer of [{ summary: 42 }, ['Greetings.'], {}]) {
       await expect(
-        summarizeEntry(ctx, new StubAIProvider(() => answer), scope, id),
+        summarizeEntry(ctx, new StubAIProvider(() => answer), scope, id, {}, SYS),
         JSON.stringify(answer),
       ).rejects.toThrow(ValidationError);
     }
@@ -146,7 +161,7 @@ describe('autofillField', () => {
   it('fills a scalar field from the other fields', async () => {
     const id = await newPost(ctx);
     const ai = new StubAIProvider(() => ({ value: 'A friendly greeting post.' }));
-    const result = await autofillField(ctx, ai, scope, id, { field: 'summary', apply: true });
+    const result = await autofillField(ctx, ai, scope, id, { field: 'summary', apply: true }, SYS);
     expect(result.value).toBe('A friendly greeting post.');
     const { fields } = await getEntry(ctx, scope, id);
     expect(fields.summary?.['en-US']).toBe('A friendly greeting post.');
@@ -155,7 +170,7 @@ describe('autofillField', () => {
   it('rejects an unknown field', async () => {
     const id = await newPost(ctx);
     const ai = new StubAIProvider(() => ({ value: 'x' }));
-    await expect(autofillField(ctx, ai, scope, id, { field: 'nope' })).rejects.toThrow();
+    await expect(autofillField(ctx, ai, scope, id, { field: 'nope' }, SYS)).rejects.toThrow();
   });
 });
 
@@ -170,7 +185,7 @@ describe('suggestEntryTags', () => {
     const id = await newPost(ctx);
     const greetings = await createTag(ctx, scope, { name: 'greetings' });
     const ai = new StubAIProvider(() => ({ existingTags: ['greetings'], newTags: ['intro'] }));
-    const result = await suggestEntryTags(ctx, ai, scope, id, { apply: true });
+    const result = await suggestEntryTags(ctx, ai, scope, id, { apply: true }, SYS);
     expect(result.tagIds).toEqual([greetings.id]);
     expect(result.newTags).toEqual(['intro']);
     const meta = await getEntryMetadata(ctx, scope, id);
@@ -193,7 +208,7 @@ describe('suggestEntryTags', () => {
       return yes;
     });
     const ai = new StubAIProvider(() => ({ existingTags: ['finance'], newTags: ['x'] }));
-    const result = await suggestEntryTags({ ...ctx, decisions }, ai, scope, id);
+    const result = await suggestEntryTags({ ...ctx, decisions }, ai, scope, id, {}, SYS);
     expect(result.tagIds).toEqual([greetings.id]);
     expect(result.newTags).toEqual([]);
     expect(ai.requests).toEqual([]);
@@ -205,7 +220,7 @@ describe('suggestEntryTags', () => {
     const decisions = new StubDecisionModel(); // every tag: no
     // The generative model tries to pick an existing tag anyway; only its new names are taken.
     const ai = new StubAIProvider(() => ({ existingTags: ['finance'], newTags: ['intro'] }));
-    const result = await suggestEntryTags({ ...ctx, decisions }, ai, scope, id);
+    const result = await suggestEntryTags({ ...ctx, decisions }, ai, scope, id, {}, SYS);
     expect(result.tagIds).toEqual([]);
     expect(result.newTags).toEqual(['intro']);
     expect(ai.requests).toHaveLength(1);
@@ -219,9 +234,16 @@ describe('suggestEntryTags', () => {
       { existingTags: [{ name: 'greetings' }], newTags: [] },
       'greetings',
     ]) {
-      const result = await suggestEntryTags(ctx, new StubAIProvider(() => answer), scope, id, {
-        apply: true,
-      });
+      const result = await suggestEntryTags(
+        ctx,
+        new StubAIProvider(() => answer),
+        scope,
+        id,
+        {
+          apply: true,
+        },
+        SYS,
+      );
       expect(result, JSON.stringify(answer)).toMatchObject({ tagIds: [], newTags: [] });
     }
     expect((await getEntryMetadata(ctx, scope, id))?.tags ?? []).toEqual([]);
@@ -231,7 +253,14 @@ describe('suggestEntryTags', () => {
     const id = await newPost(ctx);
     for (let n = 0; n < 70; n++) await createTag(ctx, scope, { name: `tag-${n}` });
     const decisions = new StubDecisionModel();
-    await suggestEntryTags({ ...ctx, decisions }, new StubAIProvider(() => ({})), scope, id);
+    await suggestEntryTags(
+      { ...ctx, decisions },
+      new StubAIProvider(() => ({})),
+      scope,
+      id,
+      {},
+      SYS,
+    );
     expect(decisions.requests.map((r) => Object.keys(r.questions).length)).toEqual([64, 6]);
   });
 
@@ -241,7 +270,7 @@ describe('suggestEntryTags', () => {
     const concept = await createConcept(ctx, scope, { schemeId: scheme.id, prefLabel: 'travel' });
     await setEntryMetadata(ctx, scope, id, { tags: [], concepts: [concept.id] });
     const ai = new StubAIProvider(() => ({ existingTags: [], newTags: ['intro'] }));
-    await suggestEntryTags(ctx, ai, scope, id, { apply: true });
+    await suggestEntryTags(ctx, ai, scope, id, { apply: true }, SYS);
     const meta = await getEntryMetadata(ctx, scope, id);
     expect(meta?.tags).toHaveLength(1);
     expect(meta?.concepts).toEqual([concept.id]);
@@ -258,10 +287,16 @@ describe('applyEntryTags', () => {
   it('persists the reviewed suggestion without a model call', async () => {
     const id = await newPost(ctx);
     const greetings = await createTag(ctx, scope, { name: 'greetings' });
-    const result = await applyEntryTags(ctx, scope, id, {
-      tagIds: [greetings.id],
-      newTags: ['intro'],
-    });
+    const result = await applyEntryTags(
+      ctx,
+      scope,
+      id,
+      {
+        tagIds: [greetings.id],
+        newTags: ['intro'],
+      },
+      SYS,
+    );
     expect(result.createdTags).toHaveLength(1);
     expect(result.createdTags[0]?.name).toBe('intro');
     expect(result.tagIds).toContain(greetings.id);
@@ -272,7 +307,7 @@ describe('applyEntryTags', () => {
   it('reuses an existing tag when a new name matches case-insensitively', async () => {
     const id = await newPost(ctx);
     const greetings = await createTag(ctx, scope, { name: 'Greetings' });
-    const result = await applyEntryTags(ctx, scope, id, { newTags: ['greetings'] });
+    const result = await applyEntryTags(ctx, scope, id, { newTags: ['greetings'] }, SYS);
     expect(result.createdTags).toHaveLength(0);
     expect(result.tagIds).toEqual([greetings.id]);
     expect(await listTags(ctx, scope)).toHaveLength(1); // no duplicate created
@@ -284,7 +319,7 @@ describe('applyEntryTags', () => {
     const scheme = await createScheme(ctx, scope, { name: 'topics' });
     const concept = await createConcept(ctx, scope, { schemeId: scheme.id, prefLabel: 'travel' });
     await setEntryMetadata(ctx, scope, id, { tags: [existing.id], concepts: [concept.id] });
-    const result = await applyEntryTags(ctx, scope, id, { newTags: ['fresh'] });
+    const result = await applyEntryTags(ctx, scope, id, { newTags: ['fresh'] }, SYS);
     expect(result.tagIds).toContain(existing.id);
     const meta = await getEntryMetadata(ctx, scope, id);
     expect(meta?.tags).toHaveLength(2);
@@ -294,7 +329,7 @@ describe('applyEntryTags', () => {
   it('rejects an unknown tag id before creating any new tags', async () => {
     const id = await newPost(ctx);
     await expect(
-      applyEntryTags(ctx, scope, id, { tagIds: ['nope'], newTags: ['fresh'] }),
+      applyEntryTags(ctx, scope, id, { tagIds: ['nope'], newTags: ['fresh'] }, SYS),
     ).rejects.toThrow();
     const meta = await getEntryMetadata(ctx, scope, id);
     expect(meta?.tags ?? []).toHaveLength(0);
@@ -302,7 +337,7 @@ describe('applyEntryTags', () => {
   });
 
   it('rejects an unknown entry without creating tags', async () => {
-    await expect(applyEntryTags(ctx, scope, 'missing', { newTags: ['x'] })).rejects.toThrow();
+    await expect(applyEntryTags(ctx, scope, 'missing', { newTags: ['x'] }, SYS)).rejects.toThrow();
     expect(await listTags(ctx, scope)).toHaveLength(0);
   });
 });
@@ -461,6 +496,42 @@ describe('AI runs over an entry as a restricted principal', () => {
     const { fields } = await getEntry(ctx, scope, id);
     expect(fields.title?.['en-US']).toBe('Bonjour');
     expect(fields.body).toEqual({ 'en-US': SECRET });
+  });
+
+  it('adds to the tag vocabulary only for a role with content:manage', async () => {
+    const { id: news } = await createTag(ctx, scope, { name: 'news' });
+    // Assigning an existing tag needs only write on the entry.
+    expect(
+      (await applyEntryTags(ctx, scope, id, { tagIds: [news] }, { principal: editor })).tagIds,
+    ).toEqual([news]);
+    await expect(
+      applyEntryTags(ctx, scope, id, { newTags: ['fresh'] }, { principal: editor }),
+    ).rejects.toThrow('content:manage');
+    expect((await listTags(ctx, scope)).map((t) => t.name)).toEqual(['news']);
+
+    // A suggestion applied for the editor assigns what exists and leaves new names as suggestions.
+    const ai = new StubAIProvider(() => ({ existingTags: ['news'], newTags: ['greetings'] }));
+    const r = await suggestEntryTags(ctx, ai, scope, id, { apply: true }, { principal: editor });
+    expect(r).toMatchObject({ tagIds: [news], newTags: ['greetings'], applied: true });
+    expect((await listTags(ctx, scope)).map((t) => t.name)).toEqual(['news']);
+
+    const manager = { ...editor, scopes: [SCOPES.contentWrite, SCOPES.contentManage] };
+    const made = await applyEntryTags(
+      ctx,
+      scope,
+      id,
+      { newTags: ['fresh'] },
+      { principal: manager },
+    );
+    expect(made.createdTags.map((t) => t.name)).toEqual(['fresh']);
+  });
+
+  it('fails closed for a call that names neither a principal nor the system', async () => {
+    const ai = new StubAIProvider(() => ({}));
+    await expect(
+      translateEntry(ctx, ai, scope, id, { targetLocale: 'fr-FR' }, {} as never),
+    ).rejects.toThrow(ForbiddenError);
+    expect(ai.requests).toHaveLength(0);
   });
 
   it('suggests tags without showing the model a denied field', async () => {

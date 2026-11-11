@@ -109,14 +109,15 @@ export async function runAIAction(
   ai: AIProvider,
   scope: Scope,
   id: string,
-  input: RunAIActionInput = {},
-  opts: EntryAiOptions = {},
+  input: RunAIActionInput,
+  opts: EntryAiOptions,
 ): Promise<RunAIActionResult> {
   const action = await getAIAction(ctx, scope, id);
 
   const values: Record<string, string> = { ...input.variables };
   let entryFields: EntryFields | undefined;
   let unwritable: readonly string[] = [];
+  let unreadable: readonly string[] = [];
   let locale = input.locale;
   if (input.entryId) {
     const apply = Boolean(input.apply && action.targetField);
@@ -127,6 +128,7 @@ export async function runAIAction(
     const fields = read.fields;
     entryFields = fields;
     unwritable = read.unwritable;
+    unreadable = read.unreadable;
     const config = await ctx.store.spaces.getConfig(scope);
     locale = locale ?? config?.defaultLocale;
     if (locale) {
@@ -150,7 +152,7 @@ export async function runAIAction(
   if (input.apply && action.targetField && input.entryId && entryFields && locale) {
     const merged: EntryFields = { ...entryFields };
     merged[action.targetField] = { ...merged[action.targetField], [locale]: output };
-    await updateEntry(ctx, scope, input.entryId, merged, { unwritable });
+    await updateEntry(ctx, scope, input.entryId, merged, { unwritable, unreadable });
     applied = true;
   }
 
