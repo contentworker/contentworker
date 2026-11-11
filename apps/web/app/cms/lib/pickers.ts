@@ -1,5 +1,5 @@
 import type { Asset } from '@contentworker/domain';
-import { useCallback, useMemo } from 'react';
+import { useCallback, useMemo, useRef } from 'react';
 import type { Pickers, PickOption } from '../components/EntryForm';
 import { useClient } from './client-context';
 import type { PreviewEntry } from './management';
@@ -22,6 +22,12 @@ export function useEntryPickers(): {
   const types = useContentTypesQuery().data;
   const allEntriesQuery = useAllEntriesQuery();
   const assetsQuery = useAssetsQuery();
+  // The client a lookup goes through, read when it runs, so the pickers are a new object only when
+  // their lists are. Keyed on the client too, they were rebuilt as the scope settled after
+  // hydration, which re-rendered the entry form and, in the live-preview e2e, left a click on the
+  // framed page's title without focusing its field.
+  const clientRef = useRef(client);
+  clientRef.current = client;
 
   /**
    * Resolves reference matches on the server.
@@ -75,16 +81,17 @@ export function useEntryPickers(): {
       assets: (assetsQuery.data ?? []).map(assetOption),
       // One lookup per 100 ids (the asset route takes at most 100 too).
       resolve: async (linkType, ids) => {
-        if (linkType === 'Entry') return (await client.getEntriesByIds(ids)).map(entryOption);
+        const api = clientRef.current;
+        if (linkType === 'Entry') return (await api.getEntriesByIds(ids)).map(entryOption);
         const out: PickOption[] = [];
         for (let i = 0; i < ids.length; i += 100) {
-          const page = await client.listAssets({ ids: ids.slice(i, i + 100), limit: 100 });
+          const page = await api.listAssets({ ids: ids.slice(i, i + 100), limit: 100 });
           out.push(...page.items.map(assetOption));
         }
         return out;
       },
     };
-  }, [allEntriesQuery.data, assetsQuery.data, types, conn.locale, client]);
+  }, [allEntriesQuery.data, assetsQuery.data, types, conn.locale]);
 
   return { pickers, searchEntries };
 }
