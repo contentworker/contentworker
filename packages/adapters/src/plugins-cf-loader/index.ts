@@ -11,6 +11,7 @@ import type {
   HookResult,
   PluginCapabilities,
   PluginInvocation,
+  PluginOperationInvocation,
   PluginRuntime,
 } from '@contentworker/ports';
 
@@ -69,6 +70,8 @@ export interface WorkerLoaderRuntimeOptions {
   readonly compatibilityDate?: string;
   /** Ceiling on one invocation. The host bounds the wait; workerd bounds the CPU. */
   readonly timeoutMs?: number;
+  /** Ceiling on one operation call. */
+  readonly operationTimeoutMs?: number;
   readonly onError?: (message: string, detail: unknown) => void;
   /**
    * Called for every refused capability call — log it and put it on the audit
@@ -79,6 +82,66 @@ export interface WorkerLoaderRuntimeOptions {
 
 /** The class a plugin bundle must export. */
 export const PLUGIN_ENTRYPOINT_CLASS = 'Plugin';
+
+/**
+ * Part of every isolate's key, with the plugin's checksum: bump it whenever {@link hostModule}
+ * changes, so no isolate warmed with an older wrapper is reused for the same bytes.
+ */
+export const HOST_MODULE_VERSION = 'h1';
+
+/** One isolate per space, plugin, bundle and wrapper version. */
+export function isolateKey(invocation: {
+  pluginId: string;
+  checksum: string;
+  scope?: { spaceId: string };
+}): string {
+  return `${invocation.scope?.spaceId ?? '-'}/${invocation.pluginId}@${invocation.checksum}#${HOST_MODULE_VERSION}`;
+}
+
+/** The wrapper module the host loads as main, next to the author's bundle. */
+export const HOST_MODULE = '__contentworker_host.js';
+
+/**
+ * The host's main module for a plugin isolate.
+ *
+ * Worker Loader exposes only `WorkerEntrypoint` classes by name, and the plugin contract is a
+ * plain `export class Plugin` with a method per hook. This wrapper is the entrypoint: one method
+ * per hook and `runOperation`, each delegating to a fresh instance of the author's class. A hook
+ * the class does not implement passes the write through (it answers nothing); an operation call
+ * on a class without `runOperation` fails, since the caller asked for it by name. An author's
+ * class that already extends `WorkerEntrypoint` is constructed the same way.
+ */
+export function hostModule(entrypoint: string): string {
+  const methods = [...Object.values(HOOK_METHOD), PLUGIN_OPERATION_METHOD];
+  const body = methods
+    .map((m) =>
+      m === PLUGIN_OPERATION_METHOD
+        ? `  async ${m}(...args) {
+    const impl = this.#impl();
+    if (typeof impl.${m} !== 'function') {
+      throw new Error('plugin declares operations but does not implement ${m}');
+    }
+    return impl.${m}(...args);
+  }`
+        : `  async ${m}(...args) {
+    const impl = this.#impl();
+    return typeof impl.${m} === 'function' ? impl.${m}(...args) : undefined;
+  }`,
+    )
+    .join('\n');
+  return `import { WorkerEntrypoint } from 'cloudflare:workers';
+import * as authored from ${JSON.stringify(`./${entrypoint}`)};
+
+export class Plugin extends WorkerEntrypoint {
+  #instance;
+  #impl() {
+    if (typeof authored.Plugin !== 'function') throw new Error('the bundle exports no Plugin class');
+    return (this.#instance ??= new authored.Plugin(this.ctx, this.env));
+  }
+${body}
+}
+`;
+}
 
 /** Hook name → the method a plugin implements. */
 const HOOK_METHOD: Record<string, string> = {
@@ -91,6 +154,13 @@ const HOOK_METHOD: Record<string, string> = {
 
 const DEFAULT_COMPATIBILITY_DATE = '2026-06-01';
 const DEFAULT_TIMEOUT_MS = 2_000;
+/**
+ * An operation's ceiling. Longer than a hook's, which holds up someone's save; an operation is
+ * the caller's own request. Longer work is an `async` operation (planned), not a longer wait.
+ */
+export const DEFAULT_OPERATION_TIMEOUT_MS = 10_000;
+/** The method a plugin implements to serve its operations: `runOperation(name, input, caps)`. */
+export const PLUGIN_OPERATION_METHOD = 'runOperation';
 
 export function createWorkerLoaderRuntime(
   loader: WorkerLoaderBinding,
@@ -98,6 +168,28 @@ export function createWorkerLoaderRuntime(
 ): PluginRuntime {
   const compatibilityDate = options.compatibilityDate ?? DEFAULT_COMPATIBILITY_DATE;
   const defaultTimeout = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const operationTimeout = options.operationTimeoutMs ?? DEFAULT_OPERATION_TIMEOUT_MS;
+  const isolate = (invocation: {
+    pluginId: string;
+    checksum: string;
+    entrypoint: string;
+    bundle: string;
+    scope?: { spaceId: string };
+  }) =>
+    // Keyed by space, checksum and wrapper version as well as id: changed bytes never reuse an
+    // isolate warmed from the old ones, and one plugin installed in two spaces never shares
+    // module state (a cached secret, an entry read under one space's grant) between them.
+    loader.get(isolateKey(invocation), () => ({
+      compatibilityDate,
+      // The host's wrapper is the main module; the author's bundle is imported by it.
+      mainModule: HOST_MODULE,
+      modules: {
+        [invocation.entrypoint]: invocation.bundle,
+        [HOST_MODULE]: hostModule(invocation.entrypoint),
+      },
+      // No network. Verified: fetch() inside the isolate throws.
+      globalOutbound: null,
+    }));
   const report = options.onError ?? (() => {});
   const onDenied = options.onDenied ?? (() => {});
 
@@ -112,16 +204,7 @@ export function createWorkerLoaderRuntime(
       }
 
       try {
-        // Keyed by checksum as well as id, so changed bytes never reuse an
-        // isolate warmed from the old ones.
-        const worker = loader.get(`${invocation.pluginId}@${invocation.checksum}`, () => ({
-          compatibilityDate,
-          mainModule: invocation.entrypoint,
-          modules: { [invocation.entrypoint]: invocation.bundle },
-          // No network. Verified: fetch() inside the isolate throws.
-          globalOutbound: null,
-        }));
-
+        const worker = isolate(invocation);
         const entrypoint = worker.getEntrypoint(PLUGIN_ENTRYPOINT_CLASS);
         const handler = entrypoint[method];
         if (typeof handler !== 'function') {
@@ -131,10 +214,17 @@ export function createWorkerLoaderRuntime(
         }
 
         const result = await withTimeout(
-          handler.call(
-            entrypoint,
+          // Called as a method of the stub, never `handler.call(entrypoint, …)`: on a real
+          // entrypoint `handler` is an RPC stub, so `.call` is a remote method named "call", and
+          // the entrypoint passed to it fails to clone (DataCloneError), so no plugin ever ran.
+          (entrypoint[method] as Fn)(
             invocation.payload,
-            gateCapabilities(capabilities, invocation, onDenied),
+            gateCapabilities(
+              capabilities,
+              invocation,
+              onDenied,
+              Date.now() + (invocation.timeoutMs ?? defaultTimeout),
+            ),
           ),
           invocation.timeoutMs ?? defaultTimeout,
           `plugin ${invocation.pluginId}`,
@@ -145,6 +235,41 @@ export function createWorkerLoaderRuntime(
         report(`plugin ${invocation.pluginId} failed on ${invocation.hook}: ${message}`, err);
         // The caller's per-plugin error policy decides what a failure means;
         // the runtime's job is to not take the request down with it.
+        throw err;
+      }
+    },
+
+    async runOperation(
+      invocation: PluginOperationInvocation,
+      capabilities: PluginCapabilities,
+    ): Promise<unknown> {
+      const entrypoint = isolate(invocation).getEntrypoint(PLUGIN_ENTRYPOINT_CLASS);
+      const handler = entrypoint[PLUGIN_OPERATION_METHOD];
+      if (typeof handler !== 'function') {
+        // Unlike a hook, there is no write to let through: the caller asked for this by name.
+        throw new Error(
+          `plugin ${invocation.pluginId} declares operations but does not implement ${PLUGIN_OPERATION_METHOD}`,
+        );
+      }
+      try {
+        return await withTimeout(
+          // A method call on the stub, as for a hook (see `invoke`).
+          (entrypoint[PLUGIN_OPERATION_METHOD] as Fn)(
+            invocation.operation,
+            invocation.input,
+            gateCapabilities(
+              capabilities,
+              invocation,
+              onDenied,
+              Date.now() + (invocation.timeoutMs ?? operationTimeout),
+            ),
+          ),
+          invocation.timeoutMs ?? operationTimeout,
+          `plugin ${invocation.pluginId}`,
+        );
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        report(`plugin ${invocation.pluginId} failed on ${invocation.operation}: ${message}`, err);
         throw err;
       }
     },
@@ -173,10 +298,23 @@ type Fn = (...args: unknown[]) => Promise<unknown>;
  */
 export function gateCapabilities(
   host: PluginCapabilities,
-  invocation: PluginInvocation,
+  invocation: PluginInvocation | PluginOperationInvocation,
   onDenied: (denial: PluginCapabilityDenial) => void | Promise<void>,
+  /**
+   * When the host stops waiting (ms since the epoch). Past it every capability refuses: a plugin
+   * that outlived its call (the caller already has its 502, the save already went ahead) must
+   * not go on writing.
+   */
+  deadline?: number,
 ): PluginCapabilities {
   const granted = new Set<string>(invocation.capabilities);
+  const expired = () => deadline !== undefined && Date.now() > deadline;
+  const live =
+    (fn: Fn): Fn =>
+    (...args) => {
+      if (expired()) throw new Error('capability_denied: the call this plugin was serving is over');
+      return fn(...args);
+    };
   const gated: Record<string, Record<string, Fn>> = {};
 
   const deny = (
@@ -189,7 +327,7 @@ export function gateCapabilities(
     capability,
     method,
     reason,
-    hook: invocation.hook,
+    ...('hook' in invocation ? { hook: invocation.hook } : { operation: invocation.operation }),
     ...(invocation.scope
       ? { spaceId: invocation.scope.spaceId, environmentId: invocation.scope.environmentId }
       : {}),
@@ -197,7 +335,7 @@ export function gateCapabilities(
   });
   const refuse = async (denial: PluginCapabilityDenial): Promise<never> => {
     // A dry run is refused the same way but leaves no trace: reporting is a write.
-    if (!invocation.dryRun) {
+    if (!('dryRun' in invocation && invocation.dryRun)) {
       try {
         await onDenied(denial);
       } catch {
@@ -231,7 +369,7 @@ export function gateCapabilities(
         bound = (...args) => (provided as Fn).apply(owner, args);
       }
       const ns = gated[namespace] ?? {};
-      ns[name] = bound;
+      ns[name] = live(bound);
       gated[namespace] = ns;
     }
   }

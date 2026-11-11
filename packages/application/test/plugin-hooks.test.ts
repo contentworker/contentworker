@@ -484,6 +484,17 @@ describe('reaching the network', () => {
     expect(f.calls[0]?.options.timeoutMs).toBeGreaterThan(0);
   });
 
+  it('never lets a fetch outlive the hook that made it', async () => {
+    // A hook's budget is 2 s; a fetch may take 5 s on its own, so it is capped at what is left.
+    const f = fetcher();
+    await (await netCaps({}, { fetcher: f })).network?.fetch('https://api.example.com/a');
+    expect(f.calls[0]?.options.timeoutMs).toBe(2_000);
+    await (await netCaps({ id: 'com.example.two' }, { fetcher: f, timeoutMs: 500 })).network?.fetch(
+      'https://api.example.com/b',
+    );
+    expect(f.calls[1]?.options.timeoutMs).toBe(500);
+  });
+
   it('offers reads only', async () => {
     const caps = await netCaps({}, { fetcher: fetcher() });
     // A POST to a third party is a side effect on someone else's system, and a

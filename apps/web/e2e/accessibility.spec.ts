@@ -1142,6 +1142,42 @@ test('plugin capability checkboxes are named in a real browser', async ({ page }
   await expect(page.getByRole('checkbox', { name: 'Call external services' })).toBeEnabled();
 });
 
+test('the plugin consent screen lists operations with no accessibility violations', async ({
+  page,
+}, testInfo) => {
+  await openCms(page, '/settings/plugins');
+  await page.getByRole('button', { name: 'Install plugin' }).click();
+  await page.getByLabel(/manifest/i).setInputFiles({
+    name: 'plugin.json',
+    mimeType: 'application/json',
+    buffer: Buffer.from(
+      JSON.stringify({
+        manifestVersion: 2,
+        id: 'com.example.ops-a11y',
+        name: 'Operations probe',
+        version: '1.0.0',
+        capabilities: ['content:read'],
+        allowedHosts: [],
+        hooks: [],
+        entrypoint: 'index.js',
+        operations: [
+          {
+            name: 'audit',
+            title: 'Audit titles',
+            description: 'Lists entries with weak titles.',
+            requires: 'preview:read',
+            input: { type: 'object', properties: {} },
+          },
+        ],
+      }),
+    ),
+  });
+  const offered = page.getByRole('region', { name: 'It offers people and agents:' });
+  await expect(offered).toBeVisible();
+  await expect(offered.getByText('Audit titles')).toBeVisible();
+  await scan(page, testInfo);
+});
+
 test('the plugin settings sheet has no accessibility violations', async ({
   page,
   request,
