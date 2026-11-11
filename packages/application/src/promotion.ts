@@ -1,5 +1,4 @@
 import {
-  authorizeContent,
   authorizeEveryContentType,
   type BlockCatalog,
   type BlockConfig,
@@ -172,6 +171,9 @@ export async function requestPromotion(
     ]);
   }
 
+  // Entries are copied over the target's locked regions: that takes `lock` too.
+  authorizePromotedEntries(principal, entryIds.length);
+
   const types: ContentType[] = [];
   for (const apiId of typeIds) {
     const ct = await ctx.store.contentTypes.get(source, apiId);
@@ -263,16 +265,8 @@ export async function approvePromotion(
   if (found.requestedBy === actor) {
     throw new ForbiddenError('A promotion is approved by someone other than whoever requested it');
   }
-  // Content types and the block catalog change the schema: approving that takes what changing
-  // them directly would.
-  if (
-    (found.contentTypes.length > 0 || found.blocks) &&
-    !principal.scopes.includes(SCOPES.contentManage)
-  ) {
-    throw new ForbiddenError(
-      `Approving a promotion with content types or blocks takes ${SCOPES.contentManage}`,
-    );
-  }
+  assertMayDecideSchema(principal, found, 'Approving');
+  authorizePromotedEntries(principal, found.entries.length);
   // Both environments must still be there: a deleted target would collect rows no environment owns.
   await resolveEnvironment(ctx, spaceId, found.source);
   await resolveWritableEnvironment(ctx, spaceId, found.target);
@@ -297,6 +291,8 @@ export async function rejectPromotion(
 ): Promise<Promotion> {
   assertDecider(principal);
   const found = await getPromotion(ctx, principal, spaceId, id);
+  // Deciding either way is the same call: one who couldn't approve it can't reject it either.
+  assertMayDecideSchema(principal, found, 'Rejecting');
   const rejected = await ctx.store.promotions.transition(spaceId, id, 'awaiting_approval', {
     status: 'rejected',
     decidedBy: auditActor(principal),
@@ -345,6 +341,34 @@ function authorizePromotion(principal: Principal): void {
   authorizeEveryContentType(principal, PROMOTION_ACTIONS);
 }
 
+/**
+ * Applying copies each entry whole over the target's, locked regions of its blocks included (the
+ * copy can't judge regions: the apply may run for no one, from the stale sweep), so a promotion
+ * that carries entries also takes `lock` on every type, as editing a locked region does.
+ */
+function authorizePromotedEntries(principal: Principal, entries: number): void {
+  if (entries > 0) authorizeEveryContentType(principal, [...PROMOTION_ACTIONS, 'lock']);
+}
+
+/**
+ * Content types and the block catalog change the schema: deciding a promotion that carries them
+ * takes what changing them directly would.
+ */
+function assertMayDecideSchema(
+  principal: Principal,
+  promotion: Promotion,
+  verb: 'Approving' | 'Rejecting',
+): void {
+  if (
+    (promotion.contentTypes.length > 0 || promotion.blocks) &&
+    !principal.scopes.includes(SCOPES.contentManage)
+  ) {
+    throw new ForbiddenError(
+      `${verb} a promotion with content types or blocks takes ${SCOPES.contentManage}`,
+    );
+  }
+}
+
 /** The content types a promotion's record speaks for: those it pins, and its entries'. */
 function promotionTypes(promotion: Promotion): Set<string> {
   return new Set([
@@ -365,16 +389,6 @@ export function canReadPromotion(principal: Principal, promotion: Promotion): bo
   );
 }
 
-/** Enforces {@link canReadPromotion}, naming the first type (or hidden field) it can't read. */
-function authorizePromotionRead(principal: Principal, promotion: Promotion): void {
-  if (!principal.contentGrants) return;
-  for (const t of promotionTypes(promotion)) {
-    authorizeContent(principal, 'read', t);
-    const [hidden] = deniedFieldsFor(principal, t);
-    if (hidden) throw new ForbiddenError(`content:read:${t}.${hidden}`);
-  }
-}
-
 /** An audit row for a promotion's request, decision or outcome. */
 function auditRow(ctx: AppContext, promotion: Promotion, actor: string, action: string) {
   return {
@@ -390,7 +404,10 @@ function auditRow(ctx: AppContext, promotion: Promotion, actor: string, action: 
   };
 }
 
-/** A promotion, for a principal that may read it (`canReadPromotion`; 403 otherwise). */
+/**
+ * A promotion, for a principal that may read it (`canReadPromotion`). One it may not is not found,
+ * as the list leaves it out: a refusal would say it exists, and name the type or field.
+ */
 export async function getPromotion(
   ctx: AppContext,
   principal: Principal,
@@ -398,8 +415,7 @@ export async function getPromotion(
   id: string,
 ): Promise<Promotion> {
   const found = await ctx.store.promotions.get(spaceId, id);
-  if (!found) throw new NotFoundError('Promotion', id);
-  authorizePromotionRead(principal, found);
+  if (!found || !canReadPromotion(principal, found)) throw new NotFoundError('Promotion', id);
   return found;
 }
 

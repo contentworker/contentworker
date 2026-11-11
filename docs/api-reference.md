@@ -235,7 +235,9 @@ check first.
    per-type grants, or one full `*` grant), as merging entries does: it copies entries whole,
    hidden and read-only fields included, with content types and blocks. Anything narrower is a
    `403` (`content:read+write+publish:* (on every content type, every field)`) before anything is
-   written. An entry that a workflow
+   written. One that carries entries also takes `lock` on every type, since the copy replaces the
+   target's locked regions (`content:read+write+publish+lock:* …`): the Manager preset qualifies,
+   the Editor preset doesn't. An entry that a workflow
    gates in the target (`gatesPublish`) goes as a draft, and the reasons say which workflow: that
    workflow's run publishes it there, not the promotion. A gate added after the request leaves that
    entry a draft too (`result.gated`) rather than failing the rest.
@@ -276,9 +278,10 @@ check first.
    rejected by a person, or the deployment admin token, other than whoever requested it:
    - an API key, or an application acting for a person (an MCP or OAuth client, an agent), can
      request a promotion but not decide one;
-   - approving one with content types or blocks also takes `content:manage`;
-   - deciding takes the same role on every content type as requesting, `403` with the same message
-     otherwise, and the promotion stays `awaiting_approval`;
+   - approving or rejecting one with content types or blocks also takes `content:manage`;
+   - deciding takes the same role on every content type as requesting (approving one with entries,
+     `lock` too), `403` with the same message otherwise, and the promotion stays
+     `awaiting_approval`;
    - both environments must still exist when it's approved.
 
    The approver's grants are the ones in force when it applies: the apply runs in the approval's
@@ -289,8 +292,8 @@ check first.
 
    Reading one (`GET …/promotions`, `GET …/promotions/:id`, `promotion_list`, `promotion_get`)
    takes `read` on every content type it names (its content types and its entries'), with no
-   field hidden: its risk reasons describe what it copies. The list leaves out the others; a get
-   answers `403` (`content:read:<type>`, or `content:read:<type>.<field>` for a hidden field).
+   field hidden: its risk reasons describe what it copies. The list leaves out the others, and a
+   get answers `404` for them, as for a promotion that doesn't exist.
 
    Approving moves it to `applying` with a compare-and-set, so it applies exactly once. The
    request, the decision and the outcome are each written to the audit log.

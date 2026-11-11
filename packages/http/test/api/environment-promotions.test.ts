@@ -267,8 +267,23 @@ describe('promotions over HTTP', () => {
     const none = await app.request('/spaces/s1/promotions', { headers: admin });
     expect(((await none.json()) as { items: P[] }).items).toEqual([]);
 
+    // Entries go over the target's locked regions: without `lock`, refused too.
+    const noLock = await request(
+      await keyFor([{ contentTypeApiId: '*', actions: ['read', 'write', 'publish'] }]),
+    );
+    expect(noLock.status).toBe(403);
+    expect(await noLock.json()).toMatchObject({
+      error: {
+        code: 'forbidden',
+        message:
+          'Missing required scope "content:read+write+publish+lock:* (on every content type, every field)"',
+      },
+    });
+
     // A role holding every type alike may request one.
-    const wide = await keyFor([{ contentTypeApiId: '*', actions: ['read', 'write', 'publish'] }]);
+    const wide = await keyFor([
+      { contentTypeApiId: '*', actions: ['read', 'write', 'publish', 'lock'] },
+    ]);
     const requested = await request(wide);
     expect(requested.status).toBe(201);
     const { id } = (await requested.json()) as P;
@@ -279,11 +294,9 @@ describe('promotions over HTTP', () => {
     ]);
     const listed = await app.request('/spaces/s1/promotions', { headers: hidden });
     expect(((await listed.json()) as { items: P[] }).items).toEqual([]);
+    // Not found, as the list leaves it out.
     const got = await app.request(`/spaces/s1/promotions/${id}`, { headers: hidden });
-    expect(got.status).toBe(403);
-    expect(await got.json()).toMatchObject({
-      error: { code: 'forbidden', message: 'Missing required scope "content:read:note.title"' },
-    });
+    expect(got.status).toBe(404);
     const seen = await app.request('/spaces/s1/promotions', { headers: wide });
     expect(((await seen.json()) as { items: P[] }).items.map((p) => p.id)).toEqual([id]);
   });

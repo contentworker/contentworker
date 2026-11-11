@@ -313,8 +313,8 @@ Found while building and reviewing M1 and M2. None blocks a release.
 - [ ] **Re-check a running job's starter.** Record who started a bulk job and check their access
   again before each chunk, so a trash or purge job stops when its starter loses access.
 - [x] **Audit promotion and cross-space clone.** Requesting, approving and rejecting a promotion
-  take every content type alike with no field rules, as merge does (the approver's grants are the
-  ones in force at apply); a role limited per type sees only the promotions whose types it can
+  take every content type alike with no field rules, as merge does, and `lock` to copy entries
+  (the approver's grants are the ones in force at apply); a role limited per type sees only the promotions whose types it can
   read in full; a clone checks its target space in the use-case.
 - [x] **Delegated bearers and people.** Refuse invitations and member role changes from personal
   access tokens and OAuth tokens, so a short-lived token can't create a lasting admin.

@@ -509,14 +509,15 @@ Semantics:
   authorized as a whole (a clone's own export and import, a job's prepare chunk). Anything else
   fails closed, so a new surface can't reach one without the check. The use-cases also check
   `content:manage` in a clone's target space and `space:admin` for a space export import's
-  `addLocales`. Promotions are held to the same rule with `read`, `write` and `publish`, when
+  `addLocales`. Promotions are held to the same rule with `read`, `write` and `publish` (and
+  `lock` when they carry entries, which are copied over the target's locked regions), when
   requested and again when approved or rejected (`requestPromotion`, `approvePromotion`,
   `rejectPromotion`); the approver's grants are the ones in force when it applies. A promotion is
   shown (`getPromotion`, `listPromotions`) only to a role that can read every content type it
-  names with no field hidden (`canReadPromotion`). A cross-space clone needs `content:manage` in
-  both spaces, and a principal is resolved for one space (its grants are that space's), so only a
-  deployment-wide principal such as the admin token, which carries no grants, can clone across
-  spaces.
+  names with no field hidden (`canReadPromotion`; any other is not found). A cross-space clone
+  needs `content:manage` in both spaces, and a principal is resolved for one space (its grants are
+  that space's), so only a deployment-wide principal such as the admin token, which carries no
+  grants, can clone across spaces.
   `GET …/compare` (`environments_compare`) lists only the content types the role can read and
   their entries.
 - **Release note.** A custom role with `content:manage` and a `*` grant of `read` and `write` but

@@ -450,7 +450,7 @@ describe('promotions over MCP', () => {
     ]);
     const noteReader = person('rita', [{ contentTypeApiId: 'note', actions: ['read'] }]);
     const wide = person('wendy', [
-      { contentTypeApiId: '*', actions: ['read', 'write', 'publish'] },
+      { contentTypeApiId: '*', actions: ['read', 'write', 'publish', 'lock'] },
     ]);
     const everyType =
       'Missing required scope "content:read+write+publish:* (on every content type, every field)"';
@@ -484,7 +484,8 @@ describe('promotions over MCP', () => {
       name: 'promotion_get',
       arguments: { space: 'space-1', id: requested.id },
     });
-    expect(text(hidden)).toBe('Missing required scope "content:read:page"');
+    // Not found, as the list leaves it out.
+    expect(text(hidden)).toBe(`Promotion "${requested.id}" was not found`);
 
     const wendy = await connect(deps, wide);
     const approved = JSON.parse(

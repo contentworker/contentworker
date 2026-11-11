@@ -1,6 +1,7 @@
 import {
   type ContentTypeGrant,
   ForbiddenError,
+  NotFoundError,
   type Principal,
   SCOPES,
 } from '@contentworker/domain';
@@ -57,8 +58,19 @@ const readOnlyBody = person('rob', [
 const hiddenBody = person('hal', [
   { contentTypeApiId: '*', actions: ['read', 'write', 'publish'], deniedFields: ['body'] },
 ]);
-/** One full `*` grant: every type alike, no field rules. */
-const wide = person('wendy', [{ contentTypeApiId: '*', actions: ['read', 'write', 'publish'] }]);
+/** One full `*` grant: every type alike, locking too, no field rules (the Manager preset's). */
+const wide = person('wendy', [
+  { contentTypeApiId: '*', actions: ['read', 'write', 'publish', 'lock'] },
+]);
+/** Every type alike, but no `lock` (the Editor preset's grant, without `content:manage`). */
+const editor: Principal = {
+  ...person('eddie', [{ contentTypeApiId: '*', actions: ['read', 'write', 'publish'] }]),
+  scopes: [SCOPES.contentWrite, SCOPES.contentPublish],
+};
+const noLock = person('nora', [{ contentTypeApiId: '*', actions: ['read', 'write', 'publish'] }]);
+const withLock = new ForbiddenError(
+  'content:read+write+publish+lock:* (on every content type, every field)',
+).message;
 /** Reads `note` only. */
 const noteReader = person('rita', [{ contentTypeApiId: 'note', actions: ['read'] }]);
 
@@ -185,6 +197,44 @@ describe('approving a promotion', () => {
     expect((await approvePromotion(ctx, grace, spaceId, second.p.id)).status).toBe('completed');
   });
 
+  it("takes `lock` to copy entries over the target's locked regions, not to decide otherwise", async () => {
+    // Requesting with entries: refused before anything is written.
+    const id = await draft('note', 'Locked');
+    await expect(
+      requestPromotion(ctx, noLock, spaceId, { source: 'staging', target: 'qa', entries: [id] }),
+    ).rejects.toThrow(withLock);
+    await nothingWritten();
+    // Approving one with entries: refused, left waiting. Rejecting it writes nothing: allowed.
+    const { p } = await waiting();
+    await expect(approvePromotion(ctx, editor, spaceId, p.id)).rejects.toThrow(withLock);
+    expect((await store.promotions.get(spaceId, p.id))?.status).toBe('awaiting_approval');
+    expect((await rejectPromotion(ctx, editor, spaceId, p.id)).status).toBe('rejected');
+    // A content type alone copies no entry: no `lock` needed.
+    const types = await requestPromotion(ctx, noLock, spaceId, {
+      source: 'staging',
+      target: 'qa',
+      contentTypes: ['note'],
+    });
+    expect(types.status).toBe('completed');
+  });
+
+  it('takes content:manage to reject, as to approve, one carrying content types', async () => {
+    const p = await requestPromotion(ctx, ada, spaceId, {
+      source: 'staging',
+      target: 'main',
+      contentTypes: ['page'],
+    });
+    expect(p.status).toBe('awaiting_approval');
+    await expect(rejectPromotion(ctx, editor, spaceId, p.id)).rejects.toThrow(
+      'Rejecting a promotion with content types or blocks takes content:manage',
+    );
+    await expect(approvePromotion(ctx, editor, spaceId, p.id)).rejects.toThrow(
+      'Approving a promotion with content types or blocks takes content:manage',
+    );
+    expect((await store.promotions.get(spaceId, p.id))?.status).toBe('awaiting_approval');
+    expect((await rejectPromotion(ctx, wide, spaceId, p.id)).status).toBe('rejected');
+  });
+
   it('still applies when its requester has lost access since: the approver answers for it', async () => {
     // Requested while unrestricted; the requester's role narrows afterwards. Nothing re-reads it:
     // the record names whoever asked (an API key only by its kind), and the approver, held to
@@ -215,8 +265,9 @@ describe('reading promotions', () => {
     const { notes, pages } = await both();
     expect((await listPromotions(ctx, noteReader, spaceId)).map((p) => p.id)).toEqual([notes.id]);
     expect((await getPromotion(ctx, noteReader, spaceId, notes.id)).id).toBe(notes.id);
-    await expect(getPromotion(ctx, noteReader, spaceId, pages.id)).rejects.toThrow(
-      new ForbiddenError('content:read:page').message,
+    // Not found, as the list leaves it out: a refusal would say it exists.
+    await expect(getPromotion(ctx, noteReader, spaceId, pages.id)).rejects.toBeInstanceOf(
+      NotFoundError,
     );
     expect(canReadPromotion(noteReader, pages)).toBe(false);
   });
@@ -224,8 +275,8 @@ describe('reading promotions', () => {
   it('hides every promotion naming a type whose fields the role may not all read', async () => {
     const { notes } = await both();
     expect(await listPromotions(ctx, hiddenBody, spaceId)).toEqual([]);
-    await expect(getPromotion(ctx, hiddenBody, spaceId, notes.id)).rejects.toThrow(
-      new ForbiddenError('content:read:note.body').message,
+    await expect(getPromotion(ctx, hiddenBody, spaceId, notes.id)).rejects.toBeInstanceOf(
+      NotFoundError,
     );
     // A read-only field is still read: that role sees them all.
     expect(await listPromotions(ctx, readOnlyBody, spaceId)).toHaveLength(2);
