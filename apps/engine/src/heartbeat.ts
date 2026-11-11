@@ -25,6 +25,7 @@ export const CRON_JOBS = {
   expiredZips: 'expired-zips',
   taxonomyRepair: 'taxonomy-repair',
   trashRetention: 'trash-retention',
+  stalePromotions: 'stale-promotions',
 } as const;
 
 const MINUTE = 60_000;
@@ -38,6 +39,7 @@ export const CRON_EVERY: Record<keyof typeof CRON_JOBS, number> = {
   expiredZips: HOUR,
   abandonedUploads: HOUR,
   trashRetention: HOUR,
+  stalePromotions: HOUR,
   reseal: DAY,
   taxonomyRepair: DAY,
   scheduledActions: MINUTE,

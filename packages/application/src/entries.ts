@@ -38,6 +38,7 @@ import { type BlobStore, type EntryRepo, TransactionConflictError } from '@conte
 import { assertBlockConfigAllows, type BlockRulesInForce } from './block-config';
 import { noteEntryChange } from './change-log';
 import { type AppContext, actorOf } from './context';
+import { hidingUnreadable, uniqueValueTaken } from './hidden-fields';
 import { runHook, runPureHook } from './hooks';
 import { assertExpectedVersion, unpublishEntryTx } from './publishing';
 import { versionBodyPrefix } from './version-archive';
@@ -109,6 +110,11 @@ export interface EntryWriteOptions {
    */
   readonly unwritable?: readonly string[];
   /**
+   * Those of them the role denies outright (`deniedFieldsFor`): the caller can't read them either,
+   * so a refusal counts the issues in them without naming them (`hideUnreadableIssues`).
+   */
+  readonly unreadable?: readonly string[];
+  /**
    * The `currentVersion` the caller read: an update made from a copy someone has since saved over
    * is refused (409) rather than replacing their version with one built on an older read. Absent,
    * the update saves whatever the entry is at, as it always has.
@@ -162,14 +168,16 @@ export async function createEntry(
     throw new ValidationError([{ field: 'id', message: ENTRY_ID_RULE }]);
   }
   const withDefaults = applyDefaults(contentType, input.fields, vctx.locales, vctx.defaultLocale);
-  const { fields } = await prepareFields(
-    ctx,
-    scope,
-    contentType,
-    options.copy ? vctx : asCreate(contentType, vctx),
-    { contentTypeApiId: input.contentTypeApiId, fields: withDefaults },
-    'save',
-    options.copy && !options.imported ? { kind: 'copy' } : { kind: 'create' },
+  const { fields } = await hidingUnreadable(options.unreadable, () =>
+    prepareFields(
+      ctx,
+      scope,
+      contentType,
+      options.copy ? vctx : asCreate(contentType, vctx),
+      { contentTypeApiId: input.contentTypeApiId, fields: withDefaults },
+      'save',
+      options.copy && !options.imported ? { kind: 'copy' } : { kind: 'create' },
+    ),
   );
 
   const id = input.id ?? ctx.ids.newId();
@@ -198,7 +206,9 @@ export async function createEntry(
   const claims = uniqueClaims(contentType, fields);
   // Claim and write together: the claim is the constraint, so a crash between
   // the two must not leave a value reserved by an entry that does not exist.
-  await writeNewEntry(ctx, scope, contentType, entry, version, claims);
+  await hidingUnreadable(options.unreadable, () =>
+    writeNewEntry(ctx, scope, contentType, entry, version, claims),
+  );
   noteEntryChange(ctx, { entry, contentType, before: {}, after: fields, locales: vctx.locales });
   return { entry, fields };
 }
@@ -390,7 +400,7 @@ export async function assertClaimsFree(
       .map((c) =>
         c.fieldApiId === SINGLETON_CLAIM_FIELD
           ? singletonTaken(singleton?.contentTypeApiId ?? '', c.entryId)
-          : `${c.fieldApiId} "${c.value}" is already used by entry ${c.entryId}`,
+          : uniqueValueTaken(c),
       )
       .join('; '),
     { conflicts },
@@ -447,23 +457,25 @@ export async function updateEntry(
   const contentType = await requireContentType(ctx, scope, found.entry.contentTypeApiId);
   const vctx = await loadValidationContext(ctx, scope);
   // The stored version is what a disabled field must keep, unless the whole entry is a copy.
-  return saveEntryDraft(
-    ctx,
-    scope,
-    found.entry,
-    contentType,
-    options.copy ? vctx : { ...vctx, previous: found.fields },
-    withUnwritable(found.fields, fields, options),
-    found.fields,
-    {
-      judgeBlocks: !options.copy || options.imported === true,
-      judgeRegions:
-        options.regionsUnless !== undefined &&
-        !(
-          options.regionsUnless !== null &&
-          canAccessContentType(options.regionsUnless, 'lock', found.entry.contentTypeApiId)
-        ),
-    },
+  return hidingUnreadable(options.unreadable, () =>
+    saveEntryDraft(
+      ctx,
+      scope,
+      found.entry,
+      contentType,
+      options.copy ? vctx : { ...vctx, previous: found.fields },
+      withUnwritable(found.fields, fields, options),
+      found.fields,
+      {
+        judgeBlocks: !options.copy || options.imported === true,
+        judgeRegions:
+          options.regionsUnless !== undefined &&
+          !(
+            options.regionsUnless !== null &&
+            canAccessContentType(options.regionsUnless, 'lock', found.entry.contentTypeApiId)
+          ),
+      },
+    ),
   );
 }
 
@@ -595,32 +607,36 @@ export async function validateEntry(
   ctx: AppContext,
   scope: Scope,
   input: ValidateEntryInput,
-  options: Pick<EntryWriteOptions, 'unwritable'> = {},
+  options: Pick<EntryWriteOptions, 'unwritable' | 'unreadable'> = {},
 ): Promise<EntryValidation> {
   if ('entryId' in input) {
     const found = await ctx.store.entries.get(scope, input.entryId);
     if (!found) throw new NotFoundError('Entry', input.entryId);
     const contentType = await requireContentType(ctx, scope, found.entry.contentTypeApiId);
     const vctx = await loadValidationContext(ctx, scope);
-    const { fields, skippedHooks } = await prepareFields(
-      ctx,
-      scope,
-      contentType,
-      { ...vctx, previous: found.fields },
-      {
-        contentTypeApiId: found.entry.contentTypeApiId,
-        entryId: input.entryId,
-        fields: withUnwritable(found.fields, input.fields, options),
-      },
-      'dry-run',
-      { kind: 'update', before: found.fields, locks: found.entry.blockLocks },
+    const { fields, skippedHooks } = await hidingUnreadable(options.unreadable, () =>
+      prepareFields(
+        ctx,
+        scope,
+        contentType,
+        { ...vctx, previous: found.fields },
+        {
+          contentTypeApiId: found.entry.contentTypeApiId,
+          entryId: input.entryId,
+          fields: withUnwritable(found.fields, input.fields, options),
+        },
+        'dry-run',
+        { kind: 'update', before: found.fields, locks: found.entry.blockLocks },
+      ),
     );
     // The domain's own refusal (an archived entry can't take a new version), at the point a save
     // meets it.
     saveDraft(found.entry, fields);
     const claims = uniqueClaims(contentType, fields);
     if (claims.length > 0) {
-      await assertClaimsFree(ctx.store.entries, scope, claims, input.entryId);
+      await hidingUnreadable(options.unreadable, () =>
+        assertClaimsFree(ctx.store.entries, scope, claims, input.entryId),
+      );
     }
     return { valid: true, fields, skippedHooks };
   }
@@ -628,17 +644,23 @@ export async function validateEntry(
   const contentType = await requireContentType(ctx, scope, input.contentTypeApiId);
   const vctx = await loadValidationContext(ctx, scope);
   const withDefaults = applyDefaults(contentType, input.fields, vctx.locales, vctx.defaultLocale);
-  const { fields, skippedHooks } = await prepareFields(
-    ctx,
-    scope,
-    contentType,
-    asCreate(contentType, vctx),
-    { contentTypeApiId: input.contentTypeApiId, fields: withDefaults },
-    'dry-run',
-    { kind: 'create' },
+  const { fields, skippedHooks } = await hidingUnreadable(options.unreadable, () =>
+    prepareFields(
+      ctx,
+      scope,
+      contentType,
+      asCreate(contentType, vctx),
+      { contentTypeApiId: input.contentTypeApiId, fields: withDefaults },
+      'dry-run',
+      { kind: 'create' },
+    ),
   );
   const claims = uniqueClaims(contentType, fields);
-  if (claims.length > 0) await assertClaimsFree(ctx.store.entries, scope, claims);
+  if (claims.length > 0) {
+    await hidingUnreadable(options.unreadable, () =>
+      assertClaimsFree(ctx.store.entries, scope, claims),
+    );
+  }
   return { valid: true, fields, skippedHooks };
 }
 

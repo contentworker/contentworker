@@ -30,6 +30,7 @@ import {
   removedVariants,
   SCOPES,
   type Scope,
+  SYSTEM_ACTOR,
   staleOverrideUses,
   ValidationError,
 } from '@contentworker/domain';
@@ -361,6 +362,66 @@ export async function listPromotions(
 }
 
 /**
+ * How long a promotion may stay `applying` before the sweep fails it. An apply runs inside the
+ * request that requested or approved it and moves the record on itself when it ends, either way;
+ * one still `applying` this long after has died partway (the Worker evicted, or the record's
+ * own write lost), and nothing else would ever move it. Far past any real apply (at most
+ * `MAX_PROMOTION_ENTRIES` entries, which take seconds), so the sweep never races a live one.
+ */
+export const PROMOTION_APPLY_TIMEOUT_MS = 60 * 60 * 1000;
+
+/** What `failStalePromotions` did: how many it failed. */
+export interface StalePromotionSweepResult {
+  readonly failed: number;
+}
+
+/**
+ * Fails each promotion left `applying` longer than `PROMOTION_APPLY_TIMEOUT_MS`, in every space:
+ * the cron's backstop for an apply that died before it could say how it ended. What it wrote
+ * before it stopped stays, as for any failed apply; the record says so and asks for a new
+ * request. The move is a compare-and-set out of `applying`, so an apply that finishes in the
+ * meantime keeps its own outcome and the sweep leaves it alone.
+ */
+export async function failStalePromotions(ctx: AppContext): Promise<StalePromotionSweepResult> {
+  const now = ctx.clock.now();
+  const before = now.getTime() - PROMOTION_APPLY_TIMEOUT_MS;
+  let failed = 0;
+  for (const space of await ctx.store.spaces.list()) {
+    // Oldest first: the stuck ones are the old ones, however many young ones are applying.
+    const applying = await ctx.store.promotions.list(space.spaceId, {
+      status: 'applying',
+      limit: 200,
+      oldestFirst: true,
+    });
+    for (const promotion of applying) {
+      // It started applying when it was approved, or when it was requested if it needed no one.
+      if (Date.parse(promotion.decidedAt ?? promotion.createdAt) > before) continue;
+      const moved = await ctx.store.promotions.transition(
+        promotion.spaceId,
+        promotion.id,
+        'applying',
+        {
+          status: 'failed',
+          error:
+            'The apply stopped before it finished and was failed after an hour; what it wrote ' +
+            'before it stopped stays. Compare the environments and request a new promotion',
+          completedAt: now.toISOString(),
+        },
+      );
+      // Moved on since it was listed: whatever moved it (the apply itself) has the last word.
+      if (!moved) continue;
+      // The sweep failed it, not whoever approved it.
+      await ctx.store.audit.append({
+        ...auditRow(ctx, moved, SYSTEM_ACTOR, 'promotion.failed'),
+        status: 500,
+      });
+      failed++;
+    }
+  }
+  return { failed };
+}
+
+/**
  * Applies a claimed (`applying`) promotion: content types first (entries are validated against
  * them), then each entry's pinned version, published when it was live in the source. Then checks
  * the target holds what was pinned. Any failure marks it `failed`, naming the cause; what was
@@ -395,6 +456,11 @@ async function applyPromotion(base: AppContext, promotion: Promotion): Promise<P
         completedAt: ctx.clock.now().toISOString(),
       },
     );
+    // Already moved on: the stale sweep failed it while this apply ran. That outcome stands and
+    // was audited once; answer the record as it is.
+    if (!done) {
+      return (await ctx.store.promotions.get(promotion.spaceId, promotion.id)) ?? promotion;
+    }
     await ctx.store.audit.append({
       ...auditRow(
         ctx,
@@ -538,7 +604,7 @@ async function applyPromotion(base: AppContext, promotion: Promotion): Promise<P
         ...(result.blocks ? { blocks: result.blocks } : {}),
       });
     });
-    return (await finish({ status: 'completed', result: done })) ?? promotion;
+    return await finish({ status: 'completed', result: done });
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
     await finish({ status: 'failed', result: { ...result, mismatched: [] }, error });

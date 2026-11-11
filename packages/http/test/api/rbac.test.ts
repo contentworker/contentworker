@@ -174,6 +174,171 @@ describe('granular RBAC over HTTP', () => {
     expect(again.fields.internalNotes).toEqual({ 'en-US': 'secret' });
   });
 
+  it('counts an issue in a field the writer may not read, never naming it', async () => {
+    // Saved without internalNotes; someone else's rule then makes it required.
+    const bare = await app.request(`${M}/entries`, {
+      method: 'POST',
+      headers: admin,
+      body: JSON.stringify({ contentTypeApiId: 'post', fields: { title: { 'en-US': 'Bare' } } }),
+    });
+    const { entry } = (await bare.json()) as { entry: { id: string } };
+    const tightened = await app.request(`${M}/content-types`, {
+      method: 'POST',
+      headers: admin,
+      body: JSON.stringify({
+        apiId: 'post',
+        name: 'post',
+        displayField: 'title',
+        fields: [symbolField('title', 0), { ...symbolField('internalNotes', 1), required: true }],
+      }),
+    });
+    expect([200, 201], await tightened.clone().text()).toContain(tightened.status);
+    await app.request(`${M}/content-types/post/published`, { method: 'POST', headers: admin });
+
+    const fields = { title: { 'en-US': 'Edited' } };
+    for (const [method, path, body] of [
+      ['PUT', `/entries/${entry.id}`, { fields }],
+      ['POST', '/entries/validate', { entryId: entry.id, fields }],
+      ['POST', '/entries', { contentTypeApiId: 'post', fields }],
+      ['POST', '/entries/validate', { contentTypeApiId: 'post', fields }],
+    ] as const) {
+      const res = await app.request(`${M}${path}`, {
+        method,
+        headers: editor,
+        body: JSON.stringify(body),
+      });
+      const text = await res.text();
+      expect(res.status, `${method} ${path}: ${text}`).toBe(422);
+      expect(JSON.parse(text).error.issues).toEqual([
+        expect.objectContaining({ field: '', code: 'hidden', hidden: 1 }),
+      ]);
+      expect(text).not.toMatch(/notes/i);
+    }
+    // The admin, who can read it, is told which field.
+    const named = await app.request(`${M}/entries/${entry.id}`, {
+      method: 'PUT',
+      headers: admin,
+      body: JSON.stringify({ fields }),
+    });
+    expect(named.status).toBe(422);
+    expect(await named.text()).toContain('internalNotes');
+  });
+
+  it('publishes for a role without naming a dangling link in a field it may not read', async () => {
+    const ghost = '01890000-0000-7000-8000-00000000dead';
+    expect(
+      (
+        await app.request(`${M}/content-types`, {
+          method: 'POST',
+          headers: admin,
+          body: JSON.stringify({
+            apiId: 'card',
+            name: 'Card',
+            displayField: 'title',
+            fields: [
+              symbolField('title', 0),
+              { ...symbolField('related', 1), type: 'Link', linkType: 'Entry' },
+            ],
+          }),
+        })
+      ).status,
+    ).toBe(201);
+    await app.request(`${M}/content-types/card/published`, { method: 'POST', headers: admin });
+    // Someone else linked an entry that isn't there; saves don't check links, publishing does.
+    const created = await app.request(`${M}/entries`, {
+      method: 'POST',
+      headers: admin,
+      body: JSON.stringify({
+        contentTypeApiId: 'card',
+        fields: {
+          title: { 'en-US': 'Card' },
+          related: { 'en-US': { id: ghost, linkType: 'Entry' } },
+        },
+      }),
+    });
+    expect(created.status, await created.clone().text()).toBe(201);
+    const { entry } = (await created.json()) as { entry: { id: string } };
+    const role = await app.request('/spaces/s1/roles', {
+      method: 'POST',
+      headers: admin,
+      body: JSON.stringify({
+        name: 'Card publisher',
+        scopes: ['content:write', 'content:publish', 'preview:read'],
+        contentGrants: [
+          { contentTypeApiId: 'card', actions: ['read', 'publish'], deniedFields: ['related'] },
+        ],
+      }),
+    });
+    const { id: roleId } = (await role.json()) as { id: string };
+    const key = await app.request('/spaces/s1/api-keys', {
+      method: 'POST',
+      headers: admin,
+      body: JSON.stringify({ kind: 'cma', roleId }),
+    });
+    const { token } = (await key.json()) as { token: string };
+    const publisher = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+
+    const res = await app.request(`${M}/entries/${entry.id}/published`, {
+      method: 'POST',
+      headers: publisher,
+    });
+    const text = await res.text();
+    expect(res.status, text).toBe(422);
+    expect(JSON.parse(text).error.issues).toEqual([
+      expect.objectContaining({ field: '', code: 'hidden', hidden: 1 }),
+    ]);
+    expect(text).not.toContain('related');
+    expect(text).not.toContain(ghost);
+    // The admin, who can read it, is told the field and its target.
+    const named = await app.request(`${M}/entries/${entry.id}/published`, {
+      method: 'POST',
+      headers: admin,
+    });
+    expect(named.status).toBe(422);
+    expect(await named.text()).toContain(ghost);
+  });
+
+  it('saves SEO for a role without naming a field it may not read', async () => {
+    const seoField = { ...symbolField('seo', 2), type: 'Seo' };
+    const define = (notesRequired: boolean) =>
+      app.request(`${M}/content-types`, {
+        method: 'POST',
+        headers: admin,
+        body: JSON.stringify({
+          apiId: 'post',
+          name: 'post',
+          displayField: 'title',
+          fields: [
+            symbolField('title', 0),
+            { ...symbolField('internalNotes', 1), required: notesRequired },
+            seoField,
+          ],
+        }),
+      });
+    expect([200, 201]).toContain((await define(false)).status);
+    await app.request(`${M}/content-types/post/published`, { method: 'POST', headers: admin });
+    const bare = await app.request(`${M}/entries`, {
+      method: 'POST',
+      headers: admin,
+      body: JSON.stringify({ contentTypeApiId: 'post', fields: { title: { 'en-US': 'Bare' } } }),
+    });
+    const { entry } = (await bare.json()) as { entry: { id: string } };
+    expect([200, 201]).toContain((await define(true)).status);
+    await app.request(`${M}/content-types/post/published`, { method: 'POST', headers: admin });
+
+    const res = await app.request(`${M}/entries/${entry.id}/seo`, {
+      method: 'PATCH',
+      headers: editor,
+      body: JSON.stringify({ title: 'Better' }),
+    });
+    const text = await res.text();
+    expect(res.status, text).toBe(422);
+    expect(JSON.parse(text).error.issues).toEqual([
+      expect.objectContaining({ field: '', code: 'hidden', hidden: 1 }),
+    ]);
+    expect(text).not.toMatch(/notes/i);
+  });
+
   it('duplicates for a writer without the fields it may not read; the copy keeps them', async () => {
     const res = await app.request(`${M}/entries/${postId}/duplicate`, {
       method: 'POST',

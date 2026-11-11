@@ -9,6 +9,7 @@ import {
 import {
   assertWritableFields,
   authorizeContent,
+  deniedFieldsFor,
   maskDeniedFields,
   SCOPES,
   seoFieldOf,
@@ -41,19 +42,19 @@ export function seoRoutes(deps: AuthDeps): Hono<AuthVars> {
       const { locale, ...patch } = await parseBody(c, entrySeoBody);
       const id = c.req.param('id');
       const principal = c.get('principal');
+      // A field it may not read is never named in a refusal, only counted.
+      let unreadable: readonly string[] = [];
       if (principal.contentGrants) {
         const { entry } = await getEntry(ctx, scopeOf(c), id);
         authorizeContent(principal, 'write', entry.contentTypeApiId);
         const field = seoFieldOf(await getContentType(ctx, scopeOf(c), entry.contentTypeApiId));
         if (field) assertWritableFields(principal, entry.contentTypeApiId, { [field.apiId]: {} });
+        unreadable = deniedFieldsFor(principal, entry.contentTypeApiId);
       }
-      const view = await setEntrySeo(
-        actingCtx(ctx, c),
-        scopeOf(c),
-        id,
-        patch,
-        locale !== undefined ? { locale } : {},
-      );
+      const view = await setEntrySeo(actingCtx(ctx, c), scopeOf(c), id, patch, {
+        ...(locale !== undefined ? { locale } : {}),
+        unreadable,
+      });
       // The save wrote the whole entry; the answer shows only the fields the caller may read.
       return c.json({
         ...view,

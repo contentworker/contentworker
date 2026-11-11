@@ -139,9 +139,20 @@ Everything below is built and tested on v2.
   7. **Adobe packages.** PDF Services first, then Express once beta access is confirmed and it
      accepts signed object-storage URLs.
 
-  Open before step 2: package operations in MCP without one tool per operation per install, a
-  deployment-level install for per-company credentials, and the 2 s sync cap against provider
-  token exchanges.
+  Decided (2026-11-10), shaping step 2 onward:
+  - **Operations on MCP** go through two generic tools, `app_operations_list` (each installed
+    package's operations with their input and output schemas) and `app_operation_invoke`
+    (package, operation, input), mirrored in REST as `POST …/apps/:package/operations/:op`. The
+    tool list stays fixed per deploy, and scope filtering and audit apply unchanged.
+  - **Shared credentials** live in deployment-level connections (provider, sealed credentials,
+    the spaces allowed to use them), created once by a deployment administrator. Code, grants and
+    enablement stay per space; a space binds a connection and still approves its own capabilities.
+  - **Time.** Hooks keep the 2 s cap, since they block a save, and a plugin's fetch timeout is
+    capped at the budget remaining (it can be 5 s today). The host runs token exchange and
+    refresh for connections in the engine and caches tokens; a plugin calls
+    `caps.connection.fetch` with auth injected and never sees the secret. Sync operations get
+    about 10 s; longer work is declared `async` and runs on a durable workflow that returns a
+    job id.
 - [ ] **Plugin copilot: plugins from a prompt.** Describe a rule in plain language ("refuse to
   publish an article without a hero image and alt text") and get a draft plugin (manifest, bundle,
   an explanation and suggested test cases) to test against real entries and install through the
@@ -169,9 +180,10 @@ Everything below is built and tested on v2.
      plugins too), the docs, and an eval set of about 20 prompts scored by the dry run, which
      decides whether the `flagship` tier writes good enough plugins to ship or ship as beta.
 
-  Open before step 2: whether enabling a generated plugin needs a signed-in person (safer, but the
-  first deliberate break from both surfaces), and whether to wait and launch it with apps as
-  packages.
+  Decided (2026-11-10): it ships on today's five hooks, without waiting for apps as packages.
+  Agents may draft, test and install a generated plugin disabled, but only a signed-in person
+  can enable one whose `source` is `generated`: a deliberate, documented exception to both
+  surfaces, because prompt-injected code must not go live without a human.
 
 ### Before the first customer
 

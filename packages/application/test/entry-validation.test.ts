@@ -12,9 +12,11 @@ import {
   type AppContext,
   createContentType,
   createEntry,
+  hideUnreadableIssues,
   publishContentType,
   SYSTEM_CALLER,
   trashEntry,
+  updateContentType,
   updateEntry,
   validateEntry,
 } from '../src/index';
@@ -247,5 +249,149 @@ describe('entry:beforeSave on a dry run', () => {
     await expect(validateEntry(ctx, scope, article('Hello'))).rejects.toBeInstanceOf(
       HookRejectedError,
     );
+  });
+});
+
+describe('a refusal in a field the caller can’t read', () => {
+  beforeEach(() => seed());
+
+  /** An article saved without `notes`, which someone else's rule then makes required. */
+  const withRequiredNotes = async () => {
+    const def = (await store.contentTypes.get(scope, 'article'))?.fields ?? [];
+    const notes = {
+      apiId: 'notes',
+      name: 'Notes',
+      type: 'Symbol',
+      localized: false,
+      position: 3,
+    } as (typeof def)[number];
+    await updateContentType(ctx, SYSTEM_CALLER, scope, 'article', {
+      fields: [...def, { ...notes, required: false }],
+    });
+    await publishContentType(ctx, scope, 'article');
+    const { entry } = await createEntry(ctx, scope, article('Stored'));
+    await updateContentType(ctx, SYSTEM_CALLER, scope, 'article', {
+      fields: [...def, { ...notes, required: true }],
+    });
+    await publishContentType(ctx, scope, 'article');
+    return entry.id;
+  };
+  const restricted = { unwritable: ['notes'], unreadable: ['notes'] };
+  const refusal = (p: Promise<unknown>) =>
+    p.then(
+      () => null,
+      (err: unknown) => err,
+    );
+
+  it.each([
+    [
+      'an update',
+      (id: string) => updateEntry(ctx, scope, id, article('Edited').fields, restricted),
+    ],
+    [
+      'its dry run',
+      (id: string) => validateEntry(ctx, scope, { entryId: id, ...article('Edited') }, restricted),
+    ],
+    ['a create', () => createEntry(ctx, scope, article('New'), restricted)],
+    ['a create’s dry run', () => validateEntry(ctx, scope, article('New'), restricted)],
+  ] as const)('is counted in %s, never named', async (_name, run) => {
+    const id = await withRequiredNotes();
+    const err = await refusal(run(id));
+    expect(err).toBeInstanceOf(ValidationError);
+    const issues = (err as ValidationError).issues;
+    expect(issues).toEqual([
+      {
+        field: '',
+        code: 'hidden',
+        hidden: 1,
+        message: '1 field you can’t read isn’t valid; someone who can read it has to fix it first',
+      },
+    ]);
+    expect(JSON.stringify(issues)).not.toContain('notes');
+    expect(issues.some((i) => 'block' in i)).toBe(false);
+  });
+
+  it('still names the issues in fields it can read, beside the count', async () => {
+    const id = await withRequiredNotes();
+    const err = await refusal(updateEntry(ctx, scope, id, {}, restricted));
+    const issues = (err as ValidationError).issues;
+    expect(issues.map((i) => i.field)).toEqual(['title', '']);
+    expect(JSON.stringify(issues)).not.toContain('notes');
+  });
+
+  it('is named to a caller who can read the field', async () => {
+    const id = await withRequiredNotes();
+    const err = await refusal(updateEntry(ctx, scope, id, article('Edited').fields));
+    expect((err as ValidationError).issues).toEqual([expect.objectContaining({ field: 'notes' })]);
+  });
+});
+
+describe('a unique value taken in a field the caller can’t read', () => {
+  beforeEach(() => seed());
+
+  /** `code` is unique and filled by default, so every create but the first collides on it. */
+  const withDefaultCode = async () => {
+    const def = (await store.contentTypes.get(scope, 'article'))?.fields ?? [];
+    await updateContentType(ctx, SYSTEM_CALLER, scope, 'article', {
+      fields: [
+        ...def,
+        {
+          apiId: 'code',
+          name: 'Code',
+          type: 'Symbol',
+          localized: false,
+          required: false,
+          unique: true,
+          defaultValue: 'X-1',
+          position: 3,
+        } as (typeof def)[number],
+      ],
+    });
+    await publishContentType(ctx, scope, 'article');
+    return (await createEntry(ctx, scope, article('First'))).entry.id;
+  };
+  const restricted = { unwritable: ['code'], unreadable: ['code'] };
+  const refusal = (p: Promise<unknown>) =>
+    p.then(
+      () => null,
+      (err: unknown) => err,
+    );
+
+  it.each([
+    ['a create', () => createEntry(ctx, scope, article('Second'), restricted)],
+    ['a create’s dry run', () => validateEntry(ctx, scope, article('Second'), restricted)],
+  ] as const)(
+    'is counted in %s, without the field, the value or the other entry',
+    async (_n, run) => {
+      const first = await withDefaultCode();
+      const err = await refusal(run());
+      expect(err).toBeInstanceOf(ConflictError);
+      const text = `${(err as Error).message} ${JSON.stringify((err as ConflictError).details)}`;
+      expect(text).toContain('you can’t read');
+      expect(text).not.toContain('code');
+      expect(text).not.toContain('X-1');
+      expect(text).not.toContain(first);
+      expect((err as ConflictError).details).toEqual({ conflicts: [], hidden: 1 });
+    },
+  );
+
+  it('is named to a caller who can read it', async () => {
+    const first = await withDefaultCode();
+    const err = await refusal(createEntry(ctx, scope, article('Second')));
+    expect((err as Error).message).toBe(`code "X-1" is already used by entry ${first}`);
+  });
+
+  it('keeps naming the conflicts in fields it can read, beside the count', () => {
+    const err = new ConflictError('two', {
+      conflicts: [
+        { fieldApiId: 'slug', locale: 'en-US', value: 'home', entryId: 'e9' },
+        { fieldApiId: 'code', locale: 'en-US', value: 'X-1', entryId: 'e9' },
+      ],
+    });
+    const hidden = hideUnreadableIssues(err, ['code']) as ConflictError;
+    expect(hidden.message).toMatch(/^slug "home" is already used by entry e9; A value in 1 field/);
+    expect(JSON.stringify(hidden.details)).not.toContain('X-1');
+    // Nothing to hide: the same error.
+    expect(hideUnreadableIssues(err, ['body'])).toBe(err);
   });
 });
