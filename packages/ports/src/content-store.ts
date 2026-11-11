@@ -1421,10 +1421,14 @@ export type PromotionPatch = Partial<
 export interface PromotionRepo {
   create(promotion: Promotion): Promise<void>;
   get(spaceId: string, id: string): Promise<Promotion | null>;
-  /** Newest first; optionally only one status. */
+  /** Newest first (oldest first with `oldestFirst`); optionally only one status. */
   list(
     spaceId: string,
-    opts?: { readonly status?: PromotionStatus; readonly limit?: number },
+    opts?: {
+      readonly status?: PromotionStatus;
+      readonly limit?: number;
+      readonly oldestFirst?: boolean;
+    },
   ): Promise<Promotion[]>;
   /**
    * Moves a promotion out of `from`, applying `patch`: a compare-and-set, so exactly one caller

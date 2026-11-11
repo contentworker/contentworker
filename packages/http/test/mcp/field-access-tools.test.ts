@@ -9,6 +9,7 @@ import {
   getEntry,
   publishContentType,
   SYSTEM_CALLER,
+  updateContentType,
 } from '@contentworker/application';
 import { type FieldDefinition, type Principal, SCOPES } from '@contentworker/domain';
 import {
@@ -139,6 +140,104 @@ describe('a restricted writer over MCP', () => {
       internalNotes: { 'en-US': 'secret' },
       price: { 'en-US': 100 },
     });
+  });
+
+  it('counts an issue in a field it may not read, never naming it', async () => {
+    const { ctx, call } = await setup();
+    // Saved without internalNotes; someone else's rule then makes it required.
+    const { entry } = await createEntry(ctx, scope, {
+      contentTypeApiId: 'listing',
+      fields: { title: { 'en-US': 'Bare' }, price: { 'en-US': 5 } },
+    });
+    const type = await ctx.store.contentTypes.get(scope, 'listing');
+    await updateContentType(ctx, SYSTEM_CALLER, scope, 'listing', {
+      fields: (type?.fields ?? []).map((f) =>
+        f.apiId === 'internalNotes' ? { ...f, required: true } : f,
+      ),
+    });
+    await publishContentType(ctx, scope, 'listing');
+    const edit = { title: { 'en-US': 'Edited' } };
+    for (const [tool, args] of [
+      ['entries_update', { id: entry.id, fields: edit }],
+      ['entries_validate', { id: entry.id, fields: edit }],
+      // A create can't send price (read-only, required) either: that issue is named, beside the count.
+      ['entries_create', { contentType: 'listing', fields: edit }],
+      ['entries_validate', { contentType: 'listing', fields: edit }],
+    ] as const) {
+      const res = await call(tool, args);
+      expect(res.isError, `${tool}: ${res.text}`).toBe(true);
+      expect(res.text).toContain('can’t read');
+      expect(res.text).not.toMatch(/notes/i);
+    }
+    expect((await getEntry(ctx, scope, entry.id)).entry.currentVersion).toBe(1);
+  });
+
+  it('sets SEO without naming a field it may not read', async () => {
+    const { ctx, call } = await setup();
+    const { entry } = await createEntry(ctx, scope, {
+      contentTypeApiId: 'listing',
+      fields: { title: { 'en-US': 'Bare' }, price: { 'en-US': 5 } },
+    });
+    const type = await ctx.store.contentTypes.get(scope, 'listing');
+    await updateContentType(ctx, SYSTEM_CALLER, scope, 'listing', {
+      fields: [
+        ...(type?.fields ?? []).map((f) =>
+          f.apiId === 'internalNotes' ? { ...f, required: true } : f,
+        ),
+        {
+          apiId: 'seo',
+          name: 'SEO',
+          type: 'Seo',
+          localized: false,
+          required: false,
+          position: 3,
+        } as FieldDefinition,
+      ],
+    });
+    await publishContentType(ctx, scope, 'listing');
+    const res = await call('entries_set_seo', { id: entry.id, title: 'Better' });
+    expect(res.isError, res.text).toBe(true);
+    expect(res.text).toContain('can’t read');
+    expect(res.text).not.toMatch(/notes/i);
+  });
+
+  it('publishes without naming a dangling link in a field it may not read', async () => {
+    const ghost = '01890000-0000-7000-8000-00000000dead';
+    const publisher: Principal = {
+      ...writer,
+      scopes: [SCOPES.previewRead, SCOPES.contentWrite, SCOPES.contentPublish],
+      contentGrants: [
+        { contentTypeApiId: 'listing', actions: ['read', 'publish'], deniedFields: ['related'] },
+      ],
+    };
+    const { ctx, call } = await setup(publisher);
+    const type = await ctx.store.contentTypes.get(scope, 'listing');
+    await updateContentType(ctx, SYSTEM_CALLER, scope, 'listing', {
+      fields: [
+        ...(type?.fields ?? []),
+        {
+          ...({ apiId: 'related', name: 'Related', localized: false, required: false } as const),
+          type: 'Link',
+          linkType: 'Entry',
+          position: 3,
+        } as FieldDefinition,
+      ],
+    });
+    await publishContentType(ctx, scope, 'listing');
+    // Someone else linked an entry that isn't there; saves don't check links, publishing does.
+    const { entry } = await createEntry(ctx, scope, {
+      contentTypeApiId: 'listing',
+      fields: {
+        title: { 'en-US': 'Linked' },
+        price: { 'en-US': 5 },
+        related: { 'en-US': { id: ghost, linkType: 'Entry' } },
+      },
+    });
+    const res = await call('entries_publish', { id: entry.id });
+    expect(res.isError, res.text).toBe(true);
+    expect(res.text).toContain('can’t read');
+    expect(res.text).not.toContain('related');
+    expect(res.text).not.toContain(ghost);
   });
 
   it('still refuses a write to a field it may not write', async () => {

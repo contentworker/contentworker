@@ -297,9 +297,11 @@ export function buildServer(
     id: string,
     action: ContentAction | readonly ContentAction[],
   ) => {
-    if (!principal.contentGrants) return;
+    if (!principal.contentGrants) return undefined;
     const entry = await getPreviewEntry(ctx, s, id);
     authorizeContent(principal, action, entry.contentType);
+    // The type it authorized, as the HTTP API's guardEntry answers it.
+    return entry.contentType;
   };
   // Trashing asks for more than one action, and for `unpublish` too when the entry is live.
   const guardTrash = async (s: Scope, id: string) => {

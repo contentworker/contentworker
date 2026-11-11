@@ -12,6 +12,7 @@ import {
 import {
   assertWritableFields,
   authorizeContent,
+  deniedFieldsFor,
   ENTRY_OPERATION_ACTIONS,
   maskDeniedFields,
   SCOPES,
@@ -146,11 +147,13 @@ export function trashRoutes(deps: AuthDeps): Hono<AuthVars> {
       const body = await parseBody(c, updateEntryBody);
       const principal = c.get('principal');
       let unwritable: readonly string[] = [];
+      let unreadable: readonly string[] = [];
       if (principal.contentGrants) {
         const { entry } = await getEntry(ctx, scopeOf(c), c.req.param('id'));
         authorizeContent(principal, 'write', entry.contentTypeApiId);
         assertWritableFields(principal, entry.contentTypeApiId, body.fields ?? {});
         unwritable = unwritableFieldsFor(principal, entry.contentTypeApiId);
+        unreadable = deniedFieldsFor(principal, entry.contentTypeApiId);
       }
       const saved = await updateEntry(
         actingCtx(ctx, c),
@@ -159,10 +162,12 @@ export function trashRoutes(deps: AuthDeps): Hono<AuthVars> {
         body.fields,
         {
           unwritable,
+          unreadable,
           ...(body.expectedVersion !== undefined ? { expectedVersion: body.expectedVersion } : {}),
         },
       );
-      // The save kept the fields this writer may not write; the ones it may not read stay hidden.
+      // The save kept the fields this writer may not write; the ones it may not read stay hidden,
+      // from the answer and from a refusal's issues alike.
       return c.json({
         ...saved,
         fields: maskDeniedFields(principal, saved.entry.contentTypeApiId, saved.fields),

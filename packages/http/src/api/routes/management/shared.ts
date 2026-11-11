@@ -121,9 +121,11 @@ export function entryAccess(ctx: AppContext) {
     action: ContentAction | readonly ContentAction[],
   ) => {
     const principal = c.get('principal');
-    if (!principal.contentGrants) return;
+    if (!principal.contentGrants) return undefined;
     const { entry } = await getEntry(ctx, scopeOf(c), id);
     authorizeContent(principal, action, entry.contentTypeApiId);
+    // The type it authorized, for a caller that masks or hides the role's denied fields of it.
+    return entry.contentTypeApiId;
   };
   // Trashing asks for more than one action, and for `unpublish` too when the entry is live.
   const guardTrash = async (c: Context<AuthVars>, id: string) => {

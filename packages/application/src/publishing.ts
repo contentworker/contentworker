@@ -15,6 +15,7 @@ import {
 } from '@contentworker/domain';
 import type { ContentStoreTx, EntryWithFields, PublishedEntry } from '@contentworker/ports';
 import { type AppContext, actorOf } from './context';
+import { hidingUnreadable } from './hidden-fields';
 import { runHook } from './hooks';
 import {
   loadPublishGuard,
@@ -40,6 +41,11 @@ export interface PublishOptions extends ExpectedVersion {
    * snapshot import) can mint one (`publish-gate.ts`); a value from request input is ignored.
    */
   readonly grant?: PublishGrant;
+  /**
+   * Top-level fields the caller's role denies (`deniedFieldsFor`): a refusal counts the issues in
+   * them (a link someone else left dangling) without naming the field or its target.
+   */
+  readonly unreadable?: readonly string[];
 }
 
 /** Refuses with `ConflictError` (409) when `entry` is no longer at the version the caller saw. */
@@ -441,7 +447,9 @@ export async function publishEntry(
   id: string,
   opts: PublishOptions = {},
 ): Promise<Entry> {
-  return ctx.store.withTransaction((tx) => publishEntryTx(ctx, tx, scope, id, opts));
+  return hidingUnreadable(opts.unreadable, () =>
+    ctx.store.withTransaction((tx) => publishEntryTx(ctx, tx, scope, id, opts)),
+  );
 }
 
 /** Withdraws an entry's published version and removes it from the read model. */

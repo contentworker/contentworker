@@ -4950,7 +4950,7 @@ function makePromotionRepo(x: Exec): PromotionRepo {
         .select()
         .from(p)
         .where(and(eq(p.spaceId, spaceId), opts.status ? eq(p.status, opts.status) : undefined))
-        .orderBy(desc(p.createdAt))
+        .orderBy(opts.oldestFirst ? asc(p.createdAt) : desc(p.createdAt))
         .limit(Math.min(opts.limit ?? 50, 200));
       return rows.map(toPromotion);
     },

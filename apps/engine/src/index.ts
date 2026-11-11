@@ -16,6 +16,7 @@ import {
   createHasher,
   deliverWebhookRequest,
   drainOutbox,
+  failStalePromotions,
   pruneEventHistory,
   redeliverWebhook,
   repairAllTaxonomies,
@@ -582,6 +583,20 @@ export default {
             }
           },
           (err) => console.error('trash retention sweep failed', redactCredentials(err)),
+        );
+        // Promotions whose apply died partway (an eviction mid-request), still `applying` an hour
+        // on: failed, so the record says how it ended. A compare-and-set, so a live apply wins.
+        await sweep(
+          tick,
+          CRON_JOBS.stalePromotions,
+          async () => {
+            const swept = await failStalePromotions(wired.ctx);
+            if (swept.failed > 0) {
+              console.log(JSON.stringify({ msg: 'stale promotions failed', ...swept }));
+              metrics.count('contentworker_stale_promotions_failed_total', swept.failed);
+            }
+          },
+          (err) => console.error('stale promotion sweep failed', redactCredentials(err)),
         );
         // Drafts whose presigned upload never landed, a day on (bounded per tick).
         await sweep(

@@ -523,6 +523,18 @@ api signed PUT completed ───────┴→ contentworker-asset-events 
   the ones behind them. Once an environment's expired trash has been read to its end, the cursor
   clears and the next tick retries from the oldest. The engine logs `expired trash swept` and
   counts `contentworker_trash_purged_total{outcome}` (`purged`, `refused`).
+- **Stale promotions.** A promotion's apply runs inside the request that requested or approved
+  it and moves the record out of `applying` itself, either way; one that dies partway (the
+  Worker evicted) can't. On the top-of-hour tick the engine runs `failStalePromotions`
+  (`packages/application/src/promotion.ts`, heartbeat job `stale-promotions`): every space's
+  promotions still `applying`, oldest first (`PromotionRepo.list` with `oldestFirst`, at most 200 a
+  space a tick, so young ones never crowd out the stuck), that started
+  `PROMOTION_APPLY_TIMEOUT_MS` (1 h) ago or more (`decided_at`, or `created_at` when no approval
+  was needed) are moved to `failed` with an error and an audit row (`promotion.failed`, actor
+  `system`), through `PromotionRepo.transition`'s compare-and-set, so an apply that finishes
+  meanwhile wins and the sweep skips it; an apply that ends after the sweep won writes no second
+  outcome row and answers the record as the sweep left it. What the apply wrote stays. The engine logs
+  `stale promotions failed` and counts `contentworker_stale_promotions_failed_total`.
 - **Search.** Assets are indexed apart from entries, in two corpora (`AssetSearchCorpus`): the
   library (every asset as it is now) and the published assets (their published snapshots, written
   on publish and ingest, removed on unpublish). Each has its own SearchShard objects

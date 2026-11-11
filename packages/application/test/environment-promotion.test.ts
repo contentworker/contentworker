@@ -24,6 +24,9 @@ import {
   createWorkflowDraft,
   deleteEnvironment,
   deleteEnvironmentAlias,
+  failStalePromotions,
+  getPromotion,
+  PROMOTION_APPLY_TIMEOUT_MS,
   publishContentType,
   publishEntry,
   publishWorkflowVersion,
@@ -44,6 +47,7 @@ const grace: Principal = { ...ada, subject: 'grace' };
 
 let ctx: AppContext;
 let store: InMemoryContentStore;
+let clock: FixedClock;
 
 const note = (fields: { required?: boolean; extra?: boolean } = {}) =>
   ({
@@ -81,7 +85,8 @@ async function seedModel(scope: typeof staging, def = note()) {
 
 beforeEach(async () => {
   store = new InMemoryContentStore();
-  ctx = { store, clock: new FixedClock(), ids: new SequenceIdGenerator('p') };
+  clock = new FixedClock();
+  ctx = { store, clock, ids: new SequenceIdGenerator('p') };
   await createSpace(ctx, { spaceId, name: 'S', defaultLocale: 'en-US' });
   await createEnvironment(ctx, spaceId, 'staging');
   await createEnvironment(ctx, spaceId, 'qa');
@@ -820,5 +825,165 @@ describe('promoting a content type that would strand blocks in the target', () =
       ctaRefusal([entry.id]),
     ]);
     expect(await variantsOf(qa)).toEqual(['hero', 'cta']);
+  });
+});
+
+describe('failing a promotion whose apply died partway', () => {
+  /**
+   * An approved promotion into main whose apply wrote its entry and then died before the record
+   * could say how it ended (the Worker evicted mid-request): left `applying`.
+   */
+  async function stuck() {
+    const e = await createEntry(ctx, staging, {
+      contentTypeApiId: 'note',
+      fields: { title: { 'en-US': 'Halfway' } },
+    });
+    const p = await requestPromotion(ctx, ada, spaceId, {
+      source: 'staging',
+      target: 'main',
+      entries: [e.entry.id],
+    });
+    const transition = store.promotions.transition;
+    store.promotions.transition = async (...args) => {
+      if (args[2] === 'applying') throw new Error('evicted');
+      return transition(...args);
+    };
+    await expect(approvePromotion(ctx, grace, spaceId, p.id)).rejects.toThrow('evicted');
+    store.promotions.transition = transition;
+    expect((await getPromotion(ctx, spaceId, p.id)).status).toBe('applying');
+    return { promotion: p, entryId: e.entry.id };
+  }
+
+  it('fails it an hour after it started applying, keeping what it wrote, and only once', async () => {
+    const { promotion, entryId } = await stuck();
+    // Not before the bound: an apply that is still running keeps it.
+    clock.advance(PROMOTION_APPLY_TIMEOUT_MS - 1);
+    expect(await failStalePromotions(ctx)).toEqual({ failed: 0 });
+    expect((await getPromotion(ctx, spaceId, promotion.id)).status).toBe('applying');
+
+    clock.advance(1);
+    expect(await failStalePromotions(ctx)).toEqual({ failed: 1 });
+    const failed = await getPromotion(ctx, spaceId, promotion.id);
+    expect(failed).toMatchObject({
+      status: 'failed',
+      decidedBy: 'grace',
+      completedAt: clock.now().toISOString(),
+    });
+    expect(failed.error).toContain('what it wrote before it stopped stays');
+    // What the apply wrote before it died stays, as for any failed apply.
+    expect(await store.entries.get(main, entryId)).not.toBeNull();
+    const audit = await store.audit.list(spaceId, { targetType: 'promotion' });
+    expect(audit.filter((a) => a.action === 'promotion.failed')).toMatchObject([
+      { targetId: promotion.id, actor: 'system', status: 500 },
+    ]);
+    // The next tick finds nothing left to fail.
+    expect(await failStalePromotions(ctx)).toEqual({ failed: 0 });
+  });
+
+  it('leaves a promotion alone when its apply finishes while the sweep looks', async () => {
+    const { promotion } = await stuck();
+    clock.advance(PROMOTION_APPLY_TIMEOUT_MS);
+    // The apply finishing between the sweep's read and its compare-and-set: the apply wins.
+    const transition = store.promotions.transition;
+    store.promotions.transition = async (...args) => {
+      store.promotions.transition = transition;
+      await transition(spaceId, promotion.id, 'applying', { status: 'completed' });
+      return transition(...args);
+    };
+    expect(await failStalePromotions(ctx)).toEqual({ failed: 0 });
+    const done = await getPromotion(ctx, spaceId, promotion.id);
+    expect(done.status).toBe('completed');
+    expect(done.error).toBeUndefined();
+  });
+
+  it('lets an apply that outlives the sweep keep the sweep’s outcome, auditing it once', async () => {
+    for (const fails of [false, true]) {
+      const e = await createEntry(ctx, staging, {
+        contentTypeApiId: 'note',
+        fields: { title: { 'en-US': fails ? 'Slow and failing' : 'Slow' } },
+      });
+      const p = await requestPromotion(ctx, ada, spaceId, {
+        source: 'staging',
+        target: 'main',
+        entries: [e.entry.id],
+      });
+      // The apply runs past the bound, and the sweep fails it just before the apply ends.
+      const transition = store.promotions.transition;
+      const create = store.entries.create;
+      store.promotions.transition = async (...args) => {
+        if (args[2] === 'applying') {
+          store.promotions.transition = transition;
+          clock.advance(PROMOTION_APPLY_TIMEOUT_MS);
+          expect(await failStalePromotions(ctx)).toEqual({ failed: 1 });
+        }
+        return transition(...args);
+      };
+      if (fails) {
+        store.entries.create = async () => {
+          throw new Error('boom');
+        };
+      }
+      const outcome = approvePromotion(ctx, grace, spaceId, p.id);
+      if (fails) await expect(outcome).rejects.toThrow('boom');
+      else expect(await outcome).toMatchObject({ id: p.id, status: 'failed' });
+      store.entries.create = create;
+      store.promotions.transition = transition;
+      expect((await getPromotion(ctx, spaceId, p.id)).status).toBe('failed');
+      const audit = await store.audit.list(spaceId, { targetId: p.id });
+      // The sweep's row only: no `promotion.completed`, and no second `promotion.failed`.
+      expect(
+        audit.filter(
+          (a) => a.action !== 'promotion.requested' && a.action !== 'promotion.approved',
+        ),
+      ).toMatchObject([{ action: 'promotion.failed', actor: 'system' }]);
+    }
+  });
+
+  it('reaches the oldest stuck promotions however many younger ones are applying', async () => {
+    const { promotion } = await stuck();
+    clock.advance(PROMOTION_APPLY_TIMEOUT_MS);
+    // More than one list's worth applying after it, all young.
+    for (let i = 0; i < 200; i++) {
+      await store.promotions.create({
+        ...promotion,
+        id: `young-${i}`,
+        status: 'applying',
+        createdAt: clock.now().toISOString(),
+        decidedAt: clock.now().toISOString(),
+      });
+    }
+    expect(await failStalePromotions(ctx)).toEqual({ failed: 1 });
+    expect((await getPromotion(ctx, spaceId, promotion.id)).status).toBe('failed');
+    expect((await getPromotion(ctx, spaceId, 'young-0')).status).toBe('applying');
+  });
+
+  it('sweeps every space, and nothing that isn’t applying', async () => {
+    const { promotion } = await stuck();
+    const waiting = await requestPromotion(ctx, ada, spaceId, {
+      source: 'staging',
+      target: 'main',
+      entries: [
+        (
+          await createEntry(ctx, staging, {
+            contentTypeApiId: 'note',
+            fields: { title: { 'en-US': 'Waiting' } },
+          })
+        ).entry.id,
+      ],
+    });
+    // Another space's promotion, stuck the same way.
+    const other = 's2';
+    await createSpace(ctx, { spaceId: other, name: 'S2', defaultLocale: 'en-US' });
+    await store.promotions.create({
+      ...promotion,
+      id: 'elsewhere',
+      spaceId: other,
+      status: 'applying',
+    });
+    clock.advance(PROMOTION_APPLY_TIMEOUT_MS);
+    expect(await failStalePromotions(ctx)).toEqual({ failed: 2 });
+    expect((await getPromotion(ctx, other, 'elsewhere')).status).toBe('failed');
+    // Waiting for a person is not stuck: it is never failed for its age.
+    expect((await getPromotion(ctx, spaceId, waiting.id)).status).toBe('awaiting_approval');
   });
 });
