@@ -104,6 +104,14 @@ gets a 403 adding a person, changing a person's role, turning someone back on, w
 someone holds, turning off `ssoOnly` or creating or resending an invitation, whatever its scopes:
 sign in to the admin to do those. A token can still rename, turn off or remove a person.
 
+Every person has a `version`, 1 when added and one more at each change, which `GET /team`, `POST
+/members` and `PATCH /members/{id}` return. A `PATCH` changes only the fields you send, and never
+undoes a change someone else made after you read the person: if an admin turned their access off
+in between, a rename keeps it off, and if they were removed, the answer is a `404` and they stay
+removed. To have your change refused instead when anything changed since you read the person, send
+the `version` you read as `expectedVersion` (also on `role_preset_assign` with a `memberId`): the
+answer is a `409` naming the version in force, with nothing changed.
+
 ## The last administrator
 
 A space that has an administrator always keeps one. The last one can't be demoted, turned off,

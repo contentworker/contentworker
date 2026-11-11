@@ -512,6 +512,7 @@ export async function acceptInvite(
           subject: person.subject,
           roleId: g.roleId,
           disabled: false,
+          version: 1,
           createdAt: at,
           updatedAt: at,
         };

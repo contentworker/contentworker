@@ -4004,38 +4004,59 @@ function makeInviteRepo(x: Exec): InviteRepo {
   };
 }
 
+/** The people on a team. Each save and removal rides the person's version compare-and-set. */
 function makeMemberRepo(x: Exec): MemberRepo {
   const db = x.db;
   const m = schema.spaceMembers;
   return {
     async save(member) {
       const values = {
-        spaceId: member.spaceId,
-        id: member.id,
         email: member.email,
         name: member.name ?? null,
         subject: member.subject ?? null,
         roleId: member.roleId,
         disabled: member.disabled,
-        createdAt: new Date(member.createdAt),
+        version: member.version,
         updatedAt: new Date(member.updatedAt),
       };
-      await x.write(
-        db
+      // Version 1 inserts, and loses on the primary key or the (space, email) index. A later
+      // version only ever updates, while the row is at the version before it: the update path
+      // never inserts, so a save read before the person was removed can't bring them back.
+      // Either way a lost race changes no row, which fails the unit.
+      if (member.version === 1) {
+        const insert = db
           .insert(m)
-          .values(values)
-          .onConflictDoUpdate({
-            target: [m.spaceId, m.id],
-            set: {
-              email: values.email,
-              name: values.name,
-              subject: values.subject,
-              roleId: values.roleId,
-              disabled: values.disabled,
-              updatedAt: values.updatedAt,
-            },
-          }),
-      );
+          .values({
+            spaceId: member.spaceId,
+            id: member.id,
+            createdAt: new Date(member.createdAt),
+            ...values,
+          })
+          .onConflictDoNothing();
+        if (x.inUnit) {
+          await x.write(insert);
+          x.expectChanged(1);
+        } else if ((await insert.returning({ id: m.id })).length === 0) {
+          throw new TransactionConflictError();
+        }
+        return;
+      }
+      const update = db
+        .update(m)
+        .set(values)
+        .where(
+          and(
+            eq(m.spaceId, member.spaceId),
+            eq(m.id, member.id),
+            eq(m.version, member.version - 1),
+          ),
+        );
+      if (x.inUnit) {
+        await x.write(update);
+        x.expectChanged(1);
+      } else if ((await update.returning({ id: m.id })).length === 0) {
+        throw new TransactionConflictError();
+      }
     },
     async get(spaceId, id) {
       const [row] = await db
@@ -4059,8 +4080,16 @@ function makeMemberRepo(x: Exec): MemberRepo {
         .orderBy(asc(m.createdAt));
       return rows.map(toMember);
     },
-    async delete(spaceId, id) {
-      await x.write(db.delete(m).where(and(eq(m.spaceId, spaceId), eq(m.id, id))));
+    async delete(spaceId, id, version) {
+      const remove = db
+        .delete(m)
+        .where(and(eq(m.spaceId, spaceId), eq(m.id, id), eq(m.version, version)));
+      if (x.inUnit) {
+        await x.write(remove);
+        x.expectChanged(1);
+      } else if ((await remove.returning({ id: m.id })).length === 0) {
+        throw new TransactionConflictError();
+      }
     },
   };
 }
@@ -7867,6 +7896,7 @@ const toMember = (r: MemberRow): SpaceMember => ({
   ...(r.subject ? { subject: r.subject } : {}),
   roleId: r.roleId,
   disabled: r.disabled,
+  version: r.version,
   createdAt: r.createdAt.toISOString(),
   updatedAt: r.updatedAt.toISOString(),
 });

@@ -325,6 +325,10 @@ Found while building and reviewing M1 and M2. None blocks a release.
 - [x] **Role version check.** A `version` on every role and an optional `expectedVersion` on
   `PUT /roles/:id` and `role_update` (a stale one is a `409` naming the version in force), with the
   save a compare-and-set on it, so the Access sheet's save can't undo someone else's.
+- [x] **Person version check.** A `version` on every team member, with each save, removal and SSO
+  first-sign-in link a compare-and-set on it (the update never inserts, so a removed person stays
+  removed), and an optional `expectedVersion` on `PATCH /members/:id` and `role_preset_assign`, so
+  a change that read someone before an admin disabled, demoted or removed them can't undo it.
 - [x] **SDK paging.** `entries.list` sends `skip`, which the Preview list refuses; use `cursor` and
   return `nextCursor`.
 - [ ] **Flaky browser tests.** Find the cause of the webhook dialog, webhook deliveries and asset

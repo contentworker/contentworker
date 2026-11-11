@@ -12,6 +12,7 @@ import {
   ConflictError,
   DelegatedKeyMintError,
   DelegatedPeopleError,
+  ForbiddenError,
   grantsAdmin,
   grantsNoWider,
   holdsScope,
@@ -32,6 +33,7 @@ import {
   type TokenIssuance,
   ValidationError,
 } from '@contentworker/domain';
+import { TransactionConflictError } from '@contentworker/ports';
 import type { AppContext } from './context';
 import { invalidateCachedPrincipals } from './principal-cache';
 
@@ -376,10 +378,19 @@ export async function addMember(
     ...(input.name?.trim() ? { name: input.name.trim() } : {}),
     roleId: role.id,
     disabled: false,
+    version: 1,
     createdAt: now,
     updatedAt: now,
   };
-  await ctx.store.members.save(member);
+  try {
+    await ctx.store.members.save(member);
+  } catch (err) {
+    // Another add of the same address landed between the check above and this write.
+    if (err instanceof TransactionConflictError) {
+      throw new ConflictError(`${email} is already on the team`);
+    }
+    throw err;
+  }
   return member;
 }
 
@@ -388,12 +399,41 @@ export interface UpdateMemberInput {
   readonly role?: string;
   readonly disabled?: boolean;
   readonly name?: string;
+  /** The version the change was made from: another is a conflict. Absent: made over whatever. */
+  readonly expectedVersion?: number;
 }
 
 /**
- * Changes a person's role, name or whether they may sign in. Keeps the last admin. A delegated
- * bearer may rename or disable someone, but not change their role (either way: a person's role is
- * a named person's decision, unlike a key's, which a program may narrow) or let them sign in again.
+ * How many times a change to a person is read, checked and written before a run of lost races is
+ * answered as a conflict. Each lost race is someone else's save landing, so only sustained
+ * contention on one person gets that far.
+ */
+const MEMBER_SAVE_ATTEMPTS = 3;
+
+/** The 409 for a person saved by someone else since this change read them, naming their version. */
+async function memberChanged(ctx: AppContext, spaceId: string, id: string): Promise<never> {
+  const now = await ctx.store.members.get(spaceId, id);
+  if (!now) throw new NotFoundError('Member', id);
+  throw new ConflictError('The person changed while this was being saved; read them again', {
+    version: now.version,
+  });
+}
+
+/**
+ * Changes a person's role, name or whether they may sign in, as their next version. Keeps the
+ * last admin.
+ *
+ * Only the fields given change, and the write rides the person's version compare-and-set, so a
+ * change read before someone else's can't put back what theirs changed (a role, access turned
+ * off) or bring back a person removed since. Without `expectedVersion` a lost race is read again
+ * and the same fields applied over what is stored then, every check running again against it.
+ * With it, a stored version other than the one given (stale already, or after a lost race) is a
+ * 409 naming the version in force, and nothing is written. The delegated-bearer and last-admin
+ * checks run first, so a stale change is refused only when it would otherwise be allowed.
+ *
+ * A delegated bearer may rename or disable someone, but not change their role (either way: a
+ * person's role is a named person's decision, unlike a key's, which a program may narrow) or
+ * let them sign in again.
  */
 export async function updateMember(
   ctx: AppContext,
@@ -403,69 +443,122 @@ export async function updateMember(
   policy: AccessPolicy,
   actor: PeopleActor,
 ): Promise<SpaceMember> {
-  const existing = await ctx.store.members.get(spaceId, id);
-  if (!existing) throw new NotFoundError('Member', id);
-  const roleId =
-    input.role !== undefined
-      ? (await resolveRoleRef(ctx, spaceId, input.role)).id
-      : existing.roleId;
-  if (roleId !== existing.roleId) refuseDelegated(actor, 'change a person’s role');
-  if (existing.disabled && input.disabled === false) {
-    refuseDelegated(actor, 'let a disabled person sign in again');
+  for (let attempt = 1; ; attempt++) {
+    const existing = await ctx.store.members.get(spaceId, id);
+    if (!existing) throw new NotFoundError('Member', id);
+    const roleId =
+      input.role !== undefined
+        ? (await resolveRoleRef(ctx, spaceId, input.role)).id
+        : existing.roleId;
+    if (roleId !== existing.roleId) refuseDelegated(actor, 'change a person’s role');
+    if (existing.disabled && input.disabled === false) {
+      refuseDelegated(actor, 'let a disabled person sign in again');
+    }
+    const next: SpaceMember = {
+      ...existing,
+      roleId,
+      disabled: input.disabled ?? existing.disabled,
+      ...(input.name !== undefined ? { name: input.name.trim() || undefined } : {}),
+      version: existing.version + 1,
+      updatedAt: ctx.clock.now().toISOString(),
+    };
+    const members = await ctx.store.members.list(spaceId);
+    await assertKeepsAnAdmin(ctx, spaceId, policy, {
+      members: members.map((m) => (m.id === id ? next : m)),
+    });
+    if (input.expectedVersion !== undefined && input.expectedVersion !== existing.version) {
+      throw new ConflictError(
+        `The person is at version ${existing.version}, not ${input.expectedVersion}: someone ` +
+          'changed them since. Read them again and make the change over theirs.',
+        { version: existing.version },
+      );
+    }
+    try {
+      await ctx.store.members.save(next);
+      return next;
+    } catch (err) {
+      if (!(err instanceof TransactionConflictError)) throw err;
+      // Another save, or the removal, landed between the read and the write. With an expected
+      // version the next read refuses the change; without one it is made again over theirs.
+      if (attempt >= MEMBER_SAVE_ATTEMPTS) return memberChanged(ctx, spaceId, id);
+    }
   }
-  const next: SpaceMember = {
-    ...existing,
-    roleId,
-    disabled: input.disabled ?? existing.disabled,
-    ...(input.name !== undefined ? { name: input.name.trim() || undefined } : {}),
-    updatedAt: ctx.clock.now().toISOString(),
-  };
-  const members = await ctx.store.members.list(spaceId);
-  await assertKeepsAnAdmin(ctx, spaceId, policy, {
-    members: members.map((m) => (m.id === id ? next : m)),
-  });
-  await ctx.store.members.save(next);
-  return next;
 }
 
-/** Removes a person from the team. Keeps the last admin. */
+/**
+ * Removes a person from the team. Keeps the last admin. The removal rides the version the check
+ * read, so a change landing in between is read and checked again rather than removed past; a
+ * person removed meanwhile is a 404, as it is after.
+ */
 export async function removeMember(
   ctx: AppContext,
   spaceId: string,
   id: string,
   policy: AccessPolicy,
 ): Promise<void> {
-  const existing = await ctx.store.members.get(spaceId, id);
-  if (!existing) throw new NotFoundError('Member', id);
-  const members = await ctx.store.members.list(spaceId);
-  await assertKeepsAnAdmin(ctx, spaceId, policy, { members: members.filter((m) => m.id !== id) });
-  await ctx.store.members.delete(spaceId, id);
+  for (let attempt = 1; ; attempt++) {
+    const existing = await ctx.store.members.get(spaceId, id);
+    if (!existing) throw new NotFoundError('Member', id);
+    const members = await ctx.store.members.list(spaceId);
+    await assertKeepsAnAdmin(ctx, spaceId, policy, {
+      members: members.filter((m) => m.id !== id),
+    });
+    try {
+      await ctx.store.members.delete(spaceId, id, existing.version);
+      return;
+    } catch (err) {
+      if (!(err instanceof TransactionConflictError)) throw err;
+      if (attempt >= MEMBER_SAVE_ATTEMPTS) return memberChanged(ctx, spaceId, id);
+    }
+  }
 }
 
-/** The enabled person SSO sign-in should resolve to: by linked subject, else by email. */
+/**
+ * The person SSO sign-in should resolve to: by linked subject, else by email. The caller refuses
+ * a disabled one.
+ *
+ * A first sign-in links the provider's subject to the person at their version's compare-and-set,
+ * so it can't turn access back on that was turned off after the read, or bring back a person
+ * removed since. A lost race reads the team again and decides afresh, so the sign-in sees the
+ * person as they are now: disabled, removed, or linked to someone else (and no longer matched).
+ */
 export async function findMemberForSignIn(
   ctx: AppContext,
   spaceId: string,
   subject: string,
   email?: string,
 ): Promise<SpaceMember | null> {
-  const members = await ctx.store.members.list(spaceId);
-  const bySubject = subject ? members.find((m) => m.subject === subject) : undefined;
-  // An email match only counts for a row not yet linked to anyone: a row linked to another
-  // subject belongs to that person, even if this one now has (or once had) the same address.
-  const byEmail = email
-    ? members.find(
-        (m) => m.email === normalizeEmail(email) && (!m.subject || m.subject === subject),
-      )
-    : undefined;
-  const member = bySubject ?? byEmail ?? null;
-  if (member && !member.subject && subject) {
+  for (let attempt = 1; ; attempt++) {
+    const members = await ctx.store.members.list(spaceId);
+    const bySubject = subject ? members.find((m) => m.subject === subject) : undefined;
+    // An email match only counts for a row not yet linked to anyone: a row linked to another
+    // subject belongs to that person, even if this one now has (or once had) the same address.
+    const byEmail = email
+      ? members.find(
+          (m) => m.email === normalizeEmail(email) && (!m.subject || m.subject === subject),
+        )
+      : undefined;
+    const member = bySubject ?? byEmail ?? null;
+    if (!member || member.subject || !subject) return member;
     // First SSO sign-in links the provider's subject to the person.
-    const linked = { ...member, subject, updatedAt: ctx.clock.now().toISOString() };
-    await ctx.store.members.save(linked);
-    return linked;
+    const linked: SpaceMember = {
+      ...member,
+      subject,
+      version: member.version + 1,
+      updatedAt: ctx.clock.now().toISOString(),
+    };
+    try {
+      await ctx.store.members.save(linked);
+      return linked;
+    } catch (err) {
+      if (!(err instanceof TransactionConflictError)) throw err;
+      // Refused the way sign-in refuses (so a space list leaves the space out, not fails), and
+      // never let through unlinked: the person is being changed right now; signing in again works.
+      if (attempt >= MEMBER_SAVE_ATTEMPTS) {
+        throw new ForbiddenError(`Your access to space ${spaceId} is changing; sign in again`);
+      }
+    }
   }
-  return member;
 }
 
 // ---- keys -----------------------------------------------------------------------------------------
@@ -519,7 +612,13 @@ export async function assignApiKeyRole(
   return next;
 }
 
-export type PresetTarget = { readonly keyId: string } | { readonly memberId: string };
+export type PresetTarget =
+  | { readonly keyId: string }
+  | {
+      readonly memberId: string;
+      /** The version the person was read at: another is a conflict (see `updateMember`). */
+      readonly expectedVersion?: number;
+    };
 
 /** Gives a key or a person one of the space's preset roles. */
 export async function assignRolePreset(
@@ -535,7 +634,19 @@ export async function assignRolePreset(
   }
   return 'keyId' in target
     ? assignApiKeyRole(ctx, spaceId, target.keyId, preset, policy, issuer)
-    : updateMember(ctx, spaceId, target.memberId, { role: preset }, policy, issuer);
+    : updateMember(
+        ctx,
+        spaceId,
+        target.memberId,
+        {
+          role: preset,
+          ...(target.expectedVersion !== undefined
+            ? { expectedVersion: target.expectedVersion }
+            : {}),
+        },
+        policy,
+        issuer,
+      );
 }
 
 // ---- the team, as one read ------------------------------------------------------------------------
@@ -554,6 +665,8 @@ export interface TeamPerson {
   readonly disabled: boolean;
   readonly role: TeamRole | null;
   readonly admin: boolean;
+  /** Send it back as `expectedVersion` to have a change over someone else's refused. */
+  readonly version: number;
   readonly createdAt: string;
 }
 
@@ -611,6 +724,7 @@ export async function listTeam(
       disabled: m.disabled,
       role: roleOf(m.roleId),
       admin: grantsAdmin(byId.get(m.roleId)?.scopes ?? []),
+      version: m.version,
       createdAt: m.createdAt,
     })),
     keys: keys

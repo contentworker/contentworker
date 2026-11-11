@@ -430,7 +430,9 @@ own, and only by a `user` principal (a signed-in person, or one of their persona
 that carries no OAuth client: API keys, the admin token and OAuth-issued tokens get `403`. It has no
 MCP tool. The team (`…/team`, `…/members`, `…/role-presets`, `…/roles/:id/clone`,
 `…/api-keys/:id/role`, `…/access-settings`) is in
-[Auth & RBAC](./auth-and-rbac.md#space-access-the-team). Plugin routes (`/spaces/:space/plugins*`,
+[Auth & RBAC](./auth-and-rbac.md#space-access-the-team); a person carries a `version`, and
+`PATCH …/members/:id` takes an optional `expectedVersion` (stale is `409` with `details.version`,
+see [a person's version](./auth-and-rbac.md#a-persons-version)). Plugin routes (`/spaces/:space/plugins*`,
 all `space:admin`) are in [Plugins](./plugins.md#managing-plugins).
 
 `DELETE /deployment/people/:subject/credentials` revokes every OAuth grant and token, personal

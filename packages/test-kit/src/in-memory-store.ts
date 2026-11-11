@@ -2117,22 +2117,28 @@ export class InMemoryContentStore implements ContentStore {
 
   readonly members: MemberRepo = {
     save: async (member) => {
-      // Mirrors the adapter's unique (space, email) index.
+      const key = `${member.spaceId}::${member.id}`;
+      // As the D1 store's compare-and-set: version 1 is a new row, a later one replaces the
+      // version before it (never a removed row); and as its unique (space, email) index.
+      const held = this.memberData.get(key)?.version ?? 0;
+      if (held !== member.version - 1) throw new TransactionConflictError();
       if (
         [...this.memberData.values()].some(
           (m) => m.spaceId === member.spaceId && m.email === member.email && m.id !== member.id,
         )
       ) {
-        throw new Error(`A member with email ${member.email} already exists in ${member.spaceId}`);
+        throw new TransactionConflictError();
       }
-      this.memberData.set(`${member.spaceId}::${member.id}`, member);
+      this.memberData.set(key, member);
     },
     get: async (spaceId, id) => this.memberData.get(`${spaceId}::${id}`) ?? null,
     getByEmail: async (spaceId, email) =>
       [...this.memberData.values()].find((m) => m.spaceId === spaceId && m.email === email) ?? null,
     list: async (spaceId) => [...this.memberData.values()].filter((m) => m.spaceId === spaceId),
-    delete: async (spaceId, id) => {
-      this.memberData.delete(`${spaceId}::${id}`);
+    delete: async (spaceId, id, version) => {
+      const key = `${spaceId}::${id}`;
+      if (this.memberData.get(key)?.version !== version) throw new TransactionConflictError();
+      this.memberData.delete(key);
     },
   };
 
