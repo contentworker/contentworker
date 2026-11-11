@@ -8,6 +8,7 @@ import {
   getEntry,
   publishContentType,
   SYSTEM_CALLER,
+  updateContentType,
 } from '@contentworker/application';
 import { type FieldDefinition, type Principal, SCOPES } from '@contentworker/domain';
 import {
@@ -130,6 +131,36 @@ describe('a restricted writer over MCP', () => {
       internalNotes: { 'en-US': 'secret' },
       price: { 'en-US': 100 },
     });
+  });
+
+  it('counts an issue in a field it may not read, never naming it', async () => {
+    const { ctx, call } = await setup();
+    // Saved without internalNotes; someone else's rule then makes it required.
+    const { entry } = await createEntry(ctx, scope, {
+      contentTypeApiId: 'listing',
+      fields: { title: { 'en-US': 'Bare' }, price: { 'en-US': 5 } },
+    });
+    const type = await ctx.store.contentTypes.get(scope, 'listing');
+    await updateContentType(ctx, SYSTEM_CALLER, scope, 'listing', {
+      fields: (type?.fields ?? []).map((f) =>
+        f.apiId === 'internalNotes' ? { ...f, required: true } : f,
+      ),
+    });
+    await publishContentType(ctx, scope, 'listing');
+    const edit = { title: { 'en-US': 'Edited' } };
+    for (const [tool, args] of [
+      ['entries_update', { id: entry.id, fields: edit }],
+      ['entries_validate', { id: entry.id, fields: edit }],
+      // A create can't send price (read-only, required) either: that issue is named, beside the count.
+      ['entries_create', { contentType: 'listing', fields: edit }],
+      ['entries_validate', { contentType: 'listing', fields: edit }],
+    ] as const) {
+      const res = await call(tool, args);
+      expect(res.isError, `${tool}: ${res.text}`).toBe(true);
+      expect(res.text).toContain('can’t read');
+      expect(res.text).not.toMatch(/notes/i);
+    }
+    expect((await getEntry(ctx, scope, entry.id)).entry.currentVersion).toBe(1);
   });
 
   it('still refuses a write to a field it may not write', async () => {

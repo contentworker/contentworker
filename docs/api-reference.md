@@ -111,7 +111,7 @@ names no job and no error, and each isolate reuses the answer for 30 s
 (`HEALTH_SCHEDULER_TTL_MS`). `GET /deployment/scheduler` (deployment administrators: the admin
 or MCP token; anyone else `403`) and the `scheduler_status` MCP tool return the detail:
 `{ scheduler, lastTickAt?, staleAfterSeconds, jobs: [{ job, lastRunAt, lastSuccessAt?, lastErrorAt?, lastError? }] }`,
-one job per sweep (`outbox-relay`, `scheduled-actions`, `asset-expiry`, `abandoned-multipart-uploads`, `abandoned-uploads`, `expired-zips`, `trash-retention`, `event-history-prune`, `secrets-reseal`, `taxonomy-repair`,
+one job per sweep (`outbox-relay`, `scheduled-actions`, `asset-expiry`, `abandoned-multipart-uploads`, `abandoned-uploads`, `expired-zips`, `trash-retention`, `stale-promotions`, `event-history-prune`, `secrets-reseal`, `taxonomy-repair`,
 `bulk-resume`, `environment-purge-resume`, `version-archive`, `agent-schedules`), the error
 redacted and at most 500 characters.
 
@@ -281,7 +281,12 @@ check first.
    `publishEntry`), so validation, references, events and the delivery cache behave as they would
    for a person's edits. Afterwards it checks that the target holds the pinned fields
    (`result.mismatched`) and emits `environment.promoted`. A failure marks it `failed` with the
-   error; whatever was applied before it stays.
+   error; whatever was applied before it stays. An apply that dies partway without saying so (the
+   Worker evicted mid-request) would leave it `applying`: the engine's hourly `stale-promotions`
+   sweep marks one still `applying` an hour after it started (its approval, or its request when
+   it needed none) `failed`, with an error saying so, and audits `promotion.failed`. What it wrote
+   stays; compare the environments and request a new promotion. The move is a compare-and-set out
+   of `applying`, so an apply that finishes first keeps its own outcome.
 
 ### Audit log
 
@@ -508,6 +513,13 @@ body: the entry's `currentVersion` as the caller read it. If someone has saved a
 the call returns **409** and changes nothing, rather than publishing or overwriting content the
 caller never saw. The MCP tools `entries_update`, `entries_publish`, `entries_unpublish` and
 `entries_restore_version` take the same `expectedVersion` argument.
+
+**Fields the caller can't read.** A save keeps the stored values of the fields the caller's role
+denies, and one of them can still fail a rule (a required field someone else left empty). A `422`
+from a create, an update or `…/entries/validate` (and `entries_create`, `entries_update`,
+`entries_validate`) never lists those issues: they fold into one issue after the others,
+`{ field: "", code: "hidden", hidden: n, message }`, which counts the fields without naming them
+or their values, as a block patch's does.
 
 **Publish gating.** When the latest published version of a workflow has `gatesPublish` on and a run
 of it can publish (a `trigger.manual` trigger and a `content.publish` or `content.publish_release`

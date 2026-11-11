@@ -21,6 +21,7 @@ import {
   assertWritableFields,
   authorizeContent,
   CONTENT_TYPE_LIMITS,
+  deniedFieldsFor,
   type EntryFields,
   MAX_PREVIEW_TEMPLATE_LENGTH,
   MAX_URL_PATTERN_LENGTH,
@@ -291,11 +292,14 @@ export function registerWriteTools(server: McpServer, t: ToolContext): void {
       guard(SCOPES.contentWrite, scopeOf(args));
       authorizeContent(principal, 'write', args.contentType);
       assertWritableFields(principal, args.contentType, args.fields ?? {});
+      // A field it may not read is never named in a refusal, only counted.
       return ok(
-        await createEntry(ctx, scopeOf(args), {
-          contentTypeApiId: args.contentType,
-          fields: args.fields as EntryFields,
-        }),
+        await createEntry(
+          ctx,
+          scopeOf(args),
+          { contentTypeApiId: args.contentType, fields: args.fields as EntryFields },
+          { unreadable: deniedFieldsFor(principal, args.contentType) },
+        ),
       );
     },
   );
@@ -318,17 +322,21 @@ export function registerWriteTools(server: McpServer, t: ToolContext): void {
     async (args) => {
       guard(SCOPES.contentWrite, scopeOf(args));
       let unwritable: readonly string[] = [];
+      let unreadable: readonly string[] = [];
       if (principal.contentGrants) {
         const entry = await getPreviewEntry(ctx, scopeOf(args), args.id);
         authorizeContent(principal, 'write', entry.contentType);
         assertWritableFields(principal, entry.contentType, args.fields ?? {});
         unwritable = unwritableFieldsFor(principal, entry.contentType);
+        unreadable = deniedFieldsFor(principal, entry.contentType);
       }
       const saved = await updateEntry(ctx, scopeOf(args), args.id, args.fields as EntryFields, {
         unwritable,
+        unreadable,
         ...(args.expectedVersion !== undefined ? { expectedVersion: args.expectedVersion } : {}),
       });
-      // The save kept the fields this writer may not write; the ones it may not read stay hidden.
+      // The save kept the fields this writer may not write; the ones it may not read stay hidden,
+      // from the answer and from a refusal's issues alike.
       return ok({
         ...saved,
         fields: maskDeniedFields(principal, saved.entry.contentTypeApiId, saved.fields),
@@ -363,6 +371,7 @@ export function registerWriteTools(server: McpServer, t: ToolContext): void {
       const fields = (args.fields ?? {}) as EntryFields;
       if (args.id !== undefined) {
         let unwritable: readonly string[] = [];
+        let unreadable: readonly string[] = [];
         let type = '';
         if (principal.contentGrants) {
           const entry = await getPreviewEntry(ctx, scopeOf(args), args.id);
@@ -370,21 +379,29 @@ export function registerWriteTools(server: McpServer, t: ToolContext): void {
           authorizeContent(principal, 'write', type);
           assertWritableFields(principal, type, fields);
           unwritable = unwritableFieldsFor(principal, type);
+          unreadable = deniedFieldsFor(principal, type);
         }
         const result = await validateEntry(
           ctx,
           scopeOf(args),
           { entryId: args.id, fields },
-          { unwritable },
+          { unwritable, unreadable },
         );
-        // Judged with the stored values of the fields this writer may not write; answered without
-        // the ones it may not read.
+        // Judged with the stored values of the fields this writer may not write; answered (and
+        // refused) without the ones it may not read.
         return ok({ ...result, fields: maskDeniedFields(principal, type, result.fields) });
       }
       const contentTypeApiId = args.contentType ?? '';
       authorizeContent(principal, 'write', contentTypeApiId);
       assertWritableFields(principal, contentTypeApiId, fields);
-      return ok(await validateEntry(ctx, scopeOf(args), { contentTypeApiId, fields }));
+      return ok(
+        await validateEntry(
+          ctx,
+          scopeOf(args),
+          { contentTypeApiId, fields },
+          { unreadable: deniedFieldsFor(principal, contentTypeApiId) },
+        ),
+      );
     },
   );
 

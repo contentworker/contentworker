@@ -361,6 +361,63 @@ export async function listPromotions(
 }
 
 /**
+ * How long a promotion may stay `applying` before the sweep fails it. An apply runs inside the
+ * request that requested or approved it and moves the record on itself when it ends, either way;
+ * one still `applying` this long after has died partway (the Worker evicted, or the record's
+ * own write lost), and nothing else would ever move it. Far past any real apply (at most
+ * `MAX_PROMOTION_ENTRIES` entries, which take seconds), so the sweep never races a live one.
+ */
+export const PROMOTION_APPLY_TIMEOUT_MS = 60 * 60 * 1000;
+
+/** What `failStalePromotions` did: how many it failed. */
+export interface StalePromotionSweepResult {
+  readonly failed: number;
+}
+
+/**
+ * Fails each promotion left `applying` longer than `PROMOTION_APPLY_TIMEOUT_MS`, in every space:
+ * the cron's backstop for an apply that died before it could say how it ended. What it wrote
+ * before it stopped stays, as for any failed apply; the record says so and asks for a new
+ * request. The move is a compare-and-set out of `applying`, so an apply that finishes in the
+ * meantime keeps its own outcome and the sweep leaves it alone.
+ */
+export async function failStalePromotions(ctx: AppContext): Promise<StalePromotionSweepResult> {
+  const now = ctx.clock.now();
+  const before = now.getTime() - PROMOTION_APPLY_TIMEOUT_MS;
+  let failed = 0;
+  for (const space of await ctx.store.spaces.list()) {
+    const applying = await ctx.store.promotions.list(space.spaceId, {
+      status: 'applying',
+      limit: 200,
+    });
+    for (const promotion of applying) {
+      // It started applying when it was approved, or when it was requested if it needed no one.
+      if (Date.parse(promotion.decidedAt ?? promotion.createdAt) > before) continue;
+      const moved = await ctx.store.promotions.transition(
+        promotion.spaceId,
+        promotion.id,
+        'applying',
+        {
+          status: 'failed',
+          error:
+            'The apply stopped before it finished and was failed after an hour; what it wrote ' +
+            'before it stopped stays. Compare the environments and request a new promotion',
+          completedAt: now.toISOString(),
+        },
+      );
+      // Moved on since it was listed: whatever moved it (the apply itself) has the last word.
+      if (!moved) continue;
+      await ctx.store.audit.append({
+        ...auditRow(ctx, moved, moved.decidedBy ?? moved.requestedBy, 'promotion.failed'),
+        status: 500,
+      });
+      failed++;
+    }
+  }
+  return { failed };
+}
+
+/**
  * Applies a claimed (`applying`) promotion: content types first (entries are validated against
  * them), then each entry's pinned version, published when it was live in the source. Then checks
  * the target holds what was pinned. Any failure marks it `failed`, naming the cause; what was

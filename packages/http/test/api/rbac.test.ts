@@ -174,6 +174,56 @@ describe('granular RBAC over HTTP', () => {
     expect(again.fields.internalNotes).toEqual({ 'en-US': 'secret' });
   });
 
+  it('counts an issue in a field the writer may not read, never naming it', async () => {
+    // Saved without internalNotes; someone else's rule then makes it required.
+    const bare = await app.request(`${M}/entries`, {
+      method: 'POST',
+      headers: admin,
+      body: JSON.stringify({ contentTypeApiId: 'post', fields: { title: { 'en-US': 'Bare' } } }),
+    });
+    const { entry } = (await bare.json()) as { entry: { id: string } };
+    const tightened = await app.request(`${M}/content-types`, {
+      method: 'POST',
+      headers: admin,
+      body: JSON.stringify({
+        apiId: 'post',
+        name: 'post',
+        displayField: 'title',
+        fields: [symbolField('title', 0), { ...symbolField('internalNotes', 1), required: true }],
+      }),
+    });
+    expect([200, 201], await tightened.clone().text()).toContain(tightened.status);
+    await app.request(`${M}/content-types/post/published`, { method: 'POST', headers: admin });
+
+    const fields = { title: { 'en-US': 'Edited' } };
+    for (const [method, path, body] of [
+      ['PUT', `/entries/${entry.id}`, { fields }],
+      ['POST', '/entries/validate', { entryId: entry.id, fields }],
+      ['POST', '/entries', { contentTypeApiId: 'post', fields }],
+      ['POST', '/entries/validate', { contentTypeApiId: 'post', fields }],
+    ] as const) {
+      const res = await app.request(`${M}${path}`, {
+        method,
+        headers: editor,
+        body: JSON.stringify(body),
+      });
+      const text = await res.text();
+      expect(res.status, `${method} ${path}: ${text}`).toBe(422);
+      expect(JSON.parse(text).error.issues).toEqual([
+        expect.objectContaining({ field: '', code: 'hidden', hidden: 1 }),
+      ]);
+      expect(text).not.toMatch(/notes/i);
+    }
+    // The admin, who can read it, is told which field.
+    const named = await app.request(`${M}/entries/${entry.id}`, {
+      method: 'PUT',
+      headers: admin,
+      body: JSON.stringify({ fields }),
+    });
+    expect(named.status).toBe(422);
+    expect(await named.text()).toContain('internalNotes');
+  });
+
   it('duplicates for a writer without the fields it may not read; the copy keeps them', async () => {
     const res = await app.request(`${M}/entries/${postId}/duplicate`, {
       method: 'POST',
