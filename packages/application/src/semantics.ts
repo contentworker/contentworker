@@ -1,4 +1,5 @@
 import type { EntryFields, Scope } from '@contentworker/domain';
+import { requireAiCapability } from './ai-settings';
 import type { AppContext } from './context';
 import { getEntry } from './entries';
 import { extractTextByLocale, type RagDeps, type SearchHit, semanticSearch } from './rag';
@@ -38,6 +39,7 @@ export async function relatedEntries(
     unreadable?: readonly string[];
   } = {},
 ): Promise<SearchHit[]> {
+  await requireAiCapability(ctx, scope, 'search');
   const topK = opts.topK ?? 5;
   const { text } = await entryText(ctx, scope, entryId, opts.locale, opts.unreadable);
   if (!text.trim()) return [];
@@ -102,6 +104,7 @@ export async function getEntryEmbedding(
     unreadable?: readonly string[];
   } = {},
 ): Promise<SemanticRepresentation> {
+  await requireAiCapability(ctx, scope, 'search');
   const { text, locale } = await entryText(ctx, scope, entryId, opts.locale, opts.unreadable);
   const base = {
     entryId,

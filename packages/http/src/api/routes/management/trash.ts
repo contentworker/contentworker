@@ -149,9 +149,10 @@ export function trashRoutes(deps: AuthDeps): Hono<AuthVars> {
       let unwritable: readonly string[] = [];
       let unreadable: readonly string[] = [];
       if (principal.contentGrants) {
-        const { entry } = await getEntry(ctx, scopeOf(c), c.req.param('id'));
+        const { entry, fields } = await getEntry(ctx, scopeOf(c), c.req.param('id'));
         authorizeContent(principal, 'write', entry.contentTypeApiId);
-        assertWritableFields(principal, entry.contentTypeApiId, body.fields ?? {});
+        // Read-only values sent back as stored are no write (the admin sends all it read).
+        assertWritableFields(principal, entry.contentTypeApiId, body.fields ?? {}, fields);
         unwritable = unwritableFieldsFor(principal, entry.contentTypeApiId);
         unreadable = deniedFieldsFor(principal, entry.contentTypeApiId);
       }

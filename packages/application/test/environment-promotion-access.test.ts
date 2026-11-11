@@ -235,6 +235,50 @@ describe('approving a promotion', () => {
     expect((await rejectPromotion(ctx, wide, spaceId, p.id)).status).toBe('rejected');
   });
 
+  it('lets its requester withdraw it without decide rights, while it waits', async () => {
+    // Carrying a content type and an entry: deciding it takes content:manage and every type.
+    const id = await draft('page', 'Withdrawn');
+    const p = await requestPromotion(ctx, ada, spaceId, {
+      source: 'staging',
+      target: 'main',
+      contentTypes: ['page'],
+      entries: [id],
+    });
+    expect(p.status).toBe('awaiting_approval');
+    // Ada's role narrows since: she reads both types, writes neither, and lost content:manage.
+    const narrowed: Principal = {
+      ...person('ada', [{ contentTypeApiId: '*', actions: ['read'] }]),
+      scopes: [SCOPES.contentPublish],
+    };
+    // Anyone else with that role is held to deciding's checks, and it keeps waiting.
+    const other: Principal = { ...narrowed, subject: 'olga' };
+    await expect(rejectPromotion(ctx, other, spaceId, p.id)).rejects.toThrow(everyType);
+    await expect(rejectPromotion(ctx, editor, spaceId, p.id)).rejects.toThrow(
+      'Rejecting a promotion with content types or blocks takes content:manage',
+    );
+    // Approving her own stays refused; withdrawing it doesn't.
+    await expect(approvePromotion(ctx, narrowed, spaceId, p.id)).rejects.toBeInstanceOf(
+      ForbiddenError,
+    );
+    expect((await store.promotions.get(spaceId, p.id))?.status).toBe('awaiting_approval');
+    const withdrawn = await rejectPromotion(ctx, narrowed, spaceId, p.id);
+    expect(withdrawn).toMatchObject({ status: 'rejected', requestedBy: 'ada', decidedBy: 'ada' });
+    expect(await store.entries.get(main, id)).toBeNull();
+    // Only while it waits.
+    await expect(rejectPromotion(ctx, narrowed, spaceId, p.id)).rejects.toThrow(
+      'not awaiting approval',
+    );
+    // Not through an application acting for her: who withdraws is a person, as who decides.
+    const q = await requestPromotion(ctx, ada, spaceId, {
+      source: 'staging',
+      target: 'main',
+      entries: [await draft('page', 'Via app')],
+    });
+    await expect(
+      rejectPromotion(ctx, { ...ada, clientId: 'agent' }, spaceId, q.id),
+    ).rejects.toBeInstanceOf(ForbiddenError);
+  });
+
   it('still applies when its requester has lost access since: the approver answers for it', async () => {
     // Requested while unrestricted; the requester's role narrows afterwards. Nothing re-reads it:
     // the record names whoever asked (an API key only by its kind), and the approver, held to

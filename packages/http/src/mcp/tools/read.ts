@@ -10,7 +10,6 @@ import {
   getPreviewEntry,
   getPreviewSingleton,
   getSchedulerStatus,
-  hybridSearch,
   imageSearchFor,
   listContentTypes,
   listFieldValues,
@@ -22,8 +21,9 @@ import {
   relatedEntries,
   requestReindex,
   resolveEmbed,
+  searchEntries,
+  searchEntriesSemantically,
   searchIndexHealth,
-  semanticSearch,
   suggestEntries,
   visibleSearchHits,
 } from '@contentworker/application';
@@ -440,7 +440,7 @@ export function registerReadTools(server: McpServer, t: ToolContext): void {
     },
     async (args) => {
       guard(SCOPES.searchRead, scopeOf(args));
-      const hits = await hybridSearch(rag, ctx, scopeOf(args), args.query, { topK: args.topK });
+      const hits = await searchEntries(rag, ctx, scopeOf(args), args.query, { topK: args.topK });
       return ok(await visibleSearchHits(ctx, scopeOf(args), principal, hits));
     },
   );
@@ -462,7 +462,9 @@ export function registerReadTools(server: McpServer, t: ToolContext): void {
     },
     async (args) => {
       guard(SCOPES.searchRead, scopeOf(args));
-      const hits = await semanticSearch(rag, scopeOf(args), args.query, { topK: args.topK });
+      const hits = await searchEntriesSemantically(rag, ctx, scopeOf(args), args.query, {
+        topK: args.topK,
+      });
       return ok(await visibleSearchHits(ctx, scopeOf(args), principal, hits));
     },
   );

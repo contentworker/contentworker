@@ -182,15 +182,15 @@ status.
 Each ContentWorker status maps to one token (`cms/lib/format.ts` `statusTone`), and every badge, dot
 and chart series for a status reads it through `var()`, so it switches with the theme:
 
-| Token             | Means                       | ContentWorker statuses                                                            |
-| ----------------- | --------------------------- | --------------------------------------------------------------------------------- |
-| `ok`              | succeeded, live             | published, active, completed, delivered, enabled, merged                          |
-| `wait`            | waits on a person           | changed (edited since publish), pending, in review, paused, unsaved changes       |
-| `run` (work blue) | in progress or on a clock   | scheduled, running, queued, processing                                            |
-| `idle`            | at rest, or ended otherwise | draft, open (release), archived, revoked, expired, disabled, cancelled            |
-| `bad`             | failed                      | failed, error, rejected, removed                                                  |
-| `undo`            | taken back                  | rolled back, reverted                                                             |
-| `ai`              | a model's work              | proposed, suggested, generated, needs review, held (agent output awaiting review) |
+| Token             | Means                       | ContentWorker statuses                                                                         |
+| ----------------- | --------------------------- | ---------------------------------------------------------------------------------------------- |
+| `ok`              | succeeded, live             | published, active, completed, delivered, enabled, merged                                       |
+| `wait`            | waits on a person           | changed (edited since publish), pending, in review, paused, awaiting approval, unsaved changes |
+| `run` (work blue) | in progress or on a clock   | scheduled, running, queued, processing, applying                                               |
+| `idle`            | at rest, or ended otherwise | draft, open (release), archived, revoked, expired, disabled, cancelled                         |
+| `bad`             | failed                      | failed, error, rejected, removed                                                               |
+| `undo`            | taken back                  | rolled back, reverted                                                                          |
+| `ai`              | a model's work              | proposed, suggested, generated, needs review, held (agent output awaiting review)              |
 
 ### Named Rules
 
@@ -651,9 +651,33 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   its place and value: a text, number, date or select control is `readOnly` with `aria-readonly`,
   stays in the tab order, and its reason ("Read-only while Status is "sold"", muted `text-xs`) is
   read on focus through `aria-describedby`; a button-like widget (a checkbox, a picker, a list's
-  Add and Remove, nested fields) is disabled by a fieldset; an extension is told `readOnly`. When
-  an edit shows, hides or locks other fields, a polite sr-only line says so ("Sold to shown.
+  Add and Remove, nested fields) is disabled by a fieldset; an extension is told `readOnly`. It
+  looks read-only too, with the surface of a field the role makes read-only (below): marked
+  `data-readonly="rule"`, top-level or nested, no fill, a dashed edge and muted text, changing as
+  the siblings it depends on change (the sr-only line says so). Its reason has no Lock: the Lock
+  says only that the role holds the field. When an edit shows, hides or locks other fields, a polite sr-only line says so ("Sold to shown.
   Reference read-only.").
+- **Fields under a role's rules** (`cms/lib/field-access.ts`, read from the space's `auth/me`): a
+  field the person's role hides is not drawn at all, with no quiet line in its place (they may not
+  know it holds a value). One their role makes read-only takes the read-only treatment above, its
+  stored value showing, and looks it too, since it stays read-only whatever anyone types: the
+  field is marked `data-readonly="role"` and `app.css` (one rule for every `data-readonly`) gives
+  each control in it (text, number,
+  date and select inputs, a picker's search, a checkbox, rich text) no fill, a dashed edge (three
+  quarters of the `muted-foreground` ink, 3:1 on paper, card and muted in both themes) and
+  `muted-foreground` text. A select loses its chevron; a ticked box keeps its brand fill inside
+  the dashed edge, unfaded; an error keeps its destructive edge, and focus its ring (rich text
+  rings its box, and stays in the tab order with `aria-readonly`). The rows of a list or repeater
+  keep their look, their Add and Remove disabled as before. Its reason, "Your
+  role can’t change this field", is the same muted `text-xs` line led by a `Lock` (`size-3`,
+  `aria-hidden`); it wins over a rule's reason, since it holds whatever the sibling values. A
+  required one that holds nothing says "Required, but your role can’t fill it: ask someone who
+  can" rather than "Field is required". Neither
+  is sent by a save, and the editor's other surfaces follow suit: the preview and site pane
+  never name a hidden field, and generation and AI assist offer and apply only the fields the
+  person may change. The canvas, whose blocks a role can only rule as a whole field, opens for
+  review when its blocks field is ruled, and its notice names the field ("Your role can’t change
+  Main: …") and links to the form; when the field is hidden it names nothing.
 - **Dates and lists:** a Date's input follows its format: a date picker, `datetime-local`, or a
   `time` input (minutes; seconds kept when stored). A list of Text, Integer, Number or Date
   values is one row per value, each named "<Field> item N" with its own input and a ghost Remove,
@@ -865,6 +889,23 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   or an Alert saying why not (destructive for an SDK it can't speak with). The check's frame is
   off screen, `aria-hidden` and `inert`, and goes once the page answers; picking another type
   waits for the button.
+  **AI** (Automation, `cms/components/AiSettings.tsx`) is one flush section, a row per AI
+  capability: its name as an h3, what it covers in a muted line held to the measure, and a `Switch`
+  named for it with a muted On or Off beside it. Under that, where the capability has a prompt, a
+  Model tier select (Default, Flagship, Balanced, Fast: the trigger shows the word, the options and
+  a muted hint under the select say what each means) and a Guidance textarea, both named for their
+  row ("Guidance Drafting"); the count under it ("120 of 2,000 characters") is tied by
+  `aria-describedby`, and going over marks the field invalid and is said once, politely. Semantic
+  search says it has no tier or guidance. At the foot, a muted line says guidance shapes tone and
+  wording, never what a feature does, then "Unsaved changes" (or "Shorten the guidance marked to
+  save.") beside Discard changes and Save. The save is held to the version read and leaving with
+  edits asks, as the block rules do. A refused stale save keeps the edits and holds Save: a warning
+  Alert names their version (or allows it may be one's own unconfirmed save) and offers Copy my
+  changes as JSON and Load the latest, which takes focus; loading moves focus to the list and says
+  "Loaded vN. Your changes here were discarded." Without `space:admin` it reads only and says so. A
+  capability that is off hides what it powers (Generate with AI and Draft from prose on an entry,
+  Draft with AI and Change with AI on workflows; Coworker's composer and suggestions become a note
+  naming Settings → AI), never while the settings load or fail to: the API's 409 is what refuses.
   **Trash** (Workspace) is one section: a segmented Keep until deleted / Delete after a while
   (off by default), and when on a "Days in the trash" field (1 to 3650; an out-of-range value is
   said under it, tied to it by `aria-describedby`), with a muted line saying what happens (an
@@ -888,6 +929,47 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   skeleton rows, `aria-busy` with a sr-only status; a failed load is a destructive Alert with
   Retry, never locales that look turned off. Without space:admin it reads only: every control
   disabled under a warning Alert saying changing locales takes space:admin.
+  **Promotions** (Environments, under Compare & merge, `cms/components/promotions/`) are two
+  sections and a sheet. **Promote** picks Source and Target (another environment into main by
+  default), and Compare lists what it can carry, added and changed, all ticked. What only the target
+  holds is a count in one muted line ("458 entries are only in main: a promotion leaves them as they
+  are"), never rows: a fresh source would bury the rest. Each list is a group with its count, Select
+  all and Select none, and scrolls in place past eight rows. When it scrolls it takes focus, so the
+  keyboard can scroll it. Under the lists sit an "Include the block catalog and block config"
+  checkbox and Request promotion…, which confirms in a modal in ink (a promotion that needs no
+  approval publishes at once). A role without content:manage and content:publish gets the button
+  disabled, with a muted line tied to it saying what the role lacks. The answer sits under the
+  button, in a live region that is always mounted: a success Alert (what it copied, what went as
+  drafts) or a warning Alert "Waiting for approval" with the reasons and the risk check. Once it
+  answers, the picker closes, so the same promotion isn't filed twice. A refusal (nothing was
+  written) is a destructive Alert, "Nothing was promoted into main", listing the API's issues grouped
+  by what they name (Content types, Entries, Blocks), with the selection kept. One that applied at
+  once and stopped partway comes back as the API's 409 carrying its record, `failed`, and shows as
+  "The promotion failed".
+  **Promotions** is a catalog of the 50 most recent, newest first, filtered by a Segmented All /
+  Awaiting approval (asked of the API). A press anywhere on a row opens its record: its source →
+  target is the row's one button, stretched over it, named for the promotion ("Open promotion
+  staging → main, 1 content type and 5 entries, awaiting approval, requested by the admin token").
+  Then come who asked, when, what it copies, and its status badge (awaiting approval `wait`,
+  applying `run`, and a requester's own rejection reads Withdrawn).
+  A role that can't list promotions sees a muted line saying who can, not an error. While one is
+  applying, the list and the record read again every few seconds. **The record** is a sheet
+  (`?promotion=<id>`) with one sr-only status region that says where it stands as that changes.
+  Drawn below it: applying, which says an apply still running an hour on is marked failed; failed, a
+  destructive Alert in the API's words, the stale sweep's included. Approve and promote… shows only
+  to someone who may approve: never its requester, and with content types or blocks, content:manage
+  as well. It confirms in the ink `ConfirmDialog`, which holds until the answer and says a refusal
+  (403, 409) in the API's words. Reject asks in place. An apply that stopped partway answers 409 with the
+  record, so the confirm closes on "The promotion failed", and the record lists what the target
+  refused (entry, field, locale, message). Its requester, a person, gets Withdraw request
+  instead, asking in place; the API records it as their rejection, and the record, list and history
+  read Withdrawn. Someone who may not decide reads why, in a muted line ("You requested it, so
+  someone else approves or rejects it. You can withdraw it."). Once decided, focus goes
+  to the record's standing. After that come why it needs approval and the model's view (an `ai` "The
+  model" stamp, or "A fallback" with why), and what it copies. Each entry there is an `idle` Goes
+  live or As a draft, and `ok` Live only once a completed apply published it. They show a few at a
+  time with Show all, which hands focus to the first row it brought. Last come what it did and its
+  history (requested, decided, ended, each by whom and when).
 - **Workflows list:** a catalog, flush in one section under its search: each
   workflow's trigger as its tile, its name linked to its editor with its description and steps under it; what starts its
   published version (from the API's `publishedTrigger`, with "Draft starts on …" when the draft
@@ -1201,8 +1283,9 @@ for code and data blocks only.
   **The named exceptions:** a small irreversible config row may stay in place, when it reaches no
   content, file or access and can be typed in again as it was. Only these: a redirect, an item in a
   menu's editor, an environment alias, a function, an AI action, an app extension, a comment or a
-  task on an entry, and an empty asset folder (a folder with anything in it is refused). The team
-  page's account actions and revoking an invitation also ask in place for now: their step-up field
+  task on an entry, rejecting or withdrawing a promotion (nothing is copied; it can be requested
+  again), and an empty asset folder (a folder with anything in it is refused). The team page's
+  account actions and revoking an invitation also ask in place for now: their step-up field
   posts with their form. Anything new joins this list by being written here. The rule is about what
   is stored, so three kinds of asking sit outside it: leaving a form with work in it (Leaving,
   above, and leaving a workflow with edits) loses only what was never saved; stopping a bulk job

@@ -8,6 +8,7 @@
  * that locale (a localized field stores whatever keys it is sent).
  */
 
+import type { AiSettingsChange } from '../ai/ai-settings';
 import type { BlockConfigChange } from '../content-type/block-config';
 import type { BlockLockChange } from '../content-type/block-locks';
 import type { ContentType } from '../content-type/content-type';
@@ -47,6 +48,8 @@ export interface AuditDetail {
   readonly blockConfig?: BlockConfigChange;
   /** What a set of an entry's locked regions locked and unlocked (`diffBlockLocks`). */
   readonly blockLocks?: BlockLockChange;
+  /** What a set of the space's AI settings changed (`diffAiSettings`): parts named, never guidance. */
+  readonly aiSettings?: AiSettingsChange;
   /** Some of what changed isn't listed: the row hit a cap, or a change could not be read. */
   readonly truncated?: true;
 }
@@ -122,11 +125,12 @@ const sizeOf = (value: unknown): number => JSON.stringify(value).length;
 /** `detail` within {@link MAX_AUDIT_DETAIL_SIZE}: as much of it as fits, marked `truncated`. */
 export function capAuditDetail(detail: AuditDetail): AuditDetail {
   if (sizeOf(detail) <= MAX_AUDIT_DETAIL_SIZE) return detail;
-  // A block config or lock change is small and bounded (`diffBlockConfigs`, `diffBlockLocks`), so
-  // it is kept whole.
+  // A block config, lock or AI settings change is small and bounded (`diffBlockConfigs`,
+  // `diffBlockLocks`, `diffAiSettings`), so it is kept whole.
   const kept = {
     ...(detail.blockConfig ? { blockConfig: detail.blockConfig } : {}),
     ...(detail.blockLocks ? { blockLocks: detail.blockLocks } : {}),
+    ...(detail.aiSettings ? { aiSettings: detail.aiSettings } : {}),
   };
   let room = MAX_AUDIT_DETAIL_SIZE - sizeOf({ ...kept, entries: [], truncated: true });
   const fit = (items: readonly string[]): string[] => {

@@ -277,6 +277,11 @@ push would change. `cma.blockConfig.{get, set, effective}` reads and replaces wh
 allows of it, per target and slot, and answers the rules in force. See
 [Blocks from code](/guides/blocks-from-code/).
 
+**AI settings.** `cma.aiSettings.get()` reads the space's AI settings, per capability;
+`cma.aiSettings.set({ expectedVersion, capabilities })` changes the capabilities it names (it needs
+`space:admin`), and a save someone made since is a `409` (`isConflict`). See
+[AI settings](/guides/ai/#ai-settings).
+
 **Roles.** `cma.roles.{list, get, create, update, delete}` manages the space's roles (it needs
 `space:admin`). Each role has a `version`; pass the one you read as `expectedVersion` to
 `update`, and a save someone made since is a `409` (`isConflict`) that changes nothing. See

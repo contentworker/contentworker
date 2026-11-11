@@ -552,6 +552,63 @@ export interface BlockConfigSet {
   readonly unchanged: boolean;
 }
 
+/**
+ * The space's AI capabilities, each one an id an administrator reads in Settings → AI. Turned off,
+ * the requests that need one are refused with 409 `ai_capability_disabled`.
+ */
+export type AiCapability =
+  | 'drafting'
+  | 'layout'
+  | 'assistant'
+  | 'field-assist'
+  | 'translation'
+  | 'media'
+  | 'search'
+  | 'agents'
+  | 'workflows';
+
+/** One capability's settings. */
+export interface AiCapabilitySetting {
+  readonly enabled: boolean;
+  /** The tier its calls run on; null: each call site's own default. */
+  readonly tier: 'flagship' | 'balanced' | 'fast' | null;
+  /** Plain text added after the built-in prompt as quoted guidance; null: none. */
+  readonly guidance: string | null;
+}
+
+/** A space's AI settings. Version 0, everything on, before the first set. */
+export interface AiSettings {
+  readonly version: number;
+  readonly capabilities: Readonly<Record<AiCapability, AiCapabilitySetting>>;
+  readonly updatedAt: string | null;
+  readonly updatedBy: string | null;
+}
+
+export interface AiSettingsSetInput {
+  /** The version you read (0 before the first set): another one is a 409. */
+  readonly expectedVersion: number;
+  /**
+   * Each capability named is replaced whole (tier and guidance back to null when left out); the
+   * rest stay as they are.
+   */
+  readonly capabilities: Partial<
+    Record<
+      AiCapability,
+      {
+        readonly enabled: boolean;
+        readonly tier?: AiCapabilitySetting['tier'];
+        readonly guidance?: string | null;
+      }
+    >
+  >;
+}
+
+export interface AiSettingsSet {
+  readonly settings: AiSettings;
+  /** The settings were already this: nothing written. */
+  readonly unchanged: boolean;
+}
+
 /** A slot's rules once the config is laid over the code. */
 export interface EffectiveSlotRules {
   readonly allowedChildren: readonly string[];
@@ -2195,6 +2252,21 @@ export function createManagementClient(opts: ManagementClientOptions) {
       set: (input: BlockConfigSetInput) => put<BlockConfigSet>(`${envBase}/block-config`, input),
       /** The rules every target and slot follows once the config is laid over the code. */
       effective: () => get<EffectiveBlockRules>(`${envBase}/block-config/effective`),
+    },
+
+    /**
+     * The space's AI settings, per capability: on or off, its model tier and the guidance added
+     * to its prompt. The space's, whatever environment the client is for. Reading needs
+     * preview:read; setting needs space:admin.
+     */
+    aiSettings: {
+      /** The settings in force; version 0, everything on, before the first set. */
+      get: () => get<AiSettings>(`${spaceBase}/ai-settings`),
+      /**
+       * Sets the capabilities named. 422 for an unknown capability or tier, or guidance over 2000
+       * characters; 409 for a stale version (`isConflict`; `error.details.version` is the version in force).
+       */
+      set: (input: AiSettingsSetInput) => put<AiSettingsSet>(`${spaceBase}/ai-settings`, input),
     },
 
     /** Navigation menus: delivery data a front end renders (content:manage to change them). */

@@ -45,6 +45,7 @@ import {
 import { STARTERS } from '@contentworker/seed';
 import type { Context } from 'hono';
 import { z } from 'zod';
+import * as aiSettingsDocs from './docs/schemas/ai-settings';
 import * as blockCatalogDocs from './docs/schemas/block-catalog';
 import * as blockConfigDocs from './docs/schemas/block-config';
 import * as blockLockDocs from './docs/schemas/block-locks';
@@ -625,7 +626,7 @@ export const generateBlocksShape = {
     .optional()
     .describe('A slot of one of the entry’s blocks; absent, the field’s top level'),
   locale: zLocale.optional().describe('The locale to compose for (default: the default locale)'),
-  tier: zTier.optional().describe('Model tier (default flagship)'),
+  tier: zTier.optional().describe("Model tier (default: the space's layout tier, else flagship)"),
 };
 export const generateBlocksBody = z
   .object(generateBlocksShape)
@@ -1094,6 +1095,24 @@ export const blockCatalogPushBody = z.object({
     .boolean()
     .optional()
     .describe('Publish each changed type (default true); false leaves draft revisions'),
+});
+
+/**
+ * An AI settings set. Whether each key is a capability, and each guidance within its length once
+ * normalized, is the domain's check (`capabilities.media.guidance`); here the outline.
+ */
+export const aiSettingsSetBody = z.object({
+  expectedVersion: z
+    .int()
+    .min(0)
+    .describe('The version the settings were read at (0 before the first set); another is a 409'),
+  capabilities: z
+    .record(z.string().max(100), aiSettingsDocs.aiCapabilityInput)
+    .refine((c) => Object.keys(c).length <= 50, { message: 'At most 50 capabilities' })
+    .describe(
+      'By capability id: each one named is replaced whole (tier and guidance back to null when ' +
+        'left out); the rest are left as they are',
+    ),
 });
 
 /**

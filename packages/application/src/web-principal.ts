@@ -16,6 +16,8 @@ export interface WebUserAccess {
   readonly spaceId: string;
   /** The team role, when they are on the space's team; absent for a deployment admin who is not. */
   readonly roleId?: string;
+  /** The team membership the role comes from; absent with `roleId`. */
+  readonly memberId?: string;
   readonly scopes: readonly string[];
   readonly contentGrants?: Principal['contentGrants'];
 }
@@ -38,6 +40,7 @@ export async function webUserAccess(
       return {
         spaceId,
         roleId: role.id,
+        memberId: member.id,
         scopes: role.scopes,
         ...(role.contentGrants ? { contentGrants: role.contentGrants } : {}),
       };
@@ -125,6 +128,7 @@ export async function principalForWebUser(
     subject: user.sub,
     scopes: access.scopes,
     ...(access.contentGrants ? { contentGrants: access.contentGrants } : {}),
+    ...(access.memberId ? { memberId: access.memberId } : {}),
   };
 }
 

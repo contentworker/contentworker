@@ -33,6 +33,7 @@ import {
   purgeEntry,
   resumeWorkflowNode,
   SYSTEM_CALLER,
+  setAiSettings,
   setEntryMetadata,
   trashEntry,
   updateContentType,
@@ -523,6 +524,27 @@ describe('workflow node executors', () => {
       const r = await exec(type, { targetLocale: 'de-DE', field: 'summary' });
       expect(r.output, type).toMatchObject({ source: 'heuristic', fallback: 'mock' });
     }
+  });
+
+  it('with the space’s workflow AI off, asks no model and fails closed: moderation flags, routing is careful', async () => {
+    await setAiSettings(ctx, SYSTEM_CALLER, scope.spaceId, {
+      expectedVersion: 0,
+      capabilities: { workflows: { enabled: false }, translation: { enabled: false } },
+    });
+    const ai = new StubAIProvider(() => ({ flagged: false, categories: [], route: 'publish' }));
+    ctx = { ...ctx, ai: { mode: 'live', timeoutMs: 1000 } };
+    deps = { ...deps, ai };
+    const moderate = await exec('ai.moderate');
+    expect(moderate.branches).toEqual(['flagged']);
+    expect(moderate.output).toMatchObject({ source: 'heuristic', unchecked: true });
+    expect(String((moderate.output as { fallback?: string }).fallback)).toMatch(/^disabled/);
+    const router = await exec('ai.router', { routes: ['publish', 'needs_review'] });
+    expect(router.branches).toEqual(['needs_review']);
+    // A node over a use-case (translation, here off too) records a no-op instead of retrying.
+    const translated = await exec('ai.translate', { targetLocale: 'de-DE' });
+    expect(translated.failed).toBeUndefined();
+    expect(String((translated.output as { fallback?: string }).fallback)).toMatch(/^disabled/);
+    expect(ai.requests).toHaveLength(0);
   });
 
   it('runs the AI use-cases as the run’s principal: a denied field never reaches the model', async () => {

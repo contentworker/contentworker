@@ -3,6 +3,7 @@ import type { AIProvider, GenerateRequest, ModelTier } from '@contentworker/port
 import type { FakeAdapterBinding } from './adapter-guard';
 import { generateWithBudget, withTimeout } from './ai-budget';
 import type { AiCallRecord, AiProvenance } from './ai-provenance';
+import type { AiCapabilityPolicy } from './ai-settings';
 import type { AiMode, AppContext } from './context';
 
 /** Default per-call cap: a slow model must not hold a step (or a person) hostage. */
@@ -188,6 +189,12 @@ export interface GenerateJsonOptions<T> {
   readonly retry?: boolean;
   /** Overrides `ctx.ai.timeoutMs` (the copilot runs 120 s calls). */
   readonly timeoutMs?: number;
+  /**
+   * The space's settings for the capability this call is (`aiCapability`): turned off, the
+   * heuristic answers (recorded as a `disabled` fallback) without calling the model; otherwise its
+   * tier stands in for the call site's default. Guidance is the caller's to add to `system`.
+   */
+  readonly policy?: AiCapabilityPolicy;
 }
 
 export type GenerateJsonResult<T> = AiProvenance & {
@@ -209,7 +216,9 @@ export async function generateJson<T>(
   req: GenerateRequest & { outputSchema: Record<string, unknown> },
   opts: GenerateJsonOptions<T>,
 ): Promise<GenerateJsonResult<T>> {
-  const tier: ModelTier = req.tier ?? 'balanced';
+  const tier: ModelTier = opts.policy
+    ? opts.policy.tier(req.tier ?? 'balanced')
+    : (req.tier ?? 'balanced');
   const started = ctx.clock.now().getTime();
   const elapsed = () => ctx.clock.now().getTime() - started;
   const log = (record: Omit<AiCallRecord, 'type' | 'ms'>) =>
@@ -230,11 +239,14 @@ export async function generateJson<T>(
   };
 
   if (ctx.ai?.mode === 'mock') return heuristic('mock');
+  if (opts.policy && !opts.policy.enabled) {
+    return heuristic(`disabled: the space turned ${opts.policy.capability} AI off`);
+  }
 
   let result: Awaited<ReturnType<AIProvider['generate']>>;
   try {
     result = await withTimeout(
-      generateWithBudget(ctx, ai, scope, req),
+      generateWithBudget(ctx, ai, scope, { ...req, tier }),
       opts.timeoutMs ?? ctx.ai?.timeoutMs ?? DEFAULT_AI_TIMEOUT_MS,
     );
   } catch (err) {

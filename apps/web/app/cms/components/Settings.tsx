@@ -42,6 +42,7 @@ import {
 import { KeyRound, MoreHorizontalIcon, ShieldCheck, Signpost, Webhook } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { AiActions } from '~/cms/components/AiActions';
+import { AiSettings } from '~/cms/components/AiSettings';
 import { AppExtensions } from '~/cms/components/AppExtensions';
 import { AuditLog } from '~/cms/components/AuditLog';
 import { BranchMerge } from '~/cms/components/BranchMerge';
@@ -54,6 +55,7 @@ import { LocaleSettings } from '~/cms/components/LocaleSettings';
 import { Menus } from '~/cms/components/Menus';
 import { Plugins } from '~/cms/components/Plugins';
 import { PageHeader, Section } from '~/cms/components/page';
+import { Promotions } from '~/cms/components/promotions/Promotions';
 import { Redirects } from '~/cms/components/Redirects';
 import { RoleAccessSheet } from '~/cms/components/RoleAccessSheet';
 import { StatusBadge } from '~/cms/components/status';
@@ -92,6 +94,7 @@ const SECTION_BODY: Record<string, (client: ManagementClient) => React.ReactNode
   'connected-apps': (client) => <ConnectedApps client={client} />,
   webhooks: (client) => <Webhooks client={client} />,
   functions: (client) => <Functions client={client} />,
+  ai: (client) => <AiSettings client={client} />,
   'ai-actions': (client) => <AiActions client={client} />,
   extensions: (client) => <AppExtensions client={client} />,
   plugins: (client) => <Plugins client={client} />,
@@ -302,6 +305,7 @@ function Environments(props: { client: ManagementClient }) {
       </Section>
 
       <BranchMerge client={client} environments={environments} />
+      <Promotions environments={environments} />
     </div>
   );
 }

@@ -7,6 +7,7 @@ import type {
 } from '@contentworker/ports';
 import { decideWithBudget } from './ai-budget';
 import type { AiCallRecord, AiProvenance } from './ai-provenance';
+import type { AiCapabilityPolicy } from './ai-settings';
 import type { AppContext } from './context';
 
 /**
@@ -31,6 +32,8 @@ export interface DecideOptions {
   /** The caller retries a failed call itself (a durable step with attempts left). */
   readonly retry?: boolean;
   readonly timeoutMs?: number;
+  /** The space's settings for the capability (see `GenerateJsonOptions.policy`). */
+  readonly policy?: AiCapabilityPolicy;
 }
 
 export interface DecideResult extends AiProvenance {
@@ -46,7 +49,7 @@ export async function decide(
   req: DecisionRequest,
   opts: DecideOptions,
 ): Promise<DecideResult> {
-  const tier: ModelTier = req.tier ?? 'fast';
+  const tier: ModelTier = opts.policy ? opts.policy.tier(req.tier ?? 'fast') : (req.tier ?? 'fast');
   const started = ctx.clock.now().getTime();
   const log = (record: Omit<AiCallRecord, 'type' | 'ms'>) =>
     ctx.ai?.log?.({ type: 'ai_call', ms: ctx.clock.now().getTime() - started, ...record });
@@ -62,6 +65,9 @@ export async function decide(
   };
 
   if (ctx.ai?.mode === 'mock') return heuristic('mock');
+  if (opts.policy && !opts.policy.enabled) {
+    return heuristic(`disabled: the space turned ${opts.policy.capability} AI off`);
+  }
   try {
     const result = await withTimeout(
       decideWithBudget(ctx, model, scope, { ...req, tier }),

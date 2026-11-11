@@ -1,5 +1,6 @@
 import {
   type AppContext,
+  aiCapability,
   applyProposedFields,
   createAgentReview,
   DEFAULT_MODERATION_THRESHOLD,
@@ -123,10 +124,19 @@ export function makeActivities(deps: ActivitiesDeps): Activities {
         required.push(f.apiId);
       }
       const schema = { type: 'object', properties, required, additionalProperties: false };
+      // Every agent that writes values (enrich, curate, repurpose) runs as the space's `agents`
+      // capability, its tier and guidance when set. Turned off while a run was under way (the
+      // runs that start them skip first), it generates nothing rather than throwing, so a durable
+      // step neither retries nor fails the run. Moderation (`classify`) is the deployment's
+      // control and reads none.
+      const policy = await aiCapability(ctx, input.scope, 'agents');
+      if (!policy.enabled) return { fields: {}, usage: { inputTokens: 0, outputTokens: 0 } };
       const result = await generateWithBudget(ctx, ai, input.scope, {
-        system: `You work on CMS entries. Generate concise, natural values for the requested fields, consistent with the provided context.${input.instruction ? ` ${input.instruction}` : ''} ${UNTRUSTED_CONTENT_GUARD}`,
+        system: policy.system(
+          `You work on CMS entries. Generate concise, natural values for the requested fields, consistent with the provided context.${input.instruction ? ` ${input.instruction}` : ''} ${UNTRUSTED_CONTENT_GUARD}`,
+        ),
         prompt: `Context:\n${wrapUntrusted(input.context)}\n\nGenerate values for: ${input.fields.map((f) => f.name).join(', ')}.`,
-        tier: 'fast',
+        tier: policy.tier('fast'),
         maxTokens: 1024,
         outputSchema: schema as unknown as Record<string, unknown>,
       });

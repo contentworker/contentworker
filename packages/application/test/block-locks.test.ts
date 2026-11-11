@@ -21,6 +21,7 @@ import {
   duplicateEntry,
   executeImport,
   getEntryBlockLocks,
+  mergeEnvironments,
   patchEntryBlocks,
   publishContentType,
   restoreVersion,
@@ -450,6 +451,35 @@ describe('locked regions', () => {
       expect(await codes(updateEntry(ctx, staging, id, body([hero('h2'), hero('h1')])))).toContain(
         'region_locked body h1',
       );
+    });
+
+    it("takes lock to merge an entry over the target's locked regions", async () => {
+      // Staging's copy drops main's locked heroes and frozen grid, as a copy may.
+      await cloneEnvironment(ctx, SYSTEM_CALLER, scope, staging);
+      await updateEntry(ctx, staging, id, body([hero('h3')]), { copy: true });
+      const managing = (p: Principal): Principal => ({
+        ...p,
+        scopes: [...p.scopes, SCOPES.contentManage],
+      });
+      const merge = (who: Principal) =>
+        mergeEnvironments(ctx, managing(who), 'site', 'staging', 'main', { entries: [id] });
+      // Without lock, refused before anything is written: a merge copies the entry whole, its
+      // locked regions unjudged, as a promotion does.
+      expect((await failure(merge(editor), ForbiddenError)).message).toBe(
+        new ForbiddenError('content:read+write+lock:* (on every content type, every field)')
+          .message,
+      );
+      const kept = await store.entries.get(scope, id);
+      expect(kept?.entry.currentVersion).toBe(1);
+      expect(kept?.fields).toEqual(body(STORED));
+      // One who could lift the locks may merge through them; the locks stay, now stale.
+      expect((await merge(manager)).mergedEntries).toEqual([id]);
+      const merged = await store.entries.get(scope, id);
+      expect(merged?.entry.currentVersion).toBe(2);
+      expect(merged?.fields).toEqual(body([hero('h3')]));
+      const read = await getEntryBlockLocks(ctx, manager, scope, id);
+      expect(read.locks).toHaveLength(2);
+      expect(read.stale).toEqual(read.locks);
     });
   });
 });

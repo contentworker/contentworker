@@ -206,12 +206,12 @@ Base paths: `/spaces`, and `…` for `/spaces/:space/environments/:env`. Space-l
 | DELETE | `/spaces/:space/environment-aliases/:alias` | `space:admin`                        | Remove alias                                                                              |
 | GET    | `/spaces/:space/audit-log`                  | `space:admin`                        | Space audit log, a page at a time ([filters and paging](#audit-log))                      |
 | GET    | `/spaces/:space/compare`                    | `preview:read`                       | Compare two environments (`?from`, `?to`), limited to the types the role can read         |
-| POST   | `/spaces/:space/merge`                      | `content:manage`                     | Merge environment branch (entries need the actions on every content type); `409` (`details.conflicts`) before any write when its entries would take a unique value twice; `422` on `contentTypes` before any write when a type removes a field or block variant the target's entries still hold (names the type, location, count and entry ids; a merged entry's current version doesn't count, its published snapshot does); an entry in the target's trash stays there |
+| POST   | `/spaces/:space/merge`                      | `content:manage`                     | Merge environment branch (entries need `read`, `write` and `lock` on every content type, no field rules: `403` `content:read+write+lock:* (on every content type, every field)` before any write); `409` (`details.conflicts`) before any write when its entries would take a unique value twice; `422` on `contentTypes` before any write when a type removes a field or block variant the target's entries still hold (names the type, location, count and entry ids; a merged entry's current version doesn't count, its published snapshot does); an entry in the target's trash stays there |
 | POST   | `/spaces/:space/promotions`                 | `content:manage` + `content:publish` | Promote content between environments (`{ source, target, contentTypes?, entries?, blocks? }`)      |
 | GET    | `/spaces/:space/promotions`                 | `content:publish`                    | List promotions, newest first (`?status=`)                                                |
 | GET    | `/spaces/:space/promotions/:id`             | `content:publish`                    | A promotion, its risk check and result                                                    |
 | POST   | `/spaces/:space/promotions/:id/approve`     | `content:publish`                    | Approve a waiting promotion and apply it (a person or the admin token, not the requester) |
-| POST   | `/spaces/:space/promotions/:id/reject`      | `content:publish`                    | Reject a waiting promotion                                                                |
+| POST   | `/spaces/:space/promotions/:id/reject`      | `content:publish`                    | Reject a waiting promotion (its requester may too, to withdraw it)                        |
 
 A space id is 1–64 letters, digits, `.`, `_` or `-`, starting with a letter or digit, and is
 never one of the media bucket's own prefixes: `versions`, `imports`, `plugins`, `dlq` or `zips`, in any case
@@ -275,13 +275,17 @@ check first.
    reasons and the probabilities (`risk`).
 3. **Deciding.** A promotion that needs no approval applies at once (`completed`). One that does
    waits as `awaiting_approval` (event `promotion.awaiting_approval`). It's then approved or
-   rejected by a person, or the deployment admin token, other than whoever requested it:
+   rejected by a person, or the deployment admin token, other than whoever requested it. A person
+   who requested it (not an API key or an app acting for them) may reject it too, withdrawing it:
+   `decidedBy` is then the requester.
    - an API key, or an application acting for a person (an MCP or OAuth client, an agent), can
-     request a promotion but not decide one;
+     request a promotion but not decide or withdraw one;
    - approving or rejecting one with content types or blocks also takes `content:manage`;
    - deciding takes the same role on every content type as requesting (approving one with entries,
      `lock` too), `403` with the same message otherwise, and the promotion stays
      `awaiting_approval`;
+   - withdrawing: the requester may reject their own while it is `awaiting_approval`, without
+     `content:manage` or the role deciding takes, since they passed the request's checks;
    - both environments must still exist when it's approved.
 
    The approver's grants are the ones in force when it applies: the apply runs in the approval's
@@ -301,7 +305,17 @@ check first.
    `publishEntry`), so validation, references, events and the delivery cache behave as they would
    for a person's edits. Afterwards it checks that the target holds the pinned fields
    (`result.mismatched`) and emits `environment.promoted`. A failure marks it `failed` with the
-   error; whatever was applied before it stays. An apply that dies partway without saying so (the
+   error; whatever was applied before it stays. A check the apply runs before it writes anything
+   (a pin that moved, an entry that would be stranded), or a first write the target refuses,
+   answers as a refusal, `409` or `422` with its issues, though the record is `failed` too. A
+   failure once a write has landed is never a success: the request or approval answers `409`
+   `promotion_failed`, the error carrying the record in `error.promotion` (`failed`, its `error`,
+   what it wrote in `result`), so automation that checks the status stops and a client can see
+   what changed. The MCP tools answer an error result with the same body. When the target refused
+   an entry, `error` names the entry and `result.issues` lists each issue (entry, type, field,
+   locale, message); only a reader whose role reads every field of its types reads the record
+   (above), so none of them is hidden from its reader. A fault (not a refusal) that stops it partway is logged and
+   counted (`contentworker_promotion_apply_errors_total`). An apply that dies partway without saying so (the
    Worker evicted mid-request) would leave it `applying`: the engine's hourly `stale-promotions`
    sweep marks one still `applying` an hour after it started (its approval, or its request when
    it needed none) `failed`, with an error saying so, and audits `promotion.failed` as `system`.
@@ -606,6 +620,25 @@ before anything is fetched. A provider that errors, redirects, times out (5 s) o
 64 KiB is not an error: `resolved` is `false` and `embed` holds the URL, provider and kind alone,
 which is valid to store. See [Rich text](./domain-model.md#rich-text).
 
+### AI settings
+
+A space's AI settings, per capability (`drafting`, `layout`, `assistant`, `field-assist`,
+`translation`, `media`, `search`, `agents`, `workflows`): whether it is on, its model tier and the
+guidance added to its built-in prompt. One space-scoped row, versioned. See
+[AI settings per capability](./ai-agents-and-search.md#ai-settings-per-capability).
+
+| Method | Path                         | Scope          | Notes                                                                                                                                                                                                                                       |
+| ------ | ---------------------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| GET    | `/spaces/:space/ai-settings` | `preview:read` | `{ version, capabilities: { <id>: { enabled, tier, guidance } }, updatedAt, updatedBy }`; version 0, every capability on with `tier` and `guidance` null, before the first set                                                               |
+| PUT    | `/spaces/:space/ai-settings` | `space:admin`  | `{ expectedVersion, capabilities }` → `{ settings, unchanged }`: each capability named is replaced whole (`tier`, `guidance` null when left out), the rest kept. `422` for an unknown capability or tier or guidance over 2 000 characters; `409` with `details.version` for a stale `expectedVersion` or a set that lost the race |
+
+A capability turned off refuses the requests that need it with `409`
+`{ error: { code: "ai_capability_disabled", message, capability } }`; background work skips it. A
+personal access token or OAuth token holding `space:admin` may set them. A set's audit row has
+target `ai_settings` (the new version) and `detail.aiSettings` naming the parts changed
+(`translation.tier`), never guidance. MCP: `ai_settings_get` (`preview:read`), `ai_settings_set`
+(`space:admin`).
+
 ### Entries: AI and semantics
 
 | Method | Path                         | Scope            | Description                                                                                                         |
@@ -643,6 +676,11 @@ which is valid to store. See [Rich text](./domain-model.md#rich-text).
 | GET    | `…/bulk/jobs/:id`                         | `content:write`   | Job progress. A chained job (a snapshot import, a starter install) names the job it starts as `config.nextJobId`, never its plan (`config.next`) |
 | GET    | `…/bulk/jobs/:id/report`                  | `content:write`   | Per-item failures                                                           |
 | POST   | `…/bulk/jobs/:id/cancel`                  | `content:publish` | Cancel a job                                                                |
+
+A running job also stops by itself when whoever started it loses access (a key revoked or
+expired, a person disabled, removed or re-roled, a grant narrowed): before each chunk it is
+`cancelled` with `config.cancelReason: "starter_lost_access"` and `config.cancelDetail` saying
+why ([Auth & RBAC](./auth-and-rbac.md), "Bulk jobs re-check their starter"). `status` gains no value.
 
 Reads of a job are `content:write` so that whoever can start an import can watch it. Starting,
 reading the report of, or cancelling a job needs a role holding its actions on every content type

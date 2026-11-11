@@ -1834,6 +1834,9 @@ test('a field its rules hide appears and goes as its sibling changes, and the en
   await expect(reference).not.toBeEditable();
   await expect(reference).toHaveAttribute('aria-readonly', 'true');
   await expect(reference).toHaveAccessibleDescription('Read-only while Status is "sold"');
+  // And looks it: the read-only surface, no fill and a dashed edge.
+  await expect(reference).toHaveCSS('border-top-style', 'dashed');
+  await expect(reference).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
   await reference.focus();
   await expect(reference).toBeFocused();
   await page.getByLabel('Status').fill('open');

@@ -478,7 +478,7 @@ interface ContentTypeGrant {
   actions: readonly ('read' | 'write' | 'publish' | 'lock')[];
   deniedActions?: readonly ('delete' | 'unpublish')[]; // finer actions withheld (see below)
   deniedFields?: readonly string[]; // masked on read, rejected on write
-  readOnlyFields?: readonly string[]; // readable, rejected on write
+  readOnlyFields?: readonly string[]; // readable, rejected on write unless sent back unchanged
 }
 ```
 
@@ -505,7 +505,11 @@ Semantics:
   `delete`; unpublish `unpublish`. These were a write and two publishes before, which is why the
   base action stays required.
 - **Enforcement points** (identical for HTTP and MCP): entry create/update check
-  `authorizeContent(principal, 'write', ct)` + `assertWritableFields`; publish checks `publish`;
+  `authorizeContent(principal, 'write', ct)` + `assertWritableFields` (an update, and its dry run,
+  pass the stored fields: a read-only field whose every sent locale holds its stored value is no
+  write, so the admin's form and canvas, which send back every field they read, can save; a
+  denied field is refused at any value, since accepting its stored one would let a caller guess
+  it); publish checks `publish`;
   unpublish, bulk unpublish (`/bulk/entries/unpublish`, `entries_bulk_action`) and the
   `content.unpublish` node check `unpublish`; trash and purge as above. Shipping a release
   (`publishRelease` with the caller's `principal`, from the route, `releases_publish` and the
@@ -530,8 +534,10 @@ Semantics:
   (`write`, plus `publish` unless `publish` is false), and `POST …/clone` (all of those), with the
   matching MCP tools, need `content:manage` and `authorizeEveryContentType`: no per-type grants, or
   a single `*` grant holding those actions and restricting no field. The Manager and Administrator
-  presets qualify. `POST …/merge` (`environments_merge`) needs the same, with `read` and `write`,
-  when it copies entries; copying only content types needs just `content:manage`. The use-cases
+  presets qualify. `POST …/merge` (`environments_merge`) needs the same, with `read`, `write` and
+  `lock`, when it copies entries, since they go whole over the target's locked regions (the
+  Manager preset qualifies, a role with the Editor preset's grant doesn't); copying only content
+  types needs just `content:manage`. The use-cases
   make these checks themselves (`exportSnapshot`, `importSnapshot`, `startSnapshotImport`,
   `cloneEnvironment`, `startEnvironmentClone`, `mergeEnvironments`, `analyzeSpaceExport`,
   `startSpaceExportImport`, through `authorizeEnvironmentWide` in `environment-access.ts`), each
@@ -553,13 +559,19 @@ Semantics:
 - **Release note.** A custom role with `content:manage` and a `*` grant of `read` and `write` but
   not `publish` used to run a snapshot or space export import that published. It now needs
   `publish=false` for those imports (`?publish=false`, `"publish": false`), and the same on a clone.
+- **Release note.** A custom role with `content:manage` and a `*` grant of `read` and `write` but
+  not `lock` used to merge entries (`POST …/merge`, `environments_merge`) over the target's locked
+  regions. It can no longer merge entries, since that takes `lock` on every content type; merging
+  content types alone still works. The Manager and Administrator presets hold `lock` and are
+  unaffected. To restore it, add `lock` to the role's `*` grant.
 - **Limits of a withhold**, stated plainly:
   - It doesn't constrain a principal that also holds `space:admin`: that principal can edit roles
     (its own included) and mint keys, so withholding `delete` from an administrator is advice, not
     a control.
-  - Scheduled actions, workflow runs and import jobs are authorized when they are created or
-    started. Withdrawing a permission later doesn't cancel them; cancel the scheduled action
-    (`DELETE …/scheduled-actions/{id}`), the run or the job to revoke what they would do.
+  - Scheduled actions and workflow runs are authorized when they are created or started.
+    Withdrawing a permission later doesn't cancel them; cancel the scheduled action
+    (`DELETE …/scheduled-actions/{id}`) or the run to revoke what they would do. Bulk jobs are
+    checked again before each chunk (see "Bulk jobs re-check their starter" below).
   - A write-only grant (no `publish`, so no `unpublish`) can still trash a live entry, which
     unpublishes it. Only an explicit `deniedActions: ['unpublish']` stops that.
 - **Role edits are live at once.** `createRole`, `updateRole` and `deleteRole` drop the space's
@@ -788,9 +800,19 @@ interface Principal {
   plain keys don't), `bulkJobs` (the bulk jobs over entries it may start there, see below),
   `contentActions` (`contentActionsFor`: the actions its grants hold per content type a grant
   names, `types`, and on every other type, `others`; with no grants, every action on every type),
-  and `403` for a caller with no standing in that space. The admin reads it before offering the
-  bulk trash, restore and delete jobs, and before offering Lock on an entry's blocks (`lock`). Neither has an MCP tool: an MCP client already knows its own
-  token.
+  `fieldRules` (`fieldRulesFor`: the `deniedFields` and `readOnlyFields` of the same grants, shaped
+  the same way, by name only; with no grants, none), and `403` for a caller with no standing in
+  that space. The route and the `auth_me` MCP tool both answer `spaceAccessFor` (application), so
+  an agent reads its own field rules as the admin does; `GET /auth/me` has no tool, since an MCP
+  client already knows its own token. The admin reads it before offering the bulk trash, restore
+  and delete jobs, before offering Lock on an entry's blocks (`lock`), and before drawing an
+  entry's form (`apps/web/app/cms/lib/field-access.ts`): a denied field is left out of the form,
+  its validation and the save; a read-only one shows its stored value read-only ("Your role can't
+  change this field") and is left out of the save. Leaving them out is what an update expects
+  (`unwritable`: the stored values are laid over what was sent), so a required one never fails a
+  save it can't change. Field rules name top-level fields, never anything inside a block or
+  component, so the canvas opens for review when a blocks field is denied or read-only, and its
+  save leaves out the person's read-only fields as the form's does.
 - **Bulk jobs over entries** (`POST …/bulk/jobs`, its report and cancel, and the matching MCP
   tools) can't be authorized entry by entry, and a report names entries of every type, so
   `authorizeBulkJob` (application) asks `canRunEntryBulkJob` (domain) for a role that holds the job's actions on every content type alike: one with no per-content-type
@@ -810,8 +832,37 @@ interface Principal {
   and none of the fields sent denied or read-only to the role. Its report and cancel go by that
   type as a single-type import's do, and the job as read back (status, list, report) names the
   fields it sets but never holds their values, which only an entry's reads, masked by the role,
-  return. The grants are checked when the job starts, not again as
-  its chunks run; the saves are authored by whoever started it.
+  return. The grants are checked when the job starts and again before each chunk (below); the
+  saves are authored by whoever started it.
+- **Bulk jobs re-check their starter.** A job
+  records who started it as `config.startedBy` (`persistJob`, from the request's context, never
+  from the request body): `{ kind: 'key', keyId }` for an API key, OAuth token, personal access
+  token or setup token (the key row, never the token), `{ kind: 'member', memberId }` for a person
+  signed in to the admin, or `{ kind: 'deployment' }` for the admin and MCP tokens and a deployment
+  admin acting in a space whose team they are not on. Before each chunk, before it is claimed,
+  `runBulkChunk` resolves the starter again from the store (`starterLostAccess`,
+  `packages/application/src/job-starter.ts`; one resolution per chunk): the key by id in the job's
+  space through the same rules `authenticate` applies (`principalForApiKey`: revoked, expired, a
+  deleted role, a delegated token's person disabled or off the team, SSO-only for setup tokens),
+  or the membership (removed, disabled, no role, a deleted role). The resolved principal must
+  still pass the job's start rule (`authorizeJobContinues`): the start route's scopes
+  (`content:publish` for entry jobs and asset publish, unpublish and archive; `content:manage`,
+  `content:write` and `content:publish` for a content type's delete; `content:write` for a field
+  edit or a single-type import; `content:manage` for a snapshot, clone or space export import;
+  `assets:write` for asset move, tag and reindex) and its content grants (`canRunEntryBulkJob` on
+  every type for an entry job, so a grant narrowed for any type stops it; `write` on the type and
+  every field sent for a field edit; `write` on the type and on every field its records set for an
+  import (`config.fieldNames`); every type for a snapshot import). A starter that fails either is stopped: the job turns `cancelled` with
+  `config.cancelReason: 'starter_lost_access'` and `config.cancelDetail` saying why, nothing more
+  runs on their behalf (a chunk already running finishes, as with a cancel), staged work is
+  discarded, a content type's delete records `typeDeletion: { deleted: false, reason }`, and the
+  audit trail gets one `bulk_job.starter_lost_access` row by `system` naming the job. The
+  `deployment` starter, jobs the system starts (a starter install, the scheduler, a reindex after
+  the engine starts on its own), and job rows written before the record keep
+  running, as before. The application can't see a person's deployment role (the admin web app
+  keeps it), so a deployment admin's job in a space whose team they are not on runs to the end
+  even if they are demoted or their account is disabled meanwhile; cancel it. A job a job starts (a clone's create job, a snapshot's publishing job)
+  carries the same starter; the asset reindex a snapshot import starts is the system's. `config.startedBy` is never in a job as read back.
 - **Preview links** — `POST …/entries/:id/preview-link` mints an expiring token; CPA
   `GET …/entries/:id?preview_token=…` accepts it without a bearer header.
 - **OAuth 2.1** — when `OAUTH_ISSUER` is set, MCP clients obtain tokens through

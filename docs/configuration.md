@@ -222,7 +222,7 @@ worker when needed.
 | `VERSION_ARCHIVE`               | ✓   | ✓   | `false`                             | Move superseded entry version bodies to the media bucket on the engine's cron (turn on once every worker reads them) |
 | `AGENT_SCHEDULE_MAX_ENTRIES`    |     |     | `25`                                | Entries per scheduled run                                                                                            |
 | `AGENT_SCHEDULE_MAX_RUN_TOKENS` |     |     | `100000`                            | Token cap per scheduled run                                                                                          |
-| `EMAIL_FROM`, `EMAIL_FROM_NAME` | ✓   | ✓   | empty                               | Edge email sender for workflow `content.notify` nodes and the scheduler alerts; rendered from the registry's `email` |
+| `EMAIL_FROM`, `EMAIL_FROM_NAME` |     | ✓   | empty                               | Edge email sender for workflow `content.notify` nodes and the scheduler alerts; rendered from the registry's `email` |
 | `PLUGIN_MIN_RELEASE_AGE_HOURS`  | ✓   | ✓   | empty                               | Minimum age of a plugin release installed from a URL; callers may ask for longer, never shorter                      |
 | `PLUGIN_SOURCE_HOSTS`           | ✓   | ✓   | empty                               | Comma-separated hosts plugins may be installed from; callers may narrow, never widen                                 |
 

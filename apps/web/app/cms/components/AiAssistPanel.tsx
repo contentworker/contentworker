@@ -67,8 +67,11 @@ export function AiAssistPanel(props: {
   contentType: ContentType;
   locales: readonly string[];
   defaultLocale: string;
-  /** Merges reviewed field values into the live editor form (unsaved). */
-  onMergeFields: (fields: EntryFields) => void;
+  /**
+   * Merges reviewed field values into the live editor form (unsaved). `contentType` holds only
+   * the fields this person may fill; the editor also drops any other, and says how many merged.
+   */
+  onMergeFields: (fields: EntryFields) => number | void;
 }) {
   const { entryId, contentType, locales, defaultLocale, onMergeFields } = props;
   const { client } = useClient();
@@ -107,13 +110,15 @@ export function AiAssistPanel(props: {
 
   const translate = ok('translate', async () => {
     const r = await client.translateEntry(entryId, { targetLocale: target, apply: false });
-    if (r.translatedFields.length === 0) {
+    if (!r.translatedFields.some((apiId) => contentType.fields.some((f) => f.apiId === apiId))) {
       toast.success('Nothing to translate');
       return;
     }
     const patch: EntryFields = {};
     const items: { label: string; preview: string }[] = [];
+    // Only the fields offered here: one the role can't change would be proposed, then dropped.
     for (const apiId of r.translatedFields) {
+      if (!contentType.fields.some((f) => f.apiId === apiId)) continue;
       const value = r.fields[apiId]?.[target];
       if (value === undefined) continue;
       patch[apiId] = { [target]: value };

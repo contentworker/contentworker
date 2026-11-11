@@ -1,4 +1,5 @@
 import type {
+  AiCapabilitySetting,
   AssetAiSuggestions,
   AssetFile,
   AssetIngestStatus,
@@ -1407,6 +1408,21 @@ export const blockConfigs = sqliteTable(
   },
   (t) => [primaryKey({ columns: [t.spaceId, t.environmentId] })],
 );
+
+/**
+ * A space's AI settings (0043_space_ai_settings): per capability, on or off, its model tier and its
+ * guidance, as one JSON document rewritten whole at each set. Space-scoped (no environment).
+ * `version` is the compare-and-set a set rides with; no row is version 0, every capability on.
+ */
+export const spaceAiSettings = sqliteTable('space_ai_settings', {
+  spaceId: text('space_id').primaryKey(),
+  version: integer('version').notNull(),
+  document: text('document', { mode: 'json' })
+    .$type<{ capabilities: Record<string, AiCapabilitySetting> }>()
+    .notNull(),
+  updatedBy: text('updated_by'),
+  updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
+});
 
 /** Navigation menus, each a JSON tree of items written whole at its revision (0020_menus). */
 export const menus = sqliteTable(

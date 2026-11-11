@@ -91,6 +91,7 @@ import { doCostGuardFromEnv } from './do/cost-guard';
 import { createShardedSearchIndex, DEFAULT_SEARCH_SHARDS } from './do/search-shard';
 import { type EdgeEnv, withJurisdiction } from './env';
 import { newId } from './ids';
+import { makeMetrics } from './metrics';
 import { CloudflareWorkflowEngine, CloudflareWorkflowsAgentRuntime } from './workflows';
 
 const clock = { now: () => new Date() };
@@ -232,6 +233,8 @@ export function wireEdge(rawEnv: EdgeEnv, options: EdgeWireOptions = {}): EdgeWi
       ? { deliveryListTtlSeconds: posNum(env.DELIVERY_LIST_TTL_SECONDS) as number }
       : {}),
     costGuard,
+    // The same counters the Workers emit, for what a use-case should make an alert of.
+    metrics: makeMetrics(env.METRICS),
     ai: aiContext,
     // A local stack (no D1, or REQUIRE_SECURE_SECRETS=false, as `pnpm dev` sets) may preview on a
     // plain-http dev server; a deployment, whose templates require secure secrets, never.

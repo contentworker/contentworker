@@ -30,6 +30,7 @@ import {
   normalizeOptions,
   optionLabel,
   optionValue,
+  REQUIRED_FIELD_MESSAGE,
   resolveLocalizedValue,
   responsivePropsOf,
   ruleTarget,
@@ -79,6 +80,14 @@ import {
 } from '../lib/block-rules';
 import { type BlockThumbnails, NO_THUMBNAILS } from '../lib/block-thumbnails';
 import { overridesOf } from '../lib/breakpoints';
+import {
+  type FieldAccess,
+  OPEN_FIELDS,
+  READ_ONLY_BY_ROLE,
+  REQUIRED_BUT_READ_ONLY,
+  withoutHiddenFields,
+  writableFields,
+} from '../lib/field-access';
 import type { AppExtension, EntryBlockLock, TextDirection } from '../lib/management';
 import { BlockThumbnail } from './BlockThumbnail';
 import { EntityPicker } from './EntityPicker';
@@ -241,6 +250,23 @@ function withDisabledKept(
 }
 
 /**
+ * The values with every field the person's role makes read-only at its stored value: an edit, or
+ * a merged AI draft, never shows a value the save would not keep.
+ */
+function withReadOnlyKept(values: Values, stored: EntryFields, readOnly: ReadonlySet<string>) {
+  let out: Values | undefined;
+  for (const apiId of readOnly) {
+    const kept = stored[apiId] as Record<string, unknown> | undefined;
+    // Unchanged values keep their identity: what reads them (the preview) isn't told of a change.
+    if (sameFieldValue(values[apiId], kept)) continue;
+    out ??= { ...values };
+    if (kept) out[apiId] = { ...kept };
+    else delete out[apiId];
+  }
+  return out ?? values;
+}
+
+/**
  * The fields whose state an edit changed, in words: "Sold to shown. Price read-only." Empty when
  * nothing changed. A field that went from hidden to read-only says both.
  */
@@ -310,6 +336,19 @@ function disabledReason(
 ): string {
   const held = heldConditions(field, siblings, values, 'disable');
   return held.length ? `Read-only while ${held.join(' and ')}` : 'Read-only';
+}
+
+/**
+ * Issues as this person can act on them: a required field their role can't fill holds nothing, and
+ * "required" alone would ask them for the impossible. The form's own and the server's alike.
+ */
+function inRoleWords<I extends FieldIssue>(issues: readonly I[], access: FieldAccess): I[] {
+  if (access.readOnly.size === 0) return [...issues];
+  return issues.map((i) =>
+    access.readOnly.has(i.field) && i.message === REQUIRED_FIELD_MESSAGE
+      ? { ...i, message: REQUIRED_BUT_READ_ONLY }
+      : i,
+  );
 }
 
 function issuesToErrors(
@@ -502,10 +541,23 @@ export function EntryForm(props: {
   blockLocks?: readonly EntryBlockLock[];
   /** Who's who, for "Locked by …". */
   directory?: ActorDirectory;
+  /**
+   * The fields the person's role hides or makes read-only on this type, as the api says
+   * (`cms/lib/field-access.ts`). A hidden field isn't drawn, judged or sent; a read-only one shows
+   * its stored value read-only and isn't sent. The save keeps what both hold.
+   */
+  fieldAccess?: FieldAccess;
+  /** The fields to save: without those the role hides or makes read-only. */
   onSave: (fields: EntryFields) => void;
   onCancel: () => void;
 }) {
-  const { contentType, locales, defaultLocale, fallbacks, fieldEditors } = props;
+  const { locales, defaultLocale, fallbacks, fieldEditors } = props;
+  const access = props.fieldAccess ?? OPEN_FIELDS;
+  // The type as this person sees it: a field their role hides is not part of the form at all.
+  const contentType = useMemo(
+    () => withoutHiddenFields(props.contentType, access),
+    [props.contentType, access],
+  );
   const [values, setValues] = useState<Values>(() => cloneInitial(props.initial));
   const focusField = props.focusField;
   const [activeLocale, setActiveLocale] = useState(() =>
@@ -523,16 +575,30 @@ export function EntryForm(props: {
   const hasLocalized = useMemo(() => contentType.fields.some((f) => f.localized), [contentType]);
 
   // What the form shows and sends, with every field its rules disable at its stored value.
+  // A field the role makes read-only is at its stored value before any rule reads it.
   const shown = useMemo(
-    () => withDisabledKept(contentType, values, props.initial, locales, defaultLocale),
-    [contentType, values, props.initial, locales, defaultLocale],
+    () =>
+      withDisabledKept(
+        contentType,
+        withReadOnlyKept(values, props.initial, access.readOnly),
+        props.initial,
+        locales,
+        defaultLocale,
+      ),
+    [contentType, values, props.initial, access, locales, defaultLocale],
   );
   // Each top-level field's state in the locale on screen (a non-localized field is only shown
-  // on the default locale's tab, where its siblings are read in that locale too).
-  const states = useMemo(
-    () => fieldStates(contentType.fields, shown, activeLocale, defaultLocale),
-    [contentType, shown, activeLocale, defaultLocale],
-  );
+  // on the default locale's tab, where its siblings are read in that locale too). A field the
+  // role makes read-only is read-only whatever its rules say.
+  const states = useMemo(() => {
+    const ruled = fieldStates(contentType.fields, shown, activeLocale, defaultLocale);
+    if (access.readOnly.size === 0) return ruled;
+    const out = new Map(ruled);
+    for (const apiId of access.readOnly) {
+      out.set(apiId, { hidden: ruled.get(apiId)?.hidden ?? false, disabled: true });
+    }
+    return out;
+  }, [contentType, shown, activeLocale, defaultLocale, access]);
 
   // What an edit did to other fields, said once for a screen reader: a field appearing,
   // disappearing or turning read-only moves the form under a reader who can't see it move.
@@ -618,8 +684,10 @@ export function EntryForm(props: {
       document.getElementById(`field-${pendingFocus.apiId}`);
     if (!el) return;
     const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-    el.scrollIntoView?.({ block: 'center', behavior: reduce ? 'auto' : 'smooth' });
+    // Focus first: it lands now, whatever the scroll does after (a smooth one moves the page for a
+    // while, and a click or a check made meanwhile must already find the field focused).
     el.focus({ preventScroll: true });
+    el.scrollIntoView?.({ block: 'center', behavior: reduce ? 'auto' : 'smooth' });
     // A block has no focus style of its own (a click on its padding shouldn't ring it): the pick
     // marks it until focus moves on.
     if (el.dataset.blockKey !== undefined) {
@@ -710,12 +778,14 @@ export function EntryForm(props: {
             props.blockLocks,
           ).filter((i) => i.field !== '');
     if (issues.length > 0) {
-      reveal(issuesToErrors(issues, defaultLocale));
+      reveal(issuesToErrors(inRoleWords(issues, access), defaultLocale));
       props.onValidationFailed?.(issues.length);
       return;
     }
     setFieldErrors({});
-    props.onSave(out);
+    // Judged with what the read-only fields hold (a required one that holds a value passes);
+    // sent without them, as the save keeps them.
+    props.onSave(writableFields(out, access));
   };
 
   /** Shows `errors` on their fields: their locale, tab and collapsed group opened for them. */
@@ -752,7 +822,7 @@ export function EntryForm(props: {
     if (!refusal || refusal.seq === handledIssues.current) return;
     handledIssues.current = refusal.seq;
     const named = refusal.issues.filter((i) => i.field !== '');
-    if (named.length > 0) reveal(issuesToErrors(named, defaultLocale));
+    if (named.length > 0) reveal(issuesToErrors(inRoleWords(named, access), defaultLocale));
   }, [props.serverIssues]);
 
   // Read from the values on screen: a region's blocks are found by key wherever they are now.
@@ -863,7 +933,12 @@ export function EntryForm(props: {
           >
             <span className="font-medium text-foreground">{f.name}</span> is hidden{hiddenWhile},
             and keeps the value it holds: it is read-only
-            {locked.length ? ` while ${locked.join(' and ')}` : ''}.
+            {access.readOnly.has(f.apiId)
+              ? ': your role can’t change it'
+              : locked.length
+                ? ` while ${locked.join(' and ')}`
+                : ''}
+            .
           </p>
         );
       }
@@ -895,7 +970,14 @@ export function EntryForm(props: {
     const ruleId = state?.disabled ? `${id}-rule` : undefined;
     return (
       // `data-field`: the Site pane outlines the field focused here on the page.
-      <div className="space-y-1.5" key={f.apiId} data-field={f.apiId}>
+      // `data-readonly`: drawn read-only by app.css, its fill and colour muted, whether the
+      // person's role (`role`, its reason led by a Lock) or a rule on its siblings (`rule`) holds it.
+      <div
+        className="space-y-1.5"
+        key={f.apiId}
+        data-field={f.apiId}
+        data-readonly={access.readOnly.has(f.apiId) ? 'role' : state?.disabled ? 'rule' : undefined}
+      >
         <Label id={`${id}-label`} htmlFor={id} className="gap-1">
           {f.name}
           {f.required && <RequiredMark />}
@@ -934,7 +1016,14 @@ export function EntryForm(props: {
         )}
         {ruleId && (
           <p id={ruleId} className="max-w-measure text-muted-foreground text-xs">
-            {disabledReason(f, contentType.fields, rulesValues(locale))}
+            {access.readOnly.has(f.apiId) ? (
+              <>
+                <Lock className="mr-1 inline size-3 align-[-0.125em]" aria-hidden="true" />
+                {READ_ONLY_BY_ROLE}
+              </>
+            ) : (
+              disabledReason(f, contentType.fields, rulesValues(locale))
+            )}
           </p>
         )}
         {hint && !err && <p className="text-xs text-muted-foreground">{hint}</p>}
@@ -1717,7 +1806,11 @@ function ComponentInput(
         // A rule's reason is said under the field; a frozen region says why on its card.
         const ruleId = ruled.disabled ? `${nestedId}-rule` : undefined;
         return (
-          <div key={f.apiId} className="space-y-1.5">
+          <div
+            key={f.apiId}
+            className="space-y-1.5"
+            data-readonly={ruled.disabled ? 'rule' : undefined}
+          >
             <Label id={`${nestedId}-label`} htmlFor={nestedId} className="gap-1">
               {f.name}
               {f.required && <RequiredMark />}

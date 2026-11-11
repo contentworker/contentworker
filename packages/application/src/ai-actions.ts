@@ -9,6 +9,7 @@ import type { AIActionDefinition, AIProvider, ModelTier } from '@contentworker/p
 import { recordAgentRun } from './agent-audit';
 import { generateWithBudget } from './ai-budget';
 import { UNTRUSTED_CONTENT_GUARD } from './ai-prompt';
+import { requireAiCapability } from './ai-settings';
 import { assertAiTargetField, type EntryAiOptions, readEntryForAi } from './content-ai';
 import type { AppContext } from './context';
 import { updateEntry } from './entries';
@@ -112,6 +113,7 @@ export async function runAIAction(
   input: RunAIActionInput,
   opts: EntryAiOptions,
 ): Promise<RunAIActionResult> {
+  const policy = await requireAiCapability(ctx, scope, 'field-assist');
   const action = await getAIAction(ctx, scope, id);
 
   const values: Record<string, string> = { ...input.variables };
@@ -141,9 +143,12 @@ export async function runAIAction(
 
   const prompt = renderTemplate(action.promptTemplate, values);
   const result = await generateWithBudget(ctx, ai, scope, {
-    system: `You are running the AI Action "${action.name}". Follow the instructions and return only the requested output. ${UNTRUSTED_CONTENT_GUARD}`,
+    system: policy.system(
+      `You are running the AI Action "${action.name}". Follow the instructions and return only the requested output. ${UNTRUSTED_CONTENT_GUARD}`,
+    ),
     prompt,
-    tier: action.tier,
+    // An action names its own tier when it is created: that choice stands over the space's.
+    tier: policy.tier('balanced', action.tier),
     maxTokens: 2048,
   });
   const output = (result.text ?? '').trim();

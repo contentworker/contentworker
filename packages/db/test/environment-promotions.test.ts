@@ -98,6 +98,38 @@ describe('promotions on D1', () => {
     expect((await store.promotions.get(spaceId, p.id))?.status).toBe('completed');
   });
 
+  it('keeps a failed apply’s issues in the record, structured, through D1', async () => {
+    const id = `p-issues-${Date.now()}`;
+    await store.promotions.create({
+      id,
+      spaceId,
+      source: 'staging',
+      target: 'main',
+      contentTypes: [],
+      entries: [],
+      status: 'applying',
+      risk: { protectedTarget: true, reasons: [], requiresApproval: false },
+      requestedBy: 'ada',
+      createdAt: new Date().toISOString(),
+    });
+    const issues = [
+      {
+        entryId: 'e-1',
+        contentTypeApiId: 'note',
+        field: 'title',
+        locale: 'en-US',
+        message: 'Already used by another entry',
+      },
+    ];
+    await store.promotions.transition(spaceId, id, 'applying', {
+      status: 'failed',
+      error: 'The target main refused entry e-1 (1 issue)',
+      result: { contentTypes: [], entries: [], published: [], mismatched: [], gated: [], issues },
+      completedAt: new Date().toISOString(),
+    });
+    expect((await store.promotions.get(spaceId, id))?.result?.issues).toEqual(issues);
+  });
+
   it('lists a status oldest first when asked, for the stale sweep', async () => {
     const own = `promo-order-${crypto.randomUUID().slice(0, 8)}`;
     const base = Date.parse('2026-01-01T00:00:00.000Z');

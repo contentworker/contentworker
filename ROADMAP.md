@@ -72,7 +72,8 @@ Everything below is built and tested on v2.
   approvals with separation of duties, the copilot).
 - **AI.** Generation, canvas authoring, translate, summarize, autofill, tags, governed AI
   actions, the enrich/moderate/curate/repurpose agents and the review watcher on durable
-  workflows, agent schedules and reviews, per-space budgets (a stateful edge object), provenance,
+  workflows, agent schedules and reviews, per-space budgets (a stateful edge object), per-space
+  AI settings per capability (on or off, tier, fenced guidance), provenance,
   related and duplicate detection, hybrid and semantic search, RAG.
 - **Integration.** Signed webhooks with a delivery log, event-triggered functions, app
   extensions, sandboxed plugins in isolated edge workers (with per-plugin `kv:storage` and
@@ -310,10 +311,13 @@ in-browser model, page-per-language translation, and rich text or styles stored 
 
 Found while building and reviewing M1 and M2. None blocks a release.
 
-- [ ] **Re-check a running job's starter.** Record who started a bulk job and check their access
-  again before each chunk, so a trash or purge job stops when its starter loses access.
+- [x] **Re-check a running job's starter.** A bulk job records who started it (`config.startedBy`:
+  a key id, a membership id, or the deployment) and resolves them again before each chunk, so a
+  trash or purge job whose key is revoked, or whose person is disabled or re-roled, stops as
+  `cancelled` (`starter_lost_access`) and is audited; system jobs and older rows run as before.
 - [x] **Audit promotion and cross-space clone.** Requesting, approving and rejecting a promotion
   take every content type alike with no field rules, as merge does, and `lock` to copy entries
+  (a merge of entries takes `lock` too)
   (the approver's grants are the ones in force at apply); a role limited per type sees only the promotions whose types it can
   read in full; a clone checks its target space in the use-case.
 - [x] **Delegated bearers and people.** Refuse invitations and member role changes from personal
@@ -322,8 +326,11 @@ Found while building and reviewing M1 and M2. None blocks a release.
   space export import check `authorizeEveryContentType` (and a clone's target space, and
   `addLocales`) in the use-case, with a required caller (`SYSTEM_CALLER` for work already
   authorized), so a new surface can't skip it.
-- [ ] **Admin saves for read-only roles.** The editor sends every field, so a role with
-  `readOnlyFields` probably gets a 403 on save. Confirm it, and send only what the role may write.
+- [x] **Admin saves for read-only roles.** Confirmed: the editor sends every field it read, so a
+  role with `readOnlyFields` got a 403 on save. An update and its dry run now pass the stored
+  fields to `assertWritableFields`, which lets a read-only field through when every locale sent
+  holds its stored value (the save keeps it anyway); a changed value, or a denied field at any
+  value, is still refused. REST and MCP alike, so the form and canvas need no change.
 - [x] **Linear email checks.** Replace the quadratic pattern in `isEmail` (`domain/auth/team.ts`) and
   `security/credentials.ts`, as the `email` preset already was.
 - [x] **Role version check.** A `version` on every role and an optional `expectedVersion` on
@@ -337,8 +344,12 @@ Found while building and reviewing M1 and M2. None blocks a release.
   return `nextCursor`.
 - [ ] **Flaky browser tests.** Find the cause of the webhook dialog, webhook deliveries and asset
   library tests that fail under a full parallel run and pass alone.
-- [ ] **Unused api email config.** Drop `EMAIL_FROM`, `EMAIL_FROM_NAME` and the `send_email` comment
-  from `apps/api/wrangler.jsonc`; nothing on the api sends email.
+- [x] **Unused api email config.** Dropped `EMAIL_FROM`, `EMAIL_FROM_NAME` and the `send_email`
+  comment from `apps/api/wrangler.jsonc`: the fleet binds `EMAIL` only on the engine and web, so
+  the api's `makeEmail` never had a sender to read them for.
+- [ ] **Last admin across rows.** Two demotions, disables or removals of the last two admins, made
+  at once, can both land: each member's compare-and-set guards only its own row. A team-level
+  version, bumped in the same unit as every write that changes who is an admin, would close it.
 
 #### Follow-ups from first-run onboarding
 
@@ -393,7 +404,7 @@ None blocks a release.
 
 - [ ] **AI projects.** Reusable instructions, reader and writer personas, and reference assets (their
   extracted text), with a tool to read a reference file; selectable in generation, canvas and agents.
-- [ ] **AI settings per capability.** Per space: enabled, `ModelTier`, and guidance appended to the
+- [x] **AI settings per capability.** Per space: enabled, `ModelTier`, and guidance appended to the
   built-in prompt.
 - [ ] **Change summaries.** A narrative summary of a version diff, over the existing deterministic
   diff.
@@ -530,6 +541,11 @@ From the live preview spec and a review of a second implementation of its channe
   is on, ignored parts listed where they lie. With unsaved edits both show the draft, marked
   Unsaved: the exact request before Save. CodeMirror 6 (`@codemirror/*`, `@lezer/highlight`) is a
   lazy chunk fetched when a code view opens; no route ships it.
+- [ ] **Merge holds to the locks it read.** A merge's entry write (`applyEntry` in
+  `packages/application/src/branching.ts`) doesn't carry the block-lock guard `saveEntryDraft`
+  does, so a lock set between the merge's read and its write is overwritten without a `409`. Not
+  a hole (the merger holds `lock` and could lift it), but a lost race should be a conflict. Pass
+  the guard, with a test that sets a lock mid-merge.
 
 Checked against the merged channel and not needed:
 - **An admin-started reconnect.** The frame route creates its host before it gives the iframe a

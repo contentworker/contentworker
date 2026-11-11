@@ -44,5 +44,8 @@ export function isUncheckedFallback(p: AiProvenance): boolean {
 
 /** Severity for a call record: unexpected fallbacks are warnings (and alert-worthy). */
 export function aiCallLevel(r: AiCallRecord): 'info' | 'warn' {
+  // A capability the space turned off is a choice, not a failure: still unchecked (a gate fails
+  // closed on it), but not alert-worthy.
+  if (String(r.fallback ?? '').startsWith('disabled:')) return 'info';
   return r.retrying || isUncheckedFallback(r) ? 'warn' : 'info';
 }

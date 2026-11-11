@@ -115,6 +115,51 @@ Each run is recorded with its decisions and token usage. Read the log at
 `GET …/agent-runs` (filter with `workflow`, `limit`) and totals at `GET …/agent-runs/usage`
 (`workflow`, `since`); both need `space:admin`. The admin's **Overview** shows recent agent runs and a 14-day token chart; there is no MCP tool for the log.
 
+## AI settings
+
+**Settings → AI** (under Automation) decides, per space, what AI may do and how. Each kind of
+work is one row, and turning a row off stops that work everywhere: in the editor, the API, MCP,
+Coworker and workflows.
+
+| Setting         | What it covers                                                                       |
+| --------------- | ------------------------------------------------------------------------------------ |
+| Drafting        | Generate with AI and Draft from prose on an entry                                    |
+| Page layouts    | Composing blocks for a page, in the canvas, the API and Coworker                     |
+| Coworker        | The assistant's conversations                                                        |
+| Writing help    | Filling a field, summarizing an entry, suggesting tags, and AI actions               |
+| Translation     | Translating an entry, from the editor, the API or a workflow                         |
+| Media           | Alt text and tags for assets, on upload and on request                               |
+| Semantic search | Embedding entries and assets for search, related entries and duplicate checks        |
+| Agents          | Enrichment on publish, scheduled agents, entry audits and promotion reviews          |
+| Workflows       | The workflow copilot, and the AI steps in workflow runs                              |
+
+Each row has:
+
+- **A switch.** Off, the admin stops offering that work, and a request for it is refused with a
+  `409` whose code is `ai_capability_disabled` and whose `capability` names the row. Work that runs
+  in the background (an upload's alt text, an agent schedule, a workflow step) is skipped rather
+  than failing; a workflow's AI step answers as it does when the model can't (a moderation step
+  flags). With semantic search off, nothing new is sent to the embedding model, an entry or asset
+  republished drops its old embeddings, search in the admin and over MCP matches words only, and the
+  text of uploaded documents and recordings isn't read (they're found by name and details). The
+  Content Delivery API's search keeps using the embeddings already stored.
+  The moderation your deployment's administrator turns on is not a space setting, and keeps running.
+- **A model tier** (Default, Flagship, Balanced or Fast). Default keeps what each feature uses on
+  its own (see [Model tiers](#model-tiers)). A request that names a tier still gets it; in the
+  editor, Generate with AI and Draft from prose start at **Space default**, which uses this one.
+- **Guidance**, up to 2,000 characters, added after the built-in instructions: house style,
+  terminology, tone. It shapes how the model writes, not what it does: it can't change the task,
+  the shape of the answer or which tools are used, and the model is told to ignore any part of it
+  that tries to. Semantic search has no tier or guidance to set.
+
+Everything is on, at each feature's own tier, until someone changes it. Reading the settings needs
+`preview:read`; changing them needs `space:admin`, and an API key, personal access token or OAuth
+token holding it can. Each save is held to the version you read: if someone saved in the meantime,
+yours is refused (`409`) and the admin keeps your edits and offers **Load the latest**. Over the API,
+`GET` and `PUT /spaces/{space}/ai-settings`; over MCP, `ai_settings_get` and `ai_settings_set`; in the
+management SDK, `aiSettings.get()` and `aiSettings.set()`. Each change is in the audit log, naming
+what changed but never the guidance itself.
+
 ## Model tiers
 
 Features ask for a **tier**, not a specific model: `fast` for classification and tagging,

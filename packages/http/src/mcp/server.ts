@@ -8,6 +8,7 @@ import {
   withChanges,
 } from '@contentworker/application';
 import {
+  AiCapabilityDisabledError,
   authorize,
   authorizeContent,
   authorizeTrash,
@@ -17,6 +18,7 @@ import {
   inScope,
   type PermissionScope,
   type Principal,
+  PromotionFailedError,
   type Scope,
   ValidationError,
 } from '@contentworker/domain';
@@ -30,6 +32,7 @@ import { toolListedFor } from './tool-scopes';
 import { registerAgentTools } from './tools/agents';
 import { registerAiActionTools } from './tools/ai-actions';
 import { registerAiContentTools } from './tools/ai-content';
+import { registerAiSettingsTools } from './tools/ai-settings';
 import { registerApiKeyTools } from './tools/api-keys';
 import { registerAppExtensionTools } from './tools/app-extensions';
 import { registerAppTools } from './tools/apps';
@@ -106,6 +109,7 @@ const TOOL_AREAS: readonly ((server: McpServer, t: ToolContext) => void)[] = [
   registerReadTools,
   registerAiContentTools,
   registerRoleTools,
+  registerAiSettingsTools,
   registerApiKeyTools,
   registerFrontendTools,
   registerPluginTools,
@@ -279,12 +283,18 @@ export function buildServer(
         } catch (err) {
           if (err instanceof ValidationError) return validationResult(err);
           // A refusal that says what was refused (a read-only field, the version a save was made
-          // from) answers as REST's 403 or 409 body, so a client reads its details, not its words.
+          // from, the AI capability turned off) answers as REST's 403 or 409 body, so a client
+          // reads its details, not its words.
           if (
-            (err instanceof ForbiddenError || err instanceof ConflictError) &&
-            err.details !== undefined
+            ((err instanceof ForbiddenError || err instanceof ConflictError) &&
+              err.details !== undefined) ||
+            err instanceof AiCapabilityDisabledError
           )
             return { ...ok(toHttpError(err).body), isError: true as const };
+          // An apply that stopped partway: REST's 409 body, so the caller gets the failed record.
+          if (err instanceof PromotionFailedError) {
+            return { ...ok(toHttpError(err).body), isError: true as const };
+          }
           throw toolFailure(name, err);
         }
       }) as never,

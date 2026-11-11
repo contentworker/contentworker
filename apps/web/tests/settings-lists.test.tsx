@@ -33,8 +33,9 @@ vi.mock('~/cms/lib/queries', () => ({
   },
 }));
 
-// Its own screen, on its own client.
+// Their own screens, on their own client.
 vi.mock('~/cms/components/BranchMerge', () => ({ BranchMerge: () => null }));
+vi.mock('~/cms/components/promotions/Promotions', () => ({ Promotions: () => null }));
 
 const { Settings } = await import('~/cms/components/Settings');
 const { ToastProvider } = await import('~/cms/lib/toast');

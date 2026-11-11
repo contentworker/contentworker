@@ -22,6 +22,8 @@ export const TOOL_SCOPES: Readonly<Record<string, readonly PermissionScope[]>> =
   ai_action_create: [SCOPES.contentManage],
   ai_action_run: [SCOPES.contentWrite],
   ai_actions_list: [SCOPES.previewRead],
+  ai_settings_get: [SCOPES.previewRead],
+  ai_settings_set: [SCOPES.spaceAdmin],
   api_key_create: [SCOPES.spaceAdmin],
   api_key_revoke: [SCOPES.spaceAdmin],
   api_key_update: [SCOPES.spaceAdmin],
@@ -272,6 +274,8 @@ export const UNSCOPED_TOOLS: readonly string[] = [
   // Each operation names its own scope; the use-case checks it and lists only what may be called.
   'app_operation_invoke',
   'app_operations_list',
+  // The caller's own access: anyone may ask about itself (refused outside its space).
+  'auth_me',
   'docs_list',
   'docs_read',
   'docs_search',

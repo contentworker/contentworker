@@ -1,6 +1,9 @@
 import type {
   AgentReview,
   AgentReviewStatus,
+  AiCapability,
+  AiCapabilitySetting,
+  AiSettings,
   Asset,
   AssetCollection,
   AssetFolder,
@@ -36,12 +39,15 @@ import type {
   EntryVersion,
   EntryWorkflowState,
   FieldDiff,
+  FieldRulesByType,
   FilterOp,
   FrontendEndpoints,
   GraphIssue,
   Menu,
   MenuItemInput,
   MenuLink,
+  Promotion,
+  PromotionStatus,
   Redirect,
   RedirectChain,
   RedirectInput,
@@ -252,6 +258,12 @@ export interface PrincipalInfo {
     readonly types: Readonly<Record<string, readonly ContentAction[]>>;
     readonly others: readonly ContentAction[];
   };
+  /**
+   * In a space: the fields its role hides (`deniedFields`) or makes read-only (`readOnlyFields`)
+   * per content type a grant names, and on every other type, as the api resolves them
+   * (`fieldRulesFor`). Names only.
+   */
+  readonly fieldRules?: FieldRulesByType;
 }
 
 /**
@@ -1166,6 +1178,12 @@ export interface TrashSettings {
   readonly retentionDays: number | null;
 }
 
+/** What `PUT /spaces/:space/ai-settings` takes: each capability named is replaced whole. */
+export interface AiSettingsInput {
+  readonly expectedVersion: number;
+  readonly capabilities: Partial<Record<AiCapability, AiCapabilitySetting>>;
+}
+
 /** What `POST …/assets/bulk` runs over a selection of assets, as a job. */
 export type AssetBulkRequest =
   | { readonly action: 'move'; readonly ids: readonly string[]; readonly folderId: string | null }
@@ -1422,6 +1440,16 @@ export function apiIssues(err: unknown): { field: string; message: string }[] {
       ? [{ field: issue.field, message: issue.message }]
       : [],
   );
+}
+
+/**
+ * The promotion a request or approval stopped partway, when that is what the API answered (409
+ * `promotion_failed`, the record in `error.promotion`): something was written, so it is neither a
+ * success nor a refusal. Undefined for any other failure.
+ */
+export function failedPromotionOf(err: unknown): Promotion | undefined {
+  if (!(err instanceof ApiError) || err.status !== 409 || err.code !== 'promotion_failed') return;
+  return (err.body as { error?: { promotion?: Promotion } } | undefined)?.error?.promotion;
 }
 
 /** True when the API refused because the caller's role lacks the scope (403). */
@@ -1761,6 +1789,46 @@ export function createManagementClient(
       entries?: string[];
     }): Promise<MergeResult> {
       return req('POST', `${spaceBase}/merge`, input, undefined, LARGE_LIMIT);
+    },
+    /**
+     * The space's promotions, newest first (the 50 most recent; the API pages no further), or only
+     * those in one `status`. Needs content:publish.
+     */
+    async listPromotions(status?: PromotionStatus): Promise<Promotion[]> {
+      const qs = status ? `?status=${encodeURIComponent(status)}` : '';
+      return (await req<{ items: Promotion[] }>('GET', `${spaceBase}/promotions${qs}`)).items;
+    },
+    /** One promotion: what it pins, its risk check, and its decision and outcome. */
+    getPromotion(id: string): Promise<Promotion> {
+      return req('GET', `${spaceBase}/promotions/${encodeURIComponent(id)}`);
+    },
+    /**
+     * Requests a promotion source→target. The API pins what it copies and runs its risk check:
+     * one that needs no approval is applied in this request (`completed` or `failed`), one that
+     * does comes back `awaiting_approval`. A refusal (nothing would be safe to copy) is a 422.
+     */
+    requestPromotion(input: {
+      source: string;
+      target: string;
+      contentTypes?: string[];
+      entries?: string[];
+      blocks?: boolean;
+    }): Promise<Promotion> {
+      return req('POST', `${spaceBase}/promotions`, input, undefined, LARGE_LIMIT);
+    },
+    /** Approves a waiting promotion and applies it in this request (not by its requester). */
+    approvePromotion(id: string): Promise<Promotion> {
+      return req(
+        'POST',
+        `${spaceBase}/promotions/${encodeURIComponent(id)}/approve`,
+        undefined,
+        undefined,
+        LARGE_LIMIT,
+      );
+    },
+    /** Rejects a waiting promotion; nothing is copied. */
+    rejectPromotion(id: string): Promise<Promotion> {
+      return req('POST', `${spaceBase}/promotions/${encodeURIComponent(id)}/reject`);
     },
     /** A page of the space's append-only audit trail, newest first (requires space:admin). */
     listAuditLog(
@@ -3449,6 +3517,15 @@ export function createManagementClient(
     setWorkflowSettings(input: { separateDuties: boolean }): Promise<{ separateDuties: boolean }> {
       return req('PUT', `${mgmt}/workflow-settings`, input);
     },
+    /** The space's AI settings, per capability (preview:read). Version 0, all on, before a set. */
+    getAiSettings(): Promise<AiSettings> {
+      return req('GET', `${spaceBase}/ai-settings`);
+    },
+    /** Sets the capabilities named, held to `expectedVersion` (space:admin; 409 when stale). */
+    setAiSettings(input: AiSettingsInput): Promise<{ settings: AiSettings; unchanged: boolean }> {
+      return req('PUT', `${spaceBase}/ai-settings`, input);
+    },
+
     getTrashSettings(): Promise<TrashSettings> {
       return req('GET', `${mgmt}/trash-settings`);
     },

@@ -106,7 +106,9 @@ deterministic `LocalEmbeddingsProvider` (`EMBEDDINGS_PROVIDER=local`) for develo
 
 ### Which tier each use-case asks for
 
-A use-case's `tier` input overrides these defaults.
+A use-case's `tier` input overrides these defaults; a space's tier for the capability (see
+[AI settings per capability](#ai-settings-per-capability)) replaces the default when the request
+names none.
 
 | Use-case                                                      | Default tier                                                                                                                                                    |
 | ------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -120,6 +122,83 @@ A use-case's `tier` input overrides these defaults.
 | Workflow AI nodes (`workflow-nodes/ai.ts`)                    | `fast` for `ai.classify`, `ai.summarize`, `ai.suggest_tags`, `ai.moderate`, `ai.enrich`; `balanced` for `ai.router`, `ai.assess`, `ai.translate`, `ai.autofill` |
 | Agent runtime activities (`generateFields`, `classify`)       | `fast`                                                                                                                                                          |
 | Coworker (assistant)                                          | `flagship`, falling back to `fast`                                                                                                                              |
+
+### AI settings per capability
+
+A space's administrators decide, per **capability**, whether AI does that work at all, which tier
+it runs on, and what guidance is added to its built-in prompt (`AiSettings` in
+`packages/domain/src/ai/ai-settings.ts`, the use-cases in `packages/application/src/ai-settings.ts`).
+A capability names a kind of work, not a surface, so turning one off stops it wherever it runs: the
+admin, REST, MCP, Coworker and workflow nodes.
+
+| Capability     | Covers                                                                                                                     | Off                                                                                                                       |
+| -------------- | -------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `drafting`     | `draftEntry`, `canvasToEntry`                                                                                               | refused                                                                                                                   |
+| `layout`       | `generateBlocks` (the canvas, `entry_blocks_generate`, Coworker's block fills)                                              | refused                                                                                                                   |
+| `assistant`    | Coworker's model turns                                                                                                       | the turn answers that Coworker is off; pages' own edits still go through it                                              |
+| `field-assist` | `autofillField`, `summarizeEntry`, `suggestEntryTags`, `runAIAction`                                                        | refused; the `ai.summarize`, `ai.autofill` and `ai.suggest_tags` nodes record a no-op                                     |
+| `translation`  | `translateEntry` (editor, API, MCP, the `ai.translate` node)                                                               | refused; the node records a no-op                                                                                         |
+| `media`        | `generateAltText`, `autoTagAsset`, and the ingest steps that call them                                                     | refused on request; ingest skips the steps                                                                                |
+| `search`       | entry and asset embeddings, asset text extraction, `relatedEntries`, `findDuplicates`, `getEntryEmbedding`, management semantic search | nothing new is embedded and a (re)published entry's or asset's vectors are dropped; the semantic tools refuse; `content_search` and asset search use the lexical leg only |
+| `agents`       | the on-publish enrich agent (inline and durable), agent schedules except moderation ones, `auditEntry`, the agent runtime's `generateFields`, the AI review of a promotion | publish enrich and schedule firings skip (a schedule's cursor waits); a run already under way generates nothing; an audit is refused; a promotion is assessed without the model, as where no decision model is bound |
+| `workflows`    | `draftWorkflowGraph` (the copilot), `ai.classify`, `ai.router`, `ai.assess`, `ai.moderate`, `ai.enrich`                    | the copilot is refused; each node answers with its heuristic, recorded as a `disabled` fallback (moderation's flags)     |
+
+A request refused answers **409 `ai_capability_disabled`**, its body naming the capability and its
+message saying an administrator can turn it on in Settings → AI. 409, like `last_admin` and
+`publish_gated`, is a conflict with how the space is configured: not 503 (`AiUnavailableError`,
+the model failing, retryable as it stands) and not 403 (the caller's permissions are fine). Work
+nobody is waiting on (ingest, queue consumers, schedules, workflow steps) skips instead, so turning a
+capability off never fails a run or makes a step retry; such a fallback is logged at info, not as a
+warning. Moderation is the deployment's control (`AGENTS_MODERATE`, `AGENTS_MODERATE_BLOCKING`, and
+moderation schedules) and no space setting reaches it: the on-publish pass runs moderation even when
+its enrich step fails.
+
+In the admin, a capability that is off hides what it powers: Generate with AI and Draft from prose on
+an entry (`drafting`), Draft with AI and Change with AI on workflows (`workflows`), and Coworker's
+composer and suggestions (`assistant`), which become a note naming Settings → AI. Other entry points
+stay and show the API's refusal. Nothing is hidden while the settings load or can't be read: the
+API is what refuses. The drafting and canvas dialogs default to **Space default**, which sends no
+tier.
+
+**Search** stops on both sides: the point of turning it off is that content stops going to the
+embeddings model. Vectors already stored stay until their entry or asset is republished,
+unpublished or reindexed (each drops them). Delivery's `/search` and GraphQL `search` don't read the
+setting, so the public read path takes no extra statement; they serve what the index still holds,
+and their semantic leg still embeds the reader's query. Turning search off also stops reading the
+text of uploaded documents and recordings, so new ones are found by their name and metadata only.
+Turn search back on and request a reindex (`POST …/search/reindex`) to fill it again.
+
+**Tier.** `policy.tier(callSiteDefault, requested)` answers the request's own tier, else the space's,
+else the call site's default ([the table above](#which-tier-each-use-case-asks-for)). The tier then
+goes through the AI adapter's tier → model mapping (`WORKERS_AI_MODEL_BY_TIER`, the
+`WORKERS_AI_MODEL_*` overrides) and AI Gateway like any other call, and `CostGuardDO` meters it the
+same; Coworker maps it with the same table, with the fast tier behind it. An AI action names its
+own tier, which stands.
+
+**Guidance** is plain text, at most `AI_GUIDANCE_MAX_CHARS` (2 000) characters after line endings
+are normalized and the ends trimmed. It is written by a space administrator but runs in other
+people's requests, so it is treated as untrusted: `guidanceForModel` (`ai-prompt.ts`) appends it
+after the built-in system prompt inside `<space_guidance>` tags, strips every delimiter tag
+(`space_guidance` and `user_content`, nested spellings too), caps it, and tells the model it may
+shape tone, style, terminology and emphasis only, never the task, the answer's schema, the tools or
+the rules above it. Output schemas and tool lists are set by code, so no wording can widen them.
+Classifiers and decision models (moderation, `ai.classify`, `ai.router`, `ai.assess`, tag picking,
+promotion review) take no guidance; neither does search, which has no prompt.
+
+**Storage.** One row per space in `space_ai_settings` (0043), a JSON document rewritten whole at
+each set; `version` is the compare-and-set (`expectedVersion` on `PUT`, 409 naming the version in
+force when stale or beaten). A space with no row reads as every capability on, at its call sites'
+tiers, with no guidance. The settings are the space's, not an environment's: they govern what may be
+asked of the models, so a branch or a promotion never carries them. Every AI call reads the row once
+by primary key before it calls the model (an asset ingest reads it once per AI step, layout
+generation once more per image search); nothing is written on that path. A set's audit row names the parts it changed
+(`translation.tier`, `drafting.guidance`), never the guidance text.
+
+**Surfaces.** `GET /spaces/:space/ai-settings` (`preview:read`, so the admin can hide what is off
+from every editor) and `PUT` (`space:admin`); MCP `ai_settings_get` and `ai_settings_set`; the
+management SDK's `aiSettings.get()` and `aiSettings.set()`. A personal access token or OAuth token
+holding `space:admin` may set them: they are configuration and give nobody access that outlives the
+token. They are not among Coworker's tools.
 
 ### Budget and untrusted content
 

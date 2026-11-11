@@ -44,6 +44,7 @@ import { Empty, PageHeader, Section } from '~/cms/components/page';
 import { StatusBadge } from '~/cms/components/status';
 import { CopilotDialog } from '~/cms/components/workflow/CopilotDialog';
 import { NodeIcon } from '~/cms/components/workflow/NodeIcon';
+import { useAiCapability } from '~/cms/lib/ai-settings';
 import { plural } from '~/cms/lib/format';
 import { useClient } from '../lib/client-context';
 import { refusedSave, type WorkflowListItem } from '../lib/management';
@@ -90,6 +91,7 @@ export function Workflows() {
     onOpenChange: setSheetOpen,
   });
   const [copilotOpen, setCopilotOpen] = useState(false);
+  const copilot = useAiCapability('workflows');
   const [filter, setFilter] = useState('');
 
   const workflowsQuery = useScopedQuery(['workflows'], () => client.listWorkflowGraphs());
@@ -113,9 +115,16 @@ export function Workflows() {
         subtitle="The review each entry goes through before it is published. Runs keep the version they started on, so edits never change a running review."
         actions={
           <>
-            <Button type="button" size="sm" variant="outline" onClick={() => setCopilotOpen(true)}>
-              Draft with AI
-            </Button>
+            {copilot ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => setCopilotOpen(true)}
+              >
+                Draft with AI
+              </Button>
+            ) : null}
             <FormSheet open={sheetOpen} onOpenChange={guard.onOpenChange} label="New workflow">
               <NewWorkflowForm
                 guard={guard}

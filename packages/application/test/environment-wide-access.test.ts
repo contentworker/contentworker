@@ -53,8 +53,8 @@ const narrow = role([{ contentTypeApiId: 'article', actions: ['read', 'write', '
 const fieldRule = role([
   { contentTypeApiId: '*', actions: ['read', 'write', 'publish'], readOnlyFields: ['body'] },
 ]);
-/** One full `*` grant: every type alike, no field rules. */
-const wide = role([{ contentTypeApiId: '*', actions: ['read', 'write', 'publish'] }]);
+/** One full `*` grant: every type alike, locking too, no field rules (the Manager preset's). */
+const wide = role([{ contentTypeApiId: '*', actions: ['read', 'write', 'publish', 'lock'] }]);
 /** Every type alike, without publish. */
 const drafter = role([{ contentTypeApiId: '*', actions: ['read', 'write'] }]);
 
@@ -219,8 +219,23 @@ describe('mergeEnvironments', () => {
         contentTypes: ['article'],
         entries: ['article-1'],
       }),
-    ).rejects.toThrow(refusal('read+write'));
+    ).rejects.toThrow(refusal('read+write+lock'));
     await untouched();
+  });
+
+  it("takes lock to merge entries, which go over the target's locked regions", async () => {
+    await expect(
+      mergeEnvironments(ctx, drafter, 's1', 'main', 'copy', {
+        contentTypes: ['article'],
+        entries: ['article-1'],
+      }),
+    ).rejects.toThrow(refusal('read+write+lock'));
+    await untouched();
+    // Content types alone copy no entry: no lock needed.
+    const merged = await mergeEnvironments(ctx, drafter, 's1', 'main', 'copy', {
+      contentTypes: ['article'],
+    });
+    expect(merged.mergedContentTypes).toEqual(['article']);
   });
 
   it('leaves such a role the content model, as saving a type does', async () => {
