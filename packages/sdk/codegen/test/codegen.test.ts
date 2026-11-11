@@ -14,6 +14,10 @@ const tscBin = join(
   'bin',
   'tsc',
 );
+// Each call starts a `tsc` process and type-checks a module from cold: about a second alone, several
+// on a CI runner shared with the other suites, and a test may compile twice. Vitest's 5 s default
+// is a budget for in-process work, not this, so the tests that compile get their own.
+const TSC_TIMEOUT = 30_000;
 async function tsc(source: string, compilerOptions: Record<string, unknown>): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), 'cw-tsc-'));
   await writeFile(join(dir, 'generated.ts'), source);
@@ -303,7 +307,9 @@ describe('@contentworker/sdk-codegen generator', () => {
     expect(edge).toContain('export type ContentType2Fields = {');
   });
 
-  it('produces source that compiles clean and satisfies the SDK generics', async () => {
+  it('produces source that compiles clean and satisfies the SDK generics', {
+    timeout: TSC_TIMEOUT,
+  }, async () => {
     // The appended usage block proves generated shapes plug into the SDKs'
     // `F extends Record<string, unknown>` constraint (interfaces would not).
     const source = `${generateTypes([...MODEL, ...EDGE])}
@@ -505,7 +511,7 @@ describe('@contentworker/sdk-codegen block types', () => {
     );
   });
 
-  it('compiles, and types a slot as a list of its blocks', async () => {
+  it('compiles, and types a slot as a list of its blocks', { timeout: TSC_TIMEOUT }, async () => {
     const source = `${generateTypes([PAGE])}
 declare const page: PageFields;
 declare const types: BlockTypes;
@@ -758,7 +764,9 @@ describe('@contentworker/sdk-codegen per-breakpoint overrides', () => {
     "readonly lg?: { readonly size?: 'sm' | 'md' | 'xl'; readonly hidden?: boolean } };";
   const strict = { strict: true, target: 'es2022', module: 'esnext' };
 
-  it('types _responsive on a block with responsive props, and exports breakpoints', async () => {
+  it('types _responsive on a block with responsive props, and exports breakpoints', {
+    timeout: TSC_TIMEOUT,
+  }, async () => {
     const source = generateTypes([], {
       blockCatalog: {
         blocks: [hero, { id: 'quote', fields: [{ apiId: 'text', type: 'Text' }] }],
