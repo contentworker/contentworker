@@ -659,7 +659,18 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   values is one row per value, each named "<Field> item N" with its own input and a ghost Remove,
   then an outline Add item; focus goes to an added row, and after a Remove to the row that took
   its place (or Add). A row's own error sits under it, marked `aria-invalid` and linked. A list of
-  Symbols keeps its chips.
+  Symbols keeps its chips. A list of links (`LinkListInput`) is an ordered list on
+  `bg-secondary/40`: each row its place, the linked entry's title (or the asset's name) and its
+  type in an outline `Badge`, then Move up, Move down and Remove as ghost icon buttons named for
+  the row, as a collection's are (focus stays on a moved row, a move or removal is said in a polite
+  line); under it the single link's picker, holding the field's id, adds one ("Add an entry…"),
+  offering only what the field takes. A link past the pickers' page is looked up by id; one that
+  still has no name shows its id, never a blank.
+- **Compare & merge** (`cms/components/BranchMerge.tsx`, in Settings → Environments): a merge the
+  target refuses (422) lists the API's issues under the selection, above Merge, as a destructive
+  `Alert` titled "Nothing was merged into main", grouped by the list each names (Content
+  types, Entries), in the API's words; the selection stays so the type can be left out and the
+  merge sent again. Any other failure toasts.
 - **The content type dialog** (`cms/components/ContentTypeDialog.tsx`): the type's Group, Icon (a
   select of the icons the admin draws; a stored name it can't draw is kept as "name (not drawn
   here)") and Description beside its name, then Agent instructions: plain text, with a hint saying

@@ -1384,16 +1384,24 @@ export function conflictVersion(err: unknown): number | undefined {
  * message, so a form can say what is wrong beside the field. Empty for any other failure.
  */
 export function apiFieldIssues(err: unknown): Record<string, string> {
-  if (!(err instanceof ApiError) || err.status !== 422) return {};
-  const issues = (err.body as { error?: { issues?: unknown } } | undefined)?.error?.issues;
   const out: Record<string, string> = {};
-  if (!Array.isArray(issues)) return out;
-  for (const issue of issues as { field?: unknown; message?: unknown }[]) {
-    if (typeof issue.field === 'string' && typeof issue.message === 'string') {
-      out[issue.field] ??= issue.message;
-    }
-  }
+  for (const issue of apiIssues(err)) out[issue.field] ??= issue.message;
   return out;
+}
+
+/**
+ * Every issue a 422 named, in its order, for a screen that lists them all: a refusal can name one
+ * field many times (a merge's `contentTypes`, once per type it can't take). Empty otherwise.
+ */
+export function apiIssues(err: unknown): { field: string; message: string }[] {
+  if (!(err instanceof ApiError) || err.status !== 422) return [];
+  const issues = (err.body as { error?: { issues?: unknown } } | undefined)?.error?.issues;
+  if (!Array.isArray(issues)) return [];
+  return (issues as { field?: unknown; message?: unknown }[]).flatMap((issue) =>
+    typeof issue.field === 'string' && typeof issue.message === 'string'
+      ? [{ field: issue.field, message: issue.message }]
+      : [],
+  );
 }
 
 /** True when the API refused because the caller's role lacks the scope (403). */
@@ -1862,6 +1870,24 @@ export function createManagementClient(
       const entry = r.items.find((e) => e.id === id);
       if (!entry) throw new ApiError(404, `Entry ${id} was not found`);
       return entry;
+    },
+
+    /**
+     * Entries by id, their current (draft) versions, 100 to a request (`sys.id[in]` on the list
+     * route, as {@link getEntry} reads one): what a list of links names past the pickers' page.
+     * An id not in the environment is absent.
+     */
+    async getEntriesByIds(ids: readonly string[]): Promise<PreviewEntry[]> {
+      const out: PreviewEntry[] = [];
+      for (let i = 0; i < ids.length; i += 100) {
+        const part = ids.slice(i, i + 100);
+        const r = await req<{ items: PreviewEntry[] }>(
+          'GET',
+          `${preview}/entries?sys.id[in]=${part.map(encodeURIComponent).join(',')}&limit=${part.length}`,
+        );
+        out.push(...r.items);
+      }
+      return out;
     },
 
     /**

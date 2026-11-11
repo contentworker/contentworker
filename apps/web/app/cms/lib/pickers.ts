@@ -1,6 +1,8 @@
-import { useCallback, useMemo } from 'react';
+import type { Asset } from '@contentworker/domain';
+import { useCallback, useMemo, useRef } from 'react';
 import type { Pickers, PickOption } from '../components/EntryForm';
 import { useClient } from './client-context';
+import type { PreviewEntry } from './management';
 import { useAllEntriesQuery, useAssetsQuery, useContentTypesQuery } from './queries';
 
 /**
@@ -20,6 +22,12 @@ export function useEntryPickers(): {
   const types = useContentTypesQuery().data;
   const allEntriesQuery = useAllEntriesQuery();
   const assetsQuery = useAssetsQuery();
+  // The client a lookup goes through, read when it runs, so the pickers are a new object only when
+  // their lists are. Keyed on the client too, they were rebuilt as the scope settled after
+  // hydration, which re-rendered the entry form and, in the live-preview e2e, left a click on the
+  // framed page's title without focusing its field.
+  const clientRef = useRef(client);
+  clientRef.current = client;
 
   /**
    * Resolves reference matches on the server.
@@ -40,6 +48,7 @@ export function useEntryPickers(): {
       return batches.flat().map((hit) => ({
         id: hit.id,
         contentType: hit.contentType,
+        title: hit.title,
         label: `${hit.title} (${hit.contentType})`,
       }));
     },
@@ -48,23 +57,39 @@ export function useEntryPickers(): {
 
   const pickers: Pickers = useMemo(() => {
     const displayFieldOf = new Map((types ?? []).map((t) => [t.apiId, t.displayField]));
+    const entryOption = (e: PreviewEntry): PickOption => {
+      const df = displayFieldOf.get(e.contentType);
+      const value = df
+        ? (e.fields[df] as Record<string, unknown> | undefined)?.[conn.locale]
+        : undefined;
+      // A blank or missing title is no title: the row names the entry by its id instead.
+      const title = typeof value === 'string' && value !== '' ? value : undefined;
+      return {
+        id: e.id,
+        contentType: e.contentType,
+        ...(title === undefined ? {} : { title }),
+        label: `${title ?? e.id} (${e.contentType})`,
+      };
+    };
+    const assetOption = (a: Asset): PickOption => ({
+      id: a.id,
+      label: String(a.title?.[conn.locale] ?? a.file.fileName),
+      mimeType: a.file.contentType,
+    });
     return {
-      entries: (allEntriesQuery.data ?? []).map((e) => {
-        const df = displayFieldOf.get(e.contentType);
-        const title = df
-          ? (e.fields[df] as Record<string, unknown> | undefined)?.[conn.locale]
-          : undefined;
-        return {
-          id: e.id,
-          contentType: e.contentType,
-          label: `${String(title ?? e.id)} (${e.contentType})`,
-        };
-      }),
-      assets: (assetsQuery.data ?? []).map((a) => ({
-        id: a.id,
-        label: String(a.title?.[conn.locale] ?? a.file.fileName),
-        mimeType: a.file.contentType,
-      })),
+      entries: (allEntriesQuery.data ?? []).map(entryOption),
+      assets: (assetsQuery.data ?? []).map(assetOption),
+      // One lookup per 100 ids (the asset route takes at most 100 too).
+      resolve: async (linkType, ids) => {
+        const api = clientRef.current;
+        if (linkType === 'Entry') return (await api.getEntriesByIds(ids)).map(entryOption);
+        const out: PickOption[] = [];
+        for (let i = 0; i < ids.length; i += 100) {
+          const page = await api.listAssets({ ids: ids.slice(i, i + 100), limit: 100 });
+          out.push(...page.items.map(assetOption));
+        }
+        return out;
+      },
     };
   }, [allEntriesQuery.data, assetsQuery.data, types, conn.locale]);
 
