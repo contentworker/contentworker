@@ -37,6 +37,7 @@ export * from './errors';
 export * from './events';
 export * from './locale';
 export * from './menu/menu';
+export * from './plugin/operations';
 export * from './plugin/plugin';
 export * from './plugin/settings';
 export * from './promotion';

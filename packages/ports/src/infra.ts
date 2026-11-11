@@ -814,6 +814,32 @@ export interface PluginRuntime {
     invocation: PluginInvocation,
     capabilities: PluginCapabilities,
   ): Promise<HookResult<unknown>>;
+  /**
+   * Runs one of a plugin's operations and returns what it returned. Absent: this runtime runs
+   * hooks only, and operations answer that they are not configured. Bounded by the invocation's
+   * timeout like a hook; a throw is the plugin's failure, reported to the caller.
+   */
+  runOperation?(
+    invocation: PluginOperationInvocation,
+    capabilities: PluginCapabilities,
+  ): Promise<unknown>;
+}
+
+/** One call of a plugin operation. The grant is already narrowed to the caller's. */
+export interface PluginOperationInvocation {
+  readonly pluginId: string;
+  readonly bundle: string;
+  readonly entrypoint: string;
+  readonly checksum: string;
+  /** The operation's name, as the manifest declares it. */
+  readonly operation: string;
+  /** The caller's input, already checked against the operation's input schema. */
+  readonly input: unknown;
+  /** The effective grant for this call. A runtime MUST hand the plugin nothing outside it. */
+  readonly capabilities: readonly string[];
+  readonly allowedHosts: readonly string[];
+  readonly timeoutMs?: number;
+  readonly scope?: Scope;
 }
 
 /**

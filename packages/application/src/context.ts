@@ -1,4 +1,10 @@
-import { type Principal, principalActorId } from '@contentworker/domain';
+import {
+  type InstalledPlugin,
+  type PluginOperation,
+  type Principal,
+  principalActorId,
+  type Scope,
+} from '@contentworker/domain';
 import type {
   Cache,
   Clock,
@@ -85,6 +91,11 @@ export interface AppContext {
    */
   readonly hooks?: HookDispatcher;
   /**
+   * Runs plugin operations in the sandbox. Absent where nothing can sandbox plugin code (no
+   * Worker Loader): operations then answer that they are not configured.
+   */
+  readonly appOperations?: AppOperationRunner;
+  /**
    * Image transformation service (Cloudflare Images on edge). Absent → the
    * built-in query-param URL convention (`?w=&h=&fit=&fm=&q=`), which an
    * imgix-compatible CDN in front of the blob store can serve.
@@ -137,3 +148,14 @@ export const actorOf = (ctx: AppContext): string | null => ctx.actor ?? null;
 /** `ctx` acting for the principal of a request: its audit identity is the writes' author. */
 export const actingAs = (ctx: AppContext, principal: Principal): AppContext =>
   withActor(ctx, principalActorId(principal));
+
+/** Runs one plugin operation for a caller; `createPluginOperationRunner` builds the real one. */
+export interface AppOperationRunner {
+  run(
+    plugin: InstalledPlugin,
+    operation: PluginOperation,
+    input: unknown,
+    scope: Scope,
+    caller: Principal,
+  ): Promise<unknown>;
+}

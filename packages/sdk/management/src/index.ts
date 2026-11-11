@@ -264,6 +264,25 @@ export interface ContentTypeDraft {
   readonly preview?: ContentTypePreview | null;
 }
 
+/**
+ * An operation an installed plugin offers (manifest v2), as `apps.operations()` lists it: only the
+ * ones the client's token may invoke, with the JSON Schema of their input and output.
+ */
+export interface AppOperation {
+  /** The plugin id, e.g. `com.example.seo`. */
+  readonly plugin: string;
+  readonly pluginName: string;
+  readonly pluginVersion: string;
+  readonly name: string;
+  readonly title: string;
+  readonly description: string;
+  /** The scope a caller holds to invoke it. */
+  readonly requires: string;
+  readonly mode: 'sync';
+  readonly input: Readonly<Record<string, unknown>>;
+  readonly output?: Readonly<Record<string, unknown>>;
+}
+
 /** A redirect: a front end (or an edge Worker) applies it; contentworker serves no site. */
 export interface Redirect {
   readonly id: string;
@@ -2183,6 +2202,18 @@ export function createManagementClient(opts: ManagementClientOptions) {
       ) => patch<SavedView>(`${envBase}/saved-views/${e(id)}`, changes),
       delete: (id: string, o: { readonly revision?: number } = {}) =>
         del<void>(`${envBase}/saved-views/${e(id)}`, { revision: o.revision }),
+    },
+    /**
+     * App operations: what installed plugins offer by name. `invoke` answers 403 without the
+     * scope an operation requires, 422 for input off its schema, 502 when the plugin fails.
+     */
+    apps: {
+      operations: () => get<{ items: AppOperation[] }>(`${envBase}/apps/operations`),
+      invoke: <T = unknown>(
+        plugin: string,
+        operation: string,
+        input: Readonly<Record<string, unknown>> = {},
+      ) => post<{ output: T }>(`${envBase}/apps/${e(plugin)}/operations/${e(operation)}`, input),
     },
     /** Redirects: delivery data a front end applies (content:manage to change them). */
     redirects: {

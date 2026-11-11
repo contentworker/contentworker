@@ -46,6 +46,7 @@
 ^packages/domain/src/(webhook/|events\.ts$)	guides/webhooks docs/events-and-webhooks.md	prose
 ^packages/application/src/events/	docs/events-and-webhooks.md docs/consistency.md	prose
 ^packages/(application/src/plugin[a-z-]*\.ts$|domain/src/plugin/|adapters/src/plugins-cf-loader/)	guides/extending docs/plugins.md	prose
+^(packages/application/src/app-operations\.ts$|packages/http/src/(api/routes/management|mcp/tools)/apps\.ts$|packages/http/src/api/docs/(app-operations-openapi|schemas/apps)\.ts$)	guides/extending docs/plugins.md docs/api-reference.md docs/mcp.md	prose
 ^(packages/application/src/(functions|app-extensions)\.ts$|packages/http/src/(api/routes/management|mcp/tools)/(functions|app-extensions|plugins)\.ts$|packages/adapters/src/http-effects/function-invoker\.ts$|apps/web/app/cms/components/(Functions|AppExtensions|ExtensionFrame|Plugins|PluginSettingsSheet)\.tsx$)	guides/extending	prose
 #
 # Auth, roles, keys:

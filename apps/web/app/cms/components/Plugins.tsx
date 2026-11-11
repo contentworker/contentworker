@@ -1,3 +1,4 @@
+import { operationIsNew, operationsWiden, removedOperations } from '@contentworker/domain';
 import { Alert, AlertDescription, AlertTitle } from '@contentworker/ui/alert';
 import {
   AlertDialog,
@@ -31,7 +32,7 @@ import {
 import { Input } from '@contentworker/ui/input';
 import { Label } from '@contentworker/ui/label';
 import { MoreHorizontalIcon, Puzzle } from 'lucide-react';
-import { Fragment, useState } from 'react';
+import { Fragment, useId, useState } from 'react';
 import { Confirmation } from '~/cms/components/ai/Confirmation';
 import { DiscardAsk, GuardCancel, useDiscardGuard } from '~/cms/components/discard-guard';
 import { PluginSettingsSheet } from '~/cms/components/PluginSettingsSheet';
@@ -41,8 +42,10 @@ import {
   type InspectedPluginPackage,
   type InstalledPluginSummary,
   type ManagementClient,
+  PERMISSION_SCOPES,
   PLUGIN_CAPABILITIES,
   type PluginManifestInput,
+  type PluginOperationSummary,
   UNENFORCEABLE_PLUGIN_CAPABILITIES,
   UNPROVIDED_PLUGIN_CAPABILITIES,
 } from '../lib/management';
@@ -55,6 +58,18 @@ const QUERY_KEY = ['plugins'];
 const CAPABILITY = new Map(PLUGIN_CAPABILITIES.map((c) => [c.value, c] as const));
 /** Falls back to the raw string: an unknown capability is the one to show verbatim. */
 const capabilityLabel = (value: string) => CAPABILITY.get(value)?.label ?? value;
+
+const SCOPE_LABEL = new Map<string, string>(PERMISSION_SCOPES.map((s) => [s.value, s.label]));
+/** Who may call an operation, in words; an unknown scope shows verbatim, as the id it is. */
+const whoMayCall = (scope: string): React.ReactNode => {
+  const label = SCOPE_LABEL.get(scope);
+  if (label) return `anyone who can ${label.charAt(0).toLowerCase()}${label.slice(1)}`;
+  return (
+    <>
+      anyone holding <code className="font-mono">{scope}</code>
+    </>
+  );
+};
 
 /** When each hook fires, in the words of someone deciding whether to allow it. */
 const HOOK_LABEL: Record<string, string> = {
@@ -102,7 +117,7 @@ export function Plugins(props: { client: ManagementClient }) {
     <>
       <Section
         title="Plugins"
-        description="Code that runs inside a write, before it lands — it can change an entry, add validation errors, or refuse the operation. Each plugin runs in its own sandbox with no network access, and can only do what someone approved here."
+        description="Code that runs inside a write, before it lands (it can change an entry, add validation errors or refuse the save), or when a person or agent calls one of its operations. Each plugin runs in its own sandbox with no network access, and can only do what someone approved here."
         flush={plugins.length > 0}
         actions={
           <Button type="button" onClick={() => setInstalling(true)}>
@@ -227,7 +242,11 @@ function PluginRow(props: {
             <span className="break-all font-mono">{plugin.id}</span>
             <span>v{plugin.version}</span>
             <span>
-              {plugin.hooks.length === 0 ? 'Runs on nothing' : `Runs on ${hookText(plugin.hooks)}`}
+              {plugin.hooks.length > 0
+                ? `Runs on ${hookText(plugin.hooks)}`
+                : (plugin.operations?.length ?? 0) > 0
+                  ? 'Runs when called'
+                  : 'Runs on nothing'}
             </span>
             <span title={granted.join(', ')}>
               {granted.length === 0
@@ -236,6 +255,9 @@ function PluginRow(props: {
             </span>
             {declined.length > 0 && (
               <span>Asked for, not granted: {declined.map(capabilityLabel).join(', ')}</span>
+            )}
+            {(plugin.operations?.length ?? 0) > 0 && (
+              <span>Offers: {plugin.operations?.map((op) => op.title).join(', ')}</span>
             )}
           </span>
         }
@@ -419,6 +441,45 @@ function CapabilityChoices(props: {
         );
       })}
     </fieldset>
+  );
+}
+
+/**
+ * What a plugin offers callers by name, and who may call each: part of what is being approved,
+ * since an operation lets anyone holding its scope set the plugin running. It still runs with no
+ * more access than its caller has, which the line under the list says.
+ */
+function OperationList(props: {
+  operations: readonly PluginOperationSummary[] | undefined;
+  isNew?: (op: PluginOperationSummary) => boolean;
+}) {
+  const headingId = useId();
+  const operations = props.operations ?? [];
+  if (operations.length === 0) return null;
+  return (
+    <section className="space-y-2" aria-labelledby={headingId}>
+      <p id={headingId} className="text-sm font-medium">
+        It offers people and agents:
+      </p>
+      <ul className="space-y-2">
+        {operations.map((op) => (
+          <li key={op.name} className="text-sm leading-tight">
+            <span>{op.title}</span>
+            {props.isNew?.(op) && (
+              <span className="ml-2 inline-flex align-middle">
+                <ToneBadge tone="wait" label="New" />
+              </span>
+            )}
+            <span className="block text-xs text-muted-foreground">
+              {op.description} Callable by {whoMayCall(op.requires)}.
+            </span>
+          </li>
+        ))}
+      </ul>
+      <p className="text-xs text-muted-foreground">
+        A call runs with no more access than the person or agent making it.
+      </p>
+    </section>
   );
 }
 
@@ -690,10 +751,20 @@ function InstallPluginDialog(props: {
                 )}
               </div>
 
-              <p className="text-sm">
-                This code will run on <strong>{hookText(manifest.hooks ?? [])}</strong> before the
-                change is saved, and can refuse it.
-              </p>
+              {(manifest.hooks ?? []).length > 0 ? (
+                <p className="text-sm">
+                  This code will run on <strong>{hookText(manifest.hooks ?? [])}</strong> before the
+                  change is saved, and can refuse it.
+                </p>
+              ) : (
+                (manifest.operations ?? []).length === 0 && (
+                  <p className="text-sm">
+                    It runs on nothing: it registers no hook and offers no operation.
+                  </p>
+                )
+              )}
+
+              <OperationList operations={manifest.operations} />
 
               {inspected && (
                 <p className="text-xs text-muted-foreground">
@@ -807,7 +878,17 @@ function UpgradePluginDialog(props: {
   };
 
   const added = (manifest?.capabilities ?? []).filter(isNew);
-  const widens = approved.some((c) => !granted.includes(c));
+  // The server's own rule (the domain's), so the badges, the sentence and the button can't
+  // disagree with what the upgrade will do: new operations install it disabled, as new
+  // capabilities do.
+  const newOperations = (manifest?.operations ?? []).filter((op) =>
+    operationIsNew(plugin.operations, op),
+  );
+  const dropped = removedOperations(plugin.operations, manifest?.operations);
+  const widens =
+    approved.some((c) => !granted.includes(c)) ||
+    operationsWiden(plugin.operations, manifest?.operations);
+  const isNewOperation = (op: PluginOperationSummary) => operationIsNew(plugin.operations, op);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -872,9 +953,17 @@ function UpgradePluginDialog(props: {
               </div>
               <p className="text-sm">
                 {added.length === 0
-                  ? 'It asks for nothing the installed version did not.'
+                  ? 'It asks for no capability the installed version did not.'
                   : `It asks for ${added.length === 1 ? 'one capability' : `${added.length} capabilities`} the installed version never did.`}
+                {newOperations.length > 0 &&
+                  ` It offers ${newOperations.length === 1 ? 'one operation' : `${newOperations.length} operations`} callers could not use before, so it installs disabled until you enable it.`}
               </p>
+              {dropped.length > 0 && (
+                <p className="text-sm">
+                  No longer offers: {dropped.join(', ')}. Anyone calling{' '}
+                  {dropped.length === 1 ? 'it' : 'them'} will get not found.
+                </p>
+              )}
               <CapabilityChoices
                 requested={manifest.capabilities}
                 approved={approved}
@@ -882,6 +971,7 @@ function UpgradePluginDialog(props: {
                 idPrefix="upgrade"
                 isNew={isNew}
               />
+              <OperationList operations={manifest.operations} isNew={isNewOperation} />
             </div>
           )}
 
