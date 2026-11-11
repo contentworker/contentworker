@@ -478,7 +478,7 @@ interface ContentTypeGrant {
   actions: readonly ('read' | 'write' | 'publish' | 'lock')[];
   deniedActions?: readonly ('delete' | 'unpublish')[]; // finer actions withheld (see below)
   deniedFields?: readonly string[]; // masked on read, rejected on write
-  readOnlyFields?: readonly string[]; // readable, rejected on write
+  readOnlyFields?: readonly string[]; // readable, rejected on write unless sent back unchanged
 }
 ```
 
@@ -505,7 +505,11 @@ Semantics:
   `delete`; unpublish `unpublish`. These were a write and two publishes before, which is why the
   base action stays required.
 - **Enforcement points** (identical for HTTP and MCP): entry create/update check
-  `authorizeContent(principal, 'write', ct)` + `assertWritableFields`; publish checks `publish`;
+  `authorizeContent(principal, 'write', ct)` + `assertWritableFields` (an update, and its dry run,
+  pass the stored fields: a read-only field whose every sent locale holds its stored value is no
+  write, so the admin's form and canvas, which send back every field they read, can save; a
+  denied field is refused at any value, since accepting its stored one would let a caller guess
+  it); publish checks `publish`;
   unpublish, bulk unpublish (`/bulk/entries/unpublish`, `entries_bulk_action`) and the
   `content.unpublish` node check `unpublish`; trash and purge as above. Shipping a release
   (`publishRelease` with the caller's `principal`, from the route, `releases_publish` and the

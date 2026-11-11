@@ -7,7 +7,7 @@ import {
   createPreviewLink,
   deleteContentType,
   deleteContentTypeWithEntries,
-  getPreviewEntry,
+  getEntry,
   moderateEntry,
   moveEntry,
   publishContentType,
@@ -345,11 +345,13 @@ export function registerWriteTools(server: McpServer, t: ToolContext): void {
       let unwritable: readonly string[] = [];
       let unreadable: readonly string[] = [];
       if (principal.contentGrants) {
-        const entry = await getPreviewEntry(ctx, scopeOf(args), args.id);
-        authorizeContent(principal, 'write', entry.contentType);
-        assertWritableFields(principal, entry.contentType, args.fields ?? {});
-        unwritable = unwritableFieldsFor(principal, entry.contentType);
-        unreadable = deniedFieldsFor(principal, entry.contentType);
+        const stored = await getEntry(ctx, scopeOf(args), args.id);
+        const type = stored.entry.contentTypeApiId;
+        authorizeContent(principal, 'write', type);
+        // Read-only values sent back as stored are no write (a client sends all it read).
+        assertWritableFields(principal, type, args.fields ?? {}, stored.fields);
+        unwritable = unwritableFieldsFor(principal, type);
+        unreadable = deniedFieldsFor(principal, type);
       }
       const saved = await updateEntry(ctx, scopeOf(args), args.id, args.fields as EntryFields, {
         unwritable,
@@ -395,10 +397,10 @@ export function registerWriteTools(server: McpServer, t: ToolContext): void {
         let unreadable: readonly string[] = [];
         let type = '';
         if (principal.contentGrants) {
-          const entry = await getPreviewEntry(ctx, scopeOf(args), args.id);
-          type = entry.contentType;
+          const stored = await getEntry(ctx, scopeOf(args), args.id);
+          type = stored.entry.contentTypeApiId;
           authorizeContent(principal, 'write', type);
-          assertWritableFields(principal, type, fields);
+          assertWritableFields(principal, type, fields, stored.fields);
           unwritable = unwritableFieldsFor(principal, type);
           unreadable = deniedFieldsFor(principal, type);
         }
