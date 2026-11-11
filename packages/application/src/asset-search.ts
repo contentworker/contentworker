@@ -18,6 +18,7 @@ import type {
   SearchIndex,
   VectorStore,
 } from '@contentworker/ports';
+import { aiCapability } from './ai-settings';
 import {
   type AssetProjectionContext,
   assetProjectionContext,
@@ -152,6 +153,13 @@ export async function embedAssetForSearch(
   assetId: string,
 ): Promise<boolean> {
   if (!deps.embeddings || !deps.vectors) return false;
+  // Semantic search turned off: the text never reaches the embeddings model, and the asset's
+  // vectors go, so no stale text is left to match.
+  if (!(await aiCapability(ctx, scope, 'search')).enabled) {
+    await deps.vectors.deleteAsset(scope, assetId, 'library');
+    await deps.vectors.deleteAsset(scope, assetId, 'published');
+    return false;
+  }
   const { library, published } = await searchSources(ctx, scope, assetId);
   if (!library) return false;
   const libraryText = await searchText(ctx, blob, scope, library, ASSET_EMBED_EXCERPT_CHARS);
@@ -406,6 +414,7 @@ async function candidates(
   corpus: AssetSearchCorpus,
   scan: () => Promise<string[]>,
   lexicalOut?: Set<string>,
+  semanticOn = true,
 ): Promise<string[]> {
   const index = corpus === 'library' ? deps.index : deps.publishedIndex;
   const lexical = async (): Promise<string[]> => {
@@ -420,7 +429,7 @@ async function candidates(
     return scan();
   };
   const semantic = async (): Promise<string[]> => {
-    if (!deps.embeddings || !deps.vectors) return [];
+    if (!semanticOn || !deps.embeddings || !deps.vectors) return [];
     const [embedding] = await deps.embeddings.embed([q], { taskType: 'query' });
     if (!embedding) return [];
     const topK = Math.min(MAX_ASSET_SEARCH_RESULTS, deps.vectors.maxTopK ?? 50);
@@ -492,7 +501,9 @@ export async function searchAssets(
   const { q, limit } = checkQuery(query);
   const filters = query.filters ?? {};
   const queryTerms = terms(q);
-  const ids = await candidates(deps, scope, q, 'library', async () => {
+  // Semantic search turned off: the lexical leg alone, and the query is never embedded.
+  const semanticOn = (await aiCapability(ctx, scope, 'search')).enabled;
+  const library = async () => {
     const page = await ctx.store.assets.list(scope, {
       limit: ASSET_SCAN_LIMIT,
       filters: { status: filters.status ?? 'all' },
@@ -502,7 +513,8 @@ export async function searchAssets(
       .filter((h) => h.score > 0)
       .sort((x, y) => y.score - x.score)
       .map((h) => h.id);
-  });
+  };
+  const ids = await candidates(deps, scope, q, 'library', library, undefined, semanticOn);
   const byId = new Map((await ctx.store.assets.getMany(scope, ids)).map((a) => [a.id, a]));
   const rows = ids
     .map((id) => byId.get(id))

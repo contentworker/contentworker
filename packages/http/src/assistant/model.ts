@@ -20,6 +20,7 @@ import {
   normalizeSlug,
 } from '@contentworker/domain';
 import type { EdgeEnv } from '@contentworker/platform/env';
+import type { ModelTier } from '@contentworker/ports';
 import { createAI, type WorkersAIModelId } from 'agents/models/ai-sdk';
 import type { LanguageModel } from 'ai';
 
@@ -44,13 +45,17 @@ const sha256 = async (text: string) =>
 
 /**
  * The model for one turn. `used.source` says which model answered once it has, so the turn is
- * metered only when a real one did.
+ * metered only when a real one did. `tier` is the space's tier for Coworker (flagship unless an
+ * administrator chose another), mapped to a model exactly as the Workers AI adapter maps it
+ * (`WORKERS_AI_MODEL_BY_TIER`, overridden per deployment by the WORKERS_AI_MODEL_* vars), with the fast
+ * tier behind it.
  */
 export async function assistantModel(
   env: EdgeEnv,
   context: AssistantContext,
   used: ModelSource,
   personId: string,
+  tier: ModelTier = 'flagship',
 ): Promise<Model> {
   const mock = mockModel(context);
   if (env.AI_MODE === 'mock' || !env.AI) {
@@ -58,7 +63,7 @@ export async function assistantModel(
     return mock;
   }
   const models = workersAiModelsFromEnv(env as unknown as Record<string, string | undefined>);
-  const flagship = (models.flagship ?? WORKERS_AI_MODEL_BY_TIER.flagship) as WorkersAIModelId;
+  const chosen = (models[tier] ?? WORKERS_AI_MODEL_BY_TIER[tier]) as WorkersAIModelId;
   const fast = (models.fast ?? WORKERS_AI_MODEL_BY_TIER.fast) as WorkersAIModelId;
   const gatewayId = env.AI_GATEWAY_ID ?? '';
   const ai = createAI({
@@ -75,8 +80,8 @@ export async function assistantModel(
         }
       : { id: '' },
   });
-  const primary = ai(flagship, {
-    fallback: fast === flagship ? [] : [fast],
+  const primary = ai(chosen, {
+    fallback: fast === chosen ? [] : [fast],
     // Workers AI's prefix cache: the system prompt and tools repeat within a conversation.
     sessionAffinity: await sha256(`assistant:${personId}`),
     // Tool results carry people's content: the gateway keeps no prompt or answer.

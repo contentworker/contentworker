@@ -19,6 +19,7 @@ import { recordAgentRun } from './agent-audit';
 import { decideWithBudget, generateWithBudget } from './ai-budget';
 import { answerStrings, conformingAnswer } from './ai-json';
 import { describeFieldForModel, UNTRUSTED_CONTENT_GUARD, wrapUntrusted } from './ai-prompt';
+import { requireAiCapability } from './ai-settings';
 import { SYSTEM_CALLER } from './content-types';
 import type { AppContext } from './context';
 import { getEntry, updateEntry } from './entries';
@@ -181,6 +182,7 @@ export async function translateEntry(
   input: TranslateEntryInput,
   opts: EntryAiOptions,
 ): Promise<TranslateResult> {
+  const policy = await requireAiCapability(ctx, scope, 'translation');
   const apply = input.apply === true;
   const { fields, stored, ct, defaultLocale, locales, unwritable, unreadable } =
     await loadEntryForAi(ctx, scope, id, { ...opts, apply });
@@ -216,9 +218,11 @@ export async function translateEntry(
   const properties: Record<string, Record<string, unknown>> = {};
   for (const apiId of fieldIds) properties[apiId] = { type: 'string' };
   const result = await generateWithBudget(ctx, ai, scope, {
-    system: `You are a professional translator. Translate each field value into ${input.targetLocale}, preserving meaning, tone, and any markup. Return only the translations. ${UNTRUSTED_CONTENT_GUARD}`,
+    system: policy.system(
+      `You are a professional translator. Translate each field value into ${input.targetLocale}, preserving meaning, tone, and any markup. Return only the translations. ${UNTRUSTED_CONTENT_GUARD}`,
+    ),
     prompt: `Translate these fields from ${source} to ${input.targetLocale}:\n${wrapUntrusted(JSON.stringify(source_texts, null, 2))}`,
-    tier: input.tier ?? 'balanced',
+    tier: policy.tier('balanced', input.tier),
     maxTokens: 4096,
     outputSchema: {
       type: 'object',
@@ -288,6 +292,7 @@ export async function summarizeEntry(
   input: SummarizeEntryInput,
   opts: EntryAiOptions,
 ): Promise<SummarizeResult> {
+  const policy = await requireAiCapability(ctx, scope, 'field-assist');
   const apply = Boolean(input.apply && input.targetField);
   const { fields, ct, defaultLocale, contentTypeApiId, unwritable, unreadable } =
     await loadEntryForAi(ctx, scope, id, { ...opts, apply });
@@ -301,9 +306,11 @@ export async function summarizeEntry(
   }
   const maxWords = input.maxWords ?? 60;
   const result = await generateWithBudget(ctx, ai, scope, {
-    system: `You summarize content. Write a single clear summary of at most ${maxWords} words. ${UNTRUSTED_CONTENT_GUARD}`,
+    system: policy.system(
+      `You summarize content. Write a single clear summary of at most ${maxWords} words. ${UNTRUSTED_CONTENT_GUARD}`,
+    ),
     prompt: `Summarize this ${ct.name}:\n${wrapUntrusted(text)}`,
-    tier: input.tier ?? 'fast',
+    tier: policy.tier('fast', input.tier),
     maxTokens: 512,
     outputSchema: SUMMARY_SCHEMA,
   });
@@ -370,6 +377,7 @@ export async function autofillField(
   input: AutofillFieldInput,
   opts: EntryAiOptions,
 ): Promise<AutofillResult> {
+  const policy = await requireAiCapability(ctx, scope, 'field-assist');
   const apply = input.apply === true;
   const { fields, stored, ct, defaultLocale, contentTypeApiId, unwritable, unreadable } =
     await loadEntryForAi(ctx, scope, id, { ...opts, apply });
@@ -396,7 +404,9 @@ export async function autofillField(
 
   const context = collectText(ct, fields, locale, defaultLocale);
   const result = await generateWithBudget(ctx, ai, scope, {
-    system: `You fill in a single missing field of a content entry based on its other fields. Return only the value, matching the requested type. ${UNTRUSTED_CONTENT_GUARD}`,
+    system: policy.system(
+      `You fill in a single missing field of a content entry based on its other fields. Return only the value, matching the requested type. ${UNTRUSTED_CONTENT_GUARD}`,
+    ),
     prompt: [
       `Content type: ${ct.name}.`,
       `Field to fill: ${describeFieldForModel(def)} (${def.type}).`,
@@ -405,7 +415,7 @@ export async function autofillField(
     ]
       .filter(Boolean)
       .join('\n'),
-    tier: input.tier ?? 'balanced',
+    tier: policy.tier('balanced', input.tier),
     maxTokens: 1024,
     outputSchema: {
       type: 'object',
@@ -470,6 +480,7 @@ export async function suggestEntryTags(
   input: SuggestEntryTagsInput,
   opts: EntryAiOptions,
 ): Promise<SuggestEntryTagsResult> {
+  const policy = await requireAiCapability(ctx, scope, 'field-assist');
   const { fields, ct, defaultLocale } = await loadEntryForAi(ctx, scope, id, {
     ...opts,
     apply: input.apply === true,
@@ -495,7 +506,7 @@ export async function suggestEntryTags(
       ) as Record<string, DecisionQuestion>;
       const r = await decideWithBudget(ctx, ctx.decisions, scope, {
         state,
-        tier: input.tier ?? 'fast',
+        tier: policy.tier('fast', input.tier),
         questions,
       });
       inputTokens += r.usage.inputTokens;
@@ -513,13 +524,15 @@ export async function suggestEntryTags(
     decided = true;
   }
   const result = await generateWithBudget(ctx, ai, scope, {
-    system: `You classify content with taxonomy tags. Prefer the existing vocabulary; suggest new tag names only when nothing fits. Return tag NAMES, lowercase. ${UNTRUSTED_CONTENT_GUARD}`,
+    system: policy.system(
+      `You classify content with taxonomy tags. Prefer the existing vocabulary; suggest new tag names only when nothing fits. Return tag NAMES, lowercase. ${UNTRUSTED_CONTENT_GUARD}`,
+    ),
     prompt: [
       `Content type: ${ct.name}.`,
       `Content:\n${text ? wrapUntrusted(text) : '(no text)'}`,
       `Existing tags: ${existing.map((t) => t.name).join(', ') || '(none)'}`,
     ].join('\n'),
-    tier: input.tier ?? 'fast',
+    tier: policy.tier('fast', input.tier),
     maxTokens: 512,
     outputSchema: TAGS_SCHEMA,
   });

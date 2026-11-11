@@ -164,6 +164,12 @@ export const TAGS: { name: string; description: string }[] = [
       'Generation, translation, moderation, semantic tooling, AI actions, and the agent run ledger.',
   },
   {
+    name: 'AI settings',
+    description:
+      'Per space and per AI capability: whether it is on, the model tier it runs on, and the ' +
+      'guidance its administrators add to the built-in prompt.',
+  },
+  {
     name: 'Guides',
     description:
       "The product's own documentation, served over the API so agents can look up " +
@@ -187,7 +193,7 @@ const TAG_GROUPS = [
     name: 'Publishing & automation',
     tags: ['Releases & scheduling', 'Redirects', 'Menus', 'Webhooks', 'Functions', 'Apps'],
   },
-  { name: 'AI', tags: ['AI & agents'] },
+  { name: 'AI', tags: ['AI & agents', 'AI settings'] },
   { name: 'Reference', tags: ['Guides'] },
   { name: 'Delivery', tags: ['Delivery', 'Preview'] },
 ];
@@ -202,6 +208,7 @@ const TAG_RULES: [RegExp, string][] = [
   [/\/content-types/, 'Content types'],
   [/\/block-catalog/, 'Block catalog'],
   [/\/block-config/, 'Block config'],
+  [/\/ai-settings$/, 'AI settings'],
   [/\/taxonomy\//, 'Taxonomy'],
   [/\/assets\/\{id\}\/(alt-text|auto-tag)/, 'AI & agents'],
   [/\/assets/, 'Assets'],

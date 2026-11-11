@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import {
+  AiCapabilityDisabledError,
   type Asset,
   type AssetAiSuggestions,
   applyAssetMetadata,
@@ -29,6 +30,7 @@ import type {
 } from '@contentworker/ports';
 import { redactCredentials } from '@contentworker/redaction';
 import { runWithBudget } from './ai-budget';
+import { aiCapability } from './ai-settings';
 import { type AssetSearchDeps, embedAssetForSearch, indexAssetText } from './asset-search';
 import { allAssets, assetFileKey, assetTextKey, parseAssetObjectKey } from './assets';
 import type { BulkChunkOutcome } from './bulk-jobs';
@@ -644,6 +646,8 @@ export async function enrichAltText(
     ));
   } catch (err) {
     if (err instanceof RateLimitedError) return 'budget';
+    // The space turned media AI off: nothing to suggest, and nothing to retry.
+    if (err instanceof AiCapabilityDisabledError) return 'skipped';
     // An answer with no alt text in it (empty, or not the shape asked for) suggests nothing; the
     // rest of ingest goes on, and asking again would get the same answer at another call's cost.
     if (err instanceof NoAltTextError) return 'none';
@@ -681,6 +685,7 @@ export async function enrichTags(
     ));
   } catch (err) {
     if (err instanceof RateLimitedError) return 'budget';
+    if (err instanceof AiCapabilityDisabledError) return 'skipped';
     throw err;
   }
   if (tagIds.length === 0) return 'none';
@@ -755,7 +760,7 @@ export async function extractText(
   ctx: AppContext,
   deps: AssetIngestDeps,
   params: AssetIngestParams,
-): Promise<{ chars: number; skipped?: 'unsupported' | 'too-large' | 'budget' }> {
+): Promise<{ chars: number; skipped?: 'unsupported' | 'too-large' | 'budget' | 'disabled' }> {
   const asset = await currentAsset(ctx, params);
   if (!asset || !deps.extractor || !deps.blob.open) return { chars: 0, skipped: 'unsupported' };
   const contentType = mimeOf(asset.file.contentType);
@@ -765,6 +770,10 @@ export async function extractText(
   }
   const textKey = assetTextKey(params.scope, params.assetId, params.version);
   if (!textKey) return { chars: 0, skipped: 'unsupported' };
+  // The text is read for search: with semantic search turned off, the file never goes to a model.
+  if (!(await aiCapability(ctx, params.scope, 'search')).enabled) {
+    return { chars: 0, skipped: 'disabled' };
+  }
   const cap = kind === 'audio' ? MAX_EXTRACT_AUDIO_BYTES : MAX_EXTRACT_DOCUMENT_BYTES;
   const object = await deps.blob.open(assetFileKey(params.scope, asset));
   if (!object) throw new Error('The file is not in storage');

@@ -11,6 +11,7 @@ import { agentRunsRoutes } from './management/agent-runs';
 import { agentsRoutes } from './management/agents';
 import { aiActionsRoutes } from './management/ai-actions';
 import { aiContentRoutes } from './management/ai-content';
+import { aiSettingsRoutes } from './management/ai-settings';
 import { apiKeysRoutes } from './management/api-keys';
 import { appExtensionsRoutes } from './management/app-extensions';
 import { appsRoutes } from './management/apps';
@@ -79,6 +80,7 @@ const AREAS: readonly ((deps: AuthDeps) => Hono<AuthVars>)[] = [
   pluginsRoutes,
   appsRoutes,
   rolesRoutes,
+  aiSettingsRoutes,
   contentTypesRoutes,
   blockCatalogRoutes,
   blockConfigRoutes,

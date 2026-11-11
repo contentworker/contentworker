@@ -48,6 +48,7 @@ import { redactCredentials } from '@contentworker/redaction';
 import { decide } from './ai-decide';
 import { wrapUntrusted } from './ai-prompt';
 import { isUncheckedFallback } from './ai-provenance';
+import { aiCapability } from './ai-settings';
 import { auditActor } from './audit';
 import { assertThumbnailAssets, pushBlockCatalog } from './block-catalog';
 import { blockConfigChange, setBlockConfig } from './block-config';
@@ -969,7 +970,10 @@ async function assessPromotion(
 
   let assessment: PromotionAssessment | undefined;
   let aiRequires = false;
-  if (ctx.decisions) {
+  // The AI review of a promotion is one of the space's agents: with agents turned off it is left
+  // out, as it is where no decision model is bound, and the deterministic reasons above still hold.
+  const review = ctx.decisions ? await aiCapability(ctx, target, 'agents') : undefined;
+  if (ctx.decisions && review?.enabled) {
     const state = wrapUntrusted(
       JSON.stringify({
         source: source.environmentId,
@@ -990,7 +994,7 @@ async function assessPromotion(
       target,
       {
         state,
-        tier: 'flagship',
+        tier: review.tier('flagship'),
         questions: {
           review: {
             type: 'noul',

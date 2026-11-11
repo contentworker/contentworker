@@ -9,6 +9,7 @@ import {
   moderationQuestions,
   moderationVerdict,
   recordAgentRun,
+  requireAiCapability,
   settleReviewOutcome,
   UNTRUSTED_CONTENT_GUARD,
   unpublishEntry,
@@ -123,10 +124,16 @@ export function makeActivities(deps: ActivitiesDeps): Activities {
         required.push(f.apiId);
       }
       const schema = { type: 'object', properties, required, additionalProperties: false };
+      // Every agent that writes values (enrich, curate, repurpose) runs as the space's `agents`
+      // capability: refused when it is off (the runs that start them skip first), its tier and
+      // guidance when set. Moderation (`classify`) is the deployment's control and reads none.
+      const policy = await requireAiCapability(ctx, input.scope, 'agents');
       const result = await generateWithBudget(ctx, ai, input.scope, {
-        system: `You work on CMS entries. Generate concise, natural values for the requested fields, consistent with the provided context.${input.instruction ? ` ${input.instruction}` : ''} ${UNTRUSTED_CONTENT_GUARD}`,
+        system: policy.system(
+          `You work on CMS entries. Generate concise, natural values for the requested fields, consistent with the provided context.${input.instruction ? ` ${input.instruction}` : ''} ${UNTRUSTED_CONTENT_GUARD}`,
+        ),
         prompt: `Context:\n${wrapUntrusted(input.context)}\n\nGenerate values for: ${input.fields.map((f) => f.name).join(', ')}.`,
-        tier: 'fast',
+        tier: policy.tier('fast'),
         maxTokens: 1024,
         outputSchema: schema as unknown as Record<string, unknown>,
       });

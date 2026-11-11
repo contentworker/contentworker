@@ -369,15 +369,21 @@ export function auditMiddleware(deps: AuthDeps): MiddlewareHandler<AuthVars> {
         environmentId: c.get('environmentId') ?? c.req.param('env'),
         actor: auditActor(principal),
         action: `${c.req.method} ${c.req.routePath}`,
-        // A block config set names no target in its route; what it changed (its version) does.
+        // A block config or AI settings set names no target in its route; what it changed (its
+        // version) does.
         targetType: target
           ? routeTargetType(c.req.routePath, target)
           : created
             ? 'entry'
-            : detail?.blockConfig && 'block_config',
+            : detail?.blockConfig
+              ? 'block_config'
+              : detail?.aiSettings && 'ai_settings',
         targetId: target
           ? c.req.param(target)
-          : (created?.entryId ?? (detail?.blockConfig && String(detail.blockConfig.to))),
+          : (created?.entryId ??
+            (detail?.blockConfig
+              ? String(detail.blockConfig.to)
+              : detail?.aiSettings && String(detail.aiSettings.to))),
         status: c.res.status,
         detail,
       });
