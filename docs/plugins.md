@@ -45,14 +45,17 @@ the installer does not themselves hold it:
 
 | Capability                                                       | Scope the installer must hold |
 | ---------------------------------------------------------------- | ----------------------------- |
-| `content:read`, `assets:read`, `taxonomy:read`                   | `preview:read`                |
-| `content:write`, `assets:write`, `taxonomy:write`, `ai:generate` | `content:write`               |
+| `content:read`, `taxonomy:read`                                  | `preview:read`                |
+| `assets:read`                                                    | `assets:read`                 |
+| `content:write`, `taxonomy:write`, `ai:generate`                 | `content:write`               |
+| `assets:write`                                                   | `assets:write`                |
 | `content:publish`                                                | `content:publish`             |
 | `search:read`                                                    | `search:read`                 |
 | `network:request`, `kv:storage`                                  | — (reach no platform data)    |
 
 So installing a plugin is never a privilege-escalation ladder: an editor who cannot publish cannot
 install a plugin that publishes. Capabilities **intersect** RBAC; they never widen it.
+A plugin granted only asset capabilities carries only the asset scopes, never entry read or write authority; an installer holding `preview:read` or `content:write` holds them by implication ([Auth](./auth-and-rbac.md)).
 
 At call time a plugin acts as a principal holding exactly the scopes its _approved_ capabilities
 imply, scoped to the space it was installed in. Every capability method it is handed is a call into

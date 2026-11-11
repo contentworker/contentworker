@@ -9,9 +9,14 @@ entries.
 
 ## Before you start
 
-- Uploading, editing metadata and generating alt text or tags needs `content:write`.
-- Publishing and unpublishing an asset needs `content:publish`.
-- Listing assets, reading usage and resolving transforms needs `preview:read`.
+- Uploading, editing metadata, organizing and generating alt text or tags needs `assets:write`.
+- Publishing, unpublishing, archiving and deleting an asset, and its rights and share links, need
+  `content:publish`.
+- Listing assets and resolving transforms needs `assets:read`. Reading an asset's usage needs
+  `preview:read`, because it names the entries that link to it.
+- `preview:read` carries `assets:read` and `content:write` carries `assets:write`, so a key or role
+  that has either already holds the asset scope. The reverse doesn't hold: an asset scope alone
+  reads or writes assets, never entries.
 
 `…` in the routes below stands for `/spaces/{space}/environments/{env}`.
 
@@ -66,7 +71,7 @@ workspace's limit (5 GiB unless its administrator changed it):
 deleted. An upload nobody finishes is aborted automatically after a day. The MCP tools are
 `asset_upload_start`, `asset_upload_parts`, `asset_upload_complete` and `asset_upload_abort`, and
 the Management SDK's `assets.upload(...)` does all of it for any size, retrying each part and
-reporting progress ([SDKs](/guides/sdks/#writing-content)). All four calls need `content:write`.
+reporting progress ([SDKs](/guides/sdks/#writing-content)). All four calls need `assets:write`.
 
 ## Upload a video
 
@@ -189,7 +194,7 @@ for them; more than 100 ids, or an empty one, is a 422.
 **Archive** what you no longer use: an archived asset is hidden from the list (filter on
 `status=archived` to see it) and leaves delivery if it was published. **Restore** brings it back
 as a draft. Select several to archive them together. The routes are `POST …/assets/{id}/archive`
-(`content:publish`) and `…/restore` (`content:write`); the MCP tools are `asset_archive` and
+(`content:publish`) and `…/restore` (`assets:write`); the MCP tools are `asset_archive` and
 `asset_restore`.
 
 **Delete** removes an archived asset and its files for good (`DELETE …/assets/{id}`,
@@ -203,7 +208,7 @@ collection it was in.
 A **collection** is a named, ordered set of assets: a campaign's images, a press kit. An asset can
 be in any number of collections (unlike a folder, which holds it in one place), and a collection
 holds up to 1,000 assets. Collections don't change an asset or what delivery serves. Reading them
-needs `preview:read`; changing them needs `content:write`.
+needs `assets:read`; changing them needs `assets:write`.
 
 | Route | What it does |
 | --- | --- |
@@ -233,7 +238,7 @@ out. Follow the job at `GET …/asset-zips/{id}`: `status` is `pending`, `runnin
 `failed` (with `error`), and `partsDone` of `partCount` shows progress. Once `completed` it has a
 `downloadUrl` that works for 15 minutes (ask again for a fresh one). The archive is kept for a day,
 then removed. An environment builds three zips at once; a fourth request answers **409** until
-one finishes. `GET …/asset-zips` lists the latest jobs. These need `preview:read`; the MCP tools
+one finishes. `GET …/asset-zips` lists the latest jobs. These need `assets:read`; the MCP tools
 are `asset_zip_create`, `asset_zip_get` and `asset_zips_list`, and the SDK's `assets.zips`.
 
 To give someone outside your team a file or a collection without an account, see
@@ -249,7 +254,7 @@ instead). Over the API, `POST …/assets/bulk` starts the same job (`202`):
 its own. Follow it at `GET …/bulk/jobs/{id}`; `…/bulk/jobs/{id}/report` names each asset that
 failed and why. `POST …/bulk/jobs/{id}/cancel` (`content:publish`) stops a job taking new work:
 assets it hasn't reached are left as they were, a batch already running finishes, and nothing done
-is undone (MCP `bulk_job_cancel`). `move` and `tag` need `content:write`; the others
+is undone (MCP `bulk_job_cancel`). `move` and `tag` need `assets:write`; the others
 `content:publish`. The MCP tool is `assets_bulk`.
 
 ## Replace a file and restore a version
@@ -288,7 +293,7 @@ the admin, **Replace file** does this by itself for a large file, showing the by
 **Cancel upload**. A published asset keeps delivering the file it was published with until you publish
 it again; then the new file goes out under new URLs and the old ones stop. `GET
 …/assets/{id}/versions` lists the versions, and `POST …/assets/{id}/versions/{n}/restore` restores
-one (`content:write`). The MCP tools are `asset_replace_file`, `asset_replace_file_upload`, `asset_commit_file`,
+one (`assets:write`). The MCP tools are `asset_replace_file`, `asset_replace_file_upload`, `asset_commit_file`,
 `asset_versions_list` and `asset_restore_version`.
 
 ## Rights, expiry and embargo

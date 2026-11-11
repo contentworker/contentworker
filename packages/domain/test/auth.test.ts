@@ -6,6 +6,8 @@ import {
   authorizeContent,
   canAccessContentType,
   grantFor,
+  holdsScope,
+  intersectScopes,
   maskDeniedFields,
   type Principal,
   ROLE_PRESET_DEFINITIONS,
@@ -106,5 +108,33 @@ describe('approvals and presets', () => {
     const all = new Set(Object.values(SCOPES));
     expect(new Set(scopesForKind('cma'))).toEqual(all);
     expect(new Set(ROLE_PRESET_DEFINITIONS.at(-1)?.scopes)).toEqual(all);
+  });
+});
+
+describe('asset scopes by implication', () => {
+  it('holds assets:read with preview:read and assets:write with content:write', () => {
+    expect(holdsScope(['preview:read'], SCOPES.assetsRead)).toBe(true);
+    expect(holdsScope(['content:write'], SCOPES.assetsWrite)).toBe(true);
+    expect(holdsScope(['content:write'], SCOPES.assetsRead)).toBe(false);
+    expect(holdsScope(['delivery:read'], SCOPES.assetsRead)).toBe(false);
+  });
+
+  it('never implies the other way: assets:read alone reads no drafts', () => {
+    expect(holdsScope(['assets:read'], SCOPES.previewRead)).toBe(false);
+    expect(holdsScope(['assets:write'], SCOPES.contentWrite)).toBe(false);
+    const principal = { spaceId: 's1', kind: 'cma' as const, scopes: ['assets:read'] };
+    expect(() => authorize(principal, SCOPES.assetsRead, 's1')).not.toThrow();
+    expect(() => authorize(principal, SCOPES.previewRead, 's1')).toThrow();
+  });
+
+  it('caps a consented set by a role through the implication, both ways', () => {
+    expect(intersectScopes(['preview:read'], ['assets:read'])).toEqual(['assets:read']);
+    expect(intersectScopes(['assets:read'], ['preview:read', 'content:write'])).toEqual([
+      'assets:read',
+    ]);
+    expect(intersectScopes(['preview:read', 'search:read'], ['preview:read'])).toEqual([
+      'preview:read',
+    ]);
+    expect(intersectScopes(['assets:write'], ['preview:read'])).toEqual([]);
   });
 });

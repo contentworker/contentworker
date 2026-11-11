@@ -44,7 +44,7 @@ export function assetCollectionsRoutes(deps: AuthDeps): Hono<AuthVars> {
         cursor: 'nextCursor from the previous page',
       },
     }),
-    requireScope(SCOPES.previewRead),
+    requireScope(SCOPES.assetsRead),
     async (c) => {
       const limit = clampCount(c.req.query('limit'), MAX_PAGE_LIMIT, { min: 1 });
       const cursor = c.req.query('cursor');
@@ -64,7 +64,7 @@ export function assetCollectionsRoutes(deps: AuthDeps): Hono<AuthVars> {
       status: 201,
       description: 'A named, ordered set of assets; an asset may be in any number of them.',
     }),
-    requireScope(SCOPES.contentWrite),
+    requireScope(SCOPES.assetsWrite),
     async (c) => {
       const body = await parseBody(c, assetCollectionBody);
       return c.json(
@@ -78,7 +78,7 @@ export function assetCollectionsRoutes(deps: AuthDeps): Hono<AuthVars> {
   app.get(
     `${BASE}/asset-collections/:id`,
     doc('Assets', 'Get an asset collection', { ok: collectionDocs.assetCollection }),
-    requireScope(SCOPES.previewRead),
+    requireScope(SCOPES.assetsRead),
     async (c) => c.json(await getAssetCollection(ctx, scopeOf(c), c.req.param('id'))),
   );
   app.patch(
@@ -87,7 +87,7 @@ export function assetCollectionsRoutes(deps: AuthDeps): Hono<AuthVars> {
       body: assetCollectionPatchBody,
       ok: collectionDocs.assetCollection,
     }),
-    requireScope(SCOPES.contentWrite),
+    requireScope(SCOPES.assetsWrite),
     async (c) =>
       c.json(
         await updateAssetCollection(
@@ -104,7 +104,7 @@ export function assetCollectionsRoutes(deps: AuthDeps): Hono<AuthVars> {
       status: 204,
       description: 'Its assets stay in the library; links shared to it stop opening.',
     }),
-    requireScope(SCOPES.contentWrite),
+    requireScope(SCOPES.assetsWrite),
     async (c) => {
       await deleteAssetCollection(ctx, scopeOf(c), c.req.param('id'));
       return c.body(null, 204);
@@ -126,7 +126,7 @@ export function assetCollectionsRoutes(deps: AuthDeps): Hono<AuthVars> {
         cursor: 'nextCursor from the previous page',
       },
     }),
-    requireScope(SCOPES.previewRead),
+    requireScope(SCOPES.assetsRead),
     async (c) => {
       refuseGrantedAssetReads(c);
       const page = await listAssetCollectionItems(
@@ -147,7 +147,7 @@ export function assetCollectionsRoutes(deps: AuthDeps): Hono<AuthVars> {
         `After its last member, in the order given (up to ${MAX_COLLECTION_CHANGE} ids). A ` +
         `collection holds at most ${MAX_COLLECTION_ITEMS} assets: past that is a 409.`,
     }),
-    requireScope(SCOPES.contentWrite),
+    requireScope(SCOPES.assetsWrite),
     async (c) => {
       const { assetIds } = await parseBody(c, collectionAssetIdsBody);
       return c.json(await addToAssetCollection(ctx, scopeOf(c), c.req.param('id'), assetIds));
@@ -160,7 +160,7 @@ export function assetCollectionsRoutes(deps: AuthDeps): Hono<AuthVars> {
       ok: collectionDocs.collectionRemoved,
       description: 'They stay in the library. Ids that are not members are ignored.',
     }),
-    requireScope(SCOPES.contentWrite),
+    requireScope(SCOPES.assetsWrite),
     async (c) => {
       const { assetIds } = await parseBody(c, collectionAssetIdsBody);
       return c.json(await removeFromAssetCollection(ctx, scopeOf(c), c.req.param('id'), assetIds));
@@ -175,7 +175,7 @@ export function assetCollectionsRoutes(deps: AuthDeps): Hono<AuthVars> {
         'The named members go first, in that order; the rest follow in the order they had. ' +
         'Name every member to set the whole order.',
     }),
-    requireScope(SCOPES.contentWrite),
+    requireScope(SCOPES.assetsWrite),
     async (c) => {
       const { assetIds } = await parseBody(c, collectionOrderBody);
       await reorderAssetCollection(ctx, scopeOf(c), c.req.param('id'), assetIds);

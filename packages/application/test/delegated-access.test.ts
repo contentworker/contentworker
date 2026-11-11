@@ -90,3 +90,30 @@ describe('credentials are always bound to one real space', () => {
     );
   });
 });
+
+describe('asset scopes on personal tokens', () => {
+  const mint = (ctx: AppContext, scopes: string[], issuerScopes: string[]) =>
+    createPersonalAccessToken(ctx, hasher, {
+      issuer: 'system',
+      spaceId: 's1',
+      subject: ann.sub,
+      name: 'assets',
+      scopes,
+      issuerScopes,
+    });
+
+  it('mints an assets-only token for someone holding the content scope that implies it', async () => {
+    const { ctx } = await setup();
+    const { token } = await mint(ctx, [SCOPES.assetsRead], [SCOPES.previewRead]);
+    const principal = await authenticate(ctx, hasher, token);
+    expect(principal.scopes).toEqual([SCOPES.assetsRead]);
+    expect(principal.scopes).not.toContain(SCOPES.previewRead);
+  });
+
+  it('never mints the wider content scope from an asset scope', async () => {
+    const { ctx } = await setup();
+    await expect(mint(ctx, [SCOPES.previewRead], [SCOPES.assetsRead])).rejects.toThrow(
+      /cannot exceed your own permissions/,
+    );
+  });
+});

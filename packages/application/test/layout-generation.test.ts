@@ -355,6 +355,11 @@ describe('layout-aware generation', () => {
     const writer: Principal = { ...admin, scopes: [SCOPES.contentWrite] };
     expect(imageSearchFor(writer, assets)).toBeUndefined();
     expect(imageSearchFor(admin, assets)).toBe(assets);
+    // assets:read alone reads the library, and preview:read still does by implication.
+    const librarian: Principal = { ...admin, scopes: [SCOPES.contentWrite, SCOPES.assetsRead] };
+    expect(imageSearchFor(librarian, assets)).toBe(assets);
+    const previewer: Principal = { ...admin, scopes: [SCOPES.contentWrite, SCOPES.previewRead] };
+    expect(imageSearchFor(previewer, assets)).toBe(assets);
   });
 
   it('looks up at most the cap of images, whatever the answer asks for', async () => {

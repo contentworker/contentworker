@@ -3,6 +3,7 @@ import {
   DelegatedKeyMintError,
   grantsAdmin,
   grantsNoWider,
+  holdsScope,
   IMPLIED_CONTENT_ACTIONS,
   isDelegatedBearer,
   LISTED_CONTENT_ACTIONS,
@@ -92,7 +93,7 @@ export async function createRole(
  */
 async function refuseWideningKeys(ctx: AppContext, existing: Role, input: RoleInput) {
   const widens =
-    input.scopes.some((s) => !existing.scopes.includes(s)) ||
+    input.scopes.some((s) => !holdsScope(existing.scopes, s)) ||
     !grantsNoWider(input.contentGrants, existing.contentGrants);
   if (!widens) return;
   const keys = await ctx.store.auth.list(existing.spaceId);

@@ -13,6 +13,8 @@ import {
   DelegatedKeyMintError,
   grantsAdmin,
   grantsNoWider,
+  holdsScope,
+  intersectScopes,
   isDelegatedBearer,
   isEmail,
   isRolePreset,
@@ -245,7 +247,7 @@ export function adminHoldersOf(
       if (!role) continue; // a dangling role fails closed at authentication
       scopes =
         k.issuance === 'pat' || k.issuance === 'setup'
-          ? role.scopes.filter((s) => k.scopes.includes(s))
+          ? intersectScopes(role.scopes, k.scopes)
           : role.scopes;
     }
     if (grantsAdmin(scopes)) holders.push({ kind: 'key', id: k.id });
@@ -462,7 +464,7 @@ export async function assignApiKeyRole(
     const current = key.roleId ? await ctx.store.roles.get(spaceId, key.roleId) : null;
     const held = current ? current.scopes : key.scopes;
     const widens =
-      scopes.some((s) => !held.includes(s)) ||
+      scopes.some((s) => !holdsScope(held, s)) ||
       (key.roleId !== undefined &&
         (!role ||
           (role.id !== key.roleId && !grantsNoWider(role.contentGrants, current?.contentGrants))));
