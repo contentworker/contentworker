@@ -8,7 +8,7 @@ import {
   type ComponentVariant,
   type DateFormat,
   type FieldDefinition,
-  MAX_COMPONENT_DEPTH,
+  MAX_BLOCK_DEPTH,
   normalizeOptions,
   optionValue,
   variantNamed,
@@ -32,6 +32,15 @@ import {
  * Left out of a block: rich text, entry links, lists of links, plain components and repeaters,
  * JSON, locations, an image a field's MIME rule doesn't take, and a slot the rules lock (its blocks
  * are the developer's to place). A block that requires one of them isn't offered at all.
+ *
+ * A block shape that occurs more than once (a grid allowed at the top and inside a section, a
+ * card in every column of a six-deep layout) is written once, under `$defs`, and referenced with
+ * `$ref` wherever it occurs; one that occurs once stays inline. Inlining every occurrence made the
+ * schema grow with the number of paths through the tree, exponential in its depth; shared, it
+ * grows with the number of distinct shapes, at most one per block and depth. Workers AI's JSON
+ * mode takes any valid JSON Schema, as the structured outputs it is compatible with do, and
+ * `$defs` with local `$ref`s is standard JSON Schema. What the model returns is checked against
+ * the schema (`conforms` resolves the references) and then judged by the save path either way.
  */
 
 export type JsonSchema = Record<string, unknown>;
@@ -189,7 +198,10 @@ export interface PlaceRules {
 export type BlocksSchemaResult =
   | {
       readonly ok: true;
-      /** An object schema with one property, `blocks`: the array the model fills. */
+      /**
+       * An object schema with one property, `blocks`: the array the model fills. Block shapes
+       * that occur more than once are under its `$defs`, referenced as `#/$defs/<name>`.
+       */
       readonly schema: JsonSchema;
       readonly place: PlaceRules;
       /** The blocks field that is the place: the top-level field, or the slot's definition. */
@@ -206,8 +218,9 @@ export type BlocksSchemaResult =
 /**
  * The schema of the blocks to generate at `target`: one variant per block the place takes (its
  * `_type` a `const`), each with its scalar fields, image requests for its single Asset links, and
- * its slots recursing with their own allowed children down to {@link MAX_COMPONENT_DEPTH}; the
- * place's `min` and `max` (less what it holds already) as `minItems` and `maxItems`.
+ * its slots recursing with their own allowed children down to {@link MAX_BLOCK_DEPTH}; the
+ * place's `min` and `max` (less what it holds already) as `minItems` and `maxItems`. A shape that
+ * occurs more than once is shared through `$defs` (see the module comment).
  *
  * A block with a required field the model isn't asked for (rich text, an entry link, a component,
  * a locked or empty slot, an image the caller can't search for) is not offered: every block in an
@@ -263,7 +276,8 @@ export function blocksSchemaFor(
     };
   }
   const min = place.min === undefined ? undefined : Math.max(0, place.min - held);
-  const array = slotSchema(contentType.apiId, field, place, depth, options);
+  const shapes = new ShapeTable(target.field);
+  const array = slotSchema(contentType.apiId, field, place, depth, options, shapes);
   if (!array) {
     return {
       ok: false,
@@ -271,6 +285,11 @@ export function blocksSchemaFor(
       message: 'No block the model can fill can be placed here',
     };
   }
+  const { value, defs } = shapes.finish({
+    ...array.schema,
+    ...(min ? { minItems: min } : {}),
+    ...(max !== undefined ? { maxItems: max } : {}),
+  });
   return {
     ok: true,
     place,
@@ -278,32 +297,99 @@ export function blocksSchemaFor(
     offered: array.offered,
     schema: {
       type: 'object',
-      properties: {
-        blocks: {
-          ...array.schema,
-          ...(min ? { minItems: min } : {}),
-          ...(max !== undefined ? { maxItems: max } : {}),
-        },
-      },
+      properties: { blocks: value },
       required: ['blocks'],
       additionalProperties: false,
+      ...(Object.keys(defs).length > 0 ? { $defs: defs } : {}),
     },
   };
 }
 
 /**
  * The blocks field `field`'s schema as one property of a draft's: the place's bounds, without the
- * `blocks` wrapper. Undefined when the field's top level is locked or offers nothing.
+ * `blocks` wrapper, and the shapes it shares, which belong under the draft schema's own `$defs`
+ * (each is named for the field first, so two fields' shapes never collide). Undefined when the
+ * field's top level is locked or offers nothing.
  */
 export function blocksFieldSchema(
   contentType: ContentType,
   field: string,
   options: BlocksSchemaOptions = {},
-): JsonSchema | undefined {
+):
+  | { readonly schema: JsonSchema; readonly defs: Readonly<Record<string, JsonSchema>> }
+  | undefined {
   const result = blocksSchemaFor(contentType, { field }, options);
   if (!result.ok) return undefined;
-  return (result.schema.properties as Record<string, JsonSchema>).blocks;
+  return {
+    schema: (result.schema.properties as Record<string, JsonSchema>).blocks as JsonSchema,
+    defs: (result.schema.$defs as Record<string, JsonSchema> | undefined) ?? {},
+  };
 }
+
+/**
+ * The block shapes of one schema, each written once. A shape is recorded under a name (the
+ * field's apiId and the block's, `body.card`, and a count after it when the same block takes
+ * another shape at another depth) and every occurrence becomes a `$ref` to it; {@link finish}
+ * then puts back inline each shape referenced only once, so a schema with nothing shared reads as
+ * it always has. Shapes are compared by their JSON, their own slots already references, so the
+ * comparison stays as small as one block.
+ */
+class ShapeTable {
+  private readonly names = new Map<string, string>();
+  private readonly shapes = new Map<string, JsonSchema>();
+
+  constructor(private readonly prefix: string) {}
+
+  /** A reference to `shape`, recorded under `apiId` the first time it is seen. */
+  ref(apiId: string, shape: JsonSchema): JsonSchema {
+    const json = JSON.stringify(shape);
+    let name = this.names.get(json);
+    if (!name) {
+      const base = `${this.prefix}.${apiId}`;
+      name = base;
+      for (let n = 2; this.shapes.has(name); n++) name = `${base}.${n}`;
+      this.names.set(json, name);
+      this.shapes.set(name, shape);
+    }
+    return { $ref: `#/$defs/${name}` };
+  }
+
+  /** `value` with each shape used once inline, and the shapes used more than once. */
+  finish(value: JsonSchema): { value: JsonSchema; defs: Record<string, JsonSchema> } {
+    // Uses are counted from the root, each shared shape's own body once: a shape referenced from
+    // a shared one is used once however often that one is.
+    const uses = new Map<string, number>();
+    const count = (node: unknown): void => {
+      if (Array.isArray(node)) node.forEach(count);
+      else if (node && typeof node === 'object') {
+        const name = refName(node as JsonSchema);
+        if (name !== undefined) {
+          const seen = uses.get(name) ?? 0;
+          uses.set(name, seen + 1);
+          if (seen === 0) count(this.shapes.get(name));
+        } else Object.values(node).forEach(count);
+      }
+    };
+    count(value);
+    const resolve = (node: unknown): unknown => {
+      if (Array.isArray(node)) return node.map(resolve);
+      if (!node || typeof node !== 'object') return node;
+      const name = refName(node as JsonSchema);
+      if (name !== undefined) return uses.get(name) === 1 ? resolve(this.shapes.get(name)) : node;
+      return Object.fromEntries(Object.entries(node).map(([k, v]) => [k, resolve(v)]));
+    };
+    const defs: Record<string, JsonSchema> = {};
+    for (const [name, n] of uses) {
+      if (n > 1) defs[name] = resolve(this.shapes.get(name)) as JsonSchema;
+    }
+    return { value: resolve(value) as JsonSchema, defs };
+  }
+}
+
+const refName = (node: JsonSchema): string | undefined =>
+  typeof node.$ref === 'string' && node.$ref.startsWith('#/$defs/')
+    ? node.$ref.slice('#/$defs/'.length)
+    : undefined;
 
 /** A place's rules: the target's or the block's slot's in force, narrowed by the field's size. */
 export function placeRules(
@@ -347,15 +433,16 @@ function slotSchema(
   place: PlaceRules,
   depth: number,
   options: BlocksSchemaOptions,
+  table: ShapeTable,
 ): { schema: JsonSchema; offered: string[] } | undefined {
   const variants = (blockVariants(field) ?? []).filter((v) => place.allowed.includes(v.apiId));
   const offered: string[] = [];
   const shapes: JsonSchema[] = [];
   for (const v of variants) {
-    const shape = variantSchema(contentTypeApiId, v, depth, options);
+    const shape = variantSchema(contentTypeApiId, v, depth, options, table);
     if (!shape) continue;
     offered.push(v.apiId);
-    shapes.push(shape);
+    shapes.push(table.ref(v.apiId, shape));
   }
   if (shapes.length === 0) return undefined;
   const describe = options.describe ?? ((f: FieldDefinition) => f.name);
@@ -378,6 +465,7 @@ function variantSchema(
   variant: ComponentVariant,
   depth: number,
   options: BlocksSchemaOptions,
+  table: ShapeTable,
 ): JsonSchema | undefined {
   const describe = options.describe ?? ((f: FieldDefinition) => f.name);
   const manifest = options.catalog?.find((b) => b.id === variant.apiId);
@@ -391,7 +479,7 @@ function variantSchema(
     [BLOCK_TYPE_KEY]: { type: 'string', const: variant.apiId },
   };
   for (const f of variant.fields) {
-    const filled = fieldSchema(contentTypeApiId, variant, f, depth, options, describe);
+    const filled = fieldSchema(contentTypeApiId, variant, f, depth, options, describe, table);
     if (filled) properties[f.apiId] = filled;
     else if (f.required) return undefined;
   }
@@ -413,17 +501,18 @@ function fieldSchema(
   depth: number,
   options: BlocksSchemaOptions,
   describe: Describe,
+  table: ShapeTable,
 ): JsonSchema | undefined {
   const scalar = draftableFieldSchema(f, describe);
   if (scalar) return scalar;
   if (isAssetLink(f)) {
     return options.images && acceptsImages(f) ? assetRequestSchema(f, describe) : undefined;
   }
-  if (!blockVariants(f) || depth >= MAX_COMPONENT_DEPTH) return undefined;
+  if (!blockVariants(f) || depth >= MAX_BLOCK_DEPTH) return undefined;
   const place = placeRules(contentTypeApiId, f, variant.apiId, options.rules);
   // A locked slot is the developer's to fill; a new block leaves it empty.
   if (place.locked) return undefined;
-  const array = slotSchema(contentTypeApiId, f, place, depth + 1, options);
+  const array = slotSchema(contentTypeApiId, f, place, depth + 1, options, table);
   if (!array) return undefined;
   // A slot that must hold blocks is a required field: one empty would not save.
   const min = place.min ?? (f.required ? 1 : undefined);

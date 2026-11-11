@@ -701,6 +701,126 @@ describe('layout-aware generation', () => {
   });
 });
 
+describe('generating blocks six levels deep', () => {
+  // A page holds rows; a row holds a column of either kind; both kinds hold a stack, which holds a
+  // group, which holds a tile. So the stack (and what is under it) occurs twice in the schema.
+  const level = (id: string, children?: string[]) => ({
+    id,
+    name: id,
+    fields: [{ apiId: 'heading', name: 'Heading', type: 'Symbol' }],
+    ...(children ? { slots: [{ apiId: 'inner', name: 'Inner', allowedChildren: children }] } : {}),
+  });
+  const DEEP = [
+    level('row', ['wide', 'narrow']),
+    { ...level('wide', ['stack']), allowedParents: ['row'] },
+    { ...level('narrow', ['stack']), allowedParents: ['row'] },
+    { ...level('stack', ['group']), allowedParents: ['wide', 'narrow'] },
+    { ...level('group', ['tile']), allowedParents: ['stack'] },
+    { ...level('tile'), allowedParents: ['group'] },
+  ];
+  const tree = (...ids: string[]): Block => {
+    const [id, ...rest] = ids;
+    return { _type: id, heading: `A ${id}`, ...(rest.length ? { inner: [tree(...rest)] } : {}) };
+  };
+  const bodyOf = (out: GeneratedBlocks) => out.fields.body?.['en-US'] as Block[];
+  let ctx: AppContext;
+
+  beforeEach(async () => {
+    ctx = {
+      store: new InMemoryContentStore(),
+      clock: new FixedClock(),
+      ids: new SequenceIdGenerator('g'),
+    };
+    await createSpace(ctx, { spaceId: 'site', name: 'Site', defaultLocale: 'en-US' });
+    const f = { localized: false, required: false, position: 0 } as const;
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
+      apiId: 'page',
+      name: 'Page',
+      displayField: 'title',
+      fields: [
+        { ...f, apiId: 'title', name: 'Title', type: 'Symbol' },
+        {
+          ...f,
+          apiId: 'body',
+          name: 'Body',
+          type: 'Array',
+          position: 1,
+          items: {
+            type: 'Component',
+            variants: [
+              { apiId: 'x', name: 'X', fields: [{ ...f, apiId: 'x', name: 'X', type: 'Symbol' }] },
+            ],
+          },
+        },
+      ],
+    });
+    await publishContentType(ctx, scope, 'page');
+    await pushBlockCatalog(ctx, admin, scope, {
+      blocks: DEEP,
+      targets: [{ contentTypeApiId: 'page', field: 'body', blocks: ['row'] }],
+      allowDestructive: true,
+    });
+  });
+
+  it('asks for the whole tree, each repeated shape once, and takes an answer to the bottom', async () => {
+    const ai = answering([tree('row', 'narrow', 'stack', 'group', 'tile')]);
+    const out = await generateBlocks(ctx, ai, scope, {
+      contentTypeApiId: 'page',
+      field: 'body',
+      prompt: 'A deep page',
+    });
+    const schema = ai.requests[0]?.outputSchema as Record<string, unknown>;
+    // The stack occurs under both column kinds: written once, referenced twice.
+    expect(Object.keys(schema.$defs as object)).toEqual(['body.stack']);
+    expect(JSON.stringify(schema).match(/"#\/\$defs\/body\.stack"/g)).toHaveLength(2);
+    expect(JSON.stringify(schema).match(/"const":"tile"/g)).toHaveLength(1);
+    let block = bodyOf(out)[0];
+    for (const id of ['row', 'narrow', 'stack', 'group']) {
+      expect(block?._type).toBe(id);
+      block = ((block?.inner ?? []) as Block[])[0];
+    }
+    expect(block).toMatchObject({ _type: 'tile', heading: 'A tile' });
+  });
+
+  it('refuses an answer that puts a block where its shared shape doesn’t take it', async () => {
+    // A row inside a stack: no shape in the schema has it there.
+    const ai = answering([tree('row', 'wide', 'stack', 'row')]);
+    const refused = await issues(
+      generateBlocks(ctx, ai, scope, { contentTypeApiId: 'page', field: 'body', prompt: 'x' }),
+    );
+    expect(refused[0]).toMatchObject({ field: 'body', code: 'bad_generation' });
+  });
+
+  it('answers in AI_MODE=mock through the shared shapes, down to the deepest block', async () => {
+    const mock: AppContext = { ...ctx, ai: { mode: 'mock', timeoutMs: 1000 } };
+    const out = await generateBlocks(mock, answering([]), scope, {
+      contentTypeApiId: 'page',
+      field: 'body',
+      prompt: 'x',
+    });
+    let block = bodyOf(out)[0];
+    for (let d = 1; d < 5; d++) block = ((block?.inner ?? []) as Block[])[0];
+    expect(block).toMatchObject({ _type: 'tile' });
+  });
+
+  it('drafts an entry whose blocks share shapes, their $defs at the draft schema’s root', async () => {
+    const ai = new StubAIProvider(() => ({
+      title: 'Deep',
+      body: [tree('row', 'wide', 'stack', 'group', 'tile')],
+    }));
+    const draft = await draftEntry(ctx, ai, scope, { contentTypeApiId: 'page', prompt: 'x' });
+    const schema = ai.requests[0]?.outputSchema as Record<string, unknown>;
+    expect(Object.keys(schema.$defs as object)).toEqual(['body.stack']);
+    expect(
+      conforms(
+        draft.fields.body?.['en-US'],
+        (schema.properties as Record<string, object>).body as Record<string, unknown>,
+        schema,
+      ),
+    ).toBe(true);
+  });
+});
+
 describe('drafting an entry with blocks', () => {
   let ctx: AppContext;
   const f = { localized: false, required: false, position: 0 } as const;
@@ -844,6 +964,28 @@ describe('conforms, for the shapes a layout schema uses', () => {
     expect(conforms({ blocks: [{ _type: 'a', n: 1 }, { _type: 'b' }] }, schema)).toBe(true);
     expect(conforms({ blocks: [{ _type: 'c' }] }, schema)).toBe(false);
     expect(conforms({ blocks: [{ _type: 'a' }] }, schema)).toBe(false);
+  });
+
+  it('follows a $ref into the root’s $defs, and refuses one that names nothing', () => {
+    const shared = {
+      $defs: {
+        leaf: {
+          type: 'object',
+          properties: { _type: { const: 'leaf' }, n: { type: 'integer' } },
+          required: ['_type', 'n'],
+          additionalProperties: false,
+        },
+      },
+      type: 'object',
+      properties: { blocks: { type: 'array', items: { $ref: '#/$defs/leaf' } } },
+    };
+    expect(conforms({ blocks: [{ _type: 'leaf', n: 1 }] }, shared)).toBe(true);
+    expect(conforms({ blocks: [{ _type: 'leaf', n: 'one' }] }, shared)).toBe(false);
+    // A property checked on its own resolves against the schema it came from.
+    const blocks = shared.properties.blocks;
+    expect(conforms([{ _type: 'leaf', n: 2 }], blocks, shared)).toBe(true);
+    expect(conforms([{ _type: 'leaf', n: 2 }], blocks)).toBe(false);
+    expect(conforms({}, { $ref: '#/$defs/missing' })).toBe(false);
   });
 
   it('holds a const, and oneOf to exactly one branch', () => {

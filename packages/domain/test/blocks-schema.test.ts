@@ -5,12 +5,14 @@ import {
   assetRequestSites,
   blocksFieldSchema,
   blocksSchemaFor,
+  type ComponentVariant,
   catalogVariants,
   checkBlockCatalog,
   defineContentType,
   draftableFieldSchema,
   effectiveBlockRules,
   type FieldDefinition,
+  MAX_BLOCK_DEPTH,
   resolveAssetRequests,
 } from '../src/index';
 
@@ -122,6 +124,22 @@ const PAGE = defineContentType({
 });
 
 type Schema = Record<string, unknown>;
+/** `schema` with every `$ref` to its `$defs` replaced by the shape it names, as a model reads it. */
+const inline = (schema: Schema): Schema => {
+  const defs = (schema.$defs ?? {}) as Record<string, Schema>;
+  const walk = (node: unknown): unknown => {
+    if (Array.isArray(node)) return node.map(walk);
+    if (!node || typeof node !== 'object') return node;
+    const ref = (node as Schema).$ref;
+    if (typeof ref === 'string') return walk(defs[ref.replace('#/$defs/', '')]);
+    return Object.fromEntries(
+      Object.entries(node)
+        .filter(([k]) => k !== '$defs')
+        .map(([k, v]) => [k, walk(v)]),
+    );
+  };
+  return walk(schema) as Schema;
+};
 const props = (s: unknown) => (s as { properties: Record<string, Schema> }).properties;
 const variantsOf = (array: unknown): Schema[] => {
   const items = (array as { items: Schema }).items;
@@ -136,7 +154,7 @@ describe('the blocks schema a model fills', () => {
   it('offers one variant per block it can fill, its _type a const, and no _key', () => {
     const built = blocksSchemaFor(PAGE, { field: 'body' }, withImages);
     if (!built.ok) throw new Error(built.message);
-    const blocksArray = props(built.schema).blocks;
+    const blocksArray = props(inline(built.schema)).blocks;
     // article needs rich text, download a PDF: neither can be generated, so neither is offered.
     expect(ids(blocksArray)).toEqual(['hero', 'grid', 'section', 'banner']);
     expect(built.offered).toEqual(['hero', 'grid', 'section', 'banner']);
@@ -154,7 +172,7 @@ describe('the blocks schema a model fills', () => {
   it('asks for an image by what it shows, only where an image fits, and leaves rich text out', () => {
     const built = blocksSchemaFor(PAGE, { field: 'body' }, withImages);
     if (!built.ok) throw new Error(built.message);
-    const hero = variant(props(built.schema).blocks, 'hero')!;
+    const hero = variant(props(inline(built.schema)).blocks, 'hero')!;
     expect(props(hero).image).toMatchObject({
       type: 'object',
       required: [ASSET_REQUEST_KEY],
@@ -180,15 +198,15 @@ describe('the blocks schema a model fills', () => {
   it('asks for no image without a library search, and leaves out a block that needs one', () => {
     const built = blocksSchemaFor(PAGE, { field: 'body' }, {});
     if (!built.ok) throw new Error(built.message);
-    expect(ids(props(built.schema).blocks)).toEqual(['hero', 'grid', 'section']);
+    expect(ids(props(inline(built.schema)).blocks)).toEqual(['hero', 'grid', 'section']);
     // The hero's image is optional: the hero stays, without it.
-    expect(props(variant(props(built.schema).blocks, 'hero')).image).toBeUndefined();
+    expect(props(variant(props(inline(built.schema)).blocks, 'hero')).image).toBeUndefined();
   });
 
   it('recurses into slots with their own children and bounds, down to the component depth', () => {
     const built = blocksSchemaFor(PAGE, { field: 'body' }, withImages);
     if (!built.ok) throw new Error(built.message);
-    const section = variant(props(built.schema).blocks, 'section')!;
+    const section = variant(props(inline(built.schema)).blocks, 'section')!;
     const content = props(section).content;
     expect(ids(content)).toEqual(['hero', 'grid']);
     const grid = variant(content, 'grid')!;
@@ -214,7 +232,7 @@ describe('the blocks schema a model fills', () => {
     const built = blocksSchemaFor(PAGE, { field: 'body' }, { rules });
     if (!built.ok) throw new Error(built.message);
     expect(built.place).toEqual({ allowed: ['hero', 'grid', 'section'], max: 4, locked: false });
-    const top = props(built.schema).blocks;
+    const top = props(inline(built.schema)).blocks;
     // A grid must hold a card, and its slot is locked: it could never save, so it isn't offered.
     // A section's slot is optional: the section stays, its slot left out.
     expect(ids(top)).toEqual(['hero', 'section']);
@@ -235,7 +253,7 @@ describe('the blocks schema a model fills', () => {
       { rules },
     );
     if (!atTop.ok) throw new Error(atTop.message);
-    const items = props(atTop.schema).blocks;
+    const items = props(inline(atTop.schema)).blocks;
     expect(ids(items)).toEqual(['card']);
     expect(items.maxItems).toBe(2);
     expect(items.minItems).toBeUndefined();
@@ -297,9 +315,90 @@ describe('the blocks schema a model fills', () => {
       },
     );
     if (!built.ok) throw new Error(built.message);
-    const hero = variant(props(built.schema).blocks, 'hero')!;
+    const hero = variant(props(inline(built.schema)).blocks, 'hero')!;
     expect(hero.description).toBe('Hero: The big banner at the top of a page');
     expect(props(hero).heading?.description).toBe('field heading');
+  });
+
+  it('writes a block shape that occurs more than once in $defs, and keeps one that occurs once inline', () => {
+    const built = blocksSchemaFor(PAGE, { field: 'body' }, withImages);
+    if (!built.ok) throw new Error(built.message);
+    const defs = built.schema.$defs as Record<string, Schema>;
+    // The hero and the grid sit at the top and inside a section, in the same shape: shared. The
+    // section, the banner, the card and the quote occur once each.
+    expect(Object.keys(defs).sort()).toEqual(['body.grid', 'body.hero']);
+    const top = (props(built.schema).blocks as { items: { anyOf: Schema[] } }).items.anyOf;
+    expect(top.map((s) => s.$ref ?? (s.properties as Record<string, Schema>)._type?.const)).toEqual(
+      ['#/$defs/body.hero', '#/$defs/body.grid', 'section', 'banner'],
+    );
+    // A place with nothing shared has no $defs at all.
+    const flat = blocksSchemaFor(PAGE, {
+      field: 'body',
+      slot: [{ variant: 'grid', slot: 'items' }],
+    });
+    if (!flat.ok) throw new Error(flat.message);
+    expect(flat.schema.$defs).toBeUndefined();
+  });
+
+  it('grows with the blocks of a six-deep catalog, not with the paths through it', () => {
+    // `width` blocks at each of six levels, each one's slot taking every block of the next level:
+    // width^6 paths reach the deepest level, which inlining every occurrence wrote out in full.
+    const layered = (width: number) => {
+      let next: ComponentVariant[] | undefined;
+      for (let level = MAX_BLOCK_DEPTH; level >= 1; level--) {
+        const children = next;
+        next = Array.from({ length: width }, (_, i) => ({
+          apiId: `l${level}b${i}`,
+          name: `Level ${level} block ${i}`,
+          fields: [
+            symbol('title') as FieldDefinition,
+            ...(children
+              ? [
+                  {
+                    apiId: 'inner',
+                    name: 'Inner',
+                    type: 'Array',
+                    items: { type: 'Component', variants: children },
+                  } as FieldDefinition,
+                ]
+              : []),
+          ],
+        }));
+      }
+      return defineContentType({
+        apiId: 'deep',
+        name: 'Deep',
+        displayField: 'title',
+        fields: [
+          symbol('title') as FieldDefinition,
+          {
+            apiId: 'body',
+            name: 'Body',
+            type: 'Array',
+            items: { type: 'Component', variants: next },
+          } as FieldDefinition,
+        ],
+      });
+    };
+    const measure = (width: number) => {
+      const built = blocksSchemaFor(layered(width), { field: 'body' });
+      if (!built.ok) throw new Error(built.message);
+      return { schema: built.schema, bytes: JSON.stringify(built.schema).length };
+    };
+    const two = measure(2);
+    const four = measure(4);
+    // Each block below the top is written once; the top level's blocks occur once, inline.
+    expect(Object.keys(four.schema.$defs as Schema)).toHaveLength(4 * (MAX_BLOCK_DEPTH - 1));
+    // Twice the blocks per level: the shapes double, and each slot lists twice the children. The
+    // paths would grow 64-fold (2^6), and did, inlined.
+    expect(four.bytes / two.bytes).toBeLessThan(4);
+    expect(four.bytes).toBeLessThan(40_000);
+    // The deepest blocks hold no slot, and the tree still reads to the bottom.
+    let level = props(inline(four.schema)).blocks as Schema;
+    for (let d = 1; d < MAX_BLOCK_DEPTH; d++) {
+      level = props(variantsOf(level)[0]).inner as Schema;
+    }
+    expect(Object.keys(props(variantsOf(level)[0]))).toEqual(['_type', 'title']);
   });
 
   it('builds a draftable scalar’s schema, and nothing for a field a model doesn’t fill', () => {

@@ -65,23 +65,40 @@ function typeMatches(value: unknown, type: string): boolean {
   }
 }
 
+/** The schema a local `$ref` (`#/$defs/<name>`) names in `root`, else undefined. */
+function resolveRef(root: Schema, ref: string): Schema | undefined {
+  if (!ref.startsWith('#/$defs/')) return undefined;
+  const defs = root.$defs;
+  const def =
+    defs && typeof defs === 'object'
+      ? (defs as Record<string, unknown>)[ref.slice('#/$defs/'.length)]
+      : undefined;
+  return def && typeof def === 'object' ? (def as Schema) : undefined;
+}
+
 /**
  * Structural JSON Schema check covering what generation schemas use: `type`
  * (single or union), `const`, `enum`, `anyOf` (some branch), `oneOf` (exactly
- * one branch), `required`, `properties`, `items` and `additionalProperties:
- * false`, recursively. Unknown keywords are accepted — this guards the shape a
- * step relies on, not every rule (lengths, counts and patterns are the
- * validators' to judge, and they name the field).
+ * one branch), `required`, `properties`, `items`, `additionalProperties:
+ * false` and a local `$ref` to `root`'s `$defs` (a blocks schema shares a block
+ * shape that occurs more than once that way), recursively. A reference that
+ * names nothing conforms to nothing. Unknown keywords are accepted — this guards
+ * the shape a step relies on, not every rule (lengths, counts and patterns are
+ * the validators' to judge, and they name the field).
  */
-export function conforms(value: unknown, schema: Schema): boolean {
+export function conforms(value: unknown, schema: Schema, root: Schema = schema): boolean {
+  if (typeof schema.$ref === 'string') {
+    const def = resolveRef(root, schema.$ref);
+    return def !== undefined && def !== schema && conforms(value, def, root);
+  }
   const branches = (key: 'anyOf' | 'oneOf') =>
     Array.isArray(schema[key])
       ? (schema[key] as unknown[]).filter((b): b is Schema => !!b && typeof b === 'object')
       : undefined;
   const anyOf = branches('anyOf');
-  if (anyOf && !anyOf.some((b) => conforms(value, b))) return false;
+  if (anyOf && !anyOf.some((b) => conforms(value, b, root))) return false;
   const oneOf = branches('oneOf');
-  if (oneOf && oneOf.filter((b) => conforms(value, b)).length !== 1) return false;
+  if (oneOf && oneOf.filter((b) => conforms(value, b, root)).length !== 1) return false;
   if ('const' in schema && schema.const !== value) return false;
   const type = schema.type;
   if (typeof type === 'string' && !typeMatches(value, type)) return false;
@@ -103,7 +120,12 @@ export function conforms(value: unknown, schema: Schema): boolean {
         : undefined;
     if (props) {
       for (const [key, sub] of Object.entries(props)) {
-        if (key in obj && sub && typeof sub === 'object' && !conforms(obj[key], sub as Schema)) {
+        if (
+          key in obj &&
+          sub &&
+          typeof sub === 'object' &&
+          !conforms(obj[key], sub as Schema, root)
+        ) {
           return false;
         }
       }
@@ -114,7 +136,7 @@ export function conforms(value: unknown, schema: Schema): boolean {
   }
   if (Array.isArray(value) && schema.items && typeof schema.items === 'object') {
     const items = schema.items as Schema;
-    if (!value.every((v) => conforms(v, items))) return false;
+    if (!value.every((v) => conforms(v, items, root))) return false;
   }
   return true;
 }

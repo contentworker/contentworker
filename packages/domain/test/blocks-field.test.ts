@@ -7,6 +7,7 @@ import {
   defineContentType,
   extractReferences,
   type FieldDefinition,
+  MAX_BLOCK_DEPTH,
   MAX_COMPONENT_DEPTH,
   nestedFieldsFor,
   removedFields,
@@ -149,23 +150,73 @@ describe('defining a blocks field', () => {
     }
   });
 
-  it("counts a variant's fields toward the depth cap", () => {
-    // MAX_COMPONENT_DEPTH levels including the blocks field itself is fine;
-    // one more is refused, exactly as for a plain component.
+  /** A blocks field `levels` deep: each level's one variant holds the next level as a slot. */
+  const slots = (
+    levels: number,
+    leaf: FieldDefinition[] = [field({ apiId: 'x', type: 'Symbol' })],
+  ) => {
+    let inner: FieldDefinition | undefined;
+    for (let d = levels; d >= 1; d--) {
+      const fields = inner ? [field({ apiId: 'label', type: 'Symbol' }), inner] : leaf;
+      inner = field({
+        apiId: d === 1 ? 'body' : `slot${d}`,
+        type: 'Array',
+        items: { type: 'Component', variants: [{ apiId: `level${d}`, name: `L${d}`, fields }] },
+      });
+    }
+    return inner as FieldDefinition;
+  };
+  const components = (n: number): FieldDefinition => {
     let inner: FieldDefinition = field({ apiId: 'leaf', type: 'Symbol' });
-    for (let d = 1; d < MAX_COMPONENT_DEPTH; d++) {
+    for (let d = 1; d <= n; d++) {
       inner = field({ apiId: `c${d}`, type: 'Component', fields: [inner] });
     }
-    const ok = blocksField([{ apiId: 'deep', name: 'Deep', fields: [inner] }]);
+    return inner;
+  };
+
+  it(`nests slots ${MAX_BLOCK_DEPTH} deep, the blocks field counting as 1, and refuses a 7th`, () => {
+    expect(() => typeWith([slots(MAX_BLOCK_DEPTH)])).not.toThrow();
+    expect(refusal(() => typeWith([slots(MAX_BLOCK_DEPTH + 1)]))).toMatch(
+      /nest 6 deep at most, a top-level field counting as 1/,
+    );
+  });
+
+  it('counts a component prop of a block toward the overall cap', () => {
+    // A component inside the deepest block is a 7th level: it doesn't escape both caps.
+    expect(refusal(() => typeWith([slots(MAX_BLOCK_DEPTH, [components(1)])]))).toMatch(
+      /nest 6 deep at most/,
+    );
+    expect(() => typeWith([slots(MAX_BLOCK_DEPTH - 1, [components(1)])])).not.toThrow();
+  });
+
+  it(`keeps plain components to ${MAX_COMPONENT_DEPTH} among themselves inside a block`, () => {
+    // A block's slots don't count toward the plain cap; its component props do.
+    const ok = blocksField([
+      { apiId: 'deep', name: 'Deep', fields: [components(MAX_COMPONENT_DEPTH)] },
+    ]);
     expect(() => typeWith([ok])).not.toThrow();
     const tooDeep = blocksField([
-      {
-        apiId: 'deep',
-        name: 'Deep',
-        fields: [field({ apiId: 'extra', type: 'Component', fields: [inner] })],
-      },
+      { apiId: 'deep', name: 'Deep', fields: [components(MAX_COMPONENT_DEPTH + 1)] },
     ]);
-    expect(refusal(() => typeWith([tooDeep]))).toMatch(/nest 3 deep at most/);
+    expect(refusal(() => typeWith([tooDeep]))).toMatch(/Components may nest 3 deep at most/);
+    // Below two levels of slots, three components still fit (5 in all), a fourth doesn't.
+    expect(() => typeWith([slots(2, [components(MAX_COMPONENT_DEPTH)])])).not.toThrow();
+    expect(refusal(() => typeWith([slots(2, [components(MAX_COMPONENT_DEPTH + 1)])]))).toMatch(
+      /Components may nest 3 deep at most/,
+    );
+  });
+
+  it('validates a value six blocks deep against the deepest variant', () => {
+    const ct = typeWith([slots(MAX_BLOCK_DEPTH)]);
+    let value: Record<string, unknown> = { _type: `level${MAX_BLOCK_DEPTH}`, x: 1 };
+    for (let d = MAX_BLOCK_DEPTH - 1; d >= 1; d--) {
+      value = { _type: `level${d}`, label: 'ok', [`slot${d + 1}`]: [value] };
+    }
+    const issues = validateEntryFields(ct, { body: { 'en-US': [value] } }, vctx);
+    // Only the wrong leaf value is reported, at its full path.
+    expect(issues.map((i) => i.field)).toEqual([
+      'body[0].slot2[0].slot3[0].slot4[0].slot5[0].slot6[0].x',
+    ]);
   });
 });
 

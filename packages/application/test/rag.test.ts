@@ -72,6 +72,30 @@ describe('P7: RAG indexing + semantic search', () => {
     expect(text['en-US']).toBe('Big news');
   });
 
+  it('embeds the text of blocks at the full block depth, and stops below it', () => {
+    // Six levels of blocks, each with a heading and a slot holding the next; the deepest one also
+    // keeps a list of tags. JSON nested past every block level is left out.
+    let block: Record<string, unknown> = {
+      _type: 'leaf',
+      heading: 'Level 6',
+      tags: ['deepest tag'],
+      data: { a: { b: { c: 'too deep' } } },
+    };
+    for (let level = 5; level >= 1; level--) {
+      block = { _type: 'section', heading: `Level ${level}`, inner: [block] };
+    }
+    const text = extractTextByLocale({ body: { 'en-US': [block] } });
+    expect(text['en-US']?.split('\n\n')).toEqual([
+      'Level 1',
+      'Level 2',
+      'Level 3',
+      'Level 4',
+      'Level 5',
+      'Level 6',
+      'deepest tag',
+    ]);
+  });
+
   it('extracts plain text from rich-text values per locale', () => {
     const body = {
       nodeType: 'document',

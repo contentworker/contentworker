@@ -21,30 +21,44 @@ interface JsonSchema {
   readonly maxItems?: number;
   readonly anyOf?: readonly JsonSchema[];
   readonly oneOf?: readonly JsonSchema[];
+  readonly $ref?: string;
+  readonly $defs?: Readonly<Record<string, JsonSchema>>;
 }
 
-/** A placeholder value of `schema`'s shape, so the caller's parsing runs as it would live. */
-function sample(schema: JsonSchema | undefined, name: string, depth = 0): unknown {
-  // Deep enough for a blocks tree at the content model's full component depth (three levels of
-  // array, variant and object below the answer), shallow enough to stop a cyclic schema.
-  if (!schema || depth > 16) return `Sample ${name}`;
+/**
+ * A placeholder value of `schema`'s shape, so the caller's parsing runs as it would live. A local
+ * `$ref` is followed into `root`'s `$defs`, where a blocks schema keeps the shapes it shares.
+ */
+function sample(
+  schema: JsonSchema | undefined,
+  name: string,
+  root: JsonSchema | undefined,
+  depth = 0,
+): unknown {
+  // Deep enough for a blocks tree at the full block depth (six levels of array, variant and
+  // object below the answer, each a step or two more through a `$ref`), shallow enough to stop a
+  // cyclic schema.
+  if (!schema || depth > 48) return `Sample ${name}`;
+  if (schema.$ref?.startsWith('#/$defs/')) {
+    return sample(root?.$defs?.[schema.$ref.slice('#/$defs/'.length)], name, root, depth + 1);
+  }
   if (schema.const !== undefined) return schema.const;
   if (schema.enum?.length) return schema.enum[0];
   const variant = schema.anyOf?.[0] ?? schema.oneOf?.[0];
-  if (variant) return sample(variant, name, depth + 1);
+  if (variant) return sample(variant, name, root, depth + 1);
   const type = Array.isArray(schema.type) ? schema.type.find((t) => t !== 'null') : schema.type;
   switch (type) {
     case 'object': {
       const out: Record<string, unknown> = {};
       for (const [key, def] of Object.entries(schema.properties ?? {})) {
-        out[key] = sample(def, key, depth + 1);
+        out[key] = sample(def, key, root, depth + 1);
       }
       return out;
     }
     case 'array': {
       // As many as the schema asks for at least (one when it doesn't say), never more than it takes.
       const n = Math.min(Math.max(1, schema.minItems ?? 1), schema.maxItems ?? Infinity);
-      return Array.from({ length: n }, () => sample(schema.items, name, depth + 1));
+      return Array.from({ length: n }, () => sample(schema.items, name, root, depth + 1));
     }
     case 'integer':
     case 'number':
@@ -74,7 +88,8 @@ export function mockGenerate(req: GenerateRequest): GenerateResult {
   if (!req.outputSchema) {
     return { text: 'Sample response (AI_MODE=mock).', usage: { inputTokens: 0, outputTokens: 0 } };
   }
-  const object = sample({ type: 'object', ...(req.outputSchema as JsonSchema) }, 'value');
+  const schema = { type: 'object', ...(req.outputSchema as JsonSchema) };
+  const object = sample(schema, 'value', schema);
   return { text: JSON.stringify(object), object, usage: { inputTokens: 0, outputTokens: 0 } };
 }
 

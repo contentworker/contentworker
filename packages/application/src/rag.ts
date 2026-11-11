@@ -9,6 +9,7 @@ import {
   BLOCK_TYPE_KEY,
   isLocaleDelivered,
   isRichTextDocument,
+  MAX_BLOCK_DEPTH,
   RateLimitedError,
   richTextToPlainText,
 } from '@contentworker/domain';
@@ -43,8 +44,13 @@ function clampTopK(topK: number | undefined): number {
   return Math.min(Math.max(Math.trunc(topK), 1), MAX_SEARCH_TOP_K);
 }
 
-/** How deep the walk goes. Components cap at 3; this covers JSON too. */
-const MAX_TEXT_DEPTH = 8;
+/**
+ * How deep the walk goes, in JSON levels. Each block level costs two (the slot's array, then the
+ * block), so a field's blocks at full depth ({@link MAX_BLOCK_DEPTH}) hold their props at
+ * 2 × 6 = 12; the two more reach a list of strings in the deepest block and a JSON value's next
+ * level. Below that is only a JSON field's own nesting, which isn't worth an embedding.
+ */
+const MAX_TEXT_DEPTH = 2 * MAX_BLOCK_DEPTH + 2;
 
 /**
  * Collects the human-readable string values of an entry, grouped by locale.
