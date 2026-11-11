@@ -1666,7 +1666,7 @@ test('the editor names who created and last edited an entry, and Mine lists oneâ
   await expect(pane.getByText('Last edited by').locator('+ dd time')).toHaveCount(1);
 
   await openCms(page, '/content/article');
-  const mine = page.getByRole('button', { name: 'Mine' });
+  const mine = page.getByRole('button', { name: 'Mine', exact: true });
   await mine.click();
   await expect(mine).toHaveAttribute('aria-pressed', 'true');
   await expect(
