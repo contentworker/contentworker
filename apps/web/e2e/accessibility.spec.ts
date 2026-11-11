@@ -1354,7 +1354,7 @@ test('the publish confirmation has no accessibility violations', async ({
   await scan(page, testInfo);
 });
 
-test('a publish card with its review open has no accessibility violations', async ({
+test('a publish card with its review open has no accessibility violations @coworker', async ({
   page,
   request,
 }, testInfo) => {
@@ -1377,7 +1377,7 @@ test('a publish card with its review open has no accessibility violations', asyn
   await expect(card).toHaveCount(0);
 });
 
-test('a block patch card, ready and refused, has no accessibility violations', async ({
+test('a block patch card, ready and refused, has no accessibility violations @coworker', async ({
   page,
   request,
 }, testInfo) => {

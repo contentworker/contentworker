@@ -469,7 +469,7 @@ test('the dock and Build → Blocks show a block’s asset thumbnail, and not a 
   ).toHaveCount(0);
 });
 
-test('Coworker fills a seam: its proposal shows as ghosts, Not now takes them off, Confirm saves it', async ({
+test('Coworker fills a seam: its proposal shows as ghosts, Not now takes them off, Confirm saves it @coworker', async ({
   page,
   request,
 }, testInfo) => {

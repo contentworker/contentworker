@@ -202,13 +202,22 @@ pnpm generate
 engine suites. Also `@contentworker/graphql-gen`, `seed`, `redaction`, `design` and `docs` run
 `vitest` in node.
 
-The web e2e harness starts its own dev server on port 5390 with a fresh local database in
+The web e2e harness starts its own dev server with a fresh local database in
 `.wrangler/e2e` (`CONTENTWORKER_E2E=1`: offline, no remote bindings, and unseeded: the tests
 create what they need; the first-run spec sees a deployment with no spaces by filtering
 `GET /spaces` to the space it creates, since the database is shared), so it coexists with a
-`pnpm dev` session. `E2E_PORT` picks another port, for a second suite (another worktree's)
-beside one already on 5390: outside CI the harness reuses whatever answers on its port, and a
-server from another checkout has another database. Install browsers once with
+`pnpm dev` session. Its port is derived from the checkout's path (5400-5899, and the live preview
+guest page 1000 above it), so worktrees running the suite at once each get their own server.
+`E2E_PORT` and `E2E_GUEST_PORT` pin them. The harness never reuses a server it finds on its port:
+one that is already there (a collision, or a leftover run) stops the run with "is already used",
+rather than testing another checkout's code on another database. `E2E_REUSE=1` opts in to reusing
+a server of your own (never in CI). Shared content types are saved through `saveContentType`
+(`e2e/cms.ts`), which skips a save that would change nothing and takes a lost race to an
+identical definition as success, so workers can set up the same type at once. Tests that raise a card in Coworker's panel end their title with `@coworker`: the assistant's
+conversation is one person's, shared by every page open in open local development, so a card one
+test raises would show in, and take focus from, another's. The `coworker` Playwright project runs
+those tests one at a time after `cms`, in the same CI part (`--project=coworker --no-deps` runs
+them alone). Install browsers once with
 `pnpm --filter @contentworker/web exec playwright install webkit chromium`.
 
 ### Query counts

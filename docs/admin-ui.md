@@ -265,7 +265,7 @@ pnpm --filter @contentworker/web test   # vitest: auth, sessions, gateway, lib u
 pnpm --filter @contentworker/web e2e    # Playwright in WebKit and Chromium, with axe
 ```
 
-The e2e suite (`apps/web/e2e`) runs the dev server offline on port 5390 against a fresh local
+The e2e suite (`apps/web/e2e`) runs the dev server offline (on a port derived from the checkout, so worktrees don't collide) against a fresh local
 database (`.wrangler/e2e`): shell layout on iPhone, iPad and desktop (both orientations), the CMS
 flows, space access (`space-access.spec.ts`), OAuth for MCP clients end to end (`oauth.spec.ts`),
 the workflow list and editor (`workflows.spec.ts`), an axe WCAG 2.1 A/AA sweep

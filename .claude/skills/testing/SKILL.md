@@ -72,12 +72,19 @@ sweep; `login.spec.ts` (`auth`) last, in Chromium, because signing up the first 
 sign-in on.
 
 1. Browsers once: `pnpm --filter @contentworker/web exec playwright install webkit chromium`.
-2. Run: `pnpm --filter @contentworker/web e2e` (or `-- <spec> --project cms`). Run it in the
+2. Run: `pnpm --filter @contentworker/web e2e` (or `-- <spec> --project cms`). The port derives
+   from the checkout, so worktrees can run at once; a server already on it fails the run
+   (`E2E_REUSE=1` opts in to reusing your own). Shared content types go through `saveContentType`
+   (`e2e/cms.ts`), never a bare POST that two workers can race. Run it in the
    background if it may exceed two minutes; never leave a server running after.
 3. On a failure, read `apps/web/test-results/**/error-context.md` and the failing step's console
    before theorising. A thrown page error is an app bug. axe violations: report the rule id, the
    target selector and the component that renders it (often a Radix control in a `<label>` with no
    `aria-label`; jsdom can't see that, only the sweep can).
+   Tag (`@coworker` at the end of the title) any test that raises or answers a card in Coworker's
+   panel: the conversation is one person's and shared by every page in open local development, so
+   such tests run alone in the `coworker` project (after `cms`, same CI part). `--project=coworker`
+   alone needs `--no-deps`.
 4. A new screen or dialog gets a scan in `accessibility.spec.ts`.
 
 ## Rules
