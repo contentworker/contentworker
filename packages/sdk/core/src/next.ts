@@ -294,7 +294,7 @@ export type DraftClient = DeliveryClient & {
  * ```
  */
 export function createDraftClient(o: DraftClientOptions): () => Promise<DraftClient> {
-  let delivery: DeliveryClient | undefined;
+  let delivery: ReturnType<typeof createDeliveryClient> | undefined;
   let plain: DraftClient | undefined;
   const doFetch = o.delivery.fetch ?? globalThis.fetch;
   const previewBase =

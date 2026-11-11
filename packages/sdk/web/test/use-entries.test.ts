@@ -55,4 +55,35 @@ describe('useEntries', () => {
     expect(state.data?.items.map((e) => e.id)).toEqual(['e2']);
     expect(listEntries).toHaveBeenLastCalledWith({ contentType: 'post', limit: 1, cursor: 'c2' });
   });
+
+  it('reads again when a filter value changes, and not for an equal query', async () => {
+    const listEntries = vi.fn(async () => ({ items: [], total: 0 }));
+    const client = { listEntries } as unknown as DeliveryClient;
+    root = createRoot(document.createElement('div'));
+    const show = (query: EntryQuery) =>
+      act(() =>
+        root?.render(
+          createElement(
+            ContentworkerProvider,
+            { client },
+            createElement(Probe, { query, out: () => {} }),
+          ),
+        ),
+      );
+    const byAuthor = (id: string): EntryQuery => ({
+      contentType: 'post',
+      filters: [{ field: 'author', op: 'ref', value: id }],
+    });
+
+    show(byAuthor('a1'));
+    await flush();
+    show(byAuthor('a1'));
+    await flush();
+    expect(listEntries).toHaveBeenCalledTimes(1);
+
+    show(byAuthor('a2'));
+    await flush();
+    expect(listEntries).toHaveBeenCalledTimes(2);
+    expect(listEntries).toHaveBeenLastCalledWith(byAuthor('a2'));
+  });
 });

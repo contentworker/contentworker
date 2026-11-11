@@ -130,6 +130,10 @@ export function Image(props: ImageComponentProps): ReactElement | null {
 /**
  * Lists published entries (from a preview client: as they are now). For the next page, pass the
  * answer's `nextCursor` back as `cursor` (Preview) or raise `skip` (Delivery).
+ *
+ * The query is compared by content, so any changed value reads again and an equal object made
+ * fresh each render does not. Its values must therefore be stable across renders: memoize a
+ * computed one, and never put `new Date()` or the like inline, or every render is a new read.
  */
 export function useEntries<F extends Fields = Fields>(
   query: EntryQuery = {},

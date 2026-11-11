@@ -550,6 +550,8 @@ const entriesList: Command = {
     locale: { type: 'string', description: 'Resolve fields to this locale' },
     limit: { type: 'string', description: 'Page size, at most 100' },
     cursor: { type: 'string', description: 'The nextCursor of the previous page' },
+    // Kept so existing scripts run: Preview takes no offset, so the client walks the cursor.
+    skip: { type: 'string', description: 'Deprecated: entries to pass over; use --cursor' },
     order: { type: 'string', description: 'Sort keys, e.g. -sys.updatedAt' },
     query: { type: 'string', description: 'Full-text match' },
   },
@@ -559,6 +561,7 @@ const entriesList: Command = {
       locale: str(ctx, 'locale'),
       limit: int(ctx, 'limit'),
       cursor: str(ctx, 'cursor'),
+      skip: int(ctx, 'skip'),
       order: str(ctx, 'order'),
       query: str(ctx, 'query'),
     });

@@ -295,6 +295,46 @@ describe('preview skip', () => {
     ]);
   });
 
+  it('throws on a cursor that comes back again while walking past skip', async () => {
+    const client = createDeliveryClient({
+      ...base,
+      preview: true,
+      fetch: fakeFetch(() => ({ items: [{ ...image, id: 'x' }], total: 1, nextCursor: 'same' })),
+    });
+    await expect(client.listEntries({ skip: 5 })).rejects.toThrow('cursor same twice');
+  });
+
+  it('holds a Delivery iteration’s limit to 1..100, as the server does', async () => {
+    const calls: string[] = [];
+    // Delivery over 230 entries, serving at most 100 a page.
+    const client = createDeliveryClient({
+      ...base,
+      fetch: fakeFetch((url) => {
+        calls.push(url);
+        const q = new URL(url).searchParams;
+        const skip = Number(q.get('skip') ?? 0);
+        const limit = Math.min(Math.max(Number(q.get('limit') ?? 100), 1), 100);
+        const to = Math.min(skip + limit, 230);
+        const items = Array.from({ length: Math.max(to - skip, 0) }, (_, i) => ({
+          ...image,
+          id: `d${skip + i}`,
+        }));
+        return { items, total: items.length };
+      }),
+    });
+    let n = 0;
+    for await (const _ of client.iterateEntries({ limit: 150 })) n++;
+    expect(n).toBe(230);
+    expect(calls.map((u) => new URL(u).searchParams.get('limit'))).toEqual(['100', '100', '100']);
+
+    // A limit below one is one: it ends, rather than asking for nothing forever.
+    calls.length = 0;
+    let m = 0;
+    for await (const _ of client.iterateEntries({ limit: 0, skip: 228 })) m++;
+    expect(m).toBe(2);
+    expect(calls).toHaveLength(3);
+  });
+
   it('iterates Delivery entries by skip until a page comes back short', async () => {
     const calls: string[] = [];
     const client = createDeliveryClient({

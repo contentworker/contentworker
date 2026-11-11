@@ -822,6 +822,44 @@ describe('entries.list and imports', () => {
     expect((await cma.entries.list({ skip: 400 })).items).toEqual([]);
   });
 
+  it('lets a cursor win over skip, starts iterate past a skip, and stops on a repeated cursor', async () => {
+    const calls: string[] = [];
+    const list = (size: number) =>
+      fakeFetch((url) => {
+        calls.push(url);
+        const q = new URL(url).searchParams;
+        const from = Number(q.get('cursor') ?? 0);
+        const to = Math.min(from + Number(q.get('limit') ?? 100), size);
+        return {
+          items: Array.from({ length: to - from }, (_, i) => ({ id: `e${from + i}` })),
+          total: to - from,
+          ...(to < size ? { nextCursor: String(to) } : {}),
+        };
+      });
+    const cma = createManagementClient({ ...base, fetch: list(7) });
+
+    // A cursor already says where the page starts: nothing is walked.
+    const page = await cma.entries.list({ limit: 2, cursor: '4', skip: 1 });
+    expect(page.items.map((e) => e.id)).toEqual(['e4', 'e5']);
+    expect(calls.map((u) => new URL(u).search)).toEqual(['?limit=2&cursor=4']);
+
+    calls.length = 0;
+    const ids: string[] = [];
+    for await (const entry of cma.entries.iterate({ limit: 2, skip: 3 })) ids.push(entry.id);
+    expect(ids).toEqual(['e3', 'e4', 'e5', 'e6']);
+    expect(calls.map((u) => new URL(u).search)).toEqual([
+      '?limit=3',
+      '?limit=2&cursor=3',
+      '?limit=2&cursor=5',
+    ]);
+
+    const stuck = createManagementClient({
+      ...base,
+      fetch: fakeFetch(() => ({ items: [{ id: 'x' }], total: 1, nextCursor: 'same' })),
+    });
+    await expect(stuck.entries.list({ skip: 5 })).rejects.toThrow('cursor same twice');
+  });
+
   it('iterates every entry across pages, following nextCursor', async () => {
     const calls: string[] = [];
     const pages: Record<string, unknown> = {

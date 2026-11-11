@@ -1,4 +1,8 @@
-import { createDeliveryClient, type DeliveredEntry } from '@contentworker/sdk-core';
+import {
+  createDeliveryClient,
+  type DeliveredEntry,
+  type DeliveryClient,
+} from '@contentworker/sdk-core';
 import { describe, expect, it } from 'vitest';
 import { createOfflineDelivery, InMemoryStorage } from '../src/index.js';
 
@@ -10,8 +14,9 @@ const entry = (id: string, publishedAt: string): DeliveredEntry => ({
 });
 
 /**
- * A client over a fake API holding a mutable dataset, honoring `since` and `limit`: Delivery
- * pages by `skip`; Preview by `cursor`, refusing `skip` as the real list does.
+ * A client over a fake API holding a mutable dataset, holding `limit` to 100 as the server does.
+ * Delivery honors `since` and pages by `skip`. Preview behaves as the real list: it pages by
+ * `cursor`, refuses `skip`, ignores `since` and serves no `publishedAt`.
  */
 function fakeClient(data: DeliveredEntry[], o: { preview?: boolean; urls?: string[] } = {}) {
   return createDeliveryClient({
@@ -25,14 +30,16 @@ function fakeClient(data: DeliveredEntry[], o: { preview?: boolean; urls?: strin
       o.urls?.push(url.pathname + url.search);
       const q = url.searchParams;
       if (o.preview && q.has('skip')) return Response.json({}, { status: 422 });
-      const since = q.get('since');
+      const since = o.preview ? null : q.get('since');
       const type = q.get('content_type');
       const all = data
         .filter((e) => (!type || e.contentType === type) && (!since || e.publishedAt > since))
         .sort((a, b) => (a.publishedAt < b.publishedAt ? -1 : 1));
       const from = Number((o.preview ? q.get('cursor') : q.get('skip')) ?? 0);
-      const limit = Number(q.get('limit') ?? 100);
-      const items = all.slice(from, from + limit);
+      const limit = Math.min(Number(q.get('limit') ?? 100), 100);
+      const items = all
+        .slice(from, from + limit)
+        .map((e) => (o.preview ? { ...e, publishedAt: undefined } : e));
       const more = o.preview && from + limit < all.length;
       return Response.json({
         items,
@@ -110,6 +117,45 @@ describe('@contentworker/sdk-react-native offline delivery', () => {
       '/preview/s1/main/entries?content_type=article&limit=10',
       '/preview/s1/main/entries?content_type=article&limit=10&cursor=10',
     ]);
+    // Preview has no `since` and no `publishedAt`: the next sync reads the whole type again.
+    expect(r.cursor).toBeNull();
+    expect((await store.sync()).synced).toBe(15);
+    expect(await store.list()).toHaveLength(15);
+  });
+
+  it('holds pageSize to what the server serves, so no page reads as the last too early', async () => {
+    const data = Array.from({ length: 230 }, (_, i) =>
+      entry(`e${i}`, `2026-03-01T00:00:${String(i).padStart(3, '0')}Z`),
+    );
+    const store = createOfflineDelivery({
+      client: fakeClient(data),
+      storage: new InMemoryStorage(),
+      contentType: 'article',
+      pageSize: 150,
+    });
+    expect((await store.sync()).synced).toBe(230);
+    // A size below one is one, not a loop that never ends.
+    const one = createOfflineDelivery({
+      client: fakeClient(data.slice(0, 3)),
+      storage: new InMemoryStorage(),
+      contentType: 'article',
+      pageSize: 0,
+    });
+    expect((await one.sync()).synced).toBe(3);
+  });
+
+  it('pages a client without iterateEntries itself, by skip or by nextCursor', async () => {
+    const data = Array.from({ length: 5 }, (_, i) => entry(`e${i}`, `2026-04-0${i + 1}T00:00:00Z`));
+    for (const preview of [false, true]) {
+      const { listEntries } = fakeClient(data, { preview });
+      const store = createOfflineDelivery({
+        client: { listEntries } as unknown as DeliveryClient,
+        storage: new InMemoryStorage(),
+        contentType: 'article',
+        pageSize: 2,
+      });
+      expect((await store.sync()).synced).toBe(5);
+    }
   });
 
   it('reset clears the local cache and cursor', async () => {

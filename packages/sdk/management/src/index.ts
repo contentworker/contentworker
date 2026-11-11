@@ -1928,9 +1928,15 @@ export function createManagementClient(opts: ManagementClientOptions) {
     // of up to 100 are read and dropped until that many entries are behind the cursor.
     const { skip, ...rest } = query;
     let cursor = rest.cursor;
+    const seen = new Set<string>();
     for (let left = cursor ? 0 : (skip ?? 0); left > 0; ) {
       const page = await entryPage({ ...rest, cursor, limit: Math.min(left, 100) });
       if (!page.nextCursor) return { items: [], total: 0 };
+      // A cursor that comes back again would walk forever; the server never does that.
+      if (seen.has(page.nextCursor)) {
+        throw new Error(`Management API returned cursor ${page.nextCursor} twice`);
+      }
+      seen.add(page.nextCursor);
       left -= page.items.length;
       cursor = page.nextCursor;
     }

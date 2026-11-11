@@ -113,7 +113,10 @@ client.bookmark: string | undefined     // read-your-writes position (preview); 
   `nextCursor` to the last page, so `break` stops fetching. A `skip` applies to the first page
   only, and a cursor the server repeats (the starting `cursor` included) throws a plain `Error`
   rather than looping. On Delivery, which answers no entry cursor, `iterateEntries` advances
-  `skip` by `limit` (100 by default) until a page comes back short.
+  `skip` by `limit` (held to 1..100, 100 by default) until a page comes back short. Delivery drops
+  entries of types a key isn't granted after reading each page, so a page can come back short
+  mid-list for a key limited to some content types: give that key's iteration a `contentType` it
+  may read.
 - `getAsset` / `listAssets` read `/assets` (or `/preview/…/assets` with `preview: true`) and return
   the delivered asset shape (see [API reference](./api-reference.md#delivery-api-cda));
   `AssetPage` is `{ items, total, nextCursor? }`, and a `cursor` wins over `skip`.
@@ -269,7 +272,9 @@ Hooks (all return `AsyncState<T> = { data?: T; error?: Error; loading: boolean }
 
 - `useEntry<F>(id, { locale?, include? })`
 - `useEntries<F>(query?)` — an `EntryPage`; a new `cursor` (Preview's `nextCursor`) or `skip`
-  (Delivery) in the query reads that page
+  (Delivery) in the query reads that page. The query is compared by content, so its values must be
+  stable across renders: memoize a computed one and never put `new Date()` inline, or every
+  render is a new read
 - `useAsset(id, { locale? })`
 - `useSemanticSearch(query, { topK? })` — returns `[]` for an empty query (no request)
 - `useDeliveryClient()` — the injected client
@@ -559,7 +564,10 @@ import {
   both AsyncStorage and MMKV satisfy. `InMemoryStorage` ships for tests.
 - `store.sync()` delta-syncs entries published since the stored cursor and returns
   `{ synced, cursor }`; `get(id)`, `list()` and `reset()` read and clear local storage. An entry
-  unpublished on the server is not removed locally yet.
+  unpublished on the server is not removed locally yet. It pages through `client.iterateEntries`
+  (or, for a client without it, `listEntries` by `nextCursor` or `skip`), with `pageSize` held to
+  1..100. Over a preview client every sync reads the whole type again: Preview ignores `since` and
+  its entries carry no `publishedAt`, so `cursor` stays `null`.
 - `useOfflineEntries(store)` serves the cache first, syncs in the background, and returns
   `{ entries, syncing, error, sync }`; call `sync()` on reconnect or pull-to-refresh.
 - `imageSource(asset, { width?, dpr?, rendition? })` is an `<Image source>`: `{ uri, width?,

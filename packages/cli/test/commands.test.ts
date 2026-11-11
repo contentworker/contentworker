@@ -71,6 +71,32 @@ describe('entries', () => {
     expect(new URL(h.calls[1]?.url ?? '').search).toBe('?limit=1&cursor=c1');
   });
 
+  it('still takes the deprecated --skip, walking the cursor instead of sending it', async () => {
+    const h = await harness(
+      {
+        'GET /preview/s1/main/entries': (call) =>
+          new URL(call.url).searchParams.get('cursor') === 'c1'
+            ? {
+                items: [{ id: 'e2', contentType: 'article', status: 'draft', version: 1 }],
+                total: 1,
+              }
+            : {
+                items: [{ id: 'e1', contentType: 'article', status: 'draft', version: 1 }],
+                total: 1,
+                nextCursor: 'c1',
+              },
+      },
+      { env: ENV },
+    );
+    const out = await h.run('entries', 'list', '--skip', '1', '--json');
+    expect(out.code).toBe(EXIT.ok);
+    expect(h.json()).toEqual({
+      items: [{ id: 'e2', contentType: 'article', status: 'draft', version: 1 }],
+      total: 1,
+    });
+    expect(h.calls.map((c) => new URL(c.url).search)).toEqual(['?limit=1', '?cursor=c1']);
+  });
+
   it('update merges into the current draft by field and locale unless --replace', async () => {
     const puts: unknown[] = [];
     const h = await harness(

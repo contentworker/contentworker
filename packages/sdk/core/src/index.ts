@@ -503,9 +503,15 @@ export function createDeliveryClient(opts: ClientOptions) {
       limit: number,
     ) => Promise<{ items: unknown[]; nextCursor?: string }>,
   ): Promise<string | undefined | null> {
+    const seen = new Set<string>();
     for (let left = cursor ? 0 : (skip ?? 0); left > 0; ) {
       const page = await read(cursor, Math.min(left, MAX_PAGE));
       if (!page.nextCursor) return null;
+      // A cursor that comes back again would walk forever; the server never does that.
+      if (seen.has(page.nextCursor)) {
+        throw new Error(`Delivery returned cursor ${page.nextCursor} twice`);
+      }
+      seen.add(page.nextCursor);
       left -= page.items.length;
       cursor = page.nextCursor;
     }
@@ -591,7 +597,11 @@ export function createDeliveryClient(opts: ClientOptions) {
      * Every entry the query matches, a page (`limit`) at a time as the loop asks for more:
      * `for await (const entry of client.iterateEntries({ contentType: 'post' })) …`. Preview
      * follows `nextCursor`; Delivery advances `skip` until a page comes back short. A `skip` or
-     * `cursor` sets where it starts.
+     * `cursor` sets where it starts, and `limit` is held to 1..100, as the server holds it.
+     *
+     * Delivery drops the entries of types a key isn't granted from each page after reading it, so
+     * with a key limited to some content types a page can come back short mid-list and end the
+     * loop early: give such a key's iteration a `contentType` it may read.
      */
     iterateEntries<F extends Fields = Fields>(
       q: EntryQuery = {},
@@ -602,7 +612,8 @@ export function createDeliveryClient(opts: ClientOptions) {
         );
       }
       return (async function* () {
-        const limit = q.limit ?? MAX_PAGE;
+        // The server serves at most 100 a page: asking for more would read a full page as short.
+        const limit = Math.min(Math.max(1, Math.trunc(q.limit ?? MAX_PAGE)), MAX_PAGE);
         for (let skip = q.skip ?? 0; ; skip += limit) {
           const page = await listEntries<F>({ ...q, limit, skip });
           yield* page.items;
@@ -960,7 +971,12 @@ export class EntryQueryBuilder<F extends Fields> {
   }
 }
 
-export type DeliveryClient = ReturnType<typeof createDeliveryClient>;
+/**
+ * A Delivery client. `iterateEntries` is optional so a hand-written client or a test double
+ * made before it existed still fits; `createDeliveryClient` always has it.
+ */
+export type DeliveryClient = Omit<ReturnType<typeof createDeliveryClient>, 'iterateEntries'> &
+  Partial<Pick<ReturnType<typeof createDeliveryClient>, 'iterateEntries'>>;
 
 export {
   adminEditUrl,
