@@ -270,8 +270,9 @@ const SINGLETON_NAMED = 10;
 
 /**
  * Saves `next` over `current` (null when the type is new to the scope): the one save every path
- * that writes a definition over another goes through (a revision, an environment merge, a
- * promotion), so turning `singleton` on or off keeps its rule wherever it happens.
+ * that writes a definition over another goes through (a revision, a promotion), or its two halves
+ * (`prepareContentTypeSave`) for one saving several types in one unit (an environment merge, a
+ * block catalog push), so turning `singleton` on or off keeps its rule wherever it happens.
  *
  * Turning it on is refused while the type has more than one entry outside the trash, naming them;
  * with one, that entry takes the singleton's claim in the same unit as the save, guarded so an

@@ -65,10 +65,13 @@ For a merge (`mergeEnvironments`), the current version of a merged entry the tar
 doesn't count, in its trash or not, since the merge writes the source's version over it; its
 published snapshot counts, since a merge never publishes. Every check (the source's types and
 entries, each entry against the type it will have, unique values, stranding, singleton turns) runs
-before the first write; the types are then saved in one unit, and the entries after them in their
-own units, those the check let off first. Only a race after the reads, or a unique value handed from
-one existing target entry to another in the order the selection names them, can stop a merge
-partway, keeping the types and the entries already written.
+before the first write, as does the order the entries go in (`applyOrder`). The types are then
+saved in one unit, and the entries after them in their own units: those the target already has
+first, each giving up a unique value before the one taking it and, within that, those the check
+let off first; then the new ones. Values handed round in a circle among entries the target already
+has can't be written one at a time in any order, so that merge is refused (`409`) up front. Only a
+race after the reads can stop a merge partway, keeping the types and the entries already written.
+A type or entry named twice is merged once.
 
 Preflight does what the write will do, so a definition that can't be written is refused (`422`, and
 on a dry run) before anything is, rather than partway through an environment that then can't be

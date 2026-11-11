@@ -234,6 +234,81 @@ describe('a merge that would strand the target’s entries', () => {
     expect(await variantsInMain()).toEqual(['hero']);
   });
 
+  it('writes an entry giving a unique value up before the one taking it, let off or not', async () => {
+    // In staging, B gave "x" up and A, whose copy in main holds the CTA block, took it.
+    await createEntry(ctx, main, {
+      id: 'a',
+      contentTypeApiId: 'page',
+      fields: fields('A', ['cta'], { slug: 'a' }),
+    });
+    await createEntry(ctx, main, {
+      id: 'b',
+      contentTypeApiId: 'page',
+      fields: fields('B', [], { slug: 'x' }),
+    });
+    await createEntry(ctx, staging, {
+      id: 'a',
+      contentTypeApiId: 'page',
+      fields: fields('A', ['hero'], { slug: 'x' }),
+    });
+    await createEntry(ctx, staging, {
+      id: 'b',
+      contentTypeApiId: 'page',
+      fields: fields('B', [], { slug: 'y' }),
+    });
+    await mergeEnvironments(ctx, 'shop', 'staging', 'main', {
+      contentTypes: ['page'],
+      entries: ['b', 'a'],
+    });
+    expect((await getEntry(ctx, main, 'a')).fields.slug).toEqual({ 'en-US': 'x' });
+    expect((await getEntry(ctx, main, 'b')).fields.slug).toEqual({ 'en-US': 'y' });
+    expect(await variantsInMain()).toEqual(['hero']);
+  });
+
+  it('refuses values handed round in a circle before saving any type', async () => {
+    await createContentType(ctx, SYSTEM_CALLER, staging, { ...page([hero], false), apiId: 'note' });
+    await createContentType(ctx, SYSTEM_CALLER, main, { ...page([hero]), apiId: 'note' });
+    for (const [env, a, b] of [
+      [main, 'p', 'q'],
+      [staging, 'q', 'p'],
+    ] as const) {
+      await createEntry(ctx, env, {
+        id: 'ca',
+        contentTypeApiId: 'page',
+        fields: fields('A', [], { slug: a }),
+      });
+      await createEntry(ctx, env, {
+        id: 'cb',
+        contentTypeApiId: 'page',
+        fields: fields('B', [], { slug: b }),
+      });
+    }
+    const refused = mergeEnvironments(ctx, 'shop', 'staging', 'main', {
+      contentTypes: ['note'],
+      entries: ['ca', 'cb'],
+    });
+    await expect(refused).rejects.toBeInstanceOf(ConflictError);
+    await expect(refused).rejects.toThrow(
+      /in a circle between entries the target already has \(ca, cb\)/,
+    );
+    expect((await getContentType(ctx, main, 'note')).fields.some((f) => f.apiId === 'kicker')).toBe(
+      true,
+    );
+    expect((await getEntry(ctx, main, 'ca')).entry.currentVersion).toBe(1);
+  });
+
+  it('merges a type or an entry named twice once', async () => {
+    await both('twice', ['cta'], ['hero']);
+    await expect(
+      mergeEnvironments(ctx, 'shop', 'staging', 'main', {
+        contentTypes: ['page', 'page'],
+        entries: ['twice', 'twice'],
+      }),
+    ).resolves.toEqual({ mergedContentTypes: ['page'], mergedEntries: ['twice'] });
+    expect(await variantsInMain()).toEqual(['hero']);
+    expect((await getEntry(ctx, main, 'twice')).entry.currentVersion).toBe(2);
+  });
+
   it('judges what the target serves too, when a published type replaces it', async () => {
     // Main's working draft already dropped CTA; what it serves (and the live entry) still has it.
     await createEntry(ctx, main, {
@@ -309,6 +384,22 @@ describe('a merge that fails on an entry', () => {
       }),
     ).rejects.toBeInstanceOf(ConflictError);
     await unchanged();
+  });
+
+  it('saves no type when another type’s singleton turn is refused', async () => {
+    await createContentType(ctx, SYSTEM_CALLER, main, { ...page([hero]), apiId: 'solo' });
+    await createContentType(ctx, SYSTEM_CALLER, staging, {
+      ...page([hero]),
+      apiId: 'solo',
+      singleton: true,
+    } as Parameters<typeof createContentType>[3]);
+    await createEntry(ctx, main, { id: 's1', contentTypeApiId: 'solo', fields: fields('One') });
+    await createEntry(ctx, main, { id: 's2', contentTypeApiId: 'solo', fields: fields('Two') });
+    await expect(
+      mergeEnvironments(ctx, 'shop', 'staging', 'main', { contentTypes: ['page', 'solo'] }),
+    ).rejects.toThrow(/cannot be a singleton/);
+    await unchanged();
+    expect((await getContentType(ctx, main, 'solo')).singleton).not.toBe(true);
   });
 
   it('validates a new entry against the type as the merge leaves it', async () => {

@@ -82,7 +82,9 @@ so `removed` items stay where they are. Entries keep their ids and are validated
 target's content type, so include a type in the merge before the entries that use it. Unique
 values (and a singleton's one entry) hold as they do for edits: before anything is written, a
 merge whose entries would take a value another entry holds, or the same value twice, is refused
-with `409`, naming each entry and its holder; entries swapping values between them merge fine. An
+with `409`, naming each entry and its holder; an entry the merge brings in can take a value
+another one gives up. Values handed round in a circle between entries the target already has are
+refused with `409` too: give one of them up there first. An
 entry that is in the target's trash gets the new version and stays in the trash.
 
 A content type that would remove a field or block type entries in the target still hold is refused

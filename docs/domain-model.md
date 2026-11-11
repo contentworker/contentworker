@@ -635,9 +635,10 @@ interface ContentType {
   as the merge leaves them, and the stranding check (`422` on `contentTypes`, as
   `updateContentType` refuses; see [environments and snapshots](./environments-and-snapshots.md))
   all run before the selected types are saved, together in one unit (`prepareContentTypeSave`).
-  Entries the target already has are applied next, those whose copies the stranding check let off
-  first, each with its claims rebuilt in the same unit, as `updateEntry` does; new ones then stake
-  theirs. An entry the target holds in its trash gets the new version and stays there, claiming
+  Entries the target already has are applied next (`applyOrder`), each one giving up a value
+  before the one taking it and, within that, those whose copies the stranding check let off first,
+  each with its claims rebuilt in the same unit, as `updateEntry` does; values handed round in a
+  circle among them are refused (`409`) before anything is written. New ones then stake theirs. An entry the target holds in its trash gets the new version and stays there, claiming
   nothing.
 - **Delete and clone** (`content-type-lifecycle.ts`). `fieldsLinkingTo(types, apiId)` finds other
   types' fields whose `linkContentTypes` name it, through components, repeaters and block variants
