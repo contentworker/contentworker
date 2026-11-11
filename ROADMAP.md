@@ -344,6 +344,9 @@ Found while building and reviewing M1 and M2. None blocks a release.
 - [x] **Unused api email config.** Dropped `EMAIL_FROM`, `EMAIL_FROM_NAME` and the `send_email`
   comment from `apps/api/wrangler.jsonc`: the fleet binds `EMAIL` only on the engine and web, so
   the api's `makeEmail` never had a sender to read them for.
+- [ ] **Last admin across rows.** Two demotions, disables or removals of the last two admins, made
+  at once, can both land: each member's compare-and-set guards only its own row. A team-level
+  version, bumped in the same unit as every write that changes who is an admin, would close it.
 
 #### Follow-ups from first-run onboarding
 
