@@ -209,6 +209,10 @@ is uncached.
 `VECTOR_STORE`, `SEARCH_SHARDS` and the `AI_AGENT_*` vars are in no template; set them per
 worker when needed.
 
+`EMBEDDINGS_MODEL=@cf/google/embeddinggemma-300m` still boots, but Workers AI stops answering that
+model on 2026-11-20; a deployment on it moves to another 768-dimension model (the default
+`bge-base-en-v1.5`) and reindexes before then.
+
 ## Agents, workflows, email and plugins
 
 | Var                             | A   | E   | Default                             | Purpose                                                                                                              |

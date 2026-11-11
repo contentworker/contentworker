@@ -51,6 +51,8 @@ export class WorkersAIError extends Error {
     message: string,
     /** HTTP-like status, when the failure carried one. */
     readonly status?: number,
+    /** Tokens the model billed before the answer proved unusable (a `BilledGenerateFailure`). */
+    readonly usage?: { inputTokens: number; outputTokens: number },
   ) {
     super(message);
   }

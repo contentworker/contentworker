@@ -1,6 +1,7 @@
 import { AiUnavailableError, RateLimitedError, type Scope } from '@contentworker/domain';
 import type {
   AIProvider,
+  BilledGenerateFailure,
   DecisionModel,
   DecisionRequest,
   DecisionResult,
@@ -108,13 +109,11 @@ export async function generateWithBudget(
   }
   const call = ai.generate(req);
   let result: GenerateResult;
-  if (options.timeoutMs === undefined) {
-    result = await call;
-  } else {
-    try {
-      result = await withTimeout(call, options.timeoutMs);
-    } catch (err) {
-      if (!(err instanceof AiTimeoutError)) throw err;
+  try {
+    result =
+      options.timeoutMs === undefined ? await call : await withTimeout(call, options.timeoutMs);
+  } catch (err) {
+    if (options.timeoutMs !== undefined && err instanceof AiTimeoutError) {
       // The abandoned call may still fail later: nobody is listening for it.
       call.catch(() => {});
       if (ctx.costGuard) await ctx.costGuard.settle(scope, req.maxTokens);
@@ -122,12 +121,31 @@ export async function generateWithBudget(
         `The model didn’t answer within ${Math.round(options.timeoutMs / 1000)} s; try again`,
       );
     }
+    // A call that failed after the model ran (cut off at maxTokens) was billed: count it.
+    const spent = billedUsage(err);
+    if (ctx.costGuard && spent) {
+      await ctx.costGuard.settle(scope, spent.inputTokens + spent.outputTokens);
+    }
+    throw err;
   }
   if (ctx.costGuard) {
     const total = result.usage.inputTokens + result.usage.outputTokens;
     await ctx.costGuard.settle(scope, total);
   }
   return result;
+}
+
+/** The tokens a failed generation still cost, when the provider says (a BilledGenerateFailure). */
+function billedUsage(err: unknown): BilledGenerateFailure['usage'] | undefined {
+  const usage = (err as Partial<BilledGenerateFailure> | null)?.usage;
+  if (
+    typeof usage?.inputTokens === 'number' &&
+    typeof usage.outputTokens === 'number' &&
+    Number.isFinite(usage.inputTokens + usage.outputTokens)
+  ) {
+    return usage;
+  }
+  return undefined;
 }
 
 /**

@@ -86,6 +86,21 @@ function responseFormat(model: string, schema: Record<string, unknown>) {
   };
 }
 
+/**
+ * Reasoning turned down for a structured call. `completion_tokens` counts the reasoning, so at a
+ * model's default effort a 256–512 token cap (summaries, tags, alt text) runs out before the JSON
+ * does. Each switch is the one the model's input schema documents: DeepSeek V4 takes
+ * `reasoning_effort`, GLM 4.7 Flash a template flag. GLM 5.3 documents reasoning as always on,
+ * and Llama and gpt-oss get nothing.
+ */
+function structuredReasoning(model: string): Record<string, unknown> {
+  if (model.startsWith('@cf/deepseek-ai/deepseek-v4')) return { reasoning_effort: 'low' };
+  if (model === '@cf/zai-org/glm-4.7-flash') {
+    return { chat_template_kwargs: { enable_thinking: false } };
+  }
+  return {};
+}
+
 export interface WorkersAIProviderOptions {
   /** The Workers AI call: `env.AI.run.bind(env.AI)` on the edge, a REST runner on Node. */
   run: WorkersAiRun;
@@ -204,6 +219,7 @@ export function createWorkersAIProvider(opts: WorkersAIProviderOptions): AIProvi
       if (req.outputSchema) {
         input.response_format = responseFormat(model, req.outputSchema);
         input.temperature = JSON_TEMPERATURE;
+        Object.assign(input, structuredReasoning(model));
       }
       if (req.tools?.length) {
         input.tools = req.tools.map((t) => ({
@@ -223,10 +239,17 @@ export function createWorkersAIProvider(opts: WorkersAIProviderOptions): AIProvi
       } catch (err) {
         throw asWorkersAIError(err);
       }
+      const usage = {
+        inputTokens: res.usage?.prompt_tokens ?? 0,
+        outputTokens: res.usage?.completion_tokens ?? 0,
+      };
       if (res.choices?.[0]?.finish_reason === 'length') {
+        // Billed in full though unusable: the usage rides on the error for the budget.
         throw new WorkersAIError(
           'bad_response',
           `Workers AI ${model}: the answer ran past max_tokens`,
+          undefined,
+          usage,
         );
       }
 
@@ -237,13 +260,7 @@ export function createWorkersAIProvider(opts: WorkersAIProviderOptions): AIProvi
           : raw === undefined || raw === null
             ? ''
             : JSON.stringify(raw);
-      const result: GenerateResult = {
-        text,
-        usage: {
-          inputTokens: res.usage?.prompt_tokens ?? 0,
-          outputTokens: res.usage?.completion_tokens ?? 0,
-        },
-      };
+      const result: GenerateResult = { text, usage };
       if (req.outputSchema && raw !== undefined && raw !== null) {
         const value = typeof raw === 'string' ? extractJson(raw) : raw;
         if (value !== undefined) result.object = value;
@@ -267,6 +284,8 @@ export const WORKERS_AI_EMBEDDING_DIMENSIONS: Readonly<Record<string, number>> =
   '@cf/baai/bge-base-en-v1.5': 768,
   '@cf/baai/bge-large-en-v1.5': 1024,
   '@cf/baai/bge-m3': 1024,
+  // On Workers AI's deprecation list: stops answering on 2026-11-20 (successor
+  // `embeddinggemma-2` not out yet). Kept so a deployment on it boots until then.
   '@cf/google/embeddinggemma-300m': 768,
 };
 

@@ -204,6 +204,38 @@ describe('workers-ai provider — request shape', () => {
   });
 });
 
+describe('workers-ai provider — reasoning on structured calls', () => {
+  const messages = [{ role: 'user', content: 'p' }];
+  const envelope = { type: 'json_schema', json_schema: { name: 'output', schema } };
+  const bare = { type: 'json_schema', json_schema: schema };
+  const cases: [string, Record<string, unknown>][] = [
+    [
+      '@cf/deepseek-ai/deepseek-v4.1-flash-1017',
+      { response_format: envelope, reasoning_effort: 'low' },
+    ],
+    [
+      '@cf/zai-org/glm-4.7-flash',
+      { response_format: envelope, chat_template_kwargs: { enable_thinking: false } },
+    ],
+    // Documents reasoning as always on: nothing to switch.
+    ['@cf/zai-org/glm-5.3', { response_format: envelope }],
+    ['@cf/meta/llama-3.3-70b-instruct-fp8-fast', { response_format: bare }],
+    ['@cf/openai/gpt-oss-120b', { response_format: bare }],
+  ];
+
+  for (const [model, extra] of cases) {
+    it(`sends ${model} exactly the body it documents`, async () => {
+      const { run, calls } = fakeRun({ response: { title: 'T' } });
+      const ai = createWorkersAIProvider({ run, models: { flagship: model } });
+      await ai.generate({ prompt: 'p', maxTokens: 256, tier: 'flagship', outputSchema: schema });
+      await ai.generate({ prompt: 'p', maxTokens: 256, tier: 'flagship' });
+      expect(calls[0]!.input).toEqual({ messages, max_tokens: 256, temperature: 0.2, ...extra });
+      // Free text keeps the model's own reasoning.
+      expect(calls[1]!.input).toEqual({ messages, max_tokens: 256 });
+    });
+  }
+});
+
 describe('workers-ai provider — tool calling', () => {
   it('reads the flagship tool calls (typed function calls, string arguments, null content)', async () => {
     const { run } = fakeRun({
@@ -300,6 +332,21 @@ describe('workers-ai provider — errors and timeout', () => {
         outputSchema: schema,
       }),
     ).rejects.toMatchObject({ name: 'WorkersAIError', reason: 'bad_response' });
+  });
+
+  it('carries what a cut-off answer billed, reasoning included, on the error', async () => {
+    const { run } = fakeRun(deepseekAnswer('{"title":', 'length'));
+    await expect(
+      createWorkersAIProvider({ run }).generate({
+        prompt: 'p',
+        maxTokens: 230,
+        tier: 'flagship',
+        outputSchema: schema,
+      }),
+    ).rejects.toMatchObject({
+      reason: 'bad_response',
+      usage: { inputTokens: 41, outputTokens: 230 },
+    });
   });
 
   it('rejects with a timeout error after the cap', async () => {
