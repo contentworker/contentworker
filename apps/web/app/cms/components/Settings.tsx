@@ -54,6 +54,7 @@ import { LocaleSettings } from '~/cms/components/LocaleSettings';
 import { Menus } from '~/cms/components/Menus';
 import { Plugins } from '~/cms/components/Plugins';
 import { PageHeader, Section } from '~/cms/components/page';
+import { Promotions } from '~/cms/components/promotions/Promotions';
 import { Redirects } from '~/cms/components/Redirects';
 import { RoleAccessSheet } from '~/cms/components/RoleAccessSheet';
 import { StatusBadge } from '~/cms/components/status';
@@ -302,6 +303,7 @@ function Environments(props: { client: ManagementClient }) {
       </Section>
 
       <BranchMerge client={client} environments={environments} />
+      <Promotions environments={environments} />
     </div>
   );
 }

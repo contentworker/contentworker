@@ -17,6 +17,7 @@ import {
   inScope,
   type PermissionScope,
   type Principal,
+  PromotionFailedError,
   type Scope,
   ValidationError,
 } from '@contentworker/domain';
@@ -285,6 +286,10 @@ export function buildServer(
             err.details !== undefined
           )
             return { ...ok(toHttpError(err).body), isError: true as const };
+          // An apply that stopped partway: REST's 409 body, so the caller gets the failed record.
+          if (err instanceof PromotionFailedError) {
+            return { ...ok(toHttpError(err).body), isError: true as const };
+          }
           throw toolFailure(name, err);
         }
       }) as never,

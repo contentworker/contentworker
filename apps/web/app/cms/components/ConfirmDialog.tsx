@@ -27,6 +27,11 @@ export interface ConfirmDialogProps {
   readonly cancelLabel?: string;
   /** Names the act: "Delete role", not "OK". */
   readonly confirmLabel: string;
+  /**
+   * `destructive` (default) for an act that removes something for good; `default`, the ink pill,
+   * for one that removes nothing but can't be called back (a publish, a promotion).
+   */
+  readonly tone?: 'destructive' | 'default';
   /** Disables the confirming button (e.g. while another request is in flight). */
   readonly busy?: boolean;
   /**
@@ -64,6 +69,7 @@ export function ConfirmDialog({
   note,
   cancelLabel = 'Cancel',
   confirmLabel,
+  tone = 'destructive',
   busy,
   onConfirm,
   onCloseAutoFocus,
@@ -135,7 +141,7 @@ export function ConfirmDialog({
             {/* Not `disabled`: focus stays on it through the wait, for a refusal to find it there. */}
             <Button
               type="button"
-              variant="destructive"
+              variant={tone}
               aria-disabled={held || undefined}
               className="aria-disabled:pointer-events-none aria-disabled:opacity-50"
               onClick={() => void confirm()}

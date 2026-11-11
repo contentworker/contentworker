@@ -42,6 +42,8 @@ import type {
   Menu,
   MenuItemInput,
   MenuLink,
+  Promotion,
+  PromotionStatus,
   Redirect,
   RedirectChain,
   RedirectInput,
@@ -1424,6 +1426,16 @@ export function apiIssues(err: unknown): { field: string; message: string }[] {
   );
 }
 
+/**
+ * The promotion a request or approval stopped partway, when that is what the API answered (409
+ * `promotion_failed`, the record in `error.promotion`): something was written, so it is neither a
+ * success nor a refusal. Undefined for any other failure.
+ */
+export function failedPromotionOf(err: unknown): Promotion | undefined {
+  if (!(err instanceof ApiError) || err.status !== 409 || err.code !== 'promotion_failed') return;
+  return (err.body as { error?: { promotion?: Promotion } } | undefined)?.error?.promotion;
+}
+
 /** True when the API refused because the caller's role lacks the scope (403). */
 export const isForbidden = (err: unknown): boolean => err instanceof ApiError && err.status === 403;
 
@@ -1761,6 +1773,46 @@ export function createManagementClient(
       entries?: string[];
     }): Promise<MergeResult> {
       return req('POST', `${spaceBase}/merge`, input, undefined, LARGE_LIMIT);
+    },
+    /**
+     * The space's promotions, newest first (the 50 most recent; the API pages no further), or only
+     * those in one `status`. Needs content:publish.
+     */
+    async listPromotions(status?: PromotionStatus): Promise<Promotion[]> {
+      const qs = status ? `?status=${encodeURIComponent(status)}` : '';
+      return (await req<{ items: Promotion[] }>('GET', `${spaceBase}/promotions${qs}`)).items;
+    },
+    /** One promotion: what it pins, its risk check, and its decision and outcome. */
+    getPromotion(id: string): Promise<Promotion> {
+      return req('GET', `${spaceBase}/promotions/${encodeURIComponent(id)}`);
+    },
+    /**
+     * Requests a promotion source→target. The API pins what it copies and runs its risk check:
+     * one that needs no approval is applied in this request (`completed` or `failed`), one that
+     * does comes back `awaiting_approval`. A refusal (nothing would be safe to copy) is a 422.
+     */
+    requestPromotion(input: {
+      source: string;
+      target: string;
+      contentTypes?: string[];
+      entries?: string[];
+      blocks?: boolean;
+    }): Promise<Promotion> {
+      return req('POST', `${spaceBase}/promotions`, input, undefined, LARGE_LIMIT);
+    },
+    /** Approves a waiting promotion and applies it in this request (not by its requester). */
+    approvePromotion(id: string): Promise<Promotion> {
+      return req(
+        'POST',
+        `${spaceBase}/promotions/${encodeURIComponent(id)}/approve`,
+        undefined,
+        undefined,
+        LARGE_LIMIT,
+      );
+    },
+    /** Rejects a waiting promotion; nothing is copied. */
+    rejectPromotion(id: string): Promise<Promotion> {
+      return req('POST', `${spaceBase}/promotions/${encodeURIComponent(id)}/reject`);
     },
     /** A page of the space's append-only audit trail, newest first (requires space:admin). */
     listAuditLog(

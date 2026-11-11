@@ -211,7 +211,7 @@ Base paths: `/spaces`, and `…` for `/spaces/:space/environments/:env`. Space-l
 | GET    | `/spaces/:space/promotions`                 | `content:publish`                    | List promotions, newest first (`?status=`)                                                |
 | GET    | `/spaces/:space/promotions/:id`             | `content:publish`                    | A promotion, its risk check and result                                                    |
 | POST   | `/spaces/:space/promotions/:id/approve`     | `content:publish`                    | Approve a waiting promotion and apply it (a person or the admin token, not the requester) |
-| POST   | `/spaces/:space/promotions/:id/reject`      | `content:publish`                    | Reject a waiting promotion                                                                |
+| POST   | `/spaces/:space/promotions/:id/reject`      | `content:publish`                    | Reject a waiting promotion (its requester may too, to withdraw it)                        |
 
 A space id is 1–64 letters, digits, `.`, `_` or `-`, starting with a letter or digit, and is
 never one of the media bucket's own prefixes: `versions`, `imports`, `plugins`, `dlq` or `zips`, in any case
@@ -275,13 +275,17 @@ check first.
    reasons and the probabilities (`risk`).
 3. **Deciding.** A promotion that needs no approval applies at once (`completed`). One that does
    waits as `awaiting_approval` (event `promotion.awaiting_approval`). It's then approved or
-   rejected by a person, or the deployment admin token, other than whoever requested it:
+   rejected by a person, or the deployment admin token, other than whoever requested it. A person
+   who requested it (not an API key or an app acting for them) may reject it too, withdrawing it:
+   `decidedBy` is then the requester.
    - an API key, or an application acting for a person (an MCP or OAuth client, an agent), can
-     request a promotion but not decide one;
+     request a promotion but not decide or withdraw one;
    - approving or rejecting one with content types or blocks also takes `content:manage`;
    - deciding takes the same role on every content type as requesting (approving one with entries,
      `lock` too), `403` with the same message otherwise, and the promotion stays
      `awaiting_approval`;
+   - withdrawing: the requester may reject their own while it is `awaiting_approval`, without
+     `content:manage` or the role deciding takes, since they passed the request's checks;
    - both environments must still exist when it's approved.
 
    The approver's grants are the ones in force when it applies: the apply runs in the approval's
@@ -301,7 +305,17 @@ check first.
    `publishEntry`), so validation, references, events and the delivery cache behave as they would
    for a person's edits. Afterwards it checks that the target holds the pinned fields
    (`result.mismatched`) and emits `environment.promoted`. A failure marks it `failed` with the
-   error; whatever was applied before it stays. An apply that dies partway without saying so (the
+   error; whatever was applied before it stays. A check the apply runs before it writes anything
+   (a pin that moved, an entry that would be stranded), or a first write the target refuses,
+   answers as a refusal, `409` or `422` with its issues, though the record is `failed` too. A
+   failure once a write has landed is never a success: the request or approval answers `409`
+   `promotion_failed`, the error carrying the record in `error.promotion` (`failed`, its `error`,
+   what it wrote in `result`), so automation that checks the status stops and a client can see
+   what changed. The MCP tools answer an error result with the same body. When the target refused
+   an entry, `error` names the entry and `result.issues` lists each issue (entry, type, field,
+   locale, message); only a reader whose role reads every field of its types reads the record
+   (above), so none of them is hidden from its reader. A fault (not a refusal) that stops it partway is logged and
+   counted (`contentworker_promotion_apply_errors_total`). An apply that dies partway without saying so (the
    Worker evicted mid-request) would leave it `applying`: the engine's hourly `stale-promotions`
    sweep marks one still `applying` an hour after it started (its approval, or its request when
    it needed none) `failed`, with an error saying so, and audits `promotion.failed` as `system`.

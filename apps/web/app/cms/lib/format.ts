@@ -25,6 +25,7 @@ const TONE: Record<string, Tone> = {
   in_review: 'wait',
   review: 'wait',
   waiting: 'wait',
+  awaiting_approval: 'wait',
   paused: 'wait',
   modified: 'wait',
   // In progress or on a clock.
@@ -34,6 +35,7 @@ const TONE: Record<string, Tone> = {
   processing: 'run',
   publishing: 'run',
   in_progress: 'run',
+  applying: 'run',
   // At rest, or ended otherwise. A draft and an open release are the normal editable states; a
   // revoked or expired credential is a deliberate or lapsed end, not a fault.
   draft: 'idle',

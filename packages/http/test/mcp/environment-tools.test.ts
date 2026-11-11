@@ -499,6 +499,113 @@ describe('promotions over MCP', () => {
     expect(approved).toMatchObject({ status: 'completed', decidedBy: 'wendy' });
   });
 
+  it('makes an approval that stopped partway an error carrying the record, and lets a requester withdraw', async () => {
+    const deps = makeDeps();
+    await createSpace(deps.ctx, { spaceId: 'space-1', name: 'S', defaultLocale: 'en-US' });
+    await createEnvironment(deps.ctx, 'space-1', 'staging');
+    for (const environmentId of ['staging', 'main']) {
+      const scope = { spaceId: 'space-1', environmentId };
+      await createContentType(deps.ctx, SYSTEM_CALLER, scope, {
+        apiId: 'note',
+        name: 'Note',
+        displayField: 'title',
+        fields: [
+          {
+            apiId: 'title',
+            name: 'Title',
+            type: 'Symbol',
+            localized: false,
+            required: true,
+            position: 0,
+          },
+        ],
+      } as Parameters<typeof createContentType>[3]);
+      await publishContentType(deps.ctx, scope, 'note');
+    }
+    const staging = { spaceId: 'space-1', environmentId: 'staging' };
+    const make = async (title: string) =>
+      (
+        await createEntry(deps.ctx, staging, {
+          contentTypeApiId: 'note',
+          fields: { title: { 'en-US': title } },
+        })
+      ).entry.id;
+    const person = (subject: string, contentGrants?: Principal['contentGrants']): Principal => ({
+      spaceId: 'space-1',
+      kind: 'user',
+      subject,
+      scopes: [...scopesForKind('cma')],
+      ...(contentGrants ? { contentGrants } : {}),
+    });
+    const text = (r: Awaited<ReturnType<Client['callTool']>>) =>
+      (r.content as { text: string }[])[0]?.text ?? '';
+    const body = (r: Awaited<ReturnType<Client['callTool']>>) => JSON.parse(text(r) || '{}');
+    const ada = await connect(deps, person('ada'));
+    const grace = await connect(deps, person('grace'));
+    const ask = async (entries: string[]) =>
+      body(
+        await ada.callTool({
+          name: 'promotion_request',
+          arguments: { space: 'space-1', source: 'staging', target: 'main', entries },
+        }),
+      );
+
+    // Partway: the second entry's write fails once the first has landed.
+    const lands = await make('Lands');
+    const partway = await ask([lands, await make('Breaks')]);
+    const create = deps.ctx.store.entries.create.bind(deps.ctx.store.entries);
+    let writes = 0;
+    deps.ctx.store.entries.create = async (...args) => {
+      if (++writes === 2) throw new Error('boom');
+      return create(...args);
+    };
+    const approved = await grace.callTool({
+      name: 'promotion_approve',
+      arguments: { space: 'space-1', id: partway.id },
+    });
+    deps.ctx.store.entries.create = create;
+    // An error result, as REST's 409, carrying the record.
+    expect(approved.isError).toBe(true);
+    expect(body(approved).error).toMatchObject({
+      code: 'promotion_failed',
+      promotion: {
+        status: 'failed',
+        error: 'boom',
+        decidedBy: 'grace',
+        result: { entries: [lands] },
+      },
+    });
+
+    // Withdrawn: the requester rejects their own, needing no decide rights. Their role reads the
+    // type but no longer writes it; someone else with that role is held to deciding's checks.
+    const mine = await ask([await make('Second thoughts')]);
+    const readOnly = [{ contentTypeApiId: 'note', actions: ['read' as const] }];
+    const nora = await connect(deps, person('nora', readOnly));
+    const notHers = await nora.callTool({
+      name: 'promotion_reject',
+      arguments: { space: 'space-1', id: mine.id },
+    });
+    expect(notHers.isError).toBe(true);
+    expect(text(notHers)).toBe(
+      'Missing required scope "content:read+write+publish:* (on every content type, every field)"',
+    );
+    const adaNarrowed = await connect(deps, person('ada', readOnly));
+    const withdrawn = body(
+      await adaNarrowed.callTool({
+        name: 'promotion_reject',
+        arguments: { space: 'space-1', id: mine.id },
+      }),
+    );
+    expect(withdrawn).toMatchObject({ status: 'rejected', requestedBy: 'ada', decidedBy: 'ada' });
+    // Only while it waits: a second withdrawal finds it decided.
+    const again = await adaNarrowed.callTool({
+      name: 'promotion_reject',
+      arguments: { space: 'space-1', id: mine.id },
+    });
+    expect(again.isError).toBe(true);
+    expect(text(again)).toContain('not awaiting approval');
+  });
+
   it('refuses, with REST’s 422 body, a content type that drops a block variant the target’s entries use', async () => {
     const deps = makeDeps();
     await createSpace(deps.ctx, { spaceId: 'space-1', name: 'S', defaultLocale: 'en-US' });
@@ -573,14 +680,16 @@ describe('promotions over MCP', () => {
     await createEnvironment(deps.ctx, 'space-1', 'staging');
     await createEnvironment(deps.ctx, 'space-1', 'qa');
     await seedBlocks(deps.ctx, { spaceId: 'space-1', environmentId: 'staging' });
-    const person = (subject: string): Principal => ({
+    const person = (subject: string, contentGrants?: Principal['contentGrants']): Principal => ({
       spaceId: 'space-1',
       kind: 'user',
       subject,
       scopes: [...scopesForKind('cma')],
+      ...(contentGrants ? { contentGrants } : {}),
     });
-    const body = (r: Awaited<ReturnType<Client['callTool']>>) =>
-      JSON.parse((r.content as { text: string }[])[0]?.text ?? '{}');
+    const text = (r: Awaited<ReturnType<Client['callTool']>>) =>
+      (r.content as { text: string }[])[0]?.text ?? '';
+    const body = (r: Awaited<ReturnType<Client['callTool']>>) => JSON.parse(text(r) || '{}');
     const ada = await connect(deps, person('ada'));
     const args = { space: 'space-1', source: 'staging', target: 'qa', contentTypes: ['page'] };
     const without = body(await ada.callTool({ name: 'promotion_request', arguments: args }));

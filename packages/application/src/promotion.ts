@@ -8,6 +8,7 @@ import {
   type ContentAction,
   type ContentType,
   canAccessContentType,
+  DomainError,
   deniedFieldsFor,
   diffBlockCatalogs,
   EMPTY_BLOCK_CONFIG,
@@ -15,17 +16,21 @@ import {
   effectiveBlockConfig,
   effectiveBlockRules,
   extractReferences,
+  type FieldIssue,
   ForbiddenError,
   InvalidStateError,
   MAX_PROMOTION_CONTENT_TYPES,
   MAX_PROMOTION_ENTRIES,
   NotFoundError,
+  PROMOTION_RISK_LEVELS,
   type Principal,
   type PromotedBlocks,
   type PromotedContentType,
   type PromotedEntry,
   type Promotion,
   type PromotionAssessment,
+  PromotionFailedError,
+  type PromotionIssue,
   type PromotionResult,
   type PromotionRisk,
   type PromotionStatus,
@@ -39,6 +44,7 @@ import {
   ValidationError,
 } from '@contentworker/domain';
 import type { DecisionAnswer } from '@contentworker/ports';
+import { redactCredentials } from '@contentworker/redaction';
 import { decide } from './ai-decide';
 import { wrapUntrusted } from './ai-prompt';
 import { isUncheckedFallback } from './ai-provenance';
@@ -114,7 +120,7 @@ export interface RequestPromotionInput {
 const REVIEW_THRESHOLD = 0.5;
 /** The `risk` score (0 Routine … 3 High-risk) at which it asks for one. */
 const RISK_THRESHOLD = 2;
-const RISK_LEVELS = ['Routine', 'Minor', 'Significant', 'High-risk'] as const;
+const RISK_LEVELS = PROMOTION_RISK_LEVELS;
 
 export async function requestPromotion(
   ctx: AppContext,
@@ -282,17 +288,27 @@ export async function approvePromotion(
   return applyPromotion(ctx, claimed);
 }
 
-/** Rejects a waiting promotion; nothing is copied. */
+/**
+ * Rejects a waiting promotion; nothing is copied. Its requester may reject it too, withdrawing the
+ * request: they passed the request's checks already, so withdrawing asks for no decide rights
+ * (every type, content:manage), only that it is theirs and still waiting.
+ */
 export async function rejectPromotion(
   ctx: AppContext,
   principal: Principal,
   spaceId: string,
   id: string,
 ): Promise<Promotion> {
-  assertDecider(principal);
-  const found = await getPromotion(ctx, principal, spaceId, id);
+  // A person, as to decide: an API key's actor is only its kind, so "theirs" couldn't be told.
+  assertPerson(principal);
+  const stored = await ctx.store.promotions.get(spaceId, id);
+  const withdrawing = stored?.requestedBy === auditActor(principal);
+  // Anyone else decides, and is checked in the order approving is: grants, the record, the schema.
+  if (!withdrawing) authorizePromotion(principal);
+  const found = readable(principal, stored, id);
   // Deciding either way is the same call: one who couldn't approve it can't reject it either.
-  assertMayDecideSchema(principal, found, 'Rejecting');
+  if (!withdrawing) assertMayDecideSchema(principal, found, 'Rejecting');
+  // Only a waiting one: the compare-and-set below refuses one already decided, withdrawn or not.
   const rejected = await ctx.store.promotions.transition(spaceId, id, 'awaiting_approval', {
     status: 'rejected',
     decidedBy: auditActor(principal),
@@ -313,6 +329,12 @@ export async function rejectPromotion(
  * identity beyond their kind, so "someone other than the requester" couldn't be told apart.
  */
 function assertDecider(principal: Principal): void {
+  assertPerson(principal);
+  authorizePromotion(principal);
+}
+
+/** A person or the deployment admin token, acting directly: who may decide, or withdraw. */
+function assertPerson(principal: Principal): void {
   if (principal.kind !== 'user' && principal.kind !== 'admin') {
     throw new ForbiddenError(
       'Approving or rejecting a promotion takes a person or the deployment admin token, not an API key',
@@ -325,7 +347,6 @@ function assertDecider(principal: Principal): void {
       'An application acting for you can request a promotion but not decide one; decide it yourself',
     );
   }
-  authorizePromotion(principal);
 }
 
 /** What requesting or approving a promotion asks of a role, on every content type alike. */
@@ -414,7 +435,11 @@ export async function getPromotion(
   spaceId: string,
   id: string,
 ): Promise<Promotion> {
-  const found = await ctx.store.promotions.get(spaceId, id);
+  return readable(principal, await ctx.store.promotions.get(spaceId, id), id);
+}
+
+/** `found`, when `principal` may read it; otherwise not found (see `getPromotion`). */
+function readable(principal: Principal, found: Promotion | null, id: string): Promotion {
   if (!found || !canReadPromotion(principal, found)) throw new NotFoundError('Promotion', id);
   return found;
 }
@@ -494,7 +519,8 @@ export async function failStalePromotions(ctx: AppContext): Promise<StalePromoti
  * Applies a claimed (`applying`) promotion: content types first (entries are validated against
  * them), then each entry's pinned version, published when it was live in the source. Then checks
  * the target holds what was pinned. Any failure marks it `failed`, naming the cause; what was
- * applied before the failure stays, like any other edits.
+ * applied before the failure stays, like any other edits. A check that stops it before anything
+ * is written throws (a refusal); a failure once a write landed returns the `failed` record.
  */
 async function applyPromotion(base: AppContext, promotion: Promotion): Promise<Promotion> {
   if (promotion.status !== 'applying') {
@@ -511,6 +537,8 @@ async function applyPromotion(base: AppContext, promotion: Promotion): Promise<P
     gated: string[];
     blocks?: PromotionResult['blocks'];
   } = { contentTypes: [], entries: [], published: [], gated: [] };
+  // Set once a write has landed in the target: a failure after it leaves something written.
+  let wrote = false;
   const finish = async (patch: {
     status: 'completed' | 'failed';
     result: PromotionResult;
@@ -591,11 +619,15 @@ async function applyPromotion(base: AppContext, promotion: Promotion): Promise<P
       // A published definition is saved as published, and the save announces it
       // (`content_type.published`, once): no separate publish.
       result.contentTypes.push(ct.apiId);
+      wrote = true;
     }
     // After the types (a catalog push revises its targets, and finds the promoted ones already
     // matching), before the entries (which may hold blocks only the new catalog adds).
     if (blocks) {
-      await applyPromotedBlocks(ctx, target, blocks, replaced, (done) => (result.blocks = done));
+      await applyPromotedBlocks(ctx, target, blocks, replaced, (done) => {
+        result.blocks = done;
+        if (done.catalog || done.config) wrote = true;
+      });
     }
     // The entries the checks let off go first, and the live ones among them are published as soon
     // as they can be: what the types and the catalog removed is then gone from them before anything
@@ -608,31 +640,34 @@ async function applyPromotion(base: AppContext, promotion: Promotion): Promise<P
       const fields = pinned.get(e.entryId) as EntryFields;
       // The source's pinned version, copied whole (see `EntryWriteOptions.copy`).
       if (await ctx.store.entries.get(target, e.entryId)) {
-        await updateEntry(ctx, target, e.entryId, fields, { copy: true });
+        await named(e, () => updateEntry(ctx, target, e.entryId, fields, { copy: true }));
       } else {
         // A new entry in the target is the source's, promoted: it keeps who created it and when.
         const from = (await ctx.store.entries.get(source, e.entryId))?.entry;
-        await createEntry(
-          ctx,
-          target,
-          {
-            contentTypeApiId: e.contentTypeApiId,
-            fields,
-            id: e.entryId,
-            ...(from
-              ? {
-                  authorship: {
-                    createdAt: from.createdAt ?? null,
-                    createdBy: from.createdBy ?? null,
-                    firstPublishedAt: from.firstPublishedAt ?? null,
-                  },
-                }
-              : {}),
-          },
-          { copy: true },
+        await named(e, () =>
+          createEntry(
+            ctx,
+            target,
+            {
+              contentTypeApiId: e.contentTypeApiId,
+              fields,
+              id: e.entryId,
+              ...(from
+                ? {
+                    authorship: {
+                      createdAt: from.createdAt ?? null,
+                      createdBy: from.createdBy ?? null,
+                      firstPublishedAt: from.firstPublishedAt ?? null,
+                    },
+                  }
+                : {}),
+            },
+            { copy: true },
+          ),
         );
       }
       result.entries.push(e.entryId);
+      wrote = true;
     };
     // A gate added since the request: that entry stays a draft, listed, rather than failing the rest.
     const publish = async (e: PromotedEntry) => {
@@ -640,7 +675,7 @@ async function applyPromotion(base: AppContext, promotion: Promotion): Promise<P
         result.gated.push(e.entryId);
         return;
       }
-      await publishEntry(ctx, target, e.entryId);
+      await named(e, () => publishEntry(ctx, target, e.entryId));
       result.published.push(e.entryId);
     };
     for (const e of first) await write(e);
@@ -675,10 +710,82 @@ async function applyPromotion(base: AppContext, promotion: Promotion): Promise<P
     });
     return await finish({ status: 'completed', result: done });
   } catch (err) {
-    const error = err instanceof Error ? err.message : String(err);
-    await finish({ status: 'failed', result: { ...result, mismatched: [] }, error });
-    throw err;
+    const refused = err instanceof EntryRefusedError ? err : undefined;
+    const unexpected = !(err instanceof DomainError);
+    const failed = await finish({
+      status: 'failed',
+      result: {
+        ...result,
+        mismatched: [],
+        ...(refused ? { issues: refused.recorded } : {}),
+      },
+      error: failureText(err, promotion.target),
+    });
+    // Stopped before anything landed in the target (a check, or the first write refused): a
+    // refusal, said as one with its issues, though the record is failed too.
+    if (!wrote) throw err;
+    // Stopped partway: something is half-promoted. A fault (not a refusal) is logged and counted,
+    // since the answer below is the record, not a 500 an alert would see.
+    if (unexpected) {
+      ctx.metrics?.count('contentworker_promotion_apply_errors_total', 1, { stage: 'partway' });
+      console.error('promotion apply failed partway', {
+        promotionId: promotion.id,
+        spaceId: promotion.spaceId,
+        error: redactCredentials(err instanceof Error ? err.message : String(err)).slice(0, 500),
+      });
+    }
+    // Neither a success nor a refusal: an error that carries the record, so a caller sees what
+    // was written (REST answers 409, MCP an error result, each with the record).
+    throw new PromotionFailedError(failed);
   }
+}
+
+/**
+ * A promoted entry's write or publish the target refused (a field rule, a link): a validation
+ * refusal whose issues name the entry, for a caller who gets it as one, and keep the entry and its
+ * type with the issues as they were, for the failed record.
+ */
+class EntryRefusedError extends ValidationError {
+  readonly entryId: string;
+  readonly recorded: readonly PromotionIssue[];
+  constructor(e: PromotedEntry, issues: readonly FieldIssue[]) {
+    super(issues.map((i) => ({ ...i, message: `Entry ${e.entryId}: ${i.message}` })));
+    this.entryId = e.entryId;
+    this.recorded = issues.map((i) => ({
+      entryId: e.entryId,
+      contentTypeApiId: e.contentTypeApiId,
+      field: i.field,
+      ...(i.locale !== undefined ? { locale: i.locale } : {}),
+      message: i.message,
+    }));
+  }
+}
+
+/** Runs one entry's write or publish, naming the entry in what the target refuses. */
+async function named<T>(e: PromotedEntry, run: () => Promise<T>): Promise<T> {
+  try {
+    return await run();
+  } catch (err) {
+    if (!(err instanceof ValidationError) || err instanceof EntryRefusedError) throw err;
+    throw new EntryRefusedError(e, err.issues);
+  }
+}
+
+/**
+ * What a failed record says of its cause. An entry the target refused is named, not its fields:
+ * those are in `result.issues`. Another refusal keeps its words; a fault its message, redacted (it
+ * may quote a URL or a token).
+ */
+function failureText(err: unknown, target: string): string {
+  if (err instanceof EntryRefusedError) {
+    const n = err.recorded.length;
+    return `The target ${target} refused entry ${err.entryId} (${n} ${n === 1 ? 'issue' : 'issues'})`;
+  }
+  if (err instanceof ValidationError && err.issues.length > 0) {
+    return err.issues.map((i) => i.message).join('; ');
+  }
+  if (err instanceof DomainError) return err.message;
+  return redactCredentials(err instanceof Error ? err.message : String(err)).slice(0, 500);
 }
 
 /** Whether every entry an entry links to is in the target already, so publishing it now holds. */

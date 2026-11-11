@@ -105,6 +105,14 @@ A **promotion** is a merge that goes live and checks first. It copies what's pub
 source and publishes it in the target, copies drafts as drafts, and pins the versions it copies
 when you ask, so later edits in the source don't sneak in.
 
+In the admin, open **Settings → Environments** and use **Promote**: pick the source and target,
+press **Compare**, tick what to carry (everything that differs starts ticked), choose whether the
+block catalog and block config go too, and press **Request promotion** and confirm. The answer shows under the
+button: applied at once, or waiting for approval with the reasons and the AI risk check, or refused
+with each reason the API gave. **Promotions** below lists the most recent ones with their status;
+open one to see what it pins, why it needs approval, what it did and who decided it. Someone other
+than whoever requested it approves or rejects it there.
+
 ```sh
 curl -s "$API/spaces/$SPACE/promotions" \
   -H "Authorization: Bearer $CMA" -H 'content-type: application/json' \
@@ -123,10 +131,13 @@ you. Requesting and deciding both take a role with `read`, `write` and `publish`
 type and no field rules, since a promotion copies entries whole. Requesting or approving one that
 carries entries takes `lock` too, since they replace the target's locked regions (the Manager
 preset qualifies, the Editor preset doesn't). A role limited per type sees only the promotions whose every type it can read.
+Withdraw: the requester may reject their own while it waits (in the admin, **Withdraw request**),
+without `content:manage` or the role deciding takes; a person, not an API key or an app acting for
+them.
 An entry a workflow **gates publishing** for in the target arrives as a draft, and that workflow
 publishes it. If a content type changes in the source while a promotion waits, or the block
 catalog or config changes in either environment, approving it fails, so request a new one.
-A promotion that fails partway keeps what it already wrote. One whose apply stopped without
+A promotion that fails partway keeps what it already wrote, and the request or approval that ran it answers `409` (`promotion_failed`) with its record, `failed`, in `error.promotion`: the error, what it wrote, and what the target refused. A refusal copies nothing (when a check that runs as it applies refuses it, the record is `failed` too). One whose apply stopped without
 finishing (the request cut off) is marked `failed` an hour after it started applying; compare the
 environments and request a new one for the rest.
 

@@ -182,15 +182,15 @@ status.
 Each ContentWorker status maps to one token (`cms/lib/format.ts` `statusTone`), and every badge, dot
 and chart series for a status reads it through `var()`, so it switches with the theme:
 
-| Token             | Means                       | ContentWorker statuses                                                            |
-| ----------------- | --------------------------- | --------------------------------------------------------------------------------- |
-| `ok`              | succeeded, live             | published, active, completed, delivered, enabled, merged                          |
-| `wait`            | waits on a person           | changed (edited since publish), pending, in review, paused, unsaved changes       |
-| `run` (work blue) | in progress or on a clock   | scheduled, running, queued, processing                                            |
-| `idle`            | at rest, or ended otherwise | draft, open (release), archived, revoked, expired, disabled, cancelled            |
-| `bad`             | failed                      | failed, error, rejected, removed                                                  |
-| `undo`            | taken back                  | rolled back, reverted                                                             |
-| `ai`              | a model's work              | proposed, suggested, generated, needs review, held (agent output awaiting review) |
+| Token             | Means                       | ContentWorker statuses                                                                         |
+| ----------------- | --------------------------- | ---------------------------------------------------------------------------------------------- |
+| `ok`              | succeeded, live             | published, active, completed, delivered, enabled, merged                                       |
+| `wait`            | waits on a person           | changed (edited since publish), pending, in review, paused, awaiting approval, unsaved changes |
+| `run` (work blue) | in progress or on a clock   | scheduled, running, queued, processing, applying                                               |
+| `idle`            | at rest, or ended otherwise | draft, open (release), archived, revoked, expired, disabled, cancelled                         |
+| `bad`             | failed                      | failed, error, rejected, removed                                                               |
+| `undo`            | taken back                  | rolled back, reverted                                                                          |
+| `ai`              | a model's work              | proposed, suggested, generated, needs review, held (agent output awaiting review)              |
 
 ### Named Rules
 
@@ -888,6 +888,47 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   skeleton rows, `aria-busy` with a sr-only status; a failed load is a destructive Alert with
   Retry, never locales that look turned off. Without space:admin it reads only: every control
   disabled under a warning Alert saying changing locales takes space:admin.
+  **Promotions** (Environments, under Compare & merge, `cms/components/promotions/`) are two
+  sections and a sheet. **Promote** picks Source and Target (another environment into main by
+  default), and Compare lists what it can carry, added and changed, all ticked. What only the target
+  holds is a count in one muted line ("458 entries are only in main: a promotion leaves them as they
+  are"), never rows: a fresh source would bury the rest. Each list is a group with its count, Select
+  all and Select none, and scrolls in place past eight rows. When it scrolls it takes focus, so the
+  keyboard can scroll it. Under the lists sit an "Include the block catalog and block config"
+  checkbox and Request promotion…, which confirms in a modal in ink (a promotion that needs no
+  approval publishes at once). A role without content:manage and content:publish gets the button
+  disabled, with a muted line tied to it saying what the role lacks. The answer sits under the
+  button, in a live region that is always mounted: a success Alert (what it copied, what went as
+  drafts) or a warning Alert "Waiting for approval" with the reasons and the risk check. Once it
+  answers, the picker closes, so the same promotion isn't filed twice. A refusal (nothing was
+  written) is a destructive Alert, "Nothing was promoted into main", listing the API's issues grouped
+  by what they name (Content types, Entries, Blocks), with the selection kept. One that applied at
+  once and stopped partway comes back as the API's 409 carrying its record, `failed`, and shows as
+  "The promotion failed".
+  **Promotions** is a catalog of the 50 most recent, newest first, filtered by a Segmented All /
+  Awaiting approval (asked of the API). A press anywhere on a row opens its record: its source →
+  target is the row's one button, stretched over it, named for the promotion ("Open promotion
+  staging → main, 1 content type and 5 entries, awaiting approval, requested by the admin token").
+  Then come who asked, when, what it copies, and its status badge (awaiting approval `wait`,
+  applying `run`, and a requester's own rejection reads Withdrawn).
+  A role that can't list promotions sees a muted line saying who can, not an error. While one is
+  applying, the list and the record read again every few seconds. **The record** is a sheet
+  (`?promotion=<id>`) with one sr-only status region that says where it stands as that changes.
+  Drawn below it: applying, which says an apply still running an hour on is marked failed; failed, a
+  destructive Alert in the API's words, the stale sweep's included. Approve and promote… shows only
+  to someone who may approve: never its requester, and with content types or blocks, content:manage
+  as well. It confirms in the ink `ConfirmDialog`, which holds until the answer and says a refusal
+  (403, 409) in the API's words. Reject asks in place. An apply that stopped partway answers 409 with the
+  record, so the confirm closes on "The promotion failed", and the record lists what the target
+  refused (entry, field, locale, message). Its requester, a person, gets Withdraw request
+  instead, asking in place; the API records it as their rejection, and the record, list and history
+  read Withdrawn. Someone who may not decide reads why, in a muted line ("You requested it, so
+  someone else approves or rejects it. You can withdraw it."). Once decided, focus goes
+  to the record's standing. After that come why it needs approval and the model's view (an `ai` "The
+  model" stamp, or "A fallback" with why), and what it copies. Each entry there is an `idle` Goes
+  live or As a draft, and `ok` Live only once a completed apply published it. They show a few at a
+  time with Show all, which hands focus to the first row it brought. Last come what it did and its
+  history (requested, decided, ended, each by whom and when).
 - **Workflows list:** a catalog, flush in one section under its search: each
   workflow's trigger as its tile, its name linked to its editor with its description and steps under it; what starts its
   published version (from the API's `publishedTrigger`, with "Draft starts on …" when the draft
@@ -1201,8 +1242,9 @@ for code and data blocks only.
   **The named exceptions:** a small irreversible config row may stay in place, when it reaches no
   content, file or access and can be typed in again as it was. Only these: a redirect, an item in a
   menu's editor, an environment alias, a function, an AI action, an app extension, a comment or a
-  task on an entry, and an empty asset folder (a folder with anything in it is refused). The team
-  page's account actions and revoking an invitation also ask in place for now: their step-up field
+  task on an entry, rejecting or withdrawing a promotion (nothing is copied; it can be requested
+  again), and an empty asset folder (a folder with anything in it is refused). The team page's
+  account actions and revoking an invitation also ask in place for now: their step-up field
   posts with their form. Anything new joins this list by being written here. The rule is about what
   is stored, so three kinds of asking sit outside it: leaving a form with work in it (Leaving,
   above, and leaving a workflow with edits) loses only what was never saved; stopping a bulk job
