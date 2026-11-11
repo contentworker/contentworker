@@ -138,7 +138,10 @@ use-cases and body schemas). The same rule holds for them in the use-cases, on b
 delegated bearer (an OAuth access token, or a personal access token) can't mint an operator key or
 widen one's role (`assertMayMintKeys` in `packages/application/src/auth.ts`, `assignApiKeyRole` in
 `team.ts`); a signed-in person, an operator key and the admin token can. (An OAuth grant never
-carries `space:admin` anyway, `maxClientScopes` in `oauth.ts`.)
+carries `space:admin` anyway, `maxClientScopes` in `oauth.ts`.) Nor can one give a person lasting
+access: `role_preset_assign` for a person, `role_update` widening a role someone holds, and
+`invite_create` / `invite_resend` refuse it in the use-cases (`DelegatedPeopleError`; see
+[Auth & RBAC](./auth-and-rbac.md#one-token-model-three-issuances)).
 
 The webhook tools scope a hook the way the routes do
 ([Events & webhooks](./events-and-webhooks.md#webhooks)): to the `environment` argument, or

@@ -2,6 +2,7 @@ import {
   ConflictError,
   type ContentTypeGrant,
   DelegatedKeyMintError,
+  DelegatedPeopleError,
   grantsAdmin,
   grantsNoWider,
   holdsScope,
@@ -17,7 +18,7 @@ import {
 import { TransactionConflictError } from '@contentworker/ports';
 import type { AppContext } from './context';
 import { invalidateCachedPrincipals } from './principal-cache';
-import { type AccessPolicy, assertKeepsAnAdmin, NO_SSO } from './team';
+import { type AccessPolicy, assertKeepsAnAdmin } from './team';
 
 export interface RoleInput {
   readonly name: string;
@@ -95,24 +96,35 @@ export async function createRole(
 }
 
 /**
- * A delegated bearer (an OAuth or personal access token) can't widen an active API key by editing
- * the role it is bound to, as it can't by re-roling the key (`assignApiKeyRole`): new scopes, or
- * content grants that aren't a narrowing of the held ones (`grantsNoWider`), are refused while any
- * such key holds the role. Narrowing scopes or a grant's actions is not.
+ * A delegated bearer (an OAuth or personal access token) can't widen what a role's holders keep by
+ * editing the role, as it can't by re-roling a key (`assignApiKeyRole`) or a person
+ * (`updateMember`): new scopes, or content grants that aren't a narrowing of the held ones
+ * (`grantsNoWider`), are refused while an active API key or anyone on the team holds the role.
+ * A disabled person counts: re-enabling them later shouldn't hand them a role a token widened.
+ * Narrowing scopes or a grant's actions is not refused. A role nobody holds may change freely,
+ * since giving it to anyone is checked on its own.
  */
-async function refuseWideningKeys(ctx: AppContext, existing: Role, input: RoleInput) {
+async function refuseWideningHolders(ctx: AppContext, existing: Role, input: RoleInput) {
   const widens =
     input.scopes.some((s) => !holdsScope(existing.scopes, s)) ||
     !grantsNoWider(input.contentGrants, existing.contentGrants);
   if (!widens) return;
-  const keys = await ctx.store.auth.list(existing.spaceId);
+  const [keys, members] = await Promise.all([
+    ctx.store.auth.list(existing.spaceId),
+    ctx.store.members.list(existing.spaceId),
+  ]);
   if (keys.some((k) => k.roleId === existing.id && !k.revoked)) throw new DelegatedKeyMintError();
+  if (members.some((m) => m.roleId === existing.id)) {
+    throw new DelegatedPeopleError('widen a role someone on the team holds');
+  }
 }
 
 /**
  * Replaces a role's definition, as its next version. Keys and people holding it pick the change
  * up live. A preset role stays that preset. Refused with `LastAdminError` when dropping
- * `space:admin` would leave the space with no administrator.
+ * `space:admin` would leave the space with no administrator. `editor` is the caller's principal
+ * (the routes and tools), or `system` for the platform's own seeding: required, so no caller skips
+ * the delegated-bearer check by leaving it out.
  *
  * Refused (409, naming the version in force) when `expectedVersion` isn't the stored version, or
  * when another save commits first: the version is the compare-and-set the write rides with, so of
@@ -125,13 +137,15 @@ export async function updateRole(
   spaceId: string,
   id: string,
   input: RoleUpdateInput,
-  policy: AccessPolicy = NO_SSO,
-  editor?: Principal,
+  policy: AccessPolicy,
+  editor: Principal | 'system',
 ): Promise<Role> {
   validateRoleInput(input);
   const existing = await ctx.store.roles.get(spaceId, id);
   if (!existing) throw new NotFoundError('Role', id);
-  if (editor && isDelegatedBearer(editor)) await refuseWideningKeys(ctx, existing, input);
+  if (editor !== 'system' && isDelegatedBearer(editor)) {
+    await refuseWideningHolders(ctx, existing, input);
+  }
   const role: Role = {
     id,
     spaceId,

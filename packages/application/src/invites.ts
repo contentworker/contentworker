@@ -22,6 +22,7 @@ import {
   authorize,
   authorizeInviter,
   ConflictError,
+  DelegatedPeopleError,
   type DomainEvent,
   INVITE_MAX_TTL_DAYS,
   INVITE_TTL_DAYS,
@@ -35,6 +36,7 @@ import {
   inviteActorOf,
   invitePending,
   inviteStatus,
+  isDelegatedBearer,
   isEmail,
   isInviteRole,
   MAX_INVITE_GRANTS,
@@ -204,9 +206,18 @@ async function grantedRoles(ctx: AppContext, grants: readonly InviteGrant[]): Pr
 }
 
 /**
+ * Refuses a delegated bearer (an OAuth or personal access token) issuing a link that makes someone
+ * a lasting member. Such a token is bound to one space, so `authorizeInviter` refuses it already;
+ * this says why first, and holds should a token ever reach further.
+ */
+function refuseDelegatedInviter(principal: Principal, action: string): void {
+  if (isDelegatedBearer(principal)) throw new DelegatedPeopleError(action);
+}
+
+/**
  * Invites `input.email`. Refused (403) unless the caller manages people across the deployment and
- * holds everything the invitation grants; refused (409) while the address has a pending
- * invitation (resend that one instead).
+ * holds everything the invitation grants, and to a delegated bearer; refused (409) while the
+ * address has a pending invitation (resend that one instead).
  */
 export async function createInvite(
   ctx: AppContext,
@@ -215,6 +226,7 @@ export async function createInvite(
   input: CreateInviteInput,
   opts: InviteLinkOptions = {},
 ): Promise<IssuedInvite> {
+  refuseDelegatedInviter(principal, 'invite people');
   authorizeInviter(principal);
   const email = normalizeEmail(input.email ?? '');
   if (!isEmail(email) || email.length > 320) {
@@ -312,7 +324,7 @@ export async function getInvite(
 /**
  * Issues a new link for a pending (or expired) invitation: a new token, a fresh expiry, and the
  * old links (shown or emailed) stop working. The caller must be able to grant what it grants,
- * as at creation.
+ * as at creation, and not be a delegated bearer: a new link is a new way in.
  */
 export async function resendInvite(
   ctx: AppContext,
@@ -322,6 +334,7 @@ export async function resendInvite(
   input: { readonly expiresInDays?: number } = {},
   opts: InviteLinkOptions = {},
 ): Promise<IssuedInvite> {
+  refuseDelegatedInviter(principal, 'resend an invitation');
   authorizeInviter(principal);
   const invite = await existing(ctx, id);
   if (invite.status !== 'pending') {

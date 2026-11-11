@@ -309,7 +309,7 @@ Found while building and reviewing M1 and M2. None blocks a release.
   again before each chunk, so a trash or purge job stops when its starter loses access.
 - [ ] **Audit promotion and cross-space clone.** Check both against per-type and field rules, as
   imports, snapshots and merge now are.
-- [ ] **Delegated bearers and people.** Refuse invitations and member role changes from personal
+- [x] **Delegated bearers and people.** Refuse invitations and member role changes from personal
   access tokens and OAuth tokens, so a short-lived token can't create a lasting admin.
 - [ ] **Environment-wide checks in the use-cases.** Move `authorizeEveryContentType` from the HTTP
   routes and MCP tools into the use-cases with a required principal, so a new surface can't skip it.

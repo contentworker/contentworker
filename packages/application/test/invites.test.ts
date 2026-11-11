@@ -340,7 +340,7 @@ describe('invitations', () => {
   });
 
   it('keeps an existing team member’s role, and skips a deleted role', async () => {
-    await addMember(ctx, 'blog', { email: 'grace@example.com', role: 'admin' });
+    await addMember(ctx, 'blog', { email: 'grace@example.com', role: 'admin' }, 'system');
     const role = await createRole(ctx, 'docs', { name: 'Temp', scopes: [SCOPES.previewRead] });
     const issued = await invite({
       grants: [

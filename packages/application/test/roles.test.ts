@@ -32,11 +32,18 @@ describe('granular RBAC: roles', () => {
     });
     expect((await listRoles(c, 's1')).map((r) => r.id)).toEqual([role.id]);
 
-    const updated = await updateRole(c, 's1', role.id, {
-      name: 'Blog editor',
-      scopes: ['content:write', 'content:publish', 'preview:read'],
-      contentGrants: [{ contentTypeApiId: 'post', actions: ['read', 'write', 'publish'] }],
-    });
+    const updated = await updateRole(
+      c,
+      's1',
+      role.id,
+      {
+        name: 'Blog editor',
+        scopes: ['content:write', 'content:publish', 'preview:read'],
+        contentGrants: [{ contentTypeApiId: 'post', actions: ['read', 'write', 'publish'] }],
+      },
+      { sso: false },
+      'system',
+    );
     expect(updated.scopes).toContain('content:publish');
     expect((await getRole(c, 's1', role.id)).contentGrants[0]?.actions).toContain('publish');
 
@@ -114,11 +121,18 @@ describe('granular RBAC: roles', () => {
     expect(principal.contentGrants).toEqual([{ contentTypeApiId: 'post', actions: ['read'] }]);
 
     // Editing the role changes what existing keys can do — no re-mint needed.
-    await updateRole(c, 's1', role.id, {
-      name: 'Reader+',
-      scopes: ['preview:read', 'search:read'],
-      contentGrants: [{ contentTypeApiId: '*', actions: ['read'] }],
-    });
+    await updateRole(
+      c,
+      's1',
+      role.id,
+      {
+        name: 'Reader+',
+        scopes: ['preview:read', 'search:read'],
+        contentGrants: [{ contentTypeApiId: '*', actions: ['read'] }],
+      },
+      { sso: false },
+      'system',
+    );
     const after = await authenticate(c, hasher, token);
     expect(after.scopes).toContain('search:read');
     expect(after.contentGrants?.[0]?.contentTypeApiId).toBe('*');
