@@ -279,7 +279,10 @@ allows of it, per target and slot, and answers the rules in force. See
 
 **AI settings.** `cma.aiSettings.get()` reads the space's AI settings, per capability;
 `cma.aiSettings.set({ expectedVersion, capabilities })` changes the capabilities it names (it needs
-`space:admin`), and a save someone made since is a `409` (`isConflict`). See
+`space:admin`), and a save someone made since is a `409` (`isConflict`). Each capability comes
+back with the tier it runs on under the deployment's cap (`effectiveTier`, beside `maxTier`).
+`cma.aiSettings.searchReindexJob()` returns the client environment's latest search reindex, which
+turning `search` on or off starts (it needs `content:manage`), or null. See
 [AI settings](/guides/ai/#ai-settings).
 
 **Roles.** `cma.roles.{list, get, create, update, delete}` manages the space's roles (it needs
@@ -315,7 +318,9 @@ await cma.entries.publish(entry.id, { expectedVersion: entry.currentVersion });
 (`id`, `currentVersion`, status) and its draft values. `publish`, `unpublish` and
 `versions.restore` take an optional `{ expectedVersion }`, the `currentVersion` you read; if the
 draft has moved on, the call fails with a **409** and changes nothing, so you never publish text
-you haven't seen.
+you haven't seen. `versions.diff(id, from, to)` compares two versions; `versions.summarize(id,
+from, to, { fresh? })` returns a short plain-text summary of that diff, written by the space's
+Writing help AI ([Summarize the changes](/guides/editing-and-publishing/#summarize-the-changes)).
 
 Every method maps to one Management route: content types, entries and their versions, the asset
 library, bulk jobs, releases, scheduled actions, webhooks, taxonomy (`cma.taxonomy.tags`,

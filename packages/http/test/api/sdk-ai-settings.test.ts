@@ -33,7 +33,13 @@ describe('AI settings through the management SDK', () => {
 
     const current = await cma.aiSettings.get();
     expect(current.version).toBe(0);
-    expect(current.capabilities.assistant).toEqual({ enabled: true, tier: null, guidance: null });
+    expect(current.maxTier).toBe('flagship');
+    expect(current.capabilities.assistant).toEqual({
+      enabled: true,
+      tier: null,
+      guidance: null,
+      effectiveTier: null,
+    });
 
     const done = await cma.aiSettings.set({
       expectedVersion: current.version,
@@ -51,6 +57,8 @@ describe('AI settings through the management SDK', () => {
     });
     // Reading takes preview:read.
     expect((await client('cpa').aiSettings.get()).version).toBe(1);
+    // Following the search reindex: none has run here.
+    expect(await cma.aiSettings.searchReindexJob()).toBeNull();
 
     const stale = await cma.aiSettings
       .set({ expectedVersion: 0, capabilities: { media: { enabled: false } } })

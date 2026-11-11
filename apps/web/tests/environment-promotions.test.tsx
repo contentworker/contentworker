@@ -1,7 +1,8 @@
 // Promotions in Settings → Environments: requesting one, the list, and a promotion's record with
 // Approve and Reject, through the real Management client against a mocked same-origin fetch.
+import { type ContentTypeGrant, contentActionsFor, fieldRulesFor } from '@contentworker/domain';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { describe, expect, it, vi } from 'vitest';
 import { Promotions } from '~/cms/components/promotions/Promotions';
@@ -116,6 +117,8 @@ interface Setup {
   /** The session's principal kind (`user` for a signed-in person). */
   kind?: string;
   scopes?: string[];
+  /** The session role's content grants, which `auth/me` resolves (none: every type). */
+  grants?: readonly ContentTypeGrant[];
   compare?: unknown;
   url?: string;
   /** More records the API holds. */
@@ -142,11 +145,15 @@ function setup(opts: Setup = {}) {
     const json = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status });
     if (url === '/spaces') return json({ items: [{ id: 'space-1', name: 'Space 1' }] });
     if (url === `${SPACE}/auth/me`) {
+      const grants = opts.grants ? { contentGrants: opts.grants } : {};
       return json({
         spaceId: 'space-1',
         kind: opts.kind ?? 'user',
         subject: opts.subject ?? 'usr_me',
         scopes: opts.scopes ?? ['content:publish', 'content:manage'],
+        restricted: opts.grants !== undefined,
+        contentActions: contentActionsFor(grants),
+        fieldRules: fieldRulesFor(grants),
       });
     }
     if (url.startsWith(`${SPACE}/compare?`)) return json(opts.compare ?? diff);
@@ -369,6 +376,33 @@ describe('Requesting a promotion', () => {
     ).toBeTruthy();
   });
 
+  it('offers a request to a manager preset, and none to a role limited to some types', async () => {
+    const all = ['read', 'write', 'publish', 'lock'] as const;
+    setup({ grants: [{ contentTypeApiId: '*', actions: all }] });
+    await compare();
+    const button = screen.getByRole('button', { name: 'Request promotion into main…' });
+    await waitFor(() => expect((button as HTMLButtonElement).disabled).toBe(false));
+    cleanup();
+    setup({ grants: [{ contentTypeApiId: 'article', actions: all }] });
+    await compare();
+    const refused = screen.getByRole('button', { name: 'Request promotion into main…' });
+    await waitFor(() => expect((refused as HTMLButtonElement).disabled).toBe(true));
+    const why = await screen.findByText(/^Requesting a promotion takes a role that can manage/);
+    expect(refused.getAttribute('aria-describedby')).toBe(why.id);
+  });
+
+  it('asks lock on every type to request entries, and offers the rest without them', async () => {
+    setup({ grants: [{ contentTypeApiId: '*', actions: ['read', 'write', 'publish'] }] });
+    const group = await compare();
+    const button = screen.getByRole('button', { name: 'Request promotion into main…' });
+    const why = await screen.findByText(/^Requesting entries also takes a role that can lock/);
+    expect((button as HTMLButtonElement).disabled).toBe(true);
+    expect(button.getAttribute('aria-describedby')).toBe(why.id);
+    fireEvent.click(within(group).getByRole('button', { name: 'Select none of the entries' }));
+    await waitFor(() => expect((button as HTMLButtonElement).disabled).toBe(false));
+    expect(screen.queryByText(/^Requesting entries also takes/)).toBeNull();
+  });
+
   it('says a 403 in the API’s words', async () => {
     setup({
       request: {
@@ -563,16 +597,80 @@ describe('A promotion’s record', () => {
     expect(within(sheet).queryByRole('button', { name: 'Reject' })).toBeNull();
   });
 
-  it('offers only Reject to a publisher without content:manage when it copies types', async () => {
+  it('offers no decision to a publisher without content:manage when it copies types', async () => {
     setup({ url: '/settings/environments?promotion=p-wait', scopes: ['content:publish'] });
     const sheet = await screen.findByRole('dialog');
     expect(
       await within(sheet).findByText(
-        'Approving it also takes content:manage, since it copies content types or blocks.',
+        'Deciding it also takes a role that can manage content, since it copies content types or blocks.',
+      ),
+    ).toBeTruthy();
+    expect(within(sheet).queryByRole('button', { name: 'Approve and promote…' })).toBeNull();
+    expect(within(sheet).queryByRole('button', { name: 'Reject' })).toBeNull();
+  });
+
+  it('offers a manager preset both decisions, its grant being one full `*` grant', async () => {
+    setup({
+      url: '/settings/environments?promotion=p-wait',
+      grants: [{ contentTypeApiId: '*', actions: ['read', 'write', 'publish', 'lock'] }],
+    });
+    const sheet = await screen.findByRole('dialog');
+    expect(await within(sheet).findByRole('button', { name: 'Approve and promote…' })).toBeTruthy();
+    expect(within(sheet).getByRole('button', { name: 'Reject' })).toBeTruthy();
+  });
+
+  it('offers no decision to a role limited to some content types or fields, and says why', async () => {
+    const narrowed: ContentTypeGrant[][] = [
+      [{ contentTypeApiId: 'article', actions: ['read', 'write', 'publish', 'lock'] }],
+      [
+        {
+          contentTypeApiId: '*',
+          actions: ['read', 'write', 'publish', 'lock'],
+          deniedFields: ['summary'],
+        },
+      ],
+    ];
+    for (const grants of narrowed) {
+      setup({ url: '/settings/environments?promotion=p-wait', grants });
+      const sheet = await screen.findByRole('dialog');
+      expect(
+        await within(sheet).findByText(
+          'Deciding it takes a role that can publish content, with no content-type or field limits.',
+        ),
+      ).toBeTruthy();
+      expect(within(sheet).queryByRole('button', { name: 'Approve and promote…' })).toBeNull();
+      expect(within(sheet).queryByRole('button', { name: 'Reject' })).toBeNull();
+      cleanup();
+    }
+  });
+
+  it('offers only Reject on entries to a role without lock on every type, and says why', async () => {
+    setup({
+      url: '/settings/environments?promotion=p-entries',
+      grants: [{ contentTypeApiId: '*', actions: ['read', 'write', 'publish'] }],
+      extra: [{ ...waiting, id: 'p-entries', contentTypes: [] }],
+    });
+    const sheet = await screen.findByRole('dialog');
+    expect(
+      await within(sheet).findByText(
+        'Approving it also takes a role that can lock regions on every content type, since it copies entries whole.',
       ),
     ).toBeTruthy();
     expect(within(sheet).queryByRole('button', { name: 'Approve and promote…' })).toBeNull();
     expect(within(sheet).getByRole('button', { name: 'Reject' })).toBeTruthy();
+  });
+
+  it('offers its requester Withdraw however narrow their role', async () => {
+    setup({
+      url: '/settings/environments?promotion=p-wait',
+      subject: 'usr_other',
+      scopes: ['content:publish'],
+      grants: [{ contentTypeApiId: 'article', actions: ['read'] }],
+    });
+    const sheet = await screen.findByRole('dialog');
+    expect(await within(sheet).findByRole('button', { name: 'Withdraw request' })).toBeTruthy();
+    expect(within(sheet).queryByRole('button', { name: 'Approve and promote…' })).toBeNull();
+    expect(within(sheet).queryByRole('button', { name: 'Reject' })).toBeNull();
   });
 
   it('rejects in place, and says who rejected it', async () => {

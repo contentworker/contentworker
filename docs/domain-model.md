@@ -29,21 +29,21 @@ locale, keeping the read/write paths uniform.
 A content type is an ordered list of typed, validated fields. The 13 field types
 (`FIELD_TYPES`):
 
-| Type        | Represents                                          | Stored value                   |
+| Type        | Represents                                               | Stored value                   |
 | ----------- | -------------------------------------------------------- | ------------------------------ |
-| `Symbol`    | Short single-line text                              | `string`                       |
-| `Slug`      | URL-safe identifier (normalized on write)           | `string`                       |
-| `Text`      | Long multi-line text                                | `string`                       |
-| `RichText`  | Structured rich-text document                       | object                         |
-| `Integer`   | Whole number                                        | integer                        |
-| `Number`    | Floating-point number                               | number                         |
-| `Boolean`   | True/false                                          | boolean                        |
+| `Symbol`    | Short single-line text                                   | `string`                       |
+| `Slug`      | URL-safe identifier (normalized on write)                | `string`                       |
+| `Text`      | Long multi-line text                                     | `string`                       |
+| `RichText`  | Structured rich-text document                            | object                         |
+| `Integer`   | Whole number                                             | integer                        |
+| `Number`    | Floating-point number                                    | number                         |
+| `Boolean`   | True/false                                               | boolean                        |
 | `Date`      | A date, date and time, or time of day (`format`)         | string                         |
-| `Location`  | Geographic point                                    | `{ lat: number, lon: number }` |
-| `Seo`       | Search engine metadata (see [SEO](#seo-and-the-sitemap)) | object of fixed shape     |
-| `JSON`      | Arbitrary JSON                                      | object                         |
-| `Link`      | Reference to an Entry or Asset                      | `{ id, linkType }`             |
-| `Component` | A group of nested typed fields                      | object keyed by nested apiId   |
+| `Location`  | Geographic point                                         | `{ lat: number, lon: number }` |
+| `Seo`       | Search engine metadata (see [SEO](#seo-and-the-sitemap)) | object of fixed shape          |
+| `JSON`      | Arbitrary JSON                                           | object                         |
+| `Link`      | Reference to an Entry or Asset                           | `{ id, linkType }`             |
+| `Component` | A group of nested typed fields                           | object keyed by nested apiId   |
 | `Array`     | List of scalars, `Link`s or `Component`s (or blocks)     | array                          |
 
 ### Components and repeaters
@@ -761,12 +761,12 @@ plugin's capabilities) and `system` (the scheduler). The HTTP routes and the MCP
 context per request (`actingAs`); a bulk job records who started it in its `config.actor` and its
 chunks write as them; a promotion writes as whoever approved it.
 
-| Field              | Set by                                                   | `sys.*`              |
-| ------------------ | -------------------------------------------------------- | -------------------- |
-| `createdAt`        | creation (kept by a clone, a merge or a promotion)       | `sys.createdAt`      |
-| `createdBy`        | creation (kept likewise; never from an uploaded snapshot) | `sys.createdBy`      |
-| `updatedBy`        | every change, the one `sys.updatedAt` records            | `sys.updatedBy`      |
-| `firstPublishedAt` | the first publish only; kept through unpublish           | `sys.firstPublishedAt` |
+| Field              | Set by                                                    | `sys.*`                |
+| ------------------ | --------------------------------------------------------- | ---------------------- |
+| `createdAt`        | creation (kept by a clone, a merge or a promotion)        | `sys.createdAt`        |
+| `createdBy`        | creation (kept likewise; never from an uploaded snapshot) | `sys.createdBy`        |
+| `updatedBy`        | every change, the one `sys.updatedAt` records             | `sys.updatedBy`        |
+| `firstPublishedAt` | the first publish only; kept through unpublish            | `sys.firstPublishedAt` |
 
 The store writes creation once and `first_published_at` with `COALESCE`, so a stale aggregate or a
 lost race never moves either; the publish upsert copies `entry_published.first_published_at` from
@@ -1152,13 +1152,13 @@ page's metadata without reading the model. Being a field, it is versioned with t
 with the entry, localized when the field is, and delivered with the entry's other fields. A content
 type opts in by declaring one.
 
-| Part           | Type                     | Rule                                                                                 |
+| Part           | Type             | Rule                                                                                            |
 | -------------- | ---------------- | ----------------------------------------------------------------------------------------------- |
-| `title`        | `Symbol`                 | at most `MAX_SEO_TITLE_LENGTH` (200)                                                 |
-| `description`  | `Text`                   | at most `MAX_SEO_DESCRIPTION_LENGTH` (500)                                           |
-| `canonicalUrl` | `Symbol`                 | a site path (`/…`, not `//…`) or an absolute `http(s)` URL (`canonicalUrlIssue`); at most 2,048 |
-| `noindex`      | `Boolean`                | keeps the page out of search results and the sitemap                                 |
-| `ogImage`      | `Link` (`Asset`)         | the social image; a reference edge like any link (integrity, purges)                 |
+| `title`        | `Symbol`         | at most `MAX_SEO_TITLE_LENGTH` (200)                                                            |
+| `description`  | `Text`           | at most `MAX_SEO_DESCRIPTION_LENGTH` (500)                                                      |
+| `canonicalUrl` | `Symbol`         | a site path (`/…`, not `//…`) or an absolute `http(s)` URL (`canonicalUrlIssue`); at most 2,048 |
+| `noindex`      | `Boolean`        | keeps the page out of search results and the sitemap                                            |
+| `ogImage`      | `Link` (`Asset`) | the social image; a reference edge like any link (integrity, purges)                            |
 
 A type declares at most one `Seo` field, at the top level only (never inside a component), and it
 cannot be `unique` or carry nested `fields`. Validation, reference extraction, GraphQL (an object
@@ -1261,7 +1261,14 @@ interface BlockManifest {
   thumbnail?: { assetId: string } | { url: string }; // https only
   aliases?: string[]; // former ids
   fields: FieldDefinition[]; // props, the content model's vocabulary
-  slots?: { apiId: string; name: string; help?: string; allowedChildren: string[]; min?: number; max?: number }[];
+  slots?: {
+    apiId: string;
+    name: string;
+    help?: string;
+    allowedChildren: string[];
+    min?: number;
+    max?: number;
+  }[];
   allowedParents?: string[];
   responsive?: string[]; // props that take per-breakpoint overrides
 }
@@ -1272,7 +1279,13 @@ interface BlockCatalog {
   blocks: BlockManifest[];
   targets: { contentTypeApiId: string; field: string; blocks?: string[] }[];
   breakpoints: { id: string; name: string; minWidth: number }[]; // [] when none
-  changes: { added: string[]; changed: string[]; removed: string[]; renamed: { from: string; to: string }[]; breakpoints?: true };
+  changes: {
+    added: string[];
+    changed: string[];
+    removed: string[];
+    renamed: { from: string; to: string }[];
+    breakpoints?: true;
+  };
   pushedAt: string;
   pushedBy: string | null; // auditActor of the caller; null for SYSTEM_CALLER
 }
@@ -1378,11 +1391,23 @@ a push of the target's own (see [Block configs](#block-configs) and
 block catalog: narrowings laid over it per target and per block slot, never wider than the code.
 
 ```ts
-interface SlotNarrowing { allowedChildren?: string[]; min?: number; max?: number; locked?: boolean }
+interface SlotNarrowing {
+  allowedChildren?: string[];
+  min?: number;
+  max?: number;
+  locked?: boolean;
+}
 
 interface BlockConfig {
   version: number; // 0 before the first set, then one more per set that changes something
-  targets: { contentTypeApiId: string; field: string; blocks?: string[]; min?: number; max?: number; locked?: boolean }[];
+  targets: {
+    contentTypeApiId: string;
+    field: string;
+    blocks?: string[];
+    min?: number;
+    max?: number;
+    locked?: boolean;
+  }[];
   blocks: { block: string; slots: Record<string, SlotNarrowing> }[]; // wherever the block is placed
   updatedAt: string | null;
   updatedBy: string | null;
@@ -1661,7 +1686,7 @@ transactional outbox. All share a `BaseEvent` of `{ id, scope, occurredAt }`. Th
 `environment.deleted`, `promotion.awaiting_approval`, `environment.promoted`, `bulk.job_completed`,
 the `workflow_run.*` end states,
 `workflow.task_opened` and `workflow.webhook`, plus control messages for background work
-(`search.reindex_requested`, `bulk.chunk_due`, `environment.purge_due`). `webhook.test` is the body
+(`search.reindex_requested`, `search.toggled`, `bulk.chunk_due`, `environment.purge_due`). `webhook.test` is the body
 of an administrator's test delivery; it travels inside a `WebhookSendRequest`, which shares the
 outbox but is not a domain event. Every type and its payload
 is in [Events & webhooks](./events-and-webhooks.md#event-payloads).
@@ -1731,24 +1756,24 @@ See [Auth & RBAC](./auth-and-rbac.md) for the full model. The domain owns: the `
 
 All extend `DomainError` (`{ code, message, details? }`) and carry a stable, client-facing `code`:
 
-| Class                                 | `code`              | HTTP | Meaning                                                          |
+| Class                                 | `code`              | HTTP | Meaning                                                                        |
 | ------------------------------------- | ------------------- | ---- | ------------------------------------------------------------------------------ |
-| `NotFoundError(resource, id)`         | `not_found`         | 404  | Resource missing                                                 |
-| `ValidationError(issues)`             | `validation_failed` | 422  | Carries `issues: FieldIssue[]`                                   |
+| `NotFoundError(resource, id)`         | `not_found`         | 404  | Resource missing                                                               |
+| `ValidationError(issues)`             | `validation_failed` | 422  | Carries `issues: FieldIssue[]`                                                 |
 | `ConflictError(message, details?)`    | `conflict`          | 409  | Uniqueness or identity violation (e.g. duplicate apiId); `details` on the wire |
-| `TransactionConflictError` (ports)    | `conflict`          | 409  | A compare-and-set lost inside a unit of work; nothing committed  |
-| `LastAdminError`                      | `last_admin`        | 409  | Would leave the space with no active administrator               |
-| `PublishGatedError(entries)`          | `publish_gated`     | 409  | A publish of an entry a gated workflow covers, outside its runs  |
-| `AssetInUseError(assetId, usage)`     | `asset_in_use`      | 409  | Entries still link to the asset (`usage`, `total`)               |
-| `InvalidStateError(message)`          | `invalid_state`     | 400  | Illegal state-machine transition                                 |
-| `QueryTooBroadError(scanLimit)`       | `query_too_broad`   | 400  | A field query matched more candidates than the store evaluates   |
-| `UnauthorizedError(message?)`         | `unauthorized`      | 401  | Invalid/missing credentials                                      |
-| `ForbiddenError(scope)`               | `forbidden`         | 403  | Missing the required scope                                       |
-| `HookRejectedError(hook, reason)`     | `hook_rejected`     | 422  | A write-path hook refused the operation                          |
-| `RateLimitedError(message, retry?)`   | `rate_limited`      | 429  | A per-space rate or budget ceiling was exceeded                  |
-| `AiUnavailableError(message, retry?)` | `ai_unavailable`    | 503  | The model didn't answer within the call's cap; retryable         |
-| `NotConfiguredError(capability, msg)` | `not_configured`    | 501  | The deployment has not bound the capability the request needs    |
-| `SecretUnreadableError(context)`      | `secret_unreadable` | 500  | A stored secret no configured key opens (never treated as unset) |
+| `TransactionConflictError` (ports)    | `conflict`          | 409  | A compare-and-set lost inside a unit of work; nothing committed                |
+| `LastAdminError`                      | `last_admin`        | 409  | Would leave the space with no active administrator                             |
+| `PublishGatedError(entries)`          | `publish_gated`     | 409  | A publish of an entry a gated workflow covers, outside its runs                |
+| `AssetInUseError(assetId, usage)`     | `asset_in_use`      | 409  | Entries still link to the asset (`usage`, `total`)                             |
+| `InvalidStateError(message)`          | `invalid_state`     | 400  | Illegal state-machine transition                                               |
+| `QueryTooBroadError(scanLimit)`       | `query_too_broad`   | 400  | A field query matched more candidates than the store evaluates                 |
+| `UnauthorizedError(message?)`         | `unauthorized`      | 401  | Invalid/missing credentials                                                    |
+| `ForbiddenError(scope)`               | `forbidden`         | 403  | Missing the required scope                                                     |
+| `HookRejectedError(hook, reason)`     | `hook_rejected`     | 422  | A write-path hook refused the operation                                        |
+| `RateLimitedError(message, retry?)`   | `rate_limited`      | 429  | A per-space rate or budget ceiling was exceeded                                |
+| `AiUnavailableError(message, retry?)` | `ai_unavailable`    | 503  | The model didn't answer within the call's cap; retryable                       |
+| `NotConfiguredError(capability, msg)` | `not_configured`    | 501  | The deployment has not bound the capability the request needs                  |
+| `SecretUnreadableError(context)`      | `secret_unreadable` | 500  | A stored secret no configured key opens (never treated as unset)               |
 
 `OAuthError` (`oauth_<error>`) carries its own wire code and status for the OAuth endpoints, and
 `PluginCapabilityDeniedError` (`capability_denied`) refuses a plugin call outside its grant.

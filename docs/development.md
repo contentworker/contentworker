@@ -202,13 +202,22 @@ pnpm generate
 engine suites. Also `@contentworker/graphql-gen`, `seed`, `redaction`, `design` and `docs` run
 `vitest` in node.
 
-The web e2e harness starts its own dev server on port 5390 with a fresh local database in
+The web e2e harness starts its own dev server with a fresh local database in
 `.wrangler/e2e` (`CONTENTWORKER_E2E=1`: offline, no remote bindings, and unseeded: the tests
 create what they need; the first-run spec sees a deployment with no spaces by filtering
 `GET /spaces` to the space it creates, since the database is shared), so it coexists with a
-`pnpm dev` session. `E2E_PORT` picks another port, for a second suite (another worktree's)
-beside one already on 5390: outside CI the harness reuses whatever answers on its port, and a
-server from another checkout has another database. Install browsers once with
+`pnpm dev` session. Its port is derived from the checkout's path (5400-5899, and the live preview
+guest page 1000 above it), so worktrees running the suite at once each get their own server.
+`E2E_PORT` and `E2E_GUEST_PORT` pin them. The harness never reuses a server it finds on its port:
+one that is already there (a collision, or a leftover run) stops the run with "is already used",
+rather than testing another checkout's code on another database. `E2E_REUSE=1` opts in to reusing
+a server of your own (never in CI). Shared content types are saved through `saveContentType`
+(`e2e/cms.ts`), which skips a save that would change nothing and takes a lost race to an
+identical definition as success, so workers can set up the same type at once. Tests that raise a card in Coworker's panel end their title with `@coworker`: the assistant's
+conversation is one person's, shared by every page open in open local development, so a card one
+test raises would show in, and take focus from, another's. The `coworker` Playwright project runs
+those tests one at a time after `cms`, in the same CI part (`--project=coworker --no-deps` runs
+them alone). Install browsers once with
 `pnpm --filter @contentworker/web exec playwright install webkit chromium`.
 
 ### Query counts
@@ -285,27 +294,27 @@ read paths), 10 GB per database.
 `(space_id, environment_id)` leads the primary key or a unique index of every content table.
 `0001_init.sql` creates:
 
-| Tables                                                                                                                                            | Purpose                                                                                   |
-| ------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| `spaces`, `environments`, `environment_aliases`                                                                                                   | Spaces, branches, alias → environment                                                     |
+| Tables                                                                                                                                            | Purpose                                                                                                                                                       |
+| ------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `spaces`, `environments`, `environment_aliases`                                                                                                   | Spaces, branches, alias → environment                                                                                                                         |
 | `content_types`                                                                                                                                   | Content-type definitions (`fields` JSON; group, description, icon, `layout` JSON from 0026; `agent_instructions` from 0032; `preview_url_template` from 0035) |
-| `entries`, `entry_versions`, `entry_published`, `entry_metadata`, `entry_unique_values`                                                           | Entry aggregate, version ledger, published read model, tags/concepts, unique-field claims |
-| `assets`, `asset_published`                                                                                                                       | Asset metadata and its published read model                                               |
-| `references`                                                                                                                                      | Link graph (reverse lookups for invalidation and usage)                                   |
-| `api_keys`, `roles`, `space_members`, `member_invites`, `oauth_clients`, `oauth_grants`, `preview_tokens`, `deployment_settings`                  | Access                                                                                    |
-| `webhooks`, `webhook_deliveries`, `functions`, `app_extensions`, `plugins`, `plugin_settings`, `plugin_kv`                                        | Integrations (`plugin_kv`: a plugin's `kv:storage`, per environment)                      |
-| `releases`, `release_items`, `scheduled_actions`, `bulk_jobs`, `bulk_job_chunks`                                                                  | Publishing at scale                                                                       |
-| `comments`, `tasks`                                                                                                                               | Collaboration                                                                             |
-| `workflow_definitions`, `workflow_versions`, `workflow_runs`, `workflow_node_runs`, `workflow_tasks`, `workflow_timeline`, `entry_workflow_state` | Editorial workflows                                                                       |
-| `concept_schemes`, `concepts`, `tags`                                                                                                             | Taxonomy (`taxonomy_usage`, its published counts, from 0018)                              |
-| `redirects`, `redirect_sets` (`0017`)                                                                                                             | Redirects and their revision                                                              |
-| `saved_views` (`0029`)                                                                                                                            | Saved views of the entries list (space-scoped)                                            |
-| `menus` (`0020`)                                                                                                                                  | Navigation menus, each item tree a JSON column                                            |
-| `block_catalogs` (`0036`)                                                                                                                         | Pushed block catalog versions, each a JSON document                                       |
-| `ai_actions`, `agent_runs`, `agent_reviews`, `agent_schedules`                                                                                    | AI actions and the agent ledger                                                           |
-| `audit_log`, `audit_log_entries` (`0033`)                                                                                                         | Per-space audit trail; `0031` adds the indexes its filters read through, `0032` the `detail` of changed paths, `0033` which entries each row is about |
-| `outbox`                                                                                                                                          | Transactional outbox (`claimed_until` lease, `relayed_at`)                                |
-| `_guard`                                                                                                                                          | Always empty; its `CHECK (ok = 1)` aborts a batch whose compare-and-set lost              |
+| `entries`, `entry_versions`, `entry_published`, `entry_metadata`, `entry_unique_values`                                                           | Entry aggregate, version ledger, published read model, tags/concepts, unique-field claims                                                                     |
+| `assets`, `asset_published`                                                                                                                       | Asset metadata and its published read model                                                                                                                   |
+| `references`                                                                                                                                      | Link graph (reverse lookups for invalidation and usage)                                                                                                       |
+| `api_keys`, `roles`, `space_members`, `member_invites`, `oauth_clients`, `oauth_grants`, `preview_tokens`, `deployment_settings`                  | Access                                                                                                                                                        |
+| `webhooks`, `webhook_deliveries`, `functions`, `app_extensions`, `plugins`, `plugin_settings`, `plugin_kv`                                        | Integrations (`plugin_kv`: a plugin's `kv:storage`, per environment)                                                                                          |
+| `releases`, `release_items`, `scheduled_actions`, `bulk_jobs`, `bulk_job_chunks`                                                                  | Publishing at scale                                                                                                                                           |
+| `comments`, `tasks`                                                                                                                               | Collaboration                                                                                                                                                 |
+| `workflow_definitions`, `workflow_versions`, `workflow_runs`, `workflow_node_runs`, `workflow_tasks`, `workflow_timeline`, `entry_workflow_state` | Editorial workflows                                                                                                                                           |
+| `concept_schemes`, `concepts`, `tags`                                                                                                             | Taxonomy (`taxonomy_usage`, its published counts, from 0018)                                                                                                  |
+| `redirects`, `redirect_sets` (`0017`)                                                                                                             | Redirects and their revision                                                                                                                                  |
+| `saved_views` (`0029`)                                                                                                                            | Saved views of the entries list (space-scoped)                                                                                                                |
+| `menus` (`0020`)                                                                                                                                  | Navigation menus, each item tree a JSON column                                                                                                                |
+| `block_catalogs` (`0036`)                                                                                                                         | Pushed block catalog versions, each a JSON document                                                                                                           |
+| `ai_actions`, `agent_runs`, `agent_reviews`, `agent_schedules`                                                                                    | AI actions and the agent ledger                                                                                                                               |
+| `audit_log`, `audit_log_entries` (`0033`)                                                                                                         | Per-space audit trail; `0031` adds the indexes its filters read through, `0032` the `detail` of changed paths, `0033` which entries each row is about         |
+| `outbox`                                                                                                                                          | Transactional outbox (`claimed_until` lease, `relayed_at`)                                                                                                    |
+| `_guard`                                                                                                                                          | Always empty; its `CHECK (ok = 1)` aborts a batch whose compare-and-set lost                                                                                  |
 
 `0008_asset_renditions.sql` adds `asset_renditions` (`space_id`, `name`, `width`, `height`, `fit`,
 `format`, `quality`, `created_at`, `updated_at`; primary key `(space_id, name)`): a space's

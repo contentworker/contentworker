@@ -5,11 +5,13 @@ import { SkeletonPill, SkeletonText } from '@contentworker/ui/skeleton';
 import { History, RotateCcw } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { Ago } from '~/cms/components/ago';
+import { ChangeSummary } from '~/cms/components/ChangeSummary';
 import { CollapsibleCard } from '~/cms/components/CollapsibleCard';
 import { InlineConfirm } from '~/cms/components/InlineConfirm';
 import { LoadingStatus } from '~/cms/components/loading';
 import { RevisionDiff } from '~/cms/components/RevisionDiff';
 import { ToneBadge } from '~/cms/components/status';
+import { useAiCapability } from '../lib/ai-settings';
 import { useAssistantEdit } from '../lib/assistant';
 import { useClient, useLocalRun } from '../lib/client-context';
 import type { VersionDiff } from '../lib/management';
@@ -50,6 +52,8 @@ export function VersionHistory(props: {
   const toast = useToast();
   const invalidate = useInvalidate();
   const edit = useAssistantEdit();
+  // Summaries are writing help: with it turned off for the space they aren't offered.
+  const canSummarize = useAiCapability('field-assist');
   const versionsQuery = useScopedQuery(['versions', props.entryId], () =>
     client.listVersions(props.entryId),
   );
@@ -249,6 +253,15 @@ export function VersionHistory(props: {
                           </Button>
                         ))}
                       </fieldset>
+                    ) : null}
+                    {/* Keyed by the versions, so another comparison starts without a summary. */}
+                    {canSummarize ? (
+                      <ChangeSummary
+                        key={`${diff.from}-${diff.to}`}
+                        entryId={props.entryId}
+                        from={diff.from}
+                        to={diff.to}
+                      />
                     ) : null}
                     <RevisionDiff
                       diff={diff}

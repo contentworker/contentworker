@@ -93,3 +93,29 @@ export const versionDiff = z.object({
     .int()
     .describe('How many fields changed that the caller may not read, without saying which'),
 });
+
+export const changeSummary = z.object({
+  entryId: z.uuid(),
+  from: z.int().describe('The baseline version'),
+  to: z.int().describe('The version compared against it'),
+  summary: z
+    .string()
+    .describe('One to three sentences, plain text: render it as text, never as markup'),
+  highlights: z.array(z.string()).describe('Up to five notable changes, plain text; may be empty'),
+  source: z
+    .enum(['model', 'heuristic'])
+    .describe('`model` when a model wrote it; `heuristic` when it was built from the diff by rule'),
+  tier: z.enum(['flagship', 'balanced', 'fast']).nullable().describe('The tier that wrote it'),
+  fallback: z
+    .string()
+    .optional()
+    .describe('Why the heuristic wrote it: `mock`, `no visible changes`, or a bad answer'),
+  cached: z.boolean().describe('Answered from the cache, with no model call'),
+  truncated: z
+    .boolean()
+    .describe('The diff was longer than the model reads, so the summary covers part of it'),
+  changedFields: z.int().describe('Fields that changed which the caller may read'),
+  hiddenChanges: z
+    .int()
+    .describe('Fields that changed which the caller may not read: never shown to the model'),
+});

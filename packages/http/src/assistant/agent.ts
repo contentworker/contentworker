@@ -730,7 +730,7 @@ export abstract class AssistantAgentBase extends AIChatAgent<AgentEnv> {
       // turn answers so without a model; its tier and guidance otherwise. Setting up the first
       // space has no space to read them from.
       const policy = isSetupScope(context.scope)
-        ? defaultAiPolicy('assistant')
+        ? defaultAiPolicy('assistant', w.deps.ctx.ai?.maxTier)
         : await aiCapability(w.deps.ctx, context.scope, 'assistant');
       if (!policy.enabled) {
         close();

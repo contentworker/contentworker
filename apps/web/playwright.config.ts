@@ -1,8 +1,11 @@
 import { defineConfig, devices } from '@playwright/test';
-import { guestPort } from './e2e/live-guest/port';
+import { adminPort, guestPort } from './e2e/live-guest/port';
 
-// E2E_PORT runs a second suite beside one already on 5390 (another worktree's), with its own server.
-const PORT = Number(process.env.E2E_PORT) || 5390;
+// The port derives from this checkout's path, so worktrees running at once each get their own
+// server (see e2e/live-guest/port.ts). A server already on it is an error, never silently reused,
+// unless E2E_REUSE=1 asks for it (a warm server of your own, on a database it already holds).
+const PORT = adminPort();
+const REUSE = process.env.E2E_REUSE === '1' && !process.env.CI;
 const state = '.wrangler/e2e';
 
 /**
@@ -12,7 +15,15 @@ const state = '.wrangler/e2e';
  * the safe areas and touch targets. The `auth` project signs the first admin up, which turns
  * sign-in on for the server, so it runs after the others.
  */
-const DEVICES = ['iphone', 'iphone-landscape', 'ipad', 'ipad-landscape', 'desktop', 'cms'];
+const DEVICES = [
+  'iphone',
+  'iphone-landscape',
+  'ipad',
+  'ipad-landscape',
+  'desktop',
+  'cms',
+  'coworker',
+];
 
 /**
  * CI runs the suite in three jobs at once, each on its own server, named by `E2E_PART`:
@@ -32,10 +43,21 @@ if (PART && !PARTS.includes(PART)) {
 const AXE = /(accessibility|modal-focus)\.spec\.ts/;
 // Every other project, the sign-in ones included, belongs to `webkit`.
 const partOf = (project: string) =>
-  project === 'cms' ? ['axe', 'cms'] : project === 'desktop' ? ['webkit', 'axe'] : ['webkit'];
+  project === 'cms' || project === 'coworker'
+    ? ['axe', 'cms']
+    : project === 'desktop'
+      ? ['webkit', 'axe']
+      : ['webkit'];
 // The sign-in projects turn sign-in on for the server, so each part runs them after the device
 // projects it has (the ones sharing its server), never before.
 const DEVICES_IN_PART = DEVICES.filter((project) => !PART || partOf(project).includes(PART));
+
+// The CMS specs; the `axe` part has only the sweep and the modal focus specs.
+const CMS_SPECS =
+  PART === 'axe'
+    ? AXE
+    : /(cms|workflows|space-access|first-space|block-patch-card|accessibility|contrast-settle|modal-focus|live-preview|canvas-editor|canvas-drag|locked-regions|entry-save-conflict|role-save-conflict|block-config-code|ai-settings)\.spec\.ts/;
+const COWORKER = /@coworker/;
 
 export default defineConfig({
   testDir: 'e2e',
@@ -98,11 +120,23 @@ export default defineConfig({
     // the axe sweep. Desktop Chrome: the editors are review-only below lg.
     {
       name: 'cms',
-      testMatch:
-        PART === 'axe'
-          ? AXE
-          : /(cms|workflows|space-access|first-space|block-patch-card|accessibility|contrast-settle|modal-focus|live-preview|canvas-editor|canvas-drag|locked-regions|entry-save-conflict|role-save-conflict|block-config-code|ai-settings)\.spec\.ts/,
+      testMatch: CMS_SPECS,
       testIgnore: PART === 'cms' ? AXE : undefined,
+      // Tests that raise cards in Coworker's panel run alone, in `coworker` below.
+      grepInvert: COWORKER,
+      use: { ...devices['Desktop Chrome'] },
+    },
+    {
+      // The tests tagged `@coworker` (in the title): the conversation is one person's, shared by
+      // every page open in open local development, so a card one test raises shows in, and takes
+      // focus from, another's. They run one at a time, after `cms`, in the same part of CI.
+      name: 'coworker',
+      testMatch: CMS_SPECS,
+      testIgnore: PART === 'cms' ? AXE : undefined,
+      grep: COWORKER,
+      workers: 1,
+      fullyParallel: false,
+      dependencies: ['cms'],
       use: { ...devices['Desktop Chrome'] },
     },
     {
@@ -145,7 +179,7 @@ export default defineConfig({
         `CONTENTWORKER_E2E=1 PORT=${PORT} react-router dev`,
       ].join(' && '),
       url: `http://localhost:${PORT}/health`,
-      reuseExistingServer: !process.env.CI,
+      reuseExistingServer: REUSE,
       timeout: 180_000,
       stdout: 'ignore',
     },
@@ -153,7 +187,7 @@ export default defineConfig({
     {
       command: `LIVE_GUEST_ADMIN=http://localhost:${PORT} LIVE_GUEST_PORT=${guestPort()} vite --config e2e/live-guest/vite.config.ts`,
       url: `http://localhost:${guestPort()}/`,
-      reuseExistingServer: !process.env.CI,
+      reuseExistingServer: REUSE,
       timeout: 60_000,
       stdout: 'ignore',
     },

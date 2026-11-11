@@ -4,6 +4,7 @@ import {
   getVersion,
   listVersions,
   restoreVersion,
+  summarizeChange,
   visibleDiff,
 } from '@contentworker/application';
 import {
@@ -20,7 +21,7 @@ import { ok, scopeArgs, scopeOf, type ToolContext, toolSchema } from './shared';
 const versionRef = z.union([z.number().int().positive(), z.enum(['draft', 'published'])]);
 
 export function registerVersionTools(server: McpServer, t: ToolContext): void {
-  const { ctx, principal, guard, authorizeEntryRead } = t;
+  const { ctx, ai, principal, guard, authorizeEntryRead } = t;
   // --- entry version history ---------------------------------------------
   server.registerTool(
     'entries_list_versions',
@@ -66,6 +67,41 @@ export function registerVersionTools(server: McpServer, t: ToolContext): void {
       await authorizeEntryRead(scopeOf(args), args.id);
       const diff = await diffVersions(ctx, scopeOf(args), args.id, args.from, args.to);
       return ok(visibleDiff(principal, diff));
+    },
+  );
+
+  server.registerTool(
+    'entries_change_summary',
+    {
+      description:
+        'Summarize the changes between two versions of an entry (from → to, as ' +
+        'entries_diff_versions takes them) in plain text: one to three sentences and up to five ' +
+        'highlights, written by a model from the diff alone (fields you may not read never reach ' +
+        'it). source says who wrote it: "model", or "heuristic" when it was built from the diff by ' +
+        'rule (no model configured, nothing visible changed, or a bad answer). Refused with ' +
+        'ai_capability_disabled when the space turned field-assist off. A repeated request is ' +
+        'answered from a cache (cached: true); fresh: true asks the model again when you hold ' +
+        'content:write. For the exact ' +
+        'changes, read entries_diff_versions: the summary is a reading aid, not the record.',
+      inputSchema: toolSchema('entries_change_summary', () =>
+        z.object({
+          id: z.string(),
+          from: versionRef.describe('The baseline: a version number, "draft" or "published"'),
+          to: versionRef.describe('The version compared against it'),
+          fresh: z.boolean().optional().describe('Skip the cached summary and ask again'),
+          ...scopeArgs,
+        }),
+      ),
+      annotations: { readOnlyHint: true },
+    },
+    async (args) => {
+      guard(SCOPES.previewRead, scopeOf(args));
+      return ok(
+        await summarizeChange(ctx, principal, scopeOf(args), args.id, args.from, args.to, {
+          ai,
+          fresh: args.fresh,
+        }),
+      );
     },
   );
 

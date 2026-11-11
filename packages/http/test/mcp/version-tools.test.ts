@@ -6,6 +6,7 @@ import {
   FakeBlobStore,
   FakePasswordHasher,
   FixedClock,
+  InMemoryCache,
   InMemoryContentStore,
   InMemoryVectorStore,
   LocalEmbeddingsProvider,
@@ -142,6 +143,67 @@ describe('entries_diff_versions (MCP), on the HTTP route’s use-case', () => {
     expect((await asWriter('entries_diff_versions', { id, from: 1, to: 'draft' })).isError).toBe(
       true,
     );
+  });
+});
+
+describe('entries_change_summary (MCP), on the HTTP route’s use-case', () => {
+  const answer = { summary: 'The headline changed from Old to New.', highlights: [] };
+
+  it('summarizes the diff with the model, then answers the same request from the cache', async () => {
+    const { deps } = await setup();
+    const ai = new StubAIProvider(() => answer);
+    const cache = new InMemoryCache();
+    const withAi = { ...deps, ai, ctx: { ...deps.ctx, cache } };
+    const call = await connect(withAi, admin);
+    const id = await seedEntry(call);
+    const before = (await deps.ctx.store.audit.list(SPACE, {})).length;
+    const r = await call('entries_change_summary', { id, from: 'published', to: 'draft' });
+    expect(r.isError, r.text).toBe(false);
+    expect(r.body).toMatchObject({
+      from: 1,
+      to: 2,
+      summary: answer.summary,
+      source: 'model',
+      cached: false,
+      changedFields: 1,
+    });
+    // The diff reached the model inside the fence, as words.
+    expect(ai.requests.at(-1)?.prompt).toMatch(
+      /<user_content>[\s\S]*"Headline"[\s\S]*<\/user_content>/,
+    );
+    const again = await call('entries_change_summary', { id, from: 1, to: 2 });
+    expect(again.body).toMatchObject({ cached: true });
+    expect(ai.requests).toHaveLength(1);
+    // A read: nothing in the audit trail.
+    expect((await deps.ctx.store.audit.list(SPACE, {})).length).toBe(before);
+  });
+
+  it('is built by rule in mock mode, and refused when field-assist is off', async () => {
+    const { deps } = await setup();
+    const mock = { ...deps, ctx: { ...deps.ctx, ai: { mode: 'mock' as const, timeoutMs: 1000 } } };
+    const call = await connect(mock, admin);
+    const id = await seedEntry(call);
+    const r = await call('entries_change_summary', { id, from: 1, to: 'draft' });
+    expect(r.body).toMatchObject({
+      source: 'heuristic',
+      fallback: 'mock',
+      summary: 'Changed 1 field: Headline.',
+    });
+    await call('ai_settings_set', {
+      expectedVersion: 0,
+      capabilities: { 'field-assist': { enabled: false } },
+    });
+    const off = await call('entries_change_summary', { id, from: 1, to: 'draft' });
+    expect(off.isError).toBe(true);
+    expect(off.body).toMatchObject({ error: { code: 'ai_capability_disabled' } });
+  });
+
+  it('needs preview:read', async () => {
+    const { deps } = await setup();
+    const id = await seedEntry(await connect(deps, admin));
+    const none: Principal = { spaceId: SPACE, kind: 'cma', scopes: [SCOPES.contentWrite] };
+    const asWriter = await connect(deps, none);
+    expect((await asWriter('entries_change_summary', { id, from: 1, to: 2 })).isError).toBe(true);
   });
 });
 

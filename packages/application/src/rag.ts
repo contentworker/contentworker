@@ -145,6 +145,46 @@ export async function indexEntryEmbeddings(
   return rows.length;
 }
 
+/**
+ * {@link indexEntryEmbeddings} for many entries at once: every entry's chunks, in every locale,
+ * embedded in one call (the adapter sends them a model batch at a time), then each entry's old
+ * vectors replaced. A search reindex chunk's hundred entries cost a handful of embeddings
+ * requests rather than one per entry and locale, which a whole space's reindex would otherwise
+ * spend the account's embeddings rate on. Idempotent, as the single-entry form.
+ */
+export async function indexEntriesEmbeddings(
+  deps: RagDeps,
+  scope: Scope,
+  inputs: readonly IndexEntryInput[],
+): Promise<number> {
+  const pending: Omit<VectorRow, 'embedding'>[] = [];
+  for (const input of inputs) {
+    for (const [locale, text] of Object.entries(extractTextByLocale(input.fields))) {
+      chunk(text).forEach((chunkText, chunkIndex) => {
+        pending.push({
+          scope,
+          entryId: input.entryId,
+          locale,
+          chunkIndex,
+          chunkText,
+          entryVersion: input.entryVersion,
+        });
+      });
+    }
+  }
+  const embeddings =
+    pending.length > 0
+      ? await deps.embeddings.embed(
+          pending.map((p) => p.chunkText),
+          { taskType: 'document' },
+        )
+      : [];
+  for (const input of inputs) await deps.vectors.deleteByEntry(scope, input.entryId);
+  const rows = pending.map((p, i) => ({ ...p, embedding: embeddings[i] ?? [] }));
+  if (rows.length > 0) await deps.vectors.upsert(rows);
+  return rows.length;
+}
+
 export interface ReindexResult {
   /** Published entries re-embedded. */
   readonly entries: number;

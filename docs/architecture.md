@@ -36,14 +36,14 @@ served and how it is configured. Routes are rendered per deployment by `scripts/
 (`hosts()`): the admin at `<domain>`, the api at `api.<domain>`, delivery at `cdn.<domain>`,
 media at `media.<domain>`.
 
-| Edge worker     | Route            | Config highlights (`apps/*/wrangler.jsonc`)                                                                                           |
+| Edge worker     | Route            | Config highlights (`apps/*/wrangler.jsonc`)                                                                                                       |
 | --------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `apps/web`      | `<domain>`       | `cpu_ms` 5000; binds `DB` (auth tables), `API` and `DELIVERY` (service bindings to the api and delivery), `EMAIL` when the deployment sends email |
-| `apps/api`      | `api.<domain>`   | Placement near the database, `cpu_ms` 5000; `ROLE=management,preview,delivery`; binds engine stateful objects and workflows by script |
-| `apps/delivery` | `cdn.<domain>`   | No placement near the database, `cpu_ms` 2000, head sampling 0.05, the edge cache on the `Delivery` entrypoint                        |
-| `apps/media`    | `media.<domain>` | No placement near the database, `cpu_ms` 1000, head sampling 0.01, the edge cache on the `Media` entrypoint                           |
-| `apps/engine`   | none             | Placement near the database, `cpu_ms` 30000; owns stateful-object migrations                                                          |
-| `apps/docs`     | docs host        | Deployed only by the deployment with `docs: true`                                                                                     |
+| `apps/api`      | `api.<domain>`   | Placement near the database, `cpu_ms` 5000; `ROLE=management,preview,delivery`; binds engine stateful objects and workflows by script             |
+| `apps/delivery` | `cdn.<domain>`   | No placement near the database, `cpu_ms` 2000, head sampling 0.05, the edge cache on the `Delivery` entrypoint                                    |
+| `apps/media`    | `media.<domain>` | No placement near the database, `cpu_ms` 1000, head sampling 0.01, the edge cache on the `Media` entrypoint                                       |
+| `apps/engine`   | none             | Placement near the database, `cpu_ms` 30000; owns stateful-object migrations                                                                      |
+| `apps/docs`     | docs host        | Deployed only by the deployment with `docs: true`                                                                                                 |
 
 ### apps/web: the admin and the gateway
 

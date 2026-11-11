@@ -10,6 +10,7 @@ import {
   getPreviewEntry,
   getPreviewSingleton,
   getSchedulerStatus,
+  getSearchReindexJob,
   imageSearchFor,
   listContentTypes,
   listFieldValues,
@@ -579,6 +580,23 @@ export function registerReadTools(server: McpServer, t: ToolContext): void {
       return ok(
         await requestReindex(ctx, scopeOf(args), { contentTypeApiId: args.contentTypeApiId }),
       );
+    },
+  );
+
+  server.registerTool(
+    'search_reindex_job',
+    {
+      description:
+        'The latest search reindex in the environment, or null: turning the search AI ' +
+        'capability on or off (ai_settings_set) starts one in every environment, embedding ' +
+        'published entries and assets again (on) or deleting their vectors (off). Progress is ' +
+        'succeeded + failed of totalItems; cancelled means a later toggle superseded it.',
+      inputSchema: toolSchema('search_reindex_job', () => z.object({ ...scopeArgs })),
+      annotations: { readOnlyHint: true },
+    },
+    async (args) => {
+      guard(SCOPES.contentManage, scopeOf(args));
+      return ok({ job: await getSearchReindexJob(ctx, scopeOf(args)) });
     },
   );
 

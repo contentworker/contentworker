@@ -3,7 +3,7 @@ import type {
   AgentReviewStatus,
   AiCapability,
   AiCapabilitySetting,
-  AiSettings,
+  AiSettingsView,
   Asset,
   AssetCollection,
   AssetFolder,
@@ -962,6 +962,24 @@ export interface VersionDiff {
   readonly hiddenChanges: number;
 }
 
+/** A narrative of a version diff (`POST …/versions/diff/summary`). Plain text: render as text. */
+export interface ChangeSummary {
+  readonly entryId: string;
+  readonly from: number;
+  readonly to: number;
+  readonly summary: string;
+  readonly highlights: readonly string[];
+  /** `model` when a model wrote it; `heuristic` when it was built from the diff by rule. */
+  readonly source: 'model' | 'heuristic';
+  readonly tier: 'flagship' | 'balanced' | 'fast' | null;
+  readonly fallback?: string;
+  readonly cached: boolean;
+  /** The diff was longer than the model reads: the summary covers part of it. */
+  readonly truncated: boolean;
+  readonly changedFields: number;
+  readonly hiddenChanges: number;
+}
+
 /** How a source-environment item relates to the target. */
 export type ChangeKind = 'added' | 'removed' | 'changed' | 'unchanged';
 
@@ -1132,6 +1150,7 @@ export interface BulkJobSummary {
     | 'asset_archive'
     | 'content_type_delete'
     | 'set_fields'
+    | 'search_reindex'
     | 'starter_install';
   readonly status: 'running' | 'completed' | 'cancelled';
   readonly totalItems: number;
@@ -1148,6 +1167,9 @@ export interface BulkJobSummary {
   readonly config?: {
     readonly contentType?: string;
     readonly typeDeletion?: { readonly deleted: boolean; readonly reason?: string };
+    /** A `search_reindex` job: whether search was turned on, and the settings version that did. */
+    readonly enabled?: boolean;
+    readonly settingsVersion?: number;
   };
 }
 
@@ -3518,12 +3540,21 @@ export function createManagementClient(
       return req('PUT', `${mgmt}/workflow-settings`, input);
     },
     /** The space's AI settings, per capability (preview:read). Version 0, all on, before a set. */
-    getAiSettings(): Promise<AiSettings> {
+    getAiSettings(): Promise<AiSettingsView> {
       return req('GET', `${spaceBase}/ai-settings`);
     },
     /** Sets the capabilities named, held to `expectedVersion` (space:admin; 409 when stale). */
-    setAiSettings(input: AiSettingsInput): Promise<{ settings: AiSettings; unchanged: boolean }> {
+    setAiSettings(
+      input: AiSettingsInput,
+    ): Promise<{ settings: AiSettingsView; unchanged: boolean }> {
       return req('PUT', `${spaceBase}/ai-settings`, input);
+    },
+    /**
+     * This environment's latest search reindex, or null (content:manage): turning search on or
+     * off starts one in every environment.
+     */
+    async getSearchReindexJob(): Promise<BulkJobSummary | null> {
+      return (await req<{ job: BulkJobSummary | null }>('GET', `${mgmt}/search/reindex-job`)).job;
     },
 
     getTrashSettings(): Promise<TrashSettings> {
@@ -3630,6 +3661,26 @@ export function createManagementClient(
       return req(
         'GET',
         `${mgmt}/entries/${encodeURIComponent(entryId)}/versions/diff?from=${from}&to=${to}`,
+      );
+    },
+    /**
+     * A short narrative of that diff (`field-assist` AI), written from the diff alone; `fresh`
+     * skips the cached one. A read that may call a model, so it waits as long as one.
+     */
+    summarizeChange(
+      entryId: string,
+      from: VersionRef,
+      to: VersionRef,
+      opts: { fresh?: boolean } = {},
+      signal?: AbortSignal,
+    ): Promise<ChangeSummary> {
+      const fresh = opts.fresh ? '&fresh=true' : '';
+      return req(
+        'POST',
+        `${mgmt}/entries/${encodeURIComponent(entryId)}/versions/diff/summary?from=${from}&to=${to}${fresh}`,
+        undefined,
+        signal,
+        MODEL_READ_LIMIT,
       );
     },
     /** Copies an older version's fields into a new draft version. */

@@ -40,6 +40,11 @@ import {
   removeEntryEmbeddings,
   runReindexJob,
 } from '../rag';
+import {
+  type SearchReindexSources,
+  searchReindexChunkRunner,
+  startSearchReindex,
+} from '../search-reindex';
 import { isSnapshotJob } from '../snapshot-jobs';
 
 /** Reverse-reference walk bound: embed chains deeper than this stay stale
@@ -117,6 +122,12 @@ export interface DispatchDeps {
   readonly starterChunk?: BulkChunkDeps['starterChunk'];
 }
 
+/** The vectors a search reindex writes: entries' with `rag`, assets' with the asset search's. */
+const searchSources = (deps: DispatchDeps): SearchReindexSources => ({
+  ...(deps.rag ? { rag: deps.rag } : {}),
+  ...(deps.assetSearch ? { assetSearch: deps.assetSearch } : {}),
+});
+
 /**
  * Handles a single relayed domain event: fans it out to subscribed webhooks
  * (signed + recorded) and invalidates the delivery cache for the affected entry
@@ -142,6 +153,13 @@ export async function dispatchEvent(
     return;
   }
 
+  // Search turned on or off in Settings → AI: start this environment's reindex job. A control
+  // event: no webhooks, cache or RAG apply. (Routed to the bulk topic: it lists the environment.)
+  if (event.type === 'search.toggled') {
+    await startSearchReindex(ctx, searchSources(deps), event);
+    return;
+  }
+
   // Bulk-job control event: claim and run one chunk. Not a state-change fact
   // — no webhooks/cache/RAG apply. (Normally routed to the dedicated bulk
   // topic; handled here too so a single-topic deployment still works.)
@@ -156,6 +174,10 @@ export async function dispatchEvent(
         ? { assetReindexChunk: assetReindexChunkRunner(ctx, deps.assetIngest) }
         : {}),
       ...(deps.starterChunk ? { starterChunk: deps.starterChunk } : {}),
+      searchReindexChunk: searchReindexChunkRunner(ctx, {
+        ...searchSources(deps),
+        ...(deps.blob ? { blob: deps.blob } : {}),
+      }),
       ...(deps.blob ? { blob: deps.blob } : {}),
     });
     return;

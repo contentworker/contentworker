@@ -231,6 +231,25 @@ describe('@contentworker/sdk-management client', () => {
     expect(calls[2]?.url).toBe('https://cms.test/spaces/s1/environments/main/assets');
   });
 
+  it('asks for a change summary with a POST, fresh only when asked', async () => {
+    const fetchImpl = fakeFetch((url, init) => {
+      calls.push({ url, init });
+      return { summary: 'Changed 1 field: Title.', highlights: [], source: 'heuristic' };
+    });
+    const client = createManagementClient({ ...base, fetch: fetchImpl });
+
+    const res = await client.entries.versions.summarize('e1', 'published', 'draft');
+    expect(res.summary).toBe('Changed 1 field: Title.');
+    expect(calls[0]?.init?.method).toBe('POST');
+    expect(calls[0]?.url).toBe(
+      'https://cms.test/spaces/s1/environments/main/entries/e1/versions/diff/summary?from=published&to=draft',
+    );
+    await client.entries.versions.summarize('e1', 1, 3, { fresh: true });
+    expect(calls[1]?.url).toBe(
+      'https://cms.test/spaces/s1/environments/main/entries/e1/versions/diff/summary?from=1&to=3&fresh=true',
+    );
+  });
+
   it('encodes path segments', async () => {
     const fetchImpl = fakeFetch((url) => {
       calls.push({ url });

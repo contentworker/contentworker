@@ -28,6 +28,11 @@ export interface AiCallRecord extends AiProvenance {
   readonly tokens?: number;
   /** Set when the call failed and the caller (a durable step) will retry it. */
   readonly retrying?: string;
+  /**
+   * Set when the call failed and the caller refuses rather than answer (`failures: 'throw'`): no
+   * heuristic answered, the request did (503, 429).
+   */
+  readonly failed?: string;
 }
 
 /** Heuristic answers that aren't a failure. */
@@ -47,5 +52,5 @@ export function aiCallLevel(r: AiCallRecord): 'info' | 'warn' {
   // A capability the space turned off is a choice, not a failure: still unchecked (a gate fails
   // closed on it), but not alert-worthy.
   if (String(r.fallback ?? '').startsWith('disabled:')) return 'info';
-  return r.retrying || isUncheckedFallback(r) ? 'warn' : 'info';
+  return r.retrying || r.failed || isUncheckedFallback(r) ? 'warn' : 'info';
 }

@@ -521,6 +521,26 @@ export function holdsOnEveryContentType(
 }
 
 /**
+ * {@link holdsOnEveryContentType} over a role's grants as they resolve (`contentActionsFor`,
+ * `fieldRulesFor`): no type with a grant of its own, and every other type holding `actions` with
+ * no field rule. What a client holding only the resolved view (a space's `auth/me`) asks before
+ * offering an operation over every type. It answers as the check above for every role but one with
+ * more than one `*` grant, which that view can't show (the api refuses it; the parity is tested).
+ */
+export function holdsOnEveryResolvedType(
+  access: { readonly contentActions: ContentActionsByType; readonly fieldRules: FieldRulesByType },
+  actions: readonly ContentAction[],
+): boolean {
+  const { contentActions, fieldRules } = access;
+  if (Object.keys(contentActions.types).length > 0) return false;
+  if (Object.keys(fieldRules.types).length > 0) return false;
+  if (fieldRules.others.deniedFields.length || fieldRules.others.readOnlyFields.length) {
+    return false;
+  }
+  return actions.every((a) => contentActions.others.includes(a));
+}
+
+/**
  * Enforces {@link holdsOnEveryContentType}: an environment-wide operation (a snapshot export,
  * import or clone, a space export import) reads or writes every type and field there is, the
  * ones it creates included, so a role limited to some types or with field rules is refused.

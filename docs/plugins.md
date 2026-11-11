@@ -44,15 +44,15 @@ that justified it is never honoured beyond what the current manifest declares.
 Every capability that reaches platform data maps to a platform scope, and installing is refused if
 the installer does not themselves hold it:
 
-| Capability                                                       | Scope the installer must hold |
-| ---------------------------------------------------------------- | ----------------------------- |
-| `content:read`, `taxonomy:read`                                  | `preview:read`                |
-| `assets:read`                                                    | `assets:read`                 |
-| `content:write`, `taxonomy:write`, `ai:generate`                 | `content:write`               |
-| `assets:write`                                                   | `assets:write`                |
-| `content:publish`                                                | `content:publish`             |
-| `search:read`                                                    | `search:read`                 |
-| `network:request`, `kv:storage`                                  | — (reach no platform data)    |
+| Capability                                       | Scope the installer must hold |
+| ------------------------------------------------ | ----------------------------- |
+| `content:read`, `taxonomy:read`                  | `preview:read`                |
+| `assets:read`                                    | `assets:read`                 |
+| `content:write`, `taxonomy:write`, `ai:generate` | `content:write`               |
+| `assets:write`                                   | `assets:write`                |
+| `content:publish`                                | `content:publish`             |
+| `search:read`                                    | `search:read`                 |
+| `network:request`, `kv:storage`                  | — (reach no platform data)    |
 
 So installing a plugin is never a privilege-escalation ladder: an editor who cannot publish cannot
 install a plugin that publishes. Capabilities **intersect** RBAC; they never widen it.
@@ -224,14 +224,14 @@ REST route, the OpenAPI documents and the MCP tools, so both surfaces stay equal
 }
 ```
 
-| Field         | Rule                                                                                      |
-| ------------- | ----------------------------------------------------------------------------------------- |
-| `name`        | A lowercase letter, then letters, digits or `_` (64 at most); unique in the manifest       |
-| `title`, `description` | Required. They reach the consent screen, the OpenAPI document and an agent's tool choice |
-| `requires`    | A permission scope (`SCOPES`): what a caller must hold to invoke it. Not `delivery:read` or `search:read`, which public delivery keys hold |
-| `input`       | An `object` schema                                                                        |
-| `output`      | Optional schema, checked before the result is returned; absent, any JSON value is returned |
-| `mode`        | `sync`, the default and the only mode. `async` (a durable job) is planned, not built      |
+| Field                  | Rule                                                                                                                                       |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `name`                 | A lowercase letter, then letters, digits or `_` (64 at most); unique in the manifest                                                       |
+| `title`, `description` | Required. They reach the consent screen, the OpenAPI document and an agent's tool choice                                                   |
+| `requires`             | A permission scope (`SCOPES`): what a caller must hold to invoke it. Not `delivery:read` or `search:read`, which public delivery keys hold |
+| `input`                | An `object` schema                                                                                                                         |
+| `output`               | Optional schema, checked before the result is returned; absent, any JSON value is returned                                                 |
+| `mode`                 | `sync`, the default and the only mode. `async` (a durable job) is planned, not built                                                       |
 
 At most 32 operations per manifest. Schemas are a small JSON Schema subset, validated by hand in
 the domain (`operationSchemaIssues`) so what a human approves is what is checked: `object`

@@ -955,9 +955,10 @@ export interface AssetIngestStarter {
 }
 
 /**
- * An operational counter (a metric with labels). The edge backs it with Analytics Engine when the
- * deployment binds one, else a structured log line; never let a count break the work it counts.
+ * An operational counter: a `contentworker_*` metric with labels. Counting must never break the
+ * work it counts, so an implementation swallows its own failures.
  */
 export interface Counter {
+  /** Increment `metric` by `value` (default 1) with optional labels. */
   count(metric: string, value?: number, labels?: Record<string, string>): void;
 }
