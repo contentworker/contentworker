@@ -49,13 +49,23 @@ jobs:
         if: ${{ !cancelled() }}
         run: pnpm turbo run lint check-types build --continue
 
-      # On their own, after the build: the workerd suites have timing budgets (vitest's 5 s per
-      # test) that sharing the 4-core runner with the build and type-check overruns. Includes the
-      # engine's end-to-end Workflow runs in workerd (Durable Objects, Workflows, D1, R2) with
-      # AI_MODE=mock — no network or Cloudflare account needed.
-      - name: Test
+      # Two turbo runs, not one, so the suites with timing budgets don't share the runner. With one
+      # `pnpm test` turbo starts about ten packages at once on 4 cores, and the workerd suites (db,
+      # engine, media: Miniflare D1, Durable Objects, Workflows, R2; the engine's end-to-end runs use
+      # AI_MODE=mock, so no network or Cloudflare account) ran 190-340 s each, close to their 30 s
+      # per-test timeout on the slowest runs. The node suites go first, the workerd suites after
+      # them; both run in this one job, so no second runner is billed for install and setup. A new
+      # package's suite lands in the node run unless it is added to the second filter.
+      - name: Test (node suites)
         if: ${{ !cancelled() }}
-        run: pnpm test
+        run: >-
+          pnpm turbo run test --continue
+          --filter='!@contentworker/db' --filter='!@contentworker/engine' --filter='!@contentworker/media'
+      - name: Test (workerd suites)
+        if: ${{ !cancelled() }}
+        run: >-
+          pnpm turbo run test --continue
+          --filter=@contentworker/db --filter=@contentworker/engine --filter=@contentworker/media
 
       # The fleet renderer, deploy script and Durable Object migrations, against a fixture registry.
       - name: Test fleet
@@ -77,7 +87,9 @@ jobs:
   # admin and its dev server never read: the docs and docs site, the .claude toolkit and top-level
   # Markdown (one too big for the files API, 3000 files, runs them). A push to main does not: its
   # pull request already ran them, and `release` never waited for them. The nightly and manual runs
-  # and the merge queue run them.
+  # and the merge queue run them. A nightly run skips them when main has no commit newer than the
+  # last nightly's window (25 h): the previous night already ran them on the same code. (`verify`
+  # still runs nightly for the dependency audit, which can go red with no commit.)
   changes:
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -99,6 +111,17 @@ jobs:
             push)
               echo "A push to main: its pull request ran the device tests"
               echo "devices=false" >> "$GITHUB_OUTPUT"
+              exit 0
+              ;;
+            schedule)
+              since=$(date -u -d '25 hours ago' +%Y-%m-%dT%H:%M:%SZ)
+              recent=$(gh api "repos/$REPO/commits?sha=main&since=$since&per_page=1" --jq 'length')
+              if [ "$recent" = 0 ]; then
+                echo "No commit on main in 25 hours: the last nightly run covered this code"
+                echo "devices=false" >> "$GITHUB_OUTPUT"
+              else
+                echo "devices=true" >> "$GITHUB_OUTPUT"
+              fi
               exit 0
               ;;
             *)
