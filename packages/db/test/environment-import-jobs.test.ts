@@ -13,10 +13,10 @@ import {
   publishEntry,
   pushBlockCatalog,
   runBulkChunk,
+  SNAPSHOT_JOB_CHUNK_SIZE,
   SYSTEM_CALLER,
   setBlockConfig,
   startEnvironmentClone,
-  updateEntry,
 } from '@contentworker/application';
 import type { BulkChunkDueEvent } from '@contentworker/domain';
 import type { Clock, IdGenerator } from '@contentworker/ports';
@@ -81,22 +81,25 @@ describe('cloning an environment as a job on D1', () => {
       ],
     } as Parameters<typeof createContentType>[3]);
     await publishContentType(ctx, source, 'page');
-    const pageIds: string[] = [];
-    for (let i = 0; i < 150; i++) {
+    // One entry more than a chunk holds, so the chain crosses a chunk boundary. Each page is
+    // created already linking to the one after it (built from the tail), which spares a second
+    // write per page: the source's setup is hundreds of sequential D1 round trips, and on a busy
+    // CI runner that setup, not the clone, used to eat the test's whole time budget.
+    const count = SNAPSHOT_JOB_CHUNK_SIZE + 5;
+    const pageIds: string[] = new Array(count);
+    for (let i = count - 1; i >= 0; i--) {
+      const next = pageIds[i + 1];
       const { entry } = await createEntry(ctx, source, {
         contentTypeApiId: 'page',
-        fields: { title: { 'en-US': `Page ${i}` } },
+        fields: {
+          title: { 'en-US': `Page ${i}` },
+          ...(next ? { next: { 'en-US': { id: next, linkType: 'Entry' } } } : {}),
+        },
       });
-      pageIds.push(entry.id);
-    }
-    for (let i = 0; i + 1 < pageIds.length; i++) {
-      await updateEntry(ctx, source, pageIds[i] as string, {
-        title: { 'en-US': `Page ${i}` },
-        next: { 'en-US': { id: pageIds[i + 1], linkType: 'Entry' } },
-      });
+      pageIds[i] = entry.id;
     }
     for (const id of pageIds) await publishEntry(ctx, source, id);
-    expect((await exportSnapshot(ctx, source)).entries).toHaveLength(150);
+    expect((await exportSnapshot(ctx, source)).entries).toHaveLength(count);
 
     const blob = new FakeBlobStore();
     const started = await startEnvironmentClone(ctx, source, target);
@@ -108,17 +111,20 @@ describe('cloning an environment as a job on D1', () => {
     });
     expect(await getBulkJob(ctx, target, started.createJobId)).toMatchObject({
       status: 'completed',
-      succeeded: 150,
+      succeeded: count,
     });
     expect(await getBulkJob(ctx, target, started.publishJobId)).toMatchObject({
       status: 'completed',
-      succeeded: 150,
+      succeeded: count,
       failed: 0,
     });
-    const first = await store.entries.getPublished(target, pageIds[0] as string);
-    expect(first?.fields.next).toEqual({ 'en-US': { id: pageIds[1], linkType: 'Entry' } });
     const published = await store.entries.listPublished(target, { limit: 500 });
-    expect(published).toHaveLength(150);
+    expect(published).toHaveLength(count);
+    // Every link resolved, wherever its target landed in the chunks.
+    for (let i = 0; i + 1 < count; i++) {
+      const page = await store.entries.getPublished(target, pageIds[i] as string);
+      expect(page?.fields.next).toEqual({ 'en-US': { id: pageIds[i + 1], linkType: 'Entry' } });
+    }
   });
 
   it('copies the block catalog and config in force, at version 1 in the copy', async () => {
