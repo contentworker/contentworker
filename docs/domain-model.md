@@ -120,6 +120,11 @@ repeater is unchanged: its elements carry neither key.
   so a block keeps its identity across edits and reorders. Validation does not require `_key`
   (an AI draft or an import dry-run is judged on content), but a present key must be a non-empty
   string used once in the field value: a duplicate is refused at `body[i]`.
+- **`_responsive` is let through and dropped.** A block's per-breakpoint overrides
+  (`docs/specs/breakpoint-overrides.md`) aren't declared by any field yet: validation passes the
+  key over on any block, whatever it holds, and `assignBlockKeys` drops it on every save, copies
+  included. It ships ahead of the overrides themselves, so a rollback past them never leaves an
+  entry that can't be saved, only one that loses its overrides on its next save.
 - **`_key` is unique per list, not per tree.** Validation refuses a key repeated within one field
   value at one level, but the same key at two depths (a section pasted inside itself with its
   keys) is stored. Keys minted on write never collide; a caller's can.

@@ -354,6 +354,13 @@ export interface ComponentVariant {
 /** The key a blocks element names its variant under. */
 export const BLOCK_TYPE_KEY = '_type';
 /**
+ * The key a block's per-breakpoint overrides will sit under (docs/specs/breakpoint-overrides.md).
+ * Nothing declares breakpoints yet, so a block keeps none: validation lets the key through and
+ * every save drops it. Code that reads overrides ships after this, so rolling back to it never
+ * leaves an entry it can't save, only one that loses its overrides on the next save.
+ */
+export const RESPONSIVE_KEY = '_responsive';
+/**
  * The key a blocks element is identified by within its field value. Assigned
  * on write when absent, kept when present, so a client can address one block
  * across reorders and edits (a comment anchor, a live-preview patch, a React

@@ -8,6 +8,7 @@ import {
   type FieldDefinition,
   type FieldValidations,
   optionValue,
+  RESPONSIVE_KEY,
   ruleMessage,
   unsafeRegexReason,
   variantNamed,
@@ -382,7 +383,13 @@ function validateBlocks(
       push('Expected a block object with a _type');
       return;
     }
-    const { [BLOCK_TYPE_KEY]: type, [BLOCK_KEY]: key, ...values } = item as Record<string, unknown>;
+    // `_responsive` is passed over: no field takes overrides yet, and the save drops it.
+    const {
+      [BLOCK_TYPE_KEY]: type,
+      [BLOCK_KEY]: key,
+      [RESPONSIVE_KEY]: _overrides,
+      ...values
+    } = item as Record<string, unknown>;
     if (key !== undefined) {
       if (typeof key !== 'string' || key === '') push('_key must be a non-empty string');
       else if (keys.has(key)) push(`Duplicate _key "${key}"`);

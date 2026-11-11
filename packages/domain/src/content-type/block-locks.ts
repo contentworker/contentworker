@@ -8,6 +8,7 @@ import {
   BLOCK_TYPE_KEY,
   blockVariants,
   type ComponentVariant,
+  RESPONSIVE_KEY,
   variantOf,
 } from './field';
 
@@ -188,6 +189,8 @@ const shape = (item: unknown, variants: readonly ComponentVariant[]): unknown =>
 function content(item: unknown, variants: readonly ComponentVariant[], slots: boolean): unknown {
   if (!isObject(item)) return item;
   const out: Record<string, unknown> = { ...item, [BLOCK_TYPE_KEY]: typeOf(variants, item) };
+  // The save drops a block's overrides (`RESPONSIVE_KEY`): that is no edit of a frozen region.
+  delete out[RESPONSIVE_KEY];
   for (const s of slotsOf(variants, item)) {
     const children = out[s.apiId];
     if (!slots) delete out[s.apiId];
