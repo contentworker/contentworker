@@ -198,6 +198,9 @@ describe('Settings → Menus', () => {
         revision: 4,
       }),
     );
+    // The screen runs one write at a time, each against the revision it holds: wait for this one to
+    // land (it announces itself) before the next press, or that press can go out with the old one.
+    await screen.findByText('“B” moved up');
     fireEvent.click(within(list).getByRole('button', { name: 'Move “C” in a level' }));
     await waitFor(() =>
       expect(client.moveMenuItem).toHaveBeenLastCalledWith('m1', {
@@ -207,6 +210,7 @@ describe('Settings → Menus', () => {
         revision: 5,
       }),
     );
+    await screen.findByText('“C” moved in a level');
     fireEvent.click(within(list).getByRole('button', { name: 'Move “B1” out a level' }));
     await waitFor(() =>
       expect(client.moveMenuItem).toHaveBeenLastCalledWith(
@@ -214,6 +218,7 @@ describe('Settings → Menus', () => {
         expect.objectContaining({ itemId: 'b1', parentId: null, index: 2 }),
       ),
     );
+    await screen.findByText('“B1” moved out a level');
     // Alt+arrow on a focused row does the same.
     fireEvent.keyDown(within(list).getByRole('button', { name: 'Move “A” down' }), {
       key: 'ArrowDown',

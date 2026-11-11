@@ -564,13 +564,16 @@ export function ActionCard({
   const offered = useRef(false);
   useEffect(() => {
     if (!asking || !panelOpen || offered.current) return;
-    offered.current = true;
     const el = safe.current;
+    if (!el) return;
     const now = document.activeElement;
     const typing = now instanceof HTMLElement && now.matches('input, textarea, [contenteditable]');
-    const inLog = !now || now === document.body || el?.closest('[role="log"]')?.contains(now);
+    const inLog = !now || now === document.body || el.closest('[role="log"]')?.contains(now);
     if (!((direct && !typing) || inLog)) return;
-    el?.focus({ preventScroll: true });
+    // Asked once, and only when it happened: a card that couldn't take focus yet (its button not
+    // mounted, focus elsewhere) asks again when its conditions change.
+    offered.current = true;
+    el.focus({ preventScroll: true });
     // Its buttons come into view with it: on a phone they could open under the composer's bars.
     const still = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
     el?.closest('.cw-confirm')
