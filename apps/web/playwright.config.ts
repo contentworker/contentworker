@@ -15,27 +15,27 @@ const state = '.wrangler/e2e';
 const DEVICES = ['iphone', 'iphone-landscape', 'ipad', 'ipad-landscape', 'desktop', 'cms'];
 
 /**
- * CI runs the suite in four jobs at once, each on its own server, named by `E2E_PART`:
- * `webkit` (the iPhone, iPad and desktop projects), `axe` (the accessibility sweep and the modal
- * focus specs, the desktop project's too), `cms` (every other CMS spec, so a new one lands here) and
- * `sign-in` (the
- * projects that sign the first admin up, with no device tests to wait for). Each is about a third
- * of the suite's time. Unset, the whole suite runs in order, as it does locally.
+ * CI runs the suite in three jobs at once, each on its own server, named by `E2E_PART`:
+ * `webkit` (the iPhone, iPad and desktop projects, then the projects that sign the first admin
+ * up: `auth`, `invites` and `oauth`), `axe` (the accessibility sweep and the modal focus specs,
+ * the desktop project's too) and `cms` (every other CMS spec, so a new one lands here). A fourth
+ * job for the sign-in projects alone spent more on its runner's setup (checkout, install, the
+ * browser's system libraries, a server start) than on its tests, so they ride at the end of
+ * `webkit`, which waits for its device projects as the whole suite does. Unset, the whole suite
+ * runs in order, as it does locally.
  */
-const PARTS = ['webkit', 'axe', 'cms', 'sign-in'] as const;
+const PARTS = ['webkit', 'axe', 'cms'] as const;
 const PART = process.env.E2E_PART as (typeof PARTS)[number] | undefined;
 if (PART && !PARTS.includes(PART)) {
   throw new Error(`E2E_PART is "${PART}"; use ${PARTS.join(', ')} or leave it unset`);
 }
 const AXE = /(accessibility|modal-focus)\.spec\.ts/;
+// Every other project, the sign-in ones included, belongs to `webkit`.
 const partOf = (project: string) =>
-  project === 'cms'
-    ? ['axe', 'cms']
-    : project === 'desktop'
-      ? ['webkit', 'axe']
-      : DEVICES.includes(project)
-        ? ['webkit']
-        : ['sign-in'];
+  project === 'cms' ? ['axe', 'cms'] : project === 'desktop' ? ['webkit', 'axe'] : ['webkit'];
+// The sign-in projects turn sign-in on for the server, so each part runs them after the device
+// projects it has (the ones sharing its server), never before.
+const DEVICES_IN_PART = DEVICES.filter((project) => !PART || partOf(project).includes(PART));
 
 export default defineConfig({
   testDir: 'e2e',
@@ -104,7 +104,7 @@ export default defineConfig({
     {
       name: 'auth',
       testMatch: 'login.spec.ts',
-      dependencies: PART === 'sign-in' ? [] : DEVICES,
+      dependencies: DEVICES_IN_PART,
       // Chromium: it keeps the `Secure` session cookie on http://localhost, which WebKit drops.
       use: { ...devices['Desktop Chrome'] },
     },
