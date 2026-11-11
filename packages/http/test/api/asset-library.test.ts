@@ -127,6 +127,30 @@ describe('the asset library over HTTP', () => {
     expect(long.status).toBe(422);
   });
 
+  it('finds the assets holding a file by its contentHash, refusing one that is not a SHA-256', async () => {
+    const { app, ctx } = makeApp();
+    const a = await upload(app, { fileName: 'a.png', contentType: 'image/png' });
+    const b = await upload(app, { fileName: 'b.png', contentType: 'image/png' });
+    await upload(app, { fileName: 'c.png', contentType: 'image/png' });
+    const hash = 'ab'.repeat(32);
+    await ctx.store.assets.recordIngest(scope, a.id, 1, { contentHash: hash });
+    await ctx.store.assets.recordIngest(scope, b.id, 1, { contentHash: hash });
+    const list = async (qs: string) =>
+      json<{ items: AssetBody[] }>(await app.request(`${M}/assets?${qs}`, { headers: cpa }));
+
+    expect(
+      (await list(`contentHash=${hash}&sort=createdAt&order=asc`)).items.map((x) => x.id),
+    ).toEqual([a.id, b.id]);
+    // Hex in either case, as ingest writes it in lower case.
+    expect((await list(`contentHash=${hash.toUpperCase()}`)).items).toHaveLength(2);
+    expect((await list(`contentHash=${'cd'.repeat(32)}`)).items).toEqual([]);
+    expect((await list(`contentHash=${hash}&ids=${b.id}`)).items.map((x) => x.id)).toEqual([b.id]);
+    for (const bad of ['abc', 'zz'.repeat(32), 'ab'.repeat(33)]) {
+      const res = await app.request(`${M}/assets?contentHash=${bad}`, { headers: cpa });
+      expect(res.status).toBe(422);
+    }
+  });
+
   it('records the creating principal, and moves assets between folders', async () => {
     const { app } = makeApp();
     const a = await upload(app, { fileName: 'a.png', contentType: 'image/png' });

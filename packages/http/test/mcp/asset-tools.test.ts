@@ -131,6 +131,21 @@ describe('asset library tools (MCP), on the same use-cases as the HTTP routes', 
     expect(tooMany.isError).toBe(true);
   });
 
+  it('finds the assets holding a file by contentHash, as GET …/assets?contentHash= does', async () => {
+    const { ctx, deps, add } = await setup();
+    const png = await add('a.png', 'image/png');
+    await add('b.png', 'image/png');
+    const hash = 'ef'.repeat(32);
+    await ctx.store.assets.recordIngest(scope, png.id, 1, { contentHash: hash });
+    const client = await connect(deps, reader);
+    const list = async (contentHash: string) =>
+      client.callTool({ name: 'assets_list', arguments: { contentHash, space: SPACE } });
+
+    const found = payload(await list(hash.toUpperCase())) as { items: { id: string }[] };
+    expect(found.items.map((a) => a.id)).toEqual([png.id]);
+    expect((await list('not-a-hash')).isError).toBe(true);
+  });
+
   it('manages folders and moves assets into them', async () => {
     const { deps, add } = await setup();
     const a = await add('a.png', 'image/png');

@@ -41,10 +41,22 @@ function assetIds(raw: string | undefined): string[] | undefined {
   return ids;
 }
 
+/** `contentHash=`: a file's SHA-256 as 64 hex digits, read in lower case as ingest writes it. */
+function contentHash(raw: string | undefined): string | undefined {
+  if (raw === undefined || raw === '') return undefined;
+  if (!/^[0-9a-fA-F]{64}$/.test(raw)) {
+    throw new ValidationError([
+      { field: 'contentHash', message: 'contentHash is a SHA-256 as 64 hex digits' },
+    ]);
+  }
+  return raw.toLowerCase();
+}
+
 /**
  * The asset library's query string: `ids` (comma-separated, at most 100), `kind`, `mime`
  * (`image/png` or `image/*`), `tag`, `folder` (an id, or `root` for assets in no folder), `status`
- * (`all` includes archived), `sort` and `order`, `limit` and `cursor`.
+ * (`all` includes archived), `contentHash` (the assets whose file has these bytes, once ingested),
+ * `sort` and `order`, `limit` and `cursor`.
  */
 export function parseAssetListQuery(q: Record<string, string | undefined>): AssetListQuery {
   const kind = oneOf('kind', q.kind, ASSET_KINDS);
@@ -54,6 +66,7 @@ export function parseAssetListQuery(q: Record<string, string | undefined>): Asse
   const limit = clampCount(q.limit, MAX_PAGE_LIMIT, { min: 1 });
   const folder = q.folder === undefined || q.folder === '' ? undefined : q.folder;
   const ids = assetIds(q.ids);
+  const hash = contentHash(q.contentHash);
   return {
     ...(limit !== undefined ? { limit } : {}),
     ...(q.cursor ? { cursor: q.cursor } : {}),
@@ -64,6 +77,7 @@ export function parseAssetListQuery(q: Record<string, string | undefined>): Asse
       ...(q.tag ? { tag: q.tag.slice(0, 128) } : {}),
       ...(folder !== undefined ? { folderId: folder === 'root' ? null : folder } : {}),
       ...(status ? { status } : {}),
+      ...(hash ? { contentHash: hash } : {}),
     },
     ...(field || direction
       ? { sort: { field: field ?? 'updatedAt', direction: direction ?? 'desc' } }

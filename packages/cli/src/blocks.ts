@@ -9,6 +9,7 @@ import type {
   Breakpoint,
 } from '@contentworker/sdk-management';
 import { usageError } from './output.js';
+import type { LocalBlockManifest } from './thumbnails.js';
 
 /**
  * The block catalog as a file: the manifests of the components a site renders, and the blocks
@@ -16,7 +17,8 @@ import { usageError } from './output.js';
  * JSON (`{ "targets": [...], "blocks": [...], "breakpoints": [...] }`) or a TypeScript or
  * JavaScript module whose default export is that object, so the manifests can sit beside the
  * components they describe. The file is data: the CLI sends what it holds, and nothing in it runs on the
- * server or in the admin.
+ * server or in the admin. A thumbnail may be a URL or a local image (`{ "file": "…" }`, from the
+ * file's folder); `blocks push` imports either as an asset first (`thumbnails.ts`).
  */
 
 /** Where `blocks push` looks when no file is named. */
@@ -24,7 +26,7 @@ export const DEFAULT_BLOCKS_FILE = 'contentworker.blocks.json';
 
 export interface BlocksFile {
   readonly targets: readonly BlockCatalogTarget[];
-  readonly blocks: readonly BlockManifest[];
+  readonly blocks: readonly LocalBlockManifest[];
   /** Absent: none, so a push removes any the catalog had. */
   readonly breakpoints?: readonly Breakpoint[];
 }
@@ -65,10 +67,13 @@ export async function loadBlocks(path: string, cwd: string): Promise<BlocksFile>
   };
 }
 
-/** The push as the file asks for it, before any flag. */
-export const pushInput = (file: BlocksFile): BlockCatalogPushInput => ({
+/** The push as the file asks for it, before any flag, with its thumbnails as they are to be sent. */
+export const pushInput = (
+  file: BlocksFile,
+  blocks: readonly BlockManifest[],
+): BlockCatalogPushInput => ({
   targets: file.targets,
-  blocks: file.blocks,
+  blocks,
   ...(file.breakpoints ? { breakpoints: file.breakpoints } : {}),
 });
 

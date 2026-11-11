@@ -19,6 +19,10 @@ npx contentworker import posts.xml --content-type article --map title=title --ma
 npx contentworker types --out src/generated/content-types.ts
 ```
 
+`blocks push` imports a manifest's `{ url }` (https) or `{ file }` thumbnail into the space's
+assets and pushes `{ assetId }`, the only kind the admin draws: images only (AVIF, GIF, JPEG, PNG,
+SVG, WebP), at most 2 MiB, and reused by content hash rather than uploaded on every push.
+
 In CI, set `CONTENTWORKER_TOKEN` and `CONTENTWORKER_URL` instead of logging in. Exit codes: 0 ok,
 1 failed, 2 usage or confirmation needed (it never prompts off a terminal; pass `--yes`), 3 not
 signed in, 4 destructive model or block catalog change refused (`--allow-destructive`).
