@@ -110,6 +110,7 @@ export const ASSISTANT_TOOLS = {
   content_search: read('Search content', 'Searched content'),
   entries_list_versions: read('List an entry’s versions', 'Listed an entry’s versions'),
   entries_diff_versions: read('Compare versions', 'Compared versions'),
+  entries_change_summary: read('Summarize changes', 'Summarized changes'),
   entries_list_trashed: read('List trashed entries', 'Listed trashed entries'),
   releases_list: read('List releases', 'Listed releases'),
   releases_get: read('Read a release', 'Read a release'),

@@ -114,6 +114,7 @@ names none.
 | ------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `content-ai`: `translateEntry`, `autofillField`               | `balanced`                                                                                                                                                      |
 | `content-ai`: `summarizeEntry`, `suggestEntryTags`            | `fast`                                                                                                                                                          |
+| `summarizeChange` (`change-summary.ts`)                       | `fast`                                                                                                                                                          |
 | `media-ai`: alt text, asset auto-tag                          | `fast`                                                                                                                                                          |
 | `draftEntry`, `canvasToEntry` (`generation.ts`), `auditEntry` | `balanced`                                                                                                                                                      |
 | `generateBlocks` (`layout-generation.ts`)                     | `flagship`                                                                                                                                                      |
@@ -136,7 +137,7 @@ admin, REST, MCP, Coworker and workflow nodes.
 | `drafting`     | `draftEntry`, `canvasToEntry`                                                                                                                                              | refused                                                                                                                                                                                                              |
 | `layout`       | `generateBlocks` (the canvas, `entry_blocks_generate`, Coworker's block fills)                                                                                             | refused                                                                                                                                                                                                              |
 | `assistant`    | Coworker's model turns                                                                                                                                                     | the turn answers that Coworker is off; pages' own edits still go through it                                                                                                                                          |
-| `field-assist` | `autofillField`, `summarizeEntry`, `suggestEntryTags`, `runAIAction`                                                                                                       | refused; the `ai.summarize`, `ai.autofill` and `ai.suggest_tags` nodes record a no-op                                                                                                                                |
+| `field-assist` | `autofillField`, `summarizeEntry`, `summarizeChange`, `suggestEntryTags`, `runAIAction`                                                                                    | refused; the `ai.summarize`, `ai.autofill` and `ai.suggest_tags` nodes record a no-op                                                                                                                                |
 | `translation`  | `translateEntry` (editor, API, MCP, the `ai.translate` node)                                                                                                               | refused; the node records a no-op                                                                                                                                                                                    |
 | `media`        | `generateAltText`, `autoTagAsset`, and the ingest steps that call them                                                                                                     | refused on request; ingest skips the steps                                                                                                                                                                           |
 | `search`       | entry and asset embeddings, asset text extraction, `relatedEntries`, `findDuplicates`, `getEntryEmbedding`, management semantic search                                     | nothing new is embedded and a (re)published entry's or asset's vectors are dropped; the semantic tools refuse; `content_search` and asset search use the lexical leg only                                            |
@@ -281,6 +282,66 @@ the content is stripped) and add `UNTRUSTED_CONTENT_GUARD` to the system prompt,
 to treat that span only as data (`packages/application/src/ai-prompt.ts`). The assistant wraps
 tool results the same way. It blunts instruction hijacks, notably a moderation classifier being
 talked into `flagged: false`; moderation additionally fails closed (see [moderate](#moderate)).
+
+### Change summaries
+
+`summarizeChange(ctx, caller, scope, entryId, from, to, { ai, fresh })`
+(`packages/application/src/change-summary.ts`) writes a short narrative of a version diff: one to
+three sentences and up to five highlights, plain text. It is served at
+`POST …/entries/:id/versions/diff/summary?from=&to=[&fresh=true]`, the MCP tool
+`entries_change_summary` (also offered to Coworker as a read), the management SDK's
+`entries.versions.summarize()` and the admin's **Summarize changes** in a version compare.
+
+- **Input: the diff, never the entry.** It runs `diffVersions` and masks it with `visibleDiff`, as
+  the compare does, so a field the caller's role denies never reaches the model (it is only
+  counted, in `hiddenChanges`, and the prompt then tells the model other fields changed that it
+  isn't shown). The changed fields go to the model as JSON lines inside `wrapUntrusted`, after a
+  first line naming the entry's type: one per field and locale, with the field's name
+  (`nameForModel`), its type and the kind of change; a value of up to 280 characters whole, before
+  and after; text edits as the words removed and added with six unchanged words either side
+  (`context`), so a long text costs its edits, not its length; rich text as each changed block's
+  words (`RichTextDocument` trees, never markup); lists as their changed elements (12 per value);
+  links by kind ("a linked entry", "another linked asset"), never by id. JSON keeps a value from
+  posing as another field or a marker.
+- **Bounded.** Fields are added whole, in the content type's order, until the next would pass
+  12 000 characters (`CHANGE_SUMMARY_MAX_INPUT_CHARS`, about 3k tokens); a field too large for
+  what is left is tried again compact (80-character excerpts, four elements), so one large field
+  never empties the input. The rest are counted and named in a last line, the prompt tells the
+  model the summary covers only part of the changes, and the result says `truncated: true`.
+- **Output.** `generateJson` against `{ summary: string, highlights: string[] }` (checked with
+  `conforms`), in English, `maxTokens` 1 500 (room for a reasoning model's thinking, which counts
+  against the cap), with `failures: 'throw'`: a budget refusal is a 429 and a provider error or
+  timeout a 503 (logged as `failed`), rather than the heuristic passing for the model's answer. An
+  answer that came back unusable (`bad_response`: cut off, JSON mode unmet) is a bad answer, so the
+  heuristic's, as one off the schema is. The prompt asks for about 350 and 120 characters; tags,
+  angle brackets and Markdown links are dropped and the lengths capped (600 and 200 characters,
+  five highlights). The result is plain text, to render as text.
+- **Capability.** `field-assist` (Writing help): it is "summarizing", the work that capability
+  already names, so an administrator who turned writing help off has turned this off too (409
+  `ai_capability_disabled`). Its tier (default `fast`: a short extraction over structured input)
+  and guidance apply.
+- **Without a model.** Under `AI_MODE=mock`, when no visible field changed, or when the answer
+  doesn't fit the schema, the summary is built from the diff by rule (`heuristicChangeSummary`)
+  and marked `source: 'heuristic'` with the reason in `fallback`: the sentence names the changed
+  fields ("Changed 3 fields: Title, Price, Body."), and a highlight per field (and locale, when
+  the entry holds several) says how. A simple value (Symbol, Slug, Number, Integer, Boolean, Date,
+  or Text of up to 40 characters) reads before → after ("Price: 49 → 59", "Featured: off → on"),
+  cut at 40 characters, or "set to …" and "cleared"; longer text and rich text by the words they
+  changed ("Body: 6 words changed", "rewritten" past 60% of their words, "added, 80 words"); a list
+  by its elements ("Tags: 2 added, 1 removed, 1 moved"); a link by what happened to it ("Hero
+  image: replaced", never an id). Fields the caller can't read are only counted.
+- **Cache, no D1 writes.** A model-written summary is kept in `ctx.cache` (KV) for a day under
+  a SHA-256 of everything the model read: the prompt id, scope, entry, tier, the system prompt (so
+  the space's guidance) and the serialized diff (so the caller's visible fields and the field names
+  as they are now). The same request is answered from it without a call (`cached: true`); `fresh`
+  asks again and replaces it, for a caller holding `content:write` (a read-only caller asking again
+  is answered from the cache, so a preview key can't drain the space's budget in a loop). The key
+  names the tier, not the model it maps to: after a model change, summaries already kept are served
+  until they expire. Versions are immutable, so the key never goes stale, and nothing is
+  written to D1 on this read path.
+- **Who may ask.** `preview:read` and a read grant on the entry's type, as for the diff: a reviewer
+  (Viewer, Approver) can ask, and every call is metered by the space's AI budget. The first model
+  route a read scope reaches; it costs at most one call per distinct diff and caller view.
 
 ## Content generation
 

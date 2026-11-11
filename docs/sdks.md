@@ -627,6 +627,7 @@ cma.entries.publish(id, { expectedVersion? }) / .unpublish(id, { expectedVersion
 cma.entries.bulkCreate(items) / .bulkPublish(ids) / .bulkUnpublish(ids)
 cma.entries.reverseReferences(id)                     // "what links here"
 cma.entries.versions.list(id) / .get(id, v) / .diff(id, from, to)
+cma.entries.versions.summarize(id, from, to, { fresh? })   // a narrative of the diff (field-assist AI)
 cma.entries.versions.restore(id, v, { expectedVersion? })
 
 // Imports (CSV, JSON, WXR) into one content type, as drafts

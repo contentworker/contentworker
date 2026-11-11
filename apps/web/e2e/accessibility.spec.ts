@@ -1424,6 +1424,30 @@ test('an entry’s authorship and the Mine filter have no accessibility violatio
   await scan(page, testInfo);
 });
 
+test('a version compare with its change summary has no accessibility violations', async ({
+  page,
+  request,
+}, testInfo) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const title = `Summary ${Date.now()}`;
+  const id = await createChanged(request, title);
+  await openCms(page, `/content/article/${id}`);
+  const pane = page.getByRole('complementary', { name: 'Side pane' });
+  await pane.getByRole('radio', { name: 'Details' }).click();
+  await pane.getByRole('button', { name: 'Version history' }).click();
+  await pane.getByRole('button', { name: 'Compare version 1' }).click();
+  await pane.getByRole('button', { name: 'Summarize changes' }).click();
+  const summary = pane.getByRole('region', { name: 'Summary of changes' });
+  // AI_MODE=mock: built from the diff by rule, and said to be.
+  await expect(summary.getByText('Listed from the changes')).toBeVisible();
+  await expect(summary.getByText('Changed 1 field: Body.')).toBeVisible();
+  // A short text reads before → after.
+  await expect(summary.getByText('Body: Live body → Edited body')).toBeVisible();
+  // Focus lands on the summary that replaced the button, not on the page.
+  await expect(summary.locator(':focus')).toContainText('Changed 1 field: Body.');
+  await scan(page, testInfo);
+});
+
 test('an entry written right to left has no accessibility violations', async ({
   page,
   request,
