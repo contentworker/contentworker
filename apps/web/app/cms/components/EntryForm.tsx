@@ -252,14 +252,16 @@ function withDisabledKept(
  * a merged AI draft, never shows a value the save would not keep.
  */
 function withReadOnlyKept(values: Values, stored: EntryFields, readOnly: ReadonlySet<string>) {
-  if (readOnly.size === 0) return values;
-  const out: Values = { ...values };
+  let out: Values | undefined;
   for (const apiId of readOnly) {
     const kept = stored[apiId] as Record<string, unknown> | undefined;
+    // Unchanged values keep their identity: what reads them (the preview) isn't told of a change.
+    if (sameFieldValue(values[apiId], kept)) continue;
+    out ??= { ...values };
     if (kept) out[apiId] = { ...kept };
     else delete out[apiId];
   }
-  return out;
+  return out ?? values;
 }
 
 /**
@@ -916,7 +918,12 @@ export function EntryForm(props: {
           >
             <span className="font-medium text-foreground">{f.name}</span> is hidden{hiddenWhile},
             and keeps the value it holds: it is read-only
-            {locked.length ? ` while ${locked.join(' and ')}` : ''}.
+            {access.readOnly.has(f.apiId)
+              ? ': your role can’t change it'
+              : locked.length
+                ? ` while ${locked.join(' and ')}`
+                : ''}
+            .
           </p>
         );
       }

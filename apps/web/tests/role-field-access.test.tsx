@@ -150,6 +150,37 @@ describe('the entry form under a role’s field rules', () => {
     expect(screen.getByRole('alert').textContent).toContain('Price');
   });
 
+  it('says the role is why a field its rules hide keeps its value', () => {
+    const ruled: ContentType = {
+      ...LISTING,
+      fields: LISTING.fields.map((f) =>
+        f.apiId === 'price'
+          ? {
+              ...f,
+              rules: [{ action: 'hide', when: { field: 'title', operator: 'eq', value: 'Loft' } }],
+            }
+          : f,
+      ),
+    };
+    render(
+      <EntryForm
+        contentType={ruled}
+        initial={MASKED as never}
+        locales={['en-US']}
+        defaultLocale="en-US"
+        pickers={{ entries: [], assets: [] }}
+        fieldAccess={ACCESS}
+        onSave={() => {}}
+        onCancel={() => {}}
+      />,
+    );
+    // Hidden by its rule while holding a value: no Clear (the save would keep it), and the reason.
+    expect(screen.getByText(/keeps the value it holds/).textContent).toMatch(
+      /it is read-only: your role can’t change it\.$/,
+    );
+    expect(screen.queryByRole('button', { name: /Clear/ })).toBeNull();
+  });
+
   it('judges and sends every field for a role without field rules', () => {
     const onSave = renderForm(OPEN_FIELDS);
     expect(screen.getByLabelText(/^Internal notes/)).toBeTruthy();

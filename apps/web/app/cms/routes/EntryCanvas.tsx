@@ -1543,6 +1543,9 @@ function titleOf(
   return typeof v === 'string' && v.trim() ? v : null;
 }
 
+/** Field names in a sentence: "Main, Sidebar and Footer". */
+const LIST = new Intl.ListFormat('en', { type: 'conjunction' });
+
 /** Why the canvas reviews instead of editing, and what's happening to the entry, in place. */
 function Notices(props: {
   review: ReviewReason | null;
@@ -1567,15 +1570,27 @@ function Notices(props: {
       </span>,
     );
   } else if (props.review === 'fields') {
-    const what = props.ruledFields.length ? props.ruledFields.join(' and ') : 'this entry’s blocks';
     lines.push(
-      <span key="fields">
-        Your role can’t change {what}: the canvas is for review here. Edit the other fields in{' '}
-        <Link to={props.formPath} className="underline underline-offset-2">
-          the form
-        </Link>
-        .
-      </span>,
+      props.ruledFields.length ? (
+        <span key="fields">
+          Your role can’t change {LIST.format(props.ruledFields)}: the canvas is for review here.
+          Edit the other fields in{' '}
+          <Link to={props.formPath} className="underline underline-offset-2">
+            the form
+          </Link>
+          .
+        </span>
+      ) : (
+        // Every blocks field ruled is one the role can't read: nothing of them is drawn.
+        <span key="fields">
+          Your role can’t see this entry’s blocks, so there is nothing to arrange here. Edit the
+          fields you can in{' '}
+          <Link to={props.formPath} className="underline underline-offset-2">
+            the form
+          </Link>
+          .
+        </span>
+      ),
     );
   } else if (props.review === 'published') {
     lines.push(

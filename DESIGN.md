@@ -659,8 +659,11 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   know it holds a value). One their role makes read-only takes the read-only treatment above, its
   stored value showing, with the reason "Your role can’t change this field" in the same muted
   `text-xs` line; it wins over a rule's reason, since it holds whatever the sibling values. Neither
-  is sent by a save. The canvas, whose blocks a role can only rule as a whole field, opens for
-  review when its blocks field is ruled, and its notice names the field and links to the form.
+  is sent by a save, and the editor's other surfaces follow suit: the preview and site pane
+  never name a hidden field, and generation and AI assist offer and apply only the fields the
+  person may change. The canvas, whose blocks a role can only rule as a whole field, opens for
+  review when its blocks field is ruled, and its notice names the field ("Your role can’t change
+  Main: …") and links to the form; when the field is hidden it names nothing.
 - **Dates and lists:** a Date's input follows its format: a date picker, `datetime-local`, or a
   `time` input (minutes; seconds kept when stored). A list of Text, Integer, Number or Date
   values is one row per value, each named "<Field> item N" with its own input and a ghost Remove,

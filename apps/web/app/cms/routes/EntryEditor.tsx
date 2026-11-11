@@ -69,7 +69,7 @@ import { configRefusal, rulesOver } from '../lib/block-rules';
 import { useBlockThumbnails } from '../lib/block-thumbnails';
 import { canvasAvailable } from '../lib/canvas/model';
 import { useClient } from '../lib/client-context';
-import { fieldAccessFor } from '../lib/field-access';
+import { fieldAccessFor, withoutHiddenFields, writableFields } from '../lib/field-access';
 import { dateTime, toMs } from '../lib/format';
 import { capabilitiesFor, SELECT_ONLY } from '../lib/live-preview/host';
 import { liveFields } from '../lib/live-preview/ops';
@@ -96,6 +96,9 @@ const FORM_ID = 'entry-form';
 
 const submitForm = () =>
   (document.getElementById(FORM_ID) as HTMLFormElement | null)?.requestSubmit();
+
+/** A new entry's stored fields: one object, so what the form derives from them holds still. */
+const NO_FIELDS: EntryFields = {};
 
 /**
  * Create (/content/:typeId/new) or edit (/content/:typeId/:entryId) one entry.
@@ -133,7 +136,7 @@ export function EntryEditor() {
     (linkedSpace && linkedSpace !== conn.space) || (linkedEnv && linkedEnv !== conn.environment);
 
   const isEdit = Boolean(entryId);
-  const selectedType = types.find((t) => t.apiId === typeId);
+  const storedType = types.find((t) => t.apiId === typeId);
   const backTo = `/content/${typeId}`;
 
   // AI generation/canvas/assist results are merged into the live form via a
@@ -156,8 +159,6 @@ export function EntryEditor() {
     setLastAggregate(null);
     setPublishConfirm(null);
   }
-  const applyPatch = (fields: EntryFields) =>
-    setPatchState((s) => ({ ...s, patch: { seq: (s.patch?.seq ?? 0) + 1, fields } }));
   const [genOpen, setGenOpen] = useState(false);
   const [canvasOpen, setCanvasOpen] = useState(false);
   const publishButton = useRef<HTMLButtonElement>(null);
@@ -211,7 +212,7 @@ export function EntryEditor() {
     fields: EntryFields;
     publish: boolean;
   } | null>(null);
-  const baseFields = isEdit ? ((entryQuery.data?.fields as EntryFields) ?? null) : {};
+  const baseFields = isEdit ? ((entryQuery.data?.fields as EntryFields) ?? null) : NO_FIELDS;
   // Who wrote it: the freshest aggregate (a save names its author) over the loaded entry. Names
   // come from the team, which only an administrator may read; anyone else sees "You" and kinds.
   const authorship =
@@ -226,6 +227,36 @@ export function EntryEditor() {
     () => fieldAccessFor(accessQuery.data, typeId ?? ''),
     [accessQuery.data, typeId],
   );
+  // The type as this person sees it, everywhere on the page (form, preview, site pane): without
+  // the fields their role hides. What they may fill (generation, AI assist) is narrower still:
+  // without the ones it makes read-only either.
+  const selectedType = useMemo(
+    () => storedType && withoutHiddenFields(storedType, fieldAccess),
+    [storedType, fieldAccess],
+  );
+  const fillableType = useMemo(
+    () =>
+      selectedType && fieldAccess.readOnly.size > 0
+        ? {
+            ...selectedType,
+            fields: selectedType.fields.filter((f) => !fieldAccess.readOnly.has(f.apiId)),
+          }
+        : selectedType,
+    [selectedType, fieldAccess],
+  );
+  /**
+   * Merges values from generation, the canvas or AI assist into the form: only the fields this
+   * person may change (the form would keep the others at their stored values anyway). Returns how
+   * many fields it merged; none merges nothing, so the editor isn't left with nothing to save.
+   */
+  const applyPatch = (fields: EntryFields): number => {
+    const kept = writableFields(fields, fieldAccess);
+    const count = Object.keys(kept).length;
+    if (count > 0) {
+      setPatchState((s) => ({ ...s, patch: { seq: (s.patch?.seq ?? 0) + 1, fields: kept } }));
+    }
+    return count;
+  };
   const isAdmin = accessQuery.data?.scopes.includes(SPACE_ADMIN) === true;
   const teamQuery = useScopedQuery(['team'], () => client.getTeam(), {
     silent: true,
@@ -1046,7 +1077,7 @@ export function EntryEditor() {
               <AiAssistPanel
                 key={`assist:${entryId}`}
                 entryId={entryId}
-                contentType={selectedType}
+                contentType={fillableType ?? selectedType}
                 locales={locales}
                 defaultLocale={defaultLocale}
                 onMergeFields={applyPatch}
@@ -1137,10 +1168,13 @@ export function EntryEditor() {
         key={entryId ?? 'new'}
         open={genOpen}
         onOpenChange={setGenOpen}
-        contentType={selectedType}
+        contentType={fillableType ?? selectedType}
         onGenerate={generate}
         onApply={(fields) => {
-          applyPatch(fields);
+          if (applyPatch(fields) === 0) {
+            toast.error('The draft holds only fields your role can’t change: nothing applied');
+            return;
+          }
           toast.success('Applied the draft to the form. Save to keep it');
         }}
       />
@@ -1170,8 +1204,8 @@ export function EntryEditor() {
       signal,
     );
     if (signal.aborted) return;
-    applyPatch(res.fields);
+    const mapped = applyPatch(res.fields);
     const total = res.usage.inputTokens + res.usage.outputTokens;
-    toast.success(`Mapped ${Object.keys(res.fields).length} field(s) · ${total} tokens`);
+    toast.success(`Mapped ${mapped} field(s) · ${total} tokens`);
   }
 }

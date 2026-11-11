@@ -1,6 +1,7 @@
 import AxeBuilder from '@axe-core/playwright';
 import { type APIRequestContext, expect, type TestInfo, test } from '@playwright/test';
 import { EDITOR_READY, MGMT, openCms, SPACE, useCmsScope } from './cms';
+import { guestPort } from './live-guest/port';
 import { settle } from './settle';
 
 /**
@@ -14,6 +15,7 @@ import { settle } from './settle';
 const ADMIN = { Authorization: 'Bearer dev-admin-token', 'content-type': 'application/json' };
 const MCP = { Authorization: 'Bearer dev-mcp-token' };
 const WCAG = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'];
+const GUEST = `http://localhost:${guestPort()}`;
 
 async function admin(
   request: APIRequestContext,
@@ -52,7 +54,8 @@ test('a person whose role makes a field read-only and hides another edits what t
   request,
 }, testInfo) => {
   test.setTimeout(120_000);
-  const stamp = Date.now();
+  // Its own people and entries, whatever runs beside it.
+  const stamp = `${Date.now()}-${testInfo.parallelIndex}-${testInfo.repeatEachIndex}`;
   // The e2e space (the CMS projects made it while sign-in was open; make sure).
   await admin(request, 'POST', '/spaces', { spaceId: SPACE, name: 'E2E', defaultLocale: 'en-US' });
   const type = await admin(request, 'POST', `${MGMT}/content-types`, {
@@ -98,6 +101,64 @@ test('a person whose role makes a field read-only and hides another edits what t
   });
   expect(created.ok(), await created.text()).toBe(true);
   const id = ((await created.json()) as { entry: { id: string } }).entry.id;
+  // A page laid out on the canvas (framed by the guest site), whose blocks field the role reads
+  // but may not change.
+  const pageType = await admin(request, 'POST', `${MGMT}/content-types`, {
+    apiId: 'ruledPage',
+    name: 'Ruled page',
+    displayField: 'title',
+    fields: [
+      {
+        apiId: 'title',
+        name: 'Title',
+        type: 'Symbol',
+        localized: false,
+        required: false,
+        position: 0,
+      },
+      {
+        apiId: 'body',
+        name: 'Main',
+        type: 'Array',
+        localized: false,
+        required: false,
+        position: 1,
+        items: {
+          type: 'Component',
+          variants: [
+            {
+              apiId: 'hero',
+              name: 'Hero',
+              fields: [
+                {
+                  apiId: 'heading',
+                  name: 'Heading',
+                  type: 'Symbol',
+                  localized: false,
+                  required: false,
+                  position: 0,
+                },
+              ],
+            },
+          ],
+        },
+      },
+    ],
+    preview: {
+      urlTemplate: `${GUEST}/?entry={id}&type=ruledPage&space={space}&env={environment}#token={token}`,
+    },
+  });
+  expect([200, 201, 409], await pageType.text()).toContain(pageType.status());
+  await admin(request, 'POST', `${MGMT}/content-types/ruledPage/published`);
+  const laidOut = await admin(request, 'POST', `${MGMT}/entries`, {
+    contentTypeApiId: 'ruledPage',
+    fields: {
+      title: { 'en-US': `Launch ${stamp}` },
+      body: { 'en-US': [{ _type: 'hero', _key: 'h1', heading: 'Welcome' }] },
+    },
+  });
+  expect(laidOut.ok(), await laidOut.text()).toBe(true);
+  const pageId = ((await laidOut.json()) as { entry: { id: string } }).entry.id;
   const role = await admin(request, 'POST', `/spaces/${SPACE}/roles`, {
     name: `Listing writer ${stamp}`,
     scopes: ['content:write', 'preview:read'],
@@ -108,6 +169,7 @@ test('a person whose role makes a field read-only and hides another edits what t
         deniedFields: ['notes'],
         readOnlyFields: ['price'],
       },
+      { contentTypeApiId: 'ruledPage', actions: ['read', 'write'], readOnlyFields: ['body'] },
     ],
   });
   expect(role.ok(), await role.text()).toBe(true);
@@ -153,5 +215,23 @@ test('a person whose role makes a field read-only and hides another edits what t
     price: { 'en-US': 450000 },
     notes: { 'en-US': 'The owner will take less' },
   });
+
+  // ── The canvas over a blocks field the role can't change: review, and the way to the form ──
+  await openCms(page, `/content/ruledPage/${pageId}/canvas`);
+  await expect(
+    page.getByText('Your role can’t change Main: the canvas is for review here.', { exact: false }),
+  ).toBeVisible(EDITOR_READY);
+  await expect(page.getByRole('link', { name: 'the form' })).toHaveAttribute(
+    'href',
+    `/content/ruledPage/${pageId}`,
+  );
+  await expect(page.getByRole('button', { name: 'Save draft' })).toHaveCount(0);
+  const site = page
+    .frameLocator('iframe[title="Site preview"]')
+    .frameLocator('iframe[title="The entry on your site"]');
+  await expect(site.getByRole('heading', { level: 1 })).toHaveText(`Launch ${stamp}`, {
+    timeout: 15_000,
+  });
+  await scan(page, testInfo);
   await context.close();
 });
