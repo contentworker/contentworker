@@ -32,6 +32,7 @@ import {
   publishAsset,
   removeFromAssetCollection,
   reorderAssetCollection,
+  SYSTEM_CALLER,
   updateAssetCollection,
 } from '../src/index';
 
@@ -274,7 +275,7 @@ describe('asset collections', () => {
     const [one, two] = [await upload('1.png'), await upload('2.png')];
     const c = await createAssetCollection(ctx, scope, { name: 'Travel' });
     await addToAssetCollection(ctx, scope, c.id, [two.id, one.id]);
-    const snapshot = await exportSnapshot(ctx, scope);
+    const snapshot = await exportSnapshot(ctx, SYSTEM_CALLER, scope);
     expect(snapshot.assetCollections).toEqual([
       {
         collection: expect.objectContaining({ id: c.id, name: 'Travel' }),
@@ -285,7 +286,7 @@ describe('asset collections', () => {
     // An import whose snapshot lost one asset keeps the member it can.
     await createEnvironment(ctx, 'shop', 'restore');
     const restore = { spaceId: 'shop', environmentId: 'restore' };
-    await importSnapshot(ctx, restore, {
+    await importSnapshot(ctx, SYSTEM_CALLER, restore, {
       ...snapshot,
       assets: snapshot.assets.filter((a) => a.id !== one.id),
     });
@@ -294,7 +295,7 @@ describe('asset collections', () => {
 
     await createEnvironment(ctx, 'shop', 'copy');
     const copy = { spaceId: 'shop', environmentId: 'copy' };
-    await cloneEnvironment(ctx, scope, copy);
+    await cloneEnvironment(ctx, SYSTEM_CALLER, scope, copy);
     expect(await ids(c.id, copy)).toEqual(['2.png', '1.png']);
   });
 });

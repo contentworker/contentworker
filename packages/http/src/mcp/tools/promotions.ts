@@ -75,7 +75,9 @@ export function registerPromotionTools(server: McpServer, t: ToolContext): void 
     async (args) => {
       const spaceId = args.space ?? DEFAULT_SPACE;
       guard(SCOPES.contentPublish, { spaceId, environmentId: DEFAULT_ENV });
-      return ok(await listPromotions(ctx, spaceId, args.status ? { status: args.status } : {}));
+      return ok(
+        await listPromotions(ctx, principal, spaceId, args.status ? { status: args.status } : {}),
+      );
     },
   );
 
@@ -91,7 +93,7 @@ export function registerPromotionTools(server: McpServer, t: ToolContext): void 
     async (args) => {
       const spaceId = args.space ?? DEFAULT_SPACE;
       guard(SCOPES.contentPublish, { spaceId, environmentId: DEFAULT_ENV });
-      return ok(await getPromotion(ctx, spaceId, args.id));
+      return ok(await getPromotion(ctx, principal, spaceId, args.id));
     },
   );
 

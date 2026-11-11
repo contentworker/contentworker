@@ -1,5 +1,5 @@
 import { compareEnvironments, comparisonFor, mergeEnvironments } from '@contentworker/application';
-import { authorizeEveryContentType, SCOPES } from '@contentworker/domain';
+import { SCOPES } from '@contentworker/domain';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { DEFAULT_SPACE, ok, type ToolContext, toolSchema } from './shared';
@@ -48,10 +48,8 @@ export function registerEnvironmentMergeTools(server: McpServer, t: ToolContext)
     async (args) => {
       const spaceId = args.space ?? DEFAULT_SPACE;
       guard(SCOPES.contentManage, { spaceId, environmentId: args.target });
-      // As the route: entries are copied whole, of any type, every field.
-      if (args.entries?.length) authorizeEveryContentType(principal, ['read', 'write']);
       return ok(
-        await mergeEnvironments(ctx, spaceId, args.source, args.target, {
+        await mergeEnvironments(ctx, principal, spaceId, args.source, args.target, {
           contentTypes: args.contentTypes,
           entries: args.entries,
         }),

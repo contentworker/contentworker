@@ -69,7 +69,7 @@ describe('promotions on D1', () => {
       .first<{ n: number }>();
     expect(waiting?.n).toBe(1);
     expect(
-      (await listPromotions(ctx, spaceId, { status: 'awaiting_approval' })).map((x) => x.id),
+      (await listPromotions(ctx, ada, spaceId, { status: 'awaiting_approval' })).map((x) => x.id),
     ).toEqual([p.id]);
 
     // Two approvals race: the compare-and-set lets exactly one apply.
@@ -90,7 +90,7 @@ describe('promotions on D1', () => {
   });
 
   it('moves a promotion only out of the status it is in', async () => {
-    const p = (await listPromotions(ctx, spaceId))[0];
+    const p = (await listPromotions(ctx, ada, spaceId))[0];
     if (!p) throw new Error('needs the first test');
     expect(
       await store.promotions.transition(spaceId, p.id, 'awaiting_approval', { status: 'rejected' }),
