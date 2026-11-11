@@ -33,17 +33,25 @@ import {
  * JSON, locations, an image a field's MIME rule doesn't take, and a slot the rules lock (its blocks
  * are the developer's to place). A block that requires one of them isn't offered at all.
  *
- * A block shape that occurs more than once (a grid allowed at the top and inside a section, a
- * card in every column of a six-deep layout) is written once, under `$defs`, and referenced with
- * `$ref` wherever it occurs; one that occurs once stays inline. Inlining every occurrence made the
- * schema grow with the number of paths through the tree, exponential in its depth; shared, it
- * grows with the number of distinct shapes, at most one per block and depth. Workers AI's JSON
- * mode takes any valid JSON Schema, as the structured outputs it is compatible with do, and
- * `$defs` with local `$ref`s is standard JSON Schema. What the model returns is checked against
- * the schema (`conforms` resolves the references) and then judged by the save path either way.
+ * Every block shape is written inline wherever it occurs, as long as the whole schema stays within
+ * {@link INLINE_SCHEMA_BUDGET}. Inlined, a schema grows with the number of paths through the tree,
+ * exponential in its depth, so a wide six-deep catalog can pass the budget: then a shape that
+ * occurs more than once (a card in every column) is written once under `$defs` and referenced with
+ * `$ref` wherever it occurs, and the schema grows with the distinct shapes instead, at most one per
+ * block and depth. What the model returns is checked against the schema (`conforms` resolves the
+ * references) and then judged by the save path either way.
  */
 
 export type JsonSchema = Record<string, unknown>;
+
+/**
+ * The largest blocks schema written fully inline, in characters of JSON (about 32 KB): past it,
+ * repeated shapes are shared through `$defs`. Inline is the default because it is what every
+ * catalog has been generated with: Workers AI's JSON mode takes "a valid JSON Schema", but whether
+ * its guided decoding follows a local `$ref` is unconfirmed, so refs are kept to the schemas that
+ * would otherwise be too big to send at all.
+ */
+export const INLINE_SCHEMA_BUDGET = 32_000;
 
 /** Field types a model fills directly: one scalar value each. */
 export const DRAFTABLE_FIELD_TYPES: ReadonlySet<string> = new Set([
@@ -219,8 +227,9 @@ export type BlocksSchemaResult =
  * The schema of the blocks to generate at `target`: one variant per block the place takes (its
  * `_type` a `const`), each with its scalar fields, image requests for its single Asset links, and
  * its slots recursing with their own allowed children down to {@link MAX_BLOCK_DEPTH}; the
- * place's `min` and `max` (less what it holds already) as `minItems` and `maxItems`. A shape that
- * occurs more than once is shared through `$defs` (see the module comment).
+ * place's `min` and `max` (less what it holds already) as `minItems` and `maxItems`. Past
+ * {@link INLINE_SCHEMA_BUDGET}, a shape that occurs more than once is shared through `$defs` (see
+ * the module comment).
  *
  * A block with a required field the model isn't asked for (rich text, an entry link, a component,
  * a locked or empty slot, an image the caller can't search for) is not offered: every block in an
@@ -307,9 +316,9 @@ export function blocksSchemaFor(
 
 /**
  * The blocks field `field`'s schema as one property of a draft's: the place's bounds, without the
- * `blocks` wrapper, and the shapes it shares, which belong under the draft schema's own `$defs`
- * (each is named for the field first, so two fields' shapes never collide). Undefined when the
- * field's top level is locked or offers nothing.
+ * `blocks` wrapper, and the shapes it shares (none within the budget), which belong under the draft
+ * schema's own `$defs`. Each name starts with the field's, so two fields' shapes never collide.
+ * Undefined when the field's top level is locked or offers nothing.
  */
 export function blocksFieldSchema(
   contentType: ContentType,
@@ -327,69 +336,112 @@ export function blocksFieldSchema(
 }
 
 /**
- * The block shapes of one schema, each written once. A shape is recorded under a name (the
- * field's apiId and the block's, `body.card`, and a count after it when the same block takes
- * another shape at another depth) and every occurrence becomes a `$ref` to it; {@link finish}
- * then puts back inline each shape referenced only once, so a schema with nothing shared reads as
- * it always has. Shapes are compared by their JSON, their own slots already references, so the
+ * The block shapes of one schema, each recorded once. Every occurrence becomes a `$ref` while the
+ * tree is built; {@link finish} then decides: within {@link INLINE_SCHEMA_BUDGET} every reference is
+ * put back inline, exactly the schema inlining always wrote, and past it only the shapes referenced
+ * once are. Shapes are compared by their JSON, their own slots already references, so the
  * comparison stays as small as one block.
+ *
+ * A name is the field's apiId with its length in front, then the block's, then a count when the
+ * same block takes another shape at another depth: `f4_body__card`, `f4_body__card__2`. Only
+ * `[A-Za-z0-9_]`, and unambiguous although an apiId may hold `__`: the length says where the
+ * field's apiId ends, so two fields' names never meet, and within a field a name already taken is
+ * never handed out again.
  */
 class ShapeTable {
   private readonly names = new Map<string, string>();
   private readonly shapes = new Map<string, JsonSchema>();
+  private readonly prefix: string;
 
-  constructor(private readonly prefix: string) {}
+  constructor(field: string) {
+    this.prefix = `f${field.length}_${field}`;
+  }
 
   /** A reference to `shape`, recorded under `apiId` the first time it is seen. */
   ref(apiId: string, shape: JsonSchema): JsonSchema {
     const json = JSON.stringify(shape);
     let name = this.names.get(json);
     if (!name) {
-      const base = `${this.prefix}.${apiId}`;
+      const base = `${this.prefix}__${apiId}`;
       name = base;
-      for (let n = 2; this.shapes.has(name); n++) name = `${base}.${n}`;
+      for (let n = 2; this.shapes.has(name); n++) name = `${base}__${n}`;
       this.names.set(json, name);
       this.shapes.set(name, shape);
     }
-    return { $ref: `#/$defs/${name}` };
+    return refTo(name);
   }
 
-  /** `value` with each shape used once inline, and the shapes used more than once. */
+  /**
+   * `value` fully inline when that is within the budget; else with each shape used once inline,
+   * and the shapes used more than once.
+   */
   finish(value: JsonSchema): { value: JsonSchema; defs: Record<string, JsonSchema> } {
+    // The inlined length is counted, never built: built, a wide six-deep tree is the very thing
+    // the budget exists to refuse. A reference's text gives way to its shape's inlined length.
+    const lengths = new Map<string, number>();
+    const inlinedLength = (node: unknown): number => {
+      let length = JSON.stringify(node).length;
+      for (const name of refsIn(node)) {
+        length += lengthOf(name) - JSON.stringify(refTo(name)).length;
+      }
+      return length;
+    };
+    const lengthOf = (name: string): number => {
+      let length = lengths.get(name);
+      if (length === undefined) {
+        length = inlinedLength(this.shapes.get(name));
+        lengths.set(name, length);
+      }
+      return length;
+    };
+    if (inlinedLength(value) <= INLINE_SCHEMA_BUDGET) {
+      return { value: this.resolve(value, () => true) as JsonSchema, defs: {} };
+    }
     // Uses are counted from the root, each shared shape's own body once: a shape referenced from
     // a shared one is used once however often that one is.
     const uses = new Map<string, number>();
     const count = (node: unknown): void => {
-      if (Array.isArray(node)) node.forEach(count);
-      else if (node && typeof node === 'object') {
-        const name = refName(node as JsonSchema);
-        if (name !== undefined) {
-          const seen = uses.get(name) ?? 0;
-          uses.set(name, seen + 1);
-          if (seen === 0) count(this.shapes.get(name));
-        } else Object.values(node).forEach(count);
+      for (const name of refsIn(node)) {
+        const seen = uses.get(name) ?? 0;
+        uses.set(name, seen + 1);
+        if (seen === 0) count(this.shapes.get(name));
       }
     };
     count(value);
-    const resolve = (node: unknown): unknown => {
-      if (Array.isArray(node)) return node.map(resolve);
-      if (!node || typeof node !== 'object') return node;
-      const name = refName(node as JsonSchema);
-      if (name !== undefined) return uses.get(name) === 1 ? resolve(this.shapes.get(name)) : node;
-      return Object.fromEntries(Object.entries(node).map(([k, v]) => [k, resolve(v)]));
-    };
+    const once = (name: string) => uses.get(name) === 1;
     const defs: Record<string, JsonSchema> = {};
     for (const [name, n] of uses) {
-      if (n > 1) defs[name] = resolve(this.shapes.get(name)) as JsonSchema;
+      if (n > 1) defs[name] = this.resolve(this.shapes.get(name), once) as JsonSchema;
     }
-    return { value: resolve(value) as JsonSchema, defs };
+    return { value: this.resolve(value, once) as JsonSchema, defs };
+  }
+
+  /** `node` with each reference `inline` picks replaced by its shape, recursively. */
+  private resolve(node: unknown, inline: (name: string) => boolean): unknown {
+    if (Array.isArray(node)) return node.map((n) => this.resolve(n, inline));
+    if (!node || typeof node !== 'object') return node;
+    const name = refName(node as JsonSchema);
+    if (name !== undefined) {
+      return inline(name) ? this.resolve(this.shapes.get(name), inline) : node;
+    }
+    return Object.fromEntries(Object.entries(node).map(([k, v]) => [k, this.resolve(v, inline)]));
   }
 }
+
+const refTo = (name: string): JsonSchema => ({ $ref: `#/$defs/${name}` });
 
 const refName = (node: JsonSchema): string | undefined =>
   typeof node.$ref === 'string' && node.$ref.startsWith('#/$defs/')
     ? node.$ref.slice('#/$defs/'.length)
     : undefined;
+
+/** The references directly in `node`: not those inside the shapes they name. */
+function refsIn(node: unknown): string[] {
+  if (Array.isArray(node)) return node.flatMap(refsIn);
+  if (!node || typeof node !== 'object') return [];
+  const name = refName(node as JsonSchema);
+  return name !== undefined ? [name] : Object.values(node).flatMap(refsIn);
+}
 
 /** A place's rules: the target's or the block's slot's in force, narrowed by the field's size. */
 export function placeRules(

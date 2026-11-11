@@ -762,7 +762,7 @@ describe('generating blocks six levels deep', () => {
     });
   });
 
-  it('asks for the whole tree, each repeated shape once, and takes an answer to the bottom', async () => {
+  it('asks for the whole tree, inline as ever, and takes an answer to the bottom', async () => {
     const ai = answering([tree('row', 'narrow', 'stack', 'group', 'tile')]);
     const out = await generateBlocks(ctx, ai, scope, {
       contentTypeApiId: 'page',
@@ -770,10 +770,10 @@ describe('generating blocks six levels deep', () => {
       prompt: 'A deep page',
     });
     const schema = ai.requests[0]?.outputSchema as Record<string, unknown>;
-    // The stack occurs under both column kinds: written once, referenced twice.
-    expect(Object.keys(schema.$defs as object)).toEqual(['body.stack']);
-    expect(JSON.stringify(schema).match(/"#\/\$defs\/body\.stack"/g)).toHaveLength(2);
-    expect(JSON.stringify(schema).match(/"const":"tile"/g)).toHaveLength(1);
+    // Well within the inline budget: the stack, under both column kinds, is written out twice.
+    expect(schema.$defs).toBeUndefined();
+    expect(JSON.stringify(schema).match(/"const":"stack"/g)).toHaveLength(2);
+    expect(JSON.stringify(schema).match(/"const":"tile"/g)).toHaveLength(2);
     let block = bodyOf(out)[0];
     for (const id of ['row', 'narrow', 'stack', 'group']) {
       expect(block?._type).toBe(id);
@@ -782,7 +782,7 @@ describe('generating blocks six levels deep', () => {
     expect(block).toMatchObject({ _type: 'tile', heading: 'A tile' });
   });
 
-  it('refuses an answer that puts a block where its shared shape doesn’t take it', async () => {
+  it('refuses an answer that puts a block where the schema doesn’t take it', async () => {
     // A row inside a stack: no shape in the schema has it there.
     const ai = answering([tree('row', 'wide', 'stack', 'row')]);
     const refused = await issues(
@@ -791,7 +791,7 @@ describe('generating blocks six levels deep', () => {
     expect(refused[0]).toMatchObject({ field: 'body', code: 'bad_generation' });
   });
 
-  it('answers in AI_MODE=mock through the shared shapes, down to the deepest block', async () => {
+  it('answers in AI_MODE=mock down to the deepest block', async () => {
     const mock: AppContext = { ...ctx, ai: { mode: 'mock', timeoutMs: 1000 } };
     const out = await generateBlocks(mock, answering([]), scope, {
       contentTypeApiId: 'page',
@@ -802,22 +802,116 @@ describe('generating blocks six levels deep', () => {
     for (let d = 1; d < 5; d++) block = ((block?.inner ?? []) as Block[])[0];
     expect(block).toMatchObject({ _type: 'tile' });
   });
+});
 
-  it('drafts an entry whose blocks share shapes, their $defs at the draft schema’s root', async () => {
+describe('drafting blocks past the inline budget', () => {
+  // Two blocks fields, each six levels of three blocks with the same ids, every slot taking every
+  // block of the next level: 729 paths each, too many to write out, so shapes are shared.
+  const f = { localized: false, required: false, position: 0 } as const;
+  const layered = (): Record<string, unknown>[] => {
+    let next: Record<string, unknown>[] | undefined;
+    for (let level = 6; level >= 1; level--) {
+      const children = next;
+      next = Array.from({ length: 3 }, (_, i) => ({
+        apiId: `l${level}b${i}`,
+        name: `Level ${level} block ${i}`,
+        fields: [
+          { ...f, apiId: 'heading', name: 'Heading', type: 'Symbol' },
+          ...(children
+            ? [
+                {
+                  ...f,
+                  apiId: 'inner',
+                  name: 'Inner',
+                  type: 'Array',
+                  position: 1,
+                  items: { type: 'Component', variants: children },
+                },
+              ]
+            : []),
+        ],
+      }));
+    }
+    return next as Record<string, unknown>[];
+  };
+  const chain = (field: string): Block => {
+    let block: Block = { _type: 'l6b2', heading: `${field} 6` };
+    for (let level = 5; level >= 1; level--) {
+      block = { _type: `l${level}b${level % 3}`, heading: `${field} ${level}`, inner: [block] };
+    }
+    return block;
+  };
+  let ctx: AppContext;
+
+  beforeEach(async () => {
+    ctx = {
+      store: new InMemoryContentStore(),
+      clock: new FixedClock(),
+      ids: new SequenceIdGenerator('w'),
+    };
+    await createSpace(ctx, { spaceId: 'site', name: 'Site', defaultLocale: 'en-US' });
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
+      apiId: 'page',
+      name: 'Page',
+      displayField: 'title',
+      fields: [
+        { ...f, apiId: 'title', name: 'Title', type: 'Symbol' },
+        ...['body', 'aside'].map((apiId, i) => ({
+          ...f,
+          apiId,
+          name: apiId,
+          type: 'Array',
+          position: i + 1,
+          items: { type: 'Component', variants: layered() },
+        })),
+      ] as never,
+    });
+  });
+
+  const schemaOf = (ai: StubAIProvider) => ai.requests[0]?.outputSchema as Record<string, unknown>;
+  const fieldSchema = (schema: Record<string, unknown>, apiId: string) =>
+    (schema.properties as Record<string, Record<string, unknown>>)[apiId] as Record<
+      string,
+      unknown
+    >;
+
+  it('lifts both fields’ shapes to the root, apart though their block ids match', async () => {
     const ai = new StubAIProvider(() => ({
       title: 'Deep',
-      body: [tree('row', 'wide', 'stack', 'group', 'tile')],
+      body: [chain('body')],
+      aside: [chain('aside')],
     }));
     const draft = await draftEntry(ctx, ai, scope, { contentTypeApiId: 'page', prompt: 'x' });
-    const schema = ai.requests[0]?.outputSchema as Record<string, unknown>;
-    expect(Object.keys(schema.$defs as object)).toEqual(['body.stack']);
-    expect(
-      conforms(
-        draft.fields.body?.['en-US'],
-        (schema.properties as Record<string, object>).body as Record<string, unknown>,
-        schema,
-      ),
-    ).toBe(true);
+    const schema = schemaOf(ai);
+    const names = Object.keys(schema.$defs as object);
+    // Each field's blocks below its top level, once each, named for the field.
+    expect(names.filter((n) => n.startsWith('f4_body__'))).toHaveLength(15);
+    expect(names.filter((n) => n.startsWith('f5_aside__'))).toHaveLength(15);
+    expect(names).toHaveLength(30);
+    for (const apiId of ['body', 'aside']) {
+      const value = draft.fields[apiId]?.['en-US'];
+      expect(conforms(value, fieldSchema(schema, apiId), schema), apiId).toBe(true);
+      // A top-level block put back inside itself fits no shape the field's references name.
+      expect(
+        conforms(
+          [{ _type: 'l1b0', heading: 'x', inner: [{ _type: 'l1b0' }] }],
+          fieldSchema(schema, apiId),
+          schema,
+        ),
+      ).toBe(false);
+    }
+    expect(JSON.stringify(schema).length).toBeLessThan(64_000);
+  });
+
+  it('answers in AI_MODE=mock through the shared shapes, down to the deepest block', async () => {
+    const mock: AppContext = { ...ctx, ai: { mode: 'mock', timeoutMs: 1000 } };
+    const draft = await draftEntry(mock, new StubAIProvider(() => ({})), scope, {
+      contentTypeApiId: 'page',
+      prompt: 'x',
+    });
+    let block = ((draft.fields.body?.['en-US'] ?? []) as Block[])[0];
+    for (let level = 1; level < 6; level++) block = ((block?.inner ?? []) as Block[])[0];
+    expect(block).toMatchObject({ _type: 'l6b0' });
   });
 });
 

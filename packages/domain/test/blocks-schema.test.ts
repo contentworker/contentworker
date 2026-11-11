@@ -12,6 +12,7 @@ import {
   draftableFieldSchema,
   effectiveBlockRules,
   type FieldDefinition,
+  INLINE_SCHEMA_BUDGET,
   MAX_BLOCK_DEPTH,
   resolveAssetRequests,
 } from '../src/index';
@@ -141,6 +142,61 @@ const inline = (schema: Schema): Schema => {
   return walk(schema) as Schema;
 };
 const props = (s: unknown) => (s as { properties: Record<string, Schema> }).properties;
+
+const title = symbol('title') as FieldDefinition;
+/** A slot `inner` holding `children`, or none. */
+const slotOf = (children?: ComponentVariant[]): FieldDefinition[] =>
+  children
+    ? [
+        {
+          apiId: 'inner',
+          name: 'Inner',
+          type: 'Array',
+          items: { type: 'Component', variants: children },
+        } as FieldDefinition,
+      ]
+    : [];
+/**
+ * A blocks field six levels deep: `width` blocks at each level, each one's slot taking every block
+ * of the next level, plus what `extra` adds at a level (given that level's children).
+ */
+const layered = (
+  width: number,
+  id: (level: number, i: number) => string = (l, i) => `l${l}b${i}`,
+  extra: (level: number, children?: ComponentVariant[]) => ComponentVariant[] = () => [],
+): ComponentVariant[] => {
+  let next: ComponentVariant[] | undefined;
+  for (let level = MAX_BLOCK_DEPTH; level >= 1; level--) {
+    const children = next;
+    next = [
+      ...Array.from({ length: width }, (_, i) => ({
+        apiId: id(level, i),
+        name: `Level ${level} block ${i}`,
+        fields: [title, ...slotOf(children)],
+      })),
+      ...extra(level, children),
+    ];
+  }
+  return next as ComponentVariant[];
+};
+const typeWithBlocks = (fields: Record<string, ComponentVariant[]>) =>
+  defineContentType({
+    apiId: 'deep',
+    name: 'Deep',
+    displayField: 'title',
+    fields: [
+      title,
+      ...Object.entries(fields).map(
+        ([apiId, variants]) =>
+          ({
+            apiId,
+            name: apiId,
+            type: 'Array',
+            items: { type: 'Component', variants },
+          }) as FieldDefinition,
+      ),
+    ],
+  });
 const variantsOf = (array: unknown): Schema[] => {
   const items = (array as { items: Schema }).items;
   return (items.anyOf as Schema[] | undefined) ?? [items];
@@ -320,85 +376,75 @@ describe('the blocks schema a model fills', () => {
     expect(props(hero).heading?.description).toBe('field heading');
   });
 
-  it('writes a block shape that occurs more than once in $defs, and keeps one that occurs once inline', () => {
+  it('writes today’s catalogs fully inline, a shape that repeats included', () => {
     const built = blocksSchemaFor(PAGE, { field: 'body' }, withImages);
     if (!built.ok) throw new Error(built.message);
-    const defs = built.schema.$defs as Record<string, Schema>;
-    // The hero and the grid sit at the top and inside a section, in the same shape: shared. The
-    // section, the banner, the card and the quote occur once each.
-    expect(Object.keys(defs).sort()).toEqual(['body.grid', 'body.hero']);
-    const top = (props(built.schema).blocks as { items: { anyOf: Schema[] } }).items.anyOf;
-    expect(top.map((s) => s.$ref ?? (s.properties as Record<string, Schema>)._type?.const)).toEqual(
-      ['#/$defs/body.hero', '#/$defs/body.grid', 'section', 'banner'],
-    );
-    // A place with nothing shared has no $defs at all.
-    const flat = blocksSchemaFor(PAGE, {
-      field: 'body',
-      slot: [{ variant: 'grid', slot: 'items' }],
-    });
-    if (!flat.ok) throw new Error(flat.message);
-    expect(flat.schema.$defs).toBeUndefined();
+    // The hero and the grid sit at the top and inside a section: written out in both places.
+    expect(built.schema.$defs).toBeUndefined();
+    expect(JSON.stringify(built.schema)).not.toContain('$ref');
+    expect(JSON.stringify(built.schema).match(/"const":"hero"/g)).toHaveLength(2);
+    expect(JSON.stringify(built.schema).length).toBeLessThanOrEqual(INLINE_SCHEMA_BUDGET);
   });
 
-  it('grows with the blocks of a six-deep catalog, not with the paths through it', () => {
-    // `width` blocks at each of six levels, each one's slot taking every block of the next level:
-    // width^6 paths reach the deepest level, which inlining every occurrence wrote out in full.
-    const layered = (width: number) => {
-      let next: ComponentVariant[] | undefined;
-      for (let level = MAX_BLOCK_DEPTH; level >= 1; level--) {
-        const children = next;
-        next = Array.from({ length: width }, (_, i) => ({
-          apiId: `l${level}b${i}`,
-          name: `Level ${level} block ${i}`,
-          fields: [
-            symbol('title') as FieldDefinition,
-            ...(children
-              ? [
-                  {
-                    apiId: 'inner',
-                    name: 'Inner',
-                    type: 'Array',
-                    items: { type: 'Component', variants: children },
-                  } as FieldDefinition,
-                ]
-              : []),
-          ],
-        }));
-      }
-      return defineContentType({
-        apiId: 'deep',
-        name: 'Deep',
-        displayField: 'title',
-        fields: [
-          symbol('title') as FieldDefinition,
-          {
-            apiId: 'body',
-            name: 'Body',
-            type: 'Array',
-            items: { type: 'Component', variants: next },
-          } as FieldDefinition,
-        ],
-      });
-    };
+  it('grows with the blocks of a wide six-deep catalog, not with the paths through it', () => {
     const measure = (width: number) => {
-      const built = blocksSchemaFor(layered(width), { field: 'body' });
+      const built = blocksSchemaFor(typeWithBlocks({ body: layered(width) }), { field: 'body' });
       if (!built.ok) throw new Error(built.message);
       return { schema: built.schema, bytes: JSON.stringify(built.schema).length };
     };
-    const two = measure(2);
-    const four = measure(4);
+    // width^6 paths reach the deepest level: 729 at width 3, already past the inline budget.
+    const three = measure(3);
+    const six = measure(6);
     // Each block below the top is written once; the top level's blocks occur once, inline.
-    expect(Object.keys(four.schema.$defs as Schema)).toHaveLength(4 * (MAX_BLOCK_DEPTH - 1));
-    // Twice the blocks per level: the shapes double, and each slot lists twice the children. The
-    // paths would grow 64-fold (2^6), and did, inlined.
-    expect(four.bytes / two.bytes).toBeLessThan(4);
-    expect(four.bytes).toBeLessThan(40_000);
+    expect(Object.keys(three.schema.$defs as Schema)).toHaveLength(3 * (MAX_BLOCK_DEPTH - 1));
+    expect(Object.keys(six.schema.$defs as Schema)).toHaveLength(6 * (MAX_BLOCK_DEPTH - 1));
+    // Twice the blocks per level: twice the shapes, each slot listing twice the children. The
+    // paths grow 64-fold (2^6).
+    expect(six.bytes / three.bytes).toBeLessThan(4);
+    expect(six.bytes).toBeLessThan(INLINE_SCHEMA_BUDGET);
     // The deepest blocks hold no slot, and the tree still reads to the bottom.
-    let level = props(inline(four.schema)).blocks as Schema;
+    let level = props(inline(six.schema)).blocks as Schema;
     for (let d = 1; d < MAX_BLOCK_DEPTH; d++) {
       level = props(variantsOf(level)[0]).inner as Schema;
     }
     expect(Object.keys(props(variantsOf(level)[0]))).toEqual(['_type', 'title']);
+  });
+
+  it('names a block’s second shape apart, and each resolves where it sits', () => {
+    // A tile with a slot at the second level, and without one at the sixth: two shapes.
+    const tile = (level: number, children?: ComponentVariant[]) =>
+      level === 2 || level === MAX_BLOCK_DEPTH
+        ? [{ apiId: 'tile', name: 'Tile', fields: [title, ...slotOf(children)] }]
+        : [];
+    const built = blocksSchemaFor(typeWithBlocks({ body: layered(3, undefined, tile) }), {
+      field: 'body',
+    });
+    if (!built.ok) throw new Error(built.message);
+    const defs = Object.keys(built.schema.$defs as Schema);
+    expect(defs).toEqual(expect.arrayContaining(['f4_body__tile', 'f4_body__tile__2']));
+    const tree = inline(built.schema);
+    const second = variant(props(variantsOf(props(tree).blocks)[0]).inner, 'tile');
+    expect(Object.keys(props(second))).toEqual(['_type', 'title', 'inner']);
+    let fifth = variantsOf(props(tree).blocks)[0] as Schema;
+    for (let d = 1; d < MAX_BLOCK_DEPTH - 1; d++)
+      fifth = variantsOf(props(fifth).inner)[0] as Schema;
+    expect(Object.keys(props(variant(props(fifth).inner, 'tile')))).toEqual(['_type', 'title']);
+  });
+
+  it('names shapes with letters, digits and _ only, two fields’ apart even when apiIds hold __', () => {
+    // Joined by __ alone, `a__b` with `c…` and `a` with `b__c…` would name the same shapes.
+    const type = typeWithBlocks({
+      a__b: layered(3, (l, i) => `cL${l}B${i}`),
+      a: layered(3, (l, i) => `b__cL${l}B${i}`),
+    });
+    const first = blocksFieldSchema(type, 'a__b');
+    const second = blocksFieldSchema(type, 'a');
+    const names = [...Object.keys(first?.defs ?? {}), ...Object.keys(second?.defs ?? {})];
+    expect(names).toHaveLength(2 * 3 * (MAX_BLOCK_DEPTH - 1));
+    expect(new Set(names).size).toBe(names.length);
+    for (const name of names) expect(name).toMatch(/^[A-Za-z0-9_]+$/);
+    expect(names).toContain('f4_a__b__cL2B0');
+    expect(names).toContain('f1_a__b__cL2B0');
   });
 
   it('builds a draftable scalar’s schema, and nothing for a field a model doesn’t fill', () => {

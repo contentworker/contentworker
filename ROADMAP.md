@@ -191,9 +191,9 @@ Recovery targets not met yet (`docs/backup-and-restore.md`) and the move to a pr
   here and the private repo calls it, so its runs and artifacts aren't public; the first escrow of
   both environments from there succeeded on 2026-11-07. Left, in order:
   - [ ] Download both escrow generations, check they decrypt, keep them offline and delete the
-        artifacts (`docs/backup-and-restore.md`).
+    artifacts (`docs/backup-and-restore.md`).
   - [ ] Delete this repo's `production` environment and its repository-level edge account secrets,
-        which any branch can read. Nothing reads them since the cutover.
+    which any branch can read. Nothing reads them since the cutover.
   - [ ] Tick this item, and mark the cutover done in the private repo's README.
   - [ ] Provision the demo deployment, still held in the registry.
 
@@ -375,10 +375,10 @@ Built on Blocks and the frontend runtime. Layouts stay a typed tree; rich text s
 - [ ] **Layout model.** Deeper nesting than three levels, and per-breakpoint overrides of token
   props. (Slots, `allowedChildren` and `allowedParents` shipped with blocks from code.) Deeper
   nesting shipped: blocks slots nest six levels (the page's blocks field counting as 1,
-  `MAX_BLOCK_DEPTH`), plain components keep three among themselves, the AI layout schema shares a
-  repeated block shape through `$defs` instead of inlining every path, RAG indexes text at the full
-  depth, and Layers indents half a step past the third level. Per-breakpoint overrides are still to
-  come.
+  `MAX_BLOCK_DEPTH`), plain components keep three among themselves, the AI layout schema stays
+  inline and shares a repeated block shape through `$defs` only past a size budget, RAG indexes
+  text at the full depth, and the admin's blocks trees indent half a step past the third level.
+  Per-breakpoint overrides are still to come.
 - [x] **Blocks from code.** `contentworker blocks push` maps component manifests (JSON data:
   token and enum props, slots with `allowedChildren`, `allowedParents`, aliases for renamed ids,
   thumbnails) to Blocks variants, versioned per environment, over REST, MCP and the management
