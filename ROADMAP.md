@@ -315,7 +315,7 @@ Found while building and reviewing M1 and M2. None blocks a release.
   routes and MCP tools into the use-cases with a required principal, so a new surface can't skip it.
 - [ ] **Admin saves for read-only roles.** The editor sends every field, so a role with
   `readOnlyFields` probably gets a 403 on save. Confirm it, and send only what the role may write.
-- [ ] **Linear email checks.** Replace the quadratic pattern in `isEmail` (`domain/auth/team.ts`) and
+- [x] **Linear email checks.** Replace the quadratic pattern in `isEmail` (`domain/auth/team.ts`) and
   `security/credentials.ts`, as the `email` preset already was.
 - [x] **Role version check.** A `version` on every role and an optional `expectedVersion` on
   `PUT /roles/:id` and `role_update` (a stale one is a `409` naming the version in force), with the

@@ -84,6 +84,30 @@ describe('credentials', () => {
     expect(isEmail('ada@example.com')).toBe(true);
     expect(isEmail('ada@example')).toBe(false);
   });
+
+  it('checks an email in linear time, with the answers the old pattern gave', () => {
+    const before = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    const alphabet = ['a', '@', '.', ' ', '\n', ' '];
+    let strings = [''];
+    for (let length = 0; length <= 6; length++) {
+      for (const s of strings) expect([s, isEmail(s)]).toEqual([s, before.test(s)]);
+      strings = strings.flatMap((s) => alphabet.map((c) => s + c));
+    }
+    for (const [email, expected] of [
+      ['ada.lovelace+cw@mail.example.co.uk', true],
+      ['a@.b.c', true],
+      ['ada@example.', false],
+      ['ada@@example.com', false],
+      ['ada lovelace@example.com', false],
+    ] as const) {
+      expect([email, isEmail(email)]).toEqual([email, expected]);
+    }
+    // A long run of dots that fails at the end took the old pattern about 800 ms at 40,000.
+    const started = performance.now();
+    expect(isEmail(`a@${'.'.repeat(100_000)} `)).toBe(false);
+    expect(isEmail(`a@${'a.'.repeat(50_000)}@`)).toBe(false);
+    expect(performance.now() - started).toBeLessThan(50);
+  });
 });
 
 describe('passwordProblem', () => {
