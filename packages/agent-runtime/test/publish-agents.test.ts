@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Activities, AgentRunResult, PublishAgentsHooks } from '../src/types';
-import { publishAgentsWorkflow } from '../src/workflows';
+import { moderateWorkflow, publishAgentsWorkflow } from '../src/workflows';
 
 const scope = { spaceId: 's', environmentId: 'main' };
 const ZERO = { inputTokens: 0, outputTokens: 0 };
@@ -258,5 +258,28 @@ describe('publishAgentsWorkflow', () => {
       moderate: false,
     });
     expect(recorded.map((r) => r.workflow)).toEqual(['enrich']);
+  });
+});
+
+describe('moderateWorkflow', () => {
+  it('classifies only the fields not denied to the caller, and all of them otherwise', async () => {
+    const texts: string[] = [];
+    const { act } = fakeActivities({
+      loadEntry: async () => ({
+        contentTypeApiId: 'article',
+        displayField: 'title',
+        defaultLocale: 'en-US',
+        textFields: [],
+        fields: { title: { 'en-US': 'T' }, notes: { 'en-US': 'hidden words' } },
+        text: 'T\nhidden words',
+      }),
+      classify: async (_s, text) => {
+        texts.push(text);
+        return { flagged: false, categories: [], usage: ZERO };
+      },
+    });
+    await moderateWorkflow(act, { scope, entryId: 'e1', deniedFields: ['notes'] });
+    await moderateWorkflow(act, { scope, entryId: 'e1' });
+    expect(texts).toEqual(['T', 'T\nhidden words']);
   });
 });

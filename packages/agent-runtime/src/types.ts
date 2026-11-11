@@ -57,6 +57,11 @@ export interface WorkflowInput {
   readonly entryId: string;
   /** When false, enrichment is proposed but not applied (human-in-the-loop). */
   readonly autoApply?: boolean;
+  /**
+   * Fields the caller's role denies (`deniedFieldsFor`): `moderate` classifies the rest only, so
+   * its verdict says nothing about them. Absent for system runs (on publish), which judge it all.
+   */
+  readonly deniedFields?: readonly string[];
 }
 
 /** Structured outcome of one agent run — the audit record. */

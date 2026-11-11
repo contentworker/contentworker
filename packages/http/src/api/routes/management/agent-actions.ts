@@ -18,13 +18,18 @@ export function agentActionsRoutes(deps: AuthDeps): Hono<AuthVars> {
         scopeOf(c),
         c.req.param('id'),
         await parseBody(c, auditBody),
+        { principal: c.get('principal') },
       ),
     ),
   );
   // On-demand moderation: classify the entry's text; a flagged result is a
   // recorded hold (`flagged: true`), not a state change — callers decide.
   app.post(`${BASE}/entries/:id/moderate`, requireScope(SCOPES.contentWrite), async (c) =>
-    c.json(await moderateEntry(actingCtx(ctx, c), agents, scopeOf(c), c.req.param('id'))),
+    c.json(
+      await moderateEntry(actingCtx(ctx, c), agents, scopeOf(c), c.req.param('id'), {
+        principal: c.get('principal'),
+      }),
+    ),
   );
 
   return app;

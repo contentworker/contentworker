@@ -31,6 +31,7 @@ import {
 } from '../src/index';
 
 const scope = { spaceId: 's1', environmentId: 'main' };
+const SYS = { principal: SYSTEM_CALLER } as const;
 
 const field = (apiId: string, over: Partial<FieldDefinition> = {}): FieldDefinition => ({
   apiId,
@@ -162,9 +163,9 @@ describe('conditional field rules in the use-cases', () => {
       fields: { title: { en: 'Flat' } },
     });
     const ai = new StubAIProvider(() => ({ value: 'Ada' }));
-    expect(await issuesOf(autofillField(ctx, ai, scope, entry.id, { field: 'soldTo' }))).toEqual([
-      'soldTo: Cannot autofill a field its rules hide',
-    ]);
+    expect(
+      await issuesOf(autofillField(ctx, ai, scope, entry.id, { field: 'soldTo' }, SYS)),
+    ).toEqual(['soldTo: Cannot autofill a field its rules hide']);
     expect(ai.requests).toHaveLength(0);
   });
 
