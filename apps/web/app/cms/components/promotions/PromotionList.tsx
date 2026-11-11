@@ -11,6 +11,7 @@ import { LoadingStatus, rememberCount, rememberedCount } from '~/cms/components/
 import { Empty, Section } from '~/cms/components/page';
 import { StatusBadge } from '~/cms/components/status';
 import { actorLabel } from '~/cms/lib/authorship';
+import { dateTime, toMs } from '~/cms/lib/format';
 import { apiErrorMessage, isForbidden } from '~/cms/lib/management';
 import { useClient } from '../../lib/client-context';
 import { useScopedQuery } from '../../lib/queries';
@@ -109,7 +110,7 @@ export function PromotionList(props: { onOpen: (id: string) => void }) {
 /**
  * One promotion: the whole row opens its record. Its title is the one button, stretched over the
  * row, so a press anywhere on it, Enter or Space opens it, and its name says which promotion it
- * is (rows can read alike: what it copies, its status and who asked tell them apart).
+ * is (rows can read alike: what it copies, its status, who asked and when tell them apart).
  */
 function Row(props: {
   promotion: Promotion;
@@ -117,7 +118,9 @@ function Row(props: {
   onOpen: (id: string) => void;
 }) {
   const { promotion: p } = props;
-  const name = `Open promotion ${p.source} → ${p.target}, ${copiesLine(p).toLowerCase()}, ${statusWords(p).toLowerCase()}, requested by ${actorLabel(p.requestedBy, props.directory, 'inSentence')}`;
+  // The moment as well: a promotion requested again after one failed reads alike otherwise.
+  const at = toMs(p.createdAt);
+  const name = `Open promotion ${p.source} → ${p.target}, ${copiesLine(p).toLowerCase()}, ${statusWords(p).toLowerCase()}, requested by ${actorLabel(p.requestedBy, props.directory, 'inSentence')}${at ? ` ${dateTime(at)}` : ''}`;
   return (
     <CatalogRow
       className="relative cursor-pointer transition-colors hover:bg-muted"
@@ -140,7 +143,11 @@ function Row(props: {
       meta={
         <span className="flex flex-wrap gap-x-2">
           <span>
-            {actorLabel(p.requestedBy, props.directory)} · <Ago at={p.createdAt} />
+            {actorLabel(p.requestedBy, props.directory)} ·{' '}
+            {/* Over the stretched button, so its full time stays a hover away. */}
+            <span className="relative z-10">
+              <Ago at={p.createdAt} />
+            </span>
           </span>
           <span>{copiesLine(p)}</span>
         </span>

@@ -455,11 +455,14 @@ describe('promotions over MCP', () => {
         }),
       );
 
-    // Partway: the entry's write fails after the checks passed.
-    const partway = await ask([await make('Breaks')]);
+    // Partway: the second entry's write fails once the first has landed.
+    const lands = await make('Lands');
+    const partway = await ask([lands, await make('Breaks')]);
     const create = deps.ctx.store.entries.create.bind(deps.ctx.store.entries);
-    deps.ctx.store.entries.create = async () => {
-      throw new Error('boom');
+    let writes = 0;
+    deps.ctx.store.entries.create = async (...args) => {
+      if (++writes === 2) throw new Error('boom');
+      return create(...args);
     };
     const approved = await grace.callTool({
       name: 'promotion_approve',
@@ -467,7 +470,12 @@ describe('promotions over MCP', () => {
     });
     deps.ctx.store.entries.create = create;
     expect(approved.isError).toBeFalsy();
-    expect(body(approved)).toMatchObject({ status: 'failed', error: 'boom', decidedBy: 'grace' });
+    expect(body(approved)).toMatchObject({
+      status: 'failed',
+      error: 'boom',
+      decidedBy: 'grace',
+      result: { entries: [lands] },
+    });
 
     // Withdrawn: the requester rejects their own.
     const mine = await ask([await make('Second thoughts')]);

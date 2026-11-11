@@ -427,7 +427,7 @@ export async function failStalePromotions(ctx: AppContext): Promise<StalePromoti
  * them), then each entry's pinned version, published when it was live in the source. Then checks
  * the target holds what was pinned. Any failure marks it `failed`, naming the cause; what was
  * applied before the failure stays, like any other edits. A check that stops it before anything
- * is written throws (a refusal); a failure once writing began returns the `failed` record.
+ * is written throws (a refusal); a failure once a write landed returns the `failed` record.
  */
 async function applyPromotion(base: AppContext, promotion: Promotion): Promise<Promotion> {
   if (promotion.status !== 'applying') {
@@ -444,8 +444,8 @@ async function applyPromotion(base: AppContext, promotion: Promotion): Promise<P
     gated: string[];
     blocks?: PromotionResult['blocks'];
   } = { contentTypes: [], entries: [], published: [], gated: [] };
-  // Set once the checks have passed and the first write is under way.
-  let writing = false;
+  // Set once a write has landed in the target: a failure after it leaves something written.
+  let wrote = false;
   const finish = async (patch: {
     status: 'completed' | 'failed';
     result: PromotionResult;
@@ -516,8 +516,6 @@ async function applyPromotion(base: AppContext, promotion: Promotion): Promise<P
     // here rather than after the types are written. (A race after these reads can still stop the
     // apply partway, as it can any promotion; what was applied stays, as for any edits.)
     if (blocks) await checkPromotedCatalog(ctx, target, types, blocks, replaced);
-    // Every check has passed: from here on, a failure may leave something written.
-    writing = true;
     for (const ct of types) {
       await saveContentTypeOver(
         ctx,
@@ -528,11 +526,15 @@ async function applyPromotion(base: AppContext, promotion: Promotion): Promise<P
       // A published definition is saved as published, and the save announces it
       // (`content_type.published`, once): no separate publish.
       result.contentTypes.push(ct.apiId);
+      wrote = true;
     }
     // After the types (a catalog push revises its targets, and finds the promoted ones already
     // matching), before the entries (which may hold blocks only the new catalog adds).
     if (blocks) {
-      await applyPromotedBlocks(ctx, target, blocks, replaced, (done) => (result.blocks = done));
+      await applyPromotedBlocks(ctx, target, blocks, replaced, (done) => {
+        result.blocks = done;
+        if (done.catalog || done.config) wrote = true;
+      });
     }
     // The entries the checks let off go first, and the live ones among them are published as soon
     // as they can be: what the types and the catalog removed is then gone from them before anything
@@ -545,31 +547,34 @@ async function applyPromotion(base: AppContext, promotion: Promotion): Promise<P
       const fields = pinned.get(e.entryId) as EntryFields;
       // The source's pinned version, copied whole (see `EntryWriteOptions.copy`).
       if (await ctx.store.entries.get(target, e.entryId)) {
-        await updateEntry(ctx, target, e.entryId, fields, { copy: true });
+        await named(e.entryId, () => updateEntry(ctx, target, e.entryId, fields, { copy: true }));
       } else {
         // A new entry in the target is the source's, promoted: it keeps who created it and when.
         const from = (await ctx.store.entries.get(source, e.entryId))?.entry;
-        await createEntry(
-          ctx,
-          target,
-          {
-            contentTypeApiId: e.contentTypeApiId,
-            fields,
-            id: e.entryId,
-            ...(from
-              ? {
-                  authorship: {
-                    createdAt: from.createdAt ?? null,
-                    createdBy: from.createdBy ?? null,
-                    firstPublishedAt: from.firstPublishedAt ?? null,
-                  },
-                }
-              : {}),
-          },
-          { copy: true },
+        await named(e.entryId, () =>
+          createEntry(
+            ctx,
+            target,
+            {
+              contentTypeApiId: e.contentTypeApiId,
+              fields,
+              id: e.entryId,
+              ...(from
+                ? {
+                    authorship: {
+                      createdAt: from.createdAt ?? null,
+                      createdBy: from.createdBy ?? null,
+                      firstPublishedAt: from.firstPublishedAt ?? null,
+                    },
+                  }
+                : {}),
+            },
+            { copy: true },
+          ),
         );
       }
       result.entries.push(e.entryId);
+      wrote = true;
     };
     // A gate added since the request: that entry stays a draft, listed, rather than failing the rest.
     const publish = async (e: PromotedEntry) => {
@@ -577,7 +582,7 @@ async function applyPromotion(base: AppContext, promotion: Promotion): Promise<P
         result.gated.push(e.entryId);
         return;
       }
-      await publishEntry(ctx, target, e.entryId);
+      await named(e.entryId, () => publishEntry(ctx, target, e.entryId));
       result.published.push(e.entryId);
     };
     for (const e of first) await write(e);
@@ -612,15 +617,42 @@ async function applyPromotion(base: AppContext, promotion: Promotion): Promise<P
     });
     return await finish({ status: 'completed', result: done });
   } catch (err) {
-    const error = err instanceof Error ? err.message : String(err);
-    const failed = await finish({ status: 'failed', result: { ...result, mismatched: [] }, error });
-    // Stopped by a check, before anything was written: a refusal, said as one (its issues name
-    // what to change), though the record is failed too. Stopped partway: the record is the
-    // answer, naming the cause and what was written, so the request or approval that ran the
-    // apply returns it rather than an error a caller would read as "nothing happened".
-    if (!writing) throw err;
+    const failed = await finish({
+      status: 'failed',
+      result: { ...result, mismatched: [] },
+      error: failureText(err),
+    });
+    // Stopped before anything landed in the target (a check, or the first write refused): a
+    // refusal, said as one with its issues, though the record is failed too. Stopped partway:
+    // the record is the answer, naming the cause and what was written, so the request or approval
+    // that ran the apply returns it rather than an error a caller would read as "nothing happened".
+    if (!wrote) throw err;
     return failed;
   }
+}
+
+/**
+ * Runs one entry's write or publish, naming the entry in a validation refusal's issues: the
+ * failed record keeps only text, and "One or more fields are invalid" says neither which entry nor
+ * what to change.
+ */
+async function named<T>(entryId: string, run: () => Promise<T>): Promise<T> {
+  try {
+    return await run();
+  } catch (err) {
+    if (!(err instanceof ValidationError)) throw err;
+    throw new ValidationError(
+      err.issues.map((i) => ({ ...i, message: `Entry ${entryId}: ${i.message}` })),
+    );
+  }
+}
+
+/** What a failed record says of its cause: a refusal's issues in its own words, else its message. */
+function failureText(err: unknown): string {
+  if (err instanceof ValidationError && err.issues.length > 0) {
+    return err.issues.map((i) => i.message).join('; ');
+  }
+  return err instanceof Error ? err.message : String(err);
 }
 
 /** Whether every entry an entry links to is in the target already, so publishing it now holds. */

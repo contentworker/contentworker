@@ -32,7 +32,8 @@ export function promotionsRoutes(deps: AuthDeps): Hono<AuthVars> {
         'remove blocks, or one the risk check flags waits as `awaiting_approval` for someone ' +
         'else to approve. Omit `contentTypes` and `entries` to promote everything that differs ' +
         '(at most 200 entries), the block catalog and block config included; `blocks: true` ' +
-        'adds them to a selection. A refusal (422, 409, 403) writes nothing. One that applies at ' +
+        'adds them to a selection. A refusal (422, 409, 403) copies nothing (a record, if one was ' +
+        'made, is `failed`). One that applies at ' +
         'once and stops partway answers with its record, `failed`, with the `error` and what it ' +
         'wrote (`result`).',
     }),
@@ -78,7 +79,8 @@ export function promotionsRoutes(deps: AuthDeps): Hono<AuthVars> {
       ok: promotionDocs.promotion,
       description:
         'By someone other than whoever requested it (403 otherwise). A refusal (403, 409, or a ' +
-        '422 from the checks the apply runs first) writes nothing. An apply that stops partway ' +
+        '422 from the checks the apply runs first) copies nothing; after one of those checks the ' +
+        'record is `failed`. An apply that stops partway ' +
         'answers with the record, `failed`, with the `error` and what it wrote (`result`).',
     }),
     requireScope(SCOPES.contentPublish),

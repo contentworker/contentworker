@@ -240,7 +240,7 @@ function Record({ promotion: p }: { promotion: Promotion }) {
         {waiting ? (
           <p className="max-w-measure text-muted-foreground text-sm">
             {mine
-              ? 'You requested it, so someone else approves or rejects it. You can withdraw it.'
+              ? `You requested it, so someone else approves or rejects it.${withdrawable ? ' You can withdraw it.' : ' Withdrawing it takes a role that can publish content, with no content-type or field limits.'}`
               : !access
                 ? null
                 : !rejectable

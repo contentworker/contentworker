@@ -256,6 +256,8 @@ export function PromotionRequest(props: {
                 // record, `failed`, which shows as the answer below instead.
                 title={`Nothing was promoted into ${outcome.target}`}
                 refusal={outcome.refusal}
+                // Some checks run as it applies: one of those leaves the record, `failed`.
+                note="Some checks run as it applies, so Promotions below may list it as failed. Nothing was copied either way."
               />
             ) : null}
             <ConfirmDialog

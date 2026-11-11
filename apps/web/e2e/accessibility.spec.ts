@@ -593,8 +593,9 @@ test('a role’s content access sheet has no accessibility violations', async ({
   await scan(page, testInfo);
 });
 
-// Promotions: a waiting promotion's record (its reasons, the risk check, what it pins), then the
-// Promote card once Compare has listed what differs (the environment selects, the checkbox groups).
+// Promotions: a waiting promotion's record, opened from its row by pointer and by keyboard (its
+// reasons, the risk check, what it pins, Withdraw for its requester), withdrawn, then the Promote
+// card once Compare has listed what differs (the environment selects, the checkbox groups).
 test('a promotion’s record and the Promote card have no accessibility violations', async ({
   page,
   request,
@@ -625,13 +626,42 @@ test('a promotion’s record and the Promote card have no accessibility violatio
   expect(asked.ok(), await asked.text()).toBe(true);
   const { id } = (await asked.json()) as { id: string };
 
-  await openCms(page, `/settings/environments?promotion=${id}`);
+  // The whole row opens the record: a press on its meta line, away from the title, and Enter on
+  // its one button, named for the promotion.
+  await openCms(page, '/settings/environments');
+  const open = page.getByRole('button', {
+    name: new RegExp(
+      `^Open promotion ${env} → main, 1 entry, awaiting approval, requested by you `,
+    ),
+  });
+  const row = page.getByRole('listitem').filter({ has: open });
+  await row.scrollIntoViewIfNeeded();
+  const box = await row.boundingBox();
+  if (!box) throw new Error('the row has no box');
+  // Scrolled in, then pressed on its meta line, past the title: the stretched button takes it.
+  await row.click({ position: { x: box.width * 0.6, y: box.height - 10 } });
   const sheet = page.getByRole('dialog');
   await expect(sheet.getByText('Why it needs approval')).toBeVisible();
-  await scan(page, testInfo);
-
+  await expect(page).toHaveURL(new RegExp(`promotion=${id}`));
   await page.keyboard.press('Escape');
   await expect(sheet).toBeHidden();
+  await open.focus();
+  await page.keyboard.press('Enter');
+  // Its requester's view: Withdraw instead of a decision.
+  await expect(sheet.getByRole('button', { name: 'Withdraw request' })).toBeVisible();
+  await scan(page, testInfo);
+
+  await sheet.getByRole('button', { name: 'Withdraw request' }).click();
+  await expect(sheet.getByText('Withdraw this request?')).toBeVisible();
+  await sheet.getByRole('button', { name: 'Withdraw request' }).click();
+  await expect(sheet.getByText(/^Withdrawn by you,/)).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(sheet).toBeHidden();
+  await expect(
+    page.getByRole('button', {
+      name: new RegExp(`^Open promotion ${env} → main, 1 entry, withdrawn, requested by you `),
+    }),
+  ).toBeVisible();
   await page.getByRole('combobox', { name: 'Source environment to promote from' }).click();
   await page.getByRole('option', { name: env, exact: true }).click();
   // The second Compare: Compare & merge's comes first.

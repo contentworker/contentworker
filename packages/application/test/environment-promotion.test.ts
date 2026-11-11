@@ -451,6 +451,43 @@ describe('promoting content between environments', () => {
     expect(await store.entries.get(qa, a.entry.id)).not.toBeNull();
   });
 
+  it('refuses with the entry named when its first write fails the target’s rules, and records them after one landed', async () => {
+    // qa requires a body; staging doesn't.
+    await createContentType(ctx, SYSTEM_CALLER, qa, note({ required: true }));
+    await publishContentType(ctx, qa, 'note');
+    const make = async (title: string, body?: string) =>
+      (
+        await createEntry(ctx, staging, {
+          contentTypeApiId: 'note',
+          fields: { title: { 'en-US': title }, ...(body ? { body: { 'en-US': body } } : {}) },
+        })
+      ).entry.id;
+    const bare = await make('No body');
+    const full = await make('Body', 'Text');
+
+    // The first write refused: nothing landed, so it is a refusal, naming the entry.
+    const refused = requestPromotion(ctx, ada, spaceId, {
+      source: 'staging',
+      target: 'qa',
+      entries: [bare],
+    });
+    await expect(refused).rejects.toBeInstanceOf(ValidationError);
+    const issues = await refused.catch((e: ValidationError) => e.issues);
+    expect(issues).toEqual([
+      expect.objectContaining({ message: expect.stringMatching(new RegExp(`^Entry ${bare}: `)) }),
+    ]);
+
+    // After one landed: the failed record, its error in the issue's words.
+    const p = await requestPromotion(ctx, ada, spaceId, {
+      source: 'staging',
+      target: 'qa',
+      entries: [full, bare],
+    });
+    expect(p).toMatchObject({ status: 'failed', result: { entries: [full] } });
+    expect(p.error).toMatch(new RegExp(`^Entry ${bare}: `));
+    expect(p.error).not.toBe('One or more fields are invalid');
+  });
+
   it('fails, copying nothing of it, when a content type changed after the request', async () => {
     await createEnvironment(ctx, spaceId, 'slim');
     const slim = { spaceId, environmentId: 'slim' };
@@ -959,12 +996,15 @@ describe('failing a promotion whose apply died partway', () => {
         };
       }
       const outcome = approvePromotion(ctx, grace, spaceId, p.id);
-      // Either way the answer is the record as the sweep left it: failed, in the sweep's words.
-      expect(await outcome).toMatchObject({
-        id: p.id,
-        status: 'failed',
-        error: expect.stringContaining('failed after an hour'),
-      });
+      // Its one write refused, nothing landed: an error. Otherwise the answer is the record as
+      // the sweep left it, failed in the sweep's words.
+      if (fails) await expect(outcome).rejects.toThrow('boom');
+      else
+        expect(await outcome).toMatchObject({
+          id: p.id,
+          status: 'failed',
+          error: expect.stringContaining('failed after an hour'),
+        });
       store.entries.create = create;
       store.promotions.transition = transition;
       expect((await getPromotion(ctx, spaceId, p.id)).status).toBe('failed');

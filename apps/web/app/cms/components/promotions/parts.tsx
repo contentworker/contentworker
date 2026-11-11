@@ -99,6 +99,8 @@ export function RefusalAlert(props: {
   refusal: Refusal;
   /** What to do when the answer never came. */
   unconfirmed?: string;
+  /** A line under the issues. */
+  note?: string;
 }) {
   const { refusal } = props;
   if (refusal.kind === 'unconfirmed') {
@@ -117,6 +119,7 @@ export function RefusalAlert(props: {
         <AlertTitle>{props.title}</AlertTitle>
         <AlertDescription>
           <p>{refusal.message}</p>
+          {props.note ? <p>{props.note}</p> : null}
         </AlertDescription>
       </Alert>
     );
@@ -142,6 +145,7 @@ export function RefusalAlert(props: {
             </ul>
           </div>
         ))}
+        {props.note ? <p>{props.note}</p> : null}
       </AlertDescription>
     </Alert>
   );

@@ -116,21 +116,30 @@ describe('promotions over HTTP', () => {
       headers: admin,
       body: JSON.stringify({ source: 'staging', target: 'qa', contentTypes: ['note'] }),
     });
+    const second = await app.request(`${STAGING}/entries`, {
+      method: 'POST',
+      headers: admin,
+      body: JSON.stringify({ contentTypeApiId: 'note', fields: { title: { 'en-US': 'Two' } } }),
+    });
+    const secondId = ((await second.json()) as { entry: { id: string } }).entry.id;
+    // The second write fails once the first has landed: partway.
     const store = wired.ctx.store;
     const create = store.entries.create.bind(store.entries);
-    store.entries.create = async () => {
-      throw new Error('boom');
+    let writes = 0;
+    store.entries.create = async (...args) => {
+      if (++writes === 2) throw new Error('boom');
+      return create(...args);
     };
     // Into qa, which needs no approval: it applies in the request.
     const res = await app.request('/spaces/s1/promotions', {
       method: 'POST',
       headers: cma,
-      body: JSON.stringify({ source: 'staging', target: 'qa', entries: [entryId] }),
+      body: JSON.stringify({ source: 'staging', target: 'qa', entries: [entryId, secondId] }),
     });
     store.entries.create = create;
     expect(res.status).toBe(201);
     const p = (await res.json()) as P & { error?: string };
-    expect(p).toMatchObject({ status: 'failed', error: 'boom' });
+    expect(p).toMatchObject({ status: 'failed', error: 'boom', result: { entries: [entryId] } });
     const one = await app.request(`/spaces/s1/promotions/${p.id}`, { headers: admin });
     expect(await one.json()).toMatchObject({ status: 'failed', error: 'boom' });
   });

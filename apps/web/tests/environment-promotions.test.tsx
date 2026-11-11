@@ -316,6 +316,9 @@ describe('Requesting a promotion', () => {
     await request();
     const alert = await screen.findByRole('alert');
     expect(within(alert).getByText('Nothing was promoted into main')).toBeTruthy();
+    expect(
+      within(alert).getByText(/may list it as failed\. Nothing was copied either way\./),
+    ).toBeTruthy();
     expect(within(alert).getByText('Content types')).toBeTruthy();
     expect(within(alert).getByText('Entries')).toBeTruthy();
     expect(within(alert).getByText(issues[0]!.message)).toBeTruthy();
@@ -422,7 +425,7 @@ describe('The promotions list', () => {
   it('opens a record from anywhere on its row, by a button that says which promotion it is', async () => {
     setup();
     const open = await screen.findByRole('button', {
-      name: 'Open promotion staging → qa, 1 content type and 2 entries, completed, requested by you',
+      name: /^Open promotion staging → qa, 1 content type and 2 entries, completed, requested by you \w{3} \d/,
     });
     // Stretched over the row, so a press anywhere on it lands on the button.
     expect(open.className).toContain('after:inset-0');
@@ -525,6 +528,19 @@ describe('A promotion’s record', () => {
     expect(within(sheet).getByRole('status').textContent).toBe('Withdrawn');
     const history = within(sheet).getByRole('region', { name: 'History' });
     expect(within(history).getByText('Withdrawn')).toBeTruthy();
+  });
+
+  it('tells a requester who can’t withdraw what withdrawing takes', async () => {
+    setup({
+      url: '/settings/environments?promotion=p-wait',
+      subject: 'usr_other',
+      scopes: ['content:write'],
+    });
+    const sheet = await screen.findByRole('dialog');
+    expect(
+      await within(sheet).findByText(/Withdrawing it takes a role that can publish content/),
+    ).toBeTruthy();
+    expect(within(sheet).queryByRole('button', { name: 'Withdraw request' })).toBeNull();
   });
 
   it('offers no decision to a role that can’t publish, and says why', async () => {
