@@ -1,4 +1,10 @@
-import { ForbiddenError, InvalidStateError, type Principal, SCOPES } from '@contentworker/domain';
+import {
+  ForbiddenError,
+  InvalidStateError,
+  type Principal,
+  SCOPES,
+  ValidationError,
+} from '@contentworker/domain';
 import { FixedClock, InMemoryContentStore, SequenceIdGenerator } from '@contentworker/test-kit';
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
@@ -12,8 +18,10 @@ import {
   publishContentType,
   publishEntry,
   publishRelease,
+  purgeEntry,
   removeEntryFromRelease,
   SYSTEM_CALLER,
+  trashEntry,
 } from '../src/index';
 
 const scope = { spaceId: 'space-1', environmentId: 'main' };
@@ -182,5 +190,98 @@ describe('releases', () => {
     await expect(
       addEntryToRelease(ctx, scope, release.id, { entityId: b.entry.id }),
     ).rejects.toBeInstanceOf(InvalidStateError);
+  });
+});
+
+describe('a release member’s refusal in a field the shipper can’t read', () => {
+  let ctx: AppContext;
+  beforeEach(async () => {
+    ({ ctx } = makeContext());
+    await seedType(ctx);
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
+      apiId: 'story',
+      name: 'Story',
+      displayField: 'title',
+      fields: [
+        {
+          apiId: 'title',
+          name: 'Title',
+          type: 'Symbol',
+          localized: false,
+          required: true,
+          position: 0,
+        },
+        {
+          apiId: 'source',
+          name: 'Source',
+          type: 'Link',
+          localized: false,
+          required: false,
+          position: 1,
+          linkType: 'Entry',
+        },
+      ],
+    });
+    await publishContentType(ctx, scope, 'story');
+  });
+
+  /** A release holding a story whose (denied) `source` links an entry since deleted. */
+  const withDanglingSource = async () => {
+    const source = await draft(ctx, 'Source');
+    const story = await createEntry(ctx, scope, {
+      contentTypeApiId: 'story',
+      fields: {
+        title: { 'en-US': 'Story' },
+        source: { 'en-US': { id: source.entry.id, linkType: 'Entry' } },
+      },
+    });
+    await trashEntry(ctx, scope, source.entry.id);
+    await purgeEntry(ctx, scope, source.entry.id);
+    const release = await createRelease(ctx, scope, { title: 'Launch' });
+    await addEntryToRelease(ctx, scope, release.id, { entityId: story.entry.id });
+    return { releaseId: release.id, sourceId: source.entry.id };
+  };
+  const noSource: Principal = {
+    spaceId: scope.spaceId,
+    kind: 'cma',
+    scopes: [SCOPES.contentPublish],
+    contentGrants: [
+      {
+        contentTypeApiId: 'story',
+        actions: ['read', 'write', 'publish'],
+        deniedFields: ['source'],
+      },
+    ],
+  };
+  const refusal = (p: Promise<unknown>) =>
+    p.then(
+      () => null,
+      (err: unknown) => err,
+    );
+
+  it('is counted, without the field or the link’s target', async () => {
+    const { releaseId, sourceId } = await withDanglingSource();
+    const err = await refusal(publishRelease(ctx, scope, releaseId, { principal: noSource }));
+    expect(err).toBeInstanceOf(ValidationError);
+    const issues = (err as ValidationError).issues;
+    expect(issues).toEqual([expect.objectContaining({ field: '', code: 'hidden', hidden: 1 })]);
+    expect(JSON.stringify(issues)).not.toContain('source');
+    expect(JSON.stringify(issues)).not.toContain(sourceId);
+    // Nothing shipped.
+    expect((await ctx.store.releases.get(scope, releaseId))?.status).toBe('open');
+  });
+
+  it('is named to a shipper who can read the field, and to the scheduler', async () => {
+    const { releaseId, sourceId } = await withDanglingSource();
+    const reads: Principal = {
+      ...noSource,
+      contentGrants: [{ contentTypeApiId: 'story', actions: ['read', 'write', 'publish'] }],
+    };
+    for (const opts of [{ principal: reads }, {}]) {
+      const err = await refusal(publishRelease(ctx, scope, releaseId, opts));
+      expect((err as ValidationError).issues).toEqual([
+        { field: 'source', message: `Linked entry "${sourceId}" does not exist` },
+      ]);
+    }
   });
 });
