@@ -1,10 +1,14 @@
 import {
+  assertWritableFields,
+  authorizeContent,
   canAccessContentType,
   effectivePluginGrant,
+  holdsScope,
   hostAllowed,
   type InstalledPlugin,
   maskDeniedFields,
   normalizeInstalledPlugin,
+  operationGrant,
   type PermissionScope,
   type PluginCapability,
   type Principal,
@@ -25,7 +29,7 @@ import type {
   RemoteFetcher,
 } from '@contentworker/ports';
 import { getAsset, listAssets } from './assets';
-import { type AppContext, withActor } from './context';
+import { type AppContext, type AppOperationRunner, withActor } from './context';
 import { listPublishedEntries } from './delivery';
 import { createEntry, updateEntry } from './entries';
 import { resolveSettingsForPlugin } from './plugin-settings';
@@ -65,6 +69,8 @@ export interface PluginHookOptions {
   readonly onError?: (message: string, detail: unknown) => void;
   /** Per-plugin ceiling on one hook invocation. */
   readonly timeoutMs?: number;
+  /** Ceiling on one operation call. */
+  readonly operationTimeoutMs?: number;
   /**
    * Outbound fetcher backing `network:request`. Absent means the capability is
    * not offered at all, rather than offered and quietly doing nothing.
@@ -109,8 +115,9 @@ function buildCapabilities(
   principal: Principal,
   plugin: InstalledPlugin,
   options: PluginHookOptions,
+  granted: readonly PluginCapability[] = grantOf(plugin),
+  budgetMs?: number,
 ): PluginCapabilities {
-  const granted = grantOf(plugin);
   const allowedHosts = plugin.manifest.allowedHosts;
   const capabilities: PluginCapabilities = {
     // No capability: the plugin's own configuration, set by an operator for this
@@ -138,8 +145,13 @@ function buildCapabilities(
         if (!canAccessContentType(principal, 'read', entry.contentType)) return null;
         return { ...entry, fields: maskDeniedFields(principal, entry.contentType, entry.fields) };
       },
+      // Filtered and masked as `list` is: an operation's principal carries its caller's grants.
       async listPublished(query: Record<string, unknown> = {}) {
-        return listPublishedEntries(ctx, scope, query);
+        const items = await listPublishedEntries(ctx, scope, query);
+        if (!principal.contentGrants) return items;
+        return items
+          .filter((e) => canAccessContentType(principal, 'read', e.contentType))
+          .map((e) => ({ ...e, fields: maskDeniedFields(principal, e.contentType, e.fields) }));
       },
     };
   }
@@ -149,16 +161,24 @@ function buildCapabilities(
   if (has('content:write')) {
     const content = (capabilities.content ?? {}) as Record<string, unknown>;
     // Only the two fields: a plugin can't hand over an entry's id or authorship.
-    content.create = async (input: { contentTypeApiId: string; fields: Record<string, never> }) =>
-      createEntry(asPlugin, scope, {
+    // The use-cases don't check per-type grants (the routes do), so a narrowed principal — an
+    // operation's, carrying its caller's grants — is checked here before every write.
+    content.create = async (input: { contentTypeApiId: string; fields: Record<string, never> }) => {
+      if (principal.contentGrants) {
+        authorizeContent(principal, 'write', input.contentTypeApiId);
+        assertWritableFields(principal, input.contentTypeApiId, input.fields ?? {});
+      }
+      return createEntry(asPlugin, scope, {
         contentTypeApiId: input.contentTypeApiId,
         fields: input.fields,
       });
+    };
     // A narrowed principal reads its entries masked, so its update keeps the fields it may not
     // write rather than saving them erased, and answers masked as its reads do.
     content.update = async (id: string, fields: Record<string, never>) => {
       if (!principal.contentGrants) return updateEntry(asPlugin, scope, id, fields);
       const { contentType } = await getPreviewEntry(ctx, scope, id);
+      authorizeContent(principal, 'write', contentType);
       const saved = await updateEntry(asPlugin, scope, id, fields, {
         unwritable: unwritableFieldsFor(principal, contentType),
       });
@@ -172,7 +192,13 @@ function buildCapabilities(
     // Through the same use-case as the API's publish route; the context a
     // plugin is handed has no hook dispatcher, so this cannot re-enter the
     // plugin chain.
-    content.publish = async (id: string) => publishEntry(asPlugin, scope, id);
+    content.publish = async (id: string) => {
+      if (principal.contentGrants) {
+        const { contentType } = await getPreviewEntry(ctx, scope, id);
+        authorizeContent(principal, 'publish', contentType);
+      }
+      return publishEntry(asPlugin, scope, id);
+    };
     capabilities.content = content;
   }
 
@@ -188,7 +214,10 @@ function buildCapabilities(
   }
 
   if (has('network:request') && options.fetcher) {
-    capabilities.network = networkCapability(options.fetcher, allowedHosts, options);
+    const deadline = budgetMs === undefined ? undefined : ctx.clock.now().getTime() + budgetMs;
+    capabilities.network = networkCapability(options.fetcher, allowedHosts, options, () =>
+      deadline === undefined ? undefined : deadline - ctx.clock.now().getTime(),
+    );
   }
 
   if (has('taxonomy:read')) {
@@ -242,6 +271,8 @@ function networkCapability(
   fetcher: RemoteFetcher,
   allowedHosts: readonly string[],
   options: PluginHookOptions,
+  /** What is left of the invocation's budget, in ms; undefined when unbounded. */
+  remaining: () => number | undefined,
 ) {
   return {
     async fetch(url: unknown) {
@@ -254,14 +285,24 @@ function networkCapability(
       if (!hostAllowed(allowedHosts, host)) {
         throw new Error(`"${host}" is not in this plugin's allowed hosts`);
       }
+      // A fetch never outlives the invocation that made it: the host stops waiting for the plugin
+      // at its budget, so a fetch past it would only spend time nobody reads.
+      const left = remaining();
+      if (left !== undefined && left <= 0) throw new Error('fetch: the time budget is spent');
+      const cap = options.networkTimeoutMs ?? PLUGIN_FETCH_TIMEOUT_MS;
       const doc = await fetcher.get(url, {
         maxBytes: options.networkMaxBytes ?? PLUGIN_FETCH_MAX_BYTES,
-        timeoutMs: options.networkTimeoutMs ?? PLUGIN_FETCH_TIMEOUT_MS,
+        timeoutMs: left === undefined ? cap : Math.min(cap, left),
       });
       return { status: doc.status, contentType: doc.contentType, body: doc.body };
     },
   };
 }
+
+/** A hook's budget when none is given; the sandbox runtime's default ceiling is the same. */
+export const PLUGIN_HOOK_TIMEOUT_MS = 2_000;
+/** An operation's budget when none is given; the sandbox runtime's default ceiling is the same. */
+export const PLUGIN_OPERATION_TIMEOUT_MS = 10_000;
 
 /** Bounds on one plugin fetch: a plugin holds up an editor's save. */
 export const PLUGIN_FETCH_MAX_BYTES = 512 * 1024;
@@ -352,6 +393,8 @@ export function createPluginHookDispatcher(
           options.principal ?? derivePrincipal(plugin, scope.spaceId),
           plugin,
           options,
+          grantOf(plugin),
+          options.timeoutMs ?? PLUGIN_HOOK_TIMEOUT_MS,
         ),
       );
     } catch (err) {
@@ -363,4 +406,53 @@ export function createPluginHookDispatcher(
       return null;
     }
   }
+}
+
+/**
+ * Runs plugin operations: the same capability objects a hook gets, built for a grant narrowed to
+ * the caller ({@link operationGrant}) and a principal holding only the scopes that grant implies,
+ * under the caller's content grants. So an operation can do no more than the plugin was approved
+ * for, and no more than the person or agent who called it.
+ */
+export function createPluginOperationRunner(
+  ctx: AppContext,
+  blob: BlobStore,
+  runtime: PluginRuntime,
+  options: PluginHookOptions = {},
+): AppOperationRunner | undefined {
+  const runOperation = runtime.runOperation?.bind(runtime);
+  if (!runOperation) return undefined;
+  return {
+    async run(plugin, operation, input, scope, caller) {
+      const granted = operationGrant(grantOf(plugin), (s) => holdsScope(caller.scopes, s));
+      const scopes = new Set<PermissionScope>();
+      for (const capability of granted) {
+        const s = scopeForCapability(capability);
+        if (s) scopes.add(s);
+      }
+      const principal: Principal = {
+        spaceId: scope.spaceId,
+        kind: 'cma',
+        scopes: [...scopes],
+        ...(caller.contentGrants ? { contentGrants: caller.contentGrants } : {}),
+      };
+      const { bundle } = await loadPluginBundle(ctx, blob, scope.spaceId, plugin.id);
+      const budget = options.operationTimeoutMs ?? PLUGIN_OPERATION_TIMEOUT_MS;
+      return runOperation(
+        {
+          pluginId: plugin.id,
+          bundle,
+          entrypoint: plugin.manifest.entrypoint,
+          checksum: plugin.checksum,
+          operation: operation.name,
+          input,
+          capabilities: granted,
+          allowedHosts: plugin.manifest.allowedHosts,
+          timeoutMs: budget,
+          scope,
+        },
+        buildCapabilities(ctx, scope, principal, plugin, options, granted, budget),
+      );
+    },
+  };
 }

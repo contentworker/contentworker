@@ -1,4 +1,4 @@
-import type { DeliveredEntry, DeliveryClient, Fields } from '@contentworker/sdk-core';
+import type { DeliveredEntry, DeliveryClient, EntryQuery, Fields } from '@contentworker/sdk-core';
 
 /**
  * Key-value persistence the offline client writes through. Matches React
@@ -29,7 +29,7 @@ export interface OfflineOptions {
   readonly storage: Storage;
   readonly contentType: string;
   readonly locale?: string;
-  /** Page size for the sync fetch loop. */
+  /** Page size for the sync fetch loop, held to 1..100 as the server holds it. */
   readonly pageSize?: number;
 }
 
@@ -44,10 +44,14 @@ export interface SyncResult {
  * them locally, and advances the cursor; `get`/`list` read from local storage so
  * the app works offline. (Deletion tracking would need a server tombstone feed —
  * unpublished entries are not removed locally yet.)
+ *
+ * Over a preview client every sync reads the whole type again: Preview ignores `since` and its
+ * entries carry no `publishedAt` to advance the cursor by.
  */
 export function createOfflineDelivery<F extends Fields = Fields>(opts: OfflineOptions) {
   const { client, storage, contentType, locale } = opts;
-  const pageSize = opts.pageSize ?? 100;
+  // A page larger than the server serves would read as the last one and drop the rest.
+  const pageSize = Math.min(Math.max(1, Math.trunc(opts.pageSize ?? 100)), 100);
   const entryKey = (id: string) => `contentworker:entry:${contentType}:${id}`;
   const indexKey = `contentworker:index:${contentType}`;
   const cursorKey = `contentworker:cursor:${contentType}`;
@@ -62,16 +66,13 @@ export function createOfflineDelivery<F extends Fields = Fields>(opts: OfflineOp
     async sync(): Promise<SyncResult> {
       const since = (await storage.getItem(cursorKey)) ?? undefined;
       const fetched: DeliveredEntry<F>[] = [];
-      for (let skip = 0; ; skip += pageSize) {
-        const { items } = await client.listEntries<F>({
-          contentType,
-          locale,
-          since,
-          limit: pageSize,
-          skip,
-        });
-        fetched.push(...items);
-        if (items.length < pageSize) break;
+      for await (const entry of entries<F>(client, {
+        contentType,
+        locale,
+        since,
+        limit: pageSize,
+      })) {
+        fetched.push(entry);
       }
 
       const index = new Set(await readIndex());
@@ -79,7 +80,10 @@ export function createOfflineDelivery<F extends Fields = Fields>(opts: OfflineOp
       for (const entry of fetched) {
         await storage.setItem(entryKey(entry.id), JSON.stringify(entry));
         index.add(entry.id);
-        if (!cursor || entry.publishedAt > cursor) cursor = entry.publishedAt;
+        // A preview entry has no publishedAt: it never moves the cursor.
+        if (entry.publishedAt && (!cursor || entry.publishedAt > cursor)) {
+          cursor = entry.publishedAt;
+        }
       }
       await storage.setItem(indexKey, JSON.stringify([...index]));
       if (cursor) await storage.setItem(cursorKey, cursor);
@@ -115,3 +119,33 @@ export function createOfflineDelivery<F extends Fields = Fields>(opts: OfflineOp
 export type OfflineDelivery<F extends Fields = Fields> = ReturnType<
   typeof createOfflineDelivery<F>
 >;
+
+/**
+ * Every entry the query matches. Delivery pages by offset, a preview client by cursor, and the
+ * client knows which; a client without `iterateEntries` (hand-written, or older) is paged here,
+ * following `nextCursor` when it answers one and `skip` otherwise.
+ */
+async function* entries<F extends Fields>(
+  client: DeliveryClient,
+  q: EntryQuery & { limit: number },
+): AsyncGenerator<DeliveredEntry<F>, void, undefined> {
+  if (client.iterateEntries) {
+    yield* client.iterateEntries<F>(q);
+    return;
+  }
+  const seen = new Set<string>();
+  let cursor: string | undefined;
+  for (let skip = 0; ; ) {
+    const page = await client.listEntries<F>(cursor ? { ...q, cursor } : { ...q, skip });
+    yield* page.items;
+    if (page.nextCursor) {
+      if (seen.has(page.nextCursor)) throw new Error(`Cursor ${page.nextCursor} came back twice`);
+      seen.add(page.nextCursor);
+      cursor = page.nextCursor;
+    } else if (cursor || page.items.length < q.limit) {
+      return;
+    } else {
+      skip += q.limit;
+    }
+  }
+}

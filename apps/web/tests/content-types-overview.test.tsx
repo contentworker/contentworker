@@ -121,7 +121,8 @@ describe('content types overview', () => {
     });
 
     it('never says so when the draft saved and only its publish was refused', async () => {
-      client.saveContentType.mockResolvedValueOnce(undefined);
+      // The api answers a save with the type as stored.
+      client.saveContentType.mockResolvedValueOnce(type('article', 'Article', 'draft'));
       client.publishContentType.mockRejectedValueOnce(
         new ApiError(422, 'POST → 422', { error: { message: 'Entries would break' } }),
       );

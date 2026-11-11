@@ -452,6 +452,12 @@ a deploy and after a rollback. A `detail` that isn't valid JSON indexes only its
 failing the append. The migration backfills the rows already written. Nothing deletes from it, as
 nothing deletes audit history; deleting an environment leaves it.
 
+`0041_role_versions.sql` adds `roles.version` (integer, default 1, not null), so every existing
+role reads as version 1. Each save writes the next version while the row is at the one before (the
+compare-and-set `PUT /spaces/:space/roles/:id` rides with, and its optional `expectedVersion` is
+checked against). Code deployed before it never names the column: its upsert keeps the version a
+row has, and a role it creates starts at 1.
+
 `0039_promotion_blocks.sql` adds the nullable `environment_promotions.blocks`, the block catalog
 and config a promotion copies as JSON (`{ catalogVersion, configVersion, targetCatalogVersion,
 targetConfigVersion }`, the source's and the target's versions when it was requested). No backfill:

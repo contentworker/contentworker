@@ -38,8 +38,15 @@ const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? o
 /** A fresh entry snapshot, so expressions after this node see what it changed. */
 const fresh = (i: ExecInput) => loadRunEntry(i.ctx, i.scope, i.entryId);
 
-/** Very small address check: something@something.tld, no spaces. */
-const EMAIL_RE = /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/;
+/**
+ * Very small address check: something@something.tld, no spaces or angle brackets. Linear, as
+ * `isEmail` is: a recipient can be interpolated from run data, so a single pattern whose domain
+ * run competed with the dot would be quadratic on a long run of dots.
+ */
+function isAddress(email: string): boolean {
+  if (!/^[^\s@<>]+@[^\s@<>]+$/.test(email)) return false;
+  return email.slice(email.indexOf('@') + 2, -1).includes('.');
+}
 
 export const CONTENT_EXECUTORS: Record<string, Exec> = {
   'content.validate': async (i) => {
@@ -352,7 +359,7 @@ export const CONTENT_EXECUTORS: Record<string, Exec> = {
       .flatMap((t) => interpolate(t, i.run).split(','))
       .map((t) => t.trim())
       .filter(Boolean);
-    const bad = to.filter((t) => !EMAIL_RE.test(t));
+    const bad = to.filter((t) => !isAddress(t));
     if (!to.length || bad.length) {
       return { failed: `Notify: not an email address: ${bad.join(', ') || '(none)'}` };
     }

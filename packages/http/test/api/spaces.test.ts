@@ -105,7 +105,7 @@ describe('POST /spaces', () => {
   });
 
   it('refuses a signed-in member, even one who administers a space’s team', async () => {
-    await addMember(wired.ctx, 's1', { email: 'member@example.com', role: 'admin' });
+    await addMember(wired.ctx, 's1', { email: 'member@example.com', role: 'admin' }, 'system');
     await findMemberForSignIn(wired.ctx, 's1', 'usr_member', 'member@example.com');
     const res = await create(await signed('member', 'POST', '/spaces'), {
       spaceId: 'mine',

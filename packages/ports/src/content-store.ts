@@ -1258,8 +1258,11 @@ export interface OAuthGrantRepo {
 /** Custom roles (granular RBAC) — space-scoped, referenced by API keys. */
 export interface RoleRepo {
   /**
-   * Creates or replaces (by id) a role. A second role with the same `preset` in a space is
-   * refused (the adapter's unique index), so racing seeds can't duplicate a preset.
+   * Writes `role` at its version. Version 1 creates it: refused when the id is taken, or when the
+   * space already has a role with the same `preset` (the adapter's unique index), so racing seeds
+   * can't duplicate a preset. A later version replaces it only while the stored one is at the
+   * version before. A lost race is a `TransactionConflictError` (at commit, inside a unit; thrown
+   * outside one).
    */
   save(role: Role): Promise<void>;
   get(spaceId: string, id: string): Promise<Role | null>;
@@ -1396,6 +1399,8 @@ export interface ContentStoreTx {
   readonly blockCatalogs: BlockCatalogRepo;
   /** A config is written at its version's compare-and-set. */
   readonly blockConfigs: BlockConfigRepo;
+  /** A role is replaced at its version's compare-and-set. */
+  readonly roles: Pick<RoleRepo, 'save'>;
   readonly bulkJobs: BulkJobRepo;
   /** Run and task rows change in the same transaction as the outbox events they announce. */
   readonly workflowRuns: WorkflowRunRepo;

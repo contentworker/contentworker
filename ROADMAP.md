@@ -118,17 +118,23 @@ Everything below is built and tested on v2.
   per version today) and identical bodies can share an object.
 - [ ] **Required plugins.** A per-plugin `required` flag so a plugin whose refusal is load-bearing
   blocks the write when it throws or times out, instead of being skipped.
-- [ ] **Refuse a stale content-type save.** A save sends every detail field, so a dialog opened
-  before someone else's save overwrites it (`group`, `description`, `agentInstructions`). Check
-  the type the caller read against the stored one and answer `409` when it changed, on both
-  surfaces.
+- [x] **Refuse a stale content-type save.** A save sends every detail field, so a dialog opened
+  before someone else's save overwrote it (`group`, `description`, `agentInstructions`). A save
+  now carries the `expectedVersion` it read (REST, MCP, the management SDK and `model apply`) and
+  is refused with a `409` naming the stored version when it changed; the admin's dialog keeps the
+  edits and offers to load the latest or copy them.
 - [ ] **Extension runtime: apps as packages.** Grow sandboxed plugins into installable packages
   that bring their own operations, workflow nodes, content types and admin UI, so integrations
   ship as packages on the runtime rather than in core. Seven PRs, each usable on its own:
   1. ~~**Asset scopes.**~~ Shipped: `assets:read` and `assets:write`, implied by `preview:read`
      and `content:write` when scopes resolve, so no stored key, role or token changes.
   2. **Manifest v2 and operations.** Schema validation, the approval screen, sync operations, and
-     REST, OpenAPI and MCP generated from one manifest.
+     REST, OpenAPI and MCP generated from one manifest. Shipped: manifest v2 with typed sync
+     operations (`app_operations_list`, `app_operation_invoke`, `POST …/apps/:plugin/operations/:op`,
+     a per-space OpenAPI document), run with the plugin's grant narrowed to the caller's, and a
+     hook's fetch capped at its remaining budget. Still planned: `async` operations on a durable
+     workflow returning a job id, and deployment-level connections with host-managed token
+     exchange (`caps.connection.fetch`).
   3. **Content models from packages.** Managed and seeded types with an owner, install and upgrade
      with a compatibility check; uninstall leaves every entry in place.
   4. **Workflow nodes.** App node types (`app:<package>/<node>`), the `poll` result, `external`
@@ -308,17 +314,18 @@ Found while building and reviewing M1 and M2. None blocks a release.
   again before each chunk, so a trash or purge job stops when its starter loses access.
 - [ ] **Audit promotion and cross-space clone.** Check both against per-type and field rules, as
   imports, snapshots and merge now are.
-- [ ] **Delegated bearers and people.** Refuse invitations and member role changes from personal
+- [x] **Delegated bearers and people.** Refuse invitations and member role changes from personal
   access tokens and OAuth tokens, so a short-lived token can't create a lasting admin.
 - [ ] **Environment-wide checks in the use-cases.** Move `authorizeEveryContentType` from the HTTP
   routes and MCP tools into the use-cases with a required principal, so a new surface can't skip it.
 - [ ] **Admin saves for read-only roles.** The editor sends every field, so a role with
   `readOnlyFields` probably gets a 403 on save. Confirm it, and send only what the role may write.
-- [ ] **Linear email checks.** Replace the quadratic pattern in `isEmail` (`domain/auth/team.ts`) and
+- [x] **Linear email checks.** Replace the quadratic pattern in `isEmail` (`domain/auth/team.ts`) and
   `security/credentials.ts`, as the `email` preset already was.
-- [ ] **Role version check.** A revision on `PUT /roles/:id`, closing the last read-then-write window
-  in the Access sheet.
-- [ ] **SDK paging.** `entries.list` sends `skip`, which the Preview list refuses; use `cursor` and
+- [x] **Role version check.** A `version` on every role and an optional `expectedVersion` on
+  `PUT /roles/:id` and `role_update` (a stale one is a `409` naming the version in force), with the
+  save a compare-and-set on it, so the Access sheet's save can't undo someone else's.
+- [x] **SDK paging.** `entries.list` sends `skip`, which the Preview list refuses; use `cursor` and
   return `nextCursor`.
 - [ ] **Flaky browser tests.** Find the cause of the webhook dialog, webhook deliveries and asset
   library tests that fail under a full parallel run and pass alone.

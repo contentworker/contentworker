@@ -9,12 +9,12 @@ outcome.
 | | Runs | Can change a write | Where |
 | --- | --- | --- | --- |
 | **Function** | Your server, after an event | No | Settings → Functions |
-| **Plugin** | ContentWorker's sandbox, inside a write | Yes: rewrite, validate or refuse | Settings → Plugins |
+| **Plugin** | ContentWorker's sandbox, inside a write or when called by name | Yes: rewrite, validate or refuse; operations run on request | Settings → Plugins |
 | **App extension** | Your page, in the editor | Edits a field value in the browser | Settings → App extensions |
 
 Pick a [webhook](/guides/webhooks/) or a function to react to something that already happened. A
 function is the lighter form: a URL and an event pattern, with no signature, headers or delivery
-log. Pick a plugin to validate, normalize or veto content before it is saved. Pick an app
+log. Pick a plugin to validate, normalize or veto content before it is saved, or to offer API clients and agents a named call (an operation). Pick an app
 extension to give editors a custom input or a sidebar panel.
 
 ## Before you start
@@ -93,7 +93,7 @@ them is refused.
 | `asset:beforeCreate` | Before an upload URL is issued | Yes | Yes |
 
 Plugins on one hook run in order, each seeing the previous one's changes; the first refusal wins.
-A plugin that throws, times out (2 seconds by default) or fails its checksum check is skipped and
+A plugin that throws, times out (2 seconds by default; a `fetch` it makes can't outlast that) or fails its checksum check is skipped and
 the write goes ahead, so a broken plugin never makes a space read-only.
 
 ```js
@@ -110,6 +110,55 @@ Return nothing to pass the entry through, `{ payload }` to replace it (only wher
 rewrite), or `{ veto: { reason } }` to refuse. Validating an entry without saving it runs only
 plugins that hold no capabilities; the others are listed in `skippedHooks`.
 
+### Call a plugin's operations
+
+A plugin whose manifest declares `"manifestVersion": 2` can offer **operations**: named calls with a
+typed input and, optionally, a typed output. Each operation declares the scope a caller must hold
+(`requires`), so listing and calling show a key only what its scopes allow. A plugin that gains an
+operation, or changes the scope one requires, on upgrade lands disabled until you enable it again.
+
+```sh
+# What can this key call?
+curl -s "$API/spaces/$SPACE/environments/main/apps/operations" \
+  -H "Authorization: Bearer $KEY"
+
+# Call one: the body is the operation's input
+curl -s -X POST "$API/spaces/$SPACE/environments/main/apps/com.example.seo/operations/scoreEntry" \
+  -H "Authorization: Bearer $KEY" -H 'content-type: application/json' \
+  -d '{ "entryId": "01J..." }'
+```
+
+The answer is `{ "output": … }`. `403` means the key lacks the operation's scope, `404` that the
+operation doesn't exist or its plugin is disabled, and `422` that the input doesn't match the
+declared schema. `502` means the plugin failed: it threw, ran past 10 seconds or answered outside its
+output schema. Input and output are JSON of at most 64 KiB.
+
+An operation runs with the plugin's approved capabilities narrowed to the caller's scopes: a plugin
+that can write content can't write for a key that can't. `network:request` and `kv:storage` stay,
+within the plugin's allowed hosts and its own keys. The plugin implements
+`runOperation(name, input, caps)` on its `Plugin` class:
+
+```js
+export class Plugin {
+  async runOperation(name, input, caps) {
+    if (name === 'scoreEntry') {
+      const entry = await caps.content.get(input.entryId);
+      return { score: Math.min(100, (entry.fields?.title?.['en-US'] ?? '').length) };
+    }
+    throw new Error(`unknown operation ${name}`);
+  }
+}
+```
+
+Input and output schemas use a small JSON Schema subset: `object`, `array`, `string`, `number`,
+`integer` and `boolean`, closed objects, at most 8 levels deep, and at most 32 operations per
+plugin. `GET /spaces/:space/apps/openapi.json` returns an OpenAPI 3.1 document for the operations
+the key may call, for generating a client. Operations run synchronously; long-running (asynchronous)
+operations are planned.
+
+The [MCP server](/guides/mcp/) has `app_operations_list` and `app_operation_invoke`, which need no
+scope of their own: each operation's scope is checked when it is called.
+
 ## Manage plugins
 
 Each installed plugin in the list shows whether it is **Running** or **Disabled**, the hooks it
@@ -123,7 +172,7 @@ runs on and its access. The row's actions:
   show only as set or not set; a save is refused with a 409 if someone changed the settings since
   you opened them.
 - **Upgrade…** takes a new manifest and bundle. A version asking for a capability the installed one
-  never did needs fresh approval and lands disabled, and the installed version keeps running on
+  never did, or offering a new operation, needs fresh approval and lands disabled, and the installed version keeps running on
   its old grant meanwhile.
 - **Uninstall** removes the plugin, its settings and its stored keys.
 

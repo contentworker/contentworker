@@ -138,9 +138,10 @@ describe('the asset library over HTTP', () => {
     const list = async (qs: string) =>
       json<{ items: AssetBody[] }>(await app.request(`${M}/assets?${qs}`, { headers: cpa }));
 
+    // Both match; the two uploads can share a millisecond, so their order is not the point here.
     expect(
-      (await list(`contentHash=${hash}&sort=createdAt&order=asc`)).items.map((x) => x.id),
-    ).toEqual([a.id, b.id]);
+      (await list(`contentHash=${hash}&sort=createdAt&order=asc`)).items.map((x) => x.id).sort(),
+    ).toEqual([a.id, b.id].sort());
     // Hex in either case, as ingest writes it in lower case.
     expect((await list(`contentHash=${hash.toUpperCase()}`)).items).toHaveLength(2);
     expect((await list(`contentHash=${'cd'.repeat(32)}`)).items).toEqual([]);

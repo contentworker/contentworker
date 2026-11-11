@@ -54,7 +54,8 @@ export function registerInviteTools(server: McpServer, t: ToolContext): void {
         'Returns the link once (`url`, `token`): hand it to the person; it is also emailed when ' +
         'the deployment sends email. It works once, for 1–30 days (7 by default). Deployment ' +
         'administrators only, and only for roles you hold yourself; the admin role only from a ' +
-        'person signed in to the admin, never a root token.',
+        'person signed in to the admin, never a root token. Refused to a personal access token ' +
+        'or OAuth token, as is resending one.',
       inputSchema: toolSchema('invite_create', () =>
         z.object({
           email: z.string().min(3).max(320),

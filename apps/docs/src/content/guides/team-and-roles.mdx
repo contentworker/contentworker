@@ -99,6 +99,11 @@ A role can be named by id or by preset (`viewer`, `approver`, `editor`, `manager
 roles are created and edited at `/spaces/{space}/roles`; see [Roles](/guides/api-keys/#roles). The
 MCP server has `role_presets_list`, `team_list` and `role_preset_assign`.
 
+Giving someone access is a person's act. A personal access token or an app connected with OAuth
+gets a 403 adding a person, changing a person's role, turning someone back on, widening a role
+someone holds, turning off `ssoOnly` or creating or resending an invitation, whatever its scopes:
+sign in to the admin to do those. A token can still rename, turn off or remove a person.
+
 ## The last administrator
 
 A space that has an administrator always keeps one. The last one can't be demoted, turned off,

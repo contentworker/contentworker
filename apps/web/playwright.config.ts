@@ -56,7 +56,7 @@ const DEVICES_IN_PART = DEVICES.filter((project) => !PART || partOf(project).inc
 const CMS_SPECS =
   PART === 'axe'
     ? AXE
-    : /(cms|workflows|space-access|first-space|block-patch-card|accessibility|contrast-settle|modal-focus|live-preview|canvas-editor|canvas-drag|locked-regions|entry-save-conflict|block-config-code)\.spec\.ts/;
+    : /(cms|workflows|space-access|first-space|block-patch-card|accessibility|contrast-settle|modal-focus|live-preview|canvas-editor|canvas-drag|locked-regions|entry-save-conflict|role-save-conflict|block-config-code)\.spec\.ts/;
 const COWORKER = /@coworker/;
 
 export default defineConfig({
@@ -86,6 +86,8 @@ export default defineConfig({
         'modals-phone.spec.ts',
         // The rules' diff is one column on a phone.
         'block-config-code.spec.ts',
+        // The Access sheet comes from the bottom: its conflict and reload in reach.
+        'role-save-conflict.spec.ts',
       ],
       use: { ...devices['iPhone 15'] },
     },

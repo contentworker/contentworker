@@ -106,15 +106,23 @@ export function contentTypesRoutes(deps: AuthDeps): Hono<AuthVars> {
       body: contentTypeBody,
       ok: contentTypeDocs.contentType,
       status: 201,
+      description:
+        'Creates the type, or revises the one with this `apiId` (a new draft version). A save ' +
+        'sends the whole definition, so pass the `version` it was edited from as ' +
+        '`expectedVersion`: 409 `conflict` when the stored type is at another (details name ' +
+        'the stored `version`, 0 when there is none), and nothing is saved. 409 too when a ' +
+        'revision removes a field or block variant entries still hold.',
     }),
     requireScope(SCOPES.contentManage),
     async (c) => {
+      const { expectedVersion, ...draft } = await parseBody(c, contentTypeBody);
       const ct = await createContentType(
         ctx,
         // A preview URL decides where the type's preview tokens go: read on the type is needed too.
         c.get('principal'),
         scopeOf(c),
-        (await parseBody(c, contentTypeBody)) as unknown as Parameters<typeof createContentType>[3],
+        draft as unknown as Parameters<typeof createContentType>[3],
+        expectedVersion === undefined ? {} : { expectedVersion },
       );
       return c.json(ct, 201);
     },

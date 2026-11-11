@@ -4,7 +4,7 @@ import { Hono } from 'hono';
 import { type AuthDeps, type AuthVars, requireScope } from '../../auth';
 import { doc } from '../../docs/openapi';
 import * as roleDocs from '../../docs/schemas/roles';
-import { parseBody, roleBody } from '../../validation';
+import { parseBody, roleBody, roleUpdateBody } from '../../validation';
 
 const GRANT_RULES =
   'Each content grant lists `read`, `write` and `publish`. `delete` (trash and purge) comes with ' +
@@ -43,8 +43,13 @@ export function rolesRoutes(deps: AuthDeps): Hono<AuthVars> {
   app.put(
     '/spaces/:space/roles/:id',
     doc('Roles & permissions', 'Replace a role', {
-      description: `Keys and people holding it pick the change up live. ${GRANT_RULES}`,
-      body: roleBody,
+      description:
+        'Keys and people holding it pick the change up live; the role is saved as its next ' +
+        '`version`. 409 (naming the `version` in force) when `expectedVersion` is stale or another ' +
+        'save commits first; without `expectedVersion` it saves over whatever is stored. An OAuth ' +
+        'or personal access token widening a role an active key or a person holds (403) and leaving the space ' +
+        `with no administrator (409 \`last_admin\`) are refused before a stale version. ${GRANT_RULES}`,
+      body: roleUpdateBody,
       ok: roleDocs.role,
     }),
     requireScope(SCOPES.spaceAdmin),
@@ -54,8 +59,8 @@ export function rolesRoutes(deps: AuthDeps): Hono<AuthVars> {
           ctx,
           c.req.param('space'),
           c.req.param('id'),
-          await parseBody(c, roleBody),
-          deps.accessPolicy,
+          await parseBody(c, roleUpdateBody),
+          deps.accessPolicy ?? { sso: false },
           c.get('principal'),
         ),
       ),

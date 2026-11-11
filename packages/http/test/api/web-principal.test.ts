@@ -105,7 +105,7 @@ describe('the web principal (x-cw-principal)', () => {
         },
       });
     expect(((await (await asMember()).json()) as { items: unknown[] }).items).toEqual([]);
-    await addMember(ctx, 's1', { email: 'member@example.com', role: 'viewer' });
+    await addMember(ctx, 's1', { email: 'member@example.com', role: 'viewer' }, 'system');
     await findMemberForSignIn(ctx, 's1', 'usr_member', 'member@example.com');
     const items = ((await (await asMember()).json()) as { items: { id: string }[] }).items;
     expect(items.map((i) => i.id)).toEqual(['s1']);
@@ -121,8 +121,8 @@ describe('the web principal (x-cw-principal)', () => {
       scopes: ['content:write', 'content:publish', 'preview:read'],
       contentGrants: [{ contentTypeApiId: 'post', actions: ['read', 'write', 'publish'] }],
     } as Parameters<typeof createRole>[2]);
-    await addMember(ctx, 's1', { email: 'member@example.com', role: limited.id });
-    await addMember(ctx, 's2', { email: 'member@example.com', role: 'editor' });
+    await addMember(ctx, 's1', { email: 'member@example.com', role: limited.id }, 'system');
+    await addMember(ctx, 's2', { email: 'member@example.com', role: 'editor' }, 'system');
     await findMemberForSignIn(ctx, 's1', 'usr_member', 'member@example.com');
     await findMemberForSignIn(ctx, 's2', 'usr_member', 'member@example.com');
     const me = async (space: string, who: 'admin' | 'member' = 'member') => {
@@ -158,7 +158,7 @@ describe('the web principal (x-cw-principal)', () => {
         { contentTypeApiId: '*', actions: ['read', 'write'] },
       ],
     } as Parameters<typeof createRole>[2]);
-    await addMember(ctx, 's1', { email: 'member@example.com', role: locker.id });
+    await addMember(ctx, 's1', { email: 'member@example.com', role: locker.id }, 'system');
     await findMemberForSignIn(ctx, 's1', 'usr_member', 'member@example.com');
     const me = async (who: 'admin' | 'member') => {
       const target = '/spaces/s1/auth/me';
@@ -191,8 +191,8 @@ describe('the web principal (x-cw-principal)', () => {
       scopes: ['content:write', 'content:publish', 'preview:read'],
       contentGrants: [{ contentTypeApiId: 'post', actions: ['read', 'write', 'publish'] }],
     } as Parameters<typeof createRole>[2]);
-    await addMember(ctx, 's1', { email: 'admin-member@example.com', role: 'admin' });
-    await addMember(ctx, 's1', { email: 'member@example.com', role: limited.id });
+    await addMember(ctx, 's1', { email: 'admin-member@example.com', role: 'admin' }, 'system');
+    await addMember(ctx, 's1', { email: 'member@example.com', role: limited.id }, 'system');
     const adminMember = { ...person('member'), sub: 'usr_adm', email: 'admin-member@example.com' };
     await findMemberForSignIn(ctx, 's1', 'usr_adm', 'admin-member@example.com');
     await findMemberForSignIn(ctx, 's1', 'usr_member', 'member@example.com');
@@ -234,7 +234,7 @@ describe('the web principal (x-cw-principal)', () => {
         },
       ],
     } as Parameters<typeof createRole>[2]);
-    await addMember(ctx, 's1', { email: 'keeper@example.com', role: noUnpublish.id });
+    await addMember(ctx, 's1', { email: 'keeper@example.com', role: noUnpublish.id }, 'system');
     await findMemberForSignIn(ctx, 's1', 'usr_keep', 'keeper@example.com');
     const keeper = { ...person('member'), sub: 'usr_keep', email: 'keeper@example.com' };
     expect((await call(keeper, 'POST', jobs, { action: 'trash', entryIds: ids })).status).toBe(403);

@@ -83,11 +83,21 @@ export function teamRoutes(deps: AuthDeps): Hono<AuthVars> {
     doc('Auth', 'Add a person to the team', {
       body: addMemberBody,
       status: 201,
-      description: 'They sign in with SSO; their email links them on first sign-in.',
+      description:
+        'They sign in with SSO; their email links them on first sign-in. Refused with 403 to a ' +
+        'personal access token or an OAuth token: sign in to the admin to add someone.',
     }),
     admin,
     async (c) =>
-      c.json(await addMember(ctx, c.req.param('space'), await parseBody(c, addMemberBody)), 201),
+      c.json(
+        await addMember(
+          ctx,
+          c.req.param('space'),
+          await parseBody(c, addMemberBody),
+          c.get('principal'),
+        ),
+        201,
+      ),
   );
 
   app.patch(
@@ -95,7 +105,9 @@ export function teamRoutes(deps: AuthDeps): Hono<AuthVars> {
     doc('Auth', 'Change a person’s role, name or access', {
       body: updateMemberBody,
       description:
-        'Refused with 409 `last_admin` when it would leave the space with no administrator.',
+        'Refused with 409 `last_admin` when it would leave the space with no administrator. A ' +
+        'personal access token or an OAuth token may rename or disable a person, but is refused ' +
+        'with 403 changing their role or re-enabling them.',
     }),
     admin,
     async (c) =>
@@ -106,6 +118,7 @@ export function teamRoutes(deps: AuthDeps): Hono<AuthVars> {
           c.req.param('id'),
           await parseBody(c, updateMemberBody),
           policy,
+          c.get('principal'),
         ),
       ),
   );
@@ -150,12 +163,15 @@ export function teamRoutes(deps: AuthDeps): Hono<AuthVars> {
       body: accessSettingsBody,
       description:
         '`ssoOnly`: people sign in only through SSO, and the administrator credential setup ' +
-        'created stops working. Needs SSO configured and an administrator on the team.',
+        'created stops working. Needs SSO configured and an administrator on the team. Turning ' +
+        'it off is refused with 403 to a personal access token or an OAuth token.',
     }),
     admin,
     async (c) => {
       const body = await parseBody(c, accessSettingsBody);
-      return c.json(await setSsoOnly(ctx, c.req.param('space'), body.ssoOnly, policy));
+      return c.json(
+        await setSsoOnly(ctx, c.req.param('space'), body.ssoOnly, policy, c.get('principal')),
+      );
     },
   );
 

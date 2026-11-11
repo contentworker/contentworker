@@ -294,7 +294,7 @@ export type DraftClient = DeliveryClient & {
  * ```
  */
 export function createDraftClient(o: DraftClientOptions): () => Promise<DraftClient> {
-  let delivery: DeliveryClient | undefined;
+  let delivery: ReturnType<typeof createDeliveryClient> | undefined;
   let plain: DraftClient | undefined;
   const doFetch = o.delivery.fetch ?? globalThis.fetch;
   const previewBase =
@@ -383,6 +383,13 @@ export function createDraftClient(o: DraftClientOptions): () => Promise<DraftCli
         return ((await draftEntry(q.locale)) ?? found) as DeliveredEntry<F>;
       },
       listEntries,
+      async *iterateEntries<F extends Fields = Fields>(q: EntryQuery = {}) {
+        for await (const e of d.iterateEntries<F>(q)) {
+          yield e.id === ref.entryId
+            ? (((await draftEntry(q.locale)) ?? e) as DeliveredEntry<F>)
+            : e;
+        }
+      },
       query: () => new EntryQueryBuilder<Fields>((q) => listEntries(q)),
       // Only the draft entry is marked: it is the one the editor is looking at.
       editable(entry, field, q = {}): Record<string, string> {

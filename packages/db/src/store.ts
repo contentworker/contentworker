@@ -3770,36 +3770,49 @@ function makeAppExtensionRepo(x: Exec): AppExtensionRepo {
   };
 }
 
+/** Roles are the space's. Each save rides its version's compare-and-set. */
 function makeRoleRepo(x: Exec): RoleRepo {
   const db = x.db;
+  const t = schema.roles;
   return {
     async save(role) {
       const values = {
-        spaceId: role.spaceId,
-        id: role.id,
         name: role.name,
         description: role.description,
         scopes: [...role.scopes],
         contentGrants: [...role.contentGrants],
         preset: role.preset ?? null,
+        version: role.version,
         updatedAt: new Date(),
       };
-      await x.write(
-        db
-          .insert(schema.roles)
-          .values(values)
-          .onConflictDoUpdate({
-            target: [schema.roles.spaceId, schema.roles.id],
-            set: {
-              name: values.name,
-              description: values.description,
-              scopes: values.scopes,
-              contentGrants: values.contentGrants,
-              preset: values.preset,
-              updatedAt: values.updatedAt,
-            },
-          }),
-      );
+      // Version 1 inserts, and loses on the primary key or the (space, preset) index; each later
+      // version updates only while the row is at the version before it. Either way a lost race
+      // changes no row, which fails the unit.
+      if (role.version === 1) {
+        const insert = db
+          .insert(t)
+          .values({ spaceId: role.spaceId, id: role.id, ...values })
+          .onConflictDoNothing();
+        if (x.inUnit) {
+          await x.write(insert);
+          x.expectChanged(1);
+        } else if ((await insert.returning({ id: t.id })).length === 0) {
+          throw new TransactionConflictError();
+        }
+        return;
+      }
+      const update = db
+        .update(t)
+        .set(values)
+        .where(
+          and(eq(t.spaceId, role.spaceId), eq(t.id, role.id), eq(t.version, role.version - 1)),
+        );
+      if (x.inUnit) {
+        await x.write(update);
+        x.expectChanged(1);
+      } else if ((await update.returning({ id: t.id })).length === 0) {
+        throw new TransactionConflictError();
+      }
     },
     async get(spaceId, id) {
       const [row] = await db
@@ -7574,6 +7587,7 @@ function makeTx(x: Exec, scanLimit: number, versionBodies?: BlobStore): ContentS
     menus: makeMenuRepo(x),
     blockCatalogs: makeBlockCatalogRepo(x),
     blockConfigs: makeBlockConfigRepo(x),
+    roles: { save: makeRoleRepo(x).save },
     bulkJobs: makeBulkJobRepo(x),
     workflowRuns: makeWorkflowRunRepo(x),
     workflowTasks: makeWorkflowTaskRepo(x),
@@ -7841,6 +7855,7 @@ const toRole = (r: RoleRow): Role => ({
   scopes: r.scopes,
   contentGrants: r.contentGrants,
   ...(r.preset ? { preset: r.preset } : {}),
+  version: r.version,
 });
 
 type MemberRow = typeof schema.spaceMembers.$inferSelect;

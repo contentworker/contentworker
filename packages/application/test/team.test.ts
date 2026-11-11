@@ -100,10 +100,17 @@ describe('role presets', () => {
     ]);
     const viewer = roles[0];
     if (!viewer) throw new Error('no viewer');
-    const edited = await updateRole(ctx, 's1', viewer.id, {
-      name: 'Reader',
-      scopes: [SCOPES.deliveryRead],
-    });
+    const edited = await updateRole(
+      ctx,
+      's1',
+      viewer.id,
+      {
+        name: 'Reader',
+        scopes: [SCOPES.deliveryRead],
+      },
+      { sso: false },
+      'system',
+    );
     expect(edited.preset).toBe('viewer');
     expect((await listRolePresets(ctx, 's1'))[0]).toMatchObject({
       preset: 'viewer',
@@ -177,7 +184,14 @@ describe('the last administrator', () => {
       roleId: adminRole,
     });
     await expect(
-      updateRole(ctx, 's1', adminRole, { name: 'Administrator', scopes: [SCOPES.previewRead] }),
+      updateRole(
+        ctx,
+        's1',
+        adminRole,
+        { name: 'Administrator', scopes: [SCOPES.previewRead] },
+        { sso: false },
+        'system',
+      ),
     ).rejects.toBeInstanceOf(LastAdminError);
   });
 
@@ -202,20 +216,30 @@ describe('the last administrator', () => {
   });
 
   it('counts people only when SSO is configured, and guards demote/disable/remove', async () => {
-    const person = await addMember(ctx, 's1', { email: 'Ada@Example.com', role: 'admin' });
+    const person = await addMember(
+      ctx,
+      's1',
+      { email: 'Ada@Example.com', role: 'admin' },
+      'system',
+    );
     expect(person.email).toBe('ada@example.com');
     // Without SSO the person can't sign in, so they are no seat: nothing to protect.
-    await updateMember(ctx, 's1', person.id, { role: 'viewer' }, NO_SSO);
-    await updateMember(ctx, 's1', person.id, { role: 'admin' }, NO_SSO);
+    await updateMember(ctx, 's1', person.id, { role: 'viewer' }, NO_SSO, 'system');
+    await updateMember(ctx, 's1', person.id, { role: 'admin' }, NO_SSO, 'system');
     for (const change of [
-      () => updateMember(ctx, 's1', person.id, { role: 'editor' }, SSO),
-      () => updateMember(ctx, 's1', person.id, { disabled: true }, SSO),
+      () => updateMember(ctx, 's1', person.id, { role: 'editor' }, SSO, 'system'),
+      () => updateMember(ctx, 's1', person.id, { disabled: true }, SSO, 'system'),
       () => removeMember(ctx, 's1', person.id, SSO),
     ]) {
       await expect(change()).rejects.toBeInstanceOf(LastAdminError);
     }
-    const other = await addMember(ctx, 's1', { email: 'grace@example.com', role: 'admin' });
-    await updateMember(ctx, 's1', person.id, { disabled: true }, SSO);
+    const other = await addMember(
+      ctx,
+      's1',
+      { email: 'grace@example.com', role: 'admin' },
+      'system',
+    );
+    await updateMember(ctx, 's1', person.id, { disabled: true }, SSO, 'system');
     await expect(removeMember(ctx, 's1', other.id, SSO)).rejects.toBeInstanceOf(LastAdminError);
   });
 
@@ -235,7 +259,7 @@ describe('the last administrator', () => {
       name: 'oidc:x',
       expiresAt: '2099-01-01T00:00:00.000Z',
     });
-    await addMember(ctx, 's1', { email: 'v@example.com', role: 'viewer' });
+    await addMember(ctx, 's1', { email: 'v@example.com', role: 'viewer' }, 'system');
     const team = await listTeam(ctx, 's1', SSO);
     expect(team.adminCount).toBe(1);
     expect(team.keys).toHaveLength(1);
@@ -259,7 +283,7 @@ describe('SSO people and SSO-only sign-in', () => {
   });
 
   it('links a person to their SSO subject on first sign-in', async () => {
-    await addMember(ctx, 's1', { email: 'ada@example.com', role: 'editor' });
+    await addMember(ctx, 's1', { email: 'ada@example.com', role: 'editor' }, 'system');
     const first = await findMemberForSignIn(ctx, 's1', 'sub-1', 'ADA@example.com');
     expect(first?.subject).toBe('sub-1');
     // Later sign-ins find them by subject even if the provider's email changes.
@@ -267,11 +291,13 @@ describe('SSO people and SSO-only sign-in', () => {
   });
 
   it('refuses SSO-only without SSO or an SSO admin, then stops setup credentials', async () => {
-    await expect(setSsoOnly(ctx, 's1', true, NO_SSO)).rejects.toBeInstanceOf(ValidationError);
-    await expect(setSsoOnly(ctx, 's1', true, SSO)).rejects.toMatchObject({
+    await expect(setSsoOnly(ctx, 's1', true, NO_SSO, 'system')).rejects.toBeInstanceOf(
+      ValidationError,
+    );
+    await expect(setSsoOnly(ctx, 's1', true, SSO, 'system')).rejects.toMatchObject({
       issues: [{ field: 'ssoOnly', message: expect.stringMatching(/Administrator/) }],
     });
-    await addMember(ctx, 's1', { email: 'ada@example.com', role: 'admin' });
+    await addMember(ctx, 's1', { email: 'ada@example.com', role: 'admin' }, 'system');
     // Her first sign-in links her subject to the membership her credentials are checked against.
     await findMemberForSignIn(ctx, 's1', 'ada@example.com', 'ada@example.com');
     const adminRole = await presetRoleId(ctx, 's1', 'admin');
@@ -284,7 +310,7 @@ describe('SSO people and SSO-only sign-in', () => {
       subject: 'ada@example.com',
     });
     expect((await authenticate(ctx, hasher, token)).kind).toBe('user');
-    await setSsoOnly(ctx, 's1', true, SSO);
+    await setSsoOnly(ctx, 's1', true, SSO, 'system');
     await expect(authenticate(ctx, hasher, token)).rejects.toBeInstanceOf(UnauthorizedError);
   });
 });
