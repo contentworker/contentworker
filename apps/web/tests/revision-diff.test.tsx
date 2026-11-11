@@ -374,7 +374,13 @@ describe('VersionHistory compare', () => {
       from,
       to,
       summary: 'Changed 4 fields: Headline, Body copy, Hero image, Sections.',
-      highlights: [],
+      // As the rule writes them: how each field changed, never an id.
+      highlights: [
+        'Headline (en-US): Spring launch → Summer launch',
+        'Body copy: 3 words changed',
+        'Hero image: replaced',
+        'Sections: 1 added, 1 removed',
+      ],
       source: 'heuristic',
       tier: null,
       fallback: 'mock',
@@ -385,6 +391,19 @@ describe('VersionHistory compare', () => {
     }));
     const summary = await summarizeV1();
     expect(await within(summary).findByText('Listed from the changes')).toBeTruthy();
+    const notable = within(summary).getByRole('list', { name: 'Notable changes' });
+    expect(
+      within(notable)
+        .getAllByRole('listitem')
+        .map((li) => li.textContent),
+    ).toEqual([
+      'Headline (en-US): Spring launch → Summer launch',
+      'Body copy: 3 words changed',
+      'Hero image: replaced',
+      'Sections: 1 added, 1 removed',
+    ]);
+    // A rule's work carries no AI note.
+    expect(within(summary).queryByText(/Check it against them/)).toBeNull();
     expect(within(summary).queryByText('Written by AI')).toBeNull();
     expect(within(summary).queryByRole('button', { name: 'Write it again' })).toBeNull();
   });

@@ -344,11 +344,166 @@ function nameList(names: readonly string[]): string {
     : shown.join(', ');
 }
 
-const KIND_WORD = { added: 'added', removed: 'removed', changed: 'changed' } as const;
+/** Field types whose values read whole in a line, before → after. */
+const SIMPLE_TYPES: ReadonlySet<string> = new Set([
+  'Symbol',
+  'Slug',
+  'Integer',
+  'Number',
+  'Boolean',
+  'Date',
+]);
+/** A `Text` value this short reads whole too; a longer one is counted in words. */
+const SHORT_TEXT_CHARS = 40;
+/** The longest value a highlight shows before it is cut with an ellipsis. */
+const SHOWN_VALUE_CHARS = 40;
+/** Past this share of a text's words changed, it was rewritten rather than edited. */
+const REWRITTEN_SHARE = 0.6;
+
+const isEmpty = (v: unknown) => v === undefined || v === null || v === '';
+const wordCount = (text: string) => text.split(/\s+/).filter(Boolean).length;
+
+/** A simple value as a highlight shows it: a switch on or off, text on one line and cut short. */
+function shownValue(value: unknown): string {
+  if (typeof value === 'boolean') return value ? 'on' : 'off';
+  if (typeof value === 'string' || typeof value === 'number') {
+    return clip(oneLine(String(value)), SHOWN_VALUE_CHARS);
+  }
+  return clip(oneLine(JSON.stringify(value) ?? ''), SHOWN_VALUE_CHARS);
+}
+
+/** "49 → 59", "set to 59", "cleared": a simple value's change. */
+function beforeAfter(before: unknown, after: unknown): string {
+  if (isEmpty(before)) return `set to ${shownValue(after)}`;
+  if (isEmpty(after)) return 'cleared';
+  return `${shownValue(before)} → ${shownValue(after)}`;
+}
+
+/** How many words a word diff changed: per edit, the longer of what went and what came. */
+function changedWords(segments: readonly TextSegment[]): number {
+  let total = 0;
+  let removed = 0;
+  let added = 0;
+  const flush = () => {
+    total += Math.max(removed, added);
+    removed = 0;
+    added = 0;
+  };
+  for (const s of segments) {
+    if (s.kind === 'unchanged') flush();
+    else if (s.kind === 'removed') removed += wordCount(s.text);
+    else added += wordCount(s.text);
+  }
+  flush();
+  return total;
+}
+
+/** "6 words changed", "rewritten", "added, 120 words", "cleared": a longer text's change. */
+function wordsChanged(changed: number, before: number, after: number): string {
+  if (before === 0) return after === 0 ? 'changed' : `added, ${plural(after, 'word')}`;
+  if (after === 0) return 'cleared';
+  if (changed >= REWRITTEN_SHARE * Math.max(before, after)) return 'rewritten';
+  return changed === 0 ? 'formatting changed' : `${plural(changed, 'word')} changed`;
+}
+
+/** A rich-text change in words: the words its blocks changed, or that its blocks only moved. */
+function richTextChange(blocks: readonly RichTextBlockDiff[]): string {
+  const side = (b: RichTextBlockDiff, which: 'removed' | 'added') =>
+    wordCount(sideText(b.text, which));
+  const before = blocks.reduce((n, b) => n + (b.kind === 'added' ? 0 : side(b, 'removed')), 0);
+  const after = blocks.reduce((n, b) => n + (b.kind === 'removed' ? 0 : side(b, 'added')), 0);
+  const changed = blocks.reduce(
+    (n, b) =>
+      n +
+      (b.kind === 'added'
+        ? side(b, 'added')
+        : b.kind === 'removed'
+          ? side(b, 'removed')
+          : b.kind === 'changed'
+            ? changedWords(b.text)
+            : 0),
+    0,
+  );
+  if (changed === 0) {
+    const moved = blocks.filter((b) => b.moved).length;
+    if (moved > 0) return `${plural(moved, 'block')} moved`;
+    if (blocks.some((b) => b.formattingChanged)) return 'formatting changed';
+  }
+  return wordsChanged(changed, before, after);
+}
+
+/** "2 added, 1 removed, 1 moved": a list's elements by what happened to them. */
+function listChange(items: readonly ListItemDiff[]): string {
+  const count = (pred: (i: ListItemDiff) => boolean) => items.filter(pred).length;
+  const parts = [
+    [count((i) => i.kind === 'added'), 'added'],
+    [count((i) => i.kind === 'removed'), 'removed'],
+    [count((i) => i.kind === 'changed'), 'changed'],
+    [count((i) => i.kind === 'unchanged' && i.moved === true), 'moved'],
+  ] as const;
+  const said = parts.filter(([n]) => n > 0).map(([n, what]) => `${n} ${what}`);
+  return said.length > 0 ? said.join(', ') : 'changed';
+}
+
+/** A link's change, by what happened to it, never what it points at. */
+function linkChange(before: LinkRef | null, after: LinkRef | null): string {
+  if (!before) return after ? 'set' : 'changed';
+  return after ? 'replaced' : 'cleared';
+}
+
+/** What one value's change was, in a few words a person reads at a glance. */
+function describeChange(
+  fieldType: string | undefined,
+  before: unknown,
+  after: unknown,
+  detail: ValueDiff | undefined,
+): string {
+  const shortText =
+    (fieldType === 'Text' || fieldType === undefined) &&
+    [before, after].every(
+      (v) => isEmpty(v) || (typeof v === 'string' && v.length <= SHORT_TEXT_CHARS),
+    );
+  if ((fieldType && SIMPLE_TYPES.has(fieldType)) || (detail?.type === 'text' && shortText)) {
+    return beforeAfter(before, after);
+  }
+  switch (detail?.type) {
+    case 'text': {
+      const was = wordCount(sideText(detail.segments, 'removed'));
+      const now = wordCount(sideText(detail.segments, 'added'));
+      return wordsChanged(changedWords(detail.segments), was, now);
+    }
+    case 'richText':
+      return richTextChange(detail.blocks);
+    case 'list':
+      return listChange(detail.items);
+    case 'link':
+      return linkChange(detail.before, detail.after);
+    case 'component': {
+      const fields = detail.fields.filter((f) => f.kind !== 'unchanged');
+      const names = nameList(fields.map((f) => f.name ?? f.field));
+      return fields.length > 0 ? `${names} changed` : 'changed';
+    }
+    case 'value': {
+      const primitive = (v: unknown) =>
+        isEmpty(v) || ['string', 'number', 'boolean'].includes(typeof v);
+      if (primitive(detail.before) && primitive(detail.after)) {
+        return beforeAfter(detail.before, detail.after);
+      }
+      return isEmpty(detail.after) ? 'cleared' : isEmpty(detail.before) ? 'set' : 'changed';
+    }
+    default:
+      return 'changed';
+  }
+}
 
 /**
- * The summary a rule writes from the diff: which fields changed, were added or removed, and, per
- * field, in which locales. What it says is all in the diff, so it needs no model and no fence.
+ * The summary a rule writes from the diff: a sentence naming the fields that changed, then a
+ * highlight per changed field (and locale, when the entry has several) saying how: a simple value
+ * before → after ("Price: 49 → 59", "Featured: off → on", "set to …", "cleared"), a longer text or
+ * rich text by the words it changed ("Body: 6 words changed", or "rewritten"), a list by its
+ * elements ("Tags: 2 added, 1 removed"), a link by what happened to it ("Hero image: replaced",
+ * never an id). Fields the reader can't see are counted, never named. What it says is all in the
+ * diff, so it needs no model and no fence.
  */
 export function heuristicChangeSummary(
   changes: readonly FieldDiff[],
@@ -374,14 +529,17 @@ export function heuristicChangeSummary(
     .filter(Boolean)
     .join(' ');
   const showLocale = new Set(changed.flatMap((c) => c.locales.map((l) => l.locale))).size > 1;
-  const highlights = changed.slice(0, CHANGE_SUMMARY_LIMITS.highlights).map((c) => {
-    const locales = c.locales.filter((l) => l.kind !== 'unchanged').map((l) => l.locale);
-    const where = showLocale && locales.length > 0 ? ` (${locales.join(', ')})` : '';
-    return clip(
-      `${label(c)}${where}: ${KIND_WORD[c.kind as keyof typeof KIND_WORD] ?? 'changed'}`,
-      CHANGE_SUMMARY_LIMITS.highlight,
-    );
-  });
+  const highlights = changed
+    .flatMap((c) =>
+      c.locales
+        .filter((l) => l.kind !== 'unchanged')
+        .map((l) => {
+          const where = showLocale ? ` (${l.locale})` : '';
+          const how = describeChange(c.fieldType, l.before, l.after, l.detail);
+          return clip(`${label(c)}${where}: ${how}`, CHANGE_SUMMARY_LIMITS.highlight);
+        }),
+    )
+    .slice(0, CHANGE_SUMMARY_LIMITS.highlights);
   return { summary, highlights };
 }
 

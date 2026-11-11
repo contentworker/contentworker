@@ -626,7 +626,8 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   against them, and, for someone who can edit (the API asks past the cache only for them), a ghost
   `xs` **Write it again** led by the AI mark, the old summary kept in sight meanwhile. One listed
   by rule (no model) wears an `idle` "Listed from the changes" stamp, no note and no Write it
-  again; one written from part of a long diff says so beside its stamp. A failure is a destructive
+  again, and its list says how each field changed ("Price: 49 → 59", "Body: 6 words changed",
+  "Tags: 2 added, 1 removed", "Hero image: replaced"), never an id; one written from part of a long diff says so beside its stamp. A failure is a destructive
   Alert in place with Try again, which takes focus and asks the same way again (past the cache
   after a failed Write it again, the summary still above it); a refusal because Writing help is
   off is a plain Alert naming Settings → AI, with nothing to press. With Writing help off the

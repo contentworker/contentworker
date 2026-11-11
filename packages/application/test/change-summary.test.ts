@@ -1,7 +1,10 @@
 import {
   AiCapabilityDisabledError,
   AiUnavailableError,
+  type ContentType,
   diffEntryFields,
+  type EntryFields,
+  type FieldDefinition,
   ForbiddenError,
   NotFoundError,
   type Principal,
@@ -408,7 +411,12 @@ describe('change summaries', () => {
       tier: null,
       fallback: 'mock',
       summary: 'Changed 4 fields: Title, Body, Notes, Price.',
-      highlights: ['Title: changed', 'Body: changed', 'Notes: changed', 'Price: changed'],
+      highlights: [
+        'Title: Winter sale → Spring sale',
+        'Body: 1 word changed',
+        'Notes: Internal: margin is thin → Internal: SECRET margin 3%',
+        'Price: 40 → 35',
+      ],
     });
     expect(ai.requests).toHaveLength(0);
   });
@@ -519,7 +527,134 @@ describe('the summary by rule', () => {
     const { summary, highlights } = heuristicChangeSummary(changes, 0);
     expect(summary).toBe('Changed 10 fields: f0, f1, f2, f3, f4, f5, f6, f7 and 2 more.');
     expect(highlights).toHaveLength(5);
-    expect(highlights[0]).toBe('f0: added');
+    expect(highlights[0]).toBe('f0: set to x');
+  });
+
+  const field = (
+    apiId: string,
+    name: string,
+    type: FieldDefinition['type'],
+    position: number,
+    extra: Partial<FieldDefinition> = {},
+  ): FieldDefinition =>
+    ({
+      apiId,
+      name,
+      type,
+      localized: false,
+      required: false,
+      position,
+      ...extra,
+    }) as FieldDefinition;
+  const product = {
+    apiId: 'product',
+    name: 'Product',
+    displayField: 'title',
+    version: 1,
+    status: 'published',
+    fields: [
+      field('title', 'Title', 'Symbol', 0),
+      field('price', 'Price', 'Number', 1),
+      field('featured', 'Featured', 'Boolean', 2),
+      field('launch', 'Launch date', 'Date', 3),
+      field('note', 'Note', 'Text', 4),
+      field('story', 'Story', 'Text', 5),
+      field('body', 'Body', 'RichText', 6),
+      field('tags', 'Tags', 'Array', 7, { items: { type: 'Symbol' } }),
+      field('hero', 'Hero image', 'Link', 8, { linkType: 'Asset' }),
+      field('related', 'Related', 'Array', 9, { items: { type: 'Link', linkType: 'Entry' } }),
+    ],
+  } as ContentType;
+  const words = (n: number, w = 'word') =>
+    Array.from({ length: n }, (_, i) => `${w}${i}`).join(' ');
+  const en = (v: unknown) => ({ 'en-US': v });
+  const highlightsOf = (before: EntryFields, after: EntryFields) =>
+    heuristicChangeSummary(diffEntryFields(before, after, product), 0).highlights;
+
+  it('says how each field changed, by what it holds', () => {
+    const before: EntryFields = {
+      title: en('Trail runner'),
+      price: en(49),
+      featured: en(false),
+      note: en('Ships in May'),
+      story: en(`${words(30)} quick brown fox`),
+      body: en(doc('Light and fast.', 'Built for mud.')),
+      tags: en(['run', 'trail', 'sale']),
+      hero: en({ id: 'asset-0001', linkType: 'Asset' }),
+    };
+    const after: EntryFields = {
+      title: en('Trail runner'),
+      price: en(59),
+      featured: en(true),
+      launch: en('2026-12-01'),
+      story: en(`${words(30)} slow red dog`),
+      body: en(doc('Light, fast and waterproof.', 'Built for mud.')),
+      tags: en(['trail', 'run', 'new', 'winter']),
+      hero: en({ id: 'asset-0002', linkType: 'Asset' }),
+    };
+    expect(highlightsOf(before, after)).toEqual([
+      'Price: 49 → 59',
+      'Featured: off → on',
+      'Launch date: set to 2026-12-01',
+      'Note: cleared',
+      'Story: 3 words changed',
+    ]);
+    // Past five, the rest: rich text by its words, lists by their elements, links never by id.
+    const rest = heuristicChangeSummary(
+      diffEntryFields(
+        { body: before.body, tags: before.tags, hero: before.hero } as EntryFields,
+        { body: after.body, tags: after.tags, hero: after.hero } as EntryFields,
+        product,
+      ),
+      0,
+    ).highlights;
+    expect(rest).toEqual([
+      'Body: 3 words changed',
+      'Tags: 2 added, 1 removed, 1 moved',
+      'Hero image: replaced',
+    ]);
+    expect(JSON.stringify(rest)).not.toContain('asset-000');
+  });
+
+  it('cuts a long value short, calls a near-total change a rewrite, and counts references', () => {
+    const long = `A ${'very '.repeat(20)}long title`;
+    expect(highlightsOf({ title: en('Short') }, { title: en(long) })).toEqual([
+      `Title: Short → ${long.slice(0, 39)}…`,
+    ]);
+    expect(highlightsOf({ story: en(words(50)) }, { story: en(words(50, 'other')) })).toEqual([
+      'Story: rewritten',
+    ]);
+    expect(highlightsOf({}, { story: en(words(80)) })).toEqual(['Story: added, 80 words']);
+    expect(
+      highlightsOf(
+        { related: en([{ id: 'e1', linkType: 'Entry' }]) },
+        {
+          related: en([
+            { id: 'e2', linkType: 'Entry' },
+            { id: 'e3', linkType: 'Entry' },
+          ]),
+        },
+      ),
+    ).toEqual(['Related: 2 added, 1 removed']);
+    expect(highlightsOf({ hero: en({ id: 'a1', linkType: 'Asset' }) }, {})).toEqual([
+      'Hero image: cleared',
+    ]);
+  });
+
+  it('names the locale when the entry holds several', () => {
+    const changes = diffEntryFields(
+      { price: { 'en-US': 10, 'de-DE': 9 } },
+      { price: { 'en-US': 12, 'de-DE': 9 } },
+      product,
+    );
+    expect(heuristicChangeSummary(changes, 0).highlights).toEqual(['Price (en-US): 10 → 12']);
+  });
+
+  it('keeps fields the reader can’t see to a count, in the sentence and nowhere else', () => {
+    const changes = diffEntryFields({ price: en(1) }, { price: en(2) }, product);
+    const { summary, highlights } = heuristicChangeSummary(changes, 2);
+    expect(summary).toBe('Changed 1 field: Price. 2 fields you can’t read also changed.');
+    expect(highlights).toEqual(['Price: 1 → 2']);
   });
 
   it('never says nothing changed while a field the reader can’t see did', () => {

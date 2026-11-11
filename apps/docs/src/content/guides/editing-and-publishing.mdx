@@ -85,6 +85,12 @@ the diff alone (the fields your role can read, as excerpts and the words removed
 **Written by AI**, with **Write it again** to ask for another when you can edit the entry. Check it
 against the diff below it: the diff is the record, the summary a reading aid.
 
+Without a model, the summary is **Listed from the changes**: a sentence naming the fields that
+changed, then a line per field saying how. A short value reads before and after ("Price: 49 → 59",
+"Featured: off → on", "set to …", "cleared"); longer text and rich text by the words changed
+("Body: 6 words changed", or "rewritten"); a list by its elements ("Tags: 2 added, 1 removed"); a
+link or asset by what happened to it ("Hero image: replaced").
+
 The same summary is `POST …/entries/{id}/versions/diff/summary?from=3&to=draft`, the MCP tool
 `entries_change_summary` and `cma.entries.versions.summarize(id, from, to)` in the management SDK.
 The answer says who wrote it (`source`: `model`, or `heuristic` when it was listed from the diff by
