@@ -105,6 +105,56 @@ describe('promotions over HTTP', () => {
     expect(one.status).toBe(200);
   });
 
+  it('answers a request that applied at once and stopped partway with its failed record', async () => {
+    await app.request('/spaces/s1/environments', {
+      method: 'POST',
+      headers: admin,
+      body: JSON.stringify({ id: 'qa' }),
+    });
+    await app.request('/spaces/s1/merge', {
+      method: 'POST',
+      headers: admin,
+      body: JSON.stringify({ source: 'staging', target: 'qa', contentTypes: ['note'] }),
+    });
+    const store = wired.ctx.store;
+    const create = store.entries.create.bind(store.entries);
+    store.entries.create = async () => {
+      throw new Error('boom');
+    };
+    // Into qa, which needs no approval: it applies in the request.
+    const res = await app.request('/spaces/s1/promotions', {
+      method: 'POST',
+      headers: cma,
+      body: JSON.stringify({ source: 'staging', target: 'qa', entries: [entryId] }),
+    });
+    store.entries.create = create;
+    expect(res.status).toBe(201);
+    const p = (await res.json()) as P & { error?: string };
+    expect(p).toMatchObject({ status: 'failed', error: 'boom' });
+    const one = await app.request(`/spaces/s1/promotions/${p.id}`, { headers: admin });
+    expect(await one.json()).toMatchObject({ status: 'failed', error: 'boom' });
+  });
+
+  it('lets its requester withdraw a waiting promotion, recorded as rejected by them', async () => {
+    const req = await app.request('/spaces/s1/promotions', {
+      method: 'POST',
+      headers: admin,
+      body: JSON.stringify({ source: 'staging', target: 'main', entries: [entryId] }),
+    });
+    const p = (await req.json()) as P;
+    expect(p.status).toBe('awaiting_approval');
+    const res = await app.request(`/spaces/s1/promotions/${p.id}/reject`, {
+      method: 'POST',
+      headers: admin,
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      status: 'rejected',
+      requestedBy: 'admin-token',
+      decidedBy: 'admin-token',
+    });
+  });
+
   it('copies the block catalog and config with a selection when the body asks for them', async () => {
     await seedBlocks(wired.ctx, { spaceId: 's1', environmentId: 'staging' });
     const req = await app.request('/spaces/s1/promotions', {

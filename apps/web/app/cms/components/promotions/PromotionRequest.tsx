@@ -252,11 +252,10 @@ export function PromotionRequest(props: {
 
             {outcome?.kind === 'refused' ? (
               <RefusalAlert
-                title={`The promotion into ${outcome.target} didn’t go through`}
+                // A refusal writes nothing: an apply that stopped partway answers with its
+                // record, `failed`, which shows as the answer below instead.
+                title={`Nothing was promoted into ${outcome.target}`}
                 refusal={outcome.refusal}
-                // A promotion that needed no approval applies in the request, and an apply that
-                // fails answers with its error: the record, if one was made, says what happened.
-                note="If it had started applying, Promotions below lists it as failed, and what it wrote stays."
               />
             ) : null}
             <ConfirmDialog

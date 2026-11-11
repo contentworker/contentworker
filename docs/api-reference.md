@@ -211,7 +211,7 @@ Base paths: `/spaces`, and `…` for `/spaces/:space/environments/:env`. Space-l
 | GET    | `/spaces/:space/promotions`                 | `content:publish`                    | List promotions, newest first (`?status=`)                                                |
 | GET    | `/spaces/:space/promotions/:id`             | `content:publish`                    | A promotion, its risk check and result                                                    |
 | POST   | `/spaces/:space/promotions/:id/approve`     | `content:publish`                    | Approve a waiting promotion and apply it (a person or the admin token, not the requester) |
-| POST   | `/spaces/:space/promotions/:id/reject`      | `content:publish`                    | Reject a waiting promotion                                                                |
+| POST   | `/spaces/:space/promotions/:id/reject`      | `content:publish`                    | Reject a waiting promotion; its requester may too, withdrawing it (`decidedBy` is then the requester) |
 
 A space id is 1–64 letters, digits, `.`, `_` or `-`, starting with a letter or digit, and is
 never one of the media bucket's own prefixes: `versions`, `imports`, `plugins`, `dlq` or `zips`, in any case
@@ -269,7 +269,8 @@ check first.
    reasons and the probabilities (`risk`).
 3. **Deciding.** A promotion that needs no approval applies at once (`completed`). One that does
    waits as `awaiting_approval` (event `promotion.awaiting_approval`). It's then approved or
-   rejected by a person, or the deployment admin token, other than whoever requested it:
+   rejected by a person, or the deployment admin token, other than whoever requested it (who may
+   reject it too, withdrawing it: `decidedBy` is then the requester):
    - an API key, or an application acting for a person (an MCP or OAuth client, an agent), can
      request a promotion but not decide one;
    - approving one with content types or blocks also takes `content:manage`;
@@ -281,7 +282,12 @@ check first.
    `publishEntry`), so validation, references, events and the delivery cache behave as they would
    for a person's edits. Afterwards it checks that the target holds the pinned fields
    (`result.mismatched`) and emits `environment.promoted`. A failure marks it `failed` with the
-   error; whatever was applied before it stays. An apply that dies partway without saying so (the
+   error; whatever was applied before it stays. A check the apply runs before it writes anything
+   (a pin that moved, an entry that would be stranded) answers as a refusal, `409` or `422`,
+   though the record is `failed` too. A failure once writing began answers with the record
+   itself: the request (`201`) or approval (`200`) returns the promotion `failed`, with its
+   `error` and what it wrote (`result`), so a client can tell "nothing changed" from "stopped
+   partway". The MCP tools return the same record. An apply that dies partway without saying so (the
    Worker evicted mid-request) would leave it `applying`: the engine's hourly `stale-promotions`
    sweep marks one still `applying` an hour after it started (its approval, or its request when
    it needed none) `failed`, with an error saying so, and audits `promotion.failed` as `system`.

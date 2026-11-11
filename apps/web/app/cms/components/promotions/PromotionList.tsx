@@ -14,7 +14,7 @@ import { actorLabel } from '~/cms/lib/authorship';
 import { apiErrorMessage, isForbidden } from '~/cms/lib/management';
 import { useClient } from '../../lib/client-context';
 import { useScopedQuery } from '../../lib/queries';
-import { copiesLine, usePromotionViewer } from './parts';
+import { copiesLine, statusWords, usePromotionViewer } from './parts';
 
 type Filter = 'all' | 'awaiting_approval';
 
@@ -106,14 +106,21 @@ export function PromotionList(props: { onOpen: (id: string) => void }) {
   );
 }
 
+/**
+ * One promotion: the whole row opens its record. Its title is the one button, stretched over the
+ * row, so a press anywhere on it, Enter or Space opens it, and its name says which promotion it
+ * is (rows can read alike: what it copies, its status and who asked tell them apart).
+ */
 function Row(props: {
   promotion: Promotion;
   directory: ReturnType<typeof usePromotionViewer>['directory'];
   onOpen: (id: string) => void;
 }) {
   const { promotion: p } = props;
+  const name = `Open promotion ${p.source} → ${p.target}, ${copiesLine(p).toLowerCase()}, ${statusWords(p).toLowerCase()}, requested by ${actorLabel(p.requestedBy, props.directory, 'inSentence')}`;
   return (
     <CatalogRow
+      className="relative cursor-pointer transition-colors hover:bg-muted"
       media={
         <CatalogTile>
           <ArrowUpRight aria-hidden="true" />
@@ -122,15 +129,12 @@ function Row(props: {
       title={
         <button
           type="button"
-          className="hit-area rounded-sm text-left font-medium underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-ring"
+          aria-label={name}
+          className="rounded-sm text-left font-medium outline-none after:absolute after:inset-0 after:rounded-xl after:content-[''] focus-visible:after:outline-2 focus-visible:after:outline-ring"
           onClick={() => props.onOpen(p.id)}
         >
           <span className="font-mono text-xs">{p.source}</span> →{' '}
           <span className="font-mono text-xs">{p.target}</span>
-          {/* Rows can read alike: the moment tells them apart for a screen reader. */}
-          <span className="sr-only">
-            , requested <Ago at={p.createdAt} />
-          </span>
         </button>
       }
       meta={
@@ -141,7 +145,7 @@ function Row(props: {
           <span>{copiesLine(p)}</span>
         </span>
       }
-      aside={<StatusBadge status={p.status} />}
+      aside={<StatusBadge status={p.status} label={statusWords(p)} />}
     />
   );
 }

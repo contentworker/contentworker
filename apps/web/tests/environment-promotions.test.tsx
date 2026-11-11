@@ -171,11 +171,12 @@ function setup(opts: Setup = {}) {
       return json(r.body, r.status);
     }
     if (url.endsWith('/approve') || url.endsWith('/reject')) {
+      const who = opts.subject ?? 'usr_me';
       const r = opts.decide ?? {
         status: 200,
         body: url.endsWith('/approve')
-          ? { ...waiting, status: 'completed', decidedBy: 'usr_me', completedAt: ago(0) }
-          : { ...waiting, status: 'rejected', decidedBy: 'usr_me', decidedAt: ago(0) },
+          ? { ...waiting, status: 'completed', decidedBy: who, completedAt: ago(0) }
+          : { ...waiting, status: 'rejected', decidedBy: who, decidedAt: ago(0) },
       };
       if (r.status === 200) records.set((r.body as Json).id as string, r.body as Json);
       if (opts.afterDecide) records.set(opts.afterDecide.id as string, opts.afterDecide);
@@ -314,15 +315,28 @@ describe('Requesting a promotion', () => {
     await compare();
     await request();
     const alert = await screen.findByRole('alert');
-    expect(within(alert).getByText('The promotion into main didn’t go through')).toBeTruthy();
-    // It can't tell a refusal from an apply that failed partway, so it says where to look.
-    expect(within(alert).getByText(/lists it as failed, and what it wrote stays\./)).toBeTruthy();
+    expect(within(alert).getByText('Nothing was promoted into main')).toBeTruthy();
     expect(within(alert).getByText('Content types')).toBeTruthy();
     expect(within(alert).getByText('Entries')).toBeTruthy();
     expect(within(alert).getByText(issues[0]!.message)).toBeTruthy();
     expect(within(alert).getByText(issues[1]!.message)).toBeTruthy();
     // The choice stays for sending again.
     expect(screen.getByText('2 of 2 selected')).toBeTruthy();
+  });
+
+  it('says one that applied at once and stopped partway failed, from the record the API answers', async () => {
+    const error = 'Entry entry-aaaaaaaa-1 takes the slug "spring", which entry-x holds in main';
+    setup({
+      request: {
+        status: 201,
+        body: { ...completed, id: 'p-partway', target: 'main', status: 'failed', error },
+      },
+    });
+    await compare();
+    await request();
+    expect(await screen.findByText('The promotion failed')).toBeTruthy();
+    expect(screen.getByText(error)).toBeTruthy();
+    expect(screen.queryByText('Nothing was promoted into main')).toBeNull();
   });
 
   it('closes the picker once answered, so the same promotion isn’t filed twice', async () => {
@@ -405,6 +419,26 @@ describe('The promotions list', () => {
     }
   });
 
+  it('opens a record from anywhere on its row, by a button that says which promotion it is', async () => {
+    setup();
+    const open = await screen.findByRole('button', {
+      name: 'Open promotion staging → qa, 1 content type and 2 entries, completed, requested by you',
+    });
+    // Stretched over the row, so a press anywhere on it lands on the button.
+    expect(open.className).toContain('after:inset-0');
+    expect(open.closest('li')?.className).toContain('relative');
+    fireEvent.click(open);
+    expect(await screen.findByRole('dialog')).toBeTruthy();
+  });
+
+  it('calls a requester’s own rejection Withdrawn in the list', async () => {
+    setup({
+      list: [{ ...rejected, id: 'p-withdrawn', decidedBy: base.requestedBy }],
+    });
+    const list = await screen.findByRole('list', { name: 'Promotions' });
+    expect(within(list).getByText('Withdrawn')).toBeTruthy();
+  });
+
   it('asks the API for only those awaiting approval', async () => {
     const calls = setup();
     await screen.findByRole('list', { name: 'Promotions' });
@@ -471,14 +505,26 @@ describe('A promotion’s record', () => {
     );
   });
 
-  it('offers its requester no decision', async () => {
-    setup({ url: '/settings/environments?promotion=p-wait', subject: 'usr_other' });
+  it('offers its requester no decision, only Withdraw, recorded as withdrawn by them', async () => {
+    const calls = setup({ url: '/settings/environments?promotion=p-wait', subject: 'usr_other' });
     const sheet = await screen.findByRole('dialog');
     expect(
-      await within(sheet).findByText('You requested it, so someone else approves or rejects it.'),
+      await within(sheet).findByText(
+        'You requested it, so someone else approves or rejects it. You can withdraw it.',
+      ),
     ).toBeTruthy();
     expect(within(sheet).queryByRole('button', { name: 'Approve and promote…' })).toBeNull();
     expect(within(sheet).queryByRole('button', { name: 'Reject' })).toBeNull();
+    fireEvent.click(within(sheet).getByRole('button', { name: 'Withdraw request' }));
+    expect(within(sheet).getByText('Withdraw this request?')).toBeTruthy();
+    fireEvent.click(within(sheet).getByRole('button', { name: 'Withdraw request' }));
+    await waitFor(() =>
+      expect(calls.some((c) => c.method === 'POST' && c.url.endsWith('/p-wait/reject'))).toBe(true),
+    );
+    expect(await within(sheet).findByText(/^Withdrawn by you,/)).toBeTruthy();
+    expect(within(sheet).getByRole('status').textContent).toBe('Withdrawn');
+    const history = within(sheet).getByRole('region', { name: 'History' });
+    expect(within(history).getByText('Withdrawn')).toBeTruthy();
   });
 
   it('offers no decision to a role that can’t publish, and says why', async () => {
@@ -535,26 +581,34 @@ describe('A promotion’s record', () => {
     );
   });
 
-  it('shows an approval whose apply failed as failed, not as unapproved', async () => {
-    const error =
-      'The content type "page" changed in staging after the promotion was requested; request a new one';
+  it('shows an approval whose apply stopped partway as failed, from the record the API answers', async () => {
+    const error = 'Entry entry-bbbbbbbb-2 takes the slug "spring", which entry-x holds in main';
     setup({
       url: '/settings/environments?promotion=p-wait',
-      decide: { status: 409, body: { error: { code: 'conflict', message: error } } },
-      afterDecide: {
-        ...waiting,
-        status: 'failed',
-        decidedBy: 'usr_me',
-        decidedAt: ago(0),
-        completedAt: ago(0),
-        error,
+      decide: {
+        status: 200,
+        body: {
+          ...waiting,
+          status: 'failed',
+          decidedBy: 'usr_me',
+          decidedAt: ago(0),
+          completedAt: ago(0),
+          error,
+          result: {
+            contentTypes: ['article'],
+            entries: ['entry-aaaaaaaa-1'],
+            published: [],
+            mismatched: [],
+            gated: [],
+          },
+        },
       },
     });
     const sheet = await screen.findByRole('dialog');
     await approve(sheet);
     expect(await within(sheet).findByText('The promotion failed')).toBeTruthy();
     expect(within(sheet).getByText(error)).toBeTruthy();
-    // The confirm closed on it: the record says what happened.
+    expect(within(sheet).getByRole('region', { name: 'Written before it stopped' })).toBeTruthy();
     await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
   });
 

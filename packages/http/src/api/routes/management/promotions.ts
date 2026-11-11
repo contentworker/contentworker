@@ -9,6 +9,7 @@ import { authorize, PROMOTION_STATUSES, type PromotionStatus, SCOPES } from '@co
 import { Hono } from 'hono';
 import { type AuthDeps, type AuthVars, requireScope } from '../../auth';
 import { doc } from '../../docs/openapi';
+import * as promotionDocs from '../../docs/schemas/promotions';
 import { parseBody, promotionBody } from '../../validation';
 import { actingCtx } from './shared';
 
@@ -21,6 +22,7 @@ export function promotionsRoutes(deps: AuthDeps): Hono<AuthVars> {
     '/spaces/:space/promotions',
     doc('Spaces & environments', 'Promote content from one environment to another', {
       body: promotionBody,
+      ok: promotionDocs.promotion,
       status: 201,
       description:
         'Pins the entries to copy (what is live in the source goes live in the target; a draft ' +
@@ -30,7 +32,9 @@ export function promotionsRoutes(deps: AuthDeps): Hono<AuthVars> {
         'remove blocks, or one the risk check flags waits as `awaiting_approval` for someone ' +
         'else to approve. Omit `contentTypes` and `entries` to promote everything that differs ' +
         '(at most 200 entries), the block catalog and block config included; `blocks: true` ' +
-        'adds them to a selection.',
+        'adds them to a selection. A refusal (422, 409, 403) writes nothing. One that applies at ' +
+        'once and stops partway answers with its record, `failed`, with the `error` and what it ' +
+        'wrote (`result`).',
     }),
     requireScope(SCOPES.contentManage),
     async (c) => {
@@ -45,7 +49,9 @@ export function promotionsRoutes(deps: AuthDeps): Hono<AuthVars> {
   );
   app.get(
     '/spaces/:space/promotions',
-    doc('Spaces & environments', 'List promotions, newest first'),
+    doc('Spaces & environments', 'List promotions, newest first', {
+      ok: promotionDocs.promotionList,
+    }),
     requireScope(SCOPES.contentPublish),
     async (c) => {
       const status = c.req.query('status');
@@ -60,14 +66,20 @@ export function promotionsRoutes(deps: AuthDeps): Hono<AuthVars> {
   );
   app.get(
     '/spaces/:space/promotions/:id',
-    doc('Spaces & environments', 'Get a promotion, with its risk check and result'),
+    doc('Spaces & environments', 'Get a promotion, with its risk check and result', {
+      ok: promotionDocs.promotion,
+    }),
     requireScope(SCOPES.contentPublish),
     async (c) => c.json(await getPromotion(ctx, c.req.param('space'), c.req.param('id'))),
   );
   app.post(
     '/spaces/:space/promotions/:id/approve',
     doc('Spaces & environments', 'Approve a waiting promotion and apply it', {
-      description: 'By someone other than whoever requested it (403 otherwise).',
+      ok: promotionDocs.promotion,
+      description:
+        'By someone other than whoever requested it (403 otherwise). A refusal (403, 409, or a ' +
+        '422 from the checks the apply runs first) writes nothing. An apply that stops partway ' +
+        'answers with the record, `failed`, with the `error` and what it wrote (`result`).',
     }),
     requireScope(SCOPES.contentPublish),
     async (c) =>
@@ -82,7 +94,12 @@ export function promotionsRoutes(deps: AuthDeps): Hono<AuthVars> {
   );
   app.post(
     '/spaces/:space/promotions/:id/reject',
-    doc('Spaces & environments', 'Reject a waiting promotion'),
+    doc('Spaces & environments', 'Reject a waiting promotion', {
+      ok: promotionDocs.promotion,
+      description:
+        'Nothing is copied. Its requester may reject it too, withdrawing the request: ' +
+        '`decidedBy` is then the requester.',
+    }),
     requireScope(SCOPES.contentPublish),
     async (c) =>
       c.json(

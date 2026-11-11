@@ -8,7 +8,7 @@ import { Button } from '@contentworker/ui/button';
 import { useId, useState } from 'react';
 import { ToneBadge } from '~/cms/components/status';
 import type { ActorDirectory } from '~/cms/lib/authorship';
-import { plural } from '~/cms/lib/format';
+import { plural, statusLabel } from '~/cms/lib/format';
 import {
   ApiError,
   apiErrorMessage,
@@ -30,6 +30,17 @@ import { useScopedQuery } from '../../lib/queries';
  * time they were made, so entries made together share it; the end is random and tells them apart.
  */
 export const shortId = (id: string) => id.slice(-8);
+
+/**
+ * Rejected by whoever requested it: they withdrew it. The API records a withdrawal as a rejection
+ * whose `decidedBy` is the requester, so this only names what the record already says.
+ */
+export const isWithdrawn = (p: Pick<Promotion, 'status' | 'requestedBy' | 'decidedBy'>) =>
+  p.status === 'rejected' && p.decidedBy === p.requestedBy;
+
+/** A promotion's status in words: "Withdrawn" for a requester's own rejection. */
+export const statusWords = (p: Pick<Promotion, 'status' | 'requestedBy' | 'decidedBy'>) =>
+  isWithdrawn(p) ? 'Withdrawn' : statusLabel(p.status);
 
 const percent = (p: number) => `${Math.round(p * 100)}%`;
 
@@ -88,8 +99,6 @@ export function RefusalAlert(props: {
   refusal: Refusal;
   /** What to do when the answer never came. */
   unconfirmed?: string;
-  /** A line under the issues: what may have happened all the same. */
-  note?: string;
 }) {
   const { refusal } = props;
   if (refusal.kind === 'unconfirmed') {
@@ -108,7 +117,6 @@ export function RefusalAlert(props: {
         <AlertTitle>{props.title}</AlertTitle>
         <AlertDescription>
           <p>{refusal.message}</p>
-          {props.note ? <p>{props.note}</p> : null}
         </AlertDescription>
       </Alert>
     );
@@ -134,7 +142,6 @@ export function RefusalAlert(props: {
             </ul>
           </div>
         ))}
-        {props.note ? <p>{props.note}</p> : null}
       </AlertDescription>
     </Alert>
   );
@@ -268,6 +275,8 @@ export interface PromotionViewer {
   readonly canApprove: (p: Pick<Promotion, 'requestedBy' | 'contentTypes' | 'blocks'>) => boolean;
   /** Whether Reject is offered: never to its requester. */
   readonly canReject: (p: Pick<Promotion, 'requestedBy'>) => boolean;
+  /** Whether Withdraw is offered: to its requester, as a person, whose role could reject it. */
+  readonly canWithdraw: (p: Pick<Promotion, 'requestedBy'>) => boolean;
 }
 
 /**
@@ -303,6 +312,11 @@ export function usePromotionViewer(): PromotionViewer {
     directory,
     canRequest: unrestricted && has('content:publish') && has('content:manage'),
     canReject,
+    canWithdraw: (p) =>
+      unrestricted &&
+      has('content:publish') &&
+      !!access?.subject &&
+      access.subject === p.requestedBy,
     canApprove: (p) =>
       canReject(p) && (has('content:manage') || (p.contentTypes.length === 0 && !p.blocks)),
   };

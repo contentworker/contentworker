@@ -29,7 +29,9 @@ export function registerPromotionTools(server: McpServer, t: ToolContext): void 
         'blocks removed, or the risk check flagged it), and someone other than you approves it ' +
         'with promotion_approve. Omit contentTypes and entries to promote everything that ' +
         'differs (at most 200 entries), the block catalog and block config included; blocks: ' +
-        'true adds them to a selection.',
+        'true adds them to a selection. A refusal writes nothing. One that applies at once and ' +
+        'stops partway returns its record with status `failed`, its `error` and what it wrote ' +
+        '(`result`).',
       inputSchema: toolSchema('promotion_request', () =>
         z.object({
           source: z.string(),
@@ -99,7 +101,9 @@ export function registerPromotionTools(server: McpServer, t: ToolContext): void 
     'promotion_approve',
     {
       description:
-        'Approve a promotion waiting for approval, and apply it. Refused for whoever requested it.',
+        'Approve a promotion waiting for approval, and apply it. Refused for whoever requested ' +
+        'it. An apply that stops partway returns the record with status `failed`, its `error` ' +
+        'and what it wrote (`result`); a refusal writes nothing.',
       inputSchema: toolSchema('promotion_approve', () =>
         z.object({ id: z.string(), space: z.string().optional() }),
       ),
@@ -114,7 +118,9 @@ export function registerPromotionTools(server: McpServer, t: ToolContext): void 
   server.registerTool(
     'promotion_reject',
     {
-      description: 'Reject a promotion waiting for approval; nothing is copied.',
+      description:
+        'Reject a promotion waiting for approval; nothing is copied. Its requester may reject it ' +
+        'too, withdrawing the request.',
       inputSchema: toolSchema('promotion_reject', () =>
         z.object({ id: z.string(), space: z.string().optional() }),
       ),

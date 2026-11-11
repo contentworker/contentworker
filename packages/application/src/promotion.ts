@@ -426,7 +426,8 @@ export async function failStalePromotions(ctx: AppContext): Promise<StalePromoti
  * Applies a claimed (`applying`) promotion: content types first (entries are validated against
  * them), then each entry's pinned version, published when it was live in the source. Then checks
  * the target holds what was pinned. Any failure marks it `failed`, naming the cause; what was
- * applied before the failure stays, like any other edits.
+ * applied before the failure stays, like any other edits. A check that stops it before anything
+ * is written throws (a refusal); a failure once writing began returns the `failed` record.
  */
 async function applyPromotion(base: AppContext, promotion: Promotion): Promise<Promotion> {
   if (promotion.status !== 'applying') {
@@ -443,6 +444,8 @@ async function applyPromotion(base: AppContext, promotion: Promotion): Promise<P
     gated: string[];
     blocks?: PromotionResult['blocks'];
   } = { contentTypes: [], entries: [], published: [], gated: [] };
+  // Set once the checks have passed and the first write is under way.
+  let writing = false;
   const finish = async (patch: {
     status: 'completed' | 'failed';
     result: PromotionResult;
@@ -513,6 +516,8 @@ async function applyPromotion(base: AppContext, promotion: Promotion): Promise<P
     // here rather than after the types are written. (A race after these reads can still stop the
     // apply partway, as it can any promotion; what was applied stays, as for any edits.)
     if (blocks) await checkPromotedCatalog(ctx, target, types, blocks, replaced);
+    // Every check has passed: from here on, a failure may leave something written.
+    writing = true;
     for (const ct of types) {
       await saveContentTypeOver(
         ctx,
@@ -608,8 +613,13 @@ async function applyPromotion(base: AppContext, promotion: Promotion): Promise<P
     return await finish({ status: 'completed', result: done });
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
-    await finish({ status: 'failed', result: { ...result, mismatched: [] }, error });
-    throw err;
+    const failed = await finish({ status: 'failed', result: { ...result, mismatched: [] }, error });
+    // Stopped by a check, before anything was written: a refusal, said as one (its issues name
+    // what to change), though the record is failed too. Stopped partway: the record is the
+    // answer, naming the cause and what was written, so the request or approval that ran the
+    // apply returns it rather than an error a caller would read as "nothing happened".
+    if (!writing) throw err;
+    return failed;
   }
 }
 

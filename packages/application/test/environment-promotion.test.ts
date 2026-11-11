@@ -419,6 +419,38 @@ describe('promoting content between environments', () => {
     );
   });
 
+  it('answers a request that applied partway and failed with its failed record', async () => {
+    const a = await createEntry(ctx, staging, {
+      contentTypeApiId: 'note',
+      fields: { title: { 'en-US': 'First' } },
+    });
+    const b = await createEntry(ctx, staging, {
+      contentTypeApiId: 'note',
+      fields: { title: { 'en-US': 'Second' } },
+    });
+    // The second write fails once the first has landed: partway, not a refusal.
+    const create = store.entries.create.bind(store.entries);
+    let writes = 0;
+    store.entries.create = async (...args) => {
+      if (++writes === 2) throw new Error('boom');
+      return create(...args);
+    };
+    // Into qa, which needs no approval: it applies in the request.
+    const p = await requestPromotion(ctx, ada, spaceId, {
+      source: 'staging',
+      target: 'qa',
+      entries: [a.entry.id, b.entry.id],
+    });
+    store.entries.create = create;
+    expect(p).toMatchObject({
+      status: 'failed',
+      error: 'boom',
+      result: { entries: [a.entry.id] },
+    });
+    expect(p).toEqual(await getPromotion(ctx, spaceId, p.id));
+    expect(await store.entries.get(qa, a.entry.id)).not.toBeNull();
+  });
+
   it('fails, copying nothing of it, when a content type changed after the request', async () => {
     await createEnvironment(ctx, spaceId, 'slim');
     const slim = { spaceId, environmentId: 'slim' };
@@ -755,7 +787,10 @@ describe('promoting a content type that would strand blocks in the target', () =
       contentTypes: ['page'],
       entries: [b.entry.id, a.entry.id],
     });
-    await expect(approvePromotion(ctx, managers, spaceId, p.id)).rejects.toThrow();
+    // Stopped partway: the approval answers with the failed record, not an error.
+    const answered = await approvePromotion(ctx, managers, spaceId, p.id);
+    expect(answered).toMatchObject({ id: p.id, status: 'failed', error: expect.any(String) });
+    expect(answered).toEqual(await store.promotions.get(spaceId, p.id));
     expect(await store.promotions.get(spaceId, p.id)).toMatchObject({
       status: 'failed',
       result: { contentTypes: ['page'], entries: [a.entry.id], published: [a.entry.id] },
@@ -924,8 +959,12 @@ describe('failing a promotion whose apply died partway', () => {
         };
       }
       const outcome = approvePromotion(ctx, grace, spaceId, p.id);
-      if (fails) await expect(outcome).rejects.toThrow('boom');
-      else expect(await outcome).toMatchObject({ id: p.id, status: 'failed' });
+      // Either way the answer is the record as the sweep left it: failed, in the sweep's words.
+      expect(await outcome).toMatchObject({
+        id: p.id,
+        status: 'failed',
+        error: expect.stringContaining('failed after an hour'),
+      });
       store.entries.create = create;
       store.promotions.transition = transition;
       expect((await getPromotion(ctx, spaceId, p.id)).status).toBe('failed');

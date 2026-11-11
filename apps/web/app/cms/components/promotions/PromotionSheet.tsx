@@ -18,12 +18,14 @@ import { useClient, useLocalRun } from '../../lib/client-context';
 import { useInvalidate, useScopedQuery } from '../../lib/queries';
 import {
   copiesLine,
+  isWithdrawn,
   LongList,
   type Refusal,
   RefusalAlert,
   RiskReasons,
   refusalOf,
   shortId,
+  statusWords,
   usePromotionViewer,
 } from './parts';
 
@@ -113,7 +115,7 @@ function Record({ promotion: p }: { promotion: Promotion }) {
   const { client } = useClient();
   const { busy, run } = useLocalRun();
   const invalidate = useInvalidate();
-  const { directory, canApprove, canReject, access } = usePromotionViewer();
+  const { directory, canApprove, canReject, canWithdraw, access } = usePromotionViewer();
   const [refused, setRefused] = useState<Refusal>();
   const status = useRef<HTMLDivElement>(null);
   // Set once a decision lands, so the confirm hands focus to what happened, not back to Approve.
@@ -123,26 +125,23 @@ function Record({ promotion: p }: { promotion: Promotion }) {
 
   /**
    * Approves from the confirm, which holds until the answer and says a refusal (in the API's
-   * words) or no answer itself. An approval whose apply failed answers with the apply's error,
-   * after the record moved to `failed` as this person's: the record is read again, and when it
-   * says so the confirm closes on it rather than calling it unapproved.
+   * words) or no answer itself. An apply that stopped partway answers with the record, `failed`:
+   * the confirm closes on it and the record says what happened. A refusal wrote nothing, though a
+   * check the apply ran first may have failed the record: it is read again either way.
    */
   const approve = async () => {
     setRefused(undefined);
     try {
       await client.approvePromotion(p.id);
     } catch (err) {
-      if (!refusedSave(err)) throw err;
-      const now = await client.getPromotion(p.id).catch(() => null);
-      await reread();
-      const applied =
-        now?.status === 'failed' && !!access?.subject && now.decidedBy === access.subject;
-      if (!applied) throw err;
+      if (refusedSave(err)) await reread();
+      throw err;
     }
     decided.current = true;
     await reread();
   };
 
+  /** Rejects it, or, for its requester, withdraws it (the API records both as a rejection). */
   const reject = () =>
     run(async () => {
       setRefused(undefined);
@@ -165,6 +164,7 @@ function Record({ promotion: p }: { promotion: Promotion }) {
   const mine = !!access?.subject && access.subject === p.requestedBy;
   const approvable = canApprove(p);
   const rejectable = canReject(p);
+  const withdrawable = waiting && canWithdraw(p);
 
   return (
     <>
@@ -176,7 +176,7 @@ function Record({ promotion: p }: { promotion: Promotion }) {
         <Standing promotion={p} directory={directory} />
         {refused ? (
           <RefusalAlert
-            title="It wasn’t rejected"
+            title={mine ? 'It wasn’t withdrawn' : 'It wasn’t rejected'}
             refusal={refused}
             unconfirmed="The decision didn’t answer in time. It may still have gone through: this record updates when it does."
           />
@@ -221,10 +221,26 @@ function Record({ promotion: p }: { promotion: Promotion }) {
             </ConfirmButton>
           </div>
         ) : null}
+        {withdrawable ? (
+          <ConfirmButton
+            message="Withdraw this request?"
+            note={`Nothing is copied into ${p.target}. To promote it later, request it again.`}
+            confirmLabel="Withdraw request"
+            tone="default"
+            busy={busy}
+            onConfirm={() => void reject()}
+          >
+            {(ask) => (
+              <Button type="button" variant="outline" disabled={busy} onClick={ask}>
+                {busy ? 'Withdrawing…' : 'Withdraw request'}
+              </Button>
+            )}
+          </ConfirmButton>
+        ) : null}
         {waiting ? (
           <p className="max-w-measure text-muted-foreground text-sm">
             {mine
-              ? 'You requested it, so someone else approves or rejects it.'
+              ? 'You requested it, so someone else approves or rejects it. You can withdraw it.'
               : !access
                 ? null
                 : !rejectable
@@ -256,7 +272,7 @@ function spoken(p: Promotion): string {
     case 'failed':
       return `The promotion failed. ${p.error ?? ''}`.trim();
     case 'rejected':
-      return 'Rejected';
+      return statusWords(p);
   }
 }
 
@@ -319,10 +335,11 @@ function Standing({
     case 'rejected':
       return (
         <Alert role="note">
-          <AlertTitle>Rejected</AlertTitle>
+          <AlertTitle>{statusWords(p)}</AlertTitle>
           <AlertDescription>
             <p>
-              Rejected by {by(p.decidedBy)}, <When at={p.decidedAt} />. Nothing was copied.
+              {isWithdrawn(p) ? 'Withdrawn' : 'Rejected'} by {by(p.decidedBy)},{' '}
+              <When at={p.decidedAt} />. Nothing was copied.
             </p>
           </AlertDescription>
         </Alert>
@@ -458,7 +475,7 @@ function History({ promotion: p, directory }: { promotion: Promotion; directory:
   ];
   if (p.decidedAt) {
     steps.push({
-      what: p.status === 'rejected' ? 'Rejected' : 'Approved',
+      what: p.status === 'rejected' ? statusWords(p) : 'Approved',
       ...(p.decidedBy ? { who: p.decidedBy } : {}),
       at: p.decidedAt,
     });
