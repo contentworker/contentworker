@@ -216,7 +216,7 @@ their role.
 | -------------------------------------- | ------------------------------------------------------------------ |
 | `GET /spaces/:space/team`              | People + long-lived keys with roles, `adminCount`, access settings |
 | `POST /spaces/:space/members`          | Add a person `{ email, name?, role }`                              |
-| `PATCH /spaces/:space/members/:id`     | Change `role`, `name`, `disabled`                                  |
+| `PATCH /spaces/:space/members/:id`     | Change `role`, `name`, `disabled`; optional `expectedVersion`      |
 | `DELETE /spaces/:space/members/:id`    | Remove a person                                                    |
 | `PUT /spaces/:space/api-keys/:id/role` | Rebind a key `{ role }` (`null` unbinds it to its kind's defaults) |
 | `PUT /spaces/:space/access-settings`   | `{ ssoOnly }`                                                      |
@@ -224,6 +224,36 @@ their role.
 All need `space:admin`. MCP: `role_presets_list`, `team_list`, `role_preset_assign`, and
 `api_key_update` for `PUT …/api-keys/:id/role`. In the admin:
 Settings → Access → Space access.
+
+### A person's version
+
+Every person carries a `version` (1 when added, one more at each save; `0042_member_versions`),
+answered by `POST …/members`, `PATCH …/members/:id` and `GET …/team`. The store writes a person
+only while the row is at the version the change read: version 1 inserts (refused when the id or
+the email is taken), a later one only ever updates the row at the version before it, and a
+removal deletes only the version it read. The update path never inserts, so a change that read
+someone before they were removed can't bring them back, and one that read them before an admin
+turned their access off or changed their role can't write the old state back.
+
+- **`PATCH …/members/:id`** changes only the fields it names. Without `expectedVersion`, a change
+  that loses the race reads the person again and makes the same change over what is stored then,
+  every check running again (up to three times, then `409 conflict`); a person removed meanwhile
+  is a `404`. With `expectedVersion`, a stored version other than the one given is `409 conflict`
+  with `details: { version }` (the version in force) and nothing written. The delegated-bearer
+  refusals (a role change, re-enabling someone) and the last-admin check run first, against the
+  person as stored now, so a stale change is refused only when it would otherwise be allowed.
+- **`role_preset_assign`** with `memberId` takes the same optional `expectedVersion` (refused with
+  a `keyId`: a key has no version).
+- **Removing** a person rides the version the last-admin check read; a change landing in between
+  is read and checked again.
+- **An SSO first sign-in** links the provider's subject to the person at their version. A lost
+  race reads the team again and decides afresh, so the sign-in goes on with the person as they are
+  now: refused if their access was turned off, not on the team if they were removed, and no match
+  if another subject linked the row first. Three lost races in a row refuse that sign-in (`403`,
+  nothing linked); the next one goes through.
+
+The admin's Team page sends single values (a role, on or off, remove) that are right over any
+version, so it sends no `expectedVersion` and never sees the `409`.
 
 ### The last administrator
 

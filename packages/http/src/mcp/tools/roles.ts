@@ -158,12 +158,20 @@ export function registerRoleTools(server: McpServer, t: ToolContext): void {
       description:
         'Give an API key (keyId) or a person (memberId) one of the role presets. Refused when it ' +
         'would leave the space with no administrator. With a personal access token or OAuth ' +
-        "token, refused for a person's role, and for a key's when it would widen the key.",
+        "token, refused for a person's role, and for a key's when it would widen the key. For a " +
+        'person, send the version team_list showed as expectedVersion: a change made to them ' +
+        'since is refused (409, naming the version in force), so read the team again and show ' +
+        'the person what changed.',
       inputSchema: toolSchema('role_preset_assign', () =>
         z.object({
           preset: z.enum(ROLE_PRESETS),
           keyId: z.string().optional(),
           memberId: z.string().optional(),
+          expectedVersion: z
+            .int()
+            .min(1)
+            .optional()
+            .describe('With memberId: the version the person was read at; another is a 409'),
           ...scopeArgs,
         }),
       ),
@@ -175,7 +183,19 @@ export function registerRoleTools(server: McpServer, t: ToolContext): void {
           { field: 'keyId', message: 'Give exactly one of keyId or memberId' },
         ]);
       }
-      const target = args.keyId ? { keyId: args.keyId } : { memberId: args.memberId as string };
+      if (args.keyId && args.expectedVersion !== undefined) {
+        throw new ValidationError([
+          { field: 'expectedVersion', message: 'Only a person (memberId) has a version' },
+        ]);
+      }
+      const target = args.keyId
+        ? { keyId: args.keyId }
+        : {
+            memberId: args.memberId as string,
+            ...(args.expectedVersion !== undefined
+              ? { expectedVersion: args.expectedVersion }
+              : {}),
+          };
       return ok(
         await assignRolePreset(
           ctx,

@@ -1272,12 +1272,22 @@ export interface RoleRepo {
 
 /** The people on a space's team (see `SpaceMember`). Email is unique within a space. */
 export interface MemberRepo {
-  /** Creates or replaces (by id). A second member with the same email in a space is refused. */
+  /**
+   * Writes `member` at its version. Version 1 adds them: refused when the id is taken, or when the
+   * space already has someone with the same email. A later version replaces them only while the
+   * stored row is at the version before, and never inserts: a save made from a read taken before
+   * the person was removed changes nothing. A lost race is a `TransactionConflictError` (at
+   * commit, inside a unit; thrown outside one).
+   */
   save(member: SpaceMember): Promise<void>;
   get(spaceId: string, id: string): Promise<SpaceMember | null>;
   getByEmail(spaceId: string, email: string): Promise<SpaceMember | null>;
   list(spaceId: string): Promise<SpaceMember[]>;
-  delete(spaceId: string, id: string): Promise<void>;
+  /**
+   * Removes the person while they are at `version`, the one the caller read and checked. Gone
+   * already, or saved since, is a `TransactionConflictError`, as for `save`.
+   */
+  delete(spaceId: string, id: string, version: number): Promise<void>;
 }
 
 /**
@@ -1415,6 +1425,7 @@ export interface ContentStoreTx {
    * it, or as the team places it grants (`members.save`).
    */
   readonly invites: Pick<InviteRepo, 'create' | 'replace'>;
+  /** A person is added or replaced at their version's compare-and-set. */
   readonly members: Pick<MemberRepo, 'save'>;
 }
 

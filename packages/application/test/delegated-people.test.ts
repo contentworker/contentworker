@@ -61,7 +61,7 @@ describe('a delegated bearer and the people on a team', () => {
     // Ada, an administrator who has signed in once, and a second admin to keep the last-admin
     // rule out of the way.
     const ada = await addMember(ctx, S, { email: 'ada@example.com', role: 'admin' }, 'system');
-    await ctx.store.members.save({ ...ada, subject: session.subject });
+    await ctx.store.members.save({ ...ada, subject: session.subject, version: 2 });
     await addMember(ctx, S, { email: 'keeper@example.com', role: 'admin' }, 'system');
     // Her real personal access token, resolved as every request resolves it.
     const minted = await createPersonalAccessToken(ctx, hasher, {
