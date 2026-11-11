@@ -341,8 +341,9 @@ Found while building and reviewing M1 and M2. None blocks a release.
   return `nextCursor`.
 - [ ] **Flaky browser tests.** Find the cause of the webhook dialog, webhook deliveries and asset
   library tests that fail under a full parallel run and pass alone.
-- [ ] **Unused api email config.** Drop `EMAIL_FROM`, `EMAIL_FROM_NAME` and the `send_email` comment
-  from `apps/api/wrangler.jsonc`; nothing on the api sends email.
+- [x] **Unused api email config.** Dropped `EMAIL_FROM`, `EMAIL_FROM_NAME` and the `send_email`
+  comment from `apps/api/wrangler.jsonc`: the fleet binds `EMAIL` only on the engine and web, so
+  the api's `makeEmail` never had a sender to read them for.
 
 #### Follow-ups from first-run onboarding
 
