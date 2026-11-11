@@ -69,6 +69,7 @@ import { configRefusal, rulesOver } from '../lib/block-rules';
 import { useBlockThumbnails } from '../lib/block-thumbnails';
 import { canvasAvailable } from '../lib/canvas/model';
 import { useClient } from '../lib/client-context';
+import { fieldAccessFor } from '../lib/field-access';
 import { dateTime, toMs } from '../lib/format';
 import { capabilitiesFor, SELECT_ONLY } from '../lib/live-preview/host';
 import { liveFields } from '../lib/live-preview/ops';
@@ -215,10 +216,16 @@ export function EntryEditor() {
   // come from the team, which only an administrator may read; anyone else sees "You" and kinds.
   const authorship =
     lastAggregate?.id === entryId ? { ...entryQuery.data, ...lastAggregate } : entryQuery.data;
+  // Read for a new entry too: the form leaves out the fields this person's role hides or makes
+  // read-only, so it is drawn once it is known (or couldn't be read: the server still refuses).
   const accessQuery = useScopedQuery(['space-access'], () => client.getSpaceAccess(), {
     silent: true,
-    enabled: isEdit,
   });
+  const accessKnown = accessQuery.data !== undefined || accessQuery.isError;
+  const fieldAccess = useMemo(
+    () => fieldAccessFor(accessQuery.data, typeId ?? ''),
+    [accessQuery.data, typeId],
+  );
   const isAdmin = accessQuery.data?.scopes.includes(SPACE_ADMIN) === true;
   const teamQuery = useScopedQuery(['team'], () => client.getTeam(), {
     silent: true,
@@ -855,7 +862,7 @@ export function EntryEditor() {
           aria-busy={swapping || undefined}
           ref={formBox}
         >
-          {initial === null || swapping ? (
+          {initial === null || swapping || !accessKnown ? (
             <div className="max-w-2xl space-y-3">
               <Skeleton className="h-8 w-1/3" />
               <Skeleton className="h-24" />
@@ -906,6 +913,7 @@ export function EntryEditor() {
               blockLocks={blockLocks.data?.locks}
               directory={directory}
               serverIssues={refused}
+              fieldAccess={fieldAccess}
               onSave={save}
               onCancel={() => navigate(backTo)}
             />

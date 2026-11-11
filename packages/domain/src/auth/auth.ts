@@ -547,6 +547,45 @@ export function contentActionsFor(
   return { types, others: wildcard ? held(wildcard) : [] };
 }
 
+/** The fields one grant restricts: by name only, never what they hold. */
+export interface FieldRules {
+  /** Masked on read and refused on write ({@link ContentTypeGrant.deniedFields}). */
+  readonly deniedFields: readonly string[];
+  /** Readable, but refused on write ({@link ContentTypeGrant.readOnlyFields}). */
+  readonly readOnlyFields: readonly string[];
+}
+
+/**
+ * The field rules a principal's grants hold, per content type, resolved as {@link grantFor}
+ * resolves them and shaped as {@link contentActionsFor}: `types` for each type a grant names (the
+ * first grant naming it), `others` for every type none names (the first `*` grant's). No rules
+ * anywhere for a principal with no grants. What the admin reads before drawing an entry's form, so
+ * it never offers a field the save would refuse.
+ */
+export interface FieldRulesByType {
+  readonly types: Readonly<Record<string, FieldRules>>;
+  readonly others: FieldRules;
+}
+
+const NO_FIELD_RULES: FieldRules = { deniedFields: [], readOnlyFields: [] };
+
+export function fieldRulesFor(principal: Pick<Principal, 'contentGrants'>): FieldRulesByType {
+  const grants = principal.contentGrants;
+  if (!grants) return { types: {}, others: NO_FIELD_RULES };
+  const rules = (g: ContentTypeGrant): FieldRules => ({
+    deniedFields: [...new Set(g.deniedFields ?? [])],
+    readOnlyFields: [...new Set(g.readOnlyFields ?? [])],
+  });
+  const types: Record<string, FieldRules> = {};
+  for (const g of grants) {
+    if (g.contentTypeApiId !== '*' && !Object.hasOwn(types, g.contentTypeApiId)) {
+      types[g.contentTypeApiId] = rules(g);
+    }
+  }
+  const wildcard = grants.find((g) => g.contentTypeApiId === '*');
+  return { types, others: wildcard ? rules(wildcard) : NO_FIELD_RULES };
+}
+
 /** Whether `principal`'s grant on `contentTypeApiId` denies a field or makes one read-only. */
 export function hasFieldRules(principal: Principal, contentTypeApiId: string): boolean {
   if (!principal.contentGrants) return false;

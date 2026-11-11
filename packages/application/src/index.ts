@@ -99,6 +99,7 @@ export * from './seo';
 export * from './site-routes';
 export * from './snapshot-jobs';
 export * from './snapshots';
+export * from './space-access';
 export * from './space-export-import';
 export * from './spaces';
 export * from './starter-installs';

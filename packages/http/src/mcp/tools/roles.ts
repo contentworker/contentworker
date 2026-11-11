@@ -5,6 +5,7 @@ import {
   listRolePresets,
   listRoles,
   listTeam,
+  spaceAccessFor,
   updateRole,
 } from '@contentworker/application';
 import { ROLE_PRESETS, SCOPES, ValidationError } from '@contentworker/domain';
@@ -13,7 +14,27 @@ import { z } from 'zod';
 import { grantShape, ok, scopeArgs, scopeOf, type ToolContext, toolSchema } from './shared';
 
 export function registerRoleTools(server: McpServer, t: ToolContext): void {
-  const { deps, ctx, guard } = t;
+  const { deps, ctx, guard, principal } = t;
+  // --- the caller's own access ----------------------------------------------
+  // The same answer as GET /spaces/:space/auth/me: open to any caller, about itself only.
+  server.registerTool(
+    'auth_me',
+    {
+      description:
+        'Who you are in a space and what your role lets you do there: your scopes, the bulk ' +
+        'jobs over entries you may start (`bulkJobs`), your content actions per content type ' +
+        '(`contentActions`: `types` for each type a grant names, `others` for the rest), and ' +
+        'the fields per content type you may not read (`deniedFields`) or not change ' +
+        '(`readOnlyFields`) in `fieldRules`, shaped the same way. Read it before writing an ' +
+        'entry: leave out a read-only field (an update keeps what it holds) rather than sending ' +
+        'a new value, which is refused. Names only, never values. Refused for a space you have ' +
+        'no standing in.',
+      inputSchema: toolSchema('auth_me', () => z.object({ space: scopeArgs.space })),
+      annotations: { readOnlyHint: true },
+    },
+    async (args) => ok(spaceAccessFor(principal, scopeOf(args).spaceId)),
+  );
+
   // --- roles (granular RBAC, admin) ----------------------------------------
 
   server.registerTool(

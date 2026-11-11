@@ -800,9 +800,19 @@ interface Principal {
   plain keys don't), `bulkJobs` (the bulk jobs over entries it may start there, see below),
   `contentActions` (`contentActionsFor`: the actions its grants hold per content type a grant
   names, `types`, and on every other type, `others`; with no grants, every action on every type),
-  and `403` for a caller with no standing in that space. The admin reads it before offering the
-  bulk trash, restore and delete jobs, and before offering Lock on an entry's blocks (`lock`). Neither has an MCP tool: an MCP client already knows its own
-  token.
+  `fieldRules` (`fieldRulesFor`: the `deniedFields` and `readOnlyFields` of the same grants, shaped
+  the same way, by name only; with no grants, none), and `403` for a caller with no standing in
+  that space. The route and the `auth_me` MCP tool both answer `spaceAccessFor` (application), so
+  an agent reads its own field rules as the admin does; `GET /auth/me` has no tool, since an MCP
+  client already knows its own token. The admin reads it before offering the bulk trash, restore
+  and delete jobs, before offering Lock on an entry's blocks (`lock`), and before drawing an
+  entry's form (`apps/web/app/cms/lib/field-access.ts`): a denied field is left out of the form,
+  its validation and the save; a read-only one shows its stored value read-only ("Your role can't
+  change this field") and is left out of the save. Leaving them out is what an update expects
+  (`unwritable`: the stored values are laid over what was sent), so a required one never fails a
+  save it can't change. Field rules name top-level fields, never anything inside a block or
+  component, so the canvas opens for review when a blocks field is denied or read-only, and its
+  save leaves out the person's read-only fields as the form's does.
 - **Bulk jobs over entries** (`POST …/bulk/jobs`, its report and cancel, and the matching MCP
   tools) can't be authorized entry by entry, and a report names entries of every type, so
   `authorizeBulkJob` (application) asks `canRunEntryBulkJob` (domain) for a role that holds the job's actions on every content type alike: one with no per-content-type

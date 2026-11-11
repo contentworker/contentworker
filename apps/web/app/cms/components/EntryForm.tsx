@@ -79,6 +79,13 @@ import {
 } from '../lib/block-rules';
 import { type BlockThumbnails, NO_THUMBNAILS } from '../lib/block-thumbnails';
 import { overridesOf } from '../lib/breakpoints';
+import {
+  type FieldAccess,
+  OPEN_FIELDS,
+  READ_ONLY_BY_ROLE,
+  withoutHiddenFields,
+  writableFields,
+} from '../lib/field-access';
 import type { AppExtension, EntryBlockLock, TextDirection } from '../lib/management';
 import { BlockThumbnail } from './BlockThumbnail';
 import { EntityPicker } from './EntityPicker';
@@ -236,6 +243,21 @@ function withDisabledKept(
     }
     if (!next) break;
     out = next;
+  }
+  return out;
+}
+
+/**
+ * The values with every field the person's role makes read-only at its stored value: an edit, or
+ * a merged AI draft, never shows a value the save would not keep.
+ */
+function withReadOnlyKept(values: Values, stored: EntryFields, readOnly: ReadonlySet<string>) {
+  if (readOnly.size === 0) return values;
+  const out: Values = { ...values };
+  for (const apiId of readOnly) {
+    const kept = stored[apiId] as Record<string, unknown> | undefined;
+    if (kept) out[apiId] = { ...kept };
+    else delete out[apiId];
   }
   return out;
 }
@@ -502,10 +524,23 @@ export function EntryForm(props: {
   blockLocks?: readonly EntryBlockLock[];
   /** Who's who, for "Locked by …". */
   directory?: ActorDirectory;
+  /**
+   * The fields the person's role hides or makes read-only on this type, as the api says
+   * (`cms/lib/field-access.ts`). A hidden field isn't drawn, judged or sent; a read-only one shows
+   * its stored value read-only and isn't sent. The save keeps what both hold.
+   */
+  fieldAccess?: FieldAccess;
+  /** The fields to save: without those the role hides or makes read-only. */
   onSave: (fields: EntryFields) => void;
   onCancel: () => void;
 }) {
-  const { contentType, locales, defaultLocale, fallbacks, fieldEditors } = props;
+  const { locales, defaultLocale, fallbacks, fieldEditors } = props;
+  const access = props.fieldAccess ?? OPEN_FIELDS;
+  // The type as this person sees it: a field their role hides is not part of the form at all.
+  const contentType = useMemo(
+    () => withoutHiddenFields(props.contentType, access),
+    [props.contentType, access],
+  );
   const [values, setValues] = useState<Values>(() => cloneInitial(props.initial));
   const focusField = props.focusField;
   const [activeLocale, setActiveLocale] = useState(() =>
@@ -523,16 +558,30 @@ export function EntryForm(props: {
   const hasLocalized = useMemo(() => contentType.fields.some((f) => f.localized), [contentType]);
 
   // What the form shows and sends, with every field its rules disable at its stored value.
+  // A field the role makes read-only is at its stored value before any rule reads it.
   const shown = useMemo(
-    () => withDisabledKept(contentType, values, props.initial, locales, defaultLocale),
-    [contentType, values, props.initial, locales, defaultLocale],
+    () =>
+      withDisabledKept(
+        contentType,
+        withReadOnlyKept(values, props.initial, access.readOnly),
+        props.initial,
+        locales,
+        defaultLocale,
+      ),
+    [contentType, values, props.initial, access, locales, defaultLocale],
   );
   // Each top-level field's state in the locale on screen (a non-localized field is only shown
-  // on the default locale's tab, where its siblings are read in that locale too).
-  const states = useMemo(
-    () => fieldStates(contentType.fields, shown, activeLocale, defaultLocale),
-    [contentType, shown, activeLocale, defaultLocale],
-  );
+  // on the default locale's tab, where its siblings are read in that locale too). A field the
+  // role makes read-only is read-only whatever its rules say.
+  const states = useMemo(() => {
+    const ruled = fieldStates(contentType.fields, shown, activeLocale, defaultLocale);
+    if (access.readOnly.size === 0) return ruled;
+    const out = new Map(ruled);
+    for (const apiId of access.readOnly) {
+      out.set(apiId, { hidden: ruled.get(apiId)?.hidden ?? false, disabled: true });
+    }
+    return out;
+  }, [contentType, shown, activeLocale, defaultLocale, access]);
 
   // What an edit did to other fields, said once for a screen reader: a field appearing,
   // disappearing or turning read-only moves the form under a reader who can't see it move.
@@ -717,7 +766,9 @@ export function EntryForm(props: {
       return;
     }
     setFieldErrors({});
-    props.onSave(out);
+    // Judged with what the read-only fields hold (a required one that holds a value passes);
+    // sent without them, as the save keeps them.
+    props.onSave(writableFields(out, access));
   };
 
   /** Shows `errors` on their fields: their locale, tab and collapsed group opened for them. */
@@ -936,7 +987,9 @@ export function EntryForm(props: {
         )}
         {ruleId && (
           <p id={ruleId} className="max-w-measure text-muted-foreground text-xs">
-            {disabledReason(f, contentType.fields, rulesValues(locale))}
+            {access.readOnly.has(f.apiId)
+              ? READ_ONLY_BY_ROLE
+              : disabledReason(f, contentType.fields, rulesValues(locale))}
           </p>
         )}
         {hint && !err && <p className="text-xs text-muted-foreground">{hint}</p>}

@@ -654,6 +654,13 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   Add and Remove, nested fields) is disabled by a fieldset; an extension is told `readOnly`. When
   an edit shows, hides or locks other fields, a polite sr-only line says so ("Sold to shown.
   Reference read-only.").
+- **Fields under a role's rules** (`cms/lib/field-access.ts`, read from the space's `auth/me`): a
+  field the person's role hides is not drawn at all, with no quiet line in its place (they may not
+  know it holds a value). One their role makes read-only takes the read-only treatment above, its
+  stored value showing, with the reason "Your role can’t change this field" in the same muted
+  `text-xs` line; it wins over a rule's reason, since it holds whatever the sibling values. Neither
+  is sent by a save. The canvas, whose blocks a role can only rule as a whole field, opens for
+  review when its blocks field is ruled, and its notice names the field and links to the form.
 - **Dates and lists:** a Date's input follows its format: a date picker, `datetime-local`, or a
   `time` input (minutes; seconds kept when stored). A list of Text, Integer, Number or Date
   values is one row per value, each named "<Field> item N" with its own input and a ghost Remove,

@@ -36,6 +36,7 @@ import type {
   EntryVersion,
   EntryWorkflowState,
   FieldDiff,
+  FieldRulesByType,
   FilterOp,
   FrontendEndpoints,
   GraphIssue,
@@ -254,6 +255,12 @@ export interface PrincipalInfo {
     readonly types: Readonly<Record<string, readonly ContentAction[]>>;
     readonly others: readonly ContentAction[];
   };
+  /**
+   * In a space: the fields its role hides (`deniedFields`) or makes read-only (`readOnlyFields`)
+   * per content type a grant names, and on every other type, as the api resolves them
+   * (`fieldRulesFor`). Names only.
+   */
+  readonly fieldRules?: FieldRulesByType;
 }
 
 /**
