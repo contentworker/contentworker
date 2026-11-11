@@ -199,6 +199,17 @@ test('a person whose role makes a field read-only and hides another edits what t
   await expect(price).toHaveAttribute('aria-readonly', 'true');
   // Still in the tab order, its reason read on focus.
   await expect(price).toHaveAccessibleDescription('Your role can’t change this field');
+  // Drawn read-only, apart from the editable title: no fill, a dashed edge.
+  await expect(price).toHaveCSS('border-top-style', 'dashed');
+  await expect(price).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+  await expect(page.getByLabel('Title')).not.toHaveCSS('border-top-style', 'dashed');
+  // Focused, it keeps the dashed edge in the ring's colour.
+  const edge = () => price.evaluate((el) => getComputedStyle(el).borderTopColor);
+  const resting = await edge();
+  await price.focus();
+  await expect(price).toHaveCSS('border-top-style', 'dashed');
+  expect(await edge()).not.toBe(resting);
+  await price.blur();
   await expect(page.getByText('Internal notes')).toHaveCount(0);
   await scan(page, testInfo);
 

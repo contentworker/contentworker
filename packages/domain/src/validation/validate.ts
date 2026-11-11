@@ -21,6 +21,9 @@ import { validateRichText } from '../rich-text/rich-text';
 import { canonicalUrlIssue, SEO_FIELDS } from '../seo/seo';
 import type { EntryFields, LocaleCode } from '../types';
 
+/** What a required field that holds nothing says (a client may say it in its own words). */
+export const REQUIRED_FIELD_MESSAGE = 'Field is required';
+
 export interface ValidationContext {
   readonly defaultLocale: LocaleCode;
   /** Locale codes permitted in the space. */
@@ -111,7 +114,7 @@ export function validateEntryFields(
           !state.hidden &&
           !ctx.unfilled?.has(field.apiId)
         ) {
-          issues.push({ field: field.apiId, locale, message: 'Field is required' });
+          issues.push({ field: field.apiId, locale, message: REQUIRED_FIELD_MESSAGE });
         }
         continue;
       }
@@ -362,7 +365,7 @@ function validateComponent(
       // the fourth item of a repeater, which is the case that would otherwise
       // slip through — unless the component's own rules hide the field.
       if (f.required && !state.hidden) {
-        issues.push({ field: at, locale, message: 'Field is required' });
+        issues.push({ field: at, locale, message: REQUIRED_FIELD_MESSAGE });
       }
       continue;
     }

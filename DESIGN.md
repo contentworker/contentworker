@@ -657,8 +657,18 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
 - **Fields under a role's rules** (`cms/lib/field-access.ts`, read from the space's `auth/me`): a
   field the person's role hides is not drawn at all, with no quiet line in its place (they may not
   know it holds a value). One their role makes read-only takes the read-only treatment above, its
-  stored value showing, with the reason "Your role can’t change this field" in the same muted
-  `text-xs` line; it wins over a rule's reason, since it holds whatever the sibling values. Neither
+  stored value showing, and looks it too, since it stays read-only whatever anyone types: the
+  field is marked `data-readonly="role"` and `app.css` gives each control in it (text, number,
+  date and select inputs, a picker's search, a checkbox, rich text) no fill, a dashed edge (three
+  quarters of the `muted-foreground` ink, 3:1 on paper, card and muted in both themes) and
+  `muted-foreground` text. A select loses its chevron; a ticked box keeps its brand fill inside
+  the dashed edge, unfaded; an error keeps its destructive edge, and focus its ring (rich text
+  rings its box, and stays in the tab order with `aria-readonly`). The rows of a list or repeater
+  keep their look, their Add and Remove disabled as before. Its reason, "Your
+  role can’t change this field", is the same muted `text-xs` line led by a `Lock` (`size-3`,
+  `aria-hidden`); it wins over a rule's reason, since it holds whatever the sibling values. A
+  required one that holds nothing says "Required, but your role can’t fill it: ask someone who
+  can" rather than "Field is required". Neither
   is sent by a save, and the editor's other surfaces follow suit: the preview and site pane
   never name a hidden field, and generation and AI assist offer and apply only the fields the
   person may change. The canvas, whose blocks a role can only rule as a whole field, opens for

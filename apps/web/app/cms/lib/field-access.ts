@@ -20,6 +20,9 @@ export const OPEN_FIELDS: FieldAccess = { hidden: new Set(), readOnly: new Set()
 /** Why a field its role makes read-only can't be changed, under the field. */
 export const READ_ONLY_BY_ROLE = 'Your role can’t change this field';
 
+/** What a required field the role can't change says when it holds nothing. */
+export const REQUIRED_BUT_READ_ONLY = 'Required, but your role can’t fill it: ask someone who can';
+
 /**
  * The person's field access on `contentType`: its own grant's rules, else every other type's.
  * Open until the access is read (the server still refuses a write it doesn't allow).

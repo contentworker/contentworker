@@ -98,6 +98,17 @@ describe('the entry form under a role’s field rules', () => {
     // The reason is read on focus.
     const reason = screen.getByText('Your role can’t change this field');
     expect(price.getAttribute('aria-describedby')).toContain(reason.id);
+    // Drawn read-only (app.css mutes a `data-readonly="role"` field), the lock before its reason
+    // left out of what is read.
+    expect(price.closest('[data-field="price"]')?.getAttribute('data-readonly')).toBe('role');
+    expect(reason.querySelector('svg')?.getAttribute('aria-hidden')).toBe('true');
+    expect(reason.textContent).toBe('Your role can’t change this field');
+    // Still focusable: it keeps its place in the tab order.
+    price.focus();
+    expect(document.activeElement).toBe(price);
+    // An editable field isn't marked.
+    const title = screen.getByLabelText(/^Title/);
+    expect(title.closest('[data-field="title"]')?.hasAttribute('data-readonly')).toBe(false);
     expect(screen.queryByLabelText(/Internal notes/)).toBeNull();
     expect(screen.queryByText(/Internal notes/)).toBeNull();
   });
@@ -143,11 +154,16 @@ describe('the entry form under a role’s field rules', () => {
     expect((screen.getByLabelText(/^Price/) as HTMLInputElement).value).toBe('450000');
   });
 
-  it('still asks for a required read-only field that holds nothing (the save would refuse it too)', () => {
+  it('says a required read-only field that holds nothing is one for someone else (the save would refuse it too)', () => {
     const onSave = renderForm(ACCESS, { title: { 'en-US': 'Loft' } });
     fireEvent.submit(screen.getByLabelText(/^Title/).closest('form') as HTMLFormElement);
     expect(onSave).not.toHaveBeenCalled();
     expect(screen.getByRole('alert').textContent).toContain('Price');
+    // Not "Field is required": the person can't fill it.
+    expect(
+      screen.getAllByText('Required, but your role can’t fill it: ask someone who can').length,
+    ).toBeGreaterThan(0);
+    expect(screen.queryByText('Field is required')).toBeNull();
   });
 
   it('says the role is why a field its rules hide keeps its value', () => {
@@ -179,6 +195,56 @@ describe('the entry form under a role’s field rules', () => {
       /it is read-only: your role can’t change it\.$/,
     );
     expect(screen.queryByRole('button', { name: /Clear/ })).toBeNull();
+  });
+
+  it('says the same of a required read-only field when the server is the one refusing', () => {
+    render(
+      <EntryForm
+        contentType={LISTING}
+        initial={{ title: { 'en-US': 'Loft' } } as never}
+        locales={['en-US']}
+        defaultLocale="en-US"
+        pickers={{ entries: [], assets: [] }}
+        fieldAccess={ACCESS}
+        serverIssues={{
+          seq: 1,
+          issues: [{ field: 'price', locale: 'en-US', message: 'Field is required' }],
+        }}
+        onSave={() => {}}
+        onCancel={() => {}}
+      />,
+    );
+    expect(screen.queryByText('Field is required')).toBeNull();
+    expect(
+      screen.getAllByText('Required, but your role can’t fill it: ask someone who can').length,
+    ).toBeGreaterThan(0);
+  });
+
+  it('keeps read-only rich text in the tab order, saying it is read-only', async () => {
+    const withBody: ContentType = {
+      ...LISTING,
+      fields: [
+        ...LISTING.fields,
+        field({ apiId: 'body', name: 'Body', type: 'RichText', position: 4 }),
+      ],
+    };
+    render(
+      <EntryForm
+        contentType={withBody}
+        initial={MASKED as never}
+        locales={['en-US']}
+        defaultLocale="en-US"
+        pickers={{ entries: [], assets: [] }}
+        fieldAccess={{ hidden: new Set(['notes']), readOnly: new Set(['price', 'body']) }}
+        onSave={() => {}}
+        onCancel={() => {}}
+      />,
+    );
+    const body = await screen.findByRole('textbox', { name: /^Body/ });
+    expect(body.getAttribute('contenteditable')).toBe('false');
+    expect(body.getAttribute('tabindex')).toBe('0');
+    expect(body.getAttribute('aria-readonly')).toBe('true');
+    expect(body.closest('[data-field="body"]')?.getAttribute('data-readonly')).toBe('role');
   });
 
   it('judges and sends every field for a role without field rules', () => {

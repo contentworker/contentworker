@@ -30,6 +30,7 @@ import {
   normalizeOptions,
   optionLabel,
   optionValue,
+  REQUIRED_FIELD_MESSAGE,
   resolveLocalizedValue,
   responsivePropsOf,
   ruleTarget,
@@ -83,6 +84,7 @@ import {
   type FieldAccess,
   OPEN_FIELDS,
   READ_ONLY_BY_ROLE,
+  REQUIRED_BUT_READ_ONLY,
   withoutHiddenFields,
   writableFields,
 } from '../lib/field-access';
@@ -334,6 +336,19 @@ function disabledReason(
 ): string {
   const held = heldConditions(field, siblings, values, 'disable');
   return held.length ? `Read-only while ${held.join(' and ')}` : 'Read-only';
+}
+
+/**
+ * Issues as this person can act on them: a required field their role can't fill holds nothing, and
+ * "required" alone would ask them for the impossible. The form's own and the server's alike.
+ */
+function inRoleWords<I extends FieldIssue>(issues: readonly I[], access: FieldAccess): I[] {
+  if (access.readOnly.size === 0) return [...issues];
+  return issues.map((i) =>
+    access.readOnly.has(i.field) && i.message === REQUIRED_FIELD_MESSAGE
+      ? { ...i, message: REQUIRED_BUT_READ_ONLY }
+      : i,
+  );
 }
 
 function issuesToErrors(
@@ -763,7 +778,7 @@ export function EntryForm(props: {
             props.blockLocks,
           ).filter((i) => i.field !== '');
     if (issues.length > 0) {
-      reveal(issuesToErrors(issues, defaultLocale));
+      reveal(issuesToErrors(inRoleWords(issues, access), defaultLocale));
       props.onValidationFailed?.(issues.length);
       return;
     }
@@ -807,7 +822,7 @@ export function EntryForm(props: {
     if (!refusal || refusal.seq === handledIssues.current) return;
     handledIssues.current = refusal.seq;
     const named = refusal.issues.filter((i) => i.field !== '');
-    if (named.length > 0) reveal(issuesToErrors(named, defaultLocale));
+    if (named.length > 0) reveal(issuesToErrors(inRoleWords(named, access), defaultLocale));
   }, [props.serverIssues]);
 
   // Read from the values on screen: a region's blocks are found by key wherever they are now.
@@ -955,7 +970,13 @@ export function EntryForm(props: {
     const ruleId = state?.disabled ? `${id}-rule` : undefined;
     return (
       // `data-field`: the Site pane outlines the field focused here on the page.
-      <div className="space-y-1.5" key={f.apiId} data-field={f.apiId}>
+      // `data-readonly="role"`: drawn read-only by app.css, its fill and colour muted.
+      <div
+        className="space-y-1.5"
+        key={f.apiId}
+        data-field={f.apiId}
+        data-readonly={access.readOnly.has(f.apiId) ? 'role' : undefined}
+      >
         <Label id={`${id}-label`} htmlFor={id} className="gap-1">
           {f.name}
           {f.required && <RequiredMark />}
@@ -994,9 +1015,14 @@ export function EntryForm(props: {
         )}
         {ruleId && (
           <p id={ruleId} className="max-w-measure text-muted-foreground text-xs">
-            {access.readOnly.has(f.apiId)
-              ? READ_ONLY_BY_ROLE
-              : disabledReason(f, contentType.fields, rulesValues(locale))}
+            {access.readOnly.has(f.apiId) ? (
+              <>
+                <Lock className="mr-1 inline size-3 align-[-0.125em]" aria-hidden="true" />
+                {READ_ONLY_BY_ROLE}
+              </>
+            ) : (
+              disabledReason(f, contentType.fields, rulesValues(locale))
+            )}
           </p>
         )}
         {hint && !err && <p className="text-xs text-muted-foreground">{hint}</p>}
