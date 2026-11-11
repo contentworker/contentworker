@@ -6,6 +6,7 @@ import {
   blockVariants,
   type FieldDefinition,
   nestedFieldsFor,
+  RESPONSIVE_KEY,
   UNIQUE_FIELD_TYPES,
   variantOf,
 } from './field';
@@ -106,7 +107,8 @@ function withComponentDefaults(nested: readonly FieldDefinition[], value: unknow
  * across edits and reorders. Ids come from the caller (`ctx.ids.newId`), so the
  * use-case stays deterministic under test. Values are copied, never mutated.
  * A block whose `_type` is a former apiId of its variant (`aliases`) is written
- * under the current one, so a renamed block converges on its next save.
+ * under the current one, so a renamed block converges on its next save. A block's `_responsive`
+ * is dropped: no field takes per-breakpoint overrides yet (see `RESPONSIVE_KEY`).
  *
  * Runs before validation on every entry write; a duplicate key the caller sent
  * is left for validation to refuse rather than silently re-keyed, since the
@@ -154,9 +156,11 @@ function keyed(field: FieldDefinition, value: unknown, newId: () => string): unk
     const variant = variantOf(variants, block);
     const renamed = variant !== undefined && block[BLOCK_TYPE_KEY] !== variant.apiId;
     const keyless = typeof key !== 'string' || key === '';
-    if (!renamed && !keyless) return filled;
+    const overridden = Object.hasOwn(block, RESPONSIVE_KEY);
+    if (!renamed && !keyless && !overridden) return filled;
+    const { [RESPONSIVE_KEY]: _dropped, ...rest } = block;
     return {
-      ...block,
+      ...rest,
       ...(renamed ? { [BLOCK_TYPE_KEY]: variant.apiId } : {}),
       ...(keyless ? { [BLOCK_KEY]: newId() } : {}),
     };
