@@ -45,14 +45,15 @@ import {
 /** Output tokens a draft of scalars takes; one with a blocks field takes a layout's. */
 const DRAFT_MAX_TOKENS = 4096;
 
-interface JsonSchema {
+// A type alias, not an interface: an alias is a `Record<string, unknown>`, which `conforms` takes.
+type JsonSchema = {
   type: 'object';
   properties: Record<string, Record<string, unknown>>;
   required: string[];
   additionalProperties: false;
   /** The block shapes the blocks fields share, each named for its field first. */
   $defs?: Record<string, Record<string, unknown>>;
-}
+};
 
 /**
  * Builds a strict JSON Schema for the fields of a content type a model fills: its scalars
