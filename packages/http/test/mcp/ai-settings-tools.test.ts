@@ -2,8 +2,11 @@ import { createHash } from 'node:crypto';
 import { InProcessAgentRuntime, makeActivities } from '@contentworker/agent-runtime';
 import {
   type AppContext,
+  consumeEvent,
   createContentType,
+  createEntry,
   createSpace,
+  publishEntry,
   SYSTEM_CALLER,
 } from '@contentworker/application';
 import { type Principal, SCOPES } from '@contentworker/domain';
@@ -14,6 +17,7 @@ import {
   InMemoryContentStore,
   InMemoryVectorStore,
   LocalEmbeddingsProvider,
+  RecordingWebhookSender,
   SequenceIdGenerator,
   StubAIProvider,
 } from '@contentworker/test-kit';
@@ -188,5 +192,37 @@ describe('AI settings tools (MCP), on the HTTP routes’ use-cases', () => {
     // And the drafting tool runs on the cap.
     await call('generate_draft', { contentType: 'post', prompt: 'x' });
     expect(ai.requests[0]?.tier).toBe('fast');
+  });
+
+  it('follows the search reindex a toggle starts, with content:manage', async () => {
+    const { ctx, deps } = await setup();
+    const call = await connect(deps, admin);
+    expect((await call('search_reindex_job')).isError).toBe(true);
+    const manager = await connect(deps, {
+      ...admin,
+      scopes: [...admin.scopes, SCOPES.contentManage],
+    });
+    expect((await manager('search_reindex_job')).body).toEqual({ job: null });
+    const { entry } = await createEntry(
+      ctx,
+      { spaceId: SPACE, environmentId: 'main' },
+      {
+        contentTypeApiId: 'post',
+        fields: { title: { 'en-US': 'Hello' } },
+      },
+    );
+    await publishEntry(ctx, { spaceId: SPACE, environmentId: 'main' }, entry.id);
+    const store = ctx.store as InMemoryContentStore;
+    const before = store.allEvents().length;
+    await manager('ai_settings_set', {
+      expectedVersion: 0,
+      capabilities: { search: { enabled: false } },
+    });
+    for (const e of store.allEvents().slice(before)) {
+      await consumeEvent(ctx, { sender: new RecordingWebhookSender(), rag: deps.rag }, e);
+    }
+    expect((await manager('search_reindex_job')).body).toMatchObject({
+      job: { action: 'search_reindex', status: 'running', config: { enabled: false } },
+    });
   });
 });

@@ -12,12 +12,14 @@ export const EVENTS_TOPIC = 'contentworker.events';
  */
 export const BULK_TOPIC = 'contentworker.bulk';
 
-/** Default topic router: bulk chunk work → bulk topic, everything else (webhook send requests
- *  too) → events. Hosts without a bulk queue binding pass `routeTopic: () =>
- *  EVENTS_TOPIC` to keep single-topic operation. */
+/** Default topic router: bulk chunk work (and starting a search reindex, which lists a whole
+ *  environment) → bulk topic, everything else (webhook send requests too) → events. Hosts without
+ *  a bulk queue binding pass `routeTopic: () => EVENTS_TOPIC` to keep single-topic operation. */
 export function defaultRouteTopic(event: OutboxEntry): string {
   if (isWebhookSendRequest(event)) return EVENTS_TOPIC;
-  return event.type === 'bulk.chunk_due' || event.type === 'environment.purge_due'
+  return event.type === 'bulk.chunk_due' ||
+    event.type === 'environment.purge_due' ||
+    event.type === 'search.toggled'
     ? BULK_TOPIC
     : EVENTS_TOPIC;
 }

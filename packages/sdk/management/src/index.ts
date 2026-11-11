@@ -2277,6 +2277,12 @@ export function createManagementClient(opts: ManagementClientOptions) {
        * characters; 409 for a stale version (`isConflict`; `error.details.version` is the version in force).
        */
       set: (input: AiSettingsSetInput) => put<AiSettingsSet>(`${spaceBase}/ai-settings`, input),
+      /**
+       * This environment's latest search reindex, or null: turning `search` on or off starts one
+       * in every environment (content:manage). Poll it while `status` is `running`.
+       */
+      searchReindexJob: async () =>
+        (await get<{ job: BulkJob | null }>(`${envBase}/search/reindex-job`)).job,
     },
 
     /** Navigation menus: delivery data a front end renders (content:manage to change them). */

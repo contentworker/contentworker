@@ -37,7 +37,8 @@ export function registerAiSettingsTools(server: McpServer, t: ToolContext): void
         'Read ai_settings_get first and send its version as expectedVersion. Guidance is plain ' +
         `text, at most ${AI_GUIDANCE_MAX_CHARS} characters, about tone and style only. A tier ` +
         'above the deployment’s maxTier is kept but runs on maxTier (its effectiveTier). ' +
-        'Show the person the change before setting it.',
+        'Turning search on or off starts a reindex in every environment (search_reindex_job ' +
+        'follows it). Show the person the change before setting it.',
       inputSchema: toolSchema('ai_settings_set', () => aiSettingsSetBody.extend({ ...scopeArgs })),
     },
     async (args) => {

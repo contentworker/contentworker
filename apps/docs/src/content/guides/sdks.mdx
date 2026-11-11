@@ -279,7 +279,10 @@ allows of it, per target and slot, and answers the rules in force. See
 
 **AI settings.** `cma.aiSettings.get()` reads the space's AI settings, per capability;
 `cma.aiSettings.set({ expectedVersion, capabilities })` changes the capabilities it names (it needs
-`space:admin`), and a save someone made since is a `409` (`isConflict`). See
+`space:admin`), and a save someone made since is a `409` (`isConflict`). Each capability comes
+back with the tier it runs on under the deployment's cap (`effectiveTier`, beside `maxTier`).
+`cma.aiSettings.searchReindexJob()` returns the client environment's latest search reindex, which
+turning `search` on or off starts (it needs `content:manage`), or null. See
 [AI settings](/guides/ai/#ai-settings).
 
 **Roles.** `cma.roles.{list, get, create, update, delete}` manages the space's roles (it needs

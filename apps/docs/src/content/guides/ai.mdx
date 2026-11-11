@@ -139,10 +139,15 @@ Each row has:
   `409` whose code is `ai_capability_disabled` and whose `capability` names the row. Work that runs
   in the background (an upload's alt text, an agent schedule, a workflow step) is skipped rather
   than failing; a workflow's AI step answers as it does when the model can't (a moderation step
-  flags). With semantic search off, nothing new is sent to the embedding model, an entry or asset
-  republished drops its old embeddings, search in the admin and over MCP matches words only, and the
-  text of uploaded documents and recordings isn't read (they're found by name and details). The
-  Content Delivery API's search keeps using the embeddings already stored.
+  flags). With semantic search off, nothing new is sent to the embedding model, search in the admin
+  and over MCP matches words only, and the text of uploaded documents and recordings isn't read
+  (they're found by name and details).
+  Turning semantic search off or on also **reindexes** every environment of the space in the
+  background: off deletes the stored embeddings of published entries and assets (until then, the
+  Content Delivery API's search keeps using them), on embeds them again. The search row says how far
+  it has got ("Reindexing search: 40%"); over the API, follow it at
+  `GET /spaces/{space}/environments/{environment}/search/reindex-job` (or `search_reindex_job` over
+  MCP; both need `content:manage`). Turning it again while one runs replaces it.
   The moderation your deployment's administrator turns on is not a space setting, and keeps running.
 - **A model tier** (Default, Flagship, Balanced or Fast). Default keeps what each feature uses on
   its own (see [Model tiers](#model-tiers)). A request that names a tier still gets it; in the

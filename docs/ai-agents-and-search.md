@@ -161,12 +161,44 @@ API is what refuses. The drafting and canvas dialogs default to **Space default*
 tier.
 
 **Search** stops on both sides: the point of turning it off is that content stops going to the
-embeddings model. Vectors already stored stay until their entry or asset is republished,
-unpublished or reindexed (each drops them). Delivery's `/search` and GraphQL `search` don't read the
-setting, so the public read path takes no extra statement; they serve what the index still holds,
-and their semantic leg still embeds the reader's query. Turning search off also stops reading the
-text of uploaded documents and recordings, so new ones are found by their name and metadata only.
-Turn search back on and request a reindex (`POST …/search/reindex`) to fill it again.
+embeddings model. Delivery's `/search` and GraphQL `search` don't read the setting, so the public
+read path takes no extra statement; they serve what the index still holds (until the reindex below
+deletes it), and their semantic leg still embeds the reader's query. Turning search off also stops
+reading the text of uploaded documents and recordings, so new ones are found by their name and
+metadata only.
+
+**Turning search on or off reindexes it** (`packages/application/src/search-reindex.ts`). A set that
+changes `search.enabled` appends one `search.toggled` per environment of the space, in the same unit
+as the settings row (`tx.aiSettings.save` with `tx.outbox.appendMany`), so the setting and its
+reindex commit together or not at all. The event is routed to the bulk topic; its consumer starts
+the environment's `search_reindex` bulk job over every published entry (`entry:<id>`, up to
+`MAX_REINDEX_ENTRIES`) and every asset (`asset:<id>`, as many), in chunks of
+`SEARCH_REINDEX_CHUNK_SIZE` (100: each item is an embeddings call and vector writes). Off, a chunk
+deletes each entry's vectors and both of each asset's corpora; on, it embeds each published entry
+and each asset again (`indexEntryEmbeddings`, `embedAssetForSearch`), never a draft. Each chunk reads
+the setting in force when it runs, not the one that started the job, so a chunk of an overtaken job
+can only bring the index nearer the setting. The lexical leg isn't touched: it never reaches a
+model.
+
+- **Superseding.** A toggle while a job runs cancels it (`cancelBulkJob`) and starts another. An
+  event a later toggle overtook (the setting no longer what it asked for) starts nothing, and a
+  redelivered one finds the job it started (by `config.settingsVersion`).
+- **Whose job.** The system's: no starter is recorded, so its chunks don't re-check anyone's access
+  (`starterLostAccess`). It realizes the space's setting, which stays in force whoever set it; were
+  it stopped when that person lost access, the index would be left half way between on and off.
+  Who turned it is on the job as `config.actor`, and in the settings' audit row.
+- **Following it.** `GET …/search/reindex-job` and MCP `search_reindex_job` (`content:manage`)
+  answer the environment's latest one; its report and cancel are the bulk job routes'. The admin's Settings → AI
+  says "Reindexing search: 40%" on the search row while it runs.
+- **Cost.** Embeddings aren't metered by `CostGuardDO` (they never were: they run on every publish,
+  at a fraction of a generation's cost), and search has no tier, so neither the budget nor
+  `AI_MAX_TIER` bounds this job; its size is bounded instead, as above. Assets uploaded while search
+  was off had no text read from them: the job embeds their name and metadata, and a reindex of the
+  assets (`POST …/assets/reindex` with `all`) reads their text, running ingest's other steps (alt
+  text and tags, under `media`) again too.
+- **Not covered.** A deployment with no vectors bound (no `EMBEDDINGS_PROVIDER`) starts no job.
+  Entries beyond `MAX_REINDEX_ENTRIES` in one environment wait for their next publish (or `POST
+  …/search/reindex`).
 
 **Tier.** `policy.tier(callSiteDefault, requested)` answers the request's own tier, else the space's,
 else the call site's default ([the table above](#which-tier-each-use-case-asks-for)), held to the

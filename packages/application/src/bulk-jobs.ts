@@ -55,9 +55,19 @@ const isEntryTrashAction = (action: BulkJobAction): boolean =>
   action === 'set_fields' ||
   (ENTRY_TRASH_BULK_ACTIONS as readonly string[]).includes(action);
 
+/**
+ * Items per chunk of a search reindex. Each is an embeddings call and a vector delete and upsert
+ * (an entry, once per locale), all subrequests of one consumer invocation: half a publish chunk.
+ */
+export const SEARCH_REINDEX_CHUNK_SIZE = 100;
+
 /** How many ids one chunk of `action` takes. */
 export const bulkChunkSizeOf = (action: BulkJobAction): number =>
-  isEntryTrashAction(action) ? ENTRY_TRASH_CHUNK_SIZE : BULK_JOB_CHUNK_SIZE;
+  isEntryTrashAction(action)
+    ? ENTRY_TRASH_CHUNK_SIZE
+    : action === 'search_reindex'
+      ? SEARCH_REINDEX_CHUNK_SIZE
+      : BULK_JOB_CHUNK_SIZE;
 
 /** The most ids one job of `action` takes. */
 export const bulkMaxItemsOf = (action: BulkJobAction): number =>
@@ -315,6 +325,16 @@ export interface BulkChunkDeps {
    */
   readonly blob?: BlobStore;
   /**
+   * Embeds, or drops the vectors of, a search reindex chunk's entries and assets
+   * (`search-reindex.ts`), injected for the embeddings and vector store. Absent, the chunk stays
+   * claimable.
+   */
+  readonly searchReindexChunk?: (
+    scope: Scope,
+    job: BulkJob,
+    chunk: BulkJobChunk,
+  ) => Promise<BulkChunkOutcome>;
+  /**
    * Runs one phase of a space starter's background install (`@contentworker/seed`), injected
    * because the starter's content lives above this layer. Absent, the chunk stays claimable.
    */
@@ -404,6 +424,10 @@ export async function runBulkChunk(
   // A bulk field edit: each entry saved as a draft through its use-case.
   if (job.action === 'set_fields') {
     return runChunkAndFold(ctx, deps.entryFieldsChunk, scope, job, chunk);
+  }
+  // A search reindex: each entry and asset embedded, or its vectors dropped, by the setting now.
+  if (job.action === 'search_reindex') {
+    return runChunkAndFold(ctx, deps.searchReindexChunk, scope, job, chunk);
   }
   // A starter install's phase: the starter writes through the use-cases; the chunk is the phase.
   if (job.action === 'starter_install') {

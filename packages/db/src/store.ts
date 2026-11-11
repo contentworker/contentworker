@@ -7681,6 +7681,7 @@ function makeTx(x: Exec, scanLimit: number, versionBodies?: BlobStore): ContentS
     outbox: makeOutboxRepo(x),
     invites: makeInviteRepo(x),
     members: makeMemberRepo(x),
+    aiSettings: { save: makeAiSettingsRepo(x).save },
   };
 }
 

@@ -207,6 +207,8 @@ function scopesToRun(job: BulkJob): readonly PermissionScope[] {
     case 'asset_tag':
     case 'asset_reindex':
       return [SCOPES.assetsWrite];
+    case 'search_reindex':
+      return [SCOPES.spaceAdmin];
     default:
       return [];
   }

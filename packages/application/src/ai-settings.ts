@@ -68,7 +68,8 @@ export interface AiSettingsSet {
  * within its length. A tier above the deployment's cap is kept as set and reported with the tier it
  * runs on (`effectiveTier`), never refused: a cap lowered after a space chose its tiers would
  * otherwise refuse every later save of the settings until each tier was lowered by hand, and the
- * stored choice comes back when the cap is raised. A delegated bearer (PAT, OAuth token) holding `space:admin` may set them: they
+ * stored choice comes back when the cap is raised. Turning `search` on or off starts a reindex in
+ * each of the space's environments (`search.toggled`, committed with the set). A delegated bearer (PAT, OAuth token) holding `space:admin` may set them: they
  * are configuration, and grant nobody access that outlives the token.
  */
 export async function setAiSettings(
@@ -97,8 +98,30 @@ export async function setAiSettings(
     updatedAt: ctx.clock.now().toISOString(),
     updatedBy: caller === SYSTEM_CALLER ? null : auditActor(caller),
   };
+  // Search turned on or off: each environment's index is brought in line by a background job
+  // (`search-reindex.ts`), started from an event that commits with the setting or not at all.
+  const searchToggled = current.capabilities.search.enabled !== capabilities.search.enabled;
+  const environments = searchToggled ? await ctx.store.spaces.listEnvironments(spaceId) : [];
   try {
-    await ctx.store.aiSettings.save(spaceId, settings);
+    if (environments.length > 0) {
+      const occurredAt = ctx.clock.now().toISOString();
+      await ctx.store.withTransaction(async (tx) => {
+        await tx.outbox.appendMany(
+          environments.map((env) => ({
+            id: ctx.ids.newId(),
+            type: 'search.toggled' as const,
+            scope: { spaceId, environmentId: env.id },
+            occurredAt,
+            enabled: capabilities.search.enabled,
+            settingsVersion: settings.version,
+            ...(settings.updatedBy ? { actor: settings.updatedBy } : {}),
+          })),
+        );
+        await tx.aiSettings.save(spaceId, settings);
+      });
+    } else {
+      await ctx.store.aiSettings.save(spaceId, settings);
+    }
   } catch (err) {
     if (!(err instanceof TransactionConflictError)) throw err;
     throw new ConflictError('The AI settings changed while they were being set; try again', {

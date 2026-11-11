@@ -57,6 +57,8 @@ describe('AI settings through the management SDK', () => {
     });
     // Reading takes preview:read.
     expect((await client('cpa').aiSettings.get()).version).toBe(1);
+    // Following the search reindex: none has run here.
+    expect(await cma.aiSettings.searchReindexJob()).toBeNull();
 
     const stale = await cma.aiSettings
       .set({ expectedVersion: 0, capabilities: { media: { enabled: false } } })

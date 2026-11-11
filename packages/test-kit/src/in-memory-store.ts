@@ -3587,6 +3587,7 @@ export class InMemoryContentStore implements ContentStore {
         promotions: this.promotions,
         invites: this.invites,
         members: this.members,
+        aiSettings: this.aiSettings,
       });
       for (const [m, journal] of journals) m.commit(journal);
       return result;

@@ -40,8 +40,10 @@ export function aiSettingsRoutes(deps: AuthDeps): Hono<AuthVars> {
         'Setting what is in force again writes nothing. 422 naming each part that isn’t a ' +
         'capability, a tier, or guidance within its length; 409 (naming the version in force) when ' +
         '`expectedVersion` is stale or another set commits first. A tier above the deployment’s ' +
-        '`maxTier` is accepted and kept, and runs on `maxTier` (its `effectiveTier`). A capability ' +
-        'turned off answers requests that need it with 409 `ai_capability_disabled`.',
+        '`maxTier` is accepted and kept, and runs on `maxTier` (its `effectiveTier`). Turning ' +
+        '`search` on or off starts a background reindex in every environment (follow it at GET ' +
+        '`…/environments/{environment}/search/reindex-job`). A capability turned off answers ' +
+        'requests that need it with 409 `ai_capability_disabled`.',
     }),
     requireScope(SCOPES.spaceAdmin),
     async (c) =>

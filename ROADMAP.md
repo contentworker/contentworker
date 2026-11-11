@@ -409,6 +409,10 @@ None blocks a release.
   - [x] **Deployment tier cap.** `AI_MAX_TIER` (the registry's `aiMaxTier`) holds every model call
     to at most that tier, whatever its source; settings above it are kept and reported as
     `effectiveTier`, and the admin's select disables the tiers above it.
+  - [x] **Reindex when search is toggled.** Turning `search` on or off starts a `search_reindex` bulk
+    job in every environment (deleting, or re-embedding, published entries' and assets' vectors),
+    superseding one still running; followed at `…/search/reindex-job`, `search_reindex_job` and on
+    the admin's search row.
 - [ ] **Change summaries.** A narrative summary of a version diff, over the existing deterministic
   diff.
 
