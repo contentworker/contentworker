@@ -9,7 +9,12 @@ import {
   type SpaceMember,
 } from '@contentworker/domain';
 import type { MemberRepo } from '@contentworker/ports';
-import { FixedClock, InMemoryContentStore, SequenceIdGenerator } from '@contentworker/test-kit';
+import {
+  FixedClock,
+  InMemoryCache,
+  InMemoryContentStore,
+  SequenceIdGenerator,
+} from '@contentworker/test-kit';
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   type AppContext,
@@ -355,5 +360,40 @@ describe('a change to a person held to their version', () => {
     const stale: SpaceMember = { ...ada, spaceId: 's2', version: 2 };
     await expect(store.members.save(stale)).rejects.toThrow();
     expect(await store.members.list('s2')).toEqual([]);
+  });
+});
+
+describe("a change to a person drops the space's cached principals", () => {
+  it('on a role change, a disable and a removal', async () => {
+    const cache = new InMemoryCache();
+    const store = new InMemoryContentStore();
+    const ctx: AppContext = {
+      store,
+      clock: new FixedClock(),
+      ids: new SequenceIdGenerator('c'),
+      cache,
+    };
+    await createSpace(ctx, { spaceId: S, name: 'S', defaultLocale: 'en-US' });
+    const member = await addMember(
+      ctx,
+      S,
+      { email: 'ada@example.com', name: 'Ada', role: 'editor' },
+      'system',
+    );
+    // A principal authenticateCached would have stored for a token of this space.
+    const cached = () =>
+      cache.set('principal:h:token', '{}', { ttlSeconds: 60, tags: [`principals:${S}`] });
+
+    await cached();
+    await updateMember(ctx, S, member.id, { role: 'viewer' }, NO_SSO, 'system');
+    expect(await cache.get('principal:h:token')).toBeNull();
+
+    await cached();
+    await updateMember(ctx, S, member.id, { disabled: true }, NO_SSO, 'system');
+    expect(await cache.get('principal:h:token')).toBeNull();
+
+    await cached();
+    await removeMember(ctx, S, member.id, NO_SSO);
+    expect(await cache.get('principal:h:token')).toBeNull();
   });
 });

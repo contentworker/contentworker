@@ -475,6 +475,9 @@ export async function updateMember(
     }
     try {
       await ctx.store.members.save(next);
+      // A person's tokens (personal access tokens, OAuth) answer with their role and status: a
+      // demotion or a disable takes effect on the next request, not when a cached one expires.
+      await invalidateCachedPrincipals(ctx, spaceId);
       return next;
     } catch (err) {
       if (!(err instanceof TransactionConflictError)) throw err;
@@ -505,6 +508,7 @@ export async function removeMember(
     });
     try {
       await ctx.store.members.delete(spaceId, id, existing.version);
+      await invalidateCachedPrincipals(ctx, spaceId);
       return;
     } catch (err) {
       if (!(err instanceof TransactionConflictError)) throw err;
