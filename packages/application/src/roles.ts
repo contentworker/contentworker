@@ -9,6 +9,7 @@ import {
   IMPLIED_CONTENT_ACTIONS,
   isDelegatedBearer,
   LISTED_CONTENT_ACTIONS,
+  type MemberInvite,
   NotFoundError,
   type Principal,
   type Role,
@@ -99,7 +100,8 @@ export async function createRole(
  * A delegated bearer (an OAuth or personal access token) can't widen what a role's holders keep by
  * editing the role, as it can't by re-roling a key (`assignApiKeyRole`) or a person
  * (`updateMember`): new scopes, or content grants that aren't a narrowing of the held ones
- * (`grantsNoWider`), are refused while an active API key or anyone on the team holds the role.
+ * (`grantsNoWider`), are refused while an active API key, anyone on the team or an open invitation
+ * holds the role.
  * A disabled person counts: re-enabling them later shouldn't hand them a role a token widened.
  * Narrowing scopes or a grant's actions is not refused. A role nobody holds may change freely,
  * since giving it to anyone is checked on its own.
@@ -117,7 +119,24 @@ async function refuseWideningHolders(ctx: AppContext, existing: Role, input: Rol
   if (members.some((m) => m.roleId === existing.id)) {
     throw new DelegatedPeopleError('widen a role someone on the team holds');
   }
+  // An open invitation (pending, or expired and still resendable) holds the role too: whoever
+  // accepts joins with it as it reads then. Invitations are deployment-wide and listed at most
+  // INVITE_SCAN at a time, so a list that may be cut short refuses rather than guesses.
+  const now = ctx.clock.now();
+  const open = await Promise.all(
+    (['pending', 'expired'] as const).map((status) =>
+      ctx.store.invites.list({ now, status, limit: INVITE_SCAN }),
+    ),
+  );
+  const grantsIt = (i: MemberInvite) =>
+    i.grants.some((g) => g.spaceId === existing.spaceId && g.roleId === existing.id);
+  if (open.some((l) => l.length >= INVITE_SCAN) || open.flat().some(grantsIt)) {
+    throw new DelegatedPeopleError('widen a role an open invitation grants');
+  }
 }
+
+/** The most invitations one store list returns. */
+const INVITE_SCAN = 500;
 
 /**
  * Replaces a role's definition, as its next version. Keys and people holding it pick the change

@@ -196,6 +196,59 @@ describe('a delegated bearer and the people on a team', () => {
     });
   });
 
+  it("refuses widening a held role's content grants, as its scopes", async () => {
+    const grants = [{ contentTypeApiId: 'post', actions: ['read' as const] }];
+    const role = await createRole(ctx, S, {
+      name: 'Reader',
+      scopes: [SCOPES.previewRead],
+      contentGrants: grants,
+    });
+    await addMember(ctx, S, { email: 'grace@example.com', role: role.id }, 'system');
+    for (const contentGrants of [
+      [{ contentTypeApiId: 'post', actions: ['read' as const, 'write' as const] }],
+      [{ contentTypeApiId: '*', actions: ['read' as const] }],
+      [], // no grants is unrestricted
+    ]) {
+      await expect(
+        updateRole(
+          ctx,
+          S,
+          role.id,
+          { name: 'Reader', scopes: [SCOPES.previewRead], contentGrants },
+          SSO,
+          pat,
+        ),
+      ).rejects.toBeInstanceOf(DelegatedPeopleError);
+    }
+    expect((await ctx.store.roles.get(S, role.id))?.contentGrants).toEqual(grants);
+  });
+
+  it('refuses widening a role only an open invitation grants, pending or expired', async () => {
+    const role = await createRole(ctx, S, { name: 'Contractor', scopes: [SCOPES.previewRead] });
+    const widen = { name: 'Contractor', scopes: [SCOPES.previewRead, SCOPES.spaceAdmin] };
+    const inviter: Principal = { ...adminToken };
+    const issued = await createInvite(ctx, hasher, inviter, {
+      email: 'grace@example.com',
+      grants: [{ space: S, role: role.id }],
+      expiresInDays: 1,
+    });
+    for (const actor of [pat, oauth]) {
+      await expect(updateRole(ctx, S, role.id, widen, SSO, actor)).rejects.toThrow(
+        /can't widen a role an open invitation grants/,
+      );
+    }
+    // Expired, it can still be resent: still held.
+    (ctx.clock as FixedClock).advance(2 * 86_400_000);
+    await expect(updateRole(ctx, S, role.id, widen, SSO, pat)).rejects.toBeInstanceOf(
+      DelegatedPeopleError,
+    );
+    // Revoked, it holds nothing.
+    await revokeInvite(ctx, inviter, issued.invite.id);
+    await expect(updateRole(ctx, S, role.id, widen, SSO, pat)).resolves.toMatchObject({
+      scopes: widen.scopes,
+    });
+  });
+
   it('refuses turning SSO-only off, which brings the setup credential back; not turning it on', async () => {
     await expect(setSsoOnly(ctx, S, true, SSO, pat)).resolves.toEqual({ ssoOnly: true });
     for (const actor of [pat, oauth]) {

@@ -665,7 +665,7 @@ token can't …; sign in to the admin to do this"), on REST and MCP alike:
 | `POST /spaces/:space/members` (`addMember`)                                        | Refused                                                                    |
 | `PATCH /spaces/:space/members/:id`, `role_preset_assign` with `memberId`           | Refused when it changes the role (up or down) or re-enables the person; renaming and disabling pass |
 | `DELETE /spaces/:space/members/:id`                                                | Allowed: it only takes access away (the last-admin rule still holds)       |
-| `PUT /spaces/:space/roles/:id`, `role_update`                                      | Refused when it widens a role anyone on the team holds, disabled people included; narrowing passes |
+| `PUT /spaces/:space/roles/:id`, `role_update`                                      | Refused when it widens a role anyone on the team holds (disabled people included) or an open invitation grants (pending, or expired and still resendable; a deployment with more than 500 of either refuses every widening); narrowing passes |
 | `POST /spaces/:space/roles`, `…/roles/:id/clone`, `role_create`                    | Allowed: nobody holds a new role, and giving it to anyone is checked       |
 | `PUT /spaces/:space/access-settings` `{ ssoOnly: false }`                          | Refused (it brings the setup credential back); turning SSO-only on passes  |
 | `POST /deployment/invites`, `…/:id/resend`, `invite_create`, `invite_resend`       | Refused (a delegated token is bound to one space, so `authorizeInviter` already refused it; this says why) |
