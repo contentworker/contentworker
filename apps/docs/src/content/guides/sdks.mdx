@@ -143,6 +143,10 @@ function Article({ id }: { id: string }) {
 `app.use(createContentworker(client))`. Both fetch on the
 client only, so server rendering stays predictable.
 
+React's `useEntries` reads again whenever the query's content changes, `cursor` included, so a
+next page is a new `cursor`. Keep the query's values stable across renders: memoize a computed
+one, and never put `new Date()` in a filter inline, or every render starts another request.
+
 A [blocks field](/reference/field-types/#blocks) renders with `<Blocks components={…} />` (Vue:
 `<CwBlocks>`): a component per block id, typed by the generated `BlockTypes`, slots rendered with
 the same components, and live preview marks only when you pass `preview`. See
@@ -205,6 +209,7 @@ published since its last cursor (the [`since`](/guides/reading-content/#entries)
 storage you pass it, then reads from there without a network. Storage is pluggable: any object
 with `getItem`, `setItem` and `removeItem`, such as `AsyncStorage` or MMKV; `InMemoryStorage` is
 there for tests. Entries unpublished since the last sync are not removed locally yet. `useOfflineEntries(store)` wraps it in a hook.
+Over a preview client every sync reads the whole content type again: Preview has no `since`.
 `imageSource(asset, { width, dpr: PixelRatio.get() })` is an `<Image source>` with the width step
 for the device's density and the image's size in dp.
 
