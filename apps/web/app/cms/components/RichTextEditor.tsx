@@ -65,11 +65,14 @@ export function RichTextEditor(props: {
         // The words' language and direction, not the toolbar's: the admin's chrome reads its way.
         ...(props.lang ? { lang: props.lang } : {}),
         ...(props.dir ? { dir: props.dir } : {}),
+        // Read-only stays in the tab order (ProseMirror drops a non-editable one), so its reason
+        // is still read on focus, and says it is read-only.
+        ...(props.readOnly ? { tabindex: '0', 'aria-readonly': 'true' } : {}),
       },
     }),
     // Changes only when an error comes or goes (or the space config says a direction), not per
     // keystroke.
-    [props.ariaLabelledBy, props.ariaDescribedBy, props.lang, props.dir],
+    [props.ariaLabelledBy, props.ariaDescribedBy, props.lang, props.dir, props.readOnly],
   );
 
   const editor = useEditor({
@@ -105,7 +108,7 @@ export function RichTextEditor(props: {
 
   return (
     <RichTextPickersContext.Provider value={props.pickers}>
-      <div className="rounded-lg border bg-card" id={props.id}>
+      <div className="rounded-lg border bg-card" id={props.id} data-slot="rich-text">
         {editor && <Toolbar editor={editor} resolveEmbed={() => resolveEmbed.current} />}
         <EditorContent editor={editor} />
       </div>

@@ -93,7 +93,10 @@ list of grants:
   values, and a denied field's value stays out of the response. A save of an existing entry (and
   its dry run, `…/entries/validate` with `entryId`) may send a read-only field back as it was
   read, so a client can send every field it read; a changed value, or a denied field in any form,
-  is still refused with a `403`.
+  is still refused with a `403`. A caller reads its own field rules, by name only, from
+  `GET /spaces/{space}/auth/me` (`fieldRules`: `deniedFields` and `readOnlyFields` per content
+  type a grant names, and for every other type) or the `auth_me` MCP tool. The admin reads the
+  same answer: it doesn't show a denied field, and shows a read-only one read-only.
 - Roles are live: editing a role changes what every key bound to it can do on the next request.
 - Every role has a `version`, 1 when created and one more at each save. `PUT
   /spaces/{space}/roles/{id}` (and the `role_update` MCP tool) replaces the whole role; send the

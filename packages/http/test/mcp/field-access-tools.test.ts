@@ -114,6 +114,23 @@ async function setup(principal: Principal = writer) {
 }
 
 describe('a restricted writer over MCP', () => {
+  it('reads its own field rules by name, never the values, and is refused outside its space', async () => {
+    const { call } = await setup();
+    const me = await call('auth_me', {});
+    expect(me.isError, me.text).toBe(false);
+    expect(JSON.parse(me.text)).toMatchObject({
+      spaceId: SPACE,
+      restricted: true,
+      fieldRules: {
+        types: { listing: { deniedFields: ['internalNotes'], readOnlyFields: ['price'] } },
+        others: { deniedFields: [], readOnlyFields: [] },
+      },
+      contentActions: { types: { listing: ['read', 'write', 'delete'] }, others: [] },
+    });
+    expect(me.text).not.toContain('secret');
+    expect((await call('auth_me', { space: 'elsewhere' })).isError).toBe(true);
+  });
+
   it('keeps the fields it may not write when it saves, and answers without the hidden ones', async () => {
     const { ctx, id, call } = await setup();
     const edit = { title: { 'en-US': 'B' } };

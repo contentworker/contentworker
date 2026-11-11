@@ -3,13 +3,9 @@ import {
   getSchedulerStatus,
   revokeEverythingFor,
   setSchedulerAlertRecipients,
+  spaceAccessFor,
 } from '@contentworker/application';
-import {
-  contentActionsFor,
-  entryBulkJobsFor,
-  ForbiddenError,
-  inScope,
-} from '@contentworker/domain';
+import { ForbiddenError } from '@contentworker/domain';
 import { type Context, Hono } from 'hono';
 import { type AuthDeps, type AuthVars, principalMiddleware } from '../../auth';
 import { doc } from '../../docs/openapi';
@@ -100,31 +96,21 @@ export function deploymentRoutes(deps: AuthDeps): Hono<AuthVars> {
     me,
   );
   // The same, resolved in one space: a person's role (and its per-content-type grants) is per
-  // space, so this is what the admin asks before offering an action only some roles may take.
-  // `/spaces/*` already resolved the principal; a key or person with no standing in this space
-  // is refused rather than described.
+  // space, so this is what the admin asks before offering an action only some roles may take, or
+  // a field only some may change. `/spaces/*` already resolved the principal; a key or person with
+  // no standing in this space is refused rather than described. The `auth_me` tool answers the same.
   app.get(
     '/spaces/:space/auth/me',
-    doc('Auth', 'Resolve the calling principal in a space', { ok: authDocs.spacePrincipal }),
-    (c) => {
-      const principal = c.get('principal');
-      if (!inScope(principal, c.req.param('space'))) {
-        throw new ForbiddenError('this space');
-      }
-      return c.json({
-        spaceId: principal.spaceId,
-        kind: principal.kind,
-        scopes: principal.scopes,
-        subject: principal.subject,
-        restricted: principal.contentGrants !== undefined,
-        // The bulk jobs over entries this role may start here (`canRunEntryBulkJob`), as the
-        // bulk job routes decide: the admin offers only these.
-        bulkJobs: entryBulkJobsFor(principal),
-        // What its grants let it do per content type, as the use-cases resolve them: the admin
-        // offers Lock on a type's entries only where it holds `lock`.
-        contentActions: contentActionsFor(principal),
-      });
-    },
+    doc('Auth', 'Resolve the calling principal in a space', {
+      ok: authDocs.spacePrincipal,
+      description:
+        'Who the caller is in this space and what its role lets it do there: the bulk jobs over ' +
+        'entries it may start (`bulkJobs`), the content actions per content type ' +
+        '(`contentActions`), and the fields per content type it may not read (`deniedFields`) ' +
+        'or not change (`readOnlyFields`), by name only (`fieldRules`). 403 for a caller with no ' +
+        'standing in the space.',
+    }),
+    (c) => c.json(spaceAccessFor(c.get('principal'), c.req.param('space'))),
   );
 
   return app;

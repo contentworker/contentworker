@@ -272,6 +272,8 @@ export const UNSCOPED_TOOLS: readonly string[] = [
   // Each operation names its own scope; the use-case checks it and lists only what may be called.
   'app_operation_invoke',
   'app_operations_list',
+  // The caller's own access: anyone may ask about itself (refused outside its space).
+  'auth_me',
   'docs_list',
   'docs_read',
   'docs_search',

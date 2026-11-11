@@ -183,6 +183,44 @@ describe('the web principal (x-cw-principal)', () => {
     });
   });
 
+  it('names the fields a member’s role hides or makes read-only per type, so the form leaves them be', async () => {
+    const { ctx, rag, blob, ai } = wire(config);
+    const app2 = createApp(ctx, config, rag, blob, ai);
+    const ruled = await createRole(ctx, 's1', {
+      name: 'Writes posts, not their slugs',
+      scopes: ['content:write', 'preview:read'],
+      contentGrants: [
+        {
+          contentTypeApiId: 'post',
+          actions: ['read', 'write'],
+          deniedFields: ['budget'],
+          readOnlyFields: ['slug'],
+        },
+        { contentTypeApiId: '*', actions: ['read'], readOnlyFields: ['owner'] },
+      ],
+    } as Parameters<typeof createRole>[2]);
+    await addMember(ctx, 's1', { email: 'member@example.com', role: ruled.id }, 'system');
+    await findMemberForSignIn(ctx, 's1', 'usr_member', 'member@example.com');
+    const me = async (who: 'admin' | 'member') => {
+      const target = '/spaces/s1/auth/me';
+      return app2.request(target, {
+        headers: {
+          'x-cw-principal': await signPrincipal(KEY, person(who), principalTarget('GET', target)),
+        },
+      });
+    };
+    expect(await (await me('member')).json()).toMatchObject({
+      fieldRules: {
+        types: { post: { deniedFields: ['budget'], readOnlyFields: ['slug'] } },
+        others: { deniedFields: [], readOnlyFields: ['owner'] },
+      },
+    });
+    // A deployment admin has no field rules anywhere.
+    expect(await (await me('admin')).json()).toMatchObject({
+      fieldRules: { types: {}, others: { deniedFields: [], readOnlyFields: [] } },
+    });
+  });
+
   it('lets a member with the Administrator preset run bulk jobs over entries, and not a narrower one', async () => {
     const { ctx, rag, blob, ai } = wire(config);
     const app2 = createApp(ctx, config, rag, blob, ai);

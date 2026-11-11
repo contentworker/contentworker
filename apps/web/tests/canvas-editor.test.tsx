@@ -17,7 +17,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { createMemoryRouter, RouterProvider } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FRAME_CHANNEL, type FrameGeometry } from '~/cms/lib/live-preview/frame-channel';
-import { ApiError, type PreviewEntry } from '~/cms/lib/management';
+import { ApiError, type PreviewEntry, type PrincipalInfo } from '~/cms/lib/management';
 import { catalog, pageFields, pageType, ref } from './canvas-fixture';
 
 const client = {
@@ -28,7 +28,9 @@ const client = {
   getEffectiveBlockRules: vi.fn(
     async (): Promise<EffectiveBlockRules> => effectiveBlockRules(catalog, EMPTY_BLOCK_CONFIG),
   ),
-  getSpaceAccess: vi.fn(async () => ({ subject: 'me', scopes: ['content:write'] })),
+  getSpaceAccess: vi.fn(
+    async (): Promise<Partial<PrincipalInfo>> => ({ subject: 'me', scopes: ['content:write'] }),
+  ),
   getEntryWorkflowState: vi.fn(async (): Promise<unknown> => null),
   listWorkflows: vi.fn(async (): Promise<unknown[]> => []),
   listEntries: vi.fn(async () => []),
@@ -465,6 +467,23 @@ describe('saving', () => {
     fireEvent.change(screen.getByLabelText(/^Label/), { target: { value: 'Go' } });
   }
 
+  it('leaves the fields the role makes read-only out of the save, which keeps them', async () => {
+    client.getSpaceAccess.mockResolvedValueOnce({
+      subject: 'me',
+      scopes: ['content:write'],
+      fieldRules: {
+        types: { page: { deniedFields: [], readOnlyFields: ['title'] } },
+        others: { deniedFields: [], readOnlyFields: [] },
+      },
+    });
+    client.updateEntry.mockResolvedValue(saved(4));
+    await edited();
+    act(() => screen.getByRole('button', { name: 'Save draft' }).click());
+    await waitFor(() => expect(client.updateEntry).toHaveBeenCalled());
+    const fields = client.updateEntry.mock.calls[0]?.[1] as Record<string, unknown>;
+    expect(Object.keys(fields)).toEqual(['body']);
+  });
+
   it('saves through the entry’s save, held to the version the canvas started from', async () => {
     client.updateEntry.mockResolvedValue(saved(4));
     await edited();
@@ -645,6 +664,25 @@ describe('what the canvas says instead of editing', () => {
     client.getSpaceAccess.mockResolvedValueOnce({ subject: 'me', scopes: ['preview:read'] });
     await setup();
     expect(await screen.findByText(/Your role can read this entry but not edit it/)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Save draft' })).toBeNull();
+  });
+
+  it('is review-only for a role that can’t change the blocks field, and says which', async () => {
+    client.getSpaceAccess.mockResolvedValueOnce({
+      subject: 'me',
+      scopes: ['content:write'],
+      fieldRules: {
+        types: { page: { deniedFields: [], readOnlyFields: ['body'] } },
+        others: { deniedFields: [], readOnlyFields: [] },
+      },
+    });
+    await setup();
+    expect(
+      await screen.findByText(/Your role can’t change Main: the canvas is for review here/),
+    ).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'the form' }).getAttribute('href')).toBe(
+      '/content/page/e1',
+    );
     expect(screen.queryByRole('button', { name: 'Save draft' })).toBeNull();
   });
 

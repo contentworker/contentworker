@@ -17,8 +17,8 @@ const DEVICES = ['iphone', 'iphone-landscape', 'ipad', 'ipad-landscape', 'deskto
 /**
  * CI runs the suite in three jobs at once, each on its own server, named by `E2E_PART`:
  * `webkit` (the iPhone, iPad and desktop projects, then the projects that sign the first admin
- * up: `auth`, `invites` and `oauth`), `axe` (the accessibility sweep and the modal focus specs,
- * the desktop project's too) and `cms` (every other CMS spec, so a new one lands here). A fourth
+ * up: `auth`, `invites`, `field-access` and `oauth`), `axe` (the accessibility sweep and the
+ * modal focus specs, the desktop project's too) and `cms` (every other CMS spec, so a new one lands here). A fourth
  * job for the sign-in projects alone spent more on its runner's setup (checkout, install, the
  * browser's system libraries, a server start) than on its tests, so they ride at the end of
  * `webkit`, which waits for its device projects as the whole suite does. Unset, the whole suite
@@ -117,6 +117,15 @@ export default defineConfig({
       // signs in and accepts. Its own people, so it runs beside `oauth`.
       name: 'invites',
       testMatch: 'invites.spec.ts',
+      dependencies: ['auth'],
+      use: { ...devices['Desktop Chrome'] },
+    },
+    {
+      // A person whose role hides one field and makes another read-only, joined from an
+      // invitation once sign-in is on: what they see in the entry form, and that a save goes
+      // through. Its own people, so it runs beside `invites` and `oauth`.
+      name: 'field-access',
+      testMatch: 'field-access.spec.ts',
       dependencies: ['auth'],
       use: { ...devices['Desktop Chrome'] },
     },

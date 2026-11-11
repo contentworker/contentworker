@@ -651,9 +651,33 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   its place and value: a text, number, date or select control is `readOnly` with `aria-readonly`,
   stays in the tab order, and its reason ("Read-only while Status is "sold"", muted `text-xs`) is
   read on focus through `aria-describedby`; a button-like widget (a checkbox, a picker, a list's
-  Add and Remove, nested fields) is disabled by a fieldset; an extension is told `readOnly`. When
-  an edit shows, hides or locks other fields, a polite sr-only line says so ("Sold to shown.
+  Add and Remove, nested fields) is disabled by a fieldset; an extension is told `readOnly`. It
+  looks read-only too, with the surface of a field the role makes read-only (below): marked
+  `data-readonly="rule"`, top-level or nested, no fill, a dashed edge and muted text, changing as
+  the siblings it depends on change (the sr-only line says so). Its reason has no Lock: the Lock
+  says only that the role holds the field. When an edit shows, hides or locks other fields, a polite sr-only line says so ("Sold to shown.
   Reference read-only.").
+- **Fields under a role's rules** (`cms/lib/field-access.ts`, read from the space's `auth/me`): a
+  field the person's role hides is not drawn at all, with no quiet line in its place (they may not
+  know it holds a value). One their role makes read-only takes the read-only treatment above, its
+  stored value showing, and looks it too, since it stays read-only whatever anyone types: the
+  field is marked `data-readonly="role"` and `app.css` (one rule for every `data-readonly`) gives
+  each control in it (text, number,
+  date and select inputs, a picker's search, a checkbox, rich text) no fill, a dashed edge (three
+  quarters of the `muted-foreground` ink, 3:1 on paper, card and muted in both themes) and
+  `muted-foreground` text. A select loses its chevron; a ticked box keeps its brand fill inside
+  the dashed edge, unfaded; an error keeps its destructive edge, and focus its ring (rich text
+  rings its box, and stays in the tab order with `aria-readonly`). The rows of a list or repeater
+  keep their look, their Add and Remove disabled as before. Its reason, "Your
+  role can’t change this field", is the same muted `text-xs` line led by a `Lock` (`size-3`,
+  `aria-hidden`); it wins over a rule's reason, since it holds whatever the sibling values. A
+  required one that holds nothing says "Required, but your role can’t fill it: ask someone who
+  can" rather than "Field is required". Neither
+  is sent by a save, and the editor's other surfaces follow suit: the preview and site pane
+  never name a hidden field, and generation and AI assist offer and apply only the fields the
+  person may change. The canvas, whose blocks a role can only rule as a whole field, opens for
+  review when its blocks field is ruled, and its notice names the field ("Your role can’t change
+  Main: …") and links to the form; when the field is hidden it names nothing.
 - **Dates and lists:** a Date's input follows its format: a date picker, `datetime-local`, or a
   `time` input (minutes; seconds kept when stored). A list of Text, Integer, Number or Date
   values is one row per value, each named "<Field> item N" with its own input and a ghost Remove,
