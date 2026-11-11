@@ -236,8 +236,9 @@ and where from ("From Base", "From Tablet") until you give it one there, which i
 Tablet" with **Reset** to inherit again. A prop not in `responsive` reads "Same at every width" and
 is edited at Base. Each change is an ordinary canvas edit (it undoes and saves with the draft), and
 a breakpoint left with no overrides, or a block left with none, drops the key. Layers marks a block
-that carries overrides. The entry form shows a block's overrides read-only under its props, with a
-link to the canvas, and keeps them as they are when it saves.
+that carries overrides. The entry form shows a block's overrides read-only under its props, each
+breakpoint with an **Edit at …** link that opens the canvas on that block at that width, and keeps
+them as they are when it saves.
 
 A canvas undo can reach back past a save (a block removed and saved, then put back). The canvas
 drops the overrides the content type no longer takes before it sends a save (reading the type again

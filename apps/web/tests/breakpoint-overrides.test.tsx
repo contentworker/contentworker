@@ -168,7 +168,7 @@ afterEach(() => {
   localStorage.clear();
 });
 
-async function canvas(opts: { fields?: EntryFields; first?: string } = {}) {
+async function canvas(opts: { fields?: EntryFields; first?: string; search?: string } = {}) {
   client.getEntry.mockResolvedValue({
     id: 'e1',
     contentType: 'page',
@@ -179,7 +179,7 @@ async function canvas(opts: { fields?: EntryFields; first?: string } = {}) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const router = createMemoryRouter(
     [{ path: '/content/:typeId/:entryId/canvas', element: <EntryCanvas /> }],
-    { initialEntries: ['/content/page/e1/canvas'] },
+    { initialEntries: [`/content/page/e1/canvas${opts.search ?? ''}`] },
   );
   render(
     <QueryClientProvider client={queryClient}>
@@ -262,6 +262,30 @@ describe('the canvas’s widths', () => {
     expect(page.lastWidth()).toBe(768);
     // Chosen for this canvas only: the device remembered for a catalog without breakpoints stays.
     expect(localStorage.getItem('cw.entry-pane.device')).toBe('lg');
+  });
+});
+
+describe('opening the canvas from the entry form', () => {
+  it('opens on the linked block’s Look tab, at the linked width', async () => {
+    const page = await canvas({ search: '?block=h1&width=md' });
+    const radios = within(screen.getByRole('radiogroup', { name: 'Device width' }));
+    expect(
+      radios.getByRole('radio', { name: 'Tablet, 768 pixels' }).getAttribute('aria-checked'),
+    ).toBe('true');
+    await waitFor(() => expect(page.lastWidth()).toBe(768));
+    expect(screen.getByRole('heading', { level: 2, name: 'Hero' })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: 'Look' }).getAttribute('aria-selected')).toBe('true');
+    expect(checked(tone())).toBe('dark');
+    expect(toneSays()).toBe('Set for Tablet');
+    // Taken once: the canvas's own choice stands after it.
+    width('Base');
+    expect(page.lastWidth()).toBe(390);
+  });
+
+  it('opens as usual on a block or width it no longer has', async () => {
+    const page = await canvas({ search: '?block=gone&width=xl' });
+    expect(page.lastWidth()).toBe(390);
+    expect(screen.queryByRole('heading', { level: 2, name: 'Hero' })).toBeNull();
   });
 });
 
@@ -514,17 +538,21 @@ describe('the entry form', () => {
     return onSave;
   }
 
-  it('shows a block’s overrides read-only under its props, with the way to the canvas', () => {
+  it('shows a block’s overrides read-only under its props, each width linking to the canvas', () => {
     form('/content/page/e1/canvas');
     const hero = screen.getByRole('group', { name: 'Hero block 1' });
     const shown = hero.querySelector('[data-block-overrides]') as HTMLElement;
     expect(shown.textContent).toContain('Tablet from 768px');
     expect(shown.textContent).toContain('Tone dark');
+    // The canvas opens on this block, at the width the override applies from.
+    // Named for its block too, after the visible words, so a list of links tells them apart.
     expect(
       within(shown)
-        .getByRole('link', { name: 'Edit per width on the canvas' })
+        .getByRole('link', { name: 'Edit at Tablet: Hero block 1' })
         .getAttribute('href'),
-    ).toBe('/content/page/e1/canvas');
+    ).toBe('/content/page/e1/canvas?block=h1&width=md');
+    // Only the widths that hold an override are listed, and linked.
+    expect(within(shown).getAllByRole('link')).toHaveLength(1);
     expect(within(shown).queryByRole('radio')).toBeNull();
     // A block without overrides shows none.
     const cta = screen.getByRole('group', { name: 'Call to action block 2' });

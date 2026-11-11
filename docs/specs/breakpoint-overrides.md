@@ -167,7 +167,8 @@ retype it), while stored blocks still carry overrides for it. Those overrides ar
   Tablet") until the editor sets one; a set override is marked, with **Reset** to inherit again.
   A prop not in `responsive` reads "Same at every width" and stays editable only at Base.
 - **Layers** marks a block that carries overrides; the entry form shows them read-only under the
-  block's props, with a link to the canvas.
+  block's props, each breakpoint with a link that opens the canvas on that block's Look tab at
+  that width (`?block=<key>&width=<breakpoint id>`).
 - Undo, ghosts and save work as for any `update` op.
 
 ## Decisions

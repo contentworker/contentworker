@@ -2027,6 +2027,7 @@ function BlocksInput(
                   variant={variant}
                   block={asObject(item)}
                   breakpoints={breakpoints}
+                  noun={noun}
                 />
               </BlockParentContext.Provider>
             ) : (
@@ -2111,17 +2112,21 @@ function BlocksInput(
 /**
  * A block's per-breakpoint overrides (`_responsive`), read-only under its props: each breakpoint
  * the field declares and the responsive props it changes there. They are edited on the canvas, at
- * the width they apply from; the form keeps them as they are through its edits and its save.
+ * the width they apply from: each breakpoint links there, opening on the block at that width
+ * (`?block=…&width=…`). The form keeps them as they are through its edits and its save.
  * Overrides a push made stale aren't listed: the save drops them.
  */
 function BlockOverrides(props: {
   variant: ComponentVariant;
   block: Record<string, unknown>;
   breakpoints: readonly Breakpoint[];
+  /** The block as its group names it ("Hero block 1"): each link's name ends with it. */
+  noun: string;
 }) {
   const canvas = useContext(CanvasPathContext);
   const overrides = overridesOf(props.block);
   const responsive = responsivePropsOf(props.variant);
+  const key = typeof props.block[BLOCK_KEY] === 'string' ? props.block[BLOCK_KEY] : undefined;
   const rows = props.breakpoints.flatMap((b) => {
     const props_ = Object.entries(overrides[b.id] ?? {}).flatMap(([prop, value]) => {
       const f = props.variant.fields.find((x) => x.apiId === prop);
@@ -2131,12 +2136,14 @@ function BlockOverrides(props: {
     return props_.length > 0 ? [{ breakpoint: b, props: props_ }] : [];
   });
   if (rows.length === 0) return null;
+  const at = (b: Breakpoint) =>
+    `${canvas}?${new URLSearchParams({ ...(key ? { block: key } : {}), width: b.id })}`;
   return (
     <div data-block-overrides className="space-y-1.5 px-1 text-xs">
       <p className="caption">Per width</p>
       <dl className="space-y-0.5">
         {rows.map((r) => (
-          <div key={r.breakpoint.id} className="flex flex-wrap gap-x-1.5">
+          <div key={r.breakpoint.id} className="flex flex-wrap items-baseline gap-x-1.5">
             <dt className="font-medium">
               {r.breakpoint.name}
               <span className="font-normal text-muted-foreground">
@@ -2147,14 +2154,21 @@ function BlockOverrides(props: {
             <dd className="text-muted-foreground">
               {r.props.map((x) => `${x.name} ${x.value}`).join(' · ')}
             </dd>
+            {canvas ? (
+              <dd>
+                <Link
+                  to={at(r.breakpoint)}
+                  className="text-link underline-offset-2 hover:underline"
+                >
+                  Edit at {r.breakpoint.name}
+                  {/* Told apart in a list of links, the visible words first (voice control). */}
+                  <span className="sr-only">: {props.noun}</span>
+                </Link>
+              </dd>
+            ) : null}
           </div>
         ))}
       </dl>
-      {canvas ? (
-        <Link to={canvas} className="text-link underline-offset-2 hover:underline">
-          Edit per width on the canvas
-        </Link>
-      ) : null}
     </div>
   );
 }

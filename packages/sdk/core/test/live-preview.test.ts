@@ -605,11 +605,12 @@ describe('pointer, select and scroll', () => {
     await connected();
     const ref = b.getAttribute('data-cw-ref');
     host.send({ kind: 'scroll', ref, align: 'end', inset: 180 });
-    expect(b.scrollIntoView).toHaveBeenLastCalledWith(expect.objectContaining({ block: 'end' }));
-    expect(scrollBy).toHaveBeenLastCalledWith({ top: 180, behavior: 'auto' });
+    // Instant both times, so a page's own `scroll-behavior: smooth` never animates the pair.
+    expect(b.scrollIntoView).toHaveBeenLastCalledWith({ block: 'end', behavior: 'instant' });
+    expect(scrollBy).toHaveBeenLastCalledWith({ top: 180, behavior: 'instant' });
     host.send({ kind: 'scroll', ref, align: 'start', inset: 24 });
     expect(b.scrollIntoView).toHaveBeenLastCalledWith(expect.objectContaining({ block: 'start' }));
-    expect(scrollBy).toHaveBeenLastCalledWith({ top: -24, behavior: 'auto' });
+    expect(scrollBy).toHaveBeenLastCalledWith({ top: -24, behavior: 'instant' });
     // A bad align or inset drops the message whole.
     const calls = (b.scrollIntoView as ReturnType<typeof vi.fn>).mock.calls.length;
     host.send({ kind: 'scroll', ref, align: 'middle' });

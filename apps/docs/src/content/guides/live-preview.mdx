@@ -60,10 +60,15 @@ over it. It edits the same draft as the form.
   there too, and **Move to** takes the block to the end of another slot that takes it. A block's
   slots are filled from the page's seams, or from **Add to …** here.
 - **Dragging.** With a mouse or trackpad, the selected block has a grip at its corner: drag it to
-  a seam of its own slot, or of another slot in the same blocks field that takes it. The seams it
-  may go to stand out, the nearest takes the insertion line, and a place it can't go says why
-  ("Cards doesn't take Hero", a full slot, a locked one, the block config). Letting go is one move,
-  undone with ⌘Z; Esc puts it back. On a touch screen there is no grip: Move up, Move down and Move
+  a seam of its own slot, or of another slot that takes it, in the same blocks field or another
+  one. The seams it may go to stand out, the nearest takes the insertion line, and a place it can't
+  go says why ("Cards doesn't take Hero", a full slot, a locked one, the block config). Into
+  another blocks field the block goes whole, with its key, its per-width overrides and the blocks
+  inside it; that field must be of the same kind (both translated, or neither), define the block
+  the same way, not already hold one of its keys, and declare the breakpoints its overrides are
+  set at. Held near the top or bottom edge of your page, the page scrolls under the block (if it
+  accepts `scroll`); with reduced motion it jumps half a view at a time instead. Letting go is one
+  move, undone with ⌘Z; Esc puts it back. On a touch screen there is no grip: Move up, Move down and Move
   to in the inspector, and ⌘↑ ⌘↓ from Layers, do the same.
 - **Layers** opens on demand: every block as an outline, slot by slot. It is also the full
   keyboard and screen-reader path to every block (the page itself isn't navigable from the

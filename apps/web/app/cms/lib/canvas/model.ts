@@ -53,6 +53,8 @@ export interface CanvasSlot {
   readonly help?: string;
   /** The locale its ops address: the edited one when the top-level field is localized. */
   readonly locale: string;
+  /** Whether its top-level field is localized: a block moved between fields keeps to one kind. */
+  readonly localized: boolean;
   /** The blocks it holds by: every block the code lets the slot take, stored ones included. */
   readonly variants: readonly ComponentVariant[];
   /** The blocks a new one may be (the dock, a duplicate): `variants`, narrowed by the config. */
@@ -151,6 +153,7 @@ export function canvasTree(
         def.apiId,
         [],
         at,
+        def.localized,
         0,
         under,
         [],
@@ -168,6 +171,7 @@ function buildSlot(
   field: string,
   steps: readonly FieldPathStep[],
   locale: string,
+  localized: boolean,
   depth: number,
   under: Under,
   /** The breakpoints of the slot holding this one's block: what a field without its own takes. */
@@ -201,6 +205,7 @@ function buildSlot(
     name: def.name,
     ...(def.help ? { help: def.help } : {}),
     locale,
+    localized,
     variants,
     offers: policy.offers,
     ...(policy.min !== undefined ? { min: policy.min } : {}),
@@ -232,6 +237,7 @@ function buildSlot(
           field,
           [...own, { field: f.apiId }],
           locale,
+          localized,
           depth + 1,
           under,
           slot.breakpoints,
