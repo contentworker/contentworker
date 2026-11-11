@@ -213,7 +213,11 @@ one that is already there (a collision, or a leftover run) stops the run with "i
 rather than testing another checkout's code on another database. `E2E_REUSE=1` opts in to reusing
 a server of your own (never in CI). Shared content types are saved through `saveContentType`
 (`e2e/cms.ts`), which skips a save that would change nothing and takes a lost race to an
-identical definition as success, so workers can set up the same type at once. Install browsers once with
+identical definition as success, so workers can set up the same type at once. Tests that raise a card in Coworker's panel end their title with `@coworker`: the assistant's
+conversation is one person's, shared by every page open in open local development, so a card one
+test raises would show in, and take focus from, another's. The `coworker` Playwright project runs
+those tests one at a time after `cms`, in the same CI part (`--project=coworker --no-deps` runs
+them alone). Install browsers once with
 `pnpm --filter @contentworker/web exec playwright install webkit chromium`.
 
 ### Query counts

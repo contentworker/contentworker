@@ -15,7 +15,15 @@ const state = '.wrangler/e2e';
  * the safe areas and touch targets. The `auth` project signs the first admin up, which turns
  * sign-in on for the server, so it runs after the others.
  */
-const DEVICES = ['iphone', 'iphone-landscape', 'ipad', 'ipad-landscape', 'desktop', 'cms'];
+const DEVICES = [
+  'iphone',
+  'iphone-landscape',
+  'ipad',
+  'ipad-landscape',
+  'desktop',
+  'cms',
+  'coworker',
+];
 
 /**
  * CI runs the suite in three jobs at once, each on its own server, named by `E2E_PART`:
@@ -35,10 +43,21 @@ if (PART && !PARTS.includes(PART)) {
 const AXE = /(accessibility|modal-focus)\.spec\.ts/;
 // Every other project, the sign-in ones included, belongs to `webkit`.
 const partOf = (project: string) =>
-  project === 'cms' ? ['axe', 'cms'] : project === 'desktop' ? ['webkit', 'axe'] : ['webkit'];
+  project === 'cms' || project === 'coworker'
+    ? ['axe', 'cms']
+    : project === 'desktop'
+      ? ['webkit', 'axe']
+      : ['webkit'];
 // The sign-in projects turn sign-in on for the server, so each part runs them after the device
 // projects it has (the ones sharing its server), never before.
 const DEVICES_IN_PART = DEVICES.filter((project) => !PART || partOf(project).includes(PART));
+
+// The CMS specs; the `axe` part has only the sweep and the modal focus specs.
+const CMS_SPECS =
+  PART === 'axe'
+    ? AXE
+    : /(cms|workflows|space-access|first-space|block-patch-card|accessibility|contrast-settle|modal-focus|live-preview|canvas-editor|canvas-drag|locked-regions|entry-save-conflict|block-config-code)\.spec\.ts/;
+const COWORKER = /@coworker/;
 
 export default defineConfig({
   testDir: 'e2e',
@@ -97,11 +116,23 @@ export default defineConfig({
     // the axe sweep. Desktop Chrome: the editors are review-only below lg.
     {
       name: 'cms',
-      testMatch:
-        PART === 'axe'
-          ? AXE
-          : /(cms|workflows|space-access|first-space|block-patch-card|accessibility|contrast-settle|modal-focus|live-preview|canvas-editor|canvas-drag|locked-regions|entry-save-conflict|block-config-code)\.spec\.ts/,
+      testMatch: CMS_SPECS,
       testIgnore: PART === 'cms' ? AXE : undefined,
+      // Tests that raise cards in Coworker's panel run alone, in `coworker` below.
+      grepInvert: COWORKER,
+      use: { ...devices['Desktop Chrome'] },
+    },
+    {
+      // The tests tagged `@coworker` (in the title): the conversation is one person's, shared by
+      // every page open in open local development, so a card one test raises shows in, and takes
+      // focus from, another's. They run one at a time, after `cms`, in the same part of CI.
+      name: 'coworker',
+      testMatch: CMS_SPECS,
+      testIgnore: PART === 'cms' ? AXE : undefined,
+      grep: COWORKER,
+      workers: 1,
+      fullyParallel: false,
+      dependencies: ['cms'],
       use: { ...devices['Desktop Chrome'] },
     },
     {

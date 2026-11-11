@@ -81,6 +81,10 @@ sign-in on.
    before theorising. A thrown page error is an app bug. axe violations: report the rule id, the
    target selector and the component that renders it (often a Radix control in a `<label>` with no
    `aria-label`; jsdom can't see that, only the sweep can).
+   Tag (`@coworker` at the end of the title) any test that raises or answers a card in Coworker's
+   panel: the conversation is one person's and shared by every page in open local development, so
+   such tests run alone in the `coworker` project (after `cms`, same CI part). `--project=coworker`
+   alone needs `--no-deps`.
 4. A new screen or dialog gets a scan in `accessibility.spec.ts`.
 
 ## Rules
