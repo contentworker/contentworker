@@ -224,5 +224,25 @@ describe('AI settings tools (MCP), on the HTTP routes’ use-cases', () => {
     expect((await manager('search_reindex_job')).body).toMatchObject({
       job: { action: 'search_reindex', status: 'running', config: { enabled: false } },
     });
+    // A role that may publish but not change the AI settings can't stop it half way.
+    const { job } = (await manager('search_reindex_job')).body as { job: { id: string } };
+    const publisher = await connect(deps, {
+      spaceId: SPACE,
+      kind: 'cma',
+      scopes: [SCOPES.contentWrite, SCOPES.contentPublish],
+    });
+    const refused = await publisher('bulk_job_cancel', { id: job.id });
+    expect(refused.isError).toBe(true);
+    expect((await manager('search_reindex_job')).body).toMatchObject({
+      job: { status: 'running' },
+    });
+    // The cancel tool's own content:publish, and space:admin.
+    const owner = await connect(deps, {
+      ...admin,
+      scopes: [...admin.scopes, SCOPES.contentManage, SCOPES.contentPublish],
+    });
+    const stopped = await owner('bulk_job_cancel', { id: job.id });
+    expect(stopped.isError).toBe(false);
+    expect(stopped.body).toMatchObject({ status: 'cancelled' });
   });
 });

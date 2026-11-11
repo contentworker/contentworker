@@ -218,8 +218,9 @@ export interface EdgeEnv {
   readonly AI_TIMEOUT_MS?: string;
   /**
    * The most capable model tier this deployment runs: `flagship` (or empty: no cap), `balanced` or
-   * `fast`. Every AI call is held to it, whatever its capability's tier, the request or the call
-   * site asks for. Rendered from the registry's `aiMaxTier`.
+   * `fast`. Every generation and decision call is held to it, whatever its capability's tier, the
+   * request or the call site asks for (embeddings and text extraction have no tier). Rendered from
+   * the registry's `aiMaxTier`.
    */
   readonly AI_MAX_TIER?: string;
   /** Cloudflare AI Gateway id: when set, Workers AI calls route through it (logs, caching, limits). */

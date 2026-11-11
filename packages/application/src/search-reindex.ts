@@ -1,8 +1,7 @@
 import type { Scope, SearchToggledEvent } from '@contentworker/domain';
-import type { BlobStore, BulkJob, BulkJobChunk } from '@contentworker/ports';
+import type { BlobStore, BulkJob, BulkJobChunk, PublishedEntry } from '@contentworker/ports';
 import { getAiSettings } from './ai-settings';
 import { type AssetSearchDeps, embedAssetForSearch } from './asset-search';
-import { allAssets } from './assets';
 import {
   type BulkChunkOutcome,
   cancelBulkJob,
@@ -12,7 +11,7 @@ import {
 } from './bulk-jobs';
 import { type AppContext, withActor, withStarter } from './context';
 import {
-  indexEntryEmbeddings,
+  indexEntriesEmbeddings,
   MAX_REINDEX_ENTRIES,
   type RagDeps,
   removeEntryEmbeddings,
@@ -38,7 +37,7 @@ import {
  * many assets per environment, in chunks of {@link SEARCH_REINDEX_CHUNK_SIZE}.
  */
 
-/** Recent jobs looked through for this environment's search reindexes. */
+/** Search reindexes looked through: the newest, and any still running among them. */
 const RECENT_JOBS = 50;
 const ENTRY = 'entry:';
 const ASSET = 'asset:';
@@ -58,11 +57,9 @@ const versionOf = (job: BulkJob): number => {
   return typeof v === 'number' ? v : 0;
 };
 
-async function searchReindexJobs(ctx: AppContext, scope: Scope): Promise<BulkJob[]> {
-  return (await ctx.store.bulkJobs.listJobs(scope, { limit: RECENT_JOBS })).filter(
-    (j) => j.action === 'search_reindex',
-  );
-}
+/** The environment's search reindexes, newest first, however many other jobs ran since. */
+const searchReindexJobs = (ctx: AppContext, scope: Scope): Promise<BulkJob[]> =>
+  ctx.store.bulkJobs.listJobs(scope, { limit: RECENT_JOBS, action: 'search_reindex' });
 
 /**
  * The environment's latest search reindex job (newest first), running or not, or null: what the
@@ -127,9 +124,20 @@ export async function startSearchReindex(
     }
   }
   if (assets) {
-    // Every asset with a file: the library corpus is all of them, the published one those published.
-    const library = await allAssets(ctx, scope);
-    for (const a of library.slice(0, MAX_REINDEX_ENTRIES)) ids.push(`${ASSET}${a.id}`);
+    // Every asset: the library corpus is all of them, the published one those published. Paged,
+    // keeping ids only, up to the cap.
+    let cursor: string | undefined;
+    let n = 0;
+    do {
+      const page = await ctx.store.assets.list(scope, {
+        limit: 500,
+        filters: { status: 'all' },
+        ...(cursor ? { cursor } : {}),
+      });
+      for (const a of page.items.slice(0, MAX_REINDEX_ENTRIES - n)) ids.push(`${ASSET}${a.id}`);
+      n += page.items.length;
+      cursor = page.nextCursor;
+    } while (cursor && n < MAX_REINDEX_ENTRIES);
   }
   if (ids.length === 0) return null;
   // The system's job (no starter to re-check), its chunks attributed to whoever turned search.
@@ -163,17 +171,20 @@ export function searchReindexChunkRunner(
       const published = new Map(
         (await ctx.store.entries.getPublishedMany(scope, entryIds)).map((p) => [p.entryId, p]),
       );
+      // On: the published ones embedded together (a few embeddings requests for the chunk); every
+      // other id, and every id when off, loses its vectors.
+      const embed = on ? entryIds.filter((id) => published.has(id)) : [];
+      await indexEntriesEmbeddings(
+        rag,
+        scope,
+        embed.map((id) => {
+          const p = published.get(id) as PublishedEntry;
+          return { entryId: id, fields: p.fields, entryVersion: p.version };
+        }),
+      );
+      const embedded = new Set(embed);
       for (const id of entryIds) {
-        const p = published.get(id);
-        if (on && p) {
-          await indexEntryEmbeddings(rag, scope, {
-            entryId: id,
-            fields: p.fields,
-            entryVersion: p.version,
-          });
-        } else {
-          await removeEntryEmbeddings(rag, scope, id);
-        }
+        if (!embedded.has(id)) await removeEntryEmbeddings(rag, scope, id);
       }
     }
     const vectors = assetSearch?.vectors;
@@ -181,7 +192,7 @@ export function searchReindexChunkRunner(
       for (const id of assetIds) {
         if (on) {
           // Nothing when the asset is gone: its delete removed its vectors.
-          await embedAssetForSearch(ctx, assetSearch, sources.blob, scope, id);
+          await embedAssetForSearch(ctx, assetSearch, sources.blob, scope, id, { searchOn: true });
         } else {
           await vectors.deleteAsset(scope, id, 'library');
           await vectors.deleteAsset(scope, id, 'published');

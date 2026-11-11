@@ -175,8 +175,9 @@ edge, and your workspace maps each tier to a model, so a model can change withou
 workflow or an integration.
 
 A deployment can **cap the tier** at `balanced` or `fast`, to bound what each call costs. Every AI
-call then runs on at most that tier, whatever asked for more: a request, a space's setting, or a
-feature whose own default is `flagship` (page layouts, Coworker). A space's tier above the cap is
+call that writes or decides then runs on at most that tier, whatever asked for more: a request, a
+space's setting, or a feature whose own default is `flagship` (page layouts, Coworker). Embeddings
+for search have no tier. A space's tier above the cap is
 kept as set and runs on the cap; `GET /spaces/{space}/ai-settings` (and `ai_settings_get`) reports
 the cap as `maxTier` and, per capability, the tier it runs on as `effectiveTier`.
 

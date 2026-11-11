@@ -20,7 +20,7 @@ export const DEFAULT_AI_TIMEOUT_MS = 20_000;
  * defaults never drift. Anything but `mock` is live; a missing or non-positive
  * timeout falls back to {@link DEFAULT_AI_TIMEOUT_MS}. An empty or missing AI_MAX_TIER is no cap
  * (as `flagship` is); anything but a tier is refused at boot, since a cap mistyped into no cap
- * would lift the only price control a deployment has.
+ * would lift the deployment's price ceiling per call.
  */
 export function aiRuntimeConfig(env: Record<string, string | undefined> = {}): {
   mode: AiMode;

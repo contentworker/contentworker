@@ -2553,8 +2553,8 @@ export interface ScopedBulkChunkRef {
 export interface BulkJobRepo {
   createJob(scope: Scope, job: BulkJob): Promise<void>;
   getJob(scope: Scope, id: string): Promise<BulkJob | null>;
-  /** Jobs newest-first. */
-  listJobs(scope: Scope, opts?: { limit?: number }): Promise<BulkJob[]>;
+  /** Jobs newest-first; only those of `action` when given. */
+  listJobs(scope: Scope, opts?: { limit?: number; action?: BulkJobAction }): Promise<BulkJob[]>;
   /** Batch-inserts pending chunks (multi-row). */
   createChunks(scope: Scope, chunks: readonly BulkJobChunk[]): Promise<void>;
   /** Chunks of a job, in chunkId order (for the compliance report). */

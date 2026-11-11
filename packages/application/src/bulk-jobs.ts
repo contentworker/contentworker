@@ -7,8 +7,10 @@ import {
   ForbiddenError,
   hasFieldRules,
   holdsOnEveryContentType,
+  holdsScope,
   NotFoundError,
   type Principal,
+  SCOPES,
   type Scope,
   ValidationError,
 } from '@contentworker/domain';
@@ -109,6 +111,16 @@ export function authorizeBulkJobAccess(
   job: Pick<BulkJob, 'action' | 'config'>,
   access: 'report' | 'cancel',
 ): void {
+  // A search reindex realizes the space's search setting: only who may change the setting may stop
+  // it (a stop leaves the index between on and off, and nothing restarts it), and its report takes
+  // what following it does.
+  if (job.action === 'search_reindex') {
+    const needed = access === 'cancel' ? SCOPES.spaceAdmin : SCOPES.contentManage;
+    if (!holdsScope(principal.scopes, needed)) {
+      throw new ForbiddenError(`the ${access} of a search reindex (${needed})`);
+    }
+    return;
+  }
   // A field edit, like an import into one type, says which type it writes (`contentTypeApiId`).
   if (job.action !== 'import' && job.action !== 'set_fields') {
     authorizeBulkJob(principal, job.action);

@@ -1,5 +1,6 @@
 import {
   type BulkChunkDueEvent,
+  ForbiddenError,
   type Principal,
   SCOPES,
   type Scope,
@@ -17,6 +18,7 @@ import {
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   type AppContext,
+  authorizeBulkJobAccess,
   consumeEvent,
   createAsset,
   createContentType,
@@ -29,6 +31,7 @@ import {
   publishEntry,
   SYSTEM_CALLER,
   setAiSettings,
+  startBulkJob,
   startSearchReindex,
 } from '../src/index';
 
@@ -277,5 +280,58 @@ describe('search reindex on a toggle of the search setting', () => {
     await h.turn(false);
     const [off] = h.toggled();
     expect(await startSearchReindex(h.ctx, {}, off as SearchToggledEvent)).toBeNull();
+  });
+
+  it('embeds a chunk’s entries together, a few embeddings requests rather than one per entry', async () => {
+    for (let i = 0; i < 5; i++) {
+      const { entry } = await createEntry(h.ctx, main, {
+        contentTypeApiId: 'post',
+        fields: { title: { 'en-US': `Another ${i}` } },
+      });
+      await publishEntry(h.ctx, main, entry.id);
+    }
+    await h.turn(false);
+    await h.drain();
+    let calls = 0;
+    const embed = h.rag.embeddings.embed.bind(h.rag.embeddings);
+    h.rag.embeddings.embed = (...a: Parameters<typeof embed>) => {
+      calls += 1;
+      return embed(...a);
+    };
+    await h.turn(true);
+    await h.drain();
+    // One call for the chunk's six entries, one for its asset.
+    expect(calls).toBe(2);
+    expect(await h.indexed(main)).toHaveLength(6);
+  });
+
+  it('finds its job however many other bulk jobs ran in the environment since', async () => {
+    await h.turn(false);
+    await h.drain();
+    const job = await getSearchReindexJob(h.ctx, main);
+    for (let i = 0; i < 55; i++) {
+      await startBulkJob(h.ctx, main, { action: 'publish', entryIds: [h.draft] });
+    }
+    expect((await getSearchReindexJob(h.ctx, main))?.id).toBe(job?.id);
+    // A redelivered event still finds it rather than starting another.
+    const [off] = h.toggled();
+    expect((await startSearchReindex(h.ctx, { rag: h.rag }, off as SearchToggledEvent))?.id).toBe(
+      job?.id,
+    );
+  });
+
+  it('is stopped only by a space administrator, and reported to content:manage', () => {
+    const job = { action: 'search_reindex' as const, config: {} };
+    const publisher = { kind: 'cma', scopes: [SCOPES.contentWrite, SCOPES.contentPublish] };
+    expect(() => authorizeBulkJobAccess(publisher as Principal, job, 'cancel')).toThrow(
+      ForbiddenError,
+    );
+    expect(() => authorizeBulkJobAccess(publisher as Principal, job, 'report')).toThrow(
+      ForbiddenError,
+    );
+    const manager = { kind: 'cma', scopes: [SCOPES.contentManage] } as Principal;
+    expect(() => authorizeBulkJobAccess(manager, job, 'report')).not.toThrow();
+    expect(() => authorizeBulkJobAccess(manager, job, 'cancel')).toThrow(ForbiddenError);
+    expect(() => authorizeBulkJobAccess(admin, job, 'cancel')).not.toThrow();
   });
 });

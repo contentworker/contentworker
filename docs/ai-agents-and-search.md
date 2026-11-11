@@ -173,9 +173,13 @@ as the settings row (`tx.aiSettings.save` with `tx.outbox.appendMany`), so the s
 reindex commit together or not at all. The event is routed to the bulk topic; its consumer starts
 the environment's `search_reindex` bulk job over every published entry (`entry:<id>`, up to
 `MAX_REINDEX_ENTRIES`) and every asset (`asset:<id>`, as many), in chunks of
-`SEARCH_REINDEX_CHUNK_SIZE` (100: each item is an embeddings call and vector writes). Off, a chunk
-deletes each entry's vectors and both of each asset's corpora; on, it embeds each published entry
-and each asset again (`indexEntryEmbeddings`, `embedAssetForSearch`), never a draft. Each chunk reads
+`SEARCH_REINDEX_CHUNK_SIZE` (100). Off, a chunk deletes each entry's vectors and both of each
+asset's corpora; on, it embeds the chunk's published entries together (`indexEntriesEmbeddings`:
+every entry's chunks in every locale in one `embed` call, which the adapter sends 100 texts at a
+time, so a chunk is a few embeddings requests rather than one per entry and locale; the account's
+embeddings rate limit is shared by every deployment on it) and each asset again
+(`embedAssetForSearch`), never a draft. A failed embeddings or vector call fails the chunk, which is
+released and retried whole (it is idempotent) and failed for good after its attempts. Each chunk reads
 the setting in force when it runs, not the one that started the job, so a chunk of an overtaken job
 can only bring the index nearer the setting. The lexical leg isn't touched: it never reaches a
 model.
@@ -186,9 +190,13 @@ model.
 - **Whose job.** The system's: no starter is recorded, so its chunks don't re-check anyone's access
   (`starterLostAccess`). It realizes the space's setting, which stays in force whoever set it; were
   it stopped when that person lost access, the index would be left half way between on and off.
-  Who turned it is on the job as `config.actor`, and in the settings' audit row.
+  Who turned it is on the job as `config.actor`, and in the settings' audit row. Cancelling one
+  takes `space:admin` besides the cancel route's `content:publish` (`authorizeBulkJobAccess`: the
+  bulk job cancel route and `bulk_job_cancel` answer 403 to anyone else), so a lesser role can't leave a setting half
+  applied; its report takes `content:manage`, as following it does.
 - **Following it.** `GET …/search/reindex-job` and MCP `search_reindex_job` (`content:manage`)
-  answer the environment's latest one; its report and cancel are the bulk job routes'. The admin's Settings → AI
+  answer the environment's latest one (looked up by action, however many other jobs ran since); its
+  report and cancel are the bulk job routes'. The admin's Settings → AI
   says "Reindexing search: 40%" on the search row while it runs.
 - **Cost.** Embeddings aren't metered by `CostGuardDO` (they never were: they run on every publish,
   at a fraction of a generation's cost), and search has no tier, so neither the budget nor
@@ -211,7 +219,7 @@ behind it. An AI action names its own tier, which stands under the cap.
 pins background work (agents, workflows, media) to `flagship` would cost several times what it did
 at `fast` without tripping anything. `AI_MAX_TIER` (`balanced` or `fast`; `flagship` or empty is no
 cap; anything else fails at boot; the registry's `aiMaxTier`) is the deployment's price ceiling per
-call: the effective tier of every call is the lower of the cap and the tier it resolved to
+call: the effective tier of every generation and decision call is the lower of the cap and the tier it resolved to
 (`capModelTier`, order `fast` < `balanced` < `flagship`). It is one cap for every capability, not a
 split by interactive and background work: the space's per-capability tiers already express that
 split, the budget windows already separate background spend (`AI_AGENT_*`), and a second var would

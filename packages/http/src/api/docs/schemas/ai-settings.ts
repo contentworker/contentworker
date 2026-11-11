@@ -60,8 +60,9 @@ export const aiSettings = z.object({
   maxTier: z
     .enum(MODEL_TIERS)
     .describe(
-      'The most capable tier this deployment runs (its AI_MAX_TIER; `flagship`: no cap). Every AI ' +
-        'call is held to it, whatever its capability’s tier, the request or the call site asks for',
+      'The most capable tier this deployment runs (its AI_MAX_TIER; `flagship`: no cap). Every ' +
+        'generation and decision call is held to it, whatever its capability’s tier, the request ' +
+        'or the call site asks for (embeddings have no tier)',
     ),
   capabilities: capabilityMap,
   updatedAt: z.iso.datetime().nullable(),
