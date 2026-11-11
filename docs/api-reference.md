@@ -252,12 +252,16 @@ check first.
    target lacks) is refused the same way. Every copy counts (an entry's current version, the trash,
    its published snapshot) except one the promotion replaces: a promoted entry's current version,
    and its published snapshot when it goes live. Change or clear those values in the target, or
-   leave the type out. When it counts on replacing a copy, a promoted entry in the target's trash
-   is refused too (`422` on `entries`): it would fail the apply after the types were saved. The
-   apply checks again before it writes anything, so an entry that gained the removed content while
-   the promotion waited fails it (`failed`, nothing copied). A failure later in the apply (a
-   publish refused, say) keeps what was written, as below, and can leave the snapshot of an entry
-   it was to publish holding what the type removed.
+   leave the type out. A promoted entry in the target's trash is refused (`422` on `entries`,
+   restore or purge it there first) when it holds what is removed, or when the check counts on
+   replacing any copy: it would fail the apply after the types were saved. The apply always checks
+   again before it writes anything, so an entry that gained the removed content while the
+   promotion waited fails it (`failed`, nothing copied). It also reads every pinned entry version
+   first, and writes the entries whose copies were let off before any other, publishing those that
+   go live straight away (one linking to a promoted entry the target doesn't have yet is published
+   with the rest). A failure later in the apply (another entry's unique value, say) keeps what was
+   written, as below, with those copies already replaced. Only a failure on one of them (its own
+   write or publish, or a gate added that moment) can leave its copy holding what was removed.
 
    Then the decision model (Clef) answers `review`, `breaking` and `risk` over a summary of the
    change. It can only add a requirement, at `review` ≥ 0.5 or `risk` Significant or above, never

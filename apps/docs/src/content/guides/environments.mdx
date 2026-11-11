@@ -118,7 +118,7 @@ the type there would be: change or clear those entries first, or leave the type 
 would remove blocks entries in the target still use is refused the same way; change those entries
 first, or send `"blocks": false` to promote the rest. For both, entries the promotion brings in over
 the target's copies don't count, unless they arrive as drafts over a published copy that still
-holds it. Approving checks again before anything is written. A draft content type that a merge or promotion
+holds it. A copy in the trash counts in full: restore or purge it there first. Approving checks again before anything is written. A draft content type that a merge or promotion
 copies over a live one changes nothing the target serves until it is published there. Copied into a
 target without that type, it arrives as a type never published: GraphQL serves it at once, and the
 routes, sitemap and menus leave it out until it is published. A webhook on

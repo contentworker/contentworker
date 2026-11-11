@@ -53,9 +53,12 @@ A promotion refuses (`422`, on `contentTypes`) a definition that removes a field
 at any depth, that the target's entries still hold, as `updateContentType` does there (no override),
 judged against the target's working and served definitions (`assertNothingStranded` in
 `promotion.ts`). A copy the promotion replaces doesn't count: a promoted entry's current version,
-and its published snapshot when it goes live. It runs at the request and again in the apply,
-after every pin is read and before the first save, so an entry written in between fails the apply
-with nothing copied. A merge (`mergeEnvironments`) copies definitions without this check.
+and its published snapshot when it goes live; a copy in the target's trash counts in full, and a
+promoted entry there is refused as in the trash. The catalog check (`checkPromotedCatalog`) and the
+apply's catalog push judge entries the same way (`replacedCopies`). It runs at the request and
+always again in the apply, after every pin (and every pinned entry version) is read and before the
+first save, so an entry written in between fails the apply with nothing copied; the apply then
+writes, and publishes, the entries whose copies were let off before any other. A merge (`mergeEnvironments`) copies definitions without this check.
 
 Preflight does what the write will do, so a definition that can't be written is refused (`422`, and
 on a dry run) before anything is, rather than partway through an environment that then can't be

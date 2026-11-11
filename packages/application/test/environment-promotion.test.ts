@@ -680,10 +680,86 @@ describe('promoting a content type that would strand blocks in the target', () =
     expect(issues).toEqual([
       {
         field: 'entries',
-        message: `Entry ${ids[1]} is in the trash in qa, so the promotion can't write it. Restore it there first, or leave it out of the promotion`,
+        message: `Entry ${ids[1]} is in the trash in qa, so the promotion can't write it. Restore it there or purge it first, or leave it out of the promotion`,
       },
     ]);
     expect(await variantsOf(qa)).toEqual(['hero', 'cta']);
+  });
+
+  it('names a promoted entry in the trash that holds the variant as in the trash', async () => {
+    await seedPages();
+    const { entry } = await createEntry(ctx, staging, {
+      contentTypeApiId: 'page',
+      fields: heroOnly('Back'),
+    });
+    await createEntry(ctx, qa, { contentTypeApiId: 'page', id: entry.id, fields: withCta('Old') });
+    await trashEntry(ctx, qa, entry.id);
+
+    const issues = await refusal(
+      requestPromotion(ctx, ada, spaceId, {
+        source: 'staging',
+        target: 'qa',
+        contentTypes: ['page'],
+        entries: [entry.id],
+      }),
+    );
+    // Its values can't be changed in the trash: restoring or purging it is the way round.
+    expect(issues).toEqual([
+      ctaRefusal([entry.id]),
+      {
+        field: 'entries',
+        message: `Entry ${entry.id} is in the trash in qa, so the promotion can't write it. Restore it there or purge it first, or leave it out of the promotion`,
+      },
+    ]);
+  });
+
+  it('replaces the copies it let off before another entry can fail the apply', async () => {
+    await seedPages();
+    const tag = (unique: boolean) =>
+      ({
+        apiId: 'tag',
+        name: 'Tag',
+        displayField: 'title',
+        fields: [{ ...symbol('title'), required: true, unique }],
+      }) as Parameters<typeof createContentType>[3];
+    for (const [scope, unique] of [
+      [staging, false],
+      [qa, true],
+    ] as const) {
+      await createContentType(ctx, SYSTEM_CALLER, scope, tag(unique));
+      await publishContentType(ctx, scope, 'tag');
+    }
+    // A replaces qa's copy, which holds the cta the page type removes.
+    const a = await createEntry(ctx, staging, { contentTypeApiId: 'page', fields: heroOnly('A') });
+    await publishEntry(ctx, staging, a.entry.id);
+    await createEntry(ctx, qa, { contentTypeApiId: 'page', id: a.entry.id, fields: withCta('A') });
+    await publishEntry(ctx, qa, a.entry.id);
+    // B is new to qa, and its title is already claimed there: its write fails the apply.
+    const b = await createEntry(ctx, staging, {
+      contentTypeApiId: 'tag',
+      fields: { title: { 'en-US': 'Taken' } },
+    });
+    await createEntry(ctx, qa, {
+      contentTypeApiId: 'tag',
+      fields: { title: { 'en-US': 'Taken' } },
+    });
+
+    const p = await requestPromotion(ctx, ada, spaceId, {
+      source: 'staging',
+      target: 'qa',
+      contentTypes: ['page'],
+      entries: [b.entry.id, a.entry.id],
+    });
+    await expect(approvePromotion(ctx, managers, spaceId, p.id)).rejects.toThrow();
+    expect(await store.promotions.get(spaceId, p.id)).toMatchObject({
+      status: 'failed',
+      result: { contentTypes: ['page'], entries: [a.entry.id], published: [a.entry.id] },
+    });
+    // The type went, and A holds nothing it removed: neither its current version nor what is live.
+    expect(await variantsOf(qa)).toEqual(['hero']);
+    expect((await store.entries.get(qa, a.entry.id))?.fields).toMatchObject(heroOnly('A'));
+    expect((await store.entries.getPublished(qa, a.entry.id))?.fields).toMatchObject(heroOnly('A'));
+    expect(await store.entries.get(qa, b.entry.id)).toBeNull();
   });
 
   it('counts the published snapshot an entry it promotes as a draft leaves in the target', async () => {
