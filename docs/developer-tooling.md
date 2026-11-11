@@ -29,7 +29,7 @@ name) and `description` (what it covers and "Use when …"), a body under 500 li
 | `oauth.ts`       | The RFC 8628 device flow against the api's authorization server: discovery, registration, polling, refresh, revocation          |
 | `credentials.ts` | `credentials.json` in the user config dir, written 0600 in a 0700 directory, atomically (temp file and rename)                  |
 | `model.ts`       | Model files (JSON or a TypeScript module), normalization, and the plan `model apply` shows                                      |
-| `blocks.ts`      | Blocks files (`contentworker.blocks.json`, or a JSON/TS/JS module) and the change `blocks push` prints                         |
+| `blocks.ts`      | Blocks files (`contentworker.blocks.json`, or a JSON/TS/JS module) and the change `blocks push` prints                          |
 | `io.ts`          | `Io`: process, fetch, clock, config dir and prompt, injected so tests run without a network or a terminal                       |
 
 Design points:
