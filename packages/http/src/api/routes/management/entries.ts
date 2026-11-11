@@ -13,6 +13,7 @@ import {
 import {
   assertWritableFields,
   authorizeContent,
+  deniedFieldsFor,
   maskDeniedFields,
   SCOPES,
   unwritableFieldsFor,
@@ -58,10 +59,12 @@ export function entriesRoutes(deps: AuthDeps): Hono<AuthVars> {
       const principal = c.get('principal');
       authorizeContent(principal, 'write', body.contentTypeApiId);
       assertWritableFields(principal, body.contentTypeApiId, body.fields ?? {});
+      // A field it may not read is never named in a refusal, only counted.
       const view = await createEntry(
         actingCtx(ctx, c),
         scopeOf(c),
         body as Parameters<typeof createEntry>[2],
+        { unreadable: deniedFieldsFor(principal, body.contentTypeApiId) },
       );
       return c.json(view, 201);
     },
@@ -90,6 +93,7 @@ export function entriesRoutes(deps: AuthDeps): Hono<AuthVars> {
       const fields = body.fields ?? {};
       if (body.entryId !== undefined) {
         let unwritable: readonly string[] = [];
+        let unreadable: readonly string[] = [];
         let type = '';
         if (principal.contentGrants) {
           const { entry } = await getEntry(ctx, scopeOf(c), body.entryId);
@@ -97,15 +101,16 @@ export function entriesRoutes(deps: AuthDeps): Hono<AuthVars> {
           authorizeContent(principal, 'write', type);
           assertWritableFields(principal, type, fields);
           unwritable = unwritableFieldsFor(principal, type);
+          unreadable = deniedFieldsFor(principal, type);
         }
         const result = await validateEntry(
           ctx,
           scopeOf(c),
           { entryId: body.entryId, fields },
-          { unwritable },
+          { unwritable, unreadable },
         );
-        // Judged with the stored values of the fields this writer may not write; answered without
-        // the ones it may not read.
+        // Judged with the stored values of the fields this writer may not write; answered (and
+        // refused) without the ones it may not read.
         return c.json({
           ...result,
           fields: maskDeniedFields(principal, type, result.fields),
@@ -114,7 +119,14 @@ export function entriesRoutes(deps: AuthDeps): Hono<AuthVars> {
       const contentTypeApiId = body.contentTypeApiId ?? '';
       authorizeContent(principal, 'write', contentTypeApiId);
       assertWritableFields(principal, contentTypeApiId, fields);
-      return c.json(await validateEntry(ctx, scopeOf(c), { contentTypeApiId, fields }));
+      return c.json(
+        await validateEntry(
+          ctx,
+          scopeOf(c),
+          { contentTypeApiId, fields },
+          { unreadable: deniedFieldsFor(principal, contentTypeApiId) },
+        ),
+      );
     },
   );
   app.post(

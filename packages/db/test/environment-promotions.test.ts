@@ -97,4 +97,31 @@ describe('promotions on D1', () => {
     ).toBeNull();
     expect((await store.promotions.get(spaceId, p.id))?.status).toBe('completed');
   });
+
+  it('lists a status oldest first when asked, for the stale sweep', async () => {
+    const own = `promo-order-${crypto.randomUUID().slice(0, 8)}`;
+    const base = Date.parse('2026-01-01T00:00:00.000Z');
+    for (const [i, status] of (
+      ['applying', 'applying', 'completed', 'applying'] as const
+    ).entries()) {
+      await store.promotions.create({
+        id: `p${i}`,
+        spaceId: own,
+        source: 'staging',
+        target: 'main',
+        contentTypes: [],
+        entries: [],
+        status,
+        risk: { protectedTarget: true, requiresApproval: false, reasons: [] },
+        requestedBy: 'ci',
+        createdAt: new Date(base + i * 60_000).toISOString(),
+      });
+    }
+    const ids = async (oldestFirst?: boolean) =>
+      (await store.promotions.list(own, { status: 'applying', limit: 2, oldestFirst })).map(
+        (p) => p.id,
+      );
+    expect(await ids(true)).toEqual(['p0', 'p1']);
+    expect(await ids()).toEqual(['p3', 'p1']);
+  });
 });

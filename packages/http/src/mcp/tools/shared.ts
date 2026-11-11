@@ -251,12 +251,15 @@ export interface ToolContext {
   readonly principal: Principal;
   /** Authorizes `scope` in the target space; throws `ForbiddenError`. */
   readonly guard: (scope: PermissionScope, s: Scope) => void;
-  /** Granular RBAC on one entry, for role-bound principals: every one of `action` is needed. */
+  /**
+   * Granular RBAC on one entry, for role-bound principals: every one of `action` is needed.
+   * Answers the entry's content type when it checked one (undefined for an unrestricted caller).
+   */
   readonly guardEntry: (
     s: Scope,
     id: string,
     action: ContentAction | readonly ContentAction[],
-  ) => Promise<void>;
+  ) => Promise<string | undefined>;
   /** Granular RBAC for trashing one entry (`authorizeTrash`), for role-bound principals. */
   readonly guardTrash: (s: Scope, id: string) => Promise<void>;
   /** Authorizes read on an entry and returns its content type, to mask denied fields. */

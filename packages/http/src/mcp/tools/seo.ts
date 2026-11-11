@@ -8,6 +8,7 @@ import {
 import {
   assertWritableFields,
   authorizeContent,
+  deniedFieldsFor,
   maskDeniedFields,
   SCOPES,
   seoFieldOf,
@@ -35,19 +36,19 @@ export function registerSeoTools(server: McpServer, t: ToolContext): void {
     async (args) => {
       guard(SCOPES.contentWrite, scopeOf(args));
       const { space: _s, environment: _e, id, locale, ...patch } = args;
+      // A field it may not read is never named in a refusal, only counted.
+      let unreadable: readonly string[] = [];
       if (principal.contentGrants) {
         const entry = await getPreviewEntry(ctx, scopeOf(args), id);
         authorizeContent(principal, 'write', entry.contentType);
         const field = seoFieldOf(await getContentType(ctx, scopeOf(args), entry.contentType));
         if (field) assertWritableFields(principal, entry.contentType, { [field.apiId]: {} });
+        unreadable = deniedFieldsFor(principal, entry.contentType);
       }
-      const view = await setEntrySeo(
-        ctx,
-        scopeOf(args),
-        id,
-        patch,
-        locale !== undefined ? { locale } : {},
-      );
+      const view = await setEntrySeo(ctx, scopeOf(args), id, patch, {
+        ...(locale !== undefined ? { locale } : {}),
+        unreadable,
+      });
       // As the route does: the answer shows only the fields the caller may read.
       return ok({
         ...view,
