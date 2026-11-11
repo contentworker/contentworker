@@ -247,15 +247,26 @@ jobs:
         timeout-minutes: 5
         run: pnpm --filter @contentworker/web exec playwright install-deps webkit chromium
       # A timed-out first attempt kills pnpm but can leave its apt-get running with the dpkg lock
-      # held; wait for it to finish (it often completes the install) before trying again.
+      # held. If dpkg is installing, let it finish; if apt-get is still only downloading, the
+      # runner's Azure mirror is stalling (each package waits out a 20 s timeout), so stop it and
+      # fetch from the main Ubuntu archive instead.
       - name: Install WebKit system dependencies (retry)
         if: ${{ steps.deps.outcome == 'failure' }}
         timeout-minutes: 10
         run: |
-          while pgrep -x apt-get >/dev/null || pgrep -x dpkg >/dev/null; do
-            echo "Waiting for the first attempt's apt-get to release the dpkg lock"
+          while pgrep -x dpkg >/dev/null; do
+            echo "Waiting for the first attempt's dpkg to finish"
             sleep 5
           done
+          if pgrep -x apt-get >/dev/null; then
+            echo "The first attempt's apt-get is stuck downloading; stopping it"
+            sudo pkill -x apt-get || true
+            while pgrep -x apt-get >/dev/null; do sleep 1; done
+            sudo dpkg --configure -a
+          fi
+          if [ -f /etc/apt/apt-mirrors.txt ]; then
+            echo "http://archive.ubuntu.com/ubuntu/" | sudo tee /etc/apt/apt-mirrors.txt
+          fi
           pnpm --filter @contentworker/web exec playwright install-deps webkit chromium
       - name: Device tests
         run: pnpm --filter @contentworker/web e2e
