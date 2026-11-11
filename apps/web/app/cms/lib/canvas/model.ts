@@ -15,12 +15,14 @@ import {
   BLOCK_TYPE_KEY,
   type BlockOp,
   type BlockPlace,
+  type Breakpoint,
   blockVariants,
   type ComponentVariant,
   type ContentType,
   type EffectiveBlockRules,
   type EntryFields,
   type FieldDefinition,
+  RESPONSIVE_KEY,
   variantOf,
 } from '@contentworker/domain';
 import { type FieldPathStep, formatFieldPath } from '@contentworker/sdk-core';
@@ -33,6 +35,7 @@ import {
   sameRun,
 } from '../block-locks';
 import { ruleFor, type StoredSlots, slotPolicy, storedSlots, wasStored } from '../block-rules';
+import { withOverride } from '../breakpoints';
 import type { EntryBlockLock } from '../management';
 
 /** Where a slot is: a top-level blocks field, or a slot of the block keyed `parent.key`. */
@@ -69,6 +72,11 @@ export interface CanvasSlot {
    * no block goes in or out and none moves, but it is the entry's lock, not the config's.
    */
   readonly sealedBy?: LockRegion;
+  /**
+   * The breakpoints its blocks' `responsive` props take overrides at: its field's own (a catalog
+   * target's), else those of the slot holding its block; none, and its blocks take no overrides.
+   */
+  readonly breakpoints: readonly Breakpoint[];
 }
 
 export interface CanvasBlock {
@@ -134,7 +142,21 @@ export function canvasTree(
     if (!variants) return [];
     const at = def.localized ? locale : defaultLocale;
     const value = (fields[def.apiId] as Record<string, unknown> | undefined)?.[at];
-    return [buildSlot(def, variants, value, { field: def.apiId }, def.apiId, [], at, 0, under)];
+    return [
+      buildSlot(
+        def,
+        variants,
+        value,
+        { field: def.apiId },
+        def.apiId,
+        [],
+        at,
+        0,
+        under,
+        [],
+        undefined,
+      ),
+    ];
   });
 }
 
@@ -148,8 +170,10 @@ function buildSlot(
   locale: string,
   depth: number,
   under: Under,
+  /** The breakpoints of the slot holding this one's block: what a field without its own takes. */
+  inherited: readonly Breakpoint[],
   /** The catalog block holding this slot: its variant's apiId. */
-  holder?: string,
+  holder: string | undefined,
 ): CanvasSlot {
   const items = Array.isArray(value) ? value : [];
   const size = def.validations?.size;
@@ -186,6 +210,7 @@ function buildSlot(
     full: policy.max !== undefined && items.length >= policy.max,
     locked: policy.locked,
     ...(parentLock?.sealed ? { sealedBy: parentLock.region } : {}),
+    breakpoints: Array.isArray(def.items?.breakpoints) ? def.items.breakpoints : inherited,
   };
   items.forEach((item) => {
     if (typeof item !== 'object' || item === null || Array.isArray(item)) return;
@@ -209,6 +234,7 @@ function buildSlot(
           locale,
           depth + 1,
           under,
+          slot.breakpoints,
           variant?.apiId,
         ),
       ];
@@ -455,6 +481,24 @@ export function setPropOp(block: CanvasBlock, prop: string, value: unknown): Blo
     key: block.key,
     ...(value === undefined ? { unset: [prop] } : { set: { [prop]: value } }),
   };
+}
+
+/**
+ * An `update` op giving `prop` its own value at breakpoint `bp` (or, with `value` undefined,
+ * taking it away so it inherits again). It sets `_responsive` whole, as an `update` must: an
+ * emptied breakpoint is left out, and an emptied map unsets the key.
+ */
+export function setOverrideOp(
+  block: CanvasBlock,
+  bp: string,
+  prop: string,
+  value: unknown,
+): BlockOp {
+  return setPropOp(
+    block,
+    RESPONSIVE_KEY,
+    withOverride(block.value[RESPONSIVE_KEY], bp, prop, value),
+  );
 }
 
 /** Whether a type can open on the canvas: it frames the type's preview URL and edits its blocks. */

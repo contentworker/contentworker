@@ -4,7 +4,14 @@
  * - **Content**: the block's own fields, edited with the entry form's field editors.
  * - **Data**: what it points at: references to entries and assets.
  * - **Look**: its token props (a field limited to listed values), as segmented controls or a
- *   select. Never free CSS: a style prop is an enumeration the site's design system declares.
+ *   select, and the Booleans it lists in `responsive`. Never free CSS: a style prop is an
+ *   enumeration the site's design system declares.
+ *
+ * The Look tab edits the breakpoint in view (docs/specs/breakpoint-overrides.md): the one the
+ * frame's width is in, for a block whose field has the catalog's breakpoints. At Base it sets the
+ * bare prop. At a breakpoint, a prop in the variant's `responsive` shows what it inherits and from
+ * where until it is given its own value, an override (`setOverrideOp`), which Reset takes away;
+ * any other prop is the same at every width and is edited at Base only.
  *
  * A block's slots aren't fields here: blocks go into them from the page's seams (or from Add,
  * here and in Layers). Each change is one `update` op (`setPropOp`) on the block, applied on the
@@ -19,12 +26,14 @@
  * draft's save: it is keyed to stored blocks, so it waits for unsaved block changes to be saved.
  */
 import {
+  type Breakpoint,
   type FieldDefinition,
   type FieldOption,
   fieldState,
   normalizeOptions,
   optionLabel,
   optionValue,
+  responsivePropsOf,
 } from '@contentworker/domain';
 import { Alert, AlertDescription, AlertTitle } from '@contentworker/ui/alert';
 import { Button } from '@contentworker/ui/button';
@@ -39,6 +48,14 @@ import { RequiredMark } from '~/cms/components/required-mark';
 import type { ActorDirectory } from '~/cms/lib/authorship';
 import { lockedLine, lockSays } from '~/cms/lib/block-locks';
 import {
+  BASE_NAME,
+  baseInView,
+  breakpointFor,
+  overridesOf,
+  valueAt,
+  type WidthPreset,
+} from '~/cms/lib/breakpoints';
+import {
   type CanvasBlock,
   type CanvasSlot,
   canDuplicate,
@@ -50,10 +67,17 @@ import type { BlockLockInput, EntryBlockLock } from '~/cms/lib/management';
 
 export type InspectorTab = 'content' | 'data' | 'look';
 
-/** Which tab a block prop belongs to; undefined for a slot, which isn't a field here. */
-export function tabOf(f: FieldDefinition): InspectorTab | undefined {
+/**
+ * Which tab a block prop belongs to; undefined for a slot, which isn't a field here. A Boolean
+ * the block lists in `responsive` is a look: it changes per breakpoint as the tokens do.
+ */
+export function tabOf(
+  f: FieldDefinition,
+  responsive: readonly string[] = [],
+): InspectorTab | undefined {
   if (f.type === 'Array' && f.items?.type === 'Component' && f.items.variants) return undefined;
   if (f.type === 'Link' || (f.type === 'Array' && f.items?.type === 'Link')) return 'data';
+  if (f.type === 'Boolean' && responsive.includes(f.apiId)) return 'look';
   if (
     (f.type === 'Symbol' || f.type === 'Integer' || f.type === 'Number') &&
     normalizeOptions(f.validations?.in, f.type).length > 0
@@ -81,6 +105,10 @@ export interface InspectorProps {
   readonly tab: InspectorTab;
   readonly onTab: (tab: InspectorTab) => void;
   readonly onChange: (prop: string, value: unknown) => void;
+  /** The frame's width preset: the Look tab edits the breakpoint it stands for. Absent, Base. */
+  readonly preset?: Pick<WidthPreset, 'id' | 'width'>;
+  /** Gives `prop` its own value at breakpoint `bp`, or (undefined) lets it inherit again. */
+  readonly onOverride?: (bp: string, prop: string, value: unknown) => void;
   readonly onMove: (by: -1 | 1) => void;
   readonly onDuplicate: () => void;
   readonly onRemove: () => void;
@@ -112,7 +140,11 @@ export function Inspector(props: InspectorProps) {
   const { block, readOnly } = props;
   const headingId = useId();
   const fields = block.variant?.fields ?? [];
-  const byTab = (tab: InspectorTab) => fields.filter((f) => tabOf(f) === tab);
+  const responsive = responsivePropsOf(block.variant);
+  const byTab = (tab: InspectorTab) => fields.filter((f) => tabOf(f, responsive) === tab);
+  const breakpoints = block.slot.breakpoints;
+  // Absent a preset, Base: the bare props, as without breakpoints.
+  const at = props.preset ? breakpointFor(breakpoints, props.preset) : null;
   const tabs = (['content', 'data', 'look'] as const).filter((t) => byTab(t).length > 0);
   const tab = tabs.includes(props.tab) ? props.tab : (tabs[0] ?? 'content');
   const where = block.slot.name;
@@ -252,8 +284,34 @@ export function Inspector(props: InspectorProps) {
           </TabsList>
           {tabs.map((t) => (
             <TabsContent key={t} value={t} className="flex flex-col gap-4 pt-3">
+              {t === 'look' && breakpoints.length > 0 ? (
+                <p className="max-w-measure text-muted-foreground text-xs">
+                  {at ? (
+                    <>
+                      Editing <b className="font-medium text-foreground">{at.name}</b>, from{' '}
+                      {at.minWidth}px up. Change the width above the page to edit another.
+                    </>
+                  ) : (
+                    <>
+                      Editing <b className="font-medium text-foreground">{BASE_NAME}</b>
+                      {baseInView(breakpoints)
+                        ? ': every width shows it unless a breakpoint changes it.'
+                        : `: no width shows it, as ${breakpoints[0]?.name} starts at 1px. A frontend that reads no breakpoints shows it.`}
+                    </>
+                  )}
+                </p>
+              ) : null}
               {byTab(t).map((f) => (
-                <Prop key={f.apiId} field={f} {...props} />
+                <Prop
+                  key={f.apiId}
+                  field={f}
+                  {...props}
+                  look={
+                    t === 'look' && breakpoints.length > 0
+                      ? { at, breakpoints, responsive: responsive.includes(f.apiId) }
+                      : undefined
+                  }
+                />
               ))}
             </TabsContent>
           ))}
@@ -429,29 +487,69 @@ function LockPanel(props: LockingProps & { block: CanvasBlock; directory?: Actor
   );
 }
 
-function Prop(props: InspectorProps & { field: FieldDefinition }) {
-  const { field: f, block, readOnly } = props;
+/** A Look prop on a block whose field has breakpoints: the one in view, and whether it takes one. */
+interface LookAt {
+  readonly at: Breakpoint | null;
+  readonly breakpoints: readonly Breakpoint[];
+  /** The variant lists it in `responsive`. */
+  readonly responsive: boolean;
+}
+
+function Prop(props: InspectorProps & { field: FieldDefinition; look: LookAt | undefined }) {
+  const { field: f, block, readOnly, look } = props;
   const id = `canvas-${block.key}-${f.apiId}`;
   const state = fieldState(f, block.value as Record<string, unknown>);
   if (state.hidden) return null;
-  const value = block.value[f.apiId];
   const options = normalizeOptions(f.validations?.in, f.type);
+  // At a breakpoint: what a responsive prop is there, set or inherited. Otherwise the bare prop.
+  const bp = look?.at ?? null;
+  const here = bp && look?.responsive ? valueAt(block.value, f.apiId, look.breakpoints, bp) : null;
+  const value = here ? here.value : block.value[f.apiId];
   // A frozen region's content reads only, as a disabling rule's does.
-  const disabled = readOnly || state.disabled || !!block.lock?.frozen;
+  const frozen = readOnly || state.disabled || !!block.lock?.frozen;
+  // The same at every width: at a breakpoint it reads only, and is edited at Base.
+  const disabled = frozen || (!!bp && !here);
+  const change = (v: unknown) => {
+    if (bp && here) props.onOverride?.(bp.id, f.apiId, v);
+    else props.onChange(f.apiId, v);
+  };
+  const noteId = `${id}-width`;
+  const note = look ? (
+    <WidthNote
+      id={noteId}
+      field={f}
+      block={block.value}
+      look={look}
+      here={here}
+      onReset={
+        bp && here?.set && !frozen
+          ? () => {
+              props.onOverride?.(bp.id, f.apiId, undefined);
+              // Reset goes with the override: focus moves to the prop's control, not the page.
+              queueMicrotask(() => focusProp(id));
+            }
+          : undefined
+      }
+    />
+  ) : null;
+  const describedBy =
+    [note ? noteId : undefined, f.help ? `${id}-hint` : undefined].filter(Boolean).join(' ') ||
+    undefined;
   if (tabOf(f) === 'look' && options.length > 0 && options.length <= SEGMENTS) {
     return (
-      <div className="flex flex-col gap-1.5">
+      <div data-prop={id} className="flex flex-col gap-1.5">
         <span id={`${id}-label`} className="font-medium text-sm">
           {f.name}
           {f.required ? <RequiredMark /> : null}
         </span>
         <Segmented
           aria-labelledby={`${id}-label`}
+          aria-describedby={describedBy}
           value={value === undefined ? '' : String(value)}
           disabled={disabled}
           onValueChange={(v) => {
             const picked = options.find((o: FieldOption) => String(optionValue(o)) === v);
-            if (picked !== undefined) props.onChange(f.apiId, optionValue(picked));
+            if (picked !== undefined) change(optionValue(picked));
           }}
           className="w-fit"
         >
@@ -461,7 +559,12 @@ function Prop(props: InspectorProps & { field: FieldDefinition }) {
             </SegmentedItem>
           ))}
         </Segmented>
-        {f.help ? <p className="max-w-measure text-muted-foreground text-xs">{f.help}</p> : null}
+        {note}
+        {f.help ? (
+          <p id={`${id}-hint`} className="max-w-measure text-muted-foreground text-xs">
+            {f.help}
+          </p>
+        ) : null}
       </div>
     );
   }
@@ -476,17 +579,98 @@ function Prop(props: InspectorProps & { field: FieldDefinition }) {
         field={f}
         value={value}
         disabled={disabled}
-        hintId={f.help ? `${id}-hint` : undefined}
+        hintId={describedBy}
         pickers={props.pickers}
         locale={props.locale}
         onSearchEntries={props.onSearchEntries}
-        onChange={(v) => props.onChange(f.apiId, v)}
+        onChange={change}
       />
+      {note}
       {f.help ? (
         <p id={`${id}-hint`} className="max-w-measure text-muted-foreground text-xs">
           {f.help}
         </p>
       ) : null}
     </div>
+  );
+}
+
+/** Focuses a prop's control: a segmented one's chosen segment (else its first), or its input. */
+function focusProp(id: string) {
+  const group = [...document.querySelectorAll<HTMLElement>('[data-prop]')].find(
+    (el) => el.dataset.prop === id,
+  );
+  const radios = group ? [...group.querySelectorAll<HTMLElement>('[role="radio"]')] : [];
+  const target =
+    radios.find((r) => r.getAttribute('aria-checked') === 'true') ??
+    radios[0] ??
+    document.getElementById(id);
+  target?.focus();
+}
+
+/**
+ * Where a Look prop's value comes from at the width in view: set here (marked in brand, what was
+ * chosen, with Reset), inherited ("From Base", "From Tablet"), the same at every width, or, at
+ * Base, the breakpoints that give it a value of their own.
+ */
+function WidthNote(props: {
+  id: string;
+  field: FieldDefinition;
+  block: Readonly<Record<string, unknown>>;
+  look: LookAt;
+  here: ReturnType<typeof valueAt> | null;
+  onReset: (() => void) | undefined;
+}) {
+  const { look, here } = props;
+  if (look.at && !here) {
+    return (
+      <p id={props.id} className="max-w-measure text-muted-foreground text-xs">
+        Same at every width: change it at {BASE_NAME}.
+      </p>
+    );
+  }
+  if (look.at && here?.set) {
+    return (
+      <div className="flex items-center gap-2 text-xs">
+        <p
+          id={props.id}
+          data-override
+          className="inline-flex items-center gap-1.5 font-medium text-brand"
+        >
+          <span aria-hidden="true" className="size-1.5 rounded-full bg-brand" />
+          Set for {look.at.name}
+        </p>
+        {props.onReset ? (
+          <Button
+            type="button"
+            size="xs"
+            variant="ghost"
+            aria-label={`Reset ${props.field.name} at ${look.at.name}`}
+            title={`Inherit ${props.field.name} again`}
+            onClick={props.onReset}
+          >
+            Reset
+          </Button>
+        ) : null}
+      </div>
+    );
+  }
+  if (here) {
+    return (
+      <p id={props.id} className="text-muted-foreground text-xs">
+        From {here.from?.name ?? BASE_NAME}
+      </p>
+    );
+  }
+  if (!look.responsive) return null;
+  const overrides = overridesOf(props.block);
+  const changes = look.breakpoints.filter((b) =>
+    Object.hasOwn(overrides[b.id] ?? {}, props.field.apiId),
+  );
+  if (changes.length === 0) return null;
+  return (
+    <p id={props.id} className="max-w-measure text-muted-foreground text-xs">
+      Changes at {changes.map((b) => b.name).join(', ')}
+    </p>
   );
 }

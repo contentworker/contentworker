@@ -23,16 +23,22 @@
  * frame, `useSiteFrame`). Save draft is the entry's ordinary save, held to the version the canvas
  * started from (`expectedVersion`), so a save someone made meanwhile is never overwritten unseen.
  *
+ * The frame's widths are the catalog's breakpoints when it declares any (Base, then one per
+ * breakpoint, `cms/lib/breakpoints.ts`): the width in view is the breakpoint the inspector's Look
+ * tab edits, each override an `update` op setting the block's `_responsive` whole (`setOverrideOp`),
+ * so it undoes and saves as any edit. An override the server refuses is a check on its block.
+ *
  * At lg it edits: Layers (on demand) | the page | the inspector. From md it edits by tap, the dock,
  * the inspector and Layers in sheets. Below md it is review-only, and says so in place.
  */
 import {
-  type BlockConfigIssue,
   type BlockOp,
   blockVariants,
   type ComponentVariant,
+  type ContentType,
   type EntryFields,
   SCOPES,
+  withoutStaleOverrides,
 } from '@contentworker/domain';
 import type { LiveRect } from '@contentworker/sdk-core/live-preview';
 import { Alert, AlertDescription, AlertTitle } from '@contentworker/ui/alert';
@@ -62,7 +68,7 @@ import { Layers } from '~/cms/components/canvas/Layers';
 import { ProposalLine } from '~/cms/components/canvas/ProposalLine';
 import { SaveConflictDialog } from '~/cms/components/entries/SaveConflictDialog';
 import { LoadingStatus } from '~/cms/components/loading';
-import { DEVICES, SiteNotice, useDevice } from '~/cms/components/pane/SitePane';
+import { SiteNotice, useWidthPreset, WidthSwitch } from '~/cms/components/pane/SitePane';
 import { useSiteFrame } from '~/cms/components/pane/use-site-frame';
 import { ResponsiveSheetContent } from '~/cms/components/responsive-sheet';
 import { StatusBadge, ToneBadge } from '~/cms/components/status';
@@ -77,8 +83,9 @@ import {
   withLock,
   withoutLock,
 } from '~/cms/lib/block-locks';
-import { configRefusal, rulesOver } from '~/cms/lib/block-rules';
-import { canvasChecks } from '~/cms/lib/canvas/checks';
+import { configRefusal, overrideRefusal, rulesOver } from '~/cms/lib/block-rules';
+import { widthPresets } from '~/cms/lib/breakpoints';
+import { canvasChecks, type RefusedIssue } from '~/cms/lib/canvas/checks';
 import { fillAsk, fillFor, proposedLayers } from '~/cms/lib/canvas/fill';
 import {
   applyOps,
@@ -109,6 +116,7 @@ import {
   placeAfter,
   removeOp,
   runBetween,
+  setOverrideOp,
   setPropOp,
 } from '~/cms/lib/canvas/model';
 import {
@@ -121,11 +129,7 @@ import {
 } from '~/cms/lib/canvas/seams';
 import { useClient } from '~/cms/lib/client-context';
 import { useMedia, WIDE } from '~/cms/lib/device';
-import {
-  DEVICE_WIDTHS,
-  type Device,
-  type FrameGeometry,
-} from '~/cms/lib/live-preview/frame-channel';
+import type { FrameGeometry } from '~/cms/lib/live-preview/frame-channel';
 import { capabilitiesFor, SELECT_ONLY } from '~/cms/lib/live-preview/host';
 import { refForField } from '~/cms/lib/live-preview/pick';
 import { type GhostKind, ghostKeys, ghostOps } from '~/cms/lib/live-preview/proposals';
@@ -246,7 +250,8 @@ function Canvas({
   const wide = useMedia(WIDE);
   const tablet = useMedia(TABLET);
 
-  const contentType = useContentTypesQuery().data?.find((t) => t.apiId === typeId);
+  const typesQuery = useContentTypesQuery();
+  const contentType = typesQuery.data?.find((t) => t.apiId === typeId);
   const cfg = useSpaceConfigQuery().data;
   const entryQuery = useEntryQuery(entryId);
   const catalog = useScopedQuery(['block-catalog'], () => client.getBlockCatalog(), {
@@ -317,10 +322,10 @@ function Canvas({
   const [kept, setKept] = useState<ReadonlySet<string>>(new Set());
   const [draftStarted, setDraftStarted] = useState(false);
   const [conflict, setConflict] = useState<{ theirs: number } | null>(null);
-  /** What the server's block config refused of a save, for the fields it was refused for. */
+  /** What the server's block config (or override check) refused of a save, for those fields. */
   const [refused, setRefused] = useState<{
     fields: EntryFields;
-    issues: readonly BlockConfigIssue[];
+    issues: readonly RefusedIssue[];
   } | null>(null);
   const [said, setSaid] = useState('');
   const [focusInspector, setFocusInspector] = useState(false);
@@ -329,7 +334,6 @@ function Canvas({
   const [restoreFocus, setRestoreFocus] = useState<'dock' | 'layer' | null>(null);
   const [geometry, setGeometry] = useState<FrameGeometry | null>(null);
   const [hover, setHover] = useState<{ ref: string; rect: LiveRect } | null>(null);
-  const [device, setDevice] = useDevice();
 
   const fields = doc?.fields ?? (entryQuery.data?.fields as EntryFields | undefined) ?? {};
   const storedFields = doc?.base.fields;
@@ -342,6 +346,13 @@ function Canvas({
     [contentType, fields, locale, defaultLocale, under],
   );
   const block = selected ? findBlock(tree, selected) : undefined;
+  // The frame's widths: Base and the catalog's breakpoints when it declares any. While the catalog
+  // is loading, or couldn't be read, the blocks fields' own (the push wrote them there), so a
+  // field with breakpoints always has a Base to edit its bare props at.
+  const ownBreakpoints = tree.find((s) => s.breakpoints.length > 0)?.breakpoints;
+  const breakpoints = catalog?.breakpoints?.length ? catalog.breakpoints : ownBreakpoints;
+  const presets = useMemo(() => widthPresets(breakpoints), [breakpoints]);
+  const [preset, setPreset] = useWidthPreset(presets);
   const dirty = !!doc && JSON.stringify(doc.fields) !== JSON.stringify(doc.base.fields);
   const dirtyRef = useRef(dirty);
   dirtyRef.current = dirty;
@@ -436,7 +447,7 @@ function Canvas({
     allowed,
     selected: selectedRef,
     mode: 'edit',
-    device,
+    width: preset.width,
     canvas: true,
     proposal: shownOps,
     onPick: (ref, pageEntries) => {
@@ -592,6 +603,15 @@ function Canvas({
   };
   const setProp = (b: CanvasBlock, prop: string, value: unknown) =>
     apply([setPropOp(b, prop, value)], `Edited ${b.name}`, `${b.key}:${prop}`);
+  /** One prop's override at one breakpoint; a Reset is a step of its own. */
+  const setOverride = (b: CanvasBlock, bp: string, prop: string, value: unknown) => {
+    const name = b.slot.breakpoints.find((x) => x.id === bp)?.name ?? bp;
+    apply(
+      [setOverrideOp(b, bp, prop, value)],
+      value === undefined ? `Reset ${b.name} at ${name}` : `Edited ${b.name} at ${name}`,
+      value === undefined ? undefined : `${b.key}:${bp}:${prop}`,
+    );
+  };
 
   // --- locks --------------------------------------------------------------------------------
   /** Takes `key` into the selection with what's selected: a run, when they share a slot. */
@@ -680,8 +700,27 @@ function Canvas({
         return;
       }
       const expectedVersion = over ?? d.base.version;
+      // Overrides the type no longer takes (a push removed their breakpoint, or narrowed their
+      // prop) go before the save, as the save drops them: the canvas makes none by mistake, and
+      // an undo across several saves may bring back a block that holds them.
+      const send = (type: ContentType) =>
+        client.updateEntry(entryId, withoutStaleOverrides(type, d.fields), { expectedVersion });
       try {
-        const saved = await client.updateEntry(entryId, d.fields, { expectedVersion });
+        let saved: Awaited<ReturnType<typeof send>>;
+        try {
+          saved = await send(contentType);
+        } catch (err) {
+          // Refused over an override: the type may have changed since the canvas read it. Read
+          // it again, and when that drops something more, send once more.
+          if (overrideRefusal(err).length === 0) throw err;
+          const fresh = (await typesQuery.refetch()).data?.find((t) => t.apiId === typeId);
+          const unchanged =
+            !fresh ||
+            JSON.stringify(withoutStaleOverrides(fresh, d.fields)) ===
+              JSON.stringify(withoutStaleOverrides(contentType, d.fields));
+          if (unchanged) throw err;
+          saved = await send(fresh);
+        }
         const now = docRef.current ?? d;
         // What was typed while it saved stays unsaved; the history holds while the save kept
         // the blocks as the canvas made them.
@@ -722,6 +761,19 @@ function Canvas({
             regionRefusal(issues)
               ? `A locked region refused ${what}: see the checks`
               : `The block config refused ${what}: see the checks`,
+          );
+          return;
+        }
+        // An override no stored version holds, that the catalog no longer declares: said on its
+        // block, where it is reset or undone.
+        const overrides = overrideRefusal(err);
+        if (overrides.length > 0) {
+          setRefused({ fields: d.fields, issues: overrides });
+          showChecks();
+          toast.error(
+            overrides.length === 1
+              ? 'The site no longer takes an override in this draft: see the checks'
+              : `The site no longer takes ${overrides.length} overrides in this draft: see the checks`,
           );
           return;
         }
@@ -991,6 +1043,8 @@ function Canvas({
       tab={tab}
       onTab={setTab}
       onChange={(prop, value) => setProp(block, prop, value)}
+      preset={preset}
+      onOverride={(bp, prop, value) => setOverride(block, bp, prop, value)}
       onMove={(by) => move(block, by)}
       onDuplicate={() => duplicate(block)}
       onRemove={() => remove(block)}
@@ -1105,22 +1159,7 @@ function Canvas({
           {said}
         </span>
         <div className="ml-auto flex flex-wrap items-center gap-2">
-          <Segmented
-            aria-label="Device width"
-            value={device}
-            onValueChange={(v) => setDevice(v as Device)}
-          >
-            {DEVICES.map(({ value, label, icon: Icon }) => (
-              <SegmentedItem
-                key={value}
-                value={value}
-                aria-label={`${label}, ${DEVICE_WIDTHS[value]} pixels`}
-                title={`${label} (${DEVICE_WIDTHS[value]}px)`}
-              >
-                <Icon aria-hidden="true" />
-              </SegmentedItem>
-            ))}
-          </Segmented>
+          <WidthSwitch presets={presets} value={preset} onChange={setPreset} />
           <Button
             type="button"
             variant={layersOpen ? 'secondary' : 'ghost'}

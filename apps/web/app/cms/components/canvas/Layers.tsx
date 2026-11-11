@@ -9,17 +9,21 @@
  * A locked region's blocks carry a lock, and its first one says who locked it and when. Shift with
  * a click, or with ↑ ↓, takes the neighbours in the same slot into the selection: a run to lock.
  *
+ * A block that takes a different look from some breakpoint up (an override) carries a small
+ * width mark, named for the breakpoints it changes at.
+ *
  * While Coworker's proposal waits, the blocks it would put in are listed after their slot's blocks,
  * each "Proposed" in words, and a block it would change or take away says so in place.
  */
 import { Button } from '@contentworker/ui/button';
 import { cn } from '@contentworker/ui/lib/utils';
-import { Lock, Plus } from 'lucide-react';
+import { Lock, MonitorSmartphone, Plus } from 'lucide-react';
 import { useEffect, useRef } from 'react';
 import { ToneBadge } from '~/cms/components/status';
 import type { ActorDirectory } from '~/cms/lib/authorship';
 import { blockIndent } from '~/cms/lib/block-indent';
 import { lockedLine } from '~/cms/lib/block-locks';
+import { overrideNames } from '~/cms/lib/breakpoints';
 import { type ProposedLayer, slotTitle } from '~/cms/lib/canvas/fill';
 import {
   type CanvasBlock,
@@ -260,6 +264,7 @@ function LayerItem(props: ItemProps & { block: CanvasBlock; level: number }) {
   const says = lock?.own && lock.region.lock.keys[0] === block.key ? lock.region.lock : undefined;
   const filled = block.slots.filter((s) => s.blocks.length > 0 || s.min !== undefined);
   const ghost = props.marked?.get(block.key);
+  const overrides = overrideNames(block.value, block.slot.breakpoints);
   return (
     <div
       role="treeitem"
@@ -291,6 +296,18 @@ function LayerItem(props: ItemProps & { block: CanvasBlock; level: number }) {
           <span className="min-w-0 truncate text-muted-foreground text-xs">{block.label}</span>
         ) : null}
         {lock?.own && !says ? <span className="sr-only">, locked</span> : null}
+        {overrides.length > 0 ? <span className="sr-only">, </span> : null}
+        {overrides.length > 0 ? (
+          <span
+            role="img"
+            data-overrides
+            aria-label={`Has overrides at ${overrides.join(', ')}`}
+            title={`Has overrides at ${overrides.join(', ')}`}
+            className="inline-flex shrink-0 text-muted-foreground"
+          >
+            <MonitorSmartphone aria-hidden="true" className="size-3" />
+          </span>
+        ) : null}
         {ghost ? (
           <span className="ml-auto shrink-0">
             <span className="sr-only">, </span>

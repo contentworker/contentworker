@@ -261,6 +261,8 @@ type SaveKind = (
   | {
       readonly kind: 'update';
       readonly before: EntryFields;
+      /** The stored version `before` is: the one before it is read when an undo spans a save. */
+      readonly version?: number;
       /** The locked regions the stored entry holds, judged with the config. */
       readonly locks?: readonly BlockLock[];
     }
@@ -299,11 +301,17 @@ async function prepareFields(
   // block already carried is stale, and `assignBlockKeys` drops it. Judged as sent, before that
   // drop. A copy carries what was stored, so it is never judged here.
   if (save.kind !== 'copy') {
-    const undeclared = undeclaredOverrides(
-      contentType,
-      hooked.payload.fields,
-      save.kind === 'update' ? save.before : undefined,
-    );
+    const sent = hooked.payload.fields;
+    const before = save.kind === 'update' ? save.before : undefined;
+    let undeclared = undeclaredOverrides(contentType, sent, before);
+    // An undo can span a save: the canvas keeps its history across one, so its inverse may put
+    // back a block the stored version no longer holds, overrides a push made stale since and all.
+    // The version before it held them, so those count as carried. Read only on a refusal.
+    if (undeclared.length > 0 && save.kind === 'update' && save.version && save.version > 1) {
+      const id = payload.entryId;
+      const previous = id ? await ctx.store.entries.getVersion(scope, id, save.version - 1) : null;
+      if (previous) undeclared = undeclaredOverrides(contentType, sent, before, [previous.fields]);
+    }
     if (undeclared.length > 0) throw new ValidationError(undeclared);
   }
   // Blocks get their `_key` last, so a block a hook added is keyed too.
@@ -520,7 +528,13 @@ export async function saveEntryDraft(
     { contentTypeApiId: current.contentTypeApiId, entryId: id, fields },
     'save',
     judged
-      ? { kind: 'update', before: stored, locks: current.blockLocks, rules: opts.blockRules }
+      ? {
+          kind: 'update',
+          before: stored,
+          version: current.currentVersion,
+          locks: current.blockLocks,
+          rules: opts.blockRules,
+        }
       : { kind: 'copy', ...(regions ? { regions } : {}) },
   );
 
@@ -626,7 +640,12 @@ export async function validateEntry(
           fields: withUnwritable(found.fields, input.fields, options),
         },
         'dry-run',
-        { kind: 'update', before: found.fields, locks: found.entry.blockLocks },
+        {
+          kind: 'update',
+          before: found.fields,
+          version: found.entry.currentVersion,
+          locks: found.entry.blockLocks,
+        },
       ),
     );
     // The domain's own refusal (an archived entry can't take a new version), at the point a save

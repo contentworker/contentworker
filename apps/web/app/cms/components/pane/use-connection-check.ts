@@ -8,7 +8,12 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
-import { type FrameMessage, postFrame, readFrame } from '~/cms/lib/live-preview/frame-channel';
+import {
+  FRAME_WIDTH,
+  type FrameMessage,
+  postFrame,
+  readFrame,
+} from '~/cms/lib/live-preview/frame-channel';
 import { LOAD_MS } from '~/cms/lib/live-preview/host';
 
 /** What the check found. `sdk` carries which way the site's SDK is off (`old` or `new`). */
@@ -67,7 +72,7 @@ export function useConnectionCheck(props: {
         postFrame(frameRef.current?.contentWindow, {
           type: 'view',
           editing: false,
-          device: 'desktop',
+          width: FRAME_WIDTH.default,
           allowed: [],
         });
         return;
