@@ -6,6 +6,7 @@ import {
   defineContentType,
   extractReferences,
   type FieldDefinition,
+  MAX_BLOCK_DEPTH,
   MAX_COMPONENT_DEPTH,
   ValidationError,
   validateEntryFields,
@@ -164,7 +165,21 @@ describe('nesting depth', () => {
 
   it('refuses one more, and says what to do instead', () => {
     // Every consumer walks this tree; unbounded means each is a way to hang.
-    expect(refusal(() => typeWith([nest(MAX_COMPONENT_DEPTH + 1)]))).toMatch(/link to it/);
+    expect(refusal(() => typeWith([nest(MAX_COMPONENT_DEPTH + 1)]))).toMatch(
+      /Components may nest 3 deep at most.*link to it/,
+    );
+  });
+
+  it('keeps the plain cap below the blocks one', () => {
+    // Blocks may go deeper; a plain component chain may not borrow their cap.
+    expect(MAX_COMPONENT_DEPTH).toBeLessThan(MAX_BLOCK_DEPTH);
+    const list = field({
+      apiId: 'cards',
+      type: 'Array',
+      items: { type: 'Component', fields: [nest(MAX_COMPONENT_DEPTH)] },
+    });
+    // A repeater is a plain component level too: it plus three components is four.
+    expect(refusal(() => typeWith([list]))).toMatch(/Components may nest 3 deep at most/);
   });
 });
 

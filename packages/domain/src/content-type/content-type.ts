@@ -11,6 +11,7 @@ import {
   type FieldOption,
   type FieldValidations,
   isValidApiId,
+  MAX_BLOCK_DEPTH,
   MAX_COMPONENT_DEPTH,
   MESSAGE_RULES,
   type MessageRule,
@@ -451,7 +452,7 @@ function assertFieldsValid(
   displayField: string,
   previous: readonly FieldDefinition[] | undefined,
 ): void {
-  const seen = assertFieldSetValid(fields, '', 0, previous, false);
+  const seen = assertFieldSetValid(fields, '', 0, 0, previous, false);
   if (fields.length > 0 && !seen.has(displayField)) {
     throw new ValidationError([
       { field: 'displayField', message: `displayField "${displayField}" is not a defined field` },
@@ -464,7 +465,9 @@ function assertFieldsValid(
  *
  * `path` prefixes every message so an author editing a deep group is told which
  * field is wrong, not merely that something is. `depth` counts components
- * entered so far; 0 is the content type's own field list. `previous` is the
+ * entered so far, of any kind; 0 is the content type's own field list. `plain` counts the plain
+ * components among them (a `Component`, an Array of Component without variants), which keep
+ * their own, lower cap. `previous` is the
  * same level of the definition being revised, if any. `inList` says this level is part of an
  * Array's element (directly or through a component), which a `disable` rule cannot reach.
  */
@@ -472,6 +475,7 @@ function assertFieldSetValid(
   fields: readonly FieldDefinition[],
   path: string,
   depth: number,
+  plain: number,
   previous: readonly FieldDefinition[] | undefined,
   inList: boolean,
 ): Set<string> {
@@ -534,7 +538,21 @@ function assertFieldSetValid(
         { field: where, message: 'A component must define at least one field' },
       ]);
     }
-    if (depth + 1 > MAX_COMPONENT_DEPTH) {
+    // Every level counts toward the overall cap, a block's slot and a component prop alike, so
+    // nothing nests past MAX_BLOCK_DEPTH; plain components keep their own cap among themselves.
+    if (depth + 1 > MAX_BLOCK_DEPTH) {
+      throw new ValidationError([
+        {
+          field: where,
+          message: `Blocks and components may nest ${MAX_BLOCK_DEPTH} deep at most, a top-level field counting as 1. Model anything deeper as its own content type and link to it.`,
+        },
+      ]);
+    }
+    if (f.items?.variants !== undefined) {
+      assertVariantsValid(f, where, depth, plain, before);
+      continue;
+    }
+    if (plain + 1 > MAX_COMPONENT_DEPTH) {
       throw new ValidationError([
         {
           field: where,
@@ -542,12 +560,15 @@ function assertFieldSetValid(
         },
       ]);
     }
-    if (f.items?.variants !== undefined) {
-      assertVariantsValid(f, where, depth, before);
-      continue;
-    }
     const nestedBefore = before?.type === 'Component' ? before.fields : before?.items?.fields;
-    assertFieldSetValid(nested ?? [], where, depth + 1, nestedBefore, inList || f.type === 'Array');
+    assertFieldSetValid(
+      nested ?? [],
+      where,
+      depth + 1,
+      plain + 1,
+      nestedBefore,
+      inList || f.type === 'Array',
+    );
   }
   return seen;
 }
@@ -555,8 +576,9 @@ function assertFieldSetValid(
 /**
  * A blocks field's variants: at least one, each a legal apiId used once, each
  * a component in its own right. A variant's fields sit one level deeper, so
- * they obey the nested rules and count toward the depth cap like any
- * component's.
+ * they obey the nested rules and count toward {@link MAX_BLOCK_DEPTH}. A blocks
+ * level is not a plain component: it doesn't count toward
+ * {@link MAX_COMPONENT_DEPTH}.
  *
  * A field declares `items.fields` or `items.variants`, never both: with both,
  * an element without a `_type` would have two plausible shapes, and which one
@@ -569,6 +591,7 @@ function assertVariantsValid(
   f: FieldDefinition,
   where: string,
   depth: number,
+  plain: number,
   before: FieldDefinition | undefined,
 ): void {
   const fail = (message: string, at = where): never => {
@@ -600,7 +623,7 @@ function assertVariantsValid(
       fail('A variant must define at least one field', at);
     }
     const variantBefore = before?.items?.variants?.find((b) => b.apiId === apiId);
-    assertFieldSetValid(v.fields, at, depth + 1, variantBefore?.fields, true);
+    assertFieldSetValid(v.fields, at, depth + 1, plain, variantBefore?.fields, true);
   }
   // Former apiIds: each names one variant only, and never one still in use as an apiId, so a
   // stored `_type` always resolves to exactly one variant.

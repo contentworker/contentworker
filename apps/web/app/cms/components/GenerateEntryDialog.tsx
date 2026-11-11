@@ -23,6 +23,7 @@ import { useRef, useState } from 'react';
 import { Confirmation, ProposedValue } from '~/cms/components/ai/Confirmation';
 import { Suggestion, Suggestions } from '~/cms/components/ai/Suggestion';
 import { Task, TaskItem } from '~/cms/components/ai/Task';
+import { blockIndent } from '../lib/block-indent';
 import { draftBlockRows, isBlocksField, placeName } from '../lib/draft-blocks';
 import type { GeneratedDraft, ModelTier } from '../lib/management';
 import { useStoppable } from '../lib/use-stoppable';
@@ -209,7 +210,7 @@ export function GenerateEntryDialog(props: {
                             <li
                               key={b.key}
                               className="flex min-w-0 gap-1.5 text-sm"
-                              style={{ paddingInlineStart: `${b.depth * 1}rem` }}
+                              style={{ paddingInlineStart: `${blockIndent(b.depth)}rem` }}
                             >
                               <span className="shrink-0 font-medium">{b.name}</span>
                               {b.text && (

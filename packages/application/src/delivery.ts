@@ -94,7 +94,8 @@ const isPlainObject = (v: unknown): v is Record<string, unknown> =>
 
 /**
  * How far the link walk descends into one field value. Links sit in arrays, in
- * Component values (at most three deep) and in rich text, where a reference
+ * Component values and blocks (at most six levels, MAX_BLOCK_DEPTH, each two
+ * steps: the array, then the block) and in rich text, where a reference
  * node's link is `data.target` and every node level costs two steps (the node,
  * its `content` array). Validation caps rich-text nesting, so this only stops
  * a pathological stored JSON value from overflowing the stack.

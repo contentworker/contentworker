@@ -85,8 +85,9 @@ the nested fields: create one with the API (`POST …/content-types`) or the
 
 Nested fields are ordinary fields, with three exceptions. They can't be localized on their own
 (localization is decided once, on the field holding the component), they can't be unique, and they
-can't be slugs. Components nest up to three levels; anything deeper is usually better as its own
-content type, linked.
+can't be slugs. Components nest up to three levels among themselves, and six levels in all when
+blocks hold them (a page's blocks field counting as 1); anything deeper is usually better as its
+own content type, linked.
 
 ## Blocks
 

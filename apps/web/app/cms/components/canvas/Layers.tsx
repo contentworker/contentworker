@@ -18,6 +18,7 @@ import { Lock, Plus } from 'lucide-react';
 import { useEffect, useRef } from 'react';
 import { ToneBadge } from '~/cms/components/status';
 import type { ActorDirectory } from '~/cms/lib/authorship';
+import { blockIndent } from '~/cms/lib/block-indent';
 import { lockedLine } from '~/cms/lib/block-locks';
 import { type ProposedLayer, slotTitle } from '~/cms/lib/canvas/fill';
 import {
@@ -282,7 +283,7 @@ function LayerItem(props: ItemProps & { block: CanvasBlock; level: number }) {
             ? 'bg-accent font-medium text-accent-foreground'
             : 'text-foreground hover:bg-accent/60',
         )}
-        style={{ paddingLeft: `${0.5 + (level - 1) * 1}rem` }}
+        style={{ paddingLeft: `${0.5 + blockIndent(level - 1)}rem` }}
       >
         {lock?.own ? <Lock aria-hidden="true" className="size-3 shrink-0" /> : null}
         <span className="truncate">{block.name}</span>
@@ -306,7 +307,7 @@ function LayerItem(props: ItemProps & { block: CanvasBlock; level: number }) {
         <p
           data-locked-line
           className="pb-1 text-2xs text-muted-foreground"
-          style={{ paddingLeft: `${0.5 + (level - 1) * 1}rem` }}
+          style={{ paddingLeft: `${0.5 + blockIndent(level - 1)}rem` }}
         >
           <span className="sr-only">, </span>
           {lockedLine(says, props.directory)}
@@ -319,7 +320,7 @@ function LayerItem(props: ItemProps & { block: CanvasBlock; level: number }) {
             <div key={slot.path} role="none">
               <div
                 className="caption flex items-center gap-1 py-1"
-                style={{ paddingLeft: `${0.5 + level * 1}rem` }}
+                style={{ paddingLeft: `${0.5 + blockIndent(level)}rem` }}
                 aria-hidden="true"
               >
                 {slotHeld(slot) ? <Lock className="size-3" /> : null}

@@ -98,7 +98,8 @@ markup are refused, and an `assetId` must name an asset in the environment.
 ### Props
 
 Props use the content model's field vocabulary, with the rules any field inside a block follows
-(no localized, unique or Slug fields; at most three levels of nesting). `localized`, `required`
+(no localized, unique or Slug fields; components nest at most three levels among themselves, and
+a component prop counts toward the block depth below). `localized`, `required`
 and `position` may be left out: they default to `false`, `false` and the field's place in the list.
 
 Styling is design tokens, never raw CSS. A style prop is a Symbol with `validations.in`, such as
@@ -116,8 +117,13 @@ blocks it holds.
 - The two sides agree: when a block lists `allowedParents`, each parent must have a slot that
   allows it, and no slot may allow it from a parent the list leaves out.
 - A block can't end up inside itself, directly or through other blocks.
-- Slots nest at most two deep below the page (a section's columns' cards), as components do. A
-  deeper chain is refused, naming its path (`page.sections[a].s[b].s[c].s`).
+- Slots nest at most five levels below the page: the page's blocks field counts as 1, so a block
+  can sit six deep (a section's rows' columns' stacks' groups' cards). A component prop counts its
+  level too, so a block at the sixth level can't have one. A deeper chain is refused, naming its
+  path (`page.sections[a].s[b].s[c].s[d].s[e].s[f].s`).
+- Every slot is expanded in place, so a block allowed in many slots is repeated in the content
+  type once per place. A target that would expand past 1,000 blocks, or past 1 MB of fields, is
+  refused: allow fewer children per slot.
 
 The push answers `422` naming each problem by its place in the file (`blocks[hero].fields.tone`,
 `blocks[grid].slots.cards.allowedChildren`), all of them at once.
@@ -498,4 +504,3 @@ The admin's Build → Blocks screen lists the catalog in force, read-only, and s
 ## Not yet
 
 - Per-breakpoint overrides of token props.
-- Slots nested deeper than the content model's component depth.

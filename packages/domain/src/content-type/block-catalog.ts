@@ -9,7 +9,7 @@ import {
   type ComponentVariant,
   type FieldDefinition,
   isValidApiId,
-  MAX_COMPONENT_DEPTH,
+  MAX_BLOCK_DEPTH,
   variantOf,
 } from './field';
 
@@ -33,8 +33,9 @@ import {
  * what the design system allows. A JSON field (an untyped escape hatch) is refused, and a field
  * named for styling (`style`, `css`, `className`) must be an enumeration.
  *
- * Not yet: per-breakpoint overrides of token props, and slots deeper than the content model's
- * component depth ({@link MAX_COMPONENT_DEPTH}) allows.
+ * Slots nest five levels below the page ({@link MAX_BLOCK_DEPTH}, the target field counting as
+ * 1); a plain component prop counts its level too. Not yet: per-breakpoint overrides of token
+ * props.
  */
 
 /** A named place inside a block that holds other blocks: a nested blocks field. */
@@ -649,11 +650,11 @@ export function catalogVariants(
       ]);
     }
     const slots = slotFields(b, b.fields.length, (s) => {
-      if (depth + 1 > MAX_COMPONENT_DEPTH) {
+      if (depth + 1 > MAX_BLOCK_DEPTH) {
         throw new ValidationError([
           {
             field: `${path}.${s.apiId}`,
-            message: `Slots nest ${MAX_COMPONENT_DEPTH - 1} deep at most below the page; this one is deeper`,
+            message: `Slots nest ${MAX_BLOCK_DEPTH - 1} deep at most below the page; this one is deeper`,
           },
         ]);
       }

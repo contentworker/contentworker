@@ -378,6 +378,43 @@ describe('pushing a block catalog', () => {
     expect(page.fields[1]?.items?.variants?.[0]?.name).toBe('Hero');
   });
 
+  it('pushes slots five levels below the page, and refuses a sixth without writing', async () => {
+    // A chain of blocks, each holding the next in its `inner` slot.
+    const chain = (n: number) =>
+      Array.from({ length: n }, (_, i) => ({
+        id: `level${i + 1}`,
+        name: `Level ${i + 1}`,
+        fields: [{ apiId: 'heading', name: 'Heading', type: 'Symbol' }],
+        ...(i + 1 < n
+          ? { slots: [{ apiId: 'inner', name: 'Inner', allowedChildren: [`level${i + 2}`] }] }
+          : {}),
+        ...(i > 0 ? { allowedParents: [`level${i}`] } : {}),
+      }));
+    const refused = await push({ blocks: chain(7) }).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(refused).toBeInstanceOf(ValidationError);
+    expect((refused as ValidationError).issues[0]).toMatchObject({
+      field:
+        'page.body[level1].inner[level2].inner[level3].inner[level4].inner[level5].inner[level6].inner',
+      message: 'Slots nest 5 deep at most below the page; this one is deeper',
+    });
+    await expect(getBlockCatalog(ctx, scope)).rejects.toThrow(NotFoundError);
+
+    expect(await push({ blocks: chain(6) })).toMatchObject({ applied: true, version: 1 });
+    // The type holds the whole chain, and an entry six blocks deep saves and reads back.
+    let value: Record<string, unknown> = { _type: 'level6', heading: 'Six' };
+    for (let d = 5; d >= 1; d--) value = { _type: `level${d}`, heading: `${d}`, inner: [value] };
+    const created = await createEntry(ctx, scope, {
+      contentTypeApiId: 'page',
+      fields: { title: { 'en-US': 'Deep' }, body: { 'en-US': [value] } },
+    });
+    let read = ((created.fields.body?.['en-US'] ?? []) as Record<string, unknown>[])[0];
+    for (let d = 1; d < 6; d++) read = ((read?.inner ?? []) as Record<string, unknown>[])[0];
+    expect(read).toMatchObject({ _type: 'level6', heading: 'Six' });
+  });
+
   it('refuses an invalid catalog and a target that is not a blocks field', async () => {
     await expect(push({ blocks: [{ id: 'x', name: 'X', fields: [] }] })).rejects.toThrow(
       ValidationError,

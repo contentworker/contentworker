@@ -45,12 +45,15 @@ import {
 /** Output tokens a draft of scalars takes; one with a blocks field takes a layout's. */
 const DRAFT_MAX_TOKENS = 4096;
 
-interface JsonSchema {
+// A type alias, not an interface: an alias is a `Record<string, unknown>`, which `conforms` takes.
+type JsonSchema = {
   type: 'object';
   properties: Record<string, Record<string, unknown>>;
   required: string[];
   additionalProperties: false;
-}
+  /** The block shapes the blocks fields share, each named for its field first. */
+  $defs?: Record<string, Record<string, unknown>>;
+};
 
 /**
  * Builds a strict JSON Schema for the fields of a content type a model fills: its scalars
@@ -65,6 +68,7 @@ function schemaForContentType(
   assets: AssetSearchDeps | undefined,
 ): { schema: JsonSchema; drafted: ReadonlySet<string>; blocks: ReadonlySet<string> } {
   const properties: Record<string, Record<string, unknown>> = {};
+  const defs: Record<string, Record<string, unknown>> = {};
   const blocks = new Set<string>();
   for (const f of ct.fields) {
     // The field's guidance rides in the description, so a draft is written to the same brief an
@@ -77,13 +81,21 @@ function schemaForContentType(
     if (!blockVariants(f)) continue;
     const tree = blocksFieldSchema(ct, f.apiId, layoutSchemaOptions(layout, assets));
     if (!tree) continue;
-    properties[f.apiId] = tree;
+    properties[f.apiId] = tree.schema;
+    // A field's shared shapes are referenced from the root, so they move up to it.
+    Object.assign(defs, tree.defs);
     blocks.add(f.apiId);
   }
   // Strict structured outputs require every property in `required`.
   const required = Object.keys(properties);
   return {
-    schema: { type: 'object', properties, required, additionalProperties: false },
+    schema: {
+      type: 'object',
+      properties,
+      required,
+      additionalProperties: false,
+      ...(Object.keys(defs).length > 0 ? { $defs: defs } : {}),
+    },
     drafted: new Set(required),
     blocks,
   };
@@ -203,7 +215,7 @@ async function draft(
   for (const apiId of drafted) {
     const value = raw[apiId];
     if (value === undefined || value === null) continue;
-    if (conforms(value, schema.properties[apiId] ?? {})) answer[apiId] = value;
+    if (conforms(value, schema.properties[apiId] ?? {}, schema)) answer[apiId] = value;
     else {
       misfits.push({
         field: apiId,

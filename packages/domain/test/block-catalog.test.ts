@@ -232,7 +232,8 @@ describe('mapping a catalog onto a blocks field', () => {
   });
 
   it('refuses slots nested deeper than the content model allows, naming the path', () => {
-    const chain = ['a', 'b', 'c', 'd'].map((id, i, all) => ({
+    // Seven blocks in a chain: from `a`, six levels of slots below the page, one too many.
+    const chain = ['a', 'b', 'c', 'd', 'e', 'f', 'g'].map((id, i, all) => ({
       id,
       name: id,
       fields: [symbol('x')],
@@ -243,9 +244,12 @@ describe('mapping a catalog onto a blocks field', () => {
     try {
       catalogVariants(deep, { ...TARGET, blocks: ['a'] });
     } catch (err) {
-      expect((err as ValidationError).issues[0]?.field).toBe('page.body[a].s[b].s[c].s');
+      expect((err as ValidationError).issues[0]).toEqual({
+        field: 'page.body[a].s[b].s[c].s[d].s[e].s[f].s',
+        message: 'Slots nest 5 deep at most below the page; this one is deeper',
+      });
     }
-    // Two levels of slots below the page fit.
+    // From `b`, five levels of slots below the page: the page's field and its blocks six deep.
     expect(() => catalogVariants(deep, { ...TARGET, blocks: ['b'] })).not.toThrow();
   });
 

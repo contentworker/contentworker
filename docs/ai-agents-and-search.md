@@ -189,7 +189,16 @@ spends a flagship call), SDK `entries.generateBlocks`; gated like the patch
   variant per block the place takes once the block config is laid over the catalog
   (`effectiveBlockRules`; the content model's variants when no catalog targets the type), each an
   object with `_type` as a `const`, its scalar fields, and its slots recursing with their own
-  allowed children down to `MAX_COMPONENT_DEPTH`. A slot is located by the steps down to it from
+  allowed children down to `MAX_BLOCK_DEPTH` (6). The schema is written fully inline, a repeated
+  shape included, while it stays within `INLINE_SCHEMA_BUDGET` (32,000 characters of JSON): whether
+  Workers AI's guided decoding follows a local `$ref` is unconfirmed. Only past the budget (a wide
+  six-deep catalog, whose paths multiply with depth) is a shape that occurs more than once written
+  once under the schema's `$defs` and referenced with `$ref`, so the schema grows with the distinct
+  shapes instead. A name holds only `[A-Za-z0-9_]`: the field's apiId after its length, the
+  block's, and a count for its second shape (`f4_body__card`, `f4_body__card__2`). A draft lifts
+  each blocks field's `$defs` to its own root, and `conforms` and the `AI_MODE=mock` sampler follow
+  the references. A
+  slot is located by the steps down to it from
   the outline (each ancestor's `_type` and slot), so a block that sits at two depths is judged
   where it is. `min` and `max` (the rules' and the field's `size`, less the blocks the place
   holds) become `minItems` and `maxItems`. No `_key`: the patch mints them. Block descriptions,

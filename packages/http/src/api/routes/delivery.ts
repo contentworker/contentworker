@@ -73,7 +73,13 @@ import { renderSitemapXml, sitemapBase } from '../sitemap-xml';
 /** Max reference-resolution depth a delivery client may request. */
 const MAX_INCLUDE_DEPTH = 10;
 
-/** Max GraphQL selection-set nesting accepted (abuse/complexity guard). */
+/**
+ * Max GraphQL selection-set nesting accepted (abuse/complexity guard). Room for a page's blocks at
+ * the full block depth (MAX_BLOCK_DEPTH, 6): the collection (1), its blocks field (2), and one
+ * level per block below, so the deepest block's props sit at 8. Inline fragments don't count,
+ * and a link is a JSON value with no selection of its own, so nothing a content type can hold
+ * needs more; the rest is headroom for `_sys` and the like.
+ */
 const MAX_GQL_DEPTH = 12;
 
 /** Recursively measures selection-set nesting, following fragments. */

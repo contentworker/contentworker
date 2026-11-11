@@ -327,7 +327,7 @@ export interface FieldDefinition {
  *
  * A variant is a component definition with a name: its `fields` follow the
  * same rules as any component's (see {@link COMPONENT_NESTED_RULES}) and count
- * toward {@link MAX_COMPONENT_DEPTH}. A stored element looks like
+ * toward {@link MAX_BLOCK_DEPTH}. A stored element looks like
  * `{ "_type": "hero", "_key": "<uuidv7>", "heading": "…" }`. The `_` prefix
  * cannot collide with a field apiId, which must start with a letter.
  *
@@ -409,7 +409,8 @@ export function nestedFieldsFor(
 }
 
 /**
- * How deep components may nest, counting the outermost component as 1.
+ * How deep plain components (a `Component` field, or an Array of Component without variants) may
+ * nest among themselves on any path, counting the outermost as 1.
  *
  * A cap exists because every consumer of a content type — validation, codegen,
  * GraphQL type generation, the editor — walks this tree, and an unbounded one
@@ -418,6 +419,17 @@ export function nestedFieldsFor(
  * which is what the error says.
  */
 export const MAX_COMPONENT_DEPTH = 3;
+
+/**
+ * How deep component levels of any kind may nest, counting the outermost as 1: a page's blocks
+ * field is 1, so its blocks' slots may go five levels below it (a section holding columns holding
+ * a card holding…). A layout is a deeper tree than a data shape, hence a cap of its own.
+ *
+ * It is the overall bound, not only the blocks one: a plain component inside a block counts its
+ * level too, so a component prop on a block at depth 6 is refused rather than escaping both caps.
+ * Plain components still count {@link MAX_COMPONENT_DEPTH} among themselves.
+ */
+export const MAX_BLOCK_DEPTH = 6;
 
 /**
  * Two attributes are refused on a nested field rather than accepted and
