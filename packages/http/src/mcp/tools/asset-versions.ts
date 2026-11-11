@@ -36,7 +36,7 @@ export function registerAssetVersionTools(server: McpServer, t: ToolContext): vo
   const { signedOne } = signedAssets(deps);
   // --- asset versions, rights and bulk jobs ------------------------------------------------
   // The same use-cases and scopes as the REST routes: replacing or restoring a file is
-  // content:write (Delivery keeps the published file until a republish), rights are
+  // assets:write (Delivery keeps the published file until a republish), rights are
   // content:publish (they decide whether the asset is delivered).
   const fileBlob = () => {
     if (!deps.blob) throw new NotConfiguredError('blob', 'Replacing files needs a blob store');
@@ -63,7 +63,7 @@ export function registerAssetVersionTools(server: McpServer, t: ToolContext): vo
       ),
     },
     async (args) => {
-      guard(SCOPES.contentWrite, scopeOf(args));
+      guard(SCOPES.assetsWrite, scopeOf(args));
       const replacement = await replaceAssetFile(ctx, fileBlob(), scopeOf(args), args.id, {
         fileName: args.fileName,
         contentType: args.contentType,
@@ -92,7 +92,7 @@ export function registerAssetVersionTools(server: McpServer, t: ToolContext): vo
       ),
     },
     async (args) => {
-      guard(SCOPES.contentWrite, scopeOf(args));
+      guard(SCOPES.assetsWrite, scopeOf(args));
       const started = await startMultipartAssetFileReplacement(
         ctx,
         fileBlob(),
@@ -124,7 +124,7 @@ export function registerAssetVersionTools(server: McpServer, t: ToolContext): vo
       ),
     },
     async (args) => {
-      guard(SCOPES.contentWrite, scopeOf(args));
+      guard(SCOPES.assetsWrite, scopeOf(args));
       const asset = await commitAssetFile(
         ctx,
         fileBlob(),
@@ -154,7 +154,7 @@ export function registerAssetVersionTools(server: McpServer, t: ToolContext): vo
       annotations: { readOnlyHint: true },
     },
     async (args) => {
-      guard(SCOPES.previewRead, scopeOf(args));
+      guard(SCOPES.assetsRead, scopeOf(args));
       return ok({
         items: (
           await listAssetVersions(ctx, scopeOf(args), args.id, deps.blob ? { blob: deps.blob } : {})
@@ -174,7 +174,7 @@ export function registerAssetVersionTools(server: McpServer, t: ToolContext): vo
       ),
     },
     async (args) => {
-      guard(SCOPES.contentWrite, scopeOf(args));
+      guard(SCOPES.assetsWrite, scopeOf(args));
       const asset = await restoreAssetVersion(
         ctx,
         deps.blob,
@@ -229,7 +229,7 @@ export function registerAssetVersionTools(server: McpServer, t: ToolContext): vo
         'Act on many assets as a resumable bulk job: move (folderId; null for the root), tag ' +
         '(addTags, removeTags), publish, unpublish or archive. Each asset gets the same checks ' +
         'as one at a time. Follow it with bulk_job_status; bulk_job_report names each asset that ' +
-        'failed. move and tag need content:write; publish, unpublish and archive content:publish.',
+        'failed. move and tag need assets:write; publish, unpublish and archive content:publish.',
       inputSchema: toolSchema('assets_bulk', () =>
         z.object({
           action: z.enum(['move', 'tag', 'publish', 'unpublish', 'archive']),
@@ -243,7 +243,7 @@ export function registerAssetVersionTools(server: McpServer, t: ToolContext): vo
     },
     async (args) => {
       guard(
-        assetBulkActionPublishes(args.action) ? SCOPES.contentPublish : SCOPES.contentWrite,
+        assetBulkActionPublishes(args.action) ? SCOPES.contentPublish : SCOPES.assetsWrite,
         scopeOf(args),
       );
       return ok(
@@ -288,7 +288,7 @@ export function registerAssetVersionTools(server: McpServer, t: ToolContext): vo
       ),
     },
     async (args) => {
-      guard(SCOPES.contentWrite, scopeOf(args));
+      guard(SCOPES.assetsWrite, scopeOf(args));
       return ok(
         await generateAltText(ctx, ai, scopeOf(args), args.id, {
           locale: args.locale,
@@ -310,7 +310,7 @@ export function registerAssetVersionTools(server: McpServer, t: ToolContext): vo
       ),
     },
     async (args) => {
-      guard(SCOPES.contentWrite, scopeOf(args));
+      guard(SCOPES.assetsWrite, scopeOf(args));
       return ok(await autoTagAsset(ctx, ai, scopeOf(args), args.id, { apply: args.apply }));
     },
   );
@@ -338,7 +338,7 @@ export function registerAssetVersionTools(server: McpServer, t: ToolContext): vo
       annotations: { readOnlyHint: true },
     },
     async (args) => {
-      guard(SCOPES.previewRead, scopeOf(args));
+      guard(SCOPES.assetsRead, scopeOf(args));
       if (!deps.blob) throw new NotConfiguredError('blob', 'Transform URLs need a blob store');
       return ok(
         await transformAssetUrl(ctx, deps.blob, scopeOf(args), args.id, {
@@ -370,7 +370,7 @@ export function registerAssetVersionTools(server: McpServer, t: ToolContext): vo
       ),
     },
     async (args) => {
-      guard(SCOPES.contentWrite, scopeOf(args));
+      guard(SCOPES.assetsWrite, scopeOf(args));
       const created = await createVideoAsset(ctx, scopeOf(args), {
         fileName: args.fileName,
         contentType: args.contentType,
@@ -391,7 +391,7 @@ export function registerAssetVersionTools(server: McpServer, t: ToolContext): vo
       ),
     },
     async (args) => {
-      guard(SCOPES.contentWrite, scopeOf(args));
+      guard(SCOPES.assetsWrite, scopeOf(args));
       return ok(
         await signedOne(scopeOf(args), await refreshVideoAsset(ctx, scopeOf(args), args.id)),
       );

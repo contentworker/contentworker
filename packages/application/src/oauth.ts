@@ -5,6 +5,7 @@ import {
   type ClientRegistrationInput,
   ForbiddenError,
   formatScopeString,
+  holdsScope,
   normalizeClientRegistration,
   normalizeUserCode,
   type OAuthClient,
@@ -256,7 +257,7 @@ export async function validateAuthorizationRequest(
 
 /** Narrows the requested scopes to what the approving human actually holds. */
 function grantableScopes(requested: readonly string[], approval: OAuthApproval): readonly string[] {
-  const granted = requested.filter((s) => approval.approverScopes.includes(s));
+  const granted = requested.filter((s) => holdsScope(approval.approverScopes, s));
   if (granted.length === 0) {
     throw new OAuthError(
       'access_denied',
@@ -646,13 +647,14 @@ async function issueTokens(
 function kindForScopes(scopes: readonly string[]): ApiKeyKind {
   if (
     scopes.includes(SCOPES.contentWrite) ||
+    scopes.includes(SCOPES.assetsWrite) ||
     scopes.includes(SCOPES.contentPublish) ||
     scopes.includes(SCOPES.contentManage) ||
     scopes.includes(SCOPES.spaceAdmin)
   ) {
     return 'cma';
   }
-  if (scopes.includes(SCOPES.previewRead)) return 'cpa';
+  if (scopes.includes(SCOPES.previewRead) || scopes.includes(SCOPES.assetsRead)) return 'cpa';
   return 'cda';
 }
 
@@ -893,7 +895,7 @@ export async function createPersonalAccessToken(
   input: CreatePatInput,
 ): Promise<{ id: string; token: string; expiresAt?: string }> {
   assertMayMintKeys(input.issuer);
-  const scopes = input.scopes.filter((s) => input.issuerScopes.includes(s));
+  const scopes = input.scopes.filter((s) => holdsScope(input.issuerScopes, s));
   if (scopes.length === 0) {
     throw new OAuthError('invalid_scope', 'A token cannot exceed your own permissions');
   }

@@ -77,7 +77,8 @@ Everything below is built and tested on v2.
 - **Integration.** Signed webhooks with a delivery log, event-triggered functions, app
   extensions, sandboxed plugins in isolated edge workers (with per-plugin `kv:storage` and
   operator settings, secrets sealed), the transactional outbox with lease-claimed relay.
-- **Access.** CMA/CDA/CPA keys, eight scopes, roles with per-type and per-field grants (read,
+- **Access.** CMA/CDA/CPA keys, ten scopes (`assets:read` and `assets:write` held by
+  implication with `preview:read` and `content:write`), roles with per-type and per-field grants (read,
   write, publish, and delete and unpublish implied unless withheld) and presets, the last-administrator guard, OAuth 2.1 with the device flow for MCP clients, personal
   access tokens, preview links, rate limits, the audit log (filtered by actor, action, target and
   date, with keyset paging, a `detail` of the field paths an entry save changed, and each entry's
@@ -124,8 +125,8 @@ Everything below is built and tested on v2.
 - [ ] **Extension runtime: apps as packages.** Grow sandboxed plugins into installable packages
   that bring their own operations, workflow nodes, content types and admin UI, so integrations
   ship as packages on the runtime rather than in core. Seven PRs, each usable on its own:
-  1. **Asset scopes.** `assets:read` and `assets:write`, implied by `preview:read` and
-     `content:write` when scopes resolve, so no stored key, role or token changes.
+  1. ~~**Asset scopes.**~~ Shipped: `assets:read` and `assets:write`, implied by `preview:read`
+     and `content:write` when scopes resolve, so no stored key, role or token changes.
   2. **Manifest v2 and operations.** Schema validation, the approval screen, sync operations, and
      REST, OpenAPI and MCP generated from one manifest.
   3. **Content models from packages.** Managed and seeded types with an owner, install and upgrade

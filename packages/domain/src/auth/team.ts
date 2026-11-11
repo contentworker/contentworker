@@ -36,8 +36,11 @@ const MANAGES: readonly ContentTypeGrant[] = [
   { contentTypeApiId: '*', actions: ['read', 'write', 'publish', 'lock'] },
 ];
 
+// The asset scopes are listed beside the content scopes that imply them, so a preset shows
+// everything it grants. Preset roles stored before they existed hold them by implication.
 const VIEWER: readonly PermissionScope[] = [
   SCOPES.previewRead,
+  SCOPES.assetsRead,
   SCOPES.deliveryRead,
   SCOPES.searchRead,
 ];
@@ -45,6 +48,7 @@ const APPROVER: readonly PermissionScope[] = [...VIEWER, SCOPES.workflowApprove]
 const EDITOR: readonly PermissionScope[] = [
   ...APPROVER,
   SCOPES.contentWrite,
+  SCOPES.assetsWrite,
   SCOPES.contentPublish,
 ];
 const MANAGER: readonly PermissionScope[] = [...EDITOR, SCOPES.contentManage];

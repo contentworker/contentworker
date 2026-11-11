@@ -28,7 +28,7 @@ export function assetZipsRoutes(deps: AuthDeps): Hono<AuthVars> {
         `(up to ${MAX_ZIP_ASSETS} assets, 20 GiB); once completed, its downloadUrl works for 15 ` +
         'minutes, and the archive is kept for a day.',
     }),
-    requireScope(SCOPES.previewRead),
+    requireScope(SCOPES.assetsRead),
     async (c) => {
       refuseGrantedAssetReads(c);
       const body = await parseBody(c, assetZipBody);
@@ -43,7 +43,7 @@ export function assetZipsRoutes(deps: AuthDeps): Hono<AuthVars> {
   app.get(
     `${BASE}/asset-zips`,
     doc('Assets', 'List recent zip downloads', { ok: zipDocs.assetZipList }),
-    requireScope(SCOPES.previewRead),
+    requireScope(SCOPES.assetsRead),
     async (c) => {
       refuseGrantedAssetReads(c);
       return c.json({ items: await listAssetZips(ctx, scopeOf(c)) });
@@ -54,7 +54,7 @@ export function assetZipsRoutes(deps: AuthDeps): Hono<AuthVars> {
     doc('Assets', 'Get a zip download (with its download URL once built)', {
       ok: zipDocs.assetZip,
     }),
-    requireScope(SCOPES.previewRead),
+    requireScope(SCOPES.assetsRead),
     async (c) => {
       refuseGrantedAssetReads(c);
       return c.json(await getAssetZip(ctx, blob, scopeOf(c), c.req.param('id')));

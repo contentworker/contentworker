@@ -17,12 +17,17 @@ const { show } = Astro.props;
 // domain without a line here fails the build instead of rendering blank.
 const GRANTS: Record<string, string> = {
   'content:write':
-    'Create and edit draft entries and assets, comment, create tasks, and run AI drafting on entries.',
+    'Create and edit draft entries, comment, create tasks, and run AI drafting on entries. Includes `assets:write`.',
   'content:publish':
     'Publish and unpublish entries, assets, content types and releases; schedule publishing; permanently delete trashed entries.',
   'content:manage':
     'Define and change content types, workflows, taxonomy, functions, app extensions and AI actions.',
-  'preview:read': 'Read draft and current entries, content types, releases and workflows.',
+  'preview:read':
+    'Read draft and current entries, content types, releases and workflows. Includes `assets:read`.',
+  'assets:read':
+    'Read assets, drafts included: files, metadata, folders, collections, renditions, usage, versions, transform URLs and library search. Implied by `preview:read`.',
+  'assets:write':
+    'Upload, replace, edit, organize and restore assets, folders and collections; generate alt text and tags; add videos. Publishing, archiving, deleting, rights and share links stay `content:publish`. Implied by `content:write`.',
   'delivery:read': 'Read published entries and assets, including GraphQL and the live stream.',
   'search:read':
     'Search published content (hybrid, semantic and lexical) and find related entries.',
