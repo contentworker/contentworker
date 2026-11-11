@@ -7,7 +7,8 @@ import { type ContentTypeGrant, holdsScope, type Principal } from '../auth/auth'
  *
  * The job keeps a snapshot of its caller (scopes and content grants), because the Workflow runs
  * after the request that asked for it is gone: the plugin's grant is narrowed to that snapshot
- * exactly as a sync call's is narrowed to the live caller, and a job that doesn't start within
+ * exactly as a sync call's is narrowed to the live caller. Before it runs, the caller is resolved
+ * again and must still hold that access, and a job that doesn't start within
  * {@link APP_JOB_START_DEADLINE_MS} fails rather than run on a copy grown old. It also pins the plugin's checksum, so
  * a job never runs code other than what was installed when it was accepted.
  */
@@ -19,6 +20,15 @@ export interface AppOperationJobCaller {
   readonly kind: Principal['kind'];
   readonly scopes: readonly string[];
   readonly contentGrants?: readonly ContentTypeGrant[];
+  /**
+   * Who that is, by reference and never a credential (an API key id or a team membership id, as
+   * a bulk job records its starter): resolved again before the job runs, so a key revoked or a
+   * person removed or narrowed since stops it. Absent for the deployment's own tokens.
+   */
+  readonly startedBy?:
+    | { readonly kind: 'key'; readonly keyId: string }
+    | { readonly kind: 'member'; readonly memberId: string }
+    | { readonly kind: 'deployment' };
 }
 
 export interface AppOperationJob {

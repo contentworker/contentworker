@@ -34,6 +34,7 @@ import {
 import type { AppOperationJobParams, WorkflowSteps } from '@contentworker/ports';
 import { redactCredentials } from '@contentworker/redaction';
 import type { AppContext } from './context';
+import { jobStarterOf, resolveStarter } from './job-starter';
 
 /**
  * App operations: the named, typed calls installed plugins offer (manifest v2), listed and
@@ -205,6 +206,7 @@ async function acceptJob(
       `${MAX_KEPT_APP_JOBS} operation jobs are kept here; wait for older ones to expire`,
     );
   }
+  const startedBy = jobStarterOf(principal);
   const job: AppOperationJob = {
     id: ctx.ids.newId(),
     plugin: plugin.id,
@@ -218,6 +220,7 @@ async function acceptJob(
       kind: principal.kind,
       scopes: principal.scopes,
       ...(principal.contentGrants ? { contentGrants: principal.contentGrants } : {}),
+      ...(startedBy ? { startedBy } : {}),
     },
     createdBy: principalActorId(principal),
     createdAt: now.toISOString(),
@@ -283,7 +286,7 @@ type JobOutcome =
  * The engine's body for one job (one Workflow instance per job id), in three steps:
  *
  * - **claim** (retried like any step): takes a pending job that is still within its start
- *   deadline, whose plugin is still enabled, approved and the very code accepted (its checksum),
+ *   deadline, whose caller still holds the access it was accepted with, whose plugin is still enabled, approved and the very code accepted (its checksum),
  *   and marks it running. Anything else ends the job here, the plugin never called.
  * - **run** (never retried: an operation may have effects outside, and a second attempt could
  *   repeat them): calls the plugin with the grant narrowed to the caller snapshot. A run that
@@ -303,6 +306,8 @@ export async function runAppOperationJob(
     if (ctx.clock.now().getTime() - Date.parse(job.createdAt) > APP_JOB_START_DEADLINE_MS) {
       return { kind: 'failed', error: APP_JOB_NOT_STARTED };
     }
+    const lost = await callerLostAccess(ctx, scope, job);
+    if (lost) return { kind: 'failed', error: lost };
     const runnable = await resolveRunnable(ctx, scope, job);
     if ('error' in runnable) return { kind: 'failed', error: runnable.error };
     await ctx.store.appOperationJobs.update(scope, job.id, {
@@ -344,6 +349,35 @@ export async function runAppOperationJob(
     );
   });
   return outcome.kind;
+}
+
+/**
+ * Why whoever started `job` may no longer run it, or null. They are resolved again from the store,
+ * as their next request would be (`resolveStarter`: a key revoked, expired or re-roled, a person
+ * disabled, removed or re-roled), and must still hold the operation's scope, every scope the
+ * snapshot holds, and content grants no narrower than it (unrestricted, or the same). The
+ * snapshot stays the ceiling the plugin's grant is narrowed to. A job naming no starter (the
+ * deployment's own tokens) runs on the snapshot alone.
+ */
+async function callerLostAccess(
+  ctx: AppContext,
+  scope: Scope,
+  job: AppOperationJob,
+): Promise<string | null> {
+  const starter = job.caller.startedBy;
+  if (!starter || starter.kind === 'deployment') return null;
+  const now = await resolveStarter(ctx, scope.spaceId, starter);
+  if (!now) {
+    return starter.kind === 'key'
+      ? 'The API key or token that started this operation no longer works here'
+      : 'The person who started this operation is no longer on the team, or is disabled';
+  }
+  const scopesHeld = [job.requires, ...job.caller.scopes].every((s) => holdsScope(now.scopes, s));
+  const grantsHeld =
+    now.contentGrants === undefined ||
+    JSON.stringify(now.contentGrants) === JSON.stringify(job.caller.contentGrants);
+  if (scopesHeld && grantsHeld) return null;
+  return `The ${starter.kind === 'key' ? 'key' : 'person'} that started this operation may no longer run it`;
 }
 
 /** The plugin and operation a job may run on now, or why it may not. */

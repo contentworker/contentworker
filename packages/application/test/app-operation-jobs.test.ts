@@ -31,15 +31,22 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import {
   type AppContext,
   type AppOperationJobView,
+  addMember,
+  authenticate,
+  createApiKey,
   createPluginOperationRunner,
+  createRole,
   dispatchEvent,
   getAppOperationJob,
   installPlugin,
   invokeAppOperation,
   listAppOperationJobs,
+  principalForWebUser,
+  revokeApiKey,
   runAppOperationJob,
   setPluginEnabled,
   sweepExpiredAppOperationJobs,
+  updateRole,
   upgradePlugin,
 } from '../src/index';
 
@@ -428,5 +435,66 @@ describe('reading jobs', () => {
     }
     clock.advance(APP_JOB_RETENTION_SECONDS * 1000);
     expect(await sweepExpiredAppOperationJobs(ctx)).toEqual({ removed: 251 });
+  });
+});
+
+describe('checking the caller again before a job runs', () => {
+  const hasher = { hash: (v: string) => `h:${v}` };
+  const readerRole = () =>
+    createRole(ctx, SPACE, { name: 'Reader', scopes: [SCOPES.previewRead], contentGrants: [] });
+
+  async function keyPrincipal(roleId: string) {
+    const { token, apiKey } = await createApiKey(ctx, hasher, {
+      issuer: 'system',
+      spaceId: SPACE,
+      kind: 'cma',
+      roleId,
+    });
+    return { principal: await authenticate(ctx, hasher, token), keyId: apiKey.id };
+  }
+
+  it('fails without running when the key that started it was revoked; another key’s still runs', async () => {
+    const role = await readerRole();
+    const revoked = await keyPrincipal(role.id);
+    const kept = await keyPrincipal(role.id);
+    const gone = await start(revoked.principal);
+    const live = await start(kept.principal);
+    // The reference is the machinery's: callers never see it.
+    expect(JSON.stringify(gone)).not.toContain(revoked.keyId);
+    await revokeApiKey(ctx, SPACE, revoked.keyId);
+
+    expect((await run(gone.id)).outcome).toEqual({ status: 'complete', value: 'failed' });
+    expect(await getAppOperationJob(ctx, admin, scope, gone.id)).toMatchObject({
+      status: 'failed',
+      error: 'The API key or token that started this operation no longer works here',
+    });
+    expect(runtime.calls).toHaveLength(0);
+    expect((await run(live.id)).outcome).toEqual({ status: 'complete', value: 'completed' });
+    expect(runtime.calls).toHaveLength(1);
+  });
+
+  it('fails without running when the person’s role was narrowed after it was accepted', async () => {
+    const role = await readerRole();
+    await addMember(ctx, SPACE, { email: 'ann@example.com', role: role.id }, 'system');
+    const ann = await principalForWebUser(ctx, SPACE, {
+      sub: 'usr_ann',
+      email: 'ann@example.com',
+      role: 'member',
+    });
+    const job = await start(ann);
+    await updateRole(
+      ctx,
+      SPACE,
+      role.id,
+      { name: 'Reader', scopes: [SCOPES.deliveryRead], contentGrants: [] },
+      { sso: false },
+      'system',
+    );
+
+    expect((await run(job.id)).outcome).toEqual({ status: 'complete', value: 'failed' });
+    expect(await getAppOperationJob(ctx, admin, scope, job.id)).toMatchObject({
+      error: 'The person that started this operation may no longer run it',
+    });
+    expect(runtime.calls).toEqual([]);
   });
 });

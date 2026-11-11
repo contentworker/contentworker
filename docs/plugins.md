@@ -320,8 +320,13 @@ background; the caller polls the job (`GET …/apps/jobs/:id`, `GET …/apps/job
 - **Same code, same grant.** The job pins the plugin's checksum and keeps a snapshot of the caller's
   scopes and content grants (never shown to callers). The run fails, without calling the plugin,
   when the plugin has since been disabled, removed, awaiting re-approval or upgraded to other code,
-  or no longer declares the operation as `async`. Otherwise the plugin's grant is narrowed to the
-  snapshot as a sync call's is narrowed to the live caller. Output is checked against `output`, and
+  or no longer declares the operation as `async`. It also records who called, by reference (an API
+  key id or a team membership id, as a bulk job records its starter), and resolves them again
+  before the run (`resolveStarter`, `packages/application/src/job-starter.ts`): a key revoked or
+  expired, a person disabled or removed, or either one no longer holding the operation's scope,
+  every scope in the snapshot and content grants as wide, fails the job without calling the plugin.
+  The admin and MCP tokens' jobs run on the snapshot alone. Otherwise the plugin's grant is
+  narrowed to the snapshot as a sync call's is narrowed to the live caller. Output is checked against `output`, and
   an error message is redacted, as for a sync call; a failure is the job's `failed` status and
   `error`, never a `502`.
 - **Status.** `pending`, `running`, `completed` (with `output`) or `failed` (with `error`). A job

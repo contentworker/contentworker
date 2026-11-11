@@ -169,7 +169,8 @@ A completed job carries `output` (checked against the declared output schema) an
 `error`. `GET …/apps/jobs` lists the latest 50. The plugin runs with its grant narrowed to the
 scopes your key held when you called it, so a job is only readable by a key that could have called
 it. A job fails, without running, if the plugin is disabled, removed, upgraded to other code or
-not started within 10 minutes. An environment runs at most 10 jobs at once and keeps at most 1,000;
+not started within 10 minutes, or if the key or person that called it has since been revoked,
+removed or narrowed. An environment runs at most 10 jobs at once and keeps at most 1,000;
 past either, calling is `409`. Jobs and their output are kept for a day. The
 management SDK has `apps.start`, `apps.job` and `apps.jobs`.
 

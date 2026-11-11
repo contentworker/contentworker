@@ -91,7 +91,7 @@ export async function starterLostAccess(
 }
 
 /** The principal `starter` acts as in `spaceId` now, or null when it no longer acts there. */
-async function resolveStarter(
+export async function resolveStarter(
   ctx: AppContext,
   spaceId: string,
   starter: Exclude<JobStarter, { kind: 'deployment' }>,
