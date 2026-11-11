@@ -1,5 +1,5 @@
 import { sameValue } from '../entry/sequence-diff';
-import { DomainError } from '../errors';
+import { DomainError, type FieldIssue } from '../errors';
 import { ANY_FIELD, type QueryNode, queryNodeFilters } from '../query/query';
 import type { RolePreset } from './team';
 
@@ -168,6 +168,29 @@ export function grantedActions(grant: ContentTypeGrant): ReadonlySet<ContentActi
     if (canHoldAction(grant.actions, action) && !withheld.has(action)) held.add(action);
   }
   return held;
+}
+
+/**
+ * One issue for each content type (`*` included) more than one of `grants` names. Only the first
+ * grant naming a type ever governs it (`grantFor`, `contentActionsFor`), so a second one is dead
+ * weight that reads as access, and two `*` grants look like one in `auth/me` while
+ * {@link holdsOnEveryContentType} refuses them. A role save refuses these; a role stored before
+ * this rule still reads and resolves as it did, and saving it means merging the grants first.
+ */
+export function duplicateGrantIssues(grants: readonly ContentTypeGrant[]): FieldIssue[] {
+  const seen = new Set<string>();
+  const repeated = new Set<string>();
+  for (const { contentTypeApiId } of grants) {
+    if (seen.has(contentTypeApiId)) repeated.add(contentTypeApiId);
+    seen.add(contentTypeApiId);
+  }
+  return [...repeated].map((apiId) => ({
+    field: 'contentGrants',
+    message:
+      apiId === '*'
+        ? 'More than one grant covers every type ("*"); merge them into one'
+        : `More than one grant names "${apiId}"; merge them into one`,
+  }));
 }
 
 /**

@@ -12,6 +12,7 @@ import {
   ConflictError,
   DelegatedKeyMintError,
   DelegatedPeopleError,
+  duplicateGrantIssues,
   ForbiddenError,
   grantsAdmin,
   grantsNoWider,
@@ -215,7 +216,11 @@ export async function listRolePresets(
   }));
 }
 
-/** Copies a role (preset or custom) into a new custom role that can be changed freely. */
+/**
+ * Copies a role (preset or custom) into a new custom role that can be changed freely. A source
+ * stored with a repeated grant, from before role saves refused one, is refused (422) rather than
+ * copied: merge its grants first, so no new role starts out with one.
+ */
 export async function cloneRole(
   ctx: AppContext,
   spaceId: string,
@@ -224,6 +229,8 @@ export async function cloneRole(
 ): Promise<Role> {
   const source = await ctx.store.roles.get(spaceId, id);
   if (!source) throw new NotFoundError('Role', id);
+  const repeated = duplicateGrantIssues(source.contentGrants);
+  if (repeated.length > 0) throw new ValidationError(repeated);
   const role: Role = {
     id: ctx.ids.newId(),
     spaceId,

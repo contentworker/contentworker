@@ -5,7 +5,10 @@ import {
   authorizeApproval,
   authorizeContent,
   canAccessContentType,
+  contentActionsFor,
+  duplicateGrantIssues,
   grantFor,
+  holdsOnEveryContentType,
   holdsScope,
   intersectScopes,
   maskDeniedFields,
@@ -97,6 +100,49 @@ describe('granular RBAC: content grants', () => {
     expect(() =>
       assertWritableFields(editor, 'post', { internalNotes: { 'en-US': 'secret' } }, stored),
     ).toThrow(/internalNotes/);
+  });
+
+  it('names each content type more than one grant names, the wildcard included', () => {
+    expect(duplicateGrantIssues([])).toEqual([]);
+    expect(
+      duplicateGrantIssues([
+        { contentTypeApiId: 'post', actions: ['read'] },
+        { contentTypeApiId: '*', actions: ['read'] },
+      ]),
+    ).toEqual([]);
+    // Each repeated type once, however often it repeats, in the order it first repeats.
+    expect(
+      duplicateGrantIssues([
+        { contentTypeApiId: '*', actions: ['read'] },
+        { contentTypeApiId: 'post', actions: ['read'] },
+        { contentTypeApiId: 'post', actions: ['write'] },
+        { contentTypeApiId: '*', actions: ['read', 'write'] },
+        { contentTypeApiId: 'post', actions: ['publish'] },
+      ]),
+    ).toEqual([
+      { field: 'contentGrants', message: 'More than one grant names "post"; merge them into one' },
+      {
+        field: 'contentGrants',
+        message: 'More than one grant covers every type ("*"); merge them into one',
+      },
+    ]);
+  });
+
+  it('still resolves a stored role with two wildcard grants: the first one governs', () => {
+    // What a role saved before duplicates were refused still does: auth/me reports the first `*`
+    // grant, and an environment-wide operation is refused, as it was.
+    const legacy: Principal = {
+      spaceId: 's1',
+      kind: 'user',
+      scopes: [SCOPES.contentWrite],
+      contentGrants: [
+        { contentTypeApiId: '*', actions: ['read', 'write', 'publish'] },
+        { contentTypeApiId: '*', actions: ['read'] },
+      ],
+    };
+    expect(grantFor(legacy, 'post')?.actions).toEqual(['read', 'write', 'publish']);
+    expect(contentActionsFor(legacy).others).toContain('publish');
+    expect(holdsOnEveryContentType(legacy, ['read'])).toBe(false);
   });
 
   it('coarse authorize is unchanged by grants', () => {
