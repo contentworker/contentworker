@@ -2561,7 +2561,8 @@ export function createManagementClient(opts: ManagementClientOptions) {
         /**
          * A short narrative of that diff in plain text (`field-assist` AI; 409
          * `ai_capability_disabled` when the space turned it off, 429 over the AI budget, 503
-         * when the model fails). A repeated request is answered from a cache; `fresh` asks again.
+         * when the model fails). A repeated request is answered from a cache; `fresh` asks again
+         * (with `content:write`; otherwise the cached one comes back).
          */
         summarize: (
           id: string,

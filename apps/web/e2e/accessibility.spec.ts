@@ -1436,11 +1436,13 @@ test('a version compare with its change summary has no accessibility violations'
   await pane.getByRole('radio', { name: 'Details' }).click();
   await pane.getByRole('button', { name: 'Version history' }).click();
   await pane.getByRole('button', { name: 'Compare version 1' }).click();
+  await pane.getByRole('button', { name: 'Summarize changes' }).click();
   const summary = pane.getByRole('region', { name: 'Summary of changes' });
-  await summary.getByRole('button', { name: 'Summarize changes' }).click();
   // AI_MODE=mock: built from the diff by rule, and said to be.
   await expect(summary.getByText('Listed from the changes')).toBeVisible();
   await expect(summary.getByText('Changed 1 field: Body.')).toBeVisible();
+  // Focus lands on the summary that replaced the button, not on the page.
+  await expect(summary.locator(':focus')).toContainText('Changed 1 field: Body.');
   await scan(page, testInfo);
 });
 

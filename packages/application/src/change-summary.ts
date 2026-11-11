@@ -1,12 +1,14 @@
 import {
   authorizeContent,
   type FieldDiff,
+  holdsScope,
   isRichTextDocument,
   type LinkRef,
   type ListItemDiff,
   type NestedFieldDiff,
   type RichTextBlockDiff,
   richTextToPlainText,
+  SCOPES,
   type Scope,
   type TextSegment,
   type ValueDiff,
@@ -49,8 +51,11 @@ const MAX_DEPTH = 3;
 /** The longest summary and highlight kept, and the most highlights. */
 export const CHANGE_SUMMARY_LIMITS = { summary: 600, highlight: 200, highlights: 5 } as const;
 
-/** A model-written summary is the same for the same input, so it is kept this long (KV). */
-export const CHANGE_SUMMARY_CACHE_TTL_SECONDS = 7 * 24 * 3600;
+/**
+ * A model-written summary is the same for the same input, so it is kept (KV) for a day: long
+ * enough for a review, short enough not to outlive a purged entry by much.
+ */
+export const CHANGE_SUMMARY_CACHE_TTL_SECONDS = 24 * 3600;
 
 const SCHEMA = {
   type: 'object',
@@ -104,8 +109,23 @@ export interface SummarizeChangeOptions {
 
 // ---- the diff as the model reads it ------------------------------------------
 
+/** How much of each value a line carries: the full reading, or the compact one a large field gets. */
+interface Limits {
+  /** The longest excerpt of one value (a before or an after). */
+  readonly excerpt: number;
+  /** The most elements of one list, blocks of one rich-text value or edits of one text. */
+  readonly items: number;
+}
+const FULL: Limits = { excerpt: EXCERPT_CHARS, items: MAX_ITEMS };
+const COMPACT: Limits = { excerpt: 80, items: 4 };
+
+/** Words of unchanged text carried either side of an edit, so the model reads what it changed. */
+const CONTEXT_WORDS = 6;
+
 const clip = (text: string, max = EXCERPT_CHARS) =>
   text.length > max ? `${text.slice(0, max - 1)}…` : text;
+
+const oneLine = (text: string) => text.replace(/\s+/g, ' ').trim();
 
 /** Any value as one line of text: rich text as its words, never its tree or markup. */
 function valueText(value: unknown): string {
@@ -116,28 +136,47 @@ function valueText(value: unknown): string {
   return JSON.stringify(value) ?? '';
 }
 
-const excerpt = (value: unknown) => clip(valueText(value).replace(/\s+/g, ' ').trim());
+const excerpt = (value: unknown, lim: Limits) => clip(oneLine(valueText(value)), lim.excerpt);
+
+interface TextEdit {
+  readonly removed?: string;
+  readonly added?: string;
+  /** The words just before and after the edit, unchanged, its place marked `…`. */
+  readonly context?: string;
+}
 
 /**
- * A word diff as what was taken out and put in, each run with a few words either side; the
- * unchanged stretches between edits are elided, so a long text costs its edits, not its length.
+ * A word diff as what was taken out and put in, each with a few unchanged words either side
+ * (`context`); the unchanged stretches between edits are elided, so a long text costs its edits,
+ * not its length.
  */
-function textEdits(segments: readonly TextSegment[]): { removed?: string; added?: string }[] {
-  const out: { removed?: string; added?: string }[] = [];
-  let current: { removed?: string; added?: string } | null = null;
-  for (const s of segments) {
-    if (s.kind === 'unchanged') {
-      if (current) out.push(current);
-      current = null;
+function textEdits(segments: readonly TextSegment[], lim: Limits): TextEdit[] {
+  const out: TextEdit[] = [];
+  let i = 0;
+  while (i < segments.length) {
+    if (segments[i]?.kind === 'unchanged') {
+      i++;
       continue;
     }
-    current ??= {};
-    const text = clip(s.text.replace(/\s+/g, ' ').trim(), 160);
-    if (s.kind === 'removed') current.removed = text;
-    else current.added = text;
+    const prev = segments[i - 1];
+    let removed = '';
+    let added = '';
+    while (i < segments.length && segments[i]?.kind !== 'unchanged') {
+      const s = segments[i] as TextSegment;
+      if (s.kind === 'removed') removed += s.text;
+      else added += s.text;
+      i++;
+    }
+    const next = segments[i];
+    const lead = prev ? oneLine(prev.text).split(' ').slice(-CONTEXT_WORDS).join(' ') : '';
+    const tail = next ? oneLine(next.text).split(' ').slice(0, CONTEXT_WORDS).join(' ') : '';
+    out.push({
+      ...(removed.trim() ? { removed: clip(oneLine(removed), 160) } : {}),
+      ...(added.trim() ? { added: clip(oneLine(added), 160) } : {}),
+      ...(lead || tail ? { context: `${lead} … ${tail}`.trim() } : {}),
+    });
   }
-  if (current) out.push(current);
-  return out.slice(0, MAX_ITEMS);
+  return out.slice(0, lim.items);
 }
 
 const sideText = (segments: readonly TextSegment[], side: 'removed' | 'added') =>
@@ -146,79 +185,94 @@ const sideText = (segments: readonly TextSegment[], side: 'removed' | 'added') =
     .map((s) => s.text)
     .join('');
 
-const linkText = (l: LinkRef | null) => (l ? `${l.linkType} ${l.id}` : null);
+/** A link by what it points at, never its id: an id read as a value is noise a model may quote. */
+const linkText = (l: LinkRef | null) => (l ? `a linked ${l.linkType.toLowerCase()}` : null);
 
-function richTextBlocks(blocks: readonly RichTextBlockDiff[]) {
+function richTextBlocks(blocks: readonly RichTextBlockDiff[], lim: Limits) {
   const shown = blocks.filter((b) => b.kind !== 'unchanged' || b.moved);
   return {
-    blocks: shown.slice(0, MAX_ITEMS).map((b) => ({
+    blocks: shown.slice(0, lim.items).map((b) => ({
       block: b.beforeNodeType ? `${b.beforeNodeType} → ${b.nodeType}` : b.nodeType,
       kind: b.kind,
       ...(b.moved ? { moved: true } : {}),
       ...(b.formattingChanged ? { formattingOnly: true } : {}),
-      ...(b.kind === 'added' ? {} : { before: excerpt(sideText(b.text, 'removed')) }),
-      ...(b.kind === 'removed' ? {} : { after: excerpt(sideText(b.text, 'added')) }),
+      ...(b.kind === 'added' ? {} : { before: excerpt(sideText(b.text, 'removed'), lim) }),
+      ...(b.kind === 'removed' ? {} : { after: excerpt(sideText(b.text, 'added'), lim) }),
     })),
-    ...(shown.length > MAX_ITEMS ? { moreBlocks: shown.length - MAX_ITEMS } : {}),
+    ...(shown.length > lim.items ? { moreBlocks: shown.length - lim.items } : {}),
   };
 }
 
-function listItems(items: readonly ListItemDiff[], depth: number) {
+function listItems(items: readonly ListItemDiff[], depth: number, lim: Limits) {
   const shown = items.filter((i) => i.kind !== 'unchanged' || i.moved);
+  const values = (i: ListItemDiff) =>
+    i.link
+      ? {}
+      : i.kind === 'added'
+        ? { after: excerpt(i.after, lim) }
+        : i.kind === 'removed'
+          ? { before: excerpt(i.before, lim) }
+          : {};
   return {
-    items: shown.slice(0, MAX_ITEMS).map((i) => ({
+    items: shown.slice(0, lim.items).map((i) => ({
       kind: i.kind,
       ...(i.moved ? { moved: true } : {}),
       ...(i.variant ? { variant: nameForModel(i.variant) } : {}),
       ...(i.link ? { link: linkText(i.link) } : {}),
-      ...(i.detail
-        ? describeDetail(i.detail, depth + 1)
-        : i.kind === 'added'
-          ? { after: excerpt(i.after) }
-          : i.kind === 'removed'
-            ? { before: excerpt(i.before) }
-            : {}),
+      ...(i.detail ? describeDetail(i.detail, depth + 1, lim) : values(i)),
     })),
-    ...(shown.length > MAX_ITEMS ? { moreItems: shown.length - MAX_ITEMS } : {}),
+    ...(shown.length > lim.items ? { moreItems: shown.length - lim.items } : {}),
   };
 }
 
-function nestedFields(fields: readonly NestedFieldDiff[], depth: number) {
+function nestedFields(fields: readonly NestedFieldDiff[], depth: number, lim: Limits) {
   return fields
     .filter((f) => f.kind !== 'unchanged')
-    .slice(0, MAX_ITEMS)
+    .slice(0, lim.items)
     .map((f) => ({
       field: nameForModel(f.name ?? f.field),
       kind: f.kind,
-      ...(f.detail ? describeDetail(f.detail, depth + 1) : {}),
+      ...(f.detail ? describeDetail(f.detail, depth + 1, lim) : {}),
     }));
 }
 
 /** A change's typed detail as plain, bounded data. */
-function describeDetail(detail: ValueDiff, depth: number): Record<string, unknown> {
+function describeDetail(detail: ValueDiff, depth: number, lim: Limits): Record<string, unknown> {
   if (depth > MAX_DEPTH) return { nested: true };
   switch (detail.type) {
-    case 'text':
+    case 'text': {
+      // A value short enough to read whole is sent whole; a longer one as its edits alone, since
+      // its opening words would rarely hold them.
+      const before = sideText(detail.segments, 'removed');
+      const after = sideText(detail.segments, 'added');
+      const whole = Math.max(before.length, after.length) <= lim.excerpt;
       return {
-        before: excerpt(sideText(detail.segments, 'removed')),
-        after: excerpt(sideText(detail.segments, 'added')),
-        edits: textEdits(detail.segments),
+        ...(whole ? { before: oneLine(before), after: oneLine(after) } : {}),
+        edits: textEdits(detail.segments, lim),
       };
+    }
     case 'value':
-      return { before: excerpt(detail.before), after: excerpt(detail.after) };
-    case 'link':
-      return { before: linkText(detail.before), after: linkText(detail.after) };
+      return { before: excerpt(detail.before, lim), after: excerpt(detail.after, lim) };
+    case 'link': {
+      const swapped = detail.before && detail.after?.linkType === detail.before.linkType;
+      return {
+        before: linkText(detail.before),
+        after: swapped
+          ? `another linked ${detail.before?.linkType.toLowerCase()}`
+          : linkText(detail.after),
+      };
+    }
     case 'component':
-      return { fields: nestedFields(detail.fields, depth) };
+      return { fields: nestedFields(detail.fields, depth, lim) };
     case 'list':
-      return listItems(detail.items, depth);
+      return listItems(detail.items, depth, lim);
     case 'richText':
-      return richTextBlocks(detail.blocks);
+      return richTextBlocks(detail.blocks, lim);
   }
 }
 
 /** One changed field as the lines the model reads: one per locale that changed. */
-function fieldLines(change: FieldDiff, showLocale: boolean): string[] {
+function fieldLines(change: FieldDiff, showLocale: boolean, lim: Limits): string {
   const name = nameForModel(change.name ?? change.field);
   return change.locales
     .filter((l) => l.kind !== 'unchanged')
@@ -228,9 +282,10 @@ function fieldLines(change: FieldDiff, showLocale: boolean): string[] {
         ...(change.fieldType ? { type: change.fieldType } : {}),
         ...(showLocale ? { locale: l.locale } : {}),
         kind: l.kind,
-        ...(l.detail ? describeDetail(l.detail, 0) : {}),
+        ...(l.detail ? describeDetail(l.detail, 0, lim) : {}),
       }),
-    );
+    )
+    .join('\n');
 }
 
 export interface SerializedDiff {
@@ -242,9 +297,12 @@ export interface SerializedDiff {
 
 /**
  * The changed fields of a diff as the model reads them: JSON lines (so a value can't pose as a
- * marker or another field), excerpts of each value, text edits as what was removed and added, rich
- * text as each changed block's words. Fields are added whole, in the content type's order, until
- * the next would pass `maxChars`; the rest are named in a last line and counted.
+ * marker or another field), short values whole, text edits as what was removed and added with a
+ * few words either side, rich text as each changed block's words, links by kind, never by id.
+ * Fields are added whole, in the content type's order; one that doesn't fit what is left of
+ * `maxChars` is tried again compact (shorter excerpts, fewer elements), so one large field never
+ * empties the input. Once one fits neither way, it and the rest are named in a last line and
+ * counted.
  */
 export function serializeDiffForModel(
   changes: readonly FieldDiff[],
@@ -256,13 +314,17 @@ export function serializeDiffForModel(
   const omitted: string[] = [];
   let used = 0;
   for (const change of changed) {
-    const block = fieldLines(change, showLocale).join('\n');
-    if (omitted.length === 0 && used + block.length + 1 <= maxChars) {
-      lines.push(block);
-      used += block.length + 1;
-    } else {
+    const fits = (block: string) => used + block.length + 1 <= maxChars;
+    const block =
+      omitted.length > 0
+        ? undefined
+        : [FULL, COMPACT].map((lim) => fieldLines(change, showLocale, lim)).find(fits);
+    if (block === undefined) {
       omitted.push(nameForModel(change.name ?? change.field));
+      continue;
     }
+    lines.push(block);
+    used += block.length + 1;
   }
   if (omitted.length > 0) {
     lines.push(JSON.stringify({ omittedForLength: omitted.length, fields: omitted.slice(0, 50) }));
@@ -325,11 +387,17 @@ export function heuristicChangeSummary(
 
 // ---- the model's answer ----------------------------------------------------------
 
-/** A string the model wrote, as plain text: any tag-shaped run dropped, on one line, capped. */
+/**
+ * A string the model wrote, as plain text: tag-shaped runs dropped and any angle bracket left over
+ * (an unclosed tag), a Markdown link as its words, on one line, capped. The contract is plain text
+ * whoever renders it, not only the admin, which renders it as text.
+ */
 function plainText(text: string, max: number): string {
   return clip(
     text
       .replace(/<\/?[a-z][^>]*>/gi, '')
+      .replace(/[<>]/g, '')
+      .replace(/!?\[([^\]]*)\]\((?:[^()]|\([^()]*\))*\)/g, '$1')
       .replace(/\s+/g, ' ')
       .trim(),
     max,
@@ -349,13 +417,16 @@ function cleanAnswer(answer: Answer): Answer {
 const SYSTEM = [
   'You summarize the changes between two versions of a content entry for an editor reviewing them.',
   'The changes come as JSON lines, one per changed field (and locale), computed by a deterministic diff: ' +
-    '`kind` is added, removed or changed; `before` and `after` are excerpts; `edits` are the words ' +
-    'removed and added; `blocks` are rich-text blocks; `items` are list elements; `moved` means ' +
+    '`kind` is added, removed or changed; `before` and `after` are the values, or excerpts of them; ' +
+    '`edits` are the words removed and added, with `context`, the unchanged words around the edit ' +
+    '(… marks where it is); `blocks` are rich-text blocks; `items` are list elements; `moved` means ' +
     'reordered; `formattingOnly` means the words are the same and only formatting changed.',
   'Describe only what the lines show. Never guess why a change was made, never name a field, value ' +
-    'or change that is not in them, and never judge the content. Excerpts may be cut short (…).',
-  'Answer with `summary`: one to three plain sentences, at most 600 characters, and `highlights`: ' +
-    'up to five short notes on the most notable changes, or an empty list when the summary says it all.',
+    'or change that is not in them, never quote identifiers, and never judge the content. Excerpts ' +
+    'may be cut short (…).',
+  'Answer in English with `summary`: one to three plain sentences, about 350 characters, and ' +
+    '`highlights`: up to five short notes (about 120 characters each) on the most notable changes, ' +
+    'or an empty list when the summary says it all.',
   'Plain text only: no Markdown, HTML, links or quotation of whole values.',
 ].join('\n');
 
@@ -406,13 +477,20 @@ export async function summarizeChange(
   const serialized = serializeDiffForModel(seen.changes);
   const truncated = serialized.omitted.length > 0;
   const contentType = await ctx.store.contentTypes.get(scope, entry.contentTypeApiId);
-  const typeName = nameForModel(contentType?.name ?? entry.contentTypeApiId);
+  // The type's name is author text too: it goes inside the fence, as the first line.
+  const typeLine = JSON.stringify({
+    entryType: nameForModel(contentType?.name ?? entry.contentTypeApiId),
+  });
   const prompt = [
-    `Changes to a ${typeName} entry, from version ${seen.from} to version ${seen.to}:`,
-    wrapUntrusted(serialized.text),
+    `Changes to an entry, from version ${seen.from} to version ${seen.to} (the first line names its type):`,
+    wrapUntrusted(`${typeLine}\n${serialized.text}`),
     truncated
       ? `The list was cut short for length: ${plural(serialized.omitted.length, 'more changed field')} ` +
         'are named in its last line but not shown. Say that the summary covers only some of the changes.'
+      : '',
+    // Counted, never shown: the model is only told not to call what it sees all that changed.
+    seen.hiddenChanges > 0
+      ? 'Other fields changed that you are not shown: never say these are the only changes.'
       : '',
   ]
     .filter(Boolean)
@@ -429,7 +507,12 @@ export async function summarizeChange(
     prompt,
   ]);
 
-  if (ctx.ai?.mode !== 'mock' && !opts.fresh) {
+  // Asking past the cache is for someone who could edit the entry: a read-only caller (a preview
+  // key in a frontend's build) gets one model call per distinct diff at most, so it can't drain
+  // the space's AI budget, which every editor shares, by asking again in a loop.
+  const fresh =
+    opts.fresh === true && (!principal || holdsScope(principal.scopes, SCOPES.contentWrite));
+  if (ctx.ai?.mode !== 'mock' && !fresh) {
     const hit = await readCached(ctx, key);
     if (hit) {
       return { ...base, ...hit.answer, source: 'model', tier: hit.tier, cached: true, truncated };
@@ -445,7 +528,9 @@ export async function summarizeChange(
       system,
       prompt,
       tier,
-      maxTokens: 400,
+      // Room for the answer (up to ~1 600 characters) and for a reasoning model's thinking, which
+      // counts against the cap: cut short, the adapter calls the answer bad.
+      maxTokens: 1500,
       outputSchema: SCHEMA as unknown as Record<string, unknown>,
     },
     { prompt: CHANGE_SUMMARY_PROMPT, fallback: () => fallback, policy, failures: 'throw' },

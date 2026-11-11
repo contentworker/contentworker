@@ -82,16 +82,17 @@ returns the same shape.
 In a comparison, **Summarize changes** asks for a few sentences on what changed, shown above the
 diff: one to three sentences and up to five notable changes, in plain text. A model writes it from
 the diff alone (the fields your role can read, as excerpts and the words removed and added), stamped
-**Written by AI**, with **Write it again** to ask for another. Check it against the diff below it:
-the diff is the record, the summary a reading aid.
+**Written by AI**, with **Write it again** to ask for another when you can edit the entry. Check it
+against the diff below it: the diff is the record, the summary a reading aid.
 
 The same summary is `POST …/entries/{id}/versions/diff/summary?from=3&to=draft`, the MCP tool
 `entries_change_summary` and `cma.entries.versions.summarize(id, from, to)` in the management SDK.
 The answer says who wrote it (`source`: `model`, or `heuristic` when it was listed from the diff by
 rule, as it is when no model is configured), whether a long diff was cut short for the model
 (`truncated`), and how many changed fields you can't read (`hiddenChanges`; they never reach the
-model). The same request is answered from a cache (`cached: true`); `fresh=true` asks the model
-again.
+model). The same request is answered from a cache (`cached: true`) for a day; `fresh=true` asks
+the model again when you can edit the entry (`content:write`), and is answered from the cache
+otherwise.
 
 It is **Writing help** in [Settings → AI](/guides/ai/): turned off, the action isn't offered and the
 API answers `409 ai_capability_disabled`. It runs on that setting's tier (`fast` by default) and

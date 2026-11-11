@@ -618,16 +618,21 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   In Details, **Version history** (`VersionHistory.tsx`) opens a version's comparison under it
   (`RevisionDiff`); above the diff sits **Summarize changes** (`ChangeSummary.tsx`), a ghost `xs`
   button led by the AI mark in `text-ai` at rest, `write` composing beside "Summarizing…" while the
-  model works. Nothing is asked until it is pressed (a summary spends the AI budget). The summary
-  takes the button's place behind a hairline at its start: an `ai` "Written by AI" stamp, the
-  sentences and a "Notable changes" list held to the measure, a muted line saying a model wrote it
-  from the changes below and to check it against them, and a ghost `xs` **Write it again** (asks
-  past the cache, the old summary kept in sight meanwhile). One listed by rule (no model) wears an
-  `idle` "Listed from the changes" stamp, no note and no Write it again; one written from part of a
-  long diff says so beside its stamp. A failure is a destructive Alert in place with Try again; a
-  refusal because Writing help is off is a plain Alert naming Settings → AI. With Writing help off
-  the button isn't offered. Another comparison starts without a summary. The publish confirmation
-  and approvals read the diff through `EntryReview`, not this view, and offer no summary.
+  model works (`aria-disabled`, so it keeps focus). Nothing is asked until it is pressed (a summary
+  spends the AI budget), and until then it is a button, not a landmark; with content it is the
+  "Summary of changes" region. The summary takes the button's place, and its focus, behind a
+  hairline at its start: an `ai` "Written by AI" stamp, the sentences and a "Notable changes" list
+  held to the measure, a muted line saying a model wrote it from the changes below and to check it
+  against them, and, for someone who can edit (the API asks past the cache only for them), a ghost
+  `xs` **Write it again** led by the AI mark, the old summary kept in sight meanwhile. One listed
+  by rule (no model) wears an `idle` "Listed from the changes" stamp, no note and no Write it
+  again; one written from part of a long diff says so beside its stamp. A failure is a destructive
+  Alert in place with Try again, which takes focus and asks the same way again (past the cache
+  after a failed Write it again, the summary still above it); a refusal because Writing help is
+  off is a plain Alert naming Settings → AI, with nothing to press. With Writing help off the
+  button isn't offered. Another comparison starts without a summary. The publish confirmation and
+  approvals read the diff through `EntryReview`, not this view, and offer no summary: where a
+  person commits, the diff is the record.
   A new entry's pane is its preview alone. Details opens on **who wrote it**, a
   card of its own that never folds away (two lines read faster than a toggle; no card inside it):
   "Created by" with the date (`When`) and "Last edited by" with how long ago (`Ago`), each writer

@@ -1,5 +1,5 @@
 import type { ApiConfig } from '@contentworker/platform/config';
-import { StubAIProvider } from '@contentworker/test-kit';
+import { InMemoryCache, StubAIProvider } from '@contentworker/test-kit';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from '../../src/api/app';
 import { testConfig } from './config';
@@ -256,7 +256,8 @@ describe('summarizing the changes between two versions over HTTP', () => {
   async function setup(mode?: 'mock') {
     const wired = wire(config);
     const ai = new StubAIProvider(() => answer);
-    const ctx = mode ? { ...wired.ctx, ai: { mode, timeoutMs: 1000 } } : wired.ctx;
+    const cached = { ...wired.ctx, cache: new InMemoryCache() };
+    const ctx = mode ? { ...cached, ai: { mode, timeoutMs: 1000 } } : cached;
     const app = createApp(ctx, config, wired.rag, wired.blob, ai);
     await app.request(`${M}/content-types`, {
       method: 'POST',
@@ -338,6 +339,12 @@ describe('summarizing the changes between two versions over HTTP', () => {
     expect(await res.json()).toMatchObject({ changedFields: 1, hiddenChanges: 1 });
     expect(ai.requests[0]?.prompt).not.toContain('CONFIDENTIAL');
     expect(ai.requests[0]?.prompt).not.toContain('Notes');
+    // A read-only key asking again is answered from the cache: it can't spend the budget in a loop.
+    const again = await summarize(app, id, 'from=1&to=2&fresh=true', {
+      Authorization: `Bearer ${token}`,
+    });
+    expect(await again.json()).toMatchObject({ cached: true });
+    expect(ai.requests).toHaveLength(1);
   });
 
   it('is built by rule in mock mode, refuses bad references, and is a 409 with field-assist off', async () => {

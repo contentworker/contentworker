@@ -80,7 +80,8 @@ export function registerVersionTools(server: McpServer, t: ToolContext): void {
         'it). source says who wrote it: "model", or "heuristic" when it was built from the diff by ' +
         'rule (no model configured, nothing visible changed, or a bad answer). Refused with ' +
         'ai_capability_disabled when the space turned field-assist off. A repeated request is ' +
-        'answered from a cache (cached: true); fresh: true asks the model again. For the exact ' +
+        'answered from a cache (cached: true); fresh: true asks the model again when you hold ' +
+        'content:write. For the exact ' +
         'changes, read entries_diff_versions: the summary is a reading aid, not the record.',
       inputSchema: toolSchema('entries_change_summary', () =>
         z.object({

@@ -84,7 +84,7 @@ export function versionsRoutes(deps: AuthDeps): Hono<AuthVars> {
         'when the AI budget refuses, 503 when the model fails. Fields the caller may not read ' +
         'never reach the model. Without a model (AI_MODE=mock) it is built from the diff by rule ' +
         "(`source: 'heuristic'`). The same request is answered from a cache; `fresh=true` asks " +
-        'the model again.',
+        'the model again for a caller holding `content:write` (anyone else gets the cached one).',
       query: {
         from: 'The baseline: a version number, `draft` or `published`',
         to: 'The version compared against it: a version number, `draft` or `published`',

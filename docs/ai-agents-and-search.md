@@ -294,21 +294,28 @@ three sentences and up to five highlights, plain text. It is served at
 
 - **Input: the diff, never the entry.** It runs `diffVersions` and masks it with `visibleDiff`, as
   the compare does, so a field the caller's role denies never reaches the model (it is only
-  counted, in `hiddenChanges`). The changed fields go to the model as JSON lines inside
-  `wrapUntrusted`, one per field and locale: the field's name (`nameForModel`), its type, the kind of
-  change, excerpts of the values before and after (280 characters each), text edits as the words
-  removed and added, rich text as each changed block's words (`RichTextDocument` trees, never
-  markup), lists as their changed elements (12 per value). JSON keeps a value from posing as
-  another field or a marker.
+  counted, in `hiddenChanges`, and the prompt then tells the model other fields changed that it
+  isn't shown). The changed fields go to the model as JSON lines inside `wrapUntrusted`, after a
+  first line naming the entry's type: one per field and locale, with the field's name
+  (`nameForModel`), its type and the kind of change; a value of up to 280 characters whole, before
+  and after; text edits as the words removed and added with six unchanged words either side
+  (`context`), so a long text costs its edits, not its length; rich text as each changed block's
+  words (`RichTextDocument` trees, never markup); lists as their changed elements (12 per value);
+  links by kind ("a linked entry", "another linked asset"), never by id. JSON keeps a value from
+  posing as another field or a marker.
 - **Bounded.** Fields are added whole, in the content type's order, until the next would pass
-  12 000 characters (`CHANGE_SUMMARY_MAX_INPUT_CHARS`, about 3k tokens). The rest are counted and
-  named in a last line, the prompt tells the model the summary covers only part of the changes, and
-  the result says `truncated: true`.
+  12 000 characters (`CHANGE_SUMMARY_MAX_INPUT_CHARS`, about 3k tokens); a field too large for
+  what is left is tried again compact (80-character excerpts, four elements), so one large field
+  never empties the input. The rest are counted and named in a last line, the prompt tells the
+  model the summary covers only part of the changes, and the result says `truncated: true`.
 - **Output.** `generateJson` against `{ summary: string, highlights: string[] }` (checked with
-  `conforms`), with `failures: 'throw'`: a budget refusal is a 429 and a provider error or timeout a
-  503, rather than the heuristic passing for the model's answer. Tag-shaped runs are dropped and the
-  lengths capped (600 and 200 characters, five highlights); the result is plain text, rendered as
-  text.
+  `conforms`), in English, `maxTokens` 1 500 (room for a reasoning model's thinking, which counts
+  against the cap), with `failures: 'throw'`: a budget refusal is a 429 and a provider error or
+  timeout a 503 (logged as `failed`), rather than the heuristic passing for the model's answer. An
+  answer that came back unusable (`bad_response`: cut off, JSON mode unmet) is a bad answer, so the
+  heuristic's, as one off the schema is. The prompt asks for about 350 and 120 characters; tags,
+  angle brackets and Markdown links are dropped and the lengths capped (600 and 200 characters,
+  five highlights). The result is plain text, to render as text.
 - **Capability.** `field-assist` (Writing help): it is "summarizing", the work that capability
   already names, so an administrator who turned writing help off has turned this off too (409
   `ai_capability_disabled`). Its tier (default `fast`: a short extraction over structured input)
@@ -316,14 +323,18 @@ three sentences and up to five highlights, plain text. It is served at
 - **Without a model.** Under `AI_MODE=mock`, when no visible field changed, or when the answer
   doesn't fit the schema, the summary is built from the diff by rule ("Changed 3 fields: Title,
   Body, Price.") and marked `source: 'heuristic'` with the reason in `fallback`.
-- **Cache, no D1 writes.** A model-written summary is kept in `ctx.cache` (KV) for seven days under
+- **Cache, no D1 writes.** A model-written summary is kept in `ctx.cache` (KV) for a day under
   a SHA-256 of everything the model read: the prompt id, scope, entry, tier, the system prompt (so
   the space's guidance) and the serialized diff (so the caller's visible fields and the field names
   as they are now). The same request is answered from it without a call (`cached: true`); `fresh`
-  asks again and replaces it. Versions are immutable, so the key never goes stale, and nothing is
+  asks again and replaces it, for a caller holding `content:write` (a read-only caller asking again
+  is answered from the cache, so a preview key can't drain the space's budget in a loop). The key
+  names the tier, not the model it maps to: after a model change, summaries already kept are served
+  until they expire. Versions are immutable, so the key never goes stale, and nothing is
   written to D1 on this read path.
 - **Who may ask.** `preview:read` and a read grant on the entry's type, as for the diff: a reviewer
-  (Viewer, Approver) can ask, and every call is metered by the space's AI budget.
+  (Viewer, Approver) can ask, and every call is metered by the space's AI budget. The first model
+  route a read scope reaches; it costs at most one call per distinct diff and caller view.
 
 ## Content generation
 

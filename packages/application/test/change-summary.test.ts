@@ -166,14 +166,18 @@ describe('change summaries', () => {
     expect(req.system).toContain('<user_content>');
     // The diff, as text inside the fence: words removed and added, rich text as its words.
     const fenced = /<user_content>\n([\s\S]*)\n<\/user_content>/.exec(req.prompt)?.[1] ?? '';
-    const lines = fenced.split('\n').map((l) => JSON.parse(l));
+    const [type, ...lines] = fenced.split('\n').map((l) => JSON.parse(l));
+    // The type's name is author text: inside the fence, never in the instructions around it.
+    expect(type).toEqual({ entryType: 'Post' });
+    expect(req.prompt.slice(0, req.prompt.indexOf('<user_content>'))).not.toContain('Post');
     expect(lines.map((l) => l.field)).toEqual(['Title', 'Body', 'Notes', 'Price']);
     expect(lines[0]).toMatchObject({
       kind: 'changed',
       before: 'Winter sale',
       after: 'Spring sale',
     });
-    expect(lines[0].edits).toEqual([{ removed: 'Winter', added: 'Spring' }]);
+    // An edit with the unchanged words around it, so the model reads what it changed.
+    expect(lines[0].edits).toEqual([{ removed: 'Winter', added: 'Spring', context: '… sale' }]);
     expect(lines[1].blocks).toEqual([
       expect.objectContaining({
         block: 'paragraph',
@@ -271,6 +275,69 @@ describe('change summaries', () => {
     // Each value is an excerpt, never the whole of a long one.
     const first = JSON.parse(out.text.split('\n')[0] as string);
     expect(first.before.length).toBeLessThanOrEqual(280);
+  });
+
+  it('sends a long text as its edits in context, and a large field compact rather than not at all', () => {
+    const words = (from: number, n: number) =>
+      Array.from({ length: n }, (_, i) => `w${from + i}`).join(' ');
+    const before = `${words(0, 200)} price is ten ${words(300, 200)}`;
+    const after = `${words(0, 200)} price is eight ${words(300, 200)}`;
+    const [line] = serializeDiffForModel(
+      diffEntryFields({ body: { 'en-US': before } }, { body: { 'en-US': after } }),
+    ).text.split('\n');
+    const body = JSON.parse(line as string);
+    // Too long to read whole: no opening-words excerpt, only the edit and its neighbours.
+    expect(body.before).toBeUndefined();
+    expect(body.edits).toEqual([
+      {
+        removed: 'ten',
+        added: 'eight',
+        context: 'w196 w197 w198 w199 price is … w300 w301 w302 w303 w304 w305',
+      },
+    ]);
+
+    // One field whose full reading passes the cap is read compact, so the model still sees it.
+    const blocks = (tag: string) => ({
+      nodeType: 'document',
+      content: Array.from({ length: 12 }, (_, i) => ({
+        nodeType: 'paragraph',
+        content: [{ nodeType: 'text', value: `${tag} ${i} ${'z'.repeat(400)}`, marks: [] }],
+      })),
+    });
+    const locales = ['en-US', 'de-DE', 'fr-FR'];
+    const big = serializeDiffForModel(
+      diffEntryFields(
+        { body: Object.fromEntries(locales.map((l) => [l, blocks('old')])) },
+        { body: Object.fromEntries(locales.map((l) => [l, blocks('new')])) },
+      ),
+    );
+    expect(big.omitted).toEqual([]);
+    expect(big.text.length).toBeLessThanOrEqual(CHANGE_SUMMARY_MAX_INPUT_CHARS);
+    const compact = JSON.parse(big.text.split('\n')[0] as string);
+    expect(compact.blocks).toHaveLength(4);
+    expect(compact.moreBlocks).toBe(8);
+  });
+
+  it('names links by kind, never by id', () => {
+    const out = serializeDiffForModel(
+      diffEntryFields(
+        { hero: { 'en-US': { id: 'asset-0001', linkType: 'Asset' } } },
+        { hero: { 'en-US': { id: 'asset-0002', linkType: 'Asset' } } },
+      ),
+    );
+    expect(out.text).not.toContain('asset-000');
+    expect(JSON.parse(out.text)).toMatchObject({
+      before: 'a linked asset',
+      after: 'another linked asset',
+    });
+  });
+
+  it('tells the model when fields it isn’t shown changed, without naming them', async () => {
+    const ai = model();
+    await summarizeChange(ctx, reader, scope, entryId, 1, 2, { ai });
+    expect(sent(ai).prompt).toContain('Other fields changed that you are not shown');
+    await summarizeChange(ctx, SYSTEM_CALLER, scope, entryId, 1, 2, { ai });
+    expect(sent(ai).prompt).not.toContain('Other fields changed');
   });
 
   it('says so when the diff it summarized was cut short', async () => {
@@ -371,6 +438,22 @@ describe('change summaries', () => {
     expect(ai.requests).toHaveLength(3);
   });
 
+  it('answers a read-only caller asking again from the cache, so it can’t drain the budget', async () => {
+    const ai = model();
+    await summarizeChange(ctx, reader, scope, entryId, 1, 2, { ai });
+    const again = await summarizeChange(ctx, reader, scope, entryId, 1, 2, { ai, fresh: true });
+    expect(again.cached).toBe(true);
+    expect(ai.requests).toHaveLength(1);
+    // Someone who could edit the entry may ask again.
+    const editor: Principal = {
+      ...reader,
+      scopes: [SCOPES.previewRead, SCOPES.contentWrite],
+    };
+    const fresh = await summarizeChange(ctx, editor, scope, entryId, 1, 2, { ai, fresh: true });
+    expect(fresh.cached).toBe(false);
+    expect(ai.requests).toHaveLength(2);
+  });
+
   it('never caches what the heuristic wrote, and drops markup from what the model wrote', async () => {
     const bad = model({ nope: true });
     const res = await summarizeChange(ctx, SYSTEM_CALLER, scope, entryId, 1, 2, { ai: bad });
@@ -381,12 +464,23 @@ describe('change summaries', () => {
     expect((ctx.cache as InMemoryCache).size).toBe(0);
 
     const marked = model({
-      summary: '<b>Bold</b> <script>x</script>claim',
-      highlights: [' <i>a</i> '],
+      summary: '<b>Bold</b> <script>x</script>claim <img src=x onerror=alert(1)',
+      highlights: [' <i>a</i> ', 'See [the docs](javascript:alert(1))'],
     });
     const out = await summarizeChange(ctx, SYSTEM_CALLER, scope, entryId, 1, 2, { ai: marked });
-    expect(out.summary).toBe('Bold xclaim');
-    expect(out.highlights).toEqual(['a']);
+    expect(out.summary).toBe('Bold xclaim img src=x onerror=alert(1)');
+    expect(out.summary).not.toMatch(/[<>]/);
+    expect(out.highlights).toEqual(['a', 'See the docs']);
+
+    // Held to the limits whatever the model sent: JSON mode doesn't promise lengths or counts.
+    const long = model({ summary: 's'.repeat(900), highlights: Array(8).fill('h'.repeat(300)) });
+    const capped = await summarizeChange(ctx, SYSTEM_CALLER, scope, entryId, 1, 2, {
+      ai: long,
+      fresh: true,
+    });
+    expect(capped.summary).toHaveLength(600);
+    expect(capped.highlights).toHaveLength(5);
+    expect(capped.highlights.every((h) => h.length === 200)).toBe(true);
   });
 
   it('is a 429 when the budget refuses and a 503 when the model fails', async () => {
@@ -403,6 +497,16 @@ describe('change summaries', () => {
     await expect(
       summarizeChange(ctx, SYSTEM_CALLER, scope, entryId, 1, 2, { ai: failing }),
     ).rejects.toBeInstanceOf(AiUnavailableError);
+
+    // An answer that came back unusable (cut off at maxTokens) would again: listed by rule instead.
+    const cutOff = new StubAIProvider(() => {
+      throw Object.assign(new Error('cut off at max_tokens'), { reason: 'bad_response' });
+    });
+    const res = await summarizeChange(ctx, SYSTEM_CALLER, scope, entryId, 1, 2, { ai: cutOff });
+    expect(res).toMatchObject({
+      source: 'heuristic',
+      fallback: expect.stringMatching(/^bad response/),
+    });
   });
 });
 

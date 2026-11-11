@@ -191,6 +191,19 @@ export function answerStrings(result: { readonly object?: unknown }, field: stri
 
 // ---- generateJson -----------------------------------------------------------
 
+/**
+ * Whether a provider's error says the answer arrived but was unusable. The AI adapters mark that
+ * as `reason: 'bad_response'` (the Workers AI adapter's `WorkersAIError`); read by shape, so no
+ * adapter type crosses into the application.
+ */
+function isBadResponse(err: unknown): boolean {
+  return (
+    typeof err === 'object' &&
+    err !== null &&
+    (err as { reason?: unknown }).reason === 'bad_response'
+  );
+}
+
 export interface GenerateJsonOptions<T> {
   /** Stable prompt id for provenance and logs (e.g. `workflow.router`). */
   readonly prompt: string;
@@ -278,7 +291,10 @@ export async function generateJson<T>(
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
     if (opts.failures === 'throw') {
-      log({ source: 'heuristic', tier, prompt: opts.prompt, fallback: `refused: ${reason}` });
+      // An answer that came back unusable (cut off at maxTokens, JSON mode unmet) would come back
+      // the same way on a retry: it is a bad answer, so the heuristic's, like one off the schema.
+      if (isBadResponse(err)) return heuristic(`bad response: ${reason}`);
+      log({ source: 'heuristic', tier, prompt: opts.prompt, failed: reason });
       if (err instanceof RateLimitedError || err instanceof AiUnavailableError) throw err;
       throw new AiUnavailableError('The model couldn’t answer just now; try again');
     }
