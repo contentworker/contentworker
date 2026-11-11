@@ -216,6 +216,18 @@ describe('sdk-management assets against the api', () => {
     expect(err).toMatchObject({ status: 501, code: 'not_configured' });
   });
 
+  it('looks up several assets by id in one list call', async () => {
+    const cma = client();
+    const a = await image(cma, 'a.png');
+    const b = await image(cma, 'b.png');
+    await image(cma, 'c.png');
+    const page = await cma.assets.list({ ids: [a.id, b.id, 'missing'] });
+    expect(page.items.map((x) => x.id).sort()).toEqual([a.id, b.id].sort());
+    const seen: string[] = [];
+    for await (const x of cma.assets.iterate({ ids: [a.id, b.id], limit: 1 })) seen.push(x.id);
+    expect(seen.sort()).toEqual([a.id, b.id].sort());
+  });
+
   it('iterates the library and a collection across pages', async () => {
     const cma = client();
     const ids: string[] = [];

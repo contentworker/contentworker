@@ -18,7 +18,7 @@ import { type AuthDeps, type AuthVars, requireScope } from '../../auth';
 import { doc } from '../../docs/openapi';
 import * as folderDocs from '../../docs/schemas/asset-folders';
 import * as assetDocs from '../../docs/schemas/assets';
-import { parseAssetListQuery, parseAssetSearchQuery } from '../../query';
+import { MAX_ASSET_IDS, parseAssetListQuery, parseAssetSearchQuery } from '../../query';
 import {
   assetBulkBody,
   assetReindexBody,
@@ -41,8 +41,11 @@ export function assetsRoutes(deps: AuthDeps): Hono<AuthVars> {
       ok: assetDocs.assetPage,
       description:
         'Archived assets are left out unless status=archived or status=all. Page with the ' +
-        "response's nextCursor; a cursor is valid only with the same filters and sort.",
+        "response's nextCursor; a cursor is valid only with the same filters and sort. ids looks " +
+        'up several assets at once; it narrows with the other filters, and ids not in the space ' +
+        'are left out.',
       query: {
+        ids: `Comma-separated asset ids, at most ${MAX_ASSET_IDS}; 422 past that or on an empty one`,
         kind: 'image | video | audio | document | other',
         mime: 'An exact content type (image/png) or a family (image/*)',
         tag: 'A taxonomy tag id',

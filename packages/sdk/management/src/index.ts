@@ -1004,6 +1004,8 @@ export interface AssetListQuery {
   readonly limit?: number;
   /** `nextCursor` from the previous page. */
   readonly cursor?: string;
+  /** Only these assets, at most 100: a batch lookup by id (ids not in the space are left out). */
+  readonly ids?: readonly string[];
   readonly kind?: AssetKind;
   /** An exact content type (`image/png`) or a family (`image/*`). */
   readonly mime?: string;
@@ -1018,7 +1020,7 @@ export interface AssetListQuery {
 }
 
 /** What `assets.collections.assets` keeps; members come in the collection's order. */
-export type CollectionAssetQuery = Omit<AssetListQuery, 'folder' | 'sort' | 'order'>;
+export type CollectionAssetQuery = Omit<AssetListQuery, 'ids' | 'folder' | 'sort' | 'order'>;
 
 export interface AssetPage {
   readonly items: Asset[];
@@ -1735,6 +1737,11 @@ export interface ManagementClientOptions {
 type Method = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 type Query = Record<string, string | number | undefined>;
 
+/** An asset listing as query parameters: `ids` goes comma-separated. */
+function assetListParams({ ids, ...rest }: AssetListQuery): Query {
+  return { ...rest, ...(ids ? { ids: ids.join(',') } : {}) };
+}
+
 /** Creates a Management client bound to one space/environment. */
 export function createManagementClient(opts: ManagementClientOptions) {
   const doFetch = opts.fetch ?? globalThis.fetch;
@@ -2286,13 +2293,16 @@ export function createManagementClient(opts: ManagementClientOptions) {
 
     assets: {
       /** One page of the library; pass `nextCursor` back as `cursor` for the next. */
-      list: (query: AssetListQuery = {}) => get<AssetPage>(`${envBase}/assets`, { ...query }),
+      list: (query: AssetListQuery = {}) =>
+        get<AssetPage>(`${envBase}/assets`, assetListParams(query)),
       /**
        * Every asset the query matches, following `nextCursor` a page (`limit`) at a time as the
        * loop asks for more: `for await (const asset of cma.assets.iterate({ kind: 'image' })) …`.
        */
       iterate: (query: AssetListQuery = {}): AsyncGenerator<Asset, void, undefined> =>
-        pages(query.cursor, (cursor) => get<AssetPage>(`${envBase}/assets`, { ...query, cursor })),
+        pages(query.cursor, (cursor) =>
+          get<AssetPage>(`${envBase}/assets`, { ...assetListParams(query), cursor }),
+        ),
       get: (id: string) => get<Asset>(`${envBase}/assets/${e(id)}`),
       /** Hybrid search of the library (full text and semantic), with facet counts. */
       search: (query: AssetSearchQuery) =>

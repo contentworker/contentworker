@@ -99,6 +99,34 @@ describe('the asset library over HTTP', () => {
     expect(bad.status).toBe(422);
   });
 
+  it('looks up assets by ids, with the other filters, refusing more than 100 or a malformed one', async () => {
+    const { app } = makeApp();
+    const png = await upload(app, { fileName: 'a.png', contentType: 'image/png' });
+    const pdf = await upload(app, { fileName: 'b.pdf', contentType: 'application/pdf' });
+    await upload(app, { fileName: 'c.png', contentType: 'image/png' });
+    const list = async (qs: string) =>
+      json<{ items: AssetBody[]; nextCursor?: string }>(
+        await app.request(`${M}/assets?${qs}`, { headers: cpa }),
+      );
+
+    const both = await list(`ids=${png.id},${pdf.id},missing`);
+    expect(both.items.map((a) => a.id).sort()).toEqual([png.id, pdf.id].sort());
+    expect(both.nextCursor).toBeUndefined();
+    expect((await list(`ids=${png.id},${pdf.id}&kind=image`)).items.map((a) => a.id)).toEqual([
+      png.id,
+    ]);
+    // Without limit, a page holds every id it may name.
+    const hundred = [png.id, ...Array.from({ length: 99 }, (_, i) => `x${i}`)].join(',');
+    expect((await list(`ids=${hundred}`)).items.map((a) => a.id)).toEqual([png.id]);
+
+    const tooMany = await app.request(`${M}/assets?ids=${hundred},one-more`, { headers: cpa });
+    expect(tooMany.status).toBe(422);
+    const empty = await app.request(`${M}/assets?ids=${png.id},,${pdf.id}`, { headers: cpa });
+    expect(empty.status).toBe(422);
+    const long = await app.request(`${M}/assets?ids=${'a'.repeat(65)}`, { headers: cpa });
+    expect(long.status).toBe(422);
+  });
+
   it('records the creating principal, and moves assets between folders', async () => {
     const { app } = makeApp();
     const a = await upload(app, { fileName: 'a.png', contentType: 'image/png' });

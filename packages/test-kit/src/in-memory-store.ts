@@ -1070,6 +1070,7 @@ export class InMemoryContentStore implements ContentStore {
         .filter(([, a]) => !f.tag || a.metadata.tags.includes(f.tag))
         .filter(([, a]) => (f.folderId === undefined ? true : (a.folderId ?? null) === f.folderId))
         .filter(([, a]) => !f.contentHash || a.contentHash === f.contentHash)
+        .filter(([, a]) => !f.ids || f.ids.includes(a.id))
         .map(([k, a]) => ({ a, v: sortValue(k, a) }));
       const dir = sort.direction === 'asc' ? 1 : -1;
       rows.sort((x, y) => dir * (x.v - y.v || x.a.id.localeCompare(y.a.id)));

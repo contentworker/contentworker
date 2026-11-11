@@ -1520,6 +1520,10 @@ function assetFilterConditions(filters: AssetFilters): SQL[] {
   if (filters.folderId === null) conds.push(isNull(t.folderId));
   else if (filters.folderId !== undefined) conds.push(eq(t.folderId, filters.folderId));
   if (filters.contentHash) conds.push(eq(t.contentHash, filters.contentHash));
+  // One JSON parameter however many ids, so the list never meets the 100-parameter cap.
+  if (filters.ids) {
+    conds.push(sql`${t.id} IN (SELECT value FROM json_each(${JSON.stringify(filters.ids)}))`);
+  }
   return conds;
 }
 

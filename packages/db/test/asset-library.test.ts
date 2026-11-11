@@ -109,6 +109,34 @@ describe('asset listing on D1', () => {
     expect(new Set(byUpdated).size).toBe(130);
   });
 
+  it('looks up assets by id: past 100 ids in one statement, with the other filters, in its scope', async () => {
+    const scope = freshScope();
+    const created = Array.from({ length: 120 }, (_, i) =>
+      asset({ contentType: i % 2 === 0 ? 'image/png' : 'application/pdf' }),
+    );
+    const gone = asset({ status: 'archived' });
+    for (const a of [...created, gone]) await store.assets.create(scope, a);
+    const elsewhere = { ...scope, environmentId: 'other' };
+    const theirs = asset();
+    await store.assets.create(elsewhere, theirs);
+
+    const wanted = created.slice(0, 110).map((a) => a.id);
+    const asked = [...wanted, 'no-such-asset', theirs.id, gone.id];
+    // The ids ride as one JSON parameter, so 113 of them are one statement under the cap.
+    expect((await everything(scope, { filters: { ids: asked } })).sort()).toEqual(wanted.sort());
+    // AND with the other filters: archived stays hidden unless asked for, kind narrows.
+    expect(await everything(scope, { filters: { ids: asked, status: 'all' } })).toContain(gone.id);
+    expect((await everything(scope, { filters: { ids: asked, kind: 'image' } })).sort()).toEqual(
+      created
+        .filter((_a, i) => i < 110 && i % 2 === 0)
+        .map((a) => a.id)
+        .sort(),
+    );
+    expect(await everything(scope, { filters: { ids: [] } })).toEqual([]);
+    // Another environment's asset is never found by naming its id.
+    expect(await everything(elsewhere, { filters: { ids: asked } })).toEqual([theirs.id]);
+  });
+
   it('refuses a cursor it did not issue', async () => {
     await expect(
       store.assets.list(freshScope(), { cursor: 'not-a-cursor' }),

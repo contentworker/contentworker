@@ -177,6 +177,11 @@ empty. The MCP tools are `asset_folders_list`, `asset_folders_create`, `asset_fo
 (an id, or `root`), `status`, `sort` (`updatedAt`, `createdAt`, `size`) and `order`. Results come a
 page at a time; pass the response's `nextCursor` as `cursor` for the next one.
 
+**Look up several assets at once** with `ids`: `GET …/assets?ids={id},{id}` (MCP `assets_list`
+with `ids: [...]`) returns those of the up to 100 ids that are assets in the environment, in one
+page. It narrows along with the other filters, so archived assets stay out unless `status` asks
+for them; more than 100 ids, or an empty one, is a 422.
+
 **Move** up to 500 assets at once: select them and choose **Move to folder**, or
 `POST …/assets/move` with `{ "ids": [...], "folderId": "..." }` (`null` for the root; MCP
 `assets_move`).

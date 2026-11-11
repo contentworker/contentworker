@@ -696,6 +696,11 @@ export interface AssetFilters {
   readonly status?: AssetStatus | 'all';
   /** Assets whose bytes hash to this (hex SHA-256): duplicate detection. */
   readonly contentHash?: string;
+  /**
+   * Only these assets (ids missing from the scope are simply absent): a batch lookup, such as the
+   * thumbnails a block catalog names. An empty list keeps none.
+   */
+  readonly ids?: readonly string[];
 }
 
 export type AssetSortField = 'updatedAt' | 'createdAt' | 'size';
