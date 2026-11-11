@@ -170,6 +170,23 @@ describe('block catalog tools (MCP), on the HTTP routes’ use-cases', () => {
     });
   });
 
+  it('refuses a push of breakpoints to a principal with only content:write', async () => {
+    const { deps } = await withPage();
+    const writer: Principal = {
+      spaceId: SPACE,
+      kind: 'cma',
+      scopes: [SCOPES.previewRead, SCOPES.contentWrite],
+    };
+    const call = await connect(deps, writer);
+    const pushed = await call('blocks_catalog_push', {
+      blocks: BLOCKS,
+      targets: TARGETS,
+      breakpoints: [{ id: 'lg', name: 'Desktop', minWidth: 1280 }],
+    });
+    expect(pushed.isError).toBe(true);
+    expect(pushed.text).toMatch(/content:manage/);
+  });
+
   it('dry-runs, pushes against the reviewed version, and reads the catalog, versions and usage', async () => {
     const { ctx, deps, scope } = await withPage();
     const call = await connect(deps, {

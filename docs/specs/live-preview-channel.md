@@ -66,11 +66,11 @@ frontend                                   admin
 Every message, in both directions, is dropped unless all three hold. Each check catches
 something the other two miss.
 
-| Check   | Admin side                                                                                       | Frontend side                                      |
-| ------- | ------------------------------------------------------------------------------------------------ | -------------------------------------------------- |
-| Origin  | `event.origin` equals the origin of the URL the admin framed (updated on `navigated`, see below) | `event.origin` equals the configured `adminOrigin` |
-| Sender  | `event.source === iframe.contentWindow`                                                          | `event.source === window.parent`                   |
-| Channel | `data.channel` equals the pinned channel (on an offer: new, well formed)                         | `data.channel` equals its own channel              |
+| Check | Admin side | Frontend side |
+| --- | --- | --- |
+| Origin | `event.origin` equals the origin of the URL the admin framed (updated on `navigated`, see below) | `event.origin` equals the configured `adminOrigin` |
+| Sender | `event.source === iframe.contentWindow` | `event.source === window.parent` |
+| Channel | `data.channel` equals the pinned channel (on an offer: new, well formed) | `data.channel` equals its own channel |
 
 The checks run in one function per side (`acceptMessage`), and every handler goes through it.
 After the checks, the message shape is validated (below), and only then dispatched.
@@ -96,13 +96,13 @@ After the checks, the message shape is validated (below), and only then dispatch
 The offer declares what the page allows. They are fixed at connect time: there is no runtime
 grant.
 
-| Capability     | Lets the admin                                                                 |
-| -------------- | ------------------------------------------------------------------------------ |
-| `select`       | Receive clicks and hovers on marked elements, and send `select` to outline one |
-| `patch.fields` | Send unsaved field values for entries on the page                              |
-| `patch.blocks` | Send key-addressed block operations (create, update, move, remove)             |
-| `proposals`    | Send Coworker's proposed blocks, rendered as ghosts (see `patch.blocks`)       |
-| `scroll`       | Ask the page to scroll a marked element into view                              |
+| Capability | Lets the admin |
+| --- | --- |
+| `select` | Receive clicks and hovers on marked elements, and send `select` to outline one |
+| `patch.fields` | Send unsaved field values for entries on the page |
+| `patch.blocks` | Send key-addressed block operations (create, update, move, remove) |
+| `proposals` | Send Coworker's proposed blocks, rendered as ghosts (see `patch.blocks`) |
+| `scroll` | Ask the page to scroll a marked element into view |
 
 `connect.accept` echoes the subset the admin will use: the offer, narrowed by the space's
 admin config (for example a role that may only select). The admin can narrow, never widen: a
@@ -195,14 +195,10 @@ import { connectPreview } from '@contentworker/sdk/live-preview';
 const preview = connectPreview({
   adminOrigin: 'https://admin.example.com',
   capabilities: ['select', 'patch.fields', 'patch.blocks', 'proposals', 'scroll'],
-  onState(entryId, locale, fields) {
-    /* re-render with these values */
-  },
+  onState(entryId, locale, fields) { /* re-render with these values */ },
 });
 
-preview.on('select', (ref) => {
-  /* … */
-});
+preview.on('select', (ref) => { /* … */ });
 preview.emit('page', { url: location.href, entries });
 preview.close();
 ```
@@ -219,14 +215,14 @@ preview.close();
 
 ## Where the code goes
 
-| Part                                                                      | Location                                                                                                                                                  |
-| ------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Message types, schemas, `acceptMessage`, version list, `isSafeTokenValue` | `packages/sdk/core/src/live-preview/`                                                                                                                     |
-| Frontend half (`connectPreview`)                                          | same, exported as the `@contentworker/sdk/live-preview` subpath (`packages/sdk/sdk`: exports, `src/`, `tsup.config.ts`, `scripts/types.ts`, subpath test) |
-| Admin half (`usePreviewChannel`, the framed canvas)                       | `apps/web/app/cms/...`, importing the protocol from `@contentworker/sdk-core` (`workspace:*`) so both sides share one definition                          |
-| Ref paths                                                                 | `content-ref.ts` (format and parse helpers for paths)                                                                                                     |
-| Runtime wiring and `frame-ancestors`                                      | `contentworker/site` (`@contentworker/frontend`)                                                                                                          |
-| `blocks.patch` ops                                                        | shared with the `patchBlocks` use-case, which is exposed over HTTP and MCP (M6 "Layout patches")                                                          |
+| Part | Location |
+| --- | --- |
+| Message types, schemas, `acceptMessage`, version list, `isSafeTokenValue` | `packages/sdk/core/src/live-preview/` |
+| Frontend half (`connectPreview`) | same, exported as the `@contentworker/sdk/live-preview` subpath (`packages/sdk/sdk`: exports, `src/`, `tsup.config.ts`, `scripts/types.ts`, subpath test) |
+| Admin half (`usePreviewChannel`, the framed canvas) | `apps/web/app/cms/...`, importing the protocol from `@contentworker/sdk-core` (`workspace:*`) so both sides share one definition |
+| Ref paths | `content-ref.ts` (format and parse helpers for paths) |
+| Runtime wiring and `frame-ancestors` | `contentworker/site` (`@contentworker/frontend`) |
+| `blocks.patch` ops | shared with the `patchBlocks` use-case, which is exposed over HTTP and MCP (M6 "Layout patches") |
 
 The channel adds no use-case of its own: it moves unsaved form state and focus between two
 windows. Every change it previews is saved through the existing entry update, and agents get
@@ -267,16 +263,16 @@ Additive, so they need no version bump (see "Version negotiation"): optional fie
 kinds either side may ignore. The frontend half in `@contentworker/sdk/live-preview` speaks all of
 them; an admin that doesn't simply never sends or reads them.
 
-| Extension                                        | What it adds                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `layout` capability and `layout` message         | Frontend → admin: `{ blocks: [{ ref, rect }], slots: [{ ref, rect, gaps }], fields: [{ ref, rect }], scroll, viewport, docHeight, truncated? }`, the geometry the canvas editor draws seams (insertion points) from. A slot is the element marked `data-cw-slot` with the slot's ref (`body`, `body[<key>].items`); each gap is `{ index, rect, axis, after?, before? }`, naming the blocks on either side by `_key`. Sent on change, at most once an animation frame. Fitted to the message limit, on-screen boxes first; `truncated: true` when some were left out. At most 2,000 of each list and 4,000 gaps.                                                                                                                                                                            |
-| `align` and `inset` on `scroll`                  | Admin → frontend: where the element lands, `center` (the default) or `start` / `end`, kept `inset` CSS pixels clear of that edge: the canvas keeps a chosen seam out from under its dock. A page that ignores them centres the element, as before; a value outside the list, or an inset that isn't a number from 0 to 4,000, drops the message.                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| `editing { on }`                                 | Admin → frontend, needs `select`: turns in-page editing (and the inline editor) on or off. On when a session connects with `select`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| `pointer` with `ref` and `rect` `null`           | A hover that left every marked element, so the admin can clear its outline.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| `entryId` on `applied` and `failed`              | `rev` counts per entry, so the acknowledgement names the entry.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| `failed` reasons `invalid`, `conflict`, `render` | Beside `gap`: a patch or state that failed its schema (answered when its `entryId` and `rev` are readable; a state that fails is not resent, since it would fail again: the admin says the entry can't be previewed), block ops the page couldn't place, and an `onState` that threw. Each is answered, like `gap`, with a fresh `entry.state`. `invalid` and `conflict` leave the entry's `rev` where it was, so no later patch lands on stale fields; after `render` the patch stays applied (its `rev` counts) and nothing is acknowledged until a later render succeeds, whose `applied { rev }` covers every rev up to it.                                                                                                                                                             |
-| `disconnect` event                               | `preview.on('disconnect')`: the session ended (client-side navigation) and the page is offering again on a new channel; every entry's unsaved state is gone. The page reports `page` again to the new session.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| `view` argument to `onState`                     | `(entryId, locale, fields, view)`: `fields` stays the unsaved state without proposals; `view.withProposals` is what to render and `view.ghosts` (`inserted`, `changed`, `removed`) names the ghost blocks by `_key`. A proposed op must name every block it brings by `_key` (a proposed insert with a keyless block anywhere in its slots, or a proposed `duplicate`, is `invalid`), so the admin can always name a ghost; `ref`s among one message's proposals resolve to those keys. A proposed `remove` of a proposed block takes it back, with everything proposed in or beside it; a fresh `entry.state` clears all proposals. An entry holds at most 200, since each render lays every one over the fields (past that, `conflict`). `proposals` is offered only with `patch.blocks`. |
+| Extension | What it adds |
+| --- | --- |
+| `layout` capability and `layout` message | Frontend → admin: `{ blocks: [{ ref, rect }], slots: [{ ref, rect, gaps }], fields: [{ ref, rect }], scroll, viewport, docHeight, truncated? }`, the geometry the canvas editor draws seams (insertion points) from. A slot is the element marked `data-cw-slot` with the slot's ref (`body`, `body[<key>].items`); each gap is `{ index, rect, axis, after?, before? }`, naming the blocks on either side by `_key`. Sent on change, at most once an animation frame. Fitted to the message limit, on-screen boxes first; `truncated: true` when some were left out. At most 2,000 of each list and 4,000 gaps. |
+| `align` and `inset` on `scroll` | Admin → frontend: where the element lands, `center` (the default) or `start` / `end`, kept `inset` CSS pixels clear of that edge: the canvas keeps a chosen seam out from under its dock. A page that ignores them centres the element, as before; a value outside the list, or an inset that isn't a number from 0 to 4,000, drops the message. |
+| `editing { on }` | Admin → frontend, needs `select`: turns in-page editing (and the inline editor) on or off. On when a session connects with `select`. |
+| `pointer` with `ref` and `rect` `null` | A hover that left every marked element, so the admin can clear its outline. |
+| `entryId` on `applied` and `failed` | `rev` counts per entry, so the acknowledgement names the entry. |
+| `failed` reasons `invalid`, `conflict`, `render` | Beside `gap`: a patch or state that failed its schema (answered when its `entryId` and `rev` are readable; a state that fails is not resent, since it would fail again: the admin says the entry can't be previewed), block ops the page couldn't place, and an `onState` that threw. Each is answered, like `gap`, with a fresh `entry.state`. `invalid` and `conflict` leave the entry's `rev` where it was, so no later patch lands on stale fields; after `render` the patch stays applied (its `rev` counts) and nothing is acknowledged until a later render succeeds, whose `applied { rev }` covers every rev up to it. |
+| `disconnect` event | `preview.on('disconnect')`: the session ended (client-side navigation) and the page is offering again on a new channel; every entry's unsaved state is gone. The page reports `page` again to the new session. |
+| `view` argument to `onState` | `(entryId, locale, fields, view)`: `fields` stays the unsaved state without proposals; `view.withProposals` is what to render and `view.ghosts` (`inserted`, `changed`, `removed`) names the ghost blocks by `_key`. A proposed op must name every block it brings by `_key` (a proposed insert with a keyless block anywhere in its slots, or a proposed `duplicate`, is `invalid`), so the admin can always name a ghost; `ref`s among one message's proposals resolve to those keys. A proposed `remove` of a proposed block takes it back, with everything proposed in or beside it; a fresh `entry.state` clears all proposals. An entry holds at most 200, since each render lays every one over the fields (past that, `conflict`). `proposals` is offered only with `patch.blocks`. |
 
 Behaviour the spec leaves open, as the frontend implements it:
 

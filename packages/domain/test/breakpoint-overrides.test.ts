@@ -269,7 +269,7 @@ describe('breakpoints and responsive on the push', () => {
 describe('_responsive on a save', () => {
   const page = pushed();
 
-  it('takes declared overrides, at any depth, and checks each value as its prop', () => {
+  it('takes declared overrides at any depth; their values are the edit’s to judge', () => {
     const value = body([
       { _type: 'hero', size: 'md', _responsive: { lg: { size: 'xl' }, md: { hidden: true } } },
       {
@@ -279,13 +279,19 @@ describe('_responsive on a save', () => {
     ]);
     expect(validateEntryFields(page, value, VCTX)).toEqual([]);
     const bad = body([
-      { _type: 'hero', _responsive: { lg: { size: 'huge', hidden: 'yes' } } },
+      { _type: 'hero', _key: 'a', _responsive: { lg: { size: 'huge', hidden: 'yes' } } },
       { _type: 'section', items: [{ _type: 'hero', _responsive: { md: { size: null } } }] },
     ]);
-    expect(validateEntryFields(page, bad, VCTX).map((i) => i.field)).toEqual([
-      'body[0]._responsive.lg.size',
-      'body[0]._responsive.lg.hidden',
-      'body[1].items[0]._responsive.md.size',
+    // Validation passes a value over (a push may have narrowed it out: stale); a new edit doesn't.
+    expect(validateEntryFields(page, bad, VCTX)).toEqual([]);
+    expect(undeclaredOverrides(page, bad, undefined)).toMatchObject([
+      { field: 'body[0]._responsive.lg.size', code: 'override_invalid', key: 'a' },
+      {
+        field: 'body[0]._responsive.lg.hidden',
+        code: 'override_invalid',
+        message: 'Expected a boolean',
+      },
+      { field: 'body[1].items[0]._responsive.md.size', code: 'override_invalid' },
     ]);
   });
 
@@ -348,9 +354,6 @@ describe('_responsive on a save', () => {
 
 describe('an undeclared override in a new edit', () => {
   const page = pushed();
-  const local = (locale: string, blocks: unknown[]): EntryFields => ({
-    body: { [locale]: blocks },
-  });
 
   it('is named by block and breakpoint, at any depth', () => {
     const after = body([
@@ -369,28 +372,76 @@ describe('an undeclared override in a new edit', () => {
     ]);
   });
 
-  it('passes what the same block carried in the same field and locale, and nothing else', () => {
-    const stale = [{ _type: 'hero', _key: 'a', _responsive: { xl: { size: 'sm' } } }];
-    expect(undeclaredOverrides(page, body(stale), body(stale))).toEqual([]);
-    // Another prop at the stale breakpoint, another block, another locale: all new.
-    const before = body(stale);
+  it('passes what the stored entry carried for that block type anywhere, and nothing else', () => {
+    const stale = { _type: 'hero', _key: 'a', _responsive: { xl: { size: 'sm' } } };
+    const before = body([stale]);
+    expect(undeclaredOverrides(page, before, before)).toEqual([]);
+    // Moved under a section, duplicated under a new key, copied to another locale: still stale.
+    expect(
+      undeclaredOverrides(
+        page,
+        {
+          body: {
+            'en-US': [
+              { ...stale, _key: 'copy' },
+              { _type: 'section', _key: 's', items: [stale] },
+            ],
+            'de-DE': [stale],
+          },
+        },
+        before,
+      ),
+    ).toEqual([]);
+    // Another prop at the stale breakpoint is new.
     expect(
       undeclaredOverrides(
         page,
         body([{ _type: 'hero', _key: 'a', _responsive: { xl: { size: 'sm', hidden: true } } }]),
         before,
       ),
-    ).toHaveLength(1);
-    expect(undeclaredOverrides(page, body([{ ...stale[0], _key: 'b' }]), before)).toHaveLength(1);
-    expect(undeclaredOverrides(page, local('de-DE', stale), before)).toHaveLength(1);
-    // What validation refuses on its own isn't judged twice.
+    ).toMatchObject([{ field: 'body[0]._responsive.xl', message: expect.stringContaining('xl') }]);
+    // `base` and a malformed id are refused, so the save never drops them unsaid.
     expect(
       undeclaredOverrides(
         page,
-        body([{ _type: 'hero', _responsive: { base: {}, '2x': {}, md: 'x' } }]),
+        body([
+          { _type: 'hero', _responsive: { base: { size: 'sm' }, '2x': { size: 'sm' }, md: 'x' } },
+        ]),
         undefined,
       ),
-    ).toEqual([]);
+    ).toMatchObject([
+      { field: 'body[0]._responsive.base', code: 'override_undeclared' },
+      { field: 'body[0]._responsive.2x', code: 'override_undeclared' },
+    ]);
+  });
+
+  it('passes a value a push narrowed out only when the stored entry held that value', () => {
+    const narrowed = pushed(BREAKPOINTS, [
+      {
+        ...HERO,
+        fields: HERO.fields.map((f) =>
+          f.apiId === 'size' ? { ...f, validations: { in: ['sm', 'md'] } } : f,
+        ),
+      },
+      SECTION,
+    ]);
+    const before = body([{ _type: 'hero', _key: 'a', _responsive: { lg: { size: 'xl' } } }]);
+    expect(undeclaredOverrides(narrowed, before, before)).toEqual([]);
+    expect(
+      undeclaredOverrides(
+        narrowed,
+        body([{ _type: 'hero', _key: 'b', _responsive: { md: { size: 'xl' } } }]),
+        body([]),
+      ),
+    ).toMatchObject([{ code: 'override_invalid' }]);
+    // The save drops it, and the push that narrowed it counts it.
+    expect(assignBlockKeys(narrowed, before, () => 'n').body?.['en-US']).toEqual([
+      { _type: 'hero', _key: 'a' },
+    ]);
+    expect(narrowsOverrides(page.fields, narrowed.fields)).toBe(true);
+    expect(staleOverrideUses(page.fields, narrowed.fields, before)).toMatchObject([
+      { block: 'hero', breakpoint: 'lg', prop: 'size' },
+    ]);
   });
 });
 

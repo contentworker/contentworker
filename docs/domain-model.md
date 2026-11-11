@@ -29,21 +29,21 @@ locale, keeping the read/write paths uniform.
 A content type is an ordered list of typed, validated fields. The 13 field types
 (`FIELD_TYPES`):
 
-| Type        | Represents                                               | Stored value                   |
+| Type        | Represents                                          | Stored value                   |
 | ----------- | -------------------------------------------------------- | ------------------------------ |
-| `Symbol`    | Short single-line text                                   | `string`                       |
-| `Slug`      | URL-safe identifier (normalized on write)                | `string`                       |
-| `Text`      | Long multi-line text                                     | `string`                       |
-| `RichText`  | Structured rich-text document                            | object                         |
-| `Integer`   | Whole number                                             | integer                        |
-| `Number`    | Floating-point number                                    | number                         |
-| `Boolean`   | True/false                                               | boolean                        |
+| `Symbol`    | Short single-line text                              | `string`                       |
+| `Slug`      | URL-safe identifier (normalized on write)           | `string`                       |
+| `Text`      | Long multi-line text                                | `string`                       |
+| `RichText`  | Structured rich-text document                       | object                         |
+| `Integer`   | Whole number                                        | integer                        |
+| `Number`    | Floating-point number                               | number                         |
+| `Boolean`   | True/false                                          | boolean                        |
 | `Date`      | A date, date and time, or time of day (`format`)         | string                         |
-| `Location`  | Geographic point                                         | `{ lat: number, lon: number }` |
-| `Seo`       | Search engine metadata (see [SEO](#seo-and-the-sitemap)) | object of fixed shape          |
-| `JSON`      | Arbitrary JSON                                           | object                         |
-| `Link`      | Reference to an Entry or Asset                           | `{ id, linkType }`             |
-| `Component` | A group of nested typed fields                           | object keyed by nested apiId   |
+| `Location`  | Geographic point                                    | `{ lat: number, lon: number }` |
+| `Seo`       | Search engine metadata (see [SEO](#seo-and-the-sitemap)) | object of fixed shape     |
+| `JSON`      | Arbitrary JSON                                      | object                         |
+| `Link`      | Reference to an Entry or Asset                      | `{ id, linkType }`             |
+| `Component` | A group of nested typed fields                      | object keyed by nested apiId   |
 | `Array`     | List of scalars, `Link`s or `Component`s (or blocks)     | array                          |
 
 ### Components and repeaters
@@ -120,11 +120,11 @@ repeater is unchanged: its elements carry neither key.
   so a block keeps its identity across edits and reorders. Validation does not require `_key`
   (an AI draft or an import dry-run is judged on content), but a present key must be a non-empty
   string used once in the field value: a duplicate is refused at `body[i]`.
-- **`_responsive` is let through and dropped.** A block's per-breakpoint overrides
-  (`docs/specs/breakpoint-overrides.md`) aren't declared by any field yet: validation passes the
-  key over on any block, whatever it holds, and `assignBlockKeys` drops it on every save, copies
-  included. It ships ahead of the overrides themselves, so a rollback past them never leaves an
-  entry that can't be saved, only one that loses its overrides on its next save.
+- **`_responsive` holds a block's per-breakpoint overrides** (see
+  [Per-breakpoint overrides](#block-catalogs) under Block catalogs). The release before them let
+  the key through on any block and dropped it on every save, copies included, so a rollback past
+  them never leaves an entry that can't be saved, only one that loses its overrides on its next
+  save. Overrides ship after it, never in the same release.
 - **`_key` is unique per list, not per tree.** Validation refuses a key repeated within one field
   value at one level, but the same key at two depths (a section pasted inside itself with its
   keys) is stored. Keys minted on write never collide; a caller's can.
@@ -761,12 +761,12 @@ plugin's capabilities) and `system` (the scheduler). The HTTP routes and the MCP
 context per request (`actingAs`); a bulk job records who started it in its `config.actor` and its
 chunks write as them; a promotion writes as whoever approved it.
 
-| Field              | Set by                                                    | `sys.*`                |
-| ------------------ | --------------------------------------------------------- | ---------------------- |
-| `createdAt`        | creation (kept by a clone, a merge or a promotion)        | `sys.createdAt`        |
-| `createdBy`        | creation (kept likewise; never from an uploaded snapshot) | `sys.createdBy`        |
-| `updatedBy`        | every change, the one `sys.updatedAt` records             | `sys.updatedBy`        |
-| `firstPublishedAt` | the first publish only; kept through unpublish            | `sys.firstPublishedAt` |
+| Field              | Set by                                                   | `sys.*`              |
+| ------------------ | -------------------------------------------------------- | -------------------- |
+| `createdAt`        | creation (kept by a clone, a merge or a promotion)       | `sys.createdAt`      |
+| `createdBy`        | creation (kept likewise; never from an uploaded snapshot) | `sys.createdBy`      |
+| `updatedBy`        | every change, the one `sys.updatedAt` records            | `sys.updatedBy`      |
+| `firstPublishedAt` | the first publish only; kept through unpublish           | `sys.firstPublishedAt` |
 
 The store writes creation once and `first_published_at` with `COALESCE`, so a stale aggregate or a
 lost race never moves either; the publish upsert copies `entry_published.first_published_at` from
@@ -1152,13 +1152,13 @@ page's metadata without reading the model. Being a field, it is versioned with t
 with the entry, localized when the field is, and delivered with the entry's other fields. A content
 type opts in by declaring one.
 
-| Part           | Type             | Rule                                                                                            |
+| Part           | Type                     | Rule                                                                                 |
 | -------------- | ---------------- | ----------------------------------------------------------------------------------------------- |
-| `title`        | `Symbol`         | at most `MAX_SEO_TITLE_LENGTH` (200)                                                            |
-| `description`  | `Text`           | at most `MAX_SEO_DESCRIPTION_LENGTH` (500)                                                      |
-| `canonicalUrl` | `Symbol`         | a site path (`/…`, not `//…`) or an absolute `http(s)` URL (`canonicalUrlIssue`); at most 2,048 |
-| `noindex`      | `Boolean`        | keeps the page out of search results and the sitemap                                            |
-| `ogImage`      | `Link` (`Asset`) | the social image; a reference edge like any link (integrity, purges)                            |
+| `title`        | `Symbol`                 | at most `MAX_SEO_TITLE_LENGTH` (200)                                                 |
+| `description`  | `Text`                   | at most `MAX_SEO_DESCRIPTION_LENGTH` (500)                                           |
+| `canonicalUrl` | `Symbol`                 | a site path (`/…`, not `//…`) or an absolute `http(s)` URL (`canonicalUrlIssue`); at most 2,048 |
+| `noindex`      | `Boolean`                | keeps the page out of search results and the sitemap                                 |
+| `ogImage`      | `Link` (`Asset`)         | the social image; a reference edge like any link (integrity, purges)                 |
 
 A type declares at most one `Seo` field, at the top level only (never inside a component), and it
 cannot be `unique` or carry nested `fields`. Validation, reference extraction, GraphQL (an object
@@ -1261,14 +1261,7 @@ interface BlockManifest {
   thumbnail?: { assetId: string } | { url: string }; // https only
   aliases?: string[]; // former ids
   fields: FieldDefinition[]; // props, the content model's vocabulary
-  slots?: {
-    apiId: string;
-    name: string;
-    help?: string;
-    allowedChildren: string[];
-    min?: number;
-    max?: number;
-  }[];
+  slots?: { apiId: string; name: string; help?: string; allowedChildren: string[]; min?: number; max?: number }[];
   allowedParents?: string[];
   responsive?: string[]; // props that take per-breakpoint overrides
 }
@@ -1279,13 +1272,7 @@ interface BlockCatalog {
   blocks: BlockManifest[];
   targets: { contentTypeApiId: string; field: string; blocks?: string[] }[];
   breakpoints: { id: string; name: string; minWidth: number }[]; // [] when none
-  changes: {
-    added: string[];
-    changed: string[];
-    removed: string[];
-    renamed: { from: string; to: string }[];
-    breakpoints?: true;
-  };
+  changes: { added: string[]; changed: string[]; removed: string[]; renamed: { from: string; to: string }[]; breakpoints?: true };
   pushedAt: string;
   pushedBy: string | null; // auditActor of the caller; null for SYSTEM_CALLER
 }
@@ -1337,26 +1324,40 @@ field (`items.breakpoints`, top-level blocks fields only; a slot's blocks fields
 field's) and each block's `responsive` onto its variant (`ComponentVariant.responsive`), so
 validation needs only the content type; a target's breakpoint change is a field change
 (`BlockFieldChange.breakpoints`). A block holds its overrides beside its props in `_responsive`
-(`{ lg: { size: 'xl' } }`), not localized. Validation checks each override of a declared
-breakpoint and a listed prop as that prop, and refuses a non-map, `base` or a malformed id; an
-override of anything else passes validation, so stored content never fails over it. A new edit
-(create, update, block patch, import: the path that runs `assertBlockConfigAllows`) is also judged
-by `undeclaredOverrides` against the version it replaces, before keys are assigned: an override
-of an undeclared breakpoint or prop is refused (`override_undeclared`, at
-`body[0]._responsive.xl`, with the block's `key`) unless the same block (same `_key`, top-level
-field and locale) carried that pair before, which makes it **stale** (a later push removed it).
-Copies aren't judged. `assignBlockKeys`
-drops stale overrides and empty maps on write (`cleanOverrides`), so a save never fails over them;
-a frozen region compares overrides without the stale ones, so that drop is no edit. A block patch
-`update` sets or unsets `_responsive` whole, on a variant with `responsive`. The push and its dry
-run report `staleOverrides`: `narrowsOverrides` says whether a revision can strand any, and
-`staleOverrideUses` counts them per block, breakpoint and prop over the current version of each
-entry outside the trash (up to `MAX_BLOCK_USAGE_SCAN` per type). A promotion adds a risk line
-(and so waits for approval) when `staleOverridesOf`, judged from each target type as the target
-stores it to the type the promotion leaves, finds any. GraphQL gives a block with
-responsive props `responsive: <BlockType>Responsive` (one nullable field per breakpoint of its
-props), its types named after every existing one so none is renamed; codegen types
-`_responsive` and exports `breakpoints`; `resolveBlocks` and `responsiveProp` in the SDK read them.
+(`{ lg: { size: 'xl' } }`), not localized.
+
+- **Stale.** An override is stale when its breakpoint isn't declared any more, its prop isn't in
+  the variant's `responsive`, or its value is no longer one its prop takes (a push narrowed `in`
+  or retyped the prop). `assignBlockKeys` drops stale overrides and empty maps on every save
+  (`cleanOverrides`, with `overrideValueProblem` for values), so a save never fails over one; a
+  frozen region compares overrides without them, so the drop is no edit. Validation judges only
+  the shape (a non-map, `base` or a malformed id), so stored-content checks (snapshots, merges,
+  compare, restores) stay tolerant.
+- **New edits.** A create, update, block patch or import (the path that runs
+  `assertBlockConfigAllows`) is first judged by `undeclaredOverrides`, as sent: an override of
+  `base`, a malformed or undeclared breakpoint, or a prop not in `responsive` is refused
+  (`override_undeclared`, at `body[0]._responsive.xl`, with the block's `key`), and a value its
+  prop doesn't take is refused (`override_invalid`, at `body[0]._responsive.lg.size`). Unless the
+  stored version the edit replaces already holds that block type, breakpoint and prop (and, for a
+  value, that value) anywhere, in any field and locale: then it is stale, carried by a move, a
+  duplicate, an undo, a locale copy or a client sending the entry back, and the save drops it.
+  Copies aren't judged; an environment merge drops the target's stale ones before it stores
+  (`withoutStaleOverrides`).
+- **Reports.** `narrowsOverrides` says whether a revision can strand any; `staleOverrideUses`
+  finds them per block, breakpoint and prop; `staleOverridesOf` (application) counts them over the
+  current version of each entry outside the trash, up to `MAX_STALE_OVERRIDE_SCAN` per type. The
+  push and its dry run report them in `staleOverrides`; a content type update returns them as
+  `warnings`; a promotion adds a risk line, and so waits for approval, for each target type whose
+  stored definition the promotion's types (and catalog, when it copies one) would strand any,
+  leaving out the target entries it replaces.
+- **Patches.** A block patch `update` sets or unsets `_responsive` whole, on a variant with
+  `responsive`.
+- **Reads.** Delivery serves `_responsive` as stored. GraphQL gives a block with responsive props
+  `_responsive: <BlockType>Responsive` (one nullable field per breakpoint of its props, a value
+  its prop doesn't take served as null), its types named after every existing one so none is
+  renamed; codegen types `_responsive` and exports `breakpoints`; the SDK's `resolveBlocks` and
+  `responsiveProp` give only declared overrides, and only token values when the catalog or
+  variants give the props.
 
 Variant **aliases** (`ComponentVariant.aliases`) belong to the content model, not only the
 catalog: `variantOf` and validation resolve a former apiId to its variant, `assignBlockKeys`
@@ -1374,23 +1375,11 @@ a push of the target's own (see [Block configs](#block-configs) and
 block catalog: narrowings laid over it per target and per block slot, never wider than the code.
 
 ```ts
-interface SlotNarrowing {
-  allowedChildren?: string[];
-  min?: number;
-  max?: number;
-  locked?: boolean;
-}
+interface SlotNarrowing { allowedChildren?: string[]; min?: number; max?: number; locked?: boolean }
 
 interface BlockConfig {
   version: number; // 0 before the first set, then one more per set that changes something
-  targets: {
-    contentTypeApiId: string;
-    field: string;
-    blocks?: string[];
-    min?: number;
-    max?: number;
-    locked?: boolean;
-  }[];
+  targets: { contentTypeApiId: string; field: string; blocks?: string[]; min?: number; max?: number; locked?: boolean }[];
   blocks: { block: string; slots: Record<string, SlotNarrowing> }[]; // wherever the block is placed
   updatedAt: string | null;
   updatedBy: string | null;
@@ -1725,24 +1714,24 @@ See [Auth & RBAC](./auth-and-rbac.md) for the full model. The domain owns: the `
 
 All extend `DomainError` (`{ code, message, details? }`) and carry a stable, client-facing `code`:
 
-| Class                                 | `code`              | HTTP | Meaning                                                                        |
+| Class                                 | `code`              | HTTP | Meaning                                                          |
 | ------------------------------------- | ------------------- | ---- | ------------------------------------------------------------------------------ |
-| `NotFoundError(resource, id)`         | `not_found`         | 404  | Resource missing                                                               |
-| `ValidationError(issues)`             | `validation_failed` | 422  | Carries `issues: FieldIssue[]`                                                 |
+| `NotFoundError(resource, id)`         | `not_found`         | 404  | Resource missing                                                 |
+| `ValidationError(issues)`             | `validation_failed` | 422  | Carries `issues: FieldIssue[]`                                   |
 | `ConflictError(message, details?)`    | `conflict`          | 409  | Uniqueness or identity violation (e.g. duplicate apiId); `details` on the wire |
-| `TransactionConflictError` (ports)    | `conflict`          | 409  | A compare-and-set lost inside a unit of work; nothing committed                |
-| `LastAdminError`                      | `last_admin`        | 409  | Would leave the space with no active administrator                             |
-| `PublishGatedError(entries)`          | `publish_gated`     | 409  | A publish of an entry a gated workflow covers, outside its runs                |
-| `AssetInUseError(assetId, usage)`     | `asset_in_use`      | 409  | Entries still link to the asset (`usage`, `total`)                             |
-| `InvalidStateError(message)`          | `invalid_state`     | 400  | Illegal state-machine transition                                               |
-| `QueryTooBroadError(scanLimit)`       | `query_too_broad`   | 400  | A field query matched more candidates than the store evaluates                 |
-| `UnauthorizedError(message?)`         | `unauthorized`      | 401  | Invalid/missing credentials                                                    |
-| `ForbiddenError(scope)`               | `forbidden`         | 403  | Missing the required scope                                                     |
-| `HookRejectedError(hook, reason)`     | `hook_rejected`     | 422  | A write-path hook refused the operation                                        |
-| `RateLimitedError(message, retry?)`   | `rate_limited`      | 429  | A per-space rate or budget ceiling was exceeded                                |
-| `AiUnavailableError(message, retry?)` | `ai_unavailable`    | 503  | The model didn't answer within the call's cap; retryable                       |
-| `NotConfiguredError(capability, msg)` | `not_configured`    | 501  | The deployment has not bound the capability the request needs                  |
-| `SecretUnreadableError(context)`      | `secret_unreadable` | 500  | A stored secret no configured key opens (never treated as unset)               |
+| `TransactionConflictError` (ports)    | `conflict`          | 409  | A compare-and-set lost inside a unit of work; nothing committed  |
+| `LastAdminError`                      | `last_admin`        | 409  | Would leave the space with no active administrator               |
+| `PublishGatedError(entries)`          | `publish_gated`     | 409  | A publish of an entry a gated workflow covers, outside its runs  |
+| `AssetInUseError(assetId, usage)`     | `asset_in_use`      | 409  | Entries still link to the asset (`usage`, `total`)               |
+| `InvalidStateError(message)`          | `invalid_state`     | 400  | Illegal state-machine transition                                 |
+| `QueryTooBroadError(scanLimit)`       | `query_too_broad`   | 400  | A field query matched more candidates than the store evaluates   |
+| `UnauthorizedError(message?)`         | `unauthorized`      | 401  | Invalid/missing credentials                                      |
+| `ForbiddenError(scope)`               | `forbidden`         | 403  | Missing the required scope                                       |
+| `HookRejectedError(hook, reason)`     | `hook_rejected`     | 422  | A write-path hook refused the operation                          |
+| `RateLimitedError(message, retry?)`   | `rate_limited`      | 429  | A per-space rate or budget ceiling was exceeded                  |
+| `AiUnavailableError(message, retry?)` | `ai_unavailable`    | 503  | The model didn't answer within the call's cap; retryable         |
+| `NotConfiguredError(capability, msg)` | `not_configured`    | 501  | The deployment has not bound the capability the request needs    |
+| `SecretUnreadableError(context)`      | `secret_unreadable` | 500  | A stored secret no configured key opens (never treated as unset) |
 
 `OAuthError` (`oauth_<error>`) carries its own wire code and status for the OAuth endpoints, and
 `PluginCapabilityDeniedError` (`capability_denied`) refuses a plugin call outside its grant.

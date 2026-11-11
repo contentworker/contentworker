@@ -191,33 +191,38 @@ Overrides sit beside the props, in `_responsive`, keyed by breakpoint id:
 ```
 
 The bare prop stays the base, required as before, so a frontend that knows nothing of breakpoints
-renders the base and keeps working. Each override is checked as the prop itself is (its `in`, its
-type); `_responsive` isn't localized; an empty map, or a breakpoint with no props, is removed on
-save. Delivery serves `_responsive` as stored, and only on blocks someone gave an override. In
-GraphQL, a block with responsive props has a `responsive` field (`PageSectionsHeroResponsive`),
-one nullable field per breakpoint holding the props; it is named `_responsive` when the block
-already has a prop called `responsive`. An `update` [block patch](/reference/field-types/#blocks) sets or unsets
-`_responsive` as a whole.
+renders the base and keeps working. `_responsive` isn't localized; an empty map, or a breakpoint
+with no props, is removed on save. Delivery serves `_responsive` as stored, and only on blocks
+someone gave an override. In GraphQL, a block with responsive props has a `_responsive` field
+(`PageSectionsHeroResponsive`), one nullable field per breakpoint holding the props, a value that
+isn't one of its prop's tokens served as `null`. An `update`
+[block patch](/reference/field-types/#blocks) sets or unsets `_responsive` as a whole.
 
 ### Stale overrides
 
-A push can remove a breakpoint, or a prop from `responsive`, while entries still hold overrides
-for it. Those overrides are stale. They never fail a save: each entry drops them on its next save,
-the way a renamed block takes its new id, and reads serve them as stored until then. The push (and
-its dry run) reports them in `staleOverrides`, by content type, block, breakpoint and prop, with
-how many blocks and entries carry one (the current version of each entry outside the trash, up to
-2,000 entries per type; `complete: false` past that). It doesn't refuse the push. A
-[promotion](/guides/environments/#promote-changes-to-the-live-environment) whose catalog would make
-the target's overrides stale waits for approval, saying how many blocks and which breakpoints and
-props.
+A push can remove a breakpoint, remove a prop from `responsive`, or narrow a prop's `in` (or
+retype it), while entries still hold overrides for it. Those overrides are stale. They never fail
+a save: each entry drops them on its next save, the way a renamed block takes its new id, and
+reads serve them as stored until then. The push (and its dry run) reports them in
+`staleOverrides`, by content type, block, breakpoint and prop, with how many blocks and entries
+carry one (the current version of each entry outside the trash, up to 2,000 entries per type;
+`complete: false` past that); it doesn't refuse the push. Editing the content type by hand
+reports them the same way, as `warnings`. A
+[promotion](/guides/environments/#promote-changes-to-the-live-environment) whose content types or
+catalog would make the target's overrides stale waits for approval, saying how many blocks and
+which breakpoints and props (entries the promotion itself writes over don't count).
 
-An override nothing declares is only stale when the block already had it. In an edit (a create,
-an update, a block patch, an import), an override of a breakpoint the field doesn't declare, or of
-a prop not in the block's `responsive`, is refused with `422` and the code `override_undeclared`,
-naming the block and breakpoint (`sections[0]._responsive.xl`), unless the same block (same `_key`,
-field and locale) carried that breakpoint and prop in the version the edit replaces. So a typo is
-caught, and sending a stored entry back with its stale overrides still saves. Copies (snapshot
-restores, clones, promotions, merges, version restores) carry what was stored and aren't judged.
+An undeclared override is only stale when the entry already had it. In an edit (a create, an
+update, a block patch, an import), an override of `base`, of a breakpoint the field doesn't
+declare, or of a prop not in the block's `responsive` is refused with `422` and the code
+`override_undeclared`, naming the block and breakpoint (`sections[0]._responsive.xl`); a value its
+prop doesn't take is refused as `override_invalid` (`sections[0]._responsive.lg.size`). Unless the
+version the edit replaces already holds an override of that block type, breakpoint and prop (with
+that value), in any field or locale: then it was carried, by moving, duplicating or copying a
+block, undoing a change or sending the entry back, and the save drops it. So a typo is caught, and
+stored overrides never block a save. Copies (snapshot restores, clones, promotions, version
+restores) carry what was stored and aren't judged; an environment merge drops the overrides the
+target's type doesn't take before it stores the entry.
 
 ## Renaming a block
 
@@ -382,10 +387,16 @@ const { items } = renderBlocks<BlockTypes, string>(entry.fields.sections, {
 ### Per-breakpoint values
 
 Each resolved block carries `responsive`: its overrides in breakpoint order, with any the catalog
-no longer declares left out. `responsiveProp(block, prop, catalog)` reads one prop at every width,
-`{ base: 'md', lg: 'xl' }`. Applying it is your CSS: a class per breakpoint, a custom property per
-media query, or a container query. A server-rendered page can't know the screen's width, so the
-SDK never picks one value.
+no longer declares left out, and, when the catalog's blocks (or the `variants`) carry their
+`fields`, any value that isn't one of its prop's tokens. `responsiveProp(block, prop, catalog)`
+reads one prop at every width, `{ base: 'md', lg: 'xl' }`. Applying it is your CSS: a class per
+breakpoint, a custom property per media query, or a container query. A server-rendered page can't
+know the screen's width, so the SDK never picks one value.
+
+Treat an override value as you treat the bare prop: match it against the token list before it goes
+into a class name, a `style` attribute or any other markup, never interpolate it as it is.
+Delivery serves `_responsive` as stored, so a value written by hand, or one a later push narrowed
+out, reaches a page until the entry is saved again.
 
 ```tsx
 import { responsiveProp } from '@contentworker/sdk/react';

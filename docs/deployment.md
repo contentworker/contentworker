@@ -21,22 +21,22 @@ For bindings and vars, see [Configuration](./configuration.md); for what each wo
 One file per deployment, in the directory `FLEET_REGISTRY` names (this repository ships none; a
 fork's own is `deployments/`, and `examples/fleet/example.jsonc` is a held starting point), parsed by `toDeployment` in `scripts/fleet.ts`:
 
-| Field           | Meaning                                                                                                                                                                                                                                 |
-| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `id`            | Lowercase id; reserved words (`api`, `cdn`, `admin`, `docs`, …) need an explicit `domain`                                                                                                                                               |
-| `ring`          | `staging`, `internal`, `canary` or `general`                                                                                                                                                                                            |
-| `slot`          | 1–999, unique; keeps each deployment's rate-limit namespaces apart (`slot × 1000 + n`)                                                                                                                                                  |
-| `domain`        | The admin host; default `<id>.contentworker.app`. The api is `api.<domain>`, delivery `cdn.<domain>`, media `media.<domain>`                                                                                                            |
-| `suffix`        | Appended to every account-wide resource name; default `-<id>` (`""` keeps the base names in `apps/*/wrangler.jsonc`)                                                                                                                    |
-| `environment`   | The GitHub environment holding its secrets; default `deploy-<id>`                                                                                                                                                                       |
-| `d1Id`, `kvId`  | Recorded by `scripts/provision.sh`; required to render                                                                                                                                                                                  |
-| `jurisdiction`  | `eu` or `fedramp`, for the database, object storage and stateful objects (set at creation)                                                                                                                                              |
-| `hold`          | Skipped by CI: stays on what it runs now                                                                                                                                                                                                |
-| `docs`          | Also deploys the public docs site                                                                                                                                                                                                       |
+| Field           | Meaning                                                                                                                                                                        |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `id`            | Lowercase id; reserved words (`api`, `cdn`, `admin`, `docs`, …) need an explicit `domain`                                                                                      |
+| `ring`          | `staging`, `internal`, `canary` or `general`                                                                                                                                   |
+| `slot`          | 1–999, unique; keeps each deployment's rate-limit namespaces apart (`slot × 1000 + n`)                                                                                         |
+| `domain`        | The admin host; default `<id>.contentworker.app`. The api is `api.<domain>`, delivery `cdn.<domain>`, media `media.<domain>`                                                   |
+| `suffix`        | Appended to every account-wide resource name; default `-<id>` (`""` keeps the base names in `apps/*/wrangler.jsonc`)                                                                                    |
+| `environment`   | The GitHub environment holding its secrets; default `deploy-<id>`                                                                                                              |
+| `d1Id`, `kvId`  | Recorded by `scripts/provision.sh`; required to render                                                                                                                         |
+| `jurisdiction`  | `eu` or `fedramp`, for the database, object storage and stateful objects (set at creation)                                                                                     |
+| `hold`          | Skipped by CI: stays on what it runs now                                                                                                                                       |
+| `docs`          | Also deploys the public docs site                                                                                                                                              |
 | `demo`          | Public demo: models mocked (`AI_MODE=mock`, no AI gateway), no vector index, `ALLOW_FAKE_ADAPTERS=ai,vectors` on the api, delivery and engine, and the enterprise starter offered (`DEMO_STARTERS=true` on the api); never in `general` |
-| `aiGatewayLogs` | Rendered as `AI_GATEWAY_LOGS`: whether the AI gateway logs each call (prompts and answers never)                                                                                                                                        |
-| `sso`           | `{ issuer, clientId, trustEmail? }`: the customer's OIDC provider for admin sign-in (secret `OIDC_CLIENT_SECRET`)                                                                                                                       |
-| `email`         | `{ from, fromName? }`: edge email sender (workflow notify nodes, invitations, scheduler alerts; password reset codes on web); adds the engine's and web's `send_email` binding                                                          |
+| `aiGatewayLogs` | Rendered as `AI_GATEWAY_LOGS`: whether the AI gateway logs each call (prompts and answers never)                                                                               |
+| `sso`           | `{ issuer, clientId, trustEmail? }`: the customer's OIDC provider for admin sign-in (secret `OIDC_CLIENT_SECRET`)                                                              |
+| `email`         | `{ from, fromName? }`: edge email sender (workflow notify nodes, invitations, scheduler alerts; password reset codes on web); adds the engine's and web's `send_email` binding |
 
 `scripts/fleet.ts` commands (`pnpm fleet <command>` is the same script):
 

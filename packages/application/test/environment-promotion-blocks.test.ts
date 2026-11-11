@@ -19,11 +19,13 @@ import {
   createEntry,
   createEnvironment,
   createSpace,
+  getContentType,
   getEffectiveBlockRules,
   getPromotion,
   publishContentType,
   publishEntry,
   pushBlockCatalog,
+  rejectPromotion,
   requestPromotion,
   SYSTEM_CALLER,
   setBlockConfig,
@@ -273,10 +275,76 @@ describe('promoting blocks between environments', () => {
     expect(p.risk.reasons).toContain(
       'The block catalog makes 2 blocks\' overrides stale in the target\'s content type "page" (lg: tone)',
     );
-    expect(p.risk.reasons[0]).toContain('changes the breakpoints');
     const done = await approvePromotion(ctx, approver, spaceId, p.id);
     expect(done.status).toBe('completed');
     expect((await store.blockCatalogs.latest(qa))?.breakpoints).toEqual(breakpoints.slice(0, 1));
+  });
+
+  it('judges a copied content type’s breakpoints too, and skips the entries it replaces', async () => {
+    const breakpoints = [
+      { id: 'md', name: 'Tablet', minWidth: 768 },
+      { id: 'lg', name: 'Desktop', minWidth: 1280 },
+    ];
+    const toned = BLOCKS.map((b) =>
+      b.id === 'hero'
+        ? {
+            ...b,
+            responsive: ['tone'],
+            fields: [
+              ...b.fields,
+              { apiId: 'tone', name: 'Tone', type: 'Symbol', validations: { in: ['a', 'b'] } },
+            ],
+          }
+        : b,
+    );
+    for (const s of [staging, qa]) {
+      await pushBlockCatalog(ctx, admin, s, { blocks: toned, targets: TARGETS, breakpoints });
+    }
+    const withLg = (title: string) => ({
+      contentTypeApiId: 'page',
+      id: `e-${title}`,
+      fields: {
+        title: { 'en-US': title },
+        body: {
+          'en-US': [{ _type: 'hero', _key: 'h1', tone: 'a', _responsive: { lg: { tone: 'b' } } }],
+        },
+      },
+    });
+    // `shared` is in both: a promotion of it writes over qa's copy. `own` is only qa's.
+    await createEntry(ctx, staging, withLg('shared'));
+    await createEntry(ctx, qa, withLg('shared'));
+    await createEntry(ctx, qa, withLg('own'));
+    // Staging's type drops lg by hand: no catalog is copied, only the type.
+    const page = await getContentType(ctx, staging, 'page');
+    await updateContentType(ctx, SYSTEM_CALLER, staging, 'page', {
+      fields: page.fields.map((f) =>
+        f.apiId === 'body' && f.items
+          ? { ...f, items: { ...f.items, breakpoints: breakpoints.slice(0, 1) } }
+          : f,
+      ),
+    });
+    await publishContentType(ctx, staging, 'page');
+    const line = (n: string) =>
+      `The block catalog makes ${n} overrides stale in the target's content type "page" (lg: tone)`;
+
+    // With `shared` copied over, only `own` loses its override.
+    const one = await requestPromotion(ctx, admin, spaceId, {
+      source: 'staging',
+      target: 'qa',
+      contentTypes: ['page'],
+      entries: ['e-shared'],
+    });
+    expect(one.blocks).toBeUndefined();
+    expect(one.status).toBe('awaiting_approval');
+    expect(one.risk.reasons).toContain(line("1 block's"));
+    await rejectPromotion(ctx, approver, spaceId, one.id);
+
+    const both = await requestPromotion(ctx, admin, spaceId, {
+      source: 'staging',
+      target: 'qa',
+      contentTypes: ['page'],
+    });
+    expect(both.risk.reasons).toContain(line("2 blocks'"));
   });
 
   it('copies a config alone, and only when asked for alongside a selection', async () => {

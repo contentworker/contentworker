@@ -22,8 +22,8 @@ api serves, so give it the api host. The Delivery clients share a model (`Delive
 
 | Use case                                                            | Import                            |
 | ------------------------------------------------------------------- | --------------------------------- |
-| Node/SSR/backend, or building your own integration                  | `@contentworker/sdk`              |
-| React apps                                                          | `@contentworker/sdk/react`        |
+| Node/SSR/backend, or building your own integration                  | `@contentworker/sdk`         |
+| React apps                                                          | `@contentworker/sdk/react`          |
 | Vue 3 / Nuxt apps                                                   | `@contentworker/sdk/vue`          |
 | Edge functions, constrained devices, single-locale, minimal payload | `@contentworker/sdk/edge`         |
 | React Native apps with offline sync                                 | `@contentworker/sdk/react-native` |
@@ -176,19 +176,13 @@ since there is no preview stream: it hears of publishes, not draft saves.
 ```ts
 const live = client.live({
   types: ['entry.published', 'entry.unpublished'], // server-side filter (?types=)
-  entryIds: [entry.id], // client-side filters; either one matching passes
+  entryIds: [entry.id],                            // client-side filters; either one matching passes
   contentTypes: ['post'],
-  onEvent(event) {
-    /* LiveEvent, typed by `type` */
-  },
-  onStatus(status) {
-    /* 'connecting' | 'open' | 'reconnecting' | 'closed' */
-  },
-  onError(err) {
-    /* transient while reconnecting; final once closed */
-  },
-  retry: { minMs: 1000, maxMs: 30_000 }, // the defaults
-  signal, // optional AbortSignal
+  onEvent(event) { /* LiveEvent, typed by `type` */ },
+  onStatus(status) { /* 'connecting' | 'open' | 'reconnecting' | 'closed' */ },
+  onError(err) { /* transient while reconnecting; final once closed */ },
+  retry: { minMs: 1000, maxMs: 30_000 },           // the defaults
+  signal,                                          // optional AbortSignal
 });
 live.close();
 ```
@@ -478,9 +472,9 @@ framework or runtime.
 import { toHtml, toMarkdown, toPlainText, excerpt } from '@contentworker/sdk/rich-text';
 
 const html = toHtml(entry.fields.body, {
-  entryHref: (target) => `/${target.fields?.slug}`, // links to other entries
-  renderEntry: (target) => renderMyBlock(target), // embedded entries: your components
-  imageSizes: '(min-width: 900px) 800px, 100vw', // embedded images' `sizes`
+  entryHref: (target) => `/${target.fields?.slug}`,      // links to other entries
+  renderEntry: (target) => renderMyBlock(target),          // embedded entries: your components
+  imageSizes: '(min-width: 900px) 800px, 100vw',           // embedded images' `sizes`
 });
 ```
 
@@ -508,8 +502,9 @@ strings, DOM nodes):
   its blocks declare), `storedType`, `key`, `renderKey`, `index`,
   `block` (a copy with `_type` set to `type` when it differs), `responsive` (its `_responsive` in
   breakpoint order, only the catalog's breakpoints, or `breakpoints` with `variants`, and only the
-  props its definition lists in `responsive`; as stored when nothing declares them; `{}` when
-  none), `ghost` (from `ghosts` by `_key`;
+  props its definition lists in `responsive`, with a value that isn't one of its prop's tokens left
+  out when the catalog's blocks or the variants carry `fields`; as stored when nothing declares
+  them; `{}` when none), `ghost` (from `ghosts` by `_key`;
   `inserted` over `removed` over `changed`), `path`, `attrs`, `fieldAttrs(name)`, `slotNames` (the
   definition's slots plus any field holding a non-empty list of blocks) and `slot(name)` (resolved
   on first call). Not a list renders nothing; an element without a string `_type` is skipped.
@@ -519,7 +514,8 @@ strings, DOM nodes):
   `toString` never calls an inherited function. `<Blocks>` and `useBlock()` give `responsive` too.
 - `responsiveProp(block, prop, catalog)` → `{ base, <breakpoint>… }`: the bare prop, then each
   declared breakpoint overriding it, in order; with the catalog, only a prop its block lists in
-  `responsive`; with just a breakpoints list, no prop check. Never one value for "this width".
+  `responsive` and, when the block carries `fields`, only a value among its tokens; with just a
+  breakpoints list, no prop check. Never one value for "this width".
 - Preview marks, only when `preview` (a `ContentRef` whose `field` names the blocks field, or a path
   to a slot) is given: `data-cw-slot` on the element holding each list (`body`, `body[k1].cards`),
   `data-cw-ref` on each block (`body[k1]`) and field (`body[k1].heading`), formatted with
@@ -751,14 +747,14 @@ try {
 }
 ```
 
-| Guard                | `code`                                   | Details on `err.error`                    |
+| Guard                | `code`                              | Details on `err.error`                                   |
 | -------------------- | ---------------------------------------- | ----------------------------------------- |
-| `isAssetInUse`       | `asset_in_use` (409)                     | `usage`, `total`                          |
-| `isAssetRightsError` | `asset_embargoed`, `asset_expired` (409) | `embargoUntil` or `expiresAt`, by `code`  |
-| `isValidationError`  | `validation_failed` (422)                | `issues`: `{ field, locale?, message }[]` |
-| `isConflict`         | `conflict` (409)                         |                                           |
-| `isNotFound`         | `not_found` (404)                        |                                           |
-| `isRateLimited`      | `rate_limited` (429)                     |                                           |
+| `isAssetInUse`       | `asset_in_use` (409)                | `usage`, `total`                                         |
+| `isAssetRightsError` | `asset_embargoed`, `asset_expired` (409) | `embargoUntil` or `expiresAt`, by `code`            |
+| `isValidationError`  | `validation_failed` (422)           | `issues`: `{ field, locale?, message }[]`                 |
+| `isConflict`         | `conflict` (409)                    |                                                          |
+| `isNotFound`         | `not_found` (404)                   |                                                          |
+| `isRateLimited`      | `rate_limited` (429)                |                                                          |
 
 `code` is read from `{ error: { code } }` and from the flat `{ code }` of a refusal made before a
 route runs (the 413, a request-rate 429). The full list is in the

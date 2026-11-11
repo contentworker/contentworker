@@ -37,7 +37,7 @@ import { decide } from './ai-decide';
 import { wrapUntrusted } from './ai-prompt';
 import { isUncheckedFallback } from './ai-provenance';
 import { auditActor } from './audit';
-import { assertThumbnailAssets, pushBlockCatalog, staleOverridesOf } from './block-catalog';
+import { assertThumbnailAssets, pushBlockCatalog } from './block-catalog';
 import { blockConfigChange, setBlockConfig } from './block-config';
 import { compareEnvironments } from './branching';
 import {
@@ -46,6 +46,7 @@ import {
   removedContentInUse,
   SYSTEM_CALLER,
   saveContentTypeOver,
+  staleOverridesOf,
 } from './content-types';
 import { type AppContext, withActor } from './context';
 import { createEntry, updateEntry } from './entries';
@@ -712,6 +713,14 @@ async function assessPromotion(
     ? await assessPromotedBlocks(ctx, target, types, blocks, replaced)
     : [];
   reasons.push(...blockChanges);
+  const staleLines = await staleOverrideLines(
+    ctx,
+    target,
+    types,
+    blocks?.catalog ?? null,
+    replaced,
+  );
+  reasons.push(...staleLines);
 
   let assessment: PromotionAssessment | undefined;
   let aiRequires = false;
@@ -790,7 +799,11 @@ async function assessPromotion(
     }
   }
 
-  const ruled = protectedTarget || Object.keys(typeChanges).length > 0 || blockChanges.length > 0;
+  const ruled =
+    protectedTarget ||
+    Object.keys(typeChanges).length > 0 ||
+    blockChanges.length > 0 ||
+    staleLines.length > 0;
   return {
     protectedTarget,
     reasons,
@@ -962,19 +975,6 @@ async function checkPromotedCatalog(
       held.push(`${current.apiId}.${describeRemovedInUse(field, entries)}`);
     }
   }
-  // Stale overrides never block a save, but they change what the target's pages render once each
-  // entry there is saved again: that is the approver's to accept. Judged from each target type as
-  // the target stores it to the type the promotion leaves (copied, then revised by the push).
-  for (const [apiId, type] of types) {
-    const stored = copied.has(apiId) ? await ctx.store.contentTypes.get(target, apiId) : type;
-    if (!stored) continue;
-    const plan = plans.find((p) => p.contentTypeApiId === apiId);
-    const stale = await staleOverridesOf(ctx, target, stored, {
-      ...type,
-      fields: [...(plan?.fields ?? type.fields)],
-    });
-    if (stale.blocks > 0) lines.push(describeStale(apiId, stale));
-  }
   const trashed = await replaced.trashed();
   if (held.length > 0 || trashed.length > 0) {
     const refused = cantGo(
@@ -987,6 +987,59 @@ async function checkPromotedCatalog(
     throw new ValidationError([...refused.issues, ...trashed]);
   }
   return { lines, changes };
+}
+
+/**
+ * The risk lines for the overrides the promotion makes stale in the target: per type the target
+ * holds, from its stored definition to the one the promotion leaves (the copied type, else its
+ * own, each revised by the catalog push when the catalog is copied too), over the target's
+ * entries the promotion doesn't replace. Stale overrides never block a save, but each entry drops
+ * them on its next one, which changes what its pages render: that is the approver's to accept.
+ * Checked whether or not the catalog is copied, since a copied type alone can strand them.
+ */
+async function staleOverrideLines(
+  ctx: AppContext,
+  target: Scope,
+  promoted: readonly ContentType[],
+  catalog: BlockCatalog | null,
+  replaced: ReplacedCopies,
+): Promise<string[]> {
+  const copied = new Map(promoted.map((t) => [t.apiId, t]));
+  const apiIds = new Set([
+    ...copied.keys(),
+    ...(catalog?.targets.map((t) => t.contentTypeApiId) ?? []),
+  ]);
+  const stored = new Map<string, ContentType>();
+  const leaves = new Map<string, ContentType>();
+  for (const apiId of apiIds) {
+    const held = await ctx.store.contentTypes.get(target, apiId);
+    if (held) stored.set(apiId, held);
+    const left = copied.get(apiId) ?? held;
+    if (left) leaves.set(apiId, left);
+  }
+  let plans: ReturnType<typeof planCatalogTypes> = [];
+  if (catalog) {
+    try {
+      plans = planCatalogTypes(catalog.blocks, catalog.targets, leaves, catalog.breakpoints);
+    } catch (err) {
+      // A catalog the target can't take is refused by its own check.
+      if (!(err instanceof ValidationError)) throw err;
+    }
+  }
+  const lines: string[] = [];
+  for (const [apiId, before] of stored) {
+    const left = leaves.get(apiId) as ContentType;
+    const fields = plans.find((p) => p.contentTypeApiId === apiId)?.fields ?? left.fields;
+    const stale = await staleOverridesOf(
+      ctx,
+      target,
+      before,
+      { ...left, fields: [...fields] },
+      { skip: replaced.replaces },
+    );
+    if (stale.blocks > 0) lines.push(describeStale(apiId, stale));
+  }
+  return lines;
 }
 
 /**

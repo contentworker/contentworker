@@ -295,6 +295,37 @@ describe('the block catalog over HTTP', () => {
     ]);
   });
 
+  it('refuses a push of breakpoints to a key holding only content:write', async () => {
+    const { app } = await makeApp();
+    // Space-level routes, outside the environment `send` prefixes.
+    const post = async (path: string, body: unknown) =>
+      (
+        await app.request(path, { method: 'POST', headers: admin, body: JSON.stringify(body) })
+      ).json();
+    const role = (await post('/spaces/s1/roles', {
+      name: 'writer',
+      scopes: ['content:write', 'preview:read'],
+      contentGrants: [{ contentTypeApiId: '*', actions: ['read', 'write'] }],
+    })) as { id: string };
+    const key = (await post('/spaces/s1/api-keys', { kind: 'cma', roleId: role.id })) as {
+      token: string;
+    };
+    expect(role.id).toBeTruthy();
+    const writer = { Authorization: `Bearer ${key.token}`, 'Content-Type': 'application/json' };
+    const pushed = await send(
+      app,
+      'POST',
+      '/block-catalog',
+      {
+        blocks: BLOCKS,
+        targets: TARGETS,
+        breakpoints: [{ id: 'lg', name: 'Desktop', minWidth: 1280 }],
+      },
+      writer,
+    );
+    expect(pushed.status).toBe(403);
+  });
+
   it('needs content:manage to push; preview:read reads the catalog and its usage', async () => {
     const { app, ctx } = await makeApp();
     expect(

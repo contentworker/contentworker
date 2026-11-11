@@ -119,7 +119,7 @@ function withComponentDefaults(nested: readonly FieldDefinition[], value: unknow
 export function assignBlockKeys(
   contentType: ContentType,
   fields: EntryFields,
-  newId: () => string,
+  newId: (() => string) | null,
 ): EntryFields {
   if (!contentType.fields.some(mayHoldBlocks)) return fields;
   const out: EntryFields = { ...fields };
@@ -133,6 +133,15 @@ export function assignBlockKeys(
   return out;
 }
 
+/**
+ * `fields` with every block's stale overrides dropped (`cleanOverrides`), as a save would store
+ * them, and nothing else changed: no key minted, no `_type` rewritten. For a write that stores
+ * content another environment holds without a save of its own (an environment merge).
+ */
+export function withoutStaleOverrides(contentType: ContentType, fields: EntryFields): EntryFields {
+  return assignBlockKeys(contentType, fields, null);
+}
+
 /** True when a blocks field sits at or anywhere under `field`. */
 export function mayHoldBlocks(field: FieldDefinition): boolean {
   if (blockVariants(field)) return true;
@@ -143,11 +152,14 @@ export function mayHoldBlocks(field: FieldDefinition): boolean {
   return false;
 }
 
-/** `breakpoints`: the ids the enclosing blocks field takes overrides at (none at the top). */
+/**
+ * `breakpoints`: the ids the enclosing blocks field takes overrides at (none at the top). Without
+ * `newId`, only overrides are cleaned: keys and `_type` are left as they are.
+ */
 function keyed(
   field: FieldDefinition,
   value: unknown,
-  newId: () => string,
+  newId: (() => string) | null,
   breakpoints: readonly string[] = [],
 ): unknown {
   if (field.type === 'Component') {
@@ -165,8 +177,9 @@ function keyed(
     const key = block[BLOCK_KEY];
     // A block stored under a former apiId (`aliases`) takes the variant's current one.
     const variant = variantOf(variants, block);
-    const renamed = variant !== undefined && block[BLOCK_TYPE_KEY] !== variant.apiId;
-    const keyless = typeof key !== 'string' || key === '';
+    const renamed =
+      newId !== null && variant !== undefined && block[BLOCK_TYPE_KEY] !== variant.apiId;
+    const keyless = newId !== null && (typeof key !== 'string' || key === '');
     const raw = block[RESPONSIVE_KEY];
     // Stale overrides go; a block naming no known variant is left whole for validation to report.
     const overrides = variant && raw !== undefined ? cleanOverrides(variant, raw, own) : raw;
@@ -176,7 +189,7 @@ function keyed(
     return {
       ...rest,
       ...(renamed ? { [BLOCK_TYPE_KEY]: variant.apiId } : {}),
-      ...(keyless ? { [BLOCK_KEY]: newId() } : {}),
+      ...(keyless && newId ? { [BLOCK_KEY]: newId() } : {}),
       ...(overrides !== undefined ? { [RESPONSIVE_KEY]: overrides } : {}),
     };
   });
@@ -185,7 +198,7 @@ function keyed(
 function keyedComponent(
   nested: readonly FieldDefinition[],
   value: unknown,
-  newId: () => string,
+  newId: (() => string) | null,
   breakpoints: readonly string[],
 ): unknown {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return value;

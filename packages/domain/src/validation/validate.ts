@@ -14,7 +14,7 @@ import {
   variantNamed,
 } from '../content-type/field';
 import { fieldState, sameFieldValue, valuesForRules } from '../content-type/field-rules';
-import { BASE_BREAKPOINT, breakpointIdsOf, responsivePropsOf } from '../content-type/responsive';
+import { BASE_BREAKPOINT, breakpointIdsOf } from '../content-type/responsive';
 import { isSlug } from '../content-type/slug';
 import { type FieldIssue, ValidationError } from '../errors';
 import { validateRichText } from '../rich-text/rich-text';
@@ -423,24 +423,21 @@ function validateBlocks(
     }
     validateComponent(variant.fields, values, locale, issues, at, push, undefined, breakpoints);
     if (overrides !== undefined) {
-      validateOverrides(variant, overrides, breakpoints, locale, issues, `${at}.${RESPONSIVE_KEY}`);
+      validateOverrides(overrides, locale, issues, `${at}.${RESPONSIVE_KEY}`);
     }
   });
 }
 
 /**
- * A block's `_responsive`: a map of breakpoint id to the props it overrides, each value checked as
- * the prop itself is. An override of a breakpoint the field doesn't declare, or of a prop the
- * variant doesn't list in `responsive`, is stale (a later push removed it): it is passed over
- * here and dropped by the save (`cleanOverrides`), so stored content never fails over it. Only
- * what can't be stale is refused: a map that isn't one, `base` or a malformed id, and a value
- * that isn't valid for its prop. Without breakpoints or responsive props a block keeps nothing:
- * its every override is stale.
+ * A block's `_responsive`: a map of breakpoint id to the props it overrides. Only its shape is
+ * judged here: a map that isn't one, `base` or a malformed id. Whether each override is declared
+ * and its value one its prop takes is the edit's to judge (`undeclaredOverrides`, against the
+ * version it replaces): an override nothing declares any more, or whose value a push has since
+ * narrowed out, is stale, and the save drops it (`cleanOverrides`). So stored content (a snapshot,
+ * a merge, a restore) never fails over one, and a new edit's mistake is still refused.
  */
 function validateOverrides(
-  variant: ComponentVariant,
   overrides: unknown,
-  breakpoints: readonly string[],
   locale: LocaleCode,
   issues: FieldIssue[],
   path: string,
@@ -450,26 +447,12 @@ function validateOverrides(
     push(path, 'Expected an object of overrides by breakpoint id');
     return;
   }
-  const props = responsivePropsOf(variant);
   for (const [bp, values] of Object.entries(overrides)) {
     const at = `${path}.${bp}`;
     if (bp === BASE_BREAKPOINT || !/^[a-zA-Z][a-zA-Z0-9_]*$/.test(bp)) {
       push(at, `"${bp}" is not a breakpoint id: the bare props are the base`);
-      continue;
-    }
-    if (typeof values !== 'object' || values === null || Array.isArray(values)) {
+    } else if (typeof values !== 'object' || values === null || Array.isArray(values)) {
       push(at, 'Expected an object of prop overrides');
-      continue;
-    }
-    if (!breakpoints.includes(bp)) continue;
-    for (const [prop, value] of Object.entries(values)) {
-      const field = props.includes(prop) ? variant.fields.find((f) => f.apiId === prop) : undefined;
-      if (!field) continue;
-      if (value === undefined || value === null) {
-        push(`${at}.${prop}`, 'An override needs a value: leave the prop out to inherit');
-        continue;
-      }
-      validateValue(field, value, locale, issues, `${at}.${prop}`);
     }
   }
 }

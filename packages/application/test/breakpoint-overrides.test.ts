@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import {
+  type BlockOp,
   canonicalJson,
   type FieldDefinition,
   type Principal,
@@ -20,12 +21,14 @@ import {
   getContentType,
   getEntry,
   importSnapshot,
+  mergeEnvironments,
   patchEntryBlocks,
   publishContentType,
   pushBlockCatalog,
   restoreVersion,
   SYSTEM_CALLER,
   setEntryBlockLocks,
+  updateContentType,
   updateEntry,
 } from '../src/index';
 
@@ -279,15 +282,14 @@ describe('per-breakpoint overrides', () => {
       fields: body(hero('a', { lg: { size: 'xl' } }), hero('b')),
     });
 
-    // The push removes lg: the stored override is stale. Stale only for the block that carried it:
-    // the same override, new on another block, is a typo.
+    // The push removes lg: the stored override is stale. A new prop at lg is still a typo.
     await push({ breakpoints: BREAKPOINTS.slice(0, 1) });
     const typo = await refused(
       updateEntry(
         ctx,
         scope,
         entry.id,
-        body(hero('a', { lg: { size: 'xl' } }), hero('b', { lg: { size: 'sm' } })),
+        body(hero('a', { lg: { size: 'xl' } }), hero('b', { lg: { hidden: true } })),
       ),
     );
     expect(typo).toMatchObject([
@@ -354,5 +356,170 @@ describe('per-breakpoint overrides', () => {
     await push({ breakpoints: undefined });
     const saved = await updateEntry(ctx, scope, entry.id, body(hero('a', { lg: { size: 'xl' } })));
     expect(saved.fields.body?.['en-US']).toEqual([hero('a')]);
+  });
+  it('warns, as a push reports, when a type edit makes overrides stale', async () => {
+    await push();
+    await createEntry(ctx, scope, {
+      contentTypeApiId: 'page',
+      fields: body(hero('a', { lg: { size: 'xl' } })),
+    });
+    const page = await getContentType(ctx, scope, 'page');
+    const saved = await updateContentType(ctx, SYSTEM_CALLER, scope, 'page', {
+      fields: page.fields.map((f) =>
+        f.apiId === 'body' && f.items
+          ? { ...f, items: { ...f.items, breakpoints: BREAKPOINTS.slice(0, 1) } }
+          : f,
+      ),
+    });
+    expect(saved.warnings).toEqual([
+      {
+        field: 'hero._responsive.lg.size',
+        entries: 1,
+        message: expect.stringContaining('1 block overrides hero.size at lg'),
+      },
+    ]);
+  });
+
+  it('stores a merged entry without the overrides the target’s type doesn’t take', async () => {
+    await push();
+    await createEnvironment(ctx, 'site', 'staging');
+    const staging = { ...scope, environmentId: 'staging' };
+    await cloneEnvironment(ctx, scope, staging);
+    // Main drops lg and narrows size; staging keeps both.
+    await push({
+      breakpoints: BREAKPOINTS.slice(0, 1),
+      blocks: [
+        {
+          ...HERO,
+          fields: HERO.fields.map((f) =>
+            f.apiId === 'size' ? { ...f, validations: { in: ['sm', 'md'] } } : f,
+          ),
+        },
+      ],
+    });
+    const { entry } = await createEntry(ctx, staging, {
+      contentTypeApiId: 'page',
+      fields: body(hero('a', { lg: { size: 'xl' }, md: { size: 'xl', hidden: true } })),
+    });
+    await mergeEnvironments(ctx, 'site', 'staging', 'main', { entries: [entry.id] });
+    const merged = await getEntry(ctx, scope, entry.id);
+    expect(merged.fields.body?.['en-US']).toEqual([hero('a', { md: { hidden: true } })]);
+  });
+});
+
+describe('a stale override carried elsewhere in the entry', () => {
+  let ctx: AppContext;
+  const two = { spaceId: 'two', environmentId: 'main' };
+
+  beforeEach(async () => {
+    ctx = {
+      store: new InMemoryContentStore(),
+      clock: new FixedClock(new Date('2026-11-10T10:00:00.000Z')),
+      ids: new SequenceIdGenerator('c'),
+    };
+    await createSpace(ctx, {
+      spaceId: 'two',
+      name: 'Two',
+      defaultLocale: 'en-US',
+      locales: ['en-US', 'de-DE'],
+    });
+    const blocksField = (apiId: string, position: number) =>
+      field({
+        apiId,
+        type: 'Array',
+        position,
+        localized: true,
+        items: {
+          type: 'Component',
+          variants: [
+            { apiId: 'hero', name: 'Hero', fields: [field({ apiId: 'x', type: 'Symbol' })] },
+          ],
+        },
+      });
+    await createContentType(ctx, SYSTEM_CALLER, two, {
+      apiId: 'page',
+      name: 'Page',
+      displayField: 'title',
+      fields: [
+        field({ apiId: 'title', type: 'Symbol' }),
+        blocksField('body', 1),
+        blocksField('aside', 2),
+      ],
+    });
+    await publishContentType(ctx, two, 'page');
+  });
+
+  const pushTo = (breakpoints: typeof BREAKPOINTS) =>
+    pushBlockCatalog(ctx, SYSTEM_CALLER, two, {
+      blocks: [HERO],
+      targets: [
+        { contentTypeApiId: 'page', field: 'body' },
+        { contentTypeApiId: 'page', field: 'aside' },
+      ],
+      breakpoints,
+      allowDestructive: true,
+    });
+
+  /** An entry whose hero `a` holds an lg override, then a push that drops lg: it is stale. */
+  async function staleEntry() {
+    await pushTo(BREAKPOINTS);
+    const { entry } = await createEntry(ctx, two, {
+      contentTypeApiId: 'page',
+      fields: {
+        title: { 'en-US': 'Home' },
+        body: { 'en-US': [hero('a', { lg: { size: 'xl' } })] },
+      },
+    });
+    await pushTo(BREAKPOINTS.slice(0, 1));
+    return entry.id;
+  }
+  const op = { field: 'body', locale: 'en-US' } as const;
+  const patch = async (id: string, ops: BlockOp[]) =>
+    patchEntryBlocks(ctx, two, id, {
+      expectedVersion: (await getEntry(ctx, two, id)).entry.currentVersion,
+      ops,
+    });
+
+  it('saves a duplicate of the block, dropping it from both', async () => {
+    const id = await staleEntry();
+    const done = await patch(id, [{ op: 'duplicate', ...op, key: 'a' }]);
+    expect(done.fields.body?.['en-US']).toEqual([
+      hero('a'),
+      expect.objectContaining({ size: 'md' }),
+    ]);
+    expect(done.fields.body?.['en-US']?.[1]).not.toHaveProperty('_responsive');
+  });
+
+  it('saves the undo of a remove in the same patch, which re-inserts the block as it was', async () => {
+    const id = await staleEntry();
+    const before = await getEntry(ctx, two, id);
+    // The canvas's undo: the block as stored, its stale override included, put back.
+    const undo = await patch(id, [
+      { op: 'remove', ...op, key: 'a' },
+      { op: 'insert', ...op, index: 0, block: before.fields.body?.['en-US']?.[0] as never },
+    ]);
+    expect(undo.fields.body?.['en-US']).toEqual([hero('a')]);
+  });
+
+  it('saves a move to another blocks field', async () => {
+    const id = await staleEntry();
+    const stored = await getEntry(ctx, two, id);
+    const block = stored.fields.body?.['en-US']?.[0];
+    const moved = await updateEntry(ctx, two, id, {
+      ...stored.fields,
+      body: { 'en-US': [] },
+      aside: { 'en-US': [block] },
+    });
+    expect(moved.fields.aside?.['en-US']).toEqual([hero('a')]);
+  });
+
+  it('saves a copy of the block into another locale', async () => {
+    const id = await staleEntry();
+    const stored = await getEntry(ctx, two, id);
+    const copied = await updateEntry(ctx, two, id, {
+      ...stored.fields,
+      body: { ...stored.fields.body, 'de-DE': stored.fields.body?.['en-US'] ?? [] },
+    });
+    expect(copied.fields.body?.['de-DE']).toEqual([hero('a')]);
   });
 });

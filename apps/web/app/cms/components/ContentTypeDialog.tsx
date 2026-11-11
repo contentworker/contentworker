@@ -395,9 +395,11 @@ function toDefinition(
         ? items
         : { type: row.itemType }
       : undefined;
+  // A catalog's breakpoints ride along: the catalog writes them, and this dialog never edits them.
   const blocksItems = row.blocks
     ? {
         ...(retyped ? {} : { validations: items?.validations }),
+        ...(!retyped && items?.breakpoints ? { breakpoints: items.breakpoints } : {}),
         type: 'Component' as const,
         variants: variantsFromRows(row.blocks),
       }

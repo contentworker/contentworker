@@ -93,9 +93,20 @@ export interface BlockCatalogLike {
     readonly slots?: readonly { readonly apiId: string }[];
     /** The props that take per-breakpoint overrides. */
     readonly responsive?: readonly string[];
+    /** Its props: given, an override whose value isn't one of its prop's tokens is left out. */
+    readonly fields?: readonly PropLike[];
   }[];
   /** The site's CSS breakpoints, mobile-first: the ids `_responsive` is keyed by. */
   readonly breakpoints?: readonly BreakpointLike[];
+}
+
+/** A block's prop as the catalog or content type defines it: what an override is checked by. */
+export interface PropLike {
+  readonly apiId: string;
+  readonly type: string;
+  readonly validations?: {
+    readonly in?: readonly (string | number | { readonly value: string | number })[];
+  };
 }
 
 /** A blocks field's variant, as the content type defines it (`field.items.variants`). */
@@ -103,11 +114,9 @@ export interface BlockVariantLike {
   readonly apiId: string;
   readonly aliases?: readonly string[];
   readonly responsive?: readonly string[];
-  readonly fields: readonly {
-    readonly apiId: string;
-    readonly type: string;
+  readonly fields: readonly (PropLike & {
     readonly items?: { readonly type?: string; readonly variants?: readonly BlockVariantLike[] };
-  }[];
+  })[];
 }
 
 export interface ResolveBlocksOptions {
@@ -181,6 +190,8 @@ interface Definition {
   readonly slots: readonly string[];
   /** The props that take overrides; undefined when the definition can't say. */
   readonly responsive?: readonly string[];
+  /** Its props, when the definition gives them, to check override values by. */
+  readonly props?: readonly PropLike[];
   /** A slot's own variants, when the definition came from variants (they nest). */
   readonly slotVariants?: ReadonlyMap<string, readonly BlockVariantLike[]>;
 }
@@ -227,7 +238,14 @@ function catalogScope(catalog: BlockCatalogLike): Scope {
       );
       if (!b) return { type };
       const slots = list(b.slots).map((s) => s.apiId);
-      return { type: b.id, def: { slots, responsive: list(b.responsive) } };
+      return {
+        type: b.id,
+        def: {
+          slots,
+          responsive: list(b.responsive),
+          ...(Array.isArray(b.fields) ? { props: b.fields } : {}),
+        },
+      };
     },
     // A catalog names blocks once, whatever slot they sit in; a field that isn't one of the block's
     // slots (a blocks prop of its own) holds variants the catalog doesn't define.
@@ -253,7 +271,12 @@ function variantsScope(variants: readonly BlockVariantLike[]): Scope {
       }
       return {
         type: v.apiId,
-        def: { slots: [...slotVariants.keys()], slotVariants, responsive: list(v.responsive) },
+        def: {
+          slots: [...slotVariants.keys()],
+          slotVariants,
+          responsive: list(v.responsive),
+          props: list(v.fields),
+        },
       };
     },
     slotScope: (def, slot) => {
@@ -301,23 +324,54 @@ interface Context {
 const NO_OVERRIDES: BlockOverrides = Object.freeze({});
 
 /**
- * A block's `_responsive` as it applies: declared breakpoints in their order, declared props, no
- * empty breakpoint. What isn't declared is stale (a later push removed it) and the server drops it
- * on the entry's next save; until then it is ignored here.
+ * Whether `value` is one `prop` takes as an override: its type (a Symbol a string, an Integer or
+ * Number a number, a Boolean a boolean) and one of its `in` tokens. True without a definition.
+ * Overrides are served as stored, so a frontend that puts one into a class name or a style gets
+ * only a token its design system declares.
+ */
+function fits(prop: PropLike | undefined, value: unknown): boolean {
+  if (value === undefined || value === null) return false;
+  if (!prop) return true;
+  const typed =
+    prop.type === 'Boolean'
+      ? typeof value === 'boolean'
+      : prop.type === 'Symbol'
+        ? typeof value === 'string'
+        : prop.type === 'Integer'
+          ? Number.isInteger(value)
+          : prop.type === 'Number'
+            ? typeof value === 'number' && Number.isFinite(value)
+            : false;
+  if (!typed) return false;
+  const tokens = prop.validations?.in;
+  if (!Array.isArray(tokens)) return true;
+  return tokens.some((t) => (isObject(t) ? t.value : t) === value);
+}
+
+/**
+ * A block's `_responsive` as it applies: declared breakpoints in their order, declared props whose
+ * values are among their tokens, no empty breakpoint. What isn't declared is stale (a later push
+ * removed it) and the server drops it on the entry's next save; until then it is ignored here.
  */
 function overridesOf(
   raw: unknown,
-  responsive: readonly string[] | undefined,
+  def: Definition | undefined,
   breakpoints: readonly string[] | undefined,
 ): BlockOverrides {
   if (!isObject(raw)) return NO_OVERRIDES;
+  const responsive = def?.responsive;
   const ids = breakpoints ?? Object.keys(raw);
   const out: Record<string, Readonly<Record<string, unknown>>> = {};
   for (const id of ids) {
     const props = raw[id];
     if (!isObject(props)) continue;
     const kept = Object.entries(props).filter(
-      ([prop, v]) => v !== undefined && v !== null && (!responsive || responsive.includes(prop)),
+      ([prop, v]) =>
+        (!responsive || responsive.includes(prop)) &&
+        fits(
+          def?.props?.find((p) => p.apiId === prop),
+          v,
+        ),
     );
     if (kept.length > 0) out[id] = Object.fromEntries(kept);
   }
@@ -372,7 +426,7 @@ function resolveList(
       renderKey,
       index,
       block,
-      responsive: overridesOf(item._responsive, def?.responsive, ctx.breakpoints),
+      responsive: overridesOf(item._responsive, def, ctx.breakpoints),
       ghost,
       path: blockPath,
       attrs,
@@ -443,7 +497,8 @@ export type ResponsiveValue<T> = { readonly base: T } & { readonly [breakpoint: 
 /**
  * One prop of a block across widths, `{ base: 'md', lg: 'xl' }`: the bare prop as `base`, then each
  * breakpoint that overrides it, in breakpoint order. A breakpoint the catalog doesn't declare, or
- * a prop its block doesn't list in `responsive`, is left out (a stale override). Which value shows
+ * a prop its block doesn't list in `responsive`, is left out (a stale override), and so, when the
+ * catalog gives the block's `fields`, is a value that isn't one of the prop's tokens. Which value shows
  * is the frontend's CSS to decide, a class or a custom property per breakpoint: a server render
  * can't know the screen's width, so this never picks one.
  *
@@ -465,9 +520,11 @@ export function responsiveProp<
     ? (catalog as readonly BreakpointLike[])
     : list((catalog as BlockCatalogLike).breakpoints);
   let declared = true;
+  let definition: PropLike | undefined;
   if (!Array.isArray(catalog)) {
     const def = catalogScope(catalog as BlockCatalogLike).lookup(block._type).def;
     declared = def?.responsive?.includes(prop) === true;
+    definition = def?.props?.find((p) => p.apiId === prop);
   }
   const out: Record<string, unknown> = { base: block[prop] };
   if (!declared) return out as ResponsiveValue<B[K]>;
@@ -475,7 +532,7 @@ export function responsiveProp<
   for (const b of breakpoints) {
     const at = isObject(raw) ? raw[b.id] : undefined;
     const value = isObject(at) ? at[prop] : undefined;
-    if (value !== undefined && value !== null) out[b.id] = value;
+    if (fits(definition, value)) out[b.id] = value;
   }
   return out as ResponsiveValue<B[K]>;
 }
@@ -490,7 +547,7 @@ export interface RenderedSlot<R> {
 export interface BlockRenderProps<B extends BlockValue, R> {
   readonly block: B;
   /** Its overrides as they apply ({@link ResolvedBlock.responsive}). */
-  readonly responsive: BlockOverrides;
+  readonly responsive?: BlockOverrides;
   readonly index: number;
   readonly ghost: BlockGhost | undefined;
   readonly attrs: BlockAttrs;

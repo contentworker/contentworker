@@ -14,9 +14,10 @@ import {
 } from '../src/index';
 
 /**
- * A block's `_responsive` before anything declares breakpoints: every save takes it and drops
- * it, a create, an edit and a copy (a restored version) alike, so content written by a later
- * release saves here and only loses its overrides.
+ * A block's `_responsive` on a field that declares no breakpoints: a copy (a restored version, a
+ * migration of stored content) saves and drops it, so stored overrides never block a save; a new
+ * edit that brings one is told it can't, since nothing takes it. The release before overrides
+ * were kept dropped it on every save, so a rollback lands on entries that save.
  */
 
 const scope = { spaceId: 'site', environmentId: 'main' };
@@ -67,17 +68,20 @@ describe('_responsive before breakpoints', () => {
     await publishContentType(ctx, scope, 'page');
   });
 
-  it('saves a create, an edit and a copy that carry it, and stores none of it', async () => {
+  it('saves a copy that carries it, storing none of it, and refuses a new one', async () => {
+    await expect(
+      createEntry(ctx, scope, {
+        contentTypeApiId: 'page',
+        fields: body(hero('a', { lg: { size: 'xl' } })),
+      }),
+    ).rejects.toMatchObject({ issues: [{ code: 'override_undeclared' }] });
     const { entry } = await createEntry(ctx, scope, {
       contentTypeApiId: 'page',
-      fields: body(hero('a', { lg: { size: 'xl' } })),
+      fields: body(hero('a')),
     });
     expect((await getEntry(ctx, scope, entry.id)).fields.body?.['en-US']).toEqual([hero('a')]);
 
-    const edited = await updateEntry(ctx, scope, entry.id, body(hero('a', { base: 'junk' })));
-    expect(edited.fields.body?.['en-US']).toEqual([hero('a')]);
-
-    // Fields written by a later release come back as a copy, and save.
+    // Fields stored with overrides come back as a copy, and save.
     const later = body(hero('a', { lg: { size: 'xl' } }));
     const copied = await updateEntry(ctx, scope, entry.id, later, { copy: true });
     expect(copied.fields.body?.['en-US']).toEqual([hero('a')]);

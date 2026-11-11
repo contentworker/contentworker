@@ -80,4 +80,39 @@ describe('per-breakpoint overrides in the renderers', () => {
     });
     expect(responsiveProp({ _type: 'hero', size: 'sm' }, 'size', catalog)).toEqual({ base: 'sm' });
   });
+
+  it('leaves out a value that isn’t one of its prop’s tokens, when the definition gives them', () => {
+    const typed: BlockCatalogLike = {
+      ...catalog,
+      blocks: [
+        {
+          id: 'hero',
+          responsive: ['size', 'hidden'],
+          fields: [
+            { apiId: 'size', type: 'Symbol', validations: { in: ['sm', { value: 'md' }, 'xl'] } },
+            { apiId: 'hidden', type: 'Boolean' },
+          ],
+        },
+      ],
+    };
+    const odd = {
+      _type: 'hero',
+      size: 'md',
+      _responsive: { md: { size: 'url(evil)', hidden: 'yes' }, lg: { size: 'md' } },
+    };
+    expect(resolveBlocks([odd], { catalog: typed }).blocks[0]?.responsive).toEqual({
+      lg: { size: 'md' },
+    });
+    expect(responsiveProp(odd, 'size', typed)).toEqual({ base: 'md', lg: 'md' });
+    const variants = [
+      {
+        apiId: 'hero',
+        responsive: ['size'],
+        fields: [{ apiId: 'size', type: 'Symbol', validations: { in: ['md'] } }],
+      },
+    ];
+    expect(
+      resolveBlocks([odd], { variants, breakpoints: catalog.breakpoints }).blocks[0]?.responsive,
+    ).toEqual({ lg: { size: 'md' } });
+  });
 });

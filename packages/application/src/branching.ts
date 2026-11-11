@@ -15,6 +15,7 @@ import {
   type UniqueClaim,
   uniqueClaims,
   type ValidationContext,
+  withoutStaleOverrides,
 } from '@contentworker/domain';
 import { TransactionConflictError } from '@contentworker/ports';
 import { blockConfigChange } from './block-config';
@@ -259,9 +260,12 @@ export async function mergeEnvironments(
           `${target}/${found.entry.contentTypeApiId} (include it in the merge)`,
         );
       }
-      assertEntryFieldsValid(targetCt, found.fields, vctx);
+      // Overrides the target's type doesn't take (its breakpoints or a block's responsive props
+      // differ from the source's) are stale there: dropped, as a save there would drop them.
+      const fields = withoutStaleOverrides(targetCt, found.fields);
+      assertEntryFieldsValid(targetCt, fields, vctx);
       // Judged against the target's assets, as a save there would be.
-      await assertAssetMimeTypes(ctx, tgt, targetCt, found.fields);
+      await assertAssetMimeTypes(ctx, tgt, targetCt, fields);
       const existing = (await ctx.store.entries.get(tgt, entryId))?.entry ?? null;
       // An entry the target holds in its trash stays there (as a promotion leaves it), so it
       // claims nothing: the trash released its values.
@@ -270,9 +274,9 @@ export async function mergeEnvironments(
         entryId,
         from: found.entry,
         contentType: targetCt,
-        fields: found.fields,
+        fields,
         existing,
-        claims: trashed ? [] : uniqueClaims(targetCt, found.fields),
+        claims: trashed ? [] : uniqueClaims(targetCt, fields),
       });
     }
     handOffs = await assertPlanFree(ctx, tgt, plan);

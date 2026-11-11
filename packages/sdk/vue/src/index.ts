@@ -339,6 +339,7 @@ export type {
   BlockVariantLike,
   BreakpointLike,
   FieldAttrs,
+  PropLike,
   ResponsiveValue,
   SlotAttrs,
   UnknownBlock,

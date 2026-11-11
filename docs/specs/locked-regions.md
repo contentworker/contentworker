@@ -83,14 +83,14 @@ interface BlockLock {
 `blockConfigIssues` gains the regions held on the stored entry as one more input. Before and after
 compared, with each issue naming the region's first `_key`:
 
-| Change                                                    | Issue           |
-| --------------------------------------------------------- | --------------- |
-| A locked block removed, or swapped for another block type | `region_locked` |
-| A block inserted between two of a run's blocks            | `region_locked` |
-| A run's blocks reordered or split across slots            | `region_locked` |
-| With `subtree`: any slot inside a locked block changed    | `region_locked` |
-| With `freeze: 'all'`: any field inside the region changed | `region_frozen` |
-| A locked block's `_key` held by more than one block       | `region_locked` |
+| Change                                                     | Issue                         |
+| ---------------------------------------------------------- | ----------------------------- |
+| A locked block removed, or swapped for another block type  | `region_locked`               |
+| A block inserted between two of a run's blocks             | `region_locked`               |
+| A run's blocks reordered or split across slots             | `region_locked`               |
+| With `subtree`: any slot inside a locked block changed     | `region_locked`               |
+| With `freeze: 'all'`: any field inside the region changed  | `region_frozen`               |
+| A locked block's `_key` held by more than one block        | `region_locked`               |
 
 - The same rules as today: new edits are judged, copies are not, with one exception: a **version
   restore is held to the locks the entry holds now**, by the regions only (the block config's

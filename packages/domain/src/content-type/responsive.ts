@@ -6,7 +6,9 @@ import {
   type ComponentVariant,
   type FieldDefinition,
   isValidApiId,
+  optionValue,
   RESPONSIVE_KEY,
+  ruleMessage,
   variantNamed,
   variantOf,
 } from './field';
@@ -187,10 +189,50 @@ export const responsivePropsOf = (variant: ComponentVariant | undefined): readon
   Array.isArray(variant?.responsive) ? variant.responsive : [];
 
 /**
+ * Why `value` can't be an override of `field` (a token or a Boolean), or null when it can: the
+ * prop's type and its `in` list, as validation checks the prop itself.
+ */
+export function overrideValueProblem(field: FieldDefinition, value: unknown): string | null {
+  if (value === undefined || value === null) {
+    return 'An override needs a value: leave the prop out to inherit';
+  }
+  switch (field.type) {
+    case 'Boolean':
+      return typeof value === 'boolean' ? null : 'Expected a boolean';
+    case 'Symbol':
+      if (typeof value !== 'string') return 'Expected a string';
+      break;
+    case 'Integer':
+      if (typeof value !== 'number' || !Number.isInteger(value)) return 'Expected an integer';
+      break;
+    case 'Number':
+      if (typeof value !== 'number' || !Number.isFinite(value)) return 'Expected a number';
+      break;
+    default:
+      return `A ${field.type} prop takes no overrides`;
+  }
+  const v = field.validations;
+  if (!Array.isArray(v?.in)) return null;
+  const allowed = v.in.map(optionValue);
+  return allowed.includes(value as string | number)
+    ? null
+    : (ruleMessage(v, 'in') ?? `Value must be one of: ${allowed.join(', ')}`);
+}
+
+/** The variant's field for a prop that takes overrides, if `prop` is one. */
+const responsiveField = (variant: ComponentVariant, prop: string): FieldDefinition | undefined =>
+  responsivePropsOf(variant).includes(prop)
+    ? variant.fields.find((f) => f.apiId === prop)
+    : undefined;
+
+/**
  * A block's `_responsive` as a save stores it: stale overrides dropped (a breakpoint `breakpoints`
- * doesn't declare, a prop `variant` doesn't list), then empty breakpoints, and undefined when
- * nothing is left. An override whose value is not a map is kept for validation to refuse; a map
- * that isn't an object is returned as it is, for the same reason. Never mutates `raw`.
+ * doesn't declare, a prop `variant` doesn't list, a value its prop no longer takes since a push
+ * narrowed its `in` or retyped it), then empty breakpoints, and undefined when nothing is left.
+ * A new edit's overrides were judged before this runs (`undeclaredOverrides`), so all it drops is
+ * what a block carried. A breakpoint whose value is not a map is kept for validation to refuse; a
+ * `_responsive` that isn't an object is returned as it is, for the same reason. Never mutates
+ * `raw`.
  */
 export function cleanOverrides(
   variant: ComponentVariant,
@@ -199,7 +241,6 @@ export function cleanOverrides(
 ): unknown {
   if (raw === undefined) return undefined;
   if (!isObject(raw)) return raw;
-  const props = responsivePropsOf(variant);
   const out: Record<string, unknown> = {};
   for (const [bp, overrides] of Object.entries(raw)) {
     if (!breakpoints.includes(bp)) continue;
@@ -207,7 +248,10 @@ export function cleanOverrides(
       out[bp] = overrides;
       continue;
     }
-    const kept = Object.entries(overrides).filter(([prop]) => props.includes(prop));
+    const kept = Object.entries(overrides).filter(([prop, value]) => {
+      const field = responsiveField(variant, prop);
+      return field !== undefined && overrideValueProblem(field, value) === null;
+    });
     if (kept.length > 0) out[bp] = Object.fromEntries(kept);
   }
   return Object.keys(out).length > 0 ? out : undefined;
@@ -224,8 +268,9 @@ export interface StaleOverrideUse {
 }
 
 /**
- * True when `after` drops a breakpoint from a blocks field `before` declared, or a prop from a
- * surviving variant's `responsive`: only then can a revision make a stored override stale.
+ * True when `after` drops a breakpoint from a blocks field `before` declared, drops a prop from a
+ * surviving variant's `responsive`, or changes such a prop's type or `in` list: only then can a
+ * revision make a stored override stale.
  */
 export function narrowsOverrides(
   before: readonly FieldDefinition[],
@@ -251,6 +296,12 @@ export function narrowsOverrides(
           const props = responsivePropsOf(v);
           if (props.length > 0 && ownPrev.some((bp) => !ownNext.includes(bp))) return true;
           if (props.some((p) => !responsivePropsOf(survivor).includes(p))) return true;
+          const shape = (f: FieldDefinition | undefined) =>
+            JSON.stringify([f?.type, f?.validations?.in]);
+          for (const p of props) {
+            const was = v.fields.find((f) => f.apiId === p);
+            if (shape(was) !== shape(survivor.fields.find((f) => f.apiId === p))) return true;
+          }
           if (walk(v.fields, survivor.fields, ownPrev, ownNext)) return true;
         }
       } else if (f.type === 'Component') {
@@ -266,8 +317,9 @@ export function narrowsOverrides(
 
 /**
  * The overrides in `values` that are in force under `before` (the definitions they were written
- * against) and stale under `after`, one per block, breakpoint and prop, every locale. A block
- * whose variant `after` removes is left out: the push reports (and refuses) that removal itself.
+ * against) and stale under `after` (breakpoint or prop removed, or a value the prop no longer
+ * takes), one per block, breakpoint and prop, every locale. A block whose variant `after` removes
+ * is left out: the push reports (and refuses) that removal itself.
  */
 export function staleOverrideUses(
   before: readonly FieldDefinition[],
@@ -300,9 +352,11 @@ export function staleOverrideUses(
         if (isObject(raw)) {
           for (const [bp, overrides] of Object.entries(raw)) {
             if (!ownPrev.includes(bp) || !isObject(overrides)) continue;
-            for (const prop of Object.keys(overrides)) {
-              if (!responsivePropsOf(variant).includes(prop)) continue;
-              if (!ownNext.includes(bp) || !responsivePropsOf(survivor).includes(prop)) {
+            for (const [prop, value] of Object.entries(overrides)) {
+              const was = responsiveField(variant, prop);
+              if (!was || overrideValueProblem(was, value) !== null) continue;
+              const now = ownNext.includes(bp) ? responsiveField(survivor, prop) : undefined;
+              if (!now || overrideValueProblem(now, value) !== null) {
                 uses.push({ block: variant.apiId, breakpoint: bp, prop, site });
               }
             }
@@ -342,22 +396,27 @@ export function staleOverrideUses(
   return uses;
 }
 
-/** An override a new edit sends that the field or block doesn't declare (a typo, not stale). */
+/** An override a new edit sends that can't be one: a typo or a bad value, never a stale one. */
 export interface UndeclaredOverrideIssue extends FieldIssue {
-  readonly code: 'override_undeclared';
+  /** `override_undeclared`: no such breakpoint or responsive prop. `override_invalid`: a value its prop doesn't take. */
+  readonly code: 'override_undeclared' | 'override_invalid';
   /** The block it is on, by `_key`, when it has one. */
   readonly key?: string;
 }
 
 /**
- * The overrides an edit sends that nothing declares: a breakpoint the field doesn't take, or a
- * prop the block's variant doesn't list in `responsive`. Such an override in a new edit is a
- * mistake (a typo, a breakpoint the site doesn't have), so a write refuses it, naming the block
- * and breakpoint (`body[0]._responsive.xl`). One the same block (same `_key`, same top-level
- * field, same locale) already carried in `before`, the version the edit replaces, is stale, not
- * new: it passes here and the save drops it (`cleanOverrides`). `after` is the edit as sent,
- * before that drop. Only the shapes validation accepts are judged: a malformed id, `base` or a
- * non-map is validation's to refuse.
+ * The overrides a new edit sends that can't be kept: `base` or a malformed breakpoint id, a
+ * breakpoint the field doesn't declare, a prop the block's variant doesn't list in `responsive`
+ * (each `override_undeclared`, at the block and breakpoint: `body[0]._responsive.xl`), and a
+ * value its prop doesn't take (`override_invalid`, at the prop). Each is a mistake in what was
+ * sent, so a write refuses it; the save would otherwise drop it unsaid (`cleanOverrides`).
+ *
+ * Unless it is stale: an override of the same block type, breakpoint and prop (and, for a value,
+ * the same value) that the version the edit replaces (`before`) holds anywhere, in any field and
+ * locale. That one came from stored content (a block moved, duplicated, re-inserted by an undo,
+ * copied to another locale, carried back by a client), so it passes and the save drops it.
+ * `after` is the edit as sent, before that drop; a `_responsive` or breakpoint value that isn't a
+ * map is validation's to refuse.
  */
 export function undeclaredOverrides(
   contentType: { readonly fields: readonly FieldDefinition[] },
@@ -365,34 +424,49 @@ export function undeclaredOverrides(
   before: EntryFields | undefined,
 ): UndeclaredOverrideIssue[] {
   const issues: UndeclaredOverrideIssue[] = [];
+  const carried = carriedOverrides(contentType, before);
   for (const top of contentType.fields) {
     for (const [locale, value] of Object.entries(after[top.apiId] ?? {})) {
-      const carried = carriedOverrides(top, before?.[top.apiId]?.[locale]);
       walkBlocks(top, value, top.apiId, [], (variant, item, at, breakpoints) => {
         const raw = item[RESPONSIVE_KEY];
         if (!isObject(raw)) return;
         const key = typeof item._key === 'string' && item._key !== '' ? item._key : undefined;
         const props = responsivePropsOf(variant);
+        const tag = { locale, ...(key !== undefined ? { key } : {}) };
         for (const [bp, overrides] of Object.entries(raw)) {
-          if (!isObject(overrides) || bp === BASE_BREAKPOINT || !isValidApiId(bp)) continue;
-          const held = key !== undefined ? carried.get(key) : undefined;
-          const unknown = Object.keys(overrides).filter(
-            (prop) =>
-              !(breakpoints.includes(bp) && props.includes(prop)) &&
-              !held?.has(`${bp}\u0000${prop}`),
-          );
+          if (!isObject(overrides)) continue;
+          const unknown: string[] = [];
+          for (const [prop, v] of Object.entries(overrides)) {
+            const pair = carriedKey(variant.apiId, bp, prop);
+            const field = breakpoints.includes(bp) ? responsiveField(variant, prop) : undefined;
+            if (!field) {
+              if (!carried.has(pair)) unknown.push(prop);
+              continue;
+            }
+            const problem = overrideValueProblem(field, v);
+            if (problem && !carried.has(`${pair}\u0000${JSON.stringify(v)}`)) {
+              issues.push({
+                field: `${at}.${RESPONSIVE_KEY}.${bp}.${prop}`,
+                ...tag,
+                code: 'override_invalid',
+                message: problem,
+              });
+            }
+          }
           if (unknown.length === 0) continue;
           const named = unknown.map((p) => `"${p}"`).join(', ');
+          const malformed = bp === BASE_BREAKPOINT || !isValidApiId(bp);
           issues.push({
             field: `${at}.${RESPONSIVE_KEY}.${bp}`,
-            locale,
+            ...tag,
             code: 'override_undeclared',
-            ...(key !== undefined ? { key } : {}),
-            message: !breakpoints.includes(bp)
-              ? breakpoints.length === 0
-                ? `"${variant.apiId}" blocks here take no per-breakpoint overrides: this field has no breakpoints`
-                : `No breakpoint "${bp}" (one of: ${breakpoints.join(', ')})`
-              : `${named} ${unknown.length === 1 ? 'is' : 'are'} not responsive on "${variant.apiId}" blocks${props.length ? ` (one of: ${props.join(', ')})` : ''}`,
+            message: malformed
+              ? `"${bp}" is not a breakpoint id: the bare props are the base`
+              : !breakpoints.includes(bp)
+                ? breakpoints.length === 0
+                  ? `"${variant.apiId}" blocks here take no per-breakpoint overrides: this field has no breakpoints`
+                  : `No breakpoint "${bp}" (one of: ${breakpoints.join(', ')})`
+                : `${named} ${unknown.length === 1 ? 'is' : 'are'} not responsive on "${variant.apiId}" blocks${props.length ? ` (one of: ${props.join(', ')})` : ''}`,
           });
         }
       });
@@ -401,20 +475,34 @@ export function undeclaredOverrides(
   return issues;
 }
 
-/** Every breakpoint+prop pair each keyed block of one stored value carries, by `_key`. */
-function carriedOverrides(top: FieldDefinition, value: unknown): Map<string, Set<string>> {
-  const carried = new Map<string, Set<string>>();
-  walkBlocks(top, value, top.apiId, [], (_variant, item) => {
-    const key = item._key;
-    const raw = item[RESPONSIVE_KEY];
-    if (typeof key !== 'string' || !isObject(raw)) return;
-    const pairs = carried.get(key) ?? new Set<string>();
-    for (const [bp, overrides] of Object.entries(raw)) {
-      if (isObject(overrides))
-        for (const prop of Object.keys(overrides)) pairs.add(`${bp}\u0000${prop}`);
+const carriedKey = (block: string, bp: string, prop: string) => `${block}\u0000${bp}\u0000${prop}`;
+
+/**
+ * Every override the stored entry holds, anywhere: block type (its current id), breakpoint and
+ * prop, and the same with the value, for telling a stale override from a new one.
+ */
+function carriedOverrides(
+  contentType: { readonly fields: readonly FieldDefinition[] },
+  before: EntryFields | undefined,
+): Set<string> {
+  const carried = new Set<string>();
+  if (!before) return carried;
+  for (const top of contentType.fields) {
+    for (const value of Object.values(before[top.apiId] ?? {})) {
+      walkBlocks(top, value, top.apiId, [], (variant, item) => {
+        const raw = item[RESPONSIVE_KEY];
+        if (!isObject(raw)) return;
+        for (const [bp, overrides] of Object.entries(raw)) {
+          if (!isObject(overrides)) continue;
+          for (const [prop, v] of Object.entries(overrides)) {
+            const pair = carriedKey(variant.apiId, bp, prop);
+            carried.add(pair);
+            carried.add(`${pair}\u0000${JSON.stringify(v)}`);
+          }
+        }
+      });
     }
-    carried.set(key, pairs);
-  });
+  }
   return carried;
 }
 

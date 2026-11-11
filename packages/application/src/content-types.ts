@@ -11,6 +11,7 @@ import {
   ForbiddenError,
   mimeTypeAllowed,
   NotFoundError,
+  narrowsOverrides,
   type Principal,
   removedFields,
   removedFieldUses,
@@ -19,6 +20,7 @@ import {
   reviseContentType,
   type Scope,
   singletonClaim,
+  staleOverrideUses,
   uniqueClaims,
   validateEntryFields,
 } from '@contentworker/domain';
@@ -36,6 +38,26 @@ export interface ContentTypeWarning {
   readonly entries: number;
   readonly message: string;
 }
+
+/**
+ * Blocks holding an override a revision (a catalog push, a type edit) makes stale (its breakpoint or prop removed, or its value narrowed out), for one
+ * block, breakpoint and prop of a type. Reported, never refused: the overrides are dropped on each
+ * entry's next save.
+ */
+export interface StaleOverrides {
+  readonly contentTypeApiId: string;
+  readonly block: string;
+  readonly breakpoint: string;
+  readonly prop: string;
+  /** Blocks carrying the override, across the entries counted. */
+  readonly blocks: number;
+  readonly entries: number;
+  /** False when the type had more entries than the count reads: the numbers are a lower bound. */
+  readonly complete: boolean;
+}
+
+/** Entries read per type, at most, while counting stale overrides: as block usage counts. */
+export const MAX_STALE_OVERRIDE_SCAN = 2000;
 
 /** A saved content type, with what its revision means for the entries that hold it. */
 export type SavedContentType = ContentType & { readonly warnings?: readonly ContentTypeWarning[] };
@@ -125,7 +147,10 @@ export async function updateContentType(
     previewLoopback: ctx.previewLoopback === true,
   });
   await assertNoRemovedContentInUse(ctx, scope, current, revised);
-  const warnings = await tightenedRulesInUse(ctx, scope, current, revised);
+  const warnings = [
+    ...(await tightenedRulesInUse(ctx, scope, current, revised)),
+    ...staleOverrideWarnings((await staleOverridesOf(ctx, scope, current, revised)).overrides),
+  ];
   await saveContentTypeOver(ctx, scope, current, revised);
   return warnings.length > 0 ? { ...revised, warnings } : revised;
 }
@@ -262,6 +287,83 @@ export async function tightenedRulesInUse(
     message:
       `${entries} ${entries === 1 ? 'entry holds' : 'entries hold'} a value for ${field} that ` +
       'its new rules refuse; each is refused on its next save until that value is changed.',
+  }));
+}
+
+/**
+ * The overrides entries of `current` hold that the revision `next` makes stale, counted per
+ * block, breakpoint and prop as block usage counts blocks: the current version of each entry
+ * outside the trash, a page at a time, up to {@link MAX_STALE_OVERRIDE_SCAN}. Reads only when the
+ * revision drops a breakpoint or a responsive prop, or changes one's values. `blocks` counts the
+ * blocks with any stale override, each once. `skip` leaves out entries the caller is about to
+ * replace (a promotion's copies).
+ */
+export async function staleOverridesOf(
+  ctx: AppContext,
+  scope: Scope,
+  current: ContentType,
+  next: ContentType,
+  opts: { readonly skip?: (entryId: string) => boolean } = {},
+): Promise<{ readonly overrides: StaleOverrides[]; readonly blocks: number }> {
+  if (!narrowsOverrides(current.fields, next.fields)) return { overrides: [], blocks: 0 };
+  const counts = new Map<string, { blocks: number; entries: Set<string> }>();
+  let blocks = 0;
+  let read = 0;
+  let complete = true;
+  for (let after = ''; ; ) {
+    const page = await ctx.store.entries.list(scope, {
+      contentTypeApiId: current.apiId,
+      archived: false,
+      limit: REMOVAL_SCAN_PAGE,
+      afterEntryId: after,
+    });
+    for (const e of page) {
+      if (opts.skip?.(e.entry.id)) continue;
+      const uses = staleOverrideUses(current.fields, next.fields, e.fields);
+      blocks += new Set(uses.map((u) => u.site)).size;
+      for (const use of uses) {
+        const id = `${use.block}\u0000${use.breakpoint}\u0000${use.prop}`;
+        const held = counts.get(id) ?? { blocks: 0, entries: new Set<string>() };
+        held.blocks += 1;
+        held.entries.add(e.entry.id);
+        counts.set(id, held);
+      }
+    }
+    read += page.length;
+    if (page.length < REMOVAL_SCAN_PAGE) break;
+    if (read >= MAX_STALE_OVERRIDE_SCAN) {
+      complete = false;
+      break;
+    }
+    after = page[page.length - 1]?.entry.id ?? after;
+  }
+  const overrides = [...counts].map(([id, held]) => {
+    const [block, breakpoint, prop] = id.split('\u0000') as [string, string, string];
+    return {
+      contentTypeApiId: current.apiId,
+      block,
+      breakpoint,
+      prop,
+      blocks: held.blocks,
+      entries: held.entries.size,
+      complete,
+    };
+  });
+  return { overrides, blocks };
+}
+
+/**
+ * A revision's stale overrides as warnings, one per block, breakpoint and prop, as a catalog push
+ * reports them in `staleOverrides`: saved, never refused.
+ */
+function staleOverrideWarnings(stale: readonly StaleOverrides[]): ContentTypeWarning[] {
+  return stale.map((s) => ({
+    field: `${s.block}._responsive.${s.breakpoint}.${s.prop}`,
+    entries: s.entries,
+    message:
+      `${s.blocks}${s.complete ? '' : '+'} ${s.blocks === 1 ? 'block overrides' : 'blocks override'} ` +
+      `${s.block}.${s.prop} at ${s.breakpoint}, which this revision makes stale; each entry drops ` +
+      'the override on its next save.',
   }));
 }
 

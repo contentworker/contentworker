@@ -399,8 +399,8 @@ export interface BlockCatalog {
   readonly hash: string;
   readonly blocks: readonly BlockManifest[];
   readonly targets: readonly BlockCatalogTarget[];
-  /** Empty when the catalog declares none. */
-  readonly breakpoints: readonly Breakpoint[];
+  /** Empty when the catalog declares none; absent from a server older than breakpoints. */
+  readonly breakpoints?: readonly Breakpoint[];
   readonly changes: BlockCatalogChanges;
   readonly pushedAt: string;
   readonly pushedBy: string | null;
@@ -449,9 +449,10 @@ export interface BlockCatalogPush {
   }[];
   /**
    * Blocks holding overrides the push makes stale (their breakpoint or prop removed), by block,
-   * breakpoint and prop: reported, never refused; each entry's next save drops them.
+   * breakpoint and prop: reported, never refused; each entry's next save drops them. Absent from a
+   * server older than breakpoints.
    */
-  readonly staleOverrides: readonly {
+  readonly staleOverrides?: readonly {
     readonly contentTypeApiId: string;
     readonly block: string;
     readonly breakpoint: string;

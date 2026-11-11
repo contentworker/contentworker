@@ -43,7 +43,7 @@ export interface BlockContext<B extends BlockValue = UnknownBlock> {
   /** The block, `_type` its current id: a block stored under a former id reads as this one. */
   readonly block: B;
   /** Its per-breakpoint overrides as they apply (stale ones left out); `responsiveProp` reads one. */
-  readonly responsive: BlockOverrides;
+  readonly responsive?: BlockOverrides;
   readonly index: number;
   /** Set in a live preview for a block Coworker proposes: draw it as a ghost. */
   readonly ghost: BlockGhost | undefined;

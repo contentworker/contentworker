@@ -383,7 +383,7 @@ Built on Blocks and the frontend runtime. Layouts stay a typed tree; rich text s
   catalog push declares `breakpoints` and each block's `responsive` props; blocks store overrides
   in `_responsive`, validated as their props, with stale ones dropped on save and counted by the
   push (`staleOverrides`); block patches, frozen regions, copies, REST, MCP, GraphQL
-  (`responsive`), codegen and `resolveBlocks` / `responsiveProp` carry them. Still to come: editing
+  (`_responsive`), codegen and `resolveBlocks` / `responsiveProp` carry them. Still to come: editing
   them on the canvas (width presets from the breakpoints, the Look tab per breakpoint).
 - [x] **Blocks from code.** `contentworker blocks push` maps component manifests (JSON data:
   token and enum props, slots with `allowedChildren`, `allowedParents`, aliases for renamed ids,

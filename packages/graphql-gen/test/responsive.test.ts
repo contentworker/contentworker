@@ -5,9 +5,10 @@ import { describe, expect, it } from 'vitest';
 import { buildDeliverySchema, type DeliveryContext } from '../src/index';
 
 /**
- * A block with per-breakpoint overrides gains `responsive: <BlockType>Responsive`, one nullable
+ * A block with per-breakpoint overrides gains `_responsive: <BlockType>Responsive`, one nullable
  * field per breakpoint of the overridable props. Additive: every other type keeps its name, even
- * one whose preferred name the new types would otherwise have taken.
+ * one whose preferred name the new types would otherwise have taken, and the field is named for
+ * its stored key, so no prop can ever take it.
  */
 
 const field = (over: Partial<FieldDefinition> & Pick<FieldDefinition, 'apiId'>): FieldDefinition =>
@@ -100,7 +101,8 @@ const entry: ResolvedEntry = {
         _key: 'h1',
         size: 'md',
         columns: 1,
-        _responsive: { lg: { size: 'xl', columns: 3 }, xl: { size: 'sm' } },
+        // `md.size` isn't one of its tokens, `lg.columns` not a number: neither is served.
+        _responsive: { lg: { size: 'xl', columns: '3' }, md: { size: 'huge' }, xl: { size: 'sm' } },
       },
       {
         _type: 'grid',
@@ -155,12 +157,13 @@ describe('per-breakpoint overrides in the delivery schema', () => {
     expect(printSchema(buildDeliverySchema([page(undefined)]))).toBe(printSchema(before));
   });
 
-  it('names the overrides field by its stored key when a prop is already called responsive', () => {
+  it('names the overrides field by its stored key, beside a prop called responsive', () => {
     const hero = schema.getType('PageBodyHero') as GraphQLObjectType;
     expect(String(hero.getFields()._responsive?.type)).toBe('PageBodyHeroResponsive2');
     expect(String(hero.getFields().responsive?.type)).toBe('PageBodyHeroResponsive');
     const card = schema.getType('PageBodyGridItemsCard') as GraphQLObjectType;
-    expect(String(card.getFields().responsive?.type)).toBe('PageBodyGridItemsCardResponsive');
+    expect(String(card.getFields()._responsive?.type)).toBe('PageBodyGridItemsCardResponsive');
+    expect(card.getFields().responsive).toBeUndefined();
     const values = schema.getType('PageBodyHeroResponsiveValues') as GraphQLObjectType;
     expect(
       Object.fromEntries(Object.entries(values.getFields()).map(([k, f]) => [k, String(f.type)])),
@@ -170,19 +173,19 @@ describe('per-breakpoint overrides in the delivery schema', () => {
     });
   });
 
-  it('serves the declared overrides, null where a breakpoint has none', async () => {
+  it('serves the declared overrides, null where a breakpoint has none or a value isn’t a token', async () => {
     const r = await graphql({
       schema,
       contextValue,
       source: `{ page(id: "e1") { body {
         ... on PageBodyHero { size _responsive { md { size } lg { size columns } } }
-        ... on PageBodyGrid { items { ... on PageBodyGridItemsCard { responsive { md { hidden } lg { hidden } } } } }
+        ... on PageBodyGrid { items { ... on PageBodyGridItemsCard { _responsive { md { hidden } lg { hidden } } } } }
       } } }`,
     });
     expect(r.errors).toBeUndefined();
     expect((r.data as { page: { body: unknown[] } }).page.body).toEqual([
-      { size: 'md', _responsive: { md: null, lg: { size: 'xl', columns: 3 } } },
-      { items: [{ responsive: { md: { hidden: true }, lg: null } }] },
+      { size: 'md', _responsive: { md: { size: null }, lg: { size: 'xl', columns: null } } },
+      { items: [{ _responsive: { md: { hidden: true }, lg: null } }] },
     ]);
   });
 });

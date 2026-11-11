@@ -4,6 +4,7 @@ import {
   type FieldType,
   isValidApiId,
   type LinkType,
+  responsivePropProblem,
 } from '@contentworker/domain';
 import { Button } from '@contentworker/ui/button';
 import { Checkbox } from '@contentworker/ui/checkbox';
@@ -31,6 +32,11 @@ export interface VariantRow {
   apiId: string;
   apiIdTouched: boolean;
   fields: VariantFieldRow[];
+  /**
+   * The variant it was loaded from: what this editor doesn't edit (former ids in `aliases`, the
+   * `responsive` props a block catalog gave it) rides along.
+   */
+  source?: ComponentVariant;
 }
 
 /**
@@ -72,6 +78,7 @@ export function variantRowsFrom(variants: readonly ComponentVariant[]): VariantR
     name: v.name,
     apiId: v.apiId,
     apiIdTouched: true,
+    source: v,
     fields: v.fields.map((f) => ({
       name: f.name,
       apiId: f.apiId,
@@ -93,10 +100,8 @@ export function variantRowsFrom(variants: readonly ComponentVariant[]): VariantR
 export function variantsFromRows(rows: readonly VariantRow[]): ComponentVariant[] {
   return rows
     .filter((v) => v.name.trim() && v.apiId)
-    .map((v) => ({
-      apiId: v.apiId,
-      name: v.name.trim(),
-      fields: v.fields
+    .map((v) => {
+      const fields = v.fields
         .filter((f) => f.name.trim() && f.apiId)
         .map((f, position) => {
           const retyped = f.source && f.source.type !== f.type;
@@ -114,8 +119,31 @@ export function variantsFromRows(rows: readonly VariantRow[]): ComponentVariant[
             position,
             ...(f.type === 'Link' ? { linkType: f.linkType ?? 'Entry' } : {}),
           } as FieldDefinition;
-        }),
-    }));
+        });
+      // Kept from the stored variant, keeping only responsive props that are still tokens or
+      // Booleans of this block, so an edit here never wipes a block's overrides or former ids.
+      const {
+        apiId: _a,
+        name: _n,
+        fields: _f,
+        responsive,
+        ...kept
+      } = v.source ?? {
+        apiId: '',
+        name: '',
+        fields: [],
+      };
+      const stillResponsive = (responsive ?? []).filter(
+        (p) => responsivePropProblem(fields.find((f) => f.apiId === p)) === null,
+      );
+      return {
+        ...kept,
+        apiId: v.apiId,
+        name: v.name.trim(),
+        fields,
+        ...(stillResponsive.length > 0 ? { responsive: stillResponsive } : {}),
+      };
+    });
 }
 
 /**

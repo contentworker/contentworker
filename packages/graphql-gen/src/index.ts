@@ -8,6 +8,7 @@ import {
   type DeliveredAsset,
   type FieldDefinition,
   type LocalizedValue,
+  overrideValueProblem,
   RESPONSIVE_KEY,
   responsivePropsOf,
   SEO_FIELDS,
@@ -140,8 +141,8 @@ function componentType(
       }
       const responsive = variant ? responsiveType(names, name, variant, breakpoints) : undefined;
       if (responsive) {
-        // A prop may already be called `responsive`: the overrides then go by their stored key.
-        fields[fields.responsive ? RESPONSIVE_KEY : 'responsive'] = {
+        // Under its stored key, never `responsive`: a prop added by that name later can't take it.
+        fields[RESPONSIVE_KEY] = {
           type: responsive,
           description:
             "The block's per-breakpoint overrides, by breakpoint id: each applies from its " +
@@ -178,7 +179,15 @@ function responsiveType(
     fields: Object.fromEntries(
       props.map((f) => [
         f.apiId,
-        { type: scalarFor(f), resolve: (v: Record<string, unknown>) => v?.[f.apiId] ?? null },
+        {
+          type: scalarFor(f),
+          // Served as stored, so a value its prop doesn't take (a push narrowed `in`, or one
+          // written by hand) is left out rather than handed to a renderer as a token.
+          resolve: (v: Record<string, unknown>) => {
+            const value = v?.[f.apiId];
+            return overrideValueProblem(f, value) === null ? value : null;
+          },
+        },
       ]),
     ),
   });
@@ -333,7 +342,7 @@ function scalarFor(field: FieldDefinition): GraphQLOutputType {
  * `search`. A singleton type's `<type>` takes no `id` to read its one entry. Field values come from the resolver-rendered entry, so locale
  * flattening and reference resolution are reused, not reimplemented.
  *
- * A block with per-breakpoint overrides gains a `responsive` field. Its types are an addition:
+ * A block with per-breakpoint overrides gains a `_responsive` field. Its types are an addition:
  * the schema is built once without them, to learn every name it takes, and again with them
  * taking only names left over, so no type a client queries is renamed to make room.
  */
