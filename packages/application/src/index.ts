@@ -57,6 +57,7 @@ export * from './field-values';
 export * from './frontend-connection';
 export * from './functions';
 export * from './generation';
+export * from './hidden-fields';
 export * from './hooks';
 export * from './image';
 export * from './import';

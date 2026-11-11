@@ -12,6 +12,7 @@ import {
   type AppContext,
   createContentType,
   createEntry,
+  hideUnreadableIssues,
   publishContentType,
   SYSTEM_CALLER,
   trashEntry,
@@ -322,5 +323,75 @@ describe('a refusal in a field the caller can’t read', () => {
     const id = await withRequiredNotes();
     const err = await refusal(updateEntry(ctx, scope, id, article('Edited').fields));
     expect((err as ValidationError).issues).toEqual([expect.objectContaining({ field: 'notes' })]);
+  });
+});
+
+describe('a unique value taken in a field the caller can’t read', () => {
+  beforeEach(() => seed());
+
+  /** `code` is unique and filled by default, so every create but the first collides on it. */
+  const withDefaultCode = async () => {
+    const def = (await store.contentTypes.get(scope, 'article'))?.fields ?? [];
+    await updateContentType(ctx, SYSTEM_CALLER, scope, 'article', {
+      fields: [
+        ...def,
+        {
+          apiId: 'code',
+          name: 'Code',
+          type: 'Symbol',
+          localized: false,
+          required: false,
+          unique: true,
+          defaultValue: 'X-1',
+          position: 3,
+        } as (typeof def)[number],
+      ],
+    });
+    await publishContentType(ctx, scope, 'article');
+    return (await createEntry(ctx, scope, article('First'))).entry.id;
+  };
+  const restricted = { unwritable: ['code'], unreadable: ['code'] };
+  const refusal = (p: Promise<unknown>) =>
+    p.then(
+      () => null,
+      (err: unknown) => err,
+    );
+
+  it.each([
+    ['a create', () => createEntry(ctx, scope, article('Second'), restricted)],
+    ['a create’s dry run', () => validateEntry(ctx, scope, article('Second'), restricted)],
+  ] as const)(
+    'is counted in %s, without the field, the value or the other entry',
+    async (_n, run) => {
+      const first = await withDefaultCode();
+      const err = await refusal(run());
+      expect(err).toBeInstanceOf(ConflictError);
+      const text = `${(err as Error).message} ${JSON.stringify((err as ConflictError).details)}`;
+      expect(text).toContain('you can’t read');
+      expect(text).not.toContain('code');
+      expect(text).not.toContain('X-1');
+      expect(text).not.toContain(first);
+      expect((err as ConflictError).details).toEqual({ conflicts: [], hidden: 1 });
+    },
+  );
+
+  it('is named to a caller who can read it', async () => {
+    const first = await withDefaultCode();
+    const err = await refusal(createEntry(ctx, scope, article('Second')));
+    expect((err as Error).message).toBe(`code "X-1" is already used by entry ${first}`);
+  });
+
+  it('keeps naming the conflicts in fields it can read, beside the count', () => {
+    const err = new ConflictError('two', {
+      conflicts: [
+        { fieldApiId: 'slug', locale: 'en-US', value: 'home', entryId: 'e9' },
+        { fieldApiId: 'code', locale: 'en-US', value: 'X-1', entryId: 'e9' },
+      ],
+    });
+    const hidden = hideUnreadableIssues(err, ['code']) as ConflictError;
+    expect(hidden.message).toMatch(/^slug "home" is already used by entry e9; A value in 1 field/);
+    expect(JSON.stringify(hidden.details)).not.toContain('X-1');
+    // Nothing to hide: the same error.
+    expect(hideUnreadableIssues(err, ['body'])).toBe(err);
   });
 });

@@ -2257,7 +2257,11 @@ export class InMemoryContentStore implements ContentStore {
     list: async (spaceId, opts = {}) =>
       [...this.promotionData.values()]
         .filter((p) => p.spaceId === spaceId && (!opts.status || p.status === opts.status))
-        .sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0))
+        .sort(
+          (a, b) =>
+            (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0) *
+            (opts.oldestFirst ? -1 : 1),
+        )
         .slice(0, Math.min(opts.limit ?? 50, 200))
         .map((p) => cloneJson(p)),
     transition: async (spaceId, id, from, patch) => {

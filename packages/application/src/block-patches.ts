@@ -21,14 +21,8 @@ import {
   ValidationError,
 } from '@contentworker/domain';
 import type { AppContext } from './context';
-import {
-  type EntryView,
-  getEntry,
-  type HiddenFieldsIssue,
-  hideUnreadableIssues,
-  saveEntryDraft,
-  validateEntry,
-} from './entries';
+import { type EntryView, getEntry, saveEntryDraft, validateEntry } from './entries';
+import { type HiddenFieldsIssue, hideUnreadableIssues } from './hidden-fields';
 import { assertExpectedVersion } from './publishing';
 
 /**

@@ -284,9 +284,11 @@ check first.
    error; whatever was applied before it stays. An apply that dies partway without saying so (the
    Worker evicted mid-request) would leave it `applying`: the engine's hourly `stale-promotions`
    sweep marks one still `applying` an hour after it started (its approval, or its request when
-   it needed none) `failed`, with an error saying so, and audits `promotion.failed`. What it wrote
-   stays; compare the environments and request a new promotion. The move is a compare-and-set out
-   of `applying`, so an apply that finishes first keeps its own outcome.
+   it needed none) `failed`, with an error saying so, and audits `promotion.failed` as `system`.
+   What it wrote stays; compare the environments and request a new promotion. The move is a
+   compare-and-set out of `applying`, so an apply that finishes first keeps its own outcome, and
+   an apply that ends after the sweep failed it leaves the record (and its audit) as the sweep
+   left them.
 
 ### Audit log
 
@@ -515,11 +517,15 @@ caller never saw. The MCP tools `entries_update`, `entries_publish`, `entries_un
 `entries_restore_version` take the same `expectedVersion` argument.
 
 **Fields the caller can't read.** A save keeps the stored values of the fields the caller's role
-denies, and one of them can still fail a rule (a required field someone else left empty). A `422`
-from a create, an update or `…/entries/validate` (and `entries_create`, `entries_update`,
-`entries_validate`) never lists those issues: they fold into one issue after the others,
-`{ field: "", code: "hidden", hidden: n, message }`, which counts the fields without naming them
-or their values, as a block patch's does.
+denies, and one of them can still fail a rule (a required field someone else left empty), and a
+publish can still meet a dangling link in one. A `422` from a create, an update,
+`…/entries/validate`, `PATCH …/entries/:id/seo` or a publish (and `entries_create`,
+`entries_update`, `entries_validate`, `entries_set_seo`, `entries_publish`) never lists those
+issues: they fold into one issue after the others, `{ field: "", code: "hidden", hidden: n,
+message }`, which counts the fields without naming them, their values or a link's target, as a
+block patch's does. A `409` for a unique value such a field holds that another entry already uses
+says so without the field, the value or the other entry: `details` is
+`{ conflicts, hidden: n }`, `conflicts` listing only those in fields the caller can read.
 
 **Publish gating.** When the latest published version of a workflow has `gatesPublish` on and a run
 of it can publish (a `trigger.manual` trigger and a `content.publish` or `content.publish_release`

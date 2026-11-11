@@ -21,6 +21,7 @@ import type { SitemapPage } from '@contentworker/ports';
 import type { AppContext } from './context';
 import { type DeliveryReads, deliveryReads } from './delivery-reads';
 import { type EntryView, getEntry, saveEntryDraft } from './entries';
+import { hidingUnreadable } from './hidden-fields';
 
 /**
  * Search engine metadata and the sitemap. An entry's SEO metadata is its content type's `Seo`
@@ -38,6 +39,11 @@ export type EntrySeoPatch = {
 export interface SetEntrySeoOptions {
   /** The locale to change; the default locale when left out. Only a localized Seo field takes another. */
   readonly locale?: string;
+  /**
+   * Top-level fields the caller's role denies (`deniedFieldsFor`): the save judges the whole entry,
+   * and a refusal counts the issues in them without naming them (`hideUnreadableIssues`).
+   */
+  readonly unreadable?: readonly string[];
 }
 
 /**
@@ -99,18 +105,20 @@ export async function setEntrySeo(
   const { [field.apiId]: _seo, ...rest } = fields;
   const next: EntryFields =
     Object.keys(localized).length > 0 ? { ...rest, [field.apiId]: localized } : rest;
-  return saveEntryDraft(
-    ctx,
-    scope,
-    entry,
-    contentType,
-    {
-      defaultLocale: config.defaultLocale,
-      locales: config.locales,
-      previous: fields,
-    },
-    next,
-    fields,
+  return hidingUnreadable(opts.unreadable, () =>
+    saveEntryDraft(
+      ctx,
+      scope,
+      entry,
+      contentType,
+      {
+        defaultLocale: config.defaultLocale,
+        locales: config.locales,
+        previous: fields,
+      },
+      next,
+      fields,
+    ),
   );
 }
 

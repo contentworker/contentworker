@@ -874,7 +874,7 @@ describe('failing a promotion whose apply died partway', () => {
     expect(await store.entries.get(main, entryId)).not.toBeNull();
     const audit = await store.audit.list(spaceId, { targetType: 'promotion' });
     expect(audit.filter((a) => a.action === 'promotion.failed')).toMatchObject([
-      { targetId: promotion.id, actor: 'grace', status: 500 },
+      { targetId: promotion.id, actor: 'system', status: 500 },
     ]);
     // The next tick finds nothing left to fail.
     expect(await failStalePromotions(ctx)).toEqual({ failed: 0 });
@@ -894,6 +894,67 @@ describe('failing a promotion whose apply died partway', () => {
     const done = await getPromotion(ctx, spaceId, promotion.id);
     expect(done.status).toBe('completed');
     expect(done.error).toBeUndefined();
+  });
+
+  it('lets an apply that outlives the sweep keep the sweep’s outcome, auditing it once', async () => {
+    for (const fails of [false, true]) {
+      const e = await createEntry(ctx, staging, {
+        contentTypeApiId: 'note',
+        fields: { title: { 'en-US': fails ? 'Slow and failing' : 'Slow' } },
+      });
+      const p = await requestPromotion(ctx, ada, spaceId, {
+        source: 'staging',
+        target: 'main',
+        entries: [e.entry.id],
+      });
+      // The apply runs past the bound, and the sweep fails it just before the apply ends.
+      const transition = store.promotions.transition;
+      const create = store.entries.create;
+      store.promotions.transition = async (...args) => {
+        if (args[2] === 'applying') {
+          store.promotions.transition = transition;
+          clock.advance(PROMOTION_APPLY_TIMEOUT_MS);
+          expect(await failStalePromotions(ctx)).toEqual({ failed: 1 });
+        }
+        return transition(...args);
+      };
+      if (fails) {
+        store.entries.create = async () => {
+          throw new Error('boom');
+        };
+      }
+      const outcome = approvePromotion(ctx, grace, spaceId, p.id);
+      if (fails) await expect(outcome).rejects.toThrow('boom');
+      else expect(await outcome).toMatchObject({ id: p.id, status: 'failed' });
+      store.entries.create = create;
+      store.promotions.transition = transition;
+      expect((await getPromotion(ctx, spaceId, p.id)).status).toBe('failed');
+      const audit = await store.audit.list(spaceId, { targetId: p.id });
+      // The sweep's row only: no `promotion.completed`, and no second `promotion.failed`.
+      expect(
+        audit.filter(
+          (a) => a.action !== 'promotion.requested' && a.action !== 'promotion.approved',
+        ),
+      ).toMatchObject([{ action: 'promotion.failed', actor: 'system' }]);
+    }
+  });
+
+  it('reaches the oldest stuck promotions however many younger ones are applying', async () => {
+    const { promotion } = await stuck();
+    clock.advance(PROMOTION_APPLY_TIMEOUT_MS);
+    // More than one list's worth applying after it, all young.
+    for (let i = 0; i < 200; i++) {
+      await store.promotions.create({
+        ...promotion,
+        id: `young-${i}`,
+        status: 'applying',
+        createdAt: clock.now().toISOString(),
+        decidedAt: clock.now().toISOString(),
+      });
+    }
+    expect(await failStalePromotions(ctx)).toEqual({ failed: 1 });
+    expect((await getPromotion(ctx, spaceId, promotion.id)).status).toBe('failed');
+    expect((await getPromotion(ctx, spaceId, 'young-0')).status).toBe('applying');
   });
 
   it('sweeps every space, and nothing that isn’t applying', async () => {

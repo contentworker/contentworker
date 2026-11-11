@@ -8,7 +8,7 @@ import {
   searchIndexHealth,
   unpublishEntry,
 } from '@contentworker/application';
-import { SCOPES, ValidationError } from '@contentworker/domain';
+import { deniedFieldsFor, SCOPES, ValidationError } from '@contentworker/domain';
 import { Hono } from 'hono';
 import { type AuthDeps, type AuthVars, requireScope } from '../../auth';
 import { doc } from '../../docs/openapi';
@@ -107,7 +107,7 @@ export function semanticsRoutes(deps: AuthDeps): Hono<AuthVars> {
     requireScope(SCOPES.contentPublish),
     async (c) => {
       const id = c.req.param('id');
-      await guardEntry(c, id, 'publish');
+      const type = await guardEntry(c, id, 'publish');
       // Optional synchronous pre-publish moderation gate: reject flagged content
       // before it ever reaches the delivery read model.
       //
@@ -127,7 +127,14 @@ export function semanticsRoutes(deps: AuthDeps): Hono<AuthVars> {
           ]);
         }
       }
-      return c.json(await publishEntry(actingCtx(ctx, c), scopeOf(c), id, expectedVersionOf(c)));
+      // A field it may not read is never named in a refusal, only counted.
+      const unreadable = type ? deniedFieldsFor(c.get('principal'), type) : [];
+      return c.json(
+        await publishEntry(actingCtx(ctx, c), scopeOf(c), id, {
+          ...expectedVersionOf(c),
+          unreadable,
+        }),
+      );
     },
   );
   app.delete(

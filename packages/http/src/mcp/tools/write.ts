@@ -493,7 +493,7 @@ export function registerWriteTools(server: McpServer, t: ToolContext): void {
     },
     async (args) => {
       guard(SCOPES.contentPublish, scopeOf(args));
-      await guardEntry(scopeOf(args), args.id, 'publish');
+      const type = await guardEntry(scopeOf(args), args.id, 'publish');
       if (deps.moderateBeforePublish) {
         const verdict = await moderateEntry(ctx, agents, scopeOf(args), args.id);
         if (verdict.flagged) {
@@ -505,8 +505,12 @@ export function registerWriteTools(server: McpServer, t: ToolContext): void {
           ]);
         }
       }
+      // A field it may not read is never named in a refusal, only counted.
       return ok(
-        await publishEntry(ctx, scopeOf(args), args.id, { expectedVersion: args.expectedVersion }),
+        await publishEntry(ctx, scopeOf(args), args.id, {
+          expectedVersion: args.expectedVersion,
+          unreadable: type ? deniedFieldsFor(principal, type) : [],
+        }),
       );
     },
   );

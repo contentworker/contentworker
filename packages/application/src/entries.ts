@@ -38,6 +38,7 @@ import { type BlobStore, type EntryRepo, TransactionConflictError } from '@conte
 import { assertBlockConfigAllows, type BlockRulesInForce } from './block-config';
 import { noteEntryChange } from './change-log';
 import { type AppContext, actorOf } from './context';
+import { hidingUnreadable, uniqueValueTaken } from './hidden-fields';
 import { runHook, runPureHook } from './hooks';
 import { assertExpectedVersion, unpublishEntryTx } from './publishing';
 import { versionBodyPrefix } from './version-archive';
@@ -146,52 +147,6 @@ function withUnwritable(
   return out;
 }
 
-/**
- * The issue a save's refusal makes of fields the caller can't read: counted, never named. A stored
- * value it may not see can still fail a rule (a required field left empty by someone else), and
- * its path and message would say what it holds.
- */
-export interface HiddenFieldsIssue extends FieldIssue {
-  readonly code: 'hidden';
-  readonly hidden: number;
-}
-
-/**
- * A refusal's field issues as the caller may see them: those in fields it can't read (by top-level
- * field) folded into one issue that counts the fields. Any other error passes through as it is.
- */
-export function hideUnreadableIssues(err: unknown, unreadable: readonly string[] = []): unknown {
-  if (!(err instanceof ValidationError) || unreadable.length === 0) return err;
-  const hidden = new Set<string>();
-  const shown = err.issues.filter((issue) => {
-    const top = /^[A-Za-z]\w*/.exec(issue.field)?.[0] ?? '';
-    if (!unreadable.includes(top)) return true;
-    hidden.add(top);
-    return false;
-  });
-  if (hidden.size === 0) return err;
-  const n = hidden.size;
-  const counted: HiddenFieldsIssue = {
-    field: '',
-    code: 'hidden',
-    hidden: n,
-    message: `${n} ${n === 1 ? 'field' : 'fields'} you can’t read ${n === 1 ? 'isn’t' : 'aren’t'} valid; someone who can read ${n === 1 ? 'it' : 'them'} has to fix ${n === 1 ? 'it' : 'them'} first`,
-  };
-  return new ValidationError([...shown, counted]);
-}
-
-/** `run`, with its refusal's issues in fields the caller can't read counted rather than named. */
-async function hidingUnreadable<T>(
-  unreadable: readonly string[] | undefined,
-  run: () => Promise<T>,
-): Promise<T> {
-  try {
-    return await run();
-  } catch (err) {
-    throw hideUnreadableIssues(err, unreadable);
-  }
-}
-
 export interface EntryView {
   readonly entry: Entry;
   readonly fields: EntryFields;
@@ -251,7 +206,9 @@ export async function createEntry(
   const claims = uniqueClaims(contentType, fields);
   // Claim and write together: the claim is the constraint, so a crash between
   // the two must not leave a value reserved by an entry that does not exist.
-  await writeNewEntry(ctx, scope, contentType, entry, version, claims);
+  await hidingUnreadable(options.unreadable, () =>
+    writeNewEntry(ctx, scope, contentType, entry, version, claims),
+  );
   noteEntryChange(ctx, { entry, contentType, before: {}, after: fields, locales: vctx.locales });
   return { entry, fields };
 }
@@ -443,7 +400,7 @@ export async function assertClaimsFree(
       .map((c) =>
         c.fieldApiId === SINGLETON_CLAIM_FIELD
           ? singletonTaken(singleton?.contentTypeApiId ?? '', c.entryId)
-          : `${c.fieldApiId} "${c.value}" is already used by entry ${c.entryId}`,
+          : uniqueValueTaken(c),
       )
       .join('; '),
     { conflicts },
@@ -677,7 +634,9 @@ export async function validateEntry(
     saveDraft(found.entry, fields);
     const claims = uniqueClaims(contentType, fields);
     if (claims.length > 0) {
-      await assertClaimsFree(ctx.store.entries, scope, claims, input.entryId);
+      await hidingUnreadable(options.unreadable, () =>
+        assertClaimsFree(ctx.store.entries, scope, claims, input.entryId),
+      );
     }
     return { valid: true, fields, skippedHooks };
   }
@@ -697,7 +656,11 @@ export async function validateEntry(
     ),
   );
   const claims = uniqueClaims(contentType, fields);
-  if (claims.length > 0) await assertClaimsFree(ctx.store.entries, scope, claims);
+  if (claims.length > 0) {
+    await hidingUnreadable(options.unreadable, () =>
+      assertClaimsFree(ctx.store.entries, scope, claims),
+    );
+  }
   return { valid: true, fields, skippedHooks };
 }
 

@@ -86,7 +86,9 @@ describe('stale promotion sweep', () => {
     expect((await ctx.store.promotions.get(spaceId, 'young'))?.status).toBe('applying');
     expect((await ctx.store.promotions.get(spaceId, 'done'))?.status).toBe('completed');
     const audit = await ctx.store.audit.list(spaceId, { targetType: 'promotion' });
-    expect(audit).toMatchObject([{ action: 'promotion.failed', targetId: 'stuck', status: 500 }]);
+    expect(audit).toMatchObject([
+      { action: 'promotion.failed', targetId: 'stuck', actor: 'system', status: 500 },
+    ]);
 
     // A second tick (or a redelivered one) finds nothing more to fail.
     expect(await runTick()).toEqual({ failed: 0 });

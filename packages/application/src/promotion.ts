@@ -30,6 +30,7 @@ import {
   removedVariants,
   SCOPES,
   type Scope,
+  SYSTEM_ACTOR,
   staleOverrideUses,
   ValidationError,
 } from '@contentworker/domain';
@@ -386,9 +387,11 @@ export async function failStalePromotions(ctx: AppContext): Promise<StalePromoti
   const before = now.getTime() - PROMOTION_APPLY_TIMEOUT_MS;
   let failed = 0;
   for (const space of await ctx.store.spaces.list()) {
+    // Oldest first: the stuck ones are the old ones, however many young ones are applying.
     const applying = await ctx.store.promotions.list(space.spaceId, {
       status: 'applying',
       limit: 200,
+      oldestFirst: true,
     });
     for (const promotion of applying) {
       // It started applying when it was approved, or when it was requested if it needed no one.
@@ -407,8 +410,9 @@ export async function failStalePromotions(ctx: AppContext): Promise<StalePromoti
       );
       // Moved on since it was listed: whatever moved it (the apply itself) has the last word.
       if (!moved) continue;
+      // The sweep failed it, not whoever approved it.
       await ctx.store.audit.append({
-        ...auditRow(ctx, moved, moved.decidedBy ?? moved.requestedBy, 'promotion.failed'),
+        ...auditRow(ctx, moved, SYSTEM_ACTOR, 'promotion.failed'),
         status: 500,
       });
       failed++;
@@ -452,6 +456,11 @@ async function applyPromotion(base: AppContext, promotion: Promotion): Promise<P
         completedAt: ctx.clock.now().toISOString(),
       },
     );
+    // Already moved on: the stale sweep failed it while this apply ran. That outcome stands and
+    // was audited once; answer the record as it is.
+    if (!done) {
+      return (await ctx.store.promotions.get(promotion.spaceId, promotion.id)) ?? promotion;
+    }
     await ctx.store.audit.append({
       ...auditRow(
         ctx,
@@ -595,7 +604,7 @@ async function applyPromotion(base: AppContext, promotion: Promotion): Promise<P
         ...(result.blocks ? { blocks: result.blocks } : {}),
       });
     });
-    return (await finish({ status: 'completed', result: done })) ?? promotion;
+    return await finish({ status: 'completed', result: done });
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
     await finish({ status: 'failed', result: { ...result, mismatched: [] }, error });
