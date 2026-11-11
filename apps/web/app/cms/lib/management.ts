@@ -3,7 +3,7 @@ import type {
   AgentReviewStatus,
   AiCapability,
   AiCapabilitySetting,
-  AiSettings,
+  AiSettingsView,
   Asset,
   AssetCollection,
   AssetFolder,
@@ -3518,11 +3518,13 @@ export function createManagementClient(
       return req('PUT', `${mgmt}/workflow-settings`, input);
     },
     /** The space's AI settings, per capability (preview:read). Version 0, all on, before a set. */
-    getAiSettings(): Promise<AiSettings> {
+    getAiSettings(): Promise<AiSettingsView> {
       return req('GET', `${spaceBase}/ai-settings`);
     },
     /** Sets the capabilities named, held to `expectedVersion` (space:admin; 409 when stale). */
-    setAiSettings(input: AiSettingsInput): Promise<{ settings: AiSettings; unchanged: boolean }> {
+    setAiSettings(
+      input: AiSettingsInput,
+    ): Promise<{ settings: AiSettingsView; unchanged: boolean }> {
       return req('PUT', `${spaceBase}/ai-settings`, input);
     },
 

@@ -16,6 +16,24 @@ import { DomainError, ValidationError } from '../errors';
 export const MODEL_TIERS = ['flagship', 'balanced', 'fast'] as const;
 export type AiModelTier = (typeof MODEL_TIERS)[number];
 
+export const isAiModelTier = (value: unknown): value is AiModelTier =>
+  typeof value === 'string' && (MODEL_TIERS as readonly string[]).includes(value);
+
+/** Cheapest first: what a cap compares tiers by. */
+const TIER_RANK: Readonly<Record<AiModelTier, number>> = { fast: 0, balanced: 1, flagship: 2 };
+
+/**
+ * `tier` held to the deployment's cap (AI_MAX_TIER): the cap when `tier` is above it, else `tier`.
+ * No cap (undefined) is the same as `flagship`: nothing is above it.
+ */
+export function capModelTier(tier: AiModelTier, max: AiModelTier | undefined): AiModelTier {
+  return max !== undefined && TIER_RANK[tier] > TIER_RANK[max] ? max : tier;
+}
+
+/** Whether `tier` is above the cap, so a call asking for it runs on the cap instead. */
+export const isAboveTierCap = (tier: AiModelTier, max: AiModelTier | undefined): boolean =>
+  capModelTier(tier, max) !== tier;
+
 /** The AI capabilities a space can turn on or off, tune and guide, in the order the admin lists. */
 export const AI_CAPABILITIES = [
   'drafting',
@@ -116,6 +134,39 @@ export interface AiSettings {
   readonly updatedAt: string | null;
   /** Who set it, as the audit trail names them. */
   readonly updatedBy: string | null;
+}
+
+/** One capability as the surfaces report it: as set, and the tier it actually runs on. */
+export interface AiCapabilityView extends AiCapabilitySetting {
+  /**
+   * `tier` held to the deployment's cap; null when `tier` is (each call site's own default, which
+   * the cap holds the same way).
+   */
+  readonly effectiveTier: AiModelTier | null;
+}
+
+/**
+ * The settings as REST, MCP and the admin read them: as stored, with the deployment's tier cap
+ * and what it makes of each capability's tier. A tier above the cap is kept as set (lowering the
+ * cap never rewrites a space's settings, and raising it again restores them) and reported here.
+ */
+export interface AiSettingsView extends Omit<AiSettings, 'capabilities'> {
+  /** The most capable tier this deployment runs (AI_MAX_TIER); `flagship` is no cap. */
+  readonly maxTier: AiModelTier;
+  readonly capabilities: Readonly<Record<AiCapability, AiCapabilityView>>;
+}
+
+export function aiSettingsView(
+  settings: AiSettings,
+  maxTier: AiModelTier | undefined,
+): AiSettingsView {
+  const capabilities = Object.fromEntries(
+    AI_CAPABILITIES.map((c) => {
+      const s = settings.capabilities[c];
+      return [c, { ...s, effectiveTier: s.tier === null ? null : capModelTier(s.tier, maxTier) }];
+    }),
+  ) as Record<AiCapability, AiCapabilityView>;
+  return { ...settings, maxTier: maxTier ?? 'flagship', capabilities };
 }
 
 export const DEFAULT_AI_CAPABILITY_SETTING: AiCapabilitySetting = {

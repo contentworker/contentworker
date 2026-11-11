@@ -30,9 +30,12 @@ const auth = (token: string) => ({
   'Content-Type': 'application/json',
 });
 
-async function makeApp() {
+async function makeApp(opts: { maxTier?: 'balanced' | 'fast' } = {}) {
   const wired = wire(config);
-  const app = createApp(wired.ctx, config, wired.rag, wired.blob, wired.ai);
+  const ctx = opts.maxTier
+    ? { ...wired.ctx, ai: { mode: 'live' as const, timeoutMs: 20_000, maxTier: opts.maxTier } }
+    : wired.ctx;
+  const app = createApp(ctx, config, wired.rag, wired.blob, wired.ai);
   await createContentType(
     wired.ctx,
     SYSTEM_CALLER,
@@ -184,5 +187,28 @@ describe('AI settings over HTTP', () => {
       targetLocale: 'fr-FR',
     });
     expect(translated.status).toBe(200);
+  });
+
+  it('accepts a tier above the deployment’s cap, keeps it, and reports the tier it runs on', async () => {
+    const { send } = await makeApp({ maxTier: 'balanced' });
+    const set = await send('PUT', '/spaces/s1/ai-settings', {
+      expectedVersion: 0,
+      capabilities: { drafting: { enabled: true, tier: 'flagship' } },
+    });
+    expect(set.status).toBe(200);
+    expect(await set.json()).toMatchObject({
+      settings: {
+        maxTier: 'balanced',
+        capabilities: { drafting: { tier: 'flagship', effectiveTier: 'balanced' } },
+      },
+    });
+    const read = await send('GET', '/spaces/s1/ai-settings', undefined, 'cpa');
+    expect(await read.json()).toMatchObject({
+      maxTier: 'balanced',
+      capabilities: {
+        drafting: { tier: 'flagship', effectiveTier: 'balanced' },
+        layout: { tier: null, effectiveTier: null },
+      },
+    });
   });
 });

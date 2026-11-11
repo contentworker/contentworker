@@ -169,11 +169,34 @@ text of uploaded documents and recordings, so new ones are found by their name a
 Turn search back on and request a reindex (`POST …/search/reindex`) to fill it again.
 
 **Tier.** `policy.tier(callSiteDefault, requested)` answers the request's own tier, else the space's,
-else the call site's default ([the table above](#which-tier-each-use-case-asks-for)). The tier then
-goes through the AI adapter's tier → model mapping (`WORKERS_AI_MODEL_BY_TIER`, the
-`WORKERS_AI_MODEL_*` overrides) and AI Gateway like any other call, and `CostGuardDO` meters it the
-same; Coworker maps it with the same table, with the fast tier behind it. An AI action names its
-own tier, which stands.
+else the call site's default ([the table above](#which-tier-each-use-case-asks-for)), held to the
+deployment's cap (below). The tier then goes through the AI adapter's tier → model mapping
+(`WORKERS_AI_MODEL_BY_TIER`, the `WORKERS_AI_MODEL_*` overrides) and AI Gateway like any other call,
+and `CostGuardDO` meters it the same; Coworker maps it with the same table, with the fast tier
+behind it. An AI action names its own tier, which stands under the cap.
+
+**The deployment's tier cap.** `CostGuardDO` counts requests and tokens, not price, so a space that
+pins background work (agents, workflows, media) to `flagship` would cost several times what it did
+at `fast` without tripping anything. `AI_MAX_TIER` (`balanced` or `fast`; `flagship` or empty is no
+cap; anything else fails at boot; the registry's `aiMaxTier`) is the deployment's price ceiling per
+call: the effective tier of every call is the lower of the cap and the tier it resolved to
+(`capModelTier`, order `fast` < `balanced` < `flagship`). It is one cap for every capability, not a
+split by interactive and background work: the space's per-capability tiers already express that
+split, the budget windows already separate background spend (`AI_AGENT_*`), and a second var would
+only be a second place to forget. It applies to every source of a tier alike: a request's own
+`tier`, the space's setting, and the call site's default, including the `flagship` defaults of page
+layouts and Coworker (a cap with exceptions isn't a ceiling; layouts on `balanced` are still
+validated against their schema and fall back as before). It is applied in `policy.tier` and in the
+non-policy branches of `generateJson` and `decide`, so a result's provenance names the tier that
+answered, and once more at the budget wrappers (`generateWithBudget`, `decideWithBudget`) for a
+call site that names its tier outright. Embeddings have no tier, so the cap doesn't reach them.
+
+A space's tier above the cap is **accepted and kept**, not refused: a cap lowered after a space chose
+its tiers would otherwise refuse every later save of the settings until each tier was lowered by
+hand, and the choice comes back if the cap is raised. `GET`/`PUT …/ai-settings` and the MCP tools
+report `maxTier` and, per capability, `effectiveTier` (the tier held to the cap; null when the tier
+is the call site's default). The admin's tier select disables the tiers above the cap and says
+"Capped at Balanced by this deployment"; a row set above it says what it runs on.
 
 **Guidance** is plain text, at most `AI_GUIDANCE_MAX_CHARS` (2 000) characters after line endings
 are normalized and the ends trimmed. It is written by a space administrator but runs in other

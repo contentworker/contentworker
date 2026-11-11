@@ -147,6 +147,8 @@ Each row has:
 - **A model tier** (Default, Flagship, Balanced or Fast). Default keeps what each feature uses on
   its own (see [Model tiers](#model-tiers)). A request that names a tier still gets it; in the
   editor, Generate with AI and Draft from prose start at **Space default**, which uses this one.
+  Your deployment may cap the tier (see [Model tiers](#model-tiers)): the tiers above the cap
+  can't be chosen, and the row says "Capped at Balanced by this deployment".
 - **Guidance**, up to 2,000 characters, added after the built-in instructions: house style,
   terminology, tone. It shapes how the model writes, not what it does: it can't change the task,
   the shape of the answer or which tools are used, and the model is told to ignore any part of it
@@ -166,6 +168,12 @@ Features ask for a **tier**, not a specific model: `fast` for classification and
 `balanced` for drafting (the default), `flagship` for the hardest writing. Models run at the
 edge, and your workspace maps each tier to a model, so a model can change without changing a
 workflow or an integration.
+
+A deployment can **cap the tier** at `balanced` or `fast`, to bound what each call costs. Every AI
+call then runs on at most that tier, whatever asked for more: a request, a space's setting, or a
+feature whose own default is `flagship` (page layouts, Coworker). A space's tier above the cap is
+kept as set and runs on the cap; `GET /spaces/{space}/ai-settings` (and `ai_settings_get`) reports
+the cap as `maxTier` and, per capability, the tier it runs on as `effectiveTier`.
 
 ## Decisions
 

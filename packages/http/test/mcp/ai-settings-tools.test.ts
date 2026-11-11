@@ -35,12 +35,13 @@ const admin: Principal = {
   scopes: [SCOPES.previewRead, SCOPES.contentWrite, SCOPES.spaceAdmin],
 };
 
-async function setup() {
+async function setup(maxTier?: 'balanced' | 'fast') {
   const ctx: AppContext = {
     store: new InMemoryContentStore(),
     clock: new FixedClock(),
     ids: new SequenceIdGenerator('n'),
     passwords: new FakePasswordHasher(),
+    ...(maxTier ? { ai: { mode: 'live' as const, timeoutMs: 20_000, maxTier } } : {}),
   };
   const ai = new StubAIProvider(() => ({ title: 'Drafted' }));
   const deps: McpDeps = {
@@ -167,5 +168,25 @@ describe('AI settings tools (MCP), on the HTTP routes’ use-cases', () => {
       capabilities: { media: { enabled: false } },
     });
     expect(set.isError).toBe(true);
+  });
+
+  it('reports the deployment’s cap as the REST route does: kept as set, run on the cap', async () => {
+    const { deps, ai } = await setup('fast');
+    const call = await connect(deps, admin);
+    const set = await call('ai_settings_set', {
+      expectedVersion: 0,
+      capabilities: { drafting: { enabled: true, tier: 'balanced' } },
+    });
+    expect(set.isError).toBe(false);
+    expect(set.body).toMatchObject({
+      settings: {
+        maxTier: 'fast',
+        capabilities: { drafting: { tier: 'balanced', effectiveTier: 'fast' } },
+      },
+    });
+    expect((await call('ai_settings_get')).body).toMatchObject({ maxTier: 'fast' });
+    // And the drafting tool runs on the cap.
+    await call('generate_draft', { contentType: 'post', prompt: 'x' });
+    expect(ai.requests[0]?.tier).toBe('fast');
   });
 });

@@ -1,4 +1,4 @@
-import { RateLimitedError, type Scope } from '@contentworker/domain';
+import { capModelTier, RateLimitedError, type Scope } from '@contentworker/domain';
 import type {
   DecisionAnswer,
   DecisionModel,
@@ -49,7 +49,9 @@ export async function decide(
   req: DecisionRequest,
   opts: DecideOptions,
 ): Promise<DecideResult> {
-  const tier: ModelTier = opts.policy ? opts.policy.tier(req.tier ?? 'fast') : (req.tier ?? 'fast');
+  const tier: ModelTier = opts.policy
+    ? opts.policy.tier(req.tier ?? 'fast')
+    : capModelTier(req.tier ?? 'fast', ctx.ai?.maxTier);
   const started = ctx.clock.now().getTime();
   const log = (record: Omit<AiCallRecord, 'type' | 'ms'>) =>
     ctx.ai?.log?.({ type: 'ai_call', ms: ctx.clock.now().getTime() - started, ...record });

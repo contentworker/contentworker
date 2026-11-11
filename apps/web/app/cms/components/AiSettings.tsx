@@ -3,7 +3,9 @@ import {
   AI_CAPABILITY_INFO,
   AI_GUIDANCE_MAX_CHARS,
   type AiCapability,
-  type AiSettings as AiSettingsDoc,
+  type AiModelTier,
+  type AiSettingsView as AiSettingsDoc,
+  isAboveTierCap,
   SCOPES,
 } from '@contentworker/domain';
 import { Alert, AlertDescription, AlertTitle } from '@contentworker/ui/alert';
@@ -235,6 +237,7 @@ export function AiSettings(props: { client: ManagementClient }) {
               key={c}
               capability={c}
               value={draft[c]}
+              maxTier={base.maxTier ?? 'flagship'}
               disabled={busy || readOnly}
               onChange={(next) => edit(c, next)}
             />
@@ -323,13 +326,34 @@ function staleVersion(err: unknown): number | undefined {
   return typeof version === 'number' ? version : undefined;
 }
 
+/** A tier's label, as the select names it. */
+const tierLabel = (tier: AiModelTier): string =>
+  TIER_CHOICES.find((t) => t.value === tier)?.label ?? tier;
+
+/**
+ * What the tier select says under it: the chosen tier's meaning, and the deployment's cap when it
+ * has one. A tier above the cap (chosen before the cap was lowered) is kept as set, and the hint
+ * says what it runs on instead; the API reports the same as `effectiveTier`.
+ */
+export function tierHint(tier: AiModelTier | null, maxTier: AiModelTier): string {
+  const meaning = TIER_CHOICES.find((t) => t.value === (tier ?? 'default'))?.meaning ?? '';
+  if (maxTier === 'flagship') return meaning;
+  const cap = tierLabel(maxTier);
+  if (tier && isAboveTierCap(tier, maxTier)) {
+    return `Runs on ${cap}: this deployment caps AI at ${cap}.`;
+  }
+  return `${meaning}. Capped at ${cap} by this deployment.`;
+}
+
 function CapabilityRow(props: {
   capability: AiCapability;
   value: AiCapabilityDraft;
+  /** The deployment's tier cap: tiers above it can't be chosen. */
+  maxTier: AiModelTier;
   disabled: boolean;
   onChange: (next: Partial<AiCapabilityDraft>) => void;
 }) {
-  const { capability, value, disabled, onChange } = props;
+  const { capability, value, maxTier, disabled, onChange } = props;
   const info = AI_CAPABILITY_INFO[capability];
   const id = useId();
   const { chars, over } = guidanceLength(value.guidance);
@@ -382,17 +406,22 @@ function CapabilityRow(props: {
                 <SelectValue>{chosen.label}</SelectValue>
               </SelectTrigger>
               <SelectContent>
-                {TIER_CHOICES.map((t) => (
-                  <SelectItem key={t.value} value={t.value} textValue={t.label}>
-                    {t.label}
-                    <span className="sr-only">: </span>
-                    <span className="ml-1.5 text-muted-foreground text-xs">{t.meaning}</span>
-                  </SelectItem>
-                ))}
+                {TIER_CHOICES.map((t) => {
+                  const above = t.value !== 'default' && isAboveTierCap(t.value, maxTier);
+                  return (
+                    <SelectItem key={t.value} value={t.value} textValue={t.label} disabled={above}>
+                      {t.label}
+                      <span className="sr-only">: </span>
+                      <span className="ml-1.5 text-muted-foreground text-xs">
+                        {above ? `Above this deployment’s cap (${tierLabel(maxTier)})` : t.meaning}
+                      </span>
+                    </SelectItem>
+                  );
+                })}
               </SelectContent>
             </Select>
             <p id={`${id}-tier-hint`} className="text-muted-foreground text-xs">
-              {chosen.meaning}
+              {tierHint(value.tier, maxTier)}
             </p>
           </div>
           <div className="space-y-1.5">

@@ -1,4 +1,4 @@
-import { getAiSettings, setAiSettings } from '@contentworker/application';
+import { readAiSettings, setAiSettings } from '@contentworker/application';
 import { SCOPES } from '@contentworker/domain';
 import { Hono } from 'hono';
 import { type AuthDeps, type AuthVars, requireScope } from '../../auth';
@@ -24,10 +24,11 @@ export function aiSettingsRoutes(deps: AuthDeps): Hono<AuthVars> {
       ok: aiSettingsDocs.aiSettings,
       description:
         'Every AI capability with whether it is on, its tier and its guidance, and who set them ' +
-        'when. Version 0, everything on, before the first set.',
+        'when. Version 0, everything on, before the first set. `maxTier` is the deployment’s tier ' +
+        'cap, and each capability’s `effectiveTier` the tier it runs on under it.',
     }),
     requireScope(SCOPES.previewRead),
-    async (c) => c.json(await getAiSettings(ctx, c.req.param('space'))),
+    async (c) => c.json(await readAiSettings(ctx, c.req.param('space'))),
   );
   app.put(
     '/spaces/:space/ai-settings',
@@ -38,8 +39,9 @@ export function aiSettingsRoutes(deps: AuthDeps): Hono<AuthVars> {
         'Replaces each capability the body names, as a new version; the others stay as they are. ' +
         'Setting what is in force again writes nothing. 422 naming each part that isn’t a ' +
         'capability, a tier, or guidance within its length; 409 (naming the version in force) when ' +
-        '`expectedVersion` is stale or another set commits first. A capability turned off answers ' +
-        'requests that need it with 409 `ai_capability_disabled`.',
+        '`expectedVersion` is stale or another set commits first. A tier above the deployment’s ' +
+        '`maxTier` is accepted and kept, and runs on `maxTier` (its `effectiveTier`). A capability ' +
+        'turned off answers requests that need it with 409 `ai_capability_disabled`.',
     }),
     requireScope(SCOPES.spaceAdmin),
     async (c) =>

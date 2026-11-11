@@ -406,6 +406,9 @@ None blocks a release.
   extracted text), with a tool to read a reference file; selectable in generation, canvas and agents.
 - [x] **AI settings per capability.** Per space: enabled, `ModelTier`, and guidance appended to the
   built-in prompt.
+  - [x] **Deployment tier cap.** `AI_MAX_TIER` (the registry's `aiMaxTier`) holds every model call
+    to at most that tier, whatever its source; settings above it are kept and reported as
+    `effectiveTier`, and the admin's select disables the tiers above it.
 - [ ] **Change summaries.** A narrative summary of a version diff, over the existing deterministic
   diff.
 

@@ -216,6 +216,12 @@ export interface EdgeEnv {
   readonly AI_MODE?: string;
   /** Per-call cap for generateJson, ms (default 20000). */
   readonly AI_TIMEOUT_MS?: string;
+  /**
+   * The most capable model tier this deployment runs: `flagship` (or empty: no cap), `balanced` or
+   * `fast`. Every AI call is held to it, whatever its capability's tier, the request or the call
+   * site asks for. Rendered from the registry's `aiMaxTier`.
+   */
+  readonly AI_MAX_TIER?: string;
   /** Cloudflare AI Gateway id: when set, Workers AI calls route through it (logs, caching, limits). */
   readonly AI_GATEWAY_ID?: string;
   /** `true`/`false`: whether AI Gateway keeps a log entry per call (never prompt or answer). */

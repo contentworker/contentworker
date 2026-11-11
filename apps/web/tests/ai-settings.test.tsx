@@ -216,4 +216,40 @@ describe('Settings → AI', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
     await screen.findByRole('switch', { name: 'Drafting' });
   });
+
+  it('shows the deployment’s tier cap: tiers above it can’t be chosen, and one set above it says what it runs on', async () => {
+    const capped = {
+      ...DEFAULT_AI_SETTINGS,
+      version: 1,
+      maxTier: 'balanced',
+      capabilities: {
+        ...DEFAULT_AI_SETTINGS.capabilities,
+        drafting: { enabled: true, tier: 'flagship', guidance: null, effectiveTier: 'balanced' },
+      },
+    } as unknown as AiSettings;
+    renderPage(fakeClient(capped));
+    await screen.findByRole('switch', { name: 'Drafting' });
+    // Chosen before the cap was lowered: kept as set, and the row says what it runs on.
+    expect(
+      within(rowOf('Drafting')).getByText('Runs on Balanced: this deployment caps AI at Balanced.'),
+    ).toBeTruthy();
+    expect(
+      within(rowOf('Translation')).getByText(
+        'What each feature uses on its own. Capped at Balanced by this deployment.',
+      ),
+    ).toBeTruthy();
+    fireEvent.click(screen.getByRole('combobox', { name: 'Model tier Translation' }));
+    await waitFor(() => expect(screen.getAllByRole('option').length).toBe(4));
+    const option = (name: RegExp) => screen.getByRole('option', { name });
+    expect(option(/^Flagship/).getAttribute('aria-disabled')).toBe('true');
+    expect(option(/^Flagship/).textContent).toContain('Above this deployment’s cap (Balanced)');
+    expect(option(/^Balanced/).getAttribute('aria-disabled')).not.toBe('true');
+    expect(option(/^Fast/).getAttribute('aria-disabled')).not.toBe('true');
+  });
+
+  it('says nothing of a cap on a deployment without one', async () => {
+    renderPage(fakeClient({ ...DEFAULT_AI_SETTINGS, maxTier: 'flagship' } as AiSettings));
+    await screen.findByRole('switch', { name: 'Drafting' });
+    expect(screen.queryByText(/Capped at|caps AI at/)).toBeNull();
+  });
 });
