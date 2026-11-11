@@ -320,7 +320,7 @@ Found while building and reviewing M1 and M2. None blocks a release.
 - [x] **Role version check.** A `version` on every role and an optional `expectedVersion` on
   `PUT /roles/:id` and `role_update` (a stale one is a `409` naming the version in force), with the
   save a compare-and-set on it, so the Access sheet's save can't undo someone else's.
-- [ ] **SDK paging.** `entries.list` sends `skip`, which the Preview list refuses; use `cursor` and
+- [x] **SDK paging.** `entries.list` sends `skip`, which the Preview list refuses; use `cursor` and
   return `nextCursor`.
 - [ ] **Flaky browser tests.** Find the cause of the webhook dialog, webhook deliveries and asset
   library tests that fail under a full parallel run and pass alone.

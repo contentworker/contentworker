@@ -72,6 +72,26 @@ const byAuthor = await client
   .fetch();
 ```
 
+Delivery pages entries with `skip`; a preview client (`preview: true`) pages with `cursor`, the
+previous page's `nextCursor`. `iterateEntries(query)` reads every page either way, a page at a
+time as your loop asks:
+
+```ts
+const first = await preview.listEntries({ contentType: 'article', limit: 50 });
+const next = await preview.listEntries({
+  contentType: 'article',
+  limit: 50,
+  cursor: first.nextCursor,
+});
+
+for await (const entry of client.iterateEntries({ contentType: 'article' })) {
+  // every published article
+}
+```
+
+Preview takes no offset, so `skip` on a preview client is deprecated: the client walks the cursor
+past that many entries first, a request per 100 of them.
+
 `listTags`, `getTag`, `listConcepts` and `getConcept` read the [taxonomy](/guides/reading-content/#tags-and-concepts):
 each term's slug, label in your locale, description and how many published entries carry it.
 `tagged(...slugs)` on a query (or `tags: [...]` on `listEntries`) keeps the entries carrying any
@@ -122,6 +142,10 @@ function Article({ id }: { id: string }) {
 `useAsset`, `useSemanticSearch`) and a `<CwImage>` component, installed with
 `app.use(createContentworker(client))`. Both fetch on the
 client only, so server rendering stays predictable.
+
+React's `useEntries` reads again whenever the query's content changes, `cursor` included, so a
+next page is a new `cursor`. Keep the query's values stable across renders: memoize a computed
+one, and never put `new Date()` in a filter inline, or every render starts another request.
 
 A [blocks field](/reference/field-types/#blocks) renders with `<Blocks components={…} />` (Vue:
 `<CwBlocks>`): a component per block id, typed by the generated `BlockTypes`, slots rendered with
@@ -185,6 +209,7 @@ published since its last cursor (the [`since`](/guides/reading-content/#entries)
 storage you pass it, then reads from there without a network. Storage is pluggable: any object
 with `getItem`, `setItem` and `removeItem`, such as `AsyncStorage` or MMKV; `InMemoryStorage` is
 there for tests. Entries unpublished since the last sync are not removed locally yet. `useOfflineEntries(store)` wraps it in a hook.
+Over a preview client every sync reads the whole content type again: Preview has no `since`.
 `imageSource(asset, { width, dpr: PixelRatio.get() })` is an `<Image source>` with the width step
 for the device's density and the image's size in dp.
 
@@ -330,7 +355,8 @@ playback URLs on a hosted video), `metadata` (`altText`, `tags`, `focalPoint`, `
 `cma.bulkJobs.get`, and stop it with `cma.bulkJobs.cancel`, which lets a running batch finish and
 undoes nothing), and the `folders`, `collections`, `shareLinks`, `zips` and `renditions`
 namespaces. `iterate`, `collections.iterate` and `collections.iterateAssets` follow `nextCursor` as
-the loop reads. A Delivery client reads a collection's published assets with
+the loop reads, as does `cma.entries.iterate`; `cma.entries.list` returns one page of entries,
+drafts included, and pages with `cursor`. A Delivery client reads a collection's published assets with
 `client.getCollection(id, { limit, cursor, locale })`.
 
 ### Errors

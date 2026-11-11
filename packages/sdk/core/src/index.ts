@@ -68,6 +68,19 @@ export interface AssetPage {
   readonly nextCursor?: string;
 }
 
+/**
+ * A page of entries. `total` counts this page. From Preview, pass `nextCursor` back as `cursor`
+ * for the next; Delivery pages with `skip` and answers no cursor.
+ */
+export interface EntryPage<F extends Fields = Fields> {
+  items: DeliveredEntry<F>[];
+  total: number;
+  nextCursor?: string;
+}
+
+/** The largest page either list serves. */
+const MAX_PAGE = 100;
+
 /** An asset search: published assets, best match first, with facet counts. */
 export interface AssetSearchPage {
   readonly items: DeliveredAsset[];
@@ -103,7 +116,12 @@ export interface AssetQuery {
   readonly limit?: number;
   /** `nextCursor` from the previous page. */
   readonly cursor?: string;
-  /** Offset paging, without a cursor. */
+  /**
+   * Offset paging, without a cursor. Preview takes no offset, so a preview client walks the
+   * cursor past `skip` assets first, a request per 100 of them.
+   *
+   * @deprecated on a preview client: page with `cursor` (the previous page's `nextCursor`).
+   */
   readonly skip?: number;
   readonly kind?: DeliveredAsset['kind'];
   /** A taxonomy tag id. */
@@ -227,11 +245,17 @@ export interface EntryQuery {
   /** Reference resolution depth (embeds linked entries). */
   readonly include?: number;
   readonly limit?: number;
-  /** Delivery's offset. Preview pages by `cursor` instead, and refuses it (422). */
+  /**
+   * Delivery's offset. Preview pages by `cursor` and refuses an offset, so a preview client never
+   * sends it: it walks the cursor past `skip` entries first, a request per 100 of them.
+   *
+   * @deprecated on a preview client: page with `cursor` (the previous page's `nextCursor`).
+   */
   readonly skip?: number;
   /**
    * Preview only: the `nextCursor` of the previous page, with the same filters and order. It walks
    * the list's own order; in the default order an entry edited between two pages is never skipped.
+   * Delivery has no entry cursor and ignores it.
    */
   readonly cursor?: string;
   /** Delta cursor — only entries published after this ISO timestamp. */
@@ -437,10 +461,10 @@ export function createDeliveryClient(opts: ClientOptions) {
     return value;
   }
 
-  async function* pages(
+  async function* pages<T>(
     first: string | undefined,
-    page: (cursor: string | undefined) => Promise<{ items: DeliveredAsset[]; nextCursor?: string }>,
-  ): AsyncGenerator<DeliveredAsset, void, undefined> {
+    page: (cursor: string | undefined) => Promise<{ items: T[]; nextCursor?: string }>,
+  ): AsyncGenerator<T, void, undefined> {
     const seen = new Set<string>(first ? [first] : []);
     let cursor = first;
     for (;;) {
@@ -466,16 +490,61 @@ export function createDeliveryClient(opts: ClientOptions) {
       locale: o.locale,
     });
 
-  const listAssets = (q: AssetQuery = {}): Promise<AssetPage> =>
-    get<AssetPage>('/assets', {
-      limit: q.limit,
-      cursor: q.cursor,
-      skip: q.cursor ? undefined : q.skip,
-      kind: q.kind,
-      tag: q.tag,
-      folder: q.folder,
-      locale: q.locale,
-    });
+  /**
+   * Where a preview list starts `skip` items in. Preview's lists take no offset (a cursor walks
+   * keys), so pages of up to 100 are read and dropped until that many are behind the cursor:
+   * the cursor to read from, or `null` when the list ends first.
+   */
+  async function pastSkip(
+    skip: number | undefined,
+    cursor: string | undefined,
+    read: (
+      cursor: string | undefined,
+      limit: number,
+    ) => Promise<{ items: unknown[]; nextCursor?: string }>,
+  ): Promise<string | undefined | null> {
+    const seen = new Set<string>();
+    for (let left = cursor ? 0 : (skip ?? 0); left > 0; ) {
+      const page = await read(cursor, Math.min(left, MAX_PAGE));
+      if (!page.nextCursor) return null;
+      // A cursor that comes back again would walk forever; the server never does that.
+      if (seen.has(page.nextCursor)) {
+        throw new Error(`Delivery returned cursor ${page.nextCursor} twice`);
+      }
+      seen.add(page.nextCursor);
+      left -= page.items.length;
+      cursor = page.nextCursor;
+    }
+    return cursor;
+  }
+
+  const listEntries = async <F extends Fields = Fields>(
+    q: EntryQuery = {},
+  ): Promise<EntryPage<F>> => {
+    if (!opts.preview) return get('/entries', toParams(q));
+    const { skip, ...rest } = q;
+    const read = (cursor: string | undefined, limit = rest.limit) =>
+      get<EntryPage<F>>('/entries', toParams({ ...rest, cursor, limit }));
+    const cursor = await pastSkip(skip, rest.cursor, read);
+    return cursor === null ? { items: [], total: 0 } : read(cursor);
+  };
+
+  const listAssets = async (q: AssetQuery = {}): Promise<AssetPage> => {
+    const read = (cursor: string | undefined, limit = q.limit, skip?: number) =>
+      get<AssetPage>('/assets', {
+        limit,
+        cursor,
+        skip: cursor ? undefined : skip,
+        kind: q.kind,
+        tag: q.tag,
+        folder: q.folder,
+        locale: q.locale,
+      });
+    // Delivery takes an offset; Preview drops one, so it is walked here.
+    if (!opts.preview) return read(q.cursor, q.limit, q.skip);
+    const cursor = await pastSkip(q.skip, q.cursor, read);
+    return cursor === null ? { items: [], total: 0 } : read(cursor);
+  };
 
   return {
     /**
@@ -519,12 +588,38 @@ export function createDeliveryClient(opts: ClientOptions) {
 
     /**
      * List published entries (from Preview: as they are now, drafts included), optionally
-     * filtered/paginated. Preview answers `nextCursor` while another page follows.
+     * filtered/paginated. Delivery pages with `skip`; Preview with `cursor`, answering
+     * `nextCursor` while another page follows.
      */
-    async listEntries<F extends Fields = Fields>(
+    listEntries,
+
+    /**
+     * Every entry the query matches, a page (`limit`) at a time as the loop asks for more:
+     * `for await (const entry of client.iterateEntries({ contentType: 'post' })) …`. Preview
+     * follows `nextCursor`; Delivery advances `skip` until a page comes back short. A `skip` or
+     * `cursor` sets where it starts, and `limit` is held to 1..100, as the server holds it.
+     *
+     * Delivery drops the entries of types a key isn't granted from each page after reading it, so
+     * with a key limited to some content types a page can come back short mid-list and end the
+     * loop early: give such a key's iteration a `contentType` it may read.
+     */
+    iterateEntries<F extends Fields = Fields>(
       q: EntryQuery = {},
-    ): Promise<{ items: DeliveredEntry<F>[]; total: number; nextCursor?: string }> {
-      return get('/entries', toParams(q));
+    ): AsyncGenerator<DeliveredEntry<F>, void, undefined> {
+      if (opts.preview) {
+        return pages(q.cursor, (cursor) =>
+          listEntries<F>(cursor ? { ...q, cursor, skip: undefined } : q),
+        );
+      }
+      return (async function* () {
+        // The server serves at most 100 a page: asking for more would read a full page as short.
+        const limit = Math.min(Math.max(1, Math.trunc(q.limit ?? MAX_PAGE)), MAX_PAGE);
+        for (let skip = q.skip ?? 0; ; skip += limit) {
+          const page = await listEntries<F>({ ...q, limit, skip });
+          yield* page.items;
+          if (page.items.length < limit) return;
+        }
+      })();
     },
 
     /** Every tag, by slug, with its label, description and published-entry counts (Delivery). */
@@ -688,7 +783,7 @@ export function createDeliveryClient(opts: ClientOptions) {
     },
 
     /** Chainable query builder for entries. */
-    query: () => new EntryQueryBuilder<Fields>((q) => get('/entries', toParams(q))),
+    query: () => new EntryQueryBuilder<Fields>((q) => listEntries(q)),
 
     /**
      * Attributes marking a rendered value as the field it came from, to be
@@ -781,9 +876,7 @@ function toParams(q: EntryQuery): Record<string, string | number | undefined> {
 /** Fluent entry query: `client.query().contentType('article').locale('en-US').limit(10).fetch()`. */
 export class EntryQueryBuilder<F extends Fields> {
   private q: EntryQuery = {};
-  constructor(
-    private readonly run: (q: EntryQuery) => Promise<{ items: DeliveredEntry<F>[]; total: number }>,
-  ) {}
+  constructor(private readonly run: (q: EntryQuery) => Promise<EntryPage<F>>) {}
   contentType(apiId: string): this {
     this.q = { ...this.q, contentType: apiId };
     return this;
@@ -800,8 +893,14 @@ export class EntryQueryBuilder<F extends Fields> {
     this.q = { ...this.q, limit: n };
     return this;
   }
+  /** Delivery's offset; on a preview client, page with {@link cursor} instead. */
   skip(n: number): this {
     this.q = { ...this.q, skip: n };
+    return this;
+  }
+  /** Preview: start after the page that answered this `nextCursor`. */
+  cursor(nextCursor: string): this {
+    this.q = { ...this.q, cursor: nextCursor };
     return this;
   }
   /** Add a field predicate, e.g. `.where('views', 'gt', 100)`. Defaults to `eq`. */
@@ -867,12 +966,17 @@ export class EntryQueryBuilder<F extends Fields> {
     this.q = { ...this.q, search: text };
     return this;
   }
-  fetch(): Promise<{ items: DeliveredEntry<F>[]; total: number }> {
+  fetch(): Promise<EntryPage<F>> {
     return this.run(this.q);
   }
 }
 
-export type DeliveryClient = ReturnType<typeof createDeliveryClient>;
+/**
+ * A Delivery client. `iterateEntries` is optional so a hand-written client or a test double
+ * made before it existed still fits; `createDeliveryClient` always has it.
+ */
+export type DeliveryClient = Omit<ReturnType<typeof createDeliveryClient>, 'iterateEntries'> &
+  Partial<Pick<ReturnType<typeof createDeliveryClient>, 'iterateEntries'>>;
 
 export {
   adminEditUrl,

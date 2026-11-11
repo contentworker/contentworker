@@ -3,7 +3,7 @@
  * content changed. The framework hooks (`useLiveEntry`, `useLiveEntries`) are thin wrappers over
  * these; call them directly from any other framework.
  */
-import type { DeliveredEntry, DeliveryClient, EntryQuery, Fields } from './index.js';
+import type { DeliveredEntry, DeliveryClient, EntryPage, EntryQuery, Fields } from './index.js';
 import type { LiveEvent, LiveEventType } from './live.js';
 
 /** Where a followed read stands. */
@@ -214,7 +214,7 @@ export function followEntries<F extends Fields = Fields>(
   client: FollowClient & Pick<DeliveryClient, 'listEntries'>,
   query: EntryQuery,
   o: FollowOptions,
-  onState: (state: LiveState<{ items: DeliveredEntry<F>[]; total: number }>) => void,
+  onState: (state: LiveState<EntryPage<F>>) => void,
 ): Following {
   const type = query.contentType;
   return follow(
