@@ -136,7 +136,11 @@ To rename a variant's `apiId` without stranding stored blocks, list the old one 
 stored as `hero` validate and edit as `banner`, GraphQL serves them as `banner`, and each takes
 `banner` on its entry's next save (the REST APIs return a block as stored until then). An alias is
 used once in the field and is never another variant's `apiId`. To keep a field's block types in
-your site's code, see [Blocks from code](/guides/blocks-from-code/).
+your site's code, see [Blocks from code](/guides/blocks-from-code/). A block catalog can also
+declare breakpoints, and a block the token props that take a different value from a breakpoint
+up, stored beside them in `_responsive`
+([Per-breakpoint overrides](/guides/blocks-from-code/#per-breakpoint-overrides)); a blocks field
+the catalog doesn't target keeps none.
 
 ## References
 

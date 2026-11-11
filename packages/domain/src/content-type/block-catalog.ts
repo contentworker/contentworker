@@ -5,6 +5,7 @@ import { removedFields, removedVariants } from './blocks';
 import { type ContentType, defineContentType } from './content-type';
 import {
   BLOCK_TYPE_KEY,
+  type Breakpoint,
   blockVariants,
   type ComponentVariant,
   type FieldDefinition,
@@ -12,6 +13,7 @@ import {
   MAX_BLOCK_DEPTH,
   variantOf,
 } from './field';
+import { breakpointsOf, checkBreakpoints, checkResponsive } from './responsive';
 
 /**
  * Blocks from code: the components a developer's site renders, described as data and pushed to
@@ -34,8 +36,12 @@ import {
  * named for styling (`style`, `css`, `className`) must be an enumeration.
  *
  * Slots nest five levels below the page ({@link MAX_BLOCK_DEPTH}, the target field counting as
- * 1); a plain component prop counts its level too. Not yet: per-breakpoint overrides of token
- * props.
+ * 1); a plain component prop counts its level too.
+ *
+ * Breakpoints are the site's CSS, so they are the catalog's too: a top-level `breakpoints` list,
+ * mobile-first, written onto every target field. A block lists the token and Boolean props that
+ * take a different value from a breakpoint up in `responsive`, carried onto its variant; the
+ * overrides are stored beside the props, in `_responsive` (see `responsive.ts`).
  */
 
 /** A named place inside a block that holds other blocks: a nested blocks field. */
@@ -80,6 +86,11 @@ export interface BlockManifest {
    * at the top level of every target; present, only inside those parents' slots.
    */
   readonly allowedParents?: readonly string[];
+  /**
+   * The props that take per-breakpoint overrides: top-level tokens (a Symbol, Integer or Number
+   * with `validations.in`) or Booleans.
+   */
+  readonly responsive?: readonly string[];
 }
 
 /** A content type's blocks field the catalog provides the variants of. */
@@ -98,10 +109,12 @@ export interface BlockCatalogTarget {
 export interface BlockCatalog {
   /** 1 for the first push, then one more for each push that changed something. */
   readonly version: number;
-  /** SHA-256 (hex) of the canonical blocks and targets: equal hashes, equal catalogs. */
+  /** SHA-256 (hex) of the canonical blocks, targets and breakpoints: equal hashes, equal catalogs. */
   readonly hash: string;
   readonly blocks: readonly BlockManifest[];
   readonly targets: readonly BlockCatalogTarget[];
+  /** The site's CSS breakpoints, mobile-first; none when the catalog declares none. */
+  readonly breakpoints: readonly Breakpoint[];
   /** What this version changed from the one before it. */
   readonly changes: BlockCatalogChanges;
   readonly pushedAt: string;
@@ -112,12 +125,14 @@ export interface BlockCatalog {
 /** A version without its blocks: what the version history lists. */
 export type BlockCatalogSummary = Omit<BlockCatalog, 'blocks'> & { readonly blockCount: number };
 
-/** What one catalog changes from another, by block id. */
+/** What one catalog changes from another, by block id, and whether its breakpoints changed. */
 export interface BlockCatalogChanges {
   readonly added: readonly string[];
   readonly changed: readonly string[];
   readonly removed: readonly string[];
   readonly renamed: readonly { readonly from: string; readonly to: string }[];
+  /** Present (true) when the breakpoints list changed; versions pushed before them have none. */
+  readonly breakpoints?: true;
 }
 
 export const BLOCK_CATALOG_LIMITS = {
@@ -146,6 +161,8 @@ const STYLE_FIELD = /^(style|styles|css|class|classname|classes|inlinestyle)$/i;
 export interface BlockCatalogInput {
   readonly blocks: unknown;
   readonly targets: unknown;
+  /** Absent: none. */
+  readonly breakpoints?: unknown;
 }
 
 /**
@@ -157,9 +174,11 @@ export interface BlockCatalogInput {
 export function checkBlockCatalog(input: BlockCatalogInput): {
   blocks: BlockManifest[];
   targets: BlockCatalogTarget[];
+  breakpoints: Breakpoint[];
 } {
   const issues: FieldIssue[] = [];
   const issue = (field: string, message: string) => issues.push({ field, message });
+  const breakpoints = checkBreakpoints(input.breakpoints, 'breakpoints', issue);
   const blocks = checkBlocks(input.blocks, issue);
   const targets = checkTargets(input.targets, blocks, issue);
   if (issues.length === 0) checkPlacement(blocks, issue);
@@ -170,7 +189,7 @@ export function checkBlockCatalog(input: BlockCatalogInput): {
     issue('blocks', `The catalog is larger than ${BLOCK_CATALOG_LIMITS.bytes} bytes as JSON`);
   }
   if (issues.length > 0) throw new ValidationError(issues);
-  return { blocks, targets };
+  return { blocks, targets, breakpoints };
 }
 
 type Issue = (field: string, message: string) => void;
@@ -265,6 +284,8 @@ function checkBlocks(raw: unknown, issue: Issue): BlockManifest[] {
         issue(`${at}.slots.${s.apiId}`, `A slot and a field are both named "${s.apiId}"`);
       }
     }
+    // A slot is no prop of the block, so naming one is refused like any non-token.
+    const responsive = checkResponsive(b.responsive, fields, `${at}.responsive`, issue);
     out.push({
       id,
       name,
@@ -275,6 +296,7 @@ function checkBlocks(raw: unknown, issue: Issue): BlockManifest[] {
       fields,
       ...(slots.length ? { slots } : {}),
       ...(allowedParents?.length ? { allowedParents } : {}),
+      ...(responsive ? { responsive } : {}),
     });
   });
   // Aliases: each a former id of one block only, and no block's current id.
@@ -668,6 +690,7 @@ export function catalogVariants(
       name: b.name,
       fields: [...b.fields, ...slots],
       ...(b.aliases?.length ? { aliases: b.aliases } : {}),
+      ...(b.responsive?.length ? { responsive: b.responsive } : {}),
     };
   };
   return roots.flatMap((id) => {
@@ -683,6 +706,8 @@ export interface BlockFieldChange {
   readonly changed: readonly string[];
   readonly removed: readonly string[];
   readonly renamed: readonly { readonly from: string; readonly to: string }[];
+  /** Present (true) when the push changes the field's breakpoints. */
+  readonly breakpoints?: true;
 }
 
 /** One content type a catalog changes: its revised fields and what changed in each target. */
@@ -697,13 +722,15 @@ export interface BlockTypePlan {
 /**
  * The content types a catalog changes, each with its fields as they would be: every target
  * field's variants replaced by the catalog's (the catalog owns the whole field: a variant it
- * doesn't provide is removed). Types the catalog leaves as they are aren't listed. Refuses a
- * target type or field that doesn't exist, or a field that isn't a top-level blocks field.
+ * doesn't provide is removed), and its breakpoints by the catalog's (none: the field has none).
+ * Types the catalog leaves as they are aren't listed. Refuses a target type or field that doesn't
+ * exist, or a field that isn't a top-level blocks field.
  */
 export function planCatalogTypes(
   blocks: readonly BlockManifest[],
   targets: readonly BlockCatalogTarget[],
   types: ReadonlyMap<string, ContentType>,
+  breakpoints: readonly Breakpoint[] = [],
 ): BlockTypePlan[] {
   const issues: FieldIssue[] = [];
   const byType = new Map<string, BlockCatalogTarget[]>();
@@ -736,10 +763,18 @@ export function planCatalogTypes(
       if (!target || !f.items) return f;
       const before = blockVariants(f) ?? [];
       const after = catalogVariants(blocks, target);
+      const moved = canonicalJson(breakpointsOf(f)) !== canonicalJson(breakpoints);
       const change = variantChanges(f.apiId, before, after);
-      if (!change) return f;
-      changes.push(change);
-      return { ...f, items: { ...f.items, variants: after } };
+      if (!change && !moved) return f;
+      changes.push({
+        ...(change ?? { field: f.apiId, added: [], changed: [], removed: [], renamed: [] }),
+        ...(moved ? { breakpoints: true as const } : {}),
+      });
+      const { breakpoints: _was, ...items } = f.items;
+      return {
+        ...f,
+        items: { ...items, variants: after, ...(breakpoints.length ? { breakpoints } : {}) },
+      };
     });
     if (changes.length === 0) continue;
     if (utf8Length(canonicalJson(fields)) > BLOCK_CATALOG_LIMITS.bytes) {
@@ -790,10 +825,12 @@ function variantChanges(
  * What `next` changes from `previous` (null for the first push), by block id. A block whose
  * `aliases` name a block of `previous` is that block renamed, not a removal and an addition.
  * Refuses an id reused: one `previous` had as a former id (an alias) back as another block's id.
+ * Given `breakpoints`, a changed list (ids, names or widths) is a change too.
  */
 export function diffBlockCatalogs(
   previous: readonly BlockManifest[] | null,
   next: readonly BlockManifest[],
+  breakpoints?: { readonly before: readonly Breakpoint[]; readonly after: readonly Breakpoint[] },
 ): BlockCatalogChanges {
   const before = new Map((previous ?? []).map((b) => [b.id, b]));
   const retired = new Map<string, string>();
@@ -822,7 +859,10 @@ export function diffBlockCatalogs(
   }
   if (issues.length > 0) throw new ValidationError(issues);
   const removed = [...before.keys()].filter((id) => !kept.has(id));
-  return { added, changed, removed, renamed };
+  const moved =
+    breakpoints !== undefined &&
+    canonicalJson(breakpoints.before) !== canonicalJson(breakpoints.after);
+  return { added, changed, removed, renamed, ...(moved ? { breakpoints: true as const } : {}) };
 }
 
 /**

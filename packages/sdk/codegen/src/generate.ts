@@ -45,6 +45,8 @@ export interface FieldInput {
     readonly fields?: readonly FieldInput[];
     /** For a blocks field (Array-of-Component): the shapes an element may take. */
     readonly variants?: readonly VariantInput[];
+    /** For a top-level blocks field a catalog targets: the breakpoints its blocks override at. */
+    readonly breakpoints?: readonly BreakpointInput[];
   };
   /** For Component fields: the nested definitions. */
   readonly fields?: readonly FieldInput[];
@@ -56,7 +58,16 @@ export interface VariantInput {
   readonly name?: string;
   /** Ids the variant had before; noted on its block type. */
   readonly aliases?: readonly string[];
+  /** The props that take per-breakpoint overrides, typed under `_responsive`. */
+  readonly responsive?: readonly string[];
   readonly fields: readonly FieldInput[];
+}
+
+/** One of the site's CSS breakpoints, mobile-first. */
+export interface BreakpointInput {
+  readonly id: string;
+  readonly name?: string;
+  readonly minWidth: number;
 }
 
 /**
@@ -65,6 +76,8 @@ export interface VariantInput {
  */
 export interface BlockCatalogInput {
   readonly blocks: readonly BlockManifestInput[];
+  /** The breakpoints `responsive` props take overrides at; exported as `breakpoints`. */
+  readonly breakpoints?: readonly BreakpointInput[];
 }
 
 /** One block of a catalog: its id, former ids, props and slots. */
@@ -73,6 +86,7 @@ export interface BlockManifestInput {
   readonly name?: string;
   readonly description?: string;
   readonly aliases?: readonly string[];
+  readonly responsive?: readonly string[];
   readonly fields: readonly FieldInput[];
   readonly slots?: readonly {
     readonly apiId: string;
@@ -212,8 +226,42 @@ export function generateTypes(
   }
 
   sections.push(...renderBlockTypes(blockShapes(contentTypes, opts.blockCatalog)));
+  const breakpoints = breakpointsOf(contentTypes, opts.blockCatalog);
+  if (breakpoints.length > 0) sections.push(renderBreakpoints(breakpoints));
 
   return sections.join('\n');
+}
+
+/**
+ * The breakpoints the catalog declares, else those the first blocks field carries (a catalog writes
+ * the same ones on every field it targets); none when neither has any.
+ */
+function breakpointsOf(
+  contentTypes: readonly ContentTypeInput[],
+  catalog: BlockCatalogInput | undefined,
+): readonly BreakpointInput[] {
+  if (catalog) return list(catalog.breakpoints);
+  for (const ct of contentTypes) {
+    for (const f of ct.fields ?? []) {
+      const own = list(f.items?.breakpoints);
+      if (variantsOf(f) && own.length > 0) return own;
+    }
+  }
+  return [];
+}
+
+/** `breakpoints`, as a value: what `responsiveProp` and a frontend's CSS read, in order. */
+function renderBreakpoints(breakpoints: readonly BreakpointInput[]): string {
+  const rows = breakpoints.map(
+    (b) =>
+      `  { id: ${literal(b.id)}, name: ${literal(b.name ?? b.id)}, minWidth: ${Number(b.minWidth)} },`,
+  );
+  return (
+    "/** The site's CSS breakpoints, mobile-first: a block's bare props apply below the first, " +
+    'each `_responsive[id]` from its `minWidth` up. */\n' +
+    `export const breakpoints = [\n${rows.join('\n')}\n] as const;\n\n` +
+    "export type BreakpointId = (typeof breakpoints)[number]['id'];\n"
+  );
 }
 
 // --- block types -------------------------------------------------------------------------------
@@ -225,6 +273,9 @@ interface BlockShape {
   readonly description?: string;
   readonly aliases?: readonly string[];
   readonly fields: readonly FieldInput[];
+  /** Props that take overrides, and the breakpoint ids they take them at. */
+  readonly responsive?: readonly string[];
+  readonly breakpoints: readonly string[];
   readonly slots: readonly {
     readonly apiId: string;
     readonly present: boolean;
@@ -260,12 +311,15 @@ function blockShapes(
 }
 
 function catalogShapes(catalog: BlockCatalogInput): BlockShape[] {
+  const breakpoints = list(catalog.breakpoints).map((b) => b.id);
   return list(catalog.blocks).map((b) => ({
     id: b.id,
     name: b.name,
     description: b.description,
     aliases: b.aliases,
     fields: list(b.fields),
+    responsive: b.responsive,
+    breakpoints,
     slots: list(b.slots).map((slot) => ({
       apiId: slot.apiId,
       present: (slot.min ?? 0) > 0,
@@ -281,15 +335,18 @@ function catalogShapes(catalog: BlockCatalogInput): BlockShape[] {
  */
 function variantShapes(contentTypes: readonly ContentTypeInput[]): BlockShape[] {
   const shapes: BlockShape[] = [];
-  const visitFields = (fields: readonly FieldInput[] | undefined) => {
+  // `bps`: the breakpoint ids of the blocks field above (a slot takes its block's field's).
+  const visitFields = (fields: readonly FieldInput[] | undefined, bps: readonly string[]) => {
     for (const f of fields ?? []) {
       const variants = variantsOf(f);
-      if (variants) for (const v of variants) visitVariant(v);
-      else if (f.type === 'Component') visitFields(f.fields);
-      else if (f.type === 'Array' && f.items?.type === 'Component') visitFields(f.items.fields);
+      const own = f.items?.breakpoints ? list(f.items.breakpoints).map((b) => b.id) : bps;
+      if (variants) for (const v of variants) visitVariant(v, own);
+      else if (f.type === 'Component') visitFields(f.fields, bps);
+      else if (f.type === 'Array' && f.items?.type === 'Component')
+        visitFields(f.items.fields, bps);
     }
   };
-  const visitVariant = (v: VariantInput) => {
+  const visitVariant = (v: VariantInput, bps: readonly string[]) => {
     const fields: FieldInput[] = [];
     const slots: BlockShape['slots'][number][] = [];
     const children: VariantInput[] = [];
@@ -297,8 +354,10 @@ function variantShapes(contentTypes: readonly ContentTypeInput[]): BlockShape[] 
       const nested = variantsOf(f);
       if (!nested) {
         fields.push(f);
-        if (f.type === 'Component') visitFields(f.fields);
-        else if (f.type === 'Array' && f.items?.type === 'Component') visitFields(f.items.fields);
+        if (f.type === 'Component') visitFields(f.fields, bps);
+        else if (f.type === 'Array' && f.items?.type === 'Component') {
+          visitFields(f.items.fields, bps);
+        }
         continue;
       }
       slots.push({
@@ -310,10 +369,18 @@ function variantShapes(contentTypes: readonly ContentTypeInput[]): BlockShape[] 
       children.push(...nested);
     }
     // A block before the blocks its slots hold, as a catalog lists them.
-    shapes.push({ id: v.apiId, name: v.name, aliases: v.aliases, fields, slots });
-    for (const n of children) visitVariant(n);
+    shapes.push({
+      id: v.apiId,
+      name: v.name,
+      aliases: v.aliases,
+      fields,
+      responsive: v.responsive,
+      breakpoints: bps,
+      slots,
+    });
+    for (const n of children) visitVariant(n, bps);
   };
-  for (const ct of contentTypes) visitFields(ct.fields);
+  for (const ct of contentTypes) visitFields(ct.fields, []);
   return shapes;
 }
 
@@ -343,6 +410,13 @@ function renderBlockTypes(shapes: readonly BlockShape[]): string[] {
     for (const f of shape.fields) {
       rows.push(
         `${fieldComment(f)}  ${propertyKey(f.apiId)}${present(f) ? '' : '?'}: ${fieldValueType(f, { delivered: true })};`,
+      );
+    }
+    const overrides = responsiveType(shape);
+    if (overrides) {
+      rows.push(
+        '  /** Per-breakpoint overrides of the props above, each from its breakpoint up. */',
+        `  _responsive?: ${overrides};`,
       );
     }
     for (const slot of shape.slots) {
@@ -379,6 +453,24 @@ function renderBlockTypes(shapes: readonly BlockShape[]): string[] {
     `export type BlockId = keyof BlockTypes;\n`,
   );
   return out;
+}
+
+/**
+ * A block's `_responsive` as a type, `{ readonly md?: { readonly size?: 'sm' | 'xl' } }`: each
+ * breakpoint, each prop `responsive` lists typed as the prop is. Null without breakpoints or
+ * responsive props.
+ */
+function responsiveType(shape: BlockShape): string | null {
+  const props = list(shape.responsive).flatMap((apiId) => {
+    const f = shape.fields.find((d) => d.apiId === apiId);
+    return f ? [f] : [];
+  });
+  if (props.length === 0 || shape.breakpoints.length === 0) return null;
+  const values = props
+    .map((f) => `readonly ${propertyKey(f.apiId)}?: ${fieldValueType(f, { delivered: true })}`)
+    .join('; ');
+  const rows = shape.breakpoints.map((bp) => `readonly ${propertyKey(bp)}?: { ${values} }`);
+  return `{ ${rows.join('; ')} }`;
 }
 
 function renderContentType(ct: ContentTypeInput, typeName: string): string {

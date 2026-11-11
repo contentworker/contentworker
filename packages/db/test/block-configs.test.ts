@@ -81,6 +81,7 @@ describe('block configs on D1', () => {
       hash: `h${version}`,
       blocks: [{ id: 'hero', name: 'Hero', fields: [] }],
       targets: [{ contentTypeApiId: 'page', field: 'body' }],
+      breakpoints: [],
       changes: { added: [], changed: [], removed: [], renamed: [] },
       pushedAt: AT,
       pushedBy: null,

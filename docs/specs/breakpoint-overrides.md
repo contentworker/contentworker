@@ -1,7 +1,15 @@
 # Per-breakpoint overrides
 
-Status: **decided** 2026-11-10, not built (M6, "Layout model" in `ROADMAP.md`). Overrides sit
-beside the props in a `_responsive` key, and the owner took all five proposals under Decisions.
+Status: **decided** 2026-11-10, **backend built**; the canvas (below) is still to come (M6,
+"Layout model" in `ROADMAP.md`). Overrides sit beside the props in a `_responsive` key, and the
+owner took all five proposals under Decisions. Built: the push checks and stores breakpoints and
+`responsive` (`packages/domain/src/content-type/responsive.ts`, `block-catalog.ts`,
+`packages/application/src/block-catalog.ts`, migration `0040_block_catalog_breakpoints`), carrying
+them onto the target field (`items.breakpoints`) and the variant; validation and the stale drop
+(`validation/validate.ts`, `assignBlockKeys` in `field-values.ts`); block patches and frozen regions
+(`block-patch.ts`, `block-locks.ts`); the push's `staleOverrides`; REST, MCP, the management SDK
+and the CLI; GraphQL (`packages/graphql-gen`); codegen (`packages/sdk/codegen`); and the
+renderers (`resolveBlocks`' `responsive` and `responsiveProp` in `packages/sdk/core/src/blocks.ts`).
 This file sits in `docs/specs/`, which the docs embed does not read (it takes `docs/*.md` only),
 so MCP clients never mistake it for a description of shipped behaviour.
 

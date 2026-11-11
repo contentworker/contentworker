@@ -22,8 +22,10 @@ export function registerBlockCatalogTools(server: McpServer, t: ToolContext): vo
       description:
         'The block catalog in force (or one version of it): each block a page can be composed ' +
         'from, with its id (stored on blocks as _type), name, group, props (field definitions), ' +
-        'slots and the blocks each slot allows, allowedParents and aliases (former ids); the ' +
-        'blocks fields it provides; and who pushed it when. Not found before the first push.',
+        'slots and the blocks each slot allows, allowedParents, aliases (former ids) and ' +
+        'responsive (props that take per-breakpoint overrides, stored in _responsive); the ' +
+        'blocks fields it provides; its breakpoints (id, name, minWidth, mobile-first); and who ' +
+        'pushed it when. Not found before the first push.',
       inputSchema: toolSchema('blocks_catalog_get', () =>
         z.object({
           version: z.int().min(1).optional().describe('A past version; default the one in force'),
@@ -72,7 +74,10 @@ export function registerBlockCatalogTools(server: McpServer, t: ToolContext): vo
         'renamed, the types it changes, and inUse (what it would remove that entries hold, which ' +
         'refuses the push). Then push with expectedVersion set to the dry run’s previousVersion. ' +
         'A removal also needs allowDestructive. To rename a block id, keep the old id in the ' +
-        'new block’s aliases. Style props are tokens (a Symbol with validations.in); never CSS.',
+        'new block’s aliases. Style props are tokens (a Symbol with validations.in); never CSS. ' +
+        'breakpoints (the site’s CSS, mobile-first) and a block’s responsive props let editors ' +
+        'override a token or Boolean from a width up; staleOverrides counts the overrides a push ' +
+        'strands (reported, never refused).',
       inputSchema: toolSchema('blocks_catalog_push', () =>
         blockCatalogPushBody.extend({ ...scopeArgs }),
       ),

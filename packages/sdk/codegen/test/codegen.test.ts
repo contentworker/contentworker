@@ -737,3 +737,94 @@ describe('@contentworker/sdk-codegen CLI', () => {
     );
   });
 });
+
+describe('@contentworker/sdk-codegen per-breakpoint overrides', () => {
+  const BREAKPOINTS = [
+    { id: 'md', name: 'Tablet', minWidth: 768 },
+    { id: 'lg', name: 'Desktop', minWidth: 1280 },
+  ];
+  const hero = {
+    id: 'hero',
+    name: 'Hero',
+    responsive: ['size', 'hidden'],
+    fields: [
+      { apiId: 'heading', type: 'Symbol' },
+      { apiId: 'size', type: 'Symbol', validations: { in: ['sm', 'md', 'xl'] } },
+      { apiId: 'hidden', type: 'Boolean' },
+    ],
+  };
+  const OVERRIDES =
+    "_responsive?: { readonly md?: { readonly size?: 'sm' | 'md' | 'xl'; readonly hidden?: boolean }; " +
+    "readonly lg?: { readonly size?: 'sm' | 'md' | 'xl'; readonly hidden?: boolean } };";
+  const strict = { strict: true, target: 'es2022', module: 'esnext' };
+
+  it('types _responsive on a block with responsive props, and exports breakpoints', async () => {
+    const source = generateTypes([], {
+      blockCatalog: {
+        blocks: [hero, { id: 'quote', fields: [{ apiId: 'text', type: 'Text' }] }],
+        breakpoints: BREAKPOINTS,
+      },
+    });
+    expect(source).toContain(OVERRIDES);
+    expect(source.match(/_responsive\?/g)).toHaveLength(1);
+    expect(source).toContain(
+      "export const breakpoints = [\n  { id: 'md', name: 'Tablet', minWidth: 768 },\n  { id: 'lg', name: 'Desktop', minWidth: 1280 },\n] as const;",
+    );
+    expect(source).toContain("export type BreakpointId = (typeof breakpoints)[number]['id'];");
+    const ok = [
+      source,
+      "const ok: HeroBlock = { _type: 'hero', _key: 'k', _responsive: { lg: { size: 'xl' } } };",
+      "const id: BreakpointId = 'md';",
+      'void ok; void id;',
+    ].join('\n');
+    expect(await tsc(ok, strict)).toBe('');
+    const wrong = [
+      source,
+      "const no: HeroBlock = { _type: 'hero', _key: 'k', _responsive: { lg: { size: 'huge' } } };",
+      'void no;',
+    ].join('\n');
+    expect(await tsc(wrong, strict)).toContain('TS2322');
+  });
+
+  it('types the same from the target field and its variants, slots included', () => {
+    const page: ContentTypeInput = {
+      apiId: 'page',
+      fields: [
+        {
+          apiId: 'body',
+          type: 'Array',
+          items: {
+            type: 'Component',
+            breakpoints: BREAKPOINTS,
+            variants: [
+              {
+                apiId: 'grid',
+                fields: [
+                  {
+                    apiId: 'items',
+                    type: 'Array',
+                    items: {
+                      type: 'Component',
+                      variants: [
+                        { apiId: 'hero', responsive: hero.responsive, fields: hero.fields },
+                      ],
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      ],
+    };
+    const source = generateTypes([page]);
+    expect(source).toContain(OVERRIDES);
+    expect(source).toContain('export const breakpoints = [');
+  });
+
+  it('leaves both out without breakpoints', () => {
+    const source = generateTypes([], { blockCatalog: { blocks: [hero] } });
+    expect(source).not.toContain('_responsive');
+    expect(source).not.toContain('export const breakpoints');
+  });
+});

@@ -10,6 +10,7 @@ import {
   UNIQUE_FIELD_TYPES,
   variantOf,
 } from './field';
+import { breakpointIdsOf, cleanOverrides } from './responsive';
 import { normalizeSlug } from './slug';
 
 /**
@@ -107,8 +108,9 @@ function withComponentDefaults(nested: readonly FieldDefinition[], value: unknow
  * across edits and reorders. Ids come from the caller (`ctx.ids.newId`), so the
  * use-case stays deterministic under test. Values are copied, never mutated.
  * A block whose `_type` is a former apiId of its variant (`aliases`) is written
- * under the current one, so a renamed block converges on its next save. A block's `_responsive`
- * is dropped: no field takes per-breakpoint overrides yet (see `RESPONSIVE_KEY`).
+ * under the current one, so a renamed block converges on its next save. In the same pass a
+ * block's stale overrides (a breakpoint or prop a later push removed, see `responsive.ts`) are
+ * dropped, and an override map left empty goes, so a save never fails over them.
  *
  * Runs before validation on every entry write; a duplicate key the caller sent
  * is left for validation to refuse rather than silently re-keyed, since the
@@ -141,14 +143,23 @@ export function mayHoldBlocks(field: FieldDefinition): boolean {
   return false;
 }
 
-function keyed(field: FieldDefinition, value: unknown, newId: () => string): unknown {
-  if (field.type === 'Component') return keyedComponent(field.fields ?? [], value, newId);
+/** `breakpoints`: the ids the enclosing blocks field takes overrides at (none at the top). */
+function keyed(
+  field: FieldDefinition,
+  value: unknown,
+  newId: () => string,
+  breakpoints: readonly string[] = [],
+): unknown {
+  if (field.type === 'Component') {
+    return keyedComponent(field.fields ?? [], value, newId, breakpoints);
+  }
   if (!Array.isArray(value)) return value;
   const variants = blockVariants(field);
+  const own = variants ? breakpointIdsOf(field, breakpoints) : breakpoints;
   return value.map((item) => {
     if (typeof item !== 'object' || item === null || Array.isArray(item)) return item;
     const nested = nestedFieldsFor(field, item);
-    const filled = nested ? keyedComponent(nested, item, newId) : item;
+    const filled = nested ? keyedComponent(nested, item, newId, own) : item;
     if (!variants) return filled;
     const block = filled as Record<string, unknown>;
     const key = block[BLOCK_KEY];
@@ -156,13 +167,17 @@ function keyed(field: FieldDefinition, value: unknown, newId: () => string): unk
     const variant = variantOf(variants, block);
     const renamed = variant !== undefined && block[BLOCK_TYPE_KEY] !== variant.apiId;
     const keyless = typeof key !== 'string' || key === '';
-    const overridden = Object.hasOwn(block, RESPONSIVE_KEY);
-    if (!renamed && !keyless && !overridden) return filled;
+    const raw = block[RESPONSIVE_KEY];
+    // Stale overrides go; a block naming no known variant is left whole for validation to report.
+    const overrides = variant && raw !== undefined ? cleanOverrides(variant, raw, own) : raw;
+    const restyled = JSON.stringify(overrides) !== JSON.stringify(raw);
+    if (!renamed && !keyless && !restyled) return filled;
     const { [RESPONSIVE_KEY]: _dropped, ...rest } = block;
     return {
       ...rest,
       ...(renamed ? { [BLOCK_TYPE_KEY]: variant.apiId } : {}),
       ...(keyless ? { [BLOCK_KEY]: newId() } : {}),
+      ...(overrides !== undefined ? { [RESPONSIVE_KEY]: overrides } : {}),
     };
   });
 }
@@ -171,12 +186,13 @@ function keyedComponent(
   nested: readonly FieldDefinition[],
   value: unknown,
   newId: () => string,
+  breakpoints: readonly string[],
 ): unknown {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return value;
   const out = { ...(value as Record<string, unknown>) };
   for (const f of nested) {
     if (out[f.apiId] !== undefined && mayHoldBlocks(f))
-      out[f.apiId] = keyed(f, out[f.apiId], newId);
+      out[f.apiId] = keyed(f, out[f.apiId], newId, breakpoints);
   }
   return out;
 }

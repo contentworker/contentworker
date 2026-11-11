@@ -206,7 +206,7 @@ spends a flagship call), SDK `entries.generateBlocks`; gated like the patch
   delimiters and capped (`describeBlockForModel`, `describeFieldForModel`, `nameForModel`).
 - **What isn't offered:** rich text, entry links, lists of links, plain components and
   repeaters, JSON and locations inside blocks, a slot the rules lock, and an image the field's
-  MIME rule doesn't take (`acceptsImages`). A block that *requires* one of them, or a required
+  MIME rule doesn't take (`acceptsImages`). A block that _requires_ one of them, or a required
   slot that offers nothing, is not offered at all, so every block in a schema can pass a save.
 - **Images:** a block's single `Link` to an `Asset` that takes images is asked for as
   `{ "$asset": { "query": "a lighthouse at dusk" } }`, only for a caller that may read the

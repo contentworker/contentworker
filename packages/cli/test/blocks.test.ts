@@ -35,6 +35,7 @@ const plan = (over: Partial<BlockCatalogPush> = {}): BlockCatalogPush => ({
   ],
   destructive: false,
   inUse: [],
+  staleOverrides: [],
   warnings: [],
   ...over,
 });
@@ -203,6 +204,56 @@ describe('a blocks file', () => {
       }),
     );
     expect(text).toContain('~ hero → banner (renamed)');
+  });
+
+  it('sends the file’s breakpoints, and renders a breakpoint change and the overrides it strands', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'cw-blocks-file-'));
+    const breakpoints = [{ id: 'lg', name: 'Desktop', minWidth: 1280 }];
+    await writeFile(join(dir, 'bp.json'), JSON.stringify({ ...FILE, breakpoints }));
+    expect((await loadBlocks('bp.json', dir)).breakpoints).toEqual(breakpoints);
+    expect(await loadBlocks('bp.json', dir)).toMatchObject({ breakpoints });
+    await writeFile(join(dir, 'none.json'), JSON.stringify(FILE));
+    expect(await loadBlocks('none.json', dir)).not.toHaveProperty('breakpoints');
+    await writeFile(join(dir, 'odd.json'), JSON.stringify({ ...FILE, breakpoints: {} }));
+    await expect(loadBlocks('odd.json', dir)).rejects.toThrow(/"breakpoints" must be a list/);
+
+    const text = renderPush(
+      plan({
+        changes: { added: [], changed: [], removed: [], renamed: [], breakpoints: true },
+        contentTypes: [
+          {
+            contentTypeApiId: 'page',
+            fields: [
+              {
+                field: 'body',
+                added: [],
+                changed: [],
+                removed: [],
+                renamed: [],
+                breakpoints: true,
+              },
+            ],
+            destructive: false,
+            version: 8,
+            published: true,
+          },
+        ],
+        staleOverrides: [
+          {
+            contentTypeApiId: 'page',
+            block: 'hero',
+            breakpoint: 'md',
+            prop: 'size',
+            blocks: 3,
+            entries: 2,
+            complete: true,
+          },
+        ],
+      }),
+    );
+    expect(text).toContain('    ~ breakpoints');
+    expect(text).toContain('    body: ~breakpoints');
+    expect(text).toContain('3 block(s) in page override hero.size at md');
   });
 });
 

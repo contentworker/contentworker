@@ -13,6 +13,7 @@ import {
   BLOCK_CATALOG_LIMITS,
   BLOCK_CONFIG_LIMITS,
   BLOCK_LOCK_LIMITS,
+  BREAKPOINT_LIMITS,
   FIELD_GUIDANCE_LIMITS,
   MAX_ASSET_RIGHTS_TEXT,
   MAX_CANONICAL_URL_LENGTH,
@@ -1051,6 +1052,14 @@ export const blockCatalogPushBody = z.object({
     .min(1)
     .max(BLOCK_CATALOG_LIMITS.targets)
     .describe('The blocks fields the catalog provides the variants of'),
+  breakpoints: z
+    .array(z.object({}).loose())
+    .max(BREAKPOINT_LIMITS.count)
+    .optional()
+    .describe(
+      'The site’s CSS breakpoints, mobile-first: { id, name, minWidth } each, minWidth strictly ' +
+        'increasing. Absent: none (a push without them removes them)',
+    ),
   dryRun: z.boolean().optional().describe('Return what the push would do; change nothing'),
   expectedVersion: z
     .int()

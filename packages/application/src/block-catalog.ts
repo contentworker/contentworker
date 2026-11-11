@@ -7,6 +7,7 @@ import {
   type BlockCatalogTarget,
   type BlockFieldChange,
   type BlockManifest,
+  type Breakpoint,
   blocksUsed,
   ConflictError,
   type ContentType,
@@ -15,11 +16,13 @@ import {
   checkBlockCatalog,
   diffBlockCatalogs,
   NotFoundError,
+  narrowsOverrides,
   type Principal,
   planCatalogTypes,
   reviseContentType,
   SCOPES,
   type Scope,
+  staleOverrideUses,
   ValidationError,
 } from '@contentworker/domain';
 import { TransactionConflictError } from '@contentworker/ports';
@@ -49,10 +52,15 @@ import type { AppContext } from './context';
  * not at all. It needs `content:manage`, checked by the surfaces.
  */
 
-/** What `pushBlockCatalog` takes. `blocks` and `targets` are checked here, whatever sent them. */
+/**
+ * What `pushBlockCatalog` takes. `blocks`, `targets` and `breakpoints` are checked here, whatever
+ * sent them.
+ */
 export interface PushBlockCatalogInput {
   readonly blocks: unknown;
   readonly targets: unknown;
+  /** The site's CSS breakpoints, mobile-first; absent, none (a push without them removes them). */
+  readonly breakpoints?: unknown;
   /** Work out and return the push, change nothing. */
   readonly dryRun?: boolean;
   /** The version the push was made against (0 before the first): another one is a conflict. */
@@ -95,6 +103,23 @@ export interface BlocksInUse {
   readonly entries: readonly string[];
 }
 
+/**
+ * Blocks holding an override the push makes stale (its breakpoint or its prop removed), for one
+ * block, breakpoint and prop of a type. Reported, never refused: the overrides are dropped on each
+ * entry's next save.
+ */
+export interface StaleOverrides {
+  readonly contentTypeApiId: string;
+  readonly block: string;
+  readonly breakpoint: string;
+  readonly prop: string;
+  /** Blocks carrying the override, across the entries counted. */
+  readonly blocks: number;
+  readonly entries: number;
+  /** False when the type had more entries than the count reads: the numbers are a lower bound. */
+  readonly complete: boolean;
+}
+
 /** What a push did, or would do. */
 export interface BlockCatalogPush {
   readonly dryRun: boolean;
@@ -113,15 +138,23 @@ export interface BlockCatalogPush {
   readonly destructive: boolean;
   /** What it would remove that entries hold: a push with any is refused. */
   readonly inUse: readonly BlocksInUse[];
+  /** The overrides it makes stale: reported, never refused. */
+  readonly staleOverrides: readonly StaleOverrides[];
   readonly warnings: readonly ContentTypeWarning[];
 }
 
-/** SHA-256 of the canonical catalog: what tells an unchanged push from a new version. */
+/**
+ * SHA-256 of the canonical catalog: what tells an unchanged push from a new version. Breakpoints
+ * count only when there are some, so a catalog pushed before they existed keeps its hash.
+ */
 export function blockCatalogHash(
   blocks: readonly BlockManifest[],
   targets: readonly BlockCatalogTarget[],
+  breakpoints: readonly Breakpoint[] = [],
 ): string {
-  return createHash('sha256').update(canonicalJson({ blocks, targets })).digest('hex');
+  return createHash('sha256')
+    .update(canonicalJson({ blocks, targets, ...(breakpoints.length ? { breakpoints } : {}) }))
+    .digest('hex');
 }
 
 /**
@@ -151,10 +184,13 @@ export async function pushBlockCatalog(
   if (publish && caller !== SYSTEM_CALLER) {
     authorize(caller, SCOPES.contentPublish, scope.spaceId);
   }
-  const { blocks, targets } = checkBlockCatalog(input);
+  const { blocks, targets, breakpoints } = checkBlockCatalog(input);
   const latest = await ctx.store.blockCatalogs.latest(scope);
   const previousVersion = latest?.version ?? 0;
-  const changes = diffBlockCatalogs(latest?.blocks ?? null, blocks);
+  const changes = diffBlockCatalogs(latest?.blocks ?? null, blocks, {
+    before: latest?.breakpoints ?? [],
+    after: breakpoints,
+  });
   await assertThumbnailAssets(ctx, scope, blocks);
 
   const types = new Map<string, ContentType>();
@@ -162,7 +198,7 @@ export async function pushBlockCatalog(
     const type = await ctx.store.contentTypes.get(scope, apiId);
     if (type) types.set(apiId, type);
   }
-  const revisions = planCatalogTypes(blocks, targets, types).flatMap((plan) => {
+  const revisions = planCatalogTypes(blocks, targets, types, breakpoints).flatMap((plan) => {
     const current = types.get(plan.contentTypeApiId) as ContentType;
     const revised = reviseContentType(
       current,
@@ -203,8 +239,12 @@ export async function pushBlockCatalog(
     }
     warnings.push(...(await tightenedRulesInUse(ctx, scope, current, next)));
   }
+  const staleOverrides: StaleOverrides[] = [];
+  for (const { current, next } of revisions) {
+    staleOverrides.push(...(await staleOverridesOf(ctx, scope, current, next)));
+  }
 
-  const hash = blockCatalogHash(blocks, targets);
+  const hash = blockCatalogHash(blocks, targets, breakpoints);
   const unchanged = latest?.hash === hash && revisions.length === 0;
   // Checked after `unchanged`: a retried push whose first try landed is a no-op, not a conflict.
   if (
@@ -236,6 +276,7 @@ export async function pushBlockCatalog(
     })),
     destructive,
     inUse,
+    staleOverrides,
     warnings,
   };
   if (input.dryRun || unchanged) return result;
@@ -266,6 +307,7 @@ export async function pushBlockCatalog(
     hash,
     blocks,
     targets,
+    breakpoints,
     changes,
     pushedAt: ctx.clock.now().toISOString(),
     pushedBy: caller === SYSTEM_CALLER ? null : auditActor(caller),
@@ -282,6 +324,60 @@ export async function pushBlockCatalog(
     );
   }
   return { ...result, applied: true };
+}
+
+/**
+ * The overrides entries of `current` hold that the revision `next` makes stale, counted per
+ * block, breakpoint and prop as block usage counts blocks: the current version of each entry
+ * outside the trash, a page at a time, up to {@link MAX_BLOCK_USAGE_SCAN}. Reads only when the
+ * revision drops a breakpoint or a responsive prop.
+ */
+async function staleOverridesOf(
+  ctx: AppContext,
+  scope: Scope,
+  current: ContentType,
+  next: ContentType,
+): Promise<StaleOverrides[]> {
+  if (!narrowsOverrides(current.fields, next.fields)) return [];
+  const counts = new Map<string, { blocks: number; entries: Set<string> }>();
+  let read = 0;
+  let complete = true;
+  for (let after = ''; ; ) {
+    const page = await ctx.store.entries.list(scope, {
+      contentTypeApiId: current.apiId,
+      archived: false,
+      limit: USAGE_PAGE,
+      afterEntryId: after,
+    });
+    for (const e of page) {
+      for (const use of staleOverrideUses(current.fields, next.fields, e.fields)) {
+        const id = `${use.block}\u0000${use.breakpoint}\u0000${use.prop}`;
+        const held = counts.get(id) ?? { blocks: 0, entries: new Set<string>() };
+        held.blocks += 1;
+        held.entries.add(e.entry.id);
+        counts.set(id, held);
+      }
+    }
+    read += page.length;
+    if (page.length < USAGE_PAGE) break;
+    if (read >= MAX_BLOCK_USAGE_SCAN) {
+      complete = false;
+      break;
+    }
+    after = page[page.length - 1]?.entry.id ?? after;
+  }
+  return [...counts].map(([id, held]) => {
+    const [block, breakpoint, prop] = id.split('\u0000') as [string, string, string];
+    return {
+      contentTypeApiId: current.apiId,
+      block,
+      breakpoint,
+      prop,
+      blocks: held.blocks,
+      entries: held.entries.size,
+      complete,
+    };
+  });
 }
 
 /** A thumbnail naming an asset names one in the scope. A promotion checks it before it waits. */

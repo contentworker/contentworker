@@ -359,6 +359,21 @@ export interface BlockManifest {
   readonly slots?: readonly BlockSlot[];
   /** Only these blocks' slots may hold it, and never the top level. */
   readonly allowedParents?: readonly string[];
+  /**
+   * Props that take per-breakpoint overrides, stored on each block in `_responsive`: top-level
+   * tokens (a Symbol, Integer or Number with `validations.in`) or Booleans.
+   */
+  readonly responsive?: readonly string[];
+}
+
+/**
+ * One of the site's CSS breakpoints, mobile-first: a block's bare props apply below the first,
+ * `_responsive[id]` from `minWidth` up. `id` is never `base`.
+ */
+export interface Breakpoint {
+  readonly id: string;
+  readonly name: string;
+  readonly minWidth: number;
 }
 
 /** A content type's top-level blocks field the catalog provides the variants of. */
@@ -374,6 +389,8 @@ export interface BlockCatalogChanges {
   readonly changed: readonly string[];
   readonly removed: readonly string[];
   readonly renamed: readonly { readonly from: string; readonly to: string }[];
+  /** Present (true) when the breakpoints changed. */
+  readonly breakpoints?: true;
 }
 
 /** One pushed version of the environment's block catalog. */
@@ -382,6 +399,8 @@ export interface BlockCatalog {
   readonly hash: string;
   readonly blocks: readonly BlockManifest[];
   readonly targets: readonly BlockCatalogTarget[];
+  /** Empty when the catalog declares none. */
+  readonly breakpoints: readonly Breakpoint[];
   readonly changes: BlockCatalogChanges;
   readonly pushedAt: string;
   readonly pushedBy: string | null;
@@ -392,6 +411,8 @@ export type BlockCatalogSummary = Omit<BlockCatalog, 'blocks'> & { readonly bloc
 export interface BlockCatalogPushInput {
   readonly blocks: readonly BlockManifest[];
   readonly targets: readonly BlockCatalogTarget[];
+  /** The site's CSS breakpoints, mobile-first (at most 6); absent, none. */
+  readonly breakpoints?: readonly Breakpoint[];
   /** Answer what the push would do; change nothing. */
   readonly dryRun?: boolean;
   /** The version you reviewed (a dry run's `previousVersion`): another one is a 409. */
@@ -425,6 +446,20 @@ export interface BlockCatalogPush {
     readonly at: string;
     readonly kind: 'variant' | 'field';
     readonly entries: readonly string[];
+  }[];
+  /**
+   * Blocks holding overrides the push makes stale (their breakpoint or prop removed), by block,
+   * breakpoint and prop: reported, never refused; each entry's next save drops them.
+   */
+  readonly staleOverrides: readonly {
+    readonly contentTypeApiId: string;
+    readonly block: string;
+    readonly breakpoint: string;
+    readonly prop: string;
+    readonly blocks: number;
+    readonly entries: number;
+    /** False when the type had more entries than the count reads. */
+    readonly complete: boolean;
   }[];
   readonly warnings: readonly {
     readonly field: string;

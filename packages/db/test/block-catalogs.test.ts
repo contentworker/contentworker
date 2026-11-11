@@ -75,6 +75,7 @@ const catalog = (version: number, over: Partial<BlockCatalog> = {}): BlockCatalo
   hash: `h${version}`,
   blocks: [{ id: 'hero', name: 'Hero', fields: [] }],
   targets: [{ contentTypeApiId: 'page', field: 'body' }],
+  breakpoints: [],
   changes: { added: ['hero'], changed: [], removed: [], renamed: [] },
   pushedAt: AT,
   pushedBy: 'dev@example.com',
@@ -96,6 +97,24 @@ describe('block catalogs on D1', () => {
     expect(
       (await store.blockCatalogs.list(scope, { limit: 10, before: 2 })).map((c) => c.version),
     ).toEqual([1]);
+  });
+
+  it('stores the breakpoints a version declares, and reads a version without them as none', async () => {
+    const { scope } = await harness();
+    const breakpoints = [
+      { id: 'md', name: 'Tablet', minWidth: 768 },
+      { id: 'lg', name: 'Desktop', minWidth: 1280 },
+    ];
+    await store.blockCatalogs.save(scope, catalog(1));
+    await store.blockCatalogs.save(
+      scope,
+      catalog(2, { breakpoints, changes: { ...catalog(2).changes, breakpoints: true } }),
+    );
+    expect((await store.blockCatalogs.get(scope, 1))?.breakpoints).toEqual([]);
+    expect((await store.blockCatalogs.latest(scope))?.breakpoints).toEqual(breakpoints);
+    expect((await store.blockCatalogs.latest(scope))?.changes.breakpoints).toBe(true);
+    const [listed] = await store.blockCatalogs.list(scope, { limit: 1 });
+    expect(listed?.breakpoints).toEqual(breakpoints);
   });
 
   it('keeps one environment’s versions from another’s', async () => {

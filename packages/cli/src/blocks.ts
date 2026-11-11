@@ -6,14 +6,16 @@ import type {
   BlockCatalogPushInput,
   BlockCatalogTarget,
   BlockManifest,
+  Breakpoint,
 } from '@contentworker/sdk-management';
 import { usageError } from './output.js';
 
 /**
  * The block catalog as a file: the manifests of the components a site renders, and the blocks
- * fields they go in. JSON (`{ "targets": [...], "blocks": [...] }`) or a TypeScript or JavaScript
- * module whose default export is that object, so the manifests can sit beside the components
- * they describe. The file is data: the CLI sends what it holds, and nothing in it runs on the
+ * fields they go in, and the site's CSS breakpoints when its blocks take per-breakpoint overrides.
+ * JSON (`{ "targets": [...], "blocks": [...], "breakpoints": [...] }`) or a TypeScript or
+ * JavaScript module whose default export is that object, so the manifests can sit beside the
+ * components they describe. The file is data: the CLI sends what it holds, and nothing in it runs on the
  * server or in the admin.
  */
 
@@ -23,6 +25,8 @@ export const DEFAULT_BLOCKS_FILE = 'contentworker.blocks.json';
 export interface BlocksFile {
   readonly targets: readonly BlockCatalogTarget[];
   readonly blocks: readonly BlockManifest[];
+  /** Absent: none, so a push removes any the catalog had. */
+  readonly breakpoints?: readonly Breakpoint[];
 }
 
 /** Reads a blocks file. Shapes beyond the outline are checked by the server, which names each. */
@@ -51,13 +55,21 @@ export async function loadBlocks(path: string, cwd: string): Promise<BlocksFile>
   if (!Array.isArray(file?.blocks) || !Array.isArray(file?.targets)) {
     throw usageError(`${path}: expected { "targets": [...], "blocks": [...] }`);
   }
-  return { targets: file.targets, blocks: file.blocks };
+  if (file.breakpoints !== undefined && !Array.isArray(file.breakpoints)) {
+    throw usageError(`${path}: "breakpoints" must be a list of { id, name, minWidth }`);
+  }
+  return {
+    targets: file.targets,
+    blocks: file.blocks,
+    ...(file.breakpoints ? { breakpoints: file.breakpoints } : {}),
+  };
 }
 
 /** The push as the file asks for it, before any flag. */
 export const pushInput = (file: BlocksFile): BlockCatalogPushInput => ({
   targets: file.targets,
   blocks: file.blocks,
+  ...(file.breakpoints ? { breakpoints: file.breakpoints } : {}),
 });
 
 /** What a push did or would do, in the lines `model apply` uses: + added, ~ changed, - removed. */
@@ -69,6 +81,7 @@ export function renderPush(push: BlockCatalogPush): string {
   for (const r of renamed) lines.push(`    ~ ${r.from} → ${r.to} (renamed)`);
   for (const id of changed) lines.push(`    ~ ${id}`);
   for (const id of removed) lines.push(`    ! ${id} (removed)`);
+  if (push.changes.breakpoints) lines.push('    ~ breakpoints');
   for (const t of push.contentTypes) {
     lines.push(`${t.destructive ? '!' : '~'} ${t.contentTypeApiId} (version ${t.version})`);
     for (const f of t.fields) {
@@ -77,6 +90,7 @@ export function renderPush(push: BlockCatalogPush): string {
         ...f.renamed.map((r) => `~${r.from}→${r.to}`),
         ...f.changed.map((id) => `~${id}`),
         ...f.removed.map((id) => `-${id}`),
+        ...(f.breakpoints ? ['~breakpoints'] : []),
       ];
       lines.push(`    ${f.field}: ${parts.length ? parts.join(' ') : 'reordered'}`);
     }
@@ -85,6 +99,14 @@ export function renderPush(push: BlockCatalogPush): string {
     const named = u.entries.slice(0, 5).join(', ');
     const more = u.entries.length > 5 ? ` and ${u.entries.length - 5} more` : '';
     lines.push(`  ✗ ${u.contentTypeApiId}.${u.at} is still used by ${named}${more}`);
+  }
+  // Older servers answer without it.
+  for (const s of push.staleOverrides ?? []) {
+    const count = `${s.blocks}${s.complete ? '' : '+'} block(s)`;
+    lines.push(
+      `  warning: ${count} in ${s.contentTypeApiId} override ${s.block}.${s.prop} at ${s.breakpoint}, ` +
+        'which this push removes; each entry drops the override on its next save',
+    );
   }
   for (const w of push.warnings) lines.push(`  warning: ${w.message}`);
   lines.push(

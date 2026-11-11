@@ -2,11 +2,14 @@ import {
   BLOCK_KEY,
   BLOCK_TYPE_KEY,
   blockVariants,
+  breakpointIdsOf,
   type ComponentVariant,
   type ContentType,
   type DeliveredAsset,
   type FieldDefinition,
   type LocalizedValue,
+  RESPONSIVE_KEY,
+  responsivePropsOf,
   SEO_FIELDS,
   variantOf,
 } from '@contentworker/domain';
@@ -71,6 +74,13 @@ const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 class TypeNames {
   #taken = new Set<string>();
 
+  /**
+   * `existing`: every name the schema takes without per-breakpoint overrides. Given, the schema
+   * adds the `responsive` types, and those claim only names outside it ({@link claimNew}), so
+   * adding them never renames a type a client already queries.
+   */
+  constructor(readonly existing?: ReadonlySet<string>) {}
+
   claim(preferred: string): string {
     let name = preferred;
     let n = 2;
@@ -79,8 +89,21 @@ class TypeNames {
     return name;
   }
 
+  /** A name for a type added after the others: none an existing type takes, now or later. */
+  claimNew(preferred: string): string {
+    let name = preferred;
+    let n = 2;
+    while (this.#taken.has(name) || this.existing?.has(name)) name = `${preferred}${n++}`;
+    this.#taken.add(name);
+    return name;
+  }
+
   reserve(name: string): void {
     this.#taken.add(name);
+  }
+
+  get taken(): ReadonlySet<string> {
+    return this.#taken;
   }
 }
 
@@ -97,6 +120,8 @@ function componentType(
   preferredName: string,
   nested: readonly FieldDefinition[] | undefined,
   extra: GraphQLFieldConfigMap<Record<string, unknown>, unknown> = {},
+  breakpoints: readonly string[] = [],
+  variant?: ComponentVariant,
 ): GraphQLOutputType {
   if (!nested || nested.length === 0) return JSONScalar;
   const name = names.claim(preferredName);
@@ -106,15 +131,71 @@ function componentType(
       const fields: GraphQLFieldConfigMap<Record<string, unknown>, unknown> = { ...extra };
       for (const f of nested) {
         fields[f.apiId] = {
-          type: typeFor(names, `${name}${cap(f.apiId)}`, f),
+          type: typeFor(names, `${name}${cap(f.apiId)}`, f, breakpoints),
           ...describeField(f),
           // Values arrive as a plain object keyed by nested apiId, so the
           // default resolver would do — spelled out to survive a rename.
           resolve: (value) => servedValue(f, value?.[f.apiId]),
         };
       }
+      const responsive = variant ? responsiveType(names, name, variant, breakpoints) : undefined;
+      if (responsive) {
+        // A prop may already be called `responsive`: the overrides then go by their stored key.
+        fields[fields.responsive ? RESPONSIVE_KEY : 'responsive'] = {
+          type: responsive,
+          description:
+            "The block's per-breakpoint overrides, by breakpoint id: each applies from its " +
+            'breakpoint up, over the bare props (the base).',
+          resolve: (value) => value?.[RESPONSIVE_KEY] ?? null,
+        };
+      }
       return fields;
     },
+  });
+}
+
+/**
+ * A block's overrides as a type: `<BlockType>Responsive`, one nullable field per breakpoint,
+ * each a `<BlockType>ResponsiveValues` of the props `responsive` lists, typed as the props are.
+ * Undefined when the schema leaves overrides out, the field has no breakpoints, or the block no
+ * responsive props. An override stored for a breakpoint or prop since removed has no field.
+ */
+function responsiveType(
+  names: TypeNames,
+  blockType: string,
+  variant: ComponentVariant,
+  breakpoints: readonly string[],
+): GraphQLObjectType | undefined {
+  if (!names.existing || breakpoints.length === 0) return undefined;
+  const props = responsivePropsOf(variant).flatMap((apiId) => {
+    const f = variant.fields.find((d) => d.apiId === apiId);
+    return f ? [f] : [];
+  });
+  if (props.length === 0) return undefined;
+  const outer = names.claimNew(`${blockType}Responsive`);
+  const values = new GraphQLObjectType<Record<string, unknown>>({
+    name: names.claimNew(`${blockType}ResponsiveValues`),
+    fields: Object.fromEntries(
+      props.map((f) => [
+        f.apiId,
+        { type: scalarFor(f), resolve: (v: Record<string, unknown>) => v?.[f.apiId] ?? null },
+      ]),
+    ),
+  });
+  return new GraphQLObjectType<Record<string, unknown>>({
+    name: outer,
+    fields: Object.fromEntries(
+      breakpoints.map((bp) => [
+        bp,
+        {
+          type: values,
+          resolve: (v: Record<string, unknown>) => {
+            const at = v?.[bp];
+            return at && typeof at === 'object' && !Array.isArray(at) ? at : null;
+          },
+        },
+      ]),
+    ),
   });
 }
 
@@ -143,11 +224,19 @@ function blocksType(
   names: TypeNames,
   preferredName: string,
   variants: readonly ComponentVariant[],
+  breakpoints: readonly string[],
 ): GraphQLUnionType {
   const name = names.claim(preferredName);
   const members = new Map<string, GraphQLObjectType>();
   for (const v of variants) {
-    const member = componentType(names, `${name}${cap(v.apiId)}`, v.fields, BLOCK_FIELDS);
+    const member = componentType(
+      names,
+      `${name}${cap(v.apiId)}`,
+      v.fields,
+      BLOCK_FIELDS,
+      breakpoints,
+      v,
+    );
     // Variants are refused without fields, so this is always an object type.
     if (member instanceof GraphQLObjectType) members.set(v.apiId, member);
   }
@@ -180,21 +269,31 @@ function servedValue(field: FieldDefinition, value: unknown): unknown {
   });
 }
 
-/** The GraphQL type for one field, recursing into components. */
+/**
+ * The GraphQL type for one field, recursing into components. `breakpoints`: those of the blocks
+ * field it sits under, which a nested blocks field takes.
+ */
 function typeFor(
   names: TypeNames,
   preferredName: string,
   field: FieldDefinition,
+  breakpoints: readonly string[] = [],
 ): GraphQLOutputType {
-  if (field.type === 'Component') return componentType(names, preferredName, field.fields);
+  if (field.type === 'Component') {
+    return componentType(names, preferredName, field.fields, {}, breakpoints);
+  }
   // A Seo field is a component of fixed shape: typed the same way, so a query selects its parts.
   if (field.type === 'Seo') return componentType(names, preferredName, SEO_FIELDS);
   if (field.type === 'Array' && field.items?.type === 'Component') {
     const variants = field.items.variants;
     if (variants && variants.length > 0) {
-      return new GraphQLList(blocksType(names, preferredName, variants));
+      return new GraphQLList(
+        blocksType(names, preferredName, variants, breakpointIdsOf(field, breakpoints)),
+      );
     }
-    return new GraphQLList(componentType(names, preferredName, field.items.fields));
+    return new GraphQLList(
+      componentType(names, preferredName, field.items.fields, {}, breakpoints),
+    );
   }
   // A list of scalars is a list of that scalar. A list of links stays JSON (links arrive resolved).
   const itemType = field.type === 'Array' ? field.items?.type : undefined;
@@ -233,12 +332,42 @@ function scalarFor(field: FieldDefinition): GraphQLOutputType {
  * JSON), with `<type>` and `<type>Collection` root queries plus `asset` and
  * `search`. A singleton type's `<type>` takes no `id` to read its one entry. Field values come from the resolver-rendered entry, so locale
  * flattening and reference resolution are reused, not reimplemented.
+ *
+ * A block with per-breakpoint overrides gains a `responsive` field. Its types are an addition:
+ * the schema is built once without them, to learn every name it takes, and again with them
+ * taking only names left over, so no type a client queries is renamed to make room.
  */
 export function buildDeliverySchema(contentTypes: readonly ContentType[]): GraphQLSchema {
+  if (!contentTypes.some((ct) => takesOverrides(ct.fields, []))) {
+    return buildSchema(contentTypes, new TypeNames());
+  }
+  const without = new TypeNames();
+  buildSchema(contentTypes, without);
+  return buildSchema(contentTypes, new TypeNames(new Set(without.taken)));
+}
+
+/** True when some block, at any depth, has responsive props and breakpoints to take them at. */
+function takesOverrides(
+  fields: readonly FieldDefinition[],
+  breakpoints: readonly string[],
+): boolean {
+  return fields.some((f) => {
+    const variants = blockVariants(f);
+    if (variants) {
+      const own = breakpointIdsOf(f, breakpoints);
+      return variants.some(
+        (v) => (own.length > 0 && responsivePropsOf(v).length > 0) || takesOverrides(v.fields, own),
+      );
+    }
+    const nested = f.type === 'Component' ? f.fields : f.items?.fields;
+    return nested ? takesOverrides(nested, breakpoints) : false;
+  });
+}
+
+function buildSchema(contentTypes: readonly ContentType[], names: TypeNames): GraphQLSchema {
   // Content-type names are reserved first, so a component never takes a name a
   // content type is going to need — the entry types are what clients query by,
   // and renaming one to make room for a nested shape would be backwards.
-  const names = new TypeNames();
   for (const reserved of ['Sys', 'SearchHit', 'Query', 'JSON', ...ASSET_TYPE_NAMES]) {
     names.reserve(reserved);
   }

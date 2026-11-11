@@ -190,6 +190,45 @@ describe('promoting blocks between environments', () => {
     await expect(heroPage(qa)).rejects.toBeInstanceOf(ValidationError);
   });
 
+  it('copies breakpoints with the catalog, and entries with their overrides', async () => {
+    const breakpoints = [{ id: 'lg', name: 'Desktop', minWidth: 1280 }];
+    const toned = BLOCKS.map((b) =>
+      b.id === 'hero'
+        ? {
+            ...b,
+            responsive: ['tone'],
+            fields: [
+              ...b.fields,
+              { apiId: 'tone', name: 'Tone', type: 'Symbol', validations: { in: ['a', 'b'] } },
+            ],
+          }
+        : b,
+    );
+    await pushBlockCatalog(ctx, admin, staging, { blocks: toned, targets: TARGETS, breakpoints });
+    const { entry } = await createEntry(ctx, staging, {
+      contentTypeApiId: 'page',
+      fields: {
+        title: { 'en-US': 'Home' },
+        body: {
+          'en-US': [{ _type: 'hero', _key: 'h1', tone: 'a', _responsive: { lg: { tone: 'b' } } }],
+        },
+      },
+    });
+    const p = await requestPromotion(ctx, admin, spaceId, { source: 'staging', target: 'qa' });
+    // The catalog is pinned and copied; a breakpoint change alone moves no block rule.
+    expect(p.blocks).toMatchObject({ catalogVersion: 2, targetCatalogVersion: 1 });
+    const done =
+      p.status === 'awaiting_approval' ? await approvePromotion(ctx, approver, spaceId, p.id) : p;
+    expect(done.status).toBe('completed');
+    expect((await store.blockCatalogs.latest(qa))?.breakpoints).toEqual(breakpoints);
+    expect((await store.contentTypes.get(qa, 'page'))?.fields[1]?.items?.breakpoints).toEqual(
+      breakpoints,
+    );
+    expect((await store.entries.get(qa, entry.id))?.fields.body?.['en-US']?.[0]).toMatchObject({
+      _responsive: { lg: { tone: 'b' } },
+    });
+  });
+
   it('copies a config alone, and only when asked for alongside a selection', async () => {
     await setBlockConfig(ctx, admin, staging, { expectedVersion: 0, ...NARROWING });
     await expect(

@@ -186,7 +186,10 @@ export interface EnvironmentSnapshot {
  * A block catalog in a snapshot. `version` and `hash` say which of the source's versions it is;
  * an import starts its own history and works the hash out again (a snapshot is anyone's JSON).
  */
-export type SnapshotBlockCatalog = Pick<BlockCatalog, 'version' | 'hash' | 'blocks' | 'targets'>;
+export type SnapshotBlockCatalog = Pick<BlockCatalog, 'version' | 'hash' | 'blocks' | 'targets'> & {
+  /** Absent in snapshots written before breakpoints travelled: none. */
+  readonly breakpoints?: BlockCatalog['breakpoints'];
+};
 
 /** A block config in a snapshot; `version` is the source's, for reading only. */
 export type SnapshotBlockConfig = Pick<BlockConfig, 'version' | 'targets' | 'blocks'>;
@@ -309,6 +312,7 @@ export async function exportSnapshot(
             hash: catalog.hash,
             blocks: catalog.blocks,
             targets: catalog.targets,
+            ...(catalog.breakpoints.length ? { breakpoints: catalog.breakpoints } : {}),
           },
         }
       : {}),
@@ -786,6 +790,7 @@ export interface CheckedSnapshotBlocks {
   readonly catalog?: {
     readonly blocks: readonly BlockManifest[];
     readonly targets: readonly BlockCatalogTarget[];
+    readonly breakpoints: BlockCatalog['breakpoints'];
   };
   readonly config?: Pick<BlockConfig, 'targets' | 'blocks'>;
   /** Why a section is left behind, as the import report names it. */
@@ -833,9 +838,13 @@ export function checkedSnapshotBlocks(
   const given = snapshot.blockCatalog;
   if (given) {
     catalog = ownExport
-      ? { blocks: given.blocks, targets: given.targets }
+      ? { blocks: given.blocks, targets: given.targets, breakpoints: given.breakpoints ?? [] }
       : uploadedCatalog(snapshot, given, skipped);
-    if (catalog && held && held.hash !== blockCatalogHash(catalog.blocks, catalog.targets)) {
+    if (
+      catalog &&
+      held &&
+      held.hash !== blockCatalogHash(catalog.blocks, catalog.targets, catalog.breakpoints)
+    ) {
       try {
         diffBlockCatalogs(held.blocks, catalog.blocks);
       } catch (err) {
@@ -892,6 +901,7 @@ function uploadedCatalog(
       checked.blocks,
       checked.targets,
       new Map(snapshot.contentTypes.map((ct) => [ct.apiId, ct])),
+      checked.breakpoints,
     );
     if (plans.length > 0) {
       const fields = plans.flatMap((p) => p.changes.map((c) => `${p.contentTypeApiId}.${c.field}`));
@@ -939,16 +949,20 @@ async function writeSnapshotBlocks(
   const at = ctx.clock.now().toISOString();
   let catalog: BlockCatalog | undefined;
   if (checked.catalog) {
-    const { blocks, targets } = checked.catalog;
-    const hash = blockCatalogHash(blocks, targets);
+    const { blocks, targets, breakpoints } = checked.catalog;
+    const hash = blockCatalogHash(blocks, targets, breakpoints);
     if (latest?.hash !== hash) {
       catalog = {
         version: (latest?.version ?? 0) + 1,
         hash,
         blocks,
         targets,
+        breakpoints,
         // The checks ran `diffBlockCatalogs` against `latest` already: it doesn't refuse here.
-        changes: diffBlockCatalogs(latest?.blocks ?? null, blocks),
+        changes: diffBlockCatalogs(latest?.blocks ?? null, blocks, {
+          before: latest?.breakpoints ?? [],
+          after: breakpoints,
+        }),
         pushedAt: at,
         pushedBy: null,
       };

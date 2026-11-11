@@ -22,8 +22,8 @@ api serves, so give it the api host. The Delivery clients share a model (`Delive
 
 | Use case                                                            | Import                            |
 | ------------------------------------------------------------------- | --------------------------------- |
-| Node/SSR/backend, or building your own integration                  | `@contentworker/sdk`         |
-| React apps                                                          | `@contentworker/sdk/react`          |
+| Node/SSR/backend, or building your own integration                  | `@contentworker/sdk`              |
+| React apps                                                          | `@contentworker/sdk/react`        |
 | Vue 3 / Nuxt apps                                                   | `@contentworker/sdk/vue`          |
 | Edge functions, constrained devices, single-locale, minimal payload | `@contentworker/sdk/edge`         |
 | React Native apps with offline sync                                 | `@contentworker/sdk/react-native` |
@@ -176,13 +176,19 @@ since there is no preview stream: it hears of publishes, not draft saves.
 ```ts
 const live = client.live({
   types: ['entry.published', 'entry.unpublished'], // server-side filter (?types=)
-  entryIds: [entry.id],                            // client-side filters; either one matching passes
+  entryIds: [entry.id], // client-side filters; either one matching passes
   contentTypes: ['post'],
-  onEvent(event) { /* LiveEvent, typed by `type` */ },
-  onStatus(status) { /* 'connecting' | 'open' | 'reconnecting' | 'closed' */ },
-  onError(err) { /* transient while reconnecting; final once closed */ },
-  retry: { minMs: 1000, maxMs: 30_000 },           // the defaults
-  signal,                                          // optional AbortSignal
+  onEvent(event) {
+    /* LiveEvent, typed by `type` */
+  },
+  onStatus(status) {
+    /* 'connecting' | 'open' | 'reconnecting' | 'closed' */
+  },
+  onError(err) {
+    /* transient while reconnecting; final once closed */
+  },
+  retry: { minMs: 1000, maxMs: 30_000 }, // the defaults
+  signal, // optional AbortSignal
 });
 live.close();
 ```
@@ -472,9 +478,9 @@ framework or runtime.
 import { toHtml, toMarkdown, toPlainText, excerpt } from '@contentworker/sdk/rich-text';
 
 const html = toHtml(entry.fields.body, {
-  entryHref: (target) => `/${target.fields?.slug}`,      // links to other entries
-  renderEntry: (target) => renderMyBlock(target),          // embedded entries: your components
-  imageSizes: '(min-width: 900px) 800px, 100vw',           // embedded images' `sizes`
+  entryHref: (target) => `/${target.fields?.slug}`, // links to other entries
+  renderEntry: (target) => renderMyBlock(target), // embedded entries: your components
+  imageSizes: '(min-width: 900px) 800px, 100vw', // embedded images' `sizes`
 });
 ```
 
@@ -496,18 +502,24 @@ const html = toHtml(entry.fields.body, {
 What `<Blocks>` and `<CwBlocks>` are built on, for any other renderer (the frontend runtime, HTML
 strings, DOM nodes):
 
-- `resolveBlocks(value, { catalog?, variants?, ghosts?, preview? })` → `{ path, attrs, blocks }`.
+- `resolveBlocks(value, { catalog?, variants?, breakpoints?, ghosts?, preview? })` → `{ path, attrs, blocks }`.
   Each block: `type` (current id; `catalog` wins over `variants`, an exact id over an alias, a
   variants slot resolves with its own nested variants, and a catalog applies only inside the slots
   its blocks declare), `storedType`, `key`, `renderKey`, `index`,
-  `block` (a copy with `_type` set to `type` when it differs), `ghost` (from `ghosts` by `_key`;
+  `block` (a copy with `_type` set to `type` when it differs), `responsive` (its `_responsive` in
+  breakpoint order, only the catalog's breakpoints, or `breakpoints` with `variants`, and only the
+  props its definition lists in `responsive`; as stored when nothing declares them; `{}` when
+  none), `ghost` (from `ghosts` by `_key`;
   `inserted` over `removed` over `changed`), `path`, `attrs`, `fieldAttrs(name)`, `slotNames` (the
   definition's slots plus any field holding a non-empty list of blocks) and `slot(name)` (resolved
   on first call). Not a list renders nothing; an element without a string `_type` is skipped.
 - `renderBlocks<BlockTypes, R>(value, { components, fallback?, …resolve options })` →
-  `{ attrs, items: R[] }`, calling `components[type]({ block, index, ghost, attrs, fieldAttrs,
-  slot })` (`slot(name)` → `{ attrs, items }`); own properties only, so a `_type` of `toString` never
-  calls an inherited function.
+  `{ attrs, items: R[] }`, calling `components[type]({ block, responsive, index, ghost, attrs,
+  fieldAttrs, slot })` (`slot(name)` → `{ attrs, items }`); own properties only, so a `_type` of
+  `toString` never calls an inherited function. `<Blocks>` and `useBlock()` give `responsive` too.
+- `responsiveProp(block, prop, catalog)` → `{ base, <breakpoint>… }`: the bare prop, then each
+  declared breakpoint overriding it, in order; with the catalog, only a prop its block lists in
+  `responsive`; with just a breakpoints list, no prop check. Never one value for "this width".
 - Preview marks, only when `preview` (a `ContentRef` whose `field` names the blocks field, or a path
   to a slot) is given: `data-cw-slot` on the element holding each list (`body`, `body[k1].cards`),
   `data-cw-ref` on each block (`body[k1]`) and field (`body[k1].heading`), formatted with
@@ -739,14 +751,14 @@ try {
 }
 ```
 
-| Guard                | `code`                              | Details on `err.error`                                   |
+| Guard                | `code`                                   | Details on `err.error`                    |
 | -------------------- | ---------------------------------------- | ----------------------------------------- |
-| `isAssetInUse`       | `asset_in_use` (409)                | `usage`, `total`                                         |
-| `isAssetRightsError` | `asset_embargoed`, `asset_expired` (409) | `embargoUntil` or `expiresAt`, by `code`            |
-| `isValidationError`  | `validation_failed` (422)           | `issues`: `{ field, locale?, message }[]`                 |
-| `isConflict`         | `conflict` (409)                    |                                                          |
-| `isNotFound`         | `not_found` (404)                   |                                                          |
-| `isRateLimited`      | `rate_limited` (429)                |                                                          |
+| `isAssetInUse`       | `asset_in_use` (409)                     | `usage`, `total`                          |
+| `isAssetRightsError` | `asset_embargoed`, `asset_expired` (409) | `embargoUntil` or `expiresAt`, by `code`  |
+| `isValidationError`  | `validation_failed` (422)                | `issues`: `{ field, locale?, message }[]` |
+| `isConflict`         | `conflict` (409)                         |                                           |
+| `isNotFound`         | `not_found` (404)                        |                                           |
+| `isRateLimited`      | `rate_limited` (429)                     |                                           |
 
 `code` is read from `{ error: { code } }` and from the flat `{ code }` of a refusal made before a
 route runs (the 413, a request-rate 429). The full list is in the
@@ -839,7 +851,9 @@ For each content type it emits two interfaces plus shared helpers and lookup map
 - `<Id>Block` per block id and `BlockTypes` (id → block type) with `BlockId`, for
   `BlockComponents<BlockTypes>` and `renderBlocks<BlockTypes, R>`: `{ _type: '<id>'; _key: string;
   …props }`, each slot a list of the blocks it allows (required when its `min` is above 0), doc
-  comments naming the block and its former ids. A catalog's blocks are typed from
+  comments naming the block and its former ids, and with breakpoints and `responsive` props
+  `_responsive?: { readonly md?: { readonly size?: 'sm' | … } }`; the module then also exports
+  `breakpoints` (`as const`) and `BreakpointId`. A catalog's blocks are typed from
   `generateTypes(types, { blockCatalog })` (`contentworker types` passes the catalog in force, or
   `--blocks <file>`; the workspace `contentworker-codegen` takes a JSON `--blocks` or fetches
   `…/block-catalog`, a 404 meaning none); every other block, from the blocks fields' variants at

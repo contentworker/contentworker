@@ -160,6 +160,72 @@ describe('the block catalog over HTTP', () => {
     expect((await send(app, 'GET', '/block-catalog/versions/abc')).status).toBe(422);
   });
 
+  it('pushes breakpoints and responsive props, reads them back, and saves an override', async () => {
+    const { app } = await makeApp();
+    const BREAKPOINTS = [
+      { id: 'md', name: 'Tablet', minWidth: 768 },
+      { id: 'lg', name: 'Desktop', minWidth: 1280 },
+    ];
+    const blocks = BLOCKS.map((b) => (b.id === 'hero' ? { ...b, responsive: ['tone'] } : b));
+    const pushed = await send(app, 'POST', '/block-catalog', {
+      blocks,
+      targets: TARGETS,
+      breakpoints: BREAKPOINTS,
+      allowDestructive: true,
+    });
+    expect(pushed.status).toBe(200);
+    const got = (await (await send(app, 'GET', '/block-catalog')).json()) as {
+      breakpoints: unknown;
+      blocks: { id: string; responsive?: string[] }[];
+    };
+    expect(got.breakpoints).toEqual(BREAKPOINTS);
+    expect(got.blocks.find((b) => b.id === 'hero')?.responsive).toEqual(['tone']);
+    const versions = (await (await send(app, 'GET', '/block-catalog/versions')).json()) as {
+      items: { breakpoints: unknown }[];
+    };
+    expect(versions.items[0]?.breakpoints).toEqual(BREAKPOINTS);
+
+    // The target field carries the breakpoints, so an entry takes an override with no catalog read.
+    const created = await send(app, 'POST', '/entries', {
+      contentTypeApiId: 'bpage',
+      fields: {
+        title: { 'en-US': 'Home' },
+        body: {
+          'en-US': [
+            { _type: 'hero', heading: 'Hi', tone: 'light', _responsive: { lg: { tone: 'dark' } } },
+          ],
+        },
+      },
+    });
+    expect(created.status).toBe(201);
+    const entry = (await created.json()) as { fields: { body: Record<string, unknown[]> } };
+    expect(entry.fields.body['en-US']?.[0]).toMatchObject({
+      _responsive: { lg: { tone: 'dark' } },
+    });
+
+    const wrong = await send(app, 'POST', '/entries', {
+      contentTypeApiId: 'bpage',
+      fields: {
+        title: { 'en-US': 'Bad' },
+        body: {
+          'en-US': [{ _type: 'hero', heading: 'Hi', _responsive: { lg: { tone: 'neon' } } }],
+        },
+      },
+    });
+    expect(wrong.status).toBe(422);
+    expect(JSON.stringify(await wrong.json())).toContain('body[0]._responsive.lg.tone');
+
+    const refused = await send(app, 'POST', '/block-catalog', {
+      blocks: BLOCKS.map((b) => (b.id === 'hero' ? { ...b, responsive: ['tone', 'heading'] } : b)),
+      targets: TARGETS,
+      breakpoints: [{ id: 'base', name: 'Base', minWidth: 1 }],
+    });
+    expect(refused.status).toBe(422);
+    const issues = JSON.stringify(await refused.json());
+    expect(issues).toContain('blocks[hero].responsive[1]');
+    expect(issues).toContain('breakpoints[0].id');
+  });
+
   it('answers 422 naming each manifest problem, and 409 for a stale version or a block in use', async () => {
     const { app, ctx } = await makeApp();
     const bad = await send(app, 'POST', '/block-catalog', {

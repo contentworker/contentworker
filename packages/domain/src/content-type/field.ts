@@ -311,6 +311,13 @@ export interface FieldDefinition {
      * carries a stable `_key`; see {@link ComponentVariant}.
      */
     readonly variants?: readonly ComponentVariant[];
+    /**
+     * For a top-level blocks field a block catalog targets: the site's CSS breakpoints,
+     * mobile-first, that its blocks' `responsive` props take overrides at (see `responsive.ts`).
+     * The catalog push writes them; a blocks field without them takes no `_responsive`, and the
+     * blocks fields inside its blocks (their slots) take the same ones.
+     */
+    readonly breakpoints?: readonly Breakpoint[];
   };
   /**
    * For Component fields: the nested field definitions.
@@ -349,15 +356,32 @@ export interface ComponentVariant {
    * variant's apiId.
    */
   readonly aliases?: readonly string[];
+  /**
+   * The props (top-level token or Boolean fields of the variant) that take a different value from
+   * a breakpoint up, stored beside them in `_responsive` (see `responsive.ts`). Absent, the block
+   * takes no overrides.
+   */
+  readonly responsive?: readonly string[];
+}
+
+/**
+ * One of a site's CSS breakpoints: from `minWidth` CSS pixels up, a block's `_responsive[id]`
+ * overrides its bare props, until the next breakpoint's overrides take over.
+ */
+export interface Breakpoint {
+  /** A letter, then letters, digits or `_`; never `base`, which names the bare props. */
+  readonly id: string;
+  /** What editors see: "Tablet". */
+  readonly name: string;
+  readonly minWidth: number;
 }
 
 /** The key a blocks element names its variant under. */
 export const BLOCK_TYPE_KEY = '_type';
 /**
- * The key a block's per-breakpoint overrides will sit under (docs/specs/breakpoint-overrides.md).
- * Nothing declares breakpoints yet, so a block keeps none: validation lets the key through and
- * every save drops it. Code that reads overrides ships after this, so rolling back to it never
- * leaves an entry it can't save, only one that loses its overrides on the next save.
+ * The key a block holds its per-breakpoint overrides under (`responsive.ts`). It was let through
+ * and dropped on every save one release before overrides were kept, so a rollback past them never
+ * leaves an entry that can't be saved, only one that loses its overrides on the next save.
  */
 export const RESPONSIVE_KEY = '_responsive';
 /**

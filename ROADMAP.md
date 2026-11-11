@@ -379,7 +379,12 @@ Built on Blocks and the frontend runtime. Layouts stay a typed tree; rich text s
   `MAX_BLOCK_DEPTH`), plain components keep three among themselves, the AI layout schema stays
   inline and shares a repeated block shape through `$defs` only past a size budget, RAG indexes
   text at the full depth, and the admin's blocks trees indent half a step past the third level.
-  Per-breakpoint overrides are still to come.
+  Per-breakpoint overrides (`docs/specs/breakpoint-overrides.md`): the backend shipped. The
+  catalog push declares `breakpoints` and each block's `responsive` props; blocks store overrides
+  in `_responsive`, validated as their props, with stale ones dropped on save and counted by the
+  push (`staleOverrides`); block patches, frozen regions, copies, REST, MCP, GraphQL
+  (`responsive`), codegen and `resolveBlocks` / `responsiveProp` carry them. Still to come: editing
+  them on the canvas (width presets from the breakpoints, the Look tab per breakpoint).
 - [x] **Blocks from code.** `contentworker blocks push` maps component manifests (JSON data:
   token and enum props, slots with `allowedChildren`, `allowedParents`, aliases for renamed ids,
   thumbnails) to Blocks variants, versioned per environment, over REST, MCP and the management

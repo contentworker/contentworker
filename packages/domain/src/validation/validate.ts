@@ -14,6 +14,7 @@ import {
   variantNamed,
 } from '../content-type/field';
 import { fieldState, sameFieldValue, valuesForRules } from '../content-type/field-rules';
+import { BASE_BREAKPOINT, breakpointIdsOf, responsivePropsOf } from '../content-type/responsive';
 import { isSlug } from '../content-type/slug';
 import { type FieldIssue, ValidationError } from '../errors';
 import { validateRichText } from '../rich-text/rich-text';
@@ -151,6 +152,9 @@ export function assertEntryFieldsValid(
  * just its apiId, but inside a component it becomes `hero.cta.label` or
  * `cards[2].title` — an editor looking at a list of eight cards needs to be
  * told which one is wrong, not that something somewhere is.
+ *
+ * `breakpoints` are the ids the blocks field enclosing the value takes overrides at (none at the
+ * top level): a nested blocks field takes its parent's.
  */
 function validateValue(
   field: FieldDefinition,
@@ -159,6 +163,7 @@ function validateValue(
   issues: FieldIssue[],
   path: string,
   kept?: Kept,
+  breakpoints: readonly string[] = [],
 ): void {
   const push = (message: string): void => {
     issues.push({ field: path, locale, message });
@@ -254,7 +259,7 @@ function validateValue(
       if (!isLink(value)) push('Expected a link { id, linkType }');
       break;
     case 'Component': {
-      validateComponent(field.fields ?? [], value, locale, issues, path, push, kept);
+      validateComponent(field.fields ?? [], value, locale, issues, path, push, kept, breakpoints);
       break;
     }
     case 'Seo': {
@@ -276,7 +281,7 @@ function validateValue(
       const itemType = field.items?.type;
       const variants = itemType === 'Component' ? field.items?.variants : undefined;
       if (variants) {
-        validateBlocks(variants, value, locale, issues, path);
+        validateBlocks(variants, value, locale, issues, path, breakpointIdsOf(field, breakpoints));
         break;
       }
       value.forEach((item, index) => {
@@ -290,8 +295,15 @@ function validateValue(
         if (itemType === 'Component') {
           // Indexed, so "the third card is missing its title" is sayable.
           const at = `${path}[${index}]`;
-          validateComponent(field.items?.fields ?? [], item, locale, issues, at, (m) =>
-            issues.push({ field: at, locale, message: m }),
+          validateComponent(
+            field.items?.fields ?? [],
+            item,
+            locale,
+            issues,
+            at,
+            (m) => issues.push({ field: at, locale, message: m }),
+            undefined,
+            breakpoints,
           );
         }
       });
@@ -315,6 +327,7 @@ function validateComponent(
   path: string,
   push: (message: string) => void,
   kept?: Kept,
+  breakpoints: readonly string[] = [],
 ): void {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     push('Expected an object of nested field values');
@@ -353,7 +366,7 @@ function validateComponent(
       }
       continue;
     }
-    validateValue(f, nestedValue, locale, issues, at, nestedKept);
+    validateValue(f, nestedValue, locale, issues, at, nestedKept, breakpoints);
   }
 }
 
@@ -367,6 +380,9 @@ function validateComponent(
  * present must be a non-empty string used once in the field value: two blocks
  * sharing a key would make every client that addresses a block by it (a
  * comment anchor, a live-preview patch) pick one of them at random.
+ *
+ * `_responsive` holds a block's per-breakpoint overrides (`responsive.ts`), checked against
+ * `breakpoints`, the ids the field takes them at.
  */
 function validateBlocks(
   variants: readonly ComponentVariant[],
@@ -374,6 +390,7 @@ function validateBlocks(
   locale: LocaleCode,
   issues: FieldIssue[],
   path: string,
+  breakpoints: readonly string[],
 ): void {
   const keys = new Set<string>();
   items.forEach((item, index) => {
@@ -383,11 +400,10 @@ function validateBlocks(
       push('Expected a block object with a _type');
       return;
     }
-    // `_responsive` is passed over: no field takes overrides yet, and the save drops it.
     const {
       [BLOCK_TYPE_KEY]: type,
       [BLOCK_KEY]: key,
-      [RESPONSIVE_KEY]: _overrides,
+      [RESPONSIVE_KEY]: overrides,
       ...values
     } = item as Record<string, unknown>;
     if (key !== undefined) {
@@ -405,8 +421,57 @@ function validateBlocks(
       push(`Unknown block type "${type}" (one of: ${variants.map((v) => v.apiId).join(', ')})`);
       return;
     }
-    validateComponent(variant.fields, values, locale, issues, at, push);
+    validateComponent(variant.fields, values, locale, issues, at, push, undefined, breakpoints);
+    if (overrides !== undefined) {
+      validateOverrides(variant, overrides, breakpoints, locale, issues, `${at}.${RESPONSIVE_KEY}`);
+    }
   });
+}
+
+/**
+ * A block's `_responsive`: a map of breakpoint id to the props it overrides, each value checked as
+ * the prop itself is. An override of a breakpoint the field doesn't declare, or of a prop the
+ * variant doesn't list in `responsive`, is stale (a later push removed it): it is passed over
+ * here and dropped by the save (`cleanOverrides`), so stored content never fails over it. Only
+ * what can't be stale is refused: a map that isn't one, `base` or a malformed id, and a value
+ * that isn't valid for its prop. Without breakpoints or responsive props a block keeps nothing:
+ * its every override is stale.
+ */
+function validateOverrides(
+  variant: ComponentVariant,
+  overrides: unknown,
+  breakpoints: readonly string[],
+  locale: LocaleCode,
+  issues: FieldIssue[],
+  path: string,
+): void {
+  const push = (field: string, message: string) => issues.push({ field, locale, message });
+  if (typeof overrides !== 'object' || overrides === null || Array.isArray(overrides)) {
+    push(path, 'Expected an object of overrides by breakpoint id');
+    return;
+  }
+  const props = responsivePropsOf(variant);
+  for (const [bp, values] of Object.entries(overrides)) {
+    const at = `${path}.${bp}`;
+    if (bp === BASE_BREAKPOINT || !/^[a-zA-Z][a-zA-Z0-9_]*$/.test(bp)) {
+      push(at, `"${bp}" is not a breakpoint id: the bare props are the base`);
+      continue;
+    }
+    if (typeof values !== 'object' || values === null || Array.isArray(values)) {
+      push(at, 'Expected an object of prop overrides');
+      continue;
+    }
+    if (!breakpoints.includes(bp)) continue;
+    for (const [prop, value] of Object.entries(values)) {
+      const field = props.includes(prop) ? variant.fields.find((f) => f.apiId === prop) : undefined;
+      if (!field) continue;
+      if (value === undefined || value === null) {
+        push(`${at}.${prop}`, 'An override needs a value: leave the prop out to inherit');
+        continue;
+      }
+      validateValue(field, value, locale, issues, `${at}.${prop}`);
+    }
+  }
 }
 
 /** Why an element of a list of Text, Integer, Number or Date is not one, or null. */

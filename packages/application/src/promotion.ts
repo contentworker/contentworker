@@ -892,6 +892,7 @@ async function assessPromotedBlocks(
       ...(changes.removed.length ? [`removes ${quotedIds(changes.removed)}`] : []),
       ...(changes.changed.length ? [`changes ${quotedIds(changes.changed)}`] : []),
       ...changes.renamed.map((r) => `renames "${r.from}" to "${r.to}"`),
+      ...(changes.breakpoints ? ['changes the breakpoints'] : []),
     ];
     if (said.length > 0) lines.unshift(`The block catalog ${said.join('; ')}`);
   }
@@ -927,8 +928,11 @@ async function checkPromotedCatalog(
   let plans: ReturnType<typeof planCatalogTypes>;
   let changes: ReturnType<typeof diffBlockCatalogs>;
   try {
-    changes = diffBlockCatalogs(targetCatalog?.blocks ?? null, catalog.blocks);
-    plans = planCatalogTypes(catalog.blocks, catalog.targets, types);
+    changes = diffBlockCatalogs(targetCatalog?.blocks ?? null, catalog.blocks, {
+      before: targetCatalog?.breakpoints ?? [],
+      after: catalog.breakpoints,
+    });
+    plans = planCatalogTypes(catalog.blocks, catalog.targets, types, catalog.breakpoints);
     await assertThumbnailAssets(ctx, target, catalog.blocks);
   } catch (err) {
     if (!(err instanceof ValidationError)) throw err;
@@ -1077,6 +1081,7 @@ async function applyPromotedBlocks(
     {
       blocks: catalog.blocks,
       targets: catalog.targets,
+      breakpoints: catalog.breakpoints,
       allowDestructive: true,
       expectedVersion: pinned.targetCatalogVersion,
     },
