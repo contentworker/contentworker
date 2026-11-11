@@ -161,6 +161,10 @@ describe('status vocabulary', () => {
     expect(statusTone('revoked')).toBe('idle');
     expect(statusTone('failed')).toBe('bad');
     expect(statusTone('proposed')).toBe('ai');
+    // A promotion waits on a person, then is under way while it applies.
+    expect(statusTone('awaiting_approval')).toBe('wait');
+    expect(statusTone('applying')).toBe('run');
+    expect(statusLabel('awaiting_approval')).toBe('Awaiting approval');
     expect(statusTone('something-new')).toBe('idle');
     expect(statusLabel('in_review')).toBe('In review');
     expect(countLabel(100)).toBe('99+');

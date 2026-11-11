@@ -42,6 +42,8 @@ import type {
   Menu,
   MenuItemInput,
   MenuLink,
+  Promotion,
+  PromotionStatus,
   Redirect,
   RedirectChain,
   RedirectInput,
@@ -1370,16 +1372,24 @@ export class ApiError extends Error {
  * message, so a form can say what is wrong beside the field. Empty for any other failure.
  */
 export function apiFieldIssues(err: unknown): Record<string, string> {
-  if (!(err instanceof ApiError) || err.status !== 422) return {};
-  const issues = (err.body as { error?: { issues?: unknown } } | undefined)?.error?.issues;
   const out: Record<string, string> = {};
-  if (!Array.isArray(issues)) return out;
-  for (const issue of issues as { field?: unknown; message?: unknown }[]) {
-    if (typeof issue.field === 'string' && typeof issue.message === 'string') {
-      out[issue.field] ??= issue.message;
-    }
-  }
+  for (const issue of apiIssues(err)) out[issue.field] ??= issue.message;
   return out;
+}
+
+/**
+ * Every issue a 422 named, in its order, for a screen that lists them all: a refusal can name one
+ * field many times (a merge's `contentTypes`, once per type it can't take). Empty otherwise.
+ */
+export function apiIssues(err: unknown): { field: string; message: string }[] {
+  if (!(err instanceof ApiError) || err.status !== 422) return [];
+  const issues = (err.body as { error?: { issues?: unknown } } | undefined)?.error?.issues;
+  if (!Array.isArray(issues)) return [];
+  return (issues as { field?: unknown; message?: unknown }[]).flatMap((issue) =>
+    typeof issue.field === 'string' && typeof issue.message === 'string'
+      ? [{ field: issue.field, message: issue.message }]
+      : [],
+  );
 }
 
 /** True when the API refused because the caller's role lacks the scope (403). */
@@ -1719,6 +1729,46 @@ export function createManagementClient(
       entries?: string[];
     }): Promise<MergeResult> {
       return req('POST', `${spaceBase}/merge`, input, undefined, LARGE_LIMIT);
+    },
+    /**
+     * The space's promotions, newest first (the 50 most recent; the API pages no further), or only
+     * those in one `status`. Needs content:publish.
+     */
+    async listPromotions(status?: PromotionStatus): Promise<Promotion[]> {
+      const qs = status ? `?status=${encodeURIComponent(status)}` : '';
+      return (await req<{ items: Promotion[] }>('GET', `${spaceBase}/promotions${qs}`)).items;
+    },
+    /** One promotion: what it pins, its risk check, and its decision and outcome. */
+    getPromotion(id: string): Promise<Promotion> {
+      return req('GET', `${spaceBase}/promotions/${encodeURIComponent(id)}`);
+    },
+    /**
+     * Requests a promotion source→target. The API pins what it copies and runs its risk check:
+     * one that needs no approval is applied in this request (`completed` or `failed`), one that
+     * does comes back `awaiting_approval`. A refusal (nothing would be safe to copy) is a 422.
+     */
+    requestPromotion(input: {
+      source: string;
+      target: string;
+      contentTypes?: string[];
+      entries?: string[];
+      blocks?: boolean;
+    }): Promise<Promotion> {
+      return req('POST', `${spaceBase}/promotions`, input, undefined, LARGE_LIMIT);
+    },
+    /** Approves a waiting promotion and applies it in this request (not by its requester). */
+    approvePromotion(id: string): Promise<Promotion> {
+      return req(
+        'POST',
+        `${spaceBase}/promotions/${encodeURIComponent(id)}/approve`,
+        undefined,
+        undefined,
+        LARGE_LIMIT,
+      );
+    },
+    /** Rejects a waiting promotion; nothing is copied. */
+    rejectPromotion(id: string): Promise<Promotion> {
+      return req('POST', `${spaceBase}/promotions/${encodeURIComponent(id)}/reject`);
     },
     /** A page of the space's append-only audit trail, newest first (requires space:admin). */
     listAuditLog(

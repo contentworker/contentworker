@@ -593,6 +593,53 @@ test('a role’s content access sheet has no accessibility violations', async ({
   await scan(page, testInfo);
 });
 
+// Promotions: a waiting promotion's record (its reasons, the risk check, what it pins), then the
+// Promote card once Compare has listed what differs (the environment selects, the checkbox groups).
+test('a promotion’s record and the Promote card have no accessibility violations', async ({
+  page,
+  request,
+}, testInfo) => {
+  const env = `promo${Date.now()}`;
+  const made = await api(request, 'POST', `/spaces/${SPACE}/environments`, { id: env, name: env });
+  expect(made.ok(), await made.text()).toBe(true);
+  const merged = await api(request, 'POST', `/spaces/${SPACE}/merge`, {
+    source: 'main',
+    target: env,
+    contentTypes: ['article'],
+    entries: [],
+  });
+  expect(merged.ok(), await merged.text()).toBe(true);
+  const entry = await api(request, 'POST', `/spaces/${SPACE}/environments/${env}/entries`, {
+    contentTypeApiId: 'article',
+    fields: { title: { 'en-US': 'Promoted for the scan' } },
+  });
+  expect(entry.ok(), await entry.text()).toBe(true);
+  const { entry: created } = (await entry.json()) as { entry: { id: string } };
+  // Into main, so it waits for someone else's approval.
+  const asked = await api(request, 'POST', `/spaces/${SPACE}/promotions`, {
+    source: env,
+    target: 'main',
+    entries: [created.id],
+    blocks: false,
+  });
+  expect(asked.ok(), await asked.text()).toBe(true);
+  const { id } = (await asked.json()) as { id: string };
+
+  await openCms(page, `/settings/environments?promotion=${id}`);
+  const sheet = page.getByRole('dialog');
+  await expect(sheet.getByText('Why it needs approval')).toBeVisible();
+  await scan(page, testInfo);
+
+  await page.keyboard.press('Escape');
+  await expect(sheet).toBeHidden();
+  await page.getByRole('combobox', { name: 'Source environment to promote from' }).click();
+  await page.getByRole('option', { name: env, exact: true }).click();
+  // The second Compare: Compare & merge's comes first.
+  await page.getByRole('button', { name: 'Compare', exact: true }).nth(1).click();
+  await expect(page.getByRole('group', { name: /^Entries/ })).toBeVisible();
+  await scan(page, testInfo);
+});
+
 // An unpublished asset's share dialog: the warning in place of the form, over the sheet.
 test('the share dialog for an unpublished asset has no accessibility violations', async ({
   page,

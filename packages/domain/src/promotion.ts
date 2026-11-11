@@ -65,6 +65,9 @@ export interface PromotionAssessment {
   readonly fallback?: string;
 }
 
+/** The decision model's risk levels, `PromotionAssessment.risk` 0 … 3. */
+export const PROMOTION_RISK_LEVELS = ['Routine', 'Minor', 'Significant', 'High-risk'] as const;
+
 export interface PromotionRisk {
   /** The target is `main` or an alias points at it. */
   readonly protectedTarget: boolean;

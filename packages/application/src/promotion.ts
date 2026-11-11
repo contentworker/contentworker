@@ -16,6 +16,7 @@ import {
   MAX_PROMOTION_CONTENT_TYPES,
   MAX_PROMOTION_ENTRIES,
   NotFoundError,
+  PROMOTION_RISK_LEVELS,
   type Principal,
   type PromotedBlocks,
   type PromotedContentType,
@@ -101,7 +102,7 @@ export interface RequestPromotionInput {
 const REVIEW_THRESHOLD = 0.5;
 /** The `risk` score (0 Routine … 3 High-risk) at which it asks for one. */
 const RISK_THRESHOLD = 2;
-const RISK_LEVELS = ['Routine', 'Minor', 'Significant', 'High-risk'] as const;
+const RISK_LEVELS = PROMOTION_RISK_LEVELS;
 
 export async function requestPromotion(
   ctx: AppContext,

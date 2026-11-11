@@ -103,6 +103,14 @@ A **promotion** is a merge that goes live and checks first. It copies what's pub
 source and publishes it in the target, copies drafts as drafts, and pins the versions it copies
 when you ask, so later edits in the source don't sneak in.
 
+In the admin, open **Settings → Environments** and use **Promote**: pick the source and target,
+press **Compare**, tick what to carry (everything that differs starts ticked), choose whether the
+block catalog and block config go too, and press **Request promotion** and confirm. The answer shows under the
+button: applied at once, or waiting for approval with the reasons and the AI risk check, or refused
+with each reason the API gave. **Promotions** below lists the most recent ones with their status;
+open one to see what it pins, why it needs approval, what it did and who decided it. Someone other
+than whoever requested it approves or rejects it there.
+
 ```sh
 curl -s "$API/spaces/$SPACE/promotions" \
   -H "Authorization: Bearer $CMA" -H 'content-type: application/json' \
