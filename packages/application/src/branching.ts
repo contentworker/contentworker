@@ -228,8 +228,10 @@ async function targetValidationContext(ctx: AppContext, scope: Scope): Promise<V
  * keeping the types and the entries already written.
  *
  * Entries are copied whole, of any type, every field (hidden ones included), so merging any takes
- * a `caller` holding `read` and `write` on every content type alike; content types alone take only
- * the request's `content:manage`, as saving one does.
+ * a `caller` holding `read` and `write` on every content type alike. The copy goes over the
+ * target's locked regions without judging them, as a promotion's does, so it takes `lock` on every
+ * type too, as a promotion carrying entries does; content types alone take only the request's
+ * `content:manage`, as saving one does.
  */
 export async function mergeEnvironments(
   ctx: AppContext,
@@ -240,7 +242,7 @@ export async function mergeEnvironments(
   selection: MergeSelection,
 ): Promise<MergeResult> {
   assertEnvironmentCaller(caller);
-  if (selection.entries?.length) authorizeEnvironmentWide(caller, ['read', 'write']);
+  if (selection.entries?.length) authorizeEnvironmentWide(caller, ['read', 'write', 'lock']);
   // The source resolves as a read, the target as a write: it must exist (or be an alias of one).
   const src = scopeOf(spaceId, await resolveEnvironment(ctx, spaceId, source));
   const tgt = scopeOf(spaceId, await resolveWritableEnvironment(ctx, spaceId, target));

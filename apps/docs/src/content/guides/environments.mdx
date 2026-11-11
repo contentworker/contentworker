@@ -95,7 +95,9 @@ does, since a merge never publishes. All of these checks run before anything is 
 refused merge, or one naming an entry the source doesn't have, changes nothing. The
 response lists `mergedContentTypes` and `mergedEntries`. The MCP tools are `environments_compare`
 and `environments_merge`. A role limited per content type sees only the types it can read in a
-comparison, and merging entries needs `read` and `write` on every type with no field rules.
+comparison. Merging entries needs `read`, `write` and `lock` on every type with no field rules,
+since each entry is copied whole over the target's locked regions (the Manager preset qualifies);
+merging only content types needs none of them.
 
 ## Promote changes to the live environment
 

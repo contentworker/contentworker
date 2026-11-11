@@ -530,8 +530,10 @@ Semantics:
   (`write`, plus `publish` unless `publish` is false), and `POST …/clone` (all of those), with the
   matching MCP tools, need `content:manage` and `authorizeEveryContentType`: no per-type grants, or
   a single `*` grant holding those actions and restricting no field. The Manager and Administrator
-  presets qualify. `POST …/merge` (`environments_merge`) needs the same, with `read` and `write`,
-  when it copies entries; copying only content types needs just `content:manage`. The use-cases
+  presets qualify. `POST …/merge` (`environments_merge`) needs the same, with `read`, `write` and
+  `lock`, when it copies entries, since they go whole over the target's locked regions (the
+  Manager preset qualifies, a role with the Editor preset's grant doesn't); copying only content
+  types needs just `content:manage`. The use-cases
   make these checks themselves (`exportSnapshot`, `importSnapshot`, `startSnapshotImport`,
   `cloneEnvironment`, `startEnvironmentClone`, `mergeEnvironments`, `analyzeSpaceExport`,
   `startSpaceExportImport`, through `authorizeEnvironmentWide` in `environment-access.ts`), each

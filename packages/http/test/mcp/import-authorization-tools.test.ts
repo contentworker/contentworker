@@ -203,7 +203,7 @@ describe('environment-wide tools as a role', () => {
       [
         'environments_merge',
         { space: SPACE, source: 'main', target: 'empty', entries: ['x'] },
-        everyType('read+write'),
+        everyType('read+write+lock'),
       ],
     ];
     for (const [tool, args, message] of calls) {
@@ -237,7 +237,9 @@ describe('environment-wide tools as a role', () => {
 
 describe('merge, compare and job tools as a role', () => {
   const narrow = role([{ contentTypeApiId: 'post', actions: ['read', 'write'] }]);
-  const wide = role([{ contentTypeApiId: '*', actions: ['read', 'write'] }]);
+  const wide = role([{ contentTypeApiId: '*', actions: ['read', 'write', 'lock'] }]);
+  /** Every type alike, publishing too, but no lock (the Editor preset's grant). */
+  const noLock = role([{ contentTypeApiId: '*', actions: ['read', 'write', 'publish'] }]);
   const envs = { source: 'main', target: 'empty', space: SPACE };
   const entryOf = async (contentTypeApiId: string) =>
     (
@@ -260,6 +262,25 @@ describe('merge, compare and job tools as a role', () => {
       entries,
     });
     expect(merged.isError).toBe(false);
+  });
+
+  it("takes lock to merge entries, which go over the target's locked regions", async () => {
+    const entries = [await entryOf('page')];
+    const refused = await call(noLock, 'environments_merge', {
+      ...envs,
+      contentTypes: ['page'],
+      entries,
+    });
+    expect(refused.isError).toBe(true);
+    expect(refused.text).toBe(
+      'Missing required scope "content:read+write+lock:* (on every content type, every field)"',
+    );
+    // Refused before anything is written, the content types included.
+    const empty = { spaceId: SPACE, environmentId: 'empty' };
+    expect(await deps.ctx.store.contentTypes.list(empty)).toEqual([]);
+    // Content types alone copy no entry: no lock needed.
+    const model = await call(noLock, 'environments_merge', { ...envs, contentTypes: ['page'] });
+    expect(model.isError).toBe(false);
   });
 
   it('shows a narrow role only the types it can read in a comparison', async () => {
