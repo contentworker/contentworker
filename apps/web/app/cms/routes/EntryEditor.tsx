@@ -1156,17 +1156,20 @@ export function EntryEditor() {
   // Generate field values from a prompt. Returns the draft for the dialog to
   // show as a proposal; the form only changes on its Apply (throws on error so
   // the dialog can surface it; not wrapped in `run`).
-  async function generate(prompt: string, tier: ModelTier, signal: AbortSignal) {
+  async function generate(prompt: string, tier: ModelTier | undefined, signal: AbortSignal) {
     if (!selectedType) throw new Error('Content type not loaded');
-    return client.generateEntry({ contentTypeApiId: selectedType.apiId, prompt, tier }, signal);
+    return client.generateEntry(
+      { contentTypeApiId: selectedType.apiId, prompt, ...(tier ? { tier } : {}) },
+      signal,
+    );
   }
 
   // Canvas: map free-form prose into the form's fields (throws so the dialog can
   // surface the error; not wrapped in `run`).
-  async function mapCanvas(prose: string, tier: ModelTier, signal: AbortSignal) {
+  async function mapCanvas(prose: string, tier: ModelTier | undefined, signal: AbortSignal) {
     if (!selectedType) return;
     const res = await client.canvasEntry(
-      { contentTypeApiId: selectedType.apiId, prose, tier },
+      { contentTypeApiId: selectedType.apiId, prose, ...(tier ? { tier } : {}) },
       signal,
     );
     if (signal.aborted) return;

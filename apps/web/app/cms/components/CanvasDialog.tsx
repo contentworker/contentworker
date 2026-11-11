@@ -23,7 +23,9 @@ import { useState } from 'react';
 import type { ModelTier } from '../lib/management';
 import { useStoppable } from '../lib/use-stoppable';
 
-const TIERS: { value: ModelTier; label: string }[] = [
+// `default` sends no tier: the space's drafting tier (Settings → AI), else the API's own.
+const TIERS: { value: ModelTier | 'default'; label: string }[] = [
+  { value: 'default', label: 'Space default' },
   { value: 'fast', label: 'Fast' },
   { value: 'balanced', label: 'Balanced' },
   { value: 'flagship', label: 'Most capable' },
@@ -39,10 +41,10 @@ export function CanvasDialog(props: {
   onOpenChange: (open: boolean) => void;
   contentTypeName: string;
   /** Maps the prose into the form; once `signal` aborts, it must leave the form alone. */
-  onMap: (prose: string, tier: ModelTier, signal: AbortSignal) => Promise<void>;
+  onMap: (prose: string, tier: ModelTier | undefined, signal: AbortSignal) => Promise<void>;
 }) {
   const [prose, setProse] = useState('');
-  const [tier, setTier] = useState<ModelTier>('balanced');
+  const [tier, setTier] = useState<ModelTier | 'default'>('default');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const mapping = useStoppable();
@@ -62,7 +64,7 @@ export function CanvasDialog(props: {
     setBusy(true);
     setError(undefined);
     try {
-      await props.onMap(prose.trim(), tier, signal);
+      await props.onMap(prose.trim(), tier === 'default' ? undefined : tier, signal);
       if (signal.aborted) return;
       props.onOpenChange(false);
     } catch (err) {
@@ -100,7 +102,7 @@ export function CanvasDialog(props: {
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="canvas-tier">Model</Label>
-            <Select value={tier} onValueChange={(v) => setTier(v as ModelTier)}>
+            <Select value={tier} onValueChange={(v) => setTier(v as ModelTier | 'default')}>
               <SelectTrigger id="canvas-tier" className="w-56">
                 <SelectValue />
               </SelectTrigger>

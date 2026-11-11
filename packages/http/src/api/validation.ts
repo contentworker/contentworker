@@ -626,7 +626,7 @@ export const generateBlocksShape = {
     .optional()
     .describe('A slot of one of the entry’s blocks; absent, the field’s top level'),
   locale: zLocale.optional().describe('The locale to compose for (default: the default locale)'),
-  tier: zTier.optional().describe('Model tier (default flagship)'),
+  tier: zTier.optional().describe("Model tier (default: the space's layout tier, else flagship)"),
 };
 export const generateBlocksBody = z
   .object(generateBlocksShape)

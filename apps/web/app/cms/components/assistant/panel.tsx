@@ -618,6 +618,8 @@ function ChatView({
           {messages.length === 0 ? (
             noSpace ? (
               <SetUpFirstSpace admin={admin} onAsk={send} mark={variant === 'panel'} />
+            ) : !assistantOn ? (
+              <Off />
             ) : (
               <FirstRun onAsk={send} />
             )
@@ -628,7 +630,8 @@ function ChatView({
                   key={m.id}
                   m={m}
                   busy={busy}
-                  onEdit={i > lastAction ? edit : undefined}
+                  // Off for the space: nothing can be asked again (the agent would refuse it).
+                  onEdit={i > lastAction && assistantOn ? edit : undefined}
                 />
               ) : (
                 <AssistantMessage
@@ -643,7 +646,8 @@ function ChatView({
                     i === messages.length - 1 &&
                     i !== lastAction &&
                     !busy &&
-                    !down
+                    !down &&
+                    assistantOn
                       ? () => void regenerate()
                       : undefined
                   }
@@ -1011,6 +1015,19 @@ function AssistantMessage({
 }
 
 // ── First run ──────────────────────────────────────────────────────────────
+
+/** First run where the space's administrators turned Coworker off: no suggestions to ask. */
+function Off() {
+  return (
+    <Empty
+      className="px-0 py-6"
+      icon={<Mark className="text-muted-foreground" />}
+      title="Coworker is off for this space"
+    >
+      {TURN_ON_HINT} Edits you make on the page still go through.
+    </Empty>
+  );
+}
 
 function FirstRun({ onAsk }: { onAsk: (text: string) => void }) {
   const { page, scope } = useAssistant();

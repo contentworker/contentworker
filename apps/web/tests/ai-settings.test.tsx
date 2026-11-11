@@ -10,6 +10,7 @@ import {
 } from '@contentworker/domain';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { createMemoryRouter, RouterProvider } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ManagementClient } from '~/cms/lib/management';
 
@@ -30,9 +31,13 @@ const { ApiError } = await import('~/cms/lib/management');
 
 afterEach(cleanup);
 
-function fakeClient(start: AiSettings = DEFAULT_AI_SETTINGS) {
+function fakeClient(
+  start: AiSettings = DEFAULT_AI_SETTINGS,
+  scopes: string[] = ['space:admin', 'preview:read'],
+) {
   let stored = start;
   const client = {
+    getSpaceAccess: vi.fn(async () => ({ spaceId: 'blog', kind: 'user', scopes })),
     getAiSettings: vi.fn(async () => stored),
     setAiSettings: vi.fn(
       async (input: { expectedVersion: number; capabilities: Record<string, unknown> }) => {
@@ -62,16 +67,27 @@ function fakeClient(start: AiSettings = DEFAULT_AI_SETTINGS) {
   return client;
 }
 
-const renderPage = (client: ReturnType<typeof fakeClient>) =>
-  render(
+const renderPage = (client: ReturnType<typeof fakeClient>) => {
+  // A data router: the page's unsaved-edits guard (`useBlocker`) needs one.
+  const router = createMemoryRouter(
+    [
+      {
+        path: '/settings/ai',
+        element: <AiSettingsPage client={client as unknown as ManagementClient} />,
+      },
+    ],
+    { initialEntries: ['/settings/ai'] },
+  );
+  return render(
     <QueryClientProvider
       client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
     >
       <ToastProvider>
-        <AiSettingsPage client={client as unknown as ManagementClient} />
+        <RouterProvider router={router} />
       </ToastProvider>
     </QueryClientProvider>,
   );
+};
 
 const rowOf = (label: string) =>
   screen.getByRole('heading', { level: 3, name: label }).closest('li') as HTMLElement;
@@ -120,6 +136,37 @@ describe('Settings → AI', () => {
     );
   });
 
+  it('keeps what it saved when the refetch after the save never answers', async () => {
+    const client = fakeClient();
+    renderPage(client);
+    fireEvent.click(await screen.findByRole('switch', { name: 'Media' }));
+    // Every read after the first hangs: the page must not fall back to what it first read.
+    client.getAiSettings.mockImplementation(() => new Promise(() => {}));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await screen.findByText('AI settings saved');
+    expect(screen.getByRole('switch', { name: 'Media' }).getAttribute('aria-checked')).toBe(
+      'false',
+    );
+    expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('reads only, saying so, without space:admin', async () => {
+    renderPage(fakeClient(DEFAULT_AI_SETTINGS, ['preview:read']));
+    const sw = await screen.findByRole('switch', { name: 'Drafting' });
+    expect((sw as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText(/Changing these takes the space:admin scope/)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Save' })).toBeNull();
+  });
+
+  it('names each row’s controls for their row', async () => {
+    renderPage(fakeClient());
+    await screen.findByRole('switch', { name: 'Drafting' });
+    expect(screen.getByRole('textbox', { name: 'Guidance Translation' })).toBeTruthy();
+    expect(screen.getByRole('combobox', { name: 'Model tier Translation' }).textContent).toBe(
+      'Default',
+    );
+  });
+
   it('holds Save while a guidance is over its length, and says so beside it', async () => {
     renderPage(fakeClient());
     const box = within(await waitFor(() => rowOf('Coworker'))).getByLabelText('Guidance');
@@ -136,6 +183,10 @@ describe('Settings → AI', () => {
     client.theirs({ layout: { enabled: false, tier: null, guidance: null } });
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     await screen.findByText('The AI settings changed since you opened them');
+    // The way on takes focus.
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Load the latest' })),
+    );
     expect(screen.getByText(/saved them as v1, so your changes weren’t saved/)).toBeTruthy();
     // The edit is still on the form, and Save waits for a decision.
     expect(screen.getByRole('switch', { name: 'Media' }).getAttribute('aria-checked')).toBe(
@@ -148,6 +199,8 @@ describe('Settings → AI', () => {
     await waitFor(() =>
       expect(screen.queryByText('The AI settings changed since you opened them')).toBeNull(),
     );
+    expect(screen.getByText('Loaded v1. Your changes here were discarded.')).toBeTruthy();
+    expect(document.activeElement?.getAttribute('aria-label')).toBe('AI capabilities');
     expect(screen.getByRole('switch', { name: 'Page layouts' }).getAttribute('aria-checked')).toBe(
       'false',
     );

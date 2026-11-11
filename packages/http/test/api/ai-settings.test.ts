@@ -107,6 +107,28 @@ describe('AI settings over HTTP', () => {
     expect((await send('PUT', '/spaces/s1/ai-settings', body, 'cma')).status).toBe(200);
   });
 
+  it('refuses a key of another space, reading and writing', async () => {
+    const { wired, send } = await makeApp();
+    // A space-admin key minted for another space.
+    const other = await send('POST', '/spaces', {
+      spaceId: 's2',
+      name: 'Other',
+      defaultLocale: 'en-US',
+    });
+    expect(other.status).toBeLessThan(300);
+    const minted = await send('POST', '/spaces/s2/api-keys', { kind: 'cma', name: 'other' });
+    const { token } = (await minted.json()) as { token: string };
+    expect((await send('GET', '/spaces/s1/ai-settings', undefined, token)).status).toBe(403);
+    const put = await send(
+      'PUT',
+      '/spaces/s1/ai-settings',
+      { expectedVersion: 0, capabilities: { media: { enabled: false } } },
+      token,
+    );
+    expect(put.status).toBe(403);
+    expect(await wired.ctx.store.aiSettings.get('s1')).toBeNull();
+  });
+
   it('refuses a stale version (409) and what is not a capability or too long (422)', async () => {
     const { send } = await makeApp();
     await send('PUT', '/spaces/s1/ai-settings', {

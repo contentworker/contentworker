@@ -77,7 +77,7 @@ export const AI_CAPABILITY_INFO: Readonly<
   search: {
     label: 'Semantic search',
     covers:
-      'Embedding entries and assets for search, semantic and related-entry search, and duplicate checks.',
+      'Embedding entries and assets for search, reading the text of uploaded documents and recordings, semantic and related-entry search, and duplicate checks.',
     guided: false,
   },
   agents: {
@@ -228,6 +228,13 @@ export function applyAiSettingsInput(
           message: `At most ${AI_GUIDANCE_MAX_CHARS} characters (it has ${guidance.length})`,
         });
       }
+    }
+    // A capability with no prompt (search runs on the embedding model) takes no tier or guidance.
+    if (!AI_CAPABILITY_INFO[id].guided && (tier !== null || guidance !== null)) {
+      issues.push({
+        field,
+        message: `${AI_CAPABILITY_INFO[id].label} has no prompt: it takes no tier or guidance`,
+      });
     }
     next[id] = {
       enabled: s.enabled === true,

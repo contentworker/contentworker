@@ -10,6 +10,7 @@ import {
   createWebhookSender,
 } from '@contentworker/adapters/http-effects';
 import {
+  aiCapability,
   archiveSupersededVersions,
   type ConsumeDeps,
   consumeEvent,
@@ -391,7 +392,10 @@ async function consumeAgentJobs(
           await agents.startPublishRuns({
             scope: bucket.scope,
             entryIds: ids,
-            enrich: agentConfig.enrich,
+            // The space can turn its enrichment agent off (Settings → AI); moderation is the
+            // deployment's control and runs regardless.
+            enrich:
+              agentConfig.enrich && (await aiCapability(wired.ctx, bucket.scope, 'agents')).enabled,
             moderate: agentConfig.moderate,
             ...(agentConfig.autoApply !== undefined ? { autoApply: agentConfig.autoApply } : {}),
           });

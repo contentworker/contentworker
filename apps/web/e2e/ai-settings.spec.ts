@@ -32,6 +32,23 @@ test('saves a tier and guidance, and a save someone beat keeps the edits', async
   request,
 }, testInfo) => {
   const guidance = `House style ${testInfo.project.name} ${Date.now()}`;
+  // Leave the shared space as the other specs expect it, whatever happens here.
+  try {
+    await changeAndBeat(page, request, guidance);
+  } finally {
+    const now = await read(request);
+    await api(request, 'PUT', `/spaces/${SPACE}/ai-settings`, {
+      expectedVersion: now.version,
+      capabilities: { translation: { enabled: true } },
+    });
+  }
+});
+
+async function changeAndBeat(
+  page: import('@playwright/test').Page,
+  request: Parameters<typeof api>[0],
+  guidance: string,
+) {
   await openCms(page, '/settings/ai');
   const translation = page.getByRole('listitem').filter({
     has: page.getByRole('heading', { name: 'Translation', exact: true }),
@@ -43,7 +60,7 @@ test('saves a tier and guidance, and a save someone beat keeps the edits', async
 
   await translation.getByLabel('Guidance').fill(guidance);
   await expect(translation.getByText(`${guidance.length} of 2,000 characters`)).toBeVisible();
-  await translation.getByLabel('Model tier').click();
+  await page.getByRole('combobox', { name: 'Model tier Translation' }).click();
   await page.getByRole('option', { name: /^Fast/ }).click();
   await page.getByRole('button', { name: 'Save', exact: true }).click();
   await expect(page.getByText('AI settings saved')).toBeVisible();
@@ -68,15 +85,10 @@ test('saves a tier and guidance, and a save someone beat keeps the edits', async
   await alert.getByRole('button', { name: 'Load the latest' }).click();
   await expect(alert).toHaveCount(0);
   await expect(translation.getByLabel('Guidance')).toHaveValue(guidance);
-  await expect(translation.getByLabel('Model tier')).toContainText('Balanced');
-
-  // Leave the shared space as the other specs expect it.
-  const now = await read(request);
-  await api(request, 'PUT', `/spaces/${SPACE}/ai-settings`, {
-    expectedVersion: now.version,
-    capabilities: { translation: { enabled: true } },
-  });
-});
+  await expect(page.getByRole('combobox', { name: 'Model tier Translation' })).toHaveText(
+    'Balanced',
+  );
+}
 
 test('an entry offers no drafting where drafting is off', async ({ page }) => {
   // Read as off for this page only: the shared space stays as it is.
@@ -87,7 +99,9 @@ test('an entry offers no drafting where drafting is off', async ({ page }) => {
     body.capabilities.drafting = { enabled: false, tier: null, guidance: null };
     await route.fulfill({ response: res, json: body });
   });
+  const answered = page.waitForResponse(`**/spaces/${SPACE}/ai-settings`);
   await openCms(page, '/content/article/new');
+  await answered;
   await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Save draft' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Generate with AI' })).toHaveCount(0);

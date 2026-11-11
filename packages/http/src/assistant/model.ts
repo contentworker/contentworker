@@ -1,6 +1,6 @@
 /**
- * The assistant's model: Workers AI's flagship tier (through AI Gateway when AI_GATEWAY_ID is set),
- * then its fast tier, with a deterministic mock model behind both. The mock speaks the same
+ * The assistant's model: Workers AI's flagship tier, or the space's tier for Coworker (Settings →
+ * AI), through AI Gateway when AI_GATEWAY_ID is set, then its fast tier, with a deterministic mock model behind both. The mock speaks the same
  * protocol, so it calls the same tools through the same confirms; it answers every turn when
  * AI_MODE is "mock" (local development, the tests, a demo), and takes over a turn when the models
  * error or say nothing in time. Page edits (`act`, `resolve`) never reach a model at all.
