@@ -454,7 +454,7 @@ Built on Blocks and the frontend runtime. Layouts stay a typed tree; rich text s
   type holds; environment compare reports how they differ, as a promotion judges it (a merge
   never copies them). Release note: after a rollback past this, reject waiting promotions
   requested with blocks (older code applies them without the blocks).
-- [ ] **Canvas editor.** A toolbox, selection overlay and undo in `apps/web` over the preview channel.
+- [x] **Canvas editor.** A toolbox, selection overlay and undo in `apps/web` over the preview channel.
   The canvas (`/content/:typeId/:entryId/canvas`) is in place: seams from the page's `layout`, a
   dock offering exactly what a slot takes, an inspector (Content, Data, Look), Layers as the
   keyboard path, undo by inverse block-patch ops, a save held to `expectedVersion`, and
@@ -463,9 +463,13 @@ Built on Blocks and the frontend runtime. Layouts stay a typed tree; rich text s
   shown as ghosts on the page and in Layers until it is confirmed or declined. Block thumbnails
   are drawn where blocks are picked (the dock, the entry form's Add block menu, Build → Blocks)
   for a manifest's `{ assetId }`, all of a catalog's read in one `GET …/assets?ids=` lookup; a
-  `{ url }` thumbnail isn't drawn (the admin's `img-src` takes no other origin). Still to come:
-  dragging blocks with a fine pointer. Per-breakpoint overrides are edited in the Look tab at the
-  width in view (see Layout model).
+  `{ url }` thumbnail isn't drawn (the admin's `img-src` takes no other origin). With a fine
+  pointer the selected block drags by its grip to a seam of its slot or another that takes it,
+  held to the dock's judgement (the slot's blocks, the block config's narrowing and counts, locks
+  and locked regions) and the save's, as one `move` op that undo inverts; touch and the keyboard
+  move blocks with the inspector's Move up, Move down and Move to, and Layers. A move stays within
+  its blocks field. Per-breakpoint overrides are edited in the Look tab at the width in view (see
+  Layout model).
 - [x] **Frontend SDK extras.** `client.live()` over the live stream (reconnecting with backoff,
   stopping when the key is refused) with `useLiveEntry` / `useLiveEntries` for React and Vue; a
   Next.js draft-mode helper (`@contentworker/sdk/next`: a route that checks the preview token, and a
