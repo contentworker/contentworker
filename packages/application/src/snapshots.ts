@@ -67,7 +67,7 @@ import { startAssetReindex } from './asset-ingest';
 import { allAssets, publishAsset } from './assets';
 import { blockCatalogHash } from './block-catalog';
 import { createContentType, publishContentType, SYSTEM_CALLER } from './content-types';
-import type { AppContext } from './context';
+import { type AppContext, withStarter } from './context';
 import { createEntry, updateEntry } from './entries';
 import {
   authorizeEnvironmentWide,
@@ -564,7 +564,11 @@ export async function importSnapshot(
       await publishSnapshotEntry(ctx, target, stagedPublication(entry));
     }
   }
-  if (options.reindexAssets && snapshot.assets.length > 0) await startAssetReindex(ctx, target);
+  // The reindex is the import's follow-up, the system's as after a job-run import (`dispatch`), not
+  // a job of the importer's: their import never asked for `assets:write`, which its re-check would.
+  if (options.reindexAssets && snapshot.assets.length > 0) {
+    await startAssetReindex(withStarter(ctx, undefined), target);
+  }
   return report;
 }
 

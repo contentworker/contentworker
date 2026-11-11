@@ -24,8 +24,9 @@ import type { AppContext } from './context';
  * never a credential. `key` is an API key row (an operator key, or a person's OAuth, personal or
  * setup token); `member` is a signed-in person's team membership in the job's space;
  * `deployment` is the deployment's own authority (the admin and MCP tokens, or a deployment
- * admin acting in a space whose team they are not on), which no space can take away, so its jobs
- * run to the end as the system's do.
+ * admin acting in a space whose team they are not on). Its jobs run to the end as the system's
+ * do: no space can take the tokens away, and a deployment admin's role lives with the admin web
+ * app's people, which this layer can't read (demoting one mid-job doesn't stop their job).
  */
 export type JobStarter =
   | { readonly kind: 'key'; readonly keyId: string }
@@ -156,6 +157,13 @@ export function authorizeJobContinues(principal: Principal, job: BulkJob, spaceI
       const type = config.contentTypeApiId;
       if (typeof type === 'string') {
         authorizeContent(principal, 'write', type);
+        // The fields its records set, as a field edit's are (`config.fieldNames`, from the start).
+        const names = Array.isArray(config.fieldNames) ? (config.fieldNames as unknown[]) : [];
+        assertWritableFields(
+          principal,
+          type,
+          Object.fromEntries(names.filter((n) => typeof n === 'string').map((n) => [n, true])),
+        );
         return;
       }
       // A snapshot or clone reaches every type: the start's every-type check, with publishing

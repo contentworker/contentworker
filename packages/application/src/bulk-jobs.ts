@@ -698,7 +698,10 @@ export async function cancelBulkJob(
     const recorded = (existing.config as { typeDeletion?: unknown } | undefined)?.typeDeletion;
     if (existing.action === 'content_type_delete' && existing.status === 'cancelled' && !recorded) {
       await ctx.store.bulkJobs.mergeConfig(scope, id, { typeDeletion: STOPPED });
-      return { ...existing, config: { ...existing.config, typeDeletion: STOPPED } };
+      return readableBulkJob({
+        ...existing,
+        config: { ...existing.config, typeDeletion: STOPPED },
+      });
     }
     return readableBulkJob(existing); // already terminal — cancel is idempotent
   }

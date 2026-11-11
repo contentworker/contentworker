@@ -841,16 +841,18 @@ interface Principal {
   edit or a single-type import; `content:manage` for a snapshot, clone or space export import;
   `assets:write` for asset move, tag and reindex) and its content grants (`canRunEntryBulkJob` on
   every type for an entry job, so a grant narrowed for any type stops it; `write` on the type and
-  every field sent for a field edit; `write` on the type for an import; every type for a snapshot
-  import). A starter that fails either is stopped: the job turns `cancelled` with
+  every field sent for a field edit; `write` on the type and on every field its records set for an
+  import (`config.fieldNames`); every type for a snapshot import). A starter that fails either is stopped: the job turns `cancelled` with
   `config.cancelReason: 'starter_lost_access'` and `config.cancelDetail` saying why, nothing more
   runs on their behalf (a chunk already running finishes, as with a cancel), staged work is
   discarded, a content type's delete records `typeDeletion: { deleted: false, reason }`, and the
   audit trail gets one `bulk_job.starter_lost_access` row by `system` naming the job. The
   `deployment` starter, jobs the system starts (a starter install, the scheduler, a reindex after
   the engine starts on its own), and job rows written before the record keep
-  running, as before. A job a job starts (a clone's create job, a snapshot's publishing job)
-  carries the same starter (so does an asset reindex a snapshot import starts). `config.startedBy` is never in a job as read back.
+  running, as before. The application can't see a person's deployment role (the admin web app
+  keeps it), so a deployment admin's job in a space whose team they are not on runs to the end
+  even if they are demoted or their account is disabled meanwhile; cancel it. A job a job starts (a clone's create job, a snapshot's publishing job)
+  carries the same starter; the asset reindex a snapshot import starts is the system's. `config.startedBy` is never in a job as read back.
 - **Preview links** — `POST …/entries/:id/preview-link` mints an expiring token; CPA
   `GET …/entries/:id?preview_token=…` accepts it without a bearer header.
 - **OAuth 2.1** — when `OAUTH_ISSUER` is set, MCP clients obtain tokens through

@@ -1,7 +1,12 @@
 import type { BulkChunkDueEvent, Principal } from '@contentworker/domain';
 import { SCOPES } from '@contentworker/domain';
 import type { BulkJob } from '@contentworker/ports';
-import { FixedClock, InMemoryContentStore, SequenceIdGenerator } from '@contentworker/test-kit';
+import {
+  FakeBlobStore,
+  FixedClock,
+  InMemoryContentStore,
+  SequenceIdGenerator,
+} from '@contentworker/test-kit';
 import { describe, expect, it } from 'vitest';
 import {
   type AppContext,
@@ -14,18 +19,23 @@ import {
   createApiKey,
   createContentType,
   createEntry,
+  createPersonalAccessToken,
   createRole,
   ensureRolePresets,
   entryFieldsChunkRunner,
   entryTrashChunkRunner,
+  findMemberForSignIn,
   getBulkJob,
+  importChunkRunner,
   listBulkJobs,
   persistJob,
   principalForWebUser,
+  removeMember,
   revokeApiKey,
   runBulkChunk,
   SYSTEM_CALLER,
   startBulkJob,
+  startImportJob,
   startSetFieldsJob,
   trashEntry,
   updateMember,
@@ -366,6 +376,165 @@ describe('a bulk job checks its starter before each chunk', () => {
     await persistJob(ctx, scope, { ...forged, id: 'forged-2' }, [], forged.createdAt);
     expect((await store.bulkJobs.getJob(scope, 'forged-2'))?.config?.startedBy).toBeUndefined();
     expect(ids).toHaveLength(1);
+  });
+});
+
+describe('each way a starter loses access stops the job', () => {
+  /** Starts a two-chunk trash job as `principal`, runs one chunk, applies `lose`, runs the next. */
+  async function trashThenLose(
+    ctx: AppContext,
+    store: InMemoryContentStore,
+    ids: readonly string[],
+    principal: Principal,
+    lose: () => Promise<void>,
+  ): Promise<BulkJob> {
+    const job = await startBulkJob(actingAs(ctx, principal), scope, {
+      action: 'trash',
+      entryIds: ids,
+    });
+    const [first, second] = chunkEvents(store, job.id);
+    await runBulkChunk(ctx, first as BulkChunkDueEvent, trashDeps(ctx));
+    await lose();
+    await runBulkChunk(ctx, second as BulkChunkDueEvent, trashDeps(ctx));
+    return getBulkJob(ctx, scope, job.id);
+  }
+  const stoppedForStarter = {
+    status: 'cancelled',
+    succeeded: 50,
+    config: { cancelReason: 'starter_lost_access' },
+  };
+
+  it('a key that expires', async () => {
+    const { ctx, store, ids } = await setup(60);
+    const role = await bulkRole(ctx);
+    const expiresAt = new Date(ctx.clock.now().getTime() + 60_000).toISOString();
+    const { token } = await createApiKey(ctx, hasher, {
+      issuer: 'system',
+      spaceId: 's1',
+      kind: 'cma',
+      roleId: role.id,
+      expiresAt,
+    });
+    const principal = await authenticate(ctx, hasher, token);
+    const lose = async () => (ctx.clock as FixedClock).advance(120_000);
+    expect(await trashThenLose(ctx, store, ids, principal, lose)).toMatchObject(stoppedForStarter);
+  });
+
+  it('a key whose role loses the scope', async () => {
+    const { ctx, store, ids } = await setup(60);
+    const role = await bulkRole(ctx);
+    const { token } = await createApiKey(ctx, hasher, {
+      issuer: 'system',
+      spaceId: 's1',
+      kind: 'cma',
+      roleId: role.id,
+    });
+    const principal = await authenticate(ctx, hasher, token);
+    const lose = async () => {
+      await updateRole(
+        ctx,
+        's1',
+        role.id,
+        { name: 'Bulk', scopes: [SCOPES.contentWrite], contentGrants: role.contentGrants },
+        NO_SSO,
+        'system',
+      );
+    };
+    expect(await trashThenLose(ctx, store, ids, principal, lose)).toMatchObject(stoppedForStarter);
+  });
+
+  it('a person removed from the team', async () => {
+    const { ctx, store, ids } = await setup(60);
+    const role = await bulkRole(ctx);
+    const member = await addMember(
+      ctx,
+      's1',
+      { email: 'ann@example.com', role: role.id },
+      'system',
+    );
+    const principal = await principalForWebUser(ctx, 's1', {
+      sub: 'usr_ann',
+      email: 'ann@example.com',
+      role: 'member',
+    });
+    const lose = () => removeMember(ctx, 's1', member.id, NO_SSO);
+    expect(await trashThenLose(ctx, store, ids, principal, lose)).toMatchObject(stoppedForStarter);
+  });
+
+  it('a personal access token whose person is removed from the team', async () => {
+    const { ctx, store, ids } = await setup(60);
+    const role = await bulkRole(ctx);
+    const member = await addMember(
+      ctx,
+      's1',
+      { email: 'ann@example.com', role: role.id },
+      'system',
+    );
+    await findMemberForSignIn(ctx, 's1', 'usr_ann', 'ann@example.com');
+    const { token } = await createPersonalAccessToken(ctx, hasher, {
+      issuer: 'system',
+      spaceId: 's1',
+      subject: 'usr_ann',
+      name: 'cli',
+      scopes: [SCOPES.contentWrite, SCOPES.contentPublish],
+      issuerScopes: role.scopes,
+    });
+    const principal = await authenticate(ctx, hasher, token);
+    expect(principal.keyId).toBeDefined();
+    const lose = () => removeMember(ctx, 's1', member.id, NO_SSO);
+    expect(await trashThenLose(ctx, store, ids, principal, lose)).toMatchObject(stoppedForStarter);
+  });
+
+  it('an import whose field becomes read-only', async () => {
+    const { ctx, store } = await setup(0);
+    const blob = new FakeBlobStore();
+    const role = await bulkRole(ctx);
+    const { token } = await createApiKey(ctx, hasher, {
+      issuer: 'system',
+      spaceId: 's1',
+      kind: 'cma',
+      roleId: role.id,
+    });
+    const principal = await authenticate(ctx, hasher, token);
+    const source = {
+      id: 'fake',
+      name: 'Fake',
+      async read() {
+        return {
+          records: [{ externalId: 'a', values: { name: 'A', tag: 't' } }],
+          fields: ['name', 'tag'],
+          warnings: [],
+        };
+      },
+    };
+    const { job } = await startImportJob(actingAs(ctx, principal), blob, principal, scope, source, {
+      payload: '',
+      mapping: { contentTypeApiId: 'page', fields: { title: 'name', tag: 'tag' } },
+    });
+    expect(job.config).toMatchObject({ fieldNames: ['title', 'tag'] });
+    await updateRole(
+      ctx,
+      's1',
+      role.id,
+      {
+        name: 'Bulk',
+        scopes: role.scopes,
+        contentGrants: [
+          { contentTypeApiId: '*', actions: ['read', 'write', 'publish'], readOnlyFields: ['tag'] },
+        ],
+      },
+      NO_SSO,
+      'system',
+    );
+    const [only] = chunkEvents(store, job.id);
+    await runBulkChunk(ctx, only as BulkChunkDueEvent, {
+      importChunk: importChunkRunner(ctx, blob),
+    });
+    expect(await getBulkJob(ctx, scope, job.id)).toMatchObject({
+      status: 'cancelled',
+      config: { cancelReason: 'starter_lost_access' },
+    });
+    expect(await ctx.store.entries.idsOfType(scope, 'page', { limit: 10 })).toEqual([]);
   });
 });
 
