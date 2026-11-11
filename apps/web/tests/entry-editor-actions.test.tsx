@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // The entry editor's action row: one primary verb for the entry's state, the save state in words,
 // Publish confirming what goes live and offering Undo only where unpublishing is its exact inverse.
-import type { ContentType } from '@contentworker/domain';
+import { type AiSettings, type ContentType, DEFAULT_AI_SETTINGS } from '@contentworker/domain';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { createMemoryRouter, Outlet, RouterProvider } from 'react-router';
@@ -15,6 +15,7 @@ globalThis.ResizeObserver ??= class {
 } as unknown as typeof ResizeObserver;
 
 const client = {
+  getAiSettings: vi.fn(async (): Promise<AiSettings> => DEFAULT_AI_SETTINGS),
   getEntry: vi.fn<(id: string) => Promise<PreviewEntry>>(),
   listEntries: vi.fn(async () => []),
   listAssets: vi.fn(async () => []),
@@ -189,6 +190,26 @@ describe('EntryEditor action row', () => {
     // Read out as the page it will be, drawn as a skeleton rather than "Edit Article" text.
     expect(h1.querySelector('[data-slot="skeleton"], .animate-pulse')).toBeTruthy();
     expect((button('Publish') as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('offers no drafting actions where the space turned drafting off (Settings → AI)', async () => {
+    client.getAiSettings.mockResolvedValueOnce({
+      ...DEFAULT_AI_SETTINGS,
+      version: 1,
+      capabilities: {
+        ...DEFAULT_AI_SETTINGS.capabilities,
+        drafting: { enabled: false, tier: null, guidance: null },
+      },
+    });
+    setup('/content/article/e1', saved('draft'));
+    await screen.findByRole('heading', { level: 1, name: 'Pricing page' });
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: 'Generate with AI', hidden: true })).toBeNull(),
+    );
+    expect(screen.queryByRole('button', { name: 'Draft from prose', hidden: true })).toBeNull();
+    // What isn't AI is still there.
+    expect(button('Publish')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Copy preview link', hidden: true })).toBeTruthy();
   });
 
   it('the AI actions are quieter than the verbs: ghost, never outline or ink', async () => {

@@ -1,6 +1,9 @@
 import type {
   AgentReview,
   AgentReviewStatus,
+  AiCapability,
+  AiCapabilitySetting,
+  AiSettings,
   Asset,
   AssetCollection,
   AssetFolder,
@@ -1166,6 +1169,12 @@ export type EntryBulkJobAction = 'publish' | 'unpublish' | 'trash' | 'restore' |
 /** The space's trash retention: days an entry stays in the trash, or null to keep it (off). */
 export interface TrashSettings {
   readonly retentionDays: number | null;
+}
+
+/** What `PUT /spaces/:space/ai-settings` takes: each capability named is replaced whole. */
+export interface AiSettingsInput {
+  readonly expectedVersion: number;
+  readonly capabilities: Partial<Record<AiCapability, AiCapabilitySetting>>;
 }
 
 /** What `POST …/assets/bulk` runs over a selection of assets, as a job. */
@@ -3501,6 +3510,15 @@ export function createManagementClient(
     setWorkflowSettings(input: { separateDuties: boolean }): Promise<{ separateDuties: boolean }> {
       return req('PUT', `${mgmt}/workflow-settings`, input);
     },
+    /** The space's AI settings, per capability (preview:read). Version 0, all on, before a set. */
+    getAiSettings(): Promise<AiSettings> {
+      return req('GET', `${spaceBase}/ai-settings`);
+    },
+    /** Sets the capabilities named, held to `expectedVersion` (space:admin; 409 when stale). */
+    setAiSettings(input: AiSettingsInput): Promise<{ settings: AiSettings; unchanged: boolean }> {
+      return req('PUT', `${spaceBase}/ai-settings`, input);
+    },
+
     getTrashSettings(): Promise<TrashSettings> {
       return req('GET', `${mgmt}/trash-settings`);
     },

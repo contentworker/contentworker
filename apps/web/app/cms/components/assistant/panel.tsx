@@ -76,6 +76,7 @@ import { Shimmer } from '~/components/ai-elements/shimmer';
 import { Suggestion, Suggestions } from '~/components/ai-elements/suggestion';
 import { Mark } from '~/components/mark';
 import { useCan, useMe } from '~/lib/use-me';
+import { TURN_ON_HINT, useAiCapability } from '../../lib/ai-settings';
 import {
   type ActResult,
   AssistantUnavailable,
@@ -464,6 +465,9 @@ function ChatView({
   const admin = useCan('admin');
   const setup = useRef(false);
   setup.current = noSpace && admin;
+  // Turned off for the space (Settings → AI): the composer says so instead of asking. A turn sent
+  // anyway is answered the same by the agent, and pages' edits still go through.
+  const assistantOn = useAiCapability('assistant', !noSpace);
   const chat = useAgentChat<unknown, Message>({
     agent,
     body: () => chatBody(setup.current ? SETUP_CONTEXT : a.readContext()),
@@ -686,6 +690,7 @@ function ChatView({
         busy={busy}
         down={down}
         setup={noSpace ? (admin ? 'ask' : 'blocked') : null}
+        off={!noSpace && !assistantOn}
         onSend={send}
         onStop={() => void stop()}
       />
@@ -1167,11 +1172,15 @@ function HeldMessages({
   );
 }
 
+/** What the composer says in place of a question box when Coworker is off for the space. */
+export const ASSISTANT_OFF_NOTE = `Coworker is turned off for this space. ${TURN_ON_HINT}`;
+
 function Composer({
   variant,
   busy,
   down,
   setup,
+  off,
   onSend,
   onStop,
 }: {
@@ -1183,6 +1192,8 @@ function Composer({
    * can't ask anything until they are added to one (`blocked`).
    */
   setup: 'ask' | 'blocked' | null;
+  /** The space's administrators turned Coworker off: nothing can be asked. */
+  off: boolean;
   onSend: (text: string) => void;
   onStop: () => void;
 }) {
@@ -1193,6 +1204,15 @@ function Composer({
   useEffect(() => {
     if (focusToken) box.current?.focus();
   }, [focusToken]);
+  if (off) {
+    return (
+      <div className="shrink-0 p-3">
+        <p role="status" className="rounded-xl bg-muted px-3 py-2.5 text-muted-foreground text-sm">
+          {ASSISTANT_OFF_NOTE}
+        </p>
+      </div>
+    );
+  }
   return (
     <div className="shrink-0 p-3 in-data-keyboard:pb-2">
       <PromptInput

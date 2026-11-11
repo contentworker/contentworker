@@ -57,6 +57,7 @@ import { EntryAuthorship } from '../components/entries/EntryAuthorship';
 import { PublishConfirm } from '../components/entries/PublishConfirm';
 import { SaveConflictDialog } from '../components/entries/SaveConflictDialog';
 import { GenerateEntryDialog } from '../components/GenerateEntryDialog';
+import { useAiCapability } from '../lib/ai-settings';
 import {
   orDirect,
   useAssistantEdit,
@@ -158,6 +159,7 @@ export function EntryEditor() {
   const applyPatch = (fields: EntryFields) =>
     setPatchState((s) => ({ ...s, patch: { seq: (s.patch?.seq ?? 0) + 1, fields } }));
   const [genOpen, setGenOpen] = useState(false);
+  const drafting = useAiCapability('drafting');
   const [canvasOpen, setCanvasOpen] = useState(false);
   const publishButton = useRef<HTMLButtonElement>(null);
   const publishAnswered = useRef(false);
@@ -714,10 +716,14 @@ export function EntryEditor() {
       .filter((b): b is HTMLButtonElement => b instanceof HTMLButtonElement)
       .findLast((b) => b !== publish && b.type === 'button' && (b.checkVisibility?.() ?? true));
   };
-  const secondary = [
-    { label: 'Draft from prose', icon: PenLine, onSelect: () => setCanvasOpen(true) },
-    { label: 'Generate with AI', icon: FileText, onSelect: () => setGenOpen(true) },
-  ];
+  // Both draft with the model: with drafting turned off for the space they aren't offered (the API
+  // refuses them anyway, 409 ai_capability_disabled).
+  const secondary = drafting
+    ? [
+        { label: 'Draft from prose', icon: PenLine, onSelect: () => setCanvasOpen(true) },
+        { label: 'Generate with AI', icon: FileText, onSelect: () => setGenOpen(true) },
+      ]
+    : [];
 
   return (
     // A named container: the secondary actions show by the room the editor has (beside the
@@ -779,34 +785,36 @@ export function EntryEditor() {
             )}
             <span aria-hidden="true" className="mx-1 h-5 w-px bg-border" />
           </span>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                className="@4xl/editor:hidden"
-                aria-label="More entry actions"
-              >
-                <Ellipsis aria-hidden="true" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-56">
-              {secondary.map(({ label, icon: Icon, onSelect }) => (
-                <DropdownMenuItem key={label} onSelect={onSelect}>
-                  <Icon /> {label}
-                </DropdownMenuItem>
-              ))}
-              {isEdit && entryId && (
-                <>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem onSelect={() => void copyPreviewLink()}>
-                    <Link2 /> Copy preview link
+          {secondary.length > 0 || (isEdit && entryId) ? (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  className="@4xl/editor:hidden"
+                  aria-label="More entry actions"
+                >
+                  <Ellipsis aria-hidden="true" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56">
+                {secondary.map(({ label, icon: Icon, onSelect }) => (
+                  <DropdownMenuItem key={label} onSelect={onSelect}>
+                    <Icon /> {label}
                   </DropdownMenuItem>
-                </>
-              )}
-            </DropdownMenuContent>
-          </DropdownMenu>
+                ))}
+                {isEdit && entryId && (
+                  <>
+                    {secondary.length > 0 ? <DropdownMenuSeparator /> : null}
+                    <DropdownMenuItem onSelect={() => void copyPreviewLink()}>
+                      <Link2 /> Copy preview link
+                    </DropdownMenuItem>
+                  </>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          ) : null}
           {/* One primary verb by state: a new entry's is Save draft; a saved one's is Publish
               while anything isn't live (Save draft steps back, enabled once there are edits); live
               and clean, both rest and Publish reads "Published". */}

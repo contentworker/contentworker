@@ -105,6 +105,7 @@ export const SETTINGS_GROUPS: readonly SettingsGroup[] = [
     sections: [
       { id: 'webhooks', label: 'Webhooks' },
       { id: 'functions', label: 'Functions' },
+      { id: 'ai', label: 'AI' },
       { id: 'ai-actions', label: 'AI actions' },
     ],
   },
