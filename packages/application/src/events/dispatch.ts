@@ -17,6 +17,7 @@ import type {
   SearchIndex,
   WebhookSender,
 } from '@contentworker/ports';
+import { aiCapability } from '../ai-settings';
 import { assetBulkChunkRunner } from '../asset-bulk';
 import { syncAssetGate } from '../asset-gate';
 import { assetReindexChunkRunner, startAssetReindex } from '../asset-ingest';
@@ -407,11 +408,17 @@ export async function dispatchEvent(
   // 3. RAG: (re)embed on publish, drop vectors on unpublish.
   if (deps.rag) {
     if (event.type === 'entry.published') {
-      await indexEntryEmbeddings(deps.rag, scope, {
-        entryId: event.entryId,
-        fields: event.fields,
-        entryVersion: event.version,
-      });
+      // Semantic search turned off: the text never reaches the embeddings model, and the entry's
+      // earlier vectors go, so no stale text is left to match.
+      if ((await aiCapability(ctx, scope, 'search')).enabled) {
+        await indexEntryEmbeddings(deps.rag, scope, {
+          entryId: event.entryId,
+          fields: event.fields,
+          entryVersion: event.version,
+        });
+      } else {
+        await removeEntryEmbeddings(deps.rag, scope, event.entryId);
+      }
     } else if (event.type === 'entry.unpublished') {
       await removeEntryEmbeddings(deps.rag, scope, event.entryId);
     }
@@ -749,7 +756,12 @@ async function dispatchBulkPublished(
   // 3. RAG + lexical index, from the batch-read snapshots.
   if (deps.rag) {
     if (isPublish) {
+      const embed = (await aiCapability(ctx, scope, 'search')).enabled;
       for (const s of snapshots) {
+        if (!embed) {
+          await removeEntryEmbeddings(deps.rag, scope, s.entryId);
+          continue;
+        }
         await indexEntryEmbeddings(deps.rag, scope, {
           entryId: s.entryId,
           fields: s.fields,

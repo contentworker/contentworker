@@ -1,6 +1,7 @@
 import {
   type AgentReview,
   type AgentSchedule,
+  type AiSettings,
   type ApiKey,
   type Asset,
   type AssetCollection,
@@ -72,6 +73,7 @@ import type {
   AgentScheduleRepo,
   AIActionDefinition,
   AIActionRepo,
+  AiSettingsRepo,
   AppExtension,
   AppExtensionRepo,
   ArchivableVersion,
@@ -2989,6 +2991,19 @@ export class InMemoryContentStore implements ContentStore {
       const held = this.blockConfigData.get(scopeKey(scope))?.version ?? 0;
       if (held !== config.version - 1) throw new TransactionConflictError();
       this.blockConfigData.set(scopeKey(scope), config);
+    },
+  };
+
+  /** spaceId → the space's AI settings. */
+  private readonly aiSettingsData = new Map<string, AiSettings>();
+
+  readonly aiSettings: AiSettingsRepo = {
+    get: async (spaceId) => this.aiSettingsData.get(spaceId) ?? null,
+    save: async (spaceId, settings) => {
+      // As the D1 store's compare-and-set: the row must be at the version before this one.
+      const held = this.aiSettingsData.get(spaceId)?.version ?? 0;
+      if (held !== settings.version - 1) throw new TransactionConflictError();
+      this.aiSettingsData.set(spaceId, settings);
     },
   };
 

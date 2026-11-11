@@ -46,6 +46,14 @@ const blockLockChange = z.object({
   unlocked: z.array(blockLockSummary).describe('Regions unlocked, at most ten'),
 });
 
+const aiSettingsChange = z.object({
+  from: z.number().int().describe('The version it replaced'),
+  to: z.number().int().describe('The version it wrote'),
+  changed: parts.describe(
+    '`<capability>.enabled`, `.tier` or `.guidance`; never the guidance text',
+  ),
+});
+
 const auditDetail = z.object({
   entries: z.array(entryChange).describe('The entries the action saved'),
   blockConfig: blockConfigChange
@@ -54,6 +62,9 @@ const auditDetail = z.object({
   blockLocks: blockLockChange
     .optional()
     .describe('What a set of an entry’s locked regions locked and unlocked'),
+  aiSettings: aiSettingsChange
+    .optional()
+    .describe('What a set of the space’s AI settings changed: parts named, never guidance'),
   truncated: z
     .literal(true)
     .optional()

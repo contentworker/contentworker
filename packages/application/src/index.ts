@@ -9,6 +9,7 @@ export * from './ai-decide';
 export * from './ai-json';
 export * from './ai-prompt';
 export * from './ai-provenance';
+export * from './ai-settings';
 export * from './app-extensions';
 export * from './app-operations';
 export * from './approvals';

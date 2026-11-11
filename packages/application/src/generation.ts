@@ -27,6 +27,7 @@ import {
   UNTRUSTED_CONTENT_GUARD,
   wrapUntrusted,
 } from './ai-prompt';
+import { requireAiCapability } from './ai-settings';
 import type { AssetSearchDeps } from './asset-search';
 import { assertBlockConfigAllows } from './block-config';
 import type { AppContext } from './context';
@@ -167,6 +168,7 @@ async function draft(
   call: DraftCall,
   options: DraftOptions,
 ): Promise<DraftResult> {
+  const policy = await requireAiCapability(ctx, scope, 'drafting');
   const ct = await ctx.store.contentTypes.get(scope, input.contentTypeApiId);
   if (!ct) throw new NotFoundError('ContentType', input.contentTypeApiId);
   const config = await ctx.store.spaces.getConfig(scope);
@@ -181,9 +183,9 @@ async function draft(
     ai,
     scope,
     {
-      system: call.system,
+      system: policy.system(call.system),
       prompt: call.prompt(ct),
-      tier: input.tier ?? 'balanced',
+      tier: policy.tier('balanced', input.tier),
       maxTokens: blocks.size > 0 ? LAYOUT_MAX_TOKENS : DRAFT_MAX_TOKENS,
       outputSchema: schema as unknown as Record<string, unknown>,
     },

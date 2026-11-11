@@ -72,7 +72,8 @@ Everything below is built and tested on v2.
   approvals with separation of duties, the copilot).
 - **AI.** Generation, canvas authoring, translate, summarize, autofill, tags, governed AI
   actions, the enrich/moderate/curate/repurpose agents and the review watcher on durable
-  workflows, agent schedules and reviews, per-space budgets (a stateful edge object), provenance,
+  workflows, agent schedules and reviews, per-space budgets (a stateful edge object), per-space
+  AI settings per capability (on or off, tier, fenced guidance), provenance,
   related and duplicate detection, hybrid and semantic search, RAG.
 - **Integration.** Signed webhooks with a delivery log, event-triggered functions, app
   extensions, sandboxed plugins in isolated edge workers (with per-plugin `kv:storage` and
@@ -403,7 +404,7 @@ None blocks a release.
 
 - [ ] **AI projects.** Reusable instructions, reader and writer personas, and reference assets (their
   extracted text), with a tool to read a reference file; selectable in generation, canvas and agents.
-- [ ] **AI settings per capability.** Per space: enabled, `ModelTier`, and guidance appended to the
+- [x] **AI settings per capability.** Per space: enabled, `ModelTier`, and guidance appended to the
   built-in prompt.
 - [ ] **Change summaries.** A narrative summary of a version diff, over the existing deterministic
   diff.

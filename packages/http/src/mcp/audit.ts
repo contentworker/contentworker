@@ -55,6 +55,7 @@ const TOOL_TARGET_TYPES: readonly (readonly [RegExp, string])[] = [
   [/^agent_schedule_/, 'agent_schedule'],
   [/^agent_review_/, 'agent_review'],
   [/^ai_action_/, 'ai_action'],
+  [/^ai_settings_/, 'ai_settings'],
   [/^bulk_job_/, 'job'],
   [/^blocks_catalog_/, 'block_catalog'],
   [/^blocks_config_/, 'block_config'],
@@ -140,11 +141,13 @@ export async function auditToolCall(ctx: AppContext, input: ToolAuditInput): Pro
         ? toolTargetType(tool)
         : created
           ? 'entry'
-          : input.detail?.blockConfig && toolTargetType(tool),
+          : (input.detail?.blockConfig || input.detail?.aiSettings) && toolTargetType(tool),
       targetId:
         named ??
         created?.entryId ??
-        (input.detail?.blockConfig && String(input.detail.blockConfig.to)),
+        (input.detail?.blockConfig
+          ? String(input.detail.blockConfig.to)
+          : input.detail?.aiSettings && String(input.detail.aiSettings.to)),
       status: 200,
       detail: input.detail,
     });

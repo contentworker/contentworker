@@ -14,6 +14,7 @@ import {
   richTextToPlainText,
 } from '@contentworker/domain';
 import type { EmbeddingsProvider, SearchIndex, VectorRow, VectorStore } from '@contentworker/ports';
+import { aiCapability, requireAiCapability } from './ai-settings';
 import type { AppContext } from './context';
 import { type DeliveryReads, deliveryReads } from './delivery-reads';
 
@@ -232,6 +233,9 @@ export async function reindexEmbeddings(
 ): Promise<ReindexResult> {
   const batchSize = Math.min(Math.max(1, opts.batchSize ?? 100), 500);
   const maxEntries = opts.maxEntries ?? MAX_REINDEX_ENTRIES;
+  // Semantic search turned off: nothing goes to the embeddings model, and each entry's vectors
+  // go instead (no stale text left to match); the lexical index is refreshed as usual.
+  const embed = deps && (await aiCapability(ctx, scope, 'search')).enabled;
   // Keyset paging (entryId is UUIDv7, time-ordered and unique): the cursor
   // stays valid even when entries before it are unpublished or republished
   // between slices, which would shift an offset cursor and skip entries.
@@ -251,12 +255,14 @@ export async function reindexEmbeddings(
         truncated = true;
         break;
       }
-      if (deps) {
+      if (deps && embed) {
         chunks += await indexEntryEmbeddings(deps, scope, {
           entryId: published.entryId,
           fields: published.fields,
           entryVersion: published.version,
         });
+      } else if (deps) {
+        await removeEntryEmbeddings(deps, scope, published.entryId);
       }
       // Refresh the external lexical index in the same pass, when bound.
       // refresh: false — bulk writes ride the engine's own refresh cycle.
@@ -515,6 +521,39 @@ function termFrequency(text: string, terms: readonly string[]): number {
     score += n;
   }
   return score;
+}
+
+/**
+ * Management search (MCP `content_search`): {@link hybridSearch} under the space's `search`
+ * setting. With semantic search turned off, the lexical leg alone answers: the query is never
+ * embedded. Delivery's search (`deliveredSearch`) doesn't read the setting, so the public read
+ * path takes no extra statement; with the setting off nothing new is embedded, so it serves what
+ * the index held, less every entry republished or unpublished since.
+ */
+export async function searchEntries(
+  deps: RagDeps | undefined,
+  ctx: AppContext,
+  scope: Scope,
+  query: string,
+  opts: { topK?: number } = {},
+): Promise<SearchHit[]> {
+  const semantic = deps !== undefined && (await aiCapability(ctx, scope, 'search')).enabled;
+  return hybridSearch(deps, ctx, scope, query, { ...opts, lexicalOnly: !semantic });
+}
+
+/**
+ * Management semantic search (MCP `content_semantic_search`): {@link semanticSearch}, refused
+ * (409 `ai_capability_disabled`) when the space turned semantic search off.
+ */
+export async function searchEntriesSemantically(
+  deps: RagDeps,
+  ctx: AppContext,
+  scope: Scope,
+  query: string,
+  opts: { topK?: number } = {},
+): Promise<SearchHit[]> {
+  await requireAiCapability(ctx, scope, 'search');
+  return semanticSearch(deps, scope, query, opts);
 }
 
 /**

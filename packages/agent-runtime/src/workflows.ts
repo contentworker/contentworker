@@ -429,11 +429,30 @@ async function runEntryPass(
   {
     const perEntry: AgentRunResult[] = [];
     for (const name of names) {
-      // Enrich before moderate so moderation sees the enriched content.
-      const run =
-        name === 'enrich'
-          ? await enrichWorkflow(act, { scope: input.scope, entryId, autoApply: input.autoApply })
-          : await moderateWorkflow(act, { scope: input.scope, entryId });
+      // Enrich before moderate so moderation sees the enriched content. An enrich that fails
+      // (the space turned agents off since the run started, the budget is spent) is recorded as
+      // skipped and moderation still runs: nothing about enrichment may stand in its way.
+      let run: AgentRunResult;
+      if (name === 'enrich') {
+        try {
+          run = await enrichWorkflow(act, {
+            scope: input.scope,
+            entryId,
+            autoApply: input.autoApply,
+          });
+        } catch (err) {
+          if (!names.includes('moderate')) throw err;
+          run = {
+            workflow: 'enrich',
+            entryId,
+            status: 'skipped',
+            decisions: [`enrich failed: ${err instanceof Error ? err.message : String(err)}`],
+            usage: ZERO,
+          };
+        }
+      } else {
+        run = await moderateWorkflow(act, { scope: input.scope, entryId });
+      }
 
       if (run.status === 'needs_review' && run.reviewId) {
         // Best-effort: without a watcher the decision still applies through the

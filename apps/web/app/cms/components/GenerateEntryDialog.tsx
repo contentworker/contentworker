@@ -30,7 +30,9 @@ import { useStoppable } from '../lib/use-stoppable';
 
 // Tiers, not models: the provider adapter maps tier → model, and the provider
 // is swappable (AI_PROVIDER), so naming a model here would be wrong elsewhere.
-const TIERS: { value: ModelTier; label: string }[] = [
+// `default` sends no tier: the space's drafting tier (Settings → AI), else the API's own.
+const TIERS: { value: ModelTier | 'default'; label: string }[] = [
+  { value: 'default', label: 'Space default' },
   { value: 'fast', label: 'Fast' },
   { value: 'balanced', label: 'Balanced' },
   { value: 'flagship', label: 'Most capable' },
@@ -61,16 +63,24 @@ export function GenerateEntryDialog(props: {
   onOpenChange: (open: boolean) => void;
   contentType: ContentType;
   /** Runs the generation and returns the draft; must not touch the form. */
-  onGenerate: (prompt: string, tier: ModelTier, signal: AbortSignal) => Promise<GeneratedDraft>;
+  onGenerate: (
+    prompt: string,
+    tier: ModelTier | undefined,
+    signal: AbortSignal,
+  ) => Promise<GeneratedDraft>;
   /** Merges the reviewed draft into the editor form (unsaved). */
   onApply: (fields: EntryFields) => void;
 }) {
   const { contentType } = props;
   const [prompt, setPrompt] = useState('');
-  const [tier, setTier] = useState<ModelTier>('balanced');
+  const [tier, setTier] = useState<ModelTier | 'default'>('default');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
-  const [draft, setDraft] = useState<{ result: GeneratedDraft; prompt: string; tier: ModelTier }>();
+  const [draft, setDraft] = useState<{
+    result: GeneratedDraft;
+    prompt: string;
+    tier: ModelTier | 'default';
+  }>();
   const promptRef = useRef<HTMLTextAreaElement>(null);
   const generation = useStoppable();
 
@@ -94,7 +104,11 @@ export function GenerateEntryDialog(props: {
     setBusy(true);
     setError(undefined);
     try {
-      const result = await props.onGenerate(prompt.trim(), tier, signal);
+      const result = await props.onGenerate(
+        prompt.trim(),
+        tier === 'default' ? undefined : tier,
+        signal,
+      );
       if (signal.aborted) return;
       setDraft({ result, prompt: prompt.trim(), tier });
     } catch (err) {
@@ -276,7 +290,7 @@ export function GenerateEntryDialog(props: {
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="gen-tier">Model</Label>
-              <Select value={tier} onValueChange={(v) => setTier(v as ModelTier)}>
+              <Select value={tier} onValueChange={(v) => setTier(v as ModelTier | 'default')}>
                 <SelectTrigger id="gen-tier" className="w-56">
                   <SelectValue />
                 </SelectTrigger>

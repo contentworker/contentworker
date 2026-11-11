@@ -7,6 +7,7 @@ import {
 } from '@contentworker/domain';
 import type { AgentRunner } from './agent-actions';
 import { recordAgentRun } from './agent-audit';
+import { aiCapability } from './ai-settings';
 import type { AppContext } from './context';
 
 /** The agent workflows a schedule may run. */
@@ -176,6 +177,12 @@ export async function runDueAgentSchedules(
     }
 
     assertWorkflow(schedule.workflow);
+    // The space turned agents off: this firing runs nothing, and the cursor stays where it was, so
+    // the entries published meanwhile are picked up once they are turned back on. A moderation
+    // schedule still runs: moderation is never the space's AI setting to turn off.
+    if (schedule.workflow !== 'moderate' && !(await aiCapability(ctx, scope, 'agents')).enabled) {
+      continue;
+    }
     let cursor: { lastRunAt: string; cursorEntryId?: string } = {
       lastRunAt: schedule.lastRunAt,
       cursorEntryId: schedule.cursorEntryId,

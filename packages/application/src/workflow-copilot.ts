@@ -20,6 +20,7 @@ import type { AIProvider } from '@contentworker/ports';
 import { generateJson } from './ai-json';
 import { UNTRUSTED_CONTENT_GUARD, wrapUntrusted } from './ai-prompt';
 import type { AiProvenance } from './ai-provenance';
+import { requireAiCapability } from './ai-settings';
 import type { AppContext } from './context';
 import { MAX_WORKFLOW_EDGES, MAX_WORKFLOW_NODES, validateWorkflowGraph } from './workflows';
 
@@ -348,6 +349,7 @@ export async function draftWorkflowGraph(
   input: WorkflowCopilotInput,
 ): Promise<WorkflowCopilotResult> {
   const { prompt, graph: current, contentTypes } = checkInput(input);
+  const policy = await requireAiCapability(ctx, scope, 'workflows');
 
   // What the workflow's content types look like, so field-picking nodes name real fields.
   const types = (
@@ -371,7 +373,7 @@ export async function draftWorkflowGraph(
     ai,
     scope,
     {
-      system: copilotSystemPrompt(),
+      system: policy.system(copilotSystemPrompt()),
       prompt: userPrompt,
       tier: 'balanced',
       maxTokens: COPILOT_MAX_TOKENS,
@@ -381,6 +383,7 @@ export async function draftWorkflowGraph(
       prompt: COPILOT_PROMPT_ID,
       fallback: () => copilotHeuristic({ prompt, ...(current ? { graph: current } : {}) }),
       timeoutMs: COPILOT_TIMEOUT_MS,
+      policy,
     },
   );
 

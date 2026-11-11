@@ -27,6 +27,9 @@
 
 import { AIChatAgent } from '@cloudflare/ai-chat';
 import {
+  type AiCapabilityPolicy,
+  aiCapability,
+  defaultAiPolicy,
   principalForWebUser,
   UNTRUSTED_CONTENT_GUARD,
   wrapUntrusted,
@@ -112,6 +115,9 @@ export const NOT_HELD =
   'Coworker couldn’t read this entry when the card was made, so it can’t say what this would change. Ask again.';
 export const TOO_FAST = 'That’s a lot at once. Wait a moment and try again.';
 const NO_SCOPE = 'The page didn’t say which space and environment you’re in. Reload it.';
+/** What a turn answers when the space's administrators turned Coworker off (Settings → AI). */
+export const ASSISTANT_OFF =
+  'Coworker is turned off for this space. A space administrator can turn it on in Settings → AI.';
 export const ADMINS_SET_UP = 'Only a deployment admin can set up a space.';
 
 /** The close code for a socket whose person may no longer act. */
@@ -720,6 +726,16 @@ export abstract class AssistantAgentBase extends AIChatAgent<AgentEnv> {
         return say(TOO_FAST);
       }
       const principal = await this.principalIn(w.deps, who, context.scope);
+      // The space's `assistant` settings, read as every other AI use-case reads its own: off, the
+      // turn answers so without a model; its tier and guidance otherwise. Setting up the first
+      // space has no space to read them from.
+      const policy = isSetupScope(context.scope)
+        ? defaultAiPolicy('assistant')
+        : await aiCapability(w.deps.ctx, context.scope, 'assistant');
+      if (!policy.enabled) {
+        close();
+        return say(ASSISTANT_OFF);
+      }
       await this.touch();
       const used: ModelSource = { source: 'model' };
       // The slot this turn was asked to fill, if any: its calls are held to it when they run.
@@ -727,7 +743,7 @@ export abstract class AssistantAgentBase extends AIChatAgent<AgentEnv> {
       const scope = { spaceId: context.scope.spaceId, environmentId: context.scope.environmentId };
       const meter = meterTurn(w.deps.ctx.costGuard, scope, () => used.source === 'model', close);
       const model = recordingCalls(
-        await assistantModel(this.env, context, used, who.claims.sub),
+        await assistantModel(this.env, context, used, who.claims.sub, policy.tier('flagship')),
         (call) => this.record(call, context.scope, principal, fillTurn),
       );
       if (!(await meter.begin())) {
@@ -737,7 +753,7 @@ export abstract class AssistantAgentBase extends AIChatAgent<AgentEnv> {
       const tools = await this.modelTools(w.deps, principal, context.scope);
       const result = streamText({
         model,
-        system: systemPrompt(who.person, context),
+        system: systemPrompt(who.person, context, policy),
         messages: await convertToModelMessages(answeredOnly(this.messages)),
         tools,
         stopWhen: stepCountIs(6),
@@ -984,7 +1000,7 @@ export async function fingerprintOf(name: string, input: unknown, scope: Assista
     .join('');
 }
 
-function systemPrompt(person: PersonNow, context: AssistantContext) {
+function systemPrompt(person: PersonNow, context: AssistantContext, policy: AiCapabilityPolicy) {
   if (isSetupScope(context.scope)) return setupPrompt();
   const { scope, page } = context;
   // A page's label is a title someone wrote: data, not instructions.
@@ -994,7 +1010,7 @@ function systemPrompt(person: PersonNow, context: AssistantContext) {
       : page.kind === 'content-type'
         ? `They are looking at the content type ${page.contentType}, named:\n${wrapUntrusted(page.label)}\n“These entries” means entries of that type.`
         : 'They are not looking at a particular entry or content type.';
-  return [
+  const base = [
     'You are Coworker, contentworker’s assistant, working for one person in the admin of a headless CMS. Content lives in spaces and environments; entries are typed by content types, saved as drafts and published.',
     `They work in space ${scope.spaceId}, environment ${scope.environmentId}${scope.locale ? `, locale ${scope.locale}` : ''}. Their role here is ${person.role}.`,
     where,
@@ -1007,6 +1023,9 @@ function systemPrompt(person: PersonNow, context: AssistantContext) {
     'To change something (save, publish, unpublish, trash, tag, schedule), call the tool: the person sees exactly what will happen and confirms it themselves. Never say a change happened unless its tool returned. If they decline, say it was left as it was.',
     'To lay out or extend a page of blocks: outline it (entry_blocks_outline), read what the place takes (blocks_config_effective, blocks_catalog_get) and what is locked (entries_block_locks_get); then compose the blocks with entry_blocks_generate, or write the ops yourself, check them with entry_blocks_validate, and propose them with entry_blocks_patch. Never change blocks inside a locked region or slot. Images come from the asset library (assets_search), never from URLs or ids you make up.',
   ].join('\n');
+  // The space's guidance comes last, fenced as data: it can shape how Coworker writes, never which
+  // tools it has (the list above is the code's) or that a person confirms every change.
+  return policy.system(base);
 }
 
 /**

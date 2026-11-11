@@ -1,4 +1,5 @@
 import {
+  AiCapabilityDisabledError,
   AiUnavailableError,
   AppOperationFailedError,
   AssetInUseError,
@@ -71,6 +72,15 @@ export function toHttpError(err: unknown): { status: number; body: unknown } {
           ...(err.details as Record<string, string>),
         },
       },
+    };
+  }
+  // The space's administrators turned the capability off: a conflict with how the space is
+  // configured (409), not the model being down (503, retryable) nor the caller's permissions (403).
+  // The body names the capability, so a client can say which one and where to turn it on.
+  if (err instanceof AiCapabilityDisabledError) {
+    return {
+      status: 409,
+      body: { error: { code: err.code, message: err.message, capability: err.capability } },
     };
   }
   // Would leave the space with no administrator: a conflict with the space's state.

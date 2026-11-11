@@ -889,6 +889,23 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   or an Alert saying why not (destructive for an SDK it can't speak with). The check's frame is
   off screen, `aria-hidden` and `inert`, and goes once the page answers; picking another type
   waits for the button.
+  **AI** (Automation, `cms/components/AiSettings.tsx`) is one flush section, a row per AI
+  capability: its name as an h3, what it covers in a muted line held to the measure, and a `Switch`
+  named for it with a muted On or Off beside it. Under that, where the capability has a prompt, a
+  Model tier select (Default, Flagship, Balanced, Fast: the trigger shows the word, the options and
+  a muted hint under the select say what each means) and a Guidance textarea, both named for their
+  row ("Guidance Drafting"); the count under it ("120 of 2,000 characters") is tied by
+  `aria-describedby`, and going over marks the field invalid and is said once, politely. Semantic
+  search says it has no tier or guidance. At the foot, a muted line says guidance shapes tone and
+  wording, never what a feature does, then "Unsaved changes" (or "Shorten the guidance marked to
+  save.") beside Discard changes and Save. The save is held to the version read and leaving with
+  edits asks, as the block rules do. A refused stale save keeps the edits and holds Save: a warning
+  Alert names their version (or allows it may be one's own unconfirmed save) and offers Copy my
+  changes as JSON and Load the latest, which takes focus; loading moves focus to the list and says
+  "Loaded vN. Your changes here were discarded." Without `space:admin` it reads only and says so. A
+  capability that is off hides what it powers (Generate with AI and Draft from prose on an entry,
+  Draft with AI and Change with AI on workflows; Coworker's composer and suggestions become a note
+  naming Settings → AI), never while the settings load or fail to: the API's 409 is what refuses.
   **Trash** (Workspace) is one section: a segmented Keep until deleted / Delete after a while
   (off by default), and when on a "Days in the trash" field (1 to 3650; an out-of-range value is
   said under it, tied to it by `aria-describedby`), with a muted line saying what happens (an

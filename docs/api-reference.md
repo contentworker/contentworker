@@ -620,6 +620,25 @@ before anything is fetched. A provider that errors, redirects, times out (5 s) o
 64 KiB is not an error: `resolved` is `false` and `embed` holds the URL, provider and kind alone,
 which is valid to store. See [Rich text](./domain-model.md#rich-text).
 
+### AI settings
+
+A space's AI settings, per capability (`drafting`, `layout`, `assistant`, `field-assist`,
+`translation`, `media`, `search`, `agents`, `workflows`): whether it is on, its model tier and the
+guidance added to its built-in prompt. One space-scoped row, versioned. See
+[AI settings per capability](./ai-agents-and-search.md#ai-settings-per-capability).
+
+| Method | Path                         | Scope          | Notes                                                                                                                                                                                                                                       |
+| ------ | ---------------------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| GET    | `/spaces/:space/ai-settings` | `preview:read` | `{ version, capabilities: { <id>: { enabled, tier, guidance } }, updatedAt, updatedBy }`; version 0, every capability on with `tier` and `guidance` null, before the first set                                                               |
+| PUT    | `/spaces/:space/ai-settings` | `space:admin`  | `{ expectedVersion, capabilities }` → `{ settings, unchanged }`: each capability named is replaced whole (`tier`, `guidance` null when left out), the rest kept. `422` for an unknown capability or tier or guidance over 2 000 characters; `409` with `details.version` for a stale `expectedVersion` or a set that lost the race |
+
+A capability turned off refuses the requests that need it with `409`
+`{ error: { code: "ai_capability_disabled", message, capability } }`; background work skips it. A
+personal access token or OAuth token holding `space:admin` may set them. A set's audit row has
+target `ai_settings` (the new version) and `detail.aiSettings` naming the parts changed
+(`translation.tier`), never guidance. MCP: `ai_settings_get` (`preview:read`), `ai_settings_set`
+(`space:admin`).
+
 ### Entries: AI and semantics
 
 | Method | Path                         | Scope            | Description                                                                                                         |

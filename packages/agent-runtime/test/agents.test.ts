@@ -4,6 +4,7 @@ import {
   createEntry,
   createSpace,
   SYSTEM_CALLER,
+  setAiSettings,
 } from '@contentworker/application';
 import type { GenerateRequest } from '@contentworker/ports';
 import {
@@ -95,6 +96,36 @@ describe('P8: durable agents (in-process executor)', () => {
     expect(got?.entry.updatedBy).toBe('agent:enrich');
     const [latest] = await ctx.store.entries.listVersions(scope, id);
     expect(latest?.createdBy).toBe('agent:enrich');
+  });
+
+  it('enrich asks no model and writes nothing once the space turned agents off, without failing', async () => {
+    const id = await seed(ctx);
+    await setAiSettings(ctx, SYSTEM_CALLER, 'blog', {
+      expectedVersion: 0,
+      capabilities: { agents: { enabled: false } },
+    });
+    const ai = new StubAIProvider(() => ({ summary: 'x', seoDescription: 'y' }));
+    const runtime = new InProcessAgentRuntime(makeActivities({ ctx, ai }));
+    const result = await runtime.run('enrich', { scope, entryId: id, autoApply: true });
+    expect(result.status).not.toBe('needs_review');
+    expect(ai.requests).toHaveLength(0);
+    expect((await ctx.store.entries.get(scope, id))?.entry.currentVersion).toBe(1);
+  });
+
+  it('enrich runs on the space’s agents tier, with its guidance fenced after the prompt', async () => {
+    const id = await seed(ctx);
+    await setAiSettings(ctx, SYSTEM_CALLER, 'blog', {
+      expectedVersion: 0,
+      capabilities: { agents: { enabled: true, tier: 'flagship', guidance: 'Plain words.' } },
+    });
+    const ai = new StubAIProvider(() => ({ summary: 'x', seoDescription: 'y' }));
+    await new InProcessAgentRuntime(makeActivities({ ctx, ai })).run('enrich', {
+      scope,
+      entryId: id,
+      autoApply: false,
+    });
+    expect(ai.requests[0]?.tier).toBe('flagship');
+    expect(ai.requests[0]?.system).toContain('<space_guidance>\nPlain words.\n</space_guidance>');
   });
 
   it('enrich drops a generated value for a field the other values would hide', async () => {

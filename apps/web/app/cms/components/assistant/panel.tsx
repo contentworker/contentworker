@@ -76,6 +76,7 @@ import { Shimmer } from '~/components/ai-elements/shimmer';
 import { Suggestion, Suggestions } from '~/components/ai-elements/suggestion';
 import { Mark } from '~/components/mark';
 import { useCan, useMe } from '~/lib/use-me';
+import { TURN_ON_HINT, useAiCapability } from '../../lib/ai-settings';
 import {
   type ActResult,
   AssistantUnavailable,
@@ -464,6 +465,9 @@ function ChatView({
   const admin = useCan('admin');
   const setup = useRef(false);
   setup.current = noSpace && admin;
+  // Turned off for the space (Settings → AI): the composer says so instead of asking. A turn sent
+  // anyway is answered the same by the agent, and pages' edits still go through.
+  const assistantOn = useAiCapability('assistant', !noSpace);
   const chat = useAgentChat<unknown, Message>({
     agent,
     body: () => chatBody(setup.current ? SETUP_CONTEXT : a.readContext()),
@@ -614,6 +618,8 @@ function ChatView({
           {messages.length === 0 ? (
             noSpace ? (
               <SetUpFirstSpace admin={admin} onAsk={send} mark={variant === 'panel'} />
+            ) : !assistantOn ? (
+              <Off />
             ) : (
               <FirstRun onAsk={send} />
             )
@@ -624,7 +630,8 @@ function ChatView({
                   key={m.id}
                   m={m}
                   busy={busy}
-                  onEdit={i > lastAction ? edit : undefined}
+                  // Off for the space: nothing can be asked again (the agent would refuse it).
+                  onEdit={i > lastAction && assistantOn ? edit : undefined}
                 />
               ) : (
                 <AssistantMessage
@@ -639,7 +646,8 @@ function ChatView({
                     i === messages.length - 1 &&
                     i !== lastAction &&
                     !busy &&
-                    !down
+                    !down &&
+                    assistantOn
                       ? () => void regenerate()
                       : undefined
                   }
@@ -686,6 +694,7 @@ function ChatView({
         busy={busy}
         down={down}
         setup={noSpace ? (admin ? 'ask' : 'blocked') : null}
+        off={!noSpace && !assistantOn}
         onSend={send}
         onStop={() => void stop()}
       />
@@ -1007,6 +1016,19 @@ function AssistantMessage({
 
 // ── First run ──────────────────────────────────────────────────────────────
 
+/** First run where the space's administrators turned Coworker off: no suggestions to ask. */
+function Off() {
+  return (
+    <Empty
+      className="px-0 py-6"
+      icon={<Mark className="text-muted-foreground" />}
+      title="Coworker is off for this space"
+    >
+      {TURN_ON_HINT} Edits you make on the page still go through.
+    </Empty>
+  );
+}
+
 function FirstRun({ onAsk }: { onAsk: (text: string) => void }) {
   const { page, scope } = useAssistant();
   const kind = scope === 'everything' ? 'everything' : page.kind;
@@ -1167,11 +1189,15 @@ function HeldMessages({
   );
 }
 
+/** What the composer says in place of a question box when Coworker is off for the space. */
+export const ASSISTANT_OFF_NOTE = `Coworker is turned off for this space. ${TURN_ON_HINT}`;
+
 function Composer({
   variant,
   busy,
   down,
   setup,
+  off,
   onSend,
   onStop,
 }: {
@@ -1183,6 +1209,8 @@ function Composer({
    * can't ask anything until they are added to one (`blocked`).
    */
   setup: 'ask' | 'blocked' | null;
+  /** The space's administrators turned Coworker off: nothing can be asked. */
+  off: boolean;
   onSend: (text: string) => void;
   onStop: () => void;
 }) {
@@ -1193,6 +1221,15 @@ function Composer({
   useEffect(() => {
     if (focusToken) box.current?.focus();
   }, [focusToken]);
+  if (off) {
+    return (
+      <div className="shrink-0 p-3">
+        <p role="status" className="rounded-xl bg-muted px-3 py-2.5 text-muted-foreground text-sm">
+          {ASSISTANT_OFF_NOTE}
+        </p>
+      </div>
+    );
+  }
   return (
     <div className="shrink-0 p-3 in-data-keyboard:pb-2">
       <PromptInput

@@ -109,6 +109,28 @@ describe('publishAgentsWorkflow', () => {
     expect(recorded.filter((r) => r.status === 'held')).toHaveLength(2);
   });
 
+  it('moderates and retracts even when enrich fails (a space turned its agents off)', async () => {
+    // Enrichment is the space's to turn off; moderation is the deployment's. A failed enrich (the
+    // space's `agents` capability refused it after the run started) must never skip moderation.
+    const { act, recorded, retracted } = fakeActivities({
+      generateFields: async () => {
+        throw new Error('Agents (AI capability "agents") is turned off for this space.');
+      },
+      classify: async () => ({ flagged: true, categories: ['unsafe'], usage: ZERO }),
+    });
+    await publishAgentsWorkflow(act, {
+      scope,
+      entryIds: ['e1'],
+      enrich: true,
+      moderate: true,
+    });
+    expect(recorded.find((r) => r.workflow === 'enrich')?.status).toBe('skipped');
+    expect(recorded.filter((r) => r.workflow === 'moderate' && r.status === 'held')).toHaveLength(
+      2,
+    );
+    expect(retracted).toEqual(['e1']);
+  });
+
   it('does not retract when nothing is held', async () => {
     const { act, retracted } = fakeActivities();
     await publishAgentsWorkflow(act, {

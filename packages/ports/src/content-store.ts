@@ -1,6 +1,7 @@
 import type {
   AgentReview,
   AgentSchedule,
+  AiSettings,
   ApiKey,
   Asset,
   AssetCollection,
@@ -151,6 +152,7 @@ export interface ContentStore {
   readonly menus: MenuRepo;
   readonly blockCatalogs: BlockCatalogRepo;
   readonly blockConfigs: BlockConfigRepo;
+  readonly aiSettings: AiSettingsRepo;
   readonly savedViews: SavedViewRepo;
   readonly audit: AuditRepo;
   readonly aiActions: AIActionRepo;
@@ -407,6 +409,22 @@ export interface BlockConfigRepo {
    * inside a unit; thrown outside one).
    */
   save(scope: Scope, config: BlockConfig): Promise<void>;
+}
+
+/**
+ * A space's AI settings: one row per space (not per environment), rewritten whole at each set, its
+ * `version` the compare-and-set a set rides with. Version 0 is the settings of a space never
+ * configured, which has no row. Read on every AI call (one statement by primary key); written only
+ * by an administrator's set, never on a read path.
+ */
+export interface AiSettingsRepo {
+  /** The settings, or null before the first set. */
+  get(spaceId: string): Promise<AiSettings | null>;
+  /**
+   * Writes `settings` at its version while the stored one is at the version before it (no row, for
+   * version 1). Another set that wrote first is a `TransactionConflictError`.
+   */
+  save(spaceId: string, settings: AiSettings): Promise<void>;
 }
 
 /**

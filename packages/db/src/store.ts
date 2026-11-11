@@ -1,6 +1,7 @@
 import {
   type AgentReview,
   type AgentSchedule,
+  type AiSettings,
   type ApiKey,
   type Asset,
   type AssetCollection,
@@ -8,6 +9,7 @@ import {
   type AssetIngestStatus,
   type AssetRendition,
   type AssetZipJob,
+  aiCapabilitiesFrom,
   assetKind,
   type BlockCatalog,
   type BlockCatalogSummary,
@@ -77,6 +79,7 @@ import type {
   AgentScheduleRepo,
   AIActionDefinition,
   AIActionRepo,
+  AiSettingsRepo,
   AppExtension,
   AppExtensionRepo,
   ArchivableVersion,
@@ -6863,6 +6866,53 @@ function makeBlockConfigRepo(x: Exec): BlockConfigRepo {
   };
 }
 
+/** A space's AI settings: one row, its version the compare-and-set every set rides with. */
+function makeAiSettingsRepo(x: Exec): AiSettingsRepo {
+  const db = x.db;
+  const t = schema.spaceAiSettings;
+  return {
+    async get(spaceId) {
+      const [row] = await db.select().from(t).where(eq(t.spaceId, spaceId));
+      if (!row) return null;
+      return {
+        version: row.version,
+        capabilities: aiCapabilitiesFrom(row.document.capabilities ?? {}),
+        updatedAt: row.updatedAt.toISOString(),
+        updatedBy: row.updatedBy,
+      } satisfies AiSettings;
+    },
+    async save(spaceId, settings) {
+      const document = { capabilities: { ...settings.capabilities } };
+      const updatedAt = new Date(settings.updatedAt ?? 0);
+      // The first set inserts and loses to another first set on the primary key; each later one
+      // updates only while the row is at the version it read. A lost race changes no row.
+      if (settings.version === 1) {
+        const insert = db
+          .insert(t)
+          .values({ spaceId, version: 1, document, updatedBy: settings.updatedBy, updatedAt })
+          .onConflictDoNothing();
+        if (x.inUnit) {
+          await x.write(insert);
+          x.expectChanged(1);
+        } else if ((await insert.returning({ version: t.version })).length === 0) {
+          throw new TransactionConflictError();
+        }
+        return;
+      }
+      const update = db
+        .update(t)
+        .set({ version: settings.version, document, updatedBy: settings.updatedBy, updatedAt })
+        .where(and(eq(t.spaceId, spaceId), eq(t.version, settings.version - 1)));
+      if (x.inUnit) {
+        await x.write(update);
+        x.expectChanged(1);
+      } else if ((await update.returning({ version: t.version })).length === 0) {
+        throw new TransactionConflictError();
+      }
+    },
+  };
+}
+
 /** Saved views are the space's: every read and write keys on `scope.spaceId` alone. */
 function makeSavedViewRepo(x: Exec): SavedViewRepo {
   const db = x.db;
@@ -7688,6 +7738,7 @@ export function createD1Store(d1: D1Like, options: D1StoreOptions = {}): Content
     menus: makeMenuRepo(x),
     blockCatalogs: makeBlockCatalogRepo(x),
     blockConfigs: makeBlockConfigRepo(x),
+    aiSettings: makeAiSettingsRepo(x),
     savedViews: makeSavedViewRepo(x),
     bulkJobs: makeBulkJobRepo(x),
     outbox: makeOutboxRepo(x),

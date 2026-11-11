@@ -84,6 +84,7 @@ const ROUTES: readonly (readonly [name: string, path: string])[] = [
   ['settings: redirects', '/settings/redirects'],
   ['settings: menus', '/settings/menus'],
   ['settings: trash', '/settings/trash'],
+  ['settings: ai', '/settings/ai'],
   ['settings: ai actions', '/settings/ai-actions'],
   ['settings: functions', '/settings/functions'],
   ['settings: extensions', '/settings/extensions'],
