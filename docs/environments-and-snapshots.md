@@ -49,16 +49,26 @@ it is published. Into a target without the type it arrives as a plain draft, whi
 published there: GraphQL serves it as it stands at once, and the routes, sitemap and menus leave it
 out until it is published.
 
-A promotion refuses (`422`, on `contentTypes`) a definition that removes a field or block variant,
-at any depth, that the target's entries still hold, as `updateContentType` does there (no override),
-judged against the target's working and served definitions (`assertNothingStranded` in
-`promotion.ts`). A copy the promotion replaces doesn't count: a promoted entry's current version,
-and its published snapshot when it goes live; a copy in the target's trash counts in full, and a
-promoted entry there is refused as in the trash. The catalog check (`checkPromotedCatalog`) and the
-apply's catalog push judge entries the same way (`replacedCopies`). It runs at the request and
-always again in the apply, after every pin (and every pinned entry version) is read and before the
-first save, so an entry written in between fails the apply with nothing copied; the apply then
-writes, and publishes, the entries whose copies were let off before any other. A merge (`mergeEnvironments`) copies definitions without this check.
+A promotion and a merge both refuse (`422`, on `contentTypes`) a definition that removes a field or
+block variant, at any depth, that the target's entries still hold, as `updateContentType` does there
+(no override), judged against the target's working and served definitions (`assertNothingStranded`
+in `stranding.ts`). A copy the operation replaces doesn't count (`replacedCopies`), and each says
+which: for a promotion, a promoted entry's current version, and its published snapshot when it goes
+live; a copy in the target's trash counts in full, and a promoted entry there is refused as in the
+trash. The catalog check (`checkPromotedCatalog`) and the apply's catalog push judge entries the
+same way. It runs at the request and always again in the apply, after every pin (and every pinned
+entry version) is read and before the first save, so an entry written in between fails the apply
+with nothing copied; the apply then writes, and publishes, the entries whose copies were let off
+before any other.
+
+For a merge (`mergeEnvironments`), the current version of a merged entry the target already has
+doesn't count, in its trash or not, since the merge writes the source's version over it; its
+published snapshot counts, since a merge never publishes. Every check (the source's types and
+entries, each entry against the type it will have, unique values, stranding, singleton turns) runs
+before the first write; the types are then saved in one unit, and the entries after them in their
+own units, those the check let off first. Only a race after the reads, or a unique value handed from
+one existing target entry to another in the order the selection names them, can stop a merge
+partway, keeping the types and the entries already written.
 
 Preflight does what the write will do, so a definition that can't be written is refused (`422`, and
 on a dry run) before anything is, rather than partway through an environment that then can't be

@@ -2,7 +2,6 @@ import {
   createContentType,
   createEnvironment,
   createMenu,
-  mergeEnvironments,
   SYSTEM_CALLER,
 } from '@contentworker/application';
 import type { ApiConfig } from '@contentworker/platform/config';
@@ -117,11 +116,16 @@ async function setup(definition: ReturnType<typeof page>) {
       },
     };
   };
-  /** Saves `fields` as a draft over main by a merge, which has no in-use check to refuse it. */
+  /**
+   * Saves `fields` as a draft over main, written as a merge writes it but straight to the store: a
+   * merge (like a revision) now refuses a draft that drops a field entries still hold, and the read
+   * path must stay safe for a definition that got there anyway (a save racing an entry's).
+   */
   const draftByMerge = async (fields: unknown[], urlPattern?: string) => {
     await createEnvironment(wired.ctx, 's1', 'staging');
     await createContentType(wired.ctx, SYSTEM_CALLER, staging, page(fields, urlPattern) as never);
-    await mergeEnvironments(wired.ctx, 's1', 'staging', 'main', { contentTypes: ['page'] });
+    const drafted = await wired.ctx.store.contentTypes.get(staging, 'page');
+    if (drafted) await wired.ctx.store.contentTypes.save(main, drafted);
   };
   return { app, wired, post, publish, reader, draftByMerge };
 }

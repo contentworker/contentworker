@@ -16,8 +16,9 @@ import {
   uniqueClaims,
   type ValidationContext,
 } from '@contentworker/domain';
+import { TransactionConflictError } from '@contentworker/ports';
 import { blockConfigChange } from './block-config';
-import { saveContentTypeOver } from './content-types';
+import { type PreparedContentTypeSave, prepareContentTypeSave } from './content-types';
 import { type AppContext, actorOf } from './context';
 import {
   assertAssetMimeTypes,
@@ -27,6 +28,7 @@ import {
 } from './entries';
 import { allPages } from './paging';
 import { resolveEnvironment, resolveWritableEnvironment } from './spaces';
+import { assertNothingStranded, replacedCopies } from './stranding';
 
 /** How an item in the source environment relates to the target. */
 export type ChangeKind = 'added' | 'removed' | 'changed' | 'unchanged';
@@ -206,7 +208,17 @@ async function targetValidationContext(ctx: AppContext, scope: Scope): Promise<V
  * Applies selected content types and entries from `source` into `target`.
  * Content types are copied wholesale; entries are copied as a NEW draft version
  * in the target (preserving the entry id, validated against the target's content
- * type). The merge is additive/overwriting — it never deletes target content.
+ * type as the merge leaves it). The merge is additive/overwriting — it never deletes target
+ * content.
+ *
+ * Everything that can refuse it is read and judged before anything is written: the source's types
+ * and entries, each entry against the type it will have, the unique values (`assertPlanFree`),
+ * what the types would strand (`assertNothingStranded` in stranding.ts) and their singleton turns
+ * (`prepareContentTypeSave`). The types are then saved together in one unit, and the entries after
+ * them, each in its own (as `updateEntry` and `createEntry` write one), the entries whose copies
+ * the stranding check let off first. Only a race after the reads, or a unique value handed from
+ * one entry the target has to another in the order the selection names them, can still stop it
+ * partway, keeping the types and the entries already written.
  */
 export async function mergeEnvironments(
   ctx: AppContext,
@@ -219,13 +231,16 @@ export async function mergeEnvironments(
   const src = scopeOf(spaceId, await resolveEnvironment(ctx, spaceId, source));
   const tgt = scopeOf(spaceId, await resolveWritableEnvironment(ctx, spaceId, target));
 
-  const mergedContentTypes: string[] = [];
+  const types: MergedType[] = [];
   for (const apiId of selection.contentTypes ?? []) {
-    const ct = await ctx.store.contentTypes.get(src, apiId);
-    if (!ct) throw new NotFoundError('ContentType', `${source}/${apiId}`);
-    await saveContentTypeOver(ctx, tgt, await ctx.store.contentTypes.get(tgt, apiId), ct);
-    mergedContentTypes.push(apiId);
+    const next = await ctx.store.contentTypes.get(src, apiId);
+    if (!next) throw new NotFoundError('ContentType', `${source}/${apiId}`);
+    types.push({ current: await ctx.store.contentTypes.get(tgt, apiId), next });
   }
+  // What each type will be in the target once the merge's own are saved.
+  const merging = new Map(types.map((t) => [t.next.apiId, t.next]));
+  const typeAfter = async (apiId: string) =>
+    merging.get(apiId) ?? (await ctx.store.contentTypes.get(tgt, apiId));
 
   const plan: PlannedEntry[] = [];
   if (selection.entries?.length) {
@@ -233,7 +248,7 @@ export async function mergeEnvironments(
     for (const entryId of selection.entries) {
       const found = await ctx.store.entries.get(src, entryId);
       if (!found) throw new NotFoundError('Entry', `${source}/${entryId}`);
-      const targetCt = await ctx.store.contentTypes.get(tgt, found.entry.contentTypeApiId);
+      const targetCt = await typeAfter(found.entry.contentTypeApiId);
       if (!targetCt) {
         throw new NotFoundError(
           'ContentType',
@@ -258,13 +273,61 @@ export async function mergeEnvironments(
     }
     await assertPlanFree(ctx, tgt, plan);
   }
+  // What the types would strand. A merge writes the source's version over a merged entry's copy
+  // in the target, in its trash or not, so that copy doesn't count; it never publishes, so the
+  // copy's published snapshot does.
+  const replaced = replacedCopies(
+    ctx,
+    tgt,
+    plan.filter((p) => p.existing).map((p) => p.entryId),
+    { operation: 'merge', writesTrash: true, goesLive: () => false },
+  );
+  await assertNothingStranded(
+    ctx,
+    tgt,
+    types.map((t) => t.next),
+    replaced,
+  );
+  const relied = replaced.relied();
+  const saves = await Promise.all(
+    types.map(({ current, next }) => prepareContentTypeSave(ctx, tgt, current, next)),
+  );
 
-  // Entries the target already has first: a value one of them gives up (a swap) is then free
-  // for the new entry that takes it.
-  const order = [...plan.filter((p) => p.existing), ...plan.filter((p) => !p.existing)];
+  if (saves.length > 0) {
+    try {
+      await ctx.store.withTransaction(async (tx) => {
+        for (const save of saves) await save.write(tx);
+      });
+    } catch (err) {
+      if (!(err instanceof TransactionConflictError)) throw err;
+      throw new ConflictError(
+        saves.length === 1
+          ? (saves[0] as PreparedContentTypeSave).conflict
+          : 'One of the merged content types changed while it was being saved; try again',
+      );
+    }
+  }
+
+  // Entries whose copies the stranding check let off first, so what the types removed is gone from
+  // them before anything else can stop the merge. Then the rest the target already has: a value
+  // one of them gives up (a swap) is then free for the new entry that takes it.
+  const order = [
+    ...plan.filter((p) => relied.has(p.entryId)),
+    ...plan.filter((p) => p.existing && !relied.has(p.entryId)),
+    ...plan.filter((p) => !p.existing),
+  ];
   for (const p of order) await applyEntry(ctx, tgt, p);
 
-  return { mergedContentTypes, mergedEntries: plan.map((p) => p.entryId) };
+  return {
+    mergedContentTypes: types.map((t) => t.next.apiId),
+    mergedEntries: plan.map((p) => p.entryId),
+  };
+}
+
+/** A selected content type: the source's definition and the target's (null when it is new there). */
+interface MergedType {
+  readonly current: ContentType | null;
+  readonly next: ContentType;
 }
 
 /** One selected entry of a merge: its source fields and what the target holds of it. */
