@@ -60,6 +60,7 @@ function ctx(): AppContext {
       subject,
       roleId,
       disabled: false,
+      version: 1,
       createdAt: at,
       updatedAt: at,
     });

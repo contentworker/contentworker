@@ -505,10 +505,10 @@ describe('a deleted environment while it is purged', () => {
       NotFoundError,
     );
     await expect(
-      mergeEnvironments(ctx, 's1', 'staging', 'main', { contentTypes: ['article'] }),
+      mergeEnvironments(ctx, SYSTEM_CALLER, 's1', 'staging', 'main', { contentTypes: ['article'] }),
     ).rejects.toBeInstanceOf(NotFoundError);
     await expect(
-      mergeEnvironments(ctx, 's1', 'main', 'staging', { contentTypes: ['article'] }),
+      mergeEnvironments(ctx, SYSTEM_CALLER, 's1', 'main', 'staging', { contentTypes: ['article'] }),
     ).rejects.toBeInstanceOf(NotFoundError);
   });
 });

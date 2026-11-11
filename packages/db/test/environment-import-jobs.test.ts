@@ -99,10 +99,10 @@ describe('cloning an environment as a job on D1', () => {
       pageIds[i] = entry.id;
     }
     for (const id of pageIds) await publishEntry(ctx, source, id);
-    expect((await exportSnapshot(ctx, source)).entries).toHaveLength(count);
+    expect((await exportSnapshot(ctx, SYSTEM_CALLER, source)).entries).toHaveLength(count);
 
     const blob = new FakeBlobStore();
-    const started = await startEnvironmentClone(ctx, source, target);
+    const started = await startEnvironmentClone(ctx, SYSTEM_CALLER, source, target);
     await drain(blob);
 
     expect(await getBulkJob(ctx, target, started.job.id)).toMatchObject({
@@ -180,7 +180,7 @@ describe('cloning an environment as a job on D1', () => {
       fields: { title: { 'en-US': 'Home' }, body: { 'en-US': [{ _type: 'quote', _key: 'q1' }] } },
     });
 
-    const started = await startEnvironmentClone(ctx, from, to);
+    const started = await startEnvironmentClone(ctx, SYSTEM_CALLER, from, to);
     await drain(new FakeBlobStore());
     expect(await getBulkJob(ctx, to, started.createJobId)).toMatchObject({
       status: 'completed',

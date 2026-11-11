@@ -103,7 +103,7 @@ describe('a merge that would strand the target’s entries', () => {
       fields: fields('Fresh', ['hero']),
     });
 
-    const refused = mergeEnvironments(ctx, 'shop', 'staging', 'main', {
+    const refused = mergeEnvironments(ctx, SYSTEM_CALLER, 'shop', 'staging', 'main', {
       contentTypes: ['page'],
       entries: ['fresh'],
     });
@@ -133,7 +133,7 @@ describe('a merge that would strand the target’s entries', () => {
       fields: fields('Kicked', [], { kicker: 'Breaking' }),
     });
     await expect(
-      mergeEnvironments(ctx, 'shop', 'staging', 'main', { contentTypes: ['note'] }),
+      mergeEnvironments(ctx, SYSTEM_CALLER, 'shop', 'staging', 'main', { contentTypes: ['note'] }),
     ).rejects.toMatchObject({
       issues: [
         {
@@ -153,7 +153,7 @@ describe('a merge that would strand the target’s entries', () => {
 
   it('lets it go when only merged entries hold it, writing them over the copies first', async () => {
     await both('mine', ['cta'], ['hero']);
-    const result = await mergeEnvironments(ctx, 'shop', 'staging', 'main', {
+    const result = await mergeEnvironments(ctx, SYSTEM_CALLER, 'shop', 'staging', 'main', {
       contentTypes: ['page'],
       entries: ['mine'],
     });
@@ -167,7 +167,7 @@ describe('a merge that would strand the target’s entries', () => {
     await both('live', ['cta'], ['hero']);
     await publishEntry(ctx, main, 'live');
     await expect(
-      mergeEnvironments(ctx, 'shop', 'staging', 'main', {
+      mergeEnvironments(ctx, SYSTEM_CALLER, 'shop', 'staging', 'main', {
         contentTypes: ['page'],
         entries: ['live'],
       }),
@@ -190,7 +190,7 @@ describe('a merge that would strand the target’s entries', () => {
       fields: fields('Other', ['cta']),
     });
     await expect(
-      mergeEnvironments(ctx, 'shop', 'staging', 'main', {
+      mergeEnvironments(ctx, SYSTEM_CALLER, 'shop', 'staging', 'main', {
         contentTypes: ['page'],
         entries: ['mine'],
       }),
@@ -211,7 +211,7 @@ describe('a merge that would strand the target’s entries', () => {
     });
     await trashEntry(ctx, main, 'binned');
     await expect(
-      mergeEnvironments(ctx, 'shop', 'staging', 'main', { contentTypes: ['page'] }),
+      mergeEnvironments(ctx, SYSTEM_CALLER, 'shop', 'staging', 'main', { contentTypes: ['page'] }),
     ).rejects.toMatchObject({
       issues: [
         { field: 'contentTypes', message: expect.stringContaining('body: cta (entry binned)') },
@@ -224,7 +224,7 @@ describe('a merge that would strand the target’s entries', () => {
       contentTypeApiId: 'page',
       fields: fields('Binned', ['hero']),
     });
-    await mergeEnvironments(ctx, 'shop', 'staging', 'main', {
+    await mergeEnvironments(ctx, SYSTEM_CALLER, 'shop', 'staging', 'main', {
       contentTypes: ['page'],
       entries: ['binned'],
     });
@@ -256,7 +256,7 @@ describe('a merge that would strand the target’s entries', () => {
       contentTypeApiId: 'page',
       fields: fields('B', [], { slug: 'y' }),
     });
-    await mergeEnvironments(ctx, 'shop', 'staging', 'main', {
+    await mergeEnvironments(ctx, SYSTEM_CALLER, 'shop', 'staging', 'main', {
       contentTypes: ['page'],
       entries: ['b', 'a'],
     });
@@ -283,7 +283,7 @@ describe('a merge that would strand the target’s entries', () => {
         fields: fields('B', [], { slug: b }),
       });
     }
-    const refused = mergeEnvironments(ctx, 'shop', 'staging', 'main', {
+    const refused = mergeEnvironments(ctx, SYSTEM_CALLER, 'shop', 'staging', 'main', {
       contentTypes: ['note'],
       entries: ['ca', 'cb'],
     });
@@ -300,7 +300,7 @@ describe('a merge that would strand the target’s entries', () => {
   it('merges a type or an entry named twice once', async () => {
     await both('twice', ['cta'], ['hero']);
     await expect(
-      mergeEnvironments(ctx, 'shop', 'staging', 'main', {
+      mergeEnvironments(ctx, SYSTEM_CALLER, 'shop', 'staging', 'main', {
         contentTypes: ['page', 'page'],
         entries: ['twice', 'twice'],
       }),
@@ -323,7 +323,7 @@ describe('a merge that would strand the target’s entries', () => {
       status: 'draft',
     });
     await expect(
-      mergeEnvironments(ctx, 'shop', 'staging', 'main', { contentTypes: ['page'] }),
+      mergeEnvironments(ctx, SYSTEM_CALLER, 'shop', 'staging', 'main', { contentTypes: ['page'] }),
     ).rejects.toMatchObject({
       issues: [
         { field: 'contentTypes', message: expect.stringContaining('body: cta (entry served)') },
@@ -350,7 +350,7 @@ describe('a merge that fails on an entry', () => {
 
   it('saves no type when a selected entry is missing from the source', async () => {
     await expect(
-      mergeEnvironments(ctx, 'shop', 'staging', 'main', {
+      mergeEnvironments(ctx, SYSTEM_CALLER, 'shop', 'staging', 'main', {
         contentTypes: ['page'],
         entries: ['ghost'],
       }),
@@ -362,7 +362,7 @@ describe('a merge that fails on an entry', () => {
     await createContentType(ctx, SYSTEM_CALLER, staging, { ...page([hero]), apiId: 'post' });
     await createEntry(ctx, staging, { id: 'p1', contentTypeApiId: 'post', fields: fields('P1') });
     await expect(
-      mergeEnvironments(ctx, 'shop', 'staging', 'main', {
+      mergeEnvironments(ctx, SYSTEM_CALLER, 'shop', 'staging', 'main', {
         contentTypes: ['page'],
         entries: ['p1'],
       }),
@@ -378,7 +378,7 @@ describe('a merge that fails on an entry', () => {
       fields: fields('Home'),
     });
     await expect(
-      mergeEnvironments(ctx, 'shop', 'staging', 'main', {
+      mergeEnvironments(ctx, SYSTEM_CALLER, 'shop', 'staging', 'main', {
         contentTypes: ['page'],
         entries: ['taker'],
       }),
@@ -396,7 +396,9 @@ describe('a merge that fails on an entry', () => {
     await createEntry(ctx, main, { id: 's1', contentTypeApiId: 'solo', fields: fields('One') });
     await createEntry(ctx, main, { id: 's2', contentTypeApiId: 'solo', fields: fields('Two') });
     await expect(
-      mergeEnvironments(ctx, 'shop', 'staging', 'main', { contentTypes: ['page', 'solo'] }),
+      mergeEnvironments(ctx, SYSTEM_CALLER, 'shop', 'staging', 'main', {
+        contentTypes: ['page', 'solo'],
+      }),
     ).rejects.toThrow(/cannot be a singleton/);
     await unchanged();
     expect((await getContentType(ctx, main, 'solo')).singleton).not.toBe(true);
@@ -411,7 +413,7 @@ describe('a merge that fails on an entry', () => {
       contentTypeApiId: 'promo',
       fields: fields('K1', [], { kicker: 'New' }),
     });
-    await mergeEnvironments(ctx, 'shop', 'staging', 'main', {
+    await mergeEnvironments(ctx, SYSTEM_CALLER, 'shop', 'staging', 'main', {
       contentTypes: ['promo'],
       entries: ['k1'],
     });

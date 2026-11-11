@@ -20,6 +20,7 @@ import {
   publishAsset,
   replaceAssetFile,
   runEnvironmentPurge,
+  SYSTEM_CALLER,
   setAssetMetadata,
   setAssetRights,
   syncAssetGate,
@@ -437,7 +438,7 @@ describe('the path token', () => {
     const u = await published();
     const staging = { spaceId: u.scope.spaceId, environmentId: 'staging' };
     await createEnvironment(u.ctx, u.scope.spaceId, 'staging');
-    await cloneEnvironment(u.ctx, u.scope, staging);
+    await cloneEnvironment(u.ctx, SYSTEM_CALLER, u.scope, staging);
     expect(await syncAssetGate(u.ctx, gate, staging, u.asset.id)).toBe('written');
     const inStaging = { scope: staging, asset: u.asset };
     expect((await SELF.fetch(urlOf(inStaging, { kind: 'original' }))).status).toBe(200);
@@ -459,7 +460,7 @@ describe('the path token', () => {
     const spaceId = u.scope.spaceId;
     const clone = { spaceId, environmentId: 'feature' };
     await createEnvironment(u.ctx, spaceId, 'feature');
-    await cloneEnvironment(u.ctx, u.scope, clone);
+    await cloneEnvironment(u.ctx, SYSTEM_CALLER, u.scope, clone);
     await syncAssetGate(u.ctx, gate, clone, u.asset.id);
     const url = urlOf({ scope: clone, asset: u.asset }, { kind: 'original' });
     expect((await SELF.fetch(url)).status).toBe(200);
@@ -491,7 +492,7 @@ describe('the path token', () => {
 
     // The same id again, the asset back as a draft: still nothing to serve.
     await createEnvironment(u.ctx, spaceId, 'feature');
-    await cloneEnvironment(u.ctx, u.scope, clone, { publish: false });
+    await cloneEnvironment(u.ctx, SYSTEM_CALLER, u.scope, clone, { publish: false });
     expect(await u.ctx.store.assets.get(clone, u.asset.id)).toMatchObject({ status: 'draft' });
     expect((await SELF.fetch(url)).status).toBe(404);
   });

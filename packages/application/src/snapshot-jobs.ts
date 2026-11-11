@@ -3,9 +3,12 @@ import type { BlobStore, BulkJob, BulkJobChunk, RemoteFetcher } from '@contentwo
 import { copyRemoteAsset, TransientCopyError } from './asset-copy';
 import { publishAsset } from './assets';
 import { type ChainedJob, persistJob } from './bulk-jobs';
+import { SYSTEM_CALLER } from './content-types';
 import type { AppContext } from './context';
+import { authorizeEnvironmentWide, type EnvironmentCaller } from './environment-access';
 import { importChunkKey } from './job-staging';
 import {
+  authorizeClone,
   confineSnapshotFiles,
   createSnapshotAsset,
   createSnapshotEntry,
@@ -18,6 +21,7 @@ import {
   publishSnapshotEntry,
   type StagedSnapshotEntry,
   type StagedSnapshotPublication,
+  snapshotImportActions,
   stagedEntry,
   stagedPublication,
   withBlocksWritten,
@@ -88,7 +92,8 @@ export const isSnapshotJob = (config: unknown): config is SnapshotJobConfig =>
 
 /**
  * Starts importing a snapshot into `target` as a job. Everything that can refuse it is checked
- * first, exactly as `importSnapshot` does; then the model is written and the rest is staged.
+ * first, exactly as `importSnapshot` does (`caller` too); then the model is written and the rest
+ * is staged.
  */
 export interface StartSnapshotOptions extends ImportOptions {
   /** The ids the create and publish jobs take (a clone fixes them up front); otherwise new. */
@@ -103,11 +108,13 @@ export interface StartSnapshotOptions extends ImportOptions {
 
 export async function startSnapshotImport(
   ctx: AppContext,
+  caller: EnvironmentCaller,
   blob: BlobStore,
   target: Scope,
   snapshot: EnvironmentSnapshot,
   options: StartSnapshotOptions = {},
 ): Promise<StartedSnapshotImport> {
+  authorizeEnvironmentWide(caller, snapshotImportActions(options));
   snapshot = normalizeSnapshotModel(confineSnapshotFiles(target, snapshot, options.filesFrom));
   const prepared = await prepareSnapshotImport(ctx, target, snapshot, options);
   const { publishable } = prepared;
@@ -236,13 +243,18 @@ export interface StartedClone {
  * (`startSnapshotImport`), so neither the export (one read per 100 entries) nor validating every
  * entry runs inside the request. A snapshot the checks refuse fails the prepare job, and its
  * report names the problems; nothing is written.
+ *
+ * `caller` is held to what the clone takes (`authorizeClone`) here, once: the prepare job's own
+ * export and import run as the system.
  */
 export async function startEnvironmentClone(
   ctx: AppContext,
+  caller: EnvironmentCaller,
   source: Scope,
   target: Scope,
   options: ImportOptions = {},
 ): Promise<StartedClone> {
+  authorizeClone(caller, target, options);
   await requireEnvironmentExists(ctx, source);
   await requireEnvironmentExists(ctx, target);
   const existing = await ctx.store.contentTypes.list(target);
@@ -328,8 +340,9 @@ async function runClonePrepare(
   }
   if (await ctx.store.bulkJobs.getJob(target, createJobId)) return { succeeded: 1, failures: [] };
   try {
-    const snapshot = await exportSnapshot(ctx, source, { blockLocks: true });
-    await startSnapshotImport(ctx, blob, target, snapshot, {
+    // Authorized when the clone started (`startEnvironmentClone`).
+    const snapshot = await exportSnapshot(ctx, SYSTEM_CALLER, source, { blockLocks: true });
+    await startSnapshotImport(ctx, SYSTEM_CALLER, blob, target, snapshot, {
       publish: config.publish !== false,
       jobIds: { create: createJobId, publish: publishJobId },
       filesFrom: source.spaceId,

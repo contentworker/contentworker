@@ -615,7 +615,7 @@ describe('D1 store (contract)', () => {
     await expect(
       addMember(ctx, spaceId, { email: 'ada@example.com', role: 'viewer' }, 'system'),
     ).rejects.toThrow();
-    await store.members.save({ ...ada, subject: 'sub-1' });
+    await store.members.save({ ...ada, subject: 'sub-1', version: 2 });
     expect(await store.members.getByEmail(spaceId, 'ada@example.com')).toMatchObject({
       id: ada.id,
       subject: 'sub-1',
@@ -646,7 +646,7 @@ describe('D1 store (contract)', () => {
       (await store.auth.list(spaceId)).find((k) => k.id === apiKey.id)?.roleId,
     ).toBeUndefined();
 
-    await store.members.delete(spaceId, ada.id);
+    await store.members.delete(spaceId, ada.id, 2);
     expect(await store.members.get(spaceId, ada.id)).toBeNull();
 
     // Deployment settings: compare-and-set.

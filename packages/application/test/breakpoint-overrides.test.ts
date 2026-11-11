@@ -241,13 +241,13 @@ describe('per-breakpoint overrides', () => {
     const held = [hero('a', { lg: { size: 'xl' } })];
     for (const env of ['copy', 'clone']) await createEnvironment(ctx, 'site', env);
     const copy = { ...scope, environmentId: 'copy' };
-    const snapshot = await exportSnapshot(ctx, scope);
+    const snapshot = await exportSnapshot(ctx, SYSTEM_CALLER, scope);
     expect(snapshot.blockCatalog?.breakpoints).toEqual(BREAKPOINTS);
-    await importSnapshot(ctx, copy, JSON.parse(JSON.stringify(snapshot)));
+    await importSnapshot(ctx, SYSTEM_CALLER, copy, JSON.parse(JSON.stringify(snapshot)));
     expect((await getBlockCatalog(ctx, copy)).breakpoints).toEqual(BREAKPOINTS);
     expect((await getEntry(ctx, copy, entry.id)).fields.body?.['en-US']).toEqual(held);
     const clone = { ...scope, environmentId: 'clone' };
-    await cloneEnvironment(ctx, scope, clone);
+    await cloneEnvironment(ctx, SYSTEM_CALLER, scope, clone);
     expect((await getBlockCatalog(ctx, clone)).breakpoints).toEqual(BREAKPOINTS);
     expect((await getEntry(ctx, clone, entry.id)).fields.body?.['en-US']).toEqual(held);
 
@@ -515,7 +515,7 @@ describe('per-breakpoint overrides', () => {
     await push();
     await createEnvironment(ctx, 'site', 'staging');
     const staging = { ...scope, environmentId: 'staging' };
-    await cloneEnvironment(ctx, scope, staging);
+    await cloneEnvironment(ctx, SYSTEM_CALLER, scope, staging);
     // Main drops lg and narrows size; staging keeps both.
     await push({
       breakpoints: BREAKPOINTS.slice(0, 1),
@@ -532,7 +532,7 @@ describe('per-breakpoint overrides', () => {
       contentTypeApiId: 'page',
       fields: body(hero('a', { lg: { size: 'xl' }, md: { size: 'xl', hidden: true } })),
     });
-    await mergeEnvironments(ctx, 'site', 'staging', 'main', { entries: [entry.id] });
+    await mergeEnvironments(ctx, SYSTEM_CALLER, 'site', 'staging', 'main', { entries: [entry.id] });
     const merged = await getEntry(ctx, scope, entry.id);
     expect(merged.fields.body?.['en-US']).toEqual([hero('a', { md: { hidden: true } })]);
   });

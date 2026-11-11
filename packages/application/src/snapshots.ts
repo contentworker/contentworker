@@ -16,6 +16,7 @@ import {
   type BlockManifest,
   type Concept,
   type ConceptScheme,
+  type ContentAction,
   type ContentType,
   type ContentTypeDraft,
   canonicalJson,
@@ -52,6 +53,7 @@ import {
   redirectKey,
   redirectSetError,
   reviseContentType,
+  SCOPES,
   type Scope,
   type Tag,
   ValidationError,
@@ -67,6 +69,11 @@ import { blockCatalogHash } from './block-catalog';
 import { createContentType, publishContentType, SYSTEM_CALLER } from './content-types';
 import type { AppContext } from './context';
 import { createEntry, updateEntry } from './entries';
+import {
+  authorizeEnvironmentWide,
+  authorizeInSpace,
+  type EnvironmentCaller,
+} from './environment-access';
 import { allPages } from './paging';
 import { grantSnapshotImport } from './publish-gate';
 import { publishEntry } from './publishing';
@@ -237,12 +244,17 @@ export interface ExportOptions {
  * snapshot carries their metadata, so a restore into a space pointing at the
  * same bucket works and one pointing elsewhere has dangling files, which is
  * visible rather than silent.
+ *
+ * It reads every entry of every type, every field, so `caller` must hold `read` on every content
+ * type alike (`authorizeEnvironmentWide`).
  */
 export async function exportSnapshot(
   ctx: AppContext,
+  caller: EnvironmentCaller,
   scope: Scope,
   options: ExportOptions = {},
 ): Promise<EnvironmentSnapshot> {
+  authorizeEnvironmentWide(caller, ['read']);
   const config = await ctx.store.spaces.getConfig(scope);
   if (!config) throw new NotFoundError('Space', scope.spaceId);
 
@@ -497,13 +509,18 @@ export interface ImportReport {
  * "make this environment look like that one", and doing it badly silently
  * corrupts both. Use a fresh environment, or `compareEnvironments`/
  * `mergeEnvironments` for the intra-space case.
+ *
+ * It writes (and publishes) entries of every type the snapshot defines, so `caller` must hold that
+ * on every content type alike, a dry run included: one limited to some types or fields is refused.
  */
 export async function importSnapshot(
   ctx: AppContext,
+  caller: EnvironmentCaller,
   target: Scope,
   snapshot: EnvironmentSnapshot,
   options: ImportOptions = {},
 ): Promise<ImportReport> {
+  authorizeEnvironmentWide(caller, snapshotImportActions(options));
   snapshot = normalizeSnapshotModel(confineSnapshotFiles(target, snapshot, options.filesFrom));
   const prepared = await prepareSnapshotImport(ctx, target, snapshot, options);
   const { publishable } = prepared;
@@ -1539,19 +1556,48 @@ function preflight(
   return issues.slice(0, MAX_PREFLIGHT_ISSUES);
 }
 
+/** What an import asks of its caller on every type: `write`, and `publish` unless it publishes none. */
+export function snapshotImportActions(options: { readonly publish?: boolean }): ContentAction[] {
+  return options.publish !== false ? ['write', 'publish'] : ['write'];
+}
+
+/** What a clone asks of its caller on every type: the export's `read` and the import's actions. */
+export function cloneActions(options: { readonly publish?: boolean }): ContentAction[] {
+  return ['read', ...snapshotImportActions(options)];
+}
+
+/**
+ * Holds `caller` to what a clone of `source` into `target` takes beyond the request's own scope
+ * check: `content:manage` in the target's space (cloning into a space the caller can't manage
+ * would be a tenancy hole), and the export's and the import's actions on every content type.
+ */
+export function authorizeClone(
+  caller: EnvironmentCaller,
+  target: Scope,
+  options: { readonly publish?: boolean },
+): void {
+  authorizeInSpace(caller, SCOPES.contentManage, target.spaceId);
+  authorizeEnvironmentWide(caller, cloneActions(options));
+}
+
 /**
  * Copies one environment onto another — export plus import, with no file in
  * between. The cross-space case that `mergeEnvironments` does not cover.
  */
 export async function cloneEnvironment(
   ctx: AppContext,
+  caller: EnvironmentCaller,
   source: Scope,
   target: Scope,
   options: ImportOptions = {},
 ): Promise<ImportReport> {
-  return importSnapshot(ctx, target, await exportSnapshot(ctx, source, { blockLocks: true }), {
-    ...options,
-    filesFrom: source.spaceId,
-    keepCreators: true,
-  });
+  authorizeClone(caller, target, options);
+  // Authorized as a whole above: its own export and import run as the system.
+  return importSnapshot(
+    ctx,
+    SYSTEM_CALLER,
+    target,
+    await exportSnapshot(ctx, SYSTEM_CALLER, source, { blockLocks: true }),
+    { ...options, filesFrom: source.spaceId, keepCreators: true },
+  );
 }

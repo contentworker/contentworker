@@ -265,7 +265,9 @@ describe('GraphQL’s schema cache', () => {
       fields: [...fields, field('subtitle', 'Symbol', 2)],
     } as Parameters<typeof createContentType>[3]);
     await publishContentType(wired.ctx, staging, 'page');
-    await mergeEnvironments(wired.ctx, 's1', 'staging', 'main', { contentTypes: ['page'] });
+    await mergeEnvironments(wired.ctx, SYSTEM_CALLER, 's1', 'staging', 'main', {
+      contentTypes: ['page'],
+    });
     expect((await wired.ctx.store.contentTypes.get(scope, 'page'))?.version).toBe(1);
 
     expect((await graphql(query)).status).toBe(200);

@@ -2,6 +2,7 @@ import {
   type Asset,
   emptyAssetMetadata,
   NotFoundError,
+  SCOPES,
   type Scope,
   ValidationError,
 } from '@contentworker/domain';
@@ -14,9 +15,15 @@ import type {
   SpaceExportReader,
 } from '@contentworker/ports';
 import { assetObjectKey } from './assets';
+import { SYSTEM_CALLER } from './content-types';
 import type { AppContext } from './context';
+import {
+  authorizeEnvironmentWide,
+  authorizeInSpace,
+  type EnvironmentCaller,
+} from './environment-access';
 import { startSnapshotImport } from './snapshot-jobs';
-import { type EnvironmentSnapshot, SNAPSHOT_VERSION } from './snapshots';
+import { type EnvironmentSnapshot, SNAPSHOT_VERSION, snapshotImportActions } from './snapshots';
 
 /**
  * Importing a whole space from the JSON "space export" format: content model, locales, tags,
@@ -45,8 +52,7 @@ export interface SpaceExportImportInput {
   readonly publish?: boolean;
   /**
    * Add the export's locales the space lacks. Changing a space's locales is a space admin's call,
-   * so the surface sets this only for a caller holding `space:admin`; without it, missing locales
-   * stop the import.
+   * so it needs a caller holding `space:admin`; without it, missing locales stop the import.
    */
   readonly addLocales?: boolean;
 }
@@ -94,13 +100,30 @@ export interface StartedSpaceExportImport {
   readonly publishJobId: string | null;
 }
 
+/**
+ * Holds `caller` to what importing a space export takes beyond the request's own scope check:
+ * `space:admin` to add locales (they change the space for every environment), and the import's
+ * actions on every content type, since it writes (and publishes) entries of every type the export
+ * defines. The analysis is held to the same, as it stands in for the import.
+ */
+function authorizeSpaceExportImport(
+  caller: EnvironmentCaller,
+  scope: Scope,
+  input: SpaceExportImportInput,
+): void {
+  if (input.addLocales) authorizeInSpace(caller, SCOPES.spaceAdmin, scope.spaceId);
+  authorizeEnvironmentWide(caller, snapshotImportActions(input));
+}
+
 /** Reads an export and reports what importing it into `scope` would do. Writes nothing. */
 export async function analyzeSpaceExport(
   ctx: AppContext,
+  caller: EnvironmentCaller,
   scope: Scope,
   reader: SpaceExportReader,
   input: SpaceExportImportInput,
 ): Promise<SpaceExportReport> {
+  authorizeSpaceExportImport(caller, scope, input);
   return (await plan(ctx, scope, reader, input)).report;
 }
 
@@ -111,11 +134,13 @@ export async function analyzeSpaceExport(
  */
 export async function startSpaceExportImport(
   ctx: AppContext,
+  caller: EnvironmentCaller,
   blob: BlobStore,
   scope: Scope,
   reader: SpaceExportReader,
   input: SpaceExportImportInput,
 ): Promise<StartedSpaceExportImport> {
+  authorizeSpaceExportImport(caller, scope, input);
   const { report, space, config } = await plan(ctx, scope, reader, input);
   if (!report.executable) {
     throw new ValidationError(report.problems.map((message) => ({ field: 'payload', message })));
@@ -175,7 +200,8 @@ export async function startSpaceExportImport(
     });
   }
 
-  const started = await startSnapshotImport(ctx, blob, scope, snapshot, {
+  // Authorized above, as a whole.
+  const started = await startSnapshotImport(ctx, SYSTEM_CALLER, blob, scope, snapshot, {
     publish: publishing,
     remoteFiles: new Map(space.assets.map((a) => [a.id, a.file.url])),
   });
