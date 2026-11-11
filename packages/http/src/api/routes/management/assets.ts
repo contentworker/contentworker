@@ -43,7 +43,8 @@ export function assetsRoutes(deps: AuthDeps): Hono<AuthVars> {
         'Archived assets are left out unless status=archived or status=all. Page with the ' +
         "response's nextCursor; a cursor is valid only with the same filters and sort. ids looks " +
         'up several assets at once; it narrows with the other filters, and ids not in the space ' +
-        'are left out.',
+        'are left out. contentHash finds the assets that already hold a file, for a client that ' +
+        'would rather reuse one than upload it again.',
       query: {
         ids: `Comma-separated asset ids, at most ${MAX_ASSET_IDS}; 422 past that or on an empty one`,
         kind: 'image | video | audio | document | other',
@@ -51,6 +52,9 @@ export function assetsRoutes(deps: AuthDeps): Hono<AuthVars> {
         tag: 'A taxonomy tag id',
         folder: 'A folder id, or root for assets in no folder',
         status: 'draft | published | archived | all',
+        contentHash:
+          'SHA-256 of a file (64 hex digits): the assets with exactly these bytes, once ingest ' +
+          'has hashed them',
         sort: 'updatedAt (default) | createdAt | size',
         order: 'desc (default) | asc',
         limit: `Page size, 1..${MAX_PAGE_LIMIT}`,
