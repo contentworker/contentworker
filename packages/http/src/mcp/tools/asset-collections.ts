@@ -50,10 +50,10 @@ export function registerAssetCollectionTools(server: McpServer, t: ToolContext):
   const { deps, ctx, principal, guard } = t;
   const { signedOne, signedPage } = signedAssets(deps);
   // --- collections, share links, multipart uploads, zip downloads ---------------------------
-  // The same use-cases and scopes as the REST routes: collections are content:write to change
-  // and preview:read to read; share links are content:publish throughout (a link, and the list
-  // that carries the URLs, opens published files to anyone); uploads content:write; a zip
-  // preview:read.
+  // The same use-cases and scopes as the REST routes: collections are assets:write to change
+  // and assets:read to read; share links are content:publish throughout (a link, and the list
+  // that carries the URLs, opens published files to anyone); uploads assets:write; a zip
+  // assets:read.
   const collectionAuthor = auditActor(principal);
   // A key with content grants reads no assets (as the preview asset tools refuse it).
   const refuseGrantedAssetReads = () => {
@@ -82,7 +82,7 @@ export function registerAssetCollectionTools(server: McpServer, t: ToolContext):
       annotations: { readOnlyHint: true },
     },
     async (args) => {
-      guard(SCOPES.previewRead, scopeOf(args));
+      guard(SCOPES.assetsRead, scopeOf(args));
       return ok(
         await listAssetCollections(ctx, scopeOf(args), {
           ...(args.limit !== undefined ? { limit: args.limit } : {}),
@@ -102,7 +102,7 @@ export function registerAssetCollectionTools(server: McpServer, t: ToolContext):
       annotations: { readOnlyHint: true },
     },
     async (args) => {
-      guard(SCOPES.previewRead, scopeOf(args));
+      guard(SCOPES.assetsRead, scopeOf(args));
       return ok(await getAssetCollection(ctx, scopeOf(args), args.id));
     },
   );
@@ -120,7 +120,7 @@ export function registerAssetCollectionTools(server: McpServer, t: ToolContext):
       ),
     },
     async (args) => {
-      guard(SCOPES.contentWrite, scopeOf(args));
+      guard(SCOPES.assetsWrite, scopeOf(args));
       return ok(
         await createAssetCollection(
           ctx,
@@ -149,7 +149,7 @@ export function registerAssetCollectionTools(server: McpServer, t: ToolContext):
       ),
     },
     async (args) => {
-      guard(SCOPES.contentWrite, scopeOf(args));
+      guard(SCOPES.assetsWrite, scopeOf(args));
       return ok(
         await updateAssetCollection(ctx, scopeOf(args), args.id, {
           ...(args.name !== undefined ? { name: args.name } : {}),
@@ -168,7 +168,7 @@ export function registerAssetCollectionTools(server: McpServer, t: ToolContext):
       ),
     },
     async (args) => {
-      guard(SCOPES.contentWrite, scopeOf(args));
+      guard(SCOPES.assetsWrite, scopeOf(args));
       await deleteAssetCollection(ctx, scopeOf(args), args.id);
       return ok({ deleted: args.id });
     },
@@ -198,7 +198,7 @@ export function registerAssetCollectionTools(server: McpServer, t: ToolContext):
       annotations: { readOnlyHint: true },
     },
     async (args) => {
-      guard(SCOPES.previewRead, scopeOf(args));
+      guard(SCOPES.assetsRead, scopeOf(args));
       refuseGrantedAssetReads();
       const page = await listAssetCollectionItems(ctx, scopeOf(args), args.id, {
         ...(args.limit !== undefined ? { limit: args.limit } : {}),
@@ -227,7 +227,7 @@ export function registerAssetCollectionTools(server: McpServer, t: ToolContext):
       ),
     },
     async (args) => {
-      guard(SCOPES.contentWrite, scopeOf(args));
+      guard(SCOPES.assetsWrite, scopeOf(args));
       return ok(await addToAssetCollection(ctx, scopeOf(args), args.id, args.assetIds));
     },
   );
@@ -245,7 +245,7 @@ export function registerAssetCollectionTools(server: McpServer, t: ToolContext):
       ),
     },
     async (args) => {
-      guard(SCOPES.contentWrite, scopeOf(args));
+      guard(SCOPES.assetsWrite, scopeOf(args));
       return ok(await removeFromAssetCollection(ctx, scopeOf(args), args.id, args.assetIds));
     },
   );
@@ -265,7 +265,7 @@ export function registerAssetCollectionTools(server: McpServer, t: ToolContext):
       ),
     },
     async (args) => {
-      guard(SCOPES.contentWrite, scopeOf(args));
+      guard(SCOPES.assetsWrite, scopeOf(args));
       await reorderAssetCollection(ctx, scopeOf(args), args.id, args.assetIds);
       return ok({ reordered: args.id });
     },
@@ -378,7 +378,7 @@ export function registerAssetCollectionTools(server: McpServer, t: ToolContext):
       ),
     },
     async (args) => {
-      guard(SCOPES.contentWrite, scopeOf(args));
+      guard(SCOPES.assetsWrite, scopeOf(args));
       const { space: _space, environment: _environment, folderId, ...input } = args;
       const created = await createAsset(ctx, uploadBlob(), scopeOf(args), input, {
         createdBy: collectionAuthor,
@@ -406,7 +406,7 @@ export function registerAssetCollectionTools(server: McpServer, t: ToolContext):
       ),
     },
     async (args) => {
-      guard(SCOPES.contentWrite, scopeOf(args));
+      guard(SCOPES.assetsWrite, scopeOf(args));
       const started = await startMultipartAssetUpload(
         ctx,
         uploadBlob(),
@@ -433,7 +433,7 @@ export function registerAssetCollectionTools(server: McpServer, t: ToolContext):
       annotations: { readOnlyHint: true },
     },
     async (args) => {
-      guard(SCOPES.contentWrite, scopeOf(args));
+      guard(SCOPES.assetsWrite, scopeOf(args));
       return ok(
         await signAssetUploadParts(
           ctx,
@@ -466,7 +466,7 @@ export function registerAssetCollectionTools(server: McpServer, t: ToolContext):
       ),
     },
     async (args) => {
-      guard(SCOPES.contentWrite, scopeOf(args));
+      guard(SCOPES.assetsWrite, scopeOf(args));
       const asset = await completeMultipartAssetUpload(
         ctx,
         { blob: uploadBlob(), ...(deps.assetIngest ? { ingest: deps.assetIngest } : {}) },
@@ -491,7 +491,7 @@ export function registerAssetCollectionTools(server: McpServer, t: ToolContext):
       ),
     },
     async (args) => {
-      guard(SCOPES.contentWrite, scopeOf(args));
+      guard(SCOPES.assetsWrite, scopeOf(args));
       await abortMultipartAssetUpload(ctx, uploadBlob(), scopeOf(args), args.id, args.uploadId);
       return ok({ aborted: args.uploadId });
     },
@@ -511,7 +511,7 @@ export function registerAssetCollectionTools(server: McpServer, t: ToolContext):
       ),
     },
     async (args) => {
-      guard(SCOPES.previewRead, scopeOf(args));
+      guard(SCOPES.assetsRead, scopeOf(args));
       refuseGrantedAssetReads();
       return ok(
         await requestAssetZip(
@@ -536,7 +536,7 @@ export function registerAssetCollectionTools(server: McpServer, t: ToolContext):
       annotations: { readOnlyHint: true },
     },
     async (args) => {
-      guard(SCOPES.previewRead, scopeOf(args));
+      guard(SCOPES.assetsRead, scopeOf(args));
       refuseGrantedAssetReads();
       return ok(await getAssetZip(ctx, uploadBlob(), scopeOf(args), args.id));
     },
@@ -550,7 +550,7 @@ export function registerAssetCollectionTools(server: McpServer, t: ToolContext):
       annotations: { readOnlyHint: true },
     },
     async (args) => {
-      guard(SCOPES.previewRead, scopeOf(args));
+      guard(SCOPES.assetsRead, scopeOf(args));
       refuseGrantedAssetReads();
       return ok({ items: await listAssetZips(ctx, scopeOf(args)) });
     },
@@ -587,7 +587,7 @@ export function registerAssetCollectionTools(server: McpServer, t: ToolContext):
       annotations: { readOnlyHint: true },
     },
     async (args) => {
-      guard(SCOPES.previewRead, scopeOf(args));
+      guard(SCOPES.assetsRead, scopeOf(args));
       return ok({ items: await listAssetRenditions(ctx, scopeOf(args)) });
     },
   );
@@ -662,7 +662,7 @@ export function registerAssetCollectionTools(server: McpServer, t: ToolContext):
       ),
     },
     async (args) => {
-      guard(SCOPES.contentWrite, scopeOf(args));
+      guard(SCOPES.assetsWrite, scopeOf(args));
       return ok(
         await signedOne(
           scopeOf(args),

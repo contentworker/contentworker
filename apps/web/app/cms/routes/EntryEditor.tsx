@@ -900,6 +900,9 @@ export function EntryEditor() {
               onValuesChange={onValuesChange}
               blockRules={formBlockRules}
               blockThumbnails={blockThumbnails}
+              {...(entryId && canvasAvailable(selectedType)
+                ? { canvasPath: `/content/${typeId}/${entryId}/canvas` }
+                : {})}
               blockLocks={blockLocks.data?.locks}
               directory={directory}
               serverIssues={refused}
@@ -978,6 +981,7 @@ export function EntryEditor() {
               onPick={onSitePick}
               proposal={proposal?.ops ?? null}
               saving={proposal?.state === 'saving'}
+              {...(blockCatalog ? { breakpoints: blockCatalog.breakpoints } : {})}
             />
           ) : null}
           {isEdit && entryId && paneView === 'activity' ? (

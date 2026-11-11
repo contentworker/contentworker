@@ -52,7 +52,8 @@ one is easy to recognize and scan for.
 
 Scopes are what a key may do: `content:write` to edit drafts, `content:publish` to publish,
 `content:manage` to change the content model, `preview:read` and `delivery:read` to read, and so
-on. Every route checks one, against the space in its path. The full list, with what each allows,
+on. `assets:read` and `assets:write` cover assets alone; `preview:read` and `content:write` carry
+them, so an existing key or role keeps its asset access. Every route checks one, against the space in its path. The full list, with what each allows,
 is in [Permission scopes](/reference/scopes/).
 
 ## Roles

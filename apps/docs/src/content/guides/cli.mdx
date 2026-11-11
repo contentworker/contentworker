@@ -55,7 +55,7 @@ In CI, skip the file: set `CONTENTWORKER_TOKEN` and `CONTENTWORKER_URL` (and
 | `entries create`                     | A draft (`--content-type`, `--fields`)                                 | `content:write`     |
 | `entries update <id>`                | A new draft version; merges `--fields` into the draft by field and locale (`--replace` sends them as the whole draft) | `content:write` |
 | `entries publish <id…>`              | Publish one entry (`--expected-version` holds it), or up to 1,000      | `content:publish`   |
-| `assets upload <file>`               | Upload a file of any size (`--title`, `--folder`, `--publish`)         | `content:write`     |
+| `assets upload <file>`               | Upload a file of any size (`--title`, `--folder`, `--publish`)         | `assets:write`      |
 | `import <file>`                      | Import a CSV, JSON or WordPress export as drafts                       | `content:write`     |
 | `types [--out file] [--blocks file]` | TypeScript types for the model and its blocks, as described in [typed content](/guides/sdks/#typed-content) | `preview:read` |
 | `doctor`                             | Check sign-in, reachability, the API version and access to the space   |                     |

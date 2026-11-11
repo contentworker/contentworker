@@ -20,9 +20,39 @@ import type { LiveEdits } from './ops';
 /** Marks this channel's messages; anything without it is someone else's. */
 export const FRAME_CHANNEL = 'cw-site-frame';
 
-/** The device widths the frame can show the site at, in CSS pixels. */
-export const DEVICE_WIDTHS = { desktop: 1280, tablet: 768, phone: 390 } as const;
-export type Device = keyof typeof DEVICE_WIDTHS;
+/**
+ * The widths the frame shows the site at, in CSS pixels: a preset's (`cms/lib/breakpoints.ts`, the
+ * catalog's breakpoints or the three devices), within the bounds a breakpoint's `minWidth` takes.
+ * Anything else is the default.
+ */
+export const FRAME_WIDTH = { min: 1, max: 10_000, default: 1280 } as const;
+
+/**
+ * What an editor page loaded before `width` replaced `device` sends: its device's width. An open
+ * tab keeps its old script after a deploy, and frames a new Site frame. Remove one release after
+ * the canvas's breakpoint presets ship, once no tab can still be that old.
+ */
+const LEGACY_DEVICE_WIDTHS: Readonly<Record<string, number>> = {
+  desktop: 1280,
+  tablet: 768,
+  phone: 390,
+};
+
+/** The width a `view` message asks for: its `width`, else an older editor's `device`. */
+export function viewWidth(m: { readonly width?: unknown; readonly device?: unknown }): number {
+  const legacy = typeof m.device === 'string' ? LEGACY_DEVICE_WIDTHS[m.device] : undefined;
+  return frameWidth(m.width ?? legacy);
+}
+
+/** A `view` message's width as the frame uses it: a whole number in bounds, else the default. */
+export function frameWidth(width: unknown): number {
+  return typeof width === 'number' &&
+    Number.isInteger(width) &&
+    width >= FRAME_WIDTH.min &&
+    width <= FRAME_WIDTH.max
+    ? width
+    : FRAME_WIDTH.default;
+}
 
 /** One entry in one locale, as the form holds it: what the frame sends the site as `entry.state`. */
 export interface FrameEntry {
@@ -62,7 +92,8 @@ export type EditorMessage =
       readonly type: 'view';
       /** Editing on: clicks in the page select (`editing { on }`); off, the page is the site. */
       readonly editing: boolean;
-      readonly device: Device;
+      /** The page's width, in CSS pixels: the frame scales it down to fit. */
+      readonly width: number;
       /**
        * What the person may let the page do; the frame accepts no more than this of the offer.
        * Absent while it isn't known yet: the frame holds the page's offer until it is.

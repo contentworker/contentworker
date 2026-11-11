@@ -1,6 +1,7 @@
 import type {
   ArrayItemType,
   BlockCatalog,
+  Breakpoint,
   ComponentVariant,
   ContentType,
   DateFormat,
@@ -30,6 +31,7 @@ import {
   optionLabel,
   optionValue,
   resolveLocalizedValue,
+  responsivePropsOf,
   ruleTarget,
   ruleValueAt,
   SEO_FIELDS,
@@ -57,6 +59,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@contentworker/ui/tabs
 import { Textarea } from '@contentworker/ui/textarea';
 import { ChevronRight, Lock, Plus } from 'lucide-react';
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { Link } from 'react-router';
 import type { ActorDirectory } from '../lib/authorship';
 import {
   inLongRun,
@@ -75,6 +78,7 @@ import {
   wasStored,
 } from '../lib/block-rules';
 import { type BlockThumbnails, NO_THUMBNAILS } from '../lib/block-thumbnails';
+import { overridesOf } from '../lib/breakpoints';
 import type { AppExtension, EntryBlockLock, TextDirection } from '../lib/management';
 import { BlockThumbnail } from './BlockThumbnail';
 import { EntityPicker } from './EntityPicker';
@@ -156,6 +160,15 @@ const BlockLocksContext = createContext<FormLocks | undefined>(undefined);
 
 /** The catalog's block thumbnails (`useBlockThumbnails`), for the Add block menus. */
 const BlockThumbnailContext = createContext<BlockThumbnails>(NO_THUMBNAILS);
+
+/**
+ * The breakpoints of the blocks field holding a block's slot: what a nested blocks field without
+ * its own takes. None at the top level.
+ */
+const BreakpointsContext = createContext<readonly Breakpoint[]>([]);
+
+/** The entry's canvas, where a block's per-breakpoint overrides are edited; absent without one. */
+const CanvasPathContext = createContext<string | undefined>(undefined);
 
 /** Per-field, per-locale working state: `{ apiId: { locale: value } }`. */
 type Values = Record<string, Record<string, unknown>>;
@@ -472,6 +485,11 @@ export function EntryForm(props: {
    * (`useBlockThumbnails`): the Add block menu shows each beside the block's name.
    */
   blockThumbnails?: BlockThumbnails;
+  /**
+   * The entry's canvas, when it has one: a block's per-breakpoint overrides show read-only under
+   * its props, with a link there to edit them.
+   */
+  canvasPath?: string;
   /**
    * Issues the server refused a save for (the block config's, set since the form read it), shown
    * on the fields they name, as the form's own are, whenever `seq` changes.
@@ -996,139 +1014,141 @@ export function EntryForm(props: {
       <DirectionsContext.Provider value={props.directions}>
         <BlockRulesContext.Provider value={formBlockRules}>
           <BlockThumbnailContext.Provider value={props.blockThumbnails ?? NO_THUMBNAILS}>
-            <BlockLocksContext.Provider value={formLocks}>
-              <p role="status" aria-live="polite" className="sr-only">
-                {ruleNews}
-              </p>
-              {hasLocalized && locales.length > 1 && (
-                // Locale switcher: a segmented row of <button>s (role=button) — component
-                // tests select a locale via getByRole('button', { name: 'de-DE' }).
-                <div className="inline-flex flex-wrap gap-1 rounded-lg border bg-muted/40 p-1">
-                  {locales.map((loc) => {
-                    const errCount = errorsByLocale.get(loc) ?? 0;
-                    return (
-                      <Button
-                        type="button"
-                        key={loc}
-                        size="sm"
-                        variant={loc === activeLocale ? 'default' : 'ghost'}
-                        onClick={() => setActiveLocale(loc)}
-                      >
-                        {loc}
-                        {loc === defaultLocale ? ' (default)' : ''}
-                        {props.delivered?.[loc] === false && (
-                          <>
-                            {' '}
-                            {/* In words and ruled in the button's own colour, so it reads on the ink of
-                        the chosen tab and the muted row alike. */}
-                            <span className="rounded-full border border-current px-1.5 font-normal text-2xs leading-4">
-                              Not delivered
-                            </span>
-                          </>
-                        )}
-                        <ErrorCount count={errCount} />
-                      </Button>
-                    );
-                  })}
-                </div>
-              )}
-
-              {tabs.length > 1 ? (
-                <Tabs value={activeTab} onValueChange={setActiveTab}>
-                  {/* Start-aligned: centred tabs that overflow push the first out of reach of the scroll. */}
-                  <TabsList
-                    aria-label="Sections of the entry"
-                    className="w-full justify-start overflow-x-auto"
-                  >
-                    {tabs.map((t) => {
-                      const count = errorsByTab.get(t.apiId) ?? 0;
+            <CanvasPathContext.Provider value={props.canvasPath}>
+              <BlockLocksContext.Provider value={formLocks}>
+                <p role="status" aria-live="polite" className="sr-only">
+                  {ruleNews}
+                </p>
+                {hasLocalized && locales.length > 1 && (
+                  // Locale switcher: a segmented row of <button>s (role=button) — component
+                  // tests select a locale via getByRole('button', { name: 'de-DE' }).
+                  <div className="inline-flex flex-wrap gap-1 rounded-lg border bg-muted/40 p-1">
+                    {locales.map((loc) => {
+                      const errCount = errorsByLocale.get(loc) ?? 0;
                       return (
-                        // As wide as its label at least: the touch minimum would otherwise let the tabs
-                        // shrink to fit, overlapping their labels instead of scrolling the bar.
-                        <TabsTrigger
-                          key={t.apiId}
-                          value={t.apiId}
-                          className="shrink-0 basis-auto px-3"
+                        <Button
+                          type="button"
+                          key={loc}
+                          size="sm"
+                          variant={loc === activeLocale ? 'default' : 'ghost'}
+                          onClick={() => setActiveLocale(loc)}
                         >
-                          {t.name}
-                          <ErrorCount count={count} />
-                        </TabsTrigger>
-                      );
-                    })}
-                  </TabsList>
-                  {tabs.map((t) => (
-                    <TabsContent key={t.apiId} value={t.apiId}>
-                      {renderTab(t)}
-                    </TabsContent>
-                  ))}
-                </Tabs>
-              ) : (
-                tabs[0] && renderTab(tabs[0])
-              )}
-
-              {Object.keys(fieldErrors).length > 0 && (
-                <div
-                  ref={summaryRef}
-                  role="alert"
-                  className="space-y-1 rounded-2xl border border-destructive/30 bg-destructive/10 p-3 text-sm"
-                >
-                  <p className="font-medium text-destructive">
-                    Can’t save yet: {Object.keys(fieldErrors).length}{' '}
-                    {Object.keys(fieldErrors).length === 1 ? 'field needs' : 'fields need'}{' '}
-                    attention.
-                  </p>
-                  <ul className="space-y-0.5">
-                    {Object.entries(fieldErrors).map(([key, message]) => {
-                      const [apiId = '', loc = defaultLocale] = key.split(':');
-                      const tab = tabOf.get(topLevel(apiId));
-                      // In view: this locale and tab, and not inside a group that is closed.
-                      const group = groupOf.get(topLevel(apiId));
-                      const here =
-                        loc === activeLocale &&
-                        (tab === undefined || tab === activeTab) &&
-                        (group === undefined || openGroups.has(group));
-                      return (
-                        <li key={key} className="text-destructive">
-                          {here ? (
-                            <span>
-                              {fieldName(apiId, loc)} ({loc}): {message}
-                            </span>
-                          ) : (
-                            <button
-                              type="button"
-                              className="underline underline-offset-2"
-                              onClick={() => {
-                                setActiveLocale(loc);
-                                if (tab !== undefined || group !== undefined)
-                                  showField(topLevel(apiId));
-                              }}
-                            >
-                              {fieldName(apiId, loc)} ({loc}): {message}
-                            </button>
+                          {loc}
+                          {loc === defaultLocale ? ' (default)' : ''}
+                          {props.delivered?.[loc] === false && (
+                            <>
+                              {' '}
+                              {/* In words and ruled in the button's own colour, so it reads on the ink of
+                        the chosen tab and the muted row alike. */}
+                              <span className="rounded-full border border-current px-1.5 font-normal text-2xs leading-4">
+                                Not delivered
+                              </span>
+                            </>
                           )}
-                        </li>
+                          <ErrorCount count={errCount} />
+                        </Button>
                       );
                     })}
-                  </ul>
-                </div>
-              )}
+                  </div>
+                )}
 
-              {!props.hideActions && (
-                <div className="flex items-center gap-2">
-                  <Button type="submit" disabled={props.busy}>
-                    Save draft
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={props.onCancel}
-                    disabled={props.busy}
+                {tabs.length > 1 ? (
+                  <Tabs value={activeTab} onValueChange={setActiveTab}>
+                    {/* Start-aligned: centred tabs that overflow push the first out of reach of the scroll. */}
+                    <TabsList
+                      aria-label="Sections of the entry"
+                      className="w-full justify-start overflow-x-auto"
+                    >
+                      {tabs.map((t) => {
+                        const count = errorsByTab.get(t.apiId) ?? 0;
+                        return (
+                          // As wide as its label at least: the touch minimum would otherwise let the tabs
+                          // shrink to fit, overlapping their labels instead of scrolling the bar.
+                          <TabsTrigger
+                            key={t.apiId}
+                            value={t.apiId}
+                            className="shrink-0 basis-auto px-3"
+                          >
+                            {t.name}
+                            <ErrorCount count={count} />
+                          </TabsTrigger>
+                        );
+                      })}
+                    </TabsList>
+                    {tabs.map((t) => (
+                      <TabsContent key={t.apiId} value={t.apiId}>
+                        {renderTab(t)}
+                      </TabsContent>
+                    ))}
+                  </Tabs>
+                ) : (
+                  tabs[0] && renderTab(tabs[0])
+                )}
+
+                {Object.keys(fieldErrors).length > 0 && (
+                  <div
+                    ref={summaryRef}
+                    role="alert"
+                    className="space-y-1 rounded-2xl border border-destructive/30 bg-destructive/10 p-3 text-sm"
                   >
-                    Cancel
-                  </Button>
-                </div>
-              )}
-            </BlockLocksContext.Provider>
+                    <p className="font-medium text-destructive">
+                      Can’t save yet: {Object.keys(fieldErrors).length}{' '}
+                      {Object.keys(fieldErrors).length === 1 ? 'field needs' : 'fields need'}{' '}
+                      attention.
+                    </p>
+                    <ul className="space-y-0.5">
+                      {Object.entries(fieldErrors).map(([key, message]) => {
+                        const [apiId = '', loc = defaultLocale] = key.split(':');
+                        const tab = tabOf.get(topLevel(apiId));
+                        // In view: this locale and tab, and not inside a group that is closed.
+                        const group = groupOf.get(topLevel(apiId));
+                        const here =
+                          loc === activeLocale &&
+                          (tab === undefined || tab === activeTab) &&
+                          (group === undefined || openGroups.has(group));
+                        return (
+                          <li key={key} className="text-destructive">
+                            {here ? (
+                              <span>
+                                {fieldName(apiId, loc)} ({loc}): {message}
+                              </span>
+                            ) : (
+                              <button
+                                type="button"
+                                className="underline underline-offset-2"
+                                onClick={() => {
+                                  setActiveLocale(loc);
+                                  if (tab !== undefined || group !== undefined)
+                                    showField(topLevel(apiId));
+                                }}
+                              >
+                                {fieldName(apiId, loc)} ({loc}): {message}
+                              </button>
+                            )}
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </div>
+                )}
+
+                {!props.hideActions && (
+                  <div className="flex items-center gap-2">
+                    <Button type="submit" disabled={props.busy}>
+                      Save draft
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={props.onCancel}
+                      disabled={props.busy}
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                )}
+              </BlockLocksContext.Provider>
+            </CanvasPathContext.Provider>
           </BlockThumbnailContext.Provider>
         </BlockRulesContext.Provider>
       </DirectionsContext.Provider>
@@ -1259,6 +1279,9 @@ export function FieldInput(props: {
         apiId={field.apiId}
         variants={variants}
         size={field.validations?.size}
+        {...(Array.isArray(field.items?.breakpoints)
+          ? { breakpoints: field.items.breakpoints }
+          : {})}
         value={value}
         path={props.path ?? field.apiId}
         errorFor={props.errorFor}
@@ -1899,6 +1922,8 @@ function BlocksInput(
     variants: readonly ComponentVariant[];
     /** `validations.size`: at the cap, adding is turned off rather than refused on save. */
     size?: { readonly min?: number; readonly max?: number };
+    /** The field's own breakpoints (a catalog target's); absent, the holding slot's. */
+    breakpoints?: readonly Breakpoint[];
   },
 ) {
   const { variants, path, errorFor, onEdited, pickers, locale, onChange, label } = props;
@@ -1933,6 +1958,8 @@ function BlocksInput(
   const view = locks?.view(locale) ?? NO_LOCKS;
   const sealedBy = parent?.key ? view.marks.get(parent.key) : undefined;
   const held = locked || !!sealedBy?.sealed;
+  const inherited = useContext(BreakpointsContext);
+  const breakpoints = props.breakpoints ?? inherited;
 
   const replace = (index: number, item: unknown) =>
     onChange(items.map((existing, i) => (i === index ? item : existing)));
@@ -2034,17 +2061,24 @@ function BlocksInput(
               <BlockParentContext.Provider
                 value={{ type: variant.apiId, ...(typeof key === 'string' ? { key } : {}) }}
               >
-                <ComponentInput
-                  id={`${props.id}-${index}`}
-                  fields={variant.fields}
-                  value={item}
-                  path={at}
-                  errorFor={errorFor}
-                  onEdited={onEdited}
-                  pickers={pickers}
-                  locale={locale}
-                  frozen={!!mark?.frozen}
-                  onChange={(v) => replace(index, v)}
+                <BreakpointsContext.Provider value={breakpoints}>
+                  <ComponentInput
+                    id={`${props.id}-${index}`}
+                    fields={variant.fields}
+                    value={item}
+                    path={at}
+                    errorFor={errorFor}
+                    onEdited={onEdited}
+                    pickers={pickers}
+                    locale={locale}
+                    frozen={!!mark?.frozen}
+                    onChange={(v) => replace(index, v)}
+                  />
+                </BreakpointsContext.Provider>
+                <BlockOverrides
+                  variant={variant}
+                  block={asObject(item)}
+                  breakpoints={breakpoints}
                 />
               </BlockParentContext.Provider>
             ) : (
@@ -2124,6 +2158,64 @@ function BlocksInput(
       )}
     </div>
   );
+}
+
+/**
+ * A block's per-breakpoint overrides (`_responsive`), read-only under its props: each breakpoint
+ * the field declares and the responsive props it changes there. They are edited on the canvas, at
+ * the width they apply from; the form keeps them as they are through its edits and its save.
+ * Overrides a push made stale aren't listed: the save drops them.
+ */
+function BlockOverrides(props: {
+  variant: ComponentVariant;
+  block: Record<string, unknown>;
+  breakpoints: readonly Breakpoint[];
+}) {
+  const canvas = useContext(CanvasPathContext);
+  const overrides = overridesOf(props.block);
+  const responsive = responsivePropsOf(props.variant);
+  const rows = props.breakpoints.flatMap((b) => {
+    const props_ = Object.entries(overrides[b.id] ?? {}).flatMap(([prop, value]) => {
+      const f = props.variant.fields.find((x) => x.apiId === prop);
+      if (!f || !responsive.includes(prop)) return [];
+      return [{ name: f.name, value: overrideLabel(f, value) }];
+    });
+    return props_.length > 0 ? [{ breakpoint: b, props: props_ }] : [];
+  });
+  if (rows.length === 0) return null;
+  return (
+    <div data-block-overrides className="space-y-1.5 px-1 text-xs">
+      <p className="caption">Per width</p>
+      <dl className="space-y-0.5">
+        {rows.map((r) => (
+          <div key={r.breakpoint.id} className="flex flex-wrap gap-x-1.5">
+            <dt className="font-medium">
+              {r.breakpoint.name}
+              <span className="font-normal text-muted-foreground">
+                {' '}
+                from {r.breakpoint.minWidth}px
+              </span>
+            </dt>
+            <dd className="text-muted-foreground">
+              {r.props.map((x) => `${x.name} ${x.value}`).join(' · ')}
+            </dd>
+          </div>
+        ))}
+      </dl>
+      {canvas ? (
+        <Link to={canvas} className="text-link underline-offset-2 hover:underline">
+          Edit per width on the canvas
+        </Link>
+      ) : null}
+    </div>
+  );
+}
+
+/** An override's value as the form reads it: a token by its option's label, a Boolean in words. */
+function overrideLabel(f: FieldDefinition, value: unknown): string {
+  if (typeof value === 'boolean') return value ? 'on' : 'off';
+  const option = normalizeOptions(f.validations?.in, f.type).find((o) => optionValue(o) === value);
+  return option !== undefined ? optionLabel(option) : String(value);
 }
 
 /**

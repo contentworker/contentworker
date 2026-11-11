@@ -77,7 +77,8 @@ Everything below is built and tested on v2.
 - **Integration.** Signed webhooks with a delivery log, event-triggered functions, app
   extensions, sandboxed plugins in isolated edge workers (with per-plugin `kv:storage` and
   operator settings, secrets sealed), the transactional outbox with lease-claimed relay.
-- **Access.** CMA/CDA/CPA keys, eight scopes, roles with per-type and per-field grants (read,
+- **Access.** CMA/CDA/CPA keys, ten scopes (`assets:read` and `assets:write` held by
+  implication with `preview:read` and `content:write`), roles with per-type and per-field grants (read,
   write, publish, and delete and unpublish implied unless withheld) and presets, the last-administrator guard, OAuth 2.1 with the device flow for MCP clients, personal
   access tokens, preview links, rate limits, the audit log (filtered by actor, action, target and
   date, with keyset paging, a `detail` of the field paths an entry save changed, and each entry's
@@ -124,8 +125,8 @@ Everything below is built and tested on v2.
 - [ ] **Extension runtime: apps as packages.** Grow sandboxed plugins into installable packages
   that bring their own operations, workflow nodes, content types and admin UI, so integrations
   ship as packages on the runtime rather than in core. Seven PRs, each usable on its own:
-  1. **Asset scopes.** `assets:read` and `assets:write`, implied by `preview:read` and
-     `content:write` when scopes resolve, so no stored key, role or token changes.
+  1. ~~**Asset scopes.**~~ Shipped: `assets:read` and `assets:write`, implied by `preview:read`
+     and `content:write` when scopes resolve, so no stored key, role or token changes.
   2. **Manifest v2 and operations.** Schema validation, the approval screen, sync operations, and
      REST, OpenAPI and MCP generated from one manifest.
   3. **Content models from packages.** Managed and seeded types with an owner, install and upgrade
@@ -153,6 +154,42 @@ Everything below is built and tested on v2.
     `caps.connection.fetch` with auth injected and never sees the secret. Sync operations get
     about 10 s; longer work is declared `async` and runs on a durable workflow that returns a
     job id.
+- [ ] **Attribute-based access to assets (ABAC).** Administrators govern assets by the attributes
+  each one carries (classification, brand, region, client, license, kind), not by the folder it
+  sits in. Roles gain asset grants beside their content grants: each grant has an effect
+  (`allow` or `deny`), actions (`read`, `download` of the original, `write`, `publish`,
+  `delete`) and a condition, a small JSON expression over asset attributes (`all`, `any`,
+  `not`, `eq`, `in`, `contains`, `exists`, before and after for dates). A role without asset
+  grants stays unrestricted, so no stored role changes; a space policy can add deny rules every
+  role but Administrator obeys (no one reads an asset whose license expired). Changing a governed
+  attribute needs the policy to allow the asset both before and after, so no one relabels an
+  asset out of a rule. One domain decision, `assetAccess(principal, asset, action)`, and a
+  compiler from a condition to D1 filters serve both surfaces. Six PRs, each usable on its own:
+  1. **Asset metadata schema.** Typed, validated custom asset fields per environment in place of
+     free-form `metadata.fields`, with expression indexes on the governed ones and an admin
+     editor. Rules need typed attributes to be written against.
+  2. **Policy and Management reads.** The grant model, the evaluator and the condition compiler,
+     `asset_grants` on roles (an expand-only migration), enforced on asset get and list over REST
+     and MCP, paging and counts filtered in the query (within the 100-parameter cap).
+  3. **Every other asset path.** Search (over-fetched, then filtered, with facets and totals
+     counted after filtering), versions, usage, zips, collections, share links, bulk jobs, and
+     the AI paths (alt text, image search for layouts, RAG, Coworker). An entry that links an
+     asset the reader can't see shows a restricted stub, with no title or file.
+  4. **Delivery, Preview and media.** Asset grants join the visibility profile the delivery cache
+     is keyed by. A restricted published asset leaves the public canonical URL: the media gate
+     marks it signed-only and it is served through short-lived signed URLs, as draft reads are.
+  5. **Admin.** A rule builder under Roles, a "test as role" preview of which assets match, and
+     who can see an asset on its detail screen; policy changes and denied reads in the audit log.
+  6. **Person attributes.** Conditions on the reader as well as the asset (department or region
+     from SCIM or OIDC, as in `user.region == asset.region`).
+
+  Open before step 2, with the option recommended first: whether rules apply to roles only to
+  start (recommended, person attributes in step 6) or to person attributes from the start;
+  whether a restricted asset's published file becomes signed-only (recommended, the only way the
+  rules hold against someone holding the URL) or stays public; whether asset grants deny by
+  default once a role has any (recommended, an allowlist) or allow by default (a denylist); and
+  whether a key with content grants keeps reading no assets unless its asset grants allow them
+  (recommended, nothing widens) or that rule is relaxed.
 - [ ] **Plugin copilot: plugins from a prompt.** Describe a rule in plain language ("refuse to
   publish an article without a hero image and alt text") and get a draft plugin (manifest, bundle,
   an explanation and suggested test cases) to test against real entries and install through the
@@ -385,7 +422,7 @@ Built on Blocks and the frontend runtime. Layouts stay a typed tree; rich text s
   composes from both ends: the Generate dialog outlines the drafted blocks and names the images
   the library had no match for, and the canvas asks Coworker to fill a seam, its proposal shown as
   ghosts until confirmed. Rich text inside generated blocks is not generated yet.
-- [ ] **Layout model.** Deeper nesting than three levels, and per-breakpoint overrides of token
+- [x] **Layout model.** Deeper nesting than three levels, and per-breakpoint overrides of token
   props. (Slots, `allowedChildren` and `allowedParents` shipped with blocks from code.) Deeper
   nesting shipped: blocks slots nest six levels (the page's blocks field counting as 1,
   `MAX_BLOCK_DEPTH`), plain components keep three among themselves, the AI layout schema stays
@@ -395,8 +432,11 @@ Built on Blocks and the frontend runtime. Layouts stay a typed tree; rich text s
   catalog push declares `breakpoints` and each block's `responsive` props; blocks store overrides
   in `_responsive`, validated as their props, with stale ones dropped on save and counted by the
   push (`staleOverrides`); block patches, frozen regions, copies, REST, MCP, GraphQL
-  (`_responsive`), codegen and `resolveBlocks` / `responsiveProp` carry them. Still to come: editing
-  them on the canvas (width presets from the breakpoints, the Look tab per breakpoint).
+  (`_responsive`), codegen and `resolveBlocks` / `responsiveProp` carry them. The canvas edits them:
+  its width presets are Base and the catalog's breakpoints, the Look tab sets an override at the
+  breakpoint in view (inherited values say where from; Reset inherits again), Layers marks a block
+  that carries one, and the entry form lists them read-only; an undo that spans a save keeps its
+  carried overrides (the save reads the version before once).
 - [x] **Blocks from code.** `contentworker blocks push` maps component manifests (JSON data:
   token and enum props, slots with `allowedChildren`, `allowedParents`, aliases for renamed ids,
   thumbnails) to Blocks variants, versioned per environment, over REST, MCP and the management
@@ -424,7 +464,8 @@ Built on Blocks and the frontend runtime. Layouts stay a typed tree; rich text s
   are drawn where blocks are picked (the dock, the entry form's Add block menu, Build → Blocks)
   for a manifest's `{ assetId }`, all of a catalog's read in one `GET …/assets?ids=` lookup; a
   `{ url }` thumbnail isn't drawn (the admin's `img-src` takes no other origin). Still to come:
-  dragging blocks with a fine pointer, and per-breakpoint overrides.
+  dragging blocks with a fine pointer. Per-breakpoint overrides are edited in the Look tab at the
+  width in view (see Layout model).
 - [x] **Frontend SDK extras.** `client.live()` over the live stream (reconnecting with backoff,
   stopping when the key is refused) with `useLiveEntry` / `useLiveEntries` for React and Vue; a
   Next.js draft-mode helper (`@contentworker/sdk/next`: a route that checks the preview token, and a

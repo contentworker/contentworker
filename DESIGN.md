@@ -583,7 +583,11 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   without one has no Site segment. Site is never remembered (it sends the site the unsaved draft,
   so it is picked for the entry in front of you); the pane opens on the view kept before. Its
   header holds two
-  segmented controls: the device width (Desktop, Tablet, Phone as icons, named in words), which
+  segmented controls: the device width (Desktop, Tablet, Phone as icons, named in words; when the
+  catalog declares breakpoints, Base and one segment per breakpoint in words, by its name, each
+  with its width in its accessible name and title; the device is remembered per browser, but with
+  breakpoints the frame always opens on Base, so a fresh canvas never writes an override by
+  accident), which
   sets the framed page's own width and scales it to fit, never the admin's width; and Edit or
   View, where Edit makes a click in the page select that field or block and focus it in the form,
   and View lets the page be the site, links followed (the control reads View, off, until the page
@@ -982,7 +986,18 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   where to review it). The Site view beside the form draws the same marks and line. The dock's first block takes focus, and the block put in hands
   focus to the inspector's heading; closing it hands focus back to what opened it. The inspector's tabs are Content (the
   block's own fields, the entry form's editors), Data (references) and Look (props limited to
-  listed values, four or fewer as a segmented control, more as a select; never free CSS); a block
+  listed values, four or fewer as a segmented control, more as a select, and the Booleans a block
+  lists in `responsive`; never free CSS). The header's width control is the Site view's: with the
+  catalog's breakpoints (the blocks field's own while the catalog can't be read), Look edits the
+  breakpoint in view, said in a muted line at its top ("Editing Tablet, from 768px up"; at Base
+  with a first breakpoint from 1px, that no width shows it). There a responsive prop shows what it inherits in a muted
+  line under it ("From Base", "From Tablet"); one set there is marked in brand, a dot and "Set for
+  Tablet" (brand is what was chosen), with a ghost `xs` **Reset**; any other prop reads only,
+  "Same at every width: change it at Base.", and at Base a responsive prop says where it changes
+  ("Changes at Tablet"). Layers marks a block with overrides by a muted `MonitorSmartphone` icon
+  named "Has overrides at Tablet, Desktop", and the entry form lists them read-only under the
+  block's props (a "Per width" caption, then each breakpoint and what it changes) with a link to
+  the canvas; a refused stale override is a check on its block. A block
   the code no longer provides says "Removed from code" with Remove and Keep for now. **Layers** is
   a tree, and the keyboard and screen-reader path to every block (the seams are pointer-only,
   out of the tab order). Undo and redo are in the header beside Save draft; a remove's toast offers

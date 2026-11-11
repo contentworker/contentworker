@@ -46,11 +46,17 @@ describe('role presets', () => {
 
   it('maps each preset onto scopes, each one including the one before it', () => {
     const scopes = Object.fromEntries(ROLE_PRESET_DEFINITIONS.map((d) => [d.preset, d.scopes]));
-    expect(scopes.viewer).toEqual([SCOPES.previewRead, SCOPES.deliveryRead, SCOPES.searchRead]);
+    expect(scopes.viewer).toEqual([
+      SCOPES.previewRead,
+      SCOPES.assetsRead,
+      SCOPES.deliveryRead,
+      SCOPES.searchRead,
+    ]);
     expect(scopes.approver).toEqual([...(scopes.viewer ?? []), SCOPES.workflowApprove]);
     expect(scopes.editor).toEqual([
       ...(scopes.approver ?? []),
       SCOPES.contentWrite,
+      SCOPES.assetsWrite,
       SCOPES.contentPublish,
     ]);
     expect(scopes.manager).toEqual([...(scopes.editor ?? []), SCOPES.contentManage]);

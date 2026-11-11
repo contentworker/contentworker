@@ -478,8 +478,9 @@ canvas, from another site too; the cookie is partitioned, kept per top-level sit
 opened in the admin's frame is never sent when your site is visited directly. A browser that
 blocks third-party cookies shows the entry published in the frame. Let only your admin frame the
 site (`Content-Security-Policy: frame-ancestors 'self' <admin origin>`). A link opened as anything
-but a page or a frame (an image, a script, a fetch: `Sec-Fetch-Dest`) gets a 403, and so does the
-exit route.
+but a page or a frame (an image, a script, a fetch: `Sec-Fetch-Mode` and `Sec-Fetch-Dest`) gets a
+403, from any site, and so does the exit route. Opening the link, top level or in the admin's frame,
+works from another site.
 
 Draft mode reads only that entry. Pages read through `createDraftClient`: outside draft mode it is
 your Delivery client; in draft mode it is still Delivery, except for the link's entry, which reads

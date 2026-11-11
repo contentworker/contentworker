@@ -54,7 +54,7 @@ export function assetItemRoutes(deps: AuthDeps): Hono<AuthVars> {
         'Its draft state, with file.url a short-lived signed read URL (a hosted video’s ' +
         'playback URLs are in file.video).',
     }),
-    requireScope(SCOPES.previewRead),
+    requireScope(SCOPES.assetsRead),
     async (c) => c.json(await signedOne(c, await getAsset(ctx, scopeOf(c), c.req.param('id')))),
   );
   app.post(
@@ -62,7 +62,7 @@ export function assetItemRoutes(deps: AuthDeps): Hono<AuthVars> {
     doc('Assets', "Refresh a video asset's processing status from the video host", {
       ok: assetDocs.asset,
     }),
-    requireScope(SCOPES.contentWrite),
+    requireScope(SCOPES.assetsWrite),
     async (c) =>
       c.json(await signedOne(c, await refreshVideoAsset(ctx, scopeOf(c), c.req.param('id')))),
   );
@@ -76,7 +76,7 @@ export function assetItemRoutes(deps: AuthDeps): Hono<AuthVars> {
         'after the AI or extraction setup changed). Alt text and tags are still only filled ' +
         'where empty. 501 when the ingest queue is not bound; 400 for a hosted video.',
     }),
-    requireScope(SCOPES.contentWrite),
+    requireScope(SCOPES.assetsWrite),
     async (c) => {
       if (!deps.assetIngest) {
         throw new NotConfiguredError('asset ingest', 'Bind ASSET_EVENTS_QUEUE to re-run ingest');
@@ -96,7 +96,7 @@ export function assetItemRoutes(deps: AuthDeps): Hono<AuthVars> {
         'back unchanged stays one. This edits the ' +
         'draft; publish again to carry it into Delivery.',
     }),
-    requireScope(SCOPES.contentWrite),
+    requireScope(SCOPES.assetsWrite),
     async (c) =>
       c.json(
         await signedOne(
@@ -114,7 +114,9 @@ export function assetItemRoutes(deps: AuthDeps): Hono<AuthVars> {
     `${BASE}/assets/:id/usage`,
     doc('Assets', 'List the entries that link to an asset', {
       ok: assetDocs.assetUsage,
-      description: 'Each entry field that links to it, from the reverse-reference index.',
+      description:
+        'Each entry field that links to it, from the reverse-reference index. Needs ' +
+        '`preview:read`, not `assets:read` alone: it names entries and their fields.',
     }),
     requireScope(SCOPES.previewRead),
     async (c) => c.json({ items: await getAssetUsage(ctx, scopeOf(c), c.req.param('id')) }),
@@ -136,7 +138,7 @@ export function assetItemRoutes(deps: AuthDeps): Hono<AuthVars> {
         q: 'Quality, 1..100',
       },
     }),
-    requireScope(SCOPES.previewRead),
+    requireScope(SCOPES.assetsRead),
     async (c) =>
       c.json(
         await transformAssetUrl(
@@ -159,7 +161,7 @@ export function assetItemRoutes(deps: AuthDeps): Hono<AuthVars> {
         'it on the metadata as well. Counted against the space’s AI budget (429 once spent); 422 ' +
         'for an asset that is not an image.',
     }),
-    requireScope(SCOPES.contentWrite),
+    requireScope(SCOPES.assetsWrite),
     async (c) =>
       c.json(
         await generateAltText(
@@ -181,7 +183,7 @@ export function assetItemRoutes(deps: AuthDeps): Hono<AuthVars> {
         'creates the new tags and sets them all on the asset. Counted against the AI budget; 422 ' +
         'for an asset that is not an image.',
     }),
-    requireScope(SCOPES.contentWrite),
+    requireScope(SCOPES.assetsWrite),
     async (c) =>
       c.json(
         await autoTagAsset(
@@ -232,7 +234,7 @@ export function assetItemRoutes(deps: AuthDeps): Hono<AuthVars> {
       ok: assetDocs.asset,
       description: 'Comes back as a draft; publishing it again is a separate action. Idempotent.',
     }),
-    requireScope(SCOPES.contentWrite),
+    requireScope(SCOPES.assetsWrite),
     async (c) => c.json(await signedOne(c, await restoreAsset(ctx, scopeOf(c), c.req.param('id')))),
   );
   app.post(
@@ -248,7 +250,7 @@ export function assetItemRoutes(deps: AuthDeps): Hono<AuthVars> {
         'second PUT through it is 412. A published asset keeps delivering its published file ' +
         'until it is published again. 400 for a hosted video.',
     }),
-    requireScope(SCOPES.contentWrite),
+    requireScope(SCOPES.assetsWrite),
     async (c) => {
       const replacement = await replaceAssetFile(
         ctx,
@@ -273,7 +275,7 @@ export function assetItemRoutes(deps: AuthDeps): Hono<AuthVars> {
         'side by side each upload to their own key: the first to commit wins, the others get ' +
         '409. 422 past the deployment’s cap.',
     }),
-    requireScope(SCOPES.contentWrite),
+    requireScope(SCOPES.assetsWrite),
     async (c) => {
       const started = await startMultipartAssetFileReplacement(
         ctx,
@@ -295,7 +297,7 @@ export function assetItemRoutes(deps: AuthDeps): Hono<AuthVars> {
         'history; ingest runs on it. 422 when nothing was uploaded; 409 when another replace or ' +
         'restore committed first. Committing again what is already committed returns the asset.',
     }),
-    requireScope(SCOPES.contentWrite),
+    requireScope(SCOPES.assetsWrite),
     async (c) =>
       c.json(
         await signedOne(
@@ -319,7 +321,7 @@ export function assetItemRoutes(deps: AuthDeps): Hono<AuthVars> {
         'Newest first: the current file and every earlier one, each with when it became the ' +
         'asset’s and by whom, and which one Delivery serves (published).',
     }),
-    requireScope(SCOPES.previewRead),
+    requireScope(SCOPES.assetsRead),
     async (c) =>
       c.json({
         items: (await listAssetVersions(ctx, scopeOf(c), c.req.param('id'), { blob })).map(
@@ -336,7 +338,7 @@ export function assetItemRoutes(deps: AuthDeps): Hono<AuthVars> {
         'Delivery keeps its published file until the asset is published again. 422 for the ' +
         'current version; 404 for one the asset never had.',
     }),
-    requireScope(SCOPES.contentWrite),
+    requireScope(SCOPES.assetsWrite),
     async (c) => {
       const version = Number(c.req.param('version'));
       if (!Number.isInteger(version) || version < 1) {

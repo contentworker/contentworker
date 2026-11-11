@@ -99,14 +99,27 @@ const redirect = (request: Request, path: string, cookie: string) =>
 const draftCookie = (value: string, maxAge: number) =>
   `${DRAFT_COOKIE}=${value}; Path=/; Max-Age=${maxAge}; HttpOnly; Secure; SameSite=None; Partitioned`;
 
-/**
- * What a draft link may be opened as (`Sec-Fetch-Dest`): a page, or a page in a frame. With the
- * cookie riding cross-site requests, another site's image, script or fetch pointed at a draft link
- * is refused before anything is read. A browser that doesn't send the header is let through: a
- * request it can't label could still be the person following a link. Defence in depth against a
- * draft link used as a subresource, not against someone sending a visitor their own preview link.
- */
+/** What a draft link may be opened as (`Sec-Fetch-Dest`): a page, or a page in a frame. */
 const OPENED_AS = new Set(['document', 'iframe', 'frame']);
+
+/**
+ * Whether a request is a page or a frame being opened: `Sec-Fetch-Mode`, when sent, is `navigate`,
+ * and `Sec-Fetch-Dest`, when sent, a page or a frame. With the cookie riding cross-site requests,
+ * another site's image, script, fetch or beacon pointed at a draft link (a `no-cors` or `cors`
+ * request) is refused before anything is read. `Sec-Fetch-Site` is not asked: the admin opens and
+ * frames the site from another site, so every legitimate request may be cross-site, and every
+ * request that isn't a navigation is refused from any site. The mode covers browsers that send it
+ * without the destination. A browser that sends neither is let through: a request it can't label
+ * could still be the person following a link, and the token is the real check. Defence in depth
+ * against a draft link used as a subresource, not against someone sending a visitor their own
+ * preview link.
+ */
+function openedAsPage(request: Request): boolean {
+  const mode = request.headers.get('sec-fetch-mode');
+  if (mode && mode !== 'navigate') return false;
+  const dest = request.headers.get('sec-fetch-dest');
+  return !dest || OPENED_AS.has(dest);
+}
 
 /** The entry and token a draft cookie holds, or null for anything else. */
 export function readDraftCookie(
@@ -166,15 +179,15 @@ function cookieLife(res: Response, now: number): number {
  *
  * It works top-level and framed by the admin (the editor's Site view and canvas), on another site
  * or the same: the cookie is `SameSite=None; Partitioned`, kept per top-level site, so a draft
- * opened in the admin's frame stays there. A request that isn't a page or a frame
- * (`Sec-Fetch-Dest`: an image, a script, a fetch) gets 403 before anything is read.
+ * opened in the admin's frame stays there. A request that isn't a navigation to a page or a frame
+ * (`Sec-Fetch-Mode` and `Sec-Fetch-Dest`: an image, a script, a fetch) gets 403 before anything is
+ * read.
  */
 export function createDraftRoute(o: DraftRouteOptions): (request: Request) => Promise<Response> {
   const doFetch = o.fetch ?? globalThis.fetch;
   const base = `${o.baseUrl.replace(/\/$/, '')}/preview/${encodeURIComponent(o.space)}/${encodeURIComponent(o.environment)}`;
   return async (request) => {
-    const dest = request.headers.get('sec-fetch-dest');
-    if (dest && !OPENED_AS.has(dest)) return text(403, 'A preview link opens as a page.');
+    if (!openedAsPage(request)) return text(403, 'A preview link opens as a page.');
     const query = new URL(request.url).searchParams;
     const entryId = query.get('entry');
     const token = query.get('token');
@@ -236,8 +249,7 @@ export function createExitDraftRoute(o: {
 }): (request: Request) => Promise<Response> {
   return async (request) => {
     // Another site's image or fetch can't switch a visitor's draft mode off either.
-    const dest = request.headers.get('sec-fetch-dest');
-    if (dest && !OPENED_AS.has(dest)) return text(403, 'A preview link opens as a page.');
+    if (!openedAsPage(request)) return text(403, 'A preview link opens as a page.');
     (await o.draftMode()).disable();
     const asked = safeRedirectPath(new URL(request.url).searchParams.get('path'));
     return redirect(request, asked ?? safeRedirectPath(o.path) ?? '/', draftCookie('', 0));

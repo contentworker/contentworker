@@ -23,7 +23,7 @@ export function assetFoldersRoutes(deps: AuthDeps): Hono<AuthVars> {
       ok: folderDocs.assetFolderList,
       description: 'Every folder, in path order (a parent before its children).',
     }),
-    requireScope(SCOPES.previewRead),
+    requireScope(SCOPES.assetsRead),
     async (c) => c.json({ items: await listAssetFolders(ctx, scopeOf(c)) }),
   );
   app.post(
@@ -34,7 +34,7 @@ export function assetFoldersRoutes(deps: AuthDeps): Hono<AuthVars> {
       status: 201,
       description: 'A sibling with the same name is a 409. Folders nest up to 16 deep.',
     }),
-    requireScope(SCOPES.contentWrite),
+    requireScope(SCOPES.assetsWrite),
     async (c) => {
       const body = await parseBody(c, assetFolderBody);
       return c.json(await createAssetFolder(ctx, scopeOf(c), body), 201);
@@ -49,7 +49,7 @@ export function assetFoldersRoutes(deps: AuthDeps): Hono<AuthVars> {
         'A move takes the whole subtree along; never into the folder itself or below it. ' +
         'parentId null moves it to the root.',
     }),
-    requireScope(SCOPES.contentWrite),
+    requireScope(SCOPES.assetsWrite),
     async (c) =>
       c.json(
         await updateAssetFolder(
@@ -66,7 +66,7 @@ export function assetFoldersRoutes(deps: AuthDeps): Hono<AuthVars> {
       status: 204,
       description: 'A folder with subfolders or assets in it is a 409: move them out first.',
     }),
-    requireScope(SCOPES.contentWrite),
+    requireScope(SCOPES.assetsWrite),
     async (c) => {
       await deleteAssetFolder(ctx, scopeOf(c), c.req.param('id'));
       return c.body(null, 204);
