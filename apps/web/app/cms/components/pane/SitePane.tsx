@@ -19,7 +19,7 @@ import { Monitor, Smartphone, Tablet } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { ProposalLine } from '~/cms/components/canvas/ProposalLine';
 import { LoadingStatus } from '~/cms/components/loading';
-import { defaultPreset, type WidthPreset, widthPresets } from '~/cms/lib/breakpoints';
+import { byBreakpoint, defaultPreset, type WidthPreset, widthPresets } from '~/cms/lib/breakpoints';
 import type { SiteStatus } from '~/cms/lib/live-preview/frame-channel';
 import { ghostOps } from '~/cms/lib/live-preview/proposals';
 import { useSiteFrame } from './use-site-frame';
@@ -359,25 +359,34 @@ export function WidthSwitch(props: {
 }
 
 /**
- * The frame's width preset, remembered per browser by id; the widest (Desktop) until someone picks
- * another, and again when the one kept isn't among `presets` (the catalog's breakpoints changed).
+ * The frame's width preset. With the catalog's breakpoints it opens on Base every time and is never
+ * remembered: a breakpoint picked yesterday must not have today's first Look edit write an
+ * override. Without them, the device is remembered per browser, Desktop until someone picks another.
  */
 export function useWidthPreset(
   presets: readonly WidthPreset[],
 ): [WidthPreset, (id: string) => void] {
   const [kept, setKept] = useState<string | null>(null);
+  const [picked, setPicked] = useState<string | null>(null);
   useEffect(() => {
     try {
       setKept(localStorage.getItem(DEVICE_KEY));
     } catch {
-      // Storage blocked: the widest.
+      // Storage blocked: Desktop.
     }
   }, []);
+  const breakpoints = byBreakpoint(presets);
   const fallback = defaultPreset(presets);
-  const preset = presets.find((p) => p.id === kept) ?? fallback;
+  const preset =
+    presets.find((p) => p.id === picked) ??
+    (breakpoints ? undefined : presets.find((p) => p.id === kept)) ??
+    fallback;
   return [
     preset,
     (id) => {
+      setPicked(id);
+      // A breakpoint is chosen for this canvas only; the device memory stays as it was.
+      if (breakpoints) return;
       setKept(id);
       try {
         if (id === fallback.id) localStorage.removeItem(DEVICE_KEY);

@@ -237,7 +237,9 @@ const checked = (group: HTMLElement) =>
     .find((r) => r.getAttribute('aria-checked') === 'true')?.textContent;
 
 describe('the canvas’s widths', () => {
-  it('are Base and the catalog’s breakpoints, by name, opening on the widest', async () => {
+  it('are Base and the catalog’s breakpoints, by name, always opening on Base', async () => {
+    // A breakpoint kept from before is never restored: a fresh canvas edits the bare props.
+    localStorage.setItem('cw.entry-pane.device', 'lg');
     const page = await canvas();
     const radios = within(screen.getByRole('radiogroup', { name: 'Device width' })).getAllByRole(
       'radio',
@@ -248,11 +250,12 @@ describe('the canvas’s widths', () => {
       'Desktop, 1280 pixels',
     ]);
     expect(radios.map((r) => r.textContent)).toEqual(['Base', 'Tablet', 'Desktop']);
-    expect(radios[2]?.getAttribute('aria-checked')).toBe('true');
+    expect(radios[0]?.getAttribute('aria-checked')).toBe('true');
+    expect(page.lastWidth()).toBe(390);
     width('Tablet');
     expect(page.lastWidth()).toBe(768);
-    // Remembered by id for the next canvas or Site pane.
-    expect(localStorage.getItem('cw.entry-pane.device')).toBe('md');
+    // Chosen for this canvas only: the device remembered for a catalog without breakpoints stays.
+    expect(localStorage.getItem('cw.entry-pane.device')).toBe('lg');
   });
 });
 
@@ -260,6 +263,7 @@ describe('the Look tab at a breakpoint', () => {
   it('shows what a responsive prop inherits and from where, and sets an override there', async () => {
     const page = await canvas();
     await openLook();
+    width('Desktop');
     // Desktop inherits Tablet's override.
     expect(screen.getByText(/Editing/).textContent).toContain('Desktop, from 1280px up');
     expect(checked(tone())).toBe('dark');
@@ -306,6 +310,7 @@ describe('the Look tab at a breakpoint', () => {
   it('keeps a prop that isn’t responsive the same at every width, editable at Base only', async () => {
     const page = await canvas();
     await openLook();
+    width('Desktop');
     const align = screen.getByRole('radiogroup', { name: 'Align' });
     expect(align.getAttribute('data-disabled')).not.toBeNull();
     expect(screen.getByText('Same at every width: change it at Base.')).toBeTruthy();
@@ -325,6 +330,7 @@ describe('the Look tab at a breakpoint', () => {
   it('puts a responsive Boolean on the Look tab, overridden like a token', async () => {
     const page = await canvas();
     await openLook();
+    width('Desktop');
     const hidden = screen.getByLabelText(/^Hidden/);
     fireEvent.click(hidden);
     expect(page.lastOps().at(-1)).toMatchObject({

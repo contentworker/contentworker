@@ -53,10 +53,22 @@ export function widthPresets(breakpoints: readonly Breakpoint[] | undefined): Wi
   ];
 }
 
-/** The preset a frame opens on: the widest, as Desktop is without breakpoints. */
+/**
+ * The preset a frame opens on: Base when the catalog declares breakpoints, so the first Look edit
+ * on a fresh canvas sets the bare prop and never an override by accident (the owner's call,
+ * 2026-11-10); Desktop without them.
+ */
 export function defaultPreset(presets: readonly WidthPreset[]): WidthPreset {
-  return presets.find((p) => p.device === 'desktop') ?? (presets.at(-1) as WidthPreset);
+  return (
+    presets.find((p) => p.id === 'base') ??
+    presets.find((p) => p.device === 'desktop') ??
+    (presets[0] as WidthPreset)
+  );
 }
+
+/** Whether `presets` are a catalog's breakpoints (Base and one per breakpoint), not the devices. */
+export const byBreakpoint = (presets: readonly WidthPreset[]): boolean =>
+  presets.some((p) => p.id === 'base');
 
 /**
  * The breakpoint the Look tab edits under preset `preset`: none (the bare props) at Base, the

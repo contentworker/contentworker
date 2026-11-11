@@ -585,7 +585,9 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   header holds two
   segmented controls: the device width (Desktop, Tablet, Phone as icons, named in words; when the
   catalog declares breakpoints, Base and one segment per breakpoint in words, by its name, each
-  with its width in its accessible name and title, remembered per browser), which
+  with its width in its accessible name and title; the device is remembered per browser, but with
+  breakpoints the frame always opens on Base, so a fresh canvas never writes an override by
+  accident), which
   sets the framed page's own width and scales it to fit, never the admin's width; and Edit or
   View, where Edit makes a click in the page select that field or block and focus it in the form,
   and View lets the page be the site, links followed (the control reads View, off, until the page

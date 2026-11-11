@@ -81,6 +81,7 @@ const status = (s: string, detail?: string) =>
 beforeEach(() => vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] }));
 afterEach(() => {
   cleanup();
+  localStorage.clear();
   vi.useRealTimers();
   vi.clearAllMocks();
 });
@@ -136,7 +137,16 @@ describe('the Site pane', () => {
     expect(posted(spy, 'view').at(-1)).toMatchObject({ width: 390 });
   });
 
-  it('offers Base and the catalog’s breakpoints as its widths when the catalog declares them', () => {
+  it('opens on the device it was left on, without breakpoints', () => {
+    localStorage.setItem('cw.entry-pane.device', 'phone');
+    render(pane());
+    expect(
+      screen.getByRole('radio', { name: 'Phone, 390 pixels' }).getAttribute('aria-checked'),
+    ).toBe('true');
+  });
+
+  it('offers Base and the catalog’s breakpoints as its widths, always opening on Base', () => {
+    localStorage.setItem('cw.entry-pane.device', 'md');
     render(
       <SitePane
         spaceId="s1"
@@ -162,7 +172,7 @@ describe('the Site pane', () => {
     expect(
       [...widths.querySelectorAll('[role="radio"]')].map((r) => r.getAttribute('aria-label')),
     ).toEqual(['Base, 390 pixels', 'Tablet, 768 pixels', 'Desktop, 1280 pixels']);
-    expect(posted(spy, 'view').at(-1)).toMatchObject({ width: 1280 });
+    expect(posted(spy, 'view').at(-1)).toMatchObject({ width: 390 });
     act(() => screen.getByRole('radio', { name: 'Tablet, 768 pixels' }).click());
     expect(posted(spy, 'view').at(-1)).toMatchObject({ width: 768 });
   });

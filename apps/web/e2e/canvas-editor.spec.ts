@@ -625,10 +625,10 @@ test('the canvas sets a prop’s override at the breakpoint in view, and it save
   await expect(site.getByRole('heading', { level: 1 })).toHaveText('Width page', {
     timeout: 15_000,
   });
-  // The widths are Base and the catalog's breakpoints, opening on the widest.
+  // The widths are Base and the catalog's breakpoints, opening on Base.
   const widths = page.getByRole('radiogroup', { name: 'Device width' });
   await expect(widths.getByRole('radio')).toHaveText(['Base', 'Tablet', 'Desktop']);
-  await expect(widths.getByRole('radio', { name: 'Desktop, 1280 pixels' })).toBeChecked();
+  await expect(widths.getByRole('radio', { name: 'Base, 390 pixels' })).toBeChecked();
   await widths.getByRole('radio', { name: 'Tablet, 768 pixels' }).click();
 
   await page.getByRole('button', { name: 'Layers' }).click();
@@ -653,12 +653,14 @@ test('the canvas sets a prop’s override at the breakpoint in view, and it save
     _responsive: { md: { tone: 'dark' } },
   });
 
-  // Read back: the width is remembered, Layers marks the hero, and the Look tab shows it set.
+  // Read back: the canvas opens on Base again, Layers marks the hero, and at Tablet the Look tab
+  // shows the override set.
   await page.reload();
   await expect(site.getByRole('heading', { level: 1 })).toHaveText('Width page', {
     timeout: 15_000,
   });
-  await expect(widths.getByRole('radio', { name: 'Tablet, 768 pixels' })).toBeChecked();
+  await expect(widths.getByRole('radio', { name: 'Base, 390 pixels' })).toBeChecked();
+  await widths.getByRole('radio', { name: 'Tablet, 768 pixels' }).click();
   await page.getByRole('button', { name: 'Layers' }).click();
   const hero = page.getByRole('treeitem', { name: /^Hero/ });
   await expect(hero.getByRole('img', { name: 'Has overrides at Tablet' })).toBeVisible();

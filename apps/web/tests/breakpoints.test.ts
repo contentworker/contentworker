@@ -33,14 +33,14 @@ describe('width presets', () => {
     }
   });
 
-  it('is Base at 390, then one per breakpoint at its minWidth by its name, opening on the widest', () => {
+  it('is Base at 390, then one per breakpoint at its minWidth by its name, opening on Base', () => {
     const presets = widthPresets(BREAKPOINTS);
     expect(presets).toEqual([
       { id: 'base', label: 'Base', width: 390 },
       { id: 'md', label: 'Tablet', width: 768 },
       { id: 'lg', label: 'Desktop', width: 1280 },
     ]);
-    expect(defaultPreset(presets).id).toBe('lg');
+    expect(defaultPreset(presets).id).toBe('base');
   });
 
   it('frames Base below a first breakpoint at 390 or under, and Base always edits the bare props', () => {
