@@ -336,6 +336,43 @@ describe('per-breakpoint overrides', () => {
     expect(declared.fields.body?.['en-US']?.[1]).toEqual(hero('b', { md: { size: 'sm' } }));
   });
 
+  it('saves an undo that spans a save, its stale overrides carried by the version before', async () => {
+    await push();
+    const { entry } = await createEntry(ctx, scope, {
+      contentTypeApiId: 'page',
+      fields: body(hero('a', { lg: { size: 'xl' } }), hero('b')),
+    });
+    // The canvas removes the block and saves (v2), a push makes lg stale, then the canvas's undo
+    // puts the block back as it was and saves again.
+    await updateEntry(ctx, scope, entry.id, body(hero('b')));
+    await push({ breakpoints: BREAKPOINTS.slice(0, 1) });
+    const saved = await updateEntry(
+      ctx,
+      scope,
+      entry.id,
+      body(hero('a', { lg: { size: 'xl' } }), hero('b')),
+    );
+    expect(saved.fields.body?.['en-US']).toEqual([hero('a'), hero('b')]);
+    expect(saved.entry.currentVersion).toBe(3);
+
+    // Only the version just before counts: two saves back is a new edit again, and refused.
+    await updateEntry(ctx, scope, entry.id, body(hero('b')));
+    await updateEntry(ctx, scope, entry.id, body(hero('b'), hero('c')));
+    const err = await updateEntry(
+      ctx,
+      scope,
+      entry.id,
+      body(hero('a', { lg: { size: 'xl' } }), hero('b')),
+    ).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(ValidationError);
+    expect((err as ValidationError).issues).toMatchObject([
+      { field: 'body[0]._responsive.lg', code: 'override_undeclared', key: 'a' },
+    ]);
+  });
+
   it('refuses a new non-map value at an undeclared breakpoint or `base`, never dropping it unsaid', async () => {
     await push();
     const err = await createEntry(ctx, scope, {
