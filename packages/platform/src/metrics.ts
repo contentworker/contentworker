@@ -1,3 +1,5 @@
+import type { Counter } from '@contentworker/ports';
+
 /**
  * Operational counters for the edge target — the Workers analogue of the Node
  * worker's Prometheus metrics (same `contentworker_*` metric names, so dashboards and
@@ -11,12 +13,7 @@
  *   blob2.. = label values, in the emit call's insertion order
  *   double1 = increment value
  */
-export interface EdgeMetrics {
-  /** Increment `metric` by `value` (default 1) with optional labels. */
-  count(metric: string, value?: number, labels?: Record<string, string>): void;
-}
-
-export function makeMetrics(dataset?: AnalyticsEngineDataset): EdgeMetrics {
+export function makeMetrics(dataset?: AnalyticsEngineDataset): Counter {
   return {
     count(metric, value = 1, labels = {}) {
       // Metrics must never break the request/consumer path.
