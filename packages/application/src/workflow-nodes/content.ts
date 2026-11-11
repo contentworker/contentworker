@@ -16,11 +16,13 @@ import {
   parsePolicyRules,
   SCOPES,
   stringList,
+  ValidationError,
   validateEntryFields,
   type Webhook,
 } from '@contentworker/domain';
 import { addComment } from '../comments';
 import { getEntry, updateEntry } from '../entries';
+import { hideUnreadableIssues } from '../hidden-fields';
 import { grantWorkflowRunPublish } from '../publish-gate';
 import { publishEntry, unpublishEntry } from '../publishing';
 import { addEntryToRelease, getRelease, publishRelease } from '../releases';
@@ -46,17 +48,27 @@ export const CONTENT_EXECUTORS: Record<string, Exec> = {
     const ct = await i.ctx.store.contentTypes.get(i.scope, entry.contentTypeApiId);
     const config = await i.ctx.store.spaces.getConfig(i.scope);
     if (!ct || !config) return { failed: 'The entry’s content type or space is missing' };
-    const issues = validateEntryFields(ct, fields, {
+    const all = validateEntryFields(ct, fields, {
       defaultLocale: config.defaultLocale,
       locales: config.locales,
     });
+    // The output and summary are read as the run's principal: issues in fields its role denies
+    // are counted, not named (the branch still goes by every issue).
+    const issues = all.length
+      ? (
+          hideUnreadableIssues(
+            new ValidationError(all),
+            deniedFieldsFor(i.actor.principal, entry.contentTypeApiId),
+          ) as ValidationError
+        ).issues
+      : all;
     return {
       branches: [issues.length ? 'invalid' : 'valid'],
       output: { valid: issues.length === 0, issues },
       summary: issues.length
         ? `${plural(issues.length, 'problem')}: ${issues
             .slice(0, 3)
-            .map((x) => `${x.field || 'entry'} ${x.message}`)
+            .map((x) => ('hidden' in x ? x.message : `${x.field || 'entry'} ${x.message}`))
             .join('; ')}`
         : 'Valid',
     };

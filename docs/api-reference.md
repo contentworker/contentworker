@@ -528,7 +528,8 @@ says so without the field, the value or the other entry: `details` is
 `{ conflicts, hidden: n }`, `conflicts` listing only those in fields the caller can read.
 Shipping a release (`POST …/releases/:id/published`, `releases_publish`) folds a member's `422` by
 what the caller's role denies on that member's type, and a workflow run's `content.publish` and
-`content.publish_release` nodes fold their failure reason by the run's principal. The other
+`content.publish_release` nodes fold their failure reason by the run's principal, as
+`content.validate` folds its `issues` output and summary. The other
 publish paths list no issues at all, so there is nothing to fold: bulk publish
 (`POST …/bulk/entries/publish`, `entries_bulk_action`) and a bulk publish job's report give each
 failed entry `One or more fields are invalid`, and so does a scheduled publish's `error` (it

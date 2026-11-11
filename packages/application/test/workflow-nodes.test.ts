@@ -263,6 +263,40 @@ describe('workflow node executors', () => {
     expect(undo).toBe('Cancelled the scheduled publish');
   });
 
+  it('content.validate counts, never names, an issue in a field the run’s principal can’t read', async () => {
+    // `summary` becomes required and the entry has none.
+    const def = (await ctx.store.contentTypes.get(scope, 'post'))?.fields ?? [];
+    await updateContentType(ctx, SYSTEM_CALLER, scope, 'post', {
+      fields: def.map((f) => (f.apiId === 'summary' ? { ...f, required: true } : f)),
+    });
+    await publishContentType(ctx, scope, 'post');
+    const noSummaryRead: Principal = {
+      ...editor,
+      subject: 'nsr@example.com',
+      contentGrants: [
+        { contentTypeApiId: 'post', actions: ['read', 'write'], deniedFields: ['summary'] },
+      ],
+    };
+
+    const hidden = await exec('content.validate', {}, noSummaryRead);
+    expect(hidden.branches).toEqual(['invalid']);
+    expect(hidden.output).toEqual({
+      valid: false,
+      issues: [expect.objectContaining({ field: '', code: 'hidden', hidden: 1 })],
+    });
+    expect(hidden.summary).toBe(
+      '1 problem: 1 field you can’t read isn’t valid; someone who can read it has to fix it first',
+    );
+    expect(JSON.stringify(hidden.output)).not.toContain('summary');
+    // A principal who reads the field is told which one.
+    const named = await exec('content.validate');
+    expect(named.output).toEqual({
+      valid: false,
+      issues: [expect.objectContaining({ field: 'summary' })],
+    });
+    expect(named.summary).toMatch(/^1 problem: summary /);
+  });
+
   it('content.publish counts, never names, a failure in a field the run’s principal can’t read', async () => {
     // `source` links an entry deleted since: the publish fails on it.
     const def = (await ctx.store.contentTypes.get(scope, 'post'))?.fields ?? [];

@@ -837,7 +837,8 @@ is never named by its path or message: an entry's create, update and their dry r
 its target) as much as a block patch, on both surfaces. Shipping a release folds each member's
 refusal by the shipper's role on that member's type (`…/releases/:id/published`,
 `releases_publish`), and a workflow run's `content.publish` and `content.publish_release` nodes fold
-their failure reason by the run's principal, who reads it. Bulk publish, a bulk publish job's
+their failure reason by the run's principal, who reads it, as `content.validate` folds its
+`issues` output and summary. Bulk publish, a bulk publish job's
 report and a scheduled publish's `error` never list issues (each says
 `One or more fields are invalid`), so they have nothing to fold. A `409` for a unique value one of
 those fields holds is counted the same way (`details.hidden`), without the field, the value or the
