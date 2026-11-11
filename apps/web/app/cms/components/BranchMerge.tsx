@@ -1,6 +1,7 @@
 import { Button } from '@contentworker/ui/button';
 import { Card, CardContent, CardHeader } from '@contentworker/ui/card';
 import { Checkbox } from '@contentworker/ui/checkbox';
+import { DialogError } from '@contentworker/ui/dialog';
 import { Label } from '@contentworker/ui/label';
 import {
   Select,
@@ -14,11 +15,12 @@ import { useCallback, useEffect, useState } from 'react';
 import { ToneBadge } from '~/cms/components/status';
 import { humanize, type Tone } from '~/cms/lib/format';
 import { useClient } from '../lib/client-context';
-import type {
-  ChangeKind,
-  Environment,
-  EnvironmentComparison,
-  ManagementClient,
+import {
+  apiIssues,
+  type ChangeKind,
+  type Environment,
+  type EnvironmentComparison,
+  type ManagementClient,
 } from '../lib/management';
 import { useToast } from '../lib/toast';
 
@@ -51,6 +53,40 @@ function DiffRow(props: {
   );
 }
 
+/** Where a refusal's issue points, in the screen's words: the list it names, else its field. */
+const ISSUE_PLACES: Record<string, string> = { contentTypes: 'Content types', entries: 'Entries' };
+const placeOf = (field: string) => ISSUE_PLACES[field.split(/[.[]/)[0] ?? ''] ?? field;
+
+/**
+ * Why the target refused the merge (a 422's issues), under the button that sent it: grouped by
+ * the list each names, in the API's own words, which name the content type or entry and what to
+ * change. Nothing was merged, so the selection stays for the person to narrow and send again.
+ */
+function MergeRefusal(props: {
+  target: string;
+  issues: readonly { field: string; message: string }[];
+}) {
+  const groups = new Map<string, string[]>();
+  for (const i of props.issues) {
+    const place = placeOf(i.field);
+    groups.set(place, [...(groups.get(place) ?? []), i.message]);
+  }
+  return (
+    <DialogError title={`Nothing was merged into ${props.target}`} className="space-y-2">
+      {[...groups].map(([place, messages]) => (
+        <div key={place} className="space-y-1">
+          <p className="font-medium text-foreground">{place}</p>
+          <ul className="list-disc space-y-1 ps-4">
+            {messages.map((m) => (
+              <li key={m}>{m}</li>
+            ))}
+          </ul>
+        </div>
+      ))}
+    </DialogError>
+  );
+}
+
 /**
  * Compare two environments and merge selected changes source→target. Merges are
  * additive/overwriting (never destructive), so only added/changed items are
@@ -65,6 +101,11 @@ export function BranchMerge(props: { client: ManagementClient; environments: Env
   const [diff, setDiff] = useState<EnvironmentComparison | null>(null);
   const [pickedTypes, setPickedTypes] = useState<Set<string>>(new Set());
   const [pickedEntries, setPickedEntries] = useState<Set<string>>(new Set());
+  // The target's refusal of the last merge, shown until the next compare or merge.
+  const [refused, setRefused] = useState<{
+    target: string;
+    issues: ReturnType<typeof apiIssues>;
+  }>();
 
   // Default the pickers to the first two distinct environments.
   useEffect(() => {
@@ -86,6 +127,7 @@ export function BranchMerge(props: { client: ManagementClient; environments: Env
       }
       const result = await client.compareEnvironments(source, target);
       setDiff(result);
+      setRefused(undefined);
       // Preselect everything mergeable.
       setPickedTypes(
         new Set(
@@ -106,12 +148,22 @@ export function BranchMerge(props: { client: ManagementClient; environments: Env
   const merge = () =>
     run(async () => {
       if (!diff) return;
-      const result = await client.mergeEnvironments({
-        source,
-        target,
-        contentTypes: [...pickedTypes],
-        entries: [...pickedEntries],
-      });
+      setRefused(undefined);
+      let result: Awaited<ReturnType<ManagementClient['mergeEnvironments']>>;
+      try {
+        result = await client.mergeEnvironments({
+          source,
+          target,
+          contentTypes: [...pickedTypes],
+          entries: [...pickedEntries],
+        });
+      } catch (err) {
+        // A refusal with issues says what to fix beside the button; anything else toasts.
+        const issues = apiIssues(err);
+        if (issues.length === 0) throw err;
+        setRefused({ target, issues });
+        return;
+      }
       toast.success(
         `Merged ${result.mergedContentTypes.length} type(s) and ${result.mergedEntries.length} entr${result.mergedEntries.length === 1 ? 'y' : 'ies'}`,
       );
@@ -216,6 +268,7 @@ export function BranchMerge(props: { client: ManagementClient; environments: Env
                     </ul>
                   </div>
                 )}
+                {refused && <MergeRefusal target={refused.target} issues={refused.issues} />}
                 <Button type="button" onClick={merge} disabled={busy || selectedCount === 0}>
                   Merge {selectedCount} selected → {target}
                 </Button>

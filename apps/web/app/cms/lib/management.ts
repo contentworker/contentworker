@@ -1370,16 +1370,24 @@ export class ApiError extends Error {
  * message, so a form can say what is wrong beside the field. Empty for any other failure.
  */
 export function apiFieldIssues(err: unknown): Record<string, string> {
-  if (!(err instanceof ApiError) || err.status !== 422) return {};
-  const issues = (err.body as { error?: { issues?: unknown } } | undefined)?.error?.issues;
   const out: Record<string, string> = {};
-  if (!Array.isArray(issues)) return out;
-  for (const issue of issues as { field?: unknown; message?: unknown }[]) {
-    if (typeof issue.field === 'string' && typeof issue.message === 'string') {
-      out[issue.field] ??= issue.message;
-    }
-  }
+  for (const issue of apiIssues(err)) out[issue.field] ??= issue.message;
   return out;
+}
+
+/**
+ * Every issue a 422 named, in its order, for a screen that lists them all: a refusal can name one
+ * field many times (a merge's `contentTypes`, once per type it can't take). Empty otherwise.
+ */
+export function apiIssues(err: unknown): { field: string; message: string }[] {
+  if (!(err instanceof ApiError) || err.status !== 422) return [];
+  const issues = (err.body as { error?: { issues?: unknown } } | undefined)?.error?.issues;
+  if (!Array.isArray(issues)) return [];
+  return (issues as { field?: unknown; message?: unknown }[]).flatMap((issue) =>
+    typeof issue.field === 'string' && typeof issue.message === 'string'
+      ? [{ field: issue.field, message: issue.message }]
+      : [],
+  );
 }
 
 /** True when the API refused because the caller's role lacks the scope (403). */

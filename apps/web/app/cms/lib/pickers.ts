@@ -40,6 +40,7 @@ export function useEntryPickers(): {
       return batches.flat().map((hit) => ({
         id: hit.id,
         contentType: hit.contentType,
+        title: hit.title,
         label: `${hit.title} (${hit.contentType})`,
       }));
     },
@@ -57,6 +58,7 @@ export function useEntryPickers(): {
         return {
           id: e.id,
           contentType: e.contentType,
+          ...(title === undefined ? {} : { title: String(title) }),
           label: `${String(title ?? e.id)} (${e.contentType})`,
         };
       }),

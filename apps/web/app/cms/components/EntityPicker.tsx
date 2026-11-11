@@ -30,7 +30,8 @@ export function EntityPicker(props: {
    * is capped, so filtering a fetched page cannot reach an entry past it.
    */
   onSearch?: (query: string) => Promise<readonly PickOption[]>;
-  onChange: (id: string | undefined) => void;
+  /** The picked id, with its option (its label is known only now, for a match from a search). */
+  onChange: (id: string | undefined, option?: PickOption) => void;
 }) {
   const { options, value, onChange, onSearch } = props;
   const listId = useId();
@@ -115,7 +116,7 @@ export function EntityPicker(props: {
     // Remembered here rather than looked up later: this is the only moment the
     // label is known for certain, and the next search will not return it.
     setPicked(option);
-    onChange(option.id);
+    onChange(option.id, option);
     setOpen(false);
   };
 

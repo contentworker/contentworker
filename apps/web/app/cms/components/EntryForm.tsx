@@ -79,6 +79,7 @@ import type { AppExtension, EntryBlockLock, TextDirection } from '../lib/managem
 import { BlockThumbnail } from './BlockThumbnail';
 import { EntityPicker } from './EntityPicker';
 import { ExtensionFrame } from './ExtensionFrame';
+import { LinkListInput } from './LinkListInput';
 import { RichTextEditor } from './RichTextEditor';
 import { RequiredMark } from './required-mark';
 
@@ -88,6 +89,8 @@ const SCALAR = new Set(['Symbol', 'Slug', 'Text', 'Integer', 'Number', 'Boolean'
 export interface PickOption {
   readonly id: string;
   readonly label: string;
+  /** The name alone, where `label` adds the type to it: a list of links shows the two apart. */
+  readonly title?: string;
   readonly contentType?: string;
   /** An asset's file type, so a field limited to some types offers only those. */
   readonly mimeType?: string;
@@ -1284,15 +1287,7 @@ export function FieldInput(props: {
   if (field.type === 'Link') {
     const linkType = field.linkType ?? 'Entry';
     const allowed = field.validations?.linkContentTypes as string[] | undefined;
-    let options = linkType === 'Asset' ? pickers.assets : pickers.entries;
-    if (linkType === 'Entry' && allowed?.length) {
-      options = options.filter((o) => !o.contentType || allowed.includes(o.contentType));
-    }
-    // Only the files the field takes: the server refuses any other on save.
-    const mimes = field.validations?.assetMimeTypes;
-    if (linkType === 'Asset' && Array.isArray(mimes) && mimes.length > 0) {
-      options = options.filter((o) => !o.mimeType || mimeTypeAllowed(o.mimeType, mimes));
-    }
+    const options = linkOptions(pickers, linkType, allowed, field.validations?.assetMimeTypes);
     const currentId = (value as { id?: string } | undefined)?.id ?? '';
     return (
       <EntityPicker
@@ -1313,6 +1308,36 @@ export function FieldInput(props: {
             }
           : {})}
         onChange={(picked) => onChange(picked ? { id: picked, linkType } : undefined)}
+      />
+    );
+  }
+
+  // A list of references: each linked entry or asset a row, added with the same picker.
+  if (field.type === 'Array' && field.items?.type === 'Link') {
+    const linkType = field.items.linkType ?? 'Entry';
+    // The rule may sit on the list or on its items; either narrows what Add offers.
+    const allowed = [
+      ...(field.validations?.linkContentTypes ?? []),
+      ...(field.items.validations?.linkContentTypes ?? []),
+    ];
+    const mimes = field.validations?.assetMimeTypes ?? field.items.validations?.assetMimeTypes;
+    const onSearchEntries = props.onSearchEntries;
+    return (
+      <LinkListInput
+        id={id}
+        label={field.name}
+        linkType={linkType}
+        known={linkType === 'Asset' ? pickers.assets : pickers.entries}
+        options={linkOptions(pickers, linkType, allowed, mimes)}
+        {...(linkType === 'Entry' && onSearchEntries
+          ? { onSearch: (q: string) => onSearchEntries(q, allowed.length ? allowed : undefined) }
+          : {})}
+        path={props.path ?? field.apiId}
+        errorFor={props.errorFor}
+        invalid={invalid}
+        describedBy={describedBy}
+        value={value}
+        onChange={change}
       />
     );
   }
@@ -1458,7 +1483,7 @@ export function FieldInput(props: {
       />
     );
   }
-  // Complex types (Array of Links, JSON, Location): raw JSON editor for the MVP.
+  // Complex types (JSON, Location): raw JSON editor for the MVP.
   return (
     <JsonFieldInput
       id={id}
@@ -1469,6 +1494,26 @@ export function FieldInput(props: {
       onChange={change}
     />
   );
+}
+
+/**
+ * What a link picker offers: the pickers' entries (only the allowed types, when the field names
+ * some) or assets (only the files it takes; the server refuses any other on save).
+ */
+function linkOptions(
+  pickers: Pickers,
+  linkType: 'Entry' | 'Asset',
+  allowed: readonly string[] | undefined,
+  mimes: readonly string[] | undefined,
+): readonly PickOption[] {
+  if (linkType === 'Asset') {
+    return mimes?.length
+      ? pickers.assets.filter((o) => !o.mimeType || mimeTypeAllowed(o.mimeType, mimes))
+      : pickers.assets;
+  }
+  return allowed?.length
+    ? pickers.entries.filter((o) => !o.contentType || allowed.includes(o.contentType))
+    : pickers.entries;
 }
 
 /** The types an `in` rule is enforced on, so the ones an options picker stands in for. */
@@ -1599,6 +1644,7 @@ function locksInPlace(field: FieldDefinition, hasEditor = false): boolean {
         blockVariants(field) ||
         field.items?.type === 'Component' ||
         field.items?.type === 'Symbol' ||
+        field.items?.type === 'Link' ||
         (field.items && LIST_ITEM_TYPES.has(field.items.type))
       );
     default:

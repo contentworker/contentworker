@@ -199,7 +199,7 @@ describe('EntityPicker', () => {
     const shown = screen.getAllByRole('option');
     expect(shown).toHaveLength(1);
     fireEvent.click(shown[0]!);
-    expect(onChange).toHaveBeenCalledWith('b2');
+    expect(onChange).toHaveBeenCalledWith('b2', expect.objectContaining({ id: 'b2' }));
   });
 
   it('shows the selected label and clears via the clear button', () => {
