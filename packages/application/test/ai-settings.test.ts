@@ -133,10 +133,14 @@ describe('AI settings: reading and setting', () => {
       enabled: false,
       tier: null,
       guidance: null,
+      effectiveTier: null,
     });
     // Line endings made \n and trimmed, as kept and counted.
     expect(res.settings.capabilities.drafting.guidance).toBe('British English.\nNo jargon.');
-    expect(res.settings.capabilities.media).toEqual(DEFAULT_AI_SETTINGS.capabilities.media);
+    expect(res.settings.capabilities.media).toEqual({
+      ...DEFAULT_AI_SETTINGS.capabilities.media,
+      effectiveTier: null,
+    });
     // The audit row names parts, never the guidance itself.
     expect(changes.detail()?.aiSettings).toEqual({
       from: 0,

@@ -1,3 +1,4 @@
+import type { ContentAction } from './auth/auth';
 import { DomainError, type FieldIssue } from './errors';
 
 /**
@@ -141,6 +142,39 @@ export interface Promotion {
   readonly createdAt: string;
   readonly decidedAt?: string;
   readonly completedAt?: string;
+}
+
+/**
+ * What requesting or deciding a promotion asks of a role, on every content type alike with no
+ * field rules (`holdsOnEveryContentType`): it copies entries whole, hidden and read-only fields
+ * included, with content types and blocks, so a role limited to some types or fields would reach
+ * what its grants forbid.
+ */
+export const PROMOTION_CONTENT_ACTIONS: readonly ContentAction[] = ['read', 'write', 'publish'];
+
+/**
+ * What requesting or approving `promotion` asks on every content type: {@link
+ * PROMOTION_CONTENT_ACTIONS}, and `lock` when it carries entries. Applying copies each entry whole
+ * over the target's, locked regions of its blocks included (the copy can't judge regions: the
+ * apply may run for no one, from the stale sweep), as editing a locked region takes `lock`.
+ * Rejecting someone else's asks only the first three.
+ */
+export function promotionContentActions(promotion: {
+  readonly entries: readonly unknown[];
+}): readonly ContentAction[] {
+  return promotion.entries.length > 0
+    ? [...PROMOTION_CONTENT_ACTIONS, 'lock']
+    : PROMOTION_CONTENT_ACTIONS;
+}
+
+/**
+ * Whether `promotion` changes the schema (content types or the block catalog), so deciding it
+ * either way takes `content:manage`, as changing them directly would.
+ */
+export function promotionChangesSchema(
+  promotion: Pick<Promotion, 'contentTypes' | 'blocks'>,
+): boolean {
+  return promotion.contentTypes.length > 0 || !!promotion.blocks;
 }
 
 /** Most entries one promotion copies: it applies in one request. */

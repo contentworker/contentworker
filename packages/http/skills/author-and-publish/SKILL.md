@@ -119,6 +119,8 @@ whoever started them, so a run can do only what that caller could.
 
 `entries_list_versions` → `entries_diff_versions` to see what changed (`from` and `to` each take
 a version number, `"draft"` or `"published"`; a change comes back typed: text as word segments,
-rich text by block, lists by element with moves) →
+rich text by block, lists by element with moves; `entries_change_summary` with the same `from`
+and `to` gives a few plain-text sentences about it, for telling a person, while the diff stays
+the record) →
 `entries_restore_version`, which copies the old fields into a new draft. Publish that draft to make
 the restore visible.

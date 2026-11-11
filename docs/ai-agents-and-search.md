@@ -128,6 +128,7 @@ names none.
 | ------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `content-ai`: `translateEntry`, `autofillField`               | `balanced`                                                                                                                                                      |
 | `content-ai`: `summarizeEntry`, `suggestEntryTags`            | `fast`                                                                                                                                                          |
+| `summarizeChange` (`change-summary.ts`)                       | `fast`                                                                                                                                                          |
 | `media-ai`: alt text, asset auto-tag                          | `fast`                                                                                                                                                          |
 | `draftEntry`, `canvasToEntry` (`generation.ts`), `auditEntry` | `balanced`                                                                                                                                                      |
 | `generateBlocks` (`layout-generation.ts`)                     | `flagship`                                                                                                                                                      |
@@ -145,17 +146,17 @@ it runs on, and what guidance is added to its built-in prompt (`AiSettings` in
 A capability names a kind of work, not a surface, so turning one off stops it wherever it runs: the
 admin, REST, MCP, Coworker and workflow nodes.
 
-| Capability     | Covers                                                                                                                     | Off                                                                                                                       |
-| -------------- | -------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `drafting`     | `draftEntry`, `canvasToEntry`                                                                                               | refused                                                                                                                   |
-| `layout`       | `generateBlocks` (the canvas, `entry_blocks_generate`, Coworker's block fills)                                              | refused                                                                                                                   |
-| `assistant`    | Coworker's model turns                                                                                                       | the turn answers that Coworker is off; pages' own edits still go through it                                              |
-| `field-assist` | `autofillField`, `summarizeEntry`, `suggestEntryTags`, `runAIAction`                                                        | refused; the `ai.summarize`, `ai.autofill` and `ai.suggest_tags` nodes record a no-op                                     |
-| `translation`  | `translateEntry` (editor, API, MCP, the `ai.translate` node)                                                               | refused; the node records a no-op                                                                                         |
-| `media`        | `generateAltText`, `autoTagAsset`, and the ingest steps that call them                                                     | refused on request; ingest skips the steps                                                                                |
-| `search`       | entry and asset embeddings, asset text extraction, `relatedEntries`, `findDuplicates`, `getEntryEmbedding`, management semantic search | nothing new is embedded and a (re)published entry's or asset's vectors are dropped; the semantic tools refuse; `content_search` and asset search use the lexical leg only |
+| Capability     | Covers                                                                                                                                                                     | Off                                                                                                                                                                                                                  |
+| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `drafting`     | `draftEntry`, `canvasToEntry`                                                                                                                                              | refused                                                                                                                                                                                                              |
+| `layout`       | `generateBlocks` (the canvas, `entry_blocks_generate`, Coworker's block fills)                                                                                             | refused                                                                                                                                                                                                              |
+| `assistant`    | Coworker's model turns                                                                                                                                                     | the turn answers that Coworker is off; pages' own edits still go through it                                                                                                                                          |
+| `field-assist` | `autofillField`, `summarizeEntry`, `summarizeChange`, `suggestEntryTags`, `runAIAction`                                                                                    | refused; the `ai.summarize`, `ai.autofill` and `ai.suggest_tags` nodes record a no-op                                                                                                                                |
+| `translation`  | `translateEntry` (editor, API, MCP, the `ai.translate` node)                                                                                                               | refused; the node records a no-op                                                                                                                                                                                    |
+| `media`        | `generateAltText`, `autoTagAsset`, and the ingest steps that call them                                                                                                     | refused on request; ingest skips the steps                                                                                                                                                                           |
+| `search`       | entry and asset embeddings, asset text extraction, `relatedEntries`, `findDuplicates`, `getEntryEmbedding`, management semantic search                                     | nothing new is embedded and a (re)published entry's or asset's vectors are dropped; the semantic tools refuse; `content_search` and asset search use the lexical leg only                                            |
 | `agents`       | the on-publish enrich agent (inline and durable), agent schedules except moderation ones, `auditEntry`, the agent runtime's `generateFields`, the AI review of a promotion | publish enrich and schedule firings skip (a schedule's cursor waits); a run already under way generates nothing; an audit is refused; a promotion is assessed without the model, as where no decision model is bound |
-| `workflows`    | `draftWorkflowGraph` (the copilot), `ai.classify`, `ai.router`, `ai.assess`, `ai.moderate`, `ai.enrich`                    | the copilot is refused; each node answers with its heuristic, recorded as a `disabled` fallback (moderation's flags)     |
+| `workflows`    | `draftWorkflowGraph` (the copilot), `ai.classify`, `ai.router`, `ai.assess`, `ai.moderate`, `ai.enrich`                                                                    | the copilot is refused; each node answers with its heuristic, recorded as a `disabled` fallback (moderation's flags)                                                                                                 |
 
 A request refused answers **409 `ai_capability_disabled`**, its body naming the capability and its
 message saying an administrator can turn it on in Settings → AI. 409, like `last_admin` and
@@ -175,19 +176,82 @@ API is what refuses. The drafting and canvas dialogs default to **Space default*
 tier.
 
 **Search** stops on both sides: the point of turning it off is that content stops going to the
-embeddings model. Vectors already stored stay until their entry or asset is republished,
-unpublished or reindexed (each drops them). Delivery's `/search` and GraphQL `search` don't read the
-setting, so the public read path takes no extra statement; they serve what the index still holds,
-and their semantic leg still embeds the reader's query. Turning search off also stops reading the
-text of uploaded documents and recordings, so new ones are found by their name and metadata only.
-Turn search back on and request a reindex (`POST …/search/reindex`) to fill it again.
+embeddings model. Delivery's `/search` and GraphQL `search` don't read the setting, so the public
+read path takes no extra statement; they serve what the index still holds (until the reindex below
+deletes it), and their semantic leg still embeds the reader's query. Turning search off also stops
+reading the text of uploaded documents and recordings, so new ones are found by their name and
+metadata only.
+
+**Turning search on or off reindexes it** (`packages/application/src/search-reindex.ts`). A set that
+changes `search.enabled` appends one `search.toggled` per environment of the space, in the same unit
+as the settings row (`tx.aiSettings.save` with `tx.outbox.appendMany`), so the setting and its
+reindex commit together or not at all. The event is routed to the bulk topic; its consumer starts
+the environment's `search_reindex` bulk job over every published entry (`entry:<id>`, up to
+`MAX_REINDEX_ENTRIES`) and every asset (`asset:<id>`, as many), in chunks of
+`SEARCH_REINDEX_CHUNK_SIZE` (100). Off, a chunk deletes each entry's vectors and both of each
+asset's corpora; on, it embeds the chunk's published entries together (`indexEntriesEmbeddings`:
+every entry's chunks in every locale in one `embed` call, which the adapter sends 100 texts at a
+time, so a chunk is a few embeddings requests rather than one per entry and locale; the account's
+embeddings rate limit is shared by every deployment on it) and each asset again
+(`embedAssetForSearch`), never a draft. A failed embeddings or vector call fails the chunk, which is
+released and retried whole (it is idempotent) and failed for good after its attempts. Each chunk reads
+the setting in force when it runs, not the one that started the job, so a chunk of an overtaken job
+can only bring the index nearer the setting. The lexical leg isn't touched: it never reaches a
+model.
+
+- **Superseding.** A toggle while a job runs cancels it (`cancelBulkJob`) and starts another. An
+  event a later toggle overtook (the setting no longer what it asked for) starts nothing, and a
+  redelivered one finds the job it started (by `config.settingsVersion`).
+- **Whose job.** The system's: no starter is recorded, so its chunks don't re-check anyone's access
+  (`starterLostAccess`). It realizes the space's setting, which stays in force whoever set it; were
+  it stopped when that person lost access, the index would be left half way between on and off.
+  Who turned it is on the job as `config.actor`, and in the settings' audit row. Cancelling one
+  takes `space:admin` besides the cancel route's `content:publish` (`authorizeBulkJobAccess`: the
+  bulk job cancel route and `bulk_job_cancel` answer 403 to anyone else), so a lesser role can't leave a setting half
+  applied; its report takes `content:manage`, as following it does.
+- **Following it.** `GET …/search/reindex-job` and MCP `search_reindex_job` (`content:manage`)
+  answer the environment's latest one (looked up by action, however many other jobs ran since); its
+  report and cancel are the bulk job routes'. The admin's Settings → AI
+  says "Reindexing search: 40%" on the search row while it runs.
+- **Cost.** Embeddings aren't metered by `CostGuardDO` (they never were: they run on every publish,
+  at a fraction of a generation's cost), and search has no tier, so neither the budget nor
+  `AI_MAX_TIER` bounds this job; its size is bounded instead, as above. Assets uploaded while search
+  was off had no text read from them: the job embeds their name and metadata, and a reindex of the
+  assets (`POST …/assets/reindex` with `all`) reads their text, running ingest's other steps (alt
+  text and tags, under `media`) again too.
+- **Not covered.** A deployment with no vectors bound (no `EMBEDDINGS_PROVIDER`) starts no job.
+  Entries beyond `MAX_REINDEX_ENTRIES` in one environment wait for their next publish (or `POST
+  …/search/reindex`).
 
 **Tier.** `policy.tier(callSiteDefault, requested)` answers the request's own tier, else the space's,
-else the call site's default ([the table above](#which-tier-each-use-case-asks-for)). The tier then
-goes through the AI adapter's tier → model mapping (`WORKERS_AI_MODEL_BY_TIER`, the
-`WORKERS_AI_MODEL_*` overrides) and AI Gateway like any other call, and `CostGuardDO` meters it the
-same; Coworker maps it with the same table, with the fast tier behind it. An AI action names its
-own tier, which stands.
+else the call site's default ([the table above](#which-tier-each-use-case-asks-for)), held to the
+deployment's cap (below). The tier then goes through the AI adapter's tier → model mapping
+(`WORKERS_AI_MODEL_BY_TIER`, the `WORKERS_AI_MODEL_*` overrides) and AI Gateway like any other call,
+and `CostGuardDO` meters it the same; Coworker maps it with the same table, with the fast tier
+behind it. An AI action names its own tier, which stands under the cap.
+
+**The deployment's tier cap.** `CostGuardDO` counts requests and tokens, not price, so a space that
+pins background work (agents, workflows, media) to `flagship` would cost several times what it did
+at `fast` without tripping anything. `AI_MAX_TIER` (`balanced` or `fast`; `flagship` or empty is no
+cap; anything else fails at boot; the registry's `aiMaxTier`) is the deployment's price ceiling per
+call: the effective tier of every generation and decision call is the lower of the cap and the tier it resolved to
+(`capModelTier`, order `fast` < `balanced` < `flagship`). It is one cap for every capability, not a
+split by interactive and background work: the space's per-capability tiers already express that
+split, the budget windows already separate background spend (`AI_AGENT_*`), and a second var would
+only be a second place to forget. It applies to every source of a tier alike: a request's own
+`tier`, the space's setting, and the call site's default, including the `flagship` defaults of page
+layouts and Coworker (a cap with exceptions isn't a ceiling; layouts on `balanced` are still
+validated against their schema and fall back as before). It is applied in `policy.tier` and in the
+non-policy branches of `generateJson` and `decide`, so a result's provenance names the tier that
+answered, and once more at the budget wrappers (`generateWithBudget`, `decideWithBudget`) for a
+call site that names its tier outright. Embeddings have no tier, so the cap doesn't reach them.
+
+A space's tier above the cap is **accepted and kept**, not refused: a cap lowered after a space chose
+its tiers would otherwise refuse every later save of the settings until each tier was lowered by
+hand, and the choice comes back if the cap is raised. `GET`/`PUT …/ai-settings` and the MCP tools
+report `maxTier` and, per capability, `effectiveTier` (the tier held to the cap; null when the tier
+is the call site's default). The admin's tier select disables the tiers above the cap and says
+"Capped at Balanced by this deployment"; a row set above it says what it runs on.
 
 **Guidance** is plain text, at most `AI_GUIDANCE_MAX_CHARS` (2 000) characters after line endings
 are normalized and the ends trimmed. It is written by a space administrator but runs in other
@@ -232,6 +296,66 @@ the content is stripped) and add `UNTRUSTED_CONTENT_GUARD` to the system prompt,
 to treat that span only as data (`packages/application/src/ai-prompt.ts`). The assistant wraps
 tool results the same way. It blunts instruction hijacks, notably a moderation classifier being
 talked into `flagged: false`; moderation additionally fails closed (see [moderate](#moderate)).
+
+### Change summaries
+
+`summarizeChange(ctx, caller, scope, entryId, from, to, { ai, fresh })`
+(`packages/application/src/change-summary.ts`) writes a short narrative of a version diff: one to
+three sentences and up to five highlights, plain text. It is served at
+`POST …/entries/:id/versions/diff/summary?from=&to=[&fresh=true]`, the MCP tool
+`entries_change_summary` (also offered to Coworker as a read), the management SDK's
+`entries.versions.summarize()` and the admin's **Summarize changes** in a version compare.
+
+- **Input: the diff, never the entry.** It runs `diffVersions` and masks it with `visibleDiff`, as
+  the compare does, so a field the caller's role denies never reaches the model (it is only
+  counted, in `hiddenChanges`, and the prompt then tells the model other fields changed that it
+  isn't shown). The changed fields go to the model as JSON lines inside `wrapUntrusted`, after a
+  first line naming the entry's type: one per field and locale, with the field's name
+  (`nameForModel`), its type and the kind of change; a value of up to 280 characters whole, before
+  and after; text edits as the words removed and added with six unchanged words either side
+  (`context`), so a long text costs its edits, not its length; rich text as each changed block's
+  words (`RichTextDocument` trees, never markup); lists as their changed elements (12 per value);
+  links by kind ("a linked entry", "another linked asset"), never by id. JSON keeps a value from
+  posing as another field or a marker.
+- **Bounded.** Fields are added whole, in the content type's order, until the next would pass
+  12 000 characters (`CHANGE_SUMMARY_MAX_INPUT_CHARS`, about 3k tokens); a field too large for
+  what is left is tried again compact (80-character excerpts, four elements), so one large field
+  never empties the input. The rest are counted and named in a last line, the prompt tells the
+  model the summary covers only part of the changes, and the result says `truncated: true`.
+- **Output.** `generateJson` against `{ summary: string, highlights: string[] }` (checked with
+  `conforms`), in English, `maxTokens` 1 500 (room for a reasoning model's thinking, which counts
+  against the cap), with `failures: 'throw'`: a budget refusal is a 429 and a provider error or
+  timeout a 503 (logged as `failed`), rather than the heuristic passing for the model's answer. An
+  answer that came back unusable (`bad_response`: cut off, JSON mode unmet) is a bad answer, so the
+  heuristic's, as one off the schema is. The prompt asks for about 350 and 120 characters; tags,
+  angle brackets and Markdown links are dropped and the lengths capped (600 and 200 characters,
+  five highlights). The result is plain text, to render as text.
+- **Capability.** `field-assist` (Writing help): it is "summarizing", the work that capability
+  already names, so an administrator who turned writing help off has turned this off too (409
+  `ai_capability_disabled`). Its tier (default `fast`: a short extraction over structured input)
+  and guidance apply.
+- **Without a model.** Under `AI_MODE=mock`, when no visible field changed, or when the answer
+  doesn't fit the schema, the summary is built from the diff by rule (`heuristicChangeSummary`)
+  and marked `source: 'heuristic'` with the reason in `fallback`: the sentence names the changed
+  fields ("Changed 3 fields: Title, Price, Body."), and a highlight per field (and locale, when
+  the entry holds several) says how. A simple value (Symbol, Slug, Number, Integer, Boolean, Date,
+  or Text of up to 40 characters) reads before → after ("Price: 49 → 59", "Featured: off → on"),
+  cut at 40 characters, or "set to …" and "cleared"; longer text and rich text by the words they
+  changed ("Body: 6 words changed", "rewritten" past 60% of their words, "added, 80 words"); a list
+  by its elements ("Tags: 2 added, 1 removed, 1 moved"); a link by what happened to it ("Hero
+  image: replaced", never an id). Fields the caller can't read are only counted.
+- **Cache, no D1 writes.** A model-written summary is kept in `ctx.cache` (KV) for a day under
+  a SHA-256 of everything the model read: the prompt id, scope, entry, tier, the system prompt (so
+  the space's guidance) and the serialized diff (so the caller's visible fields and the field names
+  as they are now). The same request is answered from it without a call (`cached: true`); `fresh`
+  asks again and replaces it, for a caller holding `content:write` (a read-only caller asking again
+  is answered from the cache, so a preview key can't drain the space's budget in a loop). The key
+  names the tier, not the model it maps to: after a model change, summaries already kept are served
+  until they expire. Versions are immutable, so the key never goes stale, and nothing is
+  written to D1 on this read path.
+- **Who may ask.** `preview:read` and a read grant on the entry's type, as for the diff: a reviewer
+  (Viewer, Approver) can ask, and every call is metered by the space's AI budget. The first model
+  route a read scope reaches; it costs at most one call per distinct diff and caller view.
 
 ## Content generation
 
@@ -299,7 +423,7 @@ spends a flagship call), SDK `entries.generateBlocks`; gated like the patch
   delimiters and capped (`describeBlockForModel`, `describeFieldForModel`, `nameForModel`).
 - **What isn't offered:** rich text, entry links, lists of links, plain components and
   repeaters, JSON and locations inside blocks, a slot the rules lock, and an image the field's
-  MIME rule doesn't take (`acceptsImages`). A block that *requires* one of them, or a required
+  MIME rule doesn't take (`acceptsImages`). A block that _requires_ one of them, or a required
   slot that offers nothing, is not offered at all, so every block in a schema can pass a save.
 - **Images:** a block's single `Link` to an `Asset` that takes images is asked for as
   `{ "$asset": { "query": "a lighthouse at dusk" } }`, only for a caller that may read the

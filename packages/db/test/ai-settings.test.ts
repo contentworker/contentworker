@@ -70,6 +70,41 @@ describe('AI settings on D1', () => {
     expect((await store.aiSettings.get(spaceId))?.version).toBe(2);
   });
 
+  it('fails a lost race inside a unit at commit, and the events written with it go too', async () => {
+    const { spaceId } = await harness();
+    await store.aiSettings.save(spaceId, settings(1));
+    const eventId = uid();
+    await expect(
+      store.withTransaction(async (tx) => {
+        await tx.outbox.append({
+          id: eventId,
+          type: 'search.toggled',
+          scope: { spaceId, environmentId: 'main' },
+          occurredAt: AT,
+          enabled: false,
+          settingsVersion: 2,
+        });
+        // Another set got to version 2 first: this one is from version 1 again.
+        await tx.aiSettings.save(spaceId, settings(1));
+      }),
+    ).rejects.toBeInstanceOf(TransactionConflictError);
+    expect(await store.outbox.get({ spaceId, environmentId: 'main' }, eventId)).toBeNull();
+    // At the version it read, the unit commits both.
+    await store.withTransaction(async (tx) => {
+      await tx.outbox.append({
+        id: eventId,
+        type: 'search.toggled',
+        scope: { spaceId, environmentId: 'main' },
+        occurredAt: AT,
+        enabled: false,
+        settingsVersion: 2,
+      });
+      await tx.aiSettings.save(spaceId, settings(2));
+    });
+    expect((await store.aiSettings.get(spaceId))?.version).toBe(2);
+    expect(await store.outbox.get({ spaceId, environmentId: 'main' }, eventId)).not.toBeNull();
+  });
+
   it('keeps each space to itself', async () => {
     const a = await harness();
     const b = await harness();

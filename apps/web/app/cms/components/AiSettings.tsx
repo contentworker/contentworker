@@ -3,7 +3,9 @@ import {
   AI_CAPABILITY_INFO,
   AI_GUIDANCE_MAX_CHARS,
   type AiCapability,
-  type AiSettings as AiSettingsDoc,
+  type AiModelTier,
+  type AiSettingsView as AiSettingsDoc,
+  isAboveTierCap,
   SCOPES,
 } from '@contentworker/domain';
 import { Alert, AlertDescription, AlertTitle } from '@contentworker/ui/alert';
@@ -20,7 +22,7 @@ import { SkeletonText } from '@contentworker/ui/skeleton';
 import { Switch } from '@contentworker/ui/switch';
 import { Textarea } from '@contentworker/ui/textarea';
 import { useQueryClient } from '@tanstack/react-query';
-import { useEffect, useId, useRef, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useId, useRef, useState } from 'react';
 import { useBlocker } from 'react-router';
 import { InlineConfirm } from '~/cms/components/InlineConfirm';
 import { LoadingStatus } from '~/cms/components/loading';
@@ -33,11 +35,13 @@ import {
   changedCapabilities,
   draftOf,
   guidanceLength,
+  SEARCH_REINDEX_KEY,
 } from '../lib/ai-settings';
 import { useClient } from '../lib/client-context';
 import {
   ApiError,
   apiErrorMessage,
+  type BulkJobSummary,
   type ManagementClient,
   RequestTimeoutError,
 } from '../lib/management';
@@ -78,6 +82,12 @@ export function AiSettings(props: { client: ManagementClient }) {
   const access = useScopedQuery(['space-access'], () => client.getSpaceAccess(), { silent: true });
   // Until access is known the form waits, rather than offering edits it may refuse.
   const canEdit = access.data?.scopes.includes(SCOPES.spaceAdmin) === true;
+  // Following the search reindex reads a bulk job, which takes content:manage.
+  const canFollowReindex = access.data?.scopes.includes(SCOPES.contentManage) === true;
+  // The settings version a save turned search on or off at: its reindex is waited for.
+  const [reindexFrom, setReindexFrom] = useState<number>();
+  // Stable, so the note's wait for its job isn't restarted by each poll.
+  const reindexSeen = useCallback(() => setReindexFrom(undefined), []);
 
   // What the form was edited from, and the form. A refetch never replaces edits under way, and
   // never takes the form back to an older version than it holds.
@@ -144,6 +154,13 @@ export function AiSettings(props: { client: ManagementClient }) {
       });
       settle(res.settings);
       setUnconfirmed(false);
+      if (
+        !res.unchanged &&
+        changes.search &&
+        changes.search.enabled !== base.capabilities.search.enabled
+      ) {
+        setReindexFrom(res.settings.version);
+      }
       toast.success('AI settings saved');
     } catch (err) {
       const theirs = staleVersion(err);
@@ -235,9 +252,14 @@ export function AiSettings(props: { client: ManagementClient }) {
               key={c}
               capability={c}
               value={draft[c]}
+              maxTier={base.maxTier ?? 'flagship'}
               disabled={busy || readOnly}
               onChange={(next) => edit(c, next)}
-            />
+            >
+              {c === 'search' && canFollowReindex ? (
+                <SearchReindexNote client={client} awaiting={reindexFrom} onStarted={reindexSeen} />
+              ) : null}
+            </CapabilityRow>
           ))}
         </ul>
       </section>
@@ -323,13 +345,36 @@ function staleVersion(err: unknown): number | undefined {
   return typeof version === 'number' ? version : undefined;
 }
 
+/** A tier's label, as the select names it. */
+const tierLabel = (tier: AiModelTier): string =>
+  TIER_CHOICES.find((t) => t.value === tier)?.label ?? tier;
+
+/**
+ * What the tier select says under it: the chosen tier's meaning, and the deployment's cap when it
+ * has one. A tier above the cap (chosen before the cap was lowered) is kept as set, and the hint
+ * says what it runs on instead; the API reports the same as `effectiveTier`.
+ */
+export function tierHint(tier: AiModelTier | null, maxTier: AiModelTier): string {
+  const meaning = TIER_CHOICES.find((t) => t.value === (tier ?? 'default'))?.meaning ?? '';
+  if (maxTier === 'flagship') return meaning;
+  const cap = tierLabel(maxTier);
+  if (tier && isAboveTierCap(tier, maxTier)) {
+    return `Runs on ${cap}: this deployment caps AI at ${cap}.`;
+  }
+  return `${meaning}. Capped at ${cap} by this deployment.`;
+}
+
 function CapabilityRow(props: {
   capability: AiCapability;
   value: AiCapabilityDraft;
+  /** The deployment's tier cap: tiers above it can't be chosen. */
+  maxTier: AiModelTier;
   disabled: boolean;
   onChange: (next: Partial<AiCapabilityDraft>) => void;
+  /** What else the row says about its capability (search: its reindex). */
+  children?: ReactNode;
 }) {
-  const { capability, value, disabled, onChange } = props;
+  const { capability, value, maxTier, disabled, onChange } = props;
   const info = AI_CAPABILITY_INFO[capability];
   const id = useId();
   const { chars, over } = guidanceLength(value.guidance);
@@ -382,17 +427,22 @@ function CapabilityRow(props: {
                 <SelectValue>{chosen.label}</SelectValue>
               </SelectTrigger>
               <SelectContent>
-                {TIER_CHOICES.map((t) => (
-                  <SelectItem key={t.value} value={t.value} textValue={t.label}>
-                    {t.label}
-                    <span className="sr-only">: </span>
-                    <span className="ml-1.5 text-muted-foreground text-xs">{t.meaning}</span>
-                  </SelectItem>
-                ))}
+                {TIER_CHOICES.map((t) => {
+                  const above = t.value !== 'default' && isAboveTierCap(t.value, maxTier);
+                  return (
+                    <SelectItem key={t.value} value={t.value} textValue={t.label} disabled={above}>
+                      {t.label}
+                      <span className="sr-only">: </span>
+                      <span className="ml-1.5 text-muted-foreground text-xs">
+                        {above ? `Above this deployment’s cap (${tierLabel(maxTier)})` : t.meaning}
+                      </span>
+                    </SelectItem>
+                  );
+                })}
               </SelectContent>
             </Select>
             <p id={`${id}-tier-hint`} className="text-muted-foreground text-xs">
-              {chosen.meaning}
+              {tierHint(value.tier, maxTier)}
             </p>
           </div>
           <div className="space-y-1.5">
@@ -431,6 +481,63 @@ function CapabilityRow(props: {
           guidance to set.
         </p>
       )}
+      {props.children}
     </li>
+  );
+}
+
+/** How often the search row asks after its reindex while one runs or is awaited. */
+const REINDEX_POLL_MS = 2000;
+/** How long a save waits to see its reindex start (the job starts on the queue, after the save). */
+const REINDEX_START_WAIT_MS = 30_000;
+
+/** Its progress, as the share of items done (each chunk's items land together). */
+export function reindexPercent(job: Pick<BulkJobSummary, 'totalItems' | 'succeeded' | 'failed'>) {
+  if (job.totalItems <= 0) return 0;
+  return Math.min(100, Math.floor(((job.succeeded + job.failed) / job.totalItems) * 100));
+}
+
+/**
+ * The search row's word on its reindex: turning search on or off starts one in every environment
+ * (this page shows this environment's), and while it runs the row says "Reindexing search: 40%".
+ * After a save that turned it, the row says it is starting until the job appears (it starts on the
+ * queue, a moment after the save), giving up quietly if none does (a deployment without
+ * embeddings has nothing to reindex). Nothing is said once it is done.
+ */
+function SearchReindexNote(props: {
+  client: ManagementClient;
+  /** The settings version a save turned search at, while its job hasn't appeared. */
+  awaiting: number | undefined;
+  onStarted: () => void;
+}) {
+  const { client, awaiting, onStarted } = props;
+  const [polling, setPolling] = useState(false);
+  const job = useScopedQuery(SEARCH_REINDEX_KEY, () => client.getSearchReindexJob(), {
+    silent: true,
+    ...(polling ? { refetchInterval: REINDEX_POLL_MS } : {}),
+  });
+  const latest = job.data ?? null;
+  const started =
+    awaiting !== undefined && latest !== null && (latest.config?.settingsVersion ?? 0) >= awaiting;
+  const waiting = awaiting !== undefined && !started;
+  const running = latest?.status === 'running';
+  useEffect(() => setPolling(running || waiting), [running, waiting]);
+  useEffect(() => {
+    if (started) onStarted();
+  }, [started, onStarted]);
+  useEffect(() => {
+    if (!waiting) return;
+    const t = setTimeout(onStarted, REINDEX_START_WAIT_MS);
+    return () => clearTimeout(t);
+  }, [waiting, onStarted]);
+  const text = running
+    ? `Reindexing search: ${reindexPercent(latest)}%`
+    : waiting
+      ? 'Reindexing search: starting…'
+      : '';
+  return (
+    <p className="text-muted-foreground text-sm" role="status">
+      {text}
+    </p>
   );
 }

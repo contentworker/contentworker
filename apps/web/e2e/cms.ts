@@ -26,18 +26,49 @@ export async function api(
   });
 }
 
+/** Whether `stored` carries everything `wanted` says (the server adds defaults of its own). */
+function covers(stored: unknown, wanted: unknown): boolean {
+  if (Array.isArray(wanted)) {
+    return (
+      Array.isArray(stored) &&
+      stored.length === wanted.length &&
+      wanted.every((item, i) => covers(stored[i], item))
+    );
+  }
+  if (wanted && typeof wanted === 'object') {
+    return (
+      !!stored &&
+      typeof stored === 'object' &&
+      Object.entries(wanted).every(([key, value]) => covers((stored as never)[key], value))
+    );
+  }
+  return stored === wanted;
+}
+
 /**
- * Saves a content type, as every worker's `beforeAll` does at once: two saves of one type racing
- * each other lose with a 409 that says to try again, so it is tried again, up to three times.
+ * Saves a shared content type, idempotently and without racing. Every worker's `beforeAll` saves
+ * the same types at once, and a save that loses to another revision of the type fails with a 409.
+ * So the stored definition is read first and a save that would change nothing is skipped (a
+ * re-save would bump the version under the other workers' saves); and if the save still loses
+ * (two workers creating the type together), the stored definition is read again: when it is
+ * the one asked for, the other worker's save was this one, and that is success. Any other 409 is a
+ * real conflict and fails.
  */
 export async function saveContentType(request: APIRequestContext, type: Record<string, unknown>) {
-  for (let attempt = 1; ; attempt++) {
-    const res = await api(request, 'POST', `${MGMT}/content-types`, type);
-    if (res.status() !== 409 || attempt === 3) {
-      expect([200, 201], await res.text()).toContain(res.status());
-      return res;
-    }
+  const path = `${MGMT}/content-types/${type.apiId as string}`;
+  const stored = async () => {
+    const res = await api(request, 'GET', path);
+    return res.status() === 200 && covers(await res.json(), type) ? res : null;
+  };
+  const same = await stored();
+  if (same) return same;
+  const res = await api(request, 'POST', `${MGMT}/content-types`, type);
+  if (res.status() === 409) {
+    const winner = await stored();
+    if (winner) return winner;
   }
+  expect([200, 201], await res.text()).toContain(res.status());
+  return res;
 }
 
 /** Creates the e2e space and its article type, once; a 409 (already there) is fine. */

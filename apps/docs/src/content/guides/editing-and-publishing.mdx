@@ -48,6 +48,7 @@ new draft, so history is never rewritten.
 | Change SEO metadata | `PATCH …/entries/{id}/seo` ([SEO](/guides/seo/))        | `content:write`   |
 | List versions       | `GET …/entries/{id}/versions`                           | `preview:read`    |
 | Compare two         | `GET …/entries/{id}/versions/diff?from=3&to=draft`      | `preview:read`    |
+| Summarize a change  | `POST …/entries/{id}/versions/diff/summary?from=3&to=draft` | `preview:read` |
 | Restore one         | `POST …/entries/{id}/versions/{version}/restore`        | `content:write`   |
 | Duplicate           | `POST …/entries/{id}/duplicate`                         | `content:write`   |
 
@@ -75,6 +76,34 @@ the content type's order and named as the type names it, with what changed in ea
 The diff is structured data, never HTML: render it as you render the content. Fields your role may
 not read are left out. Over MCP, `entries_diff_versions` takes the same `from` and `to` and
 returns the same shape.
+
+### Summarize the changes
+
+In a comparison, **Summarize changes** asks for a few sentences on what changed, shown above the
+diff: one to three sentences and up to five notable changes, in plain text. A model writes it from
+the diff alone (the fields your role can read, as excerpts and the words removed and added), stamped
+**Written by AI**, with **Write it again** to ask for another when you can edit the entry. Check it
+against the diff below it: the diff is the record, the summary a reading aid.
+
+Without a model, the summary is **Listed from the changes**: a sentence naming the fields that
+changed, then a line per field saying how. A short value reads before and after ("Price: 49 → 59",
+"Featured: off → on", "set to …", "cleared"); longer text and rich text by the words changed
+("Body: 6 words changed", or "rewritten"); a list by its elements ("Tags: 2 added, 1 removed"); a
+link or asset by what happened to it ("Hero image: replaced").
+
+The same summary is `POST …/entries/{id}/versions/diff/summary?from=3&to=draft`, the MCP tool
+`entries_change_summary` and `cma.entries.versions.summarize(id, from, to)` in the management SDK.
+The answer says who wrote it (`source`: `model`, or `heuristic` when it was listed from the diff by
+rule, as it is when no model is configured), whether a long diff was cut short for the model
+(`truncated`), and how many changed fields you can't read (`hiddenChanges`; they never reach the
+model). The same request is answered from a cache (`cached: true`) for a day; `fresh=true` asks
+the model again when you can edit the entry (`content:write`), and is answered from the cache
+otherwise.
+
+It is **Writing help** in [Settings → AI](/guides/ai/): turned off, the action isn't offered and the
+API answers `409 ai_capability_disabled`. It runs on that setting's tier (`fast` by default) and
+follows its guidance, and it counts against the space's AI budget (`429` when over; `503` when the
+model fails, to retry).
 
 ## Validate without saving
 

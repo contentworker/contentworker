@@ -406,8 +406,18 @@ None blocks a release.
   extracted text), with a tool to read a reference file; selectable in generation, canvas and agents.
 - [x] **AI settings per capability.** Per space: enabled, `ModelTier`, and guidance appended to the
   built-in prompt.
-- [ ] **Change summaries.** A narrative summary of a version diff, over the existing deterministic
-  diff.
+  - [x] **Deployment tier cap.** `AI_MAX_TIER` (the registry's `aiMaxTier`) holds every model call
+    to at most that tier, whatever its source; settings above it are kept and reported as
+    `effectiveTier`, and the admin's select disables the tiers above it.
+  - [x] **Reindex when search is toggled.** Turning `search` on or off starts a `search_reindex` bulk
+    job in every environment (deleting, or re-embedding, published entries' and assets' vectors),
+    superseding one still running; followed at `…/search/reindex-job`, `search_reindex_job` and on
+    the admin's search row.
+- [x] **Change summaries.** A narrative summary of a version diff, over the existing deterministic
+  diff: `POST …/versions/diff/summary`, `entries_change_summary` (Coworker too),
+  `versions.summarize()` and Summarize changes in the admin's compare. Written from the diff as the
+  caller may read it, fenced and bounded, under `field-assist`; listed by rule without a model;
+  cached in KV by its input.
 
 #### M6. Visual editing
 

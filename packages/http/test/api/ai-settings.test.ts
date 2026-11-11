@@ -1,5 +1,13 @@
-import { createContentType, SYSTEM_CALLER } from '@contentworker/application';
+import {
+  consumeEvent,
+  createContentType,
+  createEntry,
+  publishEntry,
+  SYSTEM_CALLER,
+} from '@contentworker/application';
 import type { ApiConfig } from '@contentworker/platform/config';
+import type { InMemoryContentStore } from '@contentworker/test-kit';
+import { RecordingWebhookSender } from '@contentworker/test-kit';
 import { describe, expect, it } from 'vitest';
 import { createApp } from '../../src/api/app';
 import { testConfig } from './config';
@@ -30,9 +38,12 @@ const auth = (token: string) => ({
   'Content-Type': 'application/json',
 });
 
-async function makeApp() {
+async function makeApp(opts: { maxTier?: 'balanced' | 'fast' } = {}) {
   const wired = wire(config);
-  const app = createApp(wired.ctx, config, wired.rag, wired.blob, wired.ai);
+  const ctx = opts.maxTier
+    ? { ...wired.ctx, ai: { mode: 'live' as const, timeoutMs: 20_000, maxTier: opts.maxTier } }
+    : wired.ctx;
+  const app = createApp(ctx, config, wired.rag, wired.blob, wired.ai);
   await createContentType(
     wired.ctx,
     SYSTEM_CALLER,
@@ -184,5 +195,68 @@ describe('AI settings over HTTP', () => {
       targetLocale: 'fr-FR',
     });
     expect(translated.status).toBe(200);
+  });
+
+  it('accepts a tier above the deployment’s cap, keeps it, and reports the tier it runs on', async () => {
+    const { send } = await makeApp({ maxTier: 'balanced' });
+    const set = await send('PUT', '/spaces/s1/ai-settings', {
+      expectedVersion: 0,
+      capabilities: { drafting: { enabled: true, tier: 'flagship' } },
+    });
+    expect(set.status).toBe(200);
+    expect(await set.json()).toMatchObject({
+      settings: {
+        maxTier: 'balanced',
+        capabilities: { drafting: { tier: 'flagship', effectiveTier: 'balanced' } },
+      },
+    });
+    const read = await send('GET', '/spaces/s1/ai-settings', undefined, 'cpa');
+    expect(await read.json()).toMatchObject({
+      maxTier: 'balanced',
+      capabilities: {
+        drafting: { tier: 'flagship', effectiveTier: 'balanced' },
+        layout: { tier: null, effectiveTier: null },
+      },
+    });
+  });
+
+  it('turning search off starts a reindex in the environment, followed at search/reindex-job', async () => {
+    const { wired, send } = await makeApp();
+    const scope = { spaceId: 's1', environmentId: 'main' };
+    const { entry } = await createEntry(wired.ctx, scope, {
+      contentTypeApiId: 'post',
+      fields: { title: { 'en-US': 'Hello' } },
+    });
+    await publishEntry(wired.ctx, scope, entry.id);
+    const follow = (token = 'admin') =>
+      send('GET', '/spaces/s1/environments/main/search/reindex-job', undefined, token);
+    expect(await (await follow()).json()).toEqual({ job: null });
+
+    const store = wired.ctx.store as InMemoryContentStore;
+    const before = store.allEvents().length;
+    await send('PUT', '/spaces/s1/ai-settings', {
+      expectedVersion: 0,
+      capabilities: { search: { enabled: false } },
+    });
+    const toggled = store.allEvents().slice(before);
+    expect(toggled).toMatchObject([
+      { type: 'search.toggled', scope, enabled: false, settingsVersion: 1 },
+    ]);
+    // What the engine's consumer does with it.
+    for (const e of toggled) {
+      await consumeEvent(wired.ctx, { sender: new RecordingWebhookSender(), rag: wired.rag }, e);
+    }
+    const res = await follow();
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      job: {
+        action: 'search_reindex',
+        status: 'running',
+        totalItems: 1,
+        config: { enabled: false, settingsVersion: 1 },
+      },
+    });
+    // Operational posture: content:manage, as the index health route; not a preview token.
+    expect((await follow('cpa')).status).toBe(403);
   });
 });

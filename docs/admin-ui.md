@@ -28,7 +28,7 @@ another origin are refused (403).
 | `/login`                                               | Email and password (PBKDF2, peppered with `PASSWORD_PEPPER`)                                                                                                                     |
 | `/login/passkey`, `/account/passkeys`                  | Passkeys (WebAuthn)                                                                                                                                                              |
 | `/login/two-factor`                                    | TOTP second factor, or a recovery code                                                                                                                                           |
-| `/login/forgot`, `/login/reset/:token?`                | Self-service password reset by an emailed code (`app/lib/password-reset.server.ts`); the emailed link moves its code into a cookie and redirects to `/login/reset`                |
+| `/login/forgot`, `/login/reset/:token?`                | Self-service password reset by an emailed code (`app/lib/password-reset.server.ts`); the emailed link moves its code into a cookie and redirects to `/login/reset`               |
 | `/logout`                                              | Signing out is a POST (the origin check covers it); a GET asks first                                                                                                             |
 | `/login/sso`, `/login/sso/callback`, `/login/sso/link` | OpenID Connect single sign-on with the deployment's provider (`app/lib/sso.server.ts`)                                                                                           |
 | `/scim/v2/*`                                           | SCIM provisioning from the identity provider, with its own bearer token. Answered by `workers/app.ts` (`scimFetch`) before React Router, so it is not a route in `app/routes.ts` |
@@ -265,7 +265,7 @@ pnpm --filter @contentworker/web test   # vitest: auth, sessions, gateway, lib u
 pnpm --filter @contentworker/web e2e    # Playwright in WebKit and Chromium, with axe
 ```
 
-The e2e suite (`apps/web/e2e`) runs the dev server offline on port 5390 against a fresh local
+The e2e suite (`apps/web/e2e`) runs the dev server offline (on a port derived from the checkout, so worktrees don't collide) against a fresh local
 database (`.wrangler/e2e`): shell layout on iPhone, iPad and desktop (both orientations), the CMS
 flows, space access (`space-access.spec.ts`), OAuth for MCP clients end to end (`oauth.spec.ts`),
 the workflow list and editor (`workflows.spec.ts`), an axe WCAG 2.1 A/AA sweep

@@ -1,7 +1,9 @@
 import {
+  PROMOTION_CONTENT_ACTIONS,
   PROMOTION_RISK_LEVELS,
   type Promotion,
   type PromotionAssessment,
+  promotionContentActions,
 } from '@contentworker/domain';
 import { Alert, AlertDescription, AlertTitle } from '@contentworker/ui/alert';
 import { Button } from '@contentworker/ui/button';
@@ -16,6 +18,11 @@ import {
   type PrincipalInfo,
   RequestTimeoutError,
 } from '~/cms/lib/management';
+import {
+  holdsEverywhere,
+  type PromotionControls,
+  promotionControls,
+} from '~/cms/lib/promotion-access';
 import { useClient } from '../../lib/client-context';
 import { useScopedQuery } from '../../lib/queries';
 
@@ -273,14 +280,15 @@ export function LongList<T>(props: {
 export interface PromotionViewer {
   readonly access: PrincipalInfo | undefined;
   readonly directory: ActorDirectory;
-  /** Whether Request is offered (content:manage and content:publish, unrestricted). */
+  /**
+   * Whether Request is offered: content:manage and content:publish, and `read`, `write` and
+   * `publish` on every content type with no field rules.
+   */
   readonly canRequest: boolean;
-  /** Whether Approve is offered: never to its requester, and with types or blocks, content:manage. */
-  readonly canApprove: (p: Pick<Promotion, 'requestedBy' | 'contentTypes' | 'blocks'>) => boolean;
-  /** Whether Reject is offered: never to its requester. */
-  readonly canReject: (p: Pick<Promotion, 'requestedBy'>) => boolean;
-  /** Whether Withdraw is offered: to its requester, as a person, whose role could reject it. */
-  readonly canWithdraw: (p: Pick<Promotion, 'requestedBy'>) => boolean;
+  /** Whether a request carrying entries is offered: `lock` on every content type as well. */
+  readonly canRequestEntries: boolean;
+  /** Approve, Reject and Withdraw on one promotion, and why not (`promotionControls`). */
+  readonly controls: (p: Parameters<typeof promotionControls>[1]) => PromotionControls;
 }
 
 /**
@@ -304,29 +312,16 @@ export function usePromotionViewer(): PromotionViewer {
     ...(team?.people ? { people: team.people } : {}),
   };
   const has = (scope: string) => access?.scopes.includes(scope) === true;
-  const unrestricted = !!access && !access.restricted;
-  // Deciding or withdrawing takes a person or the admin token, never an API key; the admin is
-  // always a person, but the API's answer says which.
-  const person = access?.kind === 'user' || access?.kind === 'admin';
-  const canReject = (p: Pick<Promotion, 'requestedBy'>) =>
-    person &&
-    unrestricted &&
-    has('content:publish') &&
-    // A person decides (the admin's every call is one): never whoever asked for it.
-    !!access?.subject &&
-    access.subject !== p.requestedBy;
   return {
     access,
     directory,
-    canRequest: unrestricted && has('content:publish') && has('content:manage'),
-    canReject,
-    canWithdraw: (p) =>
-      person &&
-      unrestricted &&
+    canRequest:
+      !!access &&
       has('content:publish') &&
-      !!access?.subject &&
-      access.subject === p.requestedBy,
-    canApprove: (p) =>
-      canReject(p) && (has('content:manage') || (p.contentTypes.length === 0 && !p.blocks)),
+      has('content:manage') &&
+      holdsEverywhere(access, PROMOTION_CONTENT_ACTIONS),
+    canRequestEntries:
+      !!access && holdsEverywhere(access, promotionContentActions({ entries: [0] })),
+    controls: (p) => promotionControls(access, p),
   };
 }
