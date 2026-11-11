@@ -488,6 +488,14 @@ Semantics:
   request (`authenticate`), so editing a role instantly changes what every bound key can do.
   Deleting a role is refused while active keys reference it; a dangling reference fails closed.
 - **Exact grant wins over `'*'`**; a type with no matching grant is denied entirely.
+- **One grant per type.** A role's grants name each content type at most once, `*` included:
+  creating, replacing or cloning a role whose grants repeat one is refused with a 422
+  (`validation_failed`, one `contentGrants` issue per repeated type, e.g. `More than one grant
+  names "post"; merge them into one`), on HTTP and MCP alike (`duplicateGrantIssues`). Only the
+  first grant naming a type ever governed it, so a second one read as access it never gave, and
+  two `*` grants looked like one in `auth/me` while `holdsOnEveryContentType` refused them. A role
+  stored with a repeated grant before the rule is left as it is and still resolves (the first
+  grant wins); saving it again, unchanged, is refused until its grants are merged.
 - **Six actions, four listed.** `ContentAction` is
   `read | write | publish | lock | delete | unpublish`. A grant lists only the first four;
   `lock` (locking and unlocking regions of an entry's blocks, whoever locked them) is never
