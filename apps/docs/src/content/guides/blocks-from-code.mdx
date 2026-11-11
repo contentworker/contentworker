@@ -40,7 +40,7 @@ object.
       "id": "hero",
       "name": "Hero",
       "group": "Headers",
-      "thumbnail": { "url": "https://cdn.example.com/blocks/hero.png" },
+      "thumbnail": { "assetId": "019a6b2e-5c4d-7e8f-9a0b-1c2d3e4f5a6b" },
       "fields": [
         { "apiId": "heading", "name": "Heading", "type": "Symbol", "required": true },
         {
@@ -94,6 +94,13 @@ whole field: a block type the field had that the catalog doesn't provide is remo
 A catalog holds at most 200 blocks, a block at most 10 slots, and the catalog at most 1,000,000
 characters as JSON. A thumbnail URL must be `https` without credentials; data URLs and inline
 markup are refused, and an `assetId` must name an asset in the environment.
+
+Prefer `{ "assetId": "…" }` for a thumbnail. The admin shows an asset thumbnail beside the block's
+name wherever editors pick a block: the canvas dock, the entry form's Add block menu and Build →
+Blocks. It doesn't draw a `{ "url": "…" }` thumbnail, because the admin loads images only from its
+own origin; a URL thumbnail is kept in the catalog for your own tooling, and the admin lists that
+block by its name. A thumbnail whose asset is archived, deleted or not an image shows the name
+too.
 
 ### Props
 

@@ -6,8 +6,11 @@
  * (unsaved). A full slot says so and offers nothing, as does a locked one (the canvas draws no seam
  * there, but Add in Layers or the inspector can still ask), and so does a place inside a locked
  * region: in a slot of a block locked with everything inside, or between two blocks of a locked
- * run (`/` after one of them can still ask). Thumbnails aren't drawn: the admin's
- * `img-src` takes no other origin, so each block is its name.
+ * run (`/` after one of them can still ask). A block whose manifest names an asset
+ * (`thumbnail: { assetId }`) leads its card with that picture, read with the catalog's other
+ * thumbnails in one lookup (`useBlockThumbnails`) and decorative beside its name; a `{ url }`
+ * thumbnail isn't drawn (the admin's `img-src` takes no other origin), and neither is an asset
+ * that's gone or fails to load: that block is its name, as before.
  *
  * One tab stop: ← → (and ↑ ↓) move across the cards, Home and End go to either end, Enter or Space
  * puts the block in, Escape closes the dock.
@@ -21,6 +24,8 @@ import { Button } from '@contentworker/ui/button';
 import { cn } from '@contentworker/ui/lib/utils';
 import { X } from 'lucide-react';
 import { useEffect, useId, useRef, useState } from 'react';
+import { BlockThumbnail } from '~/cms/components/BlockThumbnail';
+import { useBlockThumbnails } from '~/cms/lib/block-thumbnails';
 import { dockGroups } from '~/cms/lib/canvas/dock';
 import { type CanvasPlace, placeLockedBy, slotCount } from '~/cms/lib/canvas/model';
 import { Mark } from '~/components/mark';
@@ -46,6 +51,7 @@ export function Dock({ place, catalog, onInsert, onClose, inSheet, ask }: DockPr
   const lockedBy = placeLockedBy(place);
   const groups = lockedBy ? [] : dockGroups(slot, catalog);
   const items = groups.flatMap((g) => g.items);
+  const thumbnails = useBlockThumbnails(catalog);
   const row = useRef<HTMLDivElement>(null);
   const box = useRef<HTMLElement>(null);
   // The card that holds the dock's one tab stop.
@@ -201,16 +207,32 @@ export function Dock({ place, catalog, onInsert, onClose, inSheet, ask }: DockPr
                           onFocus={() => setActive(at)}
                           onClick={() => onInsert(item.variant)}
                           className={cn(
-                            'flex h-14 w-52 flex-col items-start justify-center rounded-xl bg-muted/60 px-3 text-left',
+                            'flex h-14 w-52 items-center gap-2.5 rounded-xl bg-muted/60 px-3 text-left',
                             'transition-[background-color] hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring',
                           )}
                         >
-                          <span className="w-full truncate font-medium text-sm">{item.name}</span>
-                          {item.description ? (
-                            <span className="w-full truncate text-muted-foreground text-xs">
-                              {item.description}
-                            </span>
-                          ) : null}
+                          {/* 4:3 at the card's inner height, so the dock keeps its 160px; with
+                              any picture in the catalog, a card without one holds its place. */}
+                          <BlockThumbnail
+                            src={thumbnails.of(item.variant.apiId)}
+                            className="aspect-[4/3] h-10 rounded-lg"
+                            fallback={
+                              thumbnails.any ? (
+                                <span
+                                  aria-hidden="true"
+                                  className="aspect-[4/3] h-10 shrink-0 rounded-lg bg-muted"
+                                />
+                              ) : null
+                            }
+                          />
+                          <span className="flex min-w-0 flex-1 flex-col">
+                            <span className="truncate font-medium text-sm">{item.name}</span>
+                            {item.description ? (
+                              <span className="truncate text-muted-foreground text-xs">
+                                {item.description}
+                              </span>
+                            ) : null}
+                          </span>
                         </button>
                       </li>
                     );

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { type BlockCatalog, EMPTY_BLOCK_CONFIG, effectiveBlockRules } from '@contentworker/domain';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { createMemoryRouter, RouterProvider } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { BlockCatalogUsage } from '~/cms/lib/management';
@@ -76,6 +76,7 @@ const client = {
   getBlockConfig: vi.fn(async () => EMPTY_BLOCK_CONFIG),
   getEffectiveBlockRules: vi.fn(async () => effectiveBlockRules(CATALOG, EMPTY_BLOCK_CONFIG)),
   getSpaceAccess: vi.fn(async () => ({ subject: 'me', scopes: ['preview:read'] })),
+  listAssets: vi.fn(async () => ({ items: [] as unknown[] })),
 };
 vi.mock('~/cms/lib/client-context', () => ({
   useClient: () => ({
@@ -182,6 +183,54 @@ describe('the block catalog screen', () => {
     setup(CATALOG, new Error('boom'));
     const banner = await rowOf('Banner');
     expect(await banner.findByText('Unknown')).toBeTruthy();
+  });
+
+  it('leads a block’s row with its asset thumbnail, and the others with the block tile', async () => {
+    client.listAssets.mockResolvedValueOnce({
+      items: [
+        {
+          id: 'a-banner',
+          status: 'published',
+          file: {
+            url: '/media/banner.png?sig=1',
+            fileName: 'banner.png',
+            contentType: 'image/png',
+          },
+          title: {},
+          description: {},
+          metadata: { altText: {}, tags: [] },
+        },
+      ],
+    });
+    const withThumbnails = {
+      ...CATALOG,
+      blocks: CATALOG.blocks.map((b) =>
+        b.id === 'banner'
+          ? { ...b, thumbnail: { assetId: 'a-banner' } }
+          : b.id === 'grid'
+            ? { ...b, thumbnail: { url: 'https://cdn.example/grid.png' } }
+            : b,
+      ),
+    } as BlockCatalog;
+    setup(withThumbnails);
+    const banner = (await screen.findByText('Banner', { selector: 'span' })).closest('li');
+    const pic = await waitFor(() => {
+      const img = banner?.querySelector('img');
+      if (!img) throw new Error('no thumbnail yet');
+      return img;
+    });
+    expect(pic.getAttribute('src')).toBe('/media/banner.png?sig=1');
+    expect(pic.getAttribute('alt')).toBe('');
+    // A url thumbnail isn't drawn: the row keeps the block tile.
+    const grid = (await screen.findByText('Grid', { selector: 'span' })).closest('li');
+    expect(grid?.querySelector('img')).toBeNull();
+    expect(grid?.querySelector('[data-slot="catalog-tile"]')).toBeTruthy();
+    expect(client.listAssets).toHaveBeenCalledTimes(1);
+    expect(client.listAssets).toHaveBeenCalledWith({ ids: ['a-banner'], limit: 1 });
+    // A failed load is the tile again, never a broken image.
+    fireEvent.error(pic);
+    expect(banner?.querySelector('img')).toBeNull();
+    expect(banner?.querySelector('[data-slot="catalog-tile"]')).toBeTruthy();
   });
 
   it('draws one list named Blocks, without a heading, when nothing is grouped', async () => {

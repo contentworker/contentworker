@@ -403,9 +403,11 @@ Built on Blocks and the frontend runtime. Layouts stay a typed tree; rich text s
   keyboard path, undo by inverse block-patch ops, a save held to `expectedVersion`, and
   Coworker's "Ask Coworker to fill this" at a seam (the slot's allowed blocks, bounds and the
   blocks around it, quoted to the model; the card holds the patch to that slot) with its proposal
-  shown as ghosts on the page and in Layers until it is confirmed or declined. Still to come:
-  dragging blocks with a fine pointer, block thumbnails (the admin's `img-src` takes no other
-  origin), and per-breakpoint overrides.
+  shown as ghosts on the page and in Layers until it is confirmed or declined. Block thumbnails
+  are drawn where blocks are picked (the dock, the entry form's Add block menu, Build → Blocks)
+  for a manifest's `{ assetId }`, all of a catalog's read in one `GET …/assets?ids=` lookup; a
+  `{ url }` thumbnail isn't drawn (the admin's `img-src` takes no other origin). Still to come:
+  dragging blocks with a fine pointer, and per-breakpoint overrides.
 - [x] **Frontend SDK extras.** `client.live()` over the live stream (reconnecting with backoff,
   stopping when the key is refused) with `useLiveEntry` / `useLiveEntries` for React and Vue; a
   Next.js draft-mode helper (`@contentworker/sdk/next`: a route that checks the preview token, and a

@@ -338,6 +338,137 @@ test('the rules set in Build → Blocks narrow the dock and lock a slot on the c
   await scan(page, testInfo, 'rules');
 });
 
+/** A 1×1 PNG: an asset the catalog's thumbnail can name, with real bytes behind its signed URL. */
+const PIXEL = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+  'base64',
+);
+
+/**
+ * Block thumbnails, end to end, in an environment of its own: an image asset uploaded there, a
+ * catalog naming it for one block and a URL for another. The dock draws the asset's picture from
+ * this origin (the CSP takes nothing else) and leaves the URL one its name, inside its 160px; Build
+ * → Blocks leads the block's row with the same picture.
+ */
+test('the dock and Build → Blocks show a block’s asset thumbnail, and not a URL one', async ({
+  page,
+  request,
+}, testInfo) => {
+  const env = `thumbs${testInfo.workerIndex}${Date.now().toString(36)}`;
+  const mgmt = `/spaces/${SPACE}/environments/${env}`;
+  const made = await api(request, 'POST', `/spaces/${SPACE}/environments`, { id: env });
+  expect(made.status(), await made.text()).toBe(201);
+  const created = await api(request, 'POST', `${mgmt}/assets`, {
+    fileName: 'hero.png',
+    contentType: 'image/png',
+    title: { 'en-US': 'Hero preview' },
+  });
+  expect(created.ok(), await created.text()).toBe(true);
+  const { asset, upload } = (await created.json()) as {
+    asset: { id: string };
+    upload: { url: string; headers: Record<string, string> };
+  };
+  const put = await request.fetch(upload.url, {
+    method: 'PUT',
+    headers: upload.headers,
+    data: PIXEL,
+  });
+  expect(put.ok(), await put.text()).toBe(true);
+  const type = await api(request, 'POST', `${mgmt}/content-types`, {
+    apiId: 'thumbPage',
+    name: 'Thumb page',
+    displayField: 'title',
+    fields: [
+      field('title', 'Title'),
+      {
+        apiId: 'body',
+        name: 'Main',
+        type: 'Array',
+        localized: false,
+        required: false,
+        position: 1,
+        items: {
+          type: 'Component',
+          variants: [{ apiId: 'hero', name: 'Hero', fields: [field('heading', 'Heading')] }],
+        },
+      },
+    ],
+    preview: {
+      urlTemplate: `${GUEST}/?entry={id}&type=thumbPage&space={space}&env={environment}#token={token}`,
+    },
+  });
+  expect([200, 201], await type.text()).toContain(type.status());
+  const pushed = await api(request, 'POST', `${mgmt}/block-catalog`, {
+    targets: [{ contentTypeApiId: 'thumbPage', field: 'body' }],
+    allowDestructive: true,
+    blocks: [
+      {
+        id: 'hero',
+        name: 'Hero',
+        thumbnail: { assetId: asset.id },
+        fields: [field('heading', 'Heading')],
+      },
+      {
+        id: 'cta',
+        name: 'Call to action',
+        thumbnail: { url: 'https://cdn.example.com/blocks/cta.png' },
+        fields: [field('label', 'Label')],
+      },
+    ],
+  });
+  expect(pushed.status(), await pushed.text()).toBe(200);
+  const entry = await api(request, 'POST', `${mgmt}/entries`, {
+    contentTypeApiId: 'thumbPage',
+    fields: {
+      title: { 'en-US': 'Thumb page' },
+      body: { 'en-US': [{ _type: 'hero', _key: 'h1', heading: 'Welcome' }] },
+    },
+  });
+  expect(entry.ok(), await entry.text()).toBe(true);
+  const id = ((await entry.json()) as { entry: { id: string } }).entry.id;
+  await page.addInitScript(
+    ([space, environment]) =>
+      localStorage.setItem(
+        'contentworker-scope',
+        JSON.stringify({ space, environment, locale: 'en-US' }),
+      ),
+    [SPACE, env],
+  );
+
+  await openCms(page, `/content/thumbPage/${id}/canvas`);
+  const site = page
+    .frameLocator('iframe[title="Site preview"]')
+    .frameLocator('iframe[title="The entry on your site"]');
+  await expect(site.getByRole('heading', { level: 1 })).toHaveText('Thumb page', {
+    timeout: 15_000,
+  });
+  await page.locator('[data-seam="body#1"]').click();
+  const dock = page.getByRole('region', { name: 'Add to Main' });
+  const hero = dock.locator('[data-dock-item="hero"]');
+  const pic = hero.locator('img');
+  await expect(pic).toBeVisible();
+  // Loaded, not a broken image: the bytes came through this origin.
+  await expect
+    .poll(() => pic.evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth))
+    .toBe(1);
+  expect(await pic.getAttribute('alt')).toBe('');
+  await expect(dock.getByRole('button', { name: 'Hero' })).toBeVisible();
+  await expect(dock.locator('[data-dock-item="cta"] img')).toHaveCount(0);
+  const box = await dock.boundingBox();
+  expect(box?.height ?? 0).toBeLessThanOrEqual(160);
+  await scan(page, testInfo, 'thumbnails');
+  await page.keyboard.press('Escape');
+
+  await openCms(page, '/blocks');
+  const blocks = page.getByRole('list', { name: 'Blocks' });
+  await expect(
+    blocks.getByRole('listitem').filter({ hasText: 'Hero' }).locator('img'),
+  ).toBeVisible();
+  await expect(
+    blocks.getByRole('listitem').filter({ hasText: 'Call to action' }).locator('img'),
+  ).toHaveCount(0);
+});
+
 test('Coworker fills a seam: its proposal shows as ghosts, Not now takes them off, Confirm saves it', async ({
   page,
   request,
