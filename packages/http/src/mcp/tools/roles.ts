@@ -61,7 +61,10 @@ export function registerRoleTools(server: McpServer, t: ToolContext): void {
   server.registerTool(
     'role_update',
     {
-      description: 'Replace a role definition; keys bound to it pick the change up live.',
+      description:
+        'Replace a role definition; keys bound to it pick the change up live. Read it with ' +
+        'roles_list first and send its version as expectedVersion: a save made since is refused ' +
+        '(409, naming the version in force), so read it again and show the person what changed.',
       inputSchema: toolSchema('role_update', () =>
         z.object({
           id: z.string(),
@@ -69,6 +72,11 @@ export function registerRoleTools(server: McpServer, t: ToolContext): void {
           description: z.string().optional(),
           scopes: z.array(z.string()),
           contentGrants: z.array(grantShape).optional(),
+          expectedVersion: z
+            .int()
+            .min(1)
+            .optional()
+            .describe('The version the role was read at; another is a 409'),
           ...scopeArgs,
         }),
       ),
@@ -85,6 +93,9 @@ export function registerRoleTools(server: McpServer, t: ToolContext): void {
             description: args.description,
             scopes: args.scopes,
             contentGrants: args.contentGrants,
+            ...(args.expectedVersion !== undefined
+              ? { expectedVersion: args.expectedVersion }
+              : {}),
           },
           deps.accessPolicy,
           t.principal,

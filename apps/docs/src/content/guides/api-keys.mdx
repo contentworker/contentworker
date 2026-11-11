@@ -92,8 +92,15 @@ list of grants:
   can be read but not written. Leave both out of a save: the new version keeps their stored
   values, and a denied field's value stays out of the response.
 - Roles are live: editing a role changes what every key bound to it can do on the next request.
+- Every role has a `version`, 1 when created and one more at each save. `PUT
+  /spaces/{space}/roles/{id}` (and the `role_update` MCP tool) replaces the whole role; send the
+  `version` you read as `expectedVersion`, and if someone saved the role since, the answer is a
+  `409` naming the version in force, with nothing changed. Read the role again and make your change
+  over theirs. Without `expectedVersion` the save goes through as before.
 
-Create roles in **Settings → Roles** (where **Access** sets each type's five actions) or at
+Create roles in **Settings → Roles** (where **Access** sets each type's five actions; if someone
+else saves the role while you have it open, your save is refused, your changes stay on screen, and
+**Reload role** shows the role as it is now) or at
 `POST /spaces/{space}/roles`, then bind a key with
 `{ "kind": "cma", "roleId": "…" }`.
 

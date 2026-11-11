@@ -44,6 +44,7 @@ function ctx(): AppContext {
     spaceId: 's1',
     name: 'admin',
     scopes: [...fullApproval.approverScopes],
+    version: 1,
   });
   const at = clock.now().toISOString();
   for (const [subject, roleId] of [
@@ -787,6 +788,7 @@ describe('OAuth: delegated tokens treat consented scopes as a ceiling', () => {
       name: 'editor',
       scopes: [SCOPES.deliveryRead],
       contentGrants: [{ contentTypeApiId: '*', actions: ['read'] }],
+      version: 1,
     });
     const cfg = config();
     const clientId = (await publicClient(c, cfg)).id;
@@ -807,6 +809,7 @@ describe('OAuth: delegated tokens treat consented scopes as a ceiling', () => {
       name: 'editor',
       scopes: [SCOPES.deliveryRead, SCOPES.contentPublish],
       contentGrants: [{ contentTypeApiId: '*', actions: ['read', 'publish'] }],
+      version: 2,
     });
     const principal = await authenticate(c, hasher, tokens.access_token);
     expect(principal.scopes).toEqual([SCOPES.deliveryRead]);
@@ -822,6 +825,7 @@ describe('OAuth: delegated tokens treat consented scopes as a ceiling', () => {
       name: 'editor',
       scopes: [SCOPES.deliveryRead, SCOPES.previewRead],
       contentGrants: [],
+      version: 1,
     });
     const cfg = config();
     const clientId = (await publicClient(c, cfg)).id;
@@ -837,6 +841,7 @@ describe('OAuth: delegated tokens treat consented scopes as a ceiling', () => {
       name: 'editor',
       scopes: [SCOPES.deliveryRead],
       contentGrants: [],
+      version: 2,
     });
     expect((await authenticate(c, hasher, tokens.access_token)).scopes).toEqual([
       SCOPES.deliveryRead,
@@ -853,6 +858,7 @@ describe('OAuth: delegated tokens treat consented scopes as a ceiling', () => {
       name: 'editor',
       scopes: [SCOPES.deliveryRead],
       contentGrants: [],
+      version: 1,
     });
     const { token } = await createApiKey(c, hasher, {
       issuer: 'system',
@@ -866,6 +872,7 @@ describe('OAuth: delegated tokens treat consented scopes as a ceiling', () => {
       name: 'editor',
       scopes: [SCOPES.deliveryRead, SCOPES.contentPublish],
       contentGrants: [],
+      version: 2,
     });
     expect((await authenticate(c, hasher, token)).scopes).toEqual([
       SCOPES.deliveryRead,

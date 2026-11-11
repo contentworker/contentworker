@@ -1,4 +1,5 @@
 import type { ContentTypeGrant } from '@contentworker/domain';
+import { Alert, AlertDescription, AlertTitle } from '@contentworker/ui/alert';
 import { Button } from '@contentworker/ui/button';
 import { Checkbox } from '@contentworker/ui/checkbox';
 import { DialogError } from '@contentworker/ui/dialog';
@@ -11,10 +12,10 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@contentworker/ui/sheet';
-import { useId, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { DiscardAsk, GuardCancel, useDiscardGuard } from '~/cms/components/discard-guard';
 import { ResponsiveSheetContent } from '~/cms/components/responsive-sheet';
-import type { RoleSummary } from '../lib/management';
+import { apiErrorMessage, type RoleSummary } from '../lib/management';
 import {
   actionAvailable,
   actionNeeds,
@@ -22,6 +23,7 @@ import {
   CONTENT_ACTIONS,
   contentTypeName,
   heldActions,
+  roleChanged,
   sameGrants,
   setAction,
 } from '../lib/role-grants';
@@ -30,7 +32,10 @@ import {
  * A role's content access, per content type: what it may do with each, as five actions. Write and
  * Publish bring Delete and Unpublish with them, and unticking either finer one withholds it, so a
  * role can write without deleting or publish without unpublishing. Field rules are kept as they are.
- * Closing with unsaved changes asks first, in place.
+ * Closing with unsaved changes asks first, in place. A save is held to the version the sheet
+ * opened with: when someone saved the role since, nothing is written, the edits stay, and the
+ * sheet says so and offers the role as it is now (`onReload`). The sheet stays open across the
+ * reload; a new `role.version` starts a fresh draft in it.
  */
 export function RoleAccessSheet(props: {
   role: RoleSummary;
@@ -38,19 +43,52 @@ export function RoleAccessSheet(props: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSave: (grants: readonly ContentTypeGrant[]) => Promise<void>;
+  /** Reads the role again and hands it back as `role`, dropping these edits. */
+  onReload: () => Promise<void>;
 }) {
   const id = useId();
   const [grants, setGrants] = useState<readonly ContentTypeGrant[]>(props.role.contentGrants);
   const [adding, setAdding] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Someone saved the role after it opened: saving again would be refused the same way.
+  const [changed, setChanged] = useState(false);
+  const [reloading, setReloading] = useState(false);
+  const formRef = useRef<HTMLFormElement>(null);
+  const changedRef = useRef<HTMLDivElement>(null);
+  // The role as it is now, after a reload: a fresh draft, in the same sheet.
+  const [draftOf, setDraftOf] = useState(props.role.version);
+  const reloaded = useRef(false);
+  if (draftOf !== props.role.version) {
+    setDraftOf(props.role.version);
+    setGrants(props.role.contentGrants);
+    setChanged(false);
+    setError(null);
+    reloaded.current = true;
+  }
   const dirty = !sameGrants(grants, props.role.contentGrants);
   const guard = useDiscardGuard({
     saving: busy,
     open: props.open,
     dirty,
+    subject: props.role.version,
     onOpenChange: props.onOpenChange,
   });
+
+  // Save was pressed and is now disabled, so the refusal takes focus, wherever the scroll is.
+  useEffect(() => {
+    if (!changed) return;
+    changedRef.current?.focus();
+    changedRef.current?.scrollIntoView?.({ block: 'nearest' });
+  }, [changed]);
+  // Reload role is gone with the refusal: focus lands on the reloaded role's first control.
+  useEffect(() => {
+    if (!reloaded.current) return;
+    reloaded.current = false;
+    formRef.current
+      ?.querySelector<HTMLElement>('button[role="checkbox"]:not(:disabled), select')
+      ?.focus();
+  }, [draftOf]);
   const names = new Map(props.contentTypes.map((t) => [t.apiId, t.name]));
   const addable = ['*', ...props.contentTypes.map((t) => t.apiId)].filter(
     (apiId) => !grants.some((g) => g.contentTypeApiId === apiId),
@@ -63,9 +101,23 @@ export function RoleAccessSheet(props: {
     try {
       await props.onSave(grants);
     } catch (err) {
-      setError(guard.saveFailed(err));
+      const message = guard.saveFailed(err);
+      if (roleChanged(err)) setChanged(true);
+      else setError(message);
     } finally {
       setBusy(false);
+    }
+  };
+
+  const reload = async () => {
+    setReloading(true);
+    setError(null);
+    try {
+      await props.onReload();
+    } catch (err) {
+      setError(apiErrorMessage(err));
+    } finally {
+      setReloading(false);
     }
   };
 
@@ -79,7 +131,7 @@ export function RoleAccessSheet(props: {
             exact type wins over Every type.
           </SheetDescription>
         </SheetHeader>
-        <form className="space-y-4 p-4" onSubmit={save}>
+        <form ref={formRef} className="space-y-4 p-4" onSubmit={save}>
           {grants.length === 0 ? (
             <p className="text-muted-foreground text-sm">
               No content: someone with this role sees and changes no entries.
@@ -180,6 +232,35 @@ export function RoleAccessSheet(props: {
               </Button>
             </div>
           ) : null}
+          {changed ? (
+            <Alert
+              ref={changedRef}
+              id={`${id}-changed`}
+              tabIndex={-1}
+              variant="warning"
+              className="outline-none"
+            >
+              {/* A save that didn't confirm may have been the one that moved it on. */}
+              <AlertTitle>
+                {guard.unconfirmed ? 'This role moved on' : 'Someone else changed this role'}
+              </AlertTitle>
+              <AlertDescription>
+                {guard.unconfirmed
+                  ? `${props.role.name} moved on after you opened it, perhaps by your own save that didn’t confirm. Reload to see what’s there; what you changed here is discarded.`
+                  : `${props.role.name} was saved after you opened it, so your changes weren’t saved. They’re still here. Reload to see the role as it is now; what you changed here is discarded.`}
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="mt-2"
+                  disabled={reloading}
+                  onClick={() => void reload()}
+                >
+                  Reload role
+                </Button>
+              </AlertDescription>
+            </Alert>
+          ) : null}
           {error ? <DialogError>{error}</DialogError> : null}
           <SheetFooter className="-mx-4 -mb-4">
             <DiscardAsk
@@ -187,7 +268,11 @@ export function RoleAccessSheet(props: {
               message={`Discard your changes to ${props.role.name}’s access?`}
             >
               <GuardCancel guard={guard} />
-              <Button type="submit" disabled={busy || !dirty}>
+              <Button
+                type="submit"
+                disabled={busy || !dirty || changed}
+                aria-describedby={changed ? `${id}-changed` : undefined}
+              >
                 Save access
               </Button>
             </DiscardAsk>

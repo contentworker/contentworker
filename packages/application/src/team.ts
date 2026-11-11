@@ -142,6 +142,7 @@ export async function ensureRolePresets(ctx: AppContext, spaceId: string): Promi
       scopes: [...def.scopes],
       contentGrants: def.contentGrants.map((g) => ({ ...g, actions: [...g.actions] })),
       preset: def.preset,
+      version: 1,
     };
     try {
       await ctx.store.roles.save(role);
@@ -206,6 +207,7 @@ export async function cloneRole(
     ...(source.description ? { description: source.description } : {}),
     scopes: [...source.scopes],
     contentGrants: source.contentGrants.map((g) => ({ ...g })),
+    version: 1,
   };
   await ctx.store.roles.save(role);
   return role;

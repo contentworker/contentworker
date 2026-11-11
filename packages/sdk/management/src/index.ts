@@ -1516,6 +1516,45 @@ export interface ApiKeySummary {
   readonly lastUsedAt?: string;
 }
 
+/** What a role lets its holders do with one content type (`*`: every type). */
+export interface ContentGrant {
+  readonly contentTypeApiId: string;
+  /** `write` also grants `delete`; `publish` also grants `delete` and `unpublish`. */
+  readonly actions: readonly ('read' | 'write' | 'publish' | 'lock')[];
+  /** Finer actions the grant withholds. */
+  readonly deniedActions?: readonly ('delete' | 'unpublish')[];
+  /** Masked on read, refused on write. */
+  readonly deniedFields?: readonly string[];
+  /** Readable, refused on write. */
+  readonly readOnlyFields?: readonly string[];
+}
+
+/** A role in the space: scopes plus per-content-type grants. Needs space:admin. */
+export interface Role {
+  readonly id: string;
+  readonly spaceId: string;
+  readonly name: string;
+  readonly description?: string;
+  readonly scopes: readonly string[];
+  readonly contentGrants: readonly ContentGrant[];
+  /** Set on the built-in roles seeded into every space. */
+  readonly preset?: 'viewer' | 'approver' | 'editor' | 'manager' | 'admin';
+  /** 1 when created, one more at each save: send it back as `expectedVersion`. */
+  readonly version: number;
+}
+
+export interface RoleInput {
+  readonly name: string;
+  readonly description?: string;
+  readonly scopes: readonly string[];
+  readonly contentGrants?: readonly ContentGrant[];
+}
+
+export interface RoleUpdateInput extends RoleInput {
+  /** The version you edited from: a save made since is a 409. Absent: saved over whatever is there. */
+  readonly expectedVersion?: number;
+}
+
 export interface CreateApiKeyInput {
   readonly kind: ApiKeyKind;
   readonly name?: string;
@@ -2803,6 +2842,23 @@ export function createManagementClient(opts: ManagementClientOptions) {
        */
       connect: (input: ConnectFrontendInput = {}) =>
         post<FrontendConnection>(`${envBase}/frontend-connections`, input),
+    },
+
+    /** The space's roles (space:admin). Keys and people holding one pick up a change live. */
+    roles: {
+      list: () => items(get<{ items: Role[] }>(`${spaceBase}/roles`)),
+      get: (id: string) => get<Role>(`${spaceBase}/roles/${e(id)}`),
+      /** 422 for an unknown scope or action. */
+      create: (input: RoleInput) => post<Role>(`${spaceBase}/roles`, input),
+      /**
+       * Replaces the whole role as its next version. With `expectedVersion`, a save made since is
+       * a 409 (`isConflict`; `error.details.version` is the version in force); 409 `last_admin`
+       * when it would leave the space with no administrator.
+       */
+      update: (id: string, input: RoleUpdateInput) =>
+        put<Role>(`${spaceBase}/roles/${e(id)}`, input),
+      /** Refused for a built-in role, and while an active key or a person holds it. */
+      delete: (id: string) => del<void>(`${spaceBase}/roles/${e(id)}`),
     },
 
     apiKeys: {

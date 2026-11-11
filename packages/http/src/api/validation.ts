@@ -398,6 +398,14 @@ export const roleBody = z.object({
   scopes: z.array(z.string().max(64)).max(64),
   contentGrants: z.array(contentGrant).max(500).optional(),
 });
+/** A role replaced whole, optionally held to the version it was edited from. */
+export const roleUpdateBody = roleBody.extend({
+  expectedVersion: z
+    .int()
+    .min(1)
+    .optional()
+    .describe('The version the role was edited from; another is a 409. Absent: saved over any'),
+});
 // The deep field shape (nested fields, validations, options, messages, guidance and rules) is
 // validated by the domain at every depth. The guidance keys are named here so the request
 // documents them, without caps or types: a revision may carry a value stored before guidance was

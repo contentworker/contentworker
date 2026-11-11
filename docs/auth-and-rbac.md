@@ -525,6 +525,17 @@ Semantics:
   (requires `space:admin`) and the `roles_list` / `role_create` / `role_update` /
   `role_delete` MCP tools. Mint a bound key with `POST /spaces/:space/api-keys { kind, roleId }`. Deleting is
   refused while a key or a person holds the role, and for a preset.
+- **A role save is held to its version.** Every role carries a `version` (1 when created, one more
+  at each save; `0041_role_versions`), and the store writes a save only while the row is at the
+  version it read, inside `withTransaction`, so of two saves from one read only one lands; the other
+  is a `TransactionConflictError` at commit, answered as `409 conflict`. `PUT …/roles/:id` and
+  `role_update` take an optional `expectedVersion`: one that isn't the stored version is a
+  `409 conflict` with `details: { version }` (the version in force) and nothing written; without it
+  the save goes over whatever is stored, as before. `updateRole` runs the delegated-bearer widening
+  refusal and the last-admin check first, against the role as stored now, then the version check,
+  so a stale save is refused only when it would otherwise be allowed, where a save that loses the
+  race at commit is refused too. The admin's Access sheet always sends the version it opened with;
+  on a stale `409` it keeps the edits, says someone else changed the role and offers to reload it.
 
 Grants govern entry read/write/publish/delete/unpublish and content-type visibility. **Delivery and Preview**
 list/get endpoints filter ungranted content types and `maskDeniedFields` on responses. Coarse

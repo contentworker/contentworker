@@ -677,6 +677,8 @@ export const roles = sqliteTable(
     contentGrants: text('content_grants', { mode: 'json' }).$type<ContentTypeGrant[]>().notNull(),
     // Built-in role preset this role was seeded as (viewer … admin); null for custom roles.
     preset: text('preset').$type<RolePreset>(),
+    // Bumped on every save: the compare-and-set a save rides with (0041_role_versions).
+    version: integer('version').notNull().default(1),
     createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull().default(NOW_MS),
     updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull().default(NOW_MS),
   },

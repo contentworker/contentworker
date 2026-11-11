@@ -64,6 +64,8 @@ export default defineConfig({
         'modals-phone.spec.ts',
         // The rules' diff is one column on a phone.
         'block-config-code.spec.ts',
+        // The Access sheet comes from the bottom: its conflict and reload in reach.
+        'role-save-conflict.spec.ts',
       ],
       use: { ...devices['iPhone 15'] },
     },
@@ -97,7 +99,7 @@ export default defineConfig({
       testMatch:
         PART === 'axe'
           ? AXE
-          : /(cms|workflows|space-access|first-space|block-patch-card|accessibility|contrast-settle|modal-focus|live-preview|canvas-editor|canvas-drag|locked-regions|entry-save-conflict|block-config-code)\.spec\.ts/,
+          : /(cms|workflows|space-access|first-space|block-patch-card|accessibility|contrast-settle|modal-focus|live-preview|canvas-editor|canvas-drag|locked-regions|entry-save-conflict|role-save-conflict|block-config-code)\.spec\.ts/,
       testIgnore: PART === 'cms' ? AXE : undefined,
       use: { ...devices['Desktop Chrome'] },
     },

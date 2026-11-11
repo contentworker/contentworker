@@ -1,4 +1,5 @@
 import {
+  ConflictError,
   type ContentTypeGrant,
   DelegatedKeyMintError,
   grantsAdmin,
@@ -13,6 +14,7 @@ import {
   SCOPES,
   ValidationError,
 } from '@contentworker/domain';
+import { TransactionConflictError } from '@contentworker/ports';
 import type { AppContext } from './context';
 import { invalidateCachedPrincipals } from './principal-cache';
 import { type AccessPolicy, assertKeepsAnAdmin, NO_SSO } from './team';
@@ -22,6 +24,12 @@ export interface RoleInput {
   readonly description?: string;
   readonly scopes: readonly string[];
   readonly contentGrants?: readonly ContentTypeGrant[];
+}
+
+/** What `updateRole` takes: the whole role, and optionally the version it was edited from. */
+export interface RoleUpdateInput extends RoleInput {
+  /** The version the edit was made from: another is a conflict. Absent: saved over whatever. */
+  readonly expectedVersion?: number;
 }
 
 const KNOWN_SCOPES = new Set<string>(Object.values(SCOPES));
@@ -79,6 +87,7 @@ export async function createRole(
     description: input.description,
     scopes: [...input.scopes],
     contentGrants: [...(input.contentGrants ?? [])],
+    version: 1,
   };
   await ctx.store.roles.save(role);
   await invalidateCachedPrincipals(ctx, spaceId);
@@ -101,15 +110,21 @@ async function refuseWideningKeys(ctx: AppContext, existing: Role, input: RoleIn
 }
 
 /**
- * Replaces a role's definition. Keys and people holding it pick the change up live. A preset
- * role stays that preset. Refused with `LastAdminError` when dropping `space:admin` would leave
- * the space with no administrator.
+ * Replaces a role's definition, as its next version. Keys and people holding it pick the change
+ * up live. A preset role stays that preset. Refused with `LastAdminError` when dropping
+ * `space:admin` would leave the space with no administrator.
+ *
+ * Refused (409, naming the version in force) when `expectedVersion` isn't the stored version, or
+ * when another save commits first: the version is the compare-and-set the write rides with, so of
+ * two saves from the same read only one lands. The delegated-bearer and last-admin checks run
+ * first, against the role as stored now, so a stale save is refused only when it would otherwise
+ * be allowed, the same place a save that loses the race at commit is; nothing is written either way.
  */
 export async function updateRole(
   ctx: AppContext,
   spaceId: string,
   id: string,
-  input: RoleInput,
+  input: RoleUpdateInput,
   policy: AccessPolicy = NO_SSO,
   editor?: Principal,
 ): Promise<Role> {
@@ -125,6 +140,7 @@ export async function updateRole(
     scopes: [...input.scopes],
     contentGrants: [...(input.contentGrants ?? [])],
     ...(existing.preset ? { preset: existing.preset } : {}),
+    version: existing.version + 1,
   };
   if (grantsAdmin(existing.scopes) && !grantsAdmin(role.scopes)) {
     const roles = await ctx.store.roles.list(spaceId);
@@ -132,7 +148,26 @@ export async function updateRole(
       roles: roles.map((r) => (r.id === id ? role : r)),
     });
   }
-  await ctx.store.roles.save(role);
+  if (input.expectedVersion !== undefined && input.expectedVersion !== existing.version) {
+    throw new ConflictError(
+      `The role is at version ${existing.version}, not ${input.expectedVersion}: someone ` +
+        'changed it since. Read it again and make the change over theirs.',
+      { version: existing.version },
+    );
+  }
+  try {
+    await ctx.store.withTransaction(async (tx) => {
+      await tx.roles.save(role);
+    });
+  } catch (err) {
+    if (!(err instanceof TransactionConflictError)) throw err;
+    // Another save landed between the read and the commit: name the version it left.
+    const now = await ctx.store.roles.get(spaceId, id);
+    if (!now) throw new NotFoundError('Role', id);
+    throw new ConflictError('The role changed while it was being saved; read it again', {
+      version: now.version,
+    });
+  }
   // Keys and people pick the change up on their next request, not when a cached principal expires.
   await invalidateCachedPrincipals(ctx, spaceId);
   return role;
