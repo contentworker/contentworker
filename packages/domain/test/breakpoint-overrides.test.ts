@@ -13,6 +13,7 @@ import {
   narrowsOverrides,
   planCatalogTypes,
   staleOverrideUses,
+  undeclaredOverrides,
   ValidationError,
   validateEntryFields,
 } from '../src/index';
@@ -345,6 +346,54 @@ describe('_responsive on a save', () => {
   });
 });
 
+describe('an undeclared override in a new edit', () => {
+  const page = pushed();
+  const local = (locale: string, blocks: unknown[]): EntryFields => ({
+    body: { [locale]: blocks },
+  });
+
+  it('is named by block and breakpoint, at any depth', () => {
+    const after = body([
+      { _type: 'hero', _key: 'a', _responsive: { xl: { size: 'sm' }, lg: { size: 'xl' } } },
+      {
+        _type: 'section',
+        _key: 's',
+        _responsive: { md: { label: 'x' } },
+        items: [{ _type: 'hero', _key: 'c', _responsive: { lg: { heading: 'x' } } }],
+      },
+    ]);
+    expect(undeclaredOverrides(page, after, undefined)).toMatchObject([
+      { field: 'body[0]._responsive.xl', locale: 'en-US', code: 'override_undeclared', key: 'a' },
+      { field: 'body[1]._responsive.md', key: 's', message: expect.stringContaining('"label"') },
+      { field: 'body[1].items[0]._responsive.lg', key: 'c' },
+    ]);
+  });
+
+  it('passes what the same block carried in the same field and locale, and nothing else', () => {
+    const stale = [{ _type: 'hero', _key: 'a', _responsive: { xl: { size: 'sm' } } }];
+    expect(undeclaredOverrides(page, body(stale), body(stale))).toEqual([]);
+    // Another prop at the stale breakpoint, another block, another locale: all new.
+    const before = body(stale);
+    expect(
+      undeclaredOverrides(
+        page,
+        body([{ _type: 'hero', _key: 'a', _responsive: { xl: { size: 'sm', hidden: true } } }]),
+        before,
+      ),
+    ).toHaveLength(1);
+    expect(undeclaredOverrides(page, body([{ ...stale[0], _key: 'b' }]), before)).toHaveLength(1);
+    expect(undeclaredOverrides(page, local('de-DE', stale), before)).toHaveLength(1);
+    // What validation refuses on its own isn't judged twice.
+    expect(
+      undeclaredOverrides(
+        page,
+        body([{ _type: 'hero', _responsive: { base: {}, '2x': {}, md: 'x' } }]),
+        undefined,
+      ),
+    ).toEqual([]);
+  });
+});
+
 describe('what a push makes stale', () => {
   const before = pushed();
   const values = body([
@@ -358,7 +407,13 @@ describe('what a push makes stale', () => {
   it('counts each block, breakpoint and prop a removed breakpoint strands', () => {
     const after = pushed([BREAKPOINTS[0] as never]);
     expect(narrowsOverrides(before.fields, after.fields)).toBe(true);
-    expect(staleOverrideUses(before.fields, after.fields, values)).toEqual([
+    // One site per block: the first and second blocks, and the one in the section's slot.
+    expect(staleOverrideUses(before.fields, after.fields, values).map((u) => u.site)).toEqual([
+      0, 1, 1, 3,
+    ]);
+    expect(
+      staleOverrideUses(before.fields, after.fields, values).map(({ site: _, ...use }) => use),
+    ).toEqual([
       { block: 'hero', breakpoint: 'lg', prop: 'size' },
       { block: 'hero', breakpoint: 'lg', prop: 'size' },
       { block: 'hero', breakpoint: 'lg', prop: 'hidden' },
@@ -368,7 +423,9 @@ describe('what a push makes stale', () => {
 
   it('counts a prop dropped from responsive, and nothing for a push that narrows nothing', () => {
     const after = pushed(BREAKPOINTS, [{ ...HERO, responsive: ['size'] }, SECTION]);
-    expect(staleOverrideUses(before.fields, after.fields, values)).toEqual([
+    expect(
+      staleOverrideUses(before.fields, after.fields, values).map(({ site: _, ...use }) => use),
+    ).toEqual([
       { block: 'hero', breakpoint: 'md', prop: 'hidden' },
       { block: 'hero', breakpoint: 'lg', prop: 'hidden' },
       { block: 'hero', breakpoint: 'lg', prop: 'hidden' },

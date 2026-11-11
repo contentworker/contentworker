@@ -20,6 +20,7 @@ import {
   createEnvironment,
   createSpace,
   getEffectiveBlockRules,
+  getPromotion,
   publishContentType,
   publishEntry,
   pushBlockCatalog,
@@ -215,10 +216,11 @@ describe('promoting blocks between environments', () => {
       },
     });
     const p = await requestPromotion(ctx, admin, spaceId, { source: 'staging', target: 'qa' });
-    // The catalog is pinned and copied; a breakpoint change alone moves no block rule.
+    // A breakpoint change that strands nothing in the target needs no approval.
     expect(p.blocks).toMatchObject({ catalogVersion: 2, targetCatalogVersion: 1 });
-    const done =
-      p.status === 'awaiting_approval' ? await approvePromotion(ctx, approver, spaceId, p.id) : p;
+    expect(p.status).not.toBe('awaiting_approval');
+    expect(p.risk.reasons.join('\n')).not.toContain('stale');
+    const done = await getPromotion(ctx, spaceId, p.id);
     expect(done.status).toBe('completed');
     expect((await store.blockCatalogs.latest(qa))?.breakpoints).toEqual(breakpoints);
     expect((await store.contentTypes.get(qa, 'page'))?.fields[1]?.items?.breakpoints).toEqual(
@@ -227,6 +229,54 @@ describe('promoting blocks between environments', () => {
     expect((await store.entries.get(qa, entry.id))?.fields.body?.['en-US']?.[0]).toMatchObject({
       _responsive: { lg: { tone: 'b' } },
     });
+  });
+
+  it('asks for approval when the catalog makes the target’s overrides stale', async () => {
+    const breakpoints = [
+      { id: 'md', name: 'Tablet', minWidth: 768 },
+      { id: 'lg', name: 'Desktop', minWidth: 1280 },
+    ];
+    const toned = BLOCKS.map((b) =>
+      b.id === 'hero'
+        ? {
+            ...b,
+            responsive: ['tone'],
+            fields: [
+              ...b.fields,
+              { apiId: 'tone', name: 'Tone', type: 'Symbol', validations: { in: ['a', 'b'] } },
+            ],
+          }
+        : b,
+    );
+    for (const s of [staging, qa]) {
+      await pushBlockCatalog(ctx, admin, s, { blocks: toned, targets: TARGETS, breakpoints });
+    }
+    for (const key of ['h1', 'h2']) {
+      await createEntry(ctx, qa, {
+        contentTypeApiId: 'page',
+        fields: {
+          title: { 'en-US': key },
+          body: {
+            'en-US': [{ _type: 'hero', _key: key, tone: 'a', _responsive: { lg: { tone: 'b' } } }],
+          },
+        },
+      });
+    }
+    // Staging drops lg: promoted, the target's two blocks lose their lg override on next save.
+    await pushBlockCatalog(ctx, admin, staging, {
+      blocks: toned,
+      targets: TARGETS,
+      breakpoints: breakpoints.slice(0, 1),
+    });
+    const p = await requestPromotion(ctx, admin, spaceId, { source: 'staging', target: 'qa' });
+    expect(p.status).toBe('awaiting_approval');
+    expect(p.risk.reasons).toContain(
+      'The block catalog makes 2 blocks\' overrides stale in the target\'s content type "page" (lg: tone)',
+    );
+    expect(p.risk.reasons[0]).toContain('changes the breakpoints');
+    const done = await approvePromotion(ctx, approver, spaceId, p.id);
+    expect(done.status).toBe('completed');
+    expect((await store.blockCatalogs.latest(qa))?.breakpoints).toEqual(breakpoints.slice(0, 1));
   });
 
   it('copies a config alone, and only when asked for alongside a selection', async () => {

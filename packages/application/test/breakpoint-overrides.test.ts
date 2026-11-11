@@ -20,6 +20,7 @@ import {
   getContentType,
   getEntry,
   importSnapshot,
+  patchEntryBlocks,
   publishContentType,
   pushBlockCatalog,
   restoreVersion,
@@ -248,5 +249,110 @@ describe('per-breakpoint overrides', () => {
     await updateEntry(ctx, scope, entry.id, body(hero('a')));
     const restored = await restoreVersion(ctx, scope, entry.id, 1);
     expect(restored.fields.body?.['en-US']).toEqual(held);
+  });
+
+  it('refuses an undeclared override in a new edit, and saves one the block already carried', async () => {
+    await push();
+    const refused = async (p: Promise<unknown>) => {
+      const err = await p.then(
+        () => null,
+        (e: unknown) => e,
+      );
+      expect(err).toBeInstanceOf(ValidationError);
+      return (err as ValidationError).issues;
+    };
+    // A typo'd breakpoint, and a prop that isn't responsive, on a create.
+    expect(
+      await refused(
+        createEntry(ctx, scope, {
+          contentTypeApiId: 'page',
+          fields: body(hero('a', { xl: { size: 'xl' }, lg: { heading: 'x', size: 'sm' } })),
+        }),
+      ),
+    ).toMatchObject([
+      { field: 'body[0]._responsive.xl', code: 'override_undeclared', key: 'a' },
+      { field: 'body[0]._responsive.lg', code: 'override_undeclared', key: 'a' },
+    ]);
+    // A new override of a declared breakpoint and prop passes.
+    const { entry } = await createEntry(ctx, scope, {
+      contentTypeApiId: 'page',
+      fields: body(hero('a', { lg: { size: 'xl' } }), hero('b')),
+    });
+
+    // The push removes lg: the stored override is stale. Stale only for the block that carried it:
+    // the same override, new on another block, is a typo.
+    await push({ breakpoints: BREAKPOINTS.slice(0, 1) });
+    const typo = await refused(
+      updateEntry(
+        ctx,
+        scope,
+        entry.id,
+        body(hero('a', { lg: { size: 'xl' } }), hero('b', { lg: { size: 'sm' } })),
+      ),
+    );
+    expect(typo).toMatchObject([
+      { field: 'body[1]._responsive.lg', code: 'override_undeclared', key: 'b' },
+    ]);
+    // Carried over by the next edit, it saves and is dropped.
+    const stored = await getEntry(ctx, scope, entry.id);
+    const saved = await updateEntry(ctx, scope, entry.id, {
+      ...stored.fields,
+      title: { 'en-US': 'Edited' },
+    });
+    expect(saved.fields.body?.['en-US']).toEqual([hero('a'), hero('b')]);
+
+    // In a block patch too.
+    const current = await getEntry(ctx, scope, entry.id);
+    const patch = await refused(
+      patchEntryBlocks(ctx, scope, entry.id, {
+        expectedVersion: current.entry.currentVersion,
+        ops: [
+          {
+            op: 'update',
+            field: 'body',
+            locale: 'en-US',
+            key: 'b',
+            set: { _responsive: { md: { size: 'sm' }, xl: { size: 'sm' } } },
+          },
+        ],
+      }),
+    );
+    expect(patch).toMatchObject([{ field: 'body[1]._responsive.xl', code: 'override_undeclared' }]);
+    const declared = await patchEntryBlocks(ctx, scope, entry.id, {
+      expectedVersion: current.entry.currentVersion,
+      ops: [
+        {
+          op: 'update',
+          field: 'body',
+          locale: 'en-US',
+          key: 'b',
+          set: { _responsive: { md: { size: 'sm' } } },
+        },
+      ],
+    });
+    expect(declared.fields.body?.['en-US']?.[1]).toEqual(hero('b', { md: { size: 'sm' } }));
+  });
+
+  it('takes no new override on a field without breakpoints, but carries a stored one over', async () => {
+    await push({ breakpoints: undefined });
+    const issues = await createEntry(ctx, scope, {
+      contentTypeApiId: 'page',
+      fields: body(hero('a', { lg: { size: 'xl' } })),
+    }).then(
+      () => [],
+      (e: ValidationError) => e.issues,
+    );
+    expect(issues).toMatchObject([
+      { field: 'body[0]._responsive.lg', code: 'override_undeclared', key: 'a' },
+    ]);
+    // Stored while the field had breakpoints, then carried over by an edit once it has none.
+    await push();
+    const { entry } = await createEntry(ctx, scope, {
+      contentTypeApiId: 'page',
+      fields: body(hero('a', { lg: { size: 'xl' } })),
+    });
+    await push({ breakpoints: undefined });
+    const saved = await updateEntry(ctx, scope, entry.id, body(hero('a', { lg: { size: 'xl' } })));
+    expect(saved.fields.body?.['en-US']).toEqual([hero('a')]);
   });
 });

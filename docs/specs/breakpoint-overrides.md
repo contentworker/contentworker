@@ -99,7 +99,9 @@ A push can remove a breakpoint, or a prop from `responsive`, while stored blocks
 overrides for it. Those overrides are **stale**:
 
 - A save never fails over them: they are dropped from the block on its entry's next save, the
-  way a renamed block takes its new id.
+  way a renamed block takes its new id. A stale override is one the same block (same `_key`,
+  field and locale) carried in the stored version the save replaces; an undeclared override an
+  edit brings new is a typo and is refused (`override_undeclared`, decided 2026-11-10).
 - Reads serve them as stored until then; the renderer helper ignores ids the catalog doesn't
   declare.
 - The push (and its dry run) reports how many blocks carry overrides it makes stale, by
@@ -110,6 +112,13 @@ overrides for it. Those overrides are **stale**:
 - **Validation** (`validate.ts`): `_responsive` is allowed on a block whose variant has
   `responsive`; each key must be a declared breakpoint (or stale, see above), each prop in the
   variant's list, each value valid for that prop. Any other `_`-prefixed key is refused as now.
+  Validation itself passes an undeclared override, so stored-content checks (snapshots, merges,
+  compare, restores) stay tolerant; a new edit (create, update, block patch, import) is also
+  judged against the version it replaces (`undeclaredOverrides`), refusing an undeclared override
+  its block didn't already carry with `override_undeclared` at `body[0]._responsive.xl`.
+- **Promotions** wait for approval when the catalog would make the target's stored overrides
+  stale, naming how many blocks and which breakpoints and props; a breakpoint change that strands
+  nothing needs none.
 - **Block patch**: an `update` op may `set` or `unset` `_responsive` as a whole; its inverse is the
   old map. Live preview's `blocks.patch` carries it unchanged (no protocol version bump).
 - **Locks**: a frozen region (`freeze: true`) refuses `_responsive` changes like any content

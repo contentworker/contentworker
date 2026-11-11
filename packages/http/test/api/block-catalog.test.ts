@@ -215,6 +215,42 @@ describe('the block catalog over HTTP', () => {
     expect(wrong.status).toBe(422);
     expect(JSON.stringify(await wrong.json())).toContain('body[0]._responsive.lg.tone');
 
+    // A breakpoint the catalog doesn't declare is a typo in a new edit: refused, naming the block.
+    const typo = await send(app, 'POST', '/entries', {
+      contentTypeApiId: 'bpage',
+      fields: {
+        title: { 'en-US': 'Typo' },
+        body: {
+          'en-US': [{ _type: 'hero', heading: 'Hi', _responsive: { xl: { tone: 'dark' } } }],
+        },
+      },
+    });
+    expect(typo.status).toBe(422);
+    expect(JSON.stringify(await typo.json())).toMatch(
+      /"field":"body\[0\]\._responsive\.xl"[^}]*"code":"override_undeclared"|"code":"override_undeclared"[^}]*"field":"body\[0\]\._responsive\.xl"/,
+    );
+
+    // And in a block patch.
+    const made = entry as unknown as {
+      entry: { id: string; currentVersion: number };
+      fields: { body: Record<string, { _key: string }[]> };
+    };
+    const key = made.fields.body['en-US']?.[0]?._key;
+    const patched = await send(app, 'PATCH', `/entries/${made.entry.id}/blocks`, {
+      expectedVersion: made.entry.currentVersion,
+      ops: [
+        {
+          op: 'update',
+          field: 'body',
+          locale: 'en-US',
+          key,
+          set: { _responsive: { lg: { tone: 'dark', heading: 'x' } } },
+        },
+      ],
+    });
+    expect(patched.status).toBe(422);
+    expect(JSON.stringify(await patched.json())).toContain('override_undeclared');
+
     const refused = await send(app, 'POST', '/block-catalog', {
       blocks: BLOCKS.map((b) => (b.id === 'hero' ? { ...b, responsive: ['tone', 'heading'] } : b)),
       targets: TARGETS,

@@ -29,6 +29,7 @@ import {
   saveDraft,
   stampChanged,
   stampCreated,
+  undeclaredOverrides,
   uniqueClaims,
   type ValidationContext,
   ValidationError,
@@ -284,6 +285,17 @@ async function prepareFields(
     mode === 'save'
       ? { payload: await runHook(ctx, 'entry:beforeSave', scope, payload), skipped: [] }
       : await runPureHook(ctx, 'entry:beforeSave', scope, payload);
+  // A new edit's override of a breakpoint or prop nothing declares is a typo, refused; one the
+  // block already carried is stale, and `assignBlockKeys` drops it. Judged as sent, before that
+  // drop. A copy carries what was stored, so it is never judged here.
+  if (save.kind !== 'copy') {
+    const undeclared = undeclaredOverrides(
+      contentType,
+      hooked.payload.fields,
+      save.kind === 'update' ? save.before : undefined,
+    );
+    if (undeclared.length > 0) throw new ValidationError(undeclared);
+  }
   // Blocks get their `_key` last, so a block a hook added is keyed too.
   const fields = assignBlockKeys(
     contentType,

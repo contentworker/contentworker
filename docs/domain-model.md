@@ -1339,13 +1339,21 @@ validation needs only the content type; a target's breakpoint change is a field 
 (`BlockFieldChange.breakpoints`). A block holds its overrides beside its props in `_responsive`
 (`{ lg: { size: 'xl' } }`), not localized. Validation checks each override of a declared
 breakpoint and a listed prop as that prop, and refuses a non-map, `base` or a malformed id; an
-override of anything else is **stale** (a later push removed it) and passes. `assignBlockKeys`
+override of anything else passes validation, so stored content never fails over it. A new edit
+(create, update, block patch, import: the path that runs `assertBlockConfigAllows`) is also judged
+by `undeclaredOverrides` against the version it replaces, before keys are assigned: an override
+of an undeclared breakpoint or prop is refused (`override_undeclared`, at
+`body[0]._responsive.xl`, with the block's `key`) unless the same block (same `_key`, top-level
+field and locale) carried that pair before, which makes it **stale** (a later push removed it).
+Copies aren't judged. `assignBlockKeys`
 drops stale overrides and empty maps on write (`cleanOverrides`), so a save never fails over them;
 a frozen region compares overrides without the stale ones, so that drop is no edit. A block patch
 `update` sets or unsets `_responsive` whole, on a variant with `responsive`. The push and its dry
 run report `staleOverrides`: `narrowsOverrides` says whether a revision can strand any, and
 `staleOverrideUses` counts them per block, breakpoint and prop over the current version of each
-entry outside the trash (up to `MAX_BLOCK_USAGE_SCAN` per type). GraphQL gives a block with
+entry outside the trash (up to `MAX_BLOCK_USAGE_SCAN` per type). A promotion adds a risk line
+(and so waits for approval) when `staleOverridesOf`, judged from each target type as the target
+stores it to the type the promotion leaves, finds any. GraphQL gives a block with
 responsive props `responsive: <BlockType>Responsive` (one nullable field per breakpoint of its
 props), its types named after every existing one so none is renamed; codegen types
 `_responsive` and exports `breakpoints`; `resolveBlocks` and `responsiveProp` in the SDK read them.

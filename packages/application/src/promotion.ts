@@ -37,7 +37,7 @@ import { decide } from './ai-decide';
 import { wrapUntrusted } from './ai-prompt';
 import { isUncheckedFallback } from './ai-provenance';
 import { auditActor } from './audit';
-import { assertThumbnailAssets, pushBlockCatalog } from './block-catalog';
+import { assertThumbnailAssets, pushBlockCatalog, staleOverridesOf } from './block-catalog';
 import { blockConfigChange, setBlockConfig } from './block-config';
 import { compareEnvironments } from './branching';
 import {
@@ -962,6 +962,19 @@ async function checkPromotedCatalog(
       held.push(`${current.apiId}.${describeRemovedInUse(field, entries)}`);
     }
   }
+  // Stale overrides never block a save, but they change what the target's pages render once each
+  // entry there is saved again: that is the approver's to accept. Judged from each target type as
+  // the target stores it to the type the promotion leaves (copied, then revised by the push).
+  for (const [apiId, type] of types) {
+    const stored = copied.has(apiId) ? await ctx.store.contentTypes.get(target, apiId) : type;
+    if (!stored) continue;
+    const plan = plans.find((p) => p.contentTypeApiId === apiId);
+    const stale = await staleOverridesOf(ctx, target, stored, {
+      ...type,
+      fields: [...(plan?.fields ?? type.fields)],
+    });
+    if (stale.blocks > 0) lines.push(describeStale(apiId, stale));
+  }
   const trashed = await replaced.trashed();
   if (held.length > 0 || trashed.length > 0) {
     const refused = cantGo(
@@ -974,6 +987,27 @@ async function checkPromotedCatalog(
     throw new ValidationError([...refused.issues, ...trashed]);
   }
   return { lines, changes };
+}
+
+/**
+ * `The block catalog makes 3 blocks' overrides stale in the target's content type "page" (lg:
+ * size, hidden; md: size)`: a block counted once however many of its overrides go stale. The
+ * entries are the target's, whichever type definition strands them.
+ */
+function describeStale(
+  apiId: string,
+  { overrides, blocks }: Awaited<ReturnType<typeof staleOverridesOf>>,
+): string {
+  const byBreakpoint = new Map<string, string[]>();
+  for (const s of overrides) {
+    byBreakpoint.set(s.breakpoint, [...(byBreakpoint.get(s.breakpoint) ?? []), s.prop]);
+  }
+  const where = [...byBreakpoint].map(([bp, props]) => `${bp}: ${[...new Set(props)].join(', ')}`);
+  const atLeast = overrides.some((s) => !s.complete) ? 'at least ' : '';
+  return (
+    `The block catalog makes ${atLeast}${blocks} ${blocks === 1 ? "block's" : "blocks'"} overrides ` +
+    `stale in the target's content type "${apiId}" (${where.join('; ')})`
+  );
 }
 
 /**

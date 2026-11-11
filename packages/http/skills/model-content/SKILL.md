@@ -145,7 +145,8 @@ to action), declare one `Array` field whose `items` lists the shapes as `variant
 - A catalog's `breakpoints` (the site's CSS, mobile-first) and a block's `responsive` props let a
   token or Boolean prop take another value from a width up, stored on the block as
   `_responsive: { lg: { size: "xl" } }` beside the bare prop, which stays the base. Set one with an
-  `update` block patch of `_responsive` as a whole. A push that removes a breakpoint or a
+  `update` block patch of `_responsive` as a whole; a breakpoint or prop the catalog doesn't
+  declare is refused (`override_undeclared`). A push that removes a breakpoint or a
   responsive prop reports `staleOverrides`; tell the user, since those overrides are dropped on
   each entry's next save.
 

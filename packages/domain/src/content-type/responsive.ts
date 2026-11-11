@@ -1,3 +1,4 @@
+import type { FieldIssue } from '../errors';
 import type { EntryFields } from '../types';
 import {
   type Breakpoint,
@@ -218,6 +219,8 @@ export interface StaleOverrideUse {
   readonly block: string;
   readonly breakpoint: string;
   readonly prop: string;
+  /** Which block: its place in the walk of these values (every locale), from 0. */
+  readonly site: number;
 }
 
 /**
@@ -272,6 +275,7 @@ export function staleOverrideUses(
   values: EntryFields,
 ): StaleOverrideUse[] {
   const uses: StaleOverrideUse[] = [];
+  let sites = 0;
   const visit = (
     f: FieldDefinition,
     g: FieldDefinition | undefined,
@@ -292,13 +296,14 @@ export function staleOverrideUses(
         const survivor = variantNamed(kept, variant.apiId);
         if (!survivor) continue;
         const raw = item[RESPONSIVE_KEY];
+        const site = sites++;
         if (isObject(raw)) {
           for (const [bp, overrides] of Object.entries(raw)) {
             if (!ownPrev.includes(bp) || !isObject(overrides)) continue;
             for (const prop of Object.keys(overrides)) {
               if (!responsivePropsOf(variant).includes(prop)) continue;
               if (!ownNext.includes(bp) || !responsivePropsOf(survivor).includes(prop)) {
-                uses.push({ block: variant.apiId, breakpoint: bp, prop });
+                uses.push({ block: variant.apiId, breakpoint: bp, prop, site });
               }
             }
           }
@@ -335,4 +340,125 @@ export function staleOverrideUses(
     for (const value of Object.values(values[f.apiId] ?? {})) visit(f, g, value, [], []);
   }
   return uses;
+}
+
+/** An override a new edit sends that the field or block doesn't declare (a typo, not stale). */
+export interface UndeclaredOverrideIssue extends FieldIssue {
+  readonly code: 'override_undeclared';
+  /** The block it is on, by `_key`, when it has one. */
+  readonly key?: string;
+}
+
+/**
+ * The overrides an edit sends that nothing declares: a breakpoint the field doesn't take, or a
+ * prop the block's variant doesn't list in `responsive`. Such an override in a new edit is a
+ * mistake (a typo, a breakpoint the site doesn't have), so a write refuses it, naming the block
+ * and breakpoint (`body[0]._responsive.xl`). One the same block (same `_key`, same top-level
+ * field, same locale) already carried in `before`, the version the edit replaces, is stale, not
+ * new: it passes here and the save drops it (`cleanOverrides`). `after` is the edit as sent,
+ * before that drop. Only the shapes validation accepts are judged: a malformed id, `base` or a
+ * non-map is validation's to refuse.
+ */
+export function undeclaredOverrides(
+  contentType: { readonly fields: readonly FieldDefinition[] },
+  after: EntryFields,
+  before: EntryFields | undefined,
+): UndeclaredOverrideIssue[] {
+  const issues: UndeclaredOverrideIssue[] = [];
+  for (const top of contentType.fields) {
+    for (const [locale, value] of Object.entries(after[top.apiId] ?? {})) {
+      const carried = carriedOverrides(top, before?.[top.apiId]?.[locale]);
+      walkBlocks(top, value, top.apiId, [], (variant, item, at, breakpoints) => {
+        const raw = item[RESPONSIVE_KEY];
+        if (!isObject(raw)) return;
+        const key = typeof item._key === 'string' && item._key !== '' ? item._key : undefined;
+        const props = responsivePropsOf(variant);
+        for (const [bp, overrides] of Object.entries(raw)) {
+          if (!isObject(overrides) || bp === BASE_BREAKPOINT || !isValidApiId(bp)) continue;
+          const held = key !== undefined ? carried.get(key) : undefined;
+          const unknown = Object.keys(overrides).filter(
+            (prop) =>
+              !(breakpoints.includes(bp) && props.includes(prop)) &&
+              !held?.has(`${bp}\u0000${prop}`),
+          );
+          if (unknown.length === 0) continue;
+          const named = unknown.map((p) => `"${p}"`).join(', ');
+          issues.push({
+            field: `${at}.${RESPONSIVE_KEY}.${bp}`,
+            locale,
+            code: 'override_undeclared',
+            ...(key !== undefined ? { key } : {}),
+            message: !breakpoints.includes(bp)
+              ? breakpoints.length === 0
+                ? `"${variant.apiId}" blocks here take no per-breakpoint overrides: this field has no breakpoints`
+                : `No breakpoint "${bp}" (one of: ${breakpoints.join(', ')})`
+              : `${named} ${unknown.length === 1 ? 'is' : 'are'} not responsive on "${variant.apiId}" blocks${props.length ? ` (one of: ${props.join(', ')})` : ''}`,
+          });
+        }
+      });
+    }
+  }
+  return issues;
+}
+
+/** Every breakpoint+prop pair each keyed block of one stored value carries, by `_key`. */
+function carriedOverrides(top: FieldDefinition, value: unknown): Map<string, Set<string>> {
+  const carried = new Map<string, Set<string>>();
+  walkBlocks(top, value, top.apiId, [], (_variant, item) => {
+    const key = item._key;
+    const raw = item[RESPONSIVE_KEY];
+    if (typeof key !== 'string' || !isObject(raw)) return;
+    const pairs = carried.get(key) ?? new Set<string>();
+    for (const [bp, overrides] of Object.entries(raw)) {
+      if (isObject(overrides))
+        for (const prop of Object.keys(overrides)) pairs.add(`${bp}\u0000${prop}`);
+    }
+    carried.set(key, pairs);
+  });
+  return carried;
+}
+
+/**
+ * Calls `visit` on every block under `field`'s value with its variant, its path (as validation
+ * names it) and the breakpoint ids its blocks field takes; blocks naming no variant are skipped.
+ */
+function walkBlocks(
+  field: FieldDefinition,
+  value: unknown,
+  at: string,
+  inherited: readonly string[],
+  visit: (
+    variant: ComponentVariant,
+    item: Record<string, unknown>,
+    at: string,
+    breakpoints: readonly string[],
+  ) => void,
+): void {
+  if (value === undefined || value === null) return;
+  const variants = blockVariants(field);
+  const visitObject = (
+    fields: readonly FieldDefinition[],
+    v: unknown,
+    path: string,
+    bps: readonly string[],
+  ) => {
+    if (!isObject(v)) return;
+    for (const f of fields) walkBlocks(f, v[f.apiId], `${path}.${f.apiId}`, bps, visit);
+  };
+  if (variants) {
+    if (!Array.isArray(value)) return;
+    const own = breakpointIdsOf(field, inherited);
+    value.forEach((item, i) => {
+      const variant = variantOf(variants, item);
+      if (!variant || !isObject(item)) return;
+      visit(variant, item, `${at}[${i}]`, own);
+      visitObject(variant.fields, item, `${at}[${i}]`, own);
+    });
+  } else if (field.type === 'Component') {
+    visitObject(field.fields ?? [], value, at, inherited);
+  } else if (field.type === 'Array' && field.items?.type === 'Component' && Array.isArray(value)) {
+    value.forEach((item, i) => {
+      visitObject(field.items?.fields ?? [], item, `${at}[${i}]`, inherited);
+    });
+  }
 }
