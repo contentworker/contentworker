@@ -40,13 +40,15 @@ const DEVICE_PRESETS: readonly WidthPreset[] = [
 ];
 
 /**
- * The frame's width presets: with the catalog's breakpoints, Base at 390 then one per breakpoint at
- * its `minWidth`, named by its name (mobile-first, as they apply); without, Desktop, Tablet, Phone.
+ * The frame's width presets: with the catalog's breakpoints, Base at 390 (or just below the first
+ * breakpoint, when that starts at 390 or under) then one per breakpoint at its `minWidth`, named
+ * by its name (mobile-first, as they apply); without, Desktop, Tablet, Phone.
  */
 export function widthPresets(breakpoints: readonly Breakpoint[] | undefined): WidthPreset[] {
-  if (!breakpoints || breakpoints.length === 0) return [...DEVICE_PRESETS];
+  const first = breakpoints?.[0];
+  if (!breakpoints || !first) return [...DEVICE_PRESETS];
   return [
-    { id: 'base', label: BASE_NAME, width: BASE_WIDTH },
+    { id: 'base', label: BASE_NAME, width: Math.max(1, Math.min(BASE_WIDTH, first.minWidth - 1)) },
     ...breakpoints.map((b) => ({ id: b.id, label: b.name, width: b.minWidth })),
   ];
 }
@@ -54,6 +56,18 @@ export function widthPresets(breakpoints: readonly Breakpoint[] | undefined): Wi
 /** The preset a frame opens on: the widest, as Desktop is without breakpoints. */
 export function defaultPreset(presets: readonly WidthPreset[]): WidthPreset {
   return presets.find((p) => p.device === 'desktop') ?? (presets.at(-1) as WidthPreset);
+}
+
+/**
+ * The breakpoint the Look tab edits under preset `preset`: none (the bare props) at Base, the
+ * breakpoint the preset is named for, else (the three devices) the one its width is in.
+ */
+export function breakpointFor(
+  breakpoints: readonly Breakpoint[],
+  preset: Pick<WidthPreset, 'id' | 'width'>,
+): Breakpoint | null {
+  if (preset.id === 'base') return null;
+  return breakpoints.find((b) => b.id === preset.id) ?? activeBreakpoint(breakpoints, preset.width);
 }
 
 /**
@@ -133,15 +147,13 @@ export function withOverride(
 }
 
 /**
- * The names of the breakpoints a block holds overrides at, in the breakpoints' order: one the
- * field no longer declares (a push removed it; the next save drops it) by its id, last.
+ * The names of the breakpoints a block holds overrides at, in the breakpoints' order. One the
+ * field no longer declares isn't named: a push removed it, and the next save drops it.
  */
 export function overrideNames(
   block: Readonly<Record<string, unknown>>,
   breakpoints: readonly Breakpoint[],
 ): string[] {
   const ids = Object.keys(overridesOf(block));
-  const declared = breakpoints.filter((b) => ids.includes(b.id)).map((b) => b.name);
-  const stale = ids.filter((id) => !breakpoints.some((b) => b.id === id));
-  return [...declared, ...stale];
+  return breakpoints.filter((b) => ids.includes(b.id)).map((b) => b.name);
 }

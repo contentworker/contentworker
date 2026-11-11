@@ -5,6 +5,7 @@ import type { Breakpoint } from '@contentworker/domain';
 import { describe, expect, it } from 'vitest';
 import {
   activeBreakpoint,
+  breakpointFor,
   defaultPreset,
   overrideNames,
   valueAt,
@@ -40,6 +41,18 @@ describe('width presets', () => {
       { id: 'lg', label: 'Desktop', width: 1280 },
     ]);
     expect(defaultPreset(presets).id).toBe('lg');
+  });
+
+  it('frames Base below a first breakpoint at 390 or under, and Base always edits the bare props', () => {
+    const low: Breakpoint[] = [{ id: 'xs', name: 'Small', minWidth: 375 }, ...BREAKPOINTS];
+    const presets = widthPresets(low);
+    expect(presets[0]).toEqual({ id: 'base', label: 'Base', width: 374 });
+    expect(widthPresets([{ id: 'a', name: 'A', minWidth: 1 }])[0]?.width).toBe(1);
+    expect(breakpointFor(low, { id: 'base', width: 390 })).toBeNull();
+    expect(breakpointFor(low, { id: 'md', width: 768 })).toBe(md);
+    // The three devices, over a field with breakpoints: by width.
+    expect(breakpointFor(BREAKPOINTS, { id: 'tablet', width: 768 })).toBe(md);
+    expect(breakpointFor(BREAKPOINTS, { id: 'phone', width: 390 })).toBeNull();
   });
 
   it('puts a width in the largest breakpoint at or below it, and Base below the first', () => {
@@ -79,14 +92,14 @@ describe('what a prop is at a breakpoint', () => {
     });
   });
 
-  it('names the breakpoints a block changes at, a stale one by its id last', () => {
+  it('names the breakpoints a block changes at, leaving out one no longer declared', () => {
     expect(overrideNames(block, BREAKPOINTS)).toEqual(['Tablet']);
     expect(
       overrideNames(
         { _responsive: { xl: { tone: 'dark' }, lg: { tone: 'x' }, md: {} } },
         BREAKPOINTS,
       ),
-    ).toEqual(['Desktop', 'xl']);
+    ).toEqual(['Desktop']);
     expect(overrideNames({ _responsive: 'nope' }, BREAKPOINTS)).toEqual([]);
   });
 });

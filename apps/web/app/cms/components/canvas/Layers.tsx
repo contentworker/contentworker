@@ -296,6 +296,7 @@ function LayerItem(props: ItemProps & { block: CanvasBlock; level: number }) {
           <span className="min-w-0 truncate text-muted-foreground text-xs">{block.label}</span>
         ) : null}
         {lock?.own && !says ? <span className="sr-only">, locked</span> : null}
+        {overrides.length > 0 ? <span className="sr-only">, </span> : null}
         {overrides.length > 0 ? (
           <span
             role="img"

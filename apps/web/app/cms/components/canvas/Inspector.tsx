@@ -47,7 +47,13 @@ import { FieldInput, type Pickers, type PickOption } from '~/cms/components/Entr
 import { RequiredMark } from '~/cms/components/required-mark';
 import type { ActorDirectory } from '~/cms/lib/authorship';
 import { lockedLine, lockSays } from '~/cms/lib/block-locks';
-import { activeBreakpoint, BASE_NAME, overridesOf, valueAt } from '~/cms/lib/breakpoints';
+import {
+  BASE_NAME,
+  breakpointFor,
+  overridesOf,
+  valueAt,
+  type WidthPreset,
+} from '~/cms/lib/breakpoints';
 import {
   type CanvasBlock,
   type CanvasSlot,
@@ -98,8 +104,8 @@ export interface InspectorProps {
   readonly tab: InspectorTab;
   readonly onTab: (tab: InspectorTab) => void;
   readonly onChange: (prop: string, value: unknown) => void;
-  /** The frame's width, in CSS pixels: the Look tab edits the breakpoint it is in. Absent, Base. */
-  readonly width?: number;
+  /** The frame's width preset: the Look tab edits the breakpoint it stands for. Absent, Base. */
+  readonly preset?: Pick<WidthPreset, 'id' | 'width'>;
   /** Gives `prop` its own value at breakpoint `bp`, or (undefined) lets it inherit again. */
   readonly onOverride?: (bp: string, prop: string, value: unknown) => void;
   readonly onMove: (by: -1 | 1) => void;
@@ -136,8 +142,8 @@ export function Inspector(props: InspectorProps) {
   const responsive = responsivePropsOf(block.variant);
   const byTab = (tab: InspectorTab) => fields.filter((f) => tabOf(f, responsive) === tab);
   const breakpoints = block.slot.breakpoints;
-  // Absent a width, Base: the bare props, as without breakpoints.
-  const at = props.width === undefined ? null : activeBreakpoint(breakpoints, props.width);
+  // Absent a preset, Base: the bare props, as without breakpoints.
+  const at = props.preset ? breakpointFor(breakpoints, props.preset) : null;
   const tabs = (['content', 'data', 'look'] as const).filter((t) => byTab(t).length > 0);
   const tab = tabs.includes(props.tab) ? props.tab : (tabs[0] ?? 'content');
   const where = block.slot.name;
@@ -513,7 +519,13 @@ function Prop(props: InspectorProps & { field: FieldDefinition; look: LookAt | u
       look={look}
       here={here}
       onReset={
-        bp && here?.set && !frozen ? () => props.onOverride?.(bp.id, f.apiId, undefined) : undefined
+        bp && here?.set && !frozen
+          ? () => {
+              props.onOverride?.(bp.id, f.apiId, undefined);
+              // Reset goes with the override: focus moves to the prop's control, not the page.
+              queueMicrotask(() => focusProp(id));
+            }
+          : undefined
       }
     />
   ) : null;
@@ -522,7 +534,7 @@ function Prop(props: InspectorProps & { field: FieldDefinition; look: LookAt | u
     undefined;
   if (tabOf(f) === 'look' && options.length > 0 && options.length <= SEGMENTS) {
     return (
-      <div className="flex flex-col gap-1.5">
+      <div data-prop={id} className="flex flex-col gap-1.5">
         <span id={`${id}-label`} className="font-medium text-sm">
           {f.name}
           {f.required ? <RequiredMark /> : null}
@@ -578,6 +590,19 @@ function Prop(props: InspectorProps & { field: FieldDefinition; look: LookAt | u
       ) : null}
     </div>
   );
+}
+
+/** Focuses a prop's control: a segmented one's chosen segment (else its first), or its input. */
+function focusProp(id: string) {
+  const group = [...document.querySelectorAll<HTMLElement>('[data-prop]')].find(
+    (el) => el.dataset.prop === id,
+  );
+  const radios = group ? [...group.querySelectorAll<HTMLElement>('[role="radio"]')] : [];
+  const target =
+    radios.find((r) => r.getAttribute('aria-checked') === 'true') ??
+    radios[0] ??
+    document.getElementById(id);
+  target?.focus();
 }
 
 /**

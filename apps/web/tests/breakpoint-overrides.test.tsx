@@ -278,6 +278,10 @@ describe('the Look tab at a breakpoint', () => {
 
     // Reset inherits again: the emptied breakpoint goes.
     act(() => screen.getByRole('button', { name: 'Reset Tone at Desktop' }).click());
+    // Reset goes with the override: focus lands on Tone's chosen segment, not the page.
+    await waitFor(() =>
+      expect(document.activeElement).toBe(within(tone()).getByRole('radio', { name: 'dark' })),
+    );
     expect(page.lastOps().at(-1)).toMatchObject({
       key: 'h1',
       set: { _responsive: { md: { tone: 'dark' } } },

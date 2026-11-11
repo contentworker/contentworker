@@ -136,6 +136,37 @@ describe('the Site pane', () => {
     expect(posted(spy, 'view').at(-1)).toMatchObject({ width: 390 });
   });
 
+  it('offers Base and the catalog’s breakpoints as its widths when the catalog declares them', () => {
+    render(
+      <SitePane
+        spaceId="s1"
+        environmentId="main"
+        entryId="e1"
+        contentType={type}
+        fields={{ title: { 'en-US': 'Home' } }}
+        locale="en-US"
+        defaultLocale="en-US"
+        allowed={ADMIN_CAPABILITIES}
+        selected={null}
+        split={false}
+        onPick={onPick}
+        breakpoints={[
+          { id: 'md', name: 'Tablet', minWidth: 768 },
+          { id: 'lg', name: 'Desktop', minWidth: 1280 },
+        ]}
+      />,
+    );
+    const spy = spyFrame();
+    ready();
+    const widths = screen.getByRole('radiogroup', { name: 'Device width' });
+    expect(
+      [...widths.querySelectorAll('[role="radio"]')].map((r) => r.getAttribute('aria-label')),
+    ).toEqual(['Base, 390 pixels', 'Tablet, 768 pixels', 'Desktop, 1280 pixels']);
+    expect(posted(spy, 'view').at(-1)).toMatchObject({ width: 1280 });
+    act(() => screen.getByRole('radio', { name: 'Tablet, 768 pixels' }).click());
+    expect(posted(spy, 'view').at(-1)).toMatchObject({ width: 768 });
+  });
+
   it('sends the form’s focused field to be outlined, and none to clear it', () => {
     const view = render(pane());
     const spy = spyFrame();

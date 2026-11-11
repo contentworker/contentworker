@@ -1017,7 +1017,7 @@ function Canvas({
       tab={tab}
       onTab={setTab}
       onChange={(prop, value) => setProp(block, prop, value)}
-      width={preset.width}
+      preset={preset}
       onOverride={(bp, prop, value) => setOverride(block, bp, prop, value)}
       onMove={(by) => move(block, by)}
       onDuplicate={() => duplicate(block)}
