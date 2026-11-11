@@ -244,6 +244,59 @@ describe('conditional field rules on the entry form', () => {
     expect(screen.queryByRole('button', { name: 'Clear Reference' })).toBeNull();
   });
 
+  it('draws a field its rules lock with the read-only surface, while they lock it, and no Lock', () => {
+    renderForm({ status: { 'en-US': 'open' }, reference: { 'en-US': 'REF-1' } });
+    const wrapper = () =>
+      (screen.getByLabelText('Reference') as HTMLElement).closest('[data-field="reference"]');
+    // Open: editable, unmarked.
+    expect(wrapper()?.hasAttribute('data-readonly')).toBe(false);
+    type('Status', 'sold');
+    // Locked by its rule: app.css draws `data-readonly` read-only; `rule`, not the role's mark.
+    expect(wrapper()?.getAttribute('data-readonly')).toBe('rule');
+    expect(screen.getByText('Read-only while Status is "sold"').querySelector('svg')).toBeNull();
+    type('Status', 'open');
+    expect(wrapper()?.hasAttribute('data-readonly')).toBe(false);
+  });
+
+  it('marks a nested field its component sibling locks', () => {
+    const nested: ContentType = {
+      ...LISTING,
+      fields: LISTING.fields.map((f) =>
+        f.apiId === 'cta'
+          ? {
+              ...f,
+              fields: [
+                field({ apiId: 'kind', name: 'Kind' }),
+                field({
+                  apiId: 'url',
+                  name: 'URL',
+                  position: 1,
+                  rules: [
+                    { action: 'disable', when: { field: 'kind', operator: 'eq', value: 'none' } },
+                  ],
+                }),
+              ],
+            }
+          : f,
+      ),
+    };
+    render(
+      <EntryForm
+        contentType={nested}
+        initial={{}}
+        locales={['en-US']}
+        defaultLocale="en-US"
+        pickers={{ entries: [], assets: [] }}
+        onSave={() => {}}
+        onCancel={() => {}}
+      />,
+    );
+    const url = () => screen.getByLabelText('URL').closest('[data-readonly]');
+    expect(url()).toBeNull();
+    type('Kind', 'none');
+    expect(url()?.getAttribute('data-readonly')).toBe('rule');
+  });
+
   it('hides a nested field by its component sibling', () => {
     renderForm();
     expect(screen.queryByLabelText('URL')).toBeNull();

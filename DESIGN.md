@@ -651,14 +651,18 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   its place and value: a text, number, date or select control is `readOnly` with `aria-readonly`,
   stays in the tab order, and its reason ("Read-only while Status is "sold"", muted `text-xs`) is
   read on focus through `aria-describedby`; a button-like widget (a checkbox, a picker, a list's
-  Add and Remove, nested fields) is disabled by a fieldset; an extension is told `readOnly`. When
-  an edit shows, hides or locks other fields, a polite sr-only line says so ("Sold to shown.
+  Add and Remove, nested fields) is disabled by a fieldset; an extension is told `readOnly`. It
+  looks read-only too, with the surface of a field the role makes read-only (below): marked
+  `data-readonly="rule"`, top-level or nested, no fill, a dashed edge and muted text, changing as
+  the siblings it depends on change (the sr-only line says so). Its reason has no Lock: the Lock
+  says only that the role holds the field. When an edit shows, hides or locks other fields, a polite sr-only line says so ("Sold to shown.
   Reference read-only.").
 - **Fields under a role's rules** (`cms/lib/field-access.ts`, read from the space's `auth/me`): a
   field the person's role hides is not drawn at all, with no quiet line in its place (they may not
   know it holds a value). One their role makes read-only takes the read-only treatment above, its
   stored value showing, and looks it too, since it stays read-only whatever anyone types: the
-  field is marked `data-readonly="role"` and `app.css` gives each control in it (text, number,
+  field is marked `data-readonly="role"` and `app.css` (one rule for every `data-readonly`) gives
+  each control in it (text, number,
   date and select inputs, a picker's search, a checkbox, rich text) no fill, a dashed edge (three
   quarters of the `muted-foreground` ink, 3:1 on paper, card and muted in both themes) and
   `muted-foreground` text. A select loses its chevron; a ticked box keeps its brand fill inside

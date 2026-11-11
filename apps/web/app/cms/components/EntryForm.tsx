@@ -970,12 +970,13 @@ export function EntryForm(props: {
     const ruleId = state?.disabled ? `${id}-rule` : undefined;
     return (
       // `data-field`: the Site pane outlines the field focused here on the page.
-      // `data-readonly="role"`: drawn read-only by app.css, its fill and colour muted.
+      // `data-readonly`: drawn read-only by app.css, its fill and colour muted, whether the
+      // person's role (`role`, its reason led by a Lock) or a rule on its siblings (`rule`) holds it.
       <div
         className="space-y-1.5"
         key={f.apiId}
         data-field={f.apiId}
-        data-readonly={access.readOnly.has(f.apiId) ? 'role' : undefined}
+        data-readonly={access.readOnly.has(f.apiId) ? 'role' : state?.disabled ? 'rule' : undefined}
       >
         <Label id={`${id}-label`} htmlFor={id} className="gap-1">
           {f.name}
@@ -1805,7 +1806,11 @@ function ComponentInput(
         // A rule's reason is said under the field; a frozen region says why on its card.
         const ruleId = ruled.disabled ? `${nestedId}-rule` : undefined;
         return (
-          <div key={f.apiId} className="space-y-1.5">
+          <div
+            key={f.apiId}
+            className="space-y-1.5"
+            data-readonly={ruled.disabled ? 'rule' : undefined}
+          >
             <Label id={`${nestedId}-label`} htmlFor={nestedId} className="gap-1">
               {f.name}
               {f.required && <RequiredMark />}
