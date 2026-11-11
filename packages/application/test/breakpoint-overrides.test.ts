@@ -10,6 +10,7 @@ import { FixedClock, InMemoryContentStore, SequenceIdGenerator } from '@contentw
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   type AppContext,
+  analyzeImport,
   blockCatalogHash,
   cloneEnvironment,
   createContentType,
@@ -53,7 +54,7 @@ const developer: Principal = {
   spaceId: 'site',
   kind: 'user',
   subject: 'dev@example.com',
-  scopes: ['content:manage', 'content:publish', 'content:read', 'content:lock'],
+  scopes: ['content:manage', 'content:publish', 'content:read', 'content:lock', 'content:write'],
 };
 
 const HERO = {
@@ -335,6 +336,22 @@ describe('per-breakpoint overrides', () => {
     expect(declared.fields.body?.['en-US']?.[1]).toEqual(hero('b', { md: { size: 'sm' } }));
   });
 
+  it('refuses a new non-map value at an undeclared breakpoint or `base`, never dropping it unsaid', async () => {
+    await push();
+    const err = await createEntry(ctx, scope, {
+      contentTypeApiId: 'page',
+      fields: body(hero('a', { xl: 'lg', base: 'lg' } as never)),
+    }).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(ValidationError);
+    expect((err as ValidationError).issues).toMatchObject([
+      { field: 'body[0]._responsive.xl', code: 'override_undeclared', key: 'a' },
+      { field: 'body[0]._responsive.base', code: 'override_undeclared', key: 'a' },
+    ]);
+  });
+
   it('takes no new override on a field without breakpoints, but carries a stored one over', async () => {
     await push({ breakpoints: undefined });
     const issues = await createEntry(ctx, scope, {
@@ -377,6 +394,37 @@ describe('per-breakpoint overrides', () => {
         entries: 1,
         message: expect.stringContaining('1 block overrides hero.size at lg'),
       },
+    ]);
+  });
+
+  it('reports an undeclared override in an import’s analysis, as the save would refuse it', async () => {
+    await push();
+    const source = {
+      id: 'fake',
+      name: 'Fake',
+      async read() {
+        return {
+          records: [
+            {
+              externalId: 'ok',
+              values: { name: 'Fine', body: [hero('a', { lg: { size: 'xl' } })] },
+            },
+            {
+              externalId: 'typo',
+              values: { name: 'Typo', body: [hero('b', { xl: { size: 'xl' } })] },
+            },
+          ],
+          fields: ['name', 'body'],
+          warnings: [],
+        };
+      },
+    };
+    const analysis = await analyzeImport(ctx, developer, scope, source, {
+      payload: '',
+      mapping: { contentTypeApiId: 'page', fields: { title: 'name', body: 'body' } },
+    });
+    expect(analysis.issues).toEqual([
+      { externalId: 'typo', messages: [expect.stringContaining('body[0]._responsive.xl')] },
     ]);
   });
 

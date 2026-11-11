@@ -1349,7 +1349,10 @@ validation needs only the content type; a target's breakpoint change is a field 
   push and its dry run report them in `staleOverrides`; a content type update returns them as
   `warnings`; a promotion adds a risk line, and so waits for approval, for each target type whose
   stored definition the promotion's types (and catalog, when it copies one) would strand any,
-  leaving out the target entries it replaces.
+  leaving out the target entries it replaces, and for the promoted entries' own overrides the type
+  the target is left with doesn't declare. An import's analysis and the generation gate judge
+  overrides as the save does (`undeclaredOverrides`). `narrowsOverrides` compares a prop's type
+  and its set of option values, so relabelling or reordering options scans nothing.
 - **Patches.** A block patch `update` sets or unsets `_responsive` whole, on a variant with
   `responsive`.
 - **Reads.** Delivery serves `_responsive` as stored. GraphQL gives a block with responsive props

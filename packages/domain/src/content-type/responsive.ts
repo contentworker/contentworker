@@ -296,8 +296,15 @@ export function narrowsOverrides(
           const props = responsivePropsOf(v);
           if (props.length > 0 && ownPrev.some((bp) => !ownNext.includes(bp))) return true;
           if (props.some((p) => !responsivePropsOf(survivor).includes(p))) return true;
+          // The type and the set of values it takes: relabelling or reordering options moves no
+          // override, so it scans nothing.
           const shape = (f: FieldDefinition | undefined) =>
-            JSON.stringify([f?.type, f?.validations?.in]);
+            JSON.stringify([
+              f?.type,
+              Array.isArray(f?.validations?.in)
+                ? [...new Set(f.validations.in.map((o) => JSON.stringify(optionValue(o))))].sort()
+                : null,
+            ]);
           for (const p of props) {
             const was = v.fields.find((f) => f.apiId === p);
             if (shape(was) !== shape(survivor.fields.find((f) => f.apiId === p))) return true;
@@ -434,7 +441,29 @@ export function undeclaredOverrides(
         const props = responsivePropsOf(variant);
         const tag = { locale, ...(key !== undefined ? { key } : {}) };
         for (const [bp, overrides] of Object.entries(raw)) {
-          if (!isObject(overrides)) continue;
+          const malformed = bp === BASE_BREAKPOINT || !isValidApiId(bp);
+          const why = () =>
+            malformed
+              ? `"${bp}" is not a breakpoint id: the bare props are the base`
+              : breakpoints.length === 0
+                ? `"${variant.apiId}" blocks here take no per-breakpoint overrides: this field has no breakpoints`
+                : `No breakpoint "${bp}" (one of: ${breakpoints.join(', ')})`;
+          if (!isObject(overrides)) {
+            // At a declared breakpoint, validation refuses it; anywhere else the save would drop
+            // it unsaid, so it is refused here unless the stored entry held it.
+            if (
+              (malformed || !breakpoints.includes(bp)) &&
+              !carried.has(carriedKey(variant.apiId, bp, ''))
+            ) {
+              issues.push({
+                field: `${at}.${RESPONSIVE_KEY}.${bp}`,
+                ...tag,
+                code: 'override_undeclared',
+                message: why(),
+              });
+            }
+            continue;
+          }
           const unknown: string[] = [];
           for (const [prop, v] of Object.entries(overrides)) {
             const pair = carriedKey(variant.apiId, bp, prop);
@@ -455,17 +484,13 @@ export function undeclaredOverrides(
           }
           if (unknown.length === 0) continue;
           const named = unknown.map((p) => `"${p}"`).join(', ');
-          const malformed = bp === BASE_BREAKPOINT || !isValidApiId(bp);
           issues.push({
             field: `${at}.${RESPONSIVE_KEY}.${bp}`,
             ...tag,
             code: 'override_undeclared',
-            message: malformed
-              ? `"${bp}" is not a breakpoint id: the bare props are the base`
-              : !breakpoints.includes(bp)
-                ? breakpoints.length === 0
-                  ? `"${variant.apiId}" blocks here take no per-breakpoint overrides: this field has no breakpoints`
-                  : `No breakpoint "${bp}" (one of: ${breakpoints.join(', ')})`
+            message:
+              malformed || !breakpoints.includes(bp)
+                ? why()
                 : `${named} ${unknown.length === 1 ? 'is' : 'are'} not responsive on "${variant.apiId}" blocks${props.length ? ` (one of: ${props.join(', ')})` : ''}`,
           });
         }
@@ -493,7 +518,10 @@ function carriedOverrides(
         const raw = item[RESPONSIVE_KEY];
         if (!isObject(raw)) return;
         for (const [bp, overrides] of Object.entries(raw)) {
-          if (!isObject(overrides)) continue;
+          if (!isObject(overrides)) {
+            carried.add(carriedKey(variant.apiId, bp, ''));
+            continue;
+          }
           for (const [prop, v] of Object.entries(overrides)) {
             const pair = carriedKey(variant.apiId, bp, prop);
             carried.add(pair);

@@ -415,6 +415,26 @@ describe('an undeclared override in a new edit', () => {
     ]);
   });
 
+  it('scans nothing for options relabelled or reordered, and something for one removed', () => {
+    const withSize = (inList: unknown[]) =>
+      pushed(BREAKPOINTS, [
+        {
+          ...HERO,
+          fields: HERO.fields.map((f) =>
+            f.apiId === 'size' ? { ...f, validations: { in: inList } } : f,
+          ),
+        },
+        SECTION,
+      ]);
+    const relabelled = withSize([
+      'xl',
+      { value: 'sm', label: 'Small' },
+      { value: 'md', label: 'Medium' },
+    ]);
+    expect(narrowsOverrides(page.fields, relabelled.fields)).toBe(false);
+    expect(narrowsOverrides(page.fields, withSize(['sm', 'md']).fields)).toBe(true);
+  });
+
   it('passes a value a push narrowed out only when the stored entry held that value', () => {
     const narrowed = pushed(BREAKPOINTS, [
       {

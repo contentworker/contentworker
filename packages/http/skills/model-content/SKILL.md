@@ -146,9 +146,11 @@ to action), declare one `Array` field whose `items` lists the shapes as `variant
   token or Boolean prop take another value from a width up, stored on the block as
   `_responsive: { lg: { size: "xl" } }` beside the bare prop, which stays the base. Set one with an
   `update` block patch of `_responsive` as a whole; a breakpoint or prop the catalog doesn't
-  declare is refused (`override_undeclared`). A push that removes a breakpoint or a
-  responsive prop reports `staleOverrides`; tell the user, since those overrides are dropped on
-  each entry's next save.
+  declare is refused (`override_undeclared`), and so is a value that isn't one of the prop's tokens
+  (`override_invalid`), unless the entry already held that override (then it is stale and the save
+  drops it, so sending a stored entry back, or moving or copying its blocks, always saves). A push
+  that removes a breakpoint or a responsive prop, or narrows a prop's tokens, reports
+  `staleOverrides`; tell the user, since those overrides are dropped on each entry's next save.
 
 ## Rules worth knowing
 

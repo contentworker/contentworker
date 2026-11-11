@@ -347,6 +347,55 @@ describe('promoting blocks between environments', () => {
     expect(both.risk.reasons).toContain(line("2 blocks'"));
   });
 
+  it('asks for approval when promoted entries carry overrides the target doesn’t declare', async () => {
+    const toned = BLOCKS.map((b) =>
+      b.id === 'hero'
+        ? {
+            ...b,
+            responsive: ['tone'],
+            fields: [
+              ...b.fields,
+              { apiId: 'tone', name: 'Tone', type: 'Symbol', validations: { in: ['a', 'b'] } },
+            ],
+          }
+        : b,
+    );
+    // The two environments' breakpoints have diverged: staging has xl, qa doesn't.
+    const md = { id: 'md', name: 'Tablet', minWidth: 768 };
+    await pushBlockCatalog(ctx, admin, staging, {
+      blocks: toned,
+      targets: TARGETS,
+      breakpoints: [md, { id: 'xl', name: 'Wide', minWidth: 1600 }],
+    });
+    await pushBlockCatalog(ctx, admin, qa, { blocks: toned, targets: TARGETS, breakpoints: [md] });
+    const { entry } = await createEntry(ctx, staging, {
+      contentTypeApiId: 'page',
+      fields: {
+        title: { 'en-US': 'Home' },
+        body: {
+          'en-US': [
+            {
+              _type: 'hero',
+              _key: 'h1',
+              tone: 'a',
+              _responsive: { xl: { tone: 'b' }, md: { tone: 'b' } },
+            },
+          ],
+        },
+      },
+    });
+    // Entries only: no type and no catalog copied, so the copy lands on qa's type and loses xl.
+    const p = await requestPromotion(ctx, admin, spaceId, {
+      source: 'staging',
+      target: 'qa',
+      entries: [entry.id],
+    });
+    expect(p.status).toBe('awaiting_approval');
+    expect(p.risk.reasons).toContain(
+      "The promoted entries carry 1 block's overrides the target's content type \"page\" doesn't declare (xl: tone)",
+    );
+  });
+
   it('copies a config alone, and only when asked for alongside a selection', async () => {
     await setBlockConfig(ctx, admin, staging, { expectedVersion: 0, ...NARROWING });
     await expect(

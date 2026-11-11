@@ -14,6 +14,7 @@ import {
   richTextFromHtml,
   SCOPES,
   type Scope,
+  undeclaredOverrides,
   unwritableFields,
   ValidationError,
   validateEntryFields,
@@ -420,6 +421,14 @@ async function plan(
     for (const issue of validateEntryFields(contentType, normalized, vctx)) {
       issues.push(`${issue.field}: ${issue.message}`);
     }
+    // As the save judges an edit's overrides: against what an updated entry holds, read only when
+    // the record brings one nothing declares.
+    let undeclared = undeclaredOverrides(contentType, normalized, undefined);
+    if (undeclared.length > 0 && action === 'update' && match) {
+      const stored = (await ctx.store.entries.get(scope, match))?.fields;
+      undeclared = undeclaredOverrides(contentType, normalized, stored);
+    }
+    for (const issue of undeclared) issues.push(`${issue.field}: ${issue.message}`);
 
     planned.push({
       externalId: record.externalId,

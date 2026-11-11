@@ -210,10 +210,13 @@ carry one (the current version of each entry outside the trash, up to 2,000 entr
 reports them the same way, as `warnings`. A
 [promotion](/guides/environments/#promote-changes-to-the-live-environment) whose content types or
 catalog would make the target's overrides stale waits for approval, saying how many blocks and
-which breakpoints and props (entries the promotion itself writes over don't count).
+which breakpoints and props (entries the promotion itself writes over don't count), and so does
+one whose entries carry overrides the target's type doesn't declare, which their copies there
+lose.
 
 An undeclared override is only stale when the entry already had it. In an edit (a create, an
-update, a block patch, an import), an override of `base`, of a breakpoint the field doesn't
+update, a block patch, an import, and an import's analysis), an override of `base`, of a
+breakpoint the field doesn't
 declare, or of a prop not in the block's `responsive` is refused with `422` and the code
 `override_undeclared`, naming the block and breakpoint (`sections[0]._responsive.xl`); a value its
 prop doesn't take is refused as `override_invalid` (`sections[0]._responsive.lg.size`). Unless the

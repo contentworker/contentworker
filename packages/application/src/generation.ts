@@ -12,6 +12,7 @@ import {
   resolveAssetRequests,
   type Scope,
   type UnresolvedImage,
+  undeclaredOverrides,
   ValidationError,
   validateEntryFields,
   withoutClosedFields,
@@ -261,7 +262,10 @@ async function draft(
     defaultLocale: config.defaultLocale,
     locales: config.locales,
     unfilled,
-  }).filter((i) => !isImageGap(i, gaps.required));
+  })
+    .filter((i) => !isImageGap(i, gaps.required))
+    // A draft is new content: an override nothing declares is refused, as a save would.
+    .concat(undeclaredOverrides(ct, fields, undefined));
   if (refused.length > 0) await failed(new ValidationError(refused), 'it broke a rule');
   // Blocks are placed as a create places them: under the block config, and the MIME rules.
   if (blocks.size > 0) {

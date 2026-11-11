@@ -125,7 +125,9 @@ retype it), while stored blocks still carry overrides for it. Those overrides ar
 - **Merges** drop the overrides the target's type doesn't take before they store an entry.
 - **Promotions** wait for approval when their content types or catalog would make the target's
   stored overrides stale (entries the promotion replaces aside), naming how many blocks and which
-  breakpoints and props; a change that strands nothing needs none.
+  breakpoints and props, and when the promoted entries carry overrides the target's type doesn't
+  declare; a change that strands nothing needs none. Relabelling or reordering a prop's options
+  strands nothing and scans nothing.
 - **Block patch**: an `update` op may `set` or `unset` `_responsive` as a whole; its inverse is the
   old map. Live preview's `blocks.patch` carries it unchanged (no protocol version bump).
 - **Locks**: a frozen region (`freeze: true`) refuses `_responsive` changes like any content

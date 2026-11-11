@@ -30,6 +30,7 @@ import {
   removedVariants,
   SCOPES,
   type Scope,
+  staleOverrideUses,
   ValidationError,
 } from '@contentworker/domain';
 import type { DecisionAnswer } from '@contentworker/ports';
@@ -715,8 +716,10 @@ async function assessPromotion(
   reasons.push(...blockChanges);
   const staleLines = await staleOverrideLines(
     ctx,
+    source,
     target,
     types,
+    entries,
     blocks?.catalog ?? null,
     replaced,
   );
@@ -999,8 +1002,10 @@ async function checkPromotedCatalog(
  */
 async function staleOverrideLines(
   ctx: AppContext,
+  source: Scope,
   target: Scope,
   promoted: readonly ContentType[],
+  entries: readonly PromotedEntry[],
   catalog: BlockCatalog | null,
   replaced: ReplacedCopies,
 ): Promise<string[]> {
@@ -1008,6 +1013,7 @@ async function staleOverrideLines(
   const apiIds = new Set([
     ...copied.keys(),
     ...(catalog?.targets.map((t) => t.contentTypeApiId) ?? []),
+    ...entries.map((e) => e.contentTypeApiId),
   ]);
   const stored = new Map<string, ContentType>();
   const leaves = new Map<string, ContentType>();
@@ -1038,6 +1044,40 @@ async function staleOverrideLines(
       { skip: replaced.replaces },
     );
     if (stale.blocks > 0) lines.push(describeStale(apiId, stale));
+  }
+  // The promoted copies themselves: overrides their source type declares that the type the target
+  // is left with doesn't, which the copy's save there drops.
+  const carried = new Map<string, { blocks: number; where: Map<string, Set<string>> }>();
+  const sourceTypes = new Map<string, ContentType | null>();
+  for (const e of entries) {
+    const left = leaves.get(e.contentTypeApiId);
+    if (!left) continue;
+    if (!sourceTypes.has(e.contentTypeApiId)) {
+      sourceTypes.set(
+        e.contentTypeApiId,
+        await ctx.store.contentTypes.get(source, e.contentTypeApiId),
+      );
+    }
+    const from = sourceTypes.get(e.contentTypeApiId);
+    const version = from ? await ctx.store.entries.getVersion(source, e.entryId, e.version) : null;
+    if (!from || !version) continue;
+    const fields =
+      plans.find((p) => p.contentTypeApiId === e.contentTypeApiId)?.fields ?? left.fields;
+    const uses = staleOverrideUses(from.fields, fields, version.fields);
+    if (uses.length === 0) continue;
+    const held = carried.get(e.contentTypeApiId) ?? { blocks: 0, where: new Map() };
+    held.blocks += new Set(uses.map((u) => u.site)).size;
+    for (const u of uses) {
+      held.where.set(u.breakpoint, (held.where.get(u.breakpoint) ?? new Set()).add(u.prop));
+    }
+    carried.set(e.contentTypeApiId, held);
+  }
+  for (const [apiId, { blocks, where }] of carried) {
+    const listed = [...where].map(([bp, props]) => `${bp}: ${[...props].join(', ')}`);
+    lines.push(
+      `The promoted entries carry ${blocks} ${blocks === 1 ? "block's" : "blocks'"} overrides ` +
+        `the target's content type "${apiId}" doesn't declare (${listed.join('; ')})`,
+    );
   }
   return lines;
 }
