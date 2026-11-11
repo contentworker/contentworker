@@ -155,6 +155,7 @@ export async function dispatchEvent(
         ? { assetReindexChunk: assetReindexChunkRunner(ctx, deps.assetIngest) }
         : {}),
       ...(deps.starterChunk ? { starterChunk: deps.starterChunk } : {}),
+      ...(deps.blob ? { blob: deps.blob } : {}),
     });
     return;
   }

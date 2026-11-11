@@ -36,7 +36,7 @@ import {
   localeSettingsBody,
   parseBody,
 } from '../../validation';
-import { BASE, scopeOf } from './shared';
+import { actingCtx, BASE, scopeOf } from './shared';
 
 export function contentTypesRoutes(deps: AuthDeps): Hono<AuthVars> {
   const { ctx } = deps;
@@ -232,7 +232,7 @@ export function contentTypesRoutes(deps: AuthDeps): Hono<AuthVars> {
       authorize(principal, SCOPES.contentWrite, scopeOf(c).spaceId);
       authorize(principal, SCOPES.contentPublish, scopeOf(c).spaceId);
       authorizeBulkJob(principal, 'content_type_delete');
-      const done = await deleteContentTypeWithEntries(ctx, scopeOf(c), apiId);
+      const done = await deleteContentTypeWithEntries(actingCtx(ctx, c), scopeOf(c), apiId);
       return c.json(done, done.deleted ? 200 : 202);
     },
   );

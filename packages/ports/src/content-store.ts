@@ -1097,6 +1097,8 @@ export interface AuthRepo {
   createApiKey(key: ApiKey): Promise<void>;
   /** Resolve an API key by the hash of its presented token. */
   findByHash(hashedToken: string): Promise<ApiKey | null>;
+  /** One key of a space by id, revoked or not; null when the space holds no such key. */
+  get(spaceId: string, id: string): Promise<ApiKey | null>;
   list(spaceId: string): Promise<ApiKey[]>;
   revoke(id: string): Promise<void>;
   /** Best-effort stamp of last successful use (does not fail auth). */

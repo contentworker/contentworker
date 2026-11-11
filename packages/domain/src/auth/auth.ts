@@ -284,6 +284,17 @@ export interface Principal {
    * one; absent for an operator key, the admin token and a signed-in person.
    */
   readonly issuance?: Exclude<TokenIssuance, 'key'>;
+  /**
+   * The API key row this principal came from (an operator key, or a person's OAuth, personal or
+   * setup token), so work it starts can resolve the key again later (a bulk job's chunks). Never
+   * a token; absent for the admin token and a signed-in person.
+   */
+  readonly keyId?: string;
+  /**
+   * The team membership a signed-in person acts through in `spaceId`, for the same reason. Absent
+   * for a deployment admin who is not on the space's team, and for every bearer.
+   */
+  readonly memberId?: string;
 }
 
 /**
