@@ -1368,6 +1368,18 @@ export class ApiError extends Error {
 }
 
 /**
+ * The version a save held to `expectedVersion` was refused over: the 409's `details.version`, the
+ * version stored now (0 when there is none). Undefined for any other error, a conflict that names
+ * no version (a value taken, a field entries still hold) included.
+ */
+export function conflictVersion(err: unknown): number | undefined {
+  if (!(err instanceof ApiError) || err.status !== 409 || err.code !== 'conflict') return undefined;
+  const v = (err.body as { error?: { details?: { version?: unknown } } } | undefined)?.error
+    ?.details?.version;
+  return typeof v === 'number' ? v : undefined;
+}
+
+/**
  * The fields a 422 named (`error.issues[].field`, e.g. `rights.expiresAt`), each with its first
  * message, so a form can say what is wrong beside the field. Empty for any other failure.
  */
@@ -1757,9 +1769,16 @@ export function createManagementClient(
     getContentType(apiId: string): Promise<ContentType> {
       return req('GET', `${mgmt}/content-types/${apiId}`);
     },
-    /** Create or update a content type (the route is idempotent on apiId). */
-    saveContentType(draft: ContentTypeDraft): Promise<ContentType> {
-      return req('POST', `${mgmt}/content-types`, draft);
+    /**
+     * Create or update a content type (the route is idempotent on apiId). With `expectedVersion`
+     * (the `version` the edits started from, 0 for a new type), a save made since is a 409 naming
+     * the stored `version`, and nothing is saved.
+     */
+    saveContentType(
+      draft: ContentTypeDraft,
+      opts: { readonly expectedVersion?: number } = {},
+    ): Promise<ContentType> {
+      return req('POST', `${mgmt}/content-types`, { ...draft, ...opts });
     },
     publishContentType(apiId: string): Promise<ContentType> {
       return req('POST', `${mgmt}/content-types/${apiId}/published`);

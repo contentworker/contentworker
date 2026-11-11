@@ -109,21 +109,58 @@ export function authorizePreviewChange(
 }
 
 /**
- * Creates a new content type definition (status "draft", version 1). `caller` is held to
- * `authorizePreviewChange`: the HTTP route and the MCP tool pass their principal.
+ * Holds a save to the type its caller read. A save sends the whole definition (every detail
+ * field), so one built from a copy someone has since saved over would quietly put their `group`,
+ * `description` or `agentInstructions` back; with the `version` it read, it is refused instead.
+ * Absent, the save goes over whatever is stored, as it always has (`contentworker model apply`
+ * and API clients that never read first).
+ */
+export interface ContentTypeSaveOptions {
+  /**
+   * The `version` the caller read, or 0 for a type it read as not existing: another is a
+   * `ConflictError` (409) naming the stored `version` (0 when there is none), before any other
+   * check and with nothing written.
+   */
+  readonly expectedVersion?: number;
+}
+
+function assertExpectedTypeVersion(
+  apiId: string,
+  stored: ContentType | null,
+  options: ContentTypeSaveOptions,
+): void {
+  const expected = options.expectedVersion;
+  const version = stored?.version ?? 0;
+  if (expected === undefined || version === expected) return;
+  const now = stored
+    ? `is at version ${version}, not ${expected}`
+    : `doesn't exist, so it isn't at version ${expected}`;
+  throw new ConflictError(
+    `Content type "${apiId}" ${now}: it changed after it was read. Read it again and make the ` +
+      'change over the one stored.',
+    { version, expectedVersion: expected },
+  );
+}
+
+/**
+ * Creates a new content type definition (status "draft", version 1), or revises the one with this
+ * apiId. `caller` is held to `authorizePreviewChange`: the HTTP route and the MCP tool pass their
+ * principal. `options.expectedVersion` holds either to what the caller read: 0 to create only.
  */
 export async function createContentType(
   ctx: AppContext,
   caller: ContentTypeCaller,
   scope: Scope,
   draft: ContentTypeDraft,
+  options: ContentTypeSaveOptions = {},
 ): Promise<SavedContentType> {
   assertContentTypeCaller(caller);
   // An existing type is revised, not defined afresh: a revision is checked against what is
   // stored, so a definition saved before a check existed can still be edited.
   const existing = await ctx.store.contentTypes.get(scope, draft.apiId);
+  assertExpectedTypeVersion(draft.apiId, existing, options);
   if (existing) {
-    return updateContentType(ctx, caller, scope, draft.apiId, draft);
+    return updateContentType(ctx, caller, scope, draft.apiId, draft, options);
   }
   authorizePreviewChange(caller, draft.apiId, undefined, draft.preview);
   const contentType = defineContentType(draft, { previewLoopback: ctx.previewLoopback === true });
@@ -131,17 +168,22 @@ export async function createContentType(
   return contentType;
 }
 
-/** Revises an existing content type, bumping its version. */
+/**
+ * Revises an existing content type, bumping its version. Refused (409) when it is no longer at
+ * `options.expectedVersion`, when the caller gives one.
+ */
 export async function updateContentType(
   ctx: AppContext,
   caller: ContentTypeCaller,
   scope: Scope,
   apiId: string,
   changes: ContentTypeChanges,
+  options: ContentTypeSaveOptions = {},
 ): Promise<SavedContentType> {
   assertContentTypeCaller(caller);
   const current = await ctx.store.contentTypes.get(scope, apiId);
   if (!current) throw new NotFoundError('ContentType', apiId);
+  assertExpectedTypeVersion(apiId, current, options);
   authorizePreviewChange(caller, apiId, current.preview, changes.preview);
   const revised = reviseContentType(current, changes, {
     previewLoopback: ctx.previewLoopback === true,

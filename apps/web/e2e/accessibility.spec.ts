@@ -771,6 +771,38 @@ test('the content type dialog has no accessibility violations', async ({ page },
   await scan(page, testInfo);
 });
 
+test('the content type dialog refusing a stale save has no accessibility violations', async ({
+  page,
+  request,
+}, testInfo) => {
+  const stamp = Date.now();
+  const type = {
+    apiId: `axestale${stamp}`,
+    name: `Axe stale ${stamp}`,
+    displayField: 'title',
+    fields: [
+      {
+        apiId: 'title',
+        name: 'Title',
+        type: 'Symbol',
+        localized: false,
+        required: true,
+        position: 0,
+      },
+    ],
+  };
+  expect((await api(request, 'POST', `${MGMT}/content-types`, type)).status()).toBeLessThan(300);
+  await openCms(page, '/content');
+  await page.getByRole('button', { name: `Edit “${type.name}”` }).click();
+  const dialog = page.getByRole('dialog', { name: 'Edit content type' });
+  await expect(dialog).toBeVisible();
+  const theirs = { ...type, description: 'Theirs' };
+  expect((await api(request, 'POST', `${MGMT}/content-types`, theirs)).status()).toBeLessThan(300);
+  await dialog.getByRole('button', { name: 'Save changes' }).click();
+  await expect(dialog.getByRole('alert')).toContainText('changed since you opened it');
+  await scan(page, testInfo);
+});
+
 test('the content type dialog’s guidance panels have no accessibility violations', async ({
   page,
   request,

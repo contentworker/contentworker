@@ -590,7 +590,7 @@ cma.me()                                              // principal probe (/auth/
 cma.bookmark                                          // read-your-writes position; assignable
 cma.approvals.count()                                 // what waits on a person
 
-cma.contentTypes.list() / .get(apiId) / .create(draft) / .publish(apiId) / .entryCounts()
+cma.contentTypes.list() / .get(apiId) / .create(draft, { expectedVersion? }) / .publish(apiId) / .entryCounts()
 cma.contentTypes.fieldValues(apiId, field, { locale?, limit?, cursor? }): Promise<FieldValuesPage>
 cma.contentTypes.dependents(apiId) / .delete(apiId, { purgeEntries? }) / .clone(apiId, { apiId, name })
 cma.contentTypes.setPreview(apiId, urlTemplate | null)  // the preview URL alone (PUT …/content-types/:apiId/preview)
@@ -707,7 +707,9 @@ cma.frontend.connect({ name?, roleId?, preview?, previewRoleId? })  // keys + co
 - `bulkJobs.cancel` stops a job taking new work: chunks not started are skipped, one already running
   finishes, and nothing done is rolled back. Cancelling a finished job returns it unchanged.
 - `contentTypes.create(draft)` takes `urlPattern` (e.g. `/blog/{slug}`; `null` clears it), which makes
-  a publish that changes a slug write a redirect. `redirects.import` is all or nothing, and
+  a publish that changes a slug write a redirect. A revision sends the whole definition: pass the
+  `version` you read as `{ expectedVersion }` (0 to create only) and a save someone made since is a
+  `409` (`isConflict`, `error.details.version` the stored one), with nothing saved. `redirects.import` is all or nothing, and
   `redirects.resolve` answers `null` on `404`.
 - `menus.update` replaces the whole tree when given `items`; with `revision` (and on `moveItem` and
   `delete`) a menu saved since is a `409`.

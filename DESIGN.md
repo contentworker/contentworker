@@ -671,7 +671,18 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   link's allowed file types. A list field gains **Items** beside its Type (Symbol, Text, Integer,
   Number, Date; a new list starts as Symbol); a list of links or components has none. **Layout** is drawn as Fields
   is, its title beside Add tab; each tab a row (its name, a ghost Remove), and each field row gains
-  Tab and Group selects once a tab exists.
+  Tab and Group selects once a tab exists. A save is held to the version the dialog opened (0 for
+  a new type), or to the one a save stored when only its publish was refused. Refused because
+  someone saved the type since, the form stays open with its edits, Save is disabled, and a
+  warning Alert above the footer says so ("This content type changed since you opened it", their
+  version named, or that it may be one's own save that didn't confirm), with outline Copy my
+  version as JSON and Load the latest. Loading seeds the form again inside the same dialog (so
+  closing still returns focus to the row's Edit), focuses Name and says politely "Loaded v5. Your
+  edits here were discarded." A type deleted meanwhile says "This content type was deleted since
+  you opened it", with the copy and Create it again. A new type's API ID that another type has is
+  said beside API ID before anything is sent; one made meanwhile gets the Alert ("There's already
+  a content type with this API ID, so yours wasn't created…") with only the copy, and Save comes
+  back once the API ID changes.
 - **Releases, Workflows, Taxonomy:** `PageHeader` with the page's one "New …" (a `Plus` and the
   noun), then a catalog. Publishing a release confirms in an alert dialog, naming
   what goes live and what to look at first (never-published entries, members in the trash).

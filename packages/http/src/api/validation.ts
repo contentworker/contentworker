@@ -461,6 +461,15 @@ export const contentTypeBody = z.object({
       'Holds at most one entry (site settings, a home page), served at GET …/singletons/:apiId. ' +
         'Turning it on is refused while the type has more than one entry. Left out, unchanged.',
     ),
+  expectedVersion: z
+    .int()
+    .min(0)
+    .optional()
+    .describe(
+      'The version the definition was edited from (0: read as not existing, so create only). ' +
+        'Another is a 409 naming the stored `version`, and nothing is saved. Left out, the save ' +
+        'goes over whatever is stored.',
+    ),
 });
 /** A content type's copy: its new apiId and name. */
 export const cloneContentTypeBody = z.object({ apiId: zId, name: zShort });

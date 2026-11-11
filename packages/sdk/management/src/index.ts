@@ -2004,8 +2004,13 @@ export function createManagementClient(opts: ManagementClientOptions) {
     contentTypes: {
       list: () => items(get<{ items: ContentType[] }>(`${envBase}/content-types`)),
       get: (apiId: string) => get<ContentType>(`${envBase}/content-types/${e(apiId)}`),
-      /** Creates a content type, or revises the one with this `apiId` (a new draft version). */
-      create: (draft: ContentTypeDraft) => post<ContentType>(`${envBase}/content-types`, draft),
+      /**
+       * Creates a content type, or revises the one with this `apiId` (a new draft version). A
+       * revision sends the whole definition: with `expectedVersion` (the `version` you read, 0 to
+       * create only), a save made since is a 409 and nothing is saved.
+       */
+      create: (draft: ContentTypeDraft, opts: { readonly expectedVersion?: number } = {}) =>
+        post<ContentType>(`${envBase}/content-types`, { ...draft, ...opts }),
       publish: (apiId: string) =>
         post<ContentType>(`${envBase}/content-types/${e(apiId)}/published`),
       /** Entries per content type, by status, from one grouped count. */

@@ -385,7 +385,8 @@ const modelApply: Command = {
     for (const t of plan.types) {
       if (t.action === 'unchanged') continue;
       try {
-        const saved = await cma.contentTypes.create(t.draft);
+        // Held to the version planned against: a save made since the plan was shown is a 409.
+        const saved = await cma.contentTypes.create(t.draft, { expectedVersion: t.version });
         const done = publish ? await cma.contentTypes.publish(t.apiId) : saved;
         applied.push({
           apiId: t.apiId,
