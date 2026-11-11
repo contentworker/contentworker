@@ -79,7 +79,8 @@ export const AI_CAPABILITY_INFO: Readonly<
   },
   'field-assist': {
     label: 'Writing help',
-    covers: 'Filling a field, summarizing an entry, suggesting tags, and running AI actions.',
+    covers:
+      'Filling a field, summarizing an entry or the changes between its versions, suggesting tags, and running AI actions.',
     guided: true,
   },
   translation: {

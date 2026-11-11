@@ -1,0 +1,490 @@
+import {
+  authorizeContent,
+  type FieldDiff,
+  isRichTextDocument,
+  type LinkRef,
+  type ListItemDiff,
+  type NestedFieldDiff,
+  type RichTextBlockDiff,
+  richTextToPlainText,
+  type Scope,
+  type TextSegment,
+  type ValueDiff,
+} from '@contentworker/domain';
+import type { AIProvider, ModelTier } from '@contentworker/ports';
+import { conforms, generateJson } from './ai-json';
+import { nameForModel, UNTRUSTED_CONTENT_GUARD, wrapUntrusted } from './ai-prompt';
+import type { AiSource } from './ai-provenance';
+import { requireAiCapability } from './ai-settings';
+import { aiPrincipal, type EntryAiCaller } from './content-ai';
+import type { AppContext } from './context';
+import { getEntry } from './entries';
+import { sha256Hex } from './token-crypto';
+import { diffVersions, type VersionRef, visibleDiff } from './versioning';
+
+/**
+ * A change summary: a few sentences on what changed between two versions of an entry, written by a
+ * model over the deterministic version diff (`diffVersions`) and nothing else. The model reads the
+ * diff as the caller may read it (`visibleDiff`: a field their role denies never reaches it), as
+ * compact JSON lines inside the untrusted-content fence, bounded in size. Without a model (AI_MODE
+ * mock) the summary is built from the diff by rule and says so (`source: 'heuristic'`).
+ */
+
+/** Stable prompt id, for provenance, the call log and the cache key. Bump it with the prompt. */
+export const CHANGE_SUMMARY_PROMPT = 'versions.change_summary.v1';
+
+/**
+ * How much of the diff the model reads, in characters of the serialized lines (about 3k tokens):
+ * a diff past it is cut at a field boundary, and the model is told how many changed fields it
+ * doesn't see, and which.
+ */
+export const CHANGE_SUMMARY_MAX_INPUT_CHARS = 12_000;
+/** The longest excerpt of one value (a before or an after) a line carries. */
+const EXCERPT_CHARS = 280;
+/** The most elements of one list or blocks of one rich-text value a line lists. */
+const MAX_ITEMS = 12;
+/** How deep a component inside a list inside a component is followed. */
+const MAX_DEPTH = 3;
+
+/** The longest summary and highlight kept, and the most highlights. */
+export const CHANGE_SUMMARY_LIMITS = { summary: 600, highlight: 200, highlights: 5 } as const;
+
+/** A model-written summary is the same for the same input, so it is kept this long (KV). */
+export const CHANGE_SUMMARY_CACHE_TTL_SECONDS = 7 * 24 * 3600;
+
+const SCHEMA = {
+  type: 'object',
+  properties: {
+    summary: { type: 'string', maxLength: CHANGE_SUMMARY_LIMITS.summary },
+    highlights: {
+      type: 'array',
+      items: { type: 'string', maxLength: CHANGE_SUMMARY_LIMITS.highlight },
+      maxItems: CHANGE_SUMMARY_LIMITS.highlights,
+    },
+  },
+  required: ['summary', 'highlights'],
+  additionalProperties: false,
+} as const;
+
+interface Answer {
+  readonly summary: string;
+  readonly highlights: readonly string[];
+}
+
+export interface ChangeSummary {
+  readonly entryId: string;
+  /** The version numbers the references resolved to. */
+  readonly from: number;
+  readonly to: number;
+  /** One to three sentences, plain text (never markup: render it as text). */
+  readonly summary: string;
+  /** Notable changes, plain text, at most five; empty when the summary says it all. */
+  readonly highlights: readonly string[];
+  /** `model` when a model wrote it; `heuristic` when it was built from the diff by rule. */
+  readonly source: AiSource;
+  /** The tier that wrote it; null for the heuristic. */
+  readonly tier: ModelTier | null;
+  /** Why the heuristic wrote it: `mock`, `no visible changes`, or a bad answer. */
+  readonly fallback?: string;
+  /** Served from the cache: no model was called for this request. */
+  readonly cached: boolean;
+  /** The diff was longer than the model reads, so the summary covers part of it. */
+  readonly truncated: boolean;
+  /** Fields that changed which the caller may read (what the summary covers). */
+  readonly changedFields: number;
+  /** Fields that changed which the caller may not read: never shown to the model, only counted. */
+  readonly hiddenChanges: number;
+}
+
+export interface SummarizeChangeOptions {
+  readonly ai: AIProvider;
+  /** Skip the cached summary and ask the model again (regenerate); the new one replaces it. */
+  readonly fresh?: boolean;
+}
+
+// ---- the diff as the model reads it ------------------------------------------
+
+const clip = (text: string, max = EXCERPT_CHARS) =>
+  text.length > max ? `${text.slice(0, max - 1)}…` : text;
+
+/** Any value as one line of text: rich text as its words, never its tree or markup. */
+function valueText(value: unknown): string {
+  if (value === undefined || value === null) return '';
+  if (typeof value === 'string') return value;
+  if (isRichTextDocument(value)) return richTextToPlainText(value);
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  return JSON.stringify(value) ?? '';
+}
+
+const excerpt = (value: unknown) => clip(valueText(value).replace(/\s+/g, ' ').trim());
+
+/**
+ * A word diff as what was taken out and put in, each run with a few words either side; the
+ * unchanged stretches between edits are elided, so a long text costs its edits, not its length.
+ */
+function textEdits(segments: readonly TextSegment[]): { removed?: string; added?: string }[] {
+  const out: { removed?: string; added?: string }[] = [];
+  let current: { removed?: string; added?: string } | null = null;
+  for (const s of segments) {
+    if (s.kind === 'unchanged') {
+      if (current) out.push(current);
+      current = null;
+      continue;
+    }
+    current ??= {};
+    const text = clip(s.text.replace(/\s+/g, ' ').trim(), 160);
+    if (s.kind === 'removed') current.removed = text;
+    else current.added = text;
+  }
+  if (current) out.push(current);
+  return out.slice(0, MAX_ITEMS);
+}
+
+const sideText = (segments: readonly TextSegment[], side: 'removed' | 'added') =>
+  segments
+    .filter((s) => s.kind === 'unchanged' || s.kind === side)
+    .map((s) => s.text)
+    .join('');
+
+const linkText = (l: LinkRef | null) => (l ? `${l.linkType} ${l.id}` : null);
+
+function richTextBlocks(blocks: readonly RichTextBlockDiff[]) {
+  const shown = blocks.filter((b) => b.kind !== 'unchanged' || b.moved);
+  return {
+    blocks: shown.slice(0, MAX_ITEMS).map((b) => ({
+      block: b.beforeNodeType ? `${b.beforeNodeType} → ${b.nodeType}` : b.nodeType,
+      kind: b.kind,
+      ...(b.moved ? { moved: true } : {}),
+      ...(b.formattingChanged ? { formattingOnly: true } : {}),
+      ...(b.kind === 'added' ? {} : { before: excerpt(sideText(b.text, 'removed')) }),
+      ...(b.kind === 'removed' ? {} : { after: excerpt(sideText(b.text, 'added')) }),
+    })),
+    ...(shown.length > MAX_ITEMS ? { moreBlocks: shown.length - MAX_ITEMS } : {}),
+  };
+}
+
+function listItems(items: readonly ListItemDiff[], depth: number) {
+  const shown = items.filter((i) => i.kind !== 'unchanged' || i.moved);
+  return {
+    items: shown.slice(0, MAX_ITEMS).map((i) => ({
+      kind: i.kind,
+      ...(i.moved ? { moved: true } : {}),
+      ...(i.variant ? { variant: nameForModel(i.variant) } : {}),
+      ...(i.link ? { link: linkText(i.link) } : {}),
+      ...(i.detail
+        ? describeDetail(i.detail, depth + 1)
+        : i.kind === 'added'
+          ? { after: excerpt(i.after) }
+          : i.kind === 'removed'
+            ? { before: excerpt(i.before) }
+            : {}),
+    })),
+    ...(shown.length > MAX_ITEMS ? { moreItems: shown.length - MAX_ITEMS } : {}),
+  };
+}
+
+function nestedFields(fields: readonly NestedFieldDiff[], depth: number) {
+  return fields
+    .filter((f) => f.kind !== 'unchanged')
+    .slice(0, MAX_ITEMS)
+    .map((f) => ({
+      field: nameForModel(f.name ?? f.field),
+      kind: f.kind,
+      ...(f.detail ? describeDetail(f.detail, depth + 1) : {}),
+    }));
+}
+
+/** A change's typed detail as plain, bounded data. */
+function describeDetail(detail: ValueDiff, depth: number): Record<string, unknown> {
+  if (depth > MAX_DEPTH) return { nested: true };
+  switch (detail.type) {
+    case 'text':
+      return {
+        before: excerpt(sideText(detail.segments, 'removed')),
+        after: excerpt(sideText(detail.segments, 'added')),
+        edits: textEdits(detail.segments),
+      };
+    case 'value':
+      return { before: excerpt(detail.before), after: excerpt(detail.after) };
+    case 'link':
+      return { before: linkText(detail.before), after: linkText(detail.after) };
+    case 'component':
+      return { fields: nestedFields(detail.fields, depth) };
+    case 'list':
+      return listItems(detail.items, depth);
+    case 'richText':
+      return richTextBlocks(detail.blocks);
+  }
+}
+
+/** One changed field as the lines the model reads: one per locale that changed. */
+function fieldLines(change: FieldDiff, showLocale: boolean): string[] {
+  const name = nameForModel(change.name ?? change.field);
+  return change.locales
+    .filter((l) => l.kind !== 'unchanged')
+    .map((l) =>
+      JSON.stringify({
+        field: name,
+        ...(change.fieldType ? { type: change.fieldType } : {}),
+        ...(showLocale ? { locale: l.locale } : {}),
+        kind: l.kind,
+        ...(l.detail ? describeDetail(l.detail, 0) : {}),
+      }),
+    );
+}
+
+export interface SerializedDiff {
+  /** JSON lines, one per changed field and locale, plus one naming what was left out. */
+  readonly text: string;
+  /** Changed fields left out for length, by name. */
+  readonly omitted: readonly string[];
+}
+
+/**
+ * The changed fields of a diff as the model reads them: JSON lines (so a value can't pose as a
+ * marker or another field), excerpts of each value, text edits as what was removed and added, rich
+ * text as each changed block's words. Fields are added whole, in the content type's order, until
+ * the next would pass `maxChars`; the rest are named in a last line and counted.
+ */
+export function serializeDiffForModel(
+  changes: readonly FieldDiff[],
+  maxChars = CHANGE_SUMMARY_MAX_INPUT_CHARS,
+): SerializedDiff {
+  const changed = changes.filter((c) => c.kind !== 'unchanged');
+  const showLocale = new Set(changed.flatMap((c) => c.locales.map((l) => l.locale))).size > 1;
+  const lines: string[] = [];
+  const omitted: string[] = [];
+  let used = 0;
+  for (const change of changed) {
+    const block = fieldLines(change, showLocale).join('\n');
+    if (omitted.length === 0 && used + block.length + 1 <= maxChars) {
+      lines.push(block);
+      used += block.length + 1;
+    } else {
+      omitted.push(nameForModel(change.name ?? change.field));
+    }
+  }
+  if (omitted.length > 0) {
+    lines.push(JSON.stringify({ omittedForLength: omitted.length, fields: omitted.slice(0, 50) }));
+  }
+  return { text: lines.join('\n'), omitted };
+}
+
+// ---- the summary by rule -------------------------------------------------------
+
+const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+
+/** Names as a list a person reads: the first eight, then how many more. */
+function nameList(names: readonly string[]): string {
+  const shown = names.slice(0, 8);
+  return names.length > shown.length
+    ? `${shown.join(', ')} and ${names.length - shown.length} more`
+    : shown.join(', ');
+}
+
+const KIND_WORD = { added: 'added', removed: 'removed', changed: 'changed' } as const;
+
+/**
+ * The summary a rule writes from the diff: which fields changed, were added or removed, and, per
+ * field, in which locales. What it says is all in the diff, so it needs no model and no fence.
+ */
+export function heuristicChangeSummary(
+  changes: readonly FieldDiff[],
+  hiddenChanges: number,
+): Answer {
+  const changed = changes.filter((c) => c.kind !== 'unchanged');
+  const label = (c: FieldDiff) => c.name ?? c.field;
+  const hidden =
+    hiddenChanges > 0 ? `${plural(hiddenChanges, 'field')} you can’t read also changed.` : '';
+  if (changed.length === 0) {
+    return {
+      summary:
+        hiddenChanges > 0
+          ? `${plural(hiddenChanges, 'field')} you can’t read changed.`
+          : 'No field changes.',
+      highlights: [],
+    };
+  }
+  const summary = [
+    `Changed ${plural(changed.length, 'field')}: ${nameList(changed.map(label))}.`,
+    hidden,
+  ]
+    .filter(Boolean)
+    .join(' ');
+  const showLocale = new Set(changed.flatMap((c) => c.locales.map((l) => l.locale))).size > 1;
+  const highlights = changed.slice(0, CHANGE_SUMMARY_LIMITS.highlights).map((c) => {
+    const locales = c.locales.filter((l) => l.kind !== 'unchanged').map((l) => l.locale);
+    const where = showLocale && locales.length > 0 ? ` (${locales.join(', ')})` : '';
+    return clip(
+      `${label(c)}${where}: ${KIND_WORD[c.kind as keyof typeof KIND_WORD] ?? 'changed'}`,
+      CHANGE_SUMMARY_LIMITS.highlight,
+    );
+  });
+  return { summary, highlights };
+}
+
+// ---- the model's answer ----------------------------------------------------------
+
+/** A string the model wrote, as plain text: any tag-shaped run dropped, on one line, capped. */
+function plainText(text: string, max: number): string {
+  return clip(
+    text
+      .replace(/<\/?[a-z][^>]*>/gi, '')
+      .replace(/\s+/g, ' ')
+      .trim(),
+    max,
+  );
+}
+
+function cleanAnswer(answer: Answer): Answer {
+  return {
+    summary: plainText(answer.summary, CHANGE_SUMMARY_LIMITS.summary),
+    highlights: answer.highlights
+      .map((h) => plainText(h, CHANGE_SUMMARY_LIMITS.highlight))
+      .filter(Boolean)
+      .slice(0, CHANGE_SUMMARY_LIMITS.highlights),
+  };
+}
+
+const SYSTEM = [
+  'You summarize the changes between two versions of a content entry for an editor reviewing them.',
+  'The changes come as JSON lines, one per changed field (and locale), computed by a deterministic diff: ' +
+    '`kind` is added, removed or changed; `before` and `after` are excerpts; `edits` are the words ' +
+    'removed and added; `blocks` are rich-text blocks; `items` are list elements; `moved` means ' +
+    'reordered; `formattingOnly` means the words are the same and only formatting changed.',
+  'Describe only what the lines show. Never guess why a change was made, never name a field, value ' +
+    'or change that is not in them, and never judge the content. Excerpts may be cut short (…).',
+  'Answer with `summary`: one to three plain sentences, at most 600 characters, and `highlights`: ' +
+    'up to five short notes on the most notable changes, or an empty list when the summary says it all.',
+  'Plain text only: no Markdown, HTML, links or quotation of whole values.',
+].join('\n');
+
+/**
+ * Summarizes the changes between two versions of an entry (see the module comment). `from` and
+ * `to` are as `diffVersions` takes them. 404 when the entry or a version doesn't exist, 403 when
+ * the caller's role can't read the entry's type, 409 `ai_capability_disabled` when the space turned
+ * `field-assist` off, 429 when the space's AI budget refuses the call, 503 when the model fails or
+ * times out. A read: nothing is written to D1; a model-written summary is kept in the cache
+ * (`ctx.cache`, KV) by a hash of everything the model read, so the same request (the same visible
+ * diff, field names, tier and guidance) is answered from it without a call; `fresh` asks again.
+ */
+export async function summarizeChange(
+  ctx: AppContext,
+  caller: EntryAiCaller,
+  scope: Scope,
+  entryId: string,
+  from: VersionRef,
+  to: VersionRef,
+  opts: SummarizeChangeOptions,
+): Promise<ChangeSummary> {
+  const principal = aiPrincipal(caller);
+  const policy = await requireAiCapability(ctx, scope, 'field-assist');
+  const { entry } = await getEntry(ctx, scope, entryId);
+  if (principal) authorizeContent(principal, 'read', entry.contentTypeApiId);
+  const diff = await diffVersions(ctx, scope, entryId, from, to);
+  const seen = principal ? visibleDiff(principal, diff) : { ...diff, hiddenChanges: 0 };
+  const changed = seen.changes.filter((c) => c.kind !== 'unchanged');
+  const base = {
+    entryId,
+    from: seen.from,
+    to: seen.to,
+    changedFields: changed.length,
+    hiddenChanges: seen.hiddenChanges,
+  };
+  const byRule = (fallback: string, truncated = false): ChangeSummary => ({
+    ...base,
+    ...heuristicChangeSummary(seen.changes, seen.hiddenChanges),
+    source: 'heuristic',
+    tier: null,
+    fallback,
+    cached: false,
+    truncated,
+  });
+  // Nothing the caller may read changed: there is nothing for a model to say.
+  if (changed.length === 0) return byRule('no visible changes');
+
+  const serialized = serializeDiffForModel(seen.changes);
+  const truncated = serialized.omitted.length > 0;
+  const contentType = await ctx.store.contentTypes.get(scope, entry.contentTypeApiId);
+  const typeName = nameForModel(contentType?.name ?? entry.contentTypeApiId);
+  const prompt = [
+    `Changes to a ${typeName} entry, from version ${seen.from} to version ${seen.to}:`,
+    wrapUntrusted(serialized.text),
+    truncated
+      ? `The list was cut short for length: ${plural(serialized.omitted.length, 'more changed field')} ` +
+        'are named in its last line but not shown. Say that the summary covers only some of the changes.'
+      : '',
+  ]
+    .filter(Boolean)
+    .join('\n');
+  const system = policy.system(`${SYSTEM}\n${UNTRUSTED_CONTENT_GUARD}`);
+  const tier = policy.tier('fast');
+  const key = cacheKey([
+    CHANGE_SUMMARY_PROMPT,
+    scope.spaceId,
+    scope.environmentId,
+    entryId,
+    tier,
+    system,
+    prompt,
+  ]);
+
+  if (ctx.ai?.mode !== 'mock' && !opts.fresh) {
+    const hit = await readCached(ctx, key);
+    if (hit) {
+      return { ...base, ...hit.answer, source: 'model', tier: hit.tier, cached: true, truncated };
+    }
+  }
+
+  const fallback = heuristicChangeSummary(seen.changes, seen.hiddenChanges);
+  const res = await generateJson<Answer>(
+    ctx,
+    opts.ai,
+    scope,
+    {
+      system,
+      prompt,
+      tier,
+      maxTokens: 400,
+      outputSchema: SCHEMA as unknown as Record<string, unknown>,
+    },
+    { prompt: CHANGE_SUMMARY_PROMPT, fallback: () => fallback, policy, failures: 'throw' },
+  );
+  if (res.source === 'heuristic') return byRule(res.fallback ?? 'heuristic', truncated);
+  const answer = cleanAnswer(res.value);
+  if (!answer.summary) return byRule('empty summary', truncated);
+  await ctx.cache
+    ?.set(key, JSON.stringify({ ...answer, tier: res.tier }), {
+      ttlSeconds: CHANGE_SUMMARY_CACHE_TTL_SECONDS,
+    })
+    // A summary not kept is asked for again next time; the answer in hand still stands.
+    .catch(() => {});
+  return { ...base, ...answer, source: 'model', tier: res.tier, cached: false, truncated };
+}
+
+const cacheKey = (parts: readonly string[]) => `change-summary:${sha256Hex(JSON.stringify(parts))}`;
+
+const CACHED_SCHEMA = {
+  type: 'object',
+  properties: {
+    ...SCHEMA.properties,
+    tier: { type: 'string', enum: ['flagship', 'balanced', 'fast'] },
+  },
+  required: ['summary', 'highlights', 'tier'],
+};
+
+async function readCached(
+  ctx: AppContext,
+  key: string,
+): Promise<{ answer: Answer; tier: ModelTier } | null> {
+  const raw = await ctx.cache?.get(key).catch(() => null);
+  if (!raw) return null;
+  try {
+    const value: unknown = JSON.parse(raw);
+    if (!conforms(value, CACHED_SCHEMA)) return null;
+    const { summary, highlights, tier } = value as Answer & { tier: ModelTier };
+    return { answer: cleanAnswer({ summary, highlights }), tier };
+  } catch {
+    return null;
+  }
+}

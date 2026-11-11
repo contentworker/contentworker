@@ -1,4 +1,5 @@
 import {
+  AiUnavailableError,
   capModelTier,
   isAiModelTier,
   MODEL_TIERS,
@@ -211,6 +212,14 @@ export interface GenerateJsonOptions<T> {
    * tier stands in for the call site's default. Guidance is the caller's to add to `system`.
    */
   readonly policy?: AiCapabilityPolicy;
+  /**
+   * `throw`: a call that fails (the budget refuses it, the provider errs or times out) is the
+   * caller's error rather than the heuristic's answer: a budget refusal as {@link RateLimitedError}
+   * (429), anything else as {@link AiUnavailableError} (503). For a request a person asked a model
+   * to answer, where a guess in its place would read as the model's. AI_MODE=mock and an answer off
+   * the schema still answer from the heuristic. Default `fallback`.
+   */
+  readonly failures?: 'fallback' | 'throw';
 }
 
 export type GenerateJsonResult<T> = AiProvenance & {
@@ -268,6 +277,11 @@ export async function generateJson<T>(
     );
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
+    if (opts.failures === 'throw') {
+      log({ source: 'heuristic', tier, prompt: opts.prompt, fallback: `refused: ${reason}` });
+      if (err instanceof RateLimitedError || err instanceof AiUnavailableError) throw err;
+      throw new AiUnavailableError('The model couldn’t answer just now; try again');
+    }
     if (err instanceof RateLimitedError) return heuristic(`budget: ${reason}`);
     if (opts.retry) {
       log({ source: 'heuristic', tier, prompt: opts.prompt, retrying: reason });

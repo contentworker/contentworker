@@ -5,6 +5,7 @@ import {
   listVersions,
   parseVersionRef,
   restoreVersion,
+  summarizeChange,
   visibleDiff,
 } from '@contentworker/application';
 import {
@@ -24,7 +25,7 @@ import { actingCtx, BASE, entryAccess, expectedVersionOf, scopeOf } from './shar
 const VERSION_REF = 'A version number (1 or more), draft or published';
 
 export function versionsRoutes(deps: AuthDeps): Hono<AuthVars> {
-  const { ctx } = deps;
+  const { ctx, ai } = deps;
   const { authorizeEntryRead } = entryAccess(ctx);
   const app = new Hono<AuthVars>();
 
@@ -67,6 +68,45 @@ export function versionsRoutes(deps: AuthDeps): Hono<AuthVars> {
       await authorizeEntryRead(c, c.req.param('id'));
       const diff = await diffVersions(ctx, scopeOf(c), c.req.param('id'), from, to);
       return c.json(visibleDiff(c.get('principal'), diff));
+    },
+  );
+  // A narrative of the same diff, written by a model. A POST, since it may spend the space's AI
+  // budget; a read all the same (`preview:read`, as the diff), so a reviewer who can't edit can
+  // ask. Nothing is written to D1: the summary is cached in KV by everything the model read.
+  app.post(
+    `${BASE}/entries/:id/versions/diff/summary`,
+    doc('Entries', 'Summarize the changes between two versions', {
+      description:
+        'A short narrative of the version diff (the same diff `GET …/versions/diff` returns, as ' +
+        'the caller may read it), written by a model from the diff alone: one to three sentences ' +
+        'and up to five highlights, in plain text. Runs under the `field-assist` AI capability ' +
+        '(409 `ai_capability_disabled` when the space turned it off), its tier and guidance; 429 ' +
+        'when the AI budget refuses, 503 when the model fails. Fields the caller may not read ' +
+        'never reach the model. Without a model (AI_MODE=mock) it is built from the diff by rule ' +
+        "(`source: 'heuristic'`). The same request is answered from a cache; `fresh=true` asks " +
+        'the model again.',
+      query: {
+        from: 'The baseline: a version number, `draft` or `published`',
+        to: 'The version compared against it: a version number, `draft` or `published`',
+        fresh: '`true` skips the cached summary and asks the model again',
+      },
+      ok: versionDocs.changeSummary,
+    }),
+    requireScope(SCOPES.previewRead),
+    async (c) => {
+      const from = parseVersionRef(c.req.query('from'));
+      const to = parseVersionRef(c.req.query('to'));
+      const issues = [
+        ...(from === null ? [{ field: 'from', message: VERSION_REF }] : []),
+        ...(to === null ? [{ field: 'to', message: VERSION_REF }] : []),
+      ];
+      if (from === null || to === null) throw new ValidationError(issues);
+      return c.json(
+        await summarizeChange(ctx, c.get('principal'), scopeOf(c), c.req.param('id'), from, to, {
+          ai,
+          fresh: c.req.query('fresh') === 'true',
+        }),
+      );
     },
   );
   app.get(`${BASE}/entries/:id/versions/:version`, requireScope(SCOPES.previewRead), async (c) => {

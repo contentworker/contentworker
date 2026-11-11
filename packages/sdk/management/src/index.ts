@@ -987,6 +987,34 @@ export interface EntryVersion {
   readonly createdAt?: string;
 }
 
+/**
+ * A narrative of the changes between two versions (`entries.versions.summarize`), written by a
+ * model from the version diff alone, or built from it by rule (`source: 'heuristic'`).
+ */
+export interface ChangeSummary {
+  readonly entryId: string;
+  /** The version numbers the references resolved to. */
+  readonly from: number;
+  readonly to: number;
+  /** One to three sentences, plain text: render it as text, never as markup. */
+  readonly summary: string;
+  /** Up to five notable changes, plain text; may be empty. */
+  readonly highlights: readonly string[];
+  readonly source: 'model' | 'heuristic';
+  /** The tier that wrote it; null for the heuristic. */
+  readonly tier: 'flagship' | 'balanced' | 'fast' | null;
+  /** Why the heuristic wrote it (`mock`, `no visible changes`, a bad answer). */
+  readonly fallback?: string;
+  /** Answered from the cache, with no model call. */
+  readonly cached: boolean;
+  /** The diff was longer than the model reads, so the summary covers part of it. */
+  readonly truncated: boolean;
+  /** Fields that changed which you may read. */
+  readonly changedFields: number;
+  /** Fields that changed which you may not read: never shown to the model. */
+  readonly hiddenChanges: number;
+}
+
 export type AssetKind = 'image' | 'video' | 'audio' | 'document' | 'other';
 
 /** What a reader shows while a raster image loads; ingest computes it from the pixels. */
@@ -2530,6 +2558,23 @@ export function createManagementClient(opts: ManagementClientOptions) {
          */
         diff: (id: string, from: VersionRef, to: VersionRef) =>
           get<unknown>(`${envBase}/entries/${e(id)}/versions/diff`, { from, to }),
+        /**
+         * A short narrative of that diff in plain text (`field-assist` AI; 409
+         * `ai_capability_disabled` when the space turned it off, 429 over the AI budget, 503
+         * when the model fails). A repeated request is answered from a cache; `fresh` asks again.
+         */
+        summarize: (
+          id: string,
+          from: VersionRef,
+          to: VersionRef,
+          opts: { readonly fresh?: boolean } = {},
+        ) =>
+          request<ChangeSummary>(
+            'POST',
+            `${envBase}/entries/${e(id)}/versions/diff/summary`,
+            undefined,
+            { from, to, fresh: opts.fresh ? 'true' : undefined },
+          ),
         /**
          * Copies an old version's fields into a NEW draft version; `expectedVersion` (the draft
          * you read) makes a draft saved since a 409.

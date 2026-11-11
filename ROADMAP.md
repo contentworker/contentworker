@@ -413,8 +413,11 @@ None blocks a release.
     job in every environment (deleting, or re-embedding, published entries' and assets' vectors),
     superseding one still running; followed at `…/search/reindex-job`, `search_reindex_job` and on
     the admin's search row.
-- [ ] **Change summaries.** A narrative summary of a version diff, over the existing deterministic
-  diff.
+- [x] **Change summaries.** A narrative summary of a version diff, over the existing deterministic
+  diff: `POST …/versions/diff/summary`, `entries_change_summary` (Coworker too),
+  `versions.summarize()` and Summarize changes in the admin's compare. Written from the diff as the
+  caller may read it, fenced and bounded, under `field-assist`; listed by rule without a model;
+  cached in KV by its input.
 
 #### M6. Visual editing
 

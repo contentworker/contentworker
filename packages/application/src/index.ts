@@ -36,6 +36,7 @@ export * from './branching';
 export * from './bulk';
 export * from './bulk-jobs';
 export * from './change-log';
+export * from './change-summary';
 export * from './comments';
 export * from './content-ai';
 export * from './content-type-lifecycle';

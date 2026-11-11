@@ -318,7 +318,9 @@ await cma.entries.publish(entry.id, { expectedVersion: entry.currentVersion });
 (`id`, `currentVersion`, status) and its draft values. `publish`, `unpublish` and
 `versions.restore` take an optional `{ expectedVersion }`, the `currentVersion` you read; if the
 draft has moved on, the call fails with a **409** and changes nothing, so you never publish text
-you haven't seen.
+you haven't seen. `versions.diff(id, from, to)` compares two versions; `versions.summarize(id,
+from, to, { fresh? })` returns a short plain-text summary of that diff, written by the space's
+Writing help AI ([Summarize the changes](/guides/editing-and-publishing/#summarize-the-changes)).
 
 Every method maps to one Management route: content types, entries and their versions, the asset
 library, bulk jobs, releases, scheduled actions, webhooks, taxonomy (`cma.taxonomy.tags`,

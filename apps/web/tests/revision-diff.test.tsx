@@ -8,7 +8,7 @@ import {
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { configure, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { VersionDiff, VersionRef } from '~/cms/lib/management';
+import type { ChangeSummary, VersionDiff, VersionRef } from '~/cms/lib/management';
 
 configure({ asyncUtilTimeout: 5000 });
 
@@ -125,7 +125,33 @@ const client = {
     to === 'published' ? diffOf(Number(from), 2, v1, v3) : diffOf(Number(from), 3, v1, v3),
   ),
   restoreVersion: vi.fn(),
+  getAiSettings: vi.fn(async () => ({
+    version: 1,
+    capabilities: { 'field-assist': { enabled: fieldAssist.on, tier: null, guidance: null } },
+  })),
+  summarizeChange: vi.fn(
+    async (
+      _id: string,
+      from: number,
+      to: number,
+      opts: { fresh?: boolean } = {},
+    ): Promise<ChangeSummary> => ({
+      entryId: 'e1',
+      from,
+      to,
+      summary: opts.fresh ? 'The headline changed again.' : 'The headline changed.',
+      highlights: ['Headline: Spring launch → Summer launch'],
+      source: 'model',
+      tier: 'fast',
+      cached: false,
+      truncated: false,
+      changedFields: 4,
+      hiddenChanges: 0,
+    }),
+  ),
 };
+/** Whether the space has writing help on, as the AI settings read says. */
+const fieldAssist = { on: true };
 vi.mock('~/cms/lib/client-context', () => ({
   useClient: () => ({
     client,
@@ -264,11 +290,111 @@ describe('VersionHistory compare', () => {
     expect(screen.queryByRole('region')).toBeNull();
   });
 
+  it('summarizes the compared versions on request, above the diff, stamped as AI', async () => {
+    fieldAssist.on = true;
+    renderHistory(false);
+    open();
+    fireEvent.click(await screen.findByRole('button', { name: 'Compare version 1' }));
+    const summary = await screen.findByRole('region', { name: 'Summary of changes' });
+    // Nothing is asked until the person asks: a summary may spend the AI budget.
+    expect(client.summarizeChange).not.toHaveBeenCalled();
+    fireEvent.click(within(summary).getByRole('button', { name: 'Summarize changes' }));
+    expect(await within(summary).findByText('The headline changed.')).toBeTruthy();
+    expect(client.summarizeChange).toHaveBeenCalledWith(
+      'e1',
+      1,
+      3,
+      { fresh: false },
+      expect.any(AbortSignal),
+    );
+    expect(within(summary).getByText('Written by AI')).toBeTruthy();
+    expect(within(summary).getByRole('list', { name: 'Notable changes' })).toBeTruthy();
+    expect(within(summary).getByText(/Check it against them/)).toBeTruthy();
+    // Above the diff it summarizes.
+    const diff = screen.getByRole('region', { name: /Changes from v1/ });
+    expect(summary.compareDocumentPosition(diff) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    fireEvent.click(within(summary).getByRole('button', { name: 'Write it again' }));
+    expect(await within(summary).findByText('The headline changed again.')).toBeTruthy();
+    expect(client.summarizeChange).toHaveBeenLastCalledWith(
+      'e1',
+      1,
+      3,
+      { fresh: true },
+      expect.any(AbortSignal),
+    );
+  });
+
+  it('says plainly when a summary was listed from the changes, with nothing to write again', async () => {
+    fieldAssist.on = true;
+    client.summarizeChange.mockImplementationOnce(async (_id, from, to) => ({
+      entryId: 'e1',
+      from,
+      to,
+      summary: 'Changed 4 fields: Headline, Body copy, Hero image, Sections.',
+      highlights: [],
+      source: 'heuristic',
+      tier: null,
+      fallback: 'mock',
+      cached: false,
+      truncated: false,
+      changedFields: 4,
+      hiddenChanges: 0,
+    }));
+    renderHistory(false);
+    open();
+    fireEvent.click(await screen.findByRole('button', { name: 'Compare version 1' }));
+    const summary = await screen.findByRole('region', { name: 'Summary of changes' });
+    fireEvent.click(within(summary).getByRole('button', { name: 'Summarize changes' }));
+    expect(await within(summary).findByText('Listed from the changes')).toBeTruthy();
+    expect(within(summary).queryByText('Written by AI')).toBeNull();
+    expect(within(summary).queryByRole('button', { name: 'Write it again' })).toBeNull();
+  });
+
+  it('shows a failure in place with Try again, and a refusal as the setting it is', async () => {
+    fieldAssist.on = true;
+    const { ApiError } = await import('~/cms/lib/management');
+    client.summarizeChange
+      .mockRejectedValueOnce(
+        new ApiError(503, 'unavailable', {
+          error: { code: 'ai_unavailable', message: 'The model didn’t answer; try again' },
+        }),
+      )
+      .mockRejectedValueOnce(
+        new ApiError(409, 'off', {
+          error: { code: 'ai_capability_disabled', message: 'Writing help is off' },
+        }),
+      );
+    renderHistory(false);
+    open();
+    fireEvent.click(await screen.findByRole('button', { name: 'Compare version 1' }));
+    const summary = await screen.findByRole('region', { name: 'Summary of changes' });
+    fireEvent.click(within(summary).getByRole('button', { name: 'Summarize changes' }));
+    expect(await within(summary).findByText('The summary couldn’t be written')).toBeTruthy();
+    expect(within(summary).getByText('The model didn’t answer; try again')).toBeTruthy();
+    fireEvent.click(within(summary).getByRole('button', { name: 'Try again' }));
+    expect(await within(summary).findByText('Writing help is turned off')).toBeTruthy();
+    expect(within(summary).queryByRole('button', { name: 'Try again' })).toBeNull();
+  });
+
+  it('offers no summary where the space turned writing help off', async () => {
+    fieldAssist.on = false;
+    renderHistory(false);
+    open();
+    fireEvent.click(await screen.findByRole('button', { name: 'Compare version 1' }));
+    await screen.findByRole('region', { name: /Changes from v1/ });
+    await waitFor(() => expect(client.getAiSettings).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(screen.queryByRole('region', { name: 'Summary of changes' })).toBeNull(),
+    );
+    fieldAssist.on = true;
+  });
+
   it('offers no live comparison for an entry that is not live', async () => {
     renderHistory(false);
     open();
     fireEvent.click(await screen.findByRole('button', { name: 'Compare version 2' }));
-    await screen.findByRole('region');
+    await screen.findByRole('region', { name: /Changes from v2/ });
     expect(screen.queryByRole('button', { name: 'Live version' })).toBeNull();
   });
 

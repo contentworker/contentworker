@@ -615,6 +615,19 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   shows the ring), skeleton rows while it reads, `Empty` when there is nothing, a destructive Alert
   with Try again when the first read fails, and an inline line under the rows kept when a later
   page or a refresh fails. Anyone else never sees the segment, and a remembered Activity opens on Details.
+  In Details, **Version history** (`VersionHistory.tsx`) opens a version's comparison under it
+  (`RevisionDiff`); above the diff sits **Summarize changes** (`ChangeSummary.tsx`), a ghost `xs`
+  button led by the AI mark in `text-ai` at rest, `write` composing beside "Summarizing…" while the
+  model works. Nothing is asked until it is pressed (a summary spends the AI budget). The summary
+  takes the button's place behind a hairline at its start: an `ai` "Written by AI" stamp, the
+  sentences and a "Notable changes" list held to the measure, a muted line saying a model wrote it
+  from the changes below and to check it against them, and a ghost `xs` **Write it again** (asks
+  past the cache, the old summary kept in sight meanwhile). One listed by rule (no model) wears an
+  `idle` "Listed from the changes" stamp, no note and no Write it again; one written from part of a
+  long diff says so beside its stamp. A failure is a destructive Alert in place with Try again; a
+  refusal because Writing help is off is a plain Alert naming Settings → AI. With Writing help off
+  the button isn't offered. Another comparison starts without a summary. The publish confirmation
+  and approvals read the diff through `EntryReview`, not this view, and offer no summary.
   A new entry's pane is its preview alone. Details opens on **who wrote it**, a
   card of its own that never folds away (two lines read faster than a toggle; no card inside it):
   "Created by" with the date (`When`) and "Last edited by" with how long ago (`Ago`), each writer

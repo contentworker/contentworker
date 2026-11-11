@@ -1,4 +1,5 @@
 import type { ApiConfig } from '@contentworker/platform/config';
+import { StubAIProvider } from '@contentworker/test-kit';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from '../../src/api/app';
 import { testConfig } from './config';
@@ -215,6 +216,19 @@ describe('comparing entry versions over HTTP', () => {
     expect(denied.status).toBe(403);
   });
 
+  it('is described in the OpenAPI document, with its summary', async () => {
+    const spec = (await (await app.request('/openapi.json')).json()) as {
+      paths: Record<
+        string,
+        Record<string, { summary?: string; responses: Record<string, unknown> }>
+      >;
+    };
+    const op =
+      spec.paths['/spaces/{space}/environments/{env}/entries/{id}/versions/diff/summary']?.post;
+    expect(op?.summary).toBe('Summarize the changes between two versions');
+    expect(JSON.stringify(op?.responses['200'])).toContain('highlights');
+  });
+
   it('is described in the OpenAPI document', async () => {
     const spec = (await (await app.request('/openapi.json')).json()) as {
       paths: Record<
@@ -225,5 +239,127 @@ describe('comparing entry versions over HTTP', () => {
     const op = spec.paths['/spaces/{space}/environments/{env}/entries/{id}/versions/diff']?.get;
     expect(op?.summary).toBe('Compare two versions');
     expect(JSON.stringify(op?.responses['200'])).toContain('changes');
+  });
+});
+
+describe('summarizing the changes between two versions over HTTP', () => {
+  const answer = { summary: 'The headline moved from spring to summer.', highlights: ['Headline'] };
+  const field = (apiId: string, name: string, position: number) => ({
+    apiId,
+    name,
+    type: 'Symbol',
+    localized: false,
+    required: false,
+    position,
+  });
+
+  async function setup(mode?: 'mock') {
+    const wired = wire(config);
+    const ai = new StubAIProvider(() => answer);
+    const ctx = mode ? { ...wired.ctx, ai: { mode, timeoutMs: 1000 } } : wired.ctx;
+    const app = createApp(ctx, config, wired.rag, wired.blob, ai);
+    await app.request(`${M}/content-types`, {
+      method: 'POST',
+      headers: admin,
+      body: JSON.stringify({
+        apiId: 'article',
+        name: 'Article',
+        displayField: 'title',
+        fields: [field('title', 'Headline', 0), field('notes', 'Notes', 1)],
+      }),
+    });
+    await app.request(`${M}/content-types/article/published`, { method: 'POST', headers: admin });
+    const created = await app.request(`${M}/entries`, {
+      method: 'POST',
+      headers: admin,
+      body: JSON.stringify({
+        contentTypeApiId: 'article',
+        fields: { title: { 'en-US': 'Spring' }, notes: { 'en-US': 'one' } },
+      }),
+    });
+    const id = ((await created.json()) as { entry: { id: string } }).entry.id;
+    await app.request(`${M}/entries/${id}`, {
+      method: 'PUT',
+      headers: admin,
+      body: JSON.stringify({
+        fields: { title: { 'en-US': 'Summer' }, notes: { 'en-US': 'CONFIDENTIAL two' } },
+      }),
+    });
+    return { app, ai, id };
+  }
+
+  const summarize = (
+    app: ReturnType<typeof createApp>,
+    id: string,
+    query: string,
+    headers: Record<string, string> = admin,
+  ) =>
+    app.request(`${M}/entries/${id}/versions/diff/summary?${query}`, { method: 'POST', headers });
+
+  it('answers with the model’s summary of the diff', async () => {
+    const { app, ai, id } = await setup();
+    const res = await summarize(app, id, 'from=1&to=draft');
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      entryId: id,
+      from: 1,
+      to: 2,
+      summary: answer.summary,
+      highlights: answer.highlights,
+      source: 'model',
+      changedFields: 2,
+      hiddenChanges: 0,
+    });
+    expect(ai.requests[0]?.prompt).toContain('"Headline"');
+  });
+
+  it('keeps fields the caller may not read from the model', async () => {
+    const { app, ai, id } = await setup();
+    const roleRes = await app.request('/spaces/s1/roles', {
+      method: 'POST',
+      headers: admin,
+      body: JSON.stringify({
+        name: 'Reviewer',
+        scopes: ['preview:read'],
+        contentGrants: [
+          { contentTypeApiId: 'article', actions: ['read'], deniedFields: ['notes'] },
+        ],
+      }),
+    });
+    const role = (await roleRes.json()) as { id: string };
+    const keyRes = await app.request('/spaces/s1/api-keys', {
+      method: 'POST',
+      headers: admin,
+      body: JSON.stringify({ kind: 'cpa', roleId: role.id }),
+    });
+    const { token } = (await keyRes.json()) as { token: string };
+    const res = await summarize(app, id, 'from=1&to=2', { Authorization: `Bearer ${token}` });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ changedFields: 1, hiddenChanges: 1 });
+    expect(ai.requests[0]?.prompt).not.toContain('CONFIDENTIAL');
+    expect(ai.requests[0]?.prompt).not.toContain('Notes');
+  });
+
+  it('is built by rule in mock mode, refuses bad references, and is a 409 with field-assist off', async () => {
+    const { app, id } = await setup('mock');
+    const res = await summarize(app, id, 'from=1&to=draft');
+    expect(await res.json()).toMatchObject({
+      source: 'heuristic',
+      summary: 'Changed 2 fields: Headline, Notes.',
+    });
+    expect((await summarize(app, id, 'from=latest&to=draft')).status).toBe(422);
+    expect((await summarize(app, id, 'from=1&to=9')).status).toBe(404);
+    const set = await app.request('/spaces/s1/ai-settings', {
+      method: 'PUT',
+      headers: admin,
+      body: JSON.stringify({
+        expectedVersion: 0,
+        capabilities: { 'field-assist': { enabled: false } },
+      }),
+    });
+    expect(set.status).toBe(200);
+    const off = await summarize(app, id, 'from=1&to=draft');
+    expect(off.status).toBe(409);
+    expect(await off.json()).toMatchObject({ error: { code: 'ai_capability_disabled' } });
   });
 });
