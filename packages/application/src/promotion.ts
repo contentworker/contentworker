@@ -5,14 +5,12 @@ import {
   type CarriedBlockConfig,
   ConflictError,
   type ContentType,
-  canonicalJson,
   diffBlockCatalogs,
   EMPTY_BLOCK_CONFIG,
   type EntryFields,
   effectiveBlockConfig,
   effectiveBlockRules,
   extractReferences,
-  type FieldIssue,
   ForbiddenError,
   InvalidStateError,
   MAX_PROMOTION_CONTENT_TYPES,
@@ -29,9 +27,7 @@ import {
   type PromotionStatus,
   planCatalogTypes,
   removedFields,
-  removedFieldUses,
   removedVariants,
-  removedVariantUses,
   SCOPES,
   type Scope,
   ValidationError,
@@ -56,6 +52,14 @@ import { createEntry, updateEntry } from './entries';
 import { loadPublishGuard } from './publish-gate';
 import { publishEntry } from './publishing';
 import { resolveEnvironment, resolveWritableEnvironment } from './spaces';
+import {
+  addHeld,
+  assertNothingStranded,
+  emptyHeld,
+  type ReplacedCopies,
+  replacedCopies,
+  toRemovedInUse,
+} from './stranding';
 
 /**
  * Promoting content between environments, with a risk check and, when it calls for one, a
@@ -185,7 +189,7 @@ export async function requestPromotion(
       `Entry ${e.entryId} goes as a draft: ${refused.workflows.map((w) => `"${w.name}"`).join(', ')} gates publishing it in ${targetId}`,
     );
   }
-  const replaced = replacedCopies(ctx, target, entries, (e) => e.publish);
+  const replaced = promotionCopies(ctx, target, entries, (e) => e.publish);
   await assertNothingStranded(ctx, target, types, replaced);
   const assessed = await assessPromotion(ctx, source, target, types, entries, blocks, replaced);
   const risk: PromotionRisk = { ...assessed, reasons: [...assessed.reasons, ...gatedNotes] };
@@ -430,7 +434,7 @@ async function applyPromotion(base: AppContext, promotion: Promotion): Promise<P
     const gate = await loadPublishGuard(ctx.store.workflowGraphs, target);
     const goesLive = (e: PromotedEntry) =>
       e.publish && !gate.refusal(e.entryId, e.contentTypeApiId);
-    const replaced = replacedCopies(ctx, target, promotion.entries, goesLive);
+    const replaced = promotionCopies(ctx, target, promotion.entries, goesLive);
     // And again what the request refused, over the target as it is now (always: the request's own
     // check was before the risk check and the record's write): an entry written there while the
     // promotion waited with a removed field or variant fails the apply here, before any type is
@@ -609,180 +613,29 @@ async function assertSingletonsHold(
 }
 
 /**
- * Refuses (422) a promotion whose content types would strand content in the target: a block
- * variant or a field, at any depth, that a type removes while entries there still hold it (their
- * current version, the trash, or their published snapshot), as revising the type there refuses it
- * (`updateContentType`). There is no override, as there is none there: change or clear those
- * values in the target first, or leave the type out. Judged against the target's working
- * definition and, when a published one replaces it, what the target serves, as the risk check is.
- *
- * A copy the promotion itself replaces doesn't count: a promoted entry's current version (the
- * source's pinned version takes its place, saved against the promoted type), and its published
- * snapshot when it goes live (`replacedCopies`). One in the target's trash counts whole, and is
- * named as in the trash (`trashed`). Run when the promotion is requested, and always again by the
- * apply before it writes anything. Like the direct revision, it reads before the saves rather than
- * in one unit with them: an entry written with the removed content in the moment between fails
- * its next save, naming it, rather than losing anything. Letting a copy off trusts the apply to
- * replace it, which is why the apply writes (and publishes) those entries before any other; one
- * that fails even so (its own claim or field rule, a gate added in that moment) fails the
- * promotion with that copy still holding what was removed, as any promotion failing partway keeps
- * what it applied.
+ * The copies of the target's entries a promotion replaces (`replacedCopies` in stranding.ts): a
+ * promoted entry's current version, and its published snapshot when it goes live (`goesLive`).
+ * One in the target's trash counts whole, since the apply refuses to write over it, and is refused
+ * as in the trash. The same rule for what a content type removes (`assertNothingStranded`, run
+ * when the promotion is requested and always again by the apply before it writes anything) and
+ * what the block catalog push removes (`checkPromotedCatalog`, and the push itself in the apply).
+ * One the apply relied on that fails even so (its own claim or field rule, a gate added in that
+ * moment) fails the promotion with that copy still holding what was removed, as any promotion
+ * failing partway keeps what it applied.
  */
-async function assertNothingStranded(
-  ctx: AppContext,
-  target: Scope,
-  types: readonly ContentType[],
-  replaced: ReplacedCopies,
-): Promise<void> {
-  if (types.length === 0) return;
-  const kept = await ctx.store.contentTypes.publishedDefinitions(target);
-  const issues: FieldIssue[] = [];
-  for (const ct of types) {
-    const current = await ctx.store.contentTypes.get(target, ct.apiId);
-    if (!current) continue;
-    const live = ct.status === 'published' ? kept.get(ct.apiId) : undefined;
-    // What the target serves only when it differs from its working definition: the same fields
-    // twice would scan the same entries twice for nothing.
-    const served =
-      live && canonicalJson(live.fields) !== canonicalJson(current.fields) ? live : undefined;
-    const befores = served ? [current, { ...current, fields: served.fields }] : [current];
-    // Entry ids by `location: variant` and by field location, over both definitions.
-    const held = emptyHeld();
-    for (const before of befores) addHeld(held, await removedContentInUse(ctx, target, before, ct));
-    await replaced.letOff(held, befores, ct);
-    const refuse = (what: string, verb: [string, string], at: string, ids: Set<string>) => {
-      if (ids.size === 0) return;
-      const n = ids.size;
-      issues.push({
-        field: 'contentTypes',
-        message:
-          `The content type "${ct.apiId}" can't go to ${target.environmentId}: it removes ${what} ` +
-          `${n} ${n === 1 ? `entry there still ${verb[0]}` : `entries there still ${verb[1]}`}: ` +
-          `${describeRemovedInUse(at, [...ids].sort())}. Change or clear those values there ` +
-          `first, or leave "${ct.apiId}" out of the promotion`,
-      });
-    };
-    for (const [at, ids] of [...held.variants].sort(([a], [b]) => a.localeCompare(b))) {
-      refuse('a block variant', ['uses', 'use'], at, ids);
-    }
-    for (const [at, ids] of [...held.fields].sort(([a], [b]) => a.localeCompare(b))) {
-      refuse('a field', ['holds a value for', 'hold a value for'], at, ids);
-    }
-  }
-  issues.push(...(await replaced.trashed()));
-  if (issues.length > 0) throw new ValidationError(issues);
-}
-
-/** Entry ids by removed location: `location: variant` for a variant, the location for a field. */
-interface Held {
-  readonly variants: Map<string, Set<string>>;
-  readonly fields: Map<string, Set<string>>;
-}
-
-const emptyHeld = (): Held => ({ variants: new Map(), fields: new Map() });
-
-function noteHeld(into: Map<string, Set<string>>, at: string, entryId: string): void {
-  into.set(at, (into.get(at) ?? new Set<string>()).add(entryId));
-}
-
-function addHeld(held: Held, found: RemovedContentInUse): void {
-  for (const v of found.variantsInUse)
-    for (const id of v.entries) noteHeld(held.variants, v.variant, id);
-  for (const f of found.fieldsInUse) for (const id of f.entries) noteHeld(held.fields, f.field, id);
-}
-
-function toRemovedInUse(held: Held): RemovedContentInUse {
-  const sorted = (m: Map<string, Set<string>>) =>
-    [...m]
-      .filter(([, ids]) => ids.size > 0)
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([at, ids]) => [at, [...ids].sort()] as const);
-  return {
-    variantsInUse: sorted(held.variants).map(([variant, entries]) => ({ variant, entries })),
-    fieldsInUse: sorted(held.fields).map(([field, entries]) => ({ field, entries })),
-  };
-}
-
-/**
- * The copies of the target's entries a promotion replaces, which a removal it brings doesn't
- * strand: a promoted entry's current version (the source's pinned version takes its place) and,
- * when it goes live (`goesLive`), its published snapshot. One that stays a draft keeps whatever
- * the target last published of it, so that snapshot is checked on its own; one in the target's
- * trash counts whole, since the apply refuses to write over it. The same rule for what a content
- * type removes (`assertNothingStranded`) and what the block catalog push removes
- * (`checkPromotedCatalog`, and the push itself in the apply).
- *
- * Letting a copy off leans on the apply getting as far as the entries: `relied` names them, for
- * the apply to write first, and `trashed` then refuses a promoted entry in the target's trash,
- * which would fail the apply after the types (and the catalog) are saved. A promoted entry in the
- * trash that itself holds what is removed is refused the same way, whatever else is let off:
- * changing its values there can't be done, restoring or purging it can.
- */
-type ReplacedCopies = ReturnType<typeof replacedCopies>;
-
-function replacedCopies(
+const promotionCopies = (
   ctx: AppContext,
   target: Scope,
   entries: readonly PromotedEntry[],
   goesLive: (e: PromotedEntry) => boolean,
-) {
-  const promoted = new Map(entries.map((e) => [e.entryId, e]));
-  const relied = new Set<string>();
-  const trashedHolders = new Set<string>();
-  return {
-    /** The promoted entries a removal was let off for, which the apply must replace first. */
-    relied: (): ReadonlySet<string> => relied,
-    /** Takes the replaced copies out of `held`, found over `befores` against `after`. */
-    async letOff(
-      held: Held,
-      befores: readonly Pick<ContentType, 'fields'>[],
-      after: Pick<ContentType, 'fields'>,
-    ): Promise<void> {
-      const all = [...held.variants.values(), ...held.fields.values()];
-      const holders = [...new Set(all.flatMap((s) => [...s]))].filter((id) => promoted.has(id));
-      if (holders.length === 0) return;
-      const there = await ctx.store.entries.getMany(target, holders);
-      for (const e of there) if (e.entry.status === 'archived') trashedHolders.add(e.entry.id);
-      const written = there.filter((e) => e.entry.status !== 'archived').map((e) => e.entry.id);
-      if (written.length === 0) return;
-      for (const id of written) relied.add(id);
-      for (const ids of all) for (const id of written) ids.delete(id);
-      // A promoted entry that stays a draft keeps whatever the target last published of it.
-      const drafts = written.filter((id) => !goesLive(promoted.get(id) as PromotedEntry));
-      if (drafts.length === 0) return;
-      const snapshots = await ctx.store.entries.getPublishedMany(target, drafts);
-      for (const before of befores) {
-        const removedV = removedVariants(before.fields, after.fields);
-        const removedF = removedFields(before.fields, after.fields);
-        for (const s of snapshots) {
-          for (const at of removedVariantUses(before.fields, s.fields, removedV)) {
-            noteHeld(held.variants, at, s.entryId);
-          }
-          for (const at of removedFieldUses(before.fields, s.fields, removedF)) {
-            noteHeld(held.fields, at, s.entryId);
-          }
-        }
-      }
-    },
-    /**
-     * A promoted entry in the target's trash: every one once a copy was let off, else each that
-     * holds what is removed.
-     */
-    async trashed(): Promise<FieldIssue[]> {
-      // An archived entry takes no new version, so the apply fails on it after the types are saved.
-      const ids =
-        relied.size > 0
-          ? (await ctx.store.entries.getMany(target, [...promoted.keys()]))
-              .filter((e) => e.entry.status === 'archived')
-              .map((e) => e.entry.id)
-          : [...trashedHolders];
-      return ids.sort().map((id) => ({
-        field: 'entries',
-        message: `Entry ${id} is in the trash in ${target.environmentId}, so the promotion can't write it. Restore it there or purge it first, or leave it out of the promotion`,
-      }));
-    },
-  };
-}
+): ReplacedCopies => {
+  const byId = new Map(entries.map((e) => [e.entryId, e]));
+  return replacedCopies(ctx, target, [...byId.keys()], {
+    operation: 'promotion',
+    writesTrash: false,
+    goesLive: (id) => goesLive(byId.get(id) as PromotedEntry),
+  });
+};
 
 /** The risk check: the rules, then the decision model's view, which can only add to them. */
 async function assessPromotion(

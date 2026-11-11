@@ -82,8 +82,17 @@ so `removed` items stay where they are. Entries keep their ids and are validated
 target's content type, so include a type in the merge before the entries that use it. Unique
 values (and a singleton's one entry) hold as they do for edits: before anything is written, a
 merge whose entries would take a value another entry holds, or the same value twice, is refused
-with `409`, naming each entry and its holder; entries swapping values between them merge fine. An
-entry that is in the target's trash gets the new version and stays in the trash. The
+with `409`, naming each entry and its holder; an entry the merge brings in can take a value
+another one gives up. Values handed round in a circle between entries the target already has are
+refused with `409` too: give one of them up there first. An
+entry that is in the target's trash gets the new version and stays in the trash.
+
+A content type that would remove a field or block type entries in the target still hold is refused
+the same way (`422`, naming the type, what it removes and how many entries hold it), as changing the
+type there would be: change or clear those entries first, or leave the type out. Entries the merge
+brings in over the target's copies don't count, trash included, but a copy the target has published
+does, since a merge never publishes. All of these checks run before anything is written, so a
+refused merge, or one naming an entry the source doesn't have, changes nothing. The
 response lists `mergedContentTypes` and `mergedEntries`. The MCP tools are `environments_compare`
 and `environments_merge`. A role limited per content type sees only the types it can read in a
 comparison, and merging entries needs `read` and `write` on every type with no field rules.

@@ -16,8 +16,9 @@ import {
   uniqueClaims,
   type ValidationContext,
 } from '@contentworker/domain';
+import { TransactionConflictError } from '@contentworker/ports';
 import { blockConfigChange } from './block-config';
-import { saveContentTypeOver } from './content-types';
+import { type PreparedContentTypeSave, prepareContentTypeSave } from './content-types';
 import { type AppContext, actorOf } from './context';
 import {
   assertAssetMimeTypes,
@@ -27,6 +28,7 @@ import {
 } from './entries';
 import { allPages } from './paging';
 import { resolveEnvironment, resolveWritableEnvironment } from './spaces';
+import { assertNothingStranded, replacedCopies } from './stranding';
 
 /** How an item in the source environment relates to the target. */
 export type ChangeKind = 'added' | 'removed' | 'changed' | 'unchanged';
@@ -206,7 +208,18 @@ async function targetValidationContext(ctx: AppContext, scope: Scope): Promise<V
  * Applies selected content types and entries from `source` into `target`.
  * Content types are copied wholesale; entries are copied as a NEW draft version
  * in the target (preserving the entry id, validated against the target's content
- * type). The merge is additive/overwriting — it never deletes target content.
+ * type as the merge leaves it). The merge is additive/overwriting — it never deletes target
+ * content.
+ *
+ * Everything that can refuse it is read and judged before anything is written: the source's types
+ * and entries, each entry against the type it will have, the unique values (`assertPlanFree`),
+ * what the types would strand (`assertNothingStranded` in stranding.ts) and their singleton turns
+ * (`prepareContentTypeSave`), and the order the entries can be written in (`applyOrder`). The
+ * types are then saved together in one unit, and the entries after them, each in its own (as
+ * `updateEntry` and `createEntry` write one): those the target already has first, each one giving
+ * up a unique value before the one taking it and, within that, those whose copies the stranding
+ * check let off first; then the new ones. Only a race after the reads can still stop it partway,
+ * keeping the types and the entries already written.
  */
 export async function mergeEnvironments(
   ctx: AppContext,
@@ -219,21 +232,27 @@ export async function mergeEnvironments(
   const src = scopeOf(spaceId, await resolveEnvironment(ctx, spaceId, source));
   const tgt = scopeOf(spaceId, await resolveWritableEnvironment(ctx, spaceId, target));
 
-  const mergedContentTypes: string[] = [];
-  for (const apiId of selection.contentTypes ?? []) {
-    const ct = await ctx.store.contentTypes.get(src, apiId);
-    if (!ct) throw new NotFoundError('ContentType', `${source}/${apiId}`);
-    await saveContentTypeOver(ctx, tgt, await ctx.store.contentTypes.get(tgt, apiId), ct);
-    mergedContentTypes.push(apiId);
+  // Each named once: a type saved twice in one unit would fail its own guard, and an entry
+  // planned twice would clash with itself.
+  const types: MergedType[] = [];
+  for (const apiId of new Set(selection.contentTypes ?? [])) {
+    const next = await ctx.store.contentTypes.get(src, apiId);
+    if (!next) throw new NotFoundError('ContentType', `${source}/${apiId}`);
+    types.push({ current: await ctx.store.contentTypes.get(tgt, apiId), next });
   }
+  // What each type will be in the target once the merge's own are saved.
+  const merging = new Map(types.map((t) => [t.next.apiId, t.next]));
+  const typeAfter = async (apiId: string) =>
+    merging.get(apiId) ?? (await ctx.store.contentTypes.get(tgt, apiId));
 
   const plan: PlannedEntry[] = [];
+  let handOffs: HandOffs = new Map();
   if (selection.entries?.length) {
     const vctx = await targetValidationContext(ctx, tgt);
-    for (const entryId of selection.entries) {
+    for (const entryId of new Set(selection.entries)) {
       const found = await ctx.store.entries.get(src, entryId);
       if (!found) throw new NotFoundError('Entry', `${source}/${entryId}`);
-      const targetCt = await ctx.store.contentTypes.get(tgt, found.entry.contentTypeApiId);
+      const targetCt = await typeAfter(found.entry.contentTypeApiId);
       if (!targetCt) {
         throw new NotFoundError(
           'ContentType',
@@ -256,15 +275,55 @@ export async function mergeEnvironments(
         claims: trashed ? [] : uniqueClaims(targetCt, found.fields),
       });
     }
-    await assertPlanFree(ctx, tgt, plan);
+    handOffs = await assertPlanFree(ctx, tgt, plan);
+  }
+  // What the types would strand. A merge writes the source's version over a merged entry's copy
+  // in the target, in its trash or not, so that copy doesn't count; it never publishes, so the
+  // copy's published snapshot does.
+  const replaced = replacedCopies(
+    ctx,
+    tgt,
+    plan.filter((p) => p.existing).map((p) => p.entryId),
+    { operation: 'merge', writesTrash: true, goesLive: () => false },
+  );
+  await assertNothingStranded(
+    ctx,
+    tgt,
+    types.map((t) => t.next),
+    replaced,
+  );
+  const order = applyOrder(plan, replaced.relied(), handOffs);
+  const saves = await Promise.all(
+    types.map(({ current, next }) => prepareContentTypeSave(ctx, tgt, current, next)),
+  );
+
+  if (saves.length > 0) {
+    try {
+      await ctx.store.withTransaction(async (tx) => {
+        for (const save of saves) await save.write(tx);
+      });
+    } catch (err) {
+      if (!(err instanceof TransactionConflictError)) throw err;
+      throw new ConflictError(
+        saves.length === 1
+          ? (saves[0] as PreparedContentTypeSave).conflict
+          : 'One of the merged content types changed while it was being saved; try again',
+      );
+    }
   }
 
-  // Entries the target already has first: a value one of them gives up (a swap) is then free
-  // for the new entry that takes it.
-  const order = [...plan.filter((p) => p.existing), ...plan.filter((p) => !p.existing)];
   for (const p of order) await applyEntry(ctx, tgt, p);
 
-  return { mergedContentTypes, mergedEntries: plan.map((p) => p.entryId) };
+  return {
+    mergedContentTypes: types.map((t) => t.next.apiId),
+    mergedEntries: plan.map((p) => p.entryId),
+  };
+}
+
+/** A selected content type: the source's definition and the target's (null when it is new there). */
+interface MergedType {
+  readonly current: ContentType | null;
+  readonly next: ContentType;
 }
 
 /** One selected entry of a merge: its source fields and what the target holds of it. */
@@ -287,19 +346,21 @@ const CLASHES_NAMED = 10;
  * Refuses a merge, before anything is written, whose entries would take a unique value (the
  * singleton's claim included) that the target holds outside the merge, or that two of them claim
  * together, naming each source entry and its holder. A value held by an entry of the merge that
- * gives it up (a swap) is free. A new entry of a singleton type is also refused while the target
- * has another entry outside the trash, as `createEntry` would refuse it.
+ * gives it up (a swap) is free, and returned as a hand-off for `applyOrder`. A new entry of a
+ * singleton type is also refused while the target has another entry outside the trash, as
+ * `createEntry` would refuse it.
  */
 async function assertPlanFree(
   ctx: AppContext,
   tgt: Scope,
   plan: readonly PlannedEntry[],
-): Promise<void> {
+): Promise<HandOffs> {
   const key = (c: Pick<UniqueClaim, 'contentTypeApiId' | 'fieldApiId' | 'locale' | 'value'>) =>
     `${c.contentTypeApiId}\u0000${c.fieldApiId}\u0000${c.locale}\u0000${c.value}`;
   const planned = new Set(plan.map((p) => p.entryId));
   const clashes: { entryId: string; field: string; value: string; heldBy: string }[] = [];
   const claimedBy = new Map<string, string>();
+  const handOffs = new Map<string, Set<string>>();
   for (const p of plan) {
     for (const c of p.claims) {
       const other = claimedBy.get(key(c));
@@ -310,7 +371,10 @@ async function assertPlanFree(
     if (p.claims.length > 0) {
       for (const held of await ctx.store.entries.findUniqueConflicts(tgt, p.claims, p.entryId)) {
         // Held by an entry of the merge: free if it gives the value up, a clash above if not.
-        if (planned.has(held.entryId)) continue;
+        if (planned.has(held.entryId)) {
+          handOffs.set(p.entryId, (handOffs.get(p.entryId) ?? new Set()).add(held.entryId));
+          continue;
+        }
         clashes.push({
           entryId: p.entryId,
           field: held.fieldApiId,
@@ -335,7 +399,7 @@ async function assertPlanFree(
       }
     }
   }
-  if (clashes.length === 0) return;
+  if (clashes.length === 0) return handOffs;
   const unique = [
     ...new Map(clashes.map((c) => [`${c.entryId}|${c.field}|${c.value}`, c])).values(),
   ];
@@ -351,6 +415,53 @@ async function assertPlanFree(
     `The merge would take unique values twice, so nothing was merged: ${named.join('; ')}${more}`,
     { conflicts: unique },
   );
+}
+
+/** Per entry of a merge, the entries of the merge holding a unique value in the target it takes. */
+type HandOffs = ReadonlyMap<string, ReadonlySet<string>>;
+
+/**
+ * The order a merge writes its entries in, decided before anything is written. The entries the
+ * target already has go first, each after every entry of the merge that gives up a unique value it
+ * takes (`updateEntry` refuses a value another entry still holds), and, where that leaves a choice,
+ * those whose copies the stranding check let off (`relied`) first, so what the types removed is
+ * gone from them before anything else can stop the merge; otherwise in the selection's order. The
+ * new ones go last, so every value an entry the target has gives up is free for them by then.
+ *
+ * Values handed round in a circle among entries the target already has (A takes B's, B takes A's)
+ * can't be written in any order, one entry at a time, so that merge is refused (409) here, before
+ * the types are saved.
+ */
+function applyOrder(
+  plan: readonly PlannedEntry[],
+  relied: ReadonlySet<string>,
+  handOffs: HandOffs,
+): PlannedEntry[] {
+  const existing = plan.filter((p) => p.existing);
+  const waiting = [
+    ...existing.filter((p) => relied.has(p.entryId)),
+    ...existing.filter((p) => !relied.has(p.entryId)),
+  ];
+  const done = new Set<string>();
+  const order: PlannedEntry[] = [];
+  while (waiting.length > 0) {
+    const i = waiting.findIndex((p) =>
+      [...(handOffs.get(p.entryId) ?? [])].every((giver) => done.has(giver)),
+    );
+    if (i < 0) {
+      const ids = waiting.map((p) => p.entryId).sort();
+      const named = ids.slice(0, CLASHES_NAMED).join(', ');
+      const more = ids.length > CLASHES_NAMED ? ` and ${ids.length - CLASHES_NAMED} more` : '';
+      throw new ConflictError(
+        `The merge would hand unique values round in a circle between entries the target already has (${named}${more}), so nothing was merged. Give one of those values up in the target first.`,
+        { entries: ids },
+      );
+    }
+    const [next] = waiting.splice(i, 1) as [PlannedEntry];
+    done.add(next.entryId);
+    order.push(next);
+  }
+  return [...order, ...plan.filter((p) => !p.existing)];
 }
 
 /**
