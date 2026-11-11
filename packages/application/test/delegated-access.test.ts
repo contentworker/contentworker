@@ -27,8 +27,8 @@ async function setup() {
   const ctx: AppContext = { store, clock: new FixedClock(), ids: new SequenceIdGenerator('d') };
   await ensureRolePresets(ctx, 's1');
   // A second administrator keeps the last-admin guard out of the way.
-  await addMember(ctx, 's1', { email: 'keeper@example.com', role: 'admin' });
-  const member = await addMember(ctx, 's1', { email: ann.email, role: 'editor' });
+  await addMember(ctx, 's1', { email: 'keeper@example.com', role: 'admin' }, 'system');
+  const member = await addMember(ctx, 's1', { email: ann.email, role: 'editor' }, 'system');
   await findMemberForSignIn(ctx, 's1', ann.sub, ann.email);
   const { token } = await createPersonalAccessToken(ctx, hasher, {
     issuer: 'system',
@@ -45,7 +45,7 @@ describe('a person’s tokens follow their place on the team', () => {
   it('stop working the moment they are disabled', async () => {
     const { ctx, member, token } = await setup();
     expect((await authenticate(ctx, hasher, token)).subject).toBe(ann.sub);
-    await updateMember(ctx, 's1', member.id, { disabled: true }, SSO);
+    await updateMember(ctx, 's1', member.id, { disabled: true }, SSO, 'system');
     await expect(authenticate(ctx, hasher, token)).rejects.toBeInstanceOf(UnauthorizedError);
   });
 
@@ -57,10 +57,10 @@ describe('a person’s tokens follow their place on the team', () => {
 
   it('take on a downgrade at once, and never widen past what was consented', async () => {
     const { ctx, member, token } = await setup();
-    await updateMember(ctx, 's1', member.id, { role: 'viewer' }, SSO);
+    await updateMember(ctx, 's1', member.id, { role: 'viewer' }, SSO, 'system');
     const principal = await authenticate(ctx, hasher, token);
     expect(principal.scopes).not.toContain(SCOPES.contentWrite);
-    await updateMember(ctx, 's1', member.id, { role: 'admin' }, SSO);
+    await updateMember(ctx, 's1', member.id, { role: 'admin' }, SSO, 'system');
     expect((await authenticate(ctx, hasher, token)).scopes).not.toContain(SCOPES.spaceAdmin);
   });
 });

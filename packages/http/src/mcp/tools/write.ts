@@ -50,7 +50,9 @@ export function registerWriteTools(server: McpServer, t: ToolContext): void {
     'model_create_content_type',
     {
       description:
-        'Create or update a content type definition. A field can carry guidance for whoever ' +
+        'Create or update a content type definition. An update sends the whole definition: ' +
+        'pass the `version` you read as `expectedVersion`, so a save someone made since is ' +
+        'refused (conflict) rather than overwritten. A field can carry guidance for whoever ' +
         'fills it: `description` (what it means), `help` (how to fill it, shown under the ' +
         'input), `placeholder` (an example), labelled options in `validations.in` as ' +
         '{ value, label }, and `validations.messages` to replace a rule’s default error text. ' +
@@ -129,31 +131,49 @@ export function registerWriteTools(server: McpServer, t: ToolContext): void {
                 '{field:<apiId>} (a Symbol, Slug, Integer, Number or Date field), filled ' +
                 'URL-encoded; null clears it',
             ),
+          expectedVersion: z
+            .number()
+            .int()
+            .min(0)
+            .optional()
+            .describe(
+              "The type's version as you read it (0 if you read it as not existing): this " +
+                'sends the whole definition, so pass it when updating; refused if it has ' +
+                'changed since, nothing saved',
+            ),
           ...scopeArgs,
         }),
       ),
     },
     async (args) => {
       guard(SCOPES.contentManage, scopeOf(args));
+      const held =
+        args.expectedVersion === undefined ? {} : { expectedVersion: args.expectedVersion };
       return ok(
-        await createContentType(ctx, principal, scopeOf(args), {
-          apiId: args.apiId,
-          name: args.name,
-          displayField: args.displayField,
-          ...(args.urlPattern !== undefined ? { urlPattern: args.urlPattern } : {}),
-          ...(args.singleton !== undefined ? { singleton: args.singleton } : {}),
-          ...(args.group !== undefined ? { group: args.group } : {}),
-          ...(args.description !== undefined ? { description: args.description } : {}),
-          ...(args.icon !== undefined ? { icon: args.icon } : {}),
-          ...(args.agentInstructions !== undefined
-            ? { agentInstructions: args.agentInstructions }
-            : {}),
-          // biome-ignore lint/suspicious/noExplicitAny: zod record → domain ContentTypeLayout, checked there
-          ...(args.layout !== undefined ? { layout: args.layout as any } : {}),
-          ...(args.preview !== undefined ? { preview: args.preview } : {}),
-          // biome-ignore lint/suspicious/noExplicitAny: zod field shape → domain FieldDefinition
-          fields: args.fields as any,
-        }),
+        await createContentType(
+          ctx,
+          principal,
+          scopeOf(args),
+          {
+            apiId: args.apiId,
+            name: args.name,
+            displayField: args.displayField,
+            ...(args.urlPattern !== undefined ? { urlPattern: args.urlPattern } : {}),
+            ...(args.singleton !== undefined ? { singleton: args.singleton } : {}),
+            ...(args.group !== undefined ? { group: args.group } : {}),
+            ...(args.description !== undefined ? { description: args.description } : {}),
+            ...(args.icon !== undefined ? { icon: args.icon } : {}),
+            ...(args.agentInstructions !== undefined
+              ? { agentInstructions: args.agentInstructions }
+              : {}),
+            // biome-ignore lint/suspicious/noExplicitAny: zod record → domain ContentTypeLayout, checked there
+            ...(args.layout !== undefined ? { layout: args.layout as any } : {}),
+            ...(args.preview !== undefined ? { preview: args.preview } : {}),
+            // biome-ignore lint/suspicious/noExplicitAny: zod field shape → domain FieldDefinition
+            fields: args.fields as any,
+          },
+          held,
+        ),
       );
     },
   );

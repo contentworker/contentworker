@@ -743,7 +743,14 @@ export interface RoleSummary {
   readonly scopes: readonly string[];
   /** Per content type; `deniedActions` withholds the delete and unpublish write and publish bring. */
   readonly contentGrants: readonly ContentTypeGrant[];
+  /** One more at each save: sent back as `expectedVersion`, so a save over someone else's is a 409. */
+  readonly version: number;
 }
+
+/** A role replaced whole; with `expectedVersion`, refused (409) if it was saved since. */
+export type RoleUpdate = Partial<Omit<RoleSummary, 'id' | 'version'>> & {
+  readonly expectedVersion?: number;
+};
 
 export interface PreviewLinkResult {
   /** The entry on the Preview API. */
@@ -1044,6 +1051,8 @@ export interface InstalledPluginSummary {
   readonly needsReapproval?: boolean;
   readonly allowedHosts: readonly string[];
   readonly hooks: readonly string[];
+  /** What it offers callers by name (manifest v2), and the scope each one requires. */
+  readonly operations?: readonly PluginOperationSummary[];
   readonly checksum: string;
   readonly enabled: boolean;
   readonly installedAt: string;
@@ -1269,8 +1278,18 @@ export interface InspectedPluginPackage {
   readonly bundleBytes: number;
 }
 
+/** One operation a plugin offers, as its summary and its manifest both describe it. */
+export interface PluginOperationSummary {
+  readonly name: string;
+  readonly title: string;
+  readonly description: string;
+  /** The scope a caller holds to invoke it. */
+  readonly requires: string;
+}
+
 /** The manifest half of a plugin package, as authored. */
 export interface PluginManifestInput {
+  readonly manifestVersion?: number;
   readonly id: string;
   readonly name: string;
   readonly version: string;
@@ -1279,6 +1298,7 @@ export interface PluginManifestInput {
   readonly allowedHosts?: readonly string[];
   readonly hooks: readonly string[];
   readonly entrypoint: string;
+  readonly operations?: readonly PluginOperationSummary[];
 }
 
 /**
@@ -1367,6 +1387,18 @@ export class ApiError extends Error {
   get code(): string | undefined {
     return (this.body as { error?: { code?: string } } | undefined)?.error?.code;
   }
+}
+
+/**
+ * The version a save held to `expectedVersion` was refused over: the 409's `details.version`, the
+ * version stored now (0 when there is none). Undefined for any other error, a conflict that names
+ * no version (a value taken, a field entries still hold) included.
+ */
+export function conflictVersion(err: unknown): number | undefined {
+  if (!(err instanceof ApiError) || err.status !== 409 || err.code !== 'conflict') return undefined;
+  const v = (err.body as { error?: { details?: { version?: unknown } } } | undefined)?.error
+    ?.details?.version;
+  return typeof v === 'number' ? v : undefined;
 }
 
 /**
@@ -1817,9 +1849,16 @@ export function createManagementClient(
     getContentType(apiId: string): Promise<ContentType> {
       return req('GET', `${mgmt}/content-types/${apiId}`);
     },
-    /** Create or update a content type (the route is idempotent on apiId). */
-    saveContentType(draft: ContentTypeDraft): Promise<ContentType> {
-      return req('POST', `${mgmt}/content-types`, draft);
+    /**
+     * Create or update a content type (the route is idempotent on apiId). With `expectedVersion`
+     * (the `version` the edits started from, 0 for a new type), a save made since is a 409 naming
+     * the stored `version`, and nothing is saved.
+     */
+    saveContentType(
+      draft: ContentTypeDraft,
+      opts: { readonly expectedVersion?: number } = {},
+    ): Promise<ContentType> {
+      return req('POST', `${mgmt}/content-types`, { ...draft, ...opts });
     },
     publishContentType(apiId: string): Promise<ContentType> {
       return req('POST', `${mgmt}/content-types/${apiId}/published`);
@@ -1903,6 +1942,24 @@ export function createManagementClient(
       const entry = r.items.find((e) => e.id === id);
       if (!entry) throw new ApiError(404, `Entry ${id} was not found`);
       return entry;
+    },
+
+    /**
+     * Entries by id, their current (draft) versions, 100 to a request (`sys.id[in]` on the list
+     * route, as {@link getEntry} reads one): what a list of links names past the pickers' page.
+     * An id not in the environment is absent.
+     */
+    async getEntriesByIds(ids: readonly string[]): Promise<PreviewEntry[]> {
+      const out: PreviewEntry[] = [];
+      for (let i = 0; i < ids.length; i += 100) {
+        const part = ids.slice(i, i + 100);
+        const r = await req<{ items: PreviewEntry[] }>(
+          'GET',
+          `${preview}/entries?sys.id[in]=${part.map(encodeURIComponent).join(',')}&limit=${part.length}`,
+        );
+        out.push(...r.items);
+      }
+      return out;
     },
 
     /**
@@ -2938,10 +2995,12 @@ export function createManagementClient(
     getRole(id: string): Promise<RoleSummary> {
       return req('GET', `${spaceBase}/roles/${encodeURIComponent(id)}`);
     },
-    createRole(input: Omit<RoleSummary, 'id'> & { name: string }): Promise<RoleSummary> {
+    createRole(
+      input: Omit<RoleSummary, 'id' | 'version'> & { name: string },
+    ): Promise<RoleSummary> {
       return req('POST', `${spaceBase}/roles`, input);
     },
-    updateRole(id: string, input: Partial<RoleSummary>): Promise<RoleSummary> {
+    updateRole(id: string, input: RoleUpdate): Promise<RoleSummary> {
       return req('PUT', `${spaceBase}/roles/${encodeURIComponent(id)}`, input);
     },
     deleteRole(id: string): Promise<void> {

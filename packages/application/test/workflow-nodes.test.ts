@@ -458,6 +458,26 @@ describe('workflow node executors', () => {
     );
   });
 
+  it('content.notify checks an interpolated recipient in linear time', async () => {
+    for (const [owner, ok] of [
+      ['a@.b.c', true],
+      ['<ed>@example.com', false],
+      ['ed@example.', false],
+      ['ed@@example.com', false],
+    ] as const) {
+      const r = await exec('content.notify', { to: ['{{vars.owner}}'] }, editor, { owner });
+      expect([owner, r.failed === undefined]).toEqual([owner, ok]);
+    }
+    // Run data can carry text: a long run of dots that fails at the end took the old pattern
+    // seconds.
+    const started = performance.now();
+    const r = await exec('content.notify', { to: ['{{vars.owner}}'] }, editor, {
+      owner: `a@${'.'.repeat(100_000)}>`,
+    });
+    expect(r.failed).toMatch(/not an email/);
+    expect(performance.now() - started).toBeLessThan(200);
+  });
+
   it('content.webhook posts an interpolated payload, refusing private targets', async () => {
     const r = await exec('content.webhook', { url: 'https://hooks.example.com/x' });
     expect(r.output).toEqual({ url: 'https://hooks.example.com/x', status: 200 });

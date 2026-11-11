@@ -2,7 +2,9 @@ import { createHash } from 'node:crypto';
 import { InProcessAgentRuntime, makeActivities } from '@contentworker/agent-runtime';
 import {
   type AppContext,
+  addMember,
   createApiKey,
+  createRole,
   createSpace,
   presetRoleId,
 } from '@contentworker/application';
@@ -127,6 +129,69 @@ describe('MCP role presets and team tools', () => {
       arguments: { keyId: 'x', preset: 'admin' },
     });
     expect(res.isError).toBe(true);
+  });
+
+  it("refuses a delegated bearer a person's role, a widening of their role, or an invitation", async () => {
+    await addMember(deps.ctx, SPACE, { email: 'keeper@example.com', role: 'admin' }, 'system');
+    const grace = await addMember(
+      deps.ctx,
+      SPACE,
+      { email: 'grace@example.com', role: 'viewer' },
+      'system',
+    );
+    const role = await createRole(deps.ctx, SPACE, {
+      name: 'Writer',
+      scopes: [SCOPES.previewRead],
+    });
+    await addMember(deps.ctx, SPACE, { email: 'lin@example.com', role: role.id }, 'system');
+    const person: Principal = {
+      spaceId: SPACE,
+      kind: 'user',
+      subject: 'usr_ada',
+      scopes: [SCOPES.spaceAdmin],
+    };
+    const promote = { memberId: grace.id, preset: 'admin' };
+    const widen = { id: role.id, name: 'Writer', scopes: [SCOPES.previewRead, SCOPES.spaceAdmin] };
+    for (const bearer of [
+      { ...person, issuance: 'pat' as const },
+      { ...person, issuance: 'oauth' as const, clientId: 'client-1' },
+    ]) {
+      const client = await connect(deps, bearer);
+      const assigned = await client.callTool({ name: 'role_preset_assign', arguments: promote });
+      expect(assigned.isError).toBe(true);
+      expect(JSON.stringify(assigned.content)).toMatch(
+        /personal access token or OAuth token can't change a person’s role; sign in/,
+      );
+      const widened = await client.callTool({ name: 'role_update', arguments: widen });
+      expect(widened.isError).toBe(true);
+      expect(JSON.stringify(widened.content)).toMatch(/can't widen a role someone on the team/);
+      const invited = await client.callTool({
+        name: 'invite_create',
+        arguments: { email: 'mallory@example.com' },
+      });
+      expect(invited.isError).toBe(true);
+      expect(JSON.stringify(invited.content)).toMatch(/can't invite people/);
+    }
+    expect((await deps.ctx.store.members.get(SPACE, grace.id))?.roleId).toBe(
+      await presetRoleId(deps.ctx, SPACE, 'viewer'),
+    );
+    // The same person signed in to the admin, and the admin token, still can.
+    const signedIn = await connect(deps, person);
+    expect(
+      (await signedIn.callTool({ name: 'role_preset_assign', arguments: promote })).isError,
+    ).toBeFalsy();
+    expect(
+      (await signedIn.callTool({ name: 'role_update', arguments: widen })).isError,
+    ).toBeFalsy();
+    const root = await connect(deps, admin);
+    expect(
+      (
+        await root.callTool({
+          name: 'role_preset_assign',
+          arguments: { memberId: grace.id, preset: 'editor' },
+        })
+      ).isError,
+    ).toBeFalsy();
   });
 
   it('has no setup tool: setup is HTTP-only', async () => {

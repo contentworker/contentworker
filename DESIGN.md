@@ -659,7 +659,18 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   values is one row per value, each named "<Field> item N" with its own input and a ghost Remove,
   then an outline Add item; focus goes to an added row, and after a Remove to the row that took
   its place (or Add). A row's own error sits under it, marked `aria-invalid` and linked. A list of
-  Symbols keeps its chips.
+  Symbols keeps its chips. A list of links (`LinkListInput`) is an ordered list on
+  `bg-secondary/40`: each row its place, the linked entry's title (or the asset's name) and its
+  type in an outline `Badge`, then Move up, Move down and Remove as ghost icon buttons named for
+  the row, as a collection's are (focus stays on a moved row, a move or removal is said in a polite
+  line); under it the single link's picker, holding the field's id, adds one ("Add an entry…"),
+  offering only what the field takes. A link past the pickers' page is looked up by id; one that
+  still has no name shows its id, never a blank.
+- **Compare & merge** (`cms/components/BranchMerge.tsx`, in Settings → Environments): a merge the
+  target refuses (422) lists the API's issues under the selection, above Merge, as a destructive
+  `Alert` titled "Nothing was merged into main", grouped by the list each names (Content
+  types, Entries), in the API's words; the selection stays so the type can be left out and the
+  merge sent again. Any other failure toasts.
 - **The content type dialog** (`cms/components/ContentTypeDialog.tsx`): the type's Group, Icon (a
   select of the icons the admin draws; a stored name it can't draw is kept as "name (not drawn
   here)") and Description beside its name, then Agent instructions: plain text, with a hint saying
@@ -671,7 +682,18 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   link's allowed file types. A list field gains **Items** beside its Type (Symbol, Text, Integer,
   Number, Date; a new list starts as Symbol); a list of links or components has none. **Layout** is drawn as Fields
   is, its title beside Add tab; each tab a row (its name, a ghost Remove), and each field row gains
-  Tab and Group selects once a tab exists.
+  Tab and Group selects once a tab exists. A save is held to the version the dialog opened (0 for
+  a new type), or to the one a save stored when only its publish was refused. Refused because
+  someone saved the type since, the form stays open with its edits, Save is disabled, and a
+  warning Alert above the footer says so ("This content type changed since you opened it", their
+  version named, or that it may be one's own save that didn't confirm), with outline Copy my
+  version as JSON and Load the latest. Loading seeds the form again inside the same dialog (so
+  closing still returns focus to the row's Edit), focuses Name and says politely "Loaded v5. Your
+  edits here were discarded." A type deleted meanwhile says "This content type was deleted since
+  you opened it", with the copy and Create it again. A new type's API ID that another type has is
+  said beside API ID before anything is sent; one made meanwhile gets the Alert ("There's already
+  a content type with this API ID, so yours wasn't created…") with only the copy, and Save comes
+  back once the API ID changes.
 - **Releases, Workflows, Taxonomy:** `PageHeader` with the page's one "New …" (a `Plus` and the
   noun), then a catalog. Publishing a release confirms in an alert dialog, naming
   what goes live and what to look at first (never-published entries, members in the trash).

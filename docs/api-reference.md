@@ -434,7 +434,7 @@ OAuth token (see [Auth & RBAC](./auth-and-rbac.md#one-token-model-three-issuance
 | GET    | `/spaces/:space/roles`                    | `space:admin` | List roles                                                                                   |
 | POST   | `/spaces/:space/roles`                    | `space:admin` | Create role                                                                                  |
 | GET    | `/spaces/:space/roles/:id`                | `space:admin` | Get role                                                                                     |
-| PUT    | `/spaces/:space/roles/:id`                | `space:admin` | Update role                                                                                  |
+| PUT    | `/spaces/:space/roles/:id`                | `space:admin` | Replace role; optional `expectedVersion`, stale is `409` with `details.version`              |
 | DELETE | `/spaces/:space/roles/:id`                | `space:admin` | Delete role (refused if a key or person holds it, and for a preset)                          |
 
 A personal access token is minted for the caller themselves, with scopes intersected with their
@@ -458,7 +458,7 @@ principal) may call it; the web app does when it ends a person's access (see
 | GET    | `…/space-config`                   | `preview:read`    | Space settings for the environment, with `localeSettings` resolved per locale (`delivered`, `direction`) |
 | PUT    | `…/locale-settings`                | `space:admin`     | `{ localeSettings: { <locale>: { delivered?, direction? } } }`: a locale not delivered is edited and previewed, never served by Delivery; the default locale is always delivered; answers the space config |
 | GET    | `…/content-types`                  | `preview:read`    | List content types                 |
-| POST   | `…/content-types`                  | `content:manage`  | Create/update content type; `singleton: true` holds one entry (`409` turning it on over several) |
+| POST   | `…/content-types`                  | `content:manage`  | Create/update content type; `singleton: true` holds one entry (`409` turning it on over several); `expectedVersion` holds it to the version read (`409` when it changed, see below) |
 | GET    | `…/content-types/entry-counts`     | `preview:read`    | Entries per type, by status        |
 | GET    | `…/content-types/:apiId`           | `preview:read`    | Get one                            |
 | GET    | `…/content-types/:apiId/fields/:field/values` | `preview:read` | Distinct values of a short scalar field (not `Text`) or list of Symbols across current entries, trash excluded, each with its entry `count`; booleans, numbers, strings ascending; `locale`, `limit` (≤ 100), `cursor` → `{ items, nextCursor? }`. 422 for any other field, 403 for a hidden one, `query_too_broad` when the type holds more entries than the scan cap (5,000) |
@@ -472,6 +472,15 @@ A content type may carry `urlPattern` (a path starting with `/` whose placeholde
 `{locale}` or its own `Slug` fields' apiIds, e.g. `/blog/{slug}`; `null` or `''` clears it; `422`
 otherwise). When set, a publish that changes a slug it names writes a redirect (see
 [Redirects](#redirects)).
+
+A save sends the whole definition (every detail field, `group`, `description` and
+`agentInstructions` included), so a client editing a type it read sends that read's `version` as
+`expectedVersion` (0 for a type it read as not existing: create only). When the stored type is at
+another version the save answers `409 conflict` before any other check, with
+`details: { version, expectedVersion }` (`version` 0 when there is none), and nothing is saved:
+read it again and make the change over it. Left out, the save goes over whatever is stored. The
+admin's content type dialog always sends it, and `contentworker model apply` sends the version its
+plan read. MCP: `model_create_content_type` takes the same argument.
 
 Saving a content type that drops a blocks variant some entry still uses, or a field (at any depth)
 some entry still holds a value for, answers `409 conflict` naming each `location: variant` or field
@@ -1122,6 +1131,20 @@ Writes are audited. MCP: `views_list`, `views_get`, `views_run`, `views_create`,
 | POST   | `…/ai-actions/:id/run` | `content:write`  | Run AI action on an entry           |
 | GET    | `…/agent-runs`         | `space:admin`    | List agent run audit records        |
 | GET    | `…/agent-runs/usage`   | `space:admin`    | Token usage aggregates              |
+
+### App operations
+
+Named, typed calls that installed plugins offer (manifest v2; see [Plugins](./plugins.md#operations)).
+No route-level scope: each operation declares the scope it `requires`, and the use-case checks it.
+
+| Method | Path                                      | Scope                    | Description |
+| ------ | ----------------------------------------- | ------------------------ | ----------- |
+| GET    | `…/apps/operations`                       | any principal of the space | `{ items }`: every operation of every enabled plugin the caller may invoke (its `requires` held), each with `plugin`, `pluginName`, `pluginVersion`, `name`, `title`, `description`, `requires`, `mode` (`sync`), `input` and `output` (JSON Schema subset). A plugin awaiting re-approval offers none |
+| POST   | `…/apps/:plugin/operations/:operation`    | the operation's `requires` | The body is the operation's input; → `{ output }`. `403` without the scope, `404` for an unknown or disabled operation (or plugin), `422` when the input does not match its schema (or exceeds 64 KiB), `501` where plugin code does not run, `502` (`app_operation_failed`) when the plugin throws, runs past 10 s or answers outside its `output` schema. The plugin runs with its grant narrowed to the caller's scopes |
+| GET    | `/spaces/:space/apps/openapi.json`        | any principal of the space | An OpenAPI 3.1 document with one path per operation the caller may invoke, generated from the manifests |
+
+`GET /spaces/:space/plugins` summaries carry `operations` (name, title, description, `requires`,
+`mode`). MCP: `app_operations_list` and `app_operation_invoke`.
 
 ### Webhooks
 

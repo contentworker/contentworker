@@ -1,5 +1,6 @@
 import { type PermissionScope, SCOPES } from '../auth/auth';
 import { DomainError, ValidationError } from '../errors';
+import { operationsIssues, type PluginOperation } from './operations';
 import { type PluginSettingField, settingsSchemaIssues } from './settings';
 
 /**
@@ -77,6 +78,11 @@ export type PluginHook = (typeof PLUGIN_HOOKS)[number];
 
 /** What a plugin says about itself. Authored by the plugin, trusted by nobody. */
 export interface PluginManifest {
+  /**
+   * `2` for a manifest that declares {@link PluginManifest.operations}. Absent means 1: hooks,
+   * capabilities and settings only, which every manifest written before operations still is.
+   */
+  readonly manifestVersion?: 1 | 2;
   /** Stable identifier, reverse-DNS style: `com.example.seo`. */
   readonly id: string;
   readonly name: string;
@@ -98,6 +104,11 @@ export interface PluginManifest {
    * `caps.settings.get()`. Optional: most plugins need none.
    */
   readonly settings?: readonly PluginSettingField[];
+  /**
+   * Named, typed calls the plugin offers API clients and agents (manifest v2). Each runs with the
+   * plugin's grant narrowed to its caller's; see `operations.ts`.
+   */
+  readonly operations?: readonly PluginOperation[];
 }
 
 /** A plugin as installed in a space. */
@@ -200,6 +211,14 @@ export function assertValidManifest(manifest: PluginManifest): void {
   }
 
   issues.push(...settingsSchemaIssues(manifest.settings));
+  if (
+    manifest.manifestVersion !== undefined &&
+    manifest.manifestVersion !== 1 &&
+    manifest.manifestVersion !== 2
+  ) {
+    issues.push({ field: 'manifestVersion', message: 'manifestVersion must be 1 or 2' });
+  }
+  issues.push(...operationsIssues(manifest.operations, manifest.manifestVersion));
 
   if (issues.length > 0) throw new ValidationError(issues);
 }
@@ -289,6 +308,25 @@ export function effectivePluginGrant(
 }
 
 /**
+ * The grant an operation runs with: the plugin's effective grant, less every capability whose
+ * scope the caller does not hold. Capabilities that imply no scope (`network:request`,
+ * `kv:storage`) stay, bounded as ever by the allowlist and the plugin's own namespace: the
+ * operator approved those for the plugin, not per caller.
+ *
+ * This is what stops an operation being a confused deputy: a viewer invoking an operation of a
+ * plugin granted `content:write` gets a plugin that cannot write.
+ */
+export function operationGrant(
+  grant: readonly PluginCapability[],
+  holds: (scope: PermissionScope) => boolean,
+): PluginCapability[] {
+  return grant.filter((capability) => {
+    const scope = CAPABILITY_SCOPE[capability];
+    return scope === null || holds(scope);
+  });
+}
+
+/**
  * Reads a stored plugin, upgrading a manifest that predates the required
  * `capabilities` field.
  *
@@ -361,6 +399,8 @@ export interface PluginCapabilityDenial {
   readonly method: string;
   readonly reason: PluginDenialReason;
   readonly hook?: string;
+  /** The operation the call was made from, when it came from one rather than a hook. */
+  readonly operation?: string;
   readonly spaceId?: string;
   readonly environmentId?: string;
   /** The refused host, for `host-not-allowed`. */

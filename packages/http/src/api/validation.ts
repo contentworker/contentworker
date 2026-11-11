@@ -321,6 +321,9 @@ export const cloneBody = z.object({
 });
 // The manifest's inner shape is validated by the domain, which rejects rather
 // than repairs — this only guards the envelope and bounds the bundle size.
+/** A plugin operation's input: a JSON object, checked against the operation's own schema. */
+export const appOperationInputBody = z.record(z.string(), z.unknown());
+
 export const installPluginBody = z.object({
   manifest: z.object({}).loose(),
   bundle: z.string().min(1).max(2_000_000),
@@ -398,6 +401,14 @@ export const roleBody = z.object({
   scopes: z.array(z.string().max(64)).max(64),
   contentGrants: z.array(contentGrant).max(500).optional(),
 });
+/** A role replaced whole, optionally held to the version it was edited from. */
+export const roleUpdateBody = roleBody.extend({
+  expectedVersion: z
+    .int()
+    .min(1)
+    .optional()
+    .describe('The version the role was edited from; another is a 409. Absent: saved over any'),
+});
 // The deep field shape (nested fields, validations, options, messages, guidance and rules) is
 // validated by the domain at every depth. The guidance keys are named here so the request
 // documents them, without caps or types: a revision may carry a value stored before guidance was
@@ -460,6 +471,15 @@ export const contentTypeBody = z.object({
     .describe(
       'Holds at most one entry (site settings, a home page), served at GET …/singletons/:apiId. ' +
         'Turning it on is refused while the type has more than one entry. Left out, unchanged.',
+    ),
+  expectedVersion: z
+    .int()
+    .min(0)
+    .optional()
+    .describe(
+      'The version the definition was edited from (0: read as not existing, so create only). ' +
+        'Another is a 409 naming the stored `version`, and nothing is saved. Left out, the save ' +
+        'goes over whatever is stored.',
     ),
 });
 /** A content type's copy: its new apiId and name. */

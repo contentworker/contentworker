@@ -57,9 +57,10 @@ Design points:
   `GET …/content-types`: removing a field or block variant at any depth, and changing `type`,
   `linkType`, `localized` or `items.type`/`items.linkType`, are destructive and need
   `--allow-destructive`. It upserts through `POST …/content-types` (an existing apiId is revised)
-  and publishes each type, so the server's own guard (`assertNoRemovedContentInUse`) still has the
-  last word on removals. Types not in the file are reported, never deleted (there is no delete
-  route).
+  held to the version the plan read (`expectedVersion`, 0 for a new type: a save someone made
+  after the plan was shown is a `409`, and a re-run plans again) and publishes each type, so the
+  server's own guard (`assertNoRemovedContentInUse`) still has the last word on removals. Types
+  not in the file are reported, never deleted (there is no delete route).
 - **`blocks push` lets the server plan.** It reads the blocks file (`loadBlocks`), sends it to
   `POST …/block-catalog` with `dryRun: true`, prints the result (`renderPush`), refuses (exit 4)
   when `inUse` is non-empty (`blocks_in_use`) or the push is destructive without

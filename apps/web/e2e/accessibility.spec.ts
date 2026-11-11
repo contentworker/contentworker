@@ -848,6 +848,38 @@ test('the content type dialog has no accessibility violations', async ({ page },
   await scan(page, testInfo);
 });
 
+test('the content type dialog refusing a stale save has no accessibility violations', async ({
+  page,
+  request,
+}, testInfo) => {
+  const stamp = Date.now();
+  const type = {
+    apiId: `axestale${stamp}`,
+    name: `Axe stale ${stamp}`,
+    displayField: 'title',
+    fields: [
+      {
+        apiId: 'title',
+        name: 'Title',
+        type: 'Symbol',
+        localized: false,
+        required: true,
+        position: 0,
+      },
+    ],
+  };
+  expect((await api(request, 'POST', `${MGMT}/content-types`, type)).status()).toBeLessThan(300);
+  await openCms(page, '/content');
+  await page.getByRole('button', { name: `Edit “${type.name}”` }).click();
+  const dialog = page.getByRole('dialog', { name: 'Edit content type' });
+  await expect(dialog).toBeVisible();
+  const theirs = { ...type, description: 'Theirs' };
+  expect((await api(request, 'POST', `${MGMT}/content-types`, theirs)).status()).toBeLessThan(300);
+  await dialog.getByRole('button', { name: 'Save changes' }).click();
+  await expect(dialog.getByRole('alert')).toContainText('changed since you opened it');
+  await scan(page, testInfo);
+});
+
 test('the content type dialog’s guidance panels have no accessibility violations', async ({
   page,
   request,
@@ -1185,6 +1217,42 @@ test('plugin capability checkboxes are named in a real browser', async ({ page }
     await expect(page.getByRole('checkbox', { name: label })).toBeVisible();
   }
   await expect(page.getByRole('checkbox', { name: 'Call external services' })).toBeEnabled();
+});
+
+test('the plugin consent screen lists operations with no accessibility violations', async ({
+  page,
+}, testInfo) => {
+  await openCms(page, '/settings/plugins');
+  await page.getByRole('button', { name: 'Install plugin' }).click();
+  await page.getByLabel(/manifest/i).setInputFiles({
+    name: 'plugin.json',
+    mimeType: 'application/json',
+    buffer: Buffer.from(
+      JSON.stringify({
+        manifestVersion: 2,
+        id: 'com.example.ops-a11y',
+        name: 'Operations probe',
+        version: '1.0.0',
+        capabilities: ['content:read'],
+        allowedHosts: [],
+        hooks: [],
+        entrypoint: 'index.js',
+        operations: [
+          {
+            name: 'audit',
+            title: 'Audit titles',
+            description: 'Lists entries with weak titles.',
+            requires: 'preview:read',
+            input: { type: 'object', properties: {} },
+          },
+        ],
+      }),
+    ),
+  });
+  const offered = page.getByRole('region', { name: 'It offers people and agents:' });
+  await expect(offered).toBeVisible();
+  await expect(offered.getByText('Audit titles')).toBeVisible();
+  await scan(page, testInfo);
 });
 
 test('the plugin settings sheet has no accessibility violations', async ({

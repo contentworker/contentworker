@@ -33,6 +33,7 @@ import { registerAiActionTools } from './tools/ai-actions';
 import { registerAiContentTools } from './tools/ai-content';
 import { registerApiKeyTools } from './tools/api-keys';
 import { registerAppExtensionTools } from './tools/app-extensions';
+import { registerAppTools } from './tools/apps';
 import { registerAssetCollectionTools } from './tools/asset-collections';
 import { registerAssetVersionTools } from './tools/asset-versions';
 import { registerAssetTools } from './tools/assets';
@@ -109,6 +110,7 @@ const TOOL_AREAS: readonly ((server: McpServer, t: ToolContext) => void)[] = [
   registerApiKeyTools,
   registerFrontendTools,
   registerPluginTools,
+  registerAppTools,
   registerImportTools,
   registerSpaceExportTools,
   registerSnapshotTools,

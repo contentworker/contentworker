@@ -308,13 +308,14 @@ export async function seedEnterpriseGovernance(run: EnterpriseRun): Promise<void
   }
   for (const person of TEAM) {
     if (await ctx.store.members.getByEmail(spaceId, person.email)) continue;
-    const member = await addMember(ctx, spaceId, {
-      email: person.email,
-      name: person.name,
-      role: roleId.get(person.role) ?? person.role,
-    });
+    const member = await addMember(
+      ctx,
+      spaceId,
+      { email: person.email, name: person.name, role: roleId.get(person.role) ?? person.role },
+      'system',
+    );
     if (person.disabled) {
-      await updateMember(ctx, spaceId, member.id, { disabled: true }, { sso: false });
+      await updateMember(ctx, spaceId, member.id, { disabled: true }, { sso: false }, 'system');
     }
   }
 }

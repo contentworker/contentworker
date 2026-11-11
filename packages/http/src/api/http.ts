@@ -1,5 +1,6 @@
 import {
   AiUnavailableError,
+  AppOperationFailedError,
   AssetInUseError,
   AssetRightsError,
   ConflictError,
@@ -117,6 +118,9 @@ export function toHttpError(err: unknown): { status: number; body: unknown } {
     };
   }
   if (err instanceof NotConfiguredError) return { status: 501, body: errBody(err) };
+  // A plugin operation broke (threw, timed out, answered off-schema): the upstream failed, not
+  // the request, so 502.
+  if (err instanceof AppOperationFailedError) return { status: 502, body: errBody(err) };
   // A stored secret no configured key opens is a server-side fault (a lost
   // DATA_KEY, or tampering), never the client's. The message names only where
   // the value lives.

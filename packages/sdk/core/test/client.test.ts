@@ -233,6 +233,129 @@ describe('preview entry paging', () => {
   });
 });
 
+/** A list of `size` items an offset cursor pages through, as a preview list answers. */
+function cursorList(size: number, calls: string[]) {
+  return fakeFetch((url) => {
+    calls.push(url);
+    const q = new URL(url).searchParams;
+    if (q.has('skip')) return new Response('{}', { status: 422 });
+    const from = Number(q.get('cursor') ?? 0);
+    const to = Math.min(from + Number(q.get('limit') ?? 100), size);
+    return {
+      items: Array.from({ length: to - from }, (_, i) => ({ ...image, id: `x${from + i}` })),
+      total: to - from,
+      ...(to < size ? { nextCursor: String(to) } : {}),
+    };
+  });
+}
+
+describe('preview skip', () => {
+  it('walks the cursor past skip entries instead of sending it', async () => {
+    const calls: string[] = [];
+    const client = createDeliveryClient({ ...base, preview: true, fetch: cursorList(250, calls) });
+    const page = await client.listEntries({ limit: 10, skip: 120 });
+    expect(page.items.map((e) => e.id)).toEqual(
+      Array.from({ length: 10 }, (_, i) => `x${120 + i}`),
+    );
+    expect(page.nextCursor).toBe('130');
+    expect(calls.map((u) => new URL(u).search)).toEqual([
+      '?limit=100',
+      '?limit=20&cursor=100',
+      '?limit=10&cursor=120',
+    ]);
+    // A cursor wins: nothing is walked.
+    calls.length = 0;
+    await client.listEntries({ limit: 10, skip: 120, cursor: '5' });
+    expect(calls.map((u) => new URL(u).search)).toEqual(['?limit=10&cursor=5']);
+    // Past the end: an empty page.
+    expect((await client.listEntries({ skip: 400 })).items).toEqual([]);
+  });
+
+  it('walks the asset list the same way, which Preview pages by cursor alone', async () => {
+    const calls: string[] = [];
+    const client = createDeliveryClient({ ...base, preview: true, fetch: cursorList(30, calls) });
+    const page = await client.listAssets({ limit: 5, skip: 10, kind: 'image' });
+    expect(page.items.map((a) => a.id)).toEqual(['x10', 'x11', 'x12', 'x13', 'x14']);
+    expect(calls.map((u) => new URL(u).search)).toEqual([
+      '?limit=10&kind=image',
+      '?limit=5&cursor=10&kind=image',
+    ]);
+  });
+
+  it('iterates preview entries by nextCursor across pages', async () => {
+    const calls: string[] = [];
+    const client = createDeliveryClient({ ...base, preview: true, fetch: cursorList(5, calls) });
+    const ids: string[] = [];
+    for await (const e of client.iterateEntries({ limit: 2 })) ids.push(e.id);
+    expect(ids).toEqual(['x0', 'x1', 'x2', 'x3', 'x4']);
+    expect(calls.map((u) => new URL(u).search)).toEqual([
+      '?limit=2',
+      '?limit=2&cursor=2',
+      '?limit=2&cursor=4',
+    ]);
+  });
+
+  it('throws on a cursor that comes back again while walking past skip', async () => {
+    const client = createDeliveryClient({
+      ...base,
+      preview: true,
+      fetch: fakeFetch(() => ({ items: [{ ...image, id: 'x' }], total: 1, nextCursor: 'same' })),
+    });
+    await expect(client.listEntries({ skip: 5 })).rejects.toThrow('cursor same twice');
+  });
+
+  it('holds a Delivery iteration’s limit to 1..100, as the server does', async () => {
+    const calls: string[] = [];
+    // Delivery over 230 entries, serving at most 100 a page.
+    const client = createDeliveryClient({
+      ...base,
+      fetch: fakeFetch((url) => {
+        calls.push(url);
+        const q = new URL(url).searchParams;
+        const skip = Number(q.get('skip') ?? 0);
+        const limit = Math.min(Math.max(Number(q.get('limit') ?? 100), 1), 100);
+        const to = Math.min(skip + limit, 230);
+        const items = Array.from({ length: Math.max(to - skip, 0) }, (_, i) => ({
+          ...image,
+          id: `d${skip + i}`,
+        }));
+        return { items, total: items.length };
+      }),
+    });
+    let n = 0;
+    for await (const _ of client.iterateEntries({ limit: 150 })) n++;
+    expect(n).toBe(230);
+    expect(calls.map((u) => new URL(u).searchParams.get('limit'))).toEqual(['100', '100', '100']);
+
+    // A limit below one is one: it ends, rather than asking for nothing forever.
+    calls.length = 0;
+    let m = 0;
+    for await (const _ of client.iterateEntries({ limit: 0, skip: 228 })) m++;
+    expect(m).toBe(2);
+    expect(calls).toHaveLength(3);
+  });
+
+  it('iterates Delivery entries by skip until a page comes back short', async () => {
+    const calls: string[] = [];
+    const client = createDeliveryClient({
+      ...base,
+      fetch: fakeFetch((url) => {
+        calls.push(url);
+        const skip = Number(new URL(url).searchParams.get('skip') ?? 0);
+        const items = ['d0', 'd1', 'd2'].slice(skip, skip + 2).map((id) => ({ ...image, id }));
+        return { items, total: items.length };
+      }),
+    });
+    const ids: string[] = [];
+    for await (const e of client.iterateEntries({ contentType: 'post', limit: 2 })) ids.push(e.id);
+    expect(ids).toEqual(['d0', 'd1', 'd2']);
+    expect(calls.map((u) => new URL(u).search)).toEqual([
+      '?content_type=post&limit=2&skip=0',
+      '?content_type=post&limit=2&skip=2',
+    ]);
+  });
+});
+
 describe('assets', () => {
   it('gets and lists assets on the delivery surface, with paging and filters', async () => {
     const calls: string[] = [];

@@ -573,11 +573,18 @@ describe('D1 store (contract)', () => {
     expect(principal.scopes).toEqual(['content:write', 'preview:read']);
     expect(principal.contentGrants?.[0]?.deniedFields).toEqual(['views']);
 
-    await updateRole(ctx, spaceId, role.id, {
-      name: 'Editor',
-      scopes: ['preview:read'],
-      contentGrants: [{ contentTypeApiId: '*', actions: ['read'] }],
-    });
+    await updateRole(
+      ctx,
+      spaceId,
+      role.id,
+      {
+        name: 'Editor',
+        scopes: ['preview:read'],
+        contentGrants: [{ contentTypeApiId: '*', actions: ['read'] }],
+      },
+      { sso: false },
+      'system',
+    );
     const after = await authenticate(ctx, hasher, token);
     expect(after.scopes).toEqual(['preview:read']);
     expect(after.contentGrants?.[0]?.contentTypeApiId).toBe('*');
@@ -599,9 +606,14 @@ describe('D1 store (contract)', () => {
     await expect(store.roles.save(dupe)).rejects.toThrow();
 
     // People: unique email per space, linked subject, role.
-    const ada = await addMember(ctx, spaceId, { email: 'ada@example.com', role: 'editor' });
+    const ada = await addMember(
+      ctx,
+      spaceId,
+      { email: 'ada@example.com', role: 'editor' },
+      'system',
+    );
     await expect(
-      addMember(ctx, spaceId, { email: 'ada@example.com', role: 'viewer' }),
+      addMember(ctx, spaceId, { email: 'ada@example.com', role: 'viewer' }, 'system'),
     ).rejects.toThrow();
     await store.members.save({ ...ada, subject: 'sub-1' });
     expect(await store.members.getByEmail(spaceId, 'ada@example.com')).toMatchObject({

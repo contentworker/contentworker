@@ -2,6 +2,7 @@ import {
   type DeliveredAsset,
   type DeliveredEntry,
   type DeliveryClient,
+  type EntryPage,
   type EntryQuery,
   type Fields,
   type FollowOptions,
@@ -202,13 +203,14 @@ export const CwImage = defineComponent({
 });
 
 /**
- * Lists published entries; re-fetches when the query changes. Tracking is
+ * Lists published entries; re-fetches when the query changes, so a new `cursor` (Preview's
+ * `nextCursor`) or `skip` (Delivery) reads the next page. Tracking is
  * top-level: replace the query (or nested `filters`/`order` arrays), or pass
  * a getter — mutating a nested array element in place is not observed.
  */
 export function useEntries<F extends Fields = Fields>(
   query: MaybeRefOrGetter<EntryQuery> = {},
-): AsyncRefs<{ items: DeliveredEntry<F>[]; total: number }> {
+): AsyncRefs<EntryPage<F>> {
   const client = useDeliveryClient();
   return useAsync(client, (c) => c.listEntries<F>({ ...toValue(query) }));
 }
@@ -285,7 +287,7 @@ export function useLiveEntry<F extends Fields = Fields>(
 export function useLiveEntries<F extends Fields = Fields>(
   query: MaybeRefOrGetter<EntryQuery> = {},
   opts: FollowOptions = {},
-): LiveRefs<{ items: DeliveredEntry<F>[]; total: number }> {
+): LiveRefs<EntryPage<F>> {
   const client = useDeliveryClient();
   return useFollowing((onState) =>
     followEntries<F>(client, { ...toValue(query) }, { delayMs: opts.delayMs }, onState),
@@ -310,6 +312,7 @@ export type {
   DeliveredAsset,
   DeliveredEntry,
   DeliveryClient,
+  EntryPage,
   EntryQuery,
   FollowOptions,
   ImageProps,

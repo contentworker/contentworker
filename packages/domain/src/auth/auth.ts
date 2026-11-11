@@ -218,6 +218,11 @@ export interface Role {
    * one is an ordinary custom role.
    */
   readonly preset?: RolePreset;
+  /**
+   * 1 when created, one more at each save: the compare-and-set a save rides with, and what a
+   * client sends back as `expectedVersion` to have a save over someone else's refused.
+   */
+  readonly version: number;
 }
 
 /**
@@ -318,6 +323,23 @@ export class DelegatedKeyMintError extends DomainError {
       'forbidden',
       "An OAuth or personal access token can't mint an API key or widen one; sign in to the " +
         'admin, or use an operator key',
+    );
+  }
+}
+
+/**
+ * A delegated bearer (see {@link isDelegatedBearer}) tried to give a person lasting access: invite
+ * someone, add them to a team, change their role, let them sign in again, or widen a role they
+ * hold. The token expires; the access it would grant doesn't, so only a person signed in to the
+ * admin (or an operator key) does it. A 403, like a missing scope; `details.reason` tells a client
+ * which refusal this is.
+ */
+export class DelegatedPeopleError extends DomainError {
+  constructor(action: string) {
+    super(
+      'forbidden',
+      `A personal access token or OAuth token can't ${action}; sign in to the admin to do this`,
+      { reason: 'delegated_bearer' },
     );
   }
 }

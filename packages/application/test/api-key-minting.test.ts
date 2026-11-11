@@ -41,7 +41,7 @@ describe('minting and widening API keys', () => {
     };
     await createSpace(ctx, { spaceId: S, name: 'S', defaultLocale: 'en-US' });
     // Ada, signed in once (so her row is linked to her subject).
-    const member = await addMember(ctx, S, { email: 'ada@example.com', role: 'admin' });
+    const member = await addMember(ctx, S, { email: 'ada@example.com', role: 'admin' }, 'system');
     await ctx.store.members.save({ ...member, subject: 'ada@example.com' });
     // A real personal access token, resolved as every request resolves it.
     const minted = await createPersonalAccessToken(ctx, hasher, {

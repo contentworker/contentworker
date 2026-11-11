@@ -140,6 +140,12 @@ Set them in the content type dialog, or over the API and MCP (`model_create_cont
 out of a save they stay as they are, and `null` clears one. Removing a field removes it from the
 layout.
 
+The dialog sends every one of them back on a save, so it holds the save to the version it opened:
+when someone else saved the type in the meantime, the save is refused, the dialog stays open with
+your edits, and it offers to load the latest (your edits are discarded) or copy your changes as
+JSON first. Over the API and MCP, send the `version` you read as `expectedVersion` for the same
+check (a `409` naming the stored `version`); left out, a save goes over whatever is stored.
+
 ## Field guidance
 
 Every field can carry plain-text guidance for whoever fills it, editor or agent:

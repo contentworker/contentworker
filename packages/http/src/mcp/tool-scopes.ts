@@ -269,6 +269,9 @@ export const TOOL_SCOPES: Readonly<Record<string, readonly PermissionScope[]>> =
 
 /** Tools with no scope of their own: open to any caller, or judged inside the use-case. */
 export const UNSCOPED_TOOLS: readonly string[] = [
+  // Each operation names its own scope; the use-case checks it and lists only what may be called.
+  'app_operation_invoke',
+  'app_operations_list',
   'docs_list',
   'docs_read',
   'docs_search',

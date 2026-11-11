@@ -2087,20 +2087,24 @@ export class InMemoryContentStore implements ContentStore {
     },
   };
 
-  private readonly roleData = new Map<string, Role>();
+  private readonly roleData = new JournaledMap<string, Role>();
 
   readonly roles: RoleRepo = {
     save: async (role) => {
-      // Mirrors the adapter's unique (space, preset) index.
+      const key = `${role.spaceId}::${role.id}`;
+      // As the D1 store's compare-and-set: version 1 is a new row, a later one replaces the
+      // version before it; and as its unique (space, preset) index.
+      const held = this.roleData.get(key)?.version ?? 0;
+      if (held !== role.version - 1) throw new TransactionConflictError();
       if (
         role.preset &&
         [...this.roleData.values()].some(
           (r) => r.spaceId === role.spaceId && r.preset === role.preset && r.id !== role.id,
         )
       ) {
-        throw new Error(`Preset role "${role.preset}" already exists in ${role.spaceId}`);
+        throw new TransactionConflictError();
       }
-      this.roleData.set(`${role.spaceId}::${role.id}`, role);
+      this.roleData.set(key, role);
     },
     get: async (spaceId, id) => this.roleData.get(`${spaceId}::${id}`) ?? null,
     list: async (spaceId) => [...this.roleData.values()].filter((r) => r.spaceId === spaceId),
@@ -3482,6 +3486,7 @@ export class InMemoryContentStore implements ContentStore {
       this.promotionData,
       this.inviteData,
       this.memberData,
+      this.roleData,
       this.contentTypeData,
       this.publishedSingletonData,
       this.publishedDefinitionData,
@@ -3548,6 +3553,7 @@ export class InMemoryContentStore implements ContentStore {
         menus: this.menus,
         blockCatalogs: this.blockCatalogs,
         blockConfigs: this.blockConfigs,
+        roles: this.roles,
         bulkJobs: this.bulkJobs,
         workflowRuns: this.workflowRuns,
         workflowTasks: this.workflowTasks,

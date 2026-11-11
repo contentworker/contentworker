@@ -525,6 +525,17 @@ Semantics:
   (requires `space:admin`) and the `roles_list` / `role_create` / `role_update` /
   `role_delete` MCP tools. Mint a bound key with `POST /spaces/:space/api-keys { kind, roleId }`. Deleting is
   refused while a key or a person holds the role, and for a preset.
+- **A role save is held to its version.** Every role carries a `version` (1 when created, one more
+  at each save; `0041_role_versions`), and the store writes a save only while the row is at the
+  version it read, inside `withTransaction`, so of two saves from one read only one lands; the other
+  is a `TransactionConflictError` at commit, answered as `409 conflict`. `PUT …/roles/:id` and
+  `role_update` take an optional `expectedVersion`: one that isn't the stored version is a
+  `409 conflict` with `details: { version }` (the version in force) and nothing written; without it
+  the save goes over whatever is stored, as before. `updateRole` runs the delegated-bearer widening
+  refusal and the last-admin check first, against the role as stored now, then the version check,
+  so a stale save is refused only when it would otherwise be allowed, where a save that loses the
+  race at commit is refused too. The admin's Access sheet always sends the version it opened with;
+  on a stale `409` it keeps the edits, says someone else changed the role and offers to reload it.
 
 Grants govern entry read/write/publish/delete/unpublish and content-type visibility. **Delivery and Preview**
 list/get endpoints filter ungranted content types and `maskDeniedFields` on responses. Coarse
@@ -643,6 +654,27 @@ from Manager to Editor (dropping `lock`) is a narrowing; dropping a grant (no gr
 unrestricted), naming another type or lifting a denial is a change, and refused. The key use-cases take the issuer as a
 required argument (a principal, or `system` for the OAuth and personal access token flows). A signed-in person, an operator key and the admin token are unaffected. Before this,
 a personal access token holding `space:admin` could mint a key over REST.
+
+**Nor can a delegated bearer give a person lasting access.** A seat on a team outlives the token
+that would grant it, so the people use-cases refuse it with **403** `forbidden`
+(`DelegatedPeopleError`, `details.reason: "delegated_bearer"`, "A personal access token or OAuth
+token can't …; sign in to the admin to do this"), on REST and MCP alike:
+
+| Operation                                                                          | Delegated bearer                                                           |
+| ---------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| `POST /spaces/:space/members` (`addMember`)                                        | Refused                                                                    |
+| `PATCH /spaces/:space/members/:id`, `role_preset_assign` with `memberId`           | Refused when it changes the role (up or down) or re-enables the person; renaming and disabling pass |
+| `DELETE /spaces/:space/members/:id`                                                | Allowed: it only takes access away (the last-admin rule still holds)       |
+| `PUT /spaces/:space/roles/:id`, `role_update`                                      | Refused when it widens a role anyone on the team holds (disabled people included) or an open invitation grants (pending, or expired and still resendable; a deployment with more than 500 of either refuses every widening); narrowing passes |
+| `POST /spaces/:space/roles`, `…/roles/:id/clone`, `role_create`                    | Allowed: nobody holds a new role, and giving it to anyone is checked       |
+| `PUT /spaces/:space/access-settings` `{ ssoOnly: false }`                          | Refused (it brings the setup credential back); turning SSO-only on passes  |
+| `POST /deployment/invites`, `…/:id/resend`, `invite_create`, `invite_resend`       | Refused (a delegated token is bound to one space, so `authorizeInviter` already refused it; this says why) |
+
+Unlike a key's role, which a program may narrow, a person's role changes only by a named
+person's act, so a delegated bearer can't change it in either direction. The people use-cases
+take the caller as a required argument (`PeopleActor`: a principal, or `system` for seeding).
+Deployment-wide people, deployment roles and SCIM live in the web Worker behind the admin
+session and SCIM's own token; no API bearer reaches them.
 
 ## Secrets at rest
 
