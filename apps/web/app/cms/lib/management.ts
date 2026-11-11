@@ -1852,6 +1852,24 @@ export function createManagementClient(
     },
 
     /**
+     * Entries by id, their current (draft) versions, 100 to a request (`sys.id[in]` on the list
+     * route, as {@link getEntry} reads one): what a list of links names past the pickers' page.
+     * An id not in the environment is absent.
+     */
+    async getEntriesByIds(ids: readonly string[]): Promise<PreviewEntry[]> {
+      const out: PreviewEntry[] = [];
+      for (let i = 0; i < ids.length; i += 100) {
+        const part = ids.slice(i, i + 100);
+        const r = await req<{ items: PreviewEntry[] }>(
+          'GET',
+          `${preview}/entries?sys.id[in]=${part.map(encodeURIComponent).join(',')}&limit=${part.length}`,
+        );
+        out.push(...r.items);
+      }
+      return out;
+    },
+
+    /**
      * A singleton type's one entry as it is now, or null when it has none outside the trash (or
      * the type is not a singleton): what the sidebar opens for the type.
      */

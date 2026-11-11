@@ -1,7 +1,7 @@
+import { Alert, AlertDescription, AlertTitle } from '@contentworker/ui/alert';
 import { Button } from '@contentworker/ui/button';
 import { Card, CardContent, CardHeader } from '@contentworker/ui/card';
 import { Checkbox } from '@contentworker/ui/checkbox';
-import { DialogError } from '@contentworker/ui/dialog';
 import { Label } from '@contentworker/ui/label';
 import {
   Select,
@@ -58,9 +58,10 @@ const ISSUE_PLACES: Record<string, string> = { contentTypes: 'Content types', en
 const placeOf = (field: string) => ISSUE_PLACES[field.split(/[.[]/)[0] ?? ''] ?? field;
 
 /**
- * Why the target refused the merge (a 422's issues), under the button that sent it: grouped by
- * the list each names, in the API's own words, which name the content type or entry and what to
- * change. Nothing was merged, so the selection stays for the person to narrow and send again.
+ * Why the target refused the merge (a 422's issues), a destructive Alert above the button that
+ * sent it: grouped by the list each names, in the API's own words, which name the content type or
+ * entry and what to change. Nothing was merged, so the selection stays for the person to narrow
+ * and send again.
  */
 function MergeRefusal(props: {
   target: string;
@@ -72,18 +73,22 @@ function MergeRefusal(props: {
     groups.set(place, [...(groups.get(place) ?? []), i.message]);
   }
   return (
-    <DialogError title={`Nothing was merged into ${props.target}`} className="space-y-2">
-      {[...groups].map(([place, messages]) => (
-        <div key={place} className="space-y-1">
-          <p className="font-medium text-foreground">{place}</p>
-          <ul className="list-disc space-y-1 ps-4">
-            {messages.map((m) => (
-              <li key={m}>{m}</li>
-            ))}
-          </ul>
-        </div>
-      ))}
-    </DialogError>
+    <Alert variant="destructive">
+      <AlertTitle>Nothing was merged into {props.target}</AlertTitle>
+      <AlertDescription className="space-y-2">
+        {[...groups].map(([place, messages]) => (
+          <div key={place} className="space-y-1">
+            <p className="font-medium">{place}</p>
+            <ul className="list-disc space-y-1 ps-4">
+              {messages.map((m, i) => (
+                // Keyed by place: two issues may read the same, and the list never reorders.
+                <li key={i}>{m}</li>
+              ))}
+            </ul>
+          </div>
+        ))}
+      </AlertDescription>
+    </Alert>
   );
 }
 

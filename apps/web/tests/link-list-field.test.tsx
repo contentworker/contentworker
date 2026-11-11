@@ -96,6 +96,30 @@ describe('a list of links', () => {
     expect(within(rows()[0] as HTMLElement).getByText('gone-1')).toBeTruthy();
   });
 
+  it('looks up links past the pickers’ page once, by id, and names them', async () => {
+    const resolve = vi.fn(async (_type: 'Entry' | 'Asset', ids: readonly string[]) =>
+      ids.filter((i) => i === 'far').map((i) => entry(i, 'Far away', 'article')),
+    );
+    renderForm(
+      ENTRY_LINKS,
+      { related: { 'en-US': [link('e1'), link('far'), link('gone')] } },
+      { pickers: { ...PICKERS, resolve } },
+    );
+    const [, far, gone] = rows();
+    expect(await within(far as HTMLElement).findByText('Far away')).toBeTruthy();
+    expect(within(far as HTMLElement).getByText('article')).toBeTruthy();
+    // One request, for only the ids the pickers lack; one it can't find keeps its id.
+    expect(resolve).toHaveBeenCalledTimes(1);
+    expect(resolve).toHaveBeenCalledWith('Entry', ['far', 'gone']);
+    expect(within(gone as HTMLElement).getByText('gone')).toBeTruthy();
+  });
+
+  it('gives Add the field’s id, so the field’s label leads to it', () => {
+    renderForm(ENTRY_LINKS);
+    const add = screen.getByRole('combobox', { name: 'Add an entry to Related' });
+    expect(document.querySelector('label[for="' + add.id + '"]')?.textContent).toMatch(/Related/);
+  });
+
   it('adds through the reference picker, offering only the types the field takes', async () => {
     const onSave = renderForm(
       typeWith({

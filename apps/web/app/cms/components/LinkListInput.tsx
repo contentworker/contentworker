@@ -22,8 +22,10 @@ const isLink = (v: unknown): v is LinkValue =>
  * the row that took a removed one's place (or Add); each change is said in a polite line.
  *
  * A link repeats if the editor adds it twice, as the API allows, so rows are their place in the
- * list. A target the pickers don't hold (past the first page, or gone) shows its id rather than a
- * blank that would read as no link.
+ * list. The pickers hold a capped page, so the links past it are looked up once (`resolve`); one
+ * still unnamed (gone, or untitled) shows its id rather than a blank that would read as no link.
+ *
+ * Add carries the field's id, so its label and the form's error summary land on it.
  */
 export function LinkListInput(props: {
   id: string;
@@ -33,6 +35,8 @@ export function LinkListInput(props: {
   known: readonly PickOption[];
   /** What Add offers: `known`, narrowed to what the field takes. */
   options: readonly PickOption[];
+  /** Looks up the links `known` doesn't hold. */
+  resolve?: (linkType: LinkType, ids: readonly string[]) => Promise<PickOption[]>;
   onSearch?: (query: string) => Promise<readonly PickOption[]>;
   /** The list's path, so each row finds its own error (`related[1]`). */
   path: string;
@@ -45,11 +49,35 @@ export function LinkListInput(props: {
   const { id, label, linkType } = props;
   const items = Array.isArray(props.value) ? props.value.filter(isLink) : [];
   const noun = linkType === 'Asset' ? 'asset' : 'entry';
-  // Picked through a search, so not in `known`: remembered for the row's title.
+  // Picked through a search or looked up, so not in `known`: remembered for the row's title.
   const [found, setFound] = useState<ReadonlyMap<string, PickOption>>(new Map());
   const [announcement, setAnnouncement] = useState('');
   const list = useRef<HTMLOListElement>(null);
-  const addId = `${id}-add`;
+  // Ids already looked up, found or not: each is asked for once.
+  const asked = useRef(new Set<string>());
+
+  const { resolve, known } = props;
+  const missing = items
+    .map((l) => l.id)
+    .filter((i) => !asked.current.has(i) && !found.has(i) && !known.some((o) => o.id === i));
+  const missingKey = [...new Set(missing)].join(',');
+  useEffect(() => {
+    if (!resolve || !missingKey) return;
+    const ids = missingKey.split(',');
+    for (const i of ids) asked.current.add(i);
+    // Not dropped when the list changes meanwhile: these ids are never asked for again.
+    resolve(linkType, ids)
+      .then((options) => {
+        if (options.length === 0) return;
+        setFound((m) => {
+          const next = new Map(m);
+          for (const o of options) next.set(o.id, o);
+          return next;
+        });
+      })
+      // Best-effort, as the pickers are: an unnamed row still shows its id.
+      .catch(() => {});
+  }, [resolve, linkType, missingKey]);
   const focusAfter = useRef<{ index: number; move?: 'up' | 'down' } | 'add' | null>(null);
 
   useEffect(() => {
@@ -57,7 +85,7 @@ export function LinkListInput(props: {
     if (target === null) return;
     focusAfter.current = null;
     if (target === 'add') {
-      document.getElementById(addId)?.focus();
+      document.getElementById(id)?.focus();
       return;
     }
     const row = list.current?.querySelector<HTMLElement>(`[data-index="${target.index}"]`);
@@ -77,7 +105,8 @@ export function LinkListInput(props: {
     props.known.find((o) => o.id === linkId) ?? found.get(linkId);
   const titleOf = (linkId: string) => {
     const o = optionOf(linkId);
-    return o ? (o.title ?? o.label) : undefined;
+    // An entry's label adds its type (and is its id when it has no title); an asset's is its name.
+    return o?.title ?? (linkType === 'Asset' ? o?.label : undefined);
   };
   const emit = (next: readonly LinkValue[]) => props.onChange(next.length > 0 ? next : undefined);
 
@@ -191,7 +220,7 @@ export function LinkListInput(props: {
         </ol>
       )}
       <EntityPicker
-        id={addId}
+        id={id}
         options={props.options}
         value=""
         ariaLabel={`Add ${noun === 'asset' ? 'an asset' : 'an entry'} to ${label}`}

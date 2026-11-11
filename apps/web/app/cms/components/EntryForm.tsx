@@ -99,6 +99,11 @@ export interface PickOption {
 export interface Pickers {
   readonly entries: PickOption[];
   readonly assets: PickOption[];
+  /**
+   * Looks up links the lists above don't hold (they are a capped page), so a list of links names
+   * every row. Absent, such a row shows its id.
+   */
+  readonly resolve?: (linkType: 'Entry' | 'Asset', ids: readonly string[]) => Promise<PickOption[]>;
 }
 
 /**
@@ -1328,6 +1333,7 @@ export function FieldInput(props: {
         label={field.name}
         linkType={linkType}
         known={linkType === 'Asset' ? pickers.assets : pickers.entries}
+        {...(pickers.resolve ? { resolve: pickers.resolve } : {})}
         options={linkOptions(pickers, linkType, allowed, mimes)}
         {...(linkType === 'Entry' && onSearchEntries
           ? { onSearch: (q: string) => onSearchEntries(q, allowed.length ? allowed : undefined) }
