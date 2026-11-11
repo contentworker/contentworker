@@ -31,6 +31,7 @@ import {
   type LocaleCode,
   type SlotNarrowing,
   type TargetNarrowing,
+  type UndeclaredOverrideIssue,
   variantOf,
 } from '@contentworker/domain';
 import { ApiError, type EntryBlockLock } from './management';
@@ -254,6 +255,22 @@ const CODES: ReadonlySet<string> = new Set(BLOCK_CONFIG_ISSUE_CODES);
  * and for a 422 about something else.
  */
 export function configRefusal(err: unknown): BlockConfigIssue[] {
+  return refusedIssues(err, (code) => CODES.has(code)) as BlockConfigIssue[];
+}
+
+const OVERRIDE_CODES: ReadonlySet<string> = new Set(['override_undeclared', 'override_invalid']);
+
+/**
+ * The per-breakpoint overrides a refused save names (`undeclaredOverrides` on the server): one
+ * the canvas sent that nothing declares, or a value its prop doesn't take, as the config's are
+ * read. Empty for any other failure.
+ */
+export function overrideRefusal(err: unknown): UndeclaredOverrideIssue[] {
+  return refusedIssues(err, (code) => OVERRIDE_CODES.has(code)) as UndeclaredOverrideIssue[];
+}
+
+/** The issues of a 422 (or an MCP tool's JSON error text) whose code `wanted` takes. */
+function refusedIssues(err: unknown, wanted: (code: string) => boolean): unknown[] {
   let body: unknown;
   if (err instanceof ApiError) {
     if (err.status !== 422) return [];
@@ -268,11 +285,11 @@ export function configRefusal(err: unknown): BlockConfigIssue[] {
   const issues = (body as { error?: { issues?: unknown } } | undefined)?.error?.issues;
   if (!Array.isArray(issues)) return [];
   return issues.filter(
-    (i): i is BlockConfigIssue =>
+    (i) =>
       typeof i === 'object' &&
       i !== null &&
       typeof (i as { code?: unknown }).code === 'string' &&
-      CODES.has((i as { code: string }).code) &&
+      wanted((i as { code: string }).code) &&
       typeof (i as { field?: unknown }).field === 'string' &&
       typeof (i as { message?: unknown }).message === 'string',
   );

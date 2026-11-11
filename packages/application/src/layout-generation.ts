@@ -19,6 +19,7 @@ import {
   effectiveBlockRules,
   type FieldIssue,
   ForbiddenError,
+  holdsScope,
   type InsertBlockOp,
   type LocaleCode,
   mimeTypeAllowed,
@@ -129,14 +130,14 @@ export function layoutSchemaOptions(
 
 /**
  * The library search a caller's generation may find images with: only one that may read the
- * library (`preview:read`, as `assets_search` needs), so a key that writes content but can't list
+ * library (`assets:read`, which `preview:read` implies, as `assets_search` needs), so a key that writes content but can't list
  * assets never learns an asset id from a generation. Undefined for any other caller.
  */
 export function imageSearchFor(
   principal: Principal,
   deps: AssetSearchDeps,
 ): AssetSearchDeps | undefined {
-  return principal.scopes.includes(SCOPES.previewRead) ? deps : undefined;
+  return holdsScope(principal.scopes, SCOPES.assetsRead) ? deps : undefined;
 }
 
 /**

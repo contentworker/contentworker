@@ -61,7 +61,7 @@ export function assetsRoutes(deps: AuthDeps): Hono<AuthVars> {
         cursor: 'nextCursor from the previous page',
       },
     }),
-    requireScope(SCOPES.previewRead),
+    requireScope(SCOPES.assetsRead),
     async (c) => {
       const page = await listAssets(ctx, scopeOf(c), parseAssetListQuery(c.req.query()));
       return c.json({ ...page, items: await signed(c, page.items) });
@@ -85,7 +85,7 @@ export function assetsRoutes(deps: AuthDeps): Hono<AuthVars> {
         limit: 'Most results, 1..100 (default 20)',
       },
     }),
-    requireScope(SCOPES.previewRead),
+    requireScope(SCOPES.assetsRead),
     async (c) => {
       const page = await searchAssets(
         ctx,
@@ -110,7 +110,7 @@ export function assetsRoutes(deps: AuthDeps): Hono<AuthVars> {
         'in the environment, that job is returned instead (running: true). 501 when the ingest ' +
         'queue is not bound.',
     }),
-    requireScope(SCOPES.contentWrite),
+    requireScope(SCOPES.assetsWrite),
     async (c) => {
       if (!deps.assetIngest) {
         throw new NotConfiguredError('asset ingest', 'Bind ASSET_EVENTS_QUEUE to reindex assets');
@@ -127,7 +127,7 @@ export function assetsRoutes(deps: AuthDeps): Hono<AuthVars> {
       status: 201,
       description: 'PUT the file bytes to upload.url with upload.headers, then publish the asset.',
     }),
-    requireScope(SCOPES.contentWrite),
+    requireScope(SCOPES.assetsWrite),
     async (c) => {
       const { folderId, ...input } = await parseBody(c, createAssetBody);
       const created = await createAsset(ctx, blob, scopeOf(c), input, {
@@ -146,7 +146,7 @@ export function assetsRoutes(deps: AuthDeps): Hono<AuthVars> {
         'One statement whatever the count (up to 500 ids). folderId null takes them to the root. ' +
         'Ids that are not assets here are skipped; an unknown folder is a 404.',
     }),
-    requireScope(SCOPES.contentWrite),
+    requireScope(SCOPES.assetsWrite),
     async (c) => c.json(await moveAssets(ctx, scopeOf(c), await parseBody(c, moveAssetsBody))),
   );
   app.post(
@@ -160,7 +160,7 @@ export function assetsRoutes(deps: AuthDeps): Hono<AuthVars> {
         'at /bulk/jobs/{id}/report, each named by the asset’s title or file name): move ' +
         '(folderId, null for the root), tag (addTags, removeTags), publish, unpublish or ' +
         'archive. Each asset goes through the same checks as one at a time (publishing refuses ' +
-        'an archived or embargoed asset). move and tag need content:write; publish, unpublish ' +
+        'an archived or embargoed asset). move and tag need assets:write; publish, unpublish ' +
         'and archive need content:publish.',
     }),
     // No route-level scope: it depends on the action, so it is checked once the body is read.
@@ -170,7 +170,7 @@ export function assetsRoutes(deps: AuthDeps): Hono<AuthVars> {
       const action = body.action as AssetBulkAction;
       authorize(
         c.get('principal'),
-        assetBulkActionPublishes(action) ? SCOPES.contentPublish : SCOPES.contentWrite,
+        assetBulkActionPublishes(action) ? SCOPES.contentPublish : SCOPES.assetsWrite,
         c.req.param('space'),
       );
       const job = await startAssetBulkJob(actingCtx(ctx, c), scopeOf(c), {
@@ -194,7 +194,7 @@ export function assetsRoutes(deps: AuthDeps): Hono<AuthVars> {
         '/assets/{id}/video/refresh (or rely on the host webhook) until file.video.status is ready. ' +
         '501 when no video host is bound.',
     }),
-    requireScope(SCOPES.contentWrite),
+    requireScope(SCOPES.assetsWrite),
     async (c) => {
       const created = await createVideoAsset(
         ctx,

@@ -6,7 +6,9 @@
  * of the entry's (its blocks moved or removed, its frozen content edited), each pointed at the
  * block it falls in so a click selects it. Judged by the domain's own `validateEntryFields` and
  * `blockConfigIssues`, as the save will judge it; a refusal the server sends back anyway (a config
- * set since the canvas read it) is pointed at the same way (`configChecks`).
+ * set since the canvas read it) is pointed at the same way (`configChecks`), as is a per-breakpoint
+ * override the server refused (`override_undeclared`, `override_invalid`: one a push made stale
+ * that no stored version holds), on the block its key names.
  */
 import {
   type BlockCatalog,
@@ -16,6 +18,7 @@ import {
   type ContentType,
   type EffectiveBlockRules,
   type EntryFields,
+  type UndeclaredOverrideIssue,
   validateEntryFields,
 } from '@contentworker/domain';
 import { configIssues } from '../block-rules';
@@ -46,8 +49,8 @@ export function canvasChecks(
       readonly catalog: BlockCatalog | null | undefined;
       readonly rules: EffectiveBlockRules | null | undefined;
     };
-    /** What the server's block config refused of the last save, until the next edit. */
-    readonly refused?: readonly BlockConfigIssue[];
+    /** What the server's block config (or its override check) refused of the last save, until the next edit. */
+    readonly refused?: readonly RefusedIssue[];
     /** The entry's locked regions, which the save is judged against too. */
     readonly locks?: readonly EntryBlockLock[];
   },
@@ -148,7 +151,7 @@ export function canvasChecks(
  * issue in a locale the canvas isn't showing is said, to fix in the form.
  */
 export function configChecks(
-  issues: readonly BlockConfigIssue[],
+  issues: readonly RefusedIssue[],
   fields: EntryFields,
   slots: readonly CanvasSlot[],
   config: { readonly locale: string; readonly defaultLocale: string },
@@ -160,6 +163,19 @@ export function configChecks(
     const id = `config:${issue.code}:${issue.field}:${locale}`;
     if (locale !== config.locale && locale !== config.defaultLocale) {
       return { id, message: `${issue.locale ? `${issue.locale}: ` : ''}${issue.message}`, inForm };
+    }
+    if (issue.code === 'override_undeclared' || issue.code === 'override_invalid') {
+      // Named by its block, whose settings are where the override is reset or undone.
+      const block = issue.key ? blocks.find((b) => b.key === issue.key) : undefined;
+      if (!block) return { id, message: issue.message };
+      return {
+        id,
+        message:
+          issue.code === 'override_invalid'
+            ? `${block.name}: ${issue.message}. Reset it at its width to save`
+            : `${block.name}: ${issue.message}. Undo the change to save`,
+        blockKey: block.key,
+      };
     }
     if (issue.code === 'region_locked' || issue.code === 'region_frozen') {
       // Named by the region's first block, which may be gone from the edit: its name then is the
@@ -216,6 +232,9 @@ export function configChecks(
 }
 
 const inForm = true as const;
+
+/** What a save can be refused for, said on the canvas: the block config's issues and overrides'. */
+export type RefusedIssue = BlockConfigIssue | UndeclaredOverrideIssue;
 
 /**
  * The slot a positional path names (`body`, `body[2].items`) among every slot of the tree: a

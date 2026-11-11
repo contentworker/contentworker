@@ -121,8 +121,8 @@ because it loads images only from its own origin. So give the image however is h
   duplicate.)
 - The catalog stores `{ "assetId": "…" }`, so thumbnails are versioned with it, and `--dry-run`
   uploads nothing: it lists the images it would import.
-- Importing needs `preview:read` (the lookup) and `content:write` (the upload) beside the push's
-  own scopes.
+- Importing needs `assets:read` (the lookup) and `assets:write` (the upload) beside the push's
+  own scopes; `preview:read` and `content:write` grant them.
 
 The server never fetches a thumbnail. It still accepts a `{ "url": "…" }` that another client
 pushes, keeping it for that tooling, but the admin lists such a block by its name. A thumbnail whose
@@ -222,6 +222,28 @@ someone gave an override. In GraphQL, a block with responsive props has a `_resp
 (`PageSectionsHeroResponsive`), one nullable field per breakpoint holding the props, a value that
 isn't one of its prop's tokens served as `null`. An `update`
 [block patch](/reference/field-types/#blocks) sets or unsets `_responsive` as a whole.
+
+### Editing them in the admin
+
+On the canvas, the width control above the page offers **Base** (390px, or just under a first
+breakpoint that starts at 390 or below; with a first breakpoint from 1px no width shows Base, but
+its preset still edits the bare props) and one width per
+breakpoint at its `minWidth`, named by its `name`; a catalog without breakpoints keeps Desktop,
+Tablet and Phone. With breakpoints the canvas always opens on Base, so its first edit sets the bare
+prop; choose a breakpoint's width to override it there. The width in view is the breakpoint the inspector's **Look** tab edits: at Base it
+sets the bare prop; at a breakpoint, a prop in the block's `responsive` shows the value it inherits
+and where from ("From Base", "From Tablet") until you give it one there, which is marked "Set for
+Tablet" with **Reset** to inherit again. A prop not in `responsive` reads "Same at every width" and
+is edited at Base. Each change is an ordinary canvas edit (it undoes and saves with the draft), and
+a breakpoint left with no overrides, or a block left with none, drops the key. Layers marks a block
+that carries overrides. The entry form shows a block's overrides read-only under its props, with a
+link to the canvas, and keeps them as they are when it saves.
+
+A canvas undo can reach back past a save (a block removed and saved, then put back). The canvas
+drops the overrides the content type no longer takes before it sends a save (reading the type again
+when the server refuses one it still held), as the save would drop them. Any client's save is also
+judged against the version before the stored one, so overrides an undo across one save brings back
+count as carried even when a push made them stale meanwhile.
 
 ### Stale overrides
 
@@ -655,8 +677,3 @@ Agents get the same through MCP: `blocks_catalog_get`, `blocks_catalog_versions`
 
 The admin's Build → Blocks screen lists the catalog in force, read-only, and sets the block config
 ([Setting it in the admin](#setting-it-in-the-admin)).
-
-## Not yet
-
-- Editing per-breakpoint overrides on the canvas (width presets from the catalog's breakpoints,
-  the Look tab at the breakpoint in view). The API, MCP, SDK and Delivery support them today.

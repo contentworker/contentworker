@@ -78,7 +78,7 @@ const CHANGE = [{ op: 'update', field: 'body', locale: 'en-US', key: 'k1', set: 
 
 async function connected(capabilities: string[]) {
   const t = await setup();
-  t.editor({ type: 'view', editing: true, device: 'desktop', allowed: ALLOWED });
+  t.editor({ type: 'view', editing: true, width: 1280, allowed: ALLOWED });
   t.editor({
     type: 'entry',
     entry: { entryId: 'e1', locale: 'en-US', fields: { body: [{ _type: 'cta', _key: 'k1' }] } },

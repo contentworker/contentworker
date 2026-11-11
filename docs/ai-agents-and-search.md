@@ -210,7 +210,7 @@ spends a flagship call), SDK `entries.generateBlocks`; gated like the patch
   slot that offers nothing, is not offered at all, so every block in a schema can pass a save.
 - **Images:** a block's single `Link` to an `Asset` that takes images is asked for as
   `{ "$asset": { "query": "a lighthouse at dusk" } }`, only for a caller that may read the
-  library (`preview:read`: `imageSearchFor`); without it no image is asked for, and a block whose
+  library (`assets:read`, which `preview:read` implies: `imageSearchFor`); without it no image is asked for, and a block whose
   image is required isn't offered. Requests are found by walking the answer with the content
   model (`assetRequestSites`); at most 20 lookups (`MAX_IMAGE_REQUESTS`, one cap for a whole
   draft), four at a time, within the call's remaining time. Each runs `searchAssets` with
@@ -369,7 +369,7 @@ and by ingest of a published asset, and emptied for the asset on `asset.unpublis
 (documents and queries) happens only with `EMBEDDINGS_PROVIDER` set, decided once in `wireEdge`
 (`EdgeWired.assetSearch`).
 
-`searchAssets` (Management `GET …/assets/search`, scope `preview:read`) and
+`searchAssets` (Management `GET …/assets/search`, scope `assets:read`) and
 `searchDeliveredAssets` (Delivery `GET …/assets?q=`) take `q` (1–256 characters), `limit`
 (default 20, at most 100) and the filters `kind`, `tag`, `folder` and, for the library, `status`.
 Each leg contributes up to 100 candidates, fused by RRF; the response is `{ items, total,

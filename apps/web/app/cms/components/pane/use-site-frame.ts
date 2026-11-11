@@ -15,7 +15,6 @@ import {
 import type { Capability, LivePatchOp, LiveRect } from '@contentworker/sdk-core/live-preview';
 import { useEffect, useRef, useState } from 'react';
 import {
-  type Device,
   type FrameGeometry,
   type FrameMessage,
   postFrame,
@@ -43,7 +42,8 @@ export interface SiteFrameOptions {
   readonly selected: string | null;
   /** Clicks select (editing), or the page is the site, its links followed. */
   readonly mode: 'edit' | 'view';
-  readonly device: Device;
+  /** The page's width, in CSS pixels: a preset's (`cms/lib/breakpoints.ts`). */
+  readonly width: number;
   /** The canvas draws its own outlines: the frame reports geometry instead (`onGeometry`). */
   readonly canvas?: boolean;
   /**
@@ -112,7 +112,7 @@ export function useSiteFrame(props: SiteFrameOptions): SiteFrame {
   const effectiveMode = live ? props.mode : 'view';
   const viewOf = () => ({
     editing: effectiveMode === 'edit',
-    device: props.device,
+    width: props.width,
     ...(props.allowed ? { allowed: props.allowed } : {}),
     ...(props.canvas ? { canvas: true } : {}),
   });
@@ -233,7 +233,7 @@ export function useSiteFrame(props: SiteFrameOptions): SiteFrame {
   // `allowed` by content (allowedKey).
   useEffect(() => {
     if (ready.current) toFrame({ type: 'view', ...view.current });
-  }, [effectiveMode, props.device, allowedKey, props.canvas]);
+  }, [effectiveMode, props.width, allowedKey, props.canvas]);
 
   // Per selection.
   useEffect(() => {

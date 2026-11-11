@@ -123,16 +123,18 @@ The three key kinds (`ApiKeyKind`):
 
 `SCOPES` (`PermissionScope`):
 
-| Scope              | Grants                                                       |
-| ------------------ | ------------------------------------------------------------ |
-| `content:write`    | Create/update draft entries and assets; AI draft generation  |
-| `content:publish`  | Publish/unpublish entries, assets, and content types         |
-| `content:manage`   | Define/revise content-type schemas                           |
-| `preview:read`     | Read draft/current entries and content-type definitions      |
-| `delivery:read`    | Read published entries and assets                            |
-| `search:read`      | Semantic search over published content                       |
-| `space:admin`      | Manage API keys, create spaces/environments, manage webhooks |
-| `workflow:approve` | Decide workflow approvals (the Approver preset)              |
+| Scope              | Grants                                                                                 |
+| ------------------ | -------------------------------------------------------------------------------------- |
+| `content:write`    | Create/update draft entries; AI draft generation (+ `assets:write`)                    |
+| `content:publish`  | Publish/unpublish entries, assets, and content types                                   |
+| `content:manage`   | Define/revise content-type schemas                                                     |
+| `preview:read`     | Read draft/current entries and content-type definitions (+ `assets:read`)              |
+| `assets:read`      | Read assets, drafts included: files, metadata, folders, collections, renditions       |
+| `assets:write`     | Upload, replace, edit, organize and restore assets                                     |
+| `delivery:read`    | Read published entries and assets                                                      |
+| `search:read`      | Semantic search over published content                                                 |
+| `space:admin`      | Manage API keys, create spaces/environments, manage webhooks                           |
+| `workflow:approve` | Decide workflow approvals (the Approver preset)                                        |
 
 ### Default scopes per kind
 
@@ -140,11 +142,32 @@ The three key kinds (`ApiKeyKind`):
 
 | Kind  | Scopes                                         |
 | ----- | ---------------------------------------------- |
-| `cma` | **all eight** scopes                           |
+| `cma` | **all ten** scopes                             |
 | `cda` | `delivery:read`, `search:read`                 |
 | `cpa` | `preview:read`, `delivery:read`, `search:read` |
 
 A key may be minted with an explicit scope override; otherwise it receives its kind's defaults.
+A `cpa` key's defaults carry no asset scope of their own: it reads assets through `preview:read`
+(below).
+
+### Implied scopes
+
+`IMPLIED_SCOPES` (`domain/auth`) lets a broader scope stand for an asset scope: `preview:read`
+implies `assets:read`, and `content:write` implies `assets:write`. One direction only:
+`assets:read` does not read entry drafts and `assets:write` does not write entries, so a key, role
+or token can be granted asset access alone. `holdsScope(scopes, scope)` resolves it at the decision
+point (`authorize`), never written back: no stored key, role or token changed, and what could
+reach assets before still can. `intersectScopes` applies it when a delegated token (OAuth, PAT) is
+capped by a role: consent to `preview:read` capped by a role granting only `assets:read` leaves
+`assets:read`. An OAuth grant holding only `assets:write` mints a `cma`-kind token; only
+`assets:read`, a `cpa`-kind one.
+
+Asset operations by scope. `assets:read`: every asset read, drafts included (library list and
+search, files, metadata, folders, collections, renditions, usage, versions, transform URLs,
+zips). `assets:write`: create, upload, replace, edit, organize and restore assets, folders and
+collections, alt text and auto-tagging, video. `content:publish`: publishing, unpublishing,
+archiving and deleting assets, rights, and share links. `content:manage`: rendition
+*definitions*. `delivery:read`: published asset reads through Delivery.
 
 ## Role presets
 
@@ -153,13 +176,13 @@ ordinary roles: assignable to API keys and to people, resolved live, editable, a
 custom roles. A preset role carries `preset` and can't be deleted. Each one can do everything the
 one before it can:
 
-| Preset     | Name          | Scopes                                         | In words                                                                                      |
-| ---------- | ------------- | ---------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| `viewer`   | Viewer        | `preview:read`, `delivery:read`, `search:read` | Reads drafts, published content, workflows and approvals; searches                            |
-| `approver` | Approver      | viewer + `workflow:approve`                    | Also approves or rejects workflow approvals                                                   |
-| `editor`   | Editor        | approver + `content:write`, `content:publish`  | Also writes and publishes content, starts and cancels workflow runs, delivers workflow events |
-| `manager`  | Manager       | editor + `content:manage`                      | Also changes content types, workflows, taxonomy, functions, AI actions                        |
-| `admin`    | Administrator | manager + `space:admin`                        | Also manages the team, API keys, roles, webhooks, environments, plugins, audit log            |
+| Preset     | Name          | Scopes                                                        | In words                                                                                      |
+| ---------- | ------------- | ------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `viewer`   | Viewer        | `preview:read`, `assets:read`, `delivery:read`, `search:read` | Reads drafts, published content, workflows and approvals; searches                            |
+| `approver` | Approver      | viewer + `workflow:approve`                                   | Also approves or rejects workflow approvals                                                   |
+| `editor`   | Editor        | approver + `content:write`, `assets:write`, `content:publish` | Also writes and publishes content, starts and cancels workflow runs, delivers workflow events |
+| `manager`  | Manager       | editor + `content:manage`                                     | Also changes content types, workflows, taxonomy, functions, AI actions                        |
+| `admin`    | Administrator | manager + `space:admin`                                       | Also manages the team, API keys, roles, webhooks, environments, plugins, audit log            |
 
 Each preset grants every content type (`*`): `read` for Viewer and Approver, `read`/`write`/`publish`
 for Editor, and `read`/`write`/`publish`/`lock` for Manager and Administrator (a role-bound key is
@@ -775,10 +798,12 @@ entry holding it.
 
 | Scope              | Use-cases / endpoints (representative)                                                                 |
 | ------------------ | ------------------------------------------------------------------------------------------------------ |
-| `content:write`    | Entry/asset CRUD, AI generation endpoints, bulk writes, comments/tasks, metadata                       |
+| `content:write`    | Entry CRUD, AI generation endpoints, bulk writes, comments/tasks, metadata (+ `assets:write`)          |
 | `content:publish`  | Publish/unpublish entries, assets, content types, releases; scheduled actions                          |
 | `content:manage`   | Content types, workflows, taxonomy, functions, app-extensions, ai-actions, merge                       |
-| `preview:read`     | Preview entries, content types, releases, workflows, collaboration reads                               |
+| `preview:read`     | Preview entries, content types, releases, workflows, collaboration reads (+ `assets:read`)             |
+| `assets:read`      | Asset reads: list, search, files, metadata, folders, collections, renditions, versions, zips           |
+| `assets:write`     | Asset upload, replace, edit, organize, restore; folders, collections, alt text, auto-tag, video        |
 | `delivery:read`    | Published entries/assets, Live Content SSE, GraphQL                                                    |
 | `search:read`      | Hybrid/semantic search, related/duplicates/embedding                                                   |
 | `space:admin`      | Spaces, environments, aliases, API keys, roles, team, access settings, webhooks, audit log, agent runs |

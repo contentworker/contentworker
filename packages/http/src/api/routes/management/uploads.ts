@@ -37,7 +37,7 @@ export function uploadsRoutes(deps: AuthDeps): Hono<AuthVars> {
         'every part’s ETag. Abort to give up. 422 past the deployment’s cap ' +
         '(ASSET_UPLOAD_MAX_BYTES, 5 GiB by default).',
     }),
-    requireScope(SCOPES.contentWrite),
+    requireScope(SCOPES.assetsWrite),
     async (c) => {
       const { folderId, ...input } = await parseBody(c, multipartUploadBody);
       const started = await startMultipartAssetUpload(ctx, blob, scopeOf(c), input, {
@@ -54,7 +54,7 @@ export function uploadsRoutes(deps: AuthDeps): Hono<AuthVars> {
       ok: uploadDocs.signedParts,
       description: 'Up to 100 parts per call; sign a part again to retry it.',
     }),
-    requireScope(SCOPES.contentWrite),
+    requireScope(SCOPES.assetsWrite),
     async (c) => {
       const { partNumbers } = await parseBody(c, uploadPartsBody);
       return c.json(
@@ -79,7 +79,7 @@ export function uploadsRoutes(deps: AuthDeps): Hono<AuthVars> {
         '(…/file/uploads), completing commits the new version; 409 when another replace or ' +
         'restore took that version first (the upload is dropped).',
     }),
-    requireScope(SCOPES.contentWrite),
+    requireScope(SCOPES.assetsWrite),
     async (c) => {
       const { parts } = await parseBody(c, completeUploadBody);
       const asset = await completeMultipartAssetUpload(
@@ -100,7 +100,7 @@ export function uploadsRoutes(deps: AuthDeps): Hono<AuthVars> {
       status: 204,
       description: 'Its parts are discarded, and its draft deleted while it has no bytes.',
     }),
-    requireScope(SCOPES.contentWrite),
+    requireScope(SCOPES.assetsWrite),
     async (c) => {
       await abortMultipartAssetUpload(
         ctx,

@@ -2,6 +2,7 @@ import {
   type ApiKey,
   type ApiKeyKind,
   DelegatedKeyMintError,
+  intersectScopes,
   isDelegatedBearer,
   NotFoundError,
   type Principal,
@@ -181,7 +182,7 @@ export async function authenticate(
     return {
       spaceId: key.spaceId,
       ...identity,
-      scopes: key.scopes.filter((s) => role.scopes.includes(s)),
+      scopes: intersectScopes(key.scopes, role.scopes),
       contentGrants: role.contentGrants,
     };
   }
@@ -194,7 +195,7 @@ export async function authenticate(
     // For delegated tokens the consented scope set is a ceiling: widening the
     // role must not retroactively widen a token a human approved for less.
     // Narrowing the role still takes effect immediately, in both directions.
-    const scopes = delegated ? role.scopes.filter((s) => key.scopes.includes(s)) : role.scopes;
+    const scopes = delegated ? intersectScopes(role.scopes, key.scopes) : role.scopes;
     return {
       spaceId: key.spaceId,
       ...identity,

@@ -9,7 +9,7 @@
  */
 import { DomainError } from '../errors';
 import type { ContentTypeGrant, Principal } from './auth';
-import { authorize, grantedActions, grantFor, SCOPES } from './auth';
+import { authorize, grantedActions, grantFor, holdsScope, SCOPES } from './auth';
 
 /** How long an invitation works unless the inviter picks otherwise. */
 export const INVITE_TTL_DAYS = 7;
@@ -147,7 +147,7 @@ export function assertCanGrant(
   for (const g of grants) {
     authorize(principal, SCOPES.spaceAdmin, g.spaceId);
     for (const scope of g.scopes) {
-      if (!principal.scopes.includes(scope)) {
+      if (!holdsScope(principal.scopes, scope)) {
         throw new InviteEscalationError(`You can't grant "${scope}": you don't hold it`);
       }
     }

@@ -1,7 +1,7 @@
 # Per-breakpoint overrides
 
-Status: **decided** 2026-11-10, **backend built**; the canvas (below) is still to come (M6,
-"Layout model" in `ROADMAP.md`). Overrides sit beside the props in a `_responsive` key, and the
+Status: **decided** 2026-11-10, **built** (M6, "Layout model" in `ROADMAP.md`): the backend and
+the canvas. Overrides sit beside the props in a `_responsive` key, and the
 owner took all five proposals under Decisions. Built: the push checks and stores breakpoints and
 `responsive` (`packages/domain/src/content-type/responsive.ts`, `block-catalog.ts`,
 `packages/application/src/block-catalog.ts`, migration `0040_block_catalog_breakpoints`), carrying
@@ -9,7 +9,10 @@ them onto the target field (`items.breakpoints`) and the variant; validation and
 (`validation/validate.ts`, `assignBlockKeys` in `field-values.ts`); block patches and frozen regions
 (`block-patch.ts`, `block-locks.ts`); the push's `staleOverrides`; REST, MCP, the management SDK
 and the CLI; GraphQL (`packages/graphql-gen`); codegen (`packages/sdk/codegen`); and the
-renderers (`resolveBlocks`' `responsive` and `responsiveProp` in `packages/sdk/core/src/blocks.ts`).
+renderers (`resolveBlocks`' `responsive` and `responsiveProp` in `packages/sdk/core/src/blocks.ts`);
+and the admin (`apps/web/app/cms/lib/breakpoints.ts`: the canvas's width presets, the Look tab per
+breakpoint, the Layers mark and the entry form's read-only list). An undo that spans a save is
+judged against the version before too (`prepareFields` reads it once, only on a refusal).
 Release order: a tolerance release goes first (validation lets `_responsive` through on any block,
 every save drops it), and the overrides ship after it, so a rollback past them never leaves an
 entry that can't be saved, only one that loses its overrides on its next save.
