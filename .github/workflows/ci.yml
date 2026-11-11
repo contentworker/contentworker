@@ -241,15 +241,22 @@ jobs:
         if: ${{ steps.webkit.outputs.cache-hit != 'true' }}
         timeout-minutes: 5
         run: pnpm --filter @contentworker/web exec playwright install webkit chromium
+      # Fetch Ubuntu packages over HTTPS: on 2026-11-11 the runners' plain-HTTP (port 80) route to
+      # every Ubuntu archive failed for hours while HTTPS worked, and apt-get only stalled.
+      - name: Fetch Ubuntu packages over HTTPS
+        run: |
+          for f in /etc/apt/apt-mirrors.txt /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list; do
+            [ -f "$f" ] && sudo sed -i 's#http://\([a-z.]*ubuntu\.com\)#https://\1#g' "$f"
+          done
+          cat /etc/apt/apt-mirrors.txt 2>/dev/null || true
       - name: Install WebKit system dependencies
         id: deps
         continue-on-error: true
         timeout-minutes: 5
         run: pnpm --filter @contentworker/web exec playwright install-deps webkit chromium
       # A timed-out first attempt kills pnpm but can leave its apt-get running with the dpkg lock
-      # held. If dpkg is installing, let it finish; if apt-get is still only downloading, the
-      # runner's Azure mirror is stalling (each package waits out a 20 s timeout), so stop it and
-      # fetch from the main Ubuntu archive instead.
+      # held. If dpkg is installing, let it finish; if apt-get is still only downloading, its
+      # mirror is stalling, so stop it and fetch from the main Ubuntu archive instead.
       - name: Install WebKit system dependencies (retry)
         if: ${{ steps.deps.outcome == 'failure' }}
         timeout-minutes: 10
@@ -265,7 +272,7 @@ jobs:
             sudo dpkg --configure -a
           fi
           if [ -f /etc/apt/apt-mirrors.txt ]; then
-            echo "http://archive.ubuntu.com/ubuntu/" | sudo tee /etc/apt/apt-mirrors.txt
+            echo "https://archive.ubuntu.com/ubuntu/" | sudo tee /etc/apt/apt-mirrors.txt
           fi
           pnpm --filter @contentworker/web exec playwright install-deps webkit chromium
       - name: Device tests
