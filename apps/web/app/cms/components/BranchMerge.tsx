@@ -264,7 +264,8 @@ export function BranchMerge(props: { client: ManagementClient; environments: Env
                       {mergeableEntries.map((e) => (
                         <DiffRow
                           key={e.entryId}
-                          label={`${e.contentTypeApiId} · ${e.entryId.slice(0, 8)}`}
+                          // The id's end: UUIDv7s made together share their start (the time).
+                          label={`${e.contentTypeApiId} · ${e.entryId.slice(-8)}`}
                           kind={e.kind}
                           checked={pickedEntries.has(e.entryId)}
                           onToggle={() => toggle(pickedEntries, setPickedEntries, e.entryId)}

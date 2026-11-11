@@ -74,6 +74,44 @@ const compare = async () => {
   return screen.findByRole('button', { name: /^Merge 2 selected/ });
 };
 
+describe('the entries to merge', () => {
+  it('are told apart by the end of their ids, where UUIDv7s made together differ', async () => {
+    const client = {
+      compareEnvironments: vi.fn(async () => ({
+        contentTypes: [],
+        entries: [
+          {
+            entryId: '01a1c888-d23b-75da-b7cd-ff8e1e749238',
+            contentTypeApiId: 'page',
+            kind: 'added',
+          },
+          {
+            entryId: '01a1c888-d243-7a36-ab2f-ebaa8557d62e',
+            contentTypeApiId: 'page',
+            kind: 'added',
+          },
+        ],
+      })),
+      mergeEnvironments: vi.fn(),
+    };
+    render(
+      <ToastProvider>
+        <BranchMerge
+          client={client as unknown as ManagementClient}
+          environments={[
+            { id: 'staging', name: 'Staging' },
+            { id: 'main', name: 'Main' },
+          ]}
+        />
+      </ToastProvider>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Compare' }));
+    expect(await screen.findByText('page · 1e749238')).toBeTruthy();
+    expect(screen.getByText('page · 8557d62e')).toBeTruthy();
+    expect(screen.queryByText('page · 01a1c888')).toBeNull();
+  });
+});
+
 describe('a merge the target refuses', () => {
   it('lists the issues by the list they name, in the API’s words, beside Merge', async () => {
     renderMerge(async () => {
