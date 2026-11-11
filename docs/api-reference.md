@@ -211,7 +211,7 @@ Base paths: `/spaces`, and `…` for `/spaces/:space/environments/:env`. Space-l
 | GET    | `/spaces/:space/promotions`                 | `content:publish`                    | List promotions, newest first (`?status=`)                                                |
 | GET    | `/spaces/:space/promotions/:id`             | `content:publish`                    | A promotion, its risk check and result                                                    |
 | POST   | `/spaces/:space/promotions/:id/approve`     | `content:publish`                    | Approve a waiting promotion and apply it (a person or the admin token, not the requester) |
-| POST   | `/spaces/:space/promotions/:id/reject`      | `content:publish`                    | Reject a waiting promotion; its requester may too, withdrawing it (`decidedBy` is then the requester) |
+| POST   | `/spaces/:space/promotions/:id/reject`      | `content:publish`                    | Reject a waiting promotion (its requester may too, to withdraw it)                        |
 
 A space id is 1–64 letters, digits, `.`, `_` or `-`, starting with a letter or digit, and is
 never one of the media bucket's own prefixes: `versions`, `imports`, `plugins`, `dlq` or `zips`, in any case
