@@ -158,7 +158,11 @@ Made by the owner on 2026-11-09, each as proposed:
 5. **Versions.** Locks are not in the entry's version history, and a restore doesn't bring old
    locks back. Locks are current state; the audit log records every lock and unlock. Amended
    2026-11-09: a version restore is held to the locks held now unless the restorer holds `lock`
-   (see Enforcement).
+   (see Enforcement). Amended 2026-11-11: a promotion carrying entries and an environment merge of
+   entries take `lock` on every content type, since they copy entries whole over the target's
+   locked regions without judging them. Snapshot import, clone and space export import stay
+   unjudged: they refuse a target that already has content types, so there are no locks there to
+   copy over.
 
 ## Out of scope
 

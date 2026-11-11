@@ -531,6 +531,11 @@ From the live preview spec and a review of a second implementation of its channe
   is on, ignored parts listed where they lie. With unsaved edits both show the draft, marked
   Unsaved: the exact request before Save. CodeMirror 6 (`@codemirror/*`, `@lezer/highlight`) is a
   lazy chunk fetched when a code view opens; no route ships it.
+- [ ] **Merge holds to the locks it read.** A merge's entry write (`applyEntry` in
+  `packages/application/src/branching.ts`) doesn't carry the block-lock guard `saveEntryDraft`
+  does, so a lock set between the merge's read and its write is overwritten without a `409`. Not
+  a hole (the merger holds `lock` and could lift it), but a lost race should be a conflict. Pass
+  the guard, with a test that sets a lock mid-merge.
 
 Checked against the merged channel and not needed:
 - **An admin-started reconnect.** The frame route creates its host before it gives the iframe a

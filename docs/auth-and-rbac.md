@@ -555,6 +555,11 @@ Semantics:
 - **Release note.** A custom role with `content:manage` and a `*` grant of `read` and `write` but
   not `publish` used to run a snapshot or space export import that published. It now needs
   `publish=false` for those imports (`?publish=false`, `"publish": false`), and the same on a clone.
+- **Release note.** A custom role with `content:manage` and a `*` grant of `read` and `write` but
+  not `lock` used to merge entries (`POST …/merge`, `environments_merge`) over the target's locked
+  regions. It can no longer merge entries, since that takes `lock` on every content type; merging
+  content types alone still works. The Manager and Administrator presets hold `lock` and are
+  unaffected. To restore it, add `lock` to the role's `*` grant.
 - **Limits of a withhold**, stated plainly:
   - It doesn't constrain a principal that also holds `space:admin`: that principal can edit roles
     (its own included) and mint keys, so withholding `delete` from an administrator is advice, not
