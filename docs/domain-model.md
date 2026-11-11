@@ -61,9 +61,13 @@ otherwise be a promise nothing keeps:
 | `unique`    | The constraint behind it is a row per (content type, field, locale, value). There is no row for the third card's title.                                                                                              |
 | `Slug`      | Slugs are normalized by walking an entry's top-level fields, so a nested one would be stored exactly as typed and then fail its own validation.                                                                      |
 
-Components nest up to `MAX_COMPONENT_DEPTH` (3). The cap exists because validation, codegen,
-GraphQL type generation and the editor all walk this tree; anything deeper is better modeled as its
-own content type and linked, which is what the error says.
+Plain components (a `Component`, or an `Array` of `Component` without variants) nest up to
+`MAX_COMPONENT_DEPTH` (3) among themselves on any path. Component levels of every kind, blocks
+fields and their variants included, nest up to `MAX_BLOCK_DEPTH` (6), a top-level field counting
+as 1: a page's blocks may hold slots five levels below it, and a plain component prop inside a
+block counts its level toward the 6 too, so nothing escapes both caps. The caps exist because
+validation, codegen, GraphQL type generation and the editor all walk this tree; anything deeper is
+better modeled as its own content type and linked, which is what the errors say.
 
 Everything else behaves as it does at the top level, and is tested that way:
 
@@ -107,6 +111,7 @@ repeater is unchanged: its elements carry neither key.
 - **Definition rules** (`defineContentType` / `reviseContentType`): at least one variant, variant
   apiIds legal and unique within the field, each variant at least one field. A variant's fields
   obey the component rules above (no `localized`, `unique` or `Slug`) and count toward
+  `MAX_BLOCK_DEPTH`; a blocks level is not a plain component, so it doesn't count toward
   `MAX_COMPONENT_DEPTH`. Variants are refused on a single `Component`: one optional block slot is
   the same `Array` field with `validations.size.max: 1`. Content type fields are stored as JSON
   (`content_types.fields`), so blocks needed no migration.
@@ -1269,8 +1274,9 @@ interface BlockCatalog {
   then go through `defineContentType` as a variant (slots holding stand-in children).
 - **Mapping** (`catalogVariants`, `planCatalogTypes`). A target's top level takes its `blocks`, or
   every block without `allowedParents`; a slot becomes a nested blocks field (`size` from `min`
-  and `max`, `required` when `min > 0`) of its `allowedChildren`, expanded recursively. Slots below
-  `MAX_COMPONENT_DEPTH` are refused by path; a target expanding past 1,000 variants is refused.
+  and `max`, `required` when `min > 0`) of its `allowedChildren`, expanded recursively. Slots more
+  than five levels below the page (`MAX_BLOCK_DEPTH`, the target counting as 1) are refused by
+  path; a target expanding past 1,000 variants, or past 1 MB of fields once expanded, is refused.
   The catalog owns the whole field: a variant it doesn't provide is removed. A plan is per type,
   with the changed fields' added, changed, removed and renamed variants and whether it is
   destructive (`removedVariants` or `removedFields` non-empty).

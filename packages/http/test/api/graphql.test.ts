@@ -221,6 +221,84 @@ describe('GraphQL Delivery (generated from content types)', () => {
     expect(res.status).toBe(401);
   });
 
+  it('answers a query for blocks six levels deep within the depth limit', async () => {
+    const { ctx, rag, blob, ai } = wire(config);
+    const app = createApp(ctx, config, rag, blob, ai);
+    const symbol = { type: 'Symbol', localized: false, required: false, position: 0 };
+    // A section holds a section, down to the full block depth (the page's field counting as 1).
+    const section = (level: number): Record<string, unknown>[] => [
+      { ...symbol, apiId: 'heading', name: 'Heading' },
+      ...(level < 6
+        ? [
+            {
+              ...symbol,
+              apiId: 'inner',
+              name: 'Inner',
+              type: 'Array',
+              position: 1,
+              items: {
+                type: 'Component',
+                variants: [{ apiId: 'section', name: 'Section', fields: section(level + 1) }],
+              },
+            },
+          ]
+        : []),
+    ];
+    const created = await app.request(`${M}/content-types`, {
+      method: 'POST',
+      headers: cma,
+      body: JSON.stringify({
+        apiId: 'deep',
+        name: 'Deep',
+        displayField: 'title',
+        fields: [
+          { ...symbol, apiId: 'title', name: 'Title' },
+          {
+            ...symbol,
+            apiId: 'body',
+            name: 'Body',
+            type: 'Array',
+            position: 1,
+            items: {
+              type: 'Component',
+              variants: [{ apiId: 'section', name: 'Section', fields: section(1) }],
+            },
+          },
+        ],
+      }),
+    });
+    expect(created.status).toBe(201);
+    await app.request(`${M}/content-types/deep/published`, { method: 'POST', headers: cma });
+    let block: Record<string, unknown> = { _type: 'section', heading: 'Six' };
+    for (let level = 5; level >= 1; level--) {
+      block = { _type: 'section', heading: `${level}`, inner: [block] };
+    }
+    const made = await app.request(`${M}/entries`, {
+      method: 'POST',
+      headers: cma,
+      body: JSON.stringify({
+        contentTypeApiId: 'deep',
+        fields: { title: { 'en-US': 'Deep' }, body: { 'en-US': [block] } },
+      }),
+    });
+    const { entry } = (await made.json()) as { entry: { id: string } };
+    await app.request(`${M}/entries/${entry.id}/published`, { method: 'POST', headers: cma });
+
+    // DeepBodySection, DeepBodySectionInnerSection, …: one type name per level.
+    const names = Array.from({ length: 6 }, (_, i) => `DeepBodySection${'InnerSection'.repeat(i)}`);
+    let selection = `... on ${names[5]} { heading }`;
+    for (let level = 5; level >= 1; level--) {
+      selection = `... on ${names[level - 1]} { inner { ${selection} } }`;
+    }
+    const res = await gql(app, `{ deepCollection { _sys { id } body { ${selection} } } }`);
+    expect(res.body.errors).toBeUndefined();
+    let got = (res.body.data as { deepCollection: { body: Record<string, unknown>[] }[] })
+      .deepCollection[0]?.body[0];
+    for (let level = 1; level < 6; level++)
+      got = ((got?.inner ?? []) as Record<string, unknown>[])[0];
+    expect(got).toEqual({ heading: 'Six' });
+  });
+
   it('rejects an over-deep query', async () => {
     const { ctx, rag, blob, ai } = wire(config);
     const app = createApp(ctx, config, rag, blob, ai);

@@ -180,3 +180,86 @@ describe('a blocks field becomes a union', () => {
     ).toEqual(['LandingPageBodyHero2', 'LandingPageBodyCta']);
   });
 });
+
+describe('blocks six levels deep', () => {
+  // A section holds a section in `inner`, five levels below the page: the full block depth.
+  const section = (level: number): FieldDefinition[] => [
+    field({ apiId: 'heading' }),
+    ...(level < 6
+      ? [
+          field({
+            apiId: 'inner',
+            type: 'Array',
+            position: 1,
+            items: {
+              type: 'Component',
+              variants: [{ apiId: 'section', name: 'Section', fields: section(level + 1) }],
+            },
+          }),
+        ]
+      : [field({ apiId: 'target', type: 'Link', linkType: 'Entry', position: 1 })]),
+  ];
+  const deep: ContentType = {
+    ...landingPage,
+    fields: landingPage.fields.map((f) =>
+      f.apiId === 'body' && f.items
+        ? {
+            ...f,
+            items: {
+              ...f.items,
+              variants: [
+                ...(f.items.variants ?? []),
+                { apiId: 'section', name: 'Section', fields: section(1) },
+              ],
+            },
+          }
+        : f,
+    ),
+  };
+
+  it('keeps every existing type name, and names each level after the one above', () => {
+    const s = buildDeliverySchema([deep]);
+    // What a client already queries is named as before the deeper variant was added.
+    expect(
+      (s.getType('LandingPageBody') as GraphQLUnionType).getTypes().map((t) => t.name),
+    ).toEqual(['LandingPageBodyHero', 'LandingPageBodyCta', 'LandingPageBodySection']);
+    let name = 'LandingPageBodySection';
+    for (let level = 2; level <= 6; level++) {
+      name = `${name}InnerSection`;
+      expect(s.getType(name), name).toBeDefined();
+    }
+    expect(printSchema(buildDeliverySchema([deep]))).toBe(printSchema(s));
+  });
+
+  it('resolves a value at the deepest level', async () => {
+    let block: Record<string, unknown> = {
+      _type: 'section',
+      heading: 'Six',
+      target: { id: 'e2', title: 'Linked' },
+    };
+    for (let level = 5; level >= 1; level--) {
+      block = { _type: 'section', heading: `${level}`, inner: [block] };
+    }
+    const one = { ...entry, fields: { title: 'Deep', body: [block] } };
+    const names = Array.from(
+      { length: 6 },
+      (_, i) => `LandingPageBodySection${'InnerSection'.repeat(i)}`,
+    );
+    let selection = `... on ${names[5]} { heading target }`;
+    for (let level = 5; level >= 1; level--) {
+      selection = `... on ${names[level - 1]} { inner { ${selection} } }`;
+    }
+    const r = await graphql({
+      schema: buildDeliverySchema([deep]),
+      contextValue: {
+        resolvers: { ...contextValue.resolvers, entry: async () => one },
+      } as unknown as DeliveryContext,
+      source: `{ landingPage(id: "e1") { body { ${selection} } } }`,
+    });
+    expect(r.errors).toBeUndefined();
+    let got = (r.data as { landingPage: { body: Record<string, unknown>[] } }).landingPage.body[0];
+    for (let level = 1; level < 6; level++)
+      got = ((got?.inner ?? []) as Record<string, unknown>[])[0];
+    expect(got).toEqual({ heading: 'Six', target: { id: 'e2', title: 'Linked' } });
+  });
+});

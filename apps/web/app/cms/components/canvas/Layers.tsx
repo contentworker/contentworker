@@ -31,6 +31,16 @@ import {
 } from '~/cms/lib/canvas/model';
 import { type GhostKind, ghostLabel } from '~/cms/lib/live-preview/proposals';
 
+/**
+ * How far a row at tree `level` (1 for the page's own blocks) is indented, in rem: a full step
+ * (1rem) for each of the first two levels below the page, then half a step, so a block six deep
+ * (the deepest a slot goes) sits at 4rem and keeps its name readable in a phone's sheet.
+ */
+export function layerIndent(level: number): number {
+  const below = Math.max(0, level - 1);
+  return 0.5 + Math.min(below, 2) + Math.max(0, below - 2) * 0.5;
+}
+
 export interface LayersProps {
   readonly slots: readonly CanvasSlot[];
   readonly selected: string | null;
@@ -282,7 +292,7 @@ function LayerItem(props: ItemProps & { block: CanvasBlock; level: number }) {
             ? 'bg-accent font-medium text-accent-foreground'
             : 'text-foreground hover:bg-accent/60',
         )}
-        style={{ paddingLeft: `${0.5 + (level - 1) * 1}rem` }}
+        style={{ paddingLeft: `${layerIndent(level)}rem` }}
       >
         {lock?.own ? <Lock aria-hidden="true" className="size-3 shrink-0" /> : null}
         <span className="truncate">{block.name}</span>
@@ -306,7 +316,7 @@ function LayerItem(props: ItemProps & { block: CanvasBlock; level: number }) {
         <p
           data-locked-line
           className="pb-1 text-2xs text-muted-foreground"
-          style={{ paddingLeft: `${0.5 + (level - 1) * 1}rem` }}
+          style={{ paddingLeft: `${layerIndent(level)}rem` }}
         >
           <span className="sr-only">, </span>
           {lockedLine(says, props.directory)}
@@ -319,7 +329,7 @@ function LayerItem(props: ItemProps & { block: CanvasBlock; level: number }) {
             <div key={slot.path} role="none">
               <div
                 className="caption flex items-center gap-1 py-1"
-                style={{ paddingLeft: `${0.5 + level * 1}rem` }}
+                style={{ paddingLeft: `${layerIndent(level + 1)}rem` }}
                 aria-hidden="true"
               >
                 {slotHeld(slot) ? <Lock className="size-3" /> : null}

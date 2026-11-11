@@ -373,7 +373,12 @@ Built on Blocks and the frontend runtime. Layouts stay a typed tree; rich text s
   side (composing from the canvas and the dock) is next; rich text inside generated blocks is not
   generated yet.
 - [ ] **Layout model.** Deeper nesting than three levels, and per-breakpoint overrides of token
-  props. (Slots, `allowedChildren` and `allowedParents` shipped with blocks from code.)
+  props. (Slots, `allowedChildren` and `allowedParents` shipped with blocks from code.) Deeper
+  nesting shipped: blocks slots nest six levels (the page's blocks field counting as 1,
+  `MAX_BLOCK_DEPTH`), plain components keep three among themselves, the AI layout schema shares a
+  repeated block shape through `$defs` instead of inlining every path, RAG indexes text at the full
+  depth, and Layers indents half a step past the third level. Per-breakpoint overrides are still to
+  come.
 - [x] **Blocks from code.** `contentworker blocks push` maps component manifests (JSON data:
   token and enum props, slots with `allowedChildren`, `allowedParents`, aliases for renamed ids,
   thumbnails) to Blocks variants, versioned per environment, over REST, MCP and the management
