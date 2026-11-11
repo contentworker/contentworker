@@ -7,7 +7,7 @@ import {
   ValidationError,
 } from '@contentworker/domain';
 import { FixedClock, InMemoryContentStore, SequenceIdGenerator } from '@contentworker/test-kit';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   type AppContext,
   analyzeImport,
@@ -31,6 +31,7 @@ import {
   setEntryBlockLocks,
   updateContentType,
   updateEntry,
+  validateEntry,
 } from '../src/index';
 
 /**
@@ -371,6 +372,51 @@ describe('per-breakpoint overrides', () => {
     expect((err as ValidationError).issues).toMatchObject([
       { field: 'body[0]._responsive.lg', code: 'override_undeclared', key: 'a' },
     ]);
+  });
+
+  it('reads the version before only when the override check would refuse', async () => {
+    await push();
+    const { entry } = await createEntry(ctx, scope, {
+      contentTypeApiId: 'page',
+      fields: body(hero('a', { lg: { size: 'xl' } }), hero('b')),
+    });
+    const reads = vi.spyOn(ctx.store.entries, 'getVersion');
+    // Declared overrides, and stale ones the stored version holds: nothing refused, nothing read.
+    await updateEntry(ctx, scope, entry.id, body(hero('a', { md: { size: 'sm' } }), hero('b')));
+    await push({ breakpoints: BREAKPOINTS.slice(0, 1) });
+    await updateEntry(ctx, scope, entry.id, {
+      ...body(hero('a', { md: { size: 'sm' } }), hero('b')),
+      title: { 'en-US': 'Edited' },
+    });
+    expect(reads).not.toHaveBeenCalled();
+    // One the stored version lacks: read once.
+    await updateEntry(ctx, scope, entry.id, body(hero('a', { lg: { size: 'xl' } }))).catch(
+      () => null,
+    );
+    expect(reads).toHaveBeenCalledTimes(1);
+  });
+
+  it('judges a dry run of an undo that spans a save as the save does', async () => {
+    await push();
+    const { entry } = await createEntry(ctx, scope, {
+      contentTypeApiId: 'page',
+      fields: body(hero('a', { lg: { size: 'xl' } }), hero('b')),
+    });
+    await updateEntry(ctx, scope, entry.id, body(hero('b')));
+    await push({ breakpoints: BREAKPOINTS.slice(0, 1) });
+    const undo = body(hero('a', { lg: { size: 'xl' } }), hero('b'));
+    const dry = await validateEntry(ctx, scope, { entryId: entry.id, fields: undo });
+    expect(dry).toMatchObject({ valid: true });
+    expect(dry.fields.body?.['en-US']).toEqual([hero('a'), hero('b')]);
+    // Nothing was written.
+    expect((await getEntry(ctx, scope, entry.id)).entry.currentVersion).toBe(2);
+    // A new edit's typo is still refused in the dry run.
+    await expect(
+      validateEntry(ctx, scope, {
+        entryId: entry.id,
+        fields: body(hero('a'), hero('b', { xl: { size: 'sm' } })),
+      }),
+    ).rejects.toBeInstanceOf(ValidationError);
   });
 
   it('refuses a new non-map value at an undeclared breakpoint or `base`, never dropping it unsaid', async () => {

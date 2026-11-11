@@ -35,8 +35,10 @@ import {
   type BlockOp,
   blockVariants,
   type ComponentVariant,
+  type ContentType,
   type EntryFields,
   SCOPES,
+  withoutStaleOverrides,
 } from '@contentworker/domain';
 import type { LiveRect } from '@contentworker/sdk-core/live-preview';
 import { Alert, AlertDescription, AlertTitle } from '@contentworker/ui/alert';
@@ -248,7 +250,8 @@ function Canvas({
   const wide = useMedia(WIDE);
   const tablet = useMedia(TABLET);
 
-  const contentType = useContentTypesQuery().data?.find((t) => t.apiId === typeId);
+  const typesQuery = useContentTypesQuery();
+  const contentType = typesQuery.data?.find((t) => t.apiId === typeId);
   const cfg = useSpaceConfigQuery().data;
   const entryQuery = useEntryQuery(entryId);
   const catalog = useScopedQuery(['block-catalog'], () => client.getBlockCatalog(), {
@@ -331,9 +334,6 @@ function Canvas({
   const [restoreFocus, setRestoreFocus] = useState<'dock' | 'layer' | null>(null);
   const [geometry, setGeometry] = useState<FrameGeometry | null>(null);
   const [hover, setHover] = useState<{ ref: string; rect: LiveRect } | null>(null);
-  // The frame's widths: Base and the catalog's breakpoints when it declares any.
-  const presets = useMemo(() => widthPresets(catalog?.breakpoints), [catalog?.breakpoints]);
-  const [preset, setPreset] = useWidthPreset(presets);
 
   const fields = doc?.fields ?? (entryQuery.data?.fields as EntryFields | undefined) ?? {};
   const storedFields = doc?.base.fields;
@@ -346,6 +346,13 @@ function Canvas({
     [contentType, fields, locale, defaultLocale, under],
   );
   const block = selected ? findBlock(tree, selected) : undefined;
+  // The frame's widths: Base and the catalog's breakpoints when it declares any. While the catalog
+  // is loading, or couldn't be read, the blocks fields' own (the push wrote them there), so a
+  // field with breakpoints always has a Base to edit its bare props at.
+  const ownBreakpoints = tree.find((s) => s.breakpoints.length > 0)?.breakpoints;
+  const breakpoints = catalog?.breakpoints?.length ? catalog.breakpoints : ownBreakpoints;
+  const presets = useMemo(() => widthPresets(breakpoints), [breakpoints]);
+  const [preset, setPreset] = useWidthPreset(presets);
   const dirty = !!doc && JSON.stringify(doc.fields) !== JSON.stringify(doc.base.fields);
   const dirtyRef = useRef(dirty);
   dirtyRef.current = dirty;
@@ -693,8 +700,27 @@ function Canvas({
         return;
       }
       const expectedVersion = over ?? d.base.version;
+      // Overrides the type no longer takes (a push removed their breakpoint, or narrowed their
+      // prop) go before the save, as the save drops them: the canvas makes none by mistake, and
+      // an undo across several saves may bring back a block that holds them.
+      const send = (type: ContentType) =>
+        client.updateEntry(entryId, withoutStaleOverrides(type, d.fields), { expectedVersion });
       try {
-        const saved = await client.updateEntry(entryId, d.fields, { expectedVersion });
+        let saved: Awaited<ReturnType<typeof send>>;
+        try {
+          saved = await send(contentType);
+        } catch (err) {
+          // Refused over an override: the type may have changed since the canvas read it. Read
+          // it again, and when that drops something more, send once more.
+          if (overrideRefusal(err).length === 0) throw err;
+          const fresh = (await typesQuery.refetch()).data?.find((t) => t.apiId === typeId);
+          const unchanged =
+            !fresh ||
+            JSON.stringify(withoutStaleOverrides(fresh, d.fields)) ===
+              JSON.stringify(withoutStaleOverrides(contentType, d.fields));
+          if (unchanged) throw err;
+          saved = await send(fresh);
+        }
         const now = docRef.current ?? d;
         // What was typed while it saved stays unsaved; the history holds while the save kept
         // the blocks as the canvas made them.

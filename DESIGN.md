@@ -977,8 +977,9 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   block's own fields, the entry form's editors), Data (references) and Look (props limited to
   listed values, four or fewer as a segmented control, more as a select, and the Booleans a block
   lists in `responsive`; never free CSS). The header's width control is the Site view's: with the
-  catalog's breakpoints, Look edits the breakpoint in view, said in a muted line at its top
-  ("Editing Tablet, from 768px up"). There a responsive prop shows what it inherits in a muted
+  catalog's breakpoints (the blocks field's own while the catalog can't be read), Look edits the
+  breakpoint in view, said in a muted line at its top ("Editing Tablet, from 768px up"; at Base
+  with a first breakpoint from 1px, that no width shows it). There a responsive prop shows what it inherits in a muted
   line under it ("From Base", "From Tablet"); one set there is marked in brand, a dot and "Set for
   Tablet" (brand is what was chosen), with a ghost `xs` **Reset**; any other prop reads only,
   "Same at every width: change it at Base.", and at Base a responsive prop says where it changes

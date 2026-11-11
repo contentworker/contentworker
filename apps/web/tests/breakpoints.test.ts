@@ -5,6 +5,7 @@ import type { Breakpoint } from '@contentworker/domain';
 import { describe, expect, it } from 'vitest';
 import {
   activeBreakpoint,
+  baseInView,
   breakpointFor,
   defaultPreset,
   overrideNames,
@@ -12,7 +13,7 @@ import {
   widthPresets,
   withOverride,
 } from '~/cms/lib/breakpoints';
-import { frameWidth } from '~/cms/lib/live-preview/frame-channel';
+import { frameWidth, viewWidth } from '~/cms/lib/live-preview/frame-channel';
 
 const BREAKPOINTS: Breakpoint[] = [
   { id: 'md', name: 'Tablet', minWidth: 768 },
@@ -47,7 +48,12 @@ describe('width presets', () => {
     const low: Breakpoint[] = [{ id: 'xs', name: 'Small', minWidth: 375 }, ...BREAKPOINTS];
     const presets = widthPresets(low);
     expect(presets[0]).toEqual({ id: 'base', label: 'Base', width: 374 });
-    expect(widthPresets([{ id: 'a', name: 'A', minWidth: 1 }])[0]?.width).toBe(1);
+    // From 1px no width shows Base: it stays a preset (the bare props are edited there), at 390.
+    const fromOne: Breakpoint[] = [{ id: 'a', name: 'A', minWidth: 1 }];
+    expect(widthPresets(fromOne)[0]).toEqual({ id: 'base', label: 'Base', width: 390 });
+    expect(baseInView(fromOne)).toBe(false);
+    expect(baseInView(low)).toBe(true);
+    expect(breakpointFor(fromOne, { id: 'base', width: 390 })).toBeNull();
     expect(breakpointFor(low, { id: 'base', width: 390 })).toBeNull();
     expect(breakpointFor(low, { id: 'md', width: 768 })).toBe(md);
     // The three devices, over a field with breakpoints: by width.
@@ -67,6 +73,12 @@ describe('width presets', () => {
   it('takes only a whole width in bounds over the frame channel', () => {
     expect(frameWidth(768)).toBe(768);
     for (const bad of [0, 10_001, 12.5, '768', undefined, null]) expect(frameWidth(bad)).toBe(1280);
+    // An editor tab loaded before `width` still says its device, for one release.
+    expect(viewWidth({ width: 768 })).toBe(768);
+    expect(viewWidth({ device: 'phone' })).toBe(390);
+    expect(viewWidth({ device: 'tablet' })).toBe(768);
+    expect(viewWidth({ device: 'toaster' })).toBe(1280);
+    expect(viewWidth({ width: 768, device: 'phone' })).toBe(768);
   });
 });
 

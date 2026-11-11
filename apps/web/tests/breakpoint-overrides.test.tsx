@@ -30,54 +30,57 @@ const BREAKPOINTS: Breakpoint[] = [
   { id: 'lg', name: 'Desktop', minWidth: 1280 },
 ];
 
-const pageType = {
-  apiId: 'page',
-  name: 'Page',
-  displayField: 'title',
-  status: 'published',
-  preview: { urlTemplate: 'https://site.example/{id}' },
-  fields: [
-    f({ apiId: 'title', name: 'Title', type: 'Symbol' }),
-    f({
-      apiId: 'body',
-      name: 'Main',
-      type: 'Array',
-      position: 1,
-      items: {
-        type: 'Component',
-        breakpoints: BREAKPOINTS,
-        variants: [
-          {
-            apiId: 'hero',
-            name: 'Hero',
-            responsive: ['tone', 'hidden'],
-            fields: [
-              f({ apiId: 'heading', name: 'Heading', type: 'Symbol' }),
-              f({
-                apiId: 'tone',
-                name: 'Tone',
-                type: 'Symbol',
-                validations: { in: ['light', 'dark'] },
-              }),
-              f({
-                apiId: 'align',
-                name: 'Align',
-                type: 'Symbol',
-                validations: { in: ['left', 'center'] },
-              }),
-              f({ apiId: 'hidden', name: 'Hidden', type: 'Boolean' }),
-            ],
-          },
-          {
-            apiId: 'cta',
-            name: 'Call to action',
-            fields: [f({ apiId: 'label', name: 'Label', type: 'Symbol' })],
-          },
-        ],
-      },
-    }),
-  ],
-} as unknown as ContentType;
+/** The page type, its blocks field holding `breakpoints` as a catalog push writes them. */
+const typeWith = (breakpoints: readonly Breakpoint[]) =>
+  ({
+    apiId: 'page',
+    name: 'Page',
+    displayField: 'title',
+    status: 'published',
+    preview: { urlTemplate: 'https://site.example/{id}' },
+    fields: [
+      f({ apiId: 'title', name: 'Title', type: 'Symbol' }),
+      f({
+        apiId: 'body',
+        name: 'Main',
+        type: 'Array',
+        position: 1,
+        items: {
+          type: 'Component',
+          breakpoints,
+          variants: [
+            {
+              apiId: 'hero',
+              name: 'Hero',
+              responsive: ['tone', 'hidden'],
+              fields: [
+                f({ apiId: 'heading', name: 'Heading', type: 'Symbol' }),
+                f({
+                  apiId: 'tone',
+                  name: 'Tone',
+                  type: 'Symbol',
+                  validations: { in: ['light', 'dark'] },
+                }),
+                f({
+                  apiId: 'align',
+                  name: 'Align',
+                  type: 'Symbol',
+                  validations: { in: ['left', 'center'] },
+                }),
+                f({ apiId: 'hidden', name: 'Hidden', type: 'Boolean' }),
+              ],
+            },
+            {
+              apiId: 'cta',
+              name: 'Call to action',
+              fields: [f({ apiId: 'label', name: 'Label', type: 'Symbol' })],
+            },
+          ],
+        },
+      }),
+    ],
+  }) as unknown as ContentType;
+const pageType = typeWith(BREAKPOINTS);
 
 const catalog = {
   version: 1,
@@ -159,16 +162,19 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  client.updateEntry.mockReset();
+  client.listContentTypes.mockImplementation(async () => [pageType]);
+  client.getBlockCatalog.mockImplementation(async () => catalog);
   localStorage.clear();
 });
 
-async function canvas() {
+async function canvas(opts: { fields?: EntryFields; first?: string } = {}) {
   client.getEntry.mockResolvedValue({
     id: 'e1',
     contentType: 'page',
     status: 'draft',
     version: 3,
-    fields: pageFields(),
+    fields: opts.fields ?? pageFields(),
   });
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const router = createMemoryRouter(
@@ -183,8 +189,8 @@ async function canvas() {
     </QueryClientProvider>,
   );
   await screen.findByRole('heading', { level: 1, name: 'Home' });
-  // The catalog arrives with the canvas: its breakpoints are the widths.
-  await screen.findByRole('radio', { name: 'Tablet, 768 pixels' });
+  // The catalog (or the field's own) arrives with the canvas: its breakpoints are the widths.
+  await screen.findByRole('radio', { name: opts.first ?? 'Tablet, 768 pixels' });
   const el = screen.getByTitle('Site preview') as HTMLIFrameElement;
   const posted: { type: string; [k: string]: unknown }[] = [];
   vi.spyOn(el.contentWindow as Window, 'postMessage').mockImplementation((m: unknown) => {
@@ -302,7 +308,7 @@ describe('the Look tab at a breakpoint', () => {
     expect(within(layer('h1')).queryByRole('img', { name: /Has overrides/ })).toBeNull();
 
     // Undo puts the override back.
-    act(() => screen.getByRole('button', { name: 'Undo' }).click());
+    act(() => screen.getByTitle(/^Undo: /).click());
     expect(toneSays()).toBe('Set for Tablet');
     expect(checked(tone())).toBe('dark');
   });
@@ -346,6 +352,110 @@ describe('Layers', () => {
     act(() => screen.getByRole('button', { name: 'Layers' }).click());
     expect(within(layer('h1')).getByRole('img', { name: 'Has overrides at Tablet' })).toBeTruthy();
     expect(within(layer('a1')).queryByRole('img', { name: /Has overrides/ })).toBeNull();
+  });
+});
+
+describe('an undo across several saves', () => {
+  it('saves without the overrides a push made stale meanwhile, reading the type again', async () => {
+    let version = 3;
+    const sent: EntryFields[] = [];
+    // As the server: an override at a breakpoint the type (after the push) doesn't declare is
+    // refused unless the version before holds it; this one is two saves back.
+    let pushed = false;
+    client.updateEntry.mockImplementation(async (_id: string, fields: EntryFields) => {
+      sent.push(fields);
+      if (pushed && JSON.stringify(fields).includes('"lg"')) {
+        throw new ApiError(422, 'Validation failed', {
+          error: {
+            code: 'validation_failed',
+            issues: [
+              {
+                field: 'body[0]._responsive.lg',
+                locale: 'en-US',
+                key: 'h1',
+                code: 'override_undeclared',
+                message: 'No breakpoint "lg" (one of: md)',
+              },
+            ],
+          },
+        });
+      }
+      version += 1;
+      return {
+        entry: { id: 'e1', contentTypeApiId: 'page', status: 'draft', currentVersion: version },
+        fields,
+      };
+    });
+    const fields = pageFields();
+    const body = fields.body?.['en-US'] as Record<string, unknown>[];
+    (body[0] as Record<string, unknown>)._responsive = {
+      lg: { tone: 'dark' },
+      md: { tone: 'dark' },
+    };
+    client.getEntry.mockResolvedValue({
+      id: 'e1',
+      contentType: 'page',
+      status: 'draft',
+      version: 3,
+      fields,
+    });
+    await canvas({ fields });
+    act(() => screen.getByRole('button', { name: 'Layers' }).click());
+    // Remove the hero, save; edit the call to action, save.
+    act(() => layer('h1').click());
+    act(() => screen.getByRole('button', { name: 'Remove Hero' }).click());
+    act(() => screen.getByRole('button', { name: 'Save draft' }).click());
+    await screen.findByText('Draft updated');
+    act(() => layer('a1').click());
+    fireEvent.change(screen.getByLabelText(/^Label/), { target: { value: 'Go' } });
+    act(() => screen.getByRole('button', { name: 'Save draft' }).click());
+    await waitFor(() => expect(sent).toHaveLength(2));
+    // A push removes lg; the canvas still holds the type it read.
+    pushed = true;
+    client.listContentTypes.mockResolvedValue([
+      typeWith([{ id: 'md', name: 'Tablet', minWidth: 768 }]),
+    ]);
+    // Undo twice: the label, then the remove, which puts the hero back with its lg override.
+    act(() => screen.getByTitle(/^Undo: /).click());
+    act(() => screen.getByTitle(/^Undo: /).click());
+    await waitFor(() => expect(layer('h1')).toBeTruthy());
+    act(() => screen.getByRole('button', { name: 'Save draft' }).click());
+    await waitFor(() => expect(sent).toHaveLength(4));
+    expect(screen.queryByText(/no longer takes an override/)).toBeNull();
+    const last = sent.at(-1)?.body?.['en-US'] as Record<string, unknown>[];
+    expect(last[0]).toMatchObject({ _key: 'h1', _responsive: { md: { tone: 'dark' } } });
+    expect(JSON.stringify(last)).not.toContain('"lg"');
+  });
+});
+
+describe('without the catalog', () => {
+  it('takes its widths from the blocks field’s own breakpoints, so Base is always there', async () => {
+    client.getBlockCatalog.mockResolvedValue(null as unknown as BlockCatalog);
+    await canvas();
+    const widths = within(screen.getByRole('radiogroup', { name: 'Device width' })).getAllByRole(
+      'radio',
+    );
+    expect(widths.map((r) => r.textContent)).toEqual(['Base', 'Tablet', 'Desktop']);
+    await openLook();
+    const align = screen.getByRole('radiogroup', { name: 'Align' });
+    expect(align.getAttribute('data-disabled')).toBeNull();
+  });
+
+  it('says no width shows Base when the first breakpoint starts at 1px, and still edits it', async () => {
+    client.getBlockCatalog.mockResolvedValue(null as unknown as BlockCatalog);
+    client.listContentTypes.mockResolvedValue([
+      typeWith([{ id: 'sm', name: 'Small', minWidth: 1 }, ...BREAKPOINTS]),
+    ]);
+    const page = await canvas({ first: 'Small, 1 pixels' });
+    expect(page.lastWidth()).toBe(390);
+    await openLook();
+    expect(screen.getByText(/no width shows it, as Small starts at 1px/)).toBeTruthy();
+    act(() =>
+      within(screen.getByRole('radiogroup', { name: 'Align' }))
+        .getByRole('radio', { name: 'center' })
+        .click(),
+    );
+    expect(page.lastOps().at(-1)).toMatchObject({ key: 'h1', set: { align: 'center' } });
   });
 });
 

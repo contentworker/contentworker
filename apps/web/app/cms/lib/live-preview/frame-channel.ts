@@ -27,6 +27,23 @@ export const FRAME_CHANNEL = 'cw-site-frame';
  */
 export const FRAME_WIDTH = { min: 1, max: 10_000, default: 1280 } as const;
 
+/**
+ * What an editor page loaded before `width` replaced `device` sends: its device's width. An open
+ * tab keeps its old script after a deploy, and frames a new Site frame. Remove one release after
+ * the canvas's breakpoint presets ship, once no tab can still be that old.
+ */
+const LEGACY_DEVICE_WIDTHS: Readonly<Record<string, number>> = {
+  desktop: 1280,
+  tablet: 768,
+  phone: 390,
+};
+
+/** The width a `view` message asks for: its `width`, else an older editor's `device`. */
+export function viewWidth(m: { readonly width?: unknown; readonly device?: unknown }): number {
+  const legacy = typeof m.device === 'string' ? LEGACY_DEVICE_WIDTHS[m.device] : undefined;
+  return frameWidth(m.width ?? legacy);
+}
+
 /** A `view` message's width as the frame uses it: a whole number in bounds, else the default. */
 export function frameWidth(width: unknown): number {
   return typeof width === 'number' &&

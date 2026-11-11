@@ -34,9 +34,9 @@ import {
   type EditorMessage,
   FRAME_WIDTH,
   type FrameGeometry,
-  frameWidth,
   postFrame,
   readFrame,
+  viewWidth,
 } from '~/cms/lib/live-preview/frame-channel';
 import { LivePreviewHost } from '~/cms/lib/live-preview/host';
 import { ghostKeys, ghostOps, refBlockKey } from '~/cms/lib/live-preview/proposals';
@@ -193,7 +193,7 @@ function SiteFrame({
       }
       switch (m.type) {
         case 'view':
-          setWidth(frameWidth(m.width));
+          setWidth(viewWidth(m));
           setEditing(m.editing === true);
           setCanvas(m.canvas === true);
           if (Array.isArray(m.allowed)) h.setAllowed(m.allowed);

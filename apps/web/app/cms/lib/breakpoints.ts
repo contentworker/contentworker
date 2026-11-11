@@ -40,18 +40,28 @@ const DEVICE_PRESETS: readonly WidthPreset[] = [
 ];
 
 /**
- * The frame's width presets: with the catalog's breakpoints, Base at 390 (or just below the first
- * breakpoint, when that starts at 390 or under) then one per breakpoint at its `minWidth`, named
- * by its name (mobile-first, as they apply); without, Desktop, Tablet, Phone.
+ * The frame's widths with the catalog's breakpoints: Base at 390, or just below the first
+ * breakpoint when that starts at 390 or under, then one per breakpoint at its `minWidth`, named by
+ * its name (mobile-first, as they apply); without, Desktop, Tablet, Phone.
+ *
+ * A first breakpoint from 1px leaves no width for Base: every page is in it. Base stays a preset
+ * all the same, at 390, since the bare props are still the base a frontend that reads no
+ * breakpoints renders, and required; the page then shows the first breakpoint, and the Look tab
+ * says so (`baseInView`).
  */
 export function widthPresets(breakpoints: readonly Breakpoint[] | undefined): WidthPreset[] {
   const first = breakpoints?.[0];
   if (!breakpoints || !first) return [...DEVICE_PRESETS];
+  const base = baseInView(breakpoints) ? Math.min(BASE_WIDTH, first.minWidth - 1) : BASE_WIDTH;
   return [
-    { id: 'base', label: BASE_NAME, width: Math.max(1, Math.min(BASE_WIDTH, first.minWidth - 1)) },
+    { id: 'base', label: BASE_NAME, width: base },
     ...breakpoints.map((b) => ({ id: b.id, label: b.name, width: b.minWidth })),
   ];
 }
+
+/** Whether some page width shows Base: the first breakpoint starts above 1px. */
+export const baseInView = (breakpoints: readonly Breakpoint[]): boolean =>
+  (breakpoints[0]?.minWidth ?? Number.POSITIVE_INFINITY) > 1;
 
 /**
  * The preset a frame opens on: Base when the catalog declares breakpoints, so the first Look edit

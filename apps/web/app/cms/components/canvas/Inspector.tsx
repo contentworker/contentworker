@@ -49,6 +49,7 @@ import type { ActorDirectory } from '~/cms/lib/authorship';
 import { lockedLine, lockSays } from '~/cms/lib/block-locks';
 import {
   BASE_NAME,
+  baseInView,
   breakpointFor,
   overridesOf,
   valueAt,
@@ -292,8 +293,10 @@ export function Inspector(props: InspectorProps) {
                     </>
                   ) : (
                     <>
-                      Editing <b className="font-medium text-foreground">{BASE_NAME}</b>: every
-                      width shows it unless a breakpoint changes it.
+                      Editing <b className="font-medium text-foreground">{BASE_NAME}</b>
+                      {baseInView(breakpoints)
+                        ? ': every width shows it unless a breakpoint changes it.'
+                        : `: no width shows it, as ${breakpoints[0]?.name} starts at 1px. A frontend that reads no breakpoints shows it.`}
                     </>
                   )}
                 </p>

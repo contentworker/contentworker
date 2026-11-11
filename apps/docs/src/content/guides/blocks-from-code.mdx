@@ -201,7 +201,8 @@ isn't one of its prop's tokens served as `null`. An `update`
 ### Editing them in the admin
 
 On the canvas, the width control above the page offers **Base** (390px, or just under a first
-breakpoint that starts at 390 or below) and one width per
+breakpoint that starts at 390 or below; with a first breakpoint from 1px no width shows Base, but
+its preset still edits the bare props) and one width per
 breakpoint at its `minWidth`, named by its `name`; a catalog without breakpoints keeps Desktop,
 Tablet and Phone. With breakpoints the canvas always opens on Base, so its first edit sets the bare
 prop; choose a breakpoint's width to override it there. The width in view is the breakpoint the inspector's **Look** tab edits: at Base it
@@ -213,8 +214,10 @@ a breakpoint left with no overrides, or a block left with none, drops the key. L
 that carries overrides. The entry form shows a block's overrides read-only under its props, with a
 link to the canvas, and keeps them as they are when it saves.
 
-A canvas undo can reach back past a save (a block removed and saved, then put back). The save of
-that undo is judged against the version before as well, so the overrides the block brings back
+A canvas undo can reach back past a save (a block removed and saved, then put back). The canvas
+drops the overrides the content type no longer takes before it sends a save (reading the type again
+when the server refuses one it still held), as the save would drop them. Any client's save is also
+judged against the version before the stored one, so overrides an undo across one save brings back
 count as carried even when a push made them stale meanwhile.
 
 ### Stale overrides
