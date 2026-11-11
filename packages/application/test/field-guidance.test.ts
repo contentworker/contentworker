@@ -106,14 +106,14 @@ describe('guidance in snapshots', () => {
       fields: { title: { 'en-US': 'Flat' }, status: { 'en-US': 'open' } },
     });
 
-    const snapshot = JSON.parse(JSON.stringify(await exportSnapshot(ctx, source)));
-    await importSnapshot(ctx, target, snapshot);
+    const snapshot = JSON.parse(JSON.stringify(await exportSnapshot(ctx, SYSTEM_CALLER, source)));
+    await importSnapshot(ctx, SYSTEM_CALLER, target, snapshot);
     const imported = await getContentType(ctx, target, 'listing');
     expect(imported.fields).toEqual(GUIDED);
 
     const other = { spaceId: 's1', environmentId: 'other' };
     await createEnvironment(ctx, 's1', 'other');
-    await cloneEnvironment(ctx, source, other);
+    await cloneEnvironment(ctx, SYSTEM_CALLER, source, other);
     expect((await getContentType(ctx, other, 'listing')).fields).toEqual(GUIDED);
   });
 
@@ -123,7 +123,12 @@ describe('guidance in snapshots', () => {
       contentTypeApiId: 'listing',
       fields: { title: { 'en-US': 'Flat' }, tone: { 'en-US': 'calm' } },
     });
-    await importSnapshot(ctx, target, await exportSnapshot(ctx, source));
+    await importSnapshot(
+      ctx,
+      SYSTEM_CALLER,
+      target,
+      await exportSnapshot(ctx, SYSTEM_CALLER, source),
+    );
     const restored = await getContentType(ctx, target, 'listing');
     expect(restored.fields[1]?.validations?.in).toEqual(['calm', 'bold']);
   });
@@ -157,7 +162,12 @@ describe('importing legacy option lists', () => {
 
   it('succeeds end to end when entries hold a duplicate, a clashing or a blank-only option', async () => {
     await seedLegacyEntries({ tone: 'calm', code: '1', blank: '' });
-    const report = await importSnapshot(ctx, target, await exportSnapshot(ctx, source));
+    const report = await importSnapshot(
+      ctx,
+      SYSTEM_CALLER,
+      target,
+      await exportSnapshot(ctx, SYSTEM_CALLER, source),
+    );
     expect(report.entries).toBe(1);
     const fields = (await getContentType(ctx, target, 'listing')).fields;
     expect(fields.find((f) => f.apiId === 'tone')?.validations?.in).toEqual(['calm', 'bold']);
@@ -169,9 +179,12 @@ describe('importing legacy option lists', () => {
 
   it('refuses before writing anything when an entry holds an option that is dropped', async () => {
     await seedLegacyEntries({ mixed: '' });
-    const refused = await importSnapshot(ctx, target, await exportSnapshot(ctx, source)).catch(
-      (err: unknown) => err,
-    );
+    const refused = await importSnapshot(
+      ctx,
+      SYSTEM_CALLER,
+      target,
+      await exportSnapshot(ctx, SYSTEM_CALLER, source),
+    ).catch((err: unknown) => err);
     expect(JSON.stringify(refused)).toContain('Value must be one of: a');
     // Checked against the model that would be written, so the target stays empty and a retry works.
     expect(await store.contentTypes.list(target)).toEqual([]);

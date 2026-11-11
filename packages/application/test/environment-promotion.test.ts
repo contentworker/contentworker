@@ -850,7 +850,7 @@ describe('failing a promotion whose apply died partway', () => {
     };
     await expect(approvePromotion(ctx, grace, spaceId, p.id)).rejects.toThrow('evicted');
     store.promotions.transition = transition;
-    expect((await getPromotion(ctx, spaceId, p.id)).status).toBe('applying');
+    expect((await getPromotion(ctx, ada, spaceId, p.id)).status).toBe('applying');
     return { promotion: p, entryId: e.entry.id };
   }
 
@@ -859,11 +859,11 @@ describe('failing a promotion whose apply died partway', () => {
     // Not before the bound: an apply that is still running keeps it.
     clock.advance(PROMOTION_APPLY_TIMEOUT_MS - 1);
     expect(await failStalePromotions(ctx)).toEqual({ failed: 0 });
-    expect((await getPromotion(ctx, spaceId, promotion.id)).status).toBe('applying');
+    expect((await getPromotion(ctx, ada, spaceId, promotion.id)).status).toBe('applying');
 
     clock.advance(1);
     expect(await failStalePromotions(ctx)).toEqual({ failed: 1 });
-    const failed = await getPromotion(ctx, spaceId, promotion.id);
+    const failed = await getPromotion(ctx, ada, spaceId, promotion.id);
     expect(failed).toMatchObject({
       status: 'failed',
       decidedBy: 'grace',
@@ -891,7 +891,7 @@ describe('failing a promotion whose apply died partway', () => {
       return transition(...args);
     };
     expect(await failStalePromotions(ctx)).toEqual({ failed: 0 });
-    const done = await getPromotion(ctx, spaceId, promotion.id);
+    const done = await getPromotion(ctx, ada, spaceId, promotion.id);
     expect(done.status).toBe('completed');
     expect(done.error).toBeUndefined();
   });
@@ -928,7 +928,7 @@ describe('failing a promotion whose apply died partway', () => {
       else expect(await outcome).toMatchObject({ id: p.id, status: 'failed' });
       store.entries.create = create;
       store.promotions.transition = transition;
-      expect((await getPromotion(ctx, spaceId, p.id)).status).toBe('failed');
+      expect((await getPromotion(ctx, ada, spaceId, p.id)).status).toBe('failed');
       const audit = await store.audit.list(spaceId, { targetId: p.id });
       // The sweep's row only: no `promotion.completed`, and no second `promotion.failed`.
       expect(
@@ -953,8 +953,8 @@ describe('failing a promotion whose apply died partway', () => {
       });
     }
     expect(await failStalePromotions(ctx)).toEqual({ failed: 1 });
-    expect((await getPromotion(ctx, spaceId, promotion.id)).status).toBe('failed');
-    expect((await getPromotion(ctx, spaceId, 'young-0')).status).toBe('applying');
+    expect((await getPromotion(ctx, ada, spaceId, promotion.id)).status).toBe('failed');
+    expect((await getPromotion(ctx, ada, spaceId, 'young-0')).status).toBe('applying');
   });
 
   it('sweeps every space, and nothing that isn’t applying', async () => {
@@ -982,8 +982,8 @@ describe('failing a promotion whose apply died partway', () => {
     });
     clock.advance(PROMOTION_APPLY_TIMEOUT_MS);
     expect(await failStalePromotions(ctx)).toEqual({ failed: 2 });
-    expect((await getPromotion(ctx, other, 'elsewhere')).status).toBe('failed');
+    expect((await getPromotion(ctx, ada, other, 'elsewhere')).status).toBe('failed');
     // Waiting for a person is not stuck: it is never failed for its age.
-    expect((await getPromotion(ctx, spaceId, waiting.id)).status).toBe('awaiting_approval');
+    expect((await getPromotion(ctx, ada, spaceId, waiting.id)).status).toBe('awaiting_approval');
   });
 });

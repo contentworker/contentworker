@@ -129,6 +129,12 @@ export interface SpaceMember {
   readonly subject?: string;
   readonly roleId: string;
   readonly disabled: boolean;
+  /**
+   * 1 when added, one more at each save: the compare-and-set a save rides with, so a write from a
+   * stale read can't put back a role, a name or access someone has changed since (or the person
+   * back after they were removed). A client sends it as `expectedVersion`.
+   */
+  readonly version: number;
   readonly createdAt: string;
   readonly updatedAt: string;
 }

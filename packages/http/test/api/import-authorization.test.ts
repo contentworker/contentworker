@@ -232,6 +232,64 @@ describe('environment-wide operations as a role over HTTP', () => {
     }
   });
 
+  it('refuses each with the code and message the use-case throws', async () => {
+    const headers = await keyFor(scopes, NARROW);
+    const body = await snapshot();
+    const spaceExport = JSON.stringify({ payload: JSON.stringify(spaceExportFixture()) });
+    const everyType = (actions: string) =>
+      `Missing required scope "content:${actions}:* (on every content type, every field)"`;
+    const calls: [string, RequestInit, string][] = [
+      [`${M}/export`, { headers }, everyType('read')],
+      [
+        `${EMPTY}/import?dryRun=true`,
+        { method: 'POST', headers, body },
+        everyType('write+publish'),
+      ],
+      [
+        `${M}/clone`,
+        { method: 'POST', headers, body: JSON.stringify({ targetEnvironmentId: 'empty' }) },
+        everyType('read+write+publish'),
+      ],
+      [
+        `${M}/clone`,
+        {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ targetSpaceId: 's2', targetEnvironmentId: 'main' }),
+        },
+        'Missing required scope "content:manage"',
+      ],
+      [
+        `${EMPTY}/imports/space-export/analyze`,
+        { method: 'POST', headers, body: spaceExport },
+        everyType('write+publish'),
+      ],
+      [
+        `${EMPTY}/imports/space-export/analyze`,
+        {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ payload: '{}', addLocales: true }),
+        },
+        'Missing required scope "space:admin"',
+      ],
+    ];
+    for (const [url, init, message] of calls) {
+      const res = await app.request(url, init);
+      expect(res.status, url).toBe(403);
+      expect(await res.json(), url).toMatchObject({ error: { code: 'forbidden', message } });
+    }
+    const merge = await app.request('/spaces/s1/merge', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ source: 'main', target: 'empty', entries: ['x'] }),
+    });
+    expect(merge.status).toBe(403);
+    expect(await merge.json()).toMatchObject({
+      error: { code: 'forbidden', message: everyType('read+write') },
+    });
+  });
+
   it('asks for publish only when the import publishes', async () => {
     const headers = await keyFor(scopes, [{ contentTypeApiId: '*', actions: ['read', 'write'] }]);
     const body = await snapshot();

@@ -442,7 +442,7 @@ describe('locked regions', () => {
     });
 
     it('carries the locks to a clone of the environment', async () => {
-      await cloneEnvironment(ctx, scope, staging);
+      await cloneEnvironment(ctx, SYSTEM_CALLER, scope, staging);
       const cloned = await store.entries.get(staging, id);
       expect(cloned?.entry.blockLocks).toEqual(
         (await store.entries.get(scope, id))?.entry.blockLocks,

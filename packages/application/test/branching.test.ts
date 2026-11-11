@@ -93,7 +93,7 @@ describe('branch compare/merge', () => {
       fields: { title: { 'en-US': 'Hello' } },
     });
 
-    const result = await mergeEnvironments(ctx, 'shop', 'staging', 'main', {
+    const result = await mergeEnvironments(ctx, SYSTEM_CALLER, 'shop', 'staging', 'main', {
       contentTypes: ['article'],
       entries: [a.entry.id],
     });
@@ -130,7 +130,9 @@ describe('branch compare/merge', () => {
       { entryId: a.entry.id, version: 1, fields: { title: { 'en-US': 'v2' } } },
     );
 
-    await mergeEnvironments(ctx, 'shop', 'staging', 'main', { entries: [a.entry.id] });
+    await mergeEnvironments(ctx, SYSTEM_CALLER, 'shop', 'staging', 'main', {
+      entries: [a.entry.id],
+    });
     const merged = await getEntry(ctx, main, a.entry.id);
     expect(merged.fields).toEqual({ title: { 'en-US': 'v2' } });
     expect(merged.entry.currentVersion).toBe(2); // a new version was appended
@@ -143,7 +145,7 @@ describe('branch compare/merge', () => {
       fields: { title: { 'en-US': 'Hello' } },
     });
     await expect(
-      mergeEnvironments(ctx, 'shop', 'staging', 'main', { entries: [a.entry.id] }),
+      mergeEnvironments(ctx, SYSTEM_CALLER, 'shop', 'staging', 'main', { entries: [a.entry.id] }),
     ).rejects.toBeInstanceOf(NotFoundError);
   });
 });

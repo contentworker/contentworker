@@ -1,11 +1,6 @@
 import { analyzeSpaceExport, startSpaceExportImport } from '@contentworker/application';
-import {
-  authorize,
-  authorizeEveryContentType,
-  SCOPES,
-  ValidationError,
-} from '@contentworker/domain';
-import { type Context, Hono } from 'hono';
+import { SCOPES, ValidationError } from '@contentworker/domain';
+import { Hono } from 'hono';
 import { type AuthDeps, type AuthVars, requireScope } from '../../auth';
 import { doc } from '../../docs/openapi';
 import { parseBody, spaceExportImportBody } from '../../validation';
@@ -18,24 +13,14 @@ export function spaceExportRoutes(deps: AuthDeps): Hono<AuthVars> {
   // --- importing a whole space from the JSON space export format -------------
   // Environment-wide, like a snapshot import (it writes the content model), so the same scope.
   // Analyze reports; the second call writes the model and runs the rest as jobs.
-  const spaceExport = (
-    c: Context<AuthVars>,
-    body: { payload: string; publish?: boolean; addLocales?: boolean },
-  ) => {
+  const spaceExport = (body: { payload: string; publish?: boolean; addLocales?: boolean }) => {
     if (!deps.spaceExportReader) {
       throw new ValidationError([
         { field: 'payload', message: 'This deployment cannot read space exports' },
       ]);
     }
-    // Adding locales changes the space for every environment: a space admin's call.
-    if (body.addLocales)
-      authorize(c.get('principal'), SCOPES.spaceAdmin, c.req.param('space') as string);
-    // It writes (and publishes) entries of every type the export defines: a role limited to some
-    // types or fields is refused, at analyze too, which stands in for the import.
-    authorizeEveryContentType(
-      c.get('principal'),
-      body.publish !== false ? ['write', 'publish'] : ['write'],
-    );
+    // `space:admin` for `addLocales` and the import's actions on every content type are the
+    // use-case's to check, at analyze too.
     return {
       reader: deps.spaceExportReader,
       input: {
@@ -58,8 +43,8 @@ export function spaceExportRoutes(deps: AuthDeps): Hono<AuthVars> {
     }),
     requireScope(SCOPES.contentManage),
     async (c) => {
-      const { reader, input } = spaceExport(c, await parseBody(c, spaceExportImportBody));
-      return c.json(await analyzeSpaceExport(ctx, scopeOf(c), reader, input));
+      const { reader, input } = spaceExport(await parseBody(c, spaceExportImportBody));
+      return c.json(await analyzeSpaceExport(ctx, c.get('principal'), scopeOf(c), reader, input));
     },
   );
   app.post(
@@ -77,7 +62,7 @@ export function spaceExportRoutes(deps: AuthDeps): Hono<AuthVars> {
     }),
     requireScope(SCOPES.contentManage),
     async (c) => {
-      const { reader, input } = spaceExport(c, await parseBody(c, spaceExportImportBody));
+      const { reader, input } = spaceExport(await parseBody(c, spaceExportImportBody));
       if (!blob) {
         throw new ValidationError([
           {
@@ -87,7 +72,14 @@ export function spaceExportRoutes(deps: AuthDeps): Hono<AuthVars> {
         ]);
       }
       return c.json(
-        await startSpaceExportImport(actingCtx(ctx, c), blob, scopeOf(c), reader, input),
+        await startSpaceExportImport(
+          actingCtx(ctx, c),
+          c.get('principal'),
+          blob,
+          scopeOf(c),
+          reader,
+          input,
+        ),
         202,
       );
     },

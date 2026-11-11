@@ -117,9 +117,13 @@ a block type or change a field's type, the blocks editors may place, or their co
 would change, or the AI risk check suggests a review. Then it waits as `awaiting_approval`, with
 the reasons, until someone else approves (`POST …/promotions/:id/approve`) or rejects it. Deciding
 takes a person (in the admin, or with their own token), not an API key or an assistant acting for
-you. An entry a workflow **gates publishing** for in the target arrives as a draft, and that
-workflow publishes it. If a content type changes in the source while a promotion waits, or the
-block catalog or config changes in either environment, approving it fails, so request a new one.
+you. Requesting and deciding both take a role with `read`, `write` and `publish` on every content
+type and no field rules, since a promotion copies entries whole. Requesting or approving one that
+carries entries takes `lock` too, since they replace the target's locked regions (the Manager
+preset qualifies, the Editor preset doesn't). A role limited per type sees only the promotions whose every type it can read.
+An entry a workflow **gates publishing** for in the target arrives as a draft, and that workflow
+publishes it. If a content type changes in the source while a promotion waits, or the block
+catalog or config changes in either environment, approving it fails, so request a new one.
 A promotion that fails partway keeps what it already wrote. One whose apply stopped without
 finishing (the request cut off) is marked `failed` an hour after it started applying; compare the
 environments and request a new one for the rest.

@@ -452,6 +452,12 @@ a deploy and after a rollback. A `detail` that isn't valid JSON indexes only its
 failing the append. The migration backfills the rows already written. Nothing deletes from it, as
 nothing deletes audit history; deleting an environment leaves it.
 
+`0042_member_versions.sql` adds `space_members.version` (integer, default 1, not null), so every
+existing person reads as version 1. Each save writes the next version while the row is at the one
+before, and never inserts past version 1, so a change read before a removal can't bring the row
+back; a removal deletes only the version it read. Code deployed before it never names the column:
+its upsert keeps the version a row has, and a person it adds starts at 1.
+
 `0041_role_versions.sql` adds `roles.version` (integer, default 1, not null), so every existing
 role reads as version 1. Each save writes the next version while the row is at the one before (the
 compare-and-set `PUT /spaces/:space/roles/:id` rides with, and its optional `expectedVersion` is

@@ -155,7 +155,13 @@ beforeEach(async () => {
 describe('importing an environment as a job', () => {
   it('writes the model at once, then creates everything, then publishes as the source had it', async () => {
     const ids = await seedSource();
-    const started = await startSnapshotImport(ctx, blob, target, await exportSnapshot(ctx, source));
+    const started = await startSnapshotImport(
+      ctx,
+      SYSTEM_CALLER,
+      blob,
+      target,
+      await exportSnapshot(ctx, SYSTEM_CALLER, source),
+    );
 
     expect(started.report).toMatchObject({ entries: COUNT, published: COUNT, contentTypes: 1 });
     const job = started.job;
@@ -202,11 +208,11 @@ describe('importing an environment as a job', () => {
 
   it('refuses a bad snapshot before writing anything, as the synchronous import does', async () => {
     await seedSource();
-    const snapshot = await exportSnapshot(ctx, source);
+    const snapshot = await exportSnapshot(ctx, SYSTEM_CALLER, source);
     const broken = { ...snapshot, contentTypes: [] };
-    await expect(startSnapshotImport(ctx, blob, target, broken)).rejects.toBeInstanceOf(
-      ValidationError,
-    );
+    await expect(
+      startSnapshotImport(ctx, SYSTEM_CALLER, blob, target, broken),
+    ).rejects.toBeInstanceOf(ValidationError);
     expect(await store.contentTypes.list(target)).toEqual([]);
     expect(blob.keys()).toEqual([]);
   });
@@ -215,9 +221,10 @@ describe('importing an environment as a job', () => {
     const ids = await seedSource();
     const started = await startSnapshotImport(
       ctx,
+      SYSTEM_CALLER,
       blob,
       target,
-      await exportSnapshot(ctx, source),
+      await exportSnapshot(ctx, SYSTEM_CALLER, source),
       { publish: false },
     );
     expect(started.publishJobId).toBeNull();
@@ -228,7 +235,13 @@ describe('importing an environment as a job', () => {
 
   it('never starts publishing when the create job is cancelled', async () => {
     await seedSource();
-    const started = await startSnapshotImport(ctx, blob, target, await exportSnapshot(ctx, source));
+    const started = await startSnapshotImport(
+      ctx,
+      SYSTEM_CALLER,
+      blob,
+      target,
+      await exportSnapshot(ctx, SYSTEM_CALLER, source),
+    );
     const job = started.job;
     if (!job) throw new Error('expected a job');
     await cancelBulkJob(ctx, target, job.id);
@@ -237,8 +250,8 @@ describe('importing an environment as a job', () => {
   });
 
   it('answers at once with no job for a snapshot with no entries or assets', async () => {
-    const snapshot = await exportSnapshot(ctx, source);
-    const started = await startSnapshotImport(ctx, blob, target, snapshot);
+    const snapshot = await exportSnapshot(ctx, SYSTEM_CALLER, source);
+    const started = await startSnapshotImport(ctx, SYSTEM_CALLER, blob, target, snapshot);
     expect(started).toMatchObject({ job: null, publishJobId: null });
   });
 });
@@ -246,10 +259,10 @@ describe('importing an environment as a job', () => {
 describe('a snapshot chunk run again after it committed', () => {
   it('neither duplicates entries nor makes a changed entry’s draft live', async () => {
     const ids = await seedSource();
-    const snapshot = await exportSnapshot(ctx, source);
+    const snapshot = await exportSnapshot(ctx, SYSTEM_CALLER, source);
     const changed = snapshot.entries.find((e) => e.id === ids[1]);
     if (!changed) throw new Error('fixture');
-    await startSnapshotImport(ctx, blob, target, { ...snapshot, entries: [] });
+    await startSnapshotImport(ctx, SYSTEM_CALLER, blob, target, { ...snapshot, entries: [] });
     const staged = stagedEntry(changed, new Map(), true);
     // Its link targets, so publishing can resolve them.
     for (const e of snapshot.entries) {
@@ -275,7 +288,13 @@ describe('a snapshot chunk run again after it committed', () => {
 describe('when the create job does not finish cleanly', () => {
   it('counts a chunk that fails for good as failures, and never starts publishing', async () => {
     await seedSource();
-    const started = await startSnapshotImport(ctx, blob, target, await exportSnapshot(ctx, source));
+    const started = await startSnapshotImport(
+      ctx,
+      SYSTEM_CALLER,
+      blob,
+      target,
+      await exportSnapshot(ctx, SYSTEM_CALLER, source),
+    );
     const job = started.job;
     if (!job) throw new Error('expected a job');
     const first = (await store.outbox.readPending(10_000)).find(
@@ -306,7 +325,13 @@ describe('when the create job does not finish cleanly', () => {
 
   it('discards everything staged when the create job is cancelled', async () => {
     await seedSource();
-    const started = await startSnapshotImport(ctx, blob, target, await exportSnapshot(ctx, source));
+    const started = await startSnapshotImport(
+      ctx,
+      SYSTEM_CALLER,
+      blob,
+      target,
+      await exportSnapshot(ctx, SYSTEM_CALLER, source),
+    );
     expect(blob.keys().filter((k) => k.startsWith('imports/')).length).toBeGreaterThan(0);
     await cancelBulkJob(ctx, target, started.job?.id as string, { blob });
     expect(blob.keys().filter((k) => k.startsWith('imports/'))).toEqual([]);
@@ -320,10 +345,22 @@ describe('when the create job does not finish cleanly', () => {
       },
     }) as FakeBlobStore;
     await expect(
-      startSnapshotImport(ctx, failing, target, await exportSnapshot(ctx, source)),
+      startSnapshotImport(
+        ctx,
+        SYSTEM_CALLER,
+        failing,
+        target,
+        await exportSnapshot(ctx, SYSTEM_CALLER, source),
+      ),
     ).rejects.toThrow(/R2/);
     expect(await store.contentTypes.list(target)).toEqual([]);
-    const retried = await startSnapshotImport(ctx, blob, target, await exportSnapshot(ctx, source));
+    const retried = await startSnapshotImport(
+      ctx,
+      SYSTEM_CALLER,
+      blob,
+      target,
+      await exportSnapshot(ctx, SYSTEM_CALLER, source),
+    );
     expect(retried.job?.status).toBe('running');
   });
 });
@@ -331,7 +368,7 @@ describe('when the create job does not finish cleanly', () => {
 describe('cloning an environment', () => {
   it('runs the export and every check in a job, then the create and publish jobs', async () => {
     const ids = await seedSource();
-    const started = await startEnvironmentClone(ctx, source, target);
+    const started = await startEnvironmentClone(ctx, SYSTEM_CALLER, source, target);
     expect(started.job).toMatchObject({ action: 'import', status: 'running', totalItems: 1 });
     // Nothing is exported, checked or written in the request.
     expect(await store.contentTypes.list(target)).toEqual([]);
@@ -358,7 +395,7 @@ describe('cloning an environment', () => {
     // An entry the source's own model now refuses (its type removed from the snapshot's view).
     const list = store.contentTypes.list.bind(store.contentTypes);
     store.contentTypes.list = async (scope) => (scope.environmentId === 'main' ? [] : list(scope));
-    const started = await startEnvironmentClone(ctx, source, target);
+    const started = await startEnvironmentClone(ctx, SYSTEM_CALLER, source, target);
     await drain();
     const report = await getBulkJobReport(ctx, target, started.job.id);
     expect(report.job).toMatchObject({ status: 'completed', succeeded: 0, failed: 1 });
@@ -369,7 +406,7 @@ describe('cloning an environment', () => {
 
   it('does nothing when its prepare chunk runs again after starting the create job', async () => {
     await seedSource();
-    const started = await startEnvironmentClone(ctx, source, target);
+    const started = await startEnvironmentClone(ctx, SYSTEM_CALLER, source, target);
     const runner = importChunkRunner(ctx, blob);
     const job = await getBulkJob(ctx, target, started.job.id);
     const chunk = (await store.bulkJobs.listChunks(target, job.id))[0];
@@ -382,9 +419,9 @@ describe('cloning an environment', () => {
   it('refuses at once a target that is missing or not empty', async () => {
     await seedSource();
     await expect(
-      startEnvironmentClone(ctx, source, { spaceId: 's1', environmentId: 'nope' }),
+      startEnvironmentClone(ctx, SYSTEM_CALLER, source, { spaceId: 's1', environmentId: 'nope' }),
     ).rejects.toBeInstanceOf(NotFoundError);
-    await expect(startEnvironmentClone(ctx, source, source)).rejects.toBeInstanceOf(
+    await expect(startEnvironmentClone(ctx, SYSTEM_CALLER, source, source)).rejects.toBeInstanceOf(
       ValidationError,
     );
   });
