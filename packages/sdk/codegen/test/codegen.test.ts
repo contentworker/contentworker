@@ -307,7 +307,9 @@ describe('@contentworker/sdk-codegen generator', () => {
     expect(edge).toContain('export type ContentType2Fields = {');
   });
 
-  it('produces source that compiles clean and satisfies the SDK generics', { timeout: TSC_TIMEOUT }, async () => {
+  it('produces source that compiles clean and satisfies the SDK generics', {
+    timeout: TSC_TIMEOUT,
+  }, async () => {
     // The appended usage block proves generated shapes plug into the SDKs'
     // `F extends Record<string, unknown>` constraint (interfaces would not).
     const source = `${generateTypes([...MODEL, ...EDGE])}
@@ -762,7 +764,9 @@ describe('@contentworker/sdk-codegen per-breakpoint overrides', () => {
     "readonly lg?: { readonly size?: 'sm' | 'md' | 'xl'; readonly hidden?: boolean } };";
   const strict = { strict: true, target: 'es2022', module: 'esnext' };
 
-  it('types _responsive on a block with responsive props, and exports breakpoints', { timeout: TSC_TIMEOUT }, async () => {
+  it('types _responsive on a block with responsive props, and exports breakpoints', {
+    timeout: TSC_TIMEOUT,
+  }, async () => {
     const source = generateTypes([], {
       blockCatalog: {
         blocks: [hero, { id: 'quote', fields: [{ apiId: 'text', type: 'Text' }] }],
