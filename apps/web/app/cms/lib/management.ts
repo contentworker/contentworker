@@ -1407,6 +1407,8 @@ export function assetUsageOf(err: unknown): AssetInUse | null {
 
 /** What the asset library can be narrowed and ordered by (the API's `GET …/assets` query). */
 export interface AssetListQuery {
+  /** Only these assets, at most 100: one lookup for many ids (those not in the space are absent). */
+  readonly ids?: readonly string[];
   readonly kind?: AssetKind;
   /** Exact (`image/png`) or a family (`image/*`). */
   readonly mime?: string;
@@ -1512,9 +1514,9 @@ export type AssetZipInput = (
 export class UploadPartError extends ApiError {}
 
 /**
- * A signed upload URL as the admin PUTs it: a `/media/…` URL (absolute on the api's host in a
- * deployment, `MEDIA_BASE_URL`) becomes its same-origin path, which the web Worker's gateway
- * forwards to the api. The api sends no CORS headers, so a cross-origin PUT's ETag couldn't be
+ * A signed upload URL as the admin PUTs it (or a read URL as it draws one, `sameOriginImage`): a
+ * `/media/…` URL (absolute on the api's host in a deployment, `MEDIA_BASE_URL`) becomes its
+ * same-origin path, which the web Worker's gateway forwards to the api. The api sends no CORS headers, so a cross-origin PUT's ETag couldn't be
  * read; the signature covers the path and query, not the host, so the two are the same request.
  * Any other URL (a video host's) is left alone.
  */
@@ -1527,7 +1529,8 @@ export function sameOriginUpload(url: string): string {
 export function assetQueryParams(query: AssetListQuery | AssetSearchQuery): URLSearchParams {
   const params = new URLSearchParams();
   for (const [k, v] of Object.entries(query)) {
-    if (v !== undefined && v !== '') params.set(k, String(v));
+    if (v === undefined || v === '') continue;
+    params.set(k, Array.isArray(v) ? v.join(',') : String(v));
   }
   return params;
 }

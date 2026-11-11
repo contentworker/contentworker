@@ -21,10 +21,30 @@ function oneOf<T extends string>(
   throw new ValidationError([{ field, message: `${field} must be one of ${allowed.join(', ')}` }]);
 }
 
+/** The most ids one asset listing looks up: a page's worth, so the default page holds them all. */
+export const MAX_ASSET_IDS = MAX_PAGE_LIMIT;
+
+/** `ids=a,b,c`: distinct asset ids, each 1 to 64 characters with no spaces. */
+function assetIds(raw: string | undefined): string[] | undefined {
+  if (raw === undefined || raw === '') return undefined;
+  const ids = [...new Set(raw.split(','))];
+  if (ids.length > MAX_ASSET_IDS) {
+    throw new ValidationError([
+      { field: 'ids', message: `ids names at most ${MAX_ASSET_IDS} assets` },
+    ]);
+  }
+  if (ids.some((id) => id === '' || id.length > 64 || /\s/.test(id))) {
+    throw new ValidationError([
+      { field: 'ids', message: 'ids is a comma-separated list of asset ids' },
+    ]);
+  }
+  return ids;
+}
+
 /**
- * The asset library's query string: `kind`, `mime` (`image/png` or `image/*`), `tag`, `folder`
- * (an id, or `root` for assets in no folder), `status` (`all` includes archived), `sort` and
- * `order`, `limit` and `cursor`.
+ * The asset library's query string: `ids` (comma-separated, at most 100), `kind`, `mime`
+ * (`image/png` or `image/*`), `tag`, `folder` (an id, or `root` for assets in no folder), `status`
+ * (`all` includes archived), `sort` and `order`, `limit` and `cursor`.
  */
 export function parseAssetListQuery(q: Record<string, string | undefined>): AssetListQuery {
   const kind = oneOf('kind', q.kind, ASSET_KINDS);
@@ -33,10 +53,12 @@ export function parseAssetListQuery(q: Record<string, string | undefined>): Asse
   const direction = oneOf('order', q.order, ['asc', 'desc'] as const);
   const limit = clampCount(q.limit, MAX_PAGE_LIMIT, { min: 1 });
   const folder = q.folder === undefined || q.folder === '' ? undefined : q.folder;
+  const ids = assetIds(q.ids);
   return {
     ...(limit !== undefined ? { limit } : {}),
     ...(q.cursor ? { cursor: q.cursor } : {}),
     filters: {
+      ...(ids ? { ids } : {}),
       ...(kind ? { kind } : {}),
       ...(q.mime ? { mime: q.mime.slice(0, 256) } : {}),
       ...(q.tag ? { tag: q.tag.slice(0, 128) } : {}),

@@ -598,7 +598,7 @@ cma.entries.versions.restore(id, v, { expectedVersion? })
 cma.imports.sources() / .analyze(input) / .run(input) / .start(input)   // start = durable job
 
 // Assets: reading
-cma.assets.list(query?) → AssetPage                   // { kind, mime, tag, folder, status, sort, order, limit, cursor }
+cma.assets.list(query?) → AssetPage                   // { ids, kind, mime, tag, folder, status, sort, order, limit, cursor }
 cma.assets.iterate(query?) → AsyncGenerator<Asset>    // follows nextCursor as the loop reads
 cma.assets.get(id) / .search({ q, kind?, tag?, folder?, status?, limit? }) / .usage(id) → AssetLink[]
 cma.assets.versions(id) → AssetVersion[]              // newest first, file.url signed

@@ -900,7 +900,7 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   caption (an h3 naming its list): its name and mono id, its props (a token prop shows its
   choices), each slot and the blocks it takes, where it may go, its former ids, and an Entries
   figure ("at least" when the count stopped short). No catalog yet is `Empty` with a minimal
-  `contentworker.blocks.json` in a `CodeBlock` and the dry-run command, both to copy. Thumbnails aren't drawn: the admin's `img-src` takes no other origin.
+  `contentworker.blocks.json` in a `CodeBlock` and the dry-run command, both to copy. A block whose manifest names an asset thumbnail (`{ assetId }`) leads its row with that picture in place of the `Boxes` tile (40px square, `rounded-lg`, edged as the tile is, `alt=""`); a `{ url }` thumbnail isn't drawn (the admin's `img-src` takes no other origin), and a missing asset or a failed load is the tile.
 
 ## Screens that change shape
 
@@ -935,7 +935,10 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   Choosing a seam (a click, a tap, or `/` after the selected block) marks it with a solid brand
   insertion line (brand is what you chose; it goes when the dock closes or the block is in) and
   opens the **dock**: one compact row along the bottom edge, at most 160px tall, of block cards
-  (name and one line of description, no thumbnails: `img-src`) under the catalog's group captions,
+  (name and one line of description, led by the block's asset thumbnail when it names one: a 4:3
+  picture at the card's inner height, `rounded-lg`, `alt=""`; never a `{ url }` one, which
+  `img-src` refuses, and never a broken image; while any block draws one, a card without one
+  holds its place with a `muted` tile so the names line up) under the catalog's group captions,
   scrolling sideways; ← → move across the cards, one tab stop for the row. When the dock would
   cover the chosen seam, the page brings the block beside it to the middle of its view (`scroll`).
   A full slot says so and offers nothing. The block config narrows what the dock offers; a slot
@@ -953,7 +956,9 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   shift-click or Shift with ↑ ↓ in Layers takes neighbours in one slot into the run), and
   **Unlock** on a locked block. A lock waits for unsaved block changes, saying why; a refused one
   is said under the button in plain words; stale locks are listed under the Checks with Clear.
-  The entry form's block cards carry the same lock line. With Coworker on, a dock that offers
+  The entry form's block cards carry the same lock line, and its Add block menu leads each item
+  with the block's asset thumbnail as the dock does (4:3, 24px tall, `rounded-md`, a `muted`
+  place held for one without while any has one). With Coworker on, a dock that offers
   blocks also offers **Ask Coworker to fill this** in its header (a ghost `xs` button led by the
   mark in `ai`; held, with a muted line saying why, while the canvas has unsaved edits or another
   proposal waits or saves); never at a full or locked place. Asked from the dock's sheet (below lg), focus stays in Coworker's prompt. Coworker's proposal comes back as a card in the

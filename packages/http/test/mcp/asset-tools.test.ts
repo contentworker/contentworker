@@ -107,6 +107,30 @@ describe('asset library tools (MCP), on the same use-cases as the HTTP routes', 
     expect(next.nextCursor).toBeUndefined();
   });
 
+  it('looks up assets by ids as GET …/assets?ids= does, refusing more than 100', async () => {
+    const { deps, add } = await setup();
+    const png = await add('a.png', 'image/png');
+    const pdf = await add('b.pdf', 'application/pdf');
+    await add('c.png', 'image/png');
+    const client = await connect(deps, reader);
+    const list = async (args: Record<string, unknown>) =>
+      payload(
+        await client.callTool({ name: 'assets_list', arguments: { ...args, space: SPACE } }),
+      ) as { items: { id: string }[] };
+
+    expect(
+      (await list({ ids: [png.id, pdf.id, 'missing'] })).items.map((a) => a.id).sort(),
+    ).toEqual([png.id, pdf.id].sort());
+    expect((await list({ ids: [png.id, pdf.id], kind: 'image' })).items.map((a) => a.id)).toEqual([
+      png.id,
+    ]);
+    const tooMany = await client.callTool({
+      name: 'assets_list',
+      arguments: { ids: Array.from({ length: 101 }, (_, i) => `x${i}`), space: SPACE },
+    });
+    expect(tooMany.isError).toBe(true);
+  });
+
   it('manages folders and moves assets into them', async () => {
     const { deps, add } = await setup();
     const a = await add('a.png', 'image/png');

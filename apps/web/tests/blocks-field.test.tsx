@@ -89,6 +89,42 @@ async function addBlock(name: string) {
 }
 
 describe('editing a blocks field', () => {
+  it('shows a block’s asset thumbnail in the Add block menu, keeping its name as the item’s', async () => {
+    const onSave = vi.fn();
+    render(
+      <EntryForm
+        contentType={PAGE}
+        initial={{}}
+        locales={['en-US']}
+        defaultLocale="en-US"
+        pickers={{ entries: [], assets: [] }}
+        blockThumbnails={{
+          of: (id) => (id === 'hero' ? '/media/hero.png?sig=1' : undefined),
+          any: true,
+        }}
+        onSave={onSave}
+        onCancel={() => {}}
+      />,
+    );
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Add block to Body' }), {
+      button: 0,
+      ctrlKey: false,
+    });
+    const hero = await screen.findByRole('menuitem', { name: 'Hero' });
+    const pic = hero.querySelector('img');
+    expect(pic?.getAttribute('src')).toBe('/media/hero.png?sig=1');
+    expect(pic?.getAttribute('alt')).toBe('');
+    // An item without one holds its place, so the names line up.
+    const cta = screen.getByRole('menuitem', { name: 'Call to action' });
+    expect(cta.querySelector('img')).toBeNull();
+    expect(cta.querySelector('span[aria-hidden="true"]')).toBeTruthy();
+    // A picture that fails to load leaves the name alone.
+    if (pic) fireEvent.error(pic);
+    expect(hero.querySelector('img')).toBeNull();
+    fireEvent.click(hero);
+    expect(screen.getByLabelText(/^Heading/)).toBeTruthy();
+  });
+
   it('says when there are no blocks yet', () => {
     renderForm(PAGE);
     expect(screen.getByText('No blocks yet.')).toBeTruthy();

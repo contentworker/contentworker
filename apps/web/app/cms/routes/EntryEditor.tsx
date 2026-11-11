@@ -66,6 +66,7 @@ import {
 } from '../lib/assistant';
 import { regionRefusal } from '../lib/block-locks';
 import { configRefusal, rulesOver } from '../lib/block-rules';
+import { useBlockThumbnails } from '../lib/block-thumbnails';
 import { canvasAvailable } from '../lib/canvas/model';
 import { useClient } from '../lib/client-context';
 import { dateTime, toMs } from '../lib/format';
@@ -242,6 +243,8 @@ export function EntryEditor() {
     () => client.getEffectiveBlockRules(),
     { silent: true, enabled: hasBlocks, staleTime: 0 },
   ).data;
+  // The catalog's asset thumbnails, read in one lookup, for the Add block menus.
+  const blockThumbnails = useBlockThumbnails(blockCatalog);
   // A new entry has nothing stored: nothing is locked until its first save.
   const storedFields = isEdit ? (baseFields ?? undefined) : undefined;
   const formBlockRules = useMemo(
@@ -896,6 +899,7 @@ export function EntryEditor() {
               mergePatch={patchState.patch}
               onValuesChange={onValuesChange}
               blockRules={formBlockRules}
+              blockThumbnails={blockThumbnails}
               blockLocks={blockLocks.data?.locks}
               directory={directory}
               serverIssues={refused}

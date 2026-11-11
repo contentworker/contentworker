@@ -25,9 +25,11 @@ import { Boxes } from 'lucide-react';
 import { useEffect, useId, useMemo, useState } from 'react';
 import { Ago } from '~/cms/components/ago';
 import { BlockRules } from '~/cms/components/BlockRules';
+import { BlockThumbnail } from '~/cms/components/BlockThumbnail';
 import { Empty, PageHeader, Section } from '~/cms/components/page';
 import { actorLabel } from '~/cms/lib/authorship';
 import type { Place } from '~/cms/lib/block-config-draft';
+import { useBlockThumbnails } from '~/cms/lib/block-thumbnails';
 import { count, plural } from '~/cms/lib/format';
 import type { BlockCatalogUsage, TeamPerson } from '~/cms/lib/management';
 import { useClient } from '../lib/client-context';
@@ -103,6 +105,7 @@ export function Blocks() {
   const { client } = useClient();
   const catalogQuery = useScopedQuery(['block-catalog'], () => client.getBlockCatalog());
   const catalog = catalogQuery.data;
+  const thumbnails = useBlockThumbnails(catalog);
   // Counted only once there is a catalog; a failure shows in each row's figure, not a toast.
   const usageQuery = useScopedQuery(['block-catalog', 'usage'], () => client.getBlockUsage(), {
     enabled: !!catalog,
@@ -318,6 +321,7 @@ export function Blocks() {
                           <BlockRow
                             key={b.id}
                             block={b}
+                            thumbnail={thumbnails.of(b.id)}
                             blockName={blockName}
                             typeName={typeName}
                             usage={usageQuery.data}
@@ -355,12 +359,15 @@ function slotBounds(min?: number, max?: number): string {
 
 function BlockRow({
   block,
+  thumbnail,
   blockName,
   typeName,
   usage,
   usageFailed,
 }: {
   block: BlockManifest;
+  /** Its `{ assetId }` thumbnail's URL; without one (or when it fails), the block's icon tile. */
+  thumbnail: string | undefined;
   blockName: (id: string) => string;
   typeName: (apiId: string) => string;
   usage: BlockCatalogUsage | undefined;
@@ -375,9 +382,15 @@ function BlockRow({
   return (
     <CatalogRow
       media={
-        <CatalogTile>
-          <Boxes aria-hidden="true" />
-        </CatalogTile>
+        <BlockThumbnail
+          src={thumbnail}
+          className="size-10 rounded-lg border"
+          fallback={
+            <CatalogTile>
+              <Boxes aria-hidden="true" />
+            </CatalogTile>
+          }
+        />
       }
       title={
         <span className="flex flex-wrap items-baseline gap-x-2">

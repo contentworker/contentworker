@@ -74,7 +74,9 @@ import {
   storedSlots,
   wasStored,
 } from '../lib/block-rules';
+import { type BlockThumbnails, NO_THUMBNAILS } from '../lib/block-thumbnails';
 import type { AppExtension, EntryBlockLock, TextDirection } from '../lib/management';
+import { BlockThumbnail } from './BlockThumbnail';
 import { EntityPicker } from './EntityPicker';
 import { ExtensionFrame } from './ExtensionFrame';
 import { RichTextEditor } from './RichTextEditor';
@@ -143,6 +145,9 @@ interface FormLocks {
   readonly directory?: ActorDirectory;
 }
 const BlockLocksContext = createContext<FormLocks | undefined>(undefined);
+
+/** The catalog's block thumbnails (`useBlockThumbnails`), for the Add block menus. */
+const BlockThumbnailContext = createContext<BlockThumbnails>(NO_THUMBNAILS);
 
 /** Per-field, per-locale working state: `{ apiId: { locale: value } }`. */
 type Values = Record<string, Record<string, unknown>>;
@@ -454,6 +459,11 @@ export function EntryForm(props: {
     readonly catalog: BlockCatalog | null | undefined;
     readonly stored: EntryFields | undefined;
   };
+  /**
+   * The catalog's block thumbnails, for blocks whose manifest names an asset
+   * (`useBlockThumbnails`): the Add block menu shows each beside the block's name.
+   */
+  blockThumbnails?: BlockThumbnails;
   /**
    * Issues the server refused a save for (the block config's, set since the form read it), shown
    * on the fields they name, as the form's own are, whenever `seq` changes.
@@ -977,138 +987,141 @@ export function EntryForm(props: {
     <form id={props.formId} onSubmit={submit} className="max-w-2xl space-y-4">
       <DirectionsContext.Provider value={props.directions}>
         <BlockRulesContext.Provider value={formBlockRules}>
-          <BlockLocksContext.Provider value={formLocks}>
-            <p role="status" aria-live="polite" className="sr-only">
-              {ruleNews}
-            </p>
-            {hasLocalized && locales.length > 1 && (
-              // Locale switcher: a segmented row of <button>s (role=button) — component
-              // tests select a locale via getByRole('button', { name: 'de-DE' }).
-              <div className="inline-flex flex-wrap gap-1 rounded-lg border bg-muted/40 p-1">
-                {locales.map((loc) => {
-                  const errCount = errorsByLocale.get(loc) ?? 0;
-                  return (
-                    <Button
-                      type="button"
-                      key={loc}
-                      size="sm"
-                      variant={loc === activeLocale ? 'default' : 'ghost'}
-                      onClick={() => setActiveLocale(loc)}
-                    >
-                      {loc}
-                      {loc === defaultLocale ? ' (default)' : ''}
-                      {props.delivered?.[loc] === false && (
-                        <>
-                          {' '}
-                          {/* In words and ruled in the button's own colour, so it reads on the ink of
-                        the chosen tab and the muted row alike. */}
-                          <span className="rounded-full border border-current px-1.5 font-normal text-2xs leading-4">
-                            Not delivered
-                          </span>
-                        </>
-                      )}
-                      <ErrorCount count={errCount} />
-                    </Button>
-                  );
-                })}
-              </div>
-            )}
-
-            {tabs.length > 1 ? (
-              <Tabs value={activeTab} onValueChange={setActiveTab}>
-                {/* Start-aligned: centred tabs that overflow push the first out of reach of the scroll. */}
-                <TabsList
-                  aria-label="Sections of the entry"
-                  className="w-full justify-start overflow-x-auto"
-                >
-                  {tabs.map((t) => {
-                    const count = errorsByTab.get(t.apiId) ?? 0;
+          <BlockThumbnailContext.Provider value={props.blockThumbnails ?? NO_THUMBNAILS}>
+            <BlockLocksContext.Provider value={formLocks}>
+              <p role="status" aria-live="polite" className="sr-only">
+                {ruleNews}
+              </p>
+              {hasLocalized && locales.length > 1 && (
+                // Locale switcher: a segmented row of <button>s (role=button) — component
+                // tests select a locale via getByRole('button', { name: 'de-DE' }).
+                <div className="inline-flex flex-wrap gap-1 rounded-lg border bg-muted/40 p-1">
+                  {locales.map((loc) => {
+                    const errCount = errorsByLocale.get(loc) ?? 0;
                     return (
-                      // As wide as its label at least: the touch minimum would otherwise let the tabs
-                      // shrink to fit, overlapping their labels instead of scrolling the bar.
-                      <TabsTrigger
-                        key={t.apiId}
-                        value={t.apiId}
-                        className="shrink-0 basis-auto px-3"
+                      <Button
+                        type="button"
+                        key={loc}
+                        size="sm"
+                        variant={loc === activeLocale ? 'default' : 'ghost'}
+                        onClick={() => setActiveLocale(loc)}
                       >
-                        {t.name}
-                        <ErrorCount count={count} />
-                      </TabsTrigger>
-                    );
-                  })}
-                </TabsList>
-                {tabs.map((t) => (
-                  <TabsContent key={t.apiId} value={t.apiId}>
-                    {renderTab(t)}
-                  </TabsContent>
-                ))}
-              </Tabs>
-            ) : (
-              tabs[0] && renderTab(tabs[0])
-            )}
-
-            {Object.keys(fieldErrors).length > 0 && (
-              <div
-                ref={summaryRef}
-                role="alert"
-                className="space-y-1 rounded-2xl border border-destructive/30 bg-destructive/10 p-3 text-sm"
-              >
-                <p className="font-medium text-destructive">
-                  Can’t save yet: {Object.keys(fieldErrors).length}{' '}
-                  {Object.keys(fieldErrors).length === 1 ? 'field needs' : 'fields need'} attention.
-                </p>
-                <ul className="space-y-0.5">
-                  {Object.entries(fieldErrors).map(([key, message]) => {
-                    const [apiId = '', loc = defaultLocale] = key.split(':');
-                    const tab = tabOf.get(topLevel(apiId));
-                    // In view: this locale and tab, and not inside a group that is closed.
-                    const group = groupOf.get(topLevel(apiId));
-                    const here =
-                      loc === activeLocale &&
-                      (tab === undefined || tab === activeTab) &&
-                      (group === undefined || openGroups.has(group));
-                    return (
-                      <li key={key} className="text-destructive">
-                        {here ? (
-                          <span>
-                            {fieldName(apiId, loc)} ({loc}): {message}
-                          </span>
-                        ) : (
-                          <button
-                            type="button"
-                            className="underline underline-offset-2"
-                            onClick={() => {
-                              setActiveLocale(loc);
-                              if (tab !== undefined || group !== undefined)
-                                showField(topLevel(apiId));
-                            }}
-                          >
-                            {fieldName(apiId, loc)} ({loc}): {message}
-                          </button>
+                        {loc}
+                        {loc === defaultLocale ? ' (default)' : ''}
+                        {props.delivered?.[loc] === false && (
+                          <>
+                            {' '}
+                            {/* In words and ruled in the button's own colour, so it reads on the ink of
+                        the chosen tab and the muted row alike. */}
+                            <span className="rounded-full border border-current px-1.5 font-normal text-2xs leading-4">
+                              Not delivered
+                            </span>
+                          </>
                         )}
-                      </li>
+                        <ErrorCount count={errCount} />
+                      </Button>
                     );
                   })}
-                </ul>
-              </div>
-            )}
+                </div>
+              )}
 
-            {!props.hideActions && (
-              <div className="flex items-center gap-2">
-                <Button type="submit" disabled={props.busy}>
-                  Save draft
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={props.onCancel}
-                  disabled={props.busy}
+              {tabs.length > 1 ? (
+                <Tabs value={activeTab} onValueChange={setActiveTab}>
+                  {/* Start-aligned: centred tabs that overflow push the first out of reach of the scroll. */}
+                  <TabsList
+                    aria-label="Sections of the entry"
+                    className="w-full justify-start overflow-x-auto"
+                  >
+                    {tabs.map((t) => {
+                      const count = errorsByTab.get(t.apiId) ?? 0;
+                      return (
+                        // As wide as its label at least: the touch minimum would otherwise let the tabs
+                        // shrink to fit, overlapping their labels instead of scrolling the bar.
+                        <TabsTrigger
+                          key={t.apiId}
+                          value={t.apiId}
+                          className="shrink-0 basis-auto px-3"
+                        >
+                          {t.name}
+                          <ErrorCount count={count} />
+                        </TabsTrigger>
+                      );
+                    })}
+                  </TabsList>
+                  {tabs.map((t) => (
+                    <TabsContent key={t.apiId} value={t.apiId}>
+                      {renderTab(t)}
+                    </TabsContent>
+                  ))}
+                </Tabs>
+              ) : (
+                tabs[0] && renderTab(tabs[0])
+              )}
+
+              {Object.keys(fieldErrors).length > 0 && (
+                <div
+                  ref={summaryRef}
+                  role="alert"
+                  className="space-y-1 rounded-2xl border border-destructive/30 bg-destructive/10 p-3 text-sm"
                 >
-                  Cancel
-                </Button>
-              </div>
-            )}
-          </BlockLocksContext.Provider>
+                  <p className="font-medium text-destructive">
+                    Can’t save yet: {Object.keys(fieldErrors).length}{' '}
+                    {Object.keys(fieldErrors).length === 1 ? 'field needs' : 'fields need'}{' '}
+                    attention.
+                  </p>
+                  <ul className="space-y-0.5">
+                    {Object.entries(fieldErrors).map(([key, message]) => {
+                      const [apiId = '', loc = defaultLocale] = key.split(':');
+                      const tab = tabOf.get(topLevel(apiId));
+                      // In view: this locale and tab, and not inside a group that is closed.
+                      const group = groupOf.get(topLevel(apiId));
+                      const here =
+                        loc === activeLocale &&
+                        (tab === undefined || tab === activeTab) &&
+                        (group === undefined || openGroups.has(group));
+                      return (
+                        <li key={key} className="text-destructive">
+                          {here ? (
+                            <span>
+                              {fieldName(apiId, loc)} ({loc}): {message}
+                            </span>
+                          ) : (
+                            <button
+                              type="button"
+                              className="underline underline-offset-2"
+                              onClick={() => {
+                                setActiveLocale(loc);
+                                if (tab !== undefined || group !== undefined)
+                                  showField(topLevel(apiId));
+                              }}
+                            >
+                              {fieldName(apiId, loc)} ({loc}): {message}
+                            </button>
+                          )}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              )}
+
+              {!props.hideActions && (
+                <div className="flex items-center gap-2">
+                  <Button type="submit" disabled={props.busy}>
+                    Save draft
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={props.onCancel}
+                    disabled={props.busy}
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              )}
+            </BlockLocksContext.Provider>
+          </BlockThumbnailContext.Provider>
         </BlockRulesContext.Provider>
       </DirectionsContext.Provider>
     </form>
@@ -1864,6 +1877,7 @@ function BlocksInput(
   // The entry's locked regions: a slot inside a block locked with everything inside holds as a
   // locked slot does; a region's own blocks keep their place (`cms/lib/block-locks.ts`).
   const locks = useContext(BlockLocksContext);
+  const thumbnails = useContext(BlockThumbnailContext);
   const view = locks?.view(locale) ?? NO_LOCKS;
   const sealedBy = parent?.key ? view.marks.get(parent.key) : undefined;
   const held = locked || !!sealedBy?.sealed;
@@ -2032,6 +2046,19 @@ function BlocksInput(
             <DropdownMenuLabel className="caption">Add to {label}</DropdownMenuLabel>
             {adds.map((v) => (
               <DropdownMenuItem key={v.apiId} onSelect={() => onChange([...items, newBlock(v)])}>
+                {/* With any picture in the catalog, an item without one holds its place. */}
+                <BlockThumbnail
+                  src={thumbnails.of(v.apiId)}
+                  className="aspect-[4/3] h-6 rounded-md"
+                  fallback={
+                    thumbnails.any ? (
+                      <span
+                        aria-hidden="true"
+                        className="aspect-[4/3] h-6 shrink-0 rounded-md bg-muted"
+                      />
+                    ) : null
+                  }
+                />
                 {v.name}
               </DropdownMenuItem>
             ))}

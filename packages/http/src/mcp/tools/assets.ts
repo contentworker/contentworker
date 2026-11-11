@@ -51,11 +51,18 @@ export function registerAssetTools(server: McpServer, t: ToolContext): void {
       description:
         'List the asset library in a space/environment, one page at a time: filter by kind, ' +
         'content type, tag, folder and status (archived assets are left out unless asked for), ' +
-        'sort, and pass nextCursor back as cursor for the next page.',
+        'sort, and pass nextCursor back as cursor for the next page. ids looks up to 100 assets ' +
+        'at once (with the other filters; ids not in the space are left out).',
       inputSchema: toolSchema('assets_list', () =>
         z.object({
           limit: z.number().int().positive().max(100).optional(),
           cursor: z.string().optional().describe('nextCursor from the previous page'),
+          ids: z
+            .array(z.string().min(1).max(64))
+            .min(1)
+            .max(100)
+            .optional()
+            .describe('only these assets: a batch lookup by id'),
           kind: z.enum(ASSET_KINDS as unknown as [string, ...string[]]).optional(),
           mime: z.string().max(256).optional().describe('exact (image/png) or family (image/*)'),
           tag: z.string().max(128).optional().describe('taxonomy tag id'),
@@ -81,6 +88,7 @@ export function registerAssetTools(server: McpServer, t: ToolContext): void {
             ...(args.limit ? { limit: args.limit } : {}),
             ...(args.cursor ? { cursor: args.cursor } : {}),
             filters: {
+              ...(args.ids ? { ids: [...new Set(args.ids)] } : {}),
               ...(args.kind ? { kind: args.kind as (typeof ASSET_KINDS)[number] } : {}),
               ...(args.mime ? { mime: args.mime } : {}),
               ...(args.tag ? { tag: args.tag } : {}),
