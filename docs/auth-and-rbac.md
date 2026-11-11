@@ -530,8 +530,10 @@ Semantics:
   (`write`, plus `publish` unless `publish` is false), and `POST …/clone` (all of those), with the
   matching MCP tools, need `content:manage` and `authorizeEveryContentType`: no per-type grants, or
   a single `*` grant holding those actions and restricting no field. The Manager and Administrator
-  presets qualify. `POST …/merge` (`environments_merge`) needs the same, with `read` and `write`,
-  when it copies entries; copying only content types needs just `content:manage`. The use-cases
+  presets qualify. `POST …/merge` (`environments_merge`) needs the same, with `read`, `write` and
+  `lock`, when it copies entries, since they go whole over the target's locked regions (the
+  Manager preset qualifies, a role with the Editor preset's grant doesn't); copying only content
+  types needs just `content:manage`. The use-cases
   make these checks themselves (`exportSnapshot`, `importSnapshot`, `startSnapshotImport`,
   `cloneEnvironment`, `startEnvironmentClone`, `mergeEnvironments`, `analyzeSpaceExport`,
   `startSpaceExportImport`, through `authorizeEnvironmentWide` in `environment-access.ts`), each
@@ -553,6 +555,11 @@ Semantics:
 - **Release note.** A custom role with `content:manage` and a `*` grant of `read` and `write` but
   not `publish` used to run a snapshot or space export import that published. It now needs
   `publish=false` for those imports (`?publish=false`, `"publish": false`), and the same on a clone.
+- **Release note.** A custom role with `content:manage` and a `*` grant of `read` and `write` but
+  not `lock` used to merge entries (`POST …/merge`, `environments_merge`) over the target's locked
+  regions. It can no longer merge entries, since that takes `lock` on every content type; merging
+  content types alone still works. The Manager and Administrator presets hold `lock` and are
+  unaffected. To restore it, add `lock` to the role's `*` grant.
 - **Limits of a withhold**, stated plainly:
   - It doesn't constrain a principal that also holds `space:admin`: that principal can edit roles
     (its own included) and mint keys, so withholding `delete` from an administrator is advice, not

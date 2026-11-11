@@ -34,7 +34,7 @@ export function registerEnvironmentMergeTools(server: McpServer, t: ToolContext)
     'environments_merge',
     {
       description:
-        "Apply selected content types/entries from a source environment into a target (additive). Refused before anything is written (422 on `contentTypes`, naming the type, what it removes and the entry ids) when a type removes a field or block variant entries in the target still hold, except merged entries' own current versions; change or clear those values there first, or leave the type out.",
+        "Apply selected content types/entries from a source environment into a target (additive). Merging entries takes read, write and lock on every content type with no field rules, since each is copied whole over the target's locked regions; content types alone take only content:manage. Refused before anything is written (422 on `contentTypes`, naming the type, what it removes and the entry ids) when a type removes a field or block variant entries in the target still hold, except merged entries' own current versions; change or clear those values there first, or leave the type out.",
       inputSchema: toolSchema('environments_merge', () =>
         z.object({
           source: z.string(),

@@ -95,8 +95,13 @@ compared, with each issue naming the region's first `_key`:
 - The same rules as today: new edits are judged, copies are not, with one exception: a **version
   restore is held to the locks the entry holds now**, by the regions only (the block config's
   rules still don't judge it), unless the restorer holds `lock` on the type, who could lift the
-  lock anyway (owner decision, 2026-11-09). A restore never brings old locks back. Promotion,
-  snapshot import and environment merge stay unjudged. A clone carries its source's locks.
+  lock anyway (owner decision, 2026-11-09). A restore never brings old locks back. Snapshot
+  import stays unjudged. A promotion carrying entries and an environment merge of entries copy
+  each entry whole over the target's, locked regions included, without judging them (a promotion
+  may apply for no one, from the stale sweep, and a merge copies as a promotion does), so they take
+  `lock` on every content type instead (2026-11-11): only someone who could lift every lock they
+  run over may copy over it. Content types alone take no `lock`. A clone carries its source's
+  locks.
 - A key is unique per array, not per tree, so a copy of a locked block could keep its key and
   stand in for it. A save holding a locked key on two blocks is refused, and a key two blocks
   hold can't be locked (`lock_ambiguous`). With each locked key on one block, a run that moved
@@ -153,7 +158,11 @@ Made by the owner on 2026-11-09, each as proposed:
 5. **Versions.** Locks are not in the entry's version history, and a restore doesn't bring old
    locks back. Locks are current state; the audit log records every lock and unlock. Amended
    2026-11-09: a version restore is held to the locks held now unless the restorer holds `lock`
-   (see Enforcement).
+   (see Enforcement). Amended 2026-11-11: a promotion carrying entries and an environment merge of
+   entries take `lock` on every content type, since they copy entries whole over the target's
+   locked regions without judging them. Snapshot import, clone and space export import stay
+   unjudged: they refuse a target that already has content types, so there are no locks there to
+   copy over.
 
 ## Out of scope
 

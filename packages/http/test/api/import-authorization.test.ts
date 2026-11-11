@@ -286,7 +286,7 @@ describe('environment-wide operations as a role over HTTP', () => {
     });
     expect(merge.status).toBe(403);
     expect(await merge.json()).toMatchObject({
-      error: { code: 'forbidden', message: everyType('read+write') },
+      error: { code: 'forbidden', message: everyType('read+write+lock') },
     });
   });
 
@@ -368,10 +368,32 @@ describe('merge and compare as a role over HTTP', () => {
     expect((await merge(ruled, { entries: [entryId] })).status).toBe(403);
     const wide = await keyFor(
       ['content:manage'],
-      [{ contentTypeApiId: '*', actions: ['read', 'write'] }],
+      [{ contentTypeApiId: '*', actions: ['read', 'write', 'lock'] }],
     );
     const res = await merge(wide, { contentTypes: ['page'], entries: [entryId] });
     expect(res.status).toBe(200);
+  });
+
+  it("takes lock to merge entries, which go over the target's locked regions", async () => {
+    // Every type alike, publishing too, but no lock (the Editor preset's grant).
+    const noLock = await keyFor(
+      ['content:manage'],
+      [{ contentTypeApiId: '*', actions: ['read', 'write', 'publish'] }],
+    );
+    const refused = await merge(noLock, { contentTypes: ['page'], entries: [entryId] });
+    expect(refused.status).toBe(403);
+    expect(await refused.json()).toMatchObject({
+      error: {
+        code: 'forbidden',
+        message:
+          'Missing required scope "content:read+write+lock:* (on every content type, every field)"',
+      },
+    });
+    // Refused before anything is written, the content types included.
+    const types = await app.request(`${EMPTY}/content-types`, { headers: admin });
+    expect(((await types.json()) as { items: unknown[] }).items).toEqual([]);
+    // Content types alone copy no entry: no lock needed.
+    expect((await merge(noLock, { contentTypes: ['page'] })).status).toBe(200);
   });
 
   it('shows a narrow role only the types it can read in a comparison', async () => {

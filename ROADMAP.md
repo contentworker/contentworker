@@ -314,6 +314,7 @@ Found while building and reviewing M1 and M2. None blocks a release.
   again before each chunk, so a trash or purge job stops when its starter loses access.
 - [x] **Audit promotion and cross-space clone.** Requesting, approving and rejecting a promotion
   take every content type alike with no field rules, as merge does, and `lock` to copy entries
+  (a merge of entries takes `lock` too)
   (the approver's grants are the ones in force at apply); a role limited per type sees only the promotions whose types it can
   read in full; a clone checks its target space in the use-case.
 - [x] **Delegated bearers and people.** Refuse invitations and member role changes from personal
@@ -530,6 +531,11 @@ From the live preview spec and a review of a second implementation of its channe
   is on, ignored parts listed where they lie. With unsaved edits both show the draft, marked
   Unsaved: the exact request before Save. CodeMirror 6 (`@codemirror/*`, `@lezer/highlight`) is a
   lazy chunk fetched when a code view opens; no route ships it.
+- [ ] **Merge holds to the locks it read.** A merge's entry write (`applyEntry` in
+  `packages/application/src/branching.ts`) doesn't carry the block-lock guard `saveEntryDraft`
+  does, so a lock set between the merge's read and its write is overwritten without a `409`. Not
+  a hole (the merger holds `lock` and could lift it), but a lost race should be a conflict. Pass
+  the guard, with a test that sets a lock mid-merge.
 
 Checked against the merged channel and not needed:
 - **An admin-started reconnect.** The frame route creates its host before it gives the iframe a
