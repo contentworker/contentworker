@@ -98,7 +98,7 @@ describe('the Site pane', () => {
     const spy = spyFrame();
     ready();
     const [first, second] = posted(spy);
-    expect(first).toMatchObject({ type: 'view', device: 'desktop', allowed: ADMIN_CAPABILITIES });
+    expect(first).toMatchObject({ type: 'view', width: 1280, allowed: ADMIN_CAPABILITIES });
     expect(second).toMatchObject({
       type: 'entry',
       entry: { entryId: 'e1', locale: 'en-US', fields: { title: 'Home' } },
@@ -133,7 +133,7 @@ describe('the Site pane', () => {
     act(() => screen.getByRole('radio', { name: 'View' }).click());
     expect(posted(spy, 'view').at(-1)).toMatchObject({ editing: false });
     act(() => screen.getByRole('radio', { name: 'Phone, 390 pixels' }).click());
-    expect(posted(spy, 'view').at(-1)).toMatchObject({ device: 'phone' });
+    expect(posted(spy, 'view').at(-1)).toMatchObject({ width: 390 });
   });
 
   it('sends the form’s focused field to be outlined, and none to clear it', () => {

@@ -540,3 +540,130 @@ test('Coworker fills a seam: its proposal shows as ghosts, Not now takes them of
   expect(body[0]?._key).toBe('h1');
   expect(Object.values(body[1] ?? {})).toContain('Proposed by Coworker');
 });
+
+/**
+ * Per-breakpoint overrides, end to end, in an environment of its own: a catalog pushed with two
+ * breakpoints and a responsive prop, then the canvas at Tablet giving the hero its own tone there.
+ * The widths are the catalog's, the Look tab says where the value comes from, and the override is
+ * saved and read back on a reload, marked in Layers.
+ */
+test('the canvas sets a prop’s override at the breakpoint in view, and it saves', async ({
+  page,
+  request,
+}, testInfo) => {
+  const env = `widths${testInfo.workerIndex}${Date.now().toString(36)}`;
+  const mgmt = `/spaces/${SPACE}/environments/${env}`;
+  const made = await api(request, 'POST', `/spaces/${SPACE}/environments`, { id: env });
+  expect(made.status(), await made.text()).toBe(201);
+  const type = await api(request, 'POST', `${mgmt}/content-types`, {
+    apiId: 'widthPage',
+    name: 'Width page',
+    displayField: 'title',
+    fields: [
+      field('title', 'Title'),
+      {
+        apiId: 'body',
+        name: 'Main',
+        type: 'Array',
+        localized: false,
+        required: false,
+        position: 1,
+        items: {
+          type: 'Component',
+          variants: [{ apiId: 'hero', name: 'Hero', fields: [field('heading', 'Heading')] }],
+        },
+      },
+    ],
+    preview: {
+      urlTemplate: `${GUEST}/?entry={id}&type=widthPage&space={space}&env={environment}#token={token}`,
+    },
+  });
+  expect([200, 201], await type.text()).toContain(type.status());
+  const pushed = await api(request, 'POST', `${mgmt}/block-catalog`, {
+    targets: [{ contentTypeApiId: 'widthPage', field: 'body' }],
+    allowDestructive: true,
+    breakpoints: [
+      { id: 'md', name: 'Tablet', minWidth: 768 },
+      { id: 'lg', name: 'Desktop', minWidth: 1280 },
+    ],
+    blocks: [
+      {
+        id: 'hero',
+        name: 'Hero',
+        responsive: ['tone'],
+        fields: [
+          field('heading', 'Heading'),
+          { ...field('tone', 'Tone', 1), validations: { in: ['light', 'dark'] } },
+          { ...field('align', 'Align', 2), validations: { in: ['left', 'center'] } },
+        ],
+      },
+    ],
+  });
+  expect(pushed.status(), await pushed.text()).toBe(200);
+  const entry = await api(request, 'POST', `${mgmt}/entries`, {
+    contentTypeApiId: 'widthPage',
+    fields: {
+      title: { 'en-US': 'Width page' },
+      body: { 'en-US': [{ _type: 'hero', _key: 'h1', heading: 'Welcome', tone: 'light' }] },
+    },
+  });
+  expect(entry.ok(), await entry.text()).toBe(true);
+  const id = ((await entry.json()) as { entry: { id: string } }).entry.id;
+  await page.addInitScript(
+    ([space, environment]) =>
+      localStorage.setItem(
+        'contentworker-scope',
+        JSON.stringify({ space, environment, locale: 'en-US' }),
+      ),
+    [SPACE, env],
+  );
+
+  await openCms(page, `/content/widthPage/${id}/canvas`);
+  const site = page
+    .frameLocator('iframe[title="Site preview"]')
+    .frameLocator('iframe[title="The entry on your site"]');
+  await expect(site.getByRole('heading', { level: 1 })).toHaveText('Width page', {
+    timeout: 15_000,
+  });
+  // The widths are Base and the catalog's breakpoints, opening on the widest.
+  const widths = page.getByRole('radiogroup', { name: 'Device width' });
+  await expect(widths.getByRole('radio')).toHaveText(['Base', 'Tablet', 'Desktop']);
+  await expect(widths.getByRole('radio', { name: 'Desktop, 1280 pixels' })).toBeChecked();
+  await widths.getByRole('radio', { name: 'Tablet, 768 pixels' }).click();
+
+  await page.getByRole('button', { name: 'Layers' }).click();
+  await page.getByRole('treeitem', { name: /^Hero/ }).click();
+  await page.getByRole('tab', { name: 'Look' }).click();
+  await expect(page.getByText(/Editing Tablet, from 768px up/)).toBeVisible();
+  const tone = page.getByRole('radiogroup', { name: 'Tone' });
+  await expect(tone.getByRole('radio', { name: 'light' })).toBeChecked();
+  await expect(page.getByText('From Base')).toBeVisible();
+  await expect(page.getByText('Same at every width: change it at Base.')).toBeVisible();
+  await tone.getByRole('radio', { name: 'dark' }).click();
+  await expect(page.getByText('Set for Tablet')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Reset Tone at Tablet' })).toBeVisible();
+  await scan(page, testInfo, 'look-at-tablet');
+
+  await page.getByRole('button', { name: 'Save draft' }).click();
+  await expect(page.getByText('Draft updated')).toBeVisible();
+  const stored = await api(request, 'GET', `${mgmt}/entries/${id}`);
+  const saved = (await stored.json()) as { fields: { body: { 'en-US': unknown[] } } };
+  expect(saved.fields.body['en-US'][0]).toMatchObject({
+    tone: 'light',
+    _responsive: { md: { tone: 'dark' } },
+  });
+
+  // Read back: the width is remembered, Layers marks the hero, and the Look tab shows it set.
+  await page.reload();
+  await expect(site.getByRole('heading', { level: 1 })).toHaveText('Width page', {
+    timeout: 15_000,
+  });
+  await expect(widths.getByRole('radio', { name: 'Tablet, 768 pixels' })).toBeChecked();
+  await page.getByRole('button', { name: 'Layers' }).click();
+  const hero = page.getByRole('treeitem', { name: /^Hero/ });
+  await expect(hero.getByRole('img', { name: 'Has overrides at Tablet' })).toBeVisible();
+  await hero.click();
+  await page.getByRole('tab', { name: 'Look' }).click();
+  await expect(tone.getByRole('radio', { name: 'dark' })).toBeChecked();
+  await expect(page.getByText('Set for Tablet')).toBeVisible();
+});

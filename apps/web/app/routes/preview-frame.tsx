@@ -11,7 +11,7 @@
  * to its URL.
  *
  * It owns the inner frame and draws the hover and selection outlines over it, from the boxes the
- * page reports, scaled with the frame to the device width the editor chose. Under the canvas editor
+ * page reports, scaled with the frame to the width the editor chose. Under the canvas editor
  * it draws nothing: it hands the boxes (and the seams between blocks) up to the canvas, moved into
  * its own coordinates, and the canvas draws them over this frame. Unsaved edits come
  * from the editor over a same-origin channel (`cms/lib/live-preview/frame-channel.ts`) and go to the
@@ -31,10 +31,10 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { data, useLoaderData } from 'react-router';
 import { GhostMark } from '~/cms/components/canvas/GhostMark';
 import {
-  DEVICE_WIDTHS,
-  type Device,
   type EditorMessage,
+  FRAME_WIDTH,
   type FrameGeometry,
+  frameWidth,
   postFrame,
   readFrame,
 } from '~/cms/lib/live-preview/frame-channel';
@@ -126,7 +126,7 @@ function SiteFrame({
   const box = useRef<HTMLElement>(null);
   const [src, setSrc] = useState<string | null>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
-  const [device, setDevice] = useState<Device>('desktop');
+  const [width, setWidth] = useState<number>(FRAME_WIDTH.default);
   const [editing, setEditing] = useState(true);
   const [canvas, setCanvas] = useState(false);
   const [layout, setLayout] = useState<LayoutMessage | null>(null);
@@ -193,7 +193,7 @@ function SiteFrame({
       }
       switch (m.type) {
         case 'view':
-          setDevice(m.device in DEVICE_WIDTHS ? m.device : 'desktop');
+          setWidth(frameWidth(m.width));
           setEditing(m.editing === true);
           setCanvas(m.canvas === true);
           if (Array.isArray(m.allowed)) h.setAllowed(m.allowed);
@@ -250,8 +250,7 @@ function SiteFrame({
     return () => ro.disconnect();
   }, []);
 
-  // The site renders at the device's width whatever the pane's, scaled down to fit when wider.
-  const width = DEVICE_WIDTHS[device];
+  // The site renders at the chosen width whatever the pane's, scaled down to fit when wider.
   const scale = size.w > 0 ? Math.min(1, size.w / width) : 1;
   const left = Math.max(0, (size.w - width * scale) / 2);
   const height = size.h / scale;

@@ -385,7 +385,7 @@ Built on Blocks and the frontend runtime. Layouts stay a typed tree; rich text s
   composes from both ends: the Generate dialog outlines the drafted blocks and names the images
   the library had no match for, and the canvas asks Coworker to fill a seam, its proposal shown as
   ghosts until confirmed. Rich text inside generated blocks is not generated yet.
-- [ ] **Layout model.** Deeper nesting than three levels, and per-breakpoint overrides of token
+- [x] **Layout model.** Deeper nesting than three levels, and per-breakpoint overrides of token
   props. (Slots, `allowedChildren` and `allowedParents` shipped with blocks from code.) Deeper
   nesting shipped: blocks slots nest six levels (the page's blocks field counting as 1,
   `MAX_BLOCK_DEPTH`), plain components keep three among themselves, the AI layout schema stays
@@ -395,8 +395,11 @@ Built on Blocks and the frontend runtime. Layouts stay a typed tree; rich text s
   catalog push declares `breakpoints` and each block's `responsive` props; blocks store overrides
   in `_responsive`, validated as their props, with stale ones dropped on save and counted by the
   push (`staleOverrides`); block patches, frozen regions, copies, REST, MCP, GraphQL
-  (`_responsive`), codegen and `resolveBlocks` / `responsiveProp` carry them. Still to come: editing
-  them on the canvas (width presets from the breakpoints, the Look tab per breakpoint).
+  (`_responsive`), codegen and `resolveBlocks` / `responsiveProp` carry them. The canvas edits them:
+  its width presets are Base and the catalog's breakpoints, the Look tab sets an override at the
+  breakpoint in view (inherited values say where from; Reset inherits again), Layers marks a block
+  that carries one, and the entry form lists them read-only; an undo that spans a save keeps its
+  carried overrides (the save reads the version before once).
 - [x] **Blocks from code.** `contentworker blocks push` maps component manifests (JSON data:
   token and enum props, slots with `allowedChildren`, `allowedParents`, aliases for renamed ids,
   thumbnails) to Blocks variants, versioned per environment, over REST, MCP and the management
@@ -424,7 +427,8 @@ Built on Blocks and the frontend runtime. Layouts stay a typed tree; rich text s
   are drawn where blocks are picked (the dock, the entry form's Add block menu, Build → Blocks)
   for a manifest's `{ assetId }`, all of a catalog's read in one `GET …/assets?ids=` lookup; a
   `{ url }` thumbnail isn't drawn (the admin's `img-src` takes no other origin). Still to come:
-  dragging blocks with a fine pointer, and per-breakpoint overrides.
+  dragging blocks with a fine pointer. Per-breakpoint overrides are edited in the Look tab at the
+  width in view (see Layout model).
 - [x] **Frontend SDK extras.** `client.live()` over the live stream (reconnecting with backoff,
   stopping when the key is refused) with `useLiveEntry` / `useLiveEntries` for React and Vue; a
   Next.js draft-mode helper (`@contentworker/sdk/next`: a route that checks the preview token, and a
