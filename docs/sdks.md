@@ -684,6 +684,7 @@ cma.spaces.starters() / .starterInstall(spaceId, environmentId, install)
 cma.environments.list() / .create(id, name)           // space-level
 cma.environments.aliases.list() / .set(alias, envId) / .delete(alias)
 cma.apiKeys.list() / .create({ kind, name }) / .revoke(id)   // admin scope
+cma.roles.list() / .get(id) / .create(input) / .update(id, { ...role, expectedVersion? }) / .delete(id)   // admin scope
 cma.frontend.connect({ name?, roleId?, preview?, previewRoleId? })  // keys + config for a frontend (POST …/frontend-connections), admin scope
 ```
 
@@ -718,6 +719,9 @@ cma.frontend.connect({ name?, roleId?, preview?, previewRoleId? })  // keys + co
   nextCursor?, ignored?, typeMissing? }`. Another person's personal view is a `404`, and a view's
   `createdBy` is left out for a key that isn't served author ids.
 - `apiKeys.create` returns the raw token exactly once; only its hash is stored.
+- `roles.update` replaces the whole role as its next `version`. Pass the `version` you read as
+  `expectedVersion` and a save made since is a `409` (`isConflict`, with `error.details.version` the
+  version in force), nothing written; leave it out to save over whatever is stored.
 - `entries.list` reads `GET /preview/:space/:env/entries` on the same origin (the Management API
   has no entry list): the latest saved version, drafts included, `{ items, total }` with `total`
   counting the page. It needs `preview:read`.

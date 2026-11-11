@@ -30,6 +30,10 @@ export const role = z.object({
     .enum(['viewer', 'approver', 'editor', 'manager', 'admin'])
     .optional()
     .describe('Set on the built-in roles seeded into every space'),
+  version: z
+    .int()
+    .min(1)
+    .describe('1 when created, one more at each save; send it back as `expectedVersion`'),
 });
 
 export const roleList = z.object({ items: z.array(role) });

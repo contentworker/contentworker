@@ -422,7 +422,7 @@ OAuth token (see [Auth & RBAC](./auth-and-rbac.md#one-token-model-three-issuance
 | GET    | `/spaces/:space/roles`                    | `space:admin` | List roles                                                                                   |
 | POST   | `/spaces/:space/roles`                    | `space:admin` | Create role                                                                                  |
 | GET    | `/spaces/:space/roles/:id`                | `space:admin` | Get role                                                                                     |
-| PUT    | `/spaces/:space/roles/:id`                | `space:admin` | Update role                                                                                  |
+| PUT    | `/spaces/:space/roles/:id`                | `space:admin` | Replace role; optional `expectedVersion`, stale is `409` with `details.version`              |
 | DELETE | `/spaces/:space/roles/:id`                | `space:admin` | Delete role (refused if a key or person holds it, and for a preset)                          |
 
 A personal access token is minted for the caller themselves, with scopes intersected with their

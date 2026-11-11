@@ -741,7 +741,14 @@ export interface RoleSummary {
   readonly scopes: readonly string[];
   /** Per content type; `deniedActions` withholds the delete and unpublish write and publish bring. */
   readonly contentGrants: readonly ContentTypeGrant[];
+  /** One more at each save: sent back as `expectedVersion`, so a save over someone else's is a 409. */
+  readonly version: number;
 }
+
+/** A role replaced whole; with `expectedVersion`, refused (409) if it was saved since. */
+export type RoleUpdate = Partial<Omit<RoleSummary, 'id' | 'version'>> & {
+  readonly expectedVersion?: number;
+};
 
 export interface PreviewLinkResult {
   /** The entry on the Preview API. */
@@ -2923,10 +2930,12 @@ export function createManagementClient(
     getRole(id: string): Promise<RoleSummary> {
       return req('GET', `${spaceBase}/roles/${encodeURIComponent(id)}`);
     },
-    createRole(input: Omit<RoleSummary, 'id'> & { name: string }): Promise<RoleSummary> {
+    createRole(
+      input: Omit<RoleSummary, 'id' | 'version'> & { name: string },
+    ): Promise<RoleSummary> {
       return req('POST', `${spaceBase}/roles`, input);
     },
-    updateRole(id: string, input: Partial<RoleSummary>): Promise<RoleSummary> {
+    updateRole(id: string, input: RoleUpdate): Promise<RoleSummary> {
       return req('PUT', `${spaceBase}/roles/${encodeURIComponent(id)}`, input);
     },
     deleteRole(id: string): Promise<void> {

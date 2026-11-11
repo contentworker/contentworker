@@ -17,7 +17,6 @@ import {
   RequestTimeoutError,
   type RoleSummary,
   refusedSave,
-  SaveRefusedError,
 } from '~/cms/lib/management';
 import { saveRoleGrants } from '~/cms/lib/role-grants';
 import { CreateReleaseDialog } from '~/cms/routes/Releases';
@@ -482,7 +481,13 @@ describe('discard guard', () => {
 
     // Each form with its own catch: the guard only knows what it is handed.
     const timedOut = () => Promise.reject(new RequestTimeoutError(true));
-    const role = { id: 'r1', name: 'Editor', scopes: [], contentGrants: [] } as RoleSummary;
+    const role = {
+      id: 'r1',
+      name: 'Editor',
+      scopes: [],
+      contentGrants: [],
+      version: 1,
+    } as RoleSummary;
     it.each<[string, () => void, string]>([
       [
         'a content type',
@@ -523,6 +528,7 @@ describe('discard guard', () => {
               open
               onOpenChange={() => {}}
               onSave={timedOut}
+              onReload={async () => {}}
             />,
           );
           fireEvent.change(screen.getByLabelText('Content type to add'), {
@@ -615,18 +621,14 @@ describe('discard guard', () => {
       expect(screen.getByRole('alert').textContent).toContain('check before you try again');
     });
 
-    it('a stale role, stopped before anything was sent, saved nothing', async () => {
-      const client = {
-        getRole: vi.fn(async () => ({
-          ...role,
-          contentGrants: [{ contentTypeApiId: '*', actions: ['read'] }],
-        })),
-        updateRole: vi.fn(),
-      };
-      const failed = await saveRoleGrants(client as never, role, []).catch((e: unknown) => e);
-      expect(failed).toBeInstanceOf(SaveRefusedError);
+    it('a stale role, refused by the api, saved nothing', async () => {
+      const stale = new ApiError(409, 'PUT → 409', {
+        error: { code: 'conflict', message: 'm', details: { version: 2 } },
+      });
+      const client = { updateRole: vi.fn(() => Promise.reject(stale)) };
+      const failed = await saveRoleGrants(client, role, []).catch((e: unknown) => e);
+      expect(failed).toBe(stale);
       expect(refusedSave(failed)).toBe(true);
-      expect(client.updateRole).not.toHaveBeenCalled();
     });
 
     it('every form on the guard hands it its failures', () => {

@@ -252,6 +252,11 @@ push would change. `cma.blockConfig.{get, set, effective}` reads and replaces wh
 allows of it, per target and slot, and answers the rules in force. See
 [Blocks from code](/guides/blocks-from-code/).
 
+**Roles.** `cma.roles.{list, get, create, update, delete}` manages the space's roles (it needs
+`space:admin`). Each role has a `version`; pass the one you read as `expectedVersion` to
+`update`, and a save someone made since is a `409` (`isConflict`) that changes nothing. See
+[Roles](/guides/api-keys/#roles).
+
 **Menus.** `client.menus()` lists the navigation menus and `client.menu(handle, { locale })` returns one
 resolved for rendering, published entries only. The management client has
 `cma.menus.{list, get, preview, resolve, create, update, moveItem, delete}`. See

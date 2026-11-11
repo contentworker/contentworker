@@ -321,12 +321,19 @@ function RolesSettings(props: { client: ManagementClient }) {
   // The role is replaced whole (PUT), so its name, description and scopes go back as they were.
   const typeNames = new Map(contentTypes.map((t) => [t.apiId, t.name]));
 
-  // Grants only: the rest of the role is re-read at save, and a concurrent grant change refuses.
+  // Grants only, held to the version the sheet opened with: a save made since is refused.
   const saveAccess = async (role: RoleSummary, contentGrants: RoleSummary['contentGrants']) => {
     await saveRoleGrants(props.client, role, contentGrants);
     await invalidate(['roles']);
     setAccessFor(null);
     toast.success(`Saved content access for ${role.name}`);
+  };
+
+  // After someone else's save: the role as it is now, a fresh draft in the same sheet.
+  const reloadAccess = async (role: RoleSummary) => {
+    const current = await props.client.getRole(role.id);
+    await invalidate(['roles']);
+    setAccessFor(current);
   };
 
   const create = async (e: React.FormEvent) => {
@@ -465,6 +472,7 @@ function RolesSettings(props: { client: ManagementClient }) {
           open
           onOpenChange={(o) => !o && setAccessFor(null)}
           onSave={(grants) => saveAccess(accessFor, grants)}
+          onReload={() => reloadAccess(accessFor)}
         />
       ) : null}
     </Section>

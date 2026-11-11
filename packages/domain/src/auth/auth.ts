@@ -218,6 +218,11 @@ export interface Role {
    * one is an ordinary custom role.
    */
   readonly preset?: RolePreset;
+  /**
+   * 1 when created, one more at each save: the compare-and-set a save rides with, and what a
+   * client sends back as `expectedVersion` to have a save over someone else's refused.
+   */
+  readonly version: number;
 }
 
 /**
