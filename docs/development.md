@@ -95,7 +95,10 @@ The same package holds the **sample starter** a real space can start with (`inst
 "sample"` and the `space_create` MCP tool): the demo content model, a 39-entry slice of the corpus,
 the taxonomy, eight sample images and documents when a blob store is bound, and one open release.
 None of the dev-only rest (API keys, comments and tasks, webhooks and functions, agent runs,
-schedules, reviews, audit entries). It installs inside the request: about 550 database calls,
+schedules, reviews, audit entries, or the seven extra content types in `model-extras.ts` that show
+the admin's content nav in every state: two groups, a singleton, a long name, a name that suggests
+no icon, and a type left unpublished; they sit on their own marker tag, `demo-model-extras-v1`, so
+a dev space seeded before them gets them on its next boot). It installs inside the request: about 550 database calls,
 held under a 600-call budget by `packages/db/test/starter.test.ts` against the 1,000 queries one
 invocation may make. If it has to grow past that, it becomes a background job.
 

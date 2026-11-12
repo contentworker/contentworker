@@ -487,7 +487,7 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
 - **Overview** (`cms/components/Dashboard.tsx`): what needs attention as cards (not yet published,
   coming up, agent proposals, live activity), then search, AI usage and recent agent runs.
 - **Content:** the content types as a catalog (`PageHeader` with New content type): each type's
-  icon as its tile, its name linked to its entries (a singleton's to its one entry, `/entry`, as the
+  icon as its tile (its own, else the one its name suggests, else its initials), its name linked to its entries (a singleton's to its one entry, `/entry`, as the
   sidebar's link is), its API id in mono and its field count under it ("One entry only" beside them
   for a singleton), then its entries, drafts and changed entries as figures, Edit, and a ghost ⋯ menu ("More actions
   for ‹type›") with Clone… and, after a separator, a destructive Delete…; a Draft badge only on a
@@ -655,10 +655,15 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   types, then each group under its name (an h3 `caption`, ids by the group's place, never a slug)
   naming its list, 1.25rem apart as Settings' groups are; when every type is grouped the groups'
   captions head the lists and "Content types" only names the nav (`sr-only`), never a caption
-  stacked on a caption. Each link has its type's icon (`size-4`; beside types with icons, one
-  without gets a blank page, which no type can choose, so every name shares one edge and none
-  reads as a child of the row above; when no type has an icon there are none and names start at
-  the caption's edge) and a `StatusDot` when not published, with its status in
+  stacked on a caption. Each link has an icon (`size-4`): its type's own, else the one the type's
+  name suggests (`suggestContentTypeIcon`: "Article" a newspaper, "Event" a calendar), else a
+  blank page, which no type can choose; so every name shares one edge and none reads as a child
+  of the row above. The overview's tile does the same, keeping initials where a name suggests
+  nothing. The dialog's Icon field is a `Select` that draws each icon beside its
+  name, in the list and on the trigger; a type with no icon of its own reads "From the name" with
+  the icon that draws, never "None" beside a nav that shows one. On a new type the field picks
+  the suggested icon as the name is typed ("Chosen from the name until you pick one."), and
+  stops once one is picked. Each link also has a `StatusDot` when not published, with its status in
   words for a resting pointer and in the link's name ("Event, Draft"); under forced colours the
   dot is a ring. The open
   link takes the accent fill, and its icon alone goes `text-brand`. A list taller than the window

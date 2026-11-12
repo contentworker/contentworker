@@ -7,7 +7,7 @@ import { useContentTypeDeleteJob } from '~/cms/components/ContentTypeDeleteJob';
 import { StatusDot } from '~/cms/components/status';
 import { statusLabel } from '~/cms/lib/format';
 import { useClient } from '../lib/client-context';
-import { ContentTypeIcon, contentTypeIcon } from '../lib/content-type-icons';
+import { ContentTypeIcon } from '../lib/content-type-icons';
 import {
   useContentTypesQuery,
   useInvalidate,
@@ -47,10 +47,6 @@ export function ContentLayout() {
   });
 
   const sections = useMemo(() => groupContentTypes(types), [types]);
-  // Once one type has an icon, every row has one (a blank page for a type without), so no name
-  // sits in from the others like a nested child. When none has one, a column of blank pages would
-  // only push every name in from the captions' edge.
-  const withIcons = types.some((t) => contentTypeIcon(t.icon));
   // Every type filed under a group: the groups' own captions head the lists (as Settings' do), and
   // "Content types" names the nav without stacking a second caption over the first group's.
   const allGrouped = sections.length > 0 && sections.every((s) => s.group);
@@ -145,10 +141,11 @@ export function ContentLayout() {
                           )}
                         >
                           <span className="flex min-w-0 items-center gap-2">
-                            {/* The brand accent marks where you are, on the icon alone. */}
+                            {/* Every type has an icon (its own, one its name suggests, or a
+                                  blank page), so no name sits in like a child of the row above.
+                                  The brand accent marks where you are, on the icon alone. */}
                             <ContentTypeIcon
-                              name={t.icon}
-                              fallback={withIcons}
+                              type={t}
                               className={cn('size-4 shrink-0', active && 'text-brand')}
                             />
                             <span className="truncate">{t.name}</span>

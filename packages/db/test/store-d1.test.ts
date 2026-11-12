@@ -64,6 +64,9 @@ beforeAll(async () => {
     apiId: 'article',
     name: 'Article',
     displayField: 'title',
+    // None, rather than the one its name suggests: Delivery's view of a type leaves the admin's
+    // icon out, and the batched read below is compared with the stored type.
+    icon: null,
     fields: [
       {
         apiId: 'title',

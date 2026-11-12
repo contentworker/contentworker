@@ -24,6 +24,7 @@ import {
   type RuleAction,
   type RuleOperator,
   SCALAR_ITEM_TYPES,
+  suggestContentTypeIcon,
   UNIQUE_FIELD_TYPES,
   ValidationError,
 } from '@contentworker/domain';
@@ -55,7 +56,7 @@ import { useEffect, useRef, useState } from 'react';
 import { CopyButton } from '~/cms/components/copy-button';
 import { DiscardAsk, GuardCancel, useDiscardGuard } from '~/cms/components/discard-guard';
 import { toApiId } from '../lib/api-id';
-import { CONTENT_TYPE_ICONS, contentTypeIcon } from '../lib/content-type-icons';
+import { CONTENT_TYPE_ICONS, ContentTypeIcon, contentTypeIcon } from '../lib/content-type-icons';
 import { apiErrorMessage, conflictVersion } from '../lib/management';
 import {
   BlockVariantsEditor,
@@ -644,6 +645,8 @@ function ContentTypeForm(
     props.initial?.agentInstructions ?? '',
   );
   const [icon, setIcon] = useState(props.initial?.icon ?? '');
+  // A new type's icon follows its name (as its API id does) until someone picks one.
+  const [iconTouched, setIconTouched] = useState(editing);
   const [tabs, setTabs] = useState<TabRow[]>(
     () => props.initial?.layout?.tabs.map((t) => ({ apiId: t.apiId, name: t.name })) ?? [],
   );
@@ -833,7 +836,12 @@ function ContentTypeForm(
               placeholder="Blog Post"
               onChange={(e) => {
                 setName(e.target.value);
-                if (!apiIdTouched) setApiId(toApiId(e.target.value));
+                const nextApiId = apiIdTouched ? apiId : toApiId(e.target.value);
+                if (!apiIdTouched) setApiId(nextApiId);
+                // Read as the nav and a create without an icon read it: the name, then the id.
+                if (!iconTouched) {
+                  setIcon(suggestContentTypeIcon({ name: e.target.value, apiId: nextApiId }) ?? '');
+                }
               }}
             />
           </div>
@@ -850,6 +858,9 @@ function ContentTypeForm(
               onChange={(e) => {
                 setApiIdTouched(true);
                 setApiId(e.target.value);
+                if (!iconTouched) {
+                  setIcon(suggestContentTypeIcon({ name, apiId: e.target.value }) ?? '');
+                }
               }}
             />
             {clash && (
@@ -877,22 +888,47 @@ function ContentTypeForm(
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="ct-icon">Icon</Label>
-            <NativeSelect
-              id="ct-icon"
-              wrapperClassName="w-full"
-              value={icon}
-              onChange={(e) => setIcon(e.target.value)}
+            {/* Each icon drawn beside its name, in the list and on the trigger: a name alone
+                ("Layout template") doesn't say what the nav will show. A type with no icon of
+                its own is drawn from its name, so that choice says so and shows what it draws. */}
+            <Select
+              value={icon || NO_ICON}
+              onValueChange={(v) => {
+                setIcon(v === NO_ICON ? '' : v);
+                setIconTouched(true);
+              }}
             >
-              <NativeSelectOption value="">None</NativeSelectOption>
-              {Object.keys(CONTENT_TYPE_ICONS).map((n) => (
-                <NativeSelectOption key={n} value={n}>
-                  {iconLabel(n)}
-                </NativeSelectOption>
-              ))}
-              {icon && !contentTypeIcon(icon) && (
-                <NativeSelectOption value={icon}>{`${icon} (not drawn here)`}</NativeSelectOption>
-              )}
-            </NativeSelect>
+              <SelectTrigger
+                id="ct-icon"
+                className="w-full"
+                aria-describedby={editing ? undefined : 'ct-icon-hint'}
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={NO_ICON}>
+                  <ContentTypeIcon type={{ name, apiId }} className="text-muted-foreground" />
+                  From the name
+                </SelectItem>
+                {Object.entries(CONTENT_TYPE_ICONS).map(([n, Icon]) => (
+                  <SelectItem key={n} value={n}>
+                    <Icon aria-hidden="true" className="text-muted-foreground" />
+                    {iconLabel(n)}
+                  </SelectItem>
+                ))}
+                {icon && icon !== NO_ICON && !contentTypeIcon(icon) && (
+                  <SelectItem value={icon}>
+                    <span aria-hidden="true" className="size-4 shrink-0" />
+                    {`${icon} (not drawn here)`}
+                  </SelectItem>
+                )}
+              </SelectContent>
+            </Select>
+            {editing ? null : (
+              <p id="ct-icon-hint" className="max-w-measure text-muted-foreground text-xs">
+                Chosen from the name until you pick one.
+              </p>
+            )}
           </div>
         </div>
         <div className="space-y-1.5">
@@ -1612,6 +1648,12 @@ function FieldRules(props: {
     </fieldset>
   );
 }
+
+/**
+ * The icon select's "From the name" (no icon of its own): a Select item can't hold the empty
+ * value. Never a kebab-case name.
+ */
+const NO_ICON = '__none__';
 
 /** An icon's name as a menu reads it: `shopping-bag` → "Shopping bag". */
 function iconLabel(name: string): string {

@@ -17,6 +17,14 @@ Element.prototype.scrollIntoView ??= () => {};
 
 afterEach(cleanup);
 
+/** Opens the Icon select and chooses an option by its name, each drawn with its icon. */
+function pickIcon(name: string) {
+  fireEvent.keyDown(screen.getByLabelText('Icon'), { key: 'ArrowDown' });
+  const option = screen.getByRole('option', { name });
+  expect(option.querySelector('svg')).toBeTruthy();
+  fireEvent.keyDown(option, { key: 'Enter' });
+}
+
 const field = (over: Partial<FieldDefinition>): FieldDefinition => ({
   apiId: 'x',
   name: 'X',
@@ -95,18 +103,24 @@ describe('the content nav', () => {
     ]);
   });
 
-  it('draws a known icon, hidden from assistive tech, and nothing for an unknown one', () => {
+  it('draws its own icon, the suggested one, else a blank page, all hidden from assistive tech', () => {
     const { container } = render(
       <>
-        <ContentTypeIcon name="calendar" />
-        <ContentTypeIcon name="no-such-icon" />
-        <ContentTypeIcon name="constructor" />
-        <ContentTypeIcon name="to-string" />
+        <ContentTypeIcon type={{ icon: 'calendar' }} />
+        <ContentTypeIcon type={{ icon: 'no-such-icon', name: 'Recipes' }} />
+        <ContentTypeIcon type={{ icon: 'constructor' }} />
+        <ContentTypeIcon type={{ name: 'to-string' }} />
       </>,
     );
-    const svgs = container.querySelectorAll('svg');
-    expect(svgs).toHaveLength(1);
-    expect(svgs[0]?.getAttribute('aria-hidden')).toBe('true');
+    // Its own icon; the one its name suggests when it names none drawn here; else a blank page.
+    const svgs = [...container.querySelectorAll('svg')];
+    expect(svgs.map((svg) => svg.getAttribute('class')?.match(/lucide-[a-z-]+/)?.[0])).toEqual([
+      'lucide-calendar',
+      'lucide-book-open',
+      'lucide-file',
+      'lucide-file',
+    ]);
+    expect(svgs.every((svg) => svg.getAttribute('aria-hidden') === 'true')).toBe(true);
   });
 });
 
@@ -284,7 +298,11 @@ describe('the content type dialog', () => {
 
   it('keeps an icon name it cannot draw, an inherited key included', async () => {
     const draft = await saveDialog({ ...ARTICLE, icon: 'constructor' }, () => {
+      // Shown as chosen on the closed select, and offered in its list.
+      expect(screen.getByLabelText('Icon').textContent).toBe('constructor (not drawn here)');
+      fireEvent.keyDown(screen.getByLabelText('Icon'), { key: 'ArrowDown' });
       expect(screen.getByRole('option', { name: 'constructor (not drawn here)' })).toBeTruthy();
+      fireEvent.keyDown(screen.getByRole('listbox'), { key: 'Escape' });
     });
     expect(draft.icon).toBe('constructor');
   });
@@ -351,11 +369,42 @@ describe('the content type dialog', () => {
     expect(document.getElementById('ct-preview-error')).toBeNull();
   });
 
+  it('chooses a new type’s icon from its name until one is picked', async () => {
+    const onSave = vi.fn<(d: ContentTypeDraft) => Promise<void>>(async () => {});
+    render(<ContentTypeDialog open onOpenChange={() => {}} onSave={onSave} />);
+    const icon = screen.getByLabelText('Icon');
+    const name = screen.getByLabelText('Name');
+    fireEvent.change(name, { target: { value: 'Event' } });
+    // The trigger draws the chosen icon beside its name.
+    expect(icon.textContent).toBe('Calendar');
+    expect(icon.querySelector('svg.lucide-calendar')).toBeTruthy();
+    fireEvent.change(name, { target: { value: 'Widget' } });
+    // A name that suggests none: still drawn from the name, as a blank page.
+    expect(icon.textContent).toBe('From the name');
+    expect(icon.querySelector('svg.lucide-file')).toBeTruthy();
+    // Read as a create without an icon reads it: the name first, then the API id.
+    fireEvent.change(screen.getByLabelText('API ID'), { target: { value: 'landingHub' } });
+    expect(icon.textContent).toBe('Layout template');
+    // Picked by hand, it no longer follows the name.
+    pickIcon('Star');
+    fireEvent.change(name, { target: { value: 'Article' } });
+    expect(icon.textContent).toBe('Star');
+  });
+
+  it('leaves an existing type’s icon alone when it is renamed', () => {
+    render(<ContentTypeDialog open onOpenChange={() => {}} initial={ARTICLE} onSave={vi.fn()} />);
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Event' } });
+    // No icon of its own: the field says where its icon comes from, and draws the one the nav will.
+    const icon = screen.getByLabelText('Icon');
+    expect(icon.textContent).toBe('From the name');
+    expect(icon.querySelector('svg.lucide-calendar')).toBeTruthy();
+  });
+
   it('saves a group, description and icon', async () => {
     const draft = await saveDialog(ARTICLE, () => {
       fireEvent.change(screen.getByLabelText('Group'), { target: { value: 'Editorial' } });
       fireEvent.change(screen.getByLabelText('Description'), { target: { value: 'Long reads' } });
-      fireEvent.change(screen.getByLabelText('Icon'), { target: { value: 'newspaper' } });
+      pickIcon('Newspaper');
       fireEvent.change(screen.getByLabelText('Agent instructions'), {
         target: { value: 'Stay factual.' },
       });

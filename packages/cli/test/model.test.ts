@@ -142,6 +142,15 @@ describe('planModel', () => {
     ]);
   });
 
+  it('exports a type without an icon as none, so a copy made from the file gains none', () => {
+    expect(toDrafts([live(article)])[0]?.icon).toBeNull();
+    expect(toDrafts([live({ ...article, icon: 'newspaper' })])[0]?.icon).toBe('newspaper');
+    // Applied over a type that has none, a stated none is no change.
+    expect(planModel(toDrafts([live(article)]).map(normalizeDraft), [live(article)]).changes).toBe(
+      0,
+    );
+  });
+
   it('compares agent instructions, and exports them', () => {
     const detailed = { ...article, agentInstructions: 'Stay factual.' };
     expect(toDrafts([live(detailed)])[0]?.agentInstructions).toBe('Stay factual.');

@@ -1685,14 +1685,23 @@ test('a singleton type opens its one entry, and refuses a second', async ({ page
   const dialog = page.getByRole('dialog', { name: 'New content type' });
   await dialog.getByLabel('Name', { exact: true }).fill(name);
   await dialog.getByLabel('API ID', { exact: true }).fill(apiId);
+  // The icon follows the name until one is picked; the list draws each beside its name.
+  const icon = dialog.getByRole('combobox', { name: 'Icon' });
+  await expect(icon).toHaveText('Box');
+  await icon.click();
+  await page.getByRole('option', { name: 'Star', exact: true }).click();
+  await expect(icon).toHaveText('Star');
   await dialog.getByRole('checkbox', { name: /one entry only/i }).check();
   await dialog.getByRole('button', { name: 'Create content type' }).click();
   await expect(dialog).toBeHidden();
 
   // The sidebar and the overview open the entry, not a list: a new one while there is none.
-  await expect(
-    page.locator(`nav[aria-labelledby="content-types-nav"] a[href="/content/${apiId}/entry"]`),
-  ).toHaveCount(1);
+  const navLink = page.locator(
+    `nav[aria-labelledby="content-types-nav"] a[href="/content/${apiId}/entry"]`,
+  );
+  await expect(navLink).toHaveCount(1);
+  // Where the nav shows (wide enough), it draws the icon picked.
+  if (await navLink.isVisible()) await expect(navLink.locator('svg.lucide-star')).toBeVisible();
   const row = page
     .getByRole('main')
     .getByRole('list', { name: 'Content types' })

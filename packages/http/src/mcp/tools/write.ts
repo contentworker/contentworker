@@ -100,7 +100,10 @@ export function registerWriteTools(server: McpServer, t: ToolContext): void {
             .max(CONTENT_TYPE_LIMITS.icon)
             .nullable()
             .optional()
-            .describe('a kebab-case icon name the admin draws, e.g. newspaper; null clears it'),
+            .describe(
+              'a kebab-case icon name the admin draws, e.g. newspaper; left out, a new type ' +
+                'takes the one its name suggests; null clears it (or creates the type with none)',
+            ),
           agentInstructions: z
             .string()
             .max(CONTENT_TYPE_LIMITS.agentInstructions)

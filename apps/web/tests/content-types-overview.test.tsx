@@ -202,22 +202,24 @@ describe('the list of content types', () => {
     expect(typeMark('')).toBe('');
   });
 
-  it('draws a type’s icon in its tile, and its initials when it has none', async () => {
+  it('draws a type’s icon in its tile, the one its name suggests, else its initials', async () => {
     setup([
       { ...type('blogPost', 'Blog post', 'published'), icon: 'newspaper' } as ContentType,
       type('author', 'Author', 'published'),
-      type('landingPage', 'Landing page', 'published'),
+      type('widget', 'Widget', 'published'),
+      type('brandKit', 'Brand kit', 'published'),
     ]);
     const tile = (name: string) =>
       screen
         .getByRole('link', { name })
         .closest('li')
         ?.querySelector('[data-slot="catalog-tile"]') as HTMLElement;
-    await screen.findByText('Landing page');
+    await screen.findByText('Brand kit');
     expect(tile('Blog post').querySelector('svg')).toBeTruthy();
-    expect(tile('Author').textContent).toBe('Au');
-    expect(tile('Landing page').textContent).toBe('LP');
-    expect(tile('Author').getAttribute('aria-hidden')).toBe('true');
+    expect(tile('Author').querySelector('svg')?.getAttribute('class')).toContain('lucide-user');
+    expect(tile('Widget').textContent).toBe('Wi');
+    expect(tile('Brand kit').textContent).toBe('BK');
+    expect(tile('Widget').getAttribute('aria-hidden')).toBe('true');
   });
 
   it('filters by name, API id and description, and a miss offers the way out', async () => {

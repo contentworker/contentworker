@@ -1,3 +1,4 @@
+import { suggestContentTypeIcon } from '@contentworker/domain';
 import {
   BookOpen,
   Box,
@@ -58,16 +59,29 @@ export function contentTypeIcon(name: string | undefined): LucideIcon | undefine
 }
 
 /**
- * A content type's icon, decorative beside its name; nothing when it names none the admin knows,
- * or, with `fallback`, a blank page in its place: in a list where other types have icons, an
- * empty slot would set the name in like a child of the row above. No type can choose the blank
- * page, so it never reads as one that did.
+ * The icon a type's name suggests (`suggestContentTypeIcon`), or undefined: what a type saved
+ * without an icon is drawn with, and what a new type is given when nobody picks one.
+ */
+export function suggestedContentTypeIcon(type: {
+  readonly name?: string | undefined;
+  readonly apiId?: string | undefined;
+}): LucideIcon | undefined {
+  return contentTypeIcon(suggestContentTypeIcon(type));
+}
+
+/**
+ * The icon a type is drawn with where every type has one (the content nav): the one it names,
+ * else the one its name suggests, else a blank page. No type can choose the blank page, so it
+ * never reads as one that did.
  */
 export function ContentTypeIcon(props: {
-  name: string | undefined;
+  type: {
+    readonly icon?: string | undefined;
+    readonly name?: string | undefined;
+    readonly apiId?: string | undefined;
+  };
   className?: string;
-  fallback?: boolean;
 }) {
-  const Icon = contentTypeIcon(props.name) ?? (props.fallback ? File : undefined);
-  return Icon ? <Icon aria-hidden="true" className={props.className ?? 'size-4 shrink-0'} /> : null;
+  const Icon = contentTypeIcon(props.type.icon) ?? suggestedContentTypeIcon(props.type) ?? File;
+  return <Icon aria-hidden="true" className={props.className ?? 'size-4 shrink-0'} />;
 }

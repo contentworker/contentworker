@@ -117,7 +117,10 @@ type, its value and the validations it takes are in the [field types reference](
 - **Group** files a type in the admin's sidebar under a heading (`Marketing`, `Docs`); types
   without one are listed first.
 - **Description** says what the type is for, for editors choosing one and agents reading the model.
-- **Icon** is a short name the admin draws beside the type (`newspaper`, `calendar`).
+- **Icon** is a short name the admin draws beside the type (`newspaper`, `calendar`). Leave it
+  out when you create a type and it takes the one its name suggests ("Article" gets `newspaper`,
+  "Event" gets `calendar`); send `null` to create a type with none. A type without an icon is
+  still drawn with the suggested one in the admin.
 - **Layout** arranges the entry form into tabs, and fields within a tab into named groups, which
   can start collapsed. It is for editors only: nothing about storage, validation or delivery
   changes, and Delivery never serves it. Each field sits in one place; fields the layout doesn't

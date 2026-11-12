@@ -605,7 +605,10 @@ interface ContentType {
 - `group`, `description`, `icon`, `agentInstructions` and `layout` follow one rule on a draft or
   revision: left out keeps the stored value, `null` (or blank text) clears it, and a value stored as
   it stands passes unchecked. They are columns on `content_types` (0026, 0032), not part of the
-  `fields` JSON.
+  `fields` JSON. One exception, on create only: `createContentType` gives a new type whose draft
+  leaves `icon` out the one its name suggests (`suggestContentTypeIcon`, which reads the name's
+  last telling word, then the API id), so `null` is how to create a type with none. A revision
+  never suggests one, and a snapshot import states the source's icon either way.
 - `layout` arranges the admin's entry form: `{ tabs: [{ apiId, name, groups: [{ name?, fields,
   collapsed? }] }] }` (at most 20 tabs, 50 groups a tab; names at most 100). Each top-level field
   is placed at most once, and a name that is not a field is refused (`checkLayout`), except that a

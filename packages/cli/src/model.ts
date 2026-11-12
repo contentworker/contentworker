@@ -25,7 +25,9 @@ export function toDrafts(types: readonly ContentType[]): ContentTypeDraft[] {
       fields,
       ...(group ? { group } : {}),
       ...(description ? { description } : {}),
-      ...(icon ? { icon } : {}),
+      // Stated either way: left out, a type created from the file would take the icon its name
+      // suggests, and the copy would differ from its source.
+      icon: icon ?? null,
       ...(agentInstructions ? { agentInstructions } : {}),
       ...(layout ? { layout } : {}),
     };

@@ -288,3 +288,61 @@ describe('a revision that tightens a rule under values entries hold', () => {
     expect(listed).toBe(0);
   });
 });
+
+describe('a new content type’s icon', () => {
+  const draft = (apiId: string, name: string) => ({
+    apiId,
+    name,
+    displayField: 'title',
+    fields: [field('title')],
+  });
+
+  it('is the one its name suggests when the draft leaves it out', async () => {
+    const made = await createContentType(ctx, SYSTEM_CALLER, scope, draft('article', 'Article'));
+    expect(made.icon).toBe('newspaper');
+    expect((await getContentType(ctx, scope, 'article')).icon).toBe('newspaper');
+  });
+
+  it('is the one given, and none when given null or a name that suggests none', async () => {
+    const given = await createContentType(ctx, SYSTEM_CALLER, scope, {
+      ...draft('article', 'Article'),
+      icon: 'star',
+    });
+    expect(given.icon).toBe('star');
+    const none = await createContentType(ctx, SYSTEM_CALLER, scope, {
+      ...draft('event', 'Event'),
+      icon: null,
+    });
+    expect(none.icon).toBeUndefined();
+    const unknown = await createContentType(ctx, SYSTEM_CALLER, scope, draft('widget', 'Widget'));
+    expect(unknown.icon).toBeUndefined();
+  });
+
+  it('is left alone on a revision: a cleared icon is not suggested again', async () => {
+    await createContentType(ctx, SYSTEM_CALLER, scope, draft('article', 'Article'));
+    await updateContentType(ctx, SYSTEM_CALLER, scope, 'article', { icon: null });
+    const again = await createContentType(ctx, SYSTEM_CALLER, scope, draft('article', 'Article'));
+    expect(again.icon).toBeUndefined();
+  });
+
+  it('is not added to a copy: a snapshot of a type without one imports without one', async () => {
+    await createContentType(ctx, SYSTEM_CALLER, scope, { ...draft('event', 'Event'), icon: null });
+    const snapshot = await exportSnapshot(ctx, SYSTEM_CALLER, scope);
+    const target = { spaceId: 's1', environmentId: 'copy' };
+    await createEnvironment(ctx, 's1', 'copy');
+    await importSnapshot(ctx, SYSTEM_CALLER, target, snapshot);
+    expect((await getContentType(ctx, target, 'event')).icon).toBeUndefined();
+  });
+
+  it('is carried by a copy: a snapshot of a type with one imports with it', async () => {
+    await createContentType(ctx, SYSTEM_CALLER, scope, {
+      ...draft('event', 'Event'),
+      icon: 'star',
+    });
+    const snapshot = await exportSnapshot(ctx, SYSTEM_CALLER, scope);
+    const target = { spaceId: 's1', environmentId: 'copy' };
+    await createEnvironment(ctx, 's1', 'copy');
+    await importSnapshot(ctx, SYSTEM_CALLER, target, snapshot);
+    expect((await getContentType(ctx, target, 'event')).icon).toBe('star');
+  });
+});
