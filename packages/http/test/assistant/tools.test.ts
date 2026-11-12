@@ -322,6 +322,34 @@ describe('the assistant’s MCP tools', () => {
     ).toEqual({ assetId: 'a1', version: 2, offset: 0, nextOffset: 6000 });
   });
 
+  it('keeps the project a call worked in, ids and outcomes only, never ranges', () => {
+    expect(
+      kept({
+        fields: { body: { 'en-US': [] } },
+        usage: { inputTokens: 1, outputTokens: 2 },
+        project: {
+          id: 'p1',
+          version: 3,
+          references: [
+            { assetId: 'a1', version: 2, used: true, ranges: [[0, 900]] },
+            { assetId: 'a2', version: 1, used: false, reason: 'forbidden' },
+          ],
+        },
+      }),
+    ).toEqual({
+      project: {
+        id: 'p1',
+        version: 3,
+        references: [
+          { assetId: 'a1', used: true },
+          { assetId: 'a2', used: false, reason: 'forbidden' },
+        ],
+      },
+    });
+    // No project, or none taken (`null`): nothing kept.
+    expect(kept({ project: null, status: 'ok' })).toEqual({ status: 'ok' });
+  });
+
   it('holds a turn’s reference reads to 24,000 characters, less on a small window', () => {
     expect(referenceTurnChars(262_144)).toBe(24_000);
     expect(referenceTurnChars(24_000)).toBe(12_000);

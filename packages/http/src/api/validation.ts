@@ -10,11 +10,14 @@ import {
   SCHEDULER_ALERT_MAX_RECIPIENTS,
 } from '@contentworker/application';
 import {
+  AI_EDIT_SIZES,
+  AI_PROJECT_CAPABILITIES,
   AI_PROJECT_DESCRIPTION_MAX,
   AI_PROJECT_INSTRUCTIONS_MAX,
   AI_PROJECT_MAX_PER_ENVIRONMENT,
   AI_PROJECT_MAX_REFERENCES,
   AI_PROJECT_NAME_MAX,
+  AI_PROPOSAL_OUTCOMES,
   BLOCK_CATALOG_LIMITS,
   BLOCK_CONFIG_LIMITS,
   BLOCK_LOCK_LIMITS,
@@ -1197,6 +1200,22 @@ export const aiProjectBody = z.object({
 });
 export const aiProjectUpdateBody = aiProjectBody.extend({
   expectedVersion: z.int().min(1).describe('The version you read; another is a 409'),
+});
+/** What a person did with a proposal made in a project: a count, never content. */
+export const aiProjectOutcomeBody = z.object({
+  capability: z
+    .enum(AI_PROJECT_CAPABILITIES)
+    .describe('The capability whose call made the proposal (drafting, layout, field-assist, …)'),
+  outcome: z
+    .enum(AI_PROPOSAL_OUTCOMES)
+    .describe('Kept as proposed (`accepted`), kept after changing it (`edited`), or thrown away'),
+  edit: z
+    .enum(AI_EDIT_SIZES)
+    .optional()
+    .describe(
+      'For `edited` only: how much changed, measured by the client over the proposed text ' +
+        '(under a tenth `small`, under two fifths `medium`, more `large`)',
+    ),
 });
 export const aiProjectDefaultBody = z.object({
   projectId: zId.nullable().describe('The project to make the default; null clears it'),

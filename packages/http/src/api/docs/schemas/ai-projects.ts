@@ -47,6 +47,14 @@ const aiReferenceStatus = aiReference.extend({
     .boolean()
     .describe('The asset has a newer file: moving the pin to it is a project update'),
   gone: z.literal(true).optional().describe('The asset was deleted or archived'),
+  textBytes: z.int().optional().describe('The text’s size in UTF-8 bytes, when it is `ready`'),
+  retryable: z
+    .literal(true)
+    .optional()
+    .describe(
+      'Retry (`POST …/references/{assetId}/extract`) would be taken now: no text for a reason a ' +
+        'rerun can change, at the current file, with media AI on',
+    ),
 });
 
 const project = {

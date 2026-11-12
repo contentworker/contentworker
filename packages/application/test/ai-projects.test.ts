@@ -23,6 +23,7 @@ import {
 } from '@contentworker/test-kit';
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
+  AI_PROJECT_OUTCOME_METRIC,
   AI_REFERENCE_EXTRACTION_STALE_MS,
   type AiCallRecord,
   type AppContext,
@@ -44,6 +45,7 @@ import {
   publishAsset,
   publishEntry,
   readAiProjectReference,
+  recordAiProjectOutcome,
   resolveAiProject,
   runAIAction,
   runAssetIngest,
@@ -143,7 +145,8 @@ describe('AI projects: create, update, delete', () => {
     });
     expect(p).toMatchObject({ version: 1, isDefault: false, createdBy: 'ed@example.com' });
     expect(p.references).toEqual([
-      { assetId: a.id, version: 1, text: 'ready', updateAvailable: false },
+      // Ready, with its text's size ("Spec text": 9 bytes).
+      { assetId: a.id, version: 1, text: 'ready', updateAvailable: false, textBytes: 9 },
     ]);
   });
 
@@ -1252,5 +1255,91 @@ describe('choosing a reference’s excerpt', () => {
     expect(selectExcerpt(text, 2_000, 'paragraph')).toEqual(
       selectExcerpt(text, 2_000, 'paragraph'),
     );
+  });
+});
+
+describe('a project read says where Retry is taken', () => {
+  it('marks a reference with no text yet retryable, and none while media AI is off', async () => {
+    const t = await setup();
+    const ready = await t.doc('guide.pdf', 'Guide text');
+    const unread = await t.doc('sheet.pdf', null);
+    const p = await createAiProject(t.ctx, scope, editor, {
+      name: 'Retry',
+      references: [{ assetId: ready.id }, { assetId: unread.id }],
+    });
+    const [r, u] = (await getAiProject(t.ctx, scope, p.id)).references;
+    expect(r).not.toHaveProperty('retryable');
+    expect(u).toMatchObject({ text: 'none', reason: 'not_extracted', retryable: true });
+    const settings = await getAiSettings(t.ctx, 'shop');
+    await setAiSettings(t.ctx, admin, 'shop', {
+      expectedVersion: settings.version,
+      capabilities: { media: { enabled: false } },
+    });
+    const [, off] = (await getAiProject(t.ctx, scope, p.id)).references;
+    expect(off).not.toHaveProperty('retryable');
+  });
+});
+
+describe('the production signal', () => {
+  it('counts an outcome per project, capability and edit size, with no content', async () => {
+    const t = await setup();
+    const counted: { metric: string; labels?: Record<string, string> }[] = [];
+    const ctx: AppContext = {
+      ...t.ctx,
+      metrics: { count: (metric, _v, labels) => counted.push({ metric, labels }) },
+    };
+    const p = await createAiProject(ctx, scope, editor, { name: 'Signal' });
+    await recordAiProjectOutcome(ctx, scope, p.id, { capability: 'drafting', outcome: 'accepted' });
+    await recordAiProjectOutcome(ctx, scope, p.id, {
+      capability: 'layout',
+      outcome: 'edited',
+      edit: 'medium',
+    });
+    expect(counted).toEqual([
+      {
+        metric: AI_PROJECT_OUTCOME_METRIC,
+        labels: {
+          spaceId: 'shop',
+          environmentId: 'main',
+          projectId: p.id,
+          capability: 'drafting',
+          outcome: 'accepted',
+          edit: 'none',
+        },
+      },
+      {
+        metric: AI_PROJECT_OUTCOME_METRIC,
+        labels: {
+          spaceId: 'shop',
+          environmentId: 'main',
+          projectId: p.id,
+          capability: 'layout',
+          outcome: 'edited',
+          edit: 'medium',
+        },
+      },
+    ]);
+    // Nothing is written: the store holds the project as it was created.
+    expect((await getAiProject(ctx, scope, p.id)).version).toBe(1);
+  });
+
+  it('404s a project of another environment, and counts nothing for a refused report', async () => {
+    const t = await setup();
+    const counted: string[] = [];
+    const ctx: AppContext = { ...t.ctx, metrics: { count: (m) => counted.push(m) } };
+    const p = await createAiProject(ctx, scope, editor, { name: 'Elsewhere' });
+    await expect(
+      recordAiProjectOutcome(ctx, { spaceId: 'shop', environmentId: 'staging' }, p.id, {
+        capability: 'drafting',
+        outcome: 'discarded',
+      }),
+    ).rejects.toBeInstanceOf(NotFoundError);
+    await expect(
+      recordAiProjectOutcome(ctx, scope, p.id, { capability: 'drafting', outcome: 'edited' }),
+    ).rejects.toBeInstanceOf(ValidationError);
+    await expect(
+      recordAiProjectOutcome(ctx, scope, p.id, { capability: 'search', outcome: 'accepted' }),
+    ).rejects.toBeInstanceOf(ValidationError);
+    expect(counted).toEqual([]);
   });
 });

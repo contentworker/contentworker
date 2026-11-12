@@ -55,7 +55,7 @@ describe('AI projects through the management SDK', () => {
       references: [{ assetId: asset.id }],
     });
     expect(created.references).toEqual([
-      { assetId: asset.id, version: 1, text: 'ready', updateAvailable: false },
+      { assetId: asset.id, version: 1, text: 'ready', updateAvailable: false, textBytes: 14_000 },
     ]);
     expect((await cma.aiProjects.get(created.id)).reader?.name).toBe('Procurement lead');
 
@@ -83,6 +83,12 @@ describe('AI projects through the management SDK', () => {
       offset: page.nextOffset as number,
     });
     expect(rest.nextOffset).toBeNull();
+
+    await cma.aiProjects.recordOutcome(created.id, {
+      capability: 'drafting',
+      outcome: 'edited',
+      edit: 'small',
+    });
 
     await cma.aiProjects.setDefault(null);
     await cma.aiProjects.delete(created.id);

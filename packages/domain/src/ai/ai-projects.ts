@@ -342,6 +342,10 @@ export interface AiReferenceStatus extends AiReference {
   readonly updateAvailable: boolean;
   /** The asset is gone (deleted or archived): the reference reaches no prompt. */
   readonly gone?: true;
+  /** The text's size in UTF-8 bytes, when `text` is `ready`. */
+  readonly textBytes?: number;
+  /** A Retry (`…/references/:assetId/extract`) would be taken now: set on a project read only. */
+  readonly retryable?: true;
 }
 
 /** Why a call left a reference out, as its answer reports it. */
@@ -381,4 +385,66 @@ export class AiProjectInUseError extends DomainError {
     this.aiActions = aiActions;
     this.agentSchedules = agentSchedules;
   }
+}
+
+// ---- the production signal (Evaluation) ----------------------------------------------------------
+
+/**
+ * What a person did with a proposal a call made in a project: kept it as proposed, kept it edited,
+ * or threw it away. Recorded per project as a count, never with content (the spec's production
+ * signal), so a project's effect can be read from real use and not the golden set alone.
+ */
+export const AI_PROPOSAL_OUTCOMES = ['accepted', 'edited', 'discarded'] as const;
+export type AiProposalOutcome = (typeof AI_PROPOSAL_OUTCOMES)[number];
+
+/**
+ * How much an edited proposal changed, as a bucket: under a tenth of its characters is `small`,
+ * under two fifths `medium`, more `large`. The client measures (the text never leaves it).
+ */
+export const AI_EDIT_SIZES = ['small', 'medium', 'large'] as const;
+export type AiEditSize = (typeof AI_EDIT_SIZES)[number];
+
+/** The bucket for `changed` characters out of `total` proposed ({@link AI_EDIT_SIZES}). */
+export function aiEditSize(changed: number, total: number): AiEditSize {
+  const share = total > 0 ? changed / total : changed > 0 ? 1 : 0;
+  return share < 0.1 ? 'small' : share < 0.4 ? 'medium' : 'large';
+}
+
+/** One outcome as a client reports it. `edit` is set only for `edited`. */
+export interface AiProposalOutcomeReport {
+  readonly capability: AiProjectCapability;
+  readonly outcome: AiProposalOutcome;
+  readonly edit?: AiEditSize;
+}
+
+/** A report checked: the capability takes projects, and `edit` is there exactly for `edited`. */
+export function checkAiProposalOutcome(input: unknown): AiProposalOutcomeReport {
+  const raw = (input ?? {}) as Record<string, unknown>;
+  const issues: FieldIssue[] = [];
+  const capability = raw.capability;
+  const outcome = raw.outcome;
+  const edit = raw.edit;
+  if (typeof capability !== 'string' || !takesAiProject(capability as AiCapability)) {
+    issues.push({
+      field: 'capability',
+      message: `One of ${AI_PROJECT_CAPABILITIES.join(', ')}: the capability that made the proposal`,
+    });
+  }
+  if (!(AI_PROPOSAL_OUTCOMES as readonly unknown[]).includes(outcome)) {
+    issues.push({ field: 'outcome', message: `One of ${AI_PROPOSAL_OUTCOMES.join(', ')}` });
+  }
+  if (outcome === 'edited' && !(AI_EDIT_SIZES as readonly unknown[]).includes(edit)) {
+    issues.push({
+      field: 'edit',
+      message: `An edited proposal says how much: ${AI_EDIT_SIZES.join(', ')}`,
+    });
+  } else if (outcome !== 'edited' && edit !== undefined) {
+    issues.push({ field: 'edit', message: 'Only an edited proposal has an edit size' });
+  }
+  if (issues.length > 0) throw new ValidationError(issues);
+  return {
+    capability: capability as AiProjectCapability,
+    outcome: outcome as AiProposalOutcome,
+    ...(outcome === 'edited' ? { edit: edit as AiEditSize } : {}),
+  };
 }

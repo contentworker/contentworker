@@ -28,6 +28,8 @@ describe('Coworker’s AI project', () => {
       'ai_project_delete',
       'ai_project_default_set',
       'ai_project_reference_extract',
+      // The panel reports what became of a proposal itself; the model never does.
+      'ai_project_outcome_record',
     ]) {
       expect(Object.hasOwn(ASSISTANT_TOOLS, name)).toBe(false);
     }
