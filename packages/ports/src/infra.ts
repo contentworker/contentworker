@@ -912,6 +912,18 @@ export interface AssetZipStarter {
   start(params: AssetZipParams): Promise<boolean>;
 }
 
+/** What one async operation job's run is about. Plain JSON: a Workflow instance's payload. */
+export interface AppOperationJobParams {
+  readonly scope: Scope;
+  readonly jobId: string;
+}
+
+/** Starts the durable run of an async operation job (one Workflow instance per job id). */
+export interface AppOperationJobStarter {
+  /** `true` when this call started the run; `false` when one under that id already existed. */
+  start(params: AppOperationJobParams): Promise<boolean>;
+}
+
 /** Ingest of one asset's file, as the queue carries it (see {@link AssetIngestQueue}). */
 export interface AssetIngestRequest {
   readonly scope: Scope;

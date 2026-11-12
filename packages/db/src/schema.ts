@@ -1,5 +1,7 @@
 import type {
   AiCapabilitySetting,
+  AppOperationJobCaller,
+  AppOperationJobStatus,
   AssetAiSuggestions,
   AssetFile,
   AssetIngestStatus,
@@ -530,6 +532,37 @@ export const assetZipJobs = sqliteTable(
     primaryKey({ columns: [t.spaceId, t.environmentId, t.id] }),
     index('asset_zip_jobs_by_created').on(t.spaceId, t.environmentId, t.createdAt),
     index('asset_zip_jobs_by_expiry').on(t.expiresAt),
+  ],
+);
+
+/** Async plugin operation jobs: accepted by the api, run by the engine's AppOperationWorkflow. */
+export const appOperationJobs = sqliteTable(
+  'app_operation_jobs',
+  {
+    spaceId: text('space_id').notNull(),
+    environmentId: text('environment_id').notNull(),
+    id: text('id').notNull(),
+    pluginId: text('plugin_id').notNull(),
+    pluginVersion: text('plugin_version').notNull(),
+    checksum: text('checksum').notNull(),
+    operation: text('operation').notNull(),
+    requires: text('requires').notNull(),
+    status: text('status').$type<AppOperationJobStatus>().notNull(),
+    input: text('input', { mode: 'json' }).$type<unknown>().notNull(),
+    /** The output's JSON text, once completed (`null` is the text `null`, not an absent column). */
+    output: text('output'),
+    error: text('error'),
+    caller: text('caller', { mode: 'json' }).$type<AppOperationJobCaller>().notNull(),
+    createdBy: text('created_by').notNull(),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+    startedAt: integer('started_at', { mode: 'timestamp_ms' }),
+    completedAt: integer('completed_at', { mode: 'timestamp_ms' }),
+    expiresAt: integer('expires_at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.spaceId, t.environmentId, t.id] }),
+    index('app_operation_jobs_by_created').on(t.spaceId, t.environmentId, t.createdAt),
+    index('app_operation_jobs_by_expiry').on(t.expiresAt),
   ],
 );
 

@@ -69,6 +69,7 @@ test('every account-wide name in every app carries the deployment', () => {
       'contentworker-editorial-acme',
       'contentworker-asset-ingest-acme',
       'contentworker-asset-zip-acme',
+      'contentworker-app-operation-acme',
     ],
   );
   assert.equal(engine.d1_databases[0].database_name, n.d1);

@@ -6,6 +6,7 @@
   "description": "The Cloudflare runtime every contentworker Worker shares: bindings (env), deployment config, the composition root (wire), ids, metrics, queue message shapes, secrets-at-rest key handling, the Durable Object classes and their clients, and the Workflows clients. Workers import this; they never import each other.",
   "exports": {
     "./asset-ingest": "./src/asset-ingest.ts",
+    "./app-operations": "./src/app-operations.ts",
     "./asset-zip": "./src/asset-zip.ts",
     "./auth-rate-limit": "./src/auth-rate-limit.ts",
     "./config": "./src/config.ts",

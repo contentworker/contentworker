@@ -7,6 +7,7 @@ import {
   type WebhookSendRequest,
 } from '@contentworker/domain';
 import type {
+  AppOperationJobStarter,
   AssetGate,
   AssetIngestQueue,
   AssetZipStarter,
@@ -100,6 +101,8 @@ export interface DispatchDeps {
   readonly assetIngest?: AssetIngestQueue;
   /** Starts the Workflow that builds a requested zip; absent, a request fails at once. */
   readonly assetZip?: AssetZipStarter;
+  /** Starts the Workflow that runs an accepted async operation; absent, a job fails at once. */
+  readonly appOperationJobs?: AppOperationJobStarter;
   /**
    * Tags already invalidated during this consumer invocation. A queue batch of
    * same-type publishes (a release, a burst of scheduled publishes) would
@@ -198,6 +201,21 @@ export async function dispatchEvent(
       await ctx.store.assetZips.update(scope, event.jobId, {
         status: 'failed',
         error: 'Zip downloads are not available on this deployment',
+      });
+    }
+    return;
+  }
+
+  // An async plugin operation was accepted: start the Workflow that runs it (one instance per
+  // job, so a redelivered event starts nothing more). A control event: no webhooks apply.
+  if (event.type === 'app_operation.requested') {
+    if (deps.appOperationJobs) {
+      await deps.appOperationJobs.start({ scope, jobId: event.jobId });
+    } else {
+      await ctx.store.appOperationJobs.update(scope, event.jobId, {
+        status: 'failed',
+        error: 'Async operations are not available on this deployment',
+        completedAt: ctx.clock.now().toISOString(),
       });
     }
     return;

@@ -472,6 +472,7 @@ function OperationList(props: {
             )}
             <span className="block text-xs text-muted-foreground">
               {op.description} Callable by {whoMayCall(op.requires)}.
+              {op.mode === 'async' && ' Runs in the background, for up to 5 minutes.'}
             </span>
           </li>
         ))}

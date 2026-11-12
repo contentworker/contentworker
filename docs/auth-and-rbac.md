@@ -871,6 +871,8 @@ interface Principal {
   keeps it), so a deployment admin's job in a space whose team they are not on runs to the end
   even if they are demoted or their account is disabled meanwhile; cancel it. A job a job starts (a clone's create job, a snapshot's publishing job)
   carries the same starter; the asset reindex a snapshot import starts is the system's. `config.startedBy` is never in a job as read back.
+  An async plugin operation's job records its caller the same way and resolves them again before
+  it runs (`docs/plugins.md`, "Async operations").
 - **Preview links** — `POST …/entries/:id/preview-link` mints an expiring token; CPA
   `GET …/entries/:id?preview_token=…` accepts it without a bearer header.
 - **OAuth 2.1** — when `OAUTH_ISSUER` is set, MCP clients obtain tokens through

@@ -29,6 +29,7 @@ tags to purge.
              │    ├─ cache     — invalidate the entry's tag + reverse-reference tags (key-value)
              │    ├─ gate      — asset.*: write or remove asset-gate:<space>:<env>:<id> (key-value)
              │    ├─ zip       — asset_zip.requested: start AssetZipWorkflow
+             │    ├─ app op    — app_operation.requested: start AppOperationWorkflow
              │    ├─ rag       — re-index (published) or delete (unpublished) embeddings
              │    └─ search    — SearchShardDO index / remove
              ├─ bus.publish(event)  →  LiveHubDO  →  Live Content SSE subscribers
@@ -226,7 +227,8 @@ On the top-of-hour tick, `pruneEventHistory` trims relayed outbox rows and webho
 older than `EVENT_RETENTION_HOURS` (default 168).
 The same tick runs `sweepAbandonedMultipartUploads` (multipart uploads unfinished after a day are
 aborted) and `sweepExpiredZips` (archives past their day are deleted with their jobs), each recorded
-in the heartbeat (`abandoned-multipart-uploads`, `expired-zips`).
+in the heartbeat (`abandoned-multipart-uploads`, `expired-zips`). `sweepExpiredAppOperationJobs`
+(`expired-app-operation-jobs`) deletes async plugin operation jobs, and their output, past their day.
 
 Once a day, on the 04:15 UTC tick, `repairAllTaxonomies` runs `repairTaxonomy` for every
 environment of every space (heartbeat job `taxonomy-repair`): it rebuilds the published usage
@@ -380,6 +382,7 @@ Domain events (`packages/domain/src/events.ts`):
 | `asset_share.created` / `asset_share.revoked`                                      | `linkId` (the media origin reads the link's row itself; a revoke purges its cached page, now and after 90 s)                                                                                                                                                                                                |
 | `taxonomy.changed`                                                                 | `termKind` (`tag` or `concept`), `termId` (a tag or concept was created, changed or deleted; Delivery's taxonomy reads are purged with the scope's tag)                                                                                                                                                     |
 | `asset_zip.requested`                                                              | `jobId` (a control event: the engine starts `AssetZipWorkflow`, or fails the job when `ASSET_ZIP_WF` is unbound; no webhooks apply)                                                                                                                                                                         |
+| `app_operation.requested`                                                          | `jobId` (a control event: the engine starts `AppOperationWorkflow`, or fails the job when `APP_OPERATION_WF` is unbound; no webhooks apply)                                                                                                                                                                 |
 | `redirects.changed`                                                                | `count` (redirects written or removed by a create, update, delete, import, chain collapse or snapshot import; Delivery's `redirects` reads are purged. A publish whose slug change writes redirects does not send it: its `entry.published` purges the same responses)                                      |
 | `menus.changed`                                                                    | `menuId?`, `handle?` (a menu was created, saved, moved or deleted; both absent when a snapshot import wrote several; Delivery's `menus` reads are purged. A publish or unpublish that changes what a menu resolves to does not send it: its entry event purges the same responses)                          |
 | `entry.moved`                                                                      | `entryId`, `contentTypeApiId`, `position`, `published` (an entry moved in its type's manual order, `order=sys.position`; live, no version; Delivery is purged when `published`, and the type's cached lists are invalidated)                                                                                |

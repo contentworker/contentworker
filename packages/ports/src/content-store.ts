@@ -3,6 +3,8 @@ import type {
   AgentSchedule,
   AiSettings,
   ApiKey,
+  AppOperationJob,
+  AppOperationJobStatus,
   Asset,
   AssetCollection,
   AssetFolder,
@@ -123,6 +125,7 @@ export interface ContentStore {
   readonly assetCollections: AssetCollectionRepo;
   readonly assetShareLinks: AssetShareLinkRepo;
   readonly assetZips: AssetZipJobRepo;
+  readonly appOperationJobs: AppOperationJobRepo;
   readonly assetUploads: AssetUploadRepo;
   readonly assetRenditions: AssetRenditionRepo;
   readonly references: ReferenceRepo;
@@ -1080,6 +1083,33 @@ export interface AssetZipJobRepo {
   delete(scope: Scope, id: string): Promise<void>;
 }
 
+/** What the engine's Workflow changes on an async operation job as it runs. */
+export interface AppOperationJobPatch {
+  readonly status?: AppOperationJobStatus;
+  readonly output?: unknown;
+  readonly error?: string;
+  readonly startedAt?: string;
+  readonly completedAt?: string;
+}
+
+/** Async plugin operation jobs. Written by the api (create) and the engine's Workflow (outcome). */
+export interface AppOperationJobRepo {
+  get(scope: Scope, id: string): Promise<AppOperationJob | null>;
+  /** Newest first, at most `limit`. */
+  list(scope: Scope, limit: number): Promise<AppOperationJob[]>;
+  /** How many of the scope's jobs are kept past `at` (not yet expired), counted up to `cap`. */
+  countKept(scope: Scope, at: Date, cap: number): Promise<number>;
+  create(scope: Scope, job: AppOperationJob): Promise<void>;
+  update(scope: Scope, id: string, patch: AppOperationJobPatch): Promise<void>;
+  /**
+   * How many of the scope's jobs accepted after `since` are pending or running, counted up to
+   * `cap` (the caller judges staleness by the window it passes).
+   */
+  countActive(scope: Scope, since: Date, cap: number): Promise<number>;
+  /** Deletes up to `limit` jobs past their expiry by `at`, in every scope: the sweep's work. */
+  deleteExpired(at: Date, limit: number): Promise<number>;
+}
+
 /**
  * A multipart upload in progress: the asset whose file it writes, the object key, the size it was
  * started for and the part size every part but the last has (R2 needs them equal).
@@ -1416,6 +1446,7 @@ export interface ContentStoreTx {
   readonly assetCollections: AssetCollectionRepo;
   readonly assetShareLinks: AssetShareLinkRepo;
   readonly assetZips: AssetZipJobRepo;
+  readonly appOperationJobs: AppOperationJobRepo;
   readonly assetUploads: AssetUploadRepo;
   readonly assetRenditions: AssetRenditionRepo;
   readonly references: ReferenceRepo;

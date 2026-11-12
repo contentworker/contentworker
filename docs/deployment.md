@@ -145,6 +145,8 @@ producer and the media worker consumes both, so a deploy without them fails). Re
 receive the video streaming service's webhook, point it at
 `https://api.<domain>/webhooks/stream` and set `STREAM_WEBHOOK_SECRET`.
 
+**A deployment that predates async plugin operations** needs migration `0044_app_operation_jobs` (CI applies it) and, in the fleet render, the `APP_OPERATION_WF` workflow binding (`scripts/fleet.ts` renders it). Without the binding an accepted async job fails at once.
+
 **A deployment that predates zip downloads and multipart uploads** needs the two object storage
 lifecycle rules (`zips/` and `abort-multipart`) and, in the fleet render, the `ASSET_ZIP_WF`
 workflow binding and the media worker's `RATE_LIMIT_SHARE_UNLOCK` rate limit (`scripts/fleet.ts`

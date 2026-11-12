@@ -181,5 +181,7 @@ export interface AppOperationRunner {
     input: unknown,
     scope: Scope,
     caller: Principal,
+    /** The wall-time budget; defaults to a sync call's (`PLUGIN_OPERATION_TIMEOUT_MS`). */
+    options?: { readonly timeoutMs?: number },
   ): Promise<unknown>;
 }

@@ -20,6 +20,7 @@ declare global {
       readonly EDITORIAL_WF: Workflow;
       readonly ASSET_INGEST_WF: Workflow;
       readonly ASSET_ZIP_WF: Workflow;
+      readonly APP_OPERATION_WF: Workflow;
       readonly MEDIA_BUCKET: R2Bucket;
       readonly ASSISTANT_AGENT: DurableObjectNamespace<AssistantAgent>;
       readonly DB: D1Database;

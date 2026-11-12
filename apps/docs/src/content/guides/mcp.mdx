@@ -75,7 +75,7 @@ through the same validation, versioning and events as a person's.
 | Releases | `releases_create`, `releases_add_entry`, `releases_get`, `releases_list`, `releases_publish`, `schedule_action` |
 | Team and roles | `auth_me` (what your role lets you do in a space, field rules included), `team_list`, `role_presets_list`, `role_preset_assign`, `roles_list`, `role_create`, `role_update`, `role_delete`, `invites_list`, `invite_get`, `invite_create`, `invite_resend`, `invite_revoke` |
 | Plugins | `plugins_list`, `plugin_set_enabled`, `plugin_approve_capabilities`, `plugin_get_settings`, `plugin_set_settings` |
-| App operations | `app_operations_list`, `app_operation_invoke`: list and call what installed plugins offer, limited to the operations your key's scopes allow (see [Functions, plugins and extensions](/guides/extending/#call-a-plugins-operations)) |
+| App operations | `app_operations_list`, `app_operation_invoke`, `app_operation_job_get`, `app_operation_jobs_list`: list and call what installed plugins offer (an async operation returns a job to poll), limited to the operations your key's scopes allow (see [Functions, plugins and extensions](/guides/extending/#call-a-plugins-operations)) |
 | Webhooks | `webhooks_list`, `webhook_create`, `webhook_update`, `webhook_delete`, `webhook_deliveries`, `webhook_test`, `webhook_resend` (`space:admin`; see [Webhooks](/guides/webhooks/#test-and-resend)) |
 | Functions | `functions_list`, `function_create`, `function_delete` |
 | App extensions | `app_extensions_list`, `app_extension_create`, `app_extension_delete` |

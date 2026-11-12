@@ -61,7 +61,7 @@ that entries still hold lists each one and its entries in `details.fieldsInUse` 
 | 401 | `unauthorized`, `http_error` | No token, one that isn't valid, or an expired preview token |
 | 403 | `forbidden` | The token lacks the scope, the content-type grant, or the space |
 | 404 | `not_found` | No such entry, type, release… |
-| 409 | `conflict`, `last_admin`, `publish_gated` | A unique value already taken, a delete blocked by links, an `expectedVersion` that no longer matches, a file replace another commit beat, a change that would leave the space with no administrator (`last_admin`), or a publish of an entry a [gated workflow](/guides/workflows/#gate-publishing) covers, made outside a run of it (`publish_gated`; the body adds `entries`, each with its `entryId` and the `workflows` whose runs may publish it) |
+| 409 | `conflict`, `last_admin`, `publish_gated` | A unique value already taken, a delete blocked by links, an `expectedVersion` that no longer matches, a file replace another commit beat, a change that would leave the space with no administrator (`last_admin`), calling an `async` plugin operation while the environment has 10 jobs running or 1,000 kept, or a publish of an entry a [gated workflow](/guides/workflows/#gate-publishing) covers, made outside a run of it (`publish_gated`; the body adds `entries`, each with its `entryId` and the `workflows` whose runs may publish it) |
 | 409 | `asset_in_use` | Deleting an asset that entries still link to. The body adds `usage`, the first 50 links (each with `fromEntryId`, `fromField`, the entry's `contentTypeApiId` and `entryTitle`), and `total`, every link counted. Archive the asset or remove the links first |
 | 409 | `asset_embargoed`, `asset_expired` | Publishing an asset under [embargo](/guides/media/#rights-expiry-and-embargo) (the body adds `embargoUntil`) or whose rights expired (`expiresAt`), or setting an embargo on a published asset |
 | 412 | none | A second `PUT` through a signed upload URL: it stores its file once. The body is plain text, not JSON. The Management SDK counts a 412 on a retry as stored (an earlier attempt's bytes landed and its answer was lost) and throws one on a first attempt |
@@ -69,7 +69,7 @@ that entries still hold lists each one and its entries in `details.fieldsInUse` 
 | 422 | `validation_failed`, `hook_rejected` | Validation failed (`issues` lists each field), or a hook or plugin refused the change on policy grounds (`hook_rejected`, with the reason as `message`) |
 | 429 | `rate_limited` | Too many requests for the key or address (the response carries `Retry-After`, in seconds), or an AI budget or a reindex cooldown for the space was hit; retry later |
 | 501 | `not_configured` | The workspace doesn't have an optional capability this call needs, such as a video host, an image transformer or a sandbox to run plugin code |
-| 502 | `app_operation_failed` | A plugin operation threw, ran past its 10 s limit or answered outside its declared output schema |
+| 502 | `app_operation_failed` | A synchronous plugin operation threw, ran past its 10 s limit or answered outside its declared output schema |
 | 503 | `ai_unavailable` | The AI model didn't answer in time (composing blocks, or a draft with blocks); nothing was written, retry |
 | 500 | `internal`, `secret_unreadable` | A server fault; retry later and report it if it persists |
 

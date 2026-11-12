@@ -1,4 +1,5 @@
 import {
+  AppOperationFailedError,
   assertWritableFields,
   authorizeContent,
   canAccessContentType,
@@ -423,7 +424,7 @@ export function createPluginOperationRunner(
   const runOperation = runtime.runOperation?.bind(runtime);
   if (!runOperation) return undefined;
   return {
-    async run(plugin, operation, input, scope, caller) {
+    async run(plugin, operation, input, scope, caller, runOptions) {
       const granted = operationGrant(grantOf(plugin), (s) => holdsScope(caller.scopes, s));
       const scopes = new Set<PermissionScope>();
       for (const capability of granted) {
@@ -436,8 +437,23 @@ export function createPluginOperationRunner(
         scopes: [...scopes],
         ...(caller.contentGrants ? { contentGrants: caller.contentGrants } : {}),
       };
-      const { bundle } = await loadPluginBundle(ctx, blob, scope.spaceId, plugin.id);
-      const budget = options.operationTimeoutMs ?? PLUGIN_OPERATION_TIMEOUT_MS;
+      const { plugin: loaded, bundle } = await loadPluginBundle(
+        ctx,
+        blob,
+        scope.spaceId,
+        plugin.id,
+      );
+      // Upgraded between the caller's checks and this load: run nothing rather than code other
+      // than the version those checks (and an async job's pin) were made against.
+      if (loaded.checksum !== plugin.checksum) {
+        throw new AppOperationFailedError(
+          plugin.id,
+          operation.name,
+          'the plugin changed while it started',
+        );
+      }
+      const budget =
+        runOptions?.timeoutMs ?? options.operationTimeoutMs ?? PLUGIN_OPERATION_TIMEOUT_MS;
       return runOperation(
         {
           pluginId: plugin.id,

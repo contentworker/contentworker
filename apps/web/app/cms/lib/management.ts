@@ -1323,6 +1323,8 @@ export interface PluginOperationSummary {
   readonly description: string;
   /** The scope a caller holds to invoke it. */
   readonly requires: string;
+  /** `async`: it runs in the background (up to 5 minutes) and its caller collects the result. */
+  readonly mode?: 'sync' | 'async';
 }
 
 /** The manifest half of a plugin package, as authored. */

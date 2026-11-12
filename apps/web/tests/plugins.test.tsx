@@ -318,6 +318,14 @@ describe('operations', () => {
         requires: 'preview:read',
         input: { type: 'object', properties: {} },
       },
+      {
+        name: 'auditAll',
+        title: 'Audit every entry',
+        description: 'Audits the whole space.',
+        requires: 'preview:read',
+        mode: 'async',
+        input: { type: 'object', properties: {} },
+      },
     ],
   };
 
@@ -326,8 +334,12 @@ describe('operations', () => {
     await openInstall(WITH_OPS);
     const offered = screen.getByRole('region', { name: 'It offers people and agents:' });
     expect(within(offered).getByText('Audit titles')).toBeTruthy();
-    expect(within(offered).getByText(/callable by anyone who can read drafts/i)).toBeTruthy();
+    expect(within(offered).getAllByText(/callable by anyone who can read drafts/i)).toHaveLength(2);
     expect(within(offered).getByText(/no more access than the person or agent/i)).toBeTruthy();
+    // Only the async one says it runs in the background.
+    expect(
+      within(offered).getAllByText(/runs in the background, for up to 5 minutes/i),
+    ).toHaveLength(1);
     // It runs on no save, so the screen does not claim it intercepts one.
     expect(screen.queryByText(/can refuse it/i)).toBeNull();
   });

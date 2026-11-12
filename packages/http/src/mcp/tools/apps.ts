@@ -1,4 +1,9 @@
-import { invokeAppOperation, listAppOperations } from '@contentworker/application';
+import {
+  getAppOperationJob,
+  invokeAppOperation,
+  listAppOperationJobs,
+  listAppOperations,
+} from '@contentworker/application';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { ok, scopeArgs, scopeOf, type ToolContext, toolSchema } from './shared';
@@ -31,9 +36,11 @@ export function registerAppTools(server: McpServer, t: ToolContext): void {
     {
       description:
         'Invoke an installed plugin’s operation by plugin id and operation name (from ' +
-        'app_operations_list), with `input` matching its input schema. Returns `{ output }`. The ' +
-        'plugin runs sandboxed with no more access than you hold. Fails on a schema mismatch, a ' +
-        'missing scope, or when the plugin errors or runs past 10 seconds.',
+        'app_operations_list), with `input` matching its input schema. A sync operation returns ' +
+        '`{ output }`; an async one returns `{ job }` at once: poll it with ' +
+        'app_operation_job_get until it is completed or failed. The plugin runs sandboxed with ' +
+        'no more access than you hold. Fails on a schema mismatch, a missing scope, or when a ' +
+        'sync operation errors or runs past 10 seconds.',
       inputSchema: toolSchema('app_operation_invoke', () =>
         z.object({
           plugin: z.string().describe('The plugin id, e.g. com.example.seo'),
@@ -57,5 +64,32 @@ export function registerAppTools(server: McpServer, t: ToolContext): void {
           args.input ?? {},
         ),
       ),
+  );
+
+  server.registerTool(
+    'app_operation_job_get',
+    {
+      description:
+        'Get an async app operation job by id (from app_operation_invoke): its status ' +
+        '(pending, running, completed, failed), and once completed its `output`, or once ' +
+        'failed its `error`.',
+      inputSchema: toolSchema('app_operation_job_get', () =>
+        z.object({ id: z.string().describe('The job id'), ...scopeArgs }),
+      ),
+      annotations: { readOnlyHint: true },
+    },
+    async (args) => ok(await getAppOperationJob(ctx, principal, scopeOf(args), args.id)),
+  );
+
+  server.registerTool(
+    'app_operation_jobs_list',
+    {
+      description:
+        'List the latest async app operation jobs in the environment that you may read, newest ' +
+        'first, with their status and output.',
+      inputSchema: toolSchema('app_operation_jobs_list', () => z.object(scopeArgs)),
+      annotations: { readOnlyHint: true },
+    },
+    async (args) => ok({ items: await listAppOperationJobs(ctx, principal, scopeOf(args)) }),
   );
 }

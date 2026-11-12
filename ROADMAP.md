@@ -133,9 +133,10 @@ Everything below is built and tested on v2.
      REST, OpenAPI and MCP generated from one manifest. Shipped: manifest v2 with typed sync
      operations (`app_operations_list`, `app_operation_invoke`, `POST …/apps/:plugin/operations/:op`,
      a per-space OpenAPI document), run with the plugin's grant narrowed to the caller's, and a
-     hook's fetch capped at its remaining budget. Still planned: `async` operations on a durable
-     workflow returning a job id, and deployment-level connections with host-managed token
-     exchange (`caps.connection.fetch`).
+     hook's fetch capped at its remaining budget, and `async` operations: accepted as a job that a
+     durable workflow (`AppOperationWorkflow`) runs for up to 5 minutes, read back over
+     `GET …/apps/jobs`, MCP and the management SDK. Still planned: deployment-level connections
+     with host-managed token exchange (`caps.connection.fetch`).
   3. **Content models from packages.** Managed and seeded types with an owner, install and upgrade
      with a compatibility check; uninstall leaves every entry in place.
   4. **Workflow nodes.** App node types (`app:<package>/<node>`), the `poll` result, `external`

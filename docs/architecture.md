@@ -157,7 +157,7 @@ delivery bind them by `script_name`) and handles:
   relay sweep, bulk-job stall recovery, the restart of deleted-environment purges that stopped
   progressing, agent schedules (`AGENTS_SCHEDULES=true`), retention, the abandoned-upload sweep (see
   [Asset ingest](#asset-ingest-and-search)), the abandoned multipart-upload sweep and the expired-zip
-  sweep (see [Collections, share links, multipart uploads and zips](#collections-share-links-multipart-uploads-and-zips)) at the top of each hour, the daily
+  sweep (see [Collections, share links, multipart uploads and zips](#collections-share-links-multipart-uploads-and-zips)) and the expired async-operation-job sweep (`expired-app-operation-jobs`) at the top of each hour, the daily
   secret reseal at 03:30 UTC, and the daily taxonomy repair at 04:15 UTC (`repairAllTaxonomies`:
   recounts each environment's published usage counts and fills missing term slugs). Each sweep runs through `sweep` (`apps/engine/src/heartbeat.ts`): a
   failure is logged and recorded, and never skips the rest of the tick. At the end of the tick one
@@ -196,7 +196,8 @@ settled however it ends.
 
 Durable workflows: `AgentWorkflow` (`contentworker-agent`), `EditorialWorkflow`
 (`contentworker-editorial`), `AssetIngestWorkflow` (`contentworker-asset-ingest`) and
-`AssetZipWorkflow` (`contentworker-asset-zip`), in `apps/engine/src/workflows/`.
+`AssetZipWorkflow` (`contentworker-asset-zip`) and `AppOperationWorkflow` (`contentworker-app-operation`,
+[async plugin operations](./plugins.md#operations)), in `apps/engine/src/workflows/`.
 
 Stateful-object migration tags only ever append (`apps/engine/wrangler.jsonc`, checked by
 `scripts/do-migrations.test.ts`).
@@ -749,7 +750,8 @@ Hooks are registered by installing plugins. With a `PLUGIN_LOADER` binding, `wir
 `AppContext.hooks` to `createPluginHookDispatcher` over the plugin-isolate runtime; without it,
 installed plugins never execute. Manifests, grants and checksums live in the database
 (`plugins`); bundle bytes in object storage at `plugins/<space>/<id>/<checksum>.js`, with the
-checksum verified on every load. See [Plugins](./plugins.md#hooks).
+checksum verified on every load. An `async` operation runs as a job (`app_operation_jobs`) on
+`AppOperationWorkflow`, started from `app_operation.requested`. See [Plugins](./plugins.md#hooks).
 
 ## Why these choices
 
