@@ -92,7 +92,7 @@ test('the entries list offers New entry for its content type', async ({ page }) 
   await expect(link).toHaveAttribute('href', '/content/article/new');
 });
 
-test('authors and publishes an entry end-to-end', async ({ page }) => {
+test('authors and publishes an entry end-to-end @coworker', async ({ page }) => {
   await openCms(page, '/content');
   await toArticles(page);
   await newArticle(page);
@@ -162,7 +162,7 @@ test('authors rich text with marks and persists it across a reload', async ({ pa
   await expect(reopened.locator('strong')).toHaveText('bolded');
 });
 
-test('publishing with unsaved edits saves first, then confirms', async ({ page }) => {
+test('publishing with unsaved edits saves first, then confirms @coworker', async ({ page }) => {
   await newArticle(page);
   const title = `Chain ${Date.now()}`;
   await page.getByRole('textbox', { name: /Title/ }).fill(title);
@@ -413,7 +413,10 @@ test('a link’s grouped conditions show in the filters and can be removed', asy
   await expect(other).toBeVisible();
 });
 
-test('trashes an entry, restores it, then deletes it permanently', async ({ page, request }) => {
+test('trashes an entry, restores it, then deletes it permanently @coworker', async ({
+  page,
+  request,
+}) => {
   const title = `Trash ${Date.now()}`;
   await api(request, 'POST', `${MGMT}/entries`, {
     contentTypeApiId: 'article',
@@ -962,7 +965,7 @@ test('deleting an asset an entry uses names that entry and links to it', async (
   await expect(library.getByRole('button', { name: `Open “${assetTitle}”` })).toBeVisible();
 });
 
-test('a changed entry’s card says what goes live, and declining keeps focus in the panel', async ({
+test('a changed entry’s card says what goes live, and declining keeps focus in the panel @coworker', async ({
   page,
   request,
 }) => {
@@ -1663,7 +1666,7 @@ test('the editor names who created and last edited an entry, and Mine lists one�
   await expect(pane.getByText('Last edited by').locator('+ dd time')).toHaveCount(1);
 
   await openCms(page, '/content/article');
-  const mine = page.getByRole('button', { name: 'Mine' });
+  const mine = page.getByRole('button', { name: 'Mine', exact: true });
   await mine.click();
   await expect(mine).toHaveAttribute('aria-pressed', 'true');
   await expect(

@@ -1,4 +1,11 @@
-import { RateLimitedError, type Scope } from '@contentworker/domain';
+import {
+  AiUnavailableError,
+  capModelTier,
+  isAiModelTier,
+  MODEL_TIERS,
+  RateLimitedError,
+  type Scope,
+} from '@contentworker/domain';
 import type { AIProvider, GenerateRequest, ModelTier } from '@contentworker/ports';
 import type { FakeAdapterBinding } from './adapter-guard';
 import { generateWithBudget, withTimeout } from './ai-budget';
@@ -10,18 +17,28 @@ import type { AiMode, AppContext } from './context';
 export const DEFAULT_AI_TIMEOUT_MS = 20_000;
 
 /**
- * Parses AI_MODE / AI_TIMEOUT_MS, shared by every composition root so the
+ * Parses AI_MODE / AI_TIMEOUT_MS / AI_MAX_TIER, shared by every composition root so the
  * defaults never drift. Anything but `mock` is live; a missing or non-positive
- * timeout falls back to {@link DEFAULT_AI_TIMEOUT_MS}.
+ * timeout falls back to {@link DEFAULT_AI_TIMEOUT_MS}. An empty or missing AI_MAX_TIER is no cap
+ * (as `flagship` is); anything but a tier is refused at boot, since a cap mistyped into no cap
+ * would lift the deployment's price ceiling per call.
  */
 export function aiRuntimeConfig(env: Record<string, string | undefined> = {}): {
   mode: AiMode;
   timeoutMs: number;
+  maxTier?: ModelTier;
 } {
   const timeout = Number(env.AI_TIMEOUT_MS);
+  const max = env.AI_MAX_TIER?.trim();
+  if (max && !isAiModelTier(max)) {
+    throw new Error(
+      `AI_MAX_TIER must be one of ${MODEL_TIERS.join(', ')}, or empty (got "${max}")`,
+    );
+  }
   return {
     mode: env.AI_MODE === 'mock' ? 'mock' : 'live',
     timeoutMs: Number.isFinite(timeout) && timeout > 0 ? timeout : DEFAULT_AI_TIMEOUT_MS,
+    ...(max && max !== 'flagship' ? { maxTier: max as ModelTier } : {}),
   };
 }
 
@@ -174,6 +191,19 @@ export function answerStrings(result: { readonly object?: unknown }, field: stri
 
 // ---- generateJson -----------------------------------------------------------
 
+/**
+ * Whether a provider's error says the answer arrived but was unusable. The AI adapters mark that
+ * as `reason: 'bad_response'` (the Workers AI adapter's `WorkersAIError`); read by shape, so no
+ * adapter type crosses into the application.
+ */
+function isBadResponse(err: unknown): boolean {
+  return (
+    typeof err === 'object' &&
+    err !== null &&
+    (err as { reason?: unknown }).reason === 'bad_response'
+  );
+}
+
 export interface GenerateJsonOptions<T> {
   /** Stable prompt id for provenance and logs (e.g. `workflow.router`). */
   readonly prompt: string;
@@ -195,6 +225,14 @@ export interface GenerateJsonOptions<T> {
    * tier stands in for the call site's default. Guidance is the caller's to add to `system`.
    */
   readonly policy?: AiCapabilityPolicy;
+  /**
+   * `throw`: a call that fails (the budget refuses it, the provider errs or times out) is the
+   * caller's error rather than the heuristic's answer: a budget refusal as {@link RateLimitedError}
+   * (429), anything else as {@link AiUnavailableError} (503). For a request a person asked a model
+   * to answer, where a guess in its place would read as the model's. AI_MODE=mock and an answer off
+   * the schema still answer from the heuristic. Default `fallback`.
+   */
+  readonly failures?: 'fallback' | 'throw';
 }
 
 export type GenerateJsonResult<T> = AiProvenance & {
@@ -216,9 +254,10 @@ export async function generateJson<T>(
   req: GenerateRequest & { outputSchema: Record<string, unknown> },
   opts: GenerateJsonOptions<T>,
 ): Promise<GenerateJsonResult<T>> {
+  // Held to the deployment's cap either way, so the provenance names the tier that answered.
   const tier: ModelTier = opts.policy
     ? opts.policy.tier(req.tier ?? 'balanced')
-    : (req.tier ?? 'balanced');
+    : capModelTier(req.tier ?? 'balanced', ctx.ai?.maxTier);
   const started = ctx.clock.now().getTime();
   const elapsed = () => ctx.clock.now().getTime() - started;
   const log = (record: Omit<AiCallRecord, 'type' | 'ms'>) =>
@@ -251,6 +290,14 @@ export async function generateJson<T>(
     );
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
+    if (opts.failures === 'throw') {
+      // An answer that came back unusable (cut off at maxTokens, JSON mode unmet) would come back
+      // the same way on a retry: it is a bad answer, so the heuristic's, like one off the schema.
+      if (isBadResponse(err)) return heuristic(`bad response: ${reason}`);
+      log({ source: 'heuristic', tier, prompt: opts.prompt, failed: reason });
+      if (err instanceof RateLimitedError || err instanceof AiUnavailableError) throw err;
+      throw new AiUnavailableError('The model couldn’t answer just now; try again');
+    }
     if (err instanceof RateLimitedError) return heuristic(`budget: ${reason}`);
     if (opts.retry) {
       log({ source: 'heuristic', tier, prompt: opts.prompt, retrying: reason });

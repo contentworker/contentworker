@@ -129,7 +129,8 @@ name: Escrow secrets
 on:
   workflow_dispatch:
     inputs:
-      environment: { description: The deployment's GitHub environment, required: true, type: string }
+      environment:
+        { description: The deployment's GitHub environment, required: true, type: string }
 permissions:
   contents: read
 jobs:
@@ -187,16 +188,16 @@ rotate what can rotate (`DATA_KEY`, `PRINCIPAL_KEY`, `MEDIA_SIGNING_SECRET`). `T
 The targets each store is held to. **RPO** is how much recent data a recovery may lose; **RTO** is
 how long the recovery may take. "Met" says whether the target can be reached today.
 
-| Store                                         | RPO                                 | RTO                   | Met                                                                                             |
-| --------------------------------------------- | ----------------------------------- | --------------------- | ----------------------------------------------------------------------------------------------- |
-| The database                                  | 1 minute, within the 30-day window  | 1 hour, plus reindex  | Not proven: the procedure above has not been timed in a drill                                   |
-| Object storage: asset bytes and plugins       | 24 hours                            | 8 hours               | **No**: nothing holds a copy of the bytes                                                       |
-| Object storage: `versions/`                   | 24 hours                            | 8 hours               | **No**: nothing holds a copy of the bodies                                                      |
-| The vector index, `SearchShardDO`             | n/a (rebuildable)                   | 24 hours              | Not proven: a reindex runs per space and environment, by hand                                   |
-| Key-value cache, edge caches                  | n/a (rebuildable)                   | Minutes               | Yes: rebuilt on demand                                                                          |
-| `AssistantAgent`                              | Best effort, 30-day object recovery | 1 day                 | **No**: nothing calls the object's point-in-time recovery                                       |
-| Durable workflows                             | None                                | 1 day, re-run by hand | Not proven: instances are not rebuilt from their rows                                           |
-| Queues                                        | The outbox window (168 hours)       | 1 hour                | Domain events only: messages the outbox doesn't feed can't replay                               |
+| Store                                         | RPO                                 | RTO                   | Met                                                                                              |
+| --------------------------------------------- | ----------------------------------- | --------------------- | ------------------------------------------------------------------------------------------------ |
+| The database                                  | 1 minute, within the 30-day window  | 1 hour, plus reindex  | Not proven: the procedure above has not been timed in a drill                                    |
+| Object storage: asset bytes and plugins       | 24 hours                            | 8 hours               | **No**: nothing holds a copy of the bytes                                                        |
+| Object storage: `versions/`                   | 24 hours                            | 8 hours               | **No**: nothing holds a copy of the bodies                                                       |
+| The vector index, `SearchShardDO`             | n/a (rebuildable)                   | 24 hours              | Not proven: a reindex runs per space and environment, by hand                                    |
+| Key-value cache, edge caches                  | n/a (rebuildable)                   | Minutes               | Yes: rebuilt on demand                                                                           |
+| `AssistantAgent`                              | Best effort, 30-day object recovery | 1 day                 | **No**: nothing calls the object's point-in-time recovery                                        |
+| Durable workflows                             | None                                | 1 day, re-run by hand | Not proven: instances are not rebuilt from their rows                                            |
+| Queues                                        | The outbox window (168 hours)       | 1 hour                | Domain events only: messages the outbox doesn't feed can't replay                                |
 | `DATA_KEY`, `TOKEN_PEPPER`, `PASSWORD_PEPPER` | Zero                                | 1 hour                | Not proven: [escrowed](#escrowing-secrets) and decrypted, but no restore has set the values back |
 
 Workers redeploy or roll back in seconds, so a database restore's RTO is dominated by the restore

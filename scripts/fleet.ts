@@ -186,6 +186,11 @@ export type Deployment = {
   demo: boolean;
   /** Whether the AI Gateway keeps request logs. Default false. */
   aiGatewayLogs: boolean;
+  /**
+   * The most capable model tier the deployment runs (`balanced` or `fast`; `flagship` is no cap),
+   * rendered as AI_MAX_TIER. Default: no cap.
+   */
+  aiMaxTier?: 'flagship' | 'balanced' | 'fast';
   /** The customer's OIDC provider for admin single sign-on (secret: OIDC_CLIENT_SECRET). */
   sso?: { issuer: string; clientId: string; trustEmail?: boolean };
   /**
@@ -225,6 +230,11 @@ export function toDeployment(raw: Record<string, unknown>, file = 'deployment'):
     throw new Error(`${file}: jurisdiction must be "eu" or "fedramp"`);
   if (raw.aiGatewayLogs !== undefined && typeof raw.aiGatewayLogs !== 'boolean')
     throw new Error(`${file}: aiGatewayLogs must be true or false`);
+  if (
+    raw.aiMaxTier !== undefined &&
+    !['flagship', 'balanced', 'fast'].includes(raw.aiMaxTier as string)
+  )
+    throw new Error(`${file}: aiMaxTier must be "flagship", "balanced" or "fast"`);
   const sso = raw.sso as Record<string, unknown> | undefined;
   if (sso !== undefined) {
     if (typeof sso.issuer !== 'string' || !/^https:\/\/\S+$/.test(sso.issuer))
@@ -259,6 +269,7 @@ export function toDeployment(raw: Record<string, unknown>, file = 'deployment'):
     docs: raw.docs === true,
     demo: raw.demo === true,
     aiGatewayLogs: raw.aiGatewayLogs === true,
+    ...(raw.aiMaxTier ? { aiMaxTier: raw.aiMaxTier as 'flagship' | 'balanced' | 'fast' } : {}),
     ...(sso
       ? {
           sso: {
@@ -419,6 +430,8 @@ function common(base: Config, d: Deployment, app: App): Config {
       c.vars.AI_GATEWAY_ID = n.aiGateway;
       c.vars.AI_GATEWAY_LOGS = String(d.aiGatewayLogs);
     }
+    // The tier cap goes wherever models are called (the api and the engine); unset, none.
+    if ('AI_MAX_TIER' in c.vars) c.vars.AI_MAX_TIER = d.aiMaxTier ?? '';
     if ('MEDIA_BASE_URL' in c.vars) c.vars.MEDIA_BASE_URL = `https://${hosts(d).api}`;
     if ('MEDIA_PUBLIC_URL' in c.vars) c.vars.MEDIA_PUBLIC_URL = `https://${hosts(d).media}`;
     if ('QUEUE_SUFFIX' in c.vars) c.vars.QUEUE_SUFFIX = d.suffix;
@@ -638,6 +651,7 @@ export const REQUIRED_BINDINGS: Record<App, readonly string[]> = {
     'EDITORIAL_WF',
     'ASSET_INGEST_WF',
     'ASSET_ZIP_WF',
+    'APP_OPERATION_WF',
   ],
   media: ['DB', 'KV_CACHE', 'MEDIA_BUCKET'],
   api: [

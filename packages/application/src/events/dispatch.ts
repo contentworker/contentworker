@@ -7,6 +7,7 @@ import {
   type WebhookSendRequest,
 } from '@contentworker/domain';
 import type {
+  AppOperationJobStarter,
   AssetGate,
   AssetIngestQueue,
   AssetZipStarter,
@@ -40,6 +41,11 @@ import {
   removeEntryEmbeddings,
   runReindexJob,
 } from '../rag';
+import {
+  type SearchReindexSources,
+  searchReindexChunkRunner,
+  startSearchReindex,
+} from '../search-reindex';
 import { isSnapshotJob } from '../snapshot-jobs';
 
 /** Reverse-reference walk bound: embed chains deeper than this stay stale
@@ -95,6 +101,8 @@ export interface DispatchDeps {
   readonly assetIngest?: AssetIngestQueue;
   /** Starts the Workflow that builds a requested zip; absent, a request fails at once. */
   readonly assetZip?: AssetZipStarter;
+  /** Starts the Workflow that runs an accepted async operation; absent, a job fails at once. */
+  readonly appOperationJobs?: AppOperationJobStarter;
   /**
    * Tags already invalidated during this consumer invocation. A queue batch of
    * same-type publishes (a release, a burst of scheduled publishes) would
@@ -116,6 +124,12 @@ export interface DispatchDeps {
    */
   readonly starterChunk?: BulkChunkDeps['starterChunk'];
 }
+
+/** The vectors a search reindex writes: entries' with `rag`, assets' with the asset search's. */
+const searchSources = (deps: DispatchDeps): SearchReindexSources => ({
+  ...(deps.rag ? { rag: deps.rag } : {}),
+  ...(deps.assetSearch ? { assetSearch: deps.assetSearch } : {}),
+});
 
 /**
  * Handles a single relayed domain event: fans it out to subscribed webhooks
@@ -142,6 +156,13 @@ export async function dispatchEvent(
     return;
   }
 
+  // Search turned on or off in Settings → AI: start this environment's reindex job. A control
+  // event: no webhooks, cache or RAG apply. (Routed to the bulk topic: it lists the environment.)
+  if (event.type === 'search.toggled') {
+    await startSearchReindex(ctx, searchSources(deps), event);
+    return;
+  }
+
   // Bulk-job control event: claim and run one chunk. Not a state-change fact
   // — no webhooks/cache/RAG apply. (Normally routed to the dedicated bulk
   // topic; handled here too so a single-topic deployment still works.)
@@ -156,6 +177,10 @@ export async function dispatchEvent(
         ? { assetReindexChunk: assetReindexChunkRunner(ctx, deps.assetIngest) }
         : {}),
       ...(deps.starterChunk ? { starterChunk: deps.starterChunk } : {}),
+      searchReindexChunk: searchReindexChunkRunner(ctx, {
+        ...searchSources(deps),
+        ...(deps.blob ? { blob: deps.blob } : {}),
+      }),
       ...(deps.blob ? { blob: deps.blob } : {}),
     });
     return;
@@ -176,6 +201,21 @@ export async function dispatchEvent(
       await ctx.store.assetZips.update(scope, event.jobId, {
         status: 'failed',
         error: 'Zip downloads are not available on this deployment',
+      });
+    }
+    return;
+  }
+
+  // An async plugin operation was accepted: start the Workflow that runs it (one instance per
+  // job, so a redelivered event starts nothing more). A control event: no webhooks apply.
+  if (event.type === 'app_operation.requested') {
+    if (deps.appOperationJobs) {
+      await deps.appOperationJobs.start({ scope, jobId: event.jobId });
+    } else {
+      await ctx.store.appOperationJobs.update(scope, event.jobId, {
+        status: 'failed',
+        error: 'Async operations are not available on this deployment',
+        completedAt: ctx.clock.now().toISOString(),
       });
     }
     return;

@@ -1,4 +1,9 @@
-import { invokeAppOperation, listAppOperations } from '@contentworker/application';
+import {
+  getAppOperationJob,
+  invokeAppOperation,
+  listAppOperationJobs,
+  listAppOperations,
+} from '@contentworker/application';
 import { Hono } from 'hono';
 import type { AuthDeps, AuthVars } from '../../auth';
 import { appOperationsOpenApi } from '../../docs/app-operations-openapi';
@@ -36,24 +41,48 @@ export function appsRoutes(deps: AuthDeps): Hono<AuthVars> {
       ok: appDocs.appOperationResult,
       description:
         'Runs the operation in the plugin sandbox with the plugin’s grant narrowed to the ' +
-        'caller’s scopes. 403 without the scope it `requires`; 404 for an unknown or disabled ' +
-        'operation; 502 when the plugin throws, runs past 10 s or answers outside its output ' +
-        'schema. Each plugin’s own operations are described in the space’s ' +
-        '`/spaces/{space}/apps/openapi.json`.',
+        'caller’s scopes. A sync operation answers `{ output }`; 502 when the plugin throws, ' +
+        'runs past 10 s or answers outside its output schema. An `async` one answers 202 ' +
+        '`{ job }` at once and runs in the background for up to 5 minutes: follow it at ' +
+        '`…/apps/jobs/{id}` (409 while ten are pending or running in the environment, or while it keeps 1,000 jobs). 403 ' +
+        'without the scope it `requires`; 404 for an unknown or disabled operation. Each ' +
+        'plugin’s own operations are described in the space’s `/spaces/{space}/apps/openapi.json`.',
     }),
     async (c) => {
       const input = await parseBody(c, appOperationInputBody);
-      return c.json(
-        await invokeAppOperation(
-          ctx,
-          c.get('principal'),
-          scopeOf(c),
-          c.req.param('plugin'),
-          c.req.param('operation'),
-          input,
-        ),
+      const result = await invokeAppOperation(
+        ctx,
+        c.get('principal'),
+        scopeOf(c),
+        c.req.param('plugin'),
+        c.req.param('operation'),
+        input,
       );
+      return 'job' in result ? c.json(result, 202) : c.json(result);
     },
+  );
+
+  app.get(
+    `${BASE}/apps/jobs`,
+    doc('Apps', 'List async app operation jobs', {
+      ok: appDocs.appOperationJobList,
+      description:
+        'The environment’s latest async operation jobs that the caller could have run ' +
+        'itself: it holds the operation’s scope and every scope the job’s caller held.',
+    }),
+    async (c) => c.json({ items: await listAppOperationJobs(ctx, c.get('principal'), scopeOf(c)) }),
+  );
+
+  app.get(
+    `${BASE}/apps/jobs/:id`,
+    doc('Apps', 'Get an async app operation job', {
+      ok: appDocs.appOperationJob,
+      description:
+        'Status, and once `completed` the output (`failed`: the error). 404 for a job the ' +
+        'caller could not have run itself. Jobs are kept a day.',
+    }),
+    async (c) =>
+      c.json(await getAppOperationJob(ctx, c.get('principal'), scopeOf(c), c.req.param('id'))),
   );
 
   app.get(

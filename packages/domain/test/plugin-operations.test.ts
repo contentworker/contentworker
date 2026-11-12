@@ -97,13 +97,14 @@ describe('manifest v2 operations', () => {
     expect(issuesOf(manifest({ manifestVersion: undefined }))).toEqual(['operations']);
   });
 
-  it('refuses bad names, duplicates, unknown scopes, async mode and non-object inputs', () => {
+  it('refuses bad names, duplicates, unknown scopes, unknown modes and non-object inputs', () => {
     const bad = (o: Partial<PluginOperation>) =>
       issuesOf(manifest({ operations: [{ ...op, ...o }] }));
     expect(bad({ name: 'Render' })).toEqual(['operations[0].name']);
     expect(issuesOf(manifest({ operations: [op, op] }))).toEqual(['operations[1].name']);
     expect(bad({ requires: 'everything' as never })).toEqual(['operations[0].requires']);
-    expect(bad({ mode: 'async' as never })).toEqual(['operations[0].mode']);
+    expect(bad({ mode: 'later' as never })).toEqual(['operations[0].mode']);
+    expect(bad({ mode: 'async' })).toEqual([]);
     expect(bad({ input: { type: 'string' } })).toEqual(['operations[0].input']);
     expect(bad({ description: ' ' })).toEqual(['operations[0].description']);
   });

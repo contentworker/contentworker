@@ -14,6 +14,7 @@ import { When } from '~/cms/components/when';
 import { type ActorDirectory, actorLabel } from '~/cms/lib/authorship';
 import { plural } from '~/cms/lib/format';
 import { ApiError, apiErrorMessage, failedPromotionOf, refusedSave } from '~/cms/lib/management';
+import type { PromotionControls } from '~/cms/lib/promotion-access';
 import { useClient, useLocalRun } from '../../lib/client-context';
 import { useInvalidate, useScopedQuery } from '../../lib/queries';
 import {
@@ -115,7 +116,7 @@ function Record({ promotion: p }: { promotion: Promotion }) {
   const { client } = useClient();
   const { busy, run } = useLocalRun();
   const invalidate = useInvalidate();
-  const { directory, canApprove, canReject, canWithdraw, access } = usePromotionViewer();
+  const { directory, controls, access } = usePromotionViewer();
   const [refused, setRefused] = useState<Refusal>();
   const status = useRef<HTMLDivElement>(null);
   // Set once a decision lands, so the confirm hands focus to what happened, not back to Approve.
@@ -165,9 +166,10 @@ function Record({ promotion: p }: { promotion: Promotion }) {
 
   const waiting = p.status === 'awaiting_approval';
   const mine = !!access?.subject && access.subject === p.requestedBy;
-  const approvable = canApprove(p);
-  const rejectable = canReject(p);
-  const withdrawable = waiting && canWithdraw(p);
+  const may = controls(p);
+  const approvable = may.approve;
+  const rejectable = may.reject;
+  const withdrawable = waiting && may.withdraw;
 
   return (
     <>
@@ -243,14 +245,8 @@ function Record({ promotion: p }: { promotion: Promotion }) {
         {waiting ? (
           <p className="max-w-measure text-muted-foreground text-sm">
             {mine
-              ? `You requested it, so someone else approves or rejects it.${withdrawable ? ' You can withdraw it.' : ' Withdrawing it takes a role that can publish content, with no content-type or field limits.'}`
-              : !access
-                ? null
-                : !rejectable
-                  ? 'Deciding it takes a role that can publish content, with no content-type or field limits.'
-                  : !approvable
-                    ? 'Approving it also takes content:manage, since it copies content types or blocks.'
-                    : null}
+              ? `You requested it, so someone else approves or rejects it.${withdrawable ? ' You can withdraw it.' : ' Withdrawing it takes a role that can publish content.'}`
+              : gapLine(may)}
           </p>
         ) : null}
       </div>
@@ -261,6 +257,24 @@ function Record({ promotion: p }: { promotion: Promotion }) {
       <History promotion={p} directory={directory} />
     </>
   );
+}
+
+/**
+ * Why someone other than the requester isn't offered a decision, in the API's terms: deciding
+ * takes the role on every content type, and content:manage for types or blocks; approving entries
+ * takes `lock` there too.
+ */
+function gapLine(may: PromotionControls): string | undefined {
+  switch (may.rejectGap ?? may.approveGap) {
+    case 'role':
+      return 'Deciding it takes a role that can publish content, with no content-type or field limits.';
+    case 'manage':
+      return 'Deciding it also takes a role that can manage content, since it copies content types or blocks.';
+    case 'lock':
+      return 'Approving it also takes a role that can lock regions on every content type, since it copies entries whole.';
+    default:
+      return undefined;
+  }
 }
 
 /** Where it stands in a sentence, for the status region. */

@@ -139,6 +139,13 @@
       "binding": "ASSET_ZIP_WF",
       "name": "contentworker-asset-zip",
       "class_name": "AssetZipWorkflow"
+    },
+    // One run per async plugin operation, started from `app_operation.requested`: a run step
+    // (never retried: the plugin may have effects outside) and a step recording the outcome.
+    {
+      "binding": "APP_OPERATION_WF",
+      "name": "contentworker-app-operation",
+      "class_name": "AppOperationWorkflow"
     }
   ],
   // `send_email` (EMAIL) is added per deployment by scripts/fleet.ts when the deployment sets an
@@ -165,6 +172,8 @@
     "AI_PROVIDER": "workers-ai",
     "AI_MODE": "live",
     "AI_TIMEOUT_MS": "20000",
+    // The deployment's model tier cap (flagship, balanced or fast); empty: none. From the registry.
+    "AI_MAX_TIER": "",
     "AI_GATEWAY_ID": "contentworker",
     "WORKERS_AI_MODEL_FLAGSHIP": "",
     "WORKERS_AI_MODEL_BALANCED": "",

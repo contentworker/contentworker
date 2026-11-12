@@ -55,7 +55,8 @@ export function registerRoleTools(server: McpServer, t: ToolContext): void {
     {
       description:
         'Create a custom role: a scope set plus per-content-type grants with ' +
-        'optional per-field deny/read-only rules. Assign it via api_key roleId.',
+        'optional per-field deny/read-only rules, one grant per content type (`*` included). ' +
+        'Assign it via api_key roleId.',
       inputSchema: toolSchema('role_create', () =>
         z.object({
           name: z.string(),
@@ -85,7 +86,8 @@ export function registerRoleTools(server: McpServer, t: ToolContext): void {
       description:
         'Replace a role definition; keys bound to it pick the change up live. Read it with ' +
         'roles_list first and send its version as expectedVersion: a save made since is refused ' +
-        '(409, naming the version in force), so read it again and show the person what changed.',
+        '(409, naming the version in force), so read it again and show the person what changed. ' +
+        'Grants naming a content type twice (`*` included) are refused: merge them into one.',
       inputSchema: toolSchema('role_update', () =>
         z.object({
           id: z.string(),

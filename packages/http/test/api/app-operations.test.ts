@@ -6,7 +6,10 @@ import { createApp } from '../../src/api/app';
 import { testConfig } from './config';
 import { wire } from './wire';
 
-/** App operations over HTTP: the list, the invoke route and the per-space OpenAPI document. */
+/**
+ * App operations over HTTP: the list, the invoke route (sync output, or an async job), the job
+ * routes and the per-space OpenAPI document.
+ */
 
 const MANIFEST = {
   manifestVersion: 2,
@@ -25,6 +28,15 @@ const MANIFEST = {
       requires: 'preview:read',
       input: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] },
       output: { type: 'object', properties: { text: { type: 'string' } } },
+    },
+    {
+      name: 'auditAll',
+      title: 'Audit all',
+      description: 'Audits in the background',
+      requires: 'preview:read',
+      mode: 'async',
+      input: { type: 'object', properties: {} },
+      output: { type: 'object', properties: { count: { type: 'integer' } } },
     },
     {
       name: 'publishAll',
@@ -87,6 +99,7 @@ beforeEach(async () => {
   expect(await install.json()).toMatchObject({
     operations: [
       { name: 'echo', requires: 'preview:read', mode: 'sync' },
+      { name: 'auditAll', mode: 'async' },
       { name: 'publishAll', requires: 'content:publish' },
     ],
   });
@@ -112,8 +125,8 @@ describe('app operations over HTTP', () => {
           items: { name: string }[];
         }
       ).items.map((o) => o.name);
-    expect(await list('cpa')).toEqual(['echo']);
-    expect(await list('cma')).toEqual(['echo', 'publishAll']);
+    expect(await list('cpa')).toEqual(['echo', 'auditAll']);
+    expect(await list('cma')).toEqual(['echo', 'auditAll', 'publishAll']);
     expect(await list('cda')).toEqual([]);
   });
 
@@ -138,12 +151,38 @@ describe('app operations over HTTP', () => {
     expect(doc.openapi).toBe('3.1.0');
     expect(Object.keys(doc.paths)).toEqual([
       '/spaces/s1/environments/{env}/apps/com.example.ops/operations/echo',
+      '/spaces/s1/environments/{env}/apps/com.example.ops/operations/auditAll',
     ]);
+    const asyncOp = doc.paths[Object.keys(doc.paths)[1] as string] as {
+      post: { responses: Record<string, unknown> };
+    };
+    expect(Object.keys(asyncOp.post.responses)).toContain('202');
+    expect(Object.keys(asyncOp.post.responses)).not.toContain('200');
     expect(doc.paths[Object.keys(doc.paths)[0] as string]).toMatchObject({
       post: {
         operationId: 'com.example.ops.echo',
         requestBody: { content: { 'application/json': { schema: MANIFEST.operations[0]?.input } } },
       },
     });
+  });
+
+  it('accepts an async one as a 202 job, then serves the job only to who could have run it', async () => {
+    const res = await invoke('auditAll', {}, 'cma');
+    expect(res.status).toBe(202);
+    const { job } = (await res.json()) as { job: { id: string; status: string } };
+    expect(job).toMatchObject({ status: 'pending' });
+    // Accepted, not run: the engine's Workflow runs it.
+    expect(calls).toHaveLength(0);
+    const get = (token: string) =>
+      app.request(`${M}/apps/jobs/${job.id}`, { headers: headers(token) });
+    const own = await get('cma');
+    expect(own.status).toBe(200);
+    expect(await own.json()).toMatchObject({ id: job.id, operation: 'auditAll' });
+    // The preview key holds less than the management key that started it.
+    expect((await get('cpa')).status).toBe(404);
+    const list = (await (
+      await app.request(`${M}/apps/jobs`, { headers: headers('cma') })
+    ).json()) as { items: { id: string }[] };
+    expect(list.items.map((j) => j.id)).toEqual([job.id]);
   });
 });

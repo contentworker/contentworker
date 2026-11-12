@@ -9,7 +9,8 @@ import { parseBody, roleBody, roleUpdateBody } from '../../validation';
 const GRANT_RULES =
   'Each content grant lists `read`, `write` and `publish`. `delete` (trash and purge) comes with ' +
   '`write` or `publish`, and `unpublish` with `publish`, unless the grant withholds them in ' +
-  '`deniedActions`: so a role can write but not delete, or publish but not unpublish.';
+  '`deniedActions`: so a role can write but not delete, or publish but not unpublish. Each ' +
+  'content type, `*` included, takes one grant: grants naming one twice are a 422.';
 
 export function rolesRoutes(deps: AuthDeps): Hono<AuthVars> {
   const { ctx } = deps;

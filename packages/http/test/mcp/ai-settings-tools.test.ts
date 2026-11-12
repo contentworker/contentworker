@@ -2,8 +2,11 @@ import { createHash } from 'node:crypto';
 import { InProcessAgentRuntime, makeActivities } from '@contentworker/agent-runtime';
 import {
   type AppContext,
+  consumeEvent,
   createContentType,
+  createEntry,
   createSpace,
+  publishEntry,
   SYSTEM_CALLER,
 } from '@contentworker/application';
 import { type Principal, SCOPES } from '@contentworker/domain';
@@ -14,6 +17,7 @@ import {
   InMemoryContentStore,
   InMemoryVectorStore,
   LocalEmbeddingsProvider,
+  RecordingWebhookSender,
   SequenceIdGenerator,
   StubAIProvider,
 } from '@contentworker/test-kit';
@@ -35,12 +39,13 @@ const admin: Principal = {
   scopes: [SCOPES.previewRead, SCOPES.contentWrite, SCOPES.spaceAdmin],
 };
 
-async function setup() {
+async function setup(maxTier?: 'balanced' | 'fast') {
   const ctx: AppContext = {
     store: new InMemoryContentStore(),
     clock: new FixedClock(),
     ids: new SequenceIdGenerator('n'),
     passwords: new FakePasswordHasher(),
+    ...(maxTier ? { ai: { mode: 'live' as const, timeoutMs: 20_000, maxTier } } : {}),
   };
   const ai = new StubAIProvider(() => ({ title: 'Drafted' }));
   const deps: McpDeps = {
@@ -167,5 +172,77 @@ describe('AI settings tools (MCP), on the HTTP routes’ use-cases', () => {
       capabilities: { media: { enabled: false } },
     });
     expect(set.isError).toBe(true);
+  });
+
+  it('reports the deployment’s cap as the REST route does: kept as set, run on the cap', async () => {
+    const { deps, ai } = await setup('fast');
+    const call = await connect(deps, admin);
+    const set = await call('ai_settings_set', {
+      expectedVersion: 0,
+      capabilities: { drafting: { enabled: true, tier: 'balanced' } },
+    });
+    expect(set.isError).toBe(false);
+    expect(set.body).toMatchObject({
+      settings: {
+        maxTier: 'fast',
+        capabilities: { drafting: { tier: 'balanced', effectiveTier: 'fast' } },
+      },
+    });
+    expect((await call('ai_settings_get')).body).toMatchObject({ maxTier: 'fast' });
+    // And the drafting tool runs on the cap.
+    await call('generate_draft', { contentType: 'post', prompt: 'x' });
+    expect(ai.requests[0]?.tier).toBe('fast');
+  });
+
+  it('follows the search reindex a toggle starts, with content:manage', async () => {
+    const { ctx, deps } = await setup();
+    const call = await connect(deps, admin);
+    expect((await call('search_reindex_job')).isError).toBe(true);
+    const manager = await connect(deps, {
+      ...admin,
+      scopes: [...admin.scopes, SCOPES.contentManage],
+    });
+    expect((await manager('search_reindex_job')).body).toEqual({ job: null });
+    const { entry } = await createEntry(
+      ctx,
+      { spaceId: SPACE, environmentId: 'main' },
+      {
+        contentTypeApiId: 'post',
+        fields: { title: { 'en-US': 'Hello' } },
+      },
+    );
+    await publishEntry(ctx, { spaceId: SPACE, environmentId: 'main' }, entry.id);
+    const store = ctx.store as InMemoryContentStore;
+    const before = store.allEvents().length;
+    await manager('ai_settings_set', {
+      expectedVersion: 0,
+      capabilities: { search: { enabled: false } },
+    });
+    for (const e of store.allEvents().slice(before)) {
+      await consumeEvent(ctx, { sender: new RecordingWebhookSender(), rag: deps.rag }, e);
+    }
+    expect((await manager('search_reindex_job')).body).toMatchObject({
+      job: { action: 'search_reindex', status: 'running', config: { enabled: false } },
+    });
+    // A role that may publish but not change the AI settings can't stop it half way.
+    const { job } = (await manager('search_reindex_job')).body as { job: { id: string } };
+    const publisher = await connect(deps, {
+      spaceId: SPACE,
+      kind: 'cma',
+      scopes: [SCOPES.contentWrite, SCOPES.contentPublish],
+    });
+    const refused = await publisher('bulk_job_cancel', { id: job.id });
+    expect(refused.isError).toBe(true);
+    expect((await manager('search_reindex_job')).body).toMatchObject({
+      job: { status: 'running' },
+    });
+    // The cancel tool's own content:publish, and space:admin.
+    const owner = await connect(deps, {
+      ...admin,
+      scopes: [...admin.scopes, SCOPES.contentManage, SCOPES.contentPublish],
+    });
+    const stopped = await owner('bulk_job_cancel', { id: job.id });
+    expect(stopped.isError).toBe(false);
+    expect(stopped.body).toMatchObject({ status: 'cancelled' });
   });
 });

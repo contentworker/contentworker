@@ -5,7 +5,6 @@ import {
   blockRuleChanges,
   type CarriedBlockConfig,
   ConflictError,
-  type ContentAction,
   type ContentType,
   canAccessContentType,
   DomainError,
@@ -22,6 +21,7 @@ import {
   MAX_PROMOTION_CONTENT_TYPES,
   MAX_PROMOTION_ENTRIES,
   NotFoundError,
+  PROMOTION_CONTENT_ACTIONS,
   PROMOTION_RISK_LEVELS,
   type Principal,
   type PromotedBlocks,
@@ -35,6 +35,8 @@ import {
   type PromotionRisk,
   type PromotionStatus,
   planCatalogTypes,
+  promotionChangesSchema,
+  promotionContentActions,
   removedFields,
   removedVariants,
   SCOPES,
@@ -179,7 +181,7 @@ export async function requestPromotion(
   }
 
   // Entries are copied over the target's locked regions: that takes `lock` too.
-  authorizePromotedEntries(principal, entryIds.length);
+  authorizePromotedEntries(principal, { entries: entryIds });
 
   const types: ContentType[] = [];
   for (const apiId of typeIds) {
@@ -273,7 +275,7 @@ export async function approvePromotion(
     throw new ForbiddenError('A promotion is approved by someone other than whoever requested it');
   }
   assertMayDecideSchema(principal, found, 'Approving');
-  authorizePromotedEntries(principal, found.entries.length);
+  authorizePromotedEntries(principal, found);
   // Both environments must still be there: a deleted target would collect rows no environment owns.
   await resolveEnvironment(ctx, spaceId, found.source);
   await resolveWritableEnvironment(ctx, spaceId, found.target);
@@ -350,41 +352,32 @@ function assertPerson(principal: Principal): void {
   }
 }
 
-/** What requesting or approving a promotion asks of a role, on every content type alike. */
-const PROMOTION_ACTIONS: readonly ContentAction[] = ['read', 'write', 'publish'];
-
 /**
- * Promotions write and publish whole entries across content types (hidden and read-only fields
- * included), with content types and blocks, so the role must hold `read`, `write` and `publish` on
- * every type alike, restricting no field (`authorizeEveryContentType`): one limited to some types,
- * or with field rules, would reach what its grants forbid.
+ * `read`, `write` and `publish` on every type alike, restricting no field
+ * (`PROMOTION_CONTENT_ACTIONS`). The admin offers Approve and Reject by the same domain rules.
  */
 function authorizePromotion(principal: Principal): void {
-  authorizeEveryContentType(principal, PROMOTION_ACTIONS);
+  authorizeEveryContentType(principal, PROMOTION_CONTENT_ACTIONS);
+}
+
+/** Requesting or approving one that carries entries also takes `lock` (`promotionContentActions`). */
+function authorizePromotedEntries(
+  principal: Principal,
+  promotion: { readonly entries: readonly unknown[] },
+): void {
+  authorizeEveryContentType(principal, promotionContentActions(promotion));
 }
 
 /**
- * Applying copies each entry whole over the target's, locked regions of its blocks included (the
- * copy can't judge regions: the apply may run for no one, from the stale sweep), so a promotion
- * that carries entries also takes `lock` on every type, as editing a locked region does.
- */
-function authorizePromotedEntries(principal: Principal, entries: number): void {
-  if (entries > 0) authorizeEveryContentType(principal, [...PROMOTION_ACTIONS, 'lock']);
-}
-
-/**
- * Content types and the block catalog change the schema: deciding a promotion that carries them
- * takes what changing them directly would.
+ * Content types and the block catalog change the schema (`promotionChangesSchema`): deciding a
+ * promotion that carries them takes what changing them directly would.
  */
 function assertMayDecideSchema(
   principal: Principal,
   promotion: Promotion,
   verb: 'Approving' | 'Rejecting',
 ): void {
-  if (
-    (promotion.contentTypes.length > 0 || promotion.blocks) &&
-    !principal.scopes.includes(SCOPES.contentManage)
-  ) {
+  if (promotionChangesSchema(promotion) && !principal.scopes.includes(SCOPES.contentManage)) {
     throw new ForbiddenError(
       `${verb} a promotion with content types or blocks takes ${SCOPES.contentManage}`,
     );

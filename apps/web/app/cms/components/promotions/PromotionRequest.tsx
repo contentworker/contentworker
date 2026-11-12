@@ -67,7 +67,7 @@ export function PromotionRequest(props: {
   const { client } = useClient();
   const { busy, run } = useLocalRun();
   const invalidate = useInvalidate();
-  const { access, canRequest } = usePromotionViewer();
+  const { access, canRequest, canRequestEntries } = usePromotionViewer();
   const [source, setSource] = useState('');
   const [target, setTarget] = useState('');
   const [diff, setDiff] = useState<EnvironmentComparison | null>(null);
@@ -154,6 +154,14 @@ export function PromotionRequest(props: {
   const entriesOnlyThere = diff?.entries.filter((e) => e.kind === 'removed').length ?? 0;
   const onlyThere = typesOnlyThere + entriesOnlyThere;
   const selected = types.size + entries.size;
+  // What the role lacks for this selection, if anything: entries also take `lock` on every type.
+  const lacks = !access
+    ? undefined
+    : !canRequest
+      ? 'role'
+      : entries.size > 0 && !canRequestEntries
+        ? 'lock'
+        : undefined;
   const same = !!source && source === target;
 
   return (
@@ -287,17 +295,18 @@ export function PromotionRequest(props: {
                 <Button
                   type="button"
                   onClick={ask}
-                  disabled={!canRequest || (selected === 0 && !blocks)}
-                  aria-describedby={access && !canRequest ? `${noteId}-role` : undefined}
+                  disabled={!!lacks || !canRequest || (selected === 0 && !blocks)}
+                  aria-describedby={lacks ? `${noteId}-role` : undefined}
                 >
                   Request promotion into {target}…
                 </Button>
               )}
             </ConfirmDialog>
-            {access && !canRequest ? (
+            {lacks ? (
               <p id={`${noteId}-role`} className="max-w-measure text-muted-foreground text-sm">
-                Requesting a promotion takes a role that can manage and publish content, with no
-                content-type or field limits.
+                {lacks === 'role'
+                  ? 'Requesting a promotion takes a role that can manage and publish content, with no content-type or field limits.'
+                  : 'Requesting entries also takes a role that can lock regions on every content type, since a promotion copies entries whole. Select none of the entries to promote the rest.'}
               </p>
             ) : null}
             <p className="text-muted-foreground text-xs" aria-live="polite">

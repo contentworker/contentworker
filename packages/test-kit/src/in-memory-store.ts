@@ -3,6 +3,7 @@ import {
   type AgentSchedule,
   type AiSettings,
   type ApiKey,
+  type AppOperationJob,
   type Asset,
   type AssetCollection,
   type AssetFolder,
@@ -76,6 +77,7 @@ import type {
   AiSettingsRepo,
   AppExtension,
   AppExtensionRepo,
+  AppOperationJobRepo,
   ArchivableVersion,
   AssetCollectionRepo,
   AssetFolderRepo,
@@ -347,6 +349,7 @@ export class InMemoryContentStore implements ContentStore {
         this.collectionItemData,
         this.shareLinkData,
         this.zipJobData,
+        this.appJobData,
         this.uploadData,
         this.referenceData,
         this.agentRunData,
@@ -1702,6 +1705,58 @@ export class InMemoryContentStore implements ContentStore {
         }),
     delete: async (scope, id) => {
       this.zipJobData.delete(`${scopeKey(scope)}::${id}`);
+    },
+  };
+
+  private readonly appJobData = new JournaledMap<string, AppOperationJob>();
+
+  readonly appOperationJobs: AppOperationJobRepo = {
+    get: async (scope, id) => this.appJobData.get(`${scopeKey(scope)}::${id}`) ?? null,
+    list: async (scope, limit) => {
+      const prefix = `${scopeKey(scope)}::`;
+      return [...this.appJobData.entries()]
+        .filter(([k]) => k.startsWith(prefix))
+        .map(([, j]) => j)
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id))
+        .slice(0, Math.max(1, limit));
+    },
+    countKept: async (scope, at, cap) =>
+      Math.min(
+        cap,
+        [...this.appJobData.entries()].filter(
+          ([k, j]) =>
+            k.startsWith(`${scopeKey(scope)}::`) && Date.parse(j.expiresAt) > at.getTime(),
+        ).length,
+      ),
+    create: async (scope, job) => {
+      this.appJobData.set(`${scopeKey(scope)}::${job.id}`, job);
+    },
+    update: async (scope, id, patch) => {
+      const key = `${scopeKey(scope)}::${id}`;
+      const job = this.appJobData.get(key);
+      if (!job) return;
+      const defined = Object.fromEntries(
+        Object.entries(patch).filter(([k, v]) => v !== undefined || k === 'output'),
+      ) as Partial<AppOperationJob>;
+      if ('output' in defined) (defined as { output: unknown }).output = defined.output ?? null;
+      this.appJobData.set(key, { ...job, ...defined });
+    },
+    countActive: async (scope, since, cap) =>
+      Math.min(
+        cap,
+        [...this.appJobData.entries()].filter(
+          ([k, j]) =>
+            k.startsWith(`${scopeKey(scope)}::`) &&
+            (j.status === 'pending' || j.status === 'running') &&
+            Date.parse(j.createdAt) > since.getTime(),
+        ).length,
+      ),
+    deleteExpired: async (at, limit) => {
+      const expired = [...this.appJobData.entries()]
+        .filter(([, j]) => Date.parse(j.expiresAt) <= at.getTime())
+        .slice(0, Math.max(1, limit));
+      for (const [k] of expired) this.appJobData.delete(k);
+      return expired.length;
     },
   };
 
@@ -3359,6 +3414,7 @@ export class InMemoryContentStore implements ContentStore {
       return [...this.bulkJobData.entries()]
         .filter(([k]) => k.startsWith(prefix))
         .map(([, v]) => v)
+        .filter((j) => !opts?.action || j.action === opts.action)
         .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id))
         .slice(0, opts?.limit ?? 50);
     },
@@ -3528,6 +3584,7 @@ export class InMemoryContentStore implements ContentStore {
       this.collectionItemData,
       this.shareLinkData,
       this.zipJobData,
+      this.appJobData,
       this.uploadData,
       this.renditionData,
       this.referenceData,
@@ -3569,6 +3626,7 @@ export class InMemoryContentStore implements ContentStore {
         assetCollections: this.assetCollections,
         assetShareLinks: this.assetShareLinks,
         assetZips: this.assetZips,
+        appOperationJobs: this.appOperationJobs,
         assetUploads: this.assetUploads,
         assetRenditions: this.assetRenditions,
         references: this.references,
@@ -3587,6 +3645,7 @@ export class InMemoryContentStore implements ContentStore {
         promotions: this.promotions,
         invites: this.invites,
         members: this.members,
+        aiSettings: this.aiSettings,
       });
       for (const [m, journal] of journals) m.commit(journal);
       return result;

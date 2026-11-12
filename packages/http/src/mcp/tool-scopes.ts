@@ -101,6 +101,7 @@ export const TOOL_SCOPES: Readonly<Record<string, readonly PermissionScope[]>> =
   comments_list: [SCOPES.previewRead],
   content_duplicates: [SCOPES.searchRead],
   content_reindex_embeddings: [SCOPES.contentManage],
+  search_reindex_job: [SCOPES.contentManage],
   content_related: [SCOPES.searchRead],
   content_search: [SCOPES.searchRead],
   content_semantic_search: [SCOPES.searchRead],
@@ -108,6 +109,7 @@ export const TOOL_SCOPES: Readonly<Record<string, readonly PermissionScope[]>> =
   entries_block_locks_get: [SCOPES.previewRead],
   entries_block_locks_set: [SCOPES.contentWrite],
   entries_bulk_action: [SCOPES.contentPublish],
+  entries_change_summary: [SCOPES.previewRead],
   entries_create: [SCOPES.contentWrite],
   entries_diff_versions: [SCOPES.previewRead],
   entries_duplicate: [SCOPES.contentWrite],
@@ -273,6 +275,8 @@ export const TOOL_SCOPES: Readonly<Record<string, readonly PermissionScope[]>> =
 export const UNSCOPED_TOOLS: readonly string[] = [
   // Each operation names its own scope; the use-case checks it and lists only what may be called.
   'app_operation_invoke',
+  'app_operation_job_get',
+  'app_operation_jobs_list',
   'app_operations_list',
   // The caller's own access: anyone may ask about itself (refused outside its space).
   'auth_me',

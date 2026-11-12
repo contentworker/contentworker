@@ -15,7 +15,7 @@ test.beforeEach(async ({ page }) => {
   await useCmsScope(page);
 });
 
-test('Coworker’s block move says where the block lands and the order it leaves, before Confirm', async ({
+test('Coworker’s block move says where the block lands and the order it leaves, before Confirm @coworker', async ({
   page,
   request,
 }) => {

@@ -123,18 +123,18 @@ The three key kinds (`ApiKeyKind`):
 
 `SCOPES` (`PermissionScope`):
 
-| Scope              | Grants                                                                                 |
-| ------------------ | -------------------------------------------------------------------------------------- |
-| `content:write`    | Create/update draft entries; AI draft generation (+ `assets:write`)                    |
-| `content:publish`  | Publish/unpublish entries, assets, and content types                                   |
-| `content:manage`   | Define/revise content-type schemas                                                     |
-| `preview:read`     | Read draft/current entries and content-type definitions (+ `assets:read`)              |
-| `assets:read`      | Read assets, drafts included: files, metadata, folders, collections, renditions       |
-| `assets:write`     | Upload, replace, edit, organize and restore assets                                     |
-| `delivery:read`    | Read published entries and assets                                                      |
-| `search:read`      | Semantic search over published content                                                 |
-| `space:admin`      | Manage API keys, create spaces/environments, manage webhooks                           |
-| `workflow:approve` | Decide workflow approvals (the Approver preset)                                        |
+| Scope              | Grants                                                                          |
+| ------------------ | ------------------------------------------------------------------------------- |
+| `content:write`    | Create/update draft entries; AI draft generation (+ `assets:write`)             |
+| `content:publish`  | Publish/unpublish entries, assets, and content types                            |
+| `content:manage`   | Define/revise content-type schemas                                              |
+| `preview:read`     | Read draft/current entries and content-type definitions (+ `assets:read`)       |
+| `assets:read`      | Read assets, drafts included: files, metadata, folders, collections, renditions |
+| `assets:write`     | Upload, replace, edit, organize and restore assets                              |
+| `delivery:read`    | Read published entries and assets                                               |
+| `search:read`      | Semantic search over published content                                          |
+| `space:admin`      | Manage API keys, create spaces/environments, manage webhooks                    |
+| `workflow:approve` | Decide workflow approvals (the Approver preset)                                 |
 
 ### Default scopes per kind
 
@@ -167,7 +167,7 @@ search, files, metadata, folders, collections, renditions, usage, versions, tran
 zips). `assets:write`: create, upload, replace, edit, organize and restore assets, folders and
 collections, alt text and auto-tagging, video. `content:publish`: publishing, unpublishing,
 archiving and deleting assets, rights, and share links. `content:manage`: rendition
-*definitions*. `delivery:read`: published asset reads through Delivery.
+_definitions_. `delivery:read`: published asset reads through Delivery.
 
 ## Role presets
 
@@ -488,6 +488,14 @@ Semantics:
   request (`authenticate`), so editing a role instantly changes what every bound key can do.
   Deleting a role is refused while active keys reference it; a dangling reference fails closed.
 - **Exact grant wins over `'*'`**; a type with no matching grant is denied entirely.
+- **One grant per type.** A role's grants name each content type at most once, `*` included:
+  creating, replacing or cloning a role whose grants repeat one is refused with a 422
+  (`validation_failed`, one `contentGrants` issue per repeated type, e.g. `More than one grant
+  names "post"; merge them into one`), on HTTP and MCP alike (`duplicateGrantIssues`). Only the
+  first grant naming a type ever governed it, so a second one read as access it never gave, and
+  two `*` grants looked like one in `auth/me` while `holdsOnEveryContentType` refused them. A role
+  stored with a repeated grant before the rule is left as it is and still resolves (the first
+  grant wins); saving it again, unchanged, is refused until its grants are merged.
 - **Six actions, four listed.** `ContentAction` is
   `read | write | publish | lock | delete | unpublish`. A grant lists only the first four;
   `lock` (locking and unlocking regions of an entry's blocks, whoever locked them) is never
@@ -718,15 +726,15 @@ that would grant it, so the people use-cases refuse it with **403** `forbidden`
 (`DelegatedPeopleError`, `details.reason: "delegated_bearer"`, "A personal access token or OAuth
 token can't …; sign in to the admin to do this"), on REST and MCP alike:
 
-| Operation                                                                          | Delegated bearer                                                           |
-| ---------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| `POST /spaces/:space/members` (`addMember`)                                        | Refused                                                                    |
-| `PATCH /spaces/:space/members/:id`, `role_preset_assign` with `memberId`           | Refused when it changes the role (up or down) or re-enables the person; renaming and disabling pass |
-| `DELETE /spaces/:space/members/:id`                                                | Allowed: it only takes access away (the last-admin rule still holds)       |
-| `PUT /spaces/:space/roles/:id`, `role_update`                                      | Refused when it widens a role anyone on the team holds (disabled people included) or an open invitation grants (pending, or expired and still resendable; a deployment with more than 500 of either refuses every widening); narrowing passes |
-| `POST /spaces/:space/roles`, `…/roles/:id/clone`, `role_create`                    | Allowed: nobody holds a new role, and giving it to anyone is checked       |
-| `PUT /spaces/:space/access-settings` `{ ssoOnly: false }`                          | Refused (it brings the setup credential back); turning SSO-only on passes  |
-| `POST /deployment/invites`, `…/:id/resend`, `invite_create`, `invite_resend`       | Refused (a delegated token is bound to one space, so `authorizeInviter` already refused it; this says why) |
+| Operation                                                                    | Delegated bearer                                                                                                                                                                                                                              |
+| ---------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /spaces/:space/members` (`addMember`)                                  | Refused                                                                                                                                                                                                                                       |
+| `PATCH /spaces/:space/members/:id`, `role_preset_assign` with `memberId`     | Refused when it changes the role (up or down) or re-enables the person; renaming and disabling pass                                                                                                                                           |
+| `DELETE /spaces/:space/members/:id`                                          | Allowed: it only takes access away (the last-admin rule still holds)                                                                                                                                                                          |
+| `PUT /spaces/:space/roles/:id`, `role_update`                                | Refused when it widens a role anyone on the team holds (disabled people included) or an open invitation grants (pending, or expired and still resendable; a deployment with more than 500 of either refuses every widening); narrowing passes |
+| `POST /spaces/:space/roles`, `…/roles/:id/clone`, `role_create`              | Allowed: nobody holds a new role, and giving it to anyone is checked                                                                                                                                                                          |
+| `PUT /spaces/:space/access-settings` `{ ssoOnly: false }`                    | Refused (it brings the setup credential back); turning SSO-only on passes                                                                                                                                                                     |
+| `POST /deployment/invites`, `…/:id/resend`, `invite_create`, `invite_resend` | Refused (a delegated token is bound to one space, so `authorizeInviter` already refused it; this says why)                                                                                                                                    |
 
 Unlike a key's role, which a program may narrow, a person's role changes only by a named
 person's act, so a delegated bearer can't change it in either direction. The people use-cases
@@ -863,6 +871,8 @@ interface Principal {
   keeps it), so a deployment admin's job in a space whose team they are not on runs to the end
   even if they are demoted or their account is disabled meanwhile; cancel it. A job a job starts (a clone's create job, a snapshot's publishing job)
   carries the same starter; the asset reindex a snapshot import starts is the system's. `config.startedBy` is never in a job as read back.
+  An async plugin operation's job records its caller the same way and resolves them again before
+  it runs (`docs/plugins.md`, "Async operations").
 - **Preview links** — `POST …/entries/:id/preview-link` mints an expiring token; CPA
   `GET …/entries/:id?preview_token=…` accepts it without a bearer header.
 - **OAuth 2.1** — when `OAUTH_ISSUER` is set, MCP clients obtain tokens through

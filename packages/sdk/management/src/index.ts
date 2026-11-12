@@ -278,9 +278,30 @@ export interface AppOperation {
   readonly description: string;
   /** The scope a caller holds to invoke it. */
   readonly requires: string;
-  readonly mode: 'sync';
+  /** `async`: call it with `apps.start` and read the output from the job. */
+  readonly mode: 'sync' | 'async';
   readonly input: Readonly<Record<string, unknown>>;
   readonly output?: Readonly<Record<string, unknown>>;
+}
+
+/**
+ * An async app operation's job, as `apps.start` returns it and `apps.job` reads it. Kept a day;
+ * `output` is set once `completed`, `error` once `failed`.
+ */
+export interface AppOperationJob<T = unknown> {
+  readonly id: string;
+  readonly plugin: string;
+  readonly pluginVersion: string;
+  readonly operation: string;
+  readonly status: 'pending' | 'running' | 'completed' | 'failed';
+  readonly input: unknown;
+  readonly output?: T;
+  readonly error?: string;
+  readonly createdBy: string;
+  readonly createdAt: string;
+  readonly startedAt?: string;
+  readonly completedAt?: string;
+  readonly expiresAt: string;
 }
 
 /** A redirect: a front end (or an edge Worker) applies it; contentworker serves no site. */
@@ -574,11 +595,21 @@ export interface AiCapabilitySetting {
   readonly tier: 'flagship' | 'balanced' | 'fast' | null;
   /** Plain text added after the built-in prompt as quoted guidance; null: none. */
   readonly guidance: string | null;
+  /**
+   * `tier` held to the deployment's `maxTier`: the tier its calls actually run on (null when
+   * `tier` is).
+   */
+  readonly effectiveTier: 'flagship' | 'balanced' | 'fast' | null;
 }
 
 /** A space's AI settings. Version 0, everything on, before the first set. */
 export interface AiSettings {
   readonly version: number;
+  /**
+   * The most capable tier the deployment runs (`flagship`: no cap). A capability's tier above it
+   * is kept as set, and runs on this one.
+   */
+  readonly maxTier: 'flagship' | 'balanced' | 'fast';
   readonly capabilities: Readonly<Record<AiCapability, AiCapabilitySetting>>;
   readonly updatedAt: string | null;
   readonly updatedBy: string | null;
@@ -975,6 +1006,34 @@ export interface EntryVersion {
   readonly fields: EntryFields;
   /** When this version was saved (ISO-8601). */
   readonly createdAt?: string;
+}
+
+/**
+ * A narrative of the changes between two versions (`entries.versions.summarize`), written by a
+ * model from the version diff alone, or built from it by rule (`source: 'heuristic'`).
+ */
+export interface ChangeSummary {
+  readonly entryId: string;
+  /** The version numbers the references resolved to. */
+  readonly from: number;
+  readonly to: number;
+  /** One to three sentences, plain text: render it as text, never as markup. */
+  readonly summary: string;
+  /** Up to five notable changes, plain text; may be empty. */
+  readonly highlights: readonly string[];
+  readonly source: 'model' | 'heuristic';
+  /** The tier that wrote it; null for the heuristic. */
+  readonly tier: 'flagship' | 'balanced' | 'fast' | null;
+  /** Why the heuristic wrote it (`mock`, `no visible changes`, a bad answer). */
+  readonly fallback?: string;
+  /** Answered from the cache, with no model call. */
+  readonly cached: boolean;
+  /** The diff was longer than the model reads, so the summary covers part of it. */
+  readonly truncated: boolean;
+  /** Fields that changed which you may read. */
+  readonly changedFields: number;
+  /** Fields that changed which you may not read: never shown to the model. */
+  readonly hiddenChanges: number;
 }
 
 export type AssetKind = 'image' | 'video' | 'audio' | 'document' | 'other';
@@ -2267,6 +2326,12 @@ export function createManagementClient(opts: ManagementClientOptions) {
        * characters; 409 for a stale version (`isConflict`; `error.details.version` is the version in force).
        */
       set: (input: AiSettingsSetInput) => put<AiSettingsSet>(`${spaceBase}/ai-settings`, input),
+      /**
+       * This environment's latest search reindex, or null: turning `search` on or off starts one
+       * in every environment (content:manage). Poll it while `status` is `running`.
+       */
+      searchReindexJob: async () =>
+        (await get<{ job: BulkJob | null }>(`${envBase}/search/reindex-job`)).job,
     },
 
     /** Navigation menus: delivery data a front end renders (content:manage to change them). */
@@ -2328,8 +2393,10 @@ export function createManagementClient(opts: ManagementClientOptions) {
         del<void>(`${envBase}/saved-views/${e(id)}`, { revision: o.revision }),
     },
     /**
-     * App operations: what installed plugins offer by name. `invoke` answers 403 without the
-     * scope an operation requires, 422 for input off its schema, 502 when the plugin fails.
+     * App operations: what installed plugins offer by name. `invoke` calls a sync operation and
+     * `start` an async one (both answer 403 without the scope an operation requires, 422 for
+     * input off its schema); a sync call is 502 when the plugin fails, and an async one's job
+     * says `failed`. `start` is 409 while ten jobs are pending or running in the environment.
      */
     apps: {
       operations: () => get<{ items: AppOperation[] }>(`${envBase}/apps/operations`),
@@ -2338,6 +2405,17 @@ export function createManagementClient(opts: ManagementClientOptions) {
         operation: string,
         input: Readonly<Record<string, unknown>> = {},
       ) => post<{ output: T }>(`${envBase}/apps/${e(plugin)}/operations/${e(operation)}`, input),
+      start: <T = unknown>(
+        plugin: string,
+        operation: string,
+        input: Readonly<Record<string, unknown>> = {},
+      ) =>
+        post<{ job: AppOperationJob<T> }>(
+          `${envBase}/apps/${e(plugin)}/operations/${e(operation)}`,
+          input,
+        ),
+      job: <T = unknown>(id: string) => get<AppOperationJob<T>>(`${envBase}/apps/jobs/${e(id)}`),
+      jobs: () => get<{ items: AppOperationJob[] }>(`${envBase}/apps/jobs`),
     },
     /** Redirects: delivery data a front end applies (content:manage to change them). */
     redirects: {
@@ -2514,6 +2592,24 @@ export function createManagementClient(opts: ManagementClientOptions) {
          */
         diff: (id: string, from: VersionRef, to: VersionRef) =>
           get<unknown>(`${envBase}/entries/${e(id)}/versions/diff`, { from, to }),
+        /**
+         * A short narrative of that diff in plain text (`field-assist` AI; 409
+         * `ai_capability_disabled` when the space turned it off, 429 over the AI budget, 503
+         * when the model fails). A repeated request is answered from a cache; `fresh` asks again
+         * (with `content:write`; otherwise the cached one comes back).
+         */
+        summarize: (
+          id: string,
+          from: VersionRef,
+          to: VersionRef,
+          opts: { readonly fresh?: boolean } = {},
+        ) =>
+          request<ChangeSummary>(
+            'POST',
+            `${envBase}/entries/${e(id)}/versions/diff/summary`,
+            undefined,
+            { from, to, fresh: opts.fresh ? 'true' : undefined },
+          ),
         /**
          * Copies an old version's fields into a NEW draft version; `expectedVersion` (the draft
          * you read) makes a draft saved since a 409.

@@ -11,6 +11,7 @@ export { LiveHubDO } from '@contentworker/platform/do/live-hub';
 export { RateLimiterDO } from '@contentworker/platform/do/rate-limiter';
 export { SearchShardDO } from '@contentworker/platform/do/search-shard';
 export { AssistantAgent } from '../../src/assistant';
+export { AppOperationTestWorkflow } from './app-operation';
 export { AssetIngestTestWorkflow } from './asset-ingest';
 export { AssetZipTestWorkflow } from './asset-zip';
 export { EditorialTestWorkflow } from './editorial';

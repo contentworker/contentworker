@@ -3,6 +3,7 @@ import {
   type ContentTypeGrant,
   DelegatedKeyMintError,
   DelegatedPeopleError,
+  duplicateGrantIssues,
   grantsAdmin,
   grantsNoWider,
   holdsScope,
@@ -72,6 +73,9 @@ function validateRoleInput(input: RoleInput): void {
       }
     }
   }
+  // Every save is checked whole, so a role stored with a repeated grant before this rule reads as
+  // it did but can't be saved again, unchanged, until its grants are merged.
+  issues.push(...duplicateGrantIssues(input.contentGrants ?? []));
   if (issues.length > 0) throw new ValidationError(issues);
 }
 

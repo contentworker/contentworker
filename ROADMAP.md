@@ -133,9 +133,10 @@ Everything below is built and tested on v2.
      REST, OpenAPI and MCP generated from one manifest. Shipped: manifest v2 with typed sync
      operations (`app_operations_list`, `app_operation_invoke`, `POST …/apps/:plugin/operations/:op`,
      a per-space OpenAPI document), run with the plugin's grant narrowed to the caller's, and a
-     hook's fetch capped at its remaining budget. Still planned: `async` operations on a durable
-     workflow returning a job id, and deployment-level connections with host-managed token
-     exchange (`caps.connection.fetch`).
+     hook's fetch capped at its remaining budget, and `async` operations: accepted as a job that a
+     durable workflow (`AppOperationWorkflow`) runs for up to 5 minutes, read back over
+     `GET …/apps/jobs`, MCP and the management SDK. Still planned: deployment-level connections
+     with host-managed token exchange (`caps.connection.fetch`).
   3. **Content models from packages.** Managed and seeded types with an owner, install and upgrade
      with a compatibility check; uninstall leaves every entry in place.
   4. **Workflow nodes.** App node types (`app:<package>/<node>`), the `poll` result, `external`
@@ -406,8 +407,18 @@ None blocks a release.
   extracted text), with a tool to read a reference file; selectable in generation, canvas and agents.
 - [x] **AI settings per capability.** Per space: enabled, `ModelTier`, and guidance appended to the
   built-in prompt.
-- [ ] **Change summaries.** A narrative summary of a version diff, over the existing deterministic
-  diff.
+  - [x] **Deployment tier cap.** `AI_MAX_TIER` (the registry's `aiMaxTier`) holds every model call
+    to at most that tier, whatever its source; settings above it are kept and reported as
+    `effectiveTier`, and the admin's select disables the tiers above it.
+  - [x] **Reindex when search is toggled.** Turning `search` on or off starts a `search_reindex` bulk
+    job in every environment (deleting, or re-embedding, published entries' and assets' vectors),
+    superseding one still running; followed at `…/search/reindex-job`, `search_reindex_job` and on
+    the admin's search row.
+- [x] **Change summaries.** A narrative summary of a version diff, over the existing deterministic
+  diff: `POST …/versions/diff/summary`, `entries_change_summary` (Coworker too),
+  `versions.summarize()` and Summarize changes in the admin's compare. Written from the diff as the
+  caller may read it, fenced and bounded, under `field-assist`; listed by rule without a model;
+  cached in KV by its input.
 
 #### M6. Visual editing
 

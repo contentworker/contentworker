@@ -1,4 +1,9 @@
-import { AiUnavailableError, RateLimitedError, type Scope } from '@contentworker/domain';
+import {
+  AiUnavailableError,
+  capModelTier,
+  RateLimitedError,
+  type Scope,
+} from '@contentworker/domain';
 import type {
   AIProvider,
   DecisionModel,
@@ -97,6 +102,10 @@ export async function generateWithBudget(
 ): Promise<GenerateResult> {
   // AI_MODE=mock: never call the model (local development, demos), from any use-case.
   if (ctx.ai?.mode === 'mock') return mockGenerate(req);
+  // The deployment's tier cap, here too: the one choke point, so a call site that named its tier
+  // outright (a workflow node, the copilot) is held to it like one that asked its capability.
+  const max = ctx.ai?.maxTier;
+  if (max) req = { ...req, tier: capModelTier(req.tier ?? 'balanced', max) };
   if (ctx.costGuard) {
     const decision = await ctx.costGuard.consume(scope);
     if (!decision.allowed) {
@@ -169,6 +178,9 @@ export async function decideWithBudget(
   req: DecisionRequest,
 ): Promise<DecisionResult> {
   if (ctx.ai?.mode === 'mock') return mockDecide(req);
+  // Held to the deployment's tier cap, as generation is (decision models default to fast).
+  const max = ctx.ai?.maxTier;
+  if (max) req = { ...req, tier: capModelTier(req.tier ?? 'fast', max) };
   if (ctx.costGuard) {
     const decision = await ctx.costGuard.consume(scope);
     if (!decision.allowed) {

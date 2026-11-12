@@ -79,6 +79,11 @@ export interface EdgeEnv {
    */
   readonly ASSET_ZIP_WF?: Workflow;
   /**
+   * Async plugin operations (`AppOperationWorkflow`, one instance per job), started by the
+   * engine's events consumer from `app_operation.requested`. Absent → an accepted job fails at once.
+   */
+  readonly APP_OPERATION_WF?: Workflow;
+  /**
    * R2 bucket holding asset bytes (native binding — no access keys). When
    * bound it is THE BlobStore: uploads and downloads go through this Worker's
    * signed `/media/*` route (see @contentworker/adapters/blob-r2).
@@ -216,6 +221,13 @@ export interface EdgeEnv {
   readonly AI_MODE?: string;
   /** Per-call cap for generateJson, ms (default 20000). */
   readonly AI_TIMEOUT_MS?: string;
+  /**
+   * The most capable model tier this deployment runs: `flagship` (or empty: no cap), `balanced` or
+   * `fast`. Every generation and decision call is held to it, whatever its capability's tier, the
+   * request or the call site asks for (embeddings and text extraction have no tier). Rendered from
+   * the registry's `aiMaxTier`.
+   */
+  readonly AI_MAX_TIER?: string;
   /** Cloudflare AI Gateway id: when set, Workers AI calls route through it (logs, caching, limits). */
   readonly AI_GATEWAY_ID?: string;
   /** `true`/`false`: whether AI Gateway keeps a log entry per call (never prompt or answer). */

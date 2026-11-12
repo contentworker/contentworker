@@ -69,6 +69,7 @@ test('every account-wide name in every app carries the deployment', () => {
       'contentworker-editorial-acme',
       'contentworker-asset-ingest-acme',
       'contentworker-asset-zip-acme',
+      'contentworker-app-operation-acme',
     ],
   );
   assert.equal(engine.d1_databases[0].database_name, n.d1);
@@ -234,6 +235,21 @@ test('a demo offers the enterprise starter on its api, and no one else does', ()
   assert.equal(renderApi(base('api'), demo).vars.DEMO_STARTERS, 'true');
   assert.equal(renderApi(base('api'), acme).vars.DEMO_STARTERS, 'false');
   assert.equal(renderEngine(base('engine'), demo).vars.DEMO_STARTERS, undefined);
+});
+
+test('a deployment’s AI tier cap reaches the api and the engine, and no cap renders empty', () => {
+  const capped = toDeployment({ ...acme, slot: 5, aiMaxTier: 'balanced' });
+  assert.equal(renderApi(base('api'), capped).vars.AI_MAX_TIER, 'balanced');
+  assert.equal(renderEngine(base('engine'), capped).vars.AI_MAX_TIER, 'balanced');
+  assert.equal(renderApi(base('api'), acme).vars.AI_MAX_TIER, '');
+  assert.equal(renderEngine(base('engine'), acme).vars.AI_MAX_TIER, '');
+  // Only Workers that call models carry it.
+  assert.equal(renderDelivery(base('delivery'), capped).vars?.AI_MAX_TIER, undefined);
+  assert.equal(renderWeb(base('web'), capped).vars?.AI_MAX_TIER, undefined);
+  assert.throws(
+    () => toDeployment({ ...acme, slot: 5, aiMaxTier: 'huge' }),
+    /aiMaxTier must be "flagship", "balanced" or "fast"/,
+  );
 });
 
 test('the registry is validated', () => {

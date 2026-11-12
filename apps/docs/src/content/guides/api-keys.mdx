@@ -74,6 +74,10 @@ list of grants:
 
 - A key bound to a role can only touch the content types its grants name (`*` matches any type;
   an exact grant wins over `*`). Types without a grant are invisible to it, in lists too.
+- Each content type, `*` included, gets one grant. A role whose grants name a type twice is
+  refused with a `422` naming the type; merge the two into one grant. A role saved with a
+  repeated grant before this rule keeps working, but it can't be saved again until its grants are
+  merged.
 - **Actions** are `read`, `write`, `publish` and `lock` (locking and unlocking regions of an
   entry's blocks; only a grant that lists it has it). Two finer actions come with them: `delete`
   (moving to the trash, and with `publish` deleting permanently) with `write` or `publish`, and

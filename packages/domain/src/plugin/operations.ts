@@ -14,8 +14,12 @@ import { DomainError } from '../errors';
  * cannot make a plugin write for them.
  */
 
-/** How an operation runs. `async` (a durable workflow returning a job id) is planned, not here. */
-export const PLUGIN_OPERATION_MODES = ['sync'] as const;
+/**
+ * How an operation runs. `sync` answers within the request (about 10 s); `async` is accepted at
+ * once as a job (`AppOperationJob`) that the engine runs on a durable Workflow, and its caller
+ * polls for the output.
+ */
+export const PLUGIN_OPERATION_MODES = ['sync', 'async'] as const;
 export type PluginOperationMode = (typeof PLUGIN_OPERATION_MODES)[number];
 
 /** One operation a manifest declares. */
@@ -31,7 +35,7 @@ export interface PluginOperation {
   readonly input: OperationSchema;
   /** The output, checked before it is returned. Absent: any JSON value. */
   readonly output?: OperationSchema;
-  /** Defaults to `sync`. */
+  /** Defaults to `sync`. An `async` operation returns a job, its output read from the job later. */
   readonly mode?: PluginOperationMode;
 }
 
@@ -285,7 +289,7 @@ export function operationsIssues(operations: unknown, manifestVersion: unknown):
       op.mode !== undefined &&
       !(PLUGIN_OPERATION_MODES as readonly unknown[]).includes(op.mode)
     ) {
-      issues.push({ field: `${field}.mode`, message: 'mode must be sync' });
+      issues.push({ field: `${field}.mode`, message: 'mode must be sync or async' });
     }
     const input = operationSchemaIssues(op.input, `${field}.input`);
     issues.push(...input);

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   type AppContext,
   authenticate,
+  cloneRole,
   createApiKey,
   createRole,
   deleteRole,
@@ -100,6 +101,112 @@ describe('granular RBAC: roles', () => {
       ],
     });
     expect((await getRole(c, 's1', role.id)).contentGrants[0]?.deniedActions).toEqual(['delete']);
+  });
+
+  it('refuses grants that name a content type more than once, two wildcards included', async () => {
+    const c = ctx();
+    await expect(
+      createRole(c, 's1', {
+        name: 'Two posts',
+        scopes: ['content:write'],
+        contentGrants: [
+          { contentTypeApiId: 'post', actions: ['read'] },
+          { contentTypeApiId: 'post', actions: ['read', 'write'] },
+        ],
+      }),
+    ).rejects.toMatchObject({
+      code: 'validation_failed',
+      issues: [
+        {
+          field: 'contentGrants',
+          message: 'More than one grant names "post"; merge them into one',
+        },
+      ],
+    });
+    const role = await createRole(c, 's1', {
+      name: 'Reader',
+      scopes: ['preview:read'],
+      contentGrants: [{ contentTypeApiId: '*', actions: ['read'] }],
+    });
+    await expect(
+      updateRole(
+        c,
+        's1',
+        role.id,
+        {
+          name: 'Reader',
+          scopes: ['preview:read'],
+          contentGrants: [
+            { contentTypeApiId: '*', actions: ['read'] },
+            { contentTypeApiId: '*', actions: ['read', 'write'] },
+          ],
+        },
+        { sso: false },
+        'system',
+      ),
+    ).rejects.toMatchObject({
+      issues: [
+        {
+          field: 'contentGrants',
+          message: 'More than one grant covers every type ("*"); merge them into one',
+        },
+      ],
+    });
+    // Refused before anything is written: the role is as it was.
+    expect(await getRole(c, 's1', role.id)).toEqual(role);
+  });
+
+  it('a role stored with repeated grants still resolves, but saves only once merged', async () => {
+    const c = ctx();
+    // Stored before role saves refused a repeated grant: written straight to the store.
+    const legacy = {
+      id: 'legacy',
+      spaceId: 's1',
+      name: 'Legacy',
+      scopes: ['content:write'],
+      contentGrants: [
+        { contentTypeApiId: '*', actions: ['read', 'write'] as const },
+        { contentTypeApiId: '*', actions: ['read'] as const },
+      ],
+      version: 1,
+    };
+    await c.store.roles.save(legacy);
+    expect((await getRole(c, 's1', 'legacy')).contentGrants).toHaveLength(2);
+    const { token } = await createApiKey(c, hasher, {
+      issuer: 'system',
+      spaceId: 's1',
+      kind: 'cma',
+      roleId: 'legacy',
+    });
+    expect((await authenticate(c, hasher, token)).contentGrants).toEqual(legacy.contentGrants);
+
+    // Saved back unchanged (a rename, say): refused, naming the type to merge.
+    const unchanged = {
+      name: 'Renamed',
+      scopes: legacy.scopes,
+      contentGrants: legacy.contentGrants,
+    };
+    await expect(
+      updateRole(c, 's1', 'legacy', unchanged, { sso: false }, 'system'),
+    ).rejects.toMatchObject({
+      issues: [expect.objectContaining({ message: expect.stringContaining('("*")') })],
+    });
+    // Nor copied into a new role.
+    await expect(cloneRole(c, 's1', 'legacy')).rejects.toMatchObject({
+      code: 'validation_failed',
+    });
+    expect((await listRoles(c, 's1')).map((r) => r.id)).toEqual(['legacy']);
+
+    const merged = await updateRole(
+      c,
+      's1',
+      'legacy',
+      { ...unchanged, contentGrants: [{ contentTypeApiId: '*', actions: ['read', 'write'] }] },
+      { sso: false },
+      'system',
+    );
+    expect(merged.version).toBe(2);
+    expect((await cloneRole(c, 's1', 'legacy')).contentGrants).toEqual(merged.contentGrants);
   });
 
   it('a role-bound key resolves the role live on authenticate', async () => {

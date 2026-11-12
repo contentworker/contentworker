@@ -123,6 +123,8 @@
     "AI_PROVIDER": "workers-ai",
     "AI_MODE": "live",
     "AI_TIMEOUT_MS": "20000",
+    // The deployment's model tier cap (flagship, balanced or fast); empty: none. From the registry.
+    "AI_MAX_TIER": "",
     "AI_GATEWAY_ID": "contentworker",
     "WORKERS_AI_MODEL_FLAGSHIP": "",
     "WORKERS_AI_MODEL_BALANCED": "",
