@@ -3758,7 +3758,7 @@ function makeAiActionRepo(x: Exec): AIActionRepo {
     variables: r.variables,
     targetField: r.targetField ?? undefined,
     tier: r.tier,
-    ...(r.projectId ? { projectId: r.projectId } : {}),
+    ...(r.projectId && r.projectId !== BEHIND_0045 ? { projectId: r.projectId } : {}),
     createdAt: r.createdAt.toISOString(),
   });
   return {
@@ -5459,7 +5459,7 @@ function makeAgentScheduleRepo(x: Exec): AgentScheduleRepo {
     cursorEntryId: r.cursorEntryId ?? undefined,
     nextRunAt: r.nextRunAt.toISOString(),
     createdAt: r.createdAt.toISOString(),
-    ...(r.projectId ? { projectId: r.projectId } : {}),
+    ...(r.projectId && r.projectId !== BEHIND_0045 ? { projectId: r.projectId } : {}),
   });
   return {
     async create(scope, s) {
@@ -5509,6 +5509,7 @@ function makeAgentScheduleRepo(x: Exec): AgentScheduleRepo {
             lastRunAt: s.lastRunAt ? new Date(s.lastRunAt) : null,
             cursorEntryId: s.cursorEntryId ?? null,
             nextRunAt: new Date(s.nextRunAt),
+            projectId: s.projectId ?? null,
           })
           .where(
             and(scopeFilter(schema.agentSchedules, scope), eq(schema.agentSchedules.id, s.id)),
@@ -7094,24 +7095,40 @@ function makeAiProjectRepo(x: Exec): AiProjectRepo {
     if (changed.length === 0) throw new TransactionConflictError();
   };
   return {
+    // A replica behind 0045 has no projects yet: reads answer none rather than fail the call.
     async list(scope) {
       const rows = await db
         .select()
         .from(t)
         .where(scopeFilter(t, scope))
         .orderBy(asc(t.nameKey), asc(t.id))
-        .limit(AI_PROJECT_MAX_PER_ENVIRONMENT);
+        .limit(AI_PROJECT_MAX_PER_ENVIRONMENT)
+        .catch((err: unknown) => {
+          if (isBehind0045(err)) return [];
+          throw err;
+        });
       return rows.map(toAiProject);
     },
     async get(scope, id) {
-      const [row] = await db.select().from(t).where(one(scope, id));
+      const [row] = await db
+        .select()
+        .from(t)
+        .where(one(scope, id))
+        .catch((err: unknown) => {
+          if (isBehind0045(err)) return [];
+          throw err;
+        });
       return row ? toAiProject(row) : null;
     },
     async getDefault(scope) {
       const [row] = await db
         .select()
         .from(t)
-        .where(and(scopeFilter(t, scope), eq(t.isDefault, true)));
+        .where(and(scopeFilter(t, scope), eq(t.isDefault, true)))
+        .catch((err: unknown) => {
+          if (isBehind0045(err)) return [];
+          throw err;
+        });
       return row ? toAiProject(row) : null;
     },
     async save(scope, project, expected) {
@@ -7149,7 +7166,23 @@ function makeAiProjectRepo(x: Exec): AiProjectRepo {
       );
     },
     async delete(scope, id, expected) {
-      await casWrite(db.delete(t).where(and(one(scope, id), eq(t.version, expected))));
+      // In the same statement as the version check: an AI action or a schedule that came to name
+      // the project since the caller looked (`usedBy`) makes the delete change nothing, so no
+      // stored id is left naming a project that is gone.
+      const a = schema.aiActions;
+      const s = schema.agentSchedules;
+      await casWrite(
+        db
+          .delete(t)
+          .where(
+            and(
+              one(scope, id),
+              eq(t.version, expected),
+              sql`NOT EXISTS (SELECT 1 FROM ${a} WHERE ${a.spaceId} = ${scope.spaceId} AND ${a.environmentId} = ${scope.environmentId} AND ${a.projectId} = ${id})`,
+              sql`NOT EXISTS (SELECT 1 FROM ${s} WHERE ${s.spaceId} = ${scope.spaceId} AND ${s.environmentId} = ${scope.environmentId} AND ${s.projectId} = ${id})`,
+            ),
+          ),
+      );
     },
     async usedBy(scope, id) {
       const a = schema.aiActions;
@@ -8112,6 +8145,16 @@ const BEHIND_0032 = 'agent_instructions';
 
 /** What `preview_url_template` reads as on a replica behind 0035, as {@link BEHIND_0032}. */
 const BEHIND_0035 = 'preview_url_template';
+
+/**
+ * What `project_id` (on `ai_actions` and `agent_schedules`) reads as on a replica behind 0045, as
+ * {@link BEHIND_0032}: no project, so the run takes the default. Remove once every deployment is
+ * past 0045.
+ */
+const BEHIND_0045 = 'project_id';
+
+/** A read of `ai_projects` on a replica behind 0045, which has no such table yet. */
+const isBehind0045 = (err: unknown): boolean => /no such table: ai_projects/i.test(messageOf(err));
 
 const toContentType = (r: CtRow): ContentType => ({
   apiId: r.apiId,

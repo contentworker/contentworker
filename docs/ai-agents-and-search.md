@@ -363,7 +363,10 @@ with `expectedVersion`, `DELETE`), `PUT …/ai-projects/default`, `POST
 `ai_project_delete`, `ai_project_default_set`, `ai_project_reference_extract` and
 `ai_project_reference_read`; the management SDK's `aiProjects`. Audit rows name the parts and pins
 a write changed, never the text. Snapshots and clones carry projects with their ids and pins
-(none comes in as the default: an administrator sets that in the target); promotions don't.
+(none comes in as the default: an administrator sets that in the target); promotions don't. A pin to
+an older file version arrives without its text (extracted text belongs to the source environment's
+asset), and can't be extracted in the target, since extraction only reads an asset's current file:
+move the pin to the current file there.
 
 ### Budget and untrusted content
 

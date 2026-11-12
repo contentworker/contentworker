@@ -3109,6 +3109,11 @@ export class InMemoryContentStore implements ContentStore {
     delete: async (scope, id, expected) => {
       const key = `${scopeKey(scope)}::${id}`;
       if (this.aiProjectData.get(key)?.version !== expected) throw new TransactionConflictError();
+      // As the D1 store: a project an AI action or a schedule names isn't deleted.
+      const used = await this.aiProjects.usedBy(scope, id);
+      if (used.aiActions.length > 0 || used.agentSchedules.length > 0) {
+        throw new TransactionConflictError();
+      }
       this.aiProjectData.delete(key);
     },
     usedBy: async (scope, id) => {

@@ -620,7 +620,8 @@ export function registerReadTools(server: McpServer, t: ToolContext): void {
           ...scopeArgs,
         }),
       ),
-      annotations: { readOnlyHint: true },
+      // Not read-only: working in an AI project can start a billed one-time read of a
+      // reference's text (audited), though it saves no entry.
     },
     async (args) => {
       guard(SCOPES.contentWrite, scopeOf(args));
@@ -658,7 +659,8 @@ export function registerReadTools(server: McpServer, t: ToolContext): void {
           ...scopeArgs,
         }),
       ),
-      annotations: { readOnlyHint: true },
+      // Not read-only: working in an AI project can start a billed one-time read of a
+      // reference's text (audited), though it saves no entry.
     },
     async (args) => {
       guard(SCOPES.contentWrite, scopeOf(args));

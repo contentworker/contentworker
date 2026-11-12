@@ -145,7 +145,17 @@ interface ReferenceState {
   /** The text's size in bytes, when it is there. */
   readonly textBytes?: number;
   readonly record?: AiReferenceExtraction;
+  /** A `pending` record older than {@link AI_REFERENCE_EXTRACTION_STALE_MS}: to start again. */
+  readonly stale?: true;
 }
+
+/**
+ * How long an extraction may stay `pending` before it counts as lost and is started again: the
+ * text-only run's whole budget (its step's ten minutes, three tries and their backoff) with room
+ * over. A record past it was never moved on (a run that never started, an engine that didn't
+ * know text-only runs and ran a full rerun instead), so resolution and Retry treat it as failed.
+ */
+export const AI_REFERENCE_EXTRACTION_STALE_MS = 30 * 60_000;
 
 /** The size cap the extraction step holds a file to. */
 const extractCap = (asset: Asset) =>
@@ -205,7 +215,11 @@ async function referenceStates(
       // An empty text (a scanned PDF, a silent recording) is no text: no rerun finds any.
       if (head && head.size === 0) return status('none', 'unsupported');
       if (head) return status('ready');
-      if (record?.status === 'pending') return status('pending');
+      if (record?.status === 'pending') {
+        const age = ctx.clock.now().getTime() - Date.parse(record.updatedAt);
+        if (!(age > AI_REFERENCE_EXTRACTION_STALE_MS)) return status('pending');
+        return { ...status('none', 'failed'), stale: true };
+      }
       if (record?.status === 'skipped') {
         return status('none', (record.reason as AiReferenceNoTextReason | null) ?? 'failed');
       }
@@ -309,6 +323,9 @@ export async function createAiProject(
   input: AiProjectInput | unknown,
 ): Promise<AiProjectView> {
   const draft = checkAiProjectInput(input);
+  // Checked on a read, not in the insert: two creates at once can pass it together and leave an
+  // environment a project or two over the cap. Accepted: it bounds a picker, not storage, and the
+  // list reads at most the cap.
   const existing = await ctx.store.aiProjects.list(scope);
   if (existing.length >= AI_PROJECT_MAX_PER_ENVIRONMENT) {
     throw new ValidationError([
@@ -443,8 +460,13 @@ export async function deleteAiProject(
   try {
     await ctx.store.aiProjects.delete(scope, id, current.version);
   } catch (err) {
-    if (err instanceof TransactionConflictError) throw stale(current, current.version);
-    throw err;
+    if (!(err instanceof TransactionConflictError)) throw err;
+    // Lost to an AI action or a schedule that came to name it since `usedBy`, or to an edit.
+    const since = await ctx.store.aiProjects.usedBy(scope, id);
+    if (since.aiActions.length > 0 || since.agentSchedules.length > 0) {
+      throw new AiProjectInUseError(id, since.aiActions, since.agentSchedules);
+    }
+    throw stale(current, current.version);
   }
   ctx.changes?.noteAiProjects([diffAiProjects(current, null)]);
 }
@@ -954,8 +976,17 @@ export async function resolveAiProject(
         leftOut(ref, 'pending');
         continue;
       }
-      if (status.reason === 'not_extracted' && !status.updateAvailable) {
-        const started = await startExtraction(ctx, scope, caller, project, state, false);
+      // Never asked for, or asked for and lost: the call starts it (a lost one as a retry, since
+      // its record is there).
+      if ((status.reason === 'not_extracted' || state.stale) && !status.updateAvailable) {
+        const started = await startExtraction(
+          ctx,
+          scope,
+          caller,
+          project,
+          state,
+          state.stale === true,
+        );
         leftOut(ref, started === 'started' || started === 'running' ? 'pending' : 'no_text');
         continue;
       }

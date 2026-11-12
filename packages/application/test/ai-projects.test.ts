@@ -17,11 +17,13 @@ import {
   FakeWorkflowSteps,
   FixedClock,
   InMemoryContentStore,
+  RecordingAssetIngestStarter,
   SequenceIdGenerator,
   StubAIProvider,
 } from '@contentworker/test-kit';
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
+  AI_REFERENCE_EXTRACTION_STALE_MS,
   type AiCallRecord,
   type AppContext,
   assetTextKey,
@@ -50,6 +52,7 @@ import {
   selectExcerpt,
   setAiSettings,
   setDefaultAiProject,
+  startRequestedAssetIngest,
   stripDelimiters,
   translateEntry,
   updateAiProject,
@@ -232,6 +235,23 @@ describe('AI projects: create, update, delete', () => {
       expectedVersion: 1,
     });
     expect(moved.project.references[0]).toMatchObject({ version: 2, updateAvailable: false });
+  });
+
+  it('answers project_in_use when an AI action came to name it after the check', async () => {
+    const p = await createAiProject(t.ctx, scope, editor, { name: 'P' });
+    const usedBy = t.store.aiProjects.usedBy.bind(t.store.aiProjects);
+    let calls = 0;
+    t.store.aiProjects.usedBy = async (s, id) => {
+      calls += 1;
+      // The first look finds nothing; an action names it before the delete commits.
+      if (calls === 1) {
+        await createAIAction(t.ctx, scope, { name: 'Late', promptTemplate: 'x', projectId: id });
+        return { aiActions: [], agentSchedules: [] };
+      }
+      return usedBy(s, id);
+    };
+    await expect(deleteAiProject(t.ctx, scope, editor, p.id)).rejects.toThrow(AiProjectInUseError);
+    expect(await t.store.aiProjects.get(scope, p.id)).not.toBeNull();
   });
 
   it('refuses to delete a project an AI action or a schedule names, listing them', async () => {
@@ -917,6 +937,85 @@ describe('reading a reference’s text when it has none (amendment C)', () => {
     expect(tokens.size).toBe(1);
   });
 
+  it('starts a pending extraction again once it is older than the step budget', async () => {
+    const a = await t.doc('spec.pdf', null);
+    const p = await createAiProject(t.ctx, scope, editor, {
+      name: 'P',
+      references: [{ assetId: a.id }],
+    });
+    const lost = (updatedAt: string) =>
+      t.store.aiReferenceExtractions.record(scope, {
+        assetId: a.id,
+        fileVersion: 1,
+        status: 'pending',
+        reason: null,
+        triggeredBy: 'system',
+        updatedAt,
+      });
+    // Pending for a minute: still running, nothing starts.
+    await lost(new Date(t.ctx.clock.now().getTime() - 60_000).toISOString());
+    await resolveAiProject(t.ctx, scope, admin, { capability: 'drafting', projectId: p.id });
+    expect(t.ingest.requested).toEqual([]);
+    // Pending past the budget: lost, and the call starts it again.
+    await lost(
+      new Date(t.ctx.clock.now().getTime() - AI_REFERENCE_EXTRACTION_STALE_MS - 1).toISOString(),
+    );
+    const out = await resolveAiProject(t.ctx, scope, admin, {
+      capability: 'drafting',
+      projectId: p.id,
+    });
+    expect(out.use?.references[0]).toMatchObject({ reason: 'pending' });
+    expect(t.ingest.requested).toEqual([
+      expect.objectContaining({ assetId: a.id, textOnly: true }),
+    ]);
+  });
+
+  it('records why a text-only start started nothing, so the record never stays pending', async () => {
+    const a = await t.doc('spec.pdf', null);
+    const pending = {
+      assetId: a.id,
+      fileVersion: 1,
+      status: 'pending' as const,
+      reason: null,
+      triggeredBy: 'ed@example.com',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    };
+    const starter = new RecordingAssetIngestStarter();
+    const request = {
+      scope,
+      assetId: a.id,
+      version: 1,
+      rerun: 'reference',
+      textOnly: true as const,
+    };
+    const recordOf = async () =>
+      (await t.store.aiReferenceExtractions.getMany(scope, [{ assetId: a.id, version: 1 }]))[0];
+    // The run starts: the record stays pending for the run to move on.
+    await t.store.aiReferenceExtractions.record(scope, pending);
+    expect(await startRequestedAssetIngest(t.ctx, starter, request)).toBe('started');
+    expect((await recordOf())?.status).toBe('pending');
+    // The same run already exists (it finished; the record was claimed again since).
+    expect(await startRequestedAssetIngest(t.ctx, starter, request)).toBe('ignored');
+    expect(await recordOf()).toMatchObject({ status: 'skipped', reason: 'failed' });
+    // The file was replaced after the claim: the pinned version is no file to read.
+    await t.store.aiReferenceExtractions.record(scope, pending);
+    expect(
+      await startRequestedAssetIngest(t.ctx, starter, { ...request, version: 2, rerun: 'x' }),
+    ).toBe('ignored');
+    await t.store.aiReferenceExtractions.record(scope, { ...pending, fileVersion: 2 });
+    expect(
+      await startRequestedAssetIngest(t.ctx, starter, { ...request, version: 2, rerun: 'y' }),
+    ).toBe('ignored');
+    const [v2] = await t.store.aiReferenceExtractions.getMany(scope, [
+      { assetId: a.id, version: 2 },
+    ]);
+    expect(v2).toMatchObject({
+      status: 'skipped',
+      reason: 'failed',
+      triggeredBy: 'ed@example.com',
+    });
+  });
+
   it('lets a person retry a skipped one, and refuses a final reason', async () => {
     const a = await t.doc('spec.pdf', null);
     const p = await createAiProject(t.ctx, scope, editor, {
@@ -976,6 +1075,17 @@ describe('the reference read tool', () => {
     expect(first.text + second.text).toBe(text);
   });
 
+  it('answers a page past the end as empty, with no next page', async () => {
+    const a = await t.doc('spec.pdf', 'Short text');
+    const p = await createAiProject(t.ctx, scope, editor, {
+      name: 'P',
+      references: [{ assetId: a.id }],
+    });
+    expect(
+      await readAiProjectReference(t.ctx, scope, editor, p.id, a.id, { offset: 1_000 }),
+    ).toMatchObject({ text: '', offset: 10, nextOffset: null, total: 10 });
+  });
+
   it('404s an asset that isn’t one of the project’s references, and one the caller can’t read', async () => {
     const a = await t.doc('spec.pdf', 'Text');
     const other = await t.doc('other.pdf', 'Other text');
@@ -1002,13 +1112,19 @@ describe('a stored project that is gone', () => {
     const stored = await createAiProject(t.ctx, scope, editor, { name: 'Stored' });
     const fallback = await createAiProject(t.ctx, scope, editor, { name: 'Default' });
     await setDefaultAiProject(t.ctx, scope, admin, fallback.id);
-    const action = await createAIAction(t.ctx, scope, {
+    // An action that names a project that is gone: the store refuses a delete that would do this,
+    // so the action is written straight to it (a row from before the guard, a restored backup).
+    await t.store.aiProjects.delete(scope, stored.id, 1);
+    const action = {
+      id: 'act-gone',
       name: 'A',
       promptTemplate: 'x',
+      variables: [],
+      tier: 'balanced' as const,
       projectId: stored.id,
-    });
-    // Gone since the action was saved (deleted behind the use-case's back).
-    await t.store.aiProjects.delete(scope, stored.id, 1);
+      createdAt: '2026-01-01T00:00:00.000Z',
+    };
+    await t.store.aiActions.create(scope, action);
     const ai = new StubAIProvider(() => 'out');
     await expect(
       runAIAction(t.ctx, ai, scope, action.id, {}, { principal: editor }),
@@ -1023,14 +1139,15 @@ describe('a stored project that is gone', () => {
     const schedule = await createAgentSchedule(t.ctx, scope, {
       workflow: 'enrich',
       cron: '* * * * *',
-      projectId: p.id,
     });
+    // Gone, though the schedule names it: written straight to the store, as for the action.
+    await t.store.aiProjects.delete(scope, p.id, 1);
     await t.store.agentSchedules.save(scope, {
       ...schedule,
+      projectId: p.id,
       lastRunAt: '2000-01-01T00:00:00.000Z',
       nextRunAt: '2000-01-01T00:00:00.000Z',
     });
-    await t.store.aiProjects.delete(scope, p.id, 1);
     const ran: unknown[] = [];
     const summary = await runDueAgentSchedules(t.ctx, {
       run: async (_w, input) => {

@@ -246,6 +246,10 @@ describe('MCP tool audit', () => {
     const reads = tools.filter((t) => t.annotations?.readOnlyHint === true).map((t) => t.name);
     expect(reads).toEqual(expect.arrayContaining(['entries_get', 'docs_list', 'audit_log_list']));
     expect(reads).not.toContain('entries_create');
+    // A draft saves nothing, but working in an AI project can start a billed text read.
+    for (const tool of ['generate_draft', 'entry_from_canvas']) {
+      expect(reads, tool).not.toContain(tool);
+    }
     // The single-asset tools: a get is a read; create, publish and unpublish are writes.
     expect(reads).toContain('asset_get');
     for (const tool of ['asset_create', 'asset_publish', 'asset_unpublish']) {

@@ -4,6 +4,7 @@ import {
   createWorkersAIProvider,
   NO_LOG_PAYLOAD,
   UNKNOWN_MODEL_CONTEXT_TOKENS,
+  WORKERS_AI_CONTEXT_WINDOWS,
   WORKERS_AI_MODEL_BY_TIER,
   WorkersAIError,
   type WorkersAiRun,
@@ -270,6 +271,12 @@ describe('workers-ai provider — limits, prefix affinity and gateway metadata',
     expect(overridden.limits?.('fast').contextTokens).toBe(60_000);
     // A model the table doesn't know is budgeted at the smallest window, never assumed large.
     expect(overridden.limits?.('balanced').contextTokens).toBe(UNKNOWN_MODEL_CONTEXT_TOKENS);
+  });
+
+  it('knows the context window of every tier’s default model', () => {
+    for (const model of Object.values(WORKERS_AI_MODEL_BY_TIER)) {
+      expect(WORKERS_AI_CONTEXT_WINDOWS[model], model).toBeGreaterThan(0);
+    }
   });
 
   it('sends the session affinity header and the project metadata through the gateway', async () => {

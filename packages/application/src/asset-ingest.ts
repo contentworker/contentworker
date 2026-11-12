@@ -218,16 +218,25 @@ export async function startRequestedAssetIngest(
 ): Promise<IngestStart> {
   const { scope, assetId, version } = request;
   const asset = await ctx.store.assets.get(scope, assetId);
-  if (!asset || asset.file.video || (asset.version ?? 1) !== version) return 'ignored';
   // A reference's text alone: its own run (the rerun token names the extraction), and the asset's
-  // ingest status stays as it is, since nothing else of ingest runs.
+  // ingest status stays as it is, since nothing else of ingest runs. One that can't start says so
+  // on its record, which would otherwise stay pending.
   if (request.textOnly) {
-    await starter.start(
+    const params = { scope, assetId, version, textOnly: true as const };
+    if (!asset || asset.file.video || (asset.version ?? 1) !== version) {
+      await failPendingExtraction(ctx, params);
+      return 'ignored';
+    }
+    const created = await starter.start(
       assetIngestInstanceId(scope, assetId, version, { rerun: `text:${request.rerun ?? ''}` }),
-      { scope, assetId, version, textOnly: true },
+      params,
     );
-    return 'started';
+    // The run under this id already exists: a redelivery while it runs moves the record on
+    // itself, but one that finished (a record claimed again since) never will.
+    if (!created) await failPendingExtraction(ctx, params);
+    return created ? 'started' : 'ignored';
   }
+  if (!asset || asset.file.video || (asset.version ?? 1) !== version) return 'ignored';
   await startRun(
     ctx,
     starter,
@@ -907,6 +916,20 @@ export async function extractReferenceText(
     await recordReferenceExtraction(ctx, params, 'done', null);
   }
   return { chars: out.chars };
+}
+
+/**
+ * Moves a reference extraction still `pending` to `skipped` (`failed`): its run was never started
+ * (the file was replaced or deleted after the claim) or was already done, so nothing else would.
+ * A record already moved on is left as it is. A person's Retry starts it again.
+ */
+async function failPendingExtraction(ctx: AppContext, params: AssetIngestParams): Promise<void> {
+  const [held] = await ctx.store.aiReferenceExtractions.getMany(params.scope, [
+    { assetId: params.assetId, version: params.version },
+  ]);
+  if (held?.status === 'pending') {
+    await recordReferenceExtraction(ctx, params, 'skipped', 'failed');
+  }
 }
 
 /** The text-only run: one step, and a record of its failure once its retries are spent. */

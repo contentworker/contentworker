@@ -125,7 +125,11 @@ export class FakeBlobStore implements BlobStore {
     if (body === undefined) return null;
     // Text is held as UTF-8 here, as R2 holds it (`put` of a string writes its UTF-8 bytes).
     const bytes = typeof body === 'string' ? encodeUtf8(body) : body;
-    const start = Math.max(0, Math.min(offset, bytes.byteLength));
+    // As the R2 adapter answers a range starting at or past the end: an empty page at the end.
+    if (offset >= bytes.byteLength) {
+      return { text: '', start: bytes.byteLength, end: bytes.byteLength, size: bytes.byteLength };
+    }
+    const start = Math.max(0, offset);
     return {
       ...decodeUtf8Range(bytes.subarray(start, start + Math.max(0, length)), start),
       size: bytes.byteLength,

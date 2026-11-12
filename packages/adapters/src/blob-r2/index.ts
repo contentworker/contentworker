@@ -319,14 +319,30 @@ export function createR2BlobStore(bucket: R2BucketLike, opts: R2BlobOptions): Bl
     },
     async getRange(key, offset, length) {
       const start = Math.max(0, offset);
-      // A zero-length range is no read R2 takes: the object's size is all there is to say.
-      if (length <= 0) {
-        const head = bucket.head ? await bucket.head(key) : null;
-        return head ? { text: '', start, end: start, size: head.size } : null;
+      // Nothing to read (an empty range, one starting past the end, a 0-byte object) is no range
+      // R2 takes: it refuses one it can't satisfy. The object's size is all there is to say.
+      const empty = async () => {
+        // Without `head`, a whole read whose body is let go unread says the same.
+        const head = bucket.head ? await bucket.head(key) : await bucket.get(key);
+        if (!head) return null;
+        if ('body' in head) await (head.body as ReadableStream).cancel();
+        const at = Math.min(start, head.size);
+        return { text: '', start: at, end: at, size: head.size };
+      };
+      if (length <= 0) return empty();
+      let obj: Awaited<ReturnType<typeof bucket.get>>;
+      try {
+        obj = await bucket.get(key, { range: { offset: start, length } });
+      } catch (err) {
+        const answer = await empty().catch(() => null);
+        // Past the end (or an empty object): an empty page at the end, not a failed read.
+        if (answer && start >= answer.size)
+          return { ...answer, start: answer.size, end: answer.size };
+        throw err;
       }
-      const obj = await bucket.get(key, { range: { offset: start, length } });
       if (!obj) return null;
       const bytes = new Uint8Array(await new Response(obj.body as ReadableStream).arrayBuffer());
+      if (start >= obj.size) return { text: '', start: obj.size, end: obj.size, size: obj.size };
       return { ...decodeUtf8Range(bytes, start), size: obj.size };
     },
     ...(bucket.createMultipartUpload && bucket.resumeMultipartUpload

@@ -9,6 +9,7 @@
 
 import {
   AI_PROJECT_READ_DEFAULT_CHARS,
+  AI_PROJECT_READ_MAX_CHARS,
   AI_PROJECT_READ_TURN_CHARS,
   wrapUntrusted,
 } from '@contentworker/application';
@@ -282,7 +283,10 @@ export const READ_SPENT =
 export function withReadLimit(input: unknown, left: number): Record<string, unknown> {
   const args = (isRecord(input) ? input : {}) as Record<string, unknown>;
   const asked = typeof args.limit === 'number' ? args.limit : AI_PROJECT_READ_DEFAULT_CHARS;
-  return { ...args, limit: Math.max(1, Math.min(asked, left)) };
+  return {
+    ...args,
+    limit: Math.max(1, Math.floor(Math.min(asked, left, AI_PROJECT_READ_MAX_CHARS))),
+  };
 }
 
 /** The characters of text a read answered with. */

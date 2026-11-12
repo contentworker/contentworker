@@ -24,6 +24,10 @@ function fakeR2() {
     async get(key, options) {
       const o = objects.get(key);
       if (!o) return null;
+      // As R2: a range it can't satisfy (starting at or past the end) is refused.
+      if (options?.range && options.range.offset >= o.byteLength) {
+        throw new Error('get: The requested range is not satisfiable (10039)');
+      }
       const bytes = options?.range
         ? o.subarray(options.range.offset, options.range.offset + options.range.length)
         : o;
@@ -209,6 +213,16 @@ describe('R2 multipart uploads', () => {
     expect(await blob.getRange?.(key, 2, 5)).toEqual({ text: '日l', start: 3, end: 7, size: 7 });
     expect(await blob.getRange?.(key, 0, 4)).toEqual({ text: 'hé', start: 0, end: 3, size: 7 });
     expect(await blob.getRange?.('missing', 0, 4)).toBeNull();
+    // Past the end, and an empty object: an empty page at the end, never a failed read.
+    expect(await blob.getRange?.(key, 7, 4)).toEqual({ text: '', start: 7, end: 7, size: 7 });
+    expect(await blob.getRange?.(key, 50, 4)).toEqual({ text: '', start: 7, end: 7, size: 7 });
+    await blob.put('s/e/b/v1/text.md', '', 'text/markdown');
+    expect(await blob.getRange?.('s/e/b/v1/text.md', 0, 4)).toEqual({
+      text: '',
+      start: 0,
+      end: 0,
+      size: 0,
+    });
   });
 
   it('a bucket without multipart offers none', () => {

@@ -68,8 +68,10 @@ export const WORKERS_AI_CONTEXT_WINDOWS: Readonly<Record<string, number>> = {
   '@cf/meta/llama-4-scout-17b-16e-instruct': 131_000,
   '@cf/openai/gpt-oss-120b': 128_000,
   '@cf/openai/gpt-oss-20b': 128_000,
-  '@cf/qwen/qwen3-30b-a3b-fp8': 32_000,
+  '@cf/qwen/qwen3-30b-a3b-fp8': 32_768,
   '@cf/zai-org/glm-4.7-flash': 131_072,
+  '@cf/zai-org/glm-5.3': 1_048_576,
+  '@cf/deepseek-ai/deepseek-v4.1-flash-1017': 1_048_576,
 };
 
 /** The window assumed for a model the catalog table doesn't list: the smallest a tier ships with. */

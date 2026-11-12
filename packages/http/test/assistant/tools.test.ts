@@ -334,6 +334,9 @@ describe('the assistant’s MCP tools', () => {
     expect(withReadLimit({ projectId: 'p', assetId: 'a' }, 100_000)).toMatchObject({
       limit: 6_000,
     });
+    // Never past a page's most, and a whole number however the model asked.
+    expect(withReadLimit({ limit: 50_000 }, 24_000)).toEqual({ limit: 12_000 });
+    expect(withReadLimit({ limit: 99.7 }, 24_000)).toEqual({ limit: 99 });
     expect(textLength({ text: 'é😀x' })).toBe(3);
   });
 

@@ -457,7 +457,10 @@ export interface AiProjectRepo {
    * taken meanwhile is a `ConflictError`.
    */
   save(scope: Scope, project: AiProject, expected?: number): Promise<void>;
-  /** Deletes a project still at version `expected`, as `save` checks it. */
+  /**
+   * Deletes a project still at version `expected` and named by no AI action or agent schedule,
+   * both checked in the delete itself; otherwise `TransactionConflictError`, as `save`.
+   */
   delete(scope: Scope, id: string, expected: number): Promise<void>;
   /** The AI actions and agent schedules that name `id`, by id: what a delete would strand. */
   usedBy(

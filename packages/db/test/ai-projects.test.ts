@@ -153,6 +153,62 @@ describe('AI projects on D1', () => {
   });
 });
 
+describe('stored project ids on D1', () => {
+  it('a schedule’s save writes its project, a new one and null', async () => {
+    const { scope } = await harness();
+    const base = {
+      id: `sch-${uid()}`,
+      workflow: 'enrich',
+      cron: '0 * * * *',
+      enabled: true,
+      autoApply: false,
+      nextRunAt: AT,
+      createdAt: AT,
+    };
+    await store.agentSchedules.create(scope, base);
+    await store.agentSchedules.save(scope, { ...base, projectId: 'p-1' });
+    expect((await store.agentSchedules.get(scope, base.id))?.projectId).toBe('p-1');
+    await store.agentSchedules.save(scope, base);
+    expect(await store.agentSchedules.get(scope, base.id)).not.toHaveProperty('projectId');
+  });
+
+  it('reads the column’s own name, as a replica behind 0045 returns it, as no project', async () => {
+    const { scope } = await harness();
+    await store.aiActions.create(scope, {
+      id: 'act-behind',
+      name: 'A',
+      promptTemplate: 'x',
+      variables: [],
+      tier: 'balanced',
+      createdAt: AT,
+    });
+    await testDb
+      .prepare(
+        'UPDATE ai_actions SET project_id = ? WHERE space_id = ? AND environment_id = ? AND id = ?',
+      )
+      .bind('project_id', scope.spaceId, scope.environmentId, 'act-behind')
+      .run();
+    expect(await store.aiActions.get(scope, 'act-behind')).not.toHaveProperty('projectId');
+  });
+
+  it('refuses to delete a project an AI action came to name, in the delete itself', async () => {
+    const { scope } = await harness();
+    const p = project();
+    await store.aiProjects.save(scope, p);
+    await store.aiActions.create(scope, {
+      id: `act-${uid()}`,
+      name: 'Late',
+      promptTemplate: 'x',
+      variables: [],
+      tier: 'balanced',
+      projectId: p.id,
+      createdAt: AT,
+    });
+    await expect(store.aiProjects.delete(scope, p.id, 1)).rejects.toThrow(TransactionConflictError);
+    expect(await store.aiProjects.get(scope, p.id)).not.toBeNull();
+  });
+});
+
 describe('AI reference extraction records on D1', () => {
   const record = (assetId: string, fileVersion: number): AiReferenceExtraction => ({
     assetId,
