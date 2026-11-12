@@ -3,6 +3,7 @@ import {
   Box,
   Briefcase,
   Calendar,
+  File,
   FileText,
   Folder,
   Image,
@@ -58,15 +59,15 @@ export function contentTypeIcon(name: string | undefined): LucideIcon | undefine
 
 /**
  * A content type's icon, decorative beside its name; nothing when it names none the admin knows,
- * or, with `reserve`, an empty slot of the same size so names in a list line up.
+ * or, with `fallback`, a blank page in its place: in a list where other types have icons, an
+ * empty slot would set the name in like a child of the row above. No type can choose the blank
+ * page, so it never reads as one that did.
  */
 export function ContentTypeIcon(props: {
   name: string | undefined;
   className?: string;
-  reserve?: boolean;
+  fallback?: boolean;
 }) {
-  const Icon = contentTypeIcon(props.name);
-  const className = props.className ?? 'size-4 shrink-0';
-  if (Icon) return <Icon aria-hidden="true" className={className} />;
-  return props.reserve ? <span aria-hidden="true" className={className} /> : null;
+  const Icon = contentTypeIcon(props.name) ?? (props.fallback ? File : undefined);
+  return Icon ? <Icon aria-hidden="true" className={props.className ?? 'size-4 shrink-0'} /> : null;
 }

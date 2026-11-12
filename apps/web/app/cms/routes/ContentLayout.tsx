@@ -1,12 +1,13 @@
 import { cn } from '@contentworker/ui/lib/utils';
 import { SkeletonText } from '@contentworker/ui/skeleton';
 import { useQueryClient } from '@tanstack/react-query';
-import { useCallback, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { Link, Outlet, useLocation } from 'react-router';
 import { useContentTypeDeleteJob } from '~/cms/components/ContentTypeDeleteJob';
 import { StatusDot } from '~/cms/components/status';
+import { statusLabel } from '~/cms/lib/format';
 import { useClient } from '../lib/client-context';
-import { ContentTypeIcon } from '../lib/content-type-icons';
+import { ContentTypeIcon, contentTypeIcon } from '../lib/content-type-icons';
 import {
   useContentTypesQuery,
   useInvalidate,
@@ -46,6 +47,26 @@ export function ContentLayout() {
   });
 
   const sections = useMemo(() => groupContentTypes(types), [types]);
+  // Once one type has an icon, every row has one (a blank page for a type without), so no name
+  // sits in from the others like a nested child. When none has one, a column of blank pages would
+  // only push every name in from the captions' edge.
+  const withIcons = types.some((t) => contentTypeIcon(t.icon));
+  // Every type filed under a group: the groups' own captions head the lists (as Settings' do), and
+  // "Content types" names the nav without stacking a second caption over the first group's.
+  const allGrouped = sections.length > 0 && sections.every((s) => s.group);
+
+  // Arriving on a type far down a long list (a deep link, the palette): where you are is brought
+  // into the nav's own scroller, which otherwise opens at its top.
+  const scroller = useRef<HTMLDivElement>(null);
+  const openType = types.find(
+    (t) => pathname === `/content/${t.apiId}` || pathname.startsWith(`/content/${t.apiId}/`),
+  )?.apiId;
+  useEffect(() => {
+    if (!openType) return;
+    scroller.current
+      ?.querySelector('[aria-current="page"]')
+      ?.scrollIntoView?.({ block: 'nearest' });
+  }, [openType]);
 
   const outlet: ContentOutlet = {
     deleteJob,
@@ -76,14 +97,22 @@ export function ContentLayout() {
           the assistant, reaches them from the Content overview's cards). Drawn as the Settings
           section nav is. */}
         <nav aria-labelledby="content-types-nav" className="hidden pt-6 @[40rem]:block">
-          <div className="sticky top-[calc(var(--shell-h)+1.5rem)]">
-            <h2 id="content-types-nav" className="caption px-2.5 pb-1">
+          {/* A model with more types than the window is tall scrolls here, on its own, so the last
+              type is never a page of entries away, and never behind the tab bar where that still
+              shows. The 0.25rem around the links (and of scroll padding, for a link that focus
+              scrolls to an edge) is room for their focus outline, which the scroller would
+              otherwise clip. */}
+          <div
+            ref={scroller}
+            className="cw-scroll sticky top-[calc(var(--shell-h)+1.5rem)] -mx-1 max-h-[calc(100dvh-var(--shell-h)-var(--tabbar-h,0px)-3rem)] scroll-py-1 overflow-y-auto px-1 pb-1"
+          >
+            <h2 id="content-types-nav" className={allGrouped ? 'sr-only' : 'caption px-2.5 pb-1'}>
               Content types
             </h2>
             {/* Types without a group first, then each group under its name: the order an
                 author filed them in, found the same way every time. */}
             {sections.map((section, index) => (
-              <div key={section.group ?? ''} className={section.group ? 'pt-3' : undefined}>
+              <div key={section.group ?? ''} className={index > 0 ? 'pt-5' : undefined}>
                 {section.group && (
                   <h3 id={sectionId(index)} className="caption px-2.5 pb-1">
                     {section.group}
@@ -98,12 +127,16 @@ export function ContentLayout() {
                     // `/entry`) marks it as the list does its entries.
                     const base = `/content/${t.apiId}`;
                     const active = pathname === base || pathname.startsWith(`${base}/`);
+                    const status = t.status !== 'published' ? statusLabel(t.status) : null;
                     return (
                       <li key={t.apiId}>
                         <Link
                           // A singleton opens its one entry, not a list of one.
                           to={t.singleton ? `${base}/entry` : base}
                           aria-current={active ? 'page' : undefined}
+                          // Named whole, so the status follows the name without the stray space
+                          // a browser puts between two boxes ("Event , Draft").
+                          aria-label={status ? `${t.name}, ${status}` : undefined}
                           className={cn(
                             'relative flex items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-sm transition-[background-color,color] touch:min-h-11',
                             active
@@ -112,16 +145,25 @@ export function ContentLayout() {
                           )}
                         >
                           <span className="flex min-w-0 items-center gap-2">
-                            {/* The brand accent marks where you are, on the icon alone; a
-                                  type without an icon keeps its slot so the names line up. */}
+                            {/* The brand accent marks where you are, on the icon alone. */}
                             <ContentTypeIcon
                               name={t.icon}
-                              reserve
+                              fallback={withIcons}
                               className={cn('size-4 shrink-0', active && 'text-brand')}
                             />
                             <span className="truncate">{t.name}</span>
                           </span>
-                          {t.status !== 'published' ? <StatusDot status={t.status} /> : null}
+                          {/* The dot says the type isn't published; its word is in the link's
+                                name and there for a pointer at rest. Forced colours drop the dot's
+                                fill, so there it is drawn as a ring. */}
+                          {status ? (
+                            <span className="flex shrink-0 items-center" title={status}>
+                              <StatusDot
+                                status={t.status}
+                                className="forced-colors:border forced-colors:border-[CanvasText]"
+                              />
+                            </span>
+                          ) : null}
                         </Link>
                       </li>
                     );
