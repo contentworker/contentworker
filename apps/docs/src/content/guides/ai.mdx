@@ -128,7 +128,7 @@ Coworker and workflows.
 | Coworker        | The assistant's conversations                                                        |
 | Writing help    | Filling a field, summarizing an entry or its changes, suggesting tags, and AI actions |
 | Translation     | Translating an entry, from the editor, the API or a workflow                         |
-| Media           | Alt text and tags for assets, on upload and on request                               |
+| Media           | Alt text and tags for assets, on upload and on request, and reading the text of AI project references |
 | Semantic search | Embedding entries and assets for search, related entries and duplicate checks        |
 | Agents          | Enrichment on publish, scheduled agents, entry audits and promotion reviews          |
 | Workflows       | The workflow copilot, and the AI steps in workflow runs                              |
@@ -166,6 +166,46 @@ yours is refused (`409`) and the admin keeps your edits and offers **Load the la
 `GET` and `PUT /spaces/{space}/ai-settings`; over MCP, `ai_settings_get` and `ai_settings_set`; in the
 management SDK, `aiSettings.get()` and `aiSettings.set()`. Each change is in the audit log, naming
 what changed but never the guidance itself.
+
+## AI projects
+
+An **AI project** is a named context for AI work in one environment: **instructions** (what to do
+and avoid, terminology, facts to prefer, up to 4,000 characters), a **writer** (who is writing, in
+what voice) and a **reader** (who it's for), each a name and a description, and up to ten
+**reference files**, documents or recordings from the asset library whose text the model may
+consult. Pick a project when you draft an entry, compose blocks, summarize, fill a field, run an AI
+action, translate, audit an entry or talk to Coworker, and every model call in that work carries
+it. Over the API, pass `projectId` on the AI call (`null` for none); leave it out to use the
+environment's **default** project, if one is set.
+
+- **Who can do what.** Reading projects needs `content:write`, so a Preview or Delivery key can't
+  list them. Creating, changing and deleting needs `content:manage`. Setting the default, and
+  changing or deleting the default project, needs `space:admin`, since it reaches everyone's AI
+  work.
+- **References are pinned** to the file version they were added at. Replacing the file changes
+  nothing until someone moves the reference to the new version (the project shows
+  `updateAvailable`). A file's text is read the first time a call uses the project; until then
+  the reference is reported as pending. Reading it is Media work: with Media off in Settings → AI,
+  no file is read for a project.
+- **How it shapes the answer.** The project's instructions and personas are added after the
+  built-in instructions as guidance, and the space's guidance comes after them and wins where they
+  disagree. Excerpts of the first three references (chosen for what the request is about) go
+  before the content, each marked as a file's own words; the rest are listed by title. Neither can
+  change the task, the shape of the answer or the tools. Translation takes only the instructions
+  (for terminology) and the reader, never the writer or the references.
+- **What was used.** Each answer that took a project says so: `project: { id, version,
+  references }`, with each reference `used` and the character ranges sent, or why it was left
+  out (`forbidden`: you can't open the file; `pending`: its text is still being read; `no_text`,
+  `gone`, `budget`).
+- **Stored on actions and schedules.** An AI action or an agent schedule can name a project; a run
+  whose project has been deleted is refused, never run with another, and a project still named by
+  one can't be deleted. Agents that run on their own (on publish, on a schedule) use a reference
+  only when its file is published at the pinned version.
+
+Over the API, `…/environments/{environment}/ai-projects`; over MCP, `ai_projects_list`,
+`ai_project_get`, `ai_project_create`, `ai_project_update`, `ai_project_delete`,
+`ai_project_default_set`, `ai_project_reference_extract` and `ai_project_reference_read`; in the
+management SDK, `aiProjects`. Each change is in the audit log, naming what changed, never the text.
 
 ## Model tiers
 
