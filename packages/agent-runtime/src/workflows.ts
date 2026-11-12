@@ -114,8 +114,9 @@ export async function enrichWorkflow(
     };
   }
 
-  const { fields, usage } = await act.generateFields({
+  const { fields, usage, project } = await act.generateFields({
     scope: input.scope,
+    ...(input.projectId ? { projectId: input.projectId } : {}),
     contentTypeApiId: loaded.contentTypeApiId,
     fields: empty.map(({ hasValue: _, ...f }) => f),
     entryId: input.entryId,
@@ -128,7 +129,7 @@ export async function enrichWorkflow(
       workflow: 'enrich',
       entryId: input.entryId,
       status: 'skipped',
-      decisions: ['model returned no values'],
+      decisions: ['model returned no values', ...(project ?? [])],
       usage,
     };
   }
@@ -145,6 +146,7 @@ export async function enrichWorkflow(
       [
         `proposed ${enrichedKeys.join(', ')}`,
         lowConfidence ? 'low confidence' : 'autoApply disabled',
+        ...(project ?? []),
       ],
       usage,
     );
@@ -155,7 +157,7 @@ export async function enrichWorkflow(
     workflow: 'enrich',
     entryId: input.entryId,
     status: 'completed',
-    decisions: [`enriched ${enrichedKeys.join(', ')}`],
+    decisions: [`enriched ${enrichedKeys.join(', ')}`, ...(project ?? [])],
     usage,
   };
 }
@@ -192,8 +194,9 @@ export async function curateWorkflow(
     };
   }
 
-  const { fields, usage } = await act.generateFields({
+  const { fields, usage, project } = await act.generateFields({
     scope: input.scope,
+    ...(input.projectId ? { projectId: input.projectId } : {}),
     contentTypeApiId: loaded.contentTypeApiId,
     fields: filled.map(({ hasValue: _, ...f }) => f),
     entryId: input.entryId,
@@ -215,7 +218,7 @@ export async function curateWorkflow(
       workflow: 'curate',
       entryId: input.entryId,
       status: 'completed',
-      decisions: ['no improvements needed'],
+      decisions: ['no improvements needed', ...(project ?? [])],
       usage,
     };
   }
@@ -232,6 +235,7 @@ export async function curateWorkflow(
       [
         `proposed ${changedKeys.join(', ')}`,
         lowConfidence ? 'low confidence' : 'autoApply disabled',
+        ...(project ?? []),
       ],
       usage,
     );
@@ -242,7 +246,7 @@ export async function curateWorkflow(
     workflow: 'curate',
     entryId: input.entryId,
     status: 'completed',
-    decisions: [`curated ${changedKeys.join(', ')}`],
+    decisions: [`curated ${changedKeys.join(', ')}`, ...(project ?? [])],
     usage,
   };
 }
@@ -275,8 +279,9 @@ export async function repurposeWorkflow(
     };
   }
 
-  const { fields, usage } = await act.generateFields({
+  const { fields, usage, project } = await act.generateFields({
     scope: input.scope,
+    ...(input.projectId ? { projectId: input.projectId } : {}),
     contentTypeApiId: loaded.contentTypeApiId,
     fields: REPURPOSE_CHANNELS.map((c) => ({ apiId: c.apiId, name: c.name })),
     context: loaded.text,
@@ -290,7 +295,7 @@ export async function repurposeWorkflow(
       workflow: 'repurpose',
       entryId: input.entryId,
       status: 'skipped',
-      decisions: ['model returned no variants'],
+      decisions: ['model returned no variants', ...(project ?? [])],
       usage,
     };
   }
@@ -301,7 +306,7 @@ export async function repurposeWorkflow(
     'repurpose',
     input,
     fields,
-    [`proposed ${variantKeys.join(', ')}`],
+    [`proposed ${variantKeys.join(', ')}`, ...(project ?? [])],
     usage,
   );
 }

@@ -1,4 +1,5 @@
 import {
+  type AiProjectUse,
   type ContentType,
   type EntryFields,
   NotFoundError,
@@ -9,6 +10,7 @@ import type { AIProvider, ModelTier } from '@contentworker/ports';
 import { recordAgentRun } from './agent-audit';
 import { generateWithBudget } from './ai-budget';
 import { conforms } from './ai-json';
+import { projectDecisions, resolveAiProject } from './ai-projects';
 import { UNTRUSTED_CONTENT_GUARD, wrapUntrusted } from './ai-prompt';
 import { aiCapability, requireAiCapability } from './ai-settings';
 import { type EntryAiOptions, readEntryForAi } from './content-ai';
@@ -31,6 +33,8 @@ export interface AgentRunner {
       readonly autoApply?: boolean;
       /** Fields the run must not read (the caller's denied fields); only `moderate` takes it. */
       readonly deniedFields?: readonly string[];
+      /** The AI project the run takes (a schedule's); absent: the environment's default. */
+      readonly projectId?: string;
     },
   ): Promise<AgentRunOutcome>;
   /**
@@ -86,6 +90,8 @@ export interface AuditEntryInput {
   readonly taskSeverity?: FindingSeverity;
   readonly assignee?: string;
   readonly tier?: ModelTier;
+  /** The AI project to work in; `null` for none; absent for the environment's default. */
+  readonly projectId?: string | null;
 }
 
 export interface AuditEntryResult {
@@ -94,6 +100,8 @@ export interface AuditEntryResult {
   /** Ids of tasks created as work packages, if requested. */
   readonly taskIds: readonly string[];
   readonly usage: { inputTokens: number; outputTokens: number };
+  /** The AI project the audit took, and what of its references it used; null for none. */
+  readonly project: AiProjectUse | null;
 }
 
 const SEVERITY_RANK: Record<FindingSeverity, number> = { info: 0, warning: 1, error: 2 };
@@ -154,13 +162,33 @@ export async function auditEntry(
   const config = await ctx.store.spaces.getConfig(scope);
   const locale = config?.defaultLocale ?? 'en-US';
 
-  const result = await generateWithBudget(ctx, ai, scope, {
-    system: policy.system(
+  const described = describeEntry(ct, fields, locale, unreadable);
+  const project = await resolveAiProject(ctx, scope, opts.principal, {
+    capability: 'agents',
+    ...(input.projectId !== undefined ? { projectId: input.projectId } : {}),
+    task: { terms: `${ct.name} ${described.slice(0, 2_000)}` },
+  });
+  const system = policy.system(
+    project.system(
       `You are a meticulous content editor. Audit the entry for gaps, inconsistencies, missing required information, and quality issues. Return concrete, actionable findings. Use severity "error" for blocking problems, "warning" for quality issues, "info" for nits. ${UNTRUSTED_CONTENT_GUARD}`,
     ),
-    prompt: `Content type: ${ct.name}.\nFields:\n${wrapUntrusted(describeEntry(ct, fields, locale, unreadable))}\n\nList the findings.`,
-    tier: policy.tier('balanced', input.tier),
+  );
+  const tier = policy.tier('balanced', input.tier);
+  const placed = project.call(
+    {
+      system,
+      prompt: `Content type: ${ct.name}.\nFields:\n${wrapUntrusted(described)}\n\nList the findings.`,
+      maxTokens: 2048,
+      tier,
+    },
+    ai,
+  );
+  const result = await generateWithBudget(ctx, ai, scope, {
+    system,
+    prompt: placed.prompt,
+    tier,
     maxTokens: 2048,
+    ...placed.request,
     outputSchema: {
       type: 'object',
       properties: {
@@ -201,11 +229,14 @@ export async function auditEntry(
     workflow: 'audit',
     entryId,
     status: 'completed',
-    decisions: [`Audited ${ct.name}: ${findings.length} finding(s), ${taskIds.length} task(s)`],
+    decisions: [
+      `Audited ${ct.name}: ${findings.length} finding(s), ${taskIds.length} task(s)`,
+      ...projectDecisions(placed.use),
+    ],
     usage: result.usage,
   });
 
-  return { entryId, findings, taskIds, usage: result.usage };
+  return { entryId, findings, taskIds, usage: result.usage, project: placed.use };
 }
 
 export interface ModerateEntryResult {

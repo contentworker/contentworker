@@ -1,4 +1,5 @@
 export * from './agents/agent-review';
+export * from './ai/ai-projects';
 export * from './ai/ai-settings';
 export * from './asset/asset';
 export * from './asset/collection';
@@ -58,6 +59,7 @@ export * from './scheduling/scheduled-action';
 export * from './seo/seo';
 export * from './taxonomy/taxonomy';
 export * from './types';
+export * from './utf8-range';
 export * from './validation/validate';
 export * from './webhook/webhook';
 export * from './workflow/index';

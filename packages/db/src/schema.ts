@@ -1,5 +1,7 @@
 import type {
   AiCapabilitySetting,
+  AiPersona,
+  AiReference,
   AppOperationJobCaller,
   AppOperationJobStatus,
   AssetAiSuggestions,
@@ -876,6 +878,8 @@ export const aiActions = sqliteTable(
     targetField: text('target_field'),
     tier: text('tier').$type<'flagship' | 'balanced' | 'fast'>().notNull(),
     createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+    /** The AI project its runs take; null: the environment's default (0045_ai_projects). */
+    projectId: text('project_id'),
   },
   (t) => [primaryKey({ columns: [t.spaceId, t.environmentId, t.id] })],
 );
@@ -1043,6 +1047,8 @@ export const agentSchedules = sqliteTable(
     cursorEntryId: text('cursor_entry_id'),
     nextRunAt: integer('next_run_at', { mode: 'timestamp_ms' }).notNull(),
     createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+    /** The AI project its runs take; null: the environment's default (0045_ai_projects). */
+    projectId: text('project_id'),
   },
   (t) => [
     primaryKey({ columns: [t.spaceId, t.environmentId, t.id] }),
@@ -1456,6 +1462,59 @@ export const spaceAiSettings = sqliteTable('space_ai_settings', {
   updatedBy: text('updated_by'),
   updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
 });
+
+/**
+ * An environment's AI projects (0045_ai_projects): instructions, personas and pinned references,
+ * each row rewritten whole at its version's compare-and-set. Unique by case-folded name; at most
+ * one default per environment.
+ */
+export const aiProjects = sqliteTable(
+  'ai_projects',
+  {
+    spaceId: text('space_id').notNull(),
+    environmentId: text('environment_id').notNull(),
+    id: text('id').notNull(),
+    name: text('name').notNull(),
+    nameKey: text('name_key').notNull(),
+    description: text('description'),
+    instructions: text('instructions'),
+    writer: text('writer', { mode: 'json' }).$type<AiPersona>(),
+    reader: text('reader', { mode: 'json' }).$type<AiPersona>(),
+    references: text('references', { mode: 'json' }).$type<AiReference[]>().notNull(),
+    isDefault: integer('is_default', { mode: 'boolean' }).notNull().default(false),
+    version: integer('version').notNull(),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+    createdBy: text('created_by'),
+    updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
+    updatedBy: text('updated_by'),
+  },
+  (t) => [
+    primaryKey({ columns: [t.spaceId, t.environmentId, t.id] }),
+    uniqueIndex('ai_projects_by_name').on(t.spaceId, t.environmentId, t.nameKey),
+    uniqueIndex('ai_projects_default')
+      .on(t.spaceId, t.environmentId)
+      .where(sql`${t.isDefault} = 1`),
+  ],
+);
+
+/**
+ * Reading a reference's text for an AI project (0045_ai_projects), one row per asset file
+ * version: `pending`, `done`, or `skipped` with a reason.
+ */
+export const aiReferenceExtractions = sqliteTable(
+  'ai_reference_extractions',
+  {
+    spaceId: text('space_id').notNull(),
+    environmentId: text('environment_id').notNull(),
+    assetId: text('asset_id').notNull(),
+    fileVersion: integer('file_version').notNull(),
+    status: text('status').$type<'pending' | 'done' | 'skipped'>().notNull(),
+    reason: text('reason'),
+    triggeredBy: text('triggered_by').notNull(),
+    updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.spaceId, t.environmentId, t.assetId, t.fileVersion] })],
+);
 
 /** Navigation menus, each a JSON tree of items written whole at its revision (0020_menus). */
 export const menus = sqliteTable(

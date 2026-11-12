@@ -1,7 +1,9 @@
+import { decodeUtf8Range, encodeUtf8 } from '@contentworker/domain';
 import type {
   BlobHead,
   BlobObject,
   BlobStore,
+  BlobTextRange,
   DownloadUrlOptions,
   MultipartBlobStore,
   UploadedPart,
@@ -111,6 +113,22 @@ export class FakeBlobStore implements BlobStore {
       })(),
       size: bytes.byteLength,
       ...(contentType ? { contentType } : {}),
+    };
+  }
+
+  /** Every text range `getRange` read: `key@offset+length`. */
+  readonly textRangesRead: string[] = [];
+
+  async getRange(key: string, offset: number, length: number): Promise<BlobTextRange | null> {
+    this.textRangesRead.push(`${key}@${offset}+${length}`);
+    const body = this.objects.get(key);
+    if (body === undefined) return null;
+    // Text is held as UTF-8 here, as R2 holds it (`put` of a string writes its UTF-8 bytes).
+    const bytes = typeof body === 'string' ? encodeUtf8(body) : body;
+    const start = Math.max(0, Math.min(offset, bytes.byteLength));
+    return {
+      ...decodeUtf8Range(bytes.subarray(start, start + Math.max(0, length)), start),
+      size: bytes.byteLength,
     };
   }
 

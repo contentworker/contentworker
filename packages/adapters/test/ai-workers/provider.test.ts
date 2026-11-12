@@ -3,6 +3,7 @@ import {
   createWorkersAIEmbeddings,
   createWorkersAIProvider,
   NO_LOG_PAYLOAD,
+  UNKNOWN_MODEL_CONTEXT_TOKENS,
   WORKERS_AI_MODEL_BY_TIER,
   WorkersAIError,
   type WorkersAiRun,
@@ -252,5 +253,50 @@ describe('workers-ai embeddings', () => {
     const { run, calls } = fakeRun({});
     expect(await createWorkersAIEmbeddings({ run }).embed([])).toEqual([]);
     expect(calls).toHaveLength(0);
+  });
+});
+
+describe('workers-ai provider — limits, prefix affinity and gateway metadata', () => {
+  it('reports each tier’s context window from the catalog, with the override’s model', () => {
+    const { run } = fakeRun({ response: 'ok' });
+    const ai = createWorkersAIProvider({ run });
+    expect(ai.limits?.('flagship').contextTokens).toBe(262_144);
+    expect(ai.limits?.('balanced').contextTokens).toBe(24_000);
+    expect(ai.limits?.('fast').contextTokens).toBe(131_072);
+    const overridden = createWorkersAIProvider({
+      run,
+      models: { fast: '@cf/meta/llama-3.1-8b-instruct-fast', balanced: '@cf/some/unlisted' },
+    });
+    expect(overridden.limits?.('fast').contextTokens).toBe(60_000);
+    // A model the table doesn't know is budgeted at the smallest window, never assumed large.
+    expect(overridden.limits?.('balanced').contextTokens).toBe(UNKNOWN_MODEL_CONTEXT_TOKENS);
+  });
+
+  it('sends the session affinity header and the project metadata through the gateway', async () => {
+    const { run, calls } = fakeRun({ response: 'ok' });
+    const ai = createWorkersAIProvider({ run, gatewayId: 'gw' });
+    await ai.generate({
+      prompt: 'p',
+      maxTokens: 16,
+      sessionAffinity: 'abc123',
+      metadata: { projectId: 'p1', projectVersion: 3 },
+    });
+    expect(calls[0]?.opts).toEqual({
+      gateway: { id: 'gw', metadata: { projectId: 'p1', projectVersion: 3 } },
+      extraHeaders: { ...NO_LOG_PAYLOAD, 'x-session-affinity': 'abc123' },
+    });
+    // A plain call keeps the gateway's own options, unchanged.
+    await ai.generate({ prompt: 'p', maxTokens: 16 });
+    expect(calls[1]?.opts).toEqual({ gateway: { id: 'gw' }, extraHeaders: NO_LOG_PAYLOAD });
+  });
+
+  it('still sends the affinity header without a gateway', async () => {
+    const { run, calls } = fakeRun({ response: 'ok' });
+    await createWorkersAIProvider({ run }).generate({
+      prompt: 'p',
+      maxTokens: 16,
+      sessionAffinity: 'abc',
+    });
+    expect(calls[0]?.opts).toEqual({ extraHeaders: { 'x-session-affinity': 'abc' } });
   });
 });

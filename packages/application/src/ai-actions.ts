@@ -1,4 +1,5 @@
 import {
+  type AiProjectUse,
   type EntryFields,
   isValidApiId,
   NotFoundError,
@@ -8,6 +9,7 @@ import {
 import type { AIActionDefinition, AIProvider, ModelTier } from '@contentworker/ports';
 import { recordAgentRun } from './agent-audit';
 import { generateWithBudget } from './ai-budget';
+import { assertStoredProjectId, projectDecisions, resolveAiProject } from './ai-projects';
 import { UNTRUSTED_CONTENT_GUARD } from './ai-prompt';
 import { requireAiCapability } from './ai-settings';
 import { assertAiTargetField, type EntryAiOptions, readEntryForAi } from './content-ai';
@@ -34,6 +36,11 @@ export interface CreateAIActionInput {
   readonly promptTemplate: string;
   readonly targetField?: string;
   readonly tier?: ModelTier;
+  /**
+   * The AI project its runs take, in this environment (checked: 422 otherwise); absent: the
+   * environment's default at run time.
+   */
+  readonly projectId?: string | null;
 }
 
 /** Creates a reusable AI Action. Variables are derived from the template. */
@@ -48,6 +55,7 @@ export async function createAIAction(
   if (input.targetField && !isValidApiId(input.targetField)) {
     throw new ValidationError([{ field: 'targetField', message: 'Invalid field apiId' }]);
   }
+  await assertStoredProjectId(ctx, scope, input.projectId);
   const action: AIActionDefinition = {
     id: ctx.ids.newId(),
     name: input.name.trim(),
@@ -56,6 +64,7 @@ export async function createAIAction(
     variables: templateVariables(input.promptTemplate),
     targetField: input.targetField,
     tier: input.tier ?? 'balanced',
+    ...(input.projectId ? { projectId: input.projectId } : {}),
     createdAt: ctx.clock.now().toISOString(),
   };
   await ctx.store.aiActions.create(scope, action);
@@ -88,6 +97,11 @@ export interface RunAIActionInput {
   readonly entryId?: string;
   readonly locale?: string;
   readonly apply?: boolean;
+  /**
+   * The AI project for this run: `null` for none, an id for that one; absent, the action's own
+   * (or, when it names none, the environment's default).
+   */
+  readonly projectId?: string | null;
 }
 
 export interface RunAIActionResult {
@@ -95,6 +109,8 @@ export interface RunAIActionResult {
   readonly output: string;
   readonly applied: boolean;
   readonly usage: { inputTokens: number; outputTokens: number };
+  /** The AI project the run took, and what of its references it used; null for none. */
+  readonly project: AiProjectUse | null;
 }
 
 /**
@@ -142,14 +158,40 @@ export async function runAIAction(
   }
 
   const prompt = renderTemplate(action.promptTemplate, values);
-  const result = await generateWithBudget(ctx, ai, scope, {
-    system: policy.system(
+  // The run's own choice, else the action's; a stored project that is gone refuses the run (404,
+  // recorded), never falls back to the default.
+  const projectId = input.projectId !== undefined ? input.projectId : action.projectId;
+  let project: Awaited<ReturnType<typeof resolveAiProject>>;
+  try {
+    project = await resolveAiProject(ctx, scope, opts.principal, {
+      capability: 'field-assist',
+      ...(projectId !== undefined ? { projectId } : {}),
+      task: { terms: `${action.name} ${prompt.slice(0, 2_000)}` },
+    });
+  } catch (err) {
+    await recordAgentRun(ctx, scope, {
+      workflow: `ai-action:${action.name}`,
+      entryId: input.entryId ?? '',
+      status: 'refused',
+      decisions: [`Refused AI Action "${action.name}": its AI project ${projectId} is gone`],
+      usage: { inputTokens: 0, outputTokens: 0 },
+    });
+    throw err;
+  }
+  const system = policy.system(
+    project.system(
       `You are running the AI Action "${action.name}". Follow the instructions and return only the requested output. ${UNTRUSTED_CONTENT_GUARD}`,
     ),
-    prompt,
-    // An action names its own tier when it is created: that choice stands over the space's.
-    tier: policy.tier('balanced', action.tier),
+  );
+  // An action names its own tier when it is created: that choice stands over the space's.
+  const tier = policy.tier('balanced', action.tier);
+  const placed = project.call({ system, prompt, maxTokens: 2048, tier }, ai);
+  const result = await generateWithBudget(ctx, ai, scope, {
+    system,
+    prompt: placed.prompt,
+    tier,
     maxTokens: 2048,
+    ...placed.request,
   });
   const output = (result.text ?? '').trim();
 
@@ -165,9 +207,9 @@ export async function runAIAction(
     workflow: `ai-action:${action.name}`,
     entryId: input.entryId ?? '',
     status: 'completed',
-    decisions: [`Ran AI Action "${action.name}"`],
+    decisions: [`Ran AI Action "${action.name}"`, ...projectDecisions(placed.use)],
     usage: result.usage,
   });
 
-  return { actionId: action.id, output, applied, usage: result.usage };
+  return { actionId: action.id, output, applied, usage: result.usage, project: placed.use };
 }

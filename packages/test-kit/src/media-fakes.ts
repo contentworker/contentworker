@@ -10,6 +10,8 @@ import type {
   AssetZipStarter,
   ByteStream,
   ExtractableFile,
+  ExtractedText,
+  ExtractOptions,
   HostedVideo,
   ImageInfo,
   ImageProbe,
@@ -235,9 +237,16 @@ export class FakeTextExtractor implements TextExtractor {
     );
   }
 
-  async extract(file: ExtractableFile): Promise<string> {
+  /** The options each read was given, in order. */
+  readonly options: (ExtractOptions | undefined)[] = [];
+  /** What each read reports it cost; default the text's length / 4. */
+  tokensFor: (text: string) => number = (text) => Math.ceil(text.length / 4);
+
+  async extract(file: ExtractableFile, opts?: ExtractOptions): Promise<ExtractedText> {
     this.read.push(file);
-    return this.texts.get(file.fileName) ?? file.chunks.map(asciiOf).join('');
+    this.options.push(opts);
+    const text = this.texts.get(file.fileName) ?? file.chunks.map(asciiOf).join('');
+    return { text, usage: { tokens: this.tokensFor(text) } };
   }
 }
 

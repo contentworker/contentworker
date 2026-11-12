@@ -101,10 +101,28 @@ export interface BlobStore {
    */
   openRange?(key: string, offset: number, length: number): Promise<BlobObject | null>;
   /**
+   * Up to `length` bytes of the UTF-8 text stored under `key`, from byte `offset`, decoded: both
+   * ends rounded to a character boundary (the start forward past a split character, the end back
+   * before one), so the text is never half a character. `null` when the object does not exist.
+   * Optional, like {@link open}: a store without it can't feed reference excerpts.
+   */
+  getRange?(key: string, offset: number, length: number): Promise<BlobTextRange | null>;
+  /**
    * Multipart uploads, for files too large for one request. Optional: a store without them takes
    * single uploads only. Every part but the last must have the same length (R2's rule).
    */
   readonly multipart?: MultipartBlobStore;
+}
+
+/** A ranged read of stored UTF-8 text ({@link BlobStore.getRange}). */
+export interface BlobTextRange {
+  readonly text: string;
+  /** The byte the text starts at: the requested offset, moved forward to a character boundary. */
+  readonly start: number;
+  /** The byte after the text's last one: where the next read starts. */
+  readonly end: number;
+  /** The whole object's size in bytes. */
+  readonly size: number;
 }
 
 /** One uploaded part, as completing a multipart upload names it. */
@@ -203,8 +221,22 @@ export interface ExtractableFile {
 export interface TextExtractor {
   /** Whether it can read this content type at all. */
   supports(contentType: string): boolean;
-  /** The text, or '' when the file holds none. */
-  extract(file: ExtractableFile): Promise<string>;
+  /**
+   * The text ('' when the file holds none) and what reading it cost, in the cost guard's unit
+   * (tokens): what the conversion reports, an audio minute converted at the balanced tier's input
+   * price.
+   */
+  extract(file: ExtractableFile, opts?: ExtractOptions): Promise<ExtractedText>;
+}
+
+export interface ExtractOptions {
+  /** Leave a PDF's metadata (author, producer, …) out of the text. */
+  readonly withoutMetadata?: boolean;
+}
+
+export interface ExtractedText {
+  readonly text: string;
+  readonly usage: { readonly tokens: number };
 }
 
 /** How an image is fit into the requested box (provider-neutral names). */
@@ -448,6 +480,22 @@ export interface GenerateRequest {
   maxTokens: number;
   /** When set, the provider must return JSON matching this JSON Schema. */
   outputSchema?: Record<string, unknown>;
+  /**
+   * Routes calls with the same value to the same model replica, so a repeated prompt prefix (an
+   * AI project's text and references) is served from the prefix cache. An opaque hash, never text.
+   */
+  sessionAffinity?: string;
+  /**
+   * Request metadata the gateway logs with the call (AI Gateway's custom metadata): ids and
+   * versions, never content. At most five keys.
+   */
+  metadata?: Record<string, string | number | boolean>;
+}
+
+/** What a tier's model can take ({@link AIProvider.limits}). */
+export interface ModelLimits {
+  /** The model's context window, in tokens: prompt and answer together. */
+  readonly contextTokens: number;
 }
 
 export interface GenerateResult {
@@ -462,6 +510,12 @@ export interface GenerateResult {
 /** Chat/generation provider. Workers AI by default; swappable. */
 export interface AIProvider {
   generate(req: GenerateRequest): Promise<GenerateResult>;
+  /**
+   * The context window of the model `tier` maps to, from the provider's model catalog (with any
+   * per-tier model override applied). Optional: without it, callers budget for the smallest
+   * window the platform's tiers ship with.
+   */
+  limits?(tier: ModelTier): ModelLimits;
 }
 
 /**
@@ -934,6 +988,11 @@ export interface AssetIngestRequest {
    * fresh run, where without it a repeat request for the same file is the same run.
    */
   readonly rerun?: string;
+  /**
+   * Read the file's text and nothing else (an AI project's reference, amendment C): the run's
+   * `extract-text` step alone, gated by `media`, recorded in the reference's extraction record.
+   */
+  readonly textOnly?: true;
 }
 
 /**
@@ -954,6 +1013,8 @@ export interface AssetIngestParams {
   readonly scope: Scope;
   readonly assetId: string;
   readonly version: number;
+  /** A reference extraction: the `extract-text` step alone (see {@link AssetIngestRequest}). */
+  readonly textOnly?: true;
 }
 
 /**

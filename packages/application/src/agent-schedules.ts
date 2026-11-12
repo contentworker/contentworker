@@ -7,6 +7,7 @@ import {
 } from '@contentworker/domain';
 import type { AgentRunner } from './agent-actions';
 import { recordAgentRun } from './agent-audit';
+import { assertStoredProjectId } from './ai-projects';
 import { aiCapability } from './ai-settings';
 import type { AppContext } from './context';
 
@@ -33,6 +34,11 @@ export interface CreateAgentScheduleInput {
   readonly contentTypeApiId?: string;
   readonly enabled?: boolean;
   readonly autoApply?: boolean;
+  /**
+   * The AI project its runs take, in this environment (checked: 422 otherwise); absent: the
+   * environment's default at each run.
+   */
+  readonly projectId?: string | null;
 }
 
 /** Creates a recurring agent job. The first due run only sets the baseline —
@@ -44,6 +50,7 @@ export async function createAgentSchedule(
 ): Promise<AgentSchedule> {
   assertWorkflow(input.workflow);
   assertValidCron(input.cron);
+  await assertStoredProjectId(ctx, scope, input.projectId);
   const now = ctx.clock.now();
   const schedule: AgentSchedule = {
     id: ctx.ids.newId(),
@@ -52,6 +59,7 @@ export async function createAgentSchedule(
     cron: input.cron,
     enabled: input.enabled ?? true,
     autoApply: input.autoApply ?? false,
+    ...(input.projectId ? { projectId: input.projectId } : {}),
     nextRunAt: nextCronOccurrence(input.cron, now).toISOString(),
     createdAt: now.toISOString(),
   };
@@ -68,6 +76,8 @@ export interface UpdateAgentSchedulePatch {
   readonly enabled?: boolean;
   readonly autoApply?: boolean;
   readonly contentTypeApiId?: string | null;
+  /** An AI project id, or `null` for the environment's default. */
+  readonly projectId?: string | null;
 }
 
 export async function updateAgentSchedule(
@@ -78,6 +88,7 @@ export async function updateAgentSchedule(
 ): Promise<AgentSchedule> {
   const existing = await ctx.store.agentSchedules.get(scope, id);
   if (!existing) throw new NotFoundError('AgentSchedule', id);
+  await assertStoredProjectId(ctx, scope, patch.projectId);
   const cron = patch.cron ?? existing.cron;
   assertValidCron(cron);
   const now = ctx.clock.now();
@@ -88,8 +99,11 @@ export async function updateAgentSchedule(
   const needsRecompute =
     patch.cron !== undefined ||
     (enabled && !existing.enabled && existing.nextRunAt <= now.toISOString());
+  const { projectId: _was, ...rest } = existing;
+  const projectId = patch.projectId === undefined ? existing.projectId : patch.projectId;
   const updated: AgentSchedule = {
-    ...existing,
+    ...rest,
+    ...(projectId ? { projectId } : {}),
     cron,
     enabled,
     autoApply: patch.autoApply ?? existing.autoApply,
@@ -183,6 +197,23 @@ export async function runDueAgentSchedules(
     if (schedule.workflow !== 'moderate' && !(await aiCapability(ctx, scope, 'agents')).enabled) {
       continue;
     }
+    // A stored project that is gone refuses the firing (recorded), never falls back to the
+    // default; the cursor stays, so the entries wait for the schedule to name another.
+    if (schedule.projectId && !(await ctx.store.aiProjects.get(scope, schedule.projectId))) {
+      await recordAgentRun(ctx, scope, {
+        workflow: schedule.workflow,
+        entryId: '',
+        status: 'refused',
+        decisions: [`Refused: the schedule's AI project ${schedule.projectId} is gone`],
+        usage: { inputTokens: 0, outputTokens: 0 },
+      });
+      errors.push({
+        scheduleId: schedule.id,
+        spaceId: scope.spaceId,
+        message: `AI project ${schedule.projectId} not found`,
+      });
+      continue;
+    }
     let cursor: { lastRunAt: string; cursorEntryId?: string } = {
       lastRunAt: schedule.lastRunAt,
       cursorEntryId: schedule.cursorEntryId,
@@ -203,6 +234,7 @@ export async function runDueAgentSchedules(
           scope,
           entryId: published.entryId,
           autoApply: schedule.autoApply,
+          ...(schedule.projectId ? { projectId: schedule.projectId } : {}),
         });
         if (outcome.status === 'needs_review' && outcome.reviewId) {
           await agents

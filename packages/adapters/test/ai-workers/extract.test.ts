@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  AUDIO_TOKENS_PER_MINUTE,
   createWorkersAITextExtractor,
   NO_LOG_PAYLOAD,
   WORKERS_AI_TRANSCRIBE_MODEL,
@@ -15,16 +16,24 @@ const chunked = (...parts: (string | Uint8Array)[]) => {
   return { chunks, size: chunks.reduce((n, c) => n + c.byteLength, 0) };
 };
 
-function fakes(markdown: unknown = { format: 'markdown', data: '# Report\n\nBody' }) {
-  const converted: { name: string; type: string; text: string }[] = [];
+function fakes(
+  markdown: unknown = { format: 'markdown', data: '# Report\n\nBody', tokens: 12 },
+  transcript: unknown = { text: 'spoken words', transcription_info: { duration: 90 } },
+) {
+  const converted: { name: string; type: string; text: string; options?: unknown }[] = [];
   const runs: { model: string; input: Record<string, unknown>; opts?: unknown }[] = [];
-  const toMarkdown: WorkersAiToMarkdown = async ({ name, blob }) => {
-    converted.push({ name, type: blob.type, text: await blob.text() });
+  const toMarkdown: WorkersAiToMarkdown = async ({ name, blob }, options) => {
+    converted.push({
+      name,
+      type: blob.type,
+      text: await blob.text(),
+      ...(options ? { options } : {}),
+    });
     return markdown;
   };
   const run: WorkersAiRun = async (model, input, opts) => {
     runs.push({ model, input, opts });
-    return { text: 'spoken words' };
+    return transcript;
   };
   return { toMarkdown, run, converted, runs };
 }
@@ -40,15 +49,69 @@ describe('workers-ai text extractor', () => {
     expect(x.supports('audio/mpeg')).toBe(true);
     expect(x.supports('image/png')).toBe(false);
     expect(x.supports('application/zip')).toBe(false);
-    const text = await x.extract({
+    const out = await x.extract({
       fileName: 'report.pdf',
       contentType: 'application/pdf; charset=binary',
       ...chunked('%PDF-1.7'),
     });
-    expect(text).toBe('# Report\n\nBody');
+    // What the conversion says it used is what is settled, not an estimate from the text.
+    expect(out).toEqual({ text: '# Report\n\nBody', usage: { tokens: 12 } });
     expect(f.converted).toEqual([
       { name: 'report.pdf', type: 'application/pdf', text: '%PDF-1.7' },
     ]);
+  });
+
+  it('leaves a PDF’s metadata out when asked, and only a PDF’s', async () => {
+    const f = fakes();
+    const x = createWorkersAITextExtractor({ toMarkdown: f.toMarkdown, run: f.run });
+    await x.extract(
+      { fileName: 'a.pdf', contentType: 'application/pdf', ...chunked('%PDF') },
+      { withoutMetadata: true },
+    );
+    await x.extract(
+      {
+        fileName: 'a.docx',
+        contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        ...chunked('PK'),
+      },
+      { withoutMetadata: true },
+    );
+    expect(f.converted[0]?.options).toEqual({ conversionOptions: { pdf: { metadata: false } } });
+    expect(f.converted[1]?.options).toBeUndefined();
+  });
+
+  it('settles an estimate only when the conversion reports no tokens', async () => {
+    const f = fakes({ format: 'markdown', data: 'x'.repeat(40) });
+    const x = createWorkersAITextExtractor({ toMarkdown: f.toMarkdown, run: f.run });
+    const out = await x.extract({
+      fileName: 'a.pdf',
+      contentType: 'application/pdf',
+      ...chunked('%PDF'),
+    });
+    expect(out.usage.tokens).toBe(10);
+  });
+
+  it('bills a recording by its minutes, from the duration Whisper reports or its size', async () => {
+    const f = fakes();
+    const x = createWorkersAITextExtractor({ toMarkdown: f.toMarkdown, run: f.run });
+    const timed = await x.extract({
+      fileName: 't.mp3',
+      contentType: 'audio/mpeg',
+      ...chunked('ID3'),
+    });
+    expect(timed.usage.tokens).toBe(Math.ceil(1.5 * AUDIO_TOKENS_PER_MINUTE));
+    const untimed = createWorkersAITextExtractor({
+      toMarkdown: f.toMarkdown,
+      run: fakes(undefined, { text: 'words' }).run,
+    });
+    // 960 kB at 16 kB a second: a minute.
+    const out = await untimed.extract({
+      fileName: 't.mp3',
+      contentType: 'audio/mpeg',
+      chunks: [new Uint8Array(960_000)],
+      size: 960_000,
+    });
+    expect(out.usage.tokens).toBe(AUDIO_TOKENS_PER_MINUTE);
   });
 
   it('reads plain text itself, without a model', async () => {
@@ -56,7 +119,7 @@ describe('workers-ai text extractor', () => {
     const x = createWorkersAITextExtractor({ toMarkdown: f.toMarkdown, run: f.run });
     expect(
       await x.extract({ fileName: 'a.txt', contentType: 'text/plain', ...chunked('héllo') }),
-    ).toBe('héllo');
+    ).toEqual({ text: 'héllo', usage: { tokens: 0 } });
     expect(f.converted).toEqual([]);
     expect(f.runs).toEqual([]);
   });
@@ -68,7 +131,7 @@ describe('workers-ai text extractor', () => {
       run: f.run,
       gatewayId: 'gw',
     });
-    const text = await x.extract({
+    const { text } = await x.extract({
       fileName: 'talk.mp3',
       contentType: 'audio/mpeg',
       ...chunked('ID3'),
@@ -114,7 +177,7 @@ describe('workers-ai text extractor', () => {
     const f = fakes();
     const x = createWorkersAITextExtractor({ toMarkdown: f.toMarkdown, run: f.run });
     const e = bytes('é');
-    const text = await x.extract({
+    const { text } = await x.extract({
       fileName: 'a.txt',
       contentType: 'text/plain',
       ...chunked(bytes('h'), e.subarray(0, 1), e.subarray(1), bytes('llo')),

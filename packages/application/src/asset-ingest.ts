@@ -21,6 +21,7 @@ import type {
   BulkJob,
   BulkJobChunk,
   ByteStream,
+  CostGuard,
   GenerateRequest,
   GenerateResult,
   ImageProbe,
@@ -30,6 +31,7 @@ import type {
 } from '@contentworker/ports';
 import { redactCredentials } from '@contentworker/redaction';
 import { runWithBudget } from './ai-budget';
+import { stripPdfMetadata } from './ai-project-excerpts';
 import { aiCapability } from './ai-settings';
 import { type AssetSearchDeps, embedAssetForSearch, indexAssetText } from './asset-search';
 import { allAssets, assetFileKey, assetTextKey, parseAssetObjectKey } from './assets';
@@ -53,7 +55,12 @@ import { autoTagAsset, generateAltText, NoAltTextError } from './media-ai';
  *    fails once the step's retries are spent records `failed`: neither fails ingest.
  * 4. `extract-text`: a document's or recording's text, into blob storage beside the file
  *    (`assetTextKey`), never into D1, and never anywhere the media origin serves. Metered by the
- *    space's AI budget, which skips it when spent.
+ *    space's AI budget at what the conversion used, which skips it when spent.
+ *
+ * A text-only run (`textOnly`: an AI project's reference without text, amendment C) is the
+ * `extract-text` step alone, gated by `media` rather than `search`, its outcome kept in the
+ * reference's extraction record; it hashes, tags, embeds and indexes nothing, and leaves the
+ * asset's ingest status as it was.
  * 5. `embed`, `index`: the asset's search vectors and lexical documents (library and published).
  * 6. `finish`: `ingest_status` ready, the published snapshot's measurements and `asset.ingested`,
  *    in one unit.
@@ -71,6 +78,11 @@ export interface AssetIngestDeps {
   /** Generation model for alt text and tags; absent, enrichment is skipped. */
   readonly ai?: AIProvider;
   readonly search?: AssetSearchDeps;
+  /**
+   * The budget text extraction is charged to, when it isn't the request window: the background
+   * agent window, where the deployment sets AI_AGENT_* ceilings. Absent: `ctx.costGuard`.
+   */
+  readonly extractionGuard?: CostGuard;
 }
 
 /**
@@ -207,6 +219,15 @@ export async function startRequestedAssetIngest(
   const { scope, assetId, version } = request;
   const asset = await ctx.store.assets.get(scope, assetId);
   if (!asset || asset.file.video || (asset.version ?? 1) !== version) return 'ignored';
+  // A reference's text alone: its own run (the rerun token names the extraction), and the asset's
+  // ingest status stays as it is, since nothing else of ingest runs.
+  if (request.textOnly) {
+    await starter.start(
+      assetIngestInstanceId(scope, assetId, version, { rerun: `text:${request.rerun ?? ''}` }),
+      { scope, assetId, version, textOnly: true },
+    );
+    return 'started';
+  }
   await startRun(
     ctx,
     starter,
@@ -339,6 +360,7 @@ export async function runAssetIngest(
   deps: AssetIngestDeps,
   params: AssetIngestParams,
 ): Promise<IngestSummary> {
+  if (params.textOnly) return runReferenceExtraction(steps, ctx, deps, params);
   const begun = await steps.do('begin', STEP, () => beginIngest(ctx, params));
   if (!begun) return { outcome: 'stale' };
   try {
@@ -760,9 +782,18 @@ export async function extractText(
   ctx: AppContext,
   deps: AssetIngestDeps,
   params: AssetIngestParams,
-): Promise<{ chars: number; skipped?: 'unsupported' | 'too-large' | 'budget' | 'disabled' }> {
+  /**
+   * The capability that lets the file go to a model: `search` for ingest (the text is read for
+   * search), `media` for an AI project's reference (asset AI work, amendment C).
+   */
+  gate: 'search' | 'media' = 'search',
+): Promise<{
+  chars: number;
+  skipped?: 'unsupported' | 'too-large' | 'budget' | 'disabled' | 'stale';
+}> {
   const asset = await currentAsset(ctx, params);
-  if (!asset || !deps.extractor || !deps.blob.open) return { chars: 0, skipped: 'unsupported' };
+  if (!asset) return { chars: 0, skipped: 'stale' };
+  if (!deps.extractor || !deps.blob.open) return { chars: 0, skipped: 'unsupported' };
   const contentType = mimeOf(asset.file.contentType);
   const kind = assetKind(contentType);
   if ((kind !== 'document' && kind !== 'audio') || !deps.extractor.supports(contentType)) {
@@ -770,8 +801,8 @@ export async function extractText(
   }
   const textKey = assetTextKey(params.scope, params.assetId, params.version);
   if (!textKey) return { chars: 0, skipped: 'unsupported' };
-  // The text is read for search: with semantic search turned off, the file never goes to a model.
-  if (!(await aiCapability(ctx, params.scope, 'search')).enabled) {
+  // With the capability that reads it turned off, the file never goes to a model.
+  if (!(await aiCapability(ctx, params.scope, gate)).enabled) {
     return { chars: 0, skipped: 'disabled' };
   }
   const cap = kind === 'audio' ? MAX_EXTRACT_AUDIO_BYTES : MAX_EXTRACT_DOCUMENT_BYTES;
@@ -786,18 +817,25 @@ export async function extractText(
   const extractor = deps.extractor;
   let raw: string;
   try {
-    raw = await runWithBudget(
-      ctx,
-      params.scope,
-      () => extractor.extract({ fileName: asset.file.fileName, contentType, ...read }),
-      // No usage comes back: the text's length stands in for the tokens it cost.
-      (text) => Math.max(1, Math.ceil(text.length / 4)),
-    );
+    // Settled at what the conversion used (its tokens; a recording's minutes), on the background
+    // window when the deployment has one. A PDF's metadata is left out of the text.
+    raw = (
+      await runWithBudget(
+        deps.extractionGuard ? { ...ctx, costGuard: deps.extractionGuard } : ctx,
+        params.scope,
+        () =>
+          extractor.extract(
+            { fileName: asset.file.fileName, contentType, ...read },
+            { withoutMetadata: true },
+          ),
+        (result) => result.usage.tokens,
+      )
+    ).text;
   } catch (err) {
     if (err instanceof RateLimitedError) return { chars: 0, skipped: 'budget' };
     throw err;
   }
-  const text = storableText(raw);
+  const text = storableText(contentType === 'application/pdf' ? stripPdfMetadata(raw) : raw);
   // Deleted meanwhile: its delete already removed what ingest derived, so write nothing; and if
   // it went just after this check, take the text back out.
   if (!(await currentAsset(ctx, params))) return { chars: 0 };
@@ -807,6 +845,89 @@ export async function extractText(
     return { chars: 0 };
   }
   return { chars: text.length };
+}
+
+/** Why a reference extraction skipped, as its record keeps it. */
+const SKIP_REASONS = {
+  unsupported: 'unsupported',
+  'too-large': 'too_large',
+  budget: 'budget',
+  disabled: 'media_off',
+  // The file was replaced (or the asset deleted) before the run: the pinned file wasn't read.
+  stale: 'failed',
+} as const;
+
+/**
+ * Writes a reference extraction's outcome, keeping who triggered it (the claim's record): the
+ * same row whatever the outcome, so a reread of the project shows it.
+ */
+async function recordReferenceExtraction(
+  ctx: AppContext,
+  params: AssetIngestParams,
+  status: 'done' | 'skipped',
+  reason: string | null,
+): Promise<void> {
+  const [held] = await ctx.store.aiReferenceExtractions.getMany(params.scope, [
+    { assetId: params.assetId, version: params.version },
+  ]);
+  await ctx.store.aiReferenceExtractions.record(params.scope, {
+    assetId: params.assetId,
+    fileVersion: params.version,
+    status,
+    reason,
+    triggeredBy: held?.triggeredBy ?? 'system',
+    updatedAt: ctx.clock.now().toISOString(),
+  });
+}
+
+/**
+ * Reads one reference's text (a text-only run, amendment C): the `extract-text` step's rules (the
+ * size caps, the character cap, the current-version checks) under `media`, its outcome in the
+ * extraction record. A redelivered start or a retried step finds the record `done`, or the text
+ * already in storage, and reads nothing again.
+ */
+export async function extractReferenceText(
+  ctx: AppContext,
+  deps: AssetIngestDeps,
+  params: AssetIngestParams,
+): Promise<{ chars: number; already?: true }> {
+  const [held] = await ctx.store.aiReferenceExtractions.getMany(params.scope, [
+    { assetId: params.assetId, version: params.version },
+  ]);
+  const textKey = assetTextKey(params.scope, params.assetId, params.version);
+  const stored = textKey && deps.blob.head ? await deps.blob.head(textKey) : null;
+  if (held?.status === 'done' || stored) {
+    if (held?.status !== 'done') await recordReferenceExtraction(ctx, params, 'done', null);
+    return { chars: 0, already: true };
+  }
+  const out = await extractText(ctx, deps, params, 'media');
+  if (out.skipped) {
+    await recordReferenceExtraction(ctx, params, 'skipped', SKIP_REASONS[out.skipped]);
+  } else {
+    await recordReferenceExtraction(ctx, params, 'done', null);
+  }
+  return { chars: out.chars };
+}
+
+/** The text-only run: one step, and a record of its failure once its retries are spent. */
+async function runReferenceExtraction(
+  steps: Pick<WorkflowSteps, 'do'>,
+  ctx: AppContext,
+  deps: AssetIngestDeps,
+  params: AssetIngestParams,
+): Promise<IngestSummary> {
+  try {
+    const text = await steps.do('extract-text', SLOW_STEP, () =>
+      extractReferenceText(ctx, deps, params),
+    );
+    return { outcome: 'ready', textChars: text.chars };
+  } catch (err) {
+    const error = ingestErrorMessage(err);
+    await steps.do('record-failed', STEP, () =>
+      recordReferenceExtraction(ctx, params, 'skipped', 'failed'),
+    );
+    return { outcome: 'error', error };
+  }
 }
 
 /**

@@ -1,4 +1,9 @@
-import type { ExtractableFile, TextExtractor } from '@contentworker/ports';
+import type {
+  ExtractableFile,
+  ExtractedText,
+  ExtractOptions,
+  TextExtractor,
+} from '@contentworker/ports';
 import {
   asWorkersAIError,
   DEFAULT_TIMEOUT_MS,
@@ -12,7 +17,23 @@ import {
  * The `AI` binding's Markdown conversion (`env.AI.toMarkdown`), typed structurally: one file in,
  * one result out (`data` holds the Markdown, `format` is `error` when it could not convert).
  */
-export type WorkersAiToMarkdown = (file: { name: string; blob: Blob }) => Promise<unknown>;
+export type WorkersAiToMarkdown = (
+  file: { name: string; blob: Blob },
+  options?: { conversionOptions?: { pdf?: { metadata?: boolean } } },
+) => Promise<unknown>;
+
+/**
+ * An audio minute in the cost guard's unit: Whisper large v3 turbo's price per minute ($0.000513)
+ * at the balanced tier's input price ($0.293 per M tokens), rounded up. The guard counts tokens,
+ * and a transcription bills minutes.
+ */
+export const AUDIO_TOKENS_PER_MINUTE = 1_800;
+
+/**
+ * Bytes per second assumed for a recording whose transcription reports no duration: 128 kbit/s,
+ * a common bitrate for speech. Only an estimate's fallback.
+ */
+const ASSUMED_AUDIO_BYTES_PER_SECOND = 16_000;
 
 /** Speech to text: Whisper large v3 turbo, which takes the audio as base64. */
 export const WORKERS_AI_TRANSCRIBE_MODEL = '@cf/openai/whisper-large-v3-turbo';
@@ -66,9 +87,10 @@ export function createWorkersAITextExtractor(opts: WorkersAITextExtractorOptions
       const mime = mimeOf(contentType);
       return DOCUMENT_TYPES.has(mime) || PLAIN_TYPES.has(mime) || mime.startsWith('audio/');
     },
-    async extract(file: ExtractableFile) {
+    async extract(file: ExtractableFile, options?: ExtractOptions): Promise<ExtractedText> {
       const mime = mimeOf(file.contentType);
-      if (PLAIN_TYPES.has(mime)) return utf8(file.chunks);
+      // No model reads a text file: it costs nothing.
+      if (PLAIN_TYPES.has(mime)) return { text: utf8(file.chunks), usage: { tokens: 0 } };
       if (mime.startsWith('audio/')) {
         let res: unknown;
         try {
@@ -79,20 +101,37 @@ export function createWorkersAITextExtractor(opts: WorkersAITextExtractorOptions
         } catch (err) {
           throw asWorkersAIError(err);
         }
-        const text = (res as { text?: unknown } | undefined)?.text;
-        if (typeof text !== 'string') {
+        const out = res as
+          | { text?: unknown; transcription_info?: { duration?: unknown } }
+          | undefined;
+        if (typeof out?.text !== 'string') {
           throw new WorkersAIError('bad_response', 'transcription returned no text');
         }
-        return text;
+        // Billed by the audio minute: the duration Whisper reports, else one read off the size.
+        const reported = out.transcription_info?.duration;
+        const seconds =
+          typeof reported === 'number' && Number.isFinite(reported) && reported > 0
+            ? reported
+            : file.size / ASSUMED_AUDIO_BYTES_PER_SECOND;
+        return {
+          text: out.text,
+          usage: { tokens: Math.max(1, Math.ceil((seconds / 60) * AUDIO_TOKENS_PER_MINUTE)) },
+        };
       }
       let res: unknown;
       try {
         res = await withTimeout(
-          opts.toMarkdown({
-            name: file.fileName,
-            // The stream's chunks as they came: the Blob is the one copy the binding reads.
-            blob: new Blob(file.chunks as Uint8Array<ArrayBuffer>[], { type: mime }),
-          }),
+          opts.toMarkdown(
+            {
+              name: file.fileName,
+              // The stream's chunks as they came: the Blob is the one copy the binding reads.
+              blob: new Blob(file.chunks as Uint8Array<ArrayBuffer>[], { type: mime }),
+            },
+            // A PDF's author and producer fields are no part of what it says.
+            options?.withoutMetadata && mime === 'application/pdf'
+              ? { conversionOptions: { pdf: { metadata: false } } }
+              : undefined,
+          ),
           timeoutMs,
         );
       } catch (err) {
@@ -100,12 +139,18 @@ export function createWorkersAITextExtractor(opts: WorkersAITextExtractorOptions
       }
       // One file in gives one result; the binding returns it bare (or in a one-item array).
       const out = (Array.isArray(res) ? res[0] : res) as
-        | { format?: unknown; data?: unknown; error?: unknown }
+        | { format?: unknown; data?: unknown; error?: unknown; tokens?: unknown }
         | undefined;
       if (out?.format === 'error') {
         throw new WorkersAIError('bad_response', `conversion failed: ${String(out.error ?? '')}`);
       }
-      return typeof out?.data === 'string' ? out.data : '';
+      const text = typeof out?.data === 'string' ? out.data : '';
+      // What the conversion reports it used; a result that says nothing is estimated from its text.
+      const tokens =
+        typeof out?.tokens === 'number' && Number.isFinite(out.tokens) && out.tokens >= 0
+          ? Math.ceil(out.tokens)
+          : Math.ceil(text.length / 4);
+      return { text, usage: { tokens } };
     },
   };
 }

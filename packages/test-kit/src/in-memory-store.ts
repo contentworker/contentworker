@@ -1,6 +1,7 @@
 import {
   type AgentReview,
   type AgentSchedule,
+  type AiProject,
   type AiSettings,
   type ApiKey,
   type AppOperationJob,
@@ -9,6 +10,7 @@ import {
   type AssetFolder,
   type AssetRendition,
   type AssetZipJob,
+  aiProjectNameKey,
   assetKind,
   type BlockCatalog,
   type BlockConfig,
@@ -74,6 +76,9 @@ import type {
   AgentScheduleRepo,
   AIActionDefinition,
   AIActionRepo,
+  AiProjectRepo,
+  AiReferenceExtraction,
+  AiReferenceExtractionRepo,
   AiSettingsRepo,
   AppExtension,
   AppExtensionRepo,
@@ -377,6 +382,8 @@ export class InMemoryContentStore implements ContentStore {
         this.blockCatalogData,
         this.blockConfigData,
         this.aiActionData,
+        this.aiProjectData,
+        this.extractionData,
         this.functionData,
         this.appExtensionData,
         this.previewTokenData,
@@ -3062,6 +3069,93 @@ export class InMemoryContentStore implements ContentStore {
     },
   };
 
+  /** `space::env::id` → project. */
+  private readonly aiProjectData = new JournaledMap<string, AiProject>();
+
+  private projectsOf(scope: Scope): AiProject[] {
+    const prefix = `${scopeKey(scope)}::`;
+    return [...this.aiProjectData.entries()]
+      .filter(([k]) => k.startsWith(prefix))
+      .map(([, v]) => v)
+      .sort(
+        (a, b) =>
+          aiProjectNameKey(a.name).localeCompare(aiProjectNameKey(b.name)) ||
+          a.id.localeCompare(b.id),
+      );
+  }
+
+  readonly aiProjects: AiProjectRepo = {
+    list: async (scope) => this.projectsOf(scope),
+    get: async (scope, id) => this.aiProjectData.get(`${scopeKey(scope)}::${id}`) ?? null,
+    getDefault: async (scope) => this.projectsOf(scope).find((p) => p.isDefault) ?? null,
+    save: async (scope, project, expected) => {
+      const key = `${scopeKey(scope)}::${project.id}`;
+      const current = this.aiProjectData.get(key);
+      // As the D1 store: an insert collides on the id, an update on a version moved since.
+      if (expected === undefined ? current : current?.version !== expected) {
+        if (expected === undefined) throw new ConflictError('A unique value is already taken');
+        throw new TransactionConflictError();
+      }
+      // As its unique indexes: one project per name, one default.
+      const others = this.projectsOf(scope).filter((p) => p.id !== project.id);
+      if (
+        others.some((p) => aiProjectNameKey(p.name) === aiProjectNameKey(project.name)) ||
+        (project.isDefault && others.some((p) => p.isDefault))
+      ) {
+        throw new ConflictError('A unique value is already taken');
+      }
+      this.aiProjectData.set(key, cloneJson(project));
+    },
+    delete: async (scope, id, expected) => {
+      const key = `${scopeKey(scope)}::${id}`;
+      if (this.aiProjectData.get(key)?.version !== expected) throw new TransactionConflictError();
+      this.aiProjectData.delete(key);
+    },
+    usedBy: async (scope, id) => {
+      const prefix = `${scopeKey(scope)}::`;
+      return {
+        aiActions: [...this.aiActionData.entries()]
+          .filter(([k, a]) => k.startsWith(prefix) && a.projectId === id)
+          .map(([, a]) => a.id),
+        agentSchedules: [...this.agentScheduleData.entries()]
+          .filter(([k, s]) => k.startsWith(prefix) && s.schedule.projectId === id)
+          .map(([, s]) => s.schedule.id),
+      };
+    },
+  };
+
+  /** `space::env::asset::version` → extraction record. */
+  private readonly extractionData = new Map<string, AiReferenceExtraction>();
+  /** Every claim made, in order: a test proves a second call started nothing. */
+  readonly extractionClaims: string[] = [];
+
+  readonly aiReferenceExtractions: AiReferenceExtractionRepo = {
+    getMany: async (scope, keys) =>
+      keys.flatMap((k) => {
+        const r = this.extractionData.get(`${scopeKey(scope)}::${k.assetId}::${k.version}`);
+        return r ? [r] : [];
+      }),
+    claim: async (scope, record) => {
+      const key = `${scopeKey(scope)}::${record.assetId}::${record.fileVersion}`;
+      if (this.extractionData.has(key)) return false;
+      this.extractionData.set(key, record);
+      this.extractionClaims.push(key);
+      return true;
+    },
+    record: async (scope, record) => {
+      this.extractionData.set(
+        `${scopeKey(scope)}::${record.assetId}::${record.fileVersion}`,
+        record,
+      );
+    },
+    deleteForAsset: async (scope, assetId) => {
+      const prefix = `${scopeKey(scope)}::${assetId}::`;
+      for (const k of [...this.extractionData.keys()]) {
+        if (k.startsWith(prefix)) this.extractionData.delete(k);
+      }
+    },
+  };
+
   /** `space::id` → view: saved views are the space's, whatever environment asks. */
   private readonly savedViewData = new Map<string, SavedView>();
 
@@ -3601,6 +3695,7 @@ export class InMemoryContentStore implements ContentStore {
       this.menuData,
       this.blockCatalogData,
       this.blockConfigData,
+      this.aiProjectData,
     ] as JournaledMap<string, unknown>[];
   }
 
@@ -3646,6 +3741,7 @@ export class InMemoryContentStore implements ContentStore {
         invites: this.invites,
         members: this.members,
         aiSettings: this.aiSettings,
+        aiProjects: this.aiProjects,
       });
       for (const [m, journal] of journals) m.commit(journal);
       return result;

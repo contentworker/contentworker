@@ -33,6 +33,24 @@ export interface AiCallRecord extends AiProvenance {
    * heuristic answered, the request did (503, 429).
    */
   readonly failed?: string;
+  /** The AI project the call took, its version, and the reference characters it sent; never text. */
+  readonly projectId?: string;
+  readonly projectVersion?: number;
+  readonly excerptChars?: number;
+}
+
+/** A call record's project fields, read off a request's gateway metadata (`ProjectCall.request`). */
+export function projectFieldsOf(
+  metadata: Readonly<Record<string, string | number | boolean>> | undefined,
+): Pick<AiCallRecord, 'projectId' | 'projectVersion' | 'excerptChars'> {
+  if (!metadata || typeof metadata.projectId !== 'string') return {};
+  return {
+    projectId: metadata.projectId,
+    ...(typeof metadata.projectVersion === 'number'
+      ? { projectVersion: metadata.projectVersion }
+      : {}),
+    ...(typeof metadata.excerptChars === 'number' ? { excerptChars: metadata.excerptChars } : {}),
+  };
 }
 
 /** Heuristic answers that aren't a failure. */

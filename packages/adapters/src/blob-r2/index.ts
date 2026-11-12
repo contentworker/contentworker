@@ -1,5 +1,5 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import type { Scope } from '@contentworker/domain';
+import { decodeUtf8Range, type Scope } from '@contentworker/domain';
 import type {
   BlobStore,
   DownloadUrlOptions,
@@ -316,6 +316,18 @@ export function createR2BlobStore(bucket: R2BucketLike, opts: R2BlobOptions): Bl
         size: obj.size,
         ...(obj.httpMetadata?.contentType ? { contentType: obj.httpMetadata.contentType } : {}),
       };
+    },
+    async getRange(key, offset, length) {
+      const start = Math.max(0, offset);
+      // A zero-length range is no read R2 takes: the object's size is all there is to say.
+      if (length <= 0) {
+        const head = bucket.head ? await bucket.head(key) : null;
+        return head ? { text: '', start, end: start, size: head.size } : null;
+      }
+      const obj = await bucket.get(key, { range: { offset: start, length } });
+      if (!obj) return null;
+      const bytes = new Uint8Array(await new Response(obj.body as ReadableStream).arrayBuffer());
+      return { ...decodeUtf8Range(bytes, start), size: obj.size };
     },
     ...(bucket.createMultipartUpload && bucket.resumeMultipartUpload
       ? { multipart: r2Multipart(bucket, opts, base, ttl, now) }

@@ -19,6 +19,11 @@ export interface AgentSchedule {
   /** Apply agent output automatically; false routes proposals to review. */
   readonly autoApply: boolean;
   /**
+   * The AI project its runs take, in the same environment; absent: the environment's default at
+   * run time. One that no longer resolves refuses the run, never falls back.
+   */
+  readonly projectId?: string;
+  /**
    * Window cursor: the publish instant of the last processed entry (or the
    * run instant when the window completed). The next run processes entries
    * strictly after `(lastRunAt, cursorEntryId)` in publish order. Unset until

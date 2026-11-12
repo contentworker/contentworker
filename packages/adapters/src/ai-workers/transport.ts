@@ -7,7 +7,8 @@
 
 /** Options the adapter passes to `run`: the AI Gateway route, when configured. */
 export interface WorkersAiRunOptions {
-  gateway?: { id: string };
+  /** `metadata`: AI Gateway's custom metadata for the call's log entry (ids, never content). */
+  gateway?: { id: string; metadata?: Record<string, string | number | boolean> };
   extraHeaders?: Record<string, string>;
 }
 

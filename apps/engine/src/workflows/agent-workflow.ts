@@ -26,7 +26,12 @@ import { doAgentCostGuardFromEnv } from '@contentworker/platform/do/cost-guard';
 import { type EdgeEnv, withJurisdiction } from '@contentworker/platform/env';
 import { newId } from '@contentworker/platform/ids';
 import { makeMetrics } from '@contentworker/platform/metrics';
-import { aiContextFromEnv, makeAI, makeDecisions } from '@contentworker/platform/wire';
+import {
+  aiContextFromEnv,
+  makeAI,
+  makeAiReferences,
+  makeDecisions,
+} from '@contentworker/platform/wire';
 import {
   type AgentWfParams,
   REVIEW_DECISION_EVENT,
@@ -140,6 +145,8 @@ export class AgentWorkflow extends WorkflowEntrypoint<EdgeEnv, AgentWfParams> {
       costGuard,
       decisions,
       ai: aiContext,
+      // An AI project's published references, read at their pinned version.
+      aiReferences: makeAiReferences(withJurisdiction(this.env)),
     };
 
     try {

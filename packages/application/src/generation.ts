@@ -1,4 +1,5 @@
 import {
+  type AiProjectUse,
   type AssetRequestSite,
   assetRequestSites,
   blocksFieldSchema,
@@ -21,6 +22,7 @@ import type { AIProvider, ModelTier } from '@contentworker/ports';
 import { recordAgentRun } from './agent-audit';
 import { generateWithBudget } from './ai-budget';
 import { conforms } from './ai-json';
+import { type AiProjectCaller, projectDecisions, resolveAiProject } from './ai-projects';
 import {
   describeFieldForModel,
   nameForModel,
@@ -30,6 +32,7 @@ import {
 import { requireAiCapability } from './ai-settings';
 import type { AssetSearchDeps } from './asset-search';
 import { assertBlockConfigAllows } from './block-config';
+import { SYSTEM_CALLER } from './content-types';
 import type { AppContext } from './context';
 import { assertAssetMimeTypes } from './entries';
 import {
@@ -125,6 +128,8 @@ export interface DraftEntryInput {
   /** Natural-language instructions describing what to generate. */
   readonly prompt: string;
   readonly tier?: ModelTier;
+  /** The AI project to work in; `null` for none; absent for the environment's default. */
+  readonly projectId?: string | null;
 }
 
 export interface DraftOptions {
@@ -133,6 +138,11 @@ export interface DraftOptions {
    * image is asked for, and a block whose image is required is not offered.
    */
   readonly assets?: AssetSearchDeps;
+  /**
+   * Who asked: the project's references are read as they may read them. Absent: the system,
+   * which reads only published files.
+   */
+  readonly caller?: AiProjectCaller;
 }
 
 export interface DraftResult {
@@ -143,11 +153,15 @@ export interface DraftResult {
   /** Required images left unresolved (`image_required`): choose one before creating the entry. */
   readonly issues: readonly FieldIssue[];
   readonly usage: { inputTokens: number; outputTokens: number };
+  /** The AI project the draft took, and what of its references it used; null for none. */
+  readonly project: AiProjectUse | null;
 }
 
 /** What both drafting use-cases share: the system prompt and the prompt, and how it's logged. */
 interface DraftCall {
   readonly system: string;
+  /** The words a reference's passages are ranked by: the brief, or the prose. */
+  readonly terms: string;
   readonly prompt: (ct: ContentType) => string;
   readonly decision: (ct: ContentType) => string;
 }
@@ -164,7 +178,11 @@ async function draft(
   ctx: AppContext,
   ai: AIProvider,
   scope: Scope,
-  input: { readonly contentTypeApiId: string; readonly tier?: ModelTier },
+  input: {
+    readonly contentTypeApiId: string;
+    readonly tier?: ModelTier;
+    readonly projectId?: string | null;
+  },
   call: DraftCall,
   options: DraftOptions,
 ): Promise<DraftResult> {
@@ -174,20 +192,30 @@ async function draft(
   const config = await ctx.store.spaces.getConfig(scope);
   if (!config) throw new NotFoundError('Space', scope.spaceId);
   const layout = await loadLayoutRules(ctx, scope, ct);
+  const project = await resolveAiProject(ctx, scope, options.caller ?? SYSTEM_CALLER, {
+    capability: 'drafting',
+    ...(input.projectId !== undefined ? { projectId: input.projectId } : {}),
+    task: { terms: `${call.terms} ${ct.name} ${ct.fields.map((f) => f.name).join(' ')}` },
+  });
 
   const { schema, drafted, blocks } = schemaForContentType(ct, layout, options.assets);
   // A draft with a blocks field is a layout's answer: its room, and its time.
   const timeoutMs = blocks.size > 0 ? layoutTimeoutMs(ctx) : undefined;
+  const system = policy.system(project.system(call.system));
+  const tier = policy.tier('balanced', input.tier);
+  const maxTokens = blocks.size > 0 ? LAYOUT_MAX_TOKENS : DRAFT_MAX_TOKENS;
+  const placed = project.call({ system, prompt: call.prompt(ct), maxTokens, tier }, ai);
   const result = await generateWithBudget(
     ctx,
     ai,
     scope,
     {
-      system: policy.system(call.system),
-      prompt: call.prompt(ct),
-      tier: policy.tier('balanced', input.tier),
-      maxTokens: blocks.size > 0 ? LAYOUT_MAX_TOKENS : DRAFT_MAX_TOKENS,
+      system,
+      prompt: placed.prompt,
+      tier,
+      maxTokens,
       outputSchema: schema as unknown as Record<string, unknown>,
+      ...placed.request,
     },
     timeoutMs !== undefined ? { timeoutMs } : {},
   );
@@ -196,7 +224,10 @@ async function draft(
       workflow: 'generate',
       entryId: '',
       status: 'failed',
-      decisions: [`Refused a draft of ${nameForModel(ct.name)}: ${why}`],
+      decisions: [
+        `Refused a draft of ${nameForModel(ct.name)}: ${why}`,
+        ...projectDecisions(placed.use),
+      ],
       usage: result.usage,
     });
     throw err;
@@ -285,7 +316,7 @@ async function draft(
     workflow: 'generate',
     entryId: '',
     status: 'completed',
-    decisions: [call.decision(ct)],
+    decisions: [call.decision(ct), ...projectDecisions(placed.use)],
     usage: result.usage,
   });
 
@@ -295,6 +326,7 @@ async function draft(
     unresolvedImages: gaps.unresolved,
     issues: [...gaps.required].map((p) => imageRequiredIssue(p, config.defaultLocale)),
     usage: result.usage,
+    project: placed.use,
   };
 }
 
@@ -329,6 +361,7 @@ export async function draftEntry(
         `${BLOCKS_GUIDANCE} ` +
         // Field guidance in the schema descriptions is author text, delimited as data.
         UNTRUSTED_CONTENT_GUARD,
+      terms: input.prompt,
       prompt: (ct) =>
         `Content type: ${nameForModel(ct.name)} (${ct.apiId}).\nInstructions: ${input.prompt}\nProduce values for every field in the schema.`,
       decision: (ct) => `Drafted ${nameForModel(ct.name)} from a prompt`,
@@ -342,6 +375,8 @@ export interface CanvasInput {
   /** Free-form prose to map into the content type's structured fields. */
   readonly prose: string;
   readonly tier?: ModelTier;
+  /** The AI project to work in; `null` for none; absent for the environment's default. */
+  readonly projectId?: string | null;
 }
 
 /**
@@ -374,6 +409,7 @@ export async function canvasToEntry(
         "preserving the author's wording where it maps directly to a field. Infer concise " +
         'values for fields the prose implies but does not state outright. Return only values ' +
         `that satisfy the schema. ${BLOCKS_GUIDANCE} ${UNTRUSTED_CONTENT_GUARD}`,
+      terms: input.prose.slice(0, 2_000),
       prompt: (ct) =>
         `Content type: ${nameForModel(ct.name)} (${ct.apiId}).\nProse:\n${wrapUntrusted(input.prose)}\nProduce values for every field in the schema.`,
       decision: (ct) => `Mapped prose into ${nameForModel(ct.name)} via Canvas`,
