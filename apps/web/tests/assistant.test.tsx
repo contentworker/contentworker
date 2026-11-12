@@ -267,3 +267,17 @@ describe('what act accepts', () => {
     expect(result.current.a.acts[0]?.about).toHaveLength(200);
   });
 });
+
+describe('the conversation’s AI project', () => {
+  it('goes with each turn: an id, null for none, and nothing for the default', () => {
+    const { result } = renderHook(() => useAssistant(), { wrapper });
+    // The default: the context names none, and the agent takes the environment’s default.
+    expect(result.current.readContext()).not.toHaveProperty('projectId');
+    act(() => result.current.setProjectId('p-brand'));
+    expect(result.current.readContext().projectId).toBe('p-brand');
+    act(() => result.current.setProjectId(null));
+    expect(result.current.readContext().projectId).toBeNull();
+    act(() => result.current.setProjectId(undefined));
+    expect(result.current.readContext()).not.toHaveProperty('projectId');
+  });
+});

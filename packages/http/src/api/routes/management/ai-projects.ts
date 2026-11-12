@@ -7,6 +7,7 @@ import {
   getAiProject,
   listAiProjects,
   readAiProjectReference,
+  recordAiProjectOutcome,
   setDefaultAiProject,
   updateAiProject,
 } from '@contentworker/application';
@@ -18,6 +19,7 @@ import * as docs from '../../docs/schemas/ai-projects';
 import {
   aiProjectBody,
   aiProjectDefaultBody,
+  aiProjectOutcomeBody,
   aiProjectUpdateBody,
   parseBody,
 } from '../../validation';
@@ -222,6 +224,28 @@ export function aiProjectsRoutes(deps: AuthDeps): Hono<AuthVars> {
           },
         ),
       ),
+  );
+  app.post(
+    `${BASE}/ai-projects/:id/outcomes`,
+    doc('AI projects', 'Record what became of a proposal', {
+      body: aiProjectOutcomeBody,
+      status: 204,
+      description:
+        'The production signal for a project: a person kept a proposal a call made in it as ' +
+        'proposed, kept it edited (with how much, measured by the client), or discarded it. ' +
+        'Counted per project in the deployment’s metrics; no content is sent or stored. 404 for ' +
+        'a project that isn’t here.',
+    }),
+    requireScope(SCOPES.contentWrite),
+    async (c) => {
+      await recordAiProjectOutcome(
+        ctx,
+        scopeOf(c),
+        c.req.param('id'),
+        await parseBody(c, aiProjectOutcomeBody),
+      );
+      return c.body(null, 204);
+    },
   );
   return app;
 }

@@ -3,6 +3,13 @@ import type {
   AgentReviewStatus,
   AiCapability,
   AiCapabilitySetting,
+  AiEditSize,
+  AiPersona,
+  AiProject,
+  AiProjectCapability,
+  AiProjectUse,
+  AiProposalOutcome,
+  AiReferenceStatus,
   AiSettingsView,
   Asset,
   AssetCollection,
@@ -577,6 +584,67 @@ export interface GeneratedDraft {
     readonly message: string;
   }[];
   readonly usage: { readonly inputTokens: number; readonly outputTokens: number };
+  /** The AI project the call worked in and what of its references it used; null for none. */
+  readonly project?: AiProjectUse | null;
+}
+
+/**
+ * The AI project a call works in, as the API takes it: an id, `null` for none, absent (undefined)
+ * for the environment's default.
+ */
+export type ProjectChoice = string | null | undefined;
+
+/** `projectId` for a call's body: left out for the default. */
+export const projectBody = (projectId: ProjectChoice): { projectId?: string | null } =>
+  projectId === undefined ? {} : { projectId };
+
+/** An AI project as the list answers it: its references as pinned. */
+export type AiProjectSummary = AiProject;
+
+/** One project as a read answers it: each reference with its pinned file's text status. */
+export type AiProjectView = Omit<AiProject, 'references'> & {
+  readonly references: readonly AiReferenceStatus[];
+};
+
+/** What a create or an update sends: every editable part, whole. */
+export interface AiProjectInput {
+  readonly name: string;
+  readonly description: string | null;
+  readonly instructions: string | null;
+  readonly writer: AiPersona | null;
+  readonly reader: AiPersona | null;
+  readonly references: readonly { readonly assetId: string; readonly version?: number }[];
+}
+
+/** What blocks a delete: the AI actions and agent schedules that name the project (409). */
+export interface AiProjectInUse {
+  readonly aiActions: readonly string[];
+  readonly agentSchedules: readonly string[];
+}
+
+/** The 409 `project_in_use` a delete is refused with, or null for any other failure. */
+export function projectInUseOf(err: unknown): AiProjectInUse | null {
+  if (!(err instanceof ApiError) || err.status !== 409 || err.code !== 'project_in_use')
+    return null;
+  const body = (err.body as { error?: { aiActions?: unknown; agentSchedules?: unknown } }).error;
+  const ids = (v: unknown) => (Array.isArray(v) ? v.filter((x) => typeof x === 'string') : []);
+  return { aiActions: ids(body?.aiActions), agentSchedules: ids(body?.agentSchedules) };
+}
+
+/** An agent schedule, as far as the admin reads one: what it runs, when, and in which project. */
+export interface AgentScheduleSummary {
+  readonly id: string;
+  readonly workflow: string;
+  readonly cron: string;
+  readonly enabled: boolean;
+  readonly projectId?: string;
+}
+
+/** What became of a proposal made in a project, as the production signal reports it. */
+export interface AiOutcomeReport {
+  readonly capability: AiProjectCapability;
+  readonly outcome: AiProposalOutcome;
+  readonly edit?: AiEditSize;
 }
 
 export type ApiKeyKind = 'cma' | 'cda' | 'cpa';
@@ -1036,6 +1104,8 @@ export interface AIAction {
   readonly variables: readonly string[];
   readonly targetField?: string;
   readonly tier: ModelTier;
+  /** The AI project its runs take; absent: the environment's default at each run. */
+  readonly projectId?: string;
   readonly createdAt: string;
 }
 
@@ -2108,14 +2178,24 @@ export function createManagementClient(
     },
     /** AI-draft field values for a content type from a natural-language prompt. */
     generateEntry(
-      input: { contentTypeApiId: string; prompt: string; tier?: ModelTier },
+      input: {
+        contentTypeApiId: string;
+        prompt: string;
+        tier?: ModelTier;
+        projectId?: string | null;
+      },
       signal?: AbortSignal,
     ): Promise<GeneratedDraft> {
       return req('POST', `${mgmt}/entries/generate`, input, signal, MODEL_READ_LIMIT);
     },
     /** Map free-form prose into a content type's structured fields (Canvas authoring). */
     canvasEntry(
-      input: { contentTypeApiId: string; prose: string; tier?: ModelTier },
+      input: {
+        contentTypeApiId: string;
+        prose: string;
+        tier?: ModelTier;
+        projectId?: string | null;
+      },
       signal?: AbortSignal,
     ): Promise<GeneratedDraft> {
       return req('POST', `${mgmt}/entries/canvas`, input, signal, MODEL_READ_LIMIT);
@@ -2488,6 +2568,7 @@ export function createManagementClient(
       description?: string;
       targetField?: string;
       tier?: ModelTier;
+      projectId?: string | null;
     }): Promise<AIAction> {
       return req('POST', `${mgmt}/ai-actions`, input);
     },
@@ -2501,9 +2582,15 @@ export function createManagementClient(
         variables?: Record<string, string>;
         locale?: string;
         apply?: boolean;
+        projectId?: string | null;
       } = {},
       signal?: AbortSignal,
-    ): Promise<{ actionId: string; output: string; applied: boolean }> {
+    ): Promise<{
+      actionId: string;
+      output: string;
+      applied: boolean;
+      project?: AiProjectUse | null;
+    }> {
       return req(
         'POST',
         `${mgmt}/ai-actions/${encodeURIComponent(id)}/run`,
@@ -2793,8 +2880,18 @@ export function createManagementClient(
     /** Translates an entry's localized text fields; `apply` saves a draft. */
     translateEntry(
       id: string,
-      input: { targetLocale: string; sourceLocale?: string; apply?: boolean },
-    ): Promise<{ fields: EntryFields; translatedFields: string[]; applied: boolean }> {
+      input: {
+        targetLocale: string;
+        sourceLocale?: string;
+        apply?: boolean;
+        projectId?: string | null;
+      },
+    ): Promise<{
+      fields: EntryFields;
+      translatedFields: string[];
+      applied: boolean;
+      project?: AiProjectUse | null;
+    }> {
       return req(
         'POST',
         `${mgmt}/entries/${encodeURIComponent(id)}/translate`,
@@ -2806,8 +2903,14 @@ export function createManagementClient(
     /** Summarizes an entry; `apply` writes the summary into `targetField`. */
     summarizeEntry(
       id: string,
-      input: { locale?: string; maxWords?: number; targetField?: string; apply?: boolean } = {},
-    ): Promise<{ summary: string; applied: boolean }> {
+      input: {
+        locale?: string;
+        maxWords?: number;
+        targetField?: string;
+        apply?: boolean;
+        projectId?: string | null;
+      } = {},
+    ): Promise<{ summary: string; applied: boolean; project?: AiProjectUse | null }> {
       return req(
         'POST',
         `${mgmt}/entries/${encodeURIComponent(id)}/summarize`,
@@ -2819,8 +2922,14 @@ export function createManagementClient(
     /** Generates a value for one scalar field; `apply` saves it. */
     autofillField(
       id: string,
-      input: { field: string; locale?: string; instructions?: string; apply?: boolean },
-    ): Promise<{ field: string; value: unknown; applied: boolean }> {
+      input: {
+        field: string;
+        locale?: string;
+        instructions?: string;
+        apply?: boolean;
+        projectId?: string | null;
+      },
+    ): Promise<{ field: string; value: unknown; applied: boolean; project?: AiProjectUse | null }> {
       return req(
         'POST',
         `${mgmt}/entries/${encodeURIComponent(id)}/autofill`,
@@ -3555,6 +3664,56 @@ export function createManagementClient(
      * This environment's latest search reindex, or null (content:manage): turning search on or
      * off starts one in every environment.
      */
+    /** The environment's agent schedules: what an AI project's "used by" counts and names. */
+    async listAgentSchedules(): Promise<AgentScheduleSummary[]> {
+      return (await req<{ items: AgentScheduleSummary[] }>('GET', `${mgmt}/agent-schedules`)).items;
+    },
+    // --- AI projects (per environment) -----------------------------------------------------
+    async listAiProjects(): Promise<AiProjectSummary[]> {
+      return (await req<{ items: AiProjectSummary[] }>('GET', `${mgmt}/ai-projects`)).items;
+    },
+    getAiProject(id: string): Promise<AiProjectView> {
+      return req('GET', `${mgmt}/ai-projects/${encodeURIComponent(id)}`);
+    },
+    createAiProject(input: AiProjectInput): Promise<AiProjectView> {
+      return req('POST', `${mgmt}/ai-projects`, input);
+    },
+    /** Every editable part, whole, at the version read: 409 with `details.version` when stale. */
+    updateAiProject(
+      id: string,
+      input: AiProjectInput & { readonly expectedVersion: number },
+    ): Promise<{ project: AiProjectView; unchanged: boolean }> {
+      return req('PUT', `${mgmt}/ai-projects/${encodeURIComponent(id)}`, input);
+    },
+    /** 409 `project_in_use` (`projectInUseOf`) while an AI action or a schedule names it. */
+    deleteAiProject(id: string, version?: number): Promise<void> {
+      const qs = version === undefined ? '' : `?version=${version}`;
+      return req('DELETE', `${mgmt}/ai-projects/${encodeURIComponent(id)}${qs}`);
+    },
+    /** Sets the default, or clears it with null (space:admin). */
+    setDefaultAiProject(
+      projectId: string | null,
+      expectedVersion?: number,
+    ): Promise<{ projectId: string | null; unchanged: boolean }> {
+      return req('PUT', `${mgmt}/ai-projects/default`, {
+        projectId,
+        ...(expectedVersion === undefined ? {} : { expectedVersion }),
+      });
+    },
+    /** Reads a reference's text again after `media_off`, `budget` or `failed`. */
+    extractAiProjectReference(
+      id: string,
+      assetId: string,
+    ): Promise<{ assetId: string; version: number; outcome: string; status: AiReferenceStatus }> {
+      return req(
+        'POST',
+        `${mgmt}/ai-projects/${encodeURIComponent(id)}/references/${encodeURIComponent(assetId)}/extract`,
+      );
+    },
+    /** The production signal: what became of a proposal made in the project. No content. */
+    recordAiProjectOutcome(id: string, report: AiOutcomeReport): Promise<void> {
+      return req('POST', `${mgmt}/ai-projects/${encodeURIComponent(id)}/outcomes`, report);
+    },
     async getSearchReindexJob(): Promise<BulkJobSummary | null> {
       return (await req<{ job: BulkJobSummary | null }>('GET', `${mgmt}/search/reindex-job`)).job;
     },

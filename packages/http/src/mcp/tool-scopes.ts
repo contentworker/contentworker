@@ -26,6 +26,7 @@ export const TOOL_SCOPES: Readonly<Record<string, readonly PermissionScope[]>> =
   ai_project_default_set: [SCOPES.spaceAdmin],
   ai_project_delete: [SCOPES.contentManage],
   ai_project_get: [SCOPES.contentWrite],
+  ai_project_outcome_record: [SCOPES.contentWrite],
   ai_project_reference_extract: [SCOPES.contentWrite],
   ai_project_reference_read: [SCOPES.contentWrite],
   ai_project_update: [SCOPES.contentManage],

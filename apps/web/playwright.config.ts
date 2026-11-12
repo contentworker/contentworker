@@ -56,7 +56,7 @@ const DEVICES_IN_PART = DEVICES.filter((project) => !PART || partOf(project).inc
 const CMS_SPECS =
   PART === 'axe'
     ? AXE
-    : /(cms|workflows|space-access|first-space|block-patch-card|accessibility|contrast-settle|modal-focus|live-preview|canvas-editor|canvas-drag|locked-regions|entry-save-conflict|role-save-conflict|block-config-code|ai-settings)\.spec\.ts/;
+    : /(cms|workflows|space-access|first-space|block-patch-card|accessibility|contrast-settle|modal-focus|live-preview|canvas-editor|canvas-drag|locked-regions|entry-save-conflict|role-save-conflict|block-config-code|ai-settings|ai-projects)\.spec\.ts/;
 const COWORKER = /@coworker/;
 
 export default defineConfig({

@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest';
 import {
   AI_PROJECT_MAX_REFERENCES,
   type AiProject,
+  aiEditSize,
   aiProjectNameKey,
   aiProjectPartsFor,
   checkAiProjectInput,
+  checkAiProposalOutcome,
   decodeUtf8Range,
   diffAiProjects,
   takesAiProject,
@@ -170,5 +172,30 @@ describe('a ranged read of UTF-8 text', () => {
       at = page.end > at ? page.end : at + 4;
     }
     expect(text).toBe('aé日𝄞z');
+  });
+});
+
+describe('proposal outcomes', () => {
+  it('buckets an edit by the share of the proposal it changed', () => {
+    expect(aiEditSize(5, 100)).toBe('small');
+    expect(aiEditSize(10, 100)).toBe('medium');
+    expect(aiEditSize(40, 100)).toBe('large');
+    expect(aiEditSize(0, 0)).toBe('small');
+    expect(aiEditSize(3, 0)).toBe('large');
+  });
+
+  it('takes an edit size for edited alone, on a capability that takes projects', () => {
+    expect(checkAiProposalOutcome({ capability: 'drafting', outcome: 'accepted' })).toEqual({
+      capability: 'drafting',
+      outcome: 'accepted',
+    });
+    expect(
+      issuesOf(() => checkAiProposalOutcome({ capability: 'drafting', outcome: 'edited' })),
+    ).toEqual(['edit']);
+    expect(
+      issuesOf(() =>
+        checkAiProposalOutcome({ capability: 'media', outcome: 'kept', edit: 'small' }),
+      ),
+    ).toEqual(['capability', 'outcome', 'edit']);
   });
 });

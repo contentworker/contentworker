@@ -374,8 +374,18 @@ conversation whose project is gone answers so.
 with `expectedVersion`, `DELETE`), `PUT …/ai-projects/default`, `POST
 …/ai-projects/:id/references/:assetId/extract` and `GET …/references/:assetId/text`; MCP
 `ai_projects_list`, `ai_project_get`, `ai_project_create`, `ai_project_update`,
-`ai_project_delete`, `ai_project_default_set`, `ai_project_reference_extract` and
-`ai_project_reference_read`; the management SDK's `aiProjects`. Audit rows name the parts and pins
+`ai_project_delete`, `ai_project_default_set`, `ai_project_reference_extract`,
+`ai_project_reference_read` and `ai_project_outcome_record`; the management SDK's `aiProjects`.
+**The production signal** (the spec's Evaluation): `POST …/ai-projects/:id/outcomes` (and the MCP
+tool) takes `{ capability, outcome, edit? }`, what became of a proposal made in the project
+(`accepted` as proposed, `edited` with a `small`, `medium` or `large` edit measured by the client,
+or `discarded`), checks the project is in the scope and counts
+`contentworker_ai_project_outcomes_total` by space, environment, project, capability, outcome and
+edit size. Nothing is written to D1 beyond the request's audit row, and no content is sent. The
+admin reports a drafted or assisted value when the entry is saved (as proposed, or edited by how
+much), Discard and Dismiss as `discarded`, and Coworker's composed blocks on Confirm or Not now.
+Coworker keeps a project-taking call's `project` (ids and outcomes, never ranges) in the
+conversation, so its block card names the project after the turn too. Audit rows name the parts and pins
 a write changed, never the text. Snapshots and clones carry projects with their ids and pins
 (none comes in as the default: an administrator sets that in the target); promotions don't. A pin to
 an older file version arrives without its text (extracted text belongs to the source environment's

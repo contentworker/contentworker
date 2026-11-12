@@ -204,8 +204,49 @@ environment's **default** project, if one is set.
 
 Over the API, `…/environments/{environment}/ai-projects`; over MCP, `ai_projects_list`,
 `ai_project_get`, `ai_project_create`, `ai_project_update`, `ai_project_delete`,
-`ai_project_default_set`, `ai_project_reference_extract` and `ai_project_reference_read`; in the
-management SDK, `aiProjects`. Each change is in the audit log, naming what changed, never the text.
+`ai_project_default_set`, `ai_project_reference_extract`, `ai_project_reference_read` and
+`ai_project_outcome_record`; in the management SDK, `aiProjects`. Each change is in the audit log,
+naming what changed, never the text.
+
+### In the admin
+
+- **Settings → AI projects** (under Automation, beside AI and AI actions) lists the environment's
+  projects, the default first and marked **Default**, each with its description, how many
+  references it has, which AI actions and agent schedules use it, and who changed it last. **New
+  project** and a project's name open its editor, a sheet with the name, description (shown in
+  the pickers, never sent to a model), instructions with a count ("120 of 4,000 characters"), the
+  writer and the reader (a name and a description each; leave both blank for none) and the
+  references.
+- **References** are picked from the asset library's documents and recordings, most important
+  first; each can move up or down or be removed. Each shows its pinned file version and its text
+  as the API reports it: **Ready** with the size of its text, **Being read**, or **No text** and
+  why (too large, a kind of file whose text can't be read, Media was off, the AI budget was spent,
+  reading failed, or nothing has asked for it yet: "This file will be read by a model the first
+  time the project is used"). **Retry**, offered where the API says it would be taken (no text for a
+  reason a rerun can change, at the current file, with Media on), reads it again. **Update available** says the asset has a newer file; **Use the
+  new file** moves the pin when you save.
+- **Set as default** and **Clear default** are offered to space administrators only, and confirm
+  first. Anyone else opens the default project read-only, and the sheet says why.
+- **Deleting** a project an AI action or an agent schedule still names is refused, and the row
+  lists them so you can point them elsewhere first.
+- Saves are held to the version you opened, as in Settings → AI: if someone saved in the meantime
+  yours is refused, the sheet keeps your edits, and offers **Copy my version as JSON** and **Load
+  the latest**.
+- **A Project select** ("Default (Brand voice)" first, then the others, then None) sits in Generate
+  with AI and Draft from prose, the AI assist panel (writing help and translation), an AI action's
+  form (stored on the action: "The default at each run", or a project by name) and its run dialog,
+  and Coworker's header (for the conversation; a new conversation starts on the default). It isn't
+  shown when the environment has no projects, or where the work it picks for is off in Settings →
+  AI. Compose on the canvas asks Coworker, so it works in the conversation's project.
+- **What was used.** A draft under review, an AI assist proposal, an AI action's result and the
+  card for blocks Coworker composed carry one quiet line: "Used project: Brand voice · 2
+  references (1 left out: you can't read it)". It opens to each reference, used and how much of it,
+  or left out and why. A file you can't open is named by its place in the project only.
+- **How proposals fare.** When you keep a proposal made in a project (by saving the entry it filled,
+  or confirming Coworker's blocks), discard it, or edit it before saving, the admin counts which,
+  per project, with how much you changed as small, medium or large. Nothing of the content is sent.
+  These counts are how a project's effect is judged in real use; over the API, `POST
+  …/ai-projects/{id}/outcomes` (`content:write`).
 
 ## Model tiers
 

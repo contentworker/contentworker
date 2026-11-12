@@ -20,6 +20,7 @@ import {
   authorize,
   ConflictError,
   checkAiProjectInput,
+  checkAiProposalOutcome,
   diffAiProjects,
   type FieldIssue,
   ForbiddenError,
@@ -133,9 +134,32 @@ export async function getAiProject(
   id: string,
 ): Promise<AiProjectView> {
   const project = await requireProject(ctx, scope, id);
-  const states = await referenceStates(ctx, scope, project.references);
-  return { ...project, references: states.map((s) => s.status) };
+  const [states, media] = await Promise.all([
+    referenceStates(ctx, scope, project.references),
+    project.references.length ? aiCapability(ctx, scope, 'media') : null,
+  ]);
+  return {
+    ...project,
+    references: states.map((s) => ({
+      ...s.status,
+      ...(s.status.text === 'ready' && s.textBytes !== undefined ? { textBytes: s.textBytes } : {}),
+      ...(retryable(s.status, media?.enabled === true) ? { retryable: true as const } : {}),
+    })),
+  };
 }
+
+/**
+ * Whether a Retry (`extractAiProjectReference`) would be taken for a reference as it stands: no
+ * text for a reason a rerun can change, at the file it is pinned to, with media AI on. Reported on
+ * the read so a screen offers Retry from the API's answer, never its own copy of the rule.
+ */
+const retryable = (status: AiReferenceStatus, mediaOn: boolean): boolean =>
+  mediaOn &&
+  status.text === 'none' &&
+  !status.gone &&
+  !status.updateAvailable &&
+  status.reason !== undefined &&
+  RETRYABLE.includes(status.reason);
 
 /** A reference with what its status was derived from. */
 interface ReferenceState {
@@ -680,6 +704,36 @@ export async function extractAiProjectReference(
 }
 
 // ---- the read tool -------------------------------------------------------------------------------
+
+// ---- the production signal -----------------------------------------------------------------------
+
+/** The counter the production signal goes to: one per outcome, labelled, never with content. */
+export const AI_PROJECT_OUTCOME_METRIC = 'contentworker_ai_project_outcomes_total';
+
+/**
+ * Records what a person did with a proposal made in a project (the spec's Evaluation: accepted as
+ * proposed, edited, by a size bucket, or discarded), as a count per project, capability and
+ * outcome. Nothing about the content is sent or kept: the client measures an edit and reports only
+ * its bucket. The project must be one here (404), so a count names a real project; nothing is
+ * written to the store, the count goes to the deployment's metrics.
+ */
+export async function recordAiProjectOutcome(
+  ctx: AppContext,
+  scope: Scope,
+  id: string,
+  input: unknown,
+): Promise<void> {
+  const report = checkAiProposalOutcome(input);
+  const project = await requireProject(ctx, scope, id);
+  ctx.metrics?.count(AI_PROJECT_OUTCOME_METRIC, 1, {
+    spaceId: scope.spaceId,
+    environmentId: scope.environmentId,
+    projectId: project.id,
+    capability: report.capability,
+    outcome: report.outcome,
+    edit: report.edit ?? 'none',
+  });
+}
 
 /** A page's default length, in characters. */
 export const AI_PROJECT_READ_DEFAULT_CHARS = 6_000;

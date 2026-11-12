@@ -946,6 +946,33 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   capability that is off hides what it powers (Generate with AI and Draft from prose on an entry,
   Draft with AI and Change with AI on workflows; Coworker's composer and suggestions become a note
   naming Settings → AI), never while the settings load or fail to: the API's 409 is what refuses.
+  **AI projects** (Automation, `cms/components/AiProjects.tsx`) is one flush section with **New
+  project** in its header (content:manage only), a catalog of the environment's projects, the
+  default first: the name's initial as the tile, the name (a button opening its sheet, named "Edit
+  ‹name›", or "View ‹name›" where the person can't change it) with an outline **Default** badge, the
+  description, then a muted line of the reference count, "Used by 2 AI actions and 1 agent
+  schedule" and "Updated by ‹who› ‹when›". Ghost **Set as default** / **Clear default**
+  (space:admin only, each asking in place in ink) and **Delete** (asking in place, red) sit at the
+  row's end. A delete refused as `project_in_use` puts a warning Alert under the row, focused,
+  listing each AI action and agent schedule that names it, with Open AI actions and Dismiss.
+  Without content:manage a muted line says the section reads only. **The editor** is a sheet (the
+  side; the bottom on a phone): Name; Description, with a muted line saying it is shown in the
+  pickers and never sent to a model; Instructions with "120 of 4,000 characters" tied by
+  `aria-describedby` (over marks it invalid, said once, and holds Save); Writer and Reader as
+  fieldsets of a name and a description each. **References** are a ruled, numbered list: a file or
+  audio icon, the asset's title, its pin ("File version 2", or "Moves to file version 3 when you
+  save"), ↑ ↓ and ✕ icon buttons named for the file, and under it the API's text status as a stamp:
+  `ok` Ready with the text's size, `run` Being read, `wait` No text with the reason in words (`idle`
+  for not read yet: "This file will be read by a model the first time the project is used"), `bad`
+  Gone; an outline xs **Retry** only where the read says `retryable` (the API's rule, never the
+  screen's), and a `wait` Update available with **Use the new file** (offered once the asset is
+  read, so the pin only ever moves forward). The library has no link to one asset yet, so a
+  reference names its file without one. Under the list, an "Add a reference" combobox over documents and recordings and a
+  muted line saying a file without text is read by a model on first use (", but Media is off in
+  Settings → AI" when it is). The default project, for someone without space:admin, opens with
+  every field disabled under a warning Alert saying why. Stale saves are the content type dialog's:
+  a warning Alert naming their version with Copy my version as JSON and Load the latest, which
+  takes focus; edits stay and Save holds. Leaving with edits asks in place of the buttons.
   **Trash** (Workspace) is one section: a segmented Keep until deleted / Delete after a while
   (off by default), and when on a "Days in the trash" field (1 to 3650; an out-of-range value is
   said under it, tied to it by `aria-describedby`), with a muted line saying what happens (an
@@ -1016,6 +1043,19 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   live or As a draft, and `ok` Live only once a completed apply published it. They show a few at a
   time with Show all, which hands focus to the first row it brought. Last come what it did and its
   history (requested, decided, ended, each by whom and when).
+- **The project picker** (`cms/components/ai/ProjectPicker.tsx`): a Select labelled "Project",
+  "Default (Brand voice)" first, then the others by name, then None (None first when there is no
+  default); each option's description muted beside it. On an AI action, stored: "The default at
+  each run" first, then every project. In a dialog's form above Model (full width on a phone,
+  18rem from `sm`); compact (the
+  label muted, xs, beside the select) in the AI assist panel and Coworker's header. It isn't drawn
+  when there are no projects, the person can't list them, or every capability it serves is off.
+- **What a project-backed result used** (`cms/components/ai/ProjectUsed.tsx`): one quiet `Task`
+  disclosure under the result's own provenance, "Used project: Brand voice · 2 references (1 left
+  out: you can't read it)", opening to a line per reference by its place ("Reference 2: left out,
+  you can't read it"), never a title. In Generate's review, an AI assist proposal, an AI action's
+  output and Coworker's block card; Draft from prose fills the form at once, so its toast carries
+  the line.
 - **Workflows list:** a catalog, flush in one section under its search: each
   workflow's trigger as its tile, its name linked to its editor with its description and steps under it; what starts its
   published version (from the API's `publishedTrigger`, with "Draft starts on …" when the draft

@@ -245,4 +245,42 @@ describe('AI projects over HTTP', () => {
     ]);
     expect(JSON.stringify(rows)).not.toContain('Secret wording');
   });
+
+  it('says a ready reference’s text size on a read', async () => {
+    const { send, doc } = await makeApp();
+    const a = await doc('spec.pdf', 'The mixer weighs 40 kg.');
+    const { id } = (await (
+      await send('POST', `${M}/ai-projects`, { name: 'Sized', references: [{ assetId: a.id }] })
+    ).json()) as { id: string };
+    const got = (await (await send('GET', `${M}/ai-projects/${id}`)).json()) as {
+      references: { text: string; textBytes?: number }[];
+    };
+    expect(got.references[0]).toMatchObject({ text: 'ready', textBytes: 23 });
+  });
+
+  it('records what became of a proposal with content:write, and refuses a bad report', async () => {
+    const { send, keyWith } = await makeApp();
+    const { id } = (await (await send('POST', `${M}/ai-projects`, { name: 'Signal' })).json()) as {
+      id: string;
+    };
+    const writer = await keyWith(['content:write']);
+    const outcome = (body: unknown, headers = writer, project = id) =>
+      send('POST', `${M}/ai-projects/${project}/outcomes`, body, headers);
+    expect((await outcome({ capability: 'drafting', outcome: 'accepted' })).status).toBe(204);
+    expect((await outcome({ capability: 'layout', outcome: 'edited', edit: 'small' })).status).toBe(
+      204,
+    );
+    // An edit says how much; nothing else does; a capability that takes no project is refused.
+    expect((await outcome({ capability: 'drafting', outcome: 'edited' })).status).toBe(422);
+    expect(
+      (await outcome({ capability: 'drafting', outcome: 'discarded', edit: 'large' })).status,
+    ).toBe(422);
+    expect((await outcome({ capability: 'media', outcome: 'accepted' })).status).toBe(422);
+    expect(
+      (await outcome({ capability: 'drafting', outcome: 'accepted' }, writer, 'missing')).status,
+    ).toBe(404);
+    expect(
+      (await outcome({ capability: 'drafting', outcome: 'accepted' }, json('cpa'))).status,
+    ).toBe(403);
+  });
 });

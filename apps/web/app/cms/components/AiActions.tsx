@@ -1,3 +1,4 @@
+import type { AiProjectUse } from '@contentworker/domain';
 import { Badge } from '@contentworker/ui/badge';
 import { Button } from '@contentworker/ui/button';
 import { Card, CardContent, CardHeader } from '@contentworker/ui/card';
@@ -20,8 +21,22 @@ import {
 } from '@contentworker/ui/select';
 import { Textarea } from '@contentworker/ui/textarea';
 import { useCallback, useEffect, useState } from 'react';
+import { ProjectPicker } from '~/cms/components/ai/ProjectPicker';
+import { ProjectUsed } from '~/cms/components/ai/ProjectUsed';
 import { ConfirmButton } from '~/cms/components/InlineConfirm';
-import type { AIAction, ManagementClient, ModelTier } from '../lib/management';
+import {
+  choiceOf,
+  type PickerValue,
+  pickerValueOf,
+  useAiProjects,
+  usePickerShown,
+} from '../lib/ai-projects';
+import {
+  type AIAction,
+  type ManagementClient,
+  type ModelTier,
+  projectBody,
+} from '../lib/management';
 import { useToast } from '../lib/toast';
 import { useStoppable } from '../lib/use-stoppable';
 
@@ -36,8 +51,18 @@ export function AiActions(props: { client: ManagementClient }) {
   const [template, setTemplate] = useState('');
   const [targetField, setTargetField] = useState('');
   const [tier, setTier] = useState<ModelTier>('balanced');
+  // Stored on the action: 'default' is the environment's default at each run.
+  const [project, setProject] = useState<PickerValue>('default');
   const [busy, setBusy] = useState(false);
-  const [output, setOutput] = useState<{ id: string; text: string } | null>(null);
+  const [output, setOutput] = useState<{
+    id: string;
+    text: string;
+    project?: AiProjectUse | null;
+  } | null>(null);
+  const projectList = useAiProjects();
+  const projects = projectList.data ?? [];
+  const pickable = usePickerShown('field-assist').shown;
+  const projectName = (id: string | undefined) => projects.find((p) => p.id === id)?.name;
 
   const load = useCallback(async () => {
     try {
@@ -60,8 +85,10 @@ export function AiActions(props: { client: ManagementClient }) {
         promptTemplate: template,
         targetField: targetField.trim() || undefined,
         tier,
+        ...(project === 'default' ? {} : { projectId: project }),
       });
       setName('');
+      setProject('default');
       setTemplate('');
       setTargetField('');
       await load();
@@ -80,17 +107,29 @@ export function AiActions(props: { client: ManagementClient }) {
   const [runFor, setRunFor] = useState<{
     action: AIAction;
     values: Record<string, string>;
+    /** This run's project: the action's own unless changed here. */
+    project: PickerValue;
   } | null>(null);
   const [running, setRunning] = useState(false);
   const runRequest = useStoppable();
 
-  const execute = async (action: AIAction, variables: Record<string, string>) => {
+  const execute = async (
+    action: AIAction,
+    variables: Record<string, string>,
+    runProject: PickerValue = pickerValueOf(action.projectId),
+  ) => {
     const signal = runRequest.start();
     setRunning(true);
     try {
-      const r = await client.runAIAction(action.id, { variables }, signal);
+      // The action's own project goes unsaid: the API takes it, or the default, at the run.
+      const own = runProject === pickerValueOf(action.projectId);
+      const r = await client.runAIAction(
+        action.id,
+        { variables, ...(own ? {} : projectBody(choiceOf(runProject))) },
+        signal,
+      );
       if (signal.aborted) return;
-      setOutput({ id: action.id, text: r.output });
+      setOutput({ id: action.id, text: r.output, project: r.project });
       setRunFor(null);
     } catch (e) {
       if (signal.aborted) return;
@@ -109,11 +148,16 @@ export function AiActions(props: { client: ManagementClient }) {
 
   const run = (action: AIAction) => {
     const vars = promptable(action);
-    if (vars.length === 0) {
+    // With projects to choose from, the run dialog says which one it works in.
+    if (vars.length === 0 && !pickable) {
       void execute(action, {});
       return;
     }
-    setRunFor({ action, values: Object.fromEntries(vars.map((v) => [v, ''])) });
+    setRunFor({
+      action,
+      values: Object.fromEntries(vars.map((v) => [v, ''])),
+      project: pickerValueOf(action.projectId),
+    });
   };
 
   const remove = async (id: string) => {
@@ -175,6 +219,12 @@ export function AiActions(props: { client: ManagementClient }) {
                 </Select>
               </div>
             </div>
+            <ProjectPicker
+              value={project}
+              onChange={setProject}
+              capabilities={['field-assist']}
+              stored
+            />
             <div className="space-y-1.5">
               <Label htmlFor="action-template">Prompt template</Label>
               <Textarea
@@ -205,6 +255,16 @@ export function AiActions(props: { client: ManagementClient }) {
                       <span className="font-medium">{a.name}</span>
                       <Badge variant="outline">{a.tier}</Badge>
                       {a.targetField && <Badge variant="secondary">→ {a.targetField}</Badge>}
+                      {a.projectId ? (
+                        <Badge variant="outline">
+                          {projectName(a.projectId)
+                            ? `Project: ${projectName(a.projectId)}`
+                            : // "Gone" only once the list has been read and lacks it.
+                              projectList.isSuccess
+                              ? 'Project: one that is gone'
+                              : 'Project set'}
+                        </Badge>
+                      ) : null}
                     </div>
                     <p className="mt-1 font-mono text-muted-foreground text-xs">
                       {a.promptTemplate}
@@ -245,9 +305,12 @@ export function AiActions(props: { client: ManagementClient }) {
                   </div>
                 </div>
                 {output?.id === a.id && (
-                  <pre className="whitespace-pre-wrap rounded-md bg-muted p-2 text-xs">
-                    {output.text}
-                  </pre>
+                  <>
+                    <pre className="whitespace-pre-wrap rounded-md bg-muted p-2 text-xs">
+                      {output.text}
+                    </pre>
+                    <ProjectUsed use={output.project} />
+                  </>
                 )}
               </CardContent>
             </Card>
@@ -262,15 +325,18 @@ export function AiActions(props: { client: ManagementClient }) {
               <DialogHeader>
                 <DialogTitle>Run “{runFor.action.name}”</DialogTitle>
                 <DialogDescription>
-                  This action's template needs {Object.keys(runFor.values).length}{' '}
-                  {Object.keys(runFor.values).length === 1 ? 'value' : 'values'} before it runs.
+                  {Object.keys(runFor.values).length === 0
+                    ? 'Choose the AI project this run works in.'
+                    : `This action's template needs ${Object.keys(runFor.values).length} ${
+                        Object.keys(runFor.values).length === 1 ? 'value' : 'values'
+                      } before it runs.`}
                 </DialogDescription>
               </DialogHeader>
               <form
                 className="space-y-3"
                 onSubmit={(e) => {
                   e.preventDefault();
-                  void execute(runFor.action, runFor.values);
+                  void execute(runFor.action, runFor.values, runFor.project);
                 }}
               >
                 {Object.keys(runFor.values).map((v) => (
@@ -287,6 +353,11 @@ export function AiActions(props: { client: ManagementClient }) {
                     />
                   </div>
                 ))}
+                <ProjectPicker
+                  value={runFor.project}
+                  onChange={(v) => setRunFor((s) => (s ? { ...s, project: v } : s))}
+                  capabilities={['field-assist']}
+                />
                 <DialogFooter>
                   <Button type="button" variant="outline" onClick={closeRun}>
                     Cancel

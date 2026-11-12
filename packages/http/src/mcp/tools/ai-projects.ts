@@ -7,13 +7,19 @@ import {
   getAiProject,
   listAiProjects,
   readAiProjectReference,
+  recordAiProjectOutcome,
   setDefaultAiProject,
   updateAiProject,
 } from '@contentworker/application';
 import { AI_PROJECT_MAX_REFERENCES, SCOPES } from '@contentworker/domain';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import { aiProjectBody, aiProjectDefaultBody, aiProjectUpdateBody } from '../../api/validation';
+import {
+  aiProjectBody,
+  aiProjectDefaultBody,
+  aiProjectOutcomeBody,
+  aiProjectUpdateBody,
+} from '../../api/validation';
 import { ok, READ_ONLY, scopeArgs, scopeOf, type ToolContext, toolSchema } from './shared';
 
 /**
@@ -196,6 +202,25 @@ export function registerAiProjectTools(server: McpServer, t: ToolContext): void 
           ...(args.limit !== undefined ? { limit: args.limit } : {}),
         }),
       );
+    },
+  );
+
+  server.registerTool(
+    'ai_project_outcome_record',
+    {
+      description:
+        'Record what became of a proposal an AI call made in a project: the person kept it as ' +
+        'proposed (accepted), kept it after changing it (edited, with edit small, medium or ' +
+        'large by how much of it changed), or discarded it. A count per project; send no content.',
+      inputSchema: toolSchema('ai_project_outcome_record', () =>
+        aiProjectOutcomeBody.extend({ id: z.string().describe('The project'), ...scopeArgs }),
+      ),
+    },
+    async (args) => {
+      guard(SCOPES.contentWrite, scopeOf(args));
+      const { space: _s, environment: _e, id, ...input } = args;
+      await recordAiProjectOutcome(ctx, scopeOf(args), id, input);
+      return ok({ recorded: true });
     },
   );
 }

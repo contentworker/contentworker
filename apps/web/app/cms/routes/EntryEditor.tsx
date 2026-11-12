@@ -1,4 +1,6 @@
 import {
+  type AiProjectCapability,
+  type AiProjectUse,
   type BlockConfigIssue,
   blockVariants,
   type EntryFields,
@@ -57,6 +59,7 @@ import { EntryAuthorship } from '../components/entries/EntryAuthorship';
 import { PublishConfirm } from '../components/entries/PublishConfirm';
 import { SaveConflictDialog } from '../components/entries/SaveConflictDialog';
 import { GenerateEntryDialog } from '../components/GenerateEntryDialog';
+import { outcomeOf, provenanceLine, useAiProjects, useProjectOutcome } from '../lib/ai-projects';
 import { useAiCapability } from '../lib/ai-settings';
 import {
   orDirect,
@@ -75,7 +78,13 @@ import { dateTime, toMs } from '../lib/format';
 import { capabilitiesFor, SELECT_ONLY } from '../lib/live-preview/host';
 import { liveFields } from '../lib/live-preview/ops';
 import { focusForRef, refForField } from '../lib/live-preview/pick';
-import type { EntryAggregate, EntryView, ModelTier } from '../lib/management';
+import {
+  type EntryAggregate,
+  type EntryView,
+  type ModelTier,
+  type ProjectChoice,
+  projectBody,
+} from '../lib/management';
 import { useEntryPickers } from '../lib/pickers';
 import { useAppExtensionsQuery, useEntryQuery, useQueryKeys, useScopedQuery } from '../lib/queries';
 import { staleSave } from '../lib/stale-save';
@@ -251,13 +260,35 @@ export function EntryEditor() {
    * person may change (the form would keep the others at their stored values anyway). Returns how
    * many fields it merged; none merges nothing, so the editor isn't left with nothing to save.
    */
-  const applyPatch = (fields: EntryFields): number => {
+  // Proposals made in an AI project and merged into the form, waiting for the save that keeps
+  // them: then each is reported kept as proposed or edited (by how much), never its content.
+  const recordOutcome = useProjectOutcome();
+  const projectNames = useAiProjects();
+  const madeInProject = useRef<
+    { use: AiProjectUse; capability: AiProjectCapability; fields: EntryFields }[]
+  >([]);
+  const applyPatch = (
+    fields: EntryFields,
+    from?: { use: AiProjectUse | null | undefined; capability: AiProjectCapability },
+  ): number => {
     const kept = writableFields(fields, fieldAccess);
     const count = Object.keys(kept).length;
     if (count > 0) {
       setPatchState((s) => ({ ...s, patch: { seq: (s.patch?.seq ?? 0) + 1, fields: kept } }));
+      if (from?.use) {
+        madeInProject.current.push({ use: from.use, capability: from.capability, fields: kept });
+      }
     }
     return count;
+  };
+  /** The save kept what was merged: each proposal as it stands in `saved`. */
+  const reportKept = (saved: EntryFields) => {
+    const pending = madeInProject.current;
+    madeInProject.current = [];
+    for (const p of pending) {
+      const { outcome, edit } = outcomeOf(p.fields, saved);
+      recordOutcome(p.use, p.capability, outcome, edit);
+    }
   };
   const isAdmin = accessQuery.data?.scopes.includes(SPACE_ADMIN) === true;
   const teamQuery = useScopedQuery(['team'], () => client.getTeam(), {
@@ -434,6 +465,7 @@ export function EntryEditor() {
         // A save runs at once; it is never a card to decline.
         if (!('output' in r)) return;
         const view = r.output;
+        reportKept(fields);
         setLastAggregate(view.entry);
         setBaseVersion(view.entry.currentVersion);
         // Edit mode: only clear dirty if nothing was typed while the request was
@@ -1178,8 +1210,9 @@ export function EntryEditor() {
         onOpenChange={setGenOpen}
         contentType={fillableType ?? selectedType}
         onGenerate={generate}
-        onApply={(fields) => {
-          if (applyPatch(fields) === 0) {
+        onDiscard={(draft) => recordOutcome(draft.project, 'drafting', 'discarded')}
+        onApply={(fields, draft) => {
+          if (applyPatch(fields, { use: draft.project, capability: 'drafting' }) === 0) {
             toast.error('The draft holds only fields your role can’t change: nothing applied');
             return;
           }
@@ -1198,25 +1231,49 @@ export function EntryEditor() {
   // Generate field values from a prompt. Returns the draft for the dialog to
   // show as a proposal; the form only changes on its Apply (throws on error so
   // the dialog can surface it; not wrapped in `run`).
-  async function generate(prompt: string, tier: ModelTier | undefined, signal: AbortSignal) {
+  async function generate(
+    prompt: string,
+    tier: ModelTier | undefined,
+    signal: AbortSignal,
+    projectId?: ProjectChoice,
+  ) {
     if (!selectedType) throw new Error('Content type not loaded');
     return client.generateEntry(
-      { contentTypeApiId: selectedType.apiId, prompt, ...(tier ? { tier } : {}) },
+      {
+        contentTypeApiId: selectedType.apiId,
+        prompt,
+        ...(tier ? { tier } : {}),
+        ...projectBody(projectId),
+      },
       signal,
     );
   }
 
   // Canvas: map free-form prose into the form's fields (throws so the dialog can
   // surface the error; not wrapped in `run`).
-  async function mapCanvas(prose: string, tier: ModelTier | undefined, signal: AbortSignal) {
+  async function mapCanvas(
+    prose: string,
+    tier: ModelTier | undefined,
+    signal: AbortSignal,
+    projectId?: ProjectChoice,
+  ) {
     if (!selectedType) return;
     const res = await client.canvasEntry(
-      { contentTypeApiId: selectedType.apiId, prose, ...(tier ? { tier } : {}) },
+      {
+        contentTypeApiId: selectedType.apiId,
+        prose,
+        ...(tier ? { tier } : {}),
+        ...projectBody(projectId),
+      },
       signal,
     );
     if (signal.aborted) return;
-    const mapped = applyPatch(res.fields);
+    const mapped = applyPatch(res.fields, { use: res.project, capability: 'drafting' });
     const total = res.usage.inputTokens + res.usage.outputTokens;
-    toast.success(`Mapped ${mapped} field(s) · ${total} tokens`);
+    // Mapped straight into the form, so the toast is where it says what it used.
+    const used = res.project
+      ? ` · ${provenanceLine(res.project, projectNames.data?.find((p) => p.id === res.project?.id)?.name)}`
+      : '';
+    toast.success(`Mapped ${mapped} field(s) · ${total} tokens${used}`);
   }
 }

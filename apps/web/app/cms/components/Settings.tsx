@@ -42,6 +42,7 @@ import {
 import { KeyRound, MoreHorizontalIcon, ShieldCheck, Signpost, Webhook } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { AiActions } from '~/cms/components/AiActions';
+import { AiProjects } from '~/cms/components/AiProjects';
 import { AiSettings } from '~/cms/components/AiSettings';
 import { AppExtensions } from '~/cms/components/AppExtensions';
 import { AuditLog } from '~/cms/components/AuditLog';
@@ -96,6 +97,7 @@ const SECTION_BODY: Record<string, (client: ManagementClient) => React.ReactNode
   functions: (client) => <Functions client={client} />,
   ai: (client) => <AiSettings client={client} />,
   'ai-actions': (client) => <AiActions client={client} />,
+  'ai-projects': (client) => <AiProjects client={client} />,
   extensions: (client) => <AppExtensions client={client} />,
   plugins: (client) => <Plugins client={client} />,
   locales: (client) => <LocaleSettings client={client} />,

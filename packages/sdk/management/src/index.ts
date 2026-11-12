@@ -671,6 +671,10 @@ export interface AiReferenceStatus extends AiReference {
   /** The asset has a newer file: move the pin with `aiProjects.update`. */
   readonly updateAvailable: boolean;
   readonly gone?: true;
+  /** The text's size in UTF-8 bytes, when it is `ready`. */
+  readonly textBytes?: number;
+  /** `aiProjects.extract` would be taken now. */
+  readonly retryable?: true;
 }
 
 /** An environment's reusable context for AI work. */
@@ -2485,6 +2489,25 @@ export function createManagementClient(opts: ManagementClientOptions) {
           outcome: 'started' | 'running';
           status: AiReferenceStatus;
         }>(`${envBase}/ai-projects/${e(id)}/references/${e(assetId)}/extract`),
+      /**
+       * Records what became of a proposal a call made in the project (the production signal):
+       * `accepted` as proposed, `edited` with how much changed (`small` under a tenth of it,
+       * `medium` under two fifths, `large`), or `discarded`. A count; send no content.
+       */
+      recordOutcome: (
+        id: string,
+        report: {
+          readonly capability:
+            | 'drafting'
+            | 'layout'
+            | 'assistant'
+            | 'field-assist'
+            | 'translation'
+            | 'agents';
+          readonly outcome: 'accepted' | 'edited' | 'discarded';
+          readonly edit?: 'small' | 'medium' | 'large';
+        },
+      ) => post<void>(`${envBase}/ai-projects/${e(id)}/outcomes`, report),
     },
 
     /** Navigation menus: delivery data a front end renders (content:manage to change them). */

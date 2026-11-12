@@ -342,7 +342,28 @@ export function kept(output: unknown): Record<string, unknown> {
     KEPT_OUTPUT.filter((k) => k in from && isScalar(from[k])).map((k) => [k, from[k]]),
   );
   for (const [k, v] of Object.entries(output)) if (Array.isArray(v)) out[`${k}Count`] = v.length;
+  const project = keptProject(output.project);
+  if (project) out.project = project;
   return out;
+}
+
+/**
+ * The AI project a call worked in, as its answer reported it, cut to ids and outcomes: which
+ * references it used and why it left any out (never their ranges or text). The panel names it on
+ * the proposal the call led to, after the turn too.
+ */
+function keptProject(project: unknown): Record<string, unknown> | undefined {
+  if (!isRecord(project) || typeof project.id !== 'string') return undefined;
+  const refs = Array.isArray(project.references) ? project.references : [];
+  return {
+    id: project.id,
+    ...(typeof project.version === 'number' ? { version: project.version } : {}),
+    references: refs.filter(isRecord).map((r) => ({
+      ...(typeof r.assetId === 'string' ? { assetId: r.assetId } : {}),
+      used: r.used === true,
+      ...(typeof r.reason === 'string' ? { reason: r.reason } : {}),
+    })),
+  };
 }
 
 const isRecord = (v: unknown): v is Record<string, unknown> =>
