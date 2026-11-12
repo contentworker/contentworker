@@ -1,11 +1,11 @@
 # AI projects
 
 Status: **decided** 2026-11-11, **backend built** (M5, "AI projects" in `ROADMAP.md`), **admin
-built, rollout held for evaluation**. The owner took all ten proposals under Decisions, added re-extraction (11), and the same day approved the
+shipped** 2026-11-12 (#281), ahead of the evaluation by the owner's call. The owner took all ten proposals under Decisions, added re-extraction (11), and the same day approved the
 security and AI reviews' changes: pinned references, the default held to `space:admin`, a
 narrower re-extraction gate, agents, reads at `content:write`, budgets and fencing by context
 window, translation without references, and an evaluation gate (amendments dated under
-Decisions). Rollout waits on the evaluation (see Evaluation).
+Decisions). The evaluation (see Evaluation) is still to run on a dev deployment.
 This file sits in `docs/specs/`, which the docs embed does not read (it takes `docs/*.md` only),
 so MCP clients never mistake it for a description of shipped behaviour.
 
