@@ -7,6 +7,7 @@
 
 import { type UseAgentChatOptions, useAgentChat } from '@cloudflare/ai-chat/react';
 import {
+  type AiProjectUse,
   ASSISTANT_TOOLS,
   type AssistantContext,
   type AssistantPage,
@@ -76,6 +77,7 @@ import { Shimmer } from '~/components/ai-elements/shimmer';
 import { Suggestion, Suggestions } from '~/components/ai-elements/suggestion';
 import { Mark } from '~/components/mark';
 import { useCan, useMe } from '~/lib/use-me';
+import { choiceOf, pickerValueOf, projectOfOutput } from '../../lib/ai-projects';
 import { TURN_ON_HINT, useAiCapability } from '../../lib/ai-settings';
 import {
   type ActResult,
@@ -96,6 +98,7 @@ import {
 import { useClient, useScopeState } from '../../lib/client-context';
 import { coarse, useMedia, useVisualViewport, WIDE } from '../../lib/device';
 import { useShortcutLabel } from '../../lib/shortcuts';
+import { ProjectPicker } from '../ai/ProjectPicker';
 import { Empty } from '../page';
 import {
   ActionCard,
@@ -378,13 +381,33 @@ function ScopeChip() {
   );
 }
 
-function PanelHeader({ onClear, canClear }: { onClear?: () => void; canClear?: boolean }) {
-  const { setOpen } = useAssistant();
+function PanelHeader({
+  onClear,
+  canClear,
+  busy,
+}: {
+  onClear?: () => void;
+  canClear?: boolean;
+  busy?: boolean;
+}) {
+  const { setOpen, projectId, setProjectId } = useAssistant();
+  const noSpace = useScopeState() === 'no-spaces';
   const shortcut = useShortcutLabel('J');
   const [clearing, setClearing] = useState(false);
   return (
     <header className="flex h-11 shrink-0 items-center gap-2 border-b px-3">
       <h2 className="font-semibold text-base tracking-title">Coworker</h2>
+      {/* The conversation's AI project, sent with each turn and checked there. */}
+      {noSpace ? null : (
+        <ProjectPicker
+          value={pickerValueOf(projectId)}
+          onChange={(v) => setProjectId(choiceOf(v))}
+          capabilities={['assistant']}
+          disabled={busy}
+          variant="compact"
+          className="ml-2 max-w-56"
+        />
+      )}
       <div className="ml-auto flex items-center">
         {onClear ? (
           <DropdownMenu>
@@ -422,7 +445,14 @@ function PanelHeader({ onClear, canClear }: { onClear?: () => void; canClear?: b
               </AlertDialogHeader>
               <AlertDialogFooter>
                 <AlertDialogCancel>Keep it</AlertDialogCancel>
-                <AlertDialogAction variant="destructive" onClick={onClear}>
+                <AlertDialogAction
+                  variant="destructive"
+                  onClick={() => {
+                    onClear();
+                    // A new conversation starts in the default project again.
+                    setProjectId(undefined);
+                  }}
+                >
                   New conversation
                 </AlertDialogAction>
               </AlertDialogFooter>
@@ -601,7 +631,7 @@ function ChatView({
   return (
     <div className="flex h-full min-h-0 flex-col">
       {variant === 'panel' ? (
-        <PanelHeader onClear={clearHistory} canClear={messages.length > 0 && !busy} />
+        <PanelHeader onClear={clearHistory} canClear={messages.length > 0 && !busy} busy={busy} />
       ) : null}
       {down ? (
         // Quiet: the page's own edits don't need the panel, so this is news, not an error.
@@ -950,6 +980,19 @@ function WaitingBar({ pending }: { pending: Waiting[] }) {
   );
 }
 
+/**
+ * The AI project the blocks a card proposes were composed in: what the turn's last
+ * `entry_blocks_generate` before the card reported. Null when none came before it, or it took none.
+ */
+function composedIn(parts: Message['parts'], before: number): AiProjectUse | null {
+  for (let i = before - 1; i >= 0; i--) {
+    const p = parts[i];
+    if (!p || !isToolUIPart(p) || getToolName(p) !== 'entry_blocks_generate') continue;
+    return p.state === 'output-available' ? projectOfOutput(p.output) : null;
+  }
+  return null;
+}
+
 function AssistantMessage({
   m,
   streaming,
@@ -988,6 +1031,7 @@ function AssistantMessage({
               <ActionCard
                 key={key}
                 part={p}
+                project={composedIn(m.parts, i)}
                 respond={respond}
                 actionKey={key}
                 direct={isDirectCall(p)}

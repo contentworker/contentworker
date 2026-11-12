@@ -6,7 +6,13 @@
  * failure, and reads in the past tense ("Not published"), so it still makes sense later.
  */
 
-import { ASSISTANT_TOOLS, fillRefusal, isAssistantTool, readFillTurn } from '@contentworker/domain';
+import {
+  type AiProjectUse,
+  ASSISTANT_TOOLS,
+  fillRefusal,
+  isAssistantTool,
+  readFillTurn,
+} from '@contentworker/domain';
 import { Button } from '@contentworker/ui/button';
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@contentworker/ui/card';
 import { Collapsible, CollapsibleContent } from '@contentworker/ui/collapsible';
@@ -29,10 +35,12 @@ import { Link, useNavigate } from 'react-router';
 import { Confirmation, ConfirmationActions } from '~/components/ai-elements/confirmation';
 import { MessageAction, MessageResponse } from '~/components/ai-elements/message';
 import { Mark } from '~/components/mark';
+import { useProjectOutcome } from '../../lib/ai-projects';
 import { type ProposedBlocks, useAssistantIfAny } from '../../lib/assistant';
 import { metaOf } from '../../lib/assistant-client';
 import { useClient } from '../../lib/client-context';
 import type { Connection, SpaceStarterInfo } from '../../lib/management';
+import { ProjectUsed } from '../ai/ProjectUsed';
 import {
   ChangedFields,
   type EntryReview,
@@ -479,8 +487,11 @@ export function ActionCard({
   replaced,
   turn,
   at,
+  project = null,
 }: {
   part: Part;
+  /** The AI project the blocks it proposes were composed in, as the composing call reported. */
+  project?: AiProjectUse | null;
   respond: (part: Part, approved: boolean) => void;
   /** Unique in the conversation; a tool call id need not be. */
   actionKey: string;
@@ -593,12 +604,18 @@ export function ActionCard({
   useHandFocus(confirmOff && !sent, confirmButton, safe, () => focusWithin.current);
   /** What this person answered here, if they did. */
   const [said, setSaid] = useState<boolean | null>(null);
+  const recordOutcome = useProjectOutcome();
   const answer = (approved: boolean) => {
     if (approved && confirmOff) return;
     holder.current?.focus({ preventScroll: true });
     setSent(true);
     setSaid(approved);
     respond(part, approved);
+    // Blocks composed in a project: confirmed as proposed (a card isn't edited before it is), or
+    // turned down. Counted for the project, never with what it said.
+    if (proposal?.kind === 'blocks') {
+      recordOutcome(project, 'layout', approved ? 'accepted' : 'discarded');
+    }
   };
 
   // A block patch whose dry run would save as it stands shows on its entry's page as ghosts
@@ -681,6 +698,7 @@ export function ActionCard({
                 {about ? <p className="break-words text-ui leading-snug">{about}</p> : null}
                 {name === 'space_create' ? <SpaceProposal input={part.input} /> : null}
                 {offFill ? <BlockRefused refusal={{ why: 'outside', ...offFill }} /> : null}
+                {proposal?.kind === 'blocks' && project ? <ProjectUsed use={project} /> : null}
                 {proposal ? (
                   <ProposalDetail
                     proposal={proposal}

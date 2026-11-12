@@ -286,7 +286,7 @@ turning `search` on or off starts (it needs `content:manage`), or null. See
 [AI settings](/guides/ai/#ai-settings).
 
 **AI projects.** `cma.aiProjects.{list, get, create, update, delete, setDefault, readReference,
-extract}` manages the client environment's AI projects: reading needs `content:write`, writing
+extract, recordOutcome}` manages the client environment's AI projects: reading needs `content:write`, writing
 `content:manage`, and `setDefault(projectId | null)`, like changing or deleting the default
 project, `space:admin`. `update(id, { ...input, expectedVersion })` replaces every editable part,
 and a save someone made since is a `409` (`isConflict`). `readReference(id, assetId, { offset,

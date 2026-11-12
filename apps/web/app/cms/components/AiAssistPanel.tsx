@@ -1,4 +1,9 @@
-import type { ContentType, EntryFields } from '@contentworker/domain';
+import type {
+  AiProjectCapability,
+  AiProjectUse,
+  ContentType,
+  EntryFields,
+} from '@contentworker/domain';
 import { Badge } from '@contentworker/ui/badge';
 import { Button } from '@contentworker/ui/button';
 import { type ComposeIcon, ComposeLoader, composeIcons } from '@contentworker/ui/compose-loader';
@@ -12,10 +17,14 @@ import {
 } from '@contentworker/ui/select';
 import { useState } from 'react';
 import { Confirmation, ProposedValue } from '~/cms/components/ai/Confirmation';
+import { ProjectPicker } from '~/cms/components/ai/ProjectPicker';
+import { ProjectUsed } from '~/cms/components/ai/ProjectUsed';
 import { Task, TaskItem } from '~/cms/components/ai/Task';
 import { CollapsibleCard } from '~/cms/components/CollapsibleCard';
 import { ToneBadge } from '~/cms/components/status';
+import { choiceOf, type PickerValue, useProjectOutcome } from '~/cms/lib/ai-projects';
 import { humanize } from '~/cms/lib/format';
+import { projectBody } from '~/cms/lib/management';
 import { useClient } from '../lib/client-context';
 import { useInvalidate, useScopedQuery } from '../lib/queries';
 import { useToast } from '../lib/toast';
@@ -46,6 +55,9 @@ type Proposal = { operation: string; steps: string[] } & (
       title: string;
       items: { label: string; preview: string }[];
       patch: EntryFields;
+      /** The AI project the call worked in, and the capability it ran under. */
+      project?: AiProjectUse | null;
+      capability: AiProjectCapability;
     }
   | { kind: 'tags'; title: string; tagIds: string[]; newTags: string[] }
 );
@@ -71,7 +83,10 @@ export function AiAssistPanel(props: {
    * Merges reviewed field values into the live editor form (unsaved). `contentType` holds only
    * the fields this person may fill; the editor also drops any other, and says how many merged.
    */
-  onMergeFields: (fields: EntryFields) => number | void;
+  onMergeFields: (
+    fields: EntryFields,
+    from?: { use: AiProjectUse | null | undefined; capability: AiProjectCapability },
+  ) => number | void;
 }) {
   const { entryId, contentType, locales, defaultLocale, onMergeFields } = props;
   const { client } = useClient();
@@ -92,6 +107,9 @@ export function AiAssistPanel(props: {
   const [findings, setFindings] = useState<Finding[] | null>(null);
   const [proposal, setProposal] = useState<Proposal | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [project, setProject] = useState<PickerValue>('default');
+  const inProject = projectBody(choiceOf(project));
+  const recordOutcome = useProjectOutcome();
   const working = busy !== null && busy !== 'apply';
   /** The loader for a task's button while that task runs. */
   const runs = (label: string, icon: ComposeIcon) =>
@@ -109,7 +127,11 @@ export function AiAssistPanel(props: {
   };
 
   const translate = ok('translate', async () => {
-    const r = await client.translateEntry(entryId, { targetLocale: target, apply: false });
+    const r = await client.translateEntry(entryId, {
+      targetLocale: target,
+      apply: false,
+      ...inProject,
+    });
     if (!r.translatedFields.some((apiId) => contentType.fields.some((f) => f.apiId === apiId))) {
       toast.success('Nothing to translate');
       return;
@@ -135,11 +157,17 @@ export function AiAssistPanel(props: {
       title: `Apply ${items.length} translated ${items.length === 1 ? 'field' : 'fields'}?`,
       items,
       patch,
+      project: r.project,
+      capability: 'translation',
     });
   });
 
   const summarize = ok('summarize', async () => {
-    const r = await client.summarizeEntry(entryId, { targetField: summaryField, apply: false });
+    const r = await client.summarizeEntry(entryId, {
+      targetField: summaryField,
+      apply: false,
+      ...inProject,
+    });
     setProposal({
       kind: 'fields',
       operation: `Summarize → ${fieldName(summaryField)}`,
@@ -153,11 +181,13 @@ export function AiAssistPanel(props: {
         { label: `${fieldName(summaryField)} (${defaultLocale})`, preview: previewOf(r.summary) },
       ],
       patch: { [summaryField]: { [defaultLocale]: r.summary } },
+      project: r.project,
+      capability: 'field-assist',
     });
   });
 
   const fill = ok('autofill', async () => {
-    const r = await client.autofillField(entryId, { field: autofill, apply: false });
+    const r = await client.autofillField(entryId, { field: autofill, apply: false, ...inProject });
     setProposal({
       kind: 'fields',
       operation: `Autofill → ${fieldName(r.field)}`,
@@ -169,6 +199,8 @@ export function AiAssistPanel(props: {
       title: `Apply value to ${fieldName(r.field)}?`,
       items: [{ label: `${fieldName(r.field)} (${defaultLocale})`, preview: previewOf(r.value) }],
       patch: { [r.field]: { [defaultLocale]: r.value } },
+      project: r.project,
+      capability: 'field-assist',
     });
   });
 
@@ -198,7 +230,7 @@ export function AiAssistPanel(props: {
   const applyProposal = ok('apply', async () => {
     if (!proposal) return;
     if (proposal.kind === 'fields') {
-      onMergeFields(proposal.patch);
+      onMergeFields(proposal.patch, { use: proposal.project, capability: proposal.capability });
       toast.success('Applied to the form. Save the draft to keep it');
     } else {
       // Persist EXACTLY the reviewed suggestion — never re-run the model at
@@ -242,6 +274,13 @@ export function AiAssistPanel(props: {
       description="Translate, summarize, autofill, and classify. Every result is proposed for your review before anything is written."
       contentClassName="space-y-3"
     >
+      <ProjectPicker
+        value={project}
+        onChange={setProject}
+        capabilities={['field-assist', 'translation']}
+        disabled={busy !== null}
+        variant="compact"
+      />
       {otherLocales.length > 0 && (
         <div className="flex items-end gap-2">
           <div className="flex-1 space-y-1">
@@ -340,16 +379,26 @@ export function AiAssistPanel(props: {
               : 'Assigns the tags to this entry now.'
           }
           provenance={
-            <Task title={`AI assist · ${proposal.operation}`}>
-              {proposal.steps.map((step) => (
-                <TaskItem key={step}>{step}</TaskItem>
-              ))}
-            </Task>
+            <>
+              <Task title={`AI assist · ${proposal.operation}`}>
+                {proposal.steps.map((step) => (
+                  <TaskItem key={step}>{step}</TaskItem>
+                ))}
+              </Task>
+              {proposal.kind === 'fields' ? (
+                <ProjectUsed use={proposal.project} className="mt-1.5" />
+              ) : null}
+            </>
           }
           busy={busy !== null}
           applyLabel={busy === 'apply' ? 'Applying…' : 'Apply'}
           onApply={applyProposal}
-          onDismiss={() => setProposal(null)}
+          onDismiss={() => {
+            if (proposal.kind === 'fields') {
+              recordOutcome(proposal.project, proposal.capability, 'discarded');
+            }
+            setProposal(null);
+          }}
         >
           {proposal.kind === 'fields' ? (
             <div className="space-y-2">

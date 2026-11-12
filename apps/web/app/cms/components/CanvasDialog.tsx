@@ -20,8 +20,10 @@ import {
 import { Textarea } from '@contentworker/ui/textarea';
 import { PenLine } from 'lucide-react';
 import { useState } from 'react';
-import type { ModelTier } from '../lib/management';
+import { choiceOf, type PickerValue } from '../lib/ai-projects';
+import type { ModelTier, ProjectChoice } from '../lib/management';
 import { useStoppable } from '../lib/use-stoppable';
+import { ProjectPicker } from './ai/ProjectPicker';
 
 // `default` sends no tier: the space's drafting tier (Settings → AI), else the API's own.
 const TIERS: { value: ModelTier | 'default'; label: string }[] = [
@@ -41,10 +43,16 @@ export function CanvasDialog(props: {
   onOpenChange: (open: boolean) => void;
   contentTypeName: string;
   /** Maps the prose into the form; once `signal` aborts, it must leave the form alone. */
-  onMap: (prose: string, tier: ModelTier | undefined, signal: AbortSignal) => Promise<void>;
+  onMap: (
+    prose: string,
+    tier: ModelTier | undefined,
+    signal: AbortSignal,
+    projectId?: ProjectChoice,
+  ) => Promise<void>;
 }) {
   const [prose, setProse] = useState('');
   const [tier, setTier] = useState<ModelTier | 'default'>('default');
+  const [project, setProject] = useState<PickerValue>('default');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const mapping = useStoppable();
@@ -64,7 +72,12 @@ export function CanvasDialog(props: {
     setBusy(true);
     setError(undefined);
     try {
-      await props.onMap(prose.trim(), tier === 'default' ? undefined : tier, signal);
+      await props.onMap(
+        prose.trim(),
+        tier === 'default' ? undefined : tier,
+        signal,
+        choiceOf(project),
+      );
       if (signal.aborted) return;
       props.onOpenChange(false);
     } catch (err) {
@@ -100,6 +113,7 @@ export function CanvasDialog(props: {
               onChange={(e) => setProse(e.target.value)}
             />
           </div>
+          <ProjectPicker value={project} onChange={setProject} capabilities={['drafting']} />
           <div className="space-y-1.5">
             <Label htmlFor="canvas-tier">Model</Label>
             <Select value={tier} onValueChange={(v) => setTier(v as ModelTier | 'default')}>

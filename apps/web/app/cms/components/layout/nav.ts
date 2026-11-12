@@ -107,6 +107,7 @@ export const SETTINGS_GROUPS: readonly SettingsGroup[] = [
       { id: 'functions', label: 'Functions' },
       { id: 'ai', label: 'AI' },
       { id: 'ai-actions', label: 'AI actions' },
+      { id: 'ai-projects', label: 'AI projects' },
     ],
   },
   {

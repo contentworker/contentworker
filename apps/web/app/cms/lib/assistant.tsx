@@ -29,7 +29,7 @@ import {
 import { scopeArgs } from './assistant-client';
 import { useClient } from './client-context';
 import { useFeatures } from './features';
-import type { Connection } from './management';
+import type { Connection, ProjectChoice } from './management';
 
 /** The page's own context, read when a message is sent or an edit made. */
 type PageReader = () => AssistantPage;
@@ -99,6 +99,12 @@ interface AssistantState {
   readonly page: AssistantPage;
   /** The context a message or an edit carries now: the scope, and the page or everything. */
   readContext(): AssistantContext;
+  /**
+   * The AI project this conversation works in, chosen in the panel's header: an id, null for none,
+   * undefined for the environment's default. Sent with each turn; the agent checks it there.
+   */
+  readonly projectId: ProjectChoice;
+  setProjectId(projectId: ProjectChoice): void;
   /** "page" follows the page in front; "everything" asks about the whole environment. */
   readonly scope: Scope;
   setScope(s: Scope): void;
@@ -154,6 +160,18 @@ export function AssistantProvider({ children }: { children: React.ReactNode }) {
   const [pendingAsk, setPendingAsk] = useState<PageAsk | null>(null);
   const [page, setPage] = useState<AssistantPage>(EVERYTHING);
   const [proposals, setProposals] = useState<ReadonlyMap<string, ProposedBlocks>>(new Map());
+  // Per conversation, and per environment: projects live in one. Another environment starts at
+  // its own default.
+  const [chosen, setChosen] = useState<{ at: string; projectId: ProjectChoice }>({
+    at: '',
+    projectId: undefined,
+  });
+  const where = `${conn.space}/${conn.environment}`;
+  const projectId = chosen.at === where ? chosen.projectId : undefined;
+  const setProjectId = useCallback(
+    (next: ProjectChoice) => setChosen({ at: where, projectId: next }),
+    [where],
+  );
   const setProposal = useCallback((card: string, p: ProposedBlocks | null) => {
     setProposals((was) => {
       const had = was.get(card);
@@ -172,13 +190,14 @@ export function AssistantProvider({ children }: { children: React.ReactNode }) {
   const waiting = useRef(new Map<string, QueuedAct>());
 
   // The context is read when something is sent, so it always carries the latest scope and page.
-  const latest = useRef({ conn, scope });
-  latest.current = { conn, scope };
+  const latest = useRef({ conn, scope, projectId });
+  latest.current = { conn, scope, projectId };
   const readContext = useCallback((): AssistantContext => {
-    const { conn: c, scope: s } = latest.current;
+    const { conn: c, scope: s, projectId: p } = latest.current;
     return {
       scope: scopeOf(c),
       page: s === 'everything' ? EVERYTHING : (reader.current?.() ?? EVERYTHING),
+      ...(p !== undefined ? { projectId: p } : {}),
     };
   }, []);
 
@@ -293,6 +312,8 @@ export function AssistantProvider({ children }: { children: React.ReactNode }) {
       focusToken,
       page,
       readContext,
+      projectId,
+      setProjectId,
       scope,
       setScope,
       register,
@@ -312,6 +333,8 @@ export function AssistantProvider({ children }: { children: React.ReactNode }) {
       focusToken,
       page,
       readContext,
+      projectId,
+      setProjectId,
       scope,
       register,
       act,

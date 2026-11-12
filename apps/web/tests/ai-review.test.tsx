@@ -46,7 +46,11 @@ const client = {
 
 vi.mock('~/cms/lib/client-context', () => ({ useClient: () => ({ client }) }));
 vi.mock('~/cms/lib/queries', () => ({
-  useScopedQuery: () => ({ data: [] }),
+  // Lists answer empty; the AI settings are unread (every capability reads as on, and no project
+  // picker shows, there being no projects).
+  useScopedQuery: (key: readonly unknown[]) => ({
+    data: key[0] === 'ai-settings' ? undefined : [],
+  }),
   useInvalidate: () => async () => {},
 }));
 
@@ -98,7 +102,13 @@ describe('GenerateEntryDialog', () => {
 
     const proposal = await screen.findByRole('alertdialog', { name: 'Apply 2 drafted fields?' });
     // Space default: no tier is sent, so the space's drafting tier (Settings → AI) applies.
-    expect(onGenerate).toHaveBeenCalledWith('Launch post', undefined, expect.any(AbortSignal));
+    // No project picked: the environment's default, so none is named.
+    expect(onGenerate).toHaveBeenCalledWith(
+      'Launch post',
+      undefined,
+      expect.any(AbortSignal),
+      undefined,
+    );
     expect(onApply).not.toHaveBeenCalled();
     expect(proposal.textContent).toContain('Realtime sync is here');
     expect(proposal.textContent).toContain('Title (en-US)');
@@ -109,7 +119,7 @@ describe('GenerateEntryDialog', () => {
     expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Discard' }));
 
     fireEvent.click(screen.getByRole('button', { name: 'Apply to form' }));
-    expect(onApply).toHaveBeenCalledWith(draft.fields);
+    expect(onApply).toHaveBeenCalledWith(draft.fields, draft);
   });
 
   it('shows drafted blocks as an outline, and the images the library had no match for', async () => {
@@ -339,7 +349,10 @@ describe('AiAssistPanel', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
     await waitFor(() =>
-      expect(onMergeFields).toHaveBeenCalledWith({ title: { 'en-US': 'A tight summary.' } }),
+      expect(onMergeFields).toHaveBeenCalledWith(
+        { title: { 'en-US': 'A tight summary.' } },
+        { use: undefined, capability: 'field-assist' },
+      ),
     );
     await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
   });
