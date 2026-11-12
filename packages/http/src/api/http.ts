@@ -1,5 +1,6 @@
 import {
   AiCapabilityDisabledError,
+  AiProjectInUseError,
   AiUnavailableError,
   AppOperationFailedError,
   AssetInUseError,
@@ -81,6 +82,21 @@ export function toHttpError(err: unknown): { status: number; body: unknown } {
     return {
       status: 409,
       body: { error: { code: err.code, message: err.message, capability: err.capability } },
+    };
+  }
+  // An AI action or a schedule still names the project: the body lists them, so a client can
+  // point them elsewhere first.
+  if (err instanceof AiProjectInUseError) {
+    return {
+      status: 409,
+      body: {
+        error: {
+          code: err.code,
+          message: err.message,
+          aiActions: err.aiActions,
+          agentSchedules: err.agentSchedules,
+        },
+      },
     };
   }
   // Would leave the space with no administrator: a conflict with the space's state.

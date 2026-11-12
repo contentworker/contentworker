@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { aiProjectUse } from './ai-projects';
 import { blockLock } from './block-locks';
 
 export const localizedValue = z
@@ -89,6 +90,7 @@ export const draftResult = z.object({
     .array(z.object({ field: z.string(), message: z.string() }).loose())
     .describe('Required images left unresolved (image_required): choose one before creating'),
   usage: z.object({ inputTokens: z.int(), outputTokens: z.int() }),
+  project: aiProjectUse,
 });
 
 export const publishedEntry = z.object({

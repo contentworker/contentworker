@@ -7,7 +7,11 @@
  * run, and in a space never them (`offeredIn`).
  */
 
-import { wrapUntrusted } from '@contentworker/application';
+import {
+  AI_PROJECT_READ_DEFAULT_CHARS,
+  AI_PROJECT_READ_TURN_CHARS,
+  wrapUntrusted,
+} from '@contentworker/application';
 import {
   ASSISTANT_TOOLS,
   type AssistantScope,
@@ -258,6 +262,35 @@ async function readJsonRpc(res: Response): Promise<JsonRpcAnswer | null> {
   return null;
 }
 
+// ── Reading a project's references ──
+// Coworker reads reference text a page at a time (`ai_project_reference_read`), and a turn reads
+// at most so much of it, whatever pages the model asks for.
+
+/**
+ * Reference characters a turn may read: 24,000, or half the tier's context window (in tokens, so
+ * a character apiece is generous) when that is smaller.
+ */
+export const referenceTurnChars = (contextTokens: number): number =>
+  Math.max(0, Math.min(AI_PROJECT_READ_TURN_CHARS, Math.floor(contextTokens / 2)));
+
+/** What a read is told when its turn has read all the reference text it may. */
+export const READ_SPENT =
+  'This turn has read all the reference text it can. Answer from what you have, or ask the ' +
+  'person to continue in another message.';
+
+/** A read's input with its page held to what the turn has left. */
+export function withReadLimit(input: unknown, left: number): Record<string, unknown> {
+  const args = (isRecord(input) ? input : {}) as Record<string, unknown>;
+  const asked = typeof args.limit === 'number' ? args.limit : AI_PROJECT_READ_DEFAULT_CHARS;
+  return { ...args, limit: Math.max(1, Math.min(asked, left)) };
+}
+
+/** The characters of text a read answered with. */
+export const textLength = (output: unknown): number => {
+  const text = isRecord(output) ? output.text : undefined;
+  return typeof text === 'string' ? [...text].length : 0;
+};
+
 // ── What a page's call keeps in the conversation ──
 // The conversation is stored, and the model reads it on the person's next turn: a page's call
 // keeps only what its line needs. Field values, comment text and the like stay in the page's own
@@ -287,6 +320,10 @@ const KEPT_OUTPUT = [
   'publishedVersion',
   'version',
   'scheduledFor',
+  // A reference page's place, so a later turn resumes from it; its text is never kept.
+  'assetId',
+  'offset',
+  'nextOffset',
 ] as const;
 
 /**

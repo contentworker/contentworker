@@ -75,6 +75,7 @@ export function registerBlockTools(server: McpServer, t: ToolContext): void {
           parent: generateBlocksShape.parent,
           locale: generateBlocksShape.locale,
           tier: generateBlocksShape.tier,
+          projectId: generateBlocksShape.projectId,
           ...scopeArgs,
         }),
       ),
@@ -91,6 +92,7 @@ export function registerBlockTools(server: McpServer, t: ToolContext): void {
         ...(args.parent ? { parent: args.parent } : {}),
         ...(args.locale ? { locale: args.locale } : {}),
         ...(args.tier ? { tier: args.tier } : {}),
+        ...(args.projectId !== undefined ? { projectId: args.projectId } : {}),
       };
       // Refuses a call naming both or neither, as the route's body does.
       if ((input.entryId === undefined) === (input.contentTypeApiId === undefined)) {
@@ -103,6 +105,7 @@ export function registerBlockTools(server: McpServer, t: ToolContext): void {
         await generateBlocks(ctx, t.ai, scopeOf(args), input, {
           ...access,
           assets: imageSearchFor(principal, t.deps.assetSearch ?? assetSearchDeps(t.rag)),
+          caller: principal,
         }),
       );
     },

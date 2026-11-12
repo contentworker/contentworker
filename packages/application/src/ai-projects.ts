@@ -799,6 +799,11 @@ export interface ProjectContext {
   referenceList(): string | null;
   /** What was used before any excerpt is placed (Coworker's report). */
   readonly use: AiProjectUse | null;
+  /**
+   * A hash of the project's id and version and its references' pins, for prefix-cache affinity
+   * (`x-session-affinity`) on a caller that builds its own requests (Coworker); null for none.
+   */
+  readonly affinity: string | null;
 }
 
 const NO_PROJECT: ProjectContext = {
@@ -807,6 +812,7 @@ const NO_PROJECT: ProjectContext = {
   call: (input) => ({ prompt: input.prompt, request: {}, use: null, excerptChars: 0 }),
   referenceList: () => null,
   use: null,
+  affinity: null,
 };
 
 /** A reference a call can use, with its text read (for the first three) and its header's title. */
@@ -971,6 +977,7 @@ export async function resolveAiProject(
   return {
     project,
     use: baseUse,
+    affinity,
     system: (base) => (fence ? `${base}\n\n${fence}` : base),
     referenceList: () => {
       if (usable.length === 0) return null;

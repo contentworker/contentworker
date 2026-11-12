@@ -19,6 +19,7 @@ import {
 } from '@contentworker/domain';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
+import { zStoredProjectId } from '../../api/validation';
 import { ok, READ_ONLY, scopeArgs, scopeOf, type ToolContext, toolSchema } from './shared';
 
 export function registerAgentTools(server: McpServer, t: ToolContext): void {
@@ -37,6 +38,7 @@ export function registerAgentTools(server: McpServer, t: ToolContext): void {
           contentTypeApiId: z.string().optional(),
           enabled: z.boolean().optional(),
           autoApply: z.boolean().optional(),
+          projectId: zStoredProjectId,
           ...scopeArgs,
         }),
       ),
@@ -50,6 +52,7 @@ export function registerAgentTools(server: McpServer, t: ToolContext): void {
           contentTypeApiId: args.contentTypeApiId,
           enabled: args.enabled,
           autoApply: args.autoApply,
+          ...(args.projectId !== undefined ? { projectId: args.projectId } : {}),
         }),
       );
     },
@@ -80,6 +83,7 @@ export function registerAgentTools(server: McpServer, t: ToolContext): void {
           enabled: z.boolean().optional(),
           autoApply: z.boolean().optional(),
           contentTypeApiId: z.string().nullable().optional(),
+          projectId: zStoredProjectId,
           ...scopeArgs,
         }),
       ),
@@ -92,6 +96,7 @@ export function registerAgentTools(server: McpServer, t: ToolContext): void {
           enabled: args.enabled,
           autoApply: args.autoApply,
           contentTypeApiId: args.contentTypeApiId,
+          ...(args.projectId !== undefined ? { projectId: args.projectId } : {}),
         }),
       );
     },

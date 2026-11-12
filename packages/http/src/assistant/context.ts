@@ -21,7 +21,11 @@ const label = (v: unknown, fallback: string) =>
  */
 export function readContext(raw: unknown): AssistantContext | null {
   if (!raw || typeof raw !== 'object') return null;
-  const { scope, page } = raw as { scope?: unknown; page?: unknown };
+  const { scope, page, projectId } = raw as {
+    scope?: unknown;
+    page?: unknown;
+    projectId?: unknown;
+  };
   if (!scope || typeof scope !== 'object') return null;
   const { spaceId, environmentId, locale } = scope as Record<string, unknown>;
   if (
@@ -39,6 +43,10 @@ export function readContext(raw: unknown): AssistantContext | null {
       ...(typeof locale === 'string' && /^[A-Za-z0-9-]{2,35}$/.test(locale) ? { locale } : {}),
     },
     page: readPage(page),
+    // The conversation's project: an id, or null for none; anything else is the default.
+    ...(projectId === null || (typeof projectId === 'string' && ID.test(projectId))
+      ? { projectId }
+      : {}),
   };
 }
 

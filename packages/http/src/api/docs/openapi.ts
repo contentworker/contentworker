@@ -170,6 +170,13 @@ export const TAGS: { name: string; description: string }[] = [
       'guidance its administrators add to the built-in prompt.',
   },
   {
+    name: 'AI projects',
+    description:
+      'Per environment: reusable contexts for AI work (instructions, a writer and a reader ' +
+      'persona, reference files) that drafting, layouts, writing help, translation, agents and ' +
+      'Coworker take.',
+  },
+  {
     name: 'Guides',
     description:
       "The product's own documentation, served over the API so agents can look up " +
@@ -193,7 +200,7 @@ const TAG_GROUPS = [
     name: 'Publishing & automation',
     tags: ['Releases & scheduling', 'Redirects', 'Menus', 'Webhooks', 'Functions', 'Apps'],
   },
-  { name: 'AI', tags: ['AI & agents', 'AI settings'] },
+  { name: 'AI', tags: ['AI & agents', 'AI settings', 'AI projects'] },
   { name: 'Reference', tags: ['Guides'] },
   { name: 'Delivery', tags: ['Delivery', 'Preview'] },
 ];
@@ -209,6 +216,7 @@ const TAG_RULES: [RegExp, string][] = [
   [/\/block-catalog/, 'Block catalog'],
   [/\/block-config/, 'Block config'],
   [/\/ai-settings$/, 'AI settings'],
+  [/\/ai-projects/, 'AI projects'],
   [/\/taxonomy\//, 'Taxonomy'],
   [/\/assets\/\{id\}\/(alt-text|auto-tag)/, 'AI & agents'],
   [/\/assets/, 'Assets'],

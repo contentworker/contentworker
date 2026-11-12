@@ -2,6 +2,7 @@ import { createAIAction, listAIActions, runAIAction } from '@contentworker/appli
 import { SCOPES } from '@contentworker/domain';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
+import { zProjectId, zStoredProjectId } from '../../api/validation';
 import { ok, scopeArgs, scopeOf, type ToolContext, toolSchema } from './shared';
 
 export function registerAiActionTools(server: McpServer, t: ToolContext): void {
@@ -33,6 +34,7 @@ export function registerAiActionTools(server: McpServer, t: ToolContext): void {
           description: z.string().optional(),
           targetField: z.string().optional(),
           tier: z.enum(['flagship', 'balanced', 'fast']).optional(),
+          projectId: zStoredProjectId,
           ...scopeArgs,
         }),
       ),
@@ -46,6 +48,7 @@ export function registerAiActionTools(server: McpServer, t: ToolContext): void {
           description: args.description,
           targetField: args.targetField,
           tier: args.tier,
+          ...(args.projectId !== undefined ? { projectId: args.projectId } : {}),
         }),
       );
     },
@@ -64,6 +67,10 @@ export function registerAiActionTools(server: McpServer, t: ToolContext): void {
           variables: z.record(z.string(), z.string()).optional(),
           locale: z.string().optional(),
           apply: z.boolean().optional(),
+          projectId: zProjectId.describe(
+            'The AI project for this run: an id, null for none; absent, the action’s own (or ' +
+              'the environment’s default)',
+          ),
           ...scopeArgs,
         }),
       ),
@@ -81,6 +88,7 @@ export function registerAiActionTools(server: McpServer, t: ToolContext): void {
             variables: args.variables,
             locale: args.locale,
             apply: args.apply,
+            ...(args.projectId !== undefined ? { projectId: args.projectId } : {}),
           },
           { principal },
         ),

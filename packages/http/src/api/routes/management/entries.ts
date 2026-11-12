@@ -176,6 +176,7 @@ export function entriesRoutes(deps: AuthDeps): Hono<AuthVars> {
       return c.json(
         await draftEntry(ctx, ai, scopeOf(c), body, {
           assets: imageSearchFor(c.get('principal'), assetSearch),
+          caller: c.get('principal'),
         }),
       );
     },
@@ -198,6 +199,7 @@ export function entriesRoutes(deps: AuthDeps): Hono<AuthVars> {
       return c.json(
         await canvasToEntry(ctx, ai, scopeOf(c), body, {
           assets: imageSearchFor(c.get('principal'), assetSearch),
+          caller: c.get('principal'),
         }),
       );
     },

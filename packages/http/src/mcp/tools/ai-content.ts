@@ -21,7 +21,7 @@ import {
 import { SCOPES } from '@contentworker/domain';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import { setFieldsJobBody } from '../../api/validation';
+import { setFieldsJobBody, zProjectId } from '../../api/validation';
 import { ok, scopeArgs, scopeOf, type ToolContext, toolSchema } from './shared';
 
 export function registerAiContentTools(server: McpServer, t: ToolContext): void {
@@ -39,6 +39,10 @@ export function registerAiContentTools(server: McpServer, t: ToolContext): void 
           targetLocale: z.string(),
           sourceLocale: z.string().optional(),
           apply: z.boolean().optional(),
+          projectId: zProjectId.describe(
+            'The AI project: its instructions (terminology) and reader persona only. An id, null ' +
+              'for none; absent, the environment’s default',
+          ),
           ...scopeArgs,
         }),
       ),
@@ -55,6 +59,7 @@ export function registerAiContentTools(server: McpServer, t: ToolContext): void 
             targetLocale: args.targetLocale,
             sourceLocale: args.sourceLocale,
             apply: args.apply,
+            ...(args.projectId !== undefined ? { projectId: args.projectId } : {}),
           },
           { principal },
         ),
@@ -73,6 +78,7 @@ export function registerAiContentTools(server: McpServer, t: ToolContext): void 
           maxWords: z.number().int().positive().optional(),
           targetField: z.string().optional(),
           apply: z.boolean().optional(),
+          projectId: zProjectId,
           ...scopeArgs,
         }),
       ),
@@ -90,6 +96,7 @@ export function registerAiContentTools(server: McpServer, t: ToolContext): void 
             maxWords: args.maxWords,
             targetField: args.targetField,
             apply: args.apply,
+            ...(args.projectId !== undefined ? { projectId: args.projectId } : {}),
           },
           { principal },
         ),
@@ -110,6 +117,7 @@ export function registerAiContentTools(server: McpServer, t: ToolContext): void 
           locale: z.string().optional(),
           instructions: z.string().optional(),
           apply: z.boolean().optional(),
+          projectId: zProjectId,
           ...scopeArgs,
         }),
       ),
@@ -127,6 +135,7 @@ export function registerAiContentTools(server: McpServer, t: ToolContext): void 
             locale: args.locale,
             instructions: args.instructions,
             apply: args.apply,
+            ...(args.projectId !== undefined ? { projectId: args.projectId } : {}),
           },
           { principal },
         ),
@@ -203,6 +212,7 @@ export function registerAiContentTools(server: McpServer, t: ToolContext): void 
           createTasks: z.boolean().optional(),
           taskSeverity: z.enum(['info', 'warning', 'error']).optional(),
           assignee: z.string().optional(),
+          projectId: zProjectId,
           ...scopeArgs,
         }),
       ),
@@ -219,6 +229,7 @@ export function registerAiContentTools(server: McpServer, t: ToolContext): void 
             createTasks: args.createTasks,
             taskSeverity: args.taskSeverity,
             assignee: args.assignee,
+            ...(args.projectId !== undefined ? { projectId: args.projectId } : {}),
           },
           { principal },
         ),

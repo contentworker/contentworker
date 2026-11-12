@@ -56,6 +56,8 @@ export async function assistantModel(
   used: ModelSource,
   personId: string,
   tier: ModelTier = 'flagship',
+  /** The conversation's AI project: named in the gateway's metadata, part of the cache affinity. */
+  project?: { readonly id: string; readonly version: number; readonly affinity: string },
 ): Promise<Model> {
   const mock = mockModel(context);
   if (env.AI_MODE === 'mock' || !env.AI) {
@@ -74,7 +76,10 @@ export async function assistantModel(
       ? {
           id: gatewayId,
           ...(env.AI_GATEWAY_LOGS ? { collectLog: env.AI_GATEWAY_LOGS === 'true' } : {}),
-          metadata: { prompt: 'assistant' },
+          metadata: {
+            prompt: 'assistant',
+            ...(project ? { projectId: project.id, projectVersion: project.version } : {}),
+          },
           retries: { maxAttempts: 2, retryDelayMs: 500, backoff: 'exponential' },
           requestTimeoutMs: AI_TIMEOUT_MS,
         }
@@ -83,7 +88,7 @@ export async function assistantModel(
   const primary = ai(chosen, {
     fallback: fast === chosen ? [] : [fast],
     // Workers AI's prefix cache: the system prompt and tools repeat within a conversation.
-    sessionAffinity: await sha256(`assistant:${personId}`),
+    sessionAffinity: await sha256(`assistant:${personId}${project ? `:${project.affinity}` : ''}`),
     // Tool results carry people's content: the gateway keeps no prompt or answer.
     headers: { ...NO_LOG_PAYLOAD },
   });

@@ -56,6 +56,7 @@ const TOOL_TARGET_TYPES: readonly (readonly [RegExp, string])[] = [
   [/^agent_review_/, 'agent_review'],
   [/^ai_action_/, 'ai_action'],
   [/^ai_settings_/, 'ai_settings'],
+  [/^ai_projects?_/, 'ai_project'],
   [/^bulk_job_/, 'job'],
   [/^blocks_catalog_/, 'block_catalog'],
   [/^blocks_config_/, 'block_config'],
@@ -141,13 +142,17 @@ export async function auditToolCall(ctx: AppContext, input: ToolAuditInput): Pro
         ? toolTargetType(tool)
         : created
           ? 'entry'
-          : (input.detail?.blockConfig || input.detail?.aiSettings) && toolTargetType(tool),
+          : input.detail?.blockConfig || input.detail?.aiSettings || input.detail?.aiProjects
+            ? toolTargetType(tool)
+            : undefined,
       targetId:
         named ??
         created?.entryId ??
         (input.detail?.blockConfig
           ? String(input.detail.blockConfig.to)
-          : input.detail?.aiSettings && String(input.detail.aiSettings.to)),
+          : input.detail?.aiSettings
+            ? String(input.detail.aiSettings.to)
+            : input.detail?.aiProjects?.[input.detail.aiProjects.length - 1]?.projectId),
       status: 200,
       detail: input.detail,
     });

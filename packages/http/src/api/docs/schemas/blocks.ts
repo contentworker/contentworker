@@ -1,5 +1,6 @@
 import { BLOCK_PATCH_MAX_OPS } from '@contentworker/application';
 import { z } from 'zod';
+import { aiProjectUse } from './ai-projects';
 import { entry, entryFields } from './entries';
 
 // --- key-addressed block patches ------------------------------------------------
@@ -190,6 +191,7 @@ export const generatedBlocks = z.object({
   usage: z
     .object({ inputTokens: z.int(), outputTokens: z.int() })
     .describe('What the model call used'),
+  project: aiProjectUse,
 });
 
 export const blocksOutline = z.object({

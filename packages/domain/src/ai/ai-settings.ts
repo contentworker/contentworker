@@ -90,7 +90,8 @@ export const AI_CAPABILITY_INFO: Readonly<
   },
   media: {
     label: 'Media',
-    covers: 'Alt text and tags for assets, on upload and on request.',
+    covers:
+      'Alt text and tags for assets, on upload and on request, and reading the text of AI project references.',
     guided: true,
   },
   search: {
