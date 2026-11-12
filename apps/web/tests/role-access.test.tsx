@@ -226,4 +226,40 @@ describe('a role’s content access', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
+
+  it('shows and removes each row of a role that names a type twice', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const onSave = vi.fn(async () => {});
+    render(
+      <RoleAccessSheet
+        role={{
+          ...role,
+          contentGrants: [
+            { contentTypeApiId: 'post', actions: ['read'] },
+            { contentTypeApiId: 'post', actions: ['read', 'write'] },
+          ],
+        }}
+        contentTypes={[{ apiId: 'post', name: 'Post' }]}
+        open
+        onOpenChange={() => {}}
+        onSave={onSave}
+        onReload={async () => {}}
+      />,
+    );
+    const writes = screen.getAllByRole('checkbox', { name: 'Write Post' });
+    expect(writes.map((w) => w.getAttribute('aria-checked'))).toEqual(['false', 'true']);
+    expect(error.mock.calls.some((c) => String(c[0]).includes('same key'))).toBe(false);
+    fireEvent.click(
+      screen.getAllByRole('button', { name: 'Remove access to Post' })[0] as HTMLElement,
+    );
+    expect(
+      screen
+        .getAllByRole('checkbox', { name: 'Write Post' })
+        .map((w) => w.getAttribute('aria-checked')),
+    ).toEqual(['true']);
+    fireEvent.click(screen.getByRole('button', { name: 'Save access' }));
+    await waitFor(() => expect(onSave).toHaveBeenCalled());
+    expect(onSave).toHaveBeenCalledWith([{ contentTypeApiId: 'post', actions: ['read', 'write'] }]);
+    error.mockRestore();
+  });
 });
