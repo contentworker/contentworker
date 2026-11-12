@@ -33,8 +33,10 @@ const LATIN = /[\p{Script=Latin}\p{N}\p{P}\p{Zs}\n\t]/u;
 
 /**
  * Tokens `text` is likely to cost, by script: Latin text (and digits, punctuation, spaces) about
- * four characters a token, CJK about one, other scripts (Cyrillic, Greek, Arabic, Devanagari, …)
- * about two. An estimate to budget by, rounded up: what the model bills is what the call settles.
+ * three characters a token (English runs nearer four, German, French, JSON and Markdown nearer
+ * three: the estimate errs to the safe side), CJK about one, other scripts (Cyrillic, Greek,
+ * Arabic, Devanagari, …) about two. An estimate to budget by, rounded up: what the model bills is
+ * what the call settles.
  */
 export function estimateTokens(text: string): number {
   let latin = 0;
@@ -45,7 +47,7 @@ export function estimateTokens(text: string): number {
     else if (ch.charCodeAt(0) < 0x80 || LATIN.test(ch)) latin += 1;
     else other += 1;
   }
-  return Math.ceil(latin / 4 + cjk + other / 2);
+  return Math.ceil(latin / 3 + cjk + other / 2);
 }
 
 /** Characters per token in `sample` (at least one character a token). */
@@ -60,6 +62,8 @@ export interface ExcerptBudgetInput {
   /** The whole system prompt and user turn the call sends besides the references. */
   readonly system: string;
   readonly prompt: string;
+  /** What else the request carries that the model reads as input: the schema, the tools. */
+  readonly extra?: string;
   /** The answer's room. */
   readonly maxTokens: number;
   /** The reference texts the budget is spent on, to read their script's density off. */
@@ -73,7 +77,11 @@ export interface ExcerptBudgetInput {
  */
 export function excerptBudgetChars(input: ExcerptBudgetInput): number {
   const used =
-    estimateTokens(input.system) + estimateTokens(input.prompt) + input.maxTokens + SAFETY_TOKENS;
+    estimateTokens(input.system) +
+    estimateTokens(input.prompt) +
+    estimateTokens(input.extra ?? '') +
+    input.maxTokens +
+    SAFETY_TOKENS;
   const spare = input.contextTokens - used;
   if (spare <= 0) return 0;
   const chars = Math.floor(spare * SPARE_SHARE * charsPerToken(input.sample));
@@ -119,8 +127,45 @@ interface Passage {
   readonly end: number;
 }
 
-/** Paragraphs (blank-line separated), or sentences when the text has too few paragraphs. */
+/**
+ * Sentences of `[start, end)` grouped into windows of at most `max` characters, in order: adjacent
+ * sentences stay together, and a sentence longer than a window is cut at a space.
+ */
+function sentenceWindows(text: string, start: number, end: number, max: number): Passage[] {
+  const sentences: Passage[] = [];
+  const sre = /[.!?。！？](?=\s|$)\s*/gu;
+  let at = start;
+  for (const m of text.slice(start, end).matchAll(sre)) {
+    const stop = start + (m.index ?? 0) + m[0].length;
+    if (stop > at) sentences.push({ start: at, end: stop });
+    at = stop;
+  }
+  if (at < end) sentences.push({ start: at, end });
+  const pieces = sentences.flatMap((s) => {
+    const out: Passage[] = [];
+    for (let a = s.start; a < s.end; ) {
+      const b = a + max >= s.end ? s.end : cutAtSpace(text, a, a + max);
+      out.push({ start: a, end: b });
+      a = b;
+    }
+    return out;
+  });
+  const windows: { start: number; end: number }[] = [];
+  for (const p of pieces) {
+    const last = windows[windows.length - 1];
+    if (last && p.end - last.start <= max) last.end = p.end;
+    else windows.push({ ...p });
+  }
+  return windows;
+}
+
+/**
+ * A text's passages after `from`: its paragraphs (blank-line separated), each one longer than a
+ * passage may be split into windows of adjacent sentences; a text with too few paragraphs to rank
+ * (a transcript, a wall of text) is all sentence windows.
+ */
 function passagesOf(text: string, from: number, maxPassage: number): Passage[] {
+  const max = Math.max(maxPassage, 1);
   const paragraphs: Passage[] = [];
   const re = /\n[ \t]*\n+/g;
   let at = from;
@@ -130,27 +175,10 @@ function passagesOf(text: string, from: number, maxPassage: number): Passage[] {
     at = end + m[0].length;
   }
   if (at < text.length) paragraphs.push({ start: at, end: text.length });
-  // A transcript (or a wall of text) has few breaks: its passages are its sentences.
-  const tooCoarse =
-    paragraphs.length < 3 || paragraphs.some((p) => p.end - p.start > Math.max(maxPassage, 1));
-  if (!tooCoarse) return paragraphs;
-  const sentences: Passage[] = [];
-  const sre = /[.!?。！？](?=\s|$)\s*/gu;
-  at = from;
-  for (const m of text.slice(from).matchAll(sre)) {
-    const end = from + (m.index ?? 0) + m[0].length;
-    if (end > at) sentences.push({ start: at, end });
-    at = end;
-  }
-  if (at < text.length) sentences.push({ start: at, end: text.length });
-  // A sentence longer than a passage may be is cut into pieces of that size.
-  return sentences.flatMap((s) => {
-    const out: Passage[] = [];
-    for (let a = s.start; a < s.end; a += maxPassage) {
-      out.push({ start: a, end: Math.min(s.end, a + maxPassage) });
-    }
-    return out;
-  });
+  if (paragraphs.length < 3) return sentenceWindows(text, from, text.length, max);
+  return paragraphs.flatMap((p) =>
+    p.end - p.start > max ? sentenceWindows(text, p.start, p.end, max) : [p],
+  );
 }
 
 const STOPWORDS = new Set(

@@ -145,9 +145,11 @@ export function createWorkersAITextExtractor(opts: WorkersAITextExtractorOptions
         throw new WorkersAIError('bad_response', `conversion failed: ${String(out.error ?? '')}`);
       }
       const text = typeof out?.data === 'string' ? out.data : '';
-      // What the conversion reports it used; a result that says nothing is estimated from its text.
+      // What the conversion reports it used. A result that says nothing, or 0 for text it did
+      // return (the field's meaning isn't documented), is estimated from its text, so a budget
+      // never reads a conversion as free.
       const tokens =
-        typeof out?.tokens === 'number' && Number.isFinite(out.tokens) && out.tokens >= 0
+        typeof out?.tokens === 'number' && Number.isFinite(out.tokens) && out.tokens > 0
           ? Math.ceil(out.tokens)
           : Math.ceil(text.length / 4);
       return { text, usage: { tokens } };

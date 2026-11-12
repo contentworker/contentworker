@@ -361,7 +361,13 @@ export async function summarizeEntry(
   );
   const tier = policy.tier('fast', input.tier);
   const placed = project.call(
-    { system, prompt: `Summarize this ${ct.name}:\n${wrapUntrusted(text)}`, maxTokens: 512, tier },
+    {
+      system,
+      prompt: `Summarize this ${ct.name}:\n${wrapUntrusted(text)}`,
+      maxTokens: 512,
+      tier,
+      outputSchema: SUMMARY_SCHEMA,
+    },
     ai,
   );
   const result = await generateWithBudget(ctx, ai, scope, {

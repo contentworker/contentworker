@@ -136,13 +136,25 @@ export function makeActivities(deps: ActivitiesDeps): Activities {
       if (!policy.enabled) return { fields: {}, usage: { inputTokens: 0, outputTokens: 0 } };
       // Background work has no caller: the project's references reach it only where published
       // and unrestricted (amendment D), since what it writes every entry reader sees.
-      const project = await resolveAiProject(ctx, input.scope, SYSTEM_CALLER, {
-        capability: 'agents',
-        ...(input.projectId ? { projectId: input.projectId } : {}),
-        task: {
-          terms: `${input.fields.map((f) => f.name).join(' ')} ${input.context.slice(0, 2_000)}`,
-        },
-      });
+      let project: Awaited<ReturnType<typeof resolveAiProject>>;
+      try {
+        project = await resolveAiProject(ctx, input.scope, SYSTEM_CALLER, {
+          capability: 'agents',
+          ...(input.projectId ? { projectId: input.projectId } : {}),
+          task: {
+            terms: `${input.fields.map((f) => f.name).join(' ')} ${input.context.slice(0, 2_000)}`,
+          },
+        });
+      } catch (err) {
+        // The run's stored project is gone (deleted mid-run): it generates nothing and says why,
+        // never falls back to the default; a retry of the step would only find it gone again.
+        if (!(err instanceof NotFoundError)) throw err;
+        return {
+          fields: {},
+          usage: { inputTokens: 0, outputTokens: 0 },
+          project: [`Refused: the AI project ${input.projectId} is gone`],
+        };
+      }
       const system = policy.system(
         project.system(
           `You work on CMS entries. Generate concise, natural values for the requested fields, consistent with the provided context.${input.instruction ? ` ${input.instruction}` : ''} ${UNTRUSTED_CONTENT_GUARD}`,
@@ -155,6 +167,7 @@ export function makeActivities(deps: ActivitiesDeps): Activities {
           prompt: `Context:\n${wrapUntrusted(input.context)}\n\nGenerate values for: ${input.fields.map((f) => f.name).join(', ')}.`,
           maxTokens: 1024,
           tier,
+          outputSchema: schema as unknown as Record<string, unknown>,
         },
         ai,
       );

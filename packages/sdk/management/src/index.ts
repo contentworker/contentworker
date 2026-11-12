@@ -2459,9 +2459,10 @@ export function createManagementClient(opts: ManagementClientOptions) {
       delete: (id: string, opts: { version?: number } = {}) =>
         del<void>(`${envBase}/ai-projects/${e(id)}`, { version: opts.version }),
       /** Sets the environment's default project, or clears it with null (space:admin). */
-      setDefault: (projectId: string | null) =>
+      setDefault: (projectId: string | null, opts: { expectedVersion?: number } = {}) =>
         put<{ projectId: string | null; unchanged: boolean }>(`${envBase}/ai-projects/default`, {
           projectId,
+          ...(opts.expectedVersion !== undefined ? { expectedVersion: opts.expectedVersion } : {}),
         }),
       /**
        * One page of a reference's text at its pinned version (also needs assets:read). Pass the

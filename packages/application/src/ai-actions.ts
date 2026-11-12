@@ -169,6 +169,7 @@ export async function runAIAction(
       task: { terms: `${action.name} ${prompt.slice(0, 2_000)}` },
     });
   } catch (err) {
+    if (!(err instanceof NotFoundError)) throw err;
     await recordAgentRun(ctx, scope, {
       workflow: `ai-action:${action.name}`,
       entryId: input.entryId ?? '',

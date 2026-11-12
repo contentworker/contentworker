@@ -202,6 +202,8 @@ async function referenceStates(
         ...(head ? { textBytes: head.size } : {}),
         ...(record ? { record } : {}),
       });
+      // An empty text (a scanned PDF, a silent recording) is no text: no rerun finds any.
+      if (head && head.size === 0) return status('none', 'unsupported');
       if (head) return status('ready');
       if (record?.status === 'pending') return status('pending');
       if (record?.status === 'skipped') {
@@ -464,12 +466,17 @@ export async function setDefaultAiProject(
   scope: Scope,
   caller: AiProjectCaller,
   projectId: string | null,
+  /** The project's version as the admin read it: a project changed since is a 409. */
+  expectedVersion?: number,
 ): Promise<AiProjectDefaultSet> {
   authorizeDefault(caller, scope);
   const [previous, target] = await Promise.all([
     ctx.store.aiProjects.getDefault(scope),
     projectId === null ? Promise.resolve(null) : requireProject(ctx, scope, projectId),
   ]);
+  if (target && expectedVersion !== undefined && expectedVersion !== target.version) {
+    throw stale(target, expectedVersion);
+  }
   if ((previous?.id ?? null) === (target?.id ?? null)) {
     return { projectId: previous?.id ?? null, unchanged: true };
   }
@@ -563,8 +570,11 @@ async function startExtraction(
         scope,
         assetId: ref.assetId,
         version: ref.version,
-        // The first read of a version is one run however often it is asked for; a retry its own.
-        rerun: retry ? ctx.ids.newId() : 'reference',
+        // The first read of a version is one run however often it is asked for; a retry is one
+        // run per record it retries (two Retries of the same failure start one between them).
+        rerun: retry
+          ? `retry:${state.record?.updatedAt ?? ''}:${state.record?.reason ?? ''}`
+          : 'reference',
         textOnly: true,
       },
     ]);
@@ -768,6 +778,8 @@ export interface ProjectCallInput {
   readonly prompt: string;
   readonly maxTokens: number;
   readonly tier: ModelTier;
+  /** The answer's schema (`response_format`), which the model reads as input too. */
+  readonly outputSchema?: Record<string, unknown>;
 }
 
 /** What a call sends once its references are placed. */
@@ -835,6 +847,9 @@ function titleOf(asset: Asset): string {
 const isPdf = (asset: Asset) =>
   asset.file.contentType.split(';')[0]?.trim().toLowerCase() === 'application/pdf';
 
+/** Room a reference's header (or its listing line) takes, title and ids included. */
+const HEADER_CHARS = 250;
+
 /** Default window when the provider reports none: the smallest a tier ships with. */
 const FALLBACK_CONTEXT_TOKENS = 24_000;
 
@@ -893,15 +908,25 @@ export async function resolveAiProject(
   const usable: UsableReference[] = [];
   if (parts.references && project.references.length > 0) {
     const states = await referenceStates(ctx, scope, project.references);
+    // Work with no caller reads what every entry reader may: the published file, and its title.
     const published = principal
-      ? new Map<string, number>()
+      ? new Map<string, { version: number; title: string | null }>()
       : new Map(
           (
             await ctx.store.assets.getPublishedMany(
               scope,
               project.references.map((r) => r.assetId),
             )
-          ).map((p) => [p.assetId, p.version ?? 1]),
+          ).map((p) => [
+            p.assetId,
+            {
+              version: p.version ?? 1,
+              title:
+                (Object.values(p.title).find((t) => typeof t === 'string' && t.trim()) as
+                  | string
+                  | undefined) ?? p.file.fileName,
+            },
+          ]),
         );
     for (const state of states) {
       const { ref, asset, status } = state;
@@ -912,13 +937,17 @@ export async function resolveAiProject(
       // As the caller may read it; work with no caller only what every entry reader may.
       const readable = principal
         ? canReadAssets(principal, scope)
-        : published.get(ref.assetId) === ref.version;
+        : published.get(ref.assetId)?.version === ref.version;
       if (!readable) {
         leftOut(ref, 'forbidden');
         continue;
       }
       if (status.text === 'ready') {
-        usable.push({ ref, title: titleOf(asset), textBytes: state.textBytes ?? 0 });
+        usable.push({
+          ref,
+          title: published.get(ref.assetId)?.title ?? titleOf(asset),
+          textBytes: state.textBytes ?? 0,
+        });
         continue;
       }
       if (status.text === 'pending') {
@@ -994,13 +1023,19 @@ export async function resolveAiProject(
       const refs = new Map(report);
       const excerptable = usable.slice(0, AI_PROJECT_EXCERPTED_REFERENCES).filter((u) => u.text);
       const contextTokens = ai.limits?.(call.tier).contextTokens ?? FALLBACK_CONTEXT_TOKENS;
-      const budget = excerptBudgetChars({
-        contextTokens,
-        system: call.system,
-        prompt: call.prompt,
-        maxTokens: call.maxTokens,
-        sample: excerptable.map((u) => (u.text ?? '').slice(0, 2_000)).join('\n'),
-      });
+      // The header and listing lines are placed around the excerpts: held back from them here.
+      const lines = usable.length * HEADER_CHARS;
+      const budget = Math.max(
+        0,
+        excerptBudgetChars({
+          contextTokens,
+          system: call.system,
+          prompt: call.prompt,
+          ...(call.outputSchema ? { extra: JSON.stringify(call.outputSchema) } : {}),
+          maxTokens: call.maxTokens,
+          sample: excerptable.map((u) => (u.text ?? '').slice(0, 2_000)).join('\n'),
+        }) - lines,
+      );
       const shares = splitExcerptBudget(
         budget,
         excerptable.map((u) => (u.text ?? '').length),

@@ -80,7 +80,13 @@ describe('workers-ai text extractor', () => {
     expect(f.converted[1]?.options).toBeUndefined();
   });
 
-  it('settles an estimate only when the conversion reports no tokens', async () => {
+  it('settles an estimate when the conversion reports no tokens, or 0 for text it returned', async () => {
+    const zero = fakes({ format: 'markdown', data: 'y'.repeat(80), tokens: 0 });
+    const counted = await createWorkersAITextExtractor({
+      toMarkdown: zero.toMarkdown,
+      run: zero.run,
+    }).extract({ fileName: 'a.pdf', contentType: 'application/pdf', ...chunked('%PDF') });
+    expect(counted.usage.tokens).toBe(20);
     const f = fakes({ format: 'markdown', data: 'x'.repeat(40) });
     const x = createWorkersAITextExtractor({ toMarkdown: f.toMarkdown, run: f.run });
     const out = await x.extract({

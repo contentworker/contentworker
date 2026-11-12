@@ -127,7 +127,15 @@ export function registerAiProjectTools(server: McpServer, t: ToolContext): void 
     },
     async (args) => {
       guard(SCOPES.spaceAdmin, scopeOf(args));
-      return ok(await setDefaultAiProject(ctx, scopeOf(args), principal, args.projectId));
+      return ok(
+        await setDefaultAiProject(
+          ctx,
+          scopeOf(args),
+          principal,
+          args.projectId,
+          args.expectedVersion,
+        ),
+      );
     },
   );
 

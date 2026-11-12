@@ -39,10 +39,12 @@ export function wrapUntrusted(content: string): string {
 
 /**
  * Every delimiter a prompt fences text in: `user_content`, `space_guidance`, `ai_project` and
- * `reference` (the last with or without attributes, as the reference span opens with one).
+ * `reference`, opening, closing or self-closing, spaced or not, with or without attributes (the
+ * reference span opens with one). One way to match any text, so its cost is linear in the text:
+ * a pattern whose whitespace runs overlap backtracks polynomially on a tag name followed by
+ * thousands of spaces, and every fenced text an author writes passes through here.
  */
-const DELIMITER =
-  /<\s*\/?\s*(?:user_content|space_guidance|ai_project|reference)(?:\s+[^<>]*)?\s*\/?\s*>/gi;
+const DELIMITER = /<[\s/]*(?:user_content|space_guidance|ai_project|reference)\b[^<>]*>/gi;
 
 /**
  * Removes every delimiter tag (all four), spaced or not, until none is left: one pass over

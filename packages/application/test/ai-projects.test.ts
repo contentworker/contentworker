@@ -47,6 +47,7 @@ import {
   runAssetIngest,
   runDueAgentSchedules,
   SYSTEM_CALLER,
+  selectExcerpt,
   setAiSettings,
   setDefaultAiProject,
   stripDelimiters,
@@ -294,6 +295,19 @@ describe('the default project', () => {
       expectedVersion: 2,
     });
     expect(renamed.project).toMatchObject({ name: 'P2', isDefault: true });
+  });
+
+  it('refuses to make a project the default when it changed since the admin read it', async () => {
+    const p = await createAiProject(t.ctx, scope, editor, { name: 'P' });
+    await updateAiProject(t.ctx, scope, editor, p.id, {
+      name: 'P',
+      instructions: 'Changed behind the admin’s back',
+      expectedVersion: 1,
+    });
+    await expect(setDefaultAiProject(t.ctx, scope, admin, p.id, 1)).rejects.toThrow(ConflictError);
+    expect(await t.store.aiProjects.getDefault(scope)).toBeNull();
+    await setDefaultAiProject(t.ctx, scope, admin, p.id, 2);
+    expect((await t.store.aiProjects.getDefault(scope))?.id).toBe(p.id);
   });
 
   it('moves from one project to another in one unit, and clears with null', async () => {
@@ -589,6 +603,71 @@ describe('resolving a project for a call', () => {
     expect(after.use?.references[0]?.reason).toBeUndefined();
   });
 
+  it('names a reference by its published title in background work, never a draft one', async () => {
+    const a = await t.doc('spec.pdf', 'Published facts');
+    await publishAsset(t.ctx, scope, a.id);
+    const held = await t.store.assets.get(scope, a.id);
+    await t.store.assets.save(scope, {
+      ...(held as NonNullable<typeof held>),
+      title: { 'en-US': 'Unannounced Mixer X' },
+    });
+    const p = await createAiProject(t.ctx, scope, editor, {
+      name: 'P',
+      references: [{ assetId: a.id }],
+    });
+    const ctx = await resolveAiProject(t.ctx, scope, SYSTEM_CALLER, {
+      capability: 'agents',
+      projectId: p.id,
+    });
+    const placed = ctx.call(
+      { system: 's', prompt: 'task', maxTokens: 1024, tier: 'fast' },
+      new StubAIProvider(draftAnswer),
+    );
+    expect(placed.prompt).toContain('Reference 1: spec (asset');
+    expect(placed.prompt).not.toContain('Unannounced');
+  });
+
+  it('reports a reference whose extracted text is empty as without text, not used', async () => {
+    const a = await t.doc('scan.pdf', '');
+    const p = await createAiProject(t.ctx, scope, editor, {
+      name: 'P',
+      references: [{ assetId: a.id }],
+    });
+    expect((await getAiProject(t.ctx, scope, p.id)).references[0]).toMatchObject({
+      text: 'none',
+      reason: 'unsupported',
+    });
+    const out = await draftEntry(
+      t.ctx,
+      new StubAIProvider(draftAnswer),
+      scope,
+      { contentTypeApiId: 'post', prompt: 'x', projectId: p.id },
+      { caller: editor },
+    );
+    expect(out.project?.references[0]).toMatchObject({ used: false, reason: 'no_text' });
+  });
+
+  it('counts the answer’s schema against the window before placing excerpts', async () => {
+    const a = await t.doc('spec.pdf', 'facts '.repeat(5_000));
+    const p = await createAiProject(t.ctx, scope, editor, {
+      name: 'P',
+      references: [{ assetId: a.id }],
+    });
+    const ctx = await resolveAiProject(t.ctx, scope, editor, {
+      capability: 'drafting',
+      projectId: p.id,
+    });
+    const ai = new StubAIProvider(draftAnswer);
+    ai.contextTokens = 12_000;
+    const plain = ctx.call({ system: 's', prompt: 'task', maxTokens: 1024, tier: 'fast' }, ai);
+    const schema = { description: 'x'.repeat(24_000) };
+    const big = ctx.call(
+      { system: 's', prompt: 'task', maxTokens: 1024, tier: 'fast', outputSchema: schema },
+      ai,
+    );
+    expect(big.excerptChars).toBeLessThan(plain.excerptChars);
+  });
+
   it('gives translation the instructions and reader only: no writer, no references', async () => {
     const a = await t.doc('spec.pdf', 'Reference facts');
     const p = await createAiProject(t.ctx, scope, editor, {
@@ -638,6 +717,18 @@ describe('resolving a project for a call', () => {
     );
     expect(ai.requests[0]?.prompt).toContain('The facts.');
     expect(ai.requests[0]?.prompt).not.toContain('Jane Secret');
+  });
+
+  it('strips a delimiter in linear time, however much whitespace follows its name', () => {
+    const started = Date.now();
+    stripDelimiters(`<reference${' '.repeat(20_000)}`);
+    stripDelimiters(`<ai_project${'\n'.repeat(20_000)}`);
+    stripDelimiters('<space_guidance '.repeat(5_000));
+    expect(Date.now() - started).toBeLessThan(200);
+    // And still every form: closing, spaced, self-closing, with attributes; never a longer name.
+    expect(stripDelimiters('< / user_content >a<ai_project/>b<referenced>c<reference_x>')).toBe(
+      'ab<referenced>c<reference_x>',
+    );
   });
 
   it('strips every delimiter tag, in a loop, from fenced text', () => {
@@ -798,6 +889,32 @@ describe('reading a reference’s text when it has none (amendment C)', () => {
       { assetId: a.id, version: 1 },
     ]);
     expect(record).toMatchObject({ status: 'done', triggeredBy: 'ed@example.com' });
+  });
+
+  it('starts one run for two Retries of the same failure', async () => {
+    const a = await t.doc('spec.pdf', null);
+    const p = await createAiProject(t.ctx, scope, editor, {
+      name: 'P',
+      references: [{ assetId: a.id }],
+    });
+    await t.store.aiReferenceExtractions.record(scope, {
+      assetId: a.id,
+      fileVersion: 1,
+      status: 'skipped',
+      reason: 'failed',
+      triggeredBy: 'system',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    });
+    // Both read the record before either writes: the runs they ask for are one run's id.
+    const read = t.store.aiReferenceExtractions.getMany.bind(t.store.aiReferenceExtractions);
+    const first = await read(scope, [{ assetId: a.id, version: 1 }]);
+    t.store.aiReferenceExtractions.getMany = async () => first;
+    await Promise.all([
+      extractAiProjectReference(t.ctx, scope, admin, p.id, a.id),
+      extractAiProjectReference(t.ctx, scope, admin, p.id, a.id),
+    ]);
+    const tokens = new Set(t.ingest.requested.map((r) => r.rerun));
+    expect(tokens.size).toBe(1);
   });
 
   it('lets a person retry a skipped one, and refuses a final reason', async () => {
@@ -983,5 +1100,40 @@ describe('a stored project that is gone', () => {
     );
     expect(out.project).toMatchObject({ id: p.id });
     expect(ai.requests[0]?.system).toContain('Check claims.');
+  });
+});
+
+describe('choosing a reference’s excerpt', () => {
+  const para = (i: number, word = 'filler') => `Paragraph ${i}. ${`${word} `.repeat(40).trim()}.`;
+
+  it('keeps the head, then the paragraphs that match the task, in document order', () => {
+    const paragraphs = Array.from({ length: 30 }, (_, i) =>
+      i === 20 ? para(i, 'torque') : para(i),
+    );
+    const text = paragraphs.join('\n\n');
+    const excerpt = selectExcerpt(text, 1_500, 'motor torque');
+    expect(excerpt.text.startsWith('Paragraph 0.')).toBe(true);
+    expect(excerpt.text).toContain('torque torque');
+    // Ranges are in order and inside the text.
+    const starts = excerpt.ranges.map(([a]) => a);
+    expect([...starts].sort((a, b) => a - b)).toEqual(starts);
+    expect(excerpt.ranges.every(([a, b]) => a < b && b <= text.length)).toBe(true);
+    expect(excerpt.text.length).toBeLessThanOrEqual(1_500);
+  });
+
+  it('splits only an over-long paragraph, keeping the others whole', () => {
+    const long = Array.from({ length: 80 }, (_, i) => `Long sentence ${i} here.`).join(' ');
+    const text = [para(0), para(1), long, para(3, 'gearbox'), para(4)].join('\n\n');
+    const excerpt = selectExcerpt(text, 1_200, 'gearbox');
+    // The matching paragraph comes whole, not as scattered sentences.
+    expect(excerpt.text).toContain(para(3, 'gearbox'));
+  });
+
+  it('is the whole text when it fits, and the same excerpt every time', () => {
+    expect(selectExcerpt('Short.', 100, 'x')).toEqual({ text: 'Short.', ranges: [[0, 6]] });
+    const text = Array.from({ length: 50 }, (_, i) => para(i)).join('\n\n');
+    expect(selectExcerpt(text, 2_000, 'paragraph')).toEqual(
+      selectExcerpt(text, 2_000, 'paragraph'),
+    );
   });
 });

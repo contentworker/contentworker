@@ -919,18 +919,22 @@ export abstract class AssistantAgentBase extends AIChatAgent<AgentEnv> {
                   if (outside) throw new ToolRefused(fillRefusalText(outside));
                   const p = await this.principalIn(now, await this.caller(), made.scope);
                   // Reference text a turn reads is capped, whatever pages the model asks for.
+                  // Reserved before it runs (a step's calls run at once), the unread rest given back.
                   const read = name === 'ai_project_reference_read';
                   if (read && turn.referenceChars <= 0) throw new ToolRefused(READ_SPENT);
-                  const output = await callAssistantTool(
-                    now,
-                    p,
-                    name,
-                    read
-                      ? withReadLimit(heldInput(input, made.bound), turn.referenceChars)
-                      : heldInput(input, made.bound),
-                    made.scope,
-                  );
-                  if (read) turn.referenceChars -= textLength(output);
+                  const held = read
+                    ? withReadLimit(heldInput(input, made.bound), turn.referenceChars)
+                    : heldInput(input, made.bound);
+                  const reserved = read ? (held as { limit: number }).limit : 0;
+                  turn.referenceChars -= reserved;
+                  let output: unknown;
+                  try {
+                    output = await callAssistantTool(now, p, name, held, made.scope);
+                  } catch (err) {
+                    turn.referenceChars += reserved;
+                    throw err;
+                  }
+                  if (read) turn.referenceChars += reserved - textLength(output);
                   this.summaries.set(toolCallId, kept(output));
                   return forModel(output);
                 } catch (err) {

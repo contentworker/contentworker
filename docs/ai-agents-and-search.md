@@ -363,7 +363,7 @@ with `expectedVersion`, `DELETE`), `PUT …/ai-projects/default`, `POST
 `ai_project_delete`, `ai_project_default_set`, `ai_project_reference_extract` and
 `ai_project_reference_read`; the management SDK's `aiProjects`. Audit rows name the parts and pins
 a write changed, never the text. Snapshots and clones carry projects with their ids and pins
-(only a clone carries the default); promotions don't.
+(none comes in as the default: an administrator sets that in the target); promotions don't.
 
 ### Budget and untrusted content
 

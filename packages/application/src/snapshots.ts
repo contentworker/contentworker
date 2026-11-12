@@ -1099,8 +1099,8 @@ async function writeSnapshotMenus(
  * Writes the snapshot's AI projects with their ids and pins, in one unit (`preflight` has checked
  * each). A project whose id or name the target already holds (a retried import, or one made there
  * since) keeps the target's. A reference is kept only to an asset the snapshot brings or the
- * target holds, at a version that asset has had. The default comes along only with a clone, into
- * a target with none. Each starts its own history at version 1; a clone keeps who made it, an upload credits the
+ * target holds, at a version that asset has had. None comes in as the default: that is
+ * `space:admin`'s to set in the target. Each starts its own history at version 1; a clone keeps who made it, an upload credits the
  * importer (a snapshot is anyone's JSON).
  */
 async function writeSnapshotAiProjects(
@@ -1114,7 +1114,6 @@ async function writeSnapshotAiProjects(
   const held = await ctx.store.aiProjects.list(target);
   const ids = new Set(held.map((p) => p.id));
   const names = new Set(held.map((p) => aiProjectNameKey(p.name)));
-  let hasDefault = held.some((p) => p.isDefault);
   // The files a pin may name: the snapshot's assets, else the target's own.
   const versions = new Map(snapshot.assets.map((a) => [a.id, a.version ?? 1]));
   const wanted = [
@@ -1140,10 +1139,10 @@ async function writeSnapshotAiProjects(
       const version = r.version ?? current;
       return version <= current ? [{ assetId: r.assetId, version }] : [];
     });
-    // The default is space:admin's to set: only a clone (a copy of an environment the cloner can
-    // already see) carries it, never an uploaded file, and never into a target that has one.
-    const isDefault = keepCreators && p.isDefault === true && !hasDefault;
-    if (isDefault) hasDefault = true;
+    // The default is space:admin's to set (amendment B), and an import or a clone needs less than
+    // that (content:manage, in a space the source may not even be): no project comes in as the
+    // default; an administrator makes one the default in the target.
+    const isDefault = false;
     const by = (who: unknown) => (keepCreators && typeof who === 'string' ? who : actor);
     adding.push({
       id: id ?? ctx.ids.newId(),

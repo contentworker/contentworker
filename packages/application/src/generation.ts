@@ -204,7 +204,16 @@ async function draft(
   const system = policy.system(project.system(call.system));
   const tier = policy.tier('balanced', input.tier);
   const maxTokens = blocks.size > 0 ? LAYOUT_MAX_TOKENS : DRAFT_MAX_TOKENS;
-  const placed = project.call({ system, prompt: call.prompt(ct), maxTokens, tier }, ai);
+  const placed = project.call(
+    {
+      system,
+      prompt: call.prompt(ct),
+      maxTokens,
+      tier,
+      outputSchema: schema as unknown as Record<string, unknown>,
+    },
+    ai,
+  );
   const result = await generateWithBudget(
     ctx,
     ai,

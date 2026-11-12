@@ -513,7 +513,7 @@ export async function generateBlocks(
   const fullSystem = policy.system(project.system(system));
   const tier = policy.tier('flagship', input.tier);
   const placed = project.call(
-    { system: fullSystem, prompt, maxTokens: LAYOUT_MAX_TOKENS, tier },
+    { system: fullSystem, prompt, maxTokens: LAYOUT_MAX_TOKENS, tier, outputSchema: built.schema },
     ai,
   );
   const timeoutMs = options.timeoutMs ?? layoutTimeoutMs(ctx);

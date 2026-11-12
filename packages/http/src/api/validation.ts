@@ -1197,6 +1197,11 @@ export const aiProjectUpdateBody = aiProjectBody.extend({
 });
 export const aiProjectDefaultBody = z.object({
   projectId: zId.nullable().describe('The project to make the default; null clears it'),
+  expectedVersion: z
+    .int()
+    .min(1)
+    .optional()
+    .describe('The project’s version as you read it: one changed since is a 409'),
 });
 
 /**

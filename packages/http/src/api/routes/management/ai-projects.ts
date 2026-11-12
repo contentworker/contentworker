@@ -97,15 +97,18 @@ export function aiProjectsRoutes(deps: AuthDeps): Hono<AuthVars> {
         'changed meanwhile.',
     }),
     requireScope(SCOPES.spaceAdmin),
-    async (c) =>
-      c.json(
+    async (c) => {
+      const body = await parseBody(c, aiProjectDefaultBody);
+      return c.json(
         await setDefaultAiProject(
           actingCtx(ctx, c),
           scopeOf(c),
           c.get('principal'),
-          (await parseBody(c, aiProjectDefaultBody)).projectId,
+          body.projectId,
+          body.expectedVersion,
         ),
-      ),
+      );
+    },
   );
   app.get(
     `${BASE}/ai-projects/:id`,

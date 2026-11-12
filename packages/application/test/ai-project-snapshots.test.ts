@@ -79,7 +79,7 @@ describe('AI projects in snapshots and clones', () => {
     ]);
   });
 
-  it('a clone carries them with their ids, pins, default and makers', async () => {
+  it('a clone carries them with their ids, pins and makers, but never the default', async () => {
     const report = await cloneEnvironment(t.ctx, editor, source, target);
     expect(report.aiProjects).toBe(1);
     const [copy] = await t.store.aiProjects.list(target);
@@ -89,7 +89,8 @@ describe('AI projects in snapshots and clones', () => {
       instructions: 'Say spec sheet.',
       writer: { name: 'Team', description: 'Plain.' },
       references: [{ assetId: t.asset.id, version: 1 }],
-      isDefault: true,
+      // The default is space:admin's to set in the target; a clone takes content:manage.
+      isDefault: false,
       version: 1,
       createdBy: 'ed@example.com',
     });
