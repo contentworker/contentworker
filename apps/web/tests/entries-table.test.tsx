@@ -248,6 +248,13 @@ describe('EntriesTable sorting from its headers', () => {
     expect(screen.getByRole('columnheader', { name: 'Updated' }).getAttribute('aria-sort')).toBe(
       'ascending',
     );
+    // The sorted column reads in ink; the others hint that they sort with an arrow that is
+    // decoration, so their names stay the column's.
+    const sortButton = (name: string) => screen.getByRole('button', { name });
+    expect(sortButton('Updated').getAttribute('class')).toContain('text-foreground');
+    expect(sortButton('Updated').querySelector('svg')).toBeNull();
+    expect(sortButton('Status').getAttribute('class')).not.toContain(' text-foreground');
+    expect(sortButton('Status').querySelector('svg')?.getAttribute('aria-hidden')).toBe('true');
     fireEvent.click(screen.getByRole('button', { name: 'Headline' }));
     expect(onSort).toHaveBeenLastCalledWith('title');
     fireEvent.click(screen.getByRole('button', { name: 'Status' }));

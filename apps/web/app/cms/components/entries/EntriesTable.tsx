@@ -9,6 +9,7 @@ import {
   DropdownMenuTrigger,
 } from '@contentworker/ui/dropdown-menu';
 import { Kbd } from '@contentworker/ui/kbd';
+import { cn } from '@contentworker/ui/lib/utils';
 import { Skeleton, SkeletonPill, SkeletonText } from '@contentworker/ui/skeleton';
 import {
   Table,
@@ -20,7 +21,7 @@ import {
   TableHead as TableHeader,
   Tr as TableRow,
 } from '@contentworker/ui/table';
-import { MoreHorizontalIcon } from 'lucide-react';
+import { ArrowUpDown, MoreHorizontalIcon } from 'lucide-react';
 import { Fragment, type ReactNode, useEffect, useId, useRef, useState } from 'react';
 import { Link } from 'react-router';
 import { Ago } from '~/cms/components/ago';
@@ -303,12 +304,25 @@ export function EntriesTable(props: EntriesTableProps) {
     return (
       <TableHead role="columnheader" scope="col" sort={sort} className={className}>
         {canSort ? (
+          // Taller than its caption (most of the header's height) without moving it, its focus
+          // outline drawn at its edge so the card's corner never clips it. The column the list
+          // is sorted by reads in ink, as its arrow does; the others show that they sort only
+          // under the pointer or focus, so the header stays quiet.
           <button
             type="button"
-            className="hit-area caption -mx-1 rounded-sm px-1 hover:text-foreground"
+            className={cn(
+              'hit-area group/sort caption -mx-1 -my-1.5 rounded-sm px-1 py-1.5 hover:text-foreground focus-visible:outline-offset-0',
+              sort && 'text-foreground',
+            )}
             onClick={() => props.onSort?.(field)}
           >
             {label}
+            {sort ? null : (
+              <ArrowUpDown
+                aria-hidden="true"
+                className="ml-1 inline size-3 align-[-0.125em] opacity-0 transition-opacity duration-(--motion-instant) group-hover/sort:opacity-60 group-focus-visible/sort:opacity-60"
+              />
+            )}
           </button>
         ) : (
           label

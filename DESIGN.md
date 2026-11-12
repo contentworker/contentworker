@@ -456,8 +456,10 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   a padded panel.
 - **Headers** are captions, `scope="col"`. A column without a name (row actions) still gets one for
   screen readers. A column the list sorts by is `Th sort` (`aria-sort` and an arrow beside the
-  caption); a sortable one holds a caption-styled button that sorts by it. Sort lives in the
-  headers, never in a filter panel.
+  caption); a sortable one holds a caption-styled button that sorts by it, most of the header's
+  height, its focus outline at its own edge so a card's corner never clips it. The sorted
+  column's label is ink, as its arrow is; the others show an up-down arrow only under the pointer
+  or focus. Sort lives in the headers, never in a filter panel.
 - **Rows** from md are one height (the entries list's are 44px, its cells centred on the row); a
   row's quiet actions are ghost `xs` buttons, badge height, so they never set the row's height. A
   ticked row (`data-state="selected"`) takes a faint brand tint and the keyboard's row
@@ -477,7 +479,13 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
 - **Long lists** (`sticky`: the entries list, the asset list, the audit logs) keep the header
   under the shell's header; the card clips with `overflow-clip`, never `overflow-hidden`. A bar
   held above the table (a bulk bar) sets `--sticky-above` to its height and the header sits under
-  it.
+  it. The header's rule is one line, drawn on its cells so it travels with them (a sticky table's
+  `thead` has no border of its own). Under forced colours, which drop that
+  shadow, the `thead` border stays and is the rule. The entries list's bulk bar is centred on
+  where the filter bar was, so while it is one row the table doesn't move when a row is ticked;
+  its paper stops at the card's edge with 0.625rem between them (a bar never covers a card's
+  corners), and its height is measured, so a bar that wraps or opens its confirm still has the
+  header under it.
 - **Keyboard:** the entries list moves with J/K, opens with Enter and ticks with X; Shift-click
   ticks a range (`EntriesTable`). The hint (`Kbd`, `text-2xs`) shows only with `fine:` from md,
   and is `aria-hidden`: the table is `aria-describedby` an sr-only sentence that says the same.

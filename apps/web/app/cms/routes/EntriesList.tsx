@@ -14,7 +14,7 @@ import { Sheet, SheetDescription, SheetHeader, SheetTitle } from '@contentworker
 import { SkeletonText } from '@contentworker/ui/skeleton';
 import { type InfiniteData, useQueryClient } from '@tanstack/react-query';
 import { FileText } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { type CSSProperties, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router';
 import { BulkJobProgress } from '~/cms/components/bulk-job-progress';
 import { EntryFilterBar } from '~/cms/components/EntryFilterBar';
@@ -196,6 +196,19 @@ export function EntriesList() {
   // so the whole batch is confirmed once before it runs).
   const [confirmBulk, setConfirmBulk] = useState<BulkConfirm | null>(null);
   const bulkBarRef = useRef<HTMLDivElement>(null);
+  // How tall the bulk bar's box stands, for the table's sticky header to sit under it
+  // (`--sticky-above`): measured, since the bar wraps in a narrow page and grows with its confirm.
+  const [bulkBarHeight, setBulkBarHeight] = useState<number>();
+  const barShown = picked.size > 0;
+  useEffect(() => {
+    const el = bulkBarRef.current;
+    if (!barShown || !el || typeof ResizeObserver === 'undefined') return;
+    const measure = () => setBulkBarHeight(el.offsetHeight);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [barShown]);
   // A trash, restore or permanent delete of the ticked entries, running as a job on the server.
   const [entryJob, setEntryJob] = useState<{
     readonly action: TrashJobAction;
@@ -888,9 +901,16 @@ export function EntriesList() {
       </PageHeader>
 
       {/* Ticking anything swaps the filter bar for what can be done to the ticked entries, held
-          under the shell's header; the table's sticky header sits under it (`--sticky-above`). */}
+          under the shell's header; the table's sticky header sits under it (`--sticky-above`, this
+          box's height). The bar is taller than the filter bar, so it is centred on where that
+          was and the table below never moves; its paper runs 0.5rem above it (rows scrolling
+          under the shell) and 0.625rem below, which is the gap to the table: it stops at the
+          card's edge, never over its corners. */}
       {bulkBar ? (
-        <div ref={bulkBarRef} className="sticky top-(--shell-h) z-20 -my-2 bg-background py-2">
+        <div
+          ref={bulkBarRef}
+          className="sticky top-(--shell-h) z-20 -mt-3.5 mb-0 bg-background pt-2 pb-2.5"
+        >
           {viewingTrash ? (
             <EntryBulkBar
               count={picked.size}
@@ -1065,7 +1085,16 @@ export function EntriesList() {
         </EmptyState>
       ) : (
         <Refreshing busy={entriesQuery.isPlaceholderData}>
-          <div className={bulkBar ? 'md:[--sticky-above:4rem]' : undefined}>
+          <div
+            // One row of bar until it is measured (and where nothing can measure it).
+            style={
+              bulkBar
+                ? ({
+                    '--sticky-above': bulkBarHeight ? `${bulkBarHeight}px` : '4.125rem',
+                  } as CSSProperties)
+                : undefined
+            }
+          >
             <EntriesTable
               type={selectedType}
               entries={entries}
