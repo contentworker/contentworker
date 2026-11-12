@@ -1,7 +1,8 @@
 # AI projects
 
-Status: **proposed** 2026-11-11 (M5, "AI projects" in `ROADMAP.md`). Nothing here is built; the
-numbered proposals under Decisions await the owner.
+Status: **decided** 2026-11-11, **not built** (M5, "AI projects" in `ROADMAP.md`). The owner took
+all ten proposals under Decisions and added one: a reference without extracted text gets its text
+read for it (see Reference text extraction).
 This file sits in `docs/specs/`, which the docs embed does not read (it takes `docs/*.md` only),
 so MCP clients never mistake it for a description of shipped behaviour.
 
@@ -74,7 +75,7 @@ but it is still one context for the whole space, and the person working can't ch
 nothing is reusable, every surface grows its own fields, and reference access is checked once per
 call site instead of in one place.
 
-**C. Projects (proposed).** A stored, versioned record per environment, picked per request or
+**C. Projects (chosen).** A stored, versioned record per environment, picked per request or
 stored on an AI action or schedule, resolved by one use-case into a fenced prompt part and a
 bounded set of reference excerpts. The rest of this spec describes C.
 
@@ -113,15 +114,16 @@ interface AiPersona {
 - **Per environment** (decision 1), in a new `ai_projects` table keyed `(space_id,
   environment_id, id)`, like `ai_actions`, `agent_schedules` and the assets the references name;
   a partial unique index holds one `is_default = 1` per environment. Expand-only migration
-  (`0045_ai_projects`), mirrored in `schema.ts`. The references are a JSON column of ids, checked
+  (`0045_ai_projects`, which also adds `ai_reference_extractions` and the two `project_id`
+  columns), mirrored in `schema.ts`. The references are a JSON column of ids, checked
   on save in one `selectChunked` read (ten ids, well under the 100-parameter cap).
 - **References must be documents or recordings** (`assetKind` `document` or `audio`) in the
   environment, not trashed; anything else is refused on save (422 `reference_not_text`, naming
-  the index). A reference reports its text status on read, derived, never stored: `ready`,
-  `pending` (ingest hasn't run), `none` (too large, unsupported, or `search` off when it ran), or
-  `stale` (the file was replaced and its new version's text isn't there yet). The text read is
-  always the library version's `assetTextKey`, so a replaced file is picked up with no write to
-  the project.
+  the index). A reference reports its text status on read, derived from the text in R2 and the
+  extraction record (see Reference text extraction), never from the project row: `ready`,
+  `pending` (ingest or an extraction hasn't finished), or `none` with a reason (`too_large`,
+  `unsupported`, `media_off`, `budget`, `failed`). The text read is always the library version's
+  `assetTextKey`, so a replaced file is picked up with no write to the project.
 - **Versioned by compare-and-set.** Each update sends `expectedVersion` (409 naming the version in
   force otherwise); setting what is in force again writes nothing. Setting the default clears the
   previous one in the same unit of work, so a lost race is a `TransactionConflictError` mapped to
@@ -152,6 +154,40 @@ part, the reference excerpts and a report of what was used:
 Disabled capability first, project second: a capability that is off still refuses with 409
 `ai_capability_disabled`, whatever project is named. Projects carry no tier (decision 7); the tier
 is the request's, the AI action's, the capability's or the call site's, held to the cap, as now.
+
+### Reference text extraction
+
+Ingest reads a file's text only while `search` is on, so a reference uploaded while search was
+off has none. Decided 2026-11-11: a reference without text gets it read for it.
+
+- **When.** A project save that adds a reference, and a file replaced on an asset any project in
+  the environment names. The save commits an `ai_project.references_added` outbox event with the
+  new asset ids in the same unit as the project; its consumer starts one extraction per asset
+  version that has no text. A replaced file already runs ingest: its `extract-text` step's gate
+  becomes "`search` on, or the asset is a reference of a project here and `media` is on", so no
+  second run is started for it.
+- **What runs.** `extractText` alone, on its own step (`extract-text` with the asset id and
+  version as its idempotency key), not hash, alt text, tags, embed or index. It writes the same
+  `assetTextKey` and keeps every rule it has now: the size caps, the 500,000-character cap, the
+  current-version checks that make a replaced or deleted asset a no-op, and `runWithBudget`
+  metering. A background job on the engine, never on the request.
+- **The record.** `ai_reference_extractions` (`space_id`, `environment_id`, `asset_id`,
+  `file_version`, `status` `pending` | `done` | `skipped`, `reason`, `updated_at`), one row per
+  asset version, written by the consumer and the step. A reference is `pending` from the save
+  until the step finishes; a redelivered event or retried step finds the row `done` (or the text
+  in R2) and does nothing. Rows for older versions are pruned with the asset's derived files.
+- **The `media` capability governs it.** Search's switch says whether files go to a model to be
+  found; reading a file's text for a reference is asset AI work, which `media` covers ("alt text
+  and tags for assets" gains "and reading the text of project references"). With `media` off, no
+  extraction starts, the row is `skipped` with `media_off`, and the reference shows `none (media
+  off)` with no text reaching any model. Turning `media` back on doesn't sweep: a **Retry** on the
+  reference (or any save of the project) starts it again. With `search` on, ingest reads the text
+  anyway, whatever `media` says, as it does now.
+- **A spent budget** skips the step (`budget`), as ingest does; Retry starts it again.
+- **Who can start it.** Anyone who can save the project (`content:manage`). It spends the space's
+  AI budget on a file the saver may not be able to read, but it returns nothing to them: the text
+  is read later as each caller may read it. Text written for a reference also feeds search if
+  search is turned on later, as any extracted text does.
 
 ### Ordering and fencing
 
@@ -246,6 +282,7 @@ Both surfaces, as AGENTS.md requires, one use-case each in `packages/application
 | Update                 | `PUT ai-projects/{id}` (`expectedVersion`)        | `ai_project_update`         | `content:manage` |
 | Delete                 | `DELETE ai-projects/{id}`                         | `ai_project_delete`         | `content:manage` |
 | Make default / clear   | `PUT ai-projects/default` (`{ projectId \| null }`) | `ai_project_default_set`    | decision 2       |
+| Retry a reference's text | `POST ai-projects/{id}/references/{assetId}/extract` | `ai_project_reference_extract` | `content:manage` |
 | Read a reference       | `GET ai-projects/{id}/references/{assetId}/text`  | `ai_project_reference_read` | `preview:read` + asset read |
 
 - **Selection on the AI calls**: an optional `projectId` (string, or `null` for none) on
@@ -276,7 +313,8 @@ Both surfaces, as AGENTS.md requires, one use-case each in `packages/application
 - **Settings → Automation → AI projects**, beside AI and AI actions: a list (name, default badge,
   reference count, updated by and when), and a project page with name, description, instructions,
   writer and reader (a name field and a description each), and references picked from the asset
-  library (documents and recordings only), each with its text status and a link to the asset.
+  library (documents and recordings only), each with its text status, a Retry when it has none
+  for a reason that can pass (`media_off`, `budget`, `failed`), and a link to the asset.
   Save, Discard and the stale-save handling AI settings use. Read-only without `content:manage`.
   Settings, not Build: projects are configuration for AI, like AI actions, not content model.
 - **Pickers**: a Project select (the environment's projects, "Default (Northwind launch)" first,
@@ -289,37 +327,35 @@ Both surfaces, as AGENTS.md requires, one use-case each in `packages/application
 
 ## Decisions
 
-Proposed, awaiting the owner:
+Made by the owner on 2026-11-11, each as proposed, with one addition (11):
 
-1. **Scope: per environment.** Projects live beside the assets they name and the AI actions and
-   schedules that store them, and travel with snapshots and clones. Alternative: per space, with
-   references resolved in whichever environment the call runs in (one project everywhere, but a
-   reference silently means a different file, or none, per environment).
-2. **Who: `content:manage` creates, edits and deletes; `space:admin` sets the default.** The
-   default reaches everyone's calls, as space guidance does. Alternative: `content:manage` for the
-   default too, as for AI actions, whose prompts also run in other people's requests.
+1. **Scope: per environment.** Considered: per space, with references resolved in whichever
+   environment the call runs in.
+2. **Who: `content:manage` creates, edits and deletes; `space:admin` sets the default.**
+   Considered: `content:manage` for the default too, as for AI actions.
 3. **Personas: one writer and one reader per project, each a name and a description.**
-   Alternative: a persona library per environment, referenced by id from projects (reuse across
-   projects, at the cost of a second entity and its own delete-in-use rule).
+   Considered: a persona library per environment, referenced by id from projects.
 4. **References: inline head excerpts (12,000 characters per call) for every call, plus
-   `ai_project_reference_read` for Coworker and MCP clients.** Alternative: a model-written digest
-   per reference, made when it is attached or its file changes (better than a head for long files,
-   but an extra metered call, a stored derived text and a staleness rule).
+   `ai_project_reference_read` for Coworker and MCP clients.** Considered: a model-written digest
+   per reference, made when it is attached or its file changes.
 5. **Delete while referenced: refused with 409 `project_in_use`** naming the AI actions and
-   schedules. Alternative: allow it, and those fall back to the default with the run recording it
-   (no blocked delete, but a background agent changes behaviour silently).
+   schedules. Considered: allowing it, with those falling back to the default.
 6. **Capabilities that take a project: `drafting`, `layout`, `assistant`, `field-assist`,
-   `translation`.** Not `media`, `search`, `workflows`, moderation or change summaries, which are
-   factual or classifying. Alternative: every guided capability, letting the project decide.
-7. **No tier on a project.** Tiers stay in AI settings, the request and AI actions, under the cap.
-   Alternative: an optional project tier between the request's and the capability's.
+   `translation`.** Considered: every guided capability.
+7. **No tier on a project.** Considered: an optional project tier between the request's and the
+   capability's.
 8. **Precedence: both apply; space guidance after the project, and it wins on conflict.**
-   Alternative: the project after space guidance and winning, as the more specific brief.
+   Considered: the project last and winning, as the more specific brief.
 9. **Background runs use a reference only while it is unrestricted** (every asset today; once
-   asset grants land, none that a grant or deny rule restricts). Alternative: background runs
-   take instructions and personas but never reference text.
+   asset grants land, none that a grant or deny rule restricts). Considered: no reference text in
+   background runs.
 10. **Promotions don't carry projects in this step**; snapshots, clones and space export do.
-    Alternative: projects as a promotable kind, pinned by version like content types.
+    Considered: projects as a promotable kind, pinned by version like content types.
+11. **A reference without text gets it read** (owner's addition): on attach and on a file
+    replaced, the text-extraction step alone, as a background job writing the same
+    `assetTextKey`, `pending` until done, governed by `media` (off: skipped, shown as `media_off`,
+    retried by hand). Considered for the gate: `search` (what ingest checks today), which would
+    make a reference's text depend on whether the space wants semantic search.
 
 ## Out of scope
 
@@ -327,8 +363,7 @@ Proposed, awaiting the owner:
   entries rather than files.
 - Tool loops in the structured use-cases (`draftEntry`, `generateBlocks`, agents): they get
   excerpts only.
-- Reference text for assets ingest didn't extract (images, video, or anything ingested while
-  `search` was off); re-extraction on attach.
+- Reference text for images and video (only documents and recordings have text to read).
 - Projects in workflow AI nodes, the workflow copilot, alt text and tags, moderation and
   promotion reviews.
 - Per-project budgets, usage reports by project beyond the agent run record, and project-level
