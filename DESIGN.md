@@ -653,9 +653,17 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
 - **The content nav** (`cms/routes/ContentLayout.tsx`): beside a type's entries once the page is
   40rem wide, drawn as the Settings section nav is. The "Content types" caption, the ungrouped
   types, then each group under its name (an h3 `caption`, ids by the group's place, never a slug)
-  naming its list. Each link has its type's icon (`size-4`; a type without one keeps the empty
-  slot, so names line up) and a `StatusDot` when not published. The open link takes the accent
-  fill, and its icon alone goes `text-brand`.
+  naming its list, 1.25rem apart as Settings' groups are; when every type is grouped the groups'
+  captions head the lists and "Content types" only names the nav (`sr-only`), never a caption
+  stacked on a caption. Each link has its type's icon (`size-4`; beside types with icons, one
+  without gets a blank page, which no type can choose, so every name shares one edge and none
+  reads as a child of the row above; when no type has an icon there are none and names start at
+  the caption's edge) and a `StatusDot` when not published, with its status in
+  words for a resting pointer and in the link's name ("Event, Draft"); under forced colours the
+  dot is a ring. The open
+  link takes the accent fill, and its icon alone goes `text-brand`. A list taller than the window
+  scrolls on its own under the header and over the tab bar (`cw-scroll`), so the last type is
+  never a page of entries away; the open type is scrolled into it on arrival.
 - **The entry form's layout** (`cms/components/EntryForm.tsx`): a type's layout draws the form as
   tabs ("Sections of the entry", a `TabsList` at full width that scrolls sideways itself, so a
   phone or tablet never scrolls the page), each tab one `Card`. A named group is a `section-title`

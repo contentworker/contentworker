@@ -4,12 +4,15 @@ import { cleanup, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-const types = [
+type NavType = { apiId: string; name: string; status: string; group?: string; icon?: string };
+
+const modelled: NavType[] = [
   // An inherited key as a stored name: drawn as no icon, never looked up on the prototype.
   { apiId: 'post', name: 'Post', status: 'published', icon: 'constructor' },
   { apiId: 'faq', name: 'FAQ', status: 'published', group: 'A B', icon: 'calendar' },
   { apiId: 'page', name: 'Page', status: 'published', group: 'A-B', icon: 'calendar' },
 ];
+let types = modelled;
 
 vi.mock('~/cms/lib/client-context', () => ({
   useClient: () => ({ conn: { space: 'demo', environment: 'main', locale: 'en-US' } }),
@@ -28,7 +31,10 @@ vi.mock('~/cms/components/ContentTypeDeleteJob', () => ({
 
 const { ContentLayout } = await import('~/cms/routes/ContentLayout');
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  types = modelled;
+});
 
 const renderNav = (at = '/content') =>
   render(
@@ -48,13 +54,50 @@ describe('the content nav', () => {
     expect(screen.getByRole('list', { name: 'A-B' }).textContent).toBe('Page');
   });
 
-  it('marks the open type’s icon in the brand accent, and keeps an empty slot for no icon', () => {
+  it('marks the open type’s icon in the brand accent, and draws a blank page for no icon', () => {
     renderNav('/content/faq');
     const icon = (name: string) =>
       screen.getByRole('link', { name }).querySelector('[aria-hidden="true"]');
     expect(icon('FAQ')?.getAttribute('class')).toContain('text-brand');
     expect(icon('Page')?.getAttribute('class')).not.toContain('text-brand');
-    // `constructor` names no icon the admin knows: a reserved slot, not a crash.
-    expect(icon('Post')?.tagName).toBe('SPAN');
+    // `constructor` names no icon the admin knows: the blank page every such type gets beside
+    // types with icons (never an empty slot, which would set the name in like a child), not a crash.
+    expect(icon('Post')?.tagName.toLowerCase()).toBe('svg');
+    expect(icon('Post')?.getAttribute('class')).toContain('lucide-file');
+    expect(icon('Post')?.getAttribute('class')).not.toContain('lucide-file-text');
+  });
+
+  it('draws no icons when no type has one, so names start at the caption’s edge', () => {
+    types = [
+      { apiId: 'post', name: 'Post', status: 'published' },
+      { apiId: 'faq', name: 'FAQ', status: 'published', icon: 'constructor' },
+    ];
+    renderNav('/content/post');
+    for (const name of ['Post', 'FAQ']) {
+      expect(screen.getByRole('link', { name }).querySelector('[aria-hidden="true"]')).toBeNull();
+    }
+  });
+
+  it('says an unpublished type’s status in words after its name', () => {
+    types = [
+      { apiId: 'post', name: 'Post', status: 'published' },
+      { apiId: 'event', name: 'Event', status: 'draft' },
+    ];
+    renderNav();
+    expect(screen.getByRole('link', { name: 'Event, Draft' })).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Event, Draft' }).textContent).toBe('Event');
+    expect(screen.getByRole('link', { name: 'Post' }).getAttribute('aria-label')).toBeNull();
+  });
+
+  it('heads the lists with the groups’ own captions when every type is grouped', () => {
+    types = modelled.filter((t) => t.group);
+    renderNav();
+    // Still the nav's name, without a caption stacked over the first group's.
+    expect(screen.getByRole('navigation', { name: 'Content types' })).toBeTruthy();
+    expect(screen.getByRole('heading', { level: 2 }).getAttribute('class')).toBe('sr-only');
+    cleanup();
+    types = modelled;
+    renderNav();
+    expect(screen.getByRole('heading', { level: 2 }).getAttribute('class')).toContain('caption');
   });
 });
