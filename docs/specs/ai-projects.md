@@ -308,16 +308,16 @@ Everything a project adds is input tokens the call settles through `generateWith
 
 Both surfaces, as AGENTS.md requires, one use-case each in `packages/application/src/ai-projects.ts`:
 
-| Operation          | REST (`/spaces/:space/environments/:env/…`)        | MCP                            | Takes                         |
-| ------------------ | -------------------------------------------------- | ------------------------------ | ----------------------------- |
-| List               | `GET ai-projects`                                  | `ai_projects_list`             | `content:write`               |
-| Read               | `GET ai-projects/{id}` (with reference status)     | `ai_project_get`               | `content:write`               |
-| Create             | `POST ai-projects`                                 | `ai_project_create`            | `content:manage`              |
-| Update             | `PUT ai-projects/{id}` (`expectedVersion`)         | `ai_project_update`            | `content:manage`; default: `space:admin` |
-| Delete             | `DELETE ai-projects/{id}`                          | `ai_project_delete`            | `content:manage`; default: `space:admin` |
-| Set or clear default | `PUT ai-projects/default` (`{ projectId }`, or null) | `ai_project_default_set`     | `space:admin`                 |
-| Retry a text       | `POST ai-projects/{id}/references/{assetId}/extract` | `ai_project_reference_extract` | `content:write` (see Who)   |
-| Read a reference   | `GET ai-projects/{id}/references/{assetId}/text`   | `ai_project_reference_read`    | `content:write` + asset read  |
+| Operation            | REST (`/spaces/:space/environments/:env/…`)          | MCP                            | Takes                                    |
+| -------------------- | ---------------------------------------------------- | ------------------------------ | ---------------------------------------- |
+| List                 | `GET ai-projects`                                    | `ai_projects_list`             | `content:write`                          |
+| Read                 | `GET ai-projects/{id}` (with reference status)       | `ai_project_get`               | `content:write`                          |
+| Create               | `POST ai-projects`                                   | `ai_project_create`            | `content:manage`                         |
+| Update               | `PUT ai-projects/{id}` (`expectedVersion`)           | `ai_project_update`            | `content:manage`; default: `space:admin` |
+| Delete               | `DELETE ai-projects/{id}`                            | `ai_project_delete`            | `content:manage`; default: `space:admin` |
+| Set or clear default | `PUT ai-projects/default` (`{ projectId }`, or null) | `ai_project_default_set`       | `space:admin`                            |
+| Retry a text         | `POST ai-projects/{id}/references/{assetId}/extract` | `ai_project_reference_extract` | `content:write` (see Who)                |
+| Read a reference     | `GET ai-projects/{id}/references/{assetId}/text`     | `ai_project_reference_read`    | `content:write` + asset read             |
 
 - **Selection on the AI calls**: an optional `projectId` (string, or `null` for none) on
   `POST …/entries/generate`, `…/entries/canvas`, `…/entries/blocks/generate`, translate,
