@@ -82,6 +82,8 @@ export interface SiteFrame {
     ref: string,
     place?: { readonly align: 'start' | 'end'; readonly inset: number },
   ) => void;
+  /** Asks the page to scroll `dy` frame pixels (needs `scroll` and `layout`): the canvas's drag. */
+  readonly scrollBy: (dy: number) => void;
 }
 
 export function useSiteFrame(props: SiteFrameOptions): SiteFrame {
@@ -261,6 +263,9 @@ export function useSiteFrame(props: SiteFrameOptions): SiteFrame {
     reload: () => setFrameKey((k) => k + 1),
     scrollTo: (ref, place) => {
       if (ready.current) toFrame({ type: 'scroll', ref, ...(place ?? {}) });
+    },
+    scrollBy: (dy) => {
+      if (ready.current) toFrame({ type: 'scrollBy', dy });
     },
   };
 }

@@ -121,7 +121,12 @@ export type EditorMessage =
       readonly ref: string;
       readonly align?: 'start' | 'end';
       readonly inset?: number;
-    };
+    }
+  /**
+   * For the canvas: scroll the page `dy` pixels of the frame (negative up), as a carried block
+   * nears its edge. The frame says it to the page as a `scroll` to an element it last reported.
+   */
+  | { readonly type: 'scrollBy'; readonly dy: number };
 
 export type FrameMessage =
   /** The frame is up and wants the entry; `origin` is the site it frames. */

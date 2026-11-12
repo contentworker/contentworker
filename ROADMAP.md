@@ -472,7 +472,8 @@ Built on Blocks and the frontend runtime. Layouts stay a typed tree; rich text s
   (`_responsive`), codegen and `resolveBlocks` / `responsiveProp` carry them. The canvas edits them:
   its width presets are Base and the catalog's breakpoints, the Look tab sets an override at the
   breakpoint in view (inherited values say where from; Reset inherits again), Layers marks a block
-  that carries one, and the entry form lists them read-only; an undo that spans a save keeps its
+  that carries one, and the entry form lists them read-only, each width linking to the canvas opened
+  on that block's Look tab at that width (`?block=…&width=…`); an undo that spans a save keeps its
   carried overrides (the save reads the version before once).
 - [x] **Blocks from code.** `contentworker blocks push` maps component manifests (JSON data:
   token and enum props, slots with `allowedChildren`, `allowedParents`, aliases for renamed ids,
@@ -503,10 +504,15 @@ Built on Blocks and the frontend runtime. Layouts stay a typed tree; rich text s
   `{ url }` thumbnail isn't drawn (the admin's `img-src` takes no other origin). With a fine
   pointer the selected block drags by its grip to a seam of its slot or another that takes it,
   held to the dock's judgement (the slot's blocks, the block config's narrowing and counts, locks
-  and locked regions) and the save's, as one `move` op that undo inverts; touch and the keyboard
-  move blocks with the inspector's Move up, Move down and Move to, and Layers. A move stays within
-  its blocks field. Per-breakpoint overrides are edited in the Look tab at the width in view (see
-  Layout model).
+  and locked regions) and the save's, as one step that undo inverts: a `move` op within a blocks
+  field, a `remove` and an `insert` (keys, overrides and inner blocks carried whole) into another
+  top-level blocks field, refused with its reason where that field is the other kind (localized or
+  not), defines the block apart, already holds one of its keys, or lacks a breakpoint its
+  overrides are set at. Carried near the frame's top or bottom edge, the block scrolls the page
+  (small steps; with reduced motion, half-view jumps), said to the page as an element-anchored
+  `scroll` so no SDK change is needed. Touch and the keyboard move blocks with the inspector's Move
+  up, Move down and Move to, and Layers. Per-breakpoint overrides are edited in the Look tab at
+  the width in view (see Layout model).
 - [x] **Frontend SDK extras.** `client.live()` over the live stream (reconnecting with backoff,
   stopping when the key is refused) with `useLiveEntry` / `useLiveEntries` for React and Vue; a
   Next.js draft-mode helper (`@contentworker/sdk/next`: a route that checks the preview token, and a

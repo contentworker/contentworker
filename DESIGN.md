@@ -1114,15 +1114,19 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   "Same at every width: change it at Base.", and at Base a responsive prop says where it changes
   ("Changes at Tablet"). Layers marks a block with overrides by a muted `MonitorSmartphone` icon
   named "Has overrides at Tablet, Desktop", and the entry form lists them read-only under the
-  block's props (a "Per width" caption, then each breakpoint and what it changes) with a link to
-  the canvas; a refused stale override is a check on its block. A block
+  block's props (a "Per width" caption, then each breakpoint and what it changes, with an "Edit at
+  Tablet" link that opens the canvas on that block's Look tab at that width); a refused stale
+  override is a check on its block. A block
   the code no longer provides says "Removed from code" with Remove and Keep for now. With a fine
   pointer the selected block carries a grip (a paper chip at its top right): dragged, the seams it
   may go to are dashed ink and the rest go, the nearest takes the brand insertion line or, where it
   can't go, the reason on its pill; a "Moving …" chip follows the pointer and the block's edge goes
-  dashed. Letting go is one move (undo takes it back); Esc or a drop away from every seam puts it
-  back, said in the live region. Touch gets no grip; the inspector's Move to (a ghost icon button
-  and menu of the slots that take the block) is the keyboard's and a finger's way. **Layers** is
+  dashed. Letting go is one move (undo takes it back), into another blocks field too; Esc or a drop
+  away from every seam puts it back, said in the live region. Held within 48px of the frame's top
+  or bottom edge, the page scrolls under it in small steps (reduced motion: a jump of half the
+  view after a moment's rest, never an animation), and the seams follow. Touch gets no grip; the
+  inspector's Move to (a ghost icon button and menu of the slots that take the block) is the
+  keyboard's and a finger's way. **Layers** is
   a tree, and the keyboard and screen-reader path to every block (the seams are pointer-only,
   out of the tab order). Undo and redo are in the header beside Save draft; a remove's toast offers
   Undo. From md to lg it edits by tap: the dock comes from the bottom, the inspector from the side

@@ -8,7 +8,10 @@
  * With a fine pointer the selected block carries a grip: dragged, the seams it may go to stand out,
  * the one nearest the pointer takes the insertion line (or says why the block can't go there), and
  * letting go moves it there (`drag.judge`, `cms/lib/canvas/drag.ts`). Esc, or letting go away from
- * every seam, puts it down where it was. A touch screen has no grip: iPadOS drag is unreliable, so
+ * every seam, puts it down where it was. Carried near the frame's top or bottom edge, the block
+ * scrolls the page (`onScrollBy`, `cms/lib/canvas/autoscroll.ts`): in small steps, or with reduced
+ * motion a jump of half the view at a time; the seams follow the page, and the one under the
+ * pointer is judged again as they do. A touch screen has no grip: iPadOS drag is unreliable, so
  * a finger moves blocks from the inspector and Layers, as the keyboard does.
  *
  * The overlay is for the pointer. The keyboard and screen readers reach every block and seam from
@@ -20,6 +23,7 @@ import type { LiveRect } from '@contentworker/sdk-core/live-preview';
 import { cn } from '@contentworker/ui/lib/utils';
 import { GripVertical, Lock } from 'lucide-react';
 import { type RefObject, useEffect, useRef, useState } from 'react';
+import { edgeScroll, REDUCED_MS, STEP_MS } from '~/cms/lib/canvas/autoscroll';
 import type { DropVerdict } from '~/cms/lib/canvas/drag';
 import { slotFill } from '~/cms/lib/canvas/model';
 import type { Seam } from '~/cms/lib/canvas/seams';
@@ -50,6 +54,11 @@ export interface CanvasStageProps {
   readonly onChooseSeam: (seam: Seam) => void;
   /** Dragging the selected block to a seam; absent where it can't be (touch, review, a lock). */
   readonly drag?: StageDrag;
+  /**
+   * Scrolls the page by `dy` of the stage's pixels (negative up), while a block is carried near
+   * the top or bottom edge; absent where the page can't be scrolled from here.
+   */
+  readonly onScrollBy?: (dy: number) => void;
   readonly children?: React.ReactNode;
 }
 
@@ -82,6 +91,7 @@ interface Moving {
 
 export function CanvasStage(props: CanvasStageProps) {
   const coarse = useMedia('(pointer: coarse)');
+  const still = useMedia('(prefers-reduced-motion: reduce)');
   const stage = useRef<HTMLDivElement>(null);
   const [moving, setMoving] = useState<Moving | null>(null);
   /** Where the press on the grip began, until it is a drag or a click. */
@@ -125,6 +135,46 @@ export function CanvasStage(props: CanvasStageProps) {
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
   }, [moving]);
+
+  // Near the top or bottom edge, the page scrolls under the block: a step each tick while the
+  // pointer stays there; with reduced motion, a jump once it has rested at the edge for
+  // `REDUCED_MS` (counted from reaching it, so passing through never jumps), then another each
+  // `REDUCED_MS` it stays.
+  const carrying = moving !== null;
+  useEffect(() => {
+    if (!carrying || !props.onScrollBy) return;
+    let since: number | null = null;
+    const tick = setInterval(() => {
+      const at = movingRef.current;
+      const height = stage.current?.clientHeight ?? 0;
+      const dy = at ? edgeScroll(at.y, height, still) : 0;
+      if (dy === 0) {
+        since = null;
+        return;
+      }
+      if (still) {
+        const now = Date.now();
+        if (since === null) since = now;
+        if (now - since < REDUCED_MS) return;
+        since = now;
+      }
+      latest.current.onScrollBy?.(dy);
+    }, STEP_MS);
+    return () => clearInterval(tick);
+  }, [carrying, still, !props.onScrollBy]);
+
+  // The page moved under a pointer that didn't (it scrolled): the seam under it is judged again.
+  // Keyed on where the seams are, not the list, which the canvas makes anew each render.
+  const seamsAt = carrying
+    ? props.seams.map((s) => `${s.id}@${s.rect.x},${s.rect.y}`).join(' ')
+    : '';
+  useEffect(() => {
+    const at = movingRef.current;
+    if (!at) return;
+    const next = { ...at, over: overAt(at.x, at.y) };
+    movingRef.current = next;
+    setMoving(next);
+  }, [seamsAt]);
 
   // The block went (undo, another's save) or stopped being draggable: nothing is carried.
   const dragKey = props.drag?.key;

@@ -30,7 +30,9 @@
  *
  * A block moves by its grip on the page with a fine pointer (a drag to a seam), and from the
  * inspector (Move up, Move down, Move to) and Layers (⌘↑ ⌘↓) with the keyboard or a finger; each
- * is one `move` op held to the same judgement as the dock and the save (`cms/lib/canvas/drag.ts`).
+ * is one step held to the same judgement as the dock and the save (`cms/lib/canvas/drag.ts`): a
+ * `move` op within a blocks field, a `remove` and an `insert` into another one. Dragged near the
+ * frame's top or bottom edge, the page scrolls under the block (`cms/lib/canvas/autoscroll.ts`).
  *
  * At lg it edits: Layers (on demand) | the page | the inspector. From md it edits by tap, the dock,
  * the inspector and Layers in sheets. Below md it is review-only, and says so in place.
@@ -64,7 +66,7 @@ import { Skeleton } from '@contentworker/ui/skeleton';
 import { useQueryClient } from '@tanstack/react-query';
 import { ListTree, Redo2, Undo2 } from 'lucide-react';
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
-import { Link, useBlocker, useNavigate, useParams } from 'react-router';
+import { Link, useBlocker, useNavigate, useParams, useSearchParams } from 'react-router';
 import { CanvasStage } from '~/cms/components/canvas/CanvasStage';
 import { Dock } from '~/cms/components/canvas/Dock';
 import { Inspector, type InspectorTab } from '~/cms/components/canvas/Inspector';
@@ -392,6 +394,24 @@ function Canvas({
   const breakpoints = catalog?.breakpoints?.length ? catalog.breakpoints : ownBreakpoints;
   const presets = useMemo(() => widthPresets(breakpoints), [breakpoints]);
   const [preset, setPreset] = useWidthPreset(presets);
+  // Opened from the entry form's overrides (`?block=…&width=…`): that block, selected with its
+  // Look tab, at that width. Each is taken once, when the canvas first has it: after that the
+  // canvas's own choices stand.
+  const [search] = useSearchParams();
+  const opening = useRef({ block: search.get('block'), width: search.get('width') });
+  useEffect(() => {
+    const { block: key, width: id } = opening.current;
+    if (id && presets.some((p) => p.id === id)) {
+      opening.current.width = null;
+      setPreset(id);
+    }
+    if (key && findBlock(tree, key)) {
+      opening.current.block = null;
+      setSelected(key);
+      setTab('look');
+      setInspectorOpen(true);
+    }
+  }, [presets, tree]);
   const fine = useFinePointer();
   const dirty = !!doc && JSON.stringify(doc.fields) !== JSON.stringify(doc.base.fields);
   const dirtyRef = useRef(dirty);
@@ -672,14 +692,14 @@ function Canvas({
     const kept = judged.current.verdicts.get(id);
     if (kept) return kept;
     const verdict = ((): Judged => {
-      const first = judgeDrop(b, at);
+      const first = judgeDrop(b, at, tree);
       if (first.kind !== 'move') return first;
       // Named as Move to lists it: "Section “Features” › Items".
       const label =
         at.slot.path === b.slot.path
           ? first.label
           : `Moved ${b.name} to ${slotTitle(tree, at.slot)}`;
-      const r = applyOps(contentType, d.fields, [first.op], newKey, { label, at: Date.now() });
+      const r = applyOps(contentType, d.fields, first.ops, newKey, { label, at: Date.now() });
       if (!r.ok) {
         return { kind: 'refused', reason: r.issues[0]?.message ?? `${b.name} can’t go there` };
       }
@@ -689,7 +709,7 @@ function Canvas({
         r.fields,
       );
       if (issue) return { kind: 'refused', reason: `${b.name} can’t go there: ${issue.message}` };
-      return { kind: 'move', op: first.op, label, applied: r };
+      return { kind: 'move', ops: first.ops, label, applied: r };
     })();
     judged.current.verdicts.set(id, verdict);
     return verdict;
@@ -1395,6 +1415,7 @@ function Canvas({
             ghosts={ghostBoxes}
             onChooseSeam={(seam) => openDock(seam)}
             {...(drag ? { drag } : {})}
+            {...(drag && site.capabilities.includes('scroll') ? { onScrollBy: site.scrollBy } : {})}
           >
             {loading ? (
               <>

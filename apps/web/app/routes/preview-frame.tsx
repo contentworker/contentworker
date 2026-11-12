@@ -13,7 +13,9 @@
  * It owns the inner frame and draws the hover and selection outlines over it, from the boxes the
  * page reports, scaled with the frame to the width the editor chose. Under the canvas editor
  * it draws nothing: it hands the boxes (and the seams between blocks) up to the canvas, moved into
- * its own coordinates, and the canvas draws them over this frame. Unsaved edits come
+ * its own coordinates, and the canvas draws them over this frame; when the canvas asks it to
+ * scroll the page by some pixels (a block carried near the edge), it names an element the page
+ * reported to scroll to (`scrollAnchor`, `cms/lib/canvas/autoscroll.ts`). Unsaved edits come
  * from the editor over a same-origin channel (`cms/lib/live-preview/frame-channel.ts`) and go to the
  * page over the live preview channel (`cms/lib/live-preview/host.ts`); clicks go back the same way.
  * So does a Coworker proposal waiting for its answer: the page draws its blocks as ghosts, and this
@@ -30,6 +32,7 @@ import { cn } from '@contentworker/ui/lib/utils';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { data, useLoaderData } from 'react-router';
 import { GhostMark } from '~/cms/components/canvas/GhostMark';
+import { scrollAnchor, stuckBoxes } from '~/cms/lib/canvas/autoscroll';
 import {
   type EditorMessage,
   FRAME_WIDTH,
@@ -130,6 +133,13 @@ function SiteFrame({
   const [editing, setEditing] = useState(true);
   const [canvas, setCanvas] = useState(false);
   const [layout, setLayout] = useState<LayoutMessage | null>(null);
+  const layoutRef = useRef(layout);
+  layoutRef.current = layout;
+  /** The boxes that stayed put through the last scroll the page reported (sticky, fixed). */
+  const stuck = useRef<{ from: LayoutMessage | null; refs: Set<string> }>({
+    from: null,
+    refs: new Set(),
+  });
   // What the pointer is over and what is selected, by ref, with the box the page last gave.
   const [hover, setHover] = useState<{ ref: string; rect: LiveRect } | null>(null);
   const [selected, setSelected] = useState<{ ref: string; rect: LiveRect | null } | null>(null);
@@ -176,7 +186,13 @@ function SiteFrame({
         // The editor checks the ref names its entry before it moves focus.
         postFrame(parent, { type: 'pick', ref });
       },
-      onLayout: setLayout,
+      onLayout: (next) => {
+        // Kept until a later scroll says otherwise: a layout from a mutation alone tells nothing.
+        const found = stuckBoxes(stuck.current.from, next);
+        const scrolledSince = stuck.current.from?.scroll.y !== next.scroll.y;
+        stuck.current = { from: next, refs: scrolledSince ? found : stuck.current.refs };
+        setLayout(next);
+      },
       onNote: (kind) => postFrame(parent, { type: 'note', kind }),
       onProposal: (shown, refused) => {
         // Marked only while the page holds it: a refused or unsupported one draws nothing.
@@ -228,6 +244,15 @@ function SiteFrame({
               ? { align, inset: Math.min(4000, Math.max(0, inset / scaleRef.current)) }
               : undefined,
           );
+          return;
+        }
+        case 'scrollBy': {
+          // The canvas carrying a block near the frame's edge. Said from the layout the page last
+          // reported, so a step asked again before the page answers names the same place.
+          const at = layoutRef.current;
+          if (!at || typeof m.dy !== 'number' || !Number.isFinite(m.dy)) return;
+          const step = scrollAnchor(at, m.dy / scaleRef.current, stuck.current.refs);
+          if (step) h.scrollTo(step.ref, { align: step.align, inset: step.inset });
           return;
         }
       }

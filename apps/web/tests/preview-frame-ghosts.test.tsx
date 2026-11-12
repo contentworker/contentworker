@@ -137,3 +137,30 @@ describe('the Site frame’s proposal marks', () => {
     expect(marks()).toHaveLength(0);
   });
 });
+
+describe('the Site frame scrolling for the canvas', () => {
+  it('scrolls the page by pixels as a scroll to an element it reported, and not without one', async () => {
+    const t = await connected(ALLOWED);
+    const guest = (screen.getByTitle('The entry on your site') as HTMLIFrameElement)
+      .contentWindow as Window;
+    const sent = () =>
+      (guest.postMessage as unknown as { mock: { calls: [Record<string, unknown>][] } }).mock.calls
+        .map((c) => c[0])
+        .filter((m) => m.kind === 'scroll');
+    // The block is 10px down a page 800 tall in a document as tall: nowhere to scroll.
+    t.editor({ type: 'scrollBy', dy: 6 });
+    expect(sent()).toEqual([]);
+    t.page('layout', {
+      blocks: [{ ref: ref('body[k1]'), rect }],
+      slots: [],
+      fields: [],
+      scroll: { x: 0, y: 0 },
+      viewport: { w: 1280, h: 800 },
+      docHeight: 2000,
+    });
+    t.editor({ type: 'scrollBy', dy: 6 });
+    expect(sent()).toMatchObject([
+      { kind: 'scroll', ref: ref('body[k1]'), align: 'start', inset: 4 },
+    ]);
+  });
+});
