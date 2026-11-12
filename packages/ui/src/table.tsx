@@ -53,8 +53,11 @@ function Table({
         className={cn(
           'w-full text-sm',
           stack === 'cards' && 'table-stack',
+          // The header's rule is drawn on its cells, which travel with it; the `thead`'s own
+          // border would sit under that one at rest and make the rule two lines thick. Forced
+          // colours drop the cells' shadow, so there the border stays and is the rule.
           sticky &&
-            'md:[&>thead_th]:sticky md:[&>thead_th]:top-[calc(var(--shell-h)+var(--sticky-above,0px))] md:[&>thead_th]:z-10 md:[&>thead_th]:bg-card md:[&>thead_th]:shadow-[inset_0_-1px_var(--border)]',
+            'md:not-forced-colors:[&>thead]:border-b-0 md:[&>thead_th]:sticky md:[&>thead_th]:top-[calc(var(--shell-h)+var(--sticky-above,0px))] md:[&>thead_th]:z-10 md:[&>thead_th]:bg-card md:[&>thead_th]:shadow-[inset_0_-1px_var(--border)]',
           className,
         )}
         {...props}
