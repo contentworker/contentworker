@@ -68,6 +68,42 @@ describe('generateWithBudget', () => {
     );
   });
 
+  it('counts the tokens of a call that failed after the model ran', async () => {
+    const guard = new InMemoryCostGuard({ maxRequests: 100, maxTokens: 150, windowSeconds: 60 });
+    const ctx = ctxWith(guard);
+    // Cut off at maxTokens: no answer, but 40 + 128 tokens billed.
+    const cutOff: AIProvider = {
+      async generate() {
+        throw Object.assign(new Error('the answer ran past max_tokens'), {
+          usage: { inputTokens: 40, outputTokens: 128 },
+        });
+      },
+    };
+    await expect(generateWithBudget(ctx, cutOff, scope, req)).rejects.toThrow('max_tokens');
+    await expect(generateWithBudget(ctx, fakeAI(0), scope, req)).rejects.toBeInstanceOf(
+      RateLimitedError,
+    );
+    // Under a per-call cap too, and for the space that spent it only.
+    await expect(
+      generateWithBudget(ctx, cutOff, scopeB, req, { timeoutMs: 5_000 }),
+    ).rejects.toThrow('max_tokens');
+    await expect(generateWithBudget(ctx, fakeAI(0), scopeB, req)).rejects.toBeInstanceOf(
+      RateLimitedError,
+    );
+  });
+
+  it('counts nothing for a failure that carries no usage', async () => {
+    const guard = new InMemoryCostGuard({ maxRequests: 100, maxTokens: 150, windowSeconds: 60 });
+    const ctx = ctxWith(guard);
+    const down: AIProvider = {
+      async generate() {
+        throw new Error('capacity exceeded');
+      },
+    };
+    await expect(generateWithBudget(ctx, down, scope, req)).rejects.toThrow('capacity');
+    await expect(generateWithBudget(ctx, fakeAI(0), scope, req)).resolves.toBeTruthy();
+  });
+
   it('isolates budgets per space', async () => {
     const guard = new InMemoryCostGuard({
       maxRequests: 1,

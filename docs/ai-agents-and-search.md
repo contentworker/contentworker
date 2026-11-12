@@ -46,9 +46,23 @@ binding, so it needs no credentials, and maps tier → model (overridable per ti
 
 | Tier       | Default model                              |
 | ---------- | ------------------------------------------ |
-| `flagship` | `@cf/moonshotai/kimi-k2.6`                 |
+| `flagship` | `@cf/deepseek-ai/deepseek-v4.1-flash-1017` |
 | `balanced` | `@cf/meta/llama-3.3-70b-instruct-fp8-fast` |
 | `fast`     | `@cf/zai-org/glm-4.7-flash`                |
+
+A structured call (`outputSchema`) sends `response_format: json_schema`: the schema itself to the
+models on Workers AI's own JSON mode (the Llama family, gpt-oss), and OpenAI's
+`{ name, schema }` envelope to every other model, which is the shape the flagship and `fast`
+defaults document. Check a model's planned deprecation date in the Workers AI catalog before
+pinning it with an override.
+
+A structured call also turns reasoning down where the model documents a switch, because
+`completion_tokens` counts the reasoning and a 256–512 token cap would otherwise run out before
+the JSON does: DeepSeek V4 models get `reasoning_effort: 'low'`, GLM 4.7 Flash gets
+`chat_template_kwargs: { enable_thinking: false }`, and other models (Llama, gpt-oss, GLM 5.3,
+whose reasoning is always on) get neither. Free-text calls and Coworker keep each model's default.
+An answer cut off at `max_tokens` is still an error, and the tokens it billed are counted against
+the space's AI budget.
 
 With `AI_GATEWAY_ID` set (the fleet renders one gateway per deployment), calls route through
 the AI gateway via the binding's `gateway` option; the gateway applies its rate limit,

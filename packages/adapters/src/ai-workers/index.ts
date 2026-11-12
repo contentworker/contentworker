@@ -43,12 +43,14 @@ export {
 } from './transport';
 
 /**
- * Provider-neutral tier → Workers AI text model: Kimi K2.6 for the hardest
- * work, Llama 3.3 70B fp8-fast (reliable in JSON mode) as the workhorse, GLM
- * 4.7 Flash where latency matters most. All accept `response_format`.
+ * Provider-neutral tier → Workers AI text model: DeepSeek V4.1 Flash (1M-token
+ * context, function calling) for the hardest work, Llama 3.3 70B fp8-fast
+ * (reliable in JSON mode) as the workhorse, GLM 4.7 Flash where latency matters
+ * most. All accept `response_format`. Kimi K2.6, the flagship until November
+ * 2026, stops answering on 2026-11-20.
  */
 export const WORKERS_AI_MODEL_BY_TIER: Readonly<Record<ModelTier, string>> = {
-  flagship: '@cf/moonshotai/kimi-k2.6',
+  flagship: '@cf/deepseek-ai/deepseek-v4.1-flash-1017',
   balanced: '@cf/meta/llama-3.3-70b-instruct-fp8-fast',
   fast: '@cf/zai-org/glm-4.7-flash',
 };
@@ -109,6 +111,37 @@ export function workersAiModelsFromEnv(
 
 /** Lower temperature for structured output: the answer should be data, not prose. */
 const JSON_TEMPERATURE = 0.2;
+
+/**
+ * Workers AI's own JSON mode (the Llama family, gpt-oss) takes the schema itself as
+ * `json_schema`. Every other chat model takes OpenAI's envelope, whose `name` is required, and
+ * is the shape newer models document, so an override to an unlisted model gets that.
+ */
+function nativeJsonMode(model: string): boolean {
+  return /^@(cf\/meta|cf\/meta-llama|hf)\/|^@cf\/openai\/gpt-oss-/.test(model);
+}
+
+function responseFormat(model: string, schema: Record<string, unknown>) {
+  return {
+    type: 'json_schema',
+    json_schema: nativeJsonMode(model) ? schema : { name: 'output', schema },
+  };
+}
+
+/**
+ * Reasoning turned down for a structured call. `completion_tokens` counts the reasoning, so at a
+ * model's default effort a 256–512 token cap (summaries, tags, alt text) runs out before the JSON
+ * does. Each switch is the one the model's input schema documents: DeepSeek V4 takes
+ * `reasoning_effort`, GLM 4.7 Flash a template flag. GLM 5.3 documents reasoning as always on,
+ * and Llama and gpt-oss get nothing.
+ */
+function structuredReasoning(model: string): Record<string, unknown> {
+  if (model.startsWith('@cf/deepseek-ai/deepseek-v4')) return { reasoning_effort: 'low' };
+  if (model === '@cf/zai-org/glm-4.7-flash') {
+    return { chat_template_kwargs: { enable_thinking: false } };
+  }
+  return {};
+}
 
 export interface WorkersAIProviderOptions {
   /** The Workers AI call: `env.AI.run.bind(env.AI)` on the edge, a REST runner on Node. */
@@ -201,8 +234,9 @@ function toolCallsOf(res: ModelAnswer): ToolCall[] {
  * tier, never a model. Transport-agnostic: everything goes through the
  * injected `run`, so the same code serves the edge binding and the REST API.
  *
- * - `outputSchema` → JSON mode (`response_format: json_schema`); the parsed
- *   value comes back as `object` (schema conformance is `generateJson`'s job).
+ * - `outputSchema` → JSON mode (`response_format: json_schema`, bare or in
+ *   OpenAI's envelope as the model takes it); the parsed value comes back as
+ *   `object` (schema conformance is `generateJson`'s job).
  * - An answer cut off at `max_tokens` (`finish_reason: 'length'`) is an error,
  *   never half an answer.
  * - `messages`/`tools` → OpenAI-style multi-turn + function calling; the
@@ -225,8 +259,9 @@ export function createWorkersAIProvider(opts: WorkersAIProviderOptions): AIProvi
 
       const input: Record<string, unknown> = { messages, max_tokens: req.maxTokens };
       if (req.outputSchema) {
-        input.response_format = { type: 'json_schema', json_schema: req.outputSchema };
+        input.response_format = responseFormat(model, req.outputSchema);
         input.temperature = JSON_TEMPERATURE;
+        Object.assign(input, structuredReasoning(model));
       }
       if (req.tools?.length) {
         input.tools = req.tools.map((t) => ({
@@ -248,10 +283,17 @@ export function createWorkersAIProvider(opts: WorkersAIProviderOptions): AIProvi
       } catch (err) {
         throw asWorkersAIError(err);
       }
+      const usage = {
+        inputTokens: res.usage?.prompt_tokens ?? 0,
+        outputTokens: res.usage?.completion_tokens ?? 0,
+      };
       if (res.choices?.[0]?.finish_reason === 'length') {
+        // Billed in full though unusable: the usage rides on the error for the budget.
         throw new WorkersAIError(
           'bad_response',
           `Workers AI ${model}: the answer ran past max_tokens`,
+          undefined,
+          usage,
         );
       }
 
@@ -262,13 +304,7 @@ export function createWorkersAIProvider(opts: WorkersAIProviderOptions): AIProvi
           : raw === undefined || raw === null
             ? ''
             : JSON.stringify(raw);
-      const result: GenerateResult = {
-        text,
-        usage: {
-          inputTokens: res.usage?.prompt_tokens ?? 0,
-          outputTokens: res.usage?.completion_tokens ?? 0,
-        },
-      };
+      const result: GenerateResult = { text, usage };
       if (req.outputSchema && raw !== undefined && raw !== null) {
         const value = typeof raw === 'string' ? extractJson(raw) : raw;
         if (value !== undefined) result.object = value;
@@ -312,6 +348,8 @@ export const WORKERS_AI_EMBEDDING_DIMENSIONS: Readonly<Record<string, number>> =
   '@cf/baai/bge-base-en-v1.5': 768,
   '@cf/baai/bge-large-en-v1.5': 1024,
   '@cf/baai/bge-m3': 1024,
+  // On Workers AI's deprecation list: stops answering on 2026-11-20 (successor
+  // `embeddinggemma-2` not out yet). Kept so a deployment on it boots until then.
   '@cf/google/embeddinggemma-300m': 768,
 };
 

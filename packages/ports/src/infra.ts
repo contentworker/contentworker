@@ -509,6 +509,11 @@ export interface GenerateResult {
 
 /** Chat/generation provider. Workers AI by default; swappable. */
 export interface AIProvider {
+  /**
+   * Rejects when there is no usable answer. When the model ran and billed tokens first (an
+   * answer cut off at `maxTokens`), the error is also a {@link BilledGenerateFailure}, so the
+   * budget counts what was spent.
+   */
   generate(req: GenerateRequest): Promise<GenerateResult>;
   /**
    * The context window of the model `tier` maps to, from the provider's model catalog (with any
@@ -516,6 +521,11 @@ export interface AIProvider {
    * window the platform's tiers ship with.
    */
   limits?(tier: ModelTier): ModelLimits;
+}
+
+/** A failed {@link AIProvider.generate} that still cost tokens: what it spent. */
+export interface BilledGenerateFailure {
+  readonly usage: GenerateResult['usage'];
 }
 
 /**
