@@ -300,7 +300,7 @@ export async function ensureContentType(run: SeedRun, draft: ContentTypeDraft): 
   }
 }
 
-async function contentTypeExists(run: SeedRun, apiId: string): Promise<boolean> {
+export async function contentTypeExists(run: SeedRun, apiId: string): Promise<boolean> {
   try {
     await getContentType(run.ctx, run.scope, apiId);
     return true;

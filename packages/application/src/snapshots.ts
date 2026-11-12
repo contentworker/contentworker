@@ -1359,6 +1359,9 @@ const publishedDraftOf = (
   fields: [...published.fields],
   ...(published.urlPattern ? { urlPattern: published.urlPattern } : {}),
   singleton: published.singleton === true,
+  // Stated, so a copy never gains an icon its source didn't have (left out, a new type takes the
+  // one its name suggests); the working draft that follows brings the source's own.
+  icon: null,
 });
 
 /**
@@ -1375,7 +1378,8 @@ const workingDraftOf = (ct: SnapshotContentType): ContentTypeDraft => ({
   singleton: ct.singleton === true,
   ...(ct.group ? { group: ct.group } : {}),
   ...(ct.description ? { description: ct.description } : {}),
-  ...(ct.icon ? { icon: ct.icon } : {}),
+  // Stated either way, as above: a copy of a type without an icon has none.
+  icon: ct.icon ?? null,
   ...(ct.agentInstructions ? { agentInstructions: ct.agentInstructions } : {}),
   ...(ct.layout ? { layout: ct.layout } : {}),
   ...(ct.preview ? { preview: ct.preview } : {}),

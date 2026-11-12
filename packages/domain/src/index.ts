@@ -24,6 +24,7 @@ export * from './content-type/dates';
 export * from './content-type/field';
 export * from './content-type/field-rules';
 export * from './content-type/field-values';
+export * from './content-type/icon-suggestion';
 export * from './content-type/layout';
 export * from './content-type/patterns';
 export * from './content-type/preview';

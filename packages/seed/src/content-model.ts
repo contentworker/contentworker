@@ -13,6 +13,7 @@ export async function seedContentModel(run: SeedRun): Promise<void> {
   await ensureContentType(run, {
     apiId: 'author',
     name: 'Author',
+    icon: 'user',
     displayField: 'name',
     fields: [
       {
@@ -38,6 +39,7 @@ export async function seedContentModel(run: SeedRun): Promise<void> {
   await ensureContentType(run, {
     apiId: 'category',
     name: 'Category',
+    icon: 'tag',
     displayField: 'name',
     fields: [
       { apiId: 'name', name: 'Name', type: 'Symbol', localized: true, required: true, position: 0 },
@@ -66,6 +68,7 @@ export async function seedContentModel(run: SeedRun): Promise<void> {
   await ensureContentType(run, {
     apiId: 'article',
     name: 'Article',
+    icon: 'newspaper',
     displayField: 'title',
     fields: [
       {
@@ -204,6 +207,7 @@ export async function seedContentModel(run: SeedRun): Promise<void> {
   await ensureContentType(run, {
     apiId: 'page',
     name: 'Page',
+    icon: 'file-text',
     displayField: 'title',
     fields: [
       {
@@ -244,6 +248,7 @@ export async function seedContentModel(run: SeedRun): Promise<void> {
   await ensureContentType(run, {
     apiId: 'product',
     name: 'Product',
+    icon: 'shopping-bag',
     displayField: 'name',
     fields: [
       { apiId: 'name', name: 'Name', type: 'Symbol', localized: true, required: true, position: 0 },
@@ -312,6 +317,7 @@ export async function seedContentModel(run: SeedRun): Promise<void> {
   await ensureContentType(run, {
     apiId: 'event',
     name: 'Event',
+    icon: 'calendar',
     displayField: 'title',
     fields: [
       {
@@ -379,6 +385,7 @@ export async function seedContentModel(run: SeedRun): Promise<void> {
   await ensureContentType(run, {
     apiId: 'recipe',
     name: 'Recipe',
+    icon: 'book-open',
     displayField: 'name',
     fields: [
       {
@@ -430,6 +437,7 @@ export async function seedContentModel(run: SeedRun): Promise<void> {
   await ensureContentType(run, {
     apiId: 'landingPage',
     name: 'Landing page',
+    icon: 'layout-template',
     displayField: 'title',
     fields: [
       {

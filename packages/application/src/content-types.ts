@@ -21,6 +21,7 @@ import {
   type Scope,
   singletonClaim,
   staleOverrideUses,
+  suggestContentTypeIcon,
   uniqueClaims,
   validateEntryFields,
 } from '@contentworker/domain';
@@ -144,7 +145,9 @@ function assertExpectedTypeVersion(
 
 /**
  * Creates a new content type definition (status "draft", version 1), or revises the one with this
- * apiId. `caller` is held to `authorizePreviewChange`: the HTTP route and the MCP tool pass their
+ * apiId. A new type whose draft leaves `icon` out takes the one its name suggests
+ * (`suggestContentTypeIcon`), so a model reads at a glance without anyone dressing it; `null`
+ * creates it with none. `caller` is held to `authorizePreviewChange`: the HTTP route and the MCP tool pass their
  * principal. `options.expectedVersion` holds either to what the caller read: 0 to create only.
  */
 export async function createContentType(
@@ -163,7 +166,10 @@ export async function createContentType(
     return updateContentType(ctx, caller, scope, draft.apiId, draft, options);
   }
   authorizePreviewChange(caller, draft.apiId, undefined, draft.preview);
-  const contentType = defineContentType(draft, { previewLoopback: ctx.previewLoopback === true });
+  const suggested = draft.icon === undefined ? suggestContentTypeIcon(draft) : undefined;
+  const contentType = defineContentType(suggested ? { ...draft, icon: suggested } : draft, {
+    previewLoopback: ctx.previewLoopback === true,
+  });
   await ctx.store.contentTypes.save(scope, contentType);
   return contentType;
 }

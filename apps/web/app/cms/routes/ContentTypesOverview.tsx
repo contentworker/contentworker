@@ -29,7 +29,7 @@ import { ContentTypeDialog, SavedNotPublishedError } from '~/cms/components/Cont
 import { LoadingStatus } from '~/cms/components/loading';
 import { Empty, PageHeader } from '~/cms/components/page';
 import { StatusBadge } from '~/cms/components/status';
-import { contentTypeIcon } from '~/cms/lib/content-type-icons';
+import { contentTypeIcon, suggestedContentTypeIcon } from '~/cms/lib/content-type-icons';
 import { count, plural } from '~/cms/lib/format';
 import { typeMark } from '~/lib/initials';
 import { useClient } from '../lib/client-context';
@@ -182,8 +182,9 @@ export function ContentTypesOverview() {
             <Catalog aria-label="Content types" className="pt-0">
               {shown.map((ct) => {
                 const n = countsFor(ct.apiId);
-                // A type without an icon shows its initials, so such rows still look apart.
-                const Icon = contentTypeIcon(ct.icon);
+                // A type without an icon shows the one its name suggests, as the nav does; one
+                // whose name suggests none shows its initials, so such rows still look apart.
+                const Icon = contentTypeIcon(ct.icon) ?? suggestedContentTypeIcon(ct);
                 return (
                   <CatalogRow
                     key={ct.apiId}

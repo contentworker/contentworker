@@ -452,7 +452,10 @@ export const contentTypeBody = z.object({
   displayField: zId,
   group: detail(contentTypeDetails.group),
   description: detail(contentTypeDetails.description),
-  icon: detail(contentTypeDetails.icon),
+  icon: detail(contentTypeDetails.icon).describe(
+    'A kebab-case icon name the admin draws beside the type, e.g. newspaper. Left out, a new ' +
+      'type takes the one its name suggests; null creates it with none (and clears it on a revision)',
+  ),
   agentInstructions: detail(contentTypeDetails.agentInstructions),
   layout: detail(contentTypeLayout),
   preview: detail(contentTypePreview),

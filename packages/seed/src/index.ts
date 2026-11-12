@@ -16,6 +16,7 @@ import { seedContentModel } from './content-model';
 import { seedCorpus } from './corpus';
 import { enterpriseSpaceInput, installEnterpriseNow } from './enterprise/install';
 import { seedGovernance } from './governance';
+import { seedModelExtras } from './model-extras';
 import { seedReleases } from './releases';
 import { seedTaxonomy } from './taxonomy';
 import type { SeedConfig, SeedDeps, SeedRun } from './types';
@@ -58,6 +59,9 @@ const MARKER_TAG = 'demo-seed-v3';
 /** The local dev space the enterprise starter installs into, and its completion marker. */
 export const ENTERPRISE_DEV_SPACE = 'aldermoor';
 const ENTERPRISE_MARKER_TAG = 'enterprise-starter-v1';
+
+/** The extra content types (`seedModelExtras`), marked apart so they reach a dev space already seeded. */
+const MODEL_EXTRAS_MARKER_TAG = 'demo-model-extras-v1';
 
 /**
  * Idempotently bootstraps a fully-populated dev environment: the seed space,
@@ -127,6 +131,12 @@ export async function seedDev(
 
   // 4. Rich demo dataset, short-circuited by the marker tag once complete.
   const tags = await listTags(ctx, scope);
+  // The content types that show the nav in every state: on their own marker, so a space seeded
+  // before they existed gets them without the whole dataset running again.
+  if (!tags.some((t) => t.name === MODEL_EXTRAS_MARKER_TAG)) {
+    await seedModelExtras(run);
+    await createTag(ctx, scope, { name: MODEL_EXTRAS_MARKER_TAG });
+  }
   if (tags.some((t) => t.name === MARKER_TAG)) return;
 
   await seedContentModel(run);

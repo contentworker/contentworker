@@ -3,6 +3,7 @@ import {
   listAgentRuns,
   listAssets,
   listAuditLog,
+  listContentTypes,
   listPreviewEntries,
   listReleases,
   listScheduledActions,
@@ -70,6 +71,27 @@ describe('seedDev', { timeout: 60_000 }, () => {
     expect((await listTags(ctx, scope)).map((t) => t.name)).toContain('demo-seed-v3');
     // All three scheduled actions: release publish, entry publish, entry unpublish.
     expect((await listScheduledActions(ctx, scope)).length).toBe(3);
+  });
+
+  it('seeds content types that show the nav in every state', async () => {
+    const ctx = makeContext();
+    await seedDev(ctx, config, { blob: new FakeBlobStore() });
+    const types = await listContentTypes(ctx, scope);
+    const by = (apiId: string) => types.find((t) => t.apiId === apiId);
+    // The demo model's eight, ungrouped, beside two groups.
+    expect(types.filter((t) => !t.group).length).toBeGreaterThanOrEqual(8);
+    expect(new Set(types.flatMap((t) => (t.group ? [t.group] : [])))).toEqual(
+      new Set(['Newsroom', 'Site']),
+    );
+    // An icon from the name, one picked by hand, and a name that suggests none.
+    expect(by('pressRelease')?.icon).toBe('megaphone');
+    expect(by('investorBriefing')?.icon).toBe('briefcase');
+    expect(by('widget')?.icon).toBeUndefined();
+    expect(by('siteSettings')?.singleton).toBe(true);
+    // One left unpublished; every other type is live.
+    expect(types.filter((t) => t.status !== 'published').map((t) => t.apiId)).toEqual([
+      'testimonial',
+    ]);
   });
 
   it('is idempotent — a second run creates nothing new', async () => {

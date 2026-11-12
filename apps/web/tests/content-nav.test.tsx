@@ -54,28 +54,32 @@ describe('the content nav', () => {
     expect(screen.getByRole('list', { name: 'A-B' }).textContent).toBe('Page');
   });
 
-  it('marks the open type’s icon in the brand accent, and draws a blank page for no icon', () => {
+  it('marks the open type’s icon in the brand accent', () => {
     renderNav('/content/faq');
     const icon = (name: string) =>
       screen.getByRole('link', { name }).querySelector('[aria-hidden="true"]');
     expect(icon('FAQ')?.getAttribute('class')).toContain('text-brand');
     expect(icon('Page')?.getAttribute('class')).not.toContain('text-brand');
-    // `constructor` names no icon the admin knows: the blank page every such type gets beside
-    // types with icons (never an empty slot, which would set the name in like a child), not a crash.
-    expect(icon('Post')?.tagName.toLowerCase()).toBe('svg');
-    expect(icon('Post')?.getAttribute('class')).toContain('lucide-file');
-    expect(icon('Post')?.getAttribute('class')).not.toContain('lucide-file-text');
   });
 
-  it('draws no icons when no type has one, so names start at the caption’s edge', () => {
+  it('gives every type an icon: its own, the one its name suggests, else a blank page', () => {
     types = [
-      { apiId: 'post', name: 'Post', status: 'published' },
-      { apiId: 'faq', name: 'FAQ', status: 'published', icon: 'constructor' },
+      { apiId: 'faq', name: 'FAQ', status: 'published', icon: 'calendar' },
+      // `constructor` names no icon the admin knows, and is never looked up on the prototype.
+      { apiId: 'post', name: 'Post', status: 'published', icon: 'constructor' },
+      { apiId: 'widget', name: 'Widget', status: 'published' },
     ];
-    renderNav('/content/post');
-    for (const name of ['Post', 'FAQ']) {
-      expect(screen.getByRole('link', { name }).querySelector('[aria-hidden="true"]')).toBeNull();
-    }
+    renderNav();
+    const icon = (name: string) =>
+      screen
+        .getByRole('link', { name })
+        .querySelector('svg[aria-hidden="true"]')
+        ?.getAttribute('class')
+        ?.match(/lucide-[a-z-]+/)?.[0];
+    expect(icon('FAQ')).toBe('lucide-calendar');
+    expect(icon('Post')).toBe('lucide-newspaper');
+    // Never an empty slot, which would set the name in like a child of the row above.
+    expect(icon('Widget')).toBe('lucide-file');
   });
 
   it('says an unpublished type’s status in words after its name', () => {

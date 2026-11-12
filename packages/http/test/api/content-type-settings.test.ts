@@ -133,6 +133,28 @@ describe('content type details, layout and field settings over HTTP', () => {
     expect(text).toContain('Does not match pattern');
   });
 
+  it('gives a new type the icon its name suggests when none is sent, and none for null', async () => {
+    const { send } = setup();
+    const { icon: _icon, ...unstated } = event;
+    const suggested = await send(`${M}/content-types`, 'POST', unstated);
+    expect(((await suggested.json()) as { icon?: string }).icon).toBe('calendar');
+    const none = await send(`${M}/content-types`, 'POST', {
+      ...unstated,
+      apiId: 'recipe',
+      name: 'Recipe',
+      icon: null,
+    });
+    expect(none.status).toBeLessThan(300);
+    expect(await none.json()).not.toHaveProperty('icon');
+    // A revision that leaves the icon out keeps what is stored, and never suggests one.
+    const kept = await send(`${M}/content-types`, 'POST', {
+      ...unstated,
+      apiId: 'recipe',
+      name: 'Recipe',
+    });
+    expect(await kept.json()).not.toHaveProperty('icon');
+  });
+
   it('clears a type detail with null, and refuses a layout naming no field', async () => {
     const { send } = setup();
     await send(`${M}/content-types`, 'POST', event);
