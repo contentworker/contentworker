@@ -427,7 +427,7 @@ describe('workers-ai provider — limits, prefix affinity and gateway metadata',
   it('reports each tier’s context window from the catalog, with the override’s model', () => {
     const { run } = fakeRun({ response: 'ok' });
     const ai = createWorkersAIProvider({ run });
-    expect(ai.limits?.('flagship').contextTokens).toBe(262_144);
+    expect(ai.limits?.('flagship').contextTokens).toBe(1_048_576); // DeepSeek V4.1 Flash (#268)
     expect(ai.limits?.('balanced').contextTokens).toBe(24_000);
     expect(ai.limits?.('fast').contextTokens).toBe(131_072);
     const overridden = createWorkersAIProvider({
