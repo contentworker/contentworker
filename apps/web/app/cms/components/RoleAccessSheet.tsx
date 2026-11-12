@@ -90,6 +90,12 @@ export function RoleAccessSheet(props: {
       ?.focus();
   }, [draftOf]);
   const names = new Map(props.contentTypes.map((t) => [t.apiId, t.name]));
+  // A role saved before duplicate grants were refused may name a type twice: each row still needs
+  // its own key, so a repeat is told apart by how many times the type came before it.
+  const rowKeys = grants.map(
+    (g, i) =>
+      `${g.contentTypeApiId}#${grants.slice(0, i).filter((h) => h.contentTypeApiId === g.contentTypeApiId).length}`,
+  );
   const addable = ['*', ...props.contentTypes.map((t) => t.apiId)].filter(
     (apiId) => !grants.some((g) => g.contentTypeApiId === apiId),
   );
@@ -141,10 +147,7 @@ export function RoleAccessSheet(props: {
             const held = heldActions(grant);
             const type = contentTypeName(grant.contentTypeApiId, names);
             return (
-              <fieldset
-                key={grant.contentTypeApiId}
-                className="space-y-2 rounded-xl bg-secondary/40 p-3"
-              >
+              <fieldset key={rowKeys[index]} className="space-y-2 rounded-xl bg-secondary/40 p-3">
                 <legend className="float-left mb-2 w-full font-medium text-sm">{type}</legend>
                 <div className="clear-both grid grid-cols-1 gap-2 sm:grid-cols-2">
                   {CONTENT_ACTIONS.map((action) => {
