@@ -140,6 +140,13 @@ how it writes, in [Settings → AI](/guides/ai/#ai-settings). Off, the panel say
 message box, and edits you make on a page still go through. Guidance shapes how it writes; it never
 adds a tool or skips a confirm. The AI settings themselves aren't among its tools.
 
+A conversation can work in an [AI project](/guides/ai/#ai-projects): the panel sends the project
+with each message (or none, or leaves it to the environment's default), and every turn reads it as
+you may. Coworker follows the project's instructions and personas, sees the titles of the reference
+files you can open, and reads their text a page at a time with `ai_project_reference_read`, at
+most 24,000 characters a turn (less on a smaller model). It can list and read projects, never
+change one. If the project has been deleted, it says so instead of answering with another.
+
 ## Privacy and retention
 
 A conversation is yours alone: only you can open it. It is kept until it has been untouched for

@@ -1,4 +1,5 @@
 import {
+  type AiProjectChange,
   type AiSettingsChange,
   type AuditDetail,
   type BlockConfigChange,
@@ -28,6 +29,8 @@ export interface ChangeLog {
   noteBlockLocks(change: BlockLockChange): void;
   /** Records a committed set of the space's AI settings: the parts it changed. */
   noteAiSettings(change: AiSettingsChange): void;
+  /** Records committed writes of AI projects: the parts and pins each changed. */
+  noteAiProjects(changes: readonly AiProjectChange[]): void;
   /** What has been noted, or undefined when nothing was. */
   detail(): AuditDetail | undefined;
   clear(): void;
@@ -50,6 +53,7 @@ export function createChangeLog(): ChangeLog {
   let blockConfig: BlockConfigChange | undefined;
   let blockLocks: BlockLockChange | undefined;
   let aiSettings: AiSettingsChange | undefined;
+  let aiProjects: readonly AiProjectChange[] | undefined;
   let incomplete = false;
   return {
     note(entryId, summarize) {
@@ -75,8 +79,18 @@ export function createChangeLog(): ChangeLog {
     noteAiSettings(change) {
       aiSettings = change;
     },
+    noteAiProjects(changes) {
+      aiProjects = changes.length > 0 ? changes : undefined;
+    },
     detail() {
-      if (entries.size === 0 && !blockConfig && !blockLocks && !aiSettings && !incomplete) {
+      if (
+        entries.size === 0 &&
+        !blockConfig &&
+        !blockLocks &&
+        !aiSettings &&
+        !aiProjects &&
+        !incomplete
+      ) {
         return undefined;
       }
       return {
@@ -84,6 +98,7 @@ export function createChangeLog(): ChangeLog {
         ...(blockConfig ? { blockConfig } : {}),
         ...(blockLocks ? { blockLocks } : {}),
         ...(aiSettings ? { aiSettings } : {}),
+        ...(aiProjects ? { aiProjects } : {}),
         ...(incomplete ? { truncated: true } : {}),
       };
     },
@@ -92,6 +107,7 @@ export function createChangeLog(): ChangeLog {
       blockConfig = undefined;
       blockLocks = undefined;
       aiSettings = undefined;
+      aiProjects = undefined;
       incomplete = false;
     },
   };

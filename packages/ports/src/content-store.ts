@@ -1,6 +1,7 @@
 import type {
   AgentReview,
   AgentSchedule,
+  AiProject,
   AiSettings,
   ApiKey,
   AppOperationJob,
@@ -156,6 +157,8 @@ export interface ContentStore {
   readonly blockCatalogs: BlockCatalogRepo;
   readonly blockConfigs: BlockConfigRepo;
   readonly aiSettings: AiSettingsRepo;
+  readonly aiProjects: AiProjectRepo;
+  readonly aiReferenceExtractions: AiReferenceExtractionRepo;
   readonly savedViews: SavedViewRepo;
   readonly audit: AuditRepo;
   readonly aiActions: AIActionRepo;
@@ -239,6 +242,11 @@ export interface AIActionDefinition {
   /** Optional entry field the run writes its output into. */
   readonly targetField?: string;
   readonly tier: 'flagship' | 'balanced' | 'fast';
+  /**
+   * The AI project its runs take, in the same environment; absent: the environment's default at
+   * run time. One that no longer resolves refuses the run, never falls back.
+   */
+  readonly projectId?: string;
   readonly createdAt: string;
 }
 
@@ -428,6 +436,70 @@ export interface AiSettingsRepo {
    * version 1). Another set that wrote first is a `TransactionConflictError`.
    */
   save(spaceId: string, settings: AiSettings): Promise<void>;
+}
+
+/**
+ * An environment's AI projects (0045_ai_projects). Every write is a compare-and-set on the
+ * project's version; one project per environment may be the default (a partial unique index), and
+ * names are unique by `aiProjectNameKey`.
+ */
+export interface AiProjectRepo {
+  /** Every project in the environment (at most `AI_PROJECT_MAX_PER_ENVIRONMENT`), by name. */
+  list(scope: Scope): Promise<AiProject[]>;
+  get(scope: Scope, id: string): Promise<AiProject | null>;
+  /** The environment's default project, or null when none is set. */
+  getDefault(scope: Scope): Promise<AiProject | null>;
+  /**
+   * Writes `project` at its own `version`. Without `expected` it is inserted: an id, a name or a
+   * second default another project holds is a `ConflictError` (at commit, inside a unit). With
+   * `expected` it replaces the project only while that is still at version `expected`, else
+   * `TransactionConflictError` (at commit inside a unit, thrown outside one); a name or default
+   * taken meanwhile is a `ConflictError`.
+   */
+  save(scope: Scope, project: AiProject, expected?: number): Promise<void>;
+  /**
+   * Deletes a project still at version `expected` and named by no AI action or agent schedule,
+   * both checked in the delete itself; otherwise `TransactionConflictError`, as `save`.
+   */
+  delete(scope: Scope, id: string, expected: number): Promise<void>;
+  /** The AI actions and agent schedules that name `id`, by id: what a delete would strand. */
+  usedBy(
+    scope: Scope,
+    id: string,
+  ): Promise<{ readonly aiActions: string[]; readonly agentSchedules: string[] }>;
+}
+
+/** Where reading a reference's text for a project stands (amendment C), per asset version. */
+export type AiReferenceExtractionStatus = 'pending' | 'done' | 'skipped';
+
+/** One extraction record: an asset's file version whose text a project asked for. */
+export interface AiReferenceExtraction {
+  readonly assetId: string;
+  readonly fileVersion: number;
+  readonly status: AiReferenceExtractionStatus;
+  /** Why it was skipped (`media_off`, `budget`, `failed`, `too_large`, `unsupported`), or null. */
+  readonly reason: string | null;
+  /** Who or what's call found the reference without text, as the audit trail names actors. */
+  readonly triggeredBy: string;
+  readonly updatedAt: string;
+}
+
+export interface AiReferenceExtractionRepo {
+  /** The records of these asset versions that exist (≤ 10 a call: one statement). */
+  getMany(
+    scope: Scope,
+    keys: readonly { readonly assetId: string; readonly version: number }[],
+  ): Promise<AiReferenceExtraction[]>;
+  /**
+   * Records an extraction as `pending` unless a record for the version exists: `true` when this
+   * call made it (and so starts the run), `false` when one was already there. Runs directly, never
+   * inside a unit of work (its answer drives control flow).
+   */
+  claim(scope: Scope, record: AiReferenceExtraction): Promise<boolean>;
+  /** Writes the record's outcome (`done`, or `skipped` with a reason), whatever it held. */
+  record(scope: Scope, record: AiReferenceExtraction): Promise<void>;
+  /** Removes an asset's records, with its derived files (`asset.deleted`). */
+  deleteForAsset(scope: Scope, assetId: string): Promise<void>;
 }
 
 /**
@@ -1480,6 +1552,8 @@ export interface ContentStoreTx {
   readonly members: Pick<MemberRepo, 'save'>;
   /** The AI settings are set with the events that act on a change (search turned on or off). */
   readonly aiSettings: Pick<AiSettingsRepo, 'save'>;
+  /** Setting the default clears the previous one, each at its version, in one unit. */
+  readonly aiProjects: Pick<AiProjectRepo, 'save' | 'delete'>;
 }
 
 /** Promotion fields a status change may set. */

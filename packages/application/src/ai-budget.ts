@@ -13,6 +13,7 @@ import type {
   GenerateResult,
 } from '@contentworker/ports';
 import { mockDecide, mockGenerate } from './ai-mock';
+import { projectFieldsOf } from './ai-provenance';
 import type { AppContext } from './context';
 
 export interface AiBudgetLimits {
@@ -83,6 +84,12 @@ export interface BudgetOptions {
    * {@link AiUnavailableError} is thrown: HTTP 503, retryable.
    */
   readonly timeoutMs?: number;
+  /**
+   * The caller writes the call's record itself (`generateJson`). Otherwise a call that took an AI
+   * project gets one here, naming the project, its version and the excerpt characters, so every
+   * such call is in the call log whatever path made it.
+   */
+  readonly logged?: boolean;
 }
 
 /**
@@ -115,6 +122,7 @@ export async function generateWithBudget(
       );
     }
   }
+  const started = ctx.clock.now().getTime();
   const call = ai.generate(req);
   let result: GenerateResult;
   if (options.timeoutMs === undefined) {
@@ -135,6 +143,18 @@ export async function generateWithBudget(
   if (ctx.costGuard) {
     const total = result.usage.inputTokens + result.usage.outputTokens;
     await ctx.costGuard.settle(scope, total);
+  }
+  const project = projectFieldsOf(req.metadata);
+  if (project.projectId && !options.logged) {
+    ctx.ai?.log?.({
+      type: 'ai_call',
+      source: 'model',
+      tier: req.tier ?? 'balanced',
+      prompt: typeof req.metadata?.prompt === 'string' ? req.metadata.prompt : 'ai-project',
+      ms: ctx.clock.now().getTime() - started,
+      tokens: result.usage.inputTokens + result.usage.outputTokens,
+      ...project,
+    });
   }
   return result;
 }

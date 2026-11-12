@@ -33,8 +33,11 @@ import {
   kept,
   listAssistantTools,
   NOT_THROUGH,
+  referenceTurnChars,
   scopedArguments,
   ToolRefused,
+  textLength,
+  withReadLimit,
 } from '../../src/assistant/tools';
 import type { McpDeps } from '../../src/mcp/deps';
 
@@ -303,6 +306,38 @@ describe('the assistant’s MCP tools', () => {
         fields: { title: { 'en-US': 'secret draft' } },
       }),
     ).toEqual({ id: 'e2', contentTypeApiId: 'article', status: 'draft', currentVersion: 1 });
+  });
+
+  it('keeps a reference page’s place, never its text, so a later turn resumes', () => {
+    expect(
+      kept({
+        projectId: 'p1',
+        assetId: 'a1',
+        version: 2,
+        offset: 0,
+        nextOffset: 6000,
+        total: 9000,
+        text: 'the reference’s own words',
+      }),
+    ).toEqual({ assetId: 'a1', version: 2, offset: 0, nextOffset: 6000 });
+  });
+
+  it('holds a turn’s reference reads to 24,000 characters, less on a small window', () => {
+    expect(referenceTurnChars(262_144)).toBe(24_000);
+    expect(referenceTurnChars(24_000)).toBe(12_000);
+    // A page is held to what the turn has left, whatever the model asked for.
+    expect(withReadLimit({ projectId: 'p', assetId: 'a', limit: 12_000 }, 5_000)).toEqual({
+      projectId: 'p',
+      assetId: 'a',
+      limit: 5_000,
+    });
+    expect(withReadLimit({ projectId: 'p', assetId: 'a' }, 100_000)).toMatchObject({
+      limit: 6_000,
+    });
+    // Never past a page's most, and a whole number however the model asked.
+    expect(withReadLimit({ limit: 50_000 }, 24_000)).toEqual({ limit: 12_000 });
+    expect(withReadLimit({ limit: 99.7 }, 24_000)).toEqual({ limit: 99 });
+    expect(textLength({ text: 'é😀x' })).toBe(3);
   });
 
   it('reports an internal error inside a tool as the generic line, never its words', async () => {

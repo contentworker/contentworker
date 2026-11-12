@@ -1,8 +1,11 @@
 import {
+  AI_PROJECT_MAX_PER_ENVIRONMENT,
+  type AiProject,
   type Asset,
   type AssetCollection,
   type AssetFolder,
   AssetRightsError,
+  aiProjectNameKey,
   analyzeRedirects,
   applyDefaults,
   assetCollectionDescription,
@@ -21,6 +24,7 @@ import {
   type ContentTypeDraft,
   canonicalJson,
   carriedAuthorshipIssues,
+  checkAiProjectInput,
   checkBlockCatalog,
   checkBlockConfig,
   checkMenuDescription,
@@ -171,6 +175,12 @@ export interface EnvironmentSnapshot {
    * menus. Entry links keep their ids (entries import with theirs); term links are remapped.
    */
   readonly menus?: readonly Menu[];
+  /**
+   * The environment's AI projects, with their ids and their references' pins (assets keep their
+   * ids, so a pin names the same file). Absent in snapshots written before projects. Promotions
+   * never carry them (decision 10): only snapshots and clones do.
+   */
+  readonly aiProjects?: readonly AiProject[];
   readonly taxonomy: {
     readonly schemes: readonly ConceptScheme[];
     readonly concepts: readonly Concept[];
@@ -311,6 +321,7 @@ export async function exportSnapshot(
     assetCollections: await exportCollections(ctx, scope),
     redirects: await ctx.store.redirects.all(scope),
     menus: await ctx.store.menus.all(scope),
+    aiProjects: await ctx.store.aiProjects.list(scope),
     taxonomy: {
       schemes: await ctx.store.taxonomy.listSchemes(scope),
       concepts: await ctx.store.taxonomy.listConcepts(scope),
@@ -497,6 +508,8 @@ export interface ImportReport {
   readonly blockCatalog: boolean;
   /** The import makes the snapshot's block config the target's (false when it has none). */
   readonly blockConfig: boolean;
+  /** AI projects in the snapshot (those whose id or name the target holds keep the target's). */
+  readonly aiProjects: number;
   /** Things that were present in the snapshot and deliberately not imported. */
   readonly skipped: readonly string[];
 }
@@ -661,6 +674,7 @@ export async function prepareSnapshotImport(
       workflows: snapshot.workflows.length,
       blockCatalog: blocks.catalog !== undefined,
       blockConfig: blocks.config !== undefined,
+      aiProjects: snapshot.aiProjects?.length ?? 0,
       skipped,
     },
   };
@@ -799,6 +813,9 @@ export async function writeSnapshotModel(
   // After taxonomy, so term links point at the target's terms. Entry links keep their ids: the
   // entries come after, with theirs, and a menu resolves its links only when it is read.
   await writeSnapshotMenus(ctx, target, snapshot.menus ?? [], taxonomyIds);
+  // Assets keep their ids, so the projects' pins name the same files; written before the assets
+  // themselves, a reference to one the snapshot brings resolves once it lands.
+  await writeSnapshotAiProjects(ctx, target, snapshot, options.keepCreators === true);
 
   for (const workflow of snapshot.workflows) {
     await importWorkflow(ctx, target, workflow, skipped);
@@ -1075,6 +1092,78 @@ async function writeSnapshotMenus(
       scope: target,
       occurredAt: ctx.clock.now().toISOString(),
     });
+  });
+}
+
+/**
+ * Writes the snapshot's AI projects with their ids and pins, in one unit (`preflight` has checked
+ * each). A project whose id or name the target already holds (a retried import, or one made there
+ * since) keeps the target's. A reference is kept only to an asset the snapshot brings or the
+ * target holds, at a version that asset has had. None comes in as the default: that is
+ * `space:admin`'s to set in the target. Each starts its own history at version 1; a clone keeps who made it, an upload credits the
+ * importer (a snapshot is anyone's JSON).
+ */
+async function writeSnapshotAiProjects(
+  ctx: AppContext,
+  target: Scope,
+  snapshot: EnvironmentSnapshot,
+  keepCreators: boolean,
+): Promise<void> {
+  const projects = snapshot.aiProjects ?? [];
+  if (projects.length === 0) return;
+  const held = await ctx.store.aiProjects.list(target);
+  const ids = new Set(held.map((p) => p.id));
+  const names = new Set(held.map((p) => aiProjectNameKey(p.name)));
+  // The files a pin may name: the snapshot's assets, else the target's own.
+  const versions = new Map(snapshot.assets.map((a) => [a.id, a.version ?? 1]));
+  const wanted = [
+    ...new Set(projects.flatMap((p) => (p.references ?? []).map((r) => r.assetId))),
+  ].filter((id) => !versions.has(id));
+  if (wanted.length > 0) {
+    for (const a of await ctx.store.assets.getMany(target, wanted)) {
+      versions.set(a.id, a.version ?? 1);
+    }
+  }
+  const at = ctx.clock.now().toISOString();
+  const actor = ctx.actor ?? null;
+  const adding: AiProject[] = [];
+  for (const p of projects) {
+    // Rebuilt from the checked fields: a snapshot is anyone's JSON.
+    const draft = checkAiProjectInput(p);
+    const id = typeof p.id === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(p.id) ? p.id : null;
+    if ((id && ids.has(id)) || names.has(aiProjectNameKey(draft.name))) continue;
+    if (held.length + adding.length >= AI_PROJECT_MAX_PER_ENVIRONMENT) break;
+    const references = draft.references.flatMap((r) => {
+      const current = versions.get(r.assetId);
+      if (current === undefined) return [];
+      const version = r.version ?? current;
+      return version <= current ? [{ assetId: r.assetId, version }] : [];
+    });
+    // The default is space:admin's to set (amendment B), and an import or a clone needs less than
+    // that (content:manage, in a space the source may not even be): no project comes in as the
+    // default; an administrator makes one the default in the target.
+    const isDefault = false;
+    const by = (who: unknown) => (keepCreators && typeof who === 'string' ? who : actor);
+    adding.push({
+      id: id ?? ctx.ids.newId(),
+      name: draft.name,
+      description: draft.description,
+      instructions: draft.instructions,
+      writer: draft.writer,
+      reader: draft.reader,
+      references,
+      isDefault,
+      version: 1,
+      createdAt: keepCreators && typeof p.createdAt === 'string' ? p.createdAt : at,
+      createdBy: by(p.createdBy),
+      updatedAt: at,
+      updatedBy: by(p.updatedBy),
+    });
+    names.add(aiProjectNameKey(draft.name));
+  }
+  if (adding.length === 0) return;
+  await ctx.store.withTransaction(async (tx) => {
+    for (const project of adding) await tx.aiProjects.save(target, project);
   });
 }
 
@@ -1515,6 +1604,28 @@ function preflight(
       issues.push({
         field: 'menus',
         message: `Menu ${String(m?.handle ?? m?.id)}: ${first ? `${first.field}: ${first.message}` : err.message}`,
+      });
+    }
+  }
+
+  // AI projects are written with the model too: each must hold today (lengths, personas, at most
+  // ten references), whatever its pins name.
+  const projects = snapshot.aiProjects ?? [];
+  if (projects.length > AI_PROJECT_MAX_PER_ENVIRONMENT) {
+    issues.push({
+      field: 'aiProjects',
+      message: `At most ${AI_PROJECT_MAX_PER_ENVIRONMENT} AI projects`,
+    });
+  }
+  for (const p of projects) {
+    try {
+      checkAiProjectInput(p);
+    } catch (err) {
+      if (!(err instanceof ValidationError)) throw err;
+      const first = err.issues[0];
+      issues.push({
+        field: 'aiProjects',
+        message: `AI project ${String(p?.name ?? p?.id)}: ${first ? `${first.field}: ${first.message}` : err.message}`,
       });
     }
   }

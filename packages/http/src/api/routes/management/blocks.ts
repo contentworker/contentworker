@@ -95,6 +95,7 @@ export function blocksRoutes(deps: AuthDeps): Hono<AuthVars> {
         await generateBlocks(ctx, ai, scopeOf(c), body, {
           ...access,
           assets: imageSearchFor(c.get('principal'), assetSearch),
+          caller: c.get('principal'),
         }),
       );
     },

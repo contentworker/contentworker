@@ -1,7 +1,7 @@
 # AI projects
 
-Status: **decided** 2026-11-11, **not built** (M5, "AI projects" in `ROADMAP.md`). The owner took
-all ten proposals under Decisions, added re-extraction (11), and the same day approved the
+Status: **decided** 2026-11-11, **backend built** (M5, "AI projects" in `ROADMAP.md`), admin UI
+next. The owner took all ten proposals under Decisions, added re-extraction (11), and the same day approved the
 security and AI reviews' changes: pinned references, the default held to `space:admin`, a
 narrower re-extraction gate, agents, reads at `content:write`, budgets and fencing by context
 window, translation without references, and an evaluation gate (amendments dated under

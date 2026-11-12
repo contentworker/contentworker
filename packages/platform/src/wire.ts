@@ -29,6 +29,7 @@ import {
   type AppContext,
   type AssetIngestDeps,
   type AssetSearchDeps,
+  agentBudgetLimits,
   aiCallLevel,
   aiModeFakes,
   aiRuntimeConfig,
@@ -89,7 +90,7 @@ import { CloudflareAssetIngestStarter } from './asset-ingest';
 import { CloudflareAssetZipStarter } from './asset-zip';
 import { type ApiConfig, loadConfig } from './config';
 import { sealerFromEnv } from './data-key';
-import { doCostGuardFromEnv } from './do/cost-guard';
+import { doAgentCostGuardFromEnv, doCostGuardFromEnv } from './do/cost-guard';
 import { createShardedSearchIndex, DEFAULT_SEARCH_SHARDS } from './do/search-shard';
 import { type EdgeEnv, withJurisdiction } from './env';
 import { newId } from './ids';
@@ -258,6 +259,7 @@ export function wireEdge(rawEnv: EdgeEnv, options: EdgeWireOptions = {}): EdgeWi
     ...(posNum(env.ASSET_UPLOAD_MAX_BYTES) !== undefined
       ? { maxUploadBytes: posNum(env.ASSET_UPLOAD_MAX_BYTES) as number }
       : {}),
+    aiReferences: makeAiReferences(env, blob),
     ...(env.MEDIA_PUBLIC_URL
       ? {
           mediaPublicUrl: env.MEDIA_PUBLIC_URL.replace(/\/$/, ''),
@@ -397,12 +399,36 @@ export function wireMedia(rawEnv: EdgeEnv, options: EdgeWireOptions = {}): Media
  */
 export function makeAssetIngestDeps(env: EdgeEnv, wired: EdgeWired): AssetIngestDeps {
   const extractor = makeTextExtractor(env, wired.ctx);
+  // Text extraction is background work: with AI_AGENT_* ceilings set, it spends the background
+  // window, not the one people's requests draw on.
+  const extractionGuard = agentBudgetLimits(env as unknown as Record<string, string | undefined>)
+    ? doAgentCostGuardFromEnv(env)
+    : undefined;
   return {
     blob: wired.blob,
     ai: wired.ai,
     ...(env.IMAGES ? { images: createCfImageProbe(env.IMAGES) } : {}),
     ...(extractor ? { extractor } : {}),
     search: wired.assetSearch,
+    ...(extractionGuard ? { extractionGuard } : {}),
+  };
+}
+
+/**
+ * Where AI project references are read from and how one without text gets it read: the asset
+ * bucket (ranged reads) and the asset-events queue (a text-only ingest rerun). `blob` is the
+ * invocation's own store; a host that has none (the agent Workflow) gets one over MEDIA_BUCKET.
+ */
+export function makeAiReferences(env: EdgeEnv, blob?: BlobStore): AppContext['aiReferences'] {
+  const store =
+    blob ??
+    (env.MEDIA_BUCKET
+      ? makeBlob(env, [], createMediaUrlSigner(mediaSigningSecret(env, Boolean(env.DB))))
+      : undefined);
+  if (!store) return undefined;
+  return {
+    blob: store,
+    ...(env.ASSET_EVENTS_QUEUE ? { ingest: createAssetIngestQueue(env.ASSET_EVENTS_QUEUE) } : {}),
   };
 }
 

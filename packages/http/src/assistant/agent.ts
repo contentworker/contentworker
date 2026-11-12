@@ -26,11 +26,14 @@
  */
 
 import { AIChatAgent } from '@cloudflare/ai-chat';
+import { workersAiLimits, workersAiModelsFromEnv } from '@contentworker/adapters/ai-workers';
 import {
   type AiCapabilityPolicy,
   aiCapability,
   defaultAiPolicy,
+  type ProjectContext,
   principalForWebUser,
+  resolveAiProject,
   UNTRUSTED_CONTENT_GUARD,
   wrapUntrusted,
 } from '@contentworker/application';
@@ -47,6 +50,7 @@ import {
   fillRefusalText,
   isAssistantTool,
   isSetupScope,
+  NotFoundError,
   offeredIn,
   type Principal,
 } from '@contentworker/domain';
@@ -82,7 +86,11 @@ import {
   kept,
   listAssistantTools,
   NOT_THROUGH,
+  READ_SPENT,
+  referenceTurnChars,
   ToolRefused,
+  textLength,
+  withReadLimit,
 } from './tools';
 
 /** The person behind a socket as they are now. */
@@ -116,6 +124,9 @@ export const NOT_HELD =
 export const TOO_FAST = 'That’s a lot at once. Wait a moment and try again.';
 const NO_SCOPE = 'The page didn’t say which space and environment you’re in. Reload it.';
 /** What a turn answers when the space's administrators turned Coworker off (Settings → AI). */
+export const PROJECT_GONE =
+  'The AI project this conversation works in isn’t there any more. Choose another, or none, in ' +
+  'the panel.';
 export const ASSISTANT_OFF =
   'Coworker is turned off for this space. A space administrator can turn it on in Settings → AI.';
 export const ADMINS_SET_UP = 'Only a deployment admin can set up a space.';
@@ -741,20 +752,59 @@ export abstract class AssistantAgentBase extends AIChatAgent<AgentEnv> {
       // The slot this turn was asked to fill, if any: its calls are held to it when they run.
       const fillTurn = fillTurnOf(context);
       const scope = { spaceId: context.scope.spaceId, environmentId: context.scope.environmentId };
+      // The conversation's AI project, resolved as the person may use it, every turn: its text
+      // fenced in the system prompt, its references listed for the read tool. Setting up a space
+      // has none.
+      let project: ProjectContext | null = null;
+      if (!isSetupScope(context.scope)) {
+        try {
+          project = await resolveAiProject(w.deps.ctx, scope, principal, {
+            capability: 'assistant',
+            ...(context.projectId !== undefined ? { projectId: context.projectId } : {}),
+          });
+        } catch (err) {
+          // The conversation names a project that is gone: never another one in its place.
+          if (!(err instanceof NotFoundError)) throw err;
+          close();
+          return say(PROJECT_GONE);
+        }
+      }
+      const tier = policy.tier('flagship');
       const meter = meterTurn(w.deps.ctx.costGuard, scope, () => used.source === 'model', close);
       const model = recordingCalls(
-        await assistantModel(this.env, context, used, who.claims.sub, policy.tier('flagship')),
+        await assistantModel(
+          this.env,
+          context,
+          used,
+          who.claims.sub,
+          tier,
+          project?.project && project.affinity
+            ? {
+                id: project.project.id,
+                version: project.project.version,
+                affinity: project.affinity,
+              }
+            : undefined,
+        ),
         (call) => this.record(call, context.scope, principal, fillTurn),
       );
       if (!(await meter.begin())) {
         await meter.settle();
         return say(BUDGET_SPENT);
       }
-      const tools = await this.modelTools(w.deps, principal, context.scope);
+      const tools = await this.modelTools(w.deps, principal, context.scope, {
+        referenceChars: referenceCharsFor(this.env, tier),
+      });
+      // The project's references go in the user turn, first: titles through nameForModel, only
+      // those the person may read, never their text (the read tool fetches it, fenced).
+      const references = project?.referenceList();
+      const messages = await convertToModelMessages(answeredOnly(this.messages));
       const result = streamText({
         model,
-        system: systemPrompt(who.person, context, policy),
-        messages: await convertToModelMessages(answeredOnly(this.messages)),
+        system: systemPrompt(who.person, context, policy, project),
+        messages: references
+          ? [{ role: 'user' as const, content: references }, ...messages]
+          : messages,
         tools,
         stopWhen: stepCountIs(6),
         temperature: 0.2,
@@ -836,6 +886,7 @@ export abstract class AssistantAgentBase extends AIChatAgent<AgentEnv> {
     deps: McpDeps,
     principal: Principal,
     scope: AssistantScope,
+    turn: { referenceChars: number },
   ): Promise<ToolSet> {
     const listed = await listAssistantTools(deps, principal, scope);
     return Object.fromEntries(
@@ -867,13 +918,23 @@ export abstract class AssistantAgentBase extends AIChatAgent<AgentEnv> {
                   const outside = made.fill ? fillRefusal(made.fill, name, input) : undefined;
                   if (outside) throw new ToolRefused(fillRefusalText(outside));
                   const p = await this.principalIn(now, await this.caller(), made.scope);
-                  const output = await callAssistantTool(
-                    now,
-                    p,
-                    name,
-                    heldInput(input, made.bound),
-                    made.scope,
-                  );
+                  // Reference text a turn reads is capped, whatever pages the model asks for.
+                  // Reserved before it runs (a step's calls run at once), the unread rest given back.
+                  const read = name === 'ai_project_reference_read';
+                  if (read && turn.referenceChars <= 0) throw new ToolRefused(READ_SPENT);
+                  const held = read
+                    ? withReadLimit(heldInput(input, made.bound), turn.referenceChars)
+                    : heldInput(input, made.bound);
+                  const reserved = read ? (held as { limit: number }).limit : 0;
+                  turn.referenceChars -= reserved;
+                  let output: unknown;
+                  try {
+                    output = await callAssistantTool(now, p, name, held, made.scope);
+                  } catch (err) {
+                    turn.referenceChars += reserved;
+                    throw err;
+                  }
+                  if (read) turn.referenceChars += reserved - textLength(output);
                   this.summaries.set(toolCallId, kept(output));
                   return forModel(output);
                 } catch (err) {
@@ -1000,7 +1061,18 @@ export async function fingerprintOf(name: string, input: unknown, scope: Assista
     .join('');
 }
 
-function systemPrompt(person: PersonNow, context: AssistantContext, policy: AiCapabilityPolicy) {
+/** Reference characters a turn may read on `tier`'s model (`referenceTurnChars`). */
+function referenceCharsFor(env: EdgeEnv, tier: Parameters<typeof workersAiLimits>[0]): number {
+  const models = workersAiModelsFromEnv(env as unknown as Record<string, string | undefined>);
+  return referenceTurnChars(workersAiLimits(tier, models).contextTokens);
+}
+
+function systemPrompt(
+  person: PersonNow,
+  context: AssistantContext,
+  policy: AiCapabilityPolicy,
+  project: ProjectContext | null,
+) {
   if (isSetupScope(context.scope)) return setupPrompt();
   const { scope, page } = context;
   // A page's label is a title someone wrote: data, not instructions.
@@ -1023,9 +1095,10 @@ function systemPrompt(person: PersonNow, context: AssistantContext, policy: AiCa
     'To change something (save, publish, unpublish, trash, tag, schedule), call the tool: the person sees exactly what will happen and confirms it themselves. Never say a change happened unless its tool returned. If they decline, say it was left as it was.',
     'To lay out or extend a page of blocks: outline it (entry_blocks_outline), read what the place takes (blocks_config_effective, blocks_catalog_get) and what is locked (entries_block_locks_get); then compose the blocks with entry_blocks_generate, or write the ops yourself, check them with entry_blocks_validate, and propose them with entry_blocks_patch. Never change blocks inside a locked region or slot. Images come from the asset library (assets_search), never from URLs or ids you make up.',
   ].join('\n');
-  // The space's guidance comes last, fenced as data: it can shape how Coworker writes, never which
-  // tools it has (the list above is the code's) or that a person confirms every change.
-  return policy.system(base);
+  // The project's text, then the space's guidance, each fenced as data: they can shape how
+  // Coworker writes, never which tools it has (the list above is the code's) or that a person
+  // confirms every change.
+  return policy.system(project ? project.system(base) : base);
 }
 
 /**

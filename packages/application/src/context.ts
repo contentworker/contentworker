@@ -6,6 +6,8 @@ import {
   type Scope,
 } from '@contentworker/domain';
 import type {
+  AssetIngestQueue,
+  BlobStore,
   Cache,
   Clock,
   ContentStore,
@@ -138,6 +140,15 @@ export interface AppContext {
   readonly passwords?: PasswordHasher;
   /** Largest file a multipart upload takes, bytes (ASSET_UPLOAD_MAX_BYTES; default 5 GiB). */
   readonly maxUploadBytes?: number;
+  /**
+   * Where an AI project's reference text is read from (the asset bucket, ranged reads) and how a
+   * reference without text has it read (the asset-events queue, a text-only ingest rerun). Absent
+   * → references carry no text, and none is read for them.
+   */
+  readonly aiReferences?: {
+    readonly blob: BlobStore;
+    readonly ingest?: AssetIngestQueue;
+  };
 }
 
 /** Default {@link AppContext.deliveryCacheTtlSeconds}. */

@@ -1,4 +1,5 @@
 import {
+  type AiProjectUse,
   assertWritableFields,
   authorizeContent,
   type ContentType,
@@ -18,6 +19,7 @@ import type { AIProvider, DecisionQuestion, ModelTier } from '@contentworker/por
 import { recordAgentRun } from './agent-audit';
 import { decideWithBudget, generateWithBudget } from './ai-budget';
 import { answerStrings, conformingAnswer } from './ai-json';
+import { projectDecisions, resolveAiProject } from './ai-projects';
 import { describeFieldForModel, UNTRUSTED_CONTENT_GUARD, wrapUntrusted } from './ai-prompt';
 import { requireAiCapability } from './ai-settings';
 import { SYSTEM_CALLER } from './content-types';
@@ -45,6 +47,15 @@ export type EntryAiCaller = Principal | typeof SYSTEM_CALLER;
 export interface EntryAiOptions {
   readonly principal: EntryAiCaller;
 }
+
+/** An AI call over an entry that may work in an AI project. */
+export interface ProjectInput {
+  /** The AI project to work in; `null` for none; absent for the environment's default. */
+  readonly projectId?: string | null;
+}
+
+const projectOf = (input: ProjectInput) =>
+  input.projectId !== undefined ? { projectId: input.projectId } : {};
 
 /**
  * The principal whose grants bound a run, or undefined for the system. Anything else (a caller the
@@ -160,6 +171,11 @@ export interface TranslateEntryInput {
   /** When true, persist the translated values as a new draft version. */
   readonly apply?: boolean;
   readonly tier?: ModelTier;
+  /**
+   * The AI project: its instructions (terminology) and reader persona only. The writer would
+   * rewrite the source's voice and the references its facts (amendment G).
+   */
+  readonly projectId?: string | null;
 }
 
 export interface TranslateResult {
@@ -167,6 +183,8 @@ export interface TranslateResult {
   readonly translatedFields: readonly string[];
   readonly applied: boolean;
   readonly usage: Usage;
+  /** The AI project the translation took; null for none. */
+  readonly project: AiProjectUse | null;
 }
 
 /**
@@ -206,24 +224,44 @@ export async function translateEntry(
     if (typeof value === 'string' && value.trim()) source_texts[f.apiId] = value;
   }
   const fieldIds = Object.keys(source_texts);
+  // Resolved before anything is skipped, so a project that is gone refuses the call either way.
+  const project = await resolveAiProject(ctx, scope, opts.principal, {
+    capability: 'translation',
+    ...projectOf(input),
+  });
   if (fieldIds.length === 0) {
     return {
       fields,
       translatedFields: [],
       applied: false,
       usage: { inputTokens: 0, outputTokens: 0 },
+      project: project.use,
     };
   }
 
   const properties: Record<string, Record<string, unknown>> = {};
   for (const apiId of fieldIds) properties[apiId] = { type: 'string' };
-  const result = await generateWithBudget(ctx, ai, scope, {
-    system: policy.system(
+  const system = policy.system(
+    project.system(
       `You are a professional translator. Translate each field value into ${input.targetLocale}, preserving meaning, tone, and any markup. Return only the translations. ${UNTRUSTED_CONTENT_GUARD}`,
     ),
-    prompt: `Translate these fields from ${source} to ${input.targetLocale}:\n${wrapUntrusted(JSON.stringify(source_texts, null, 2))}`,
-    tier: policy.tier('balanced', input.tier),
+  );
+  const tier = policy.tier('balanced', input.tier);
+  const placed = project.call(
+    {
+      system,
+      prompt: `Translate these fields from ${source} to ${input.targetLocale}:\n${wrapUntrusted(JSON.stringify(source_texts, null, 2))}`,
+      maxTokens: 4096,
+      tier,
+    },
+    ai,
+  );
+  const result = await generateWithBudget(ctx, ai, scope, {
+    system,
+    prompt: placed.prompt,
+    tier,
     maxTokens: 4096,
+    ...placed.request,
     outputSchema: {
       type: 'object',
       properties,
@@ -253,10 +291,13 @@ export async function translateEntry(
     workflow: 'translate',
     entryId: id,
     status: 'completed',
-    decisions: [`Translated ${translatedFields.length} field(s) to ${input.targetLocale}`],
+    decisions: [
+      `Translated ${translatedFields.length} field(s) to ${input.targetLocale}`,
+      ...projectDecisions(placed.use),
+    ],
     usage: result.usage,
   });
-  return { fields: merged, translatedFields, applied, usage: result.usage };
+  return { fields: merged, translatedFields, applied, usage: result.usage, project: placed.use };
 }
 
 // ---- summarize ------------------------------------------------------------
@@ -268,12 +309,15 @@ export interface SummarizeEntryInput {
   readonly targetField?: string;
   readonly apply?: boolean;
   readonly tier?: ModelTier;
+  readonly projectId?: string | null;
 }
 
 export interface SummarizeResult {
   readonly summary: string;
   readonly applied: boolean;
   readonly usage: Usage;
+  /** The AI project the summary took, and what of its references it used; null for none. */
+  readonly project: AiProjectUse | null;
 }
 
 const SUMMARY_SCHEMA = {
@@ -305,14 +349,34 @@ export async function summarizeEntry(
     throw new ValidationError([{ field: '', message: 'Entry has no text to summarize' }]);
   }
   const maxWords = input.maxWords ?? 60;
-  const result = await generateWithBudget(ctx, ai, scope, {
-    system: policy.system(
+  const project = await resolveAiProject(ctx, scope, opts.principal, {
+    capability: 'field-assist',
+    ...projectOf(input),
+    task: { terms: `${ct.name} ${text.slice(0, 2_000)}` },
+  });
+  const system = policy.system(
+    project.system(
       `You summarize content. Write a single clear summary of at most ${maxWords} words. ${UNTRUSTED_CONTENT_GUARD}`,
     ),
-    prompt: `Summarize this ${ct.name}:\n${wrapUntrusted(text)}`,
-    tier: policy.tier('fast', input.tier),
+  );
+  const tier = policy.tier('fast', input.tier);
+  const placed = project.call(
+    {
+      system,
+      prompt: `Summarize this ${ct.name}:\n${wrapUntrusted(text)}`,
+      maxTokens: 512,
+      tier,
+      outputSchema: SUMMARY_SCHEMA,
+    },
+    ai,
+  );
+  const result = await generateWithBudget(ctx, ai, scope, {
+    system,
+    prompt: placed.prompt,
+    tier,
     maxTokens: 512,
     outputSchema: SUMMARY_SCHEMA,
+    ...placed.request,
   });
   // A text-only answer is the summary; a JSON one without the shape holds none.
   const obj = conformingAnswer<{ summary: string }>(result, SUMMARY_SCHEMA);
@@ -332,10 +396,10 @@ export async function summarizeEntry(
     workflow: 'summarize',
     entryId: id,
     status: 'completed',
-    decisions: [`Summarized ${ct.name}`],
+    decisions: [`Summarized ${ct.name}`, ...projectDecisions(placed.use)],
     usage: result.usage,
   });
-  return { summary, applied, usage: result.usage };
+  return { summary, applied, usage: result.usage, project: placed.use };
 }
 
 // ---- autofill -------------------------------------------------------------
@@ -346,6 +410,7 @@ export interface AutofillFieldInput {
   readonly instructions?: string;
   readonly apply?: boolean;
   readonly tier?: ModelTier;
+  readonly projectId?: string | null;
 }
 
 export interface AutofillResult {
@@ -353,6 +418,8 @@ export interface AutofillResult {
   readonly value: unknown;
   readonly applied: boolean;
   readonly usage: Usage;
+  /** The AI project the value took, and what of its references it used; null for none. */
+  readonly project: AiProjectUse | null;
 }
 
 function jsonTypeFor(field: FieldDefinition): string {
@@ -403,20 +470,33 @@ export async function autofillField(
   }
 
   const context = collectText(ct, fields, locale, defaultLocale);
-  const result = await generateWithBudget(ctx, ai, scope, {
-    system: policy.system(
+  const project = await resolveAiProject(ctx, scope, opts.principal, {
+    capability: 'field-assist',
+    ...projectOf(input),
+    task: { terms: `${def.name} ${input.instructions ?? ''} ${context.slice(0, 1_000)}` },
+  });
+  const system = policy.system(
+    project.system(
       `You fill in a single missing field of a content entry based on its other fields. Return only the value, matching the requested type. ${UNTRUSTED_CONTENT_GUARD}`,
     ),
-    prompt: [
-      `Content type: ${ct.name}.`,
-      `Field to fill: ${describeFieldForModel(def)} (${def.type}).`,
-      input.instructions ? `Instructions: ${input.instructions}` : '',
-      `Other fields:\n${context ? wrapUntrusted(context) : '(none)'}`,
-    ]
-      .filter(Boolean)
-      .join('\n'),
-    tier: policy.tier('balanced', input.tier),
+  );
+  const tier = policy.tier('balanced', input.tier);
+  // The entry's content, then the task last.
+  const prompt = [
+    `Content type: ${ct.name}.`,
+    `Other fields:\n${context ? wrapUntrusted(context) : '(none)'}`,
+    `Field to fill: ${describeFieldForModel(def)} (${def.type}).`,
+    input.instructions ? `Instructions: ${input.instructions}` : '',
+  ]
+    .filter(Boolean)
+    .join('\n');
+  const placed = project.call({ system, prompt, maxTokens: 1024, tier }, ai);
+  const result = await generateWithBudget(ctx, ai, scope, {
+    system,
+    prompt: placed.prompt,
+    tier,
     maxTokens: 1024,
+    ...placed.request,
     outputSchema: {
       type: 'object',
       properties: { value: { type: jsonTypeFor(def) } },
@@ -441,10 +521,10 @@ export async function autofillField(
     workflow: 'autofill',
     entryId: id,
     status: 'completed',
-    decisions: [`Autofilled ${def.name}`],
+    decisions: [`Autofilled ${def.name}`, ...projectDecisions(placed.use)],
     usage: result.usage,
   });
-  return { field: input.field, value, applied, usage: result.usage };
+  return { field: input.field, value, applied, usage: result.usage, project: placed.use };
 }
 
 // ---- classify / suggest tags ---------------------------------------------

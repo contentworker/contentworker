@@ -44,6 +44,11 @@ export type AssistantPage =
 export interface AssistantContext {
   readonly scope: AssistantScope;
   readonly page: AssistantPage;
+  /**
+   * The AI project the conversation works in, chosen in the panel: an id, `null` for none,
+   * absent for the environment's default. Checked each turn.
+   */
+  readonly projectId?: string | null;
 }
 
 export interface AssistantToolInfo {
@@ -119,6 +124,11 @@ export const ASSISTANT_TOOLS = {
   taxonomy_list_tags: read('List tags', 'Listed tags'),
   assets_list: read('List assets', 'Listed assets'),
   workflow_task_list: read('List review tasks', 'Listed review tasks'),
+  // The conversation's AI project: what it says, and its reference files, read a page at a time.
+  // Coworker can't change a project or retry reading a file.
+  ai_projects_list: read('List AI projects', 'Listed AI projects'),
+  ai_project_get: read('Read an AI project', 'Read an AI project'),
+  ai_project_reference_read: read('Read a reference file', 'Read a reference file'),
 
   entries_create: edit('Create an entry', 'Created', 'Not created'),
   entries_update: edit('Save a draft', 'Saved a draft', 'Draft not saved'),

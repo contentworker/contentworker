@@ -9,7 +9,7 @@ import {
 import type { AIProvider, GenerateRequest, ModelTier } from '@contentworker/ports';
 import type { FakeAdapterBinding } from './adapter-guard';
 import { generateWithBudget, withTimeout } from './ai-budget';
-import type { AiCallRecord, AiProvenance } from './ai-provenance';
+import { type AiCallRecord, type AiProvenance, projectFieldsOf } from './ai-provenance';
 import type { AiCapabilityPolicy } from './ai-settings';
 import type { AiMode, AppContext } from './context';
 
@@ -260,8 +260,9 @@ export async function generateJson<T>(
     : capModelTier(req.tier ?? 'balanced', ctx.ai?.maxTier);
   const started = ctx.clock.now().getTime();
   const elapsed = () => ctx.clock.now().getTime() - started;
+  const project = projectFieldsOf(req.metadata);
   const log = (record: Omit<AiCallRecord, 'type' | 'ms'>) =>
-    ctx.ai?.log?.({ type: 'ai_call', ms: elapsed(), ...record });
+    ctx.ai?.log?.({ type: 'ai_call', ms: elapsed(), ...record, ...project });
 
   const heuristic = (
     reason: string,
@@ -285,7 +286,7 @@ export async function generateJson<T>(
   let result: Awaited<ReturnType<AIProvider['generate']>>;
   try {
     result = await withTimeout(
-      generateWithBudget(ctx, ai, scope, { ...req, tier }),
+      generateWithBudget(ctx, ai, scope, { ...req, tier }, { logged: true }),
       opts.timeoutMs ?? ctx.ai?.timeoutMs ?? DEFAULT_AI_TIMEOUT_MS,
     );
   } catch (err) {

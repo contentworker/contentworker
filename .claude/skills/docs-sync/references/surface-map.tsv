@@ -39,6 +39,7 @@
 ^packages/adapters/src/(ai-workers|vector-vectorize)/	guides/ai docs/ai-agents-and-search.md docs/configuration.md	prose
 ^packages/(agent-runtime/src/|application/src/agent-[a-z-]+\.ts$)	guides/ai docs/ai-agents-and-search.md	prose
 ^packages/(domain/src/ai/ai-settings\.ts$|application/src/ai-settings\.ts$|http/src/mcp/tools/ai-settings\.ts$|http/src/api/routes/management/ai-settings\.ts$|db/migrations/0043_space_ai_settings\.sql$)|^apps/web/app/cms/components/AiSettings\.tsx$	guides/ai docs/ai-agents-and-search.md docs/domain-model.md docs/api-reference.md docs/mcp.md	prose
+^packages/(domain/src/ai/ai-projects\.ts$|application/src/ai-projects\.ts$|application/src/ai-project-excerpts\.ts$|http/src/mcp/tools/ai-projects\.ts$|http/src/api/routes/management/ai-projects\.ts$|http/src/api/docs/schemas/ai-projects\.ts$|db/migrations/0045_ai_projects\.sql$)	guides/ai docs/ai-agents-and-search.md docs/domain-model.md docs/api-reference.md docs/mcp.md	prose
 ^packages/http/src/mcp/(server\.ts$|audit\.ts$|tools/)	guides/mcp docs/mcp.md	prose
 ^packages/http/skills/	guides/mcp docs/mcp.md	prose
 #

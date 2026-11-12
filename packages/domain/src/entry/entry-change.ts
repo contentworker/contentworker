@@ -8,6 +8,7 @@
  * that locale (a localized field stores whatever keys it is sent).
  */
 
+import type { AiProjectChange } from '../ai/ai-projects';
 import type { AiSettingsChange } from '../ai/ai-settings';
 import type { BlockConfigChange } from '../content-type/block-config';
 import type { BlockLockChange } from '../content-type/block-locks';
@@ -41,6 +42,15 @@ export interface EntryChange {
   readonly undeclaredFields?: number;
 }
 
+/** A reference extraction a call started, as its audit row names it. */
+export interface AiReferenceExtractionNote {
+  readonly projectId: string;
+  readonly assetId: string;
+  readonly version: number;
+  /** The actor whose call found the reference without text. */
+  readonly triggeredBy: string;
+}
+
 /** A row's structured `detail`: paths and small structural facts, never a value. */
 export interface AuditDetail {
   readonly entries: readonly EntryChange[];
@@ -50,6 +60,16 @@ export interface AuditDetail {
   readonly blockLocks?: BlockLockChange;
   /** What a set of the space's AI settings changed (`diffAiSettings`): parts named, never guidance. */
   readonly aiSettings?: AiSettingsChange;
+  /**
+   * What a write of AI projects changed (`diffAiProjects`): parts and pins named, never text. Two
+   * when the default moved from one project to another, else one.
+   */
+  readonly aiProjects?: readonly AiProjectChange[];
+  /**
+   * A reference's text read for a project (amendment C): which file, for which project, and who or
+   * what asked when the caller couldn't start it themselves.
+   */
+  readonly aiReferenceExtraction?: AiReferenceExtractionNote;
   /** Some of what changed isn't listed: the row hit a cap, or a change could not be read. */
   readonly truncated?: true;
 }
@@ -131,6 +151,10 @@ export function capAuditDetail(detail: AuditDetail): AuditDetail {
     ...(detail.blockConfig ? { blockConfig: detail.blockConfig } : {}),
     ...(detail.blockLocks ? { blockLocks: detail.blockLocks } : {}),
     ...(detail.aiSettings ? { aiSettings: detail.aiSettings } : {}),
+    ...(detail.aiProjects ? { aiProjects: detail.aiProjects } : {}),
+    ...(detail.aiReferenceExtraction
+      ? { aiReferenceExtraction: detail.aiReferenceExtraction }
+      : {}),
   };
   let room = MAX_AUDIT_DETAIL_SIZE - sizeOf({ ...kept, entries: [], truncated: true });
   const fit = (items: readonly string[]): string[] => {

@@ -9,6 +9,7 @@ import type {
   EventBus,
   GenerateRequest,
   GenerateResult,
+  ModelTier,
   Queue,
   QueueMessage,
   Subscription,
@@ -126,7 +127,13 @@ export class InMemoryCache implements Cache {
  */
 export class StubAIProvider implements AIProvider {
   readonly requests: GenerateRequest[] = [];
+  /** The context window every tier reports (`limits`); a test shrinks it to force an overflow. */
+  contextTokens = 131_072;
   constructor(private readonly respond: (req: GenerateRequest) => unknown) {}
+
+  limits(_tier: ModelTier) {
+    return { contextTokens: this.contextTokens };
+  }
 
   async generate(req: GenerateRequest): Promise<GenerateResult> {
     this.requests.push(req);

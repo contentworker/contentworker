@@ -1677,6 +1677,24 @@ tier, or guidance over `AI_GUIDANCE_MAX_CHARS` once `normalizeAiGuidance` has ru
 with `AiCapabilityDisabledError` (`ai_capability_disabled`, HTTP 409). What each capability covers
 and how the use-cases apply it: [AI settings per capability](./ai-agents-and-search.md#ai-settings-per-capability).
 
+## AI projects
+
+`AiProject` (`packages/domain/src/ai/ai-projects.ts`): an environment's reusable context for AI
+work, one row in `ai_projects`. `name` (unique per environment by `aiProjectNameKey`, case-folded),
+`description` (never sent to a model), `instructions`, `writer` and `reader` (`AiPersona`: a
+`name` and a `description`), `references` (`AiReference[]`, `{ assetId, version }`, at most
+`AI_PROJECT_MAX_REFERENCES`), `isDefault` (one per environment), `version` (the compare-and-set)
+and who made and changed it when. `checkAiProjectInput` checks a create or update (422 naming each
+part), and `diffAiProjects` names the parts and pins a write changed (`AiProjectChange`, the
+audit row's `detail.aiProjects`). `AI_PROJECT_CAPABILITIES` are the capabilities that take one;
+`aiProjectPartsFor('translation')` keeps only the instructions and the reader.
+`AiReferenceStatus` is a reference's text state, derived on read; `AiProjectUse` is what a call
+reports it used. `AiProjectInUseError` (`project_in_use`, HTTP 409) refuses a delete that would
+strand the AI actions and agent schedules naming it: both carry an optional `projectId`.
+`ai_reference_extractions` holds one row per asset file version whose text a project asked for
+(`pending`, `done`, `skipped` with a reason), dropped with the asset's derived files. See
+[AI projects](./ai-agents-and-search.md#ai-projects).
+
 ## Domain events
 
 `DomainEvent` (`packages/domain/src/events.ts`) is a discriminated union appended to the

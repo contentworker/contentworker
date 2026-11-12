@@ -640,6 +640,102 @@ export interface AiSettingsSet {
   readonly unchanged: boolean;
 }
 
+/** A persona of an AI project: who is writing, or who it is for. */
+export interface AiPersona {
+  readonly name: string;
+  /** Who they are, what they know and care about, how they speak or read. */
+  readonly description: string;
+}
+
+/** A reference file of an AI project, pinned to one of the asset's file versions. */
+export interface AiReference {
+  readonly assetId: string;
+  readonly version: number;
+}
+
+/** A reference as a project read reports it: its pinned file's text status. */
+export interface AiReferenceStatus extends AiReference {
+  /** The text is there, being read, or there is none. */
+  readonly text: 'ready' | 'pending' | 'none';
+  /**
+   * Why there is none: `too_large` and `unsupported` are final; `media_off`, `budget` and `failed`
+   * can be retried (`aiProjects.extract`); `not_extracted`: the next call that uses it reads it.
+   */
+  readonly reason?:
+    | 'too_large'
+    | 'unsupported'
+    | 'media_off'
+    | 'budget'
+    | 'failed'
+    | 'not_extracted';
+  /** The asset has a newer file: move the pin with `aiProjects.update`. */
+  readonly updateAvailable: boolean;
+  readonly gone?: true;
+}
+
+/** An environment's reusable context for AI work. */
+export interface AiProjectSummary {
+  readonly id: string;
+  readonly name: string;
+  readonly description: string | null;
+  readonly instructions: string | null;
+  readonly writer: AiPersona | null;
+  readonly reader: AiPersona | null;
+  readonly references: readonly AiReference[];
+  /** What every AI call that names no project takes. */
+  readonly isDefault: boolean;
+  readonly version: number;
+  readonly createdAt: string;
+  readonly createdBy: string | null;
+  readonly updatedAt: string;
+  readonly updatedBy: string | null;
+}
+
+/** An AI project with each reference's text status. */
+export interface AiProject extends Omit<AiProjectSummary, 'references'> {
+  readonly references: readonly AiReferenceStatus[];
+}
+
+/** A project as `aiProjects.create` and `aiProjects.update` send it: every editable part. */
+export interface AiProjectInput {
+  readonly name: string;
+  readonly description?: string | null;
+  readonly instructions?: string | null;
+  readonly writer?: AiPersona | null;
+  readonly reader?: AiPersona | null;
+  /** Without `version`, the pin already held, or a new reference's current file. */
+  readonly references?: readonly { readonly assetId: string; readonly version?: number }[];
+}
+
+/** What a call that took an AI project used of it: `project` in its answer. */
+export interface AiProjectUse {
+  readonly id: string;
+  readonly version: number;
+  readonly references: readonly {
+    readonly assetId: string;
+    readonly version: number;
+    readonly used: boolean;
+    /** Character ranges of its text the call sent, `[start, end)`. */
+    readonly ranges?: readonly (readonly [number, number])[];
+    /** Why it was left out. */
+    readonly reason?: 'forbidden' | 'no_text' | 'pending' | 'gone' | 'budget';
+  }[];
+}
+
+/** One page of a reference's text. */
+export interface AiReferencePage {
+  readonly projectId: string;
+  readonly assetId: string;
+  readonly version: number;
+  /** Where the page starts, in UTF-8 bytes of the text. */
+  readonly offset: number;
+  /** Pass as `offset` for the next page; null at the end. */
+  readonly nextOffset: number | null;
+  /** The text's length in UTF-8 bytes. */
+  readonly total: number;
+  readonly text: string;
+}
+
 /** A slot's rules once the config is laid over the code. */
 export interface EffectiveSlotRules {
   readonly allowedChildren: readonly string[];
@@ -946,6 +1042,8 @@ export type GenerateBlocksRequest = {
   readonly parent?: { readonly key: string; readonly slot: string };
   readonly locale?: string;
   readonly tier?: 'flagship' | 'balanced' | 'fast';
+  /** The AI project to compose in: an id, null for none; absent, the environment's default. */
+  readonly projectId?: string | null;
 } & (
   | { readonly entryId: string; readonly contentTypeApiId?: never }
   | { readonly contentTypeApiId: string; readonly entryId?: never }
@@ -977,6 +1075,8 @@ export interface GeneratedBlocks {
    */
   readonly issues: readonly { readonly field: string; readonly message: string }[];
   readonly usage: { readonly inputTokens: number; readonly outputTokens: number };
+  /** The AI project the blocks took, and what of its references they used; null for none. */
+  readonly project: AiProjectUse | null;
 }
 
 /** One block in an entry's outline (`entries.outlineBlocks`). */
@@ -2332,6 +2432,59 @@ export function createManagementClient(opts: ManagementClientOptions) {
        */
       searchReindexJob: async () =>
         (await get<{ job: BulkJob | null }>(`${envBase}/search/reindex-job`)).job,
+    },
+
+    /**
+     * This environment's AI projects: reusable contexts for AI work (instructions, a writer and
+     * a reader persona, reference files). Reading needs content:write; writing content:manage;
+     * the default space:admin, as does changing or deleting the project that is the default.
+     */
+    aiProjects: {
+      /** Every project, by name, with its references as pinned. */
+      list: async () => (await get<{ items: AiProjectSummary[] }>(`${envBase}/ai-projects`)).items,
+      /** One project, each reference with its text status. */
+      get: (id: string) => get<AiProject>(`${envBase}/ai-projects/${e(id)}`),
+      /**
+       * Creates a project. 409 for a name another project has; 404 for a reference you can't
+       * read; 422 `reference_not_text` for one that isn't a document or recording.
+       */
+      create: (input: AiProjectInput) => post<AiProject>(`${envBase}/ai-projects`, input),
+      /**
+       * Replaces every editable part at the version you read (409 for a stale one, `isConflict`).
+       * The default needs space:admin.
+       */
+      update: (id: string, input: AiProjectInput & { readonly expectedVersion: number }) =>
+        put<{ project: AiProject; unchanged: boolean }>(`${envBase}/ai-projects/${e(id)}`, input),
+      /** Deletes a project. 409 `project_in_use` while an AI action or a schedule names it. */
+      delete: (id: string, opts: { version?: number } = {}) =>
+        del<void>(`${envBase}/ai-projects/${e(id)}`, { version: opts.version }),
+      /** Sets the environment's default project, or clears it with null (space:admin). */
+      setDefault: (projectId: string | null, opts: { expectedVersion?: number } = {}) =>
+        put<{ projectId: string | null; unchanged: boolean }>(`${envBase}/ai-projects/default`, {
+          projectId,
+          ...(opts.expectedVersion !== undefined ? { expectedVersion: opts.expectedVersion } : {}),
+        }),
+      /**
+       * One page of a reference's text at its pinned version (also needs assets:read). Pass the
+       * page's `nextOffset` back as `offset` to read on.
+       */
+      readReference: (
+        id: string,
+        assetId: string,
+        opts: { offset?: number; limit?: number } = {},
+      ) =>
+        get<AiReferencePage>(`${envBase}/ai-projects/${e(id)}/references/${e(assetId)}/text`, {
+          offset: opts.offset,
+          limit: opts.limit,
+        }),
+      /** Retries reading a reference's text after `media_off`, `budget` or `failed`. */
+      extract: (id: string, assetId: string) =>
+        post<{
+          assetId: string;
+          version: number;
+          outcome: 'started' | 'running';
+          status: AiReferenceStatus;
+        }>(`${envBase}/ai-projects/${e(id)}/references/${e(assetId)}/extract`),
     },
 
     /** Navigation menus: delivery data a front end renders (content:manage to change them). */

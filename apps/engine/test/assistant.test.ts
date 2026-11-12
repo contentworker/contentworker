@@ -2,6 +2,7 @@ import { listDurableObjectIds, runInDurableObject, SELF } from 'cloudflare:test'
 import { env } from 'cloudflare:workers';
 import {
   type AppContext,
+  createAiProject,
   createContentType,
   createEntry,
   createSpace,
@@ -28,6 +29,7 @@ import {
   CLOSE_SESSION_ENDED,
   NOT_HELD,
   NOT_PROPOSED,
+  PROJECT_GONE,
   RETENTION_MS,
   TOO_FAST,
 } from '@contentworker/http/assistant/agent';
@@ -892,6 +894,24 @@ describe('a model turn (the mock model)', () => {
     await panel.ask('List the content types', contextIn(SPACE_B));
     const after = (await messagesOf(ada)).flatMap((m) => m.parts) as { type: string }[];
     expect(after.some((x) => x.type === 'tool-model_list_content_types')).toBe(true);
+    panel.close();
+  });
+
+  it('works in the conversation’s AI project, and says so when it is gone, never another', async () => {
+    const spaceId = 'asst-project';
+    await seedSpace(spaceId);
+    const scope = { spaceId, environmentId: 'main' };
+    const project = await createAiProject(ctx(), scope, SYSTEM_CALLER, { name: 'Northwind' });
+    const ada = await person('ada_project');
+    const panel = await socket(ada);
+    await panel.ask('List the content types', { ...contextIn(spaceId), projectId: project.id });
+    const parts = (await messagesOf(ada)).flatMap((m) => m.parts) as { type: string }[];
+    expect(parts.some((x) => x.type === 'tool-model_list_content_types')).toBe(true);
+    const chunks = await panel.ask('List the content types', {
+      ...contextIn(spaceId),
+      projectId: 'gone',
+    });
+    expect(JSON.stringify(chunks)).toContain(PROJECT_GONE.slice(0, 40));
     panel.close();
   });
 

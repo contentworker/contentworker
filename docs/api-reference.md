@@ -639,6 +639,35 @@ target `ai_settings` (the new version) and `detail.aiSettings` naming the parts 
 (`translation.tier`), never guidance. MCP: `ai_settings_get` (`preview:read`), `ai_settings_set`
 (`space:admin`).
 
+### AI projects
+
+An environment's reusable contexts for AI work: instructions, a writer and a reader persona, and up
+to ten reference files (documents or recordings) pinned to a file version. See
+[AI projects](./ai-agents-and-search.md#ai-projects).
+
+| Method | Path                                            | Scope            | Notes                                                                                                                                                                                                                                                                                                           |
+| ------ | ----------------------------------------------- | ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| GET    | `…/ai-projects`                                 | `content:write`  | `{ items, total }`, by name, references as pinned (`{ assetId, version }`)                                                                                                                                                                                                                                      |
+| POST   | `…/ai-projects`                                 | `content:manage` | `{ name, description?, instructions?, writer?, reader?, references?: [{ assetId, version? }] }` → `201` the project. A new reference pins the asset's current file. `409` for a name another project has; `404` for an asset you can't read (as for a missing one); `422` `reference_not_text` naming its index |
+| GET    | `…/ai-projects/:id`                             | `content:write`  | The project, each reference with `text` (`ready`, `pending`, `none`), `reason` when none, `updateAvailable` and `gone`                                                                                                                                                                                          |
+| PUT    | `…/ai-projects/:id`                             | `content:manage` | Every editable part, whole, with `expectedVersion` → `{ project, unchanged }`; `409` with `details.version` for a stale one. The default project needs `space:admin` (`403` otherwise)                                                                                                                          |
+| DELETE | `…/ai-projects/:id`                             | `content:manage` | `?version=` optional. `409` `{ error: { code: "project_in_use", aiActions, agentSchedules } }` while one names it. The default needs `space:admin`; deleting it clears the default                                                                                                                              |
+| PUT    | `…/ai-projects/default`                         | `space:admin`    | `{ projectId, expectedVersion? }` (null clears) → `{ projectId, unchanged }`; the previous default is cleared in the same write; 409 when the project changed since `expectedVersion`                                                                                                                           |
+| POST   | `…/ai-projects/:id/references/:assetId/extract` | `content:write`  | Retry reading a reference's text (after `media_off`, `budget`, `failed`, or before any call asked) → `{ assetId, version, outcome, status }`. `404` for an asset that isn't a reference or that you can't read; `409` for text already there, a final reason, an older pinned file or media AI off              |
+| GET    | `…/ai-projects/:id/references/:assetId/text`    | `content:write`  | `?offset=` (UTF-8 bytes) `&limit=` (characters, default 6 000, at most 12 000) → `{ projectId, assetId, version, offset, nextOffset, total, text }`. Needs `assets:read` too: `404` otherwise, and for an asset that isn't a reference or has no text                                                           |
+
+`projectId` (an id, `null` for none, absent for the environment's default) is accepted by
+`…/entries/generate`, `…/entries/canvas`, `…/entries/blocks/generate`, `…/entries/:id/translate`
+(instructions and reader persona only), `…/summarize`, `…/autofill`, `…/audit` and
+`…/ai-actions/:id/run`; each answer gains `project: { id, version, references: [{ assetId, version,
+used, ranges?, reason? }] } | null`. A project that isn't in the environment is a `404`. AI actions
+(`POST …/ai-actions`) and agent schedules (`POST`, `PATCH …/agent-schedules`) store a `projectId`
+(checked on save: `422` when unknown; null is the default at run time); a stored one deleted since
+refuses the run. Audit rows name the project (target `ai_project`) and `detail.aiProjects`, the
+parts and pins changed, never the text. MCP: `ai_projects_list`, `ai_project_get`,
+`ai_project_create`, `ai_project_update`, `ai_project_delete`, `ai_project_default_set`,
+`ai_project_reference_extract`, `ai_project_reference_read`.
+
 ### Entries: AI and semantics
 
 | Method | Path                         | Scope            | Description                                                                                                                     |
@@ -824,12 +853,12 @@ the link's path for at most 12 hours and never past the expiry. The MCP tools ar
 Recurring agent jobs (cron-cadence workflow runs over newly-published entries); see
 [AI, agents & search](./ai-agents-and-search.md#agent-schedules).
 
-| Method | Path                    | Scope             | Description                                                                                 |
-| ------ | ----------------------- | ----------------- | ------------------------------------------------------------------------------------------- |
-| GET    | `…/agent-schedules`     | `preview:read`    | List recurring agent jobs                                                                   |
-| POST   | `…/agent-schedules`     | `content:publish` | Create schedule `{ workflow, cron (5-field UTC), contentTypeApiId?, enabled?, autoApply? }` |
-| PATCH  | `…/agent-schedules/:id` | `content:publish` | Update cron / enabled / autoApply / content-type filter                                     |
-| DELETE | `…/agent-schedules/:id` | `content:publish` | Delete schedule                                                                             |
+| Method | Path                    | Scope             | Description                                                                                             |
+| ------ | ----------------------- | ----------------- | ------------------------------------------------------------------------------------------------------- |
+| GET    | `…/agent-schedules`     | `preview:read`    | List recurring agent jobs                                                                               |
+| POST   | `…/agent-schedules`     | `content:publish` | Create schedule `{ workflow, cron (5-field UTC), contentTypeApiId?, enabled?, autoApply?, projectId? }` |
+| PATCH  | `…/agent-schedules/:id` | `content:publish` | Update cron / enabled / autoApply / content-type filter / `projectId` (null: the default)               |
+| DELETE | `…/agent-schedules/:id` | `content:publish` | Delete schedule                                                                                         |
 
 ### Agent reviews
 
@@ -1176,7 +1205,7 @@ Writes are audited. MCP: `views_list`, `views_get`, `views_run`, `views_create`,
 | POST   | `…/app-extensions`     | `content:manage` | Register extension                  |
 | DELETE | `…/app-extensions/:id` | `content:manage` | Delete extension                    |
 | GET    | `…/ai-actions`         | `preview:read`   | List AI action templates            |
-| POST   | `…/ai-actions`         | `content:manage` | Create AI action                    |
+| POST   | `…/ai-actions`         | `content:manage` | Create AI action (`projectId?`)     |
 | DELETE | `…/ai-actions/:id`     | `content:manage` | Delete AI action                    |
 | POST   | `…/ai-actions/:id/run` | `content:write`  | Run AI action on an entry           |
 | GET    | `…/agent-runs`         | `space:admin`    | List agent run audit records        |

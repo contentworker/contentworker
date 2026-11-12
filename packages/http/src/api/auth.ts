@@ -370,20 +370,26 @@ export function auditMiddleware(deps: AuthDeps): MiddlewareHandler<AuthVars> {
         actor: auditActor(principal),
         action: `${c.req.method} ${c.req.routePath}`,
         // A block config or AI settings set names no target in its route; what it changed (its
-        // version) does.
+        // version) does. A created AI project, or the default set, is named by the project.
         targetType: target
           ? routeTargetType(c.req.routePath, target)
           : created
             ? 'entry'
             : detail?.blockConfig
               ? 'block_config'
-              : detail?.aiSettings && 'ai_settings',
+              : detail?.aiSettings
+                ? 'ai_settings'
+                : detail?.aiProjects?.length
+                  ? 'ai_project'
+                  : undefined,
         targetId: target
           ? c.req.param(target)
           : (created?.entryId ??
             (detail?.blockConfig
               ? String(detail.blockConfig.to)
-              : detail?.aiSettings && String(detail.aiSettings.to))),
+              : detail?.aiSettings
+                ? String(detail.aiSettings.to)
+                : detail?.aiProjects?.[detail.aiProjects.length - 1]?.projectId)),
         status: c.res.status,
         detail,
       });

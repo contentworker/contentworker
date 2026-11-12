@@ -796,6 +796,8 @@ export async function deleteAssetFiles(
   // has its own), so it goes whatever the other environments hold: its search document, its
   // vector, and its extracted text (`space/environment/assetId/v<n>/…`, five segments deep).
   await removeAssetFromSearch(deps.search, scope, assetId);
+  // Its reference extraction records go with the text they describe.
+  await ctx.store.aiReferenceExtractions.deleteForAsset(scope, assetId);
   const derived = assetDerivedPrefix(scope, assetId, 0);
   const ownPrefix = derived ? derived.slice(0, -'v0/'.length) : null;
   if (ownPrefix && deps.blob?.deletePrefix) {

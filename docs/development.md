@@ -452,6 +452,17 @@ a deploy and after a rollback. A `detail` that isn't valid JSON indexes only its
 failing the append. The migration backfills the rows already written. Nothing deletes from it, as
 nothing deletes audit history; deleting an environment leaves it.
 
+`0045_ai_projects.sql` adds `ai_projects` (`space_id`, `environment_id`, `id` primary key;
+`name`, `name_key`, `description`, `instructions`, `writer`, `reader`, `references` JSON,
+`is_default`, `version`, `created_*`, `updated_*`), unique on (`space_id`, `environment_id`,
+`name_key`) and holding one default per environment with the partial unique index
+`ai_projects_default`; `ai_reference_extractions` (`space_id`, `environment_id`, `asset_id`,
+`file_version` primary key; `status`, `reason`, `triggered_by`, `updated_at`), the record of
+reading a reference's text, claimed on its primary key; and the nullable `project_id` on
+`ai_actions` and `agent_schedules` (see [AI projects](./ai-agents-and-search.md#ai-projects)). New
+tables and nullable columns: code deployed before it never names them, and an existing action or
+schedule reads as "the default project", which is none until one is set.
+
 `0043_space_ai_settings.sql` adds `space_ai_settings` (`space_id` primary key, `version`,
 `document`, `updated_by`, `updated_at`): a space's AI settings, per capability on or off, its tier
 and its guidance, as one JSON document rewritten whole at each set, its `version` the

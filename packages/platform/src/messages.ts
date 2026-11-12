@@ -118,6 +118,7 @@ export function isAssetIngestMessage(body: unknown): body is AssetIngestMessage 
     typeof m.version === 'number' &&
     typeof m.scope?.spaceId === 'string' &&
     typeof m.scope?.environmentId === 'string' &&
-    (m.rerun === undefined || typeof m.rerun === 'string')
+    (m.rerun === undefined || typeof m.rerun === 'string') &&
+    (m.textOnly === undefined || m.textOnly === true)
   );
 }

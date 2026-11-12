@@ -133,4 +133,6 @@ export interface FieldIssue {
   /** Locale the issue applies to, if locale-specific. */
   readonly locale?: string;
   readonly message: string;
+  /** A stable code for a refusal a client acts on (`reference_not_text`), when it has one. */
+  readonly code?: string;
 }

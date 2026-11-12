@@ -48,6 +48,7 @@ import {
 import { type BlockCatalogInput, generateTypes } from '@contentworker/sdk-codegen';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
+import { zProjectId } from '../../api/validation';
 import { ok, scopeArgs, scopeOf, type ToolContext, toolSchema } from './shared';
 
 export function registerReadTools(server: McpServer, t: ToolContext): void {
@@ -615,10 +616,12 @@ export function registerReadTools(server: McpServer, t: ToolContext): void {
           contentType: z.string(),
           prompt: z.string(),
           tier: z.enum(['flagship', 'balanced', 'fast']).optional(),
+          projectId: zProjectId,
           ...scopeArgs,
         }),
       ),
-      annotations: { readOnlyHint: true },
+      // Not read-only: working in an AI project can start a billed one-time read of a
+      // reference's text (audited), though it saves no entry.
     },
     async (args) => {
       guard(SCOPES.contentWrite, scopeOf(args));
@@ -629,8 +632,13 @@ export function registerReadTools(server: McpServer, t: ToolContext): void {
           ctx,
           ai,
           scopeOf(args),
-          { contentTypeApiId: args.contentType, prompt: args.prompt, tier: args.tier },
-          { assets: imageSearchFor(principal, assetSearch) },
+          {
+            contentTypeApiId: args.contentType,
+            prompt: args.prompt,
+            tier: args.tier,
+            ...(args.projectId !== undefined ? { projectId: args.projectId } : {}),
+          },
+          { assets: imageSearchFor(principal, assetSearch), caller: principal },
         ),
       );
     },
@@ -647,10 +655,12 @@ export function registerReadTools(server: McpServer, t: ToolContext): void {
           contentType: z.string(),
           prose: z.string(),
           tier: z.enum(['flagship', 'balanced', 'fast']).optional(),
+          projectId: zProjectId,
           ...scopeArgs,
         }),
       ),
-      annotations: { readOnlyHint: true },
+      // Not read-only: working in an AI project can start a billed one-time read of a
+      // reference's text (audited), though it saves no entry.
     },
     async (args) => {
       guard(SCOPES.contentWrite, scopeOf(args));
@@ -660,8 +670,13 @@ export function registerReadTools(server: McpServer, t: ToolContext): void {
           ctx,
           ai,
           scopeOf(args),
-          { contentTypeApiId: args.contentType, prose: args.prose, tier: args.tier },
-          { assets: imageSearchFor(principal, assetSearch) },
+          {
+            contentTypeApiId: args.contentType,
+            prose: args.prose,
+            tier: args.tier,
+            ...(args.projectId !== undefined ? { projectId: args.projectId } : {}),
+          },
+          { assets: imageSearchFor(principal, assetSearch), caller: principal },
         ),
       );
     },

@@ -9,6 +9,7 @@ import {
 } from '@contentworker/application';
 import {
   AiCapabilityDisabledError,
+  AiProjectInUseError,
   authorize,
   authorizeContent,
   authorizeTrash,
@@ -32,6 +33,7 @@ import { toolListedFor } from './tool-scopes';
 import { registerAgentTools } from './tools/agents';
 import { registerAiActionTools } from './tools/ai-actions';
 import { registerAiContentTools } from './tools/ai-content';
+import { registerAiProjectTools } from './tools/ai-projects';
 import { registerAiSettingsTools } from './tools/ai-settings';
 import { registerApiKeyTools } from './tools/api-keys';
 import { registerAppExtensionTools } from './tools/app-extensions';
@@ -110,6 +112,7 @@ const TOOL_AREAS: readonly ((server: McpServer, t: ToolContext) => void)[] = [
   registerAiContentTools,
   registerRoleTools,
   registerAiSettingsTools,
+  registerAiProjectTools,
   registerApiKeyTools,
   registerFrontendTools,
   registerPluginTools,
@@ -288,7 +291,8 @@ export function buildServer(
           if (
             ((err instanceof ForbiddenError || err instanceof ConflictError) &&
               err.details !== undefined) ||
-            err instanceof AiCapabilityDisabledError
+            err instanceof AiCapabilityDisabledError ||
+            err instanceof AiProjectInUseError
           )
             return { ...ok(toHttpError(err).body), isError: true as const };
           // An apply that stopped partway: REST's 409 body, so the caller gets the failed record.

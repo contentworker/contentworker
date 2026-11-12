@@ -9,7 +9,10 @@ import {
   generateWithBudget,
   moderationQuestions,
   moderationVerdict,
+  projectDecisions,
   recordAgentRun,
+  resolveAiProject,
+  SYSTEM_CALLER,
   settleReviewOutcome,
   UNTRUSTED_CONTENT_GUARD,
   unpublishEntry,
@@ -131,14 +134,50 @@ export function makeActivities(deps: ActivitiesDeps): Activities {
       // control and reads none.
       const policy = await aiCapability(ctx, input.scope, 'agents');
       if (!policy.enabled) return { fields: {}, usage: { inputTokens: 0, outputTokens: 0 } };
-      const result = await generateWithBudget(ctx, ai, input.scope, {
-        system: policy.system(
+      // Background work has no caller: the project's references reach it only where published
+      // and unrestricted (amendment D), since what it writes every entry reader sees.
+      let project: Awaited<ReturnType<typeof resolveAiProject>>;
+      try {
+        project = await resolveAiProject(ctx, input.scope, SYSTEM_CALLER, {
+          capability: 'agents',
+          ...(input.projectId ? { projectId: input.projectId } : {}),
+          task: {
+            terms: `${input.fields.map((f) => f.name).join(' ')} ${input.context.slice(0, 2_000)}`,
+          },
+        });
+      } catch (err) {
+        // The run's stored project is gone (deleted mid-run): it generates nothing and says why,
+        // never falls back to the default; a retry of the step would only find it gone again.
+        if (!(err instanceof NotFoundError)) throw err;
+        return {
+          fields: {},
+          usage: { inputTokens: 0, outputTokens: 0 },
+          project: [`Refused: the AI project ${input.projectId} is gone`],
+        };
+      }
+      const system = policy.system(
+        project.system(
           `You work on CMS entries. Generate concise, natural values for the requested fields, consistent with the provided context.${input.instruction ? ` ${input.instruction}` : ''} ${UNTRUSTED_CONTENT_GUARD}`,
         ),
-        prompt: `Context:\n${wrapUntrusted(input.context)}\n\nGenerate values for: ${input.fields.map((f) => f.name).join(', ')}.`,
-        tier: policy.tier('fast'),
+      );
+      const tier = policy.tier('fast');
+      const placed = project.call(
+        {
+          system,
+          prompt: `Context:\n${wrapUntrusted(input.context)}\n\nGenerate values for: ${input.fields.map((f) => f.name).join(', ')}.`,
+          maxTokens: 1024,
+          tier,
+          outputSchema: schema as unknown as Record<string, unknown>,
+        },
+        ai,
+      );
+      const result = await generateWithBudget(ctx, ai, input.scope, {
+        system,
+        prompt: placed.prompt,
+        tier,
         maxTokens: 1024,
         outputSchema: schema as unknown as Record<string, unknown>,
+        ...placed.request,
       });
       const obj = (result.object ?? {}) as Record<string, unknown>;
       const fields: EntryFields = {};
@@ -146,7 +185,12 @@ export function makeActivities(deps: ActivitiesDeps): Activities {
         const value = obj[f.apiId];
         if (typeof value === 'string' && value.trim()) fields[f.apiId] = { [locale]: value };
       }
-      return { fields: await openFor(input, fields, locale), usage: result.usage };
+      const decisions = projectDecisions(placed.use);
+      return {
+        fields: await openFor(input, fields, locale),
+        usage: result.usage,
+        ...(decisions.length > 0 ? { project: decisions } : {}),
+      };
     },
 
     async applyFields(scope, entryId, enriched, agent) {

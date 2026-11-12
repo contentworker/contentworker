@@ -24,6 +24,10 @@ function fakeR2() {
     async get(key, options) {
       const o = objects.get(key);
       if (!o) return null;
+      // As R2: a range it can't satisfy (starting at or past the end) is refused.
+      if (options?.range && options.range.offset >= o.byteLength) {
+        throw new Error('get: The requested range is not satisfiable (10039)');
+      }
       const bytes = options?.range
         ? o.subarray(options.range.offset, options.range.offset + options.range.length)
         : o;
@@ -195,6 +199,29 @@ describe('R2 multipart uploads', () => {
     const part = await multipart.uploadPart('zips/s/e/j/a.zip', uploadId, 1, new Uint8Array(3));
     expect(await multipart.complete('zips/s/e/j/a.zip', uploadId, [part])).toMatchObject({
       size: 3,
+    });
+  });
+
+  it('reads a range of UTF-8 text rounded to whole characters, with where it ended', async () => {
+    const { bucket } = fakeR2();
+    const blob = createR2BlobStore(bucket, { signer });
+    const key = 's/e/a/v1/text.md';
+    // h(1) é(2) 日(3) l(1): bytes 0, 1, 3, 6.
+    await blob.put(key, 'hé日l', 'text/markdown');
+    // Starts inside é and ends inside 日: both ends move to a boundary.
+    expect(await blob.getRange?.(key, 2, 3)).toEqual({ text: '', start: 3, end: 3, size: 7 });
+    expect(await blob.getRange?.(key, 2, 5)).toEqual({ text: '日l', start: 3, end: 7, size: 7 });
+    expect(await blob.getRange?.(key, 0, 4)).toEqual({ text: 'hé', start: 0, end: 3, size: 7 });
+    expect(await blob.getRange?.('missing', 0, 4)).toBeNull();
+    // Past the end, and an empty object: an empty page at the end, never a failed read.
+    expect(await blob.getRange?.(key, 7, 4)).toEqual({ text: '', start: 7, end: 7, size: 7 });
+    expect(await blob.getRange?.(key, 50, 4)).toEqual({ text: '', start: 7, end: 7, size: 7 });
+    await blob.put('s/e/b/v1/text.md', '', 'text/markdown');
+    expect(await blob.getRange?.('s/e/b/v1/text.md', 0, 4)).toEqual({
+      text: '',
+      start: 0,
+      end: 0,
+      size: 0,
     });
   });
 

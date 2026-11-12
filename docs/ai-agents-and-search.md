@@ -20,6 +20,8 @@ interface GenerateRequest {
   tier?: ModelTier; // default 'balanced'
   maxTokens: number;
   outputSchema?: Record<string, unknown>; // when set, provider returns JSON matching this schema
+  sessionAffinity?: string; // a hash: calls sharing a prompt prefix reach the replica that cached it
+  metadata?: Record<string, string | number | boolean>; // AI Gateway metadata: ids, never content
 }
 interface GenerateResult {
   text: string;
@@ -29,7 +31,12 @@ interface GenerateResult {
 }
 ```
 
-A `tool` message answers an assistant `ToolCall` by its `id`.
+A `tool` message answers an assistant `ToolCall` by its `id`. `AIProvider.limits?(tier)` answers
+`{ contextTokens }`, the context window of the model the tier maps to; the edge adapter reads it
+from a table of the catalog's `context_window` values (`WORKERS_AI_CONTEXT_WINDOWS`), with the
+`WORKERS_AI_MODEL_*` overrides applied, and budgets a model it doesn't list at 24,000 tokens.
+`sessionAffinity` rides as the `x-session-affinity` header, `metadata` as the gateway's custom
+metadata.
 
 ### The edge inference adapter
 
@@ -139,7 +146,7 @@ admin, REST, MCP, Coworker and workflow nodes.
 | `assistant`    | Coworker's model turns                                                                                                                                                     | the turn answers that Coworker is off; pages' own edits still go through it                                                                                                                                          |
 | `field-assist` | `autofillField`, `summarizeEntry`, `summarizeChange`, `suggestEntryTags`, `runAIAction`                                                                                    | refused; the `ai.summarize`, `ai.autofill` and `ai.suggest_tags` nodes record a no-op                                                                                                                                |
 | `translation`  | `translateEntry` (editor, API, MCP, the `ai.translate` node)                                                                                                               | refused; the node records a no-op                                                                                                                                                                                    |
-| `media`        | `generateAltText`, `autoTagAsset`, and the ingest steps that call them                                                                                                     | refused on request; ingest skips the steps                                                                                                                                                                           |
+| `media`        | `generateAltText`, `autoTagAsset`, the ingest steps that call them, and reading an AI project reference's text                                                             | refused on request; ingest skips the steps; a reference without text gets none (`media_off`)                                                                                                                         |
 | `search`       | entry and asset embeddings, asset text extraction, `relatedEntries`, `findDuplicates`, `getEntryEmbedding`, management semantic search                                     | nothing new is embedded and a (re)published entry's or asset's vectors are dropped; the semantic tools refuse; `content_search` and asset search use the lexical leg only                                            |
 | `agents`       | the on-publish enrich agent (inline and durable), agent schedules except moderation ones, `auditEntry`, the agent runtime's `generateFields`, the AI review of a promotion | publish enrich and schedule firings skip (a schedule's cursor waits); a run already under way generates nothing; an audit is refused; a promotion is assessed without the model, as where no decision model is bound |
 | `workflows`    | `draftWorkflowGraph` (the copilot), `ai.classify`, `ai.router`, `ai.assess`, `ai.moderate`, `ai.enrich`                                                                    | the copilot is refused; each node answers with its heuristic, recorded as a `disabled` fallback (moderation's flags)                                                                                                 |
@@ -263,6 +270,103 @@ from every editor) and `PUT` (`space:admin`); MCP `ai_settings_get` and `ai_sett
 management SDK's `aiSettings.get()` and `aiSettings.set()`. A personal access token or OAuth token
 holding `space:admin` may set them: they are configuration and give nobody access that outlives the
 token. They are not among Coworker's tools.
+
+### AI projects
+
+An AI project is a named, reusable context for AI work in one environment (`AiProject` in
+`packages/domain/src/ai/ai-projects.ts`, the use-cases in `packages/application/src/ai-projects.ts`,
+the decision record in `docs/specs/ai-projects.md`): instructions (at most 4,000 characters), a
+writer persona and a reader persona (each a name and a description), and up to ten reference
+files, in order of importance. A reference is a document or recording in the environment, pinned
+to one file version (`{ assetId, version }`): a replaced file changes no prompt until someone moves
+the pin, and a read reports `updateAvailable`. Names are unique per environment, ignoring case;
+each write is a compare-and-set on `version`. One project may be the environment's default.
+
+**Who.** Reading projects takes `content:write` (the scope the AI calls take, so a Preview or
+Delivery key never lists them); creating, changing and deleting takes `content:manage`; setting
+or clearing the default takes `space:admin`, and so does changing or deleting the project that is
+the default. Adding a reference needs the saver to read the asset (`assets:read`): one they can't
+read answers the same 404 as a missing one; one that isn't a document or recording (or is
+archived) is a 422 with `code: 'reference_not_text'`, naming its index. Deleting a project an AI
+action or an agent schedule names is refused with 409 `project_in_use`, listing them.
+
+**Resolution.** `resolveAiProject(ctx, scope, caller, { capability, projectId, task })` runs after
+the capability check (a capability that is off still refuses with `ai_capability_disabled`) and
+before the prompt is built. `projectId` names a project (404 when it isn't in the scope), `null`
+means none, and absent means the default, if any. An AI action's or a schedule's stored project is
+taken when the run names none; one that is gone refuses the run (404, recorded in the agent
+ledger as `refused`), never falling back to the default. `drafting`, `layout`, `assistant`,
+`field-assist` (summarize, autofill, AI actions), `translation` and `agents` (entry audits, the
+agent runtime's `generateFields`, so enrich, curate and repurpose, on publish and on a schedule)
+take a project; an explicit project on any other capability is a 422. Translation takes the
+instructions and the reader persona only: no writer, no references. Projects carry no tier.
+
+**Prompt.** The system prompt is the built-in prompt (which carries `UNTRUSTED_CONTENT_GUARD`,
+naming every delimiter), then the project in `<ai_project>` (`projectForModel`), then the space's
+guidance in `<space_guidance>`, which wins where they disagree. In the user turn the references
+come first, each with a header outside its span (title through `nameForModel`, asset id, version,
+character ranges) and its excerpt in its own `<reference asset="…">` span, then the call's own
+content and task. `stripDelimiters` removes `user_content`, `space_guidance`, `ai_project` and
+`reference` tags, in a loop, from every fenced text. References never go in a system prompt, a
+schema or a tool description.
+
+**Excerpts** (`packages/application/src/ai-project-excerpts.ts`). The first three references the
+caller may use are excerpted, weighted 50 / 30 / 20 (a share one can't use passes on); the rest
+are listed by title and length and reported `budget`. The budget is the smaller of 12,000
+characters and half the tier's spare context: the window `AIProvider.limits` reports, less the
+system prompt, the user turn and `maxTokens`, estimated per script (about four Latin characters a
+token, one CJK character, two of other scripts). An excerpt is about a quarter the text's head,
+then the passages that best match the task's terms (BM25), in document order; text with too few
+paragraph breaks falls back to sentences. Each comes from one ranged read
+(`BlobStore.getRange`, UTF-8 byte offsets rounded to whole characters) of at most 200 KB, cut to
+100,000 characters; a PDF's `## Metadata` section is stripped as it is read. Overflow trims
+references, never the project's own text.
+
+**References' text** is the asset's extracted text at the pinned version (`assetTextKey`). Its
+status is derived on read: `ready`, `pending`, or `none` with `too_large`, `unsupported` (final),
+`media_off`, `budget`, `failed` or `not_extracted`. When a call finds a readable reference with
+`not_extracted` at the asset's current file and no ingest queued or running, it claims a row in
+`ai_reference_extractions` (once per asset version) and asks the ingest queue for a text-only
+rerun (`textOnly`): the ingest Workflow runs `extract-text` alone, gated by `media` instead of
+`search`, writes the same text key, and records `done` or `skipped` with a reason; the asset's
+ingest status is left alone. The call goes on without the text and reports the reference
+`pending`. A caller without `assets:write` (and background work) starts it as an audited system
+action (`ai_project.reference_extract`, actor `system`, naming who triggered it). With `media` off
+nothing starts and the reference reads `media_off`. Saving a project starts nothing. A person's
+retry is `POST …/references/{assetId}/extract`.
+
+**Access at use.** A reference reaches a call only as the caller may read it (`assets:read` in the
+space); one they can't is reported `forbidden` by id. Background work (agents with no caller) uses
+a reference only when the asset's published file is the pinned version.
+
+**Provenance.** Every answer that took a project carries `project: { id, version, references: [{
+assetId, version, used, ranges?, reason? }] }` (or `null`); `reason` is `forbidden`, `no_text`,
+`pending`, `gone` or `budget`. The agent ledger row gains a line naming the project, its version
+and each reference's pin and ranges; the call log's `AiCallRecord` gains `projectId`,
+`projectVersion` and `excerptChars`; the gateway metadata carries the same ids (never text), and
+`x-session-affinity` is a hash of the project's id, version and pins, so the stable prefix can be
+served from Workers AI's prefix cache.
+
+**Coworker** takes `projectId` in each turn's context (`readContext`; an id, `null`, or absent for
+the default), resolved every turn as the person: the project is fenced in its system prompt and
+its readable references are listed in a user message before the conversation. It reads their text
+with `ai_project_reference_read` (pages of 6,000 characters by default, 12,000 at most, addressed
+by byte offset with `nextOffset`), at most 24,000 characters a turn, or half the tier's window when
+that is smaller; earlier pages keep only `assetId`, `offset` and `nextOffset`. `ai_projects_list`
+and `ai_project_get` are its other reads; it can't change a project or retry an extraction. A
+conversation whose project is gone answers so.
+
+**Surfaces.** `…/environments/:env/ai-projects` (list, create), `…/ai-projects/:id` (get, `PUT`
+with `expectedVersion`, `DELETE`), `PUT …/ai-projects/default`, `POST
+…/ai-projects/:id/references/:assetId/extract` and `GET …/references/:assetId/text`; MCP
+`ai_projects_list`, `ai_project_get`, `ai_project_create`, `ai_project_update`,
+`ai_project_delete`, `ai_project_default_set`, `ai_project_reference_extract` and
+`ai_project_reference_read`; the management SDK's `aiProjects`. Audit rows name the parts and pins
+a write changed, never the text. Snapshots and clones carry projects with their ids and pins
+(none comes in as the default: an administrator sets that in the target); promotions don't. A pin to
+an older file version arrives without its text (extracted text belongs to the source environment's
+asset), and can't be extracted in the target, since extraction only reads an asset's current file:
+move the pin to the current file there.
 
 ### Budget and untrusted content
 
@@ -582,10 +686,14 @@ but its own. Delivery returns published assets only, in the delivered shape, and
 `assets_search` runs either (`delivered: true` for Delivery's, with the same scopes). Without a
 bound index the lexical leg scans the 500 most recent assets.
 
-Extracted text and model output are untrusted. Text from a file is only stored, embedded and
-indexed; it never reaches a generation prompt (alt text and tags are generated from the file name,
-title and description, each wrapped with `wrapUntrusted` under `UNTRUSTED_CONTENT_GUARD`). Text
-extraction is a model call metered by the space's AI budget (`runWithBudget`). What a model returns is written only where the field is empty, through
+Extracted text and model output are untrusted. Text from a file is stored, embedded and indexed,
+and reaches a generation prompt only as an AI project's reference, in its own `<reference>` span
+(see [AI projects](#ai-projects)); alt text and tags are generated from the file name, title and
+description, each wrapped with `wrapUntrusted` under `UNTRUSTED_CONTENT_GUARD`. Text extraction
+(`TextExtractor.extract`, which answers `{ text, usage }`) is metered by the space's AI budget
+(`runWithBudget`) at what it used: the conversion's reported tokens, or a recording's minutes at
+`AUDIO_TOKENS_PER_MINUTE`, on the background window when `AI_AGENT_*` ceilings are set. A PDF is
+converted without its metadata. What a model returns is written only where the field is empty, through
 `applyAssetMetadata`, as one line of at most 300 characters, and tags only from the space's
 existing vocabulary: ingest never creates a tag.
 

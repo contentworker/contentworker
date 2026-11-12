@@ -87,6 +87,7 @@ export function wire(config: ApiConfig): InMemoryWired {
       ? new InMemoryCostGuard(limits)
       : undefined;
   const embeddings = new LocalEmbeddingsProvider(1536);
+  const blob = new FakeBlobStore();
   return {
     ctx: {
       store: store as ContentStore,
@@ -95,9 +96,11 @@ export function wire(config: ApiConfig): InMemoryWired {
       costGuard,
       // Share-link passwords, hashed as the edge hashes them.
       passwords: pbkdf2PasswordHasher,
+      // AI project references read their text from the same files.
+      aiReferences: { blob },
     },
     rag: { embeddings, vectors: new InMemoryVectorStore() },
-    blob: new FakeBlobStore(),
+    blob,
     ai: new StubAIProvider(devGenerate),
     bus: new InMemoryEventBus(),
   };

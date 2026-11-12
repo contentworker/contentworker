@@ -4,6 +4,7 @@ import type {
   EmbeddingsProvider,
   GenerateRequest,
   GenerateResult,
+  ModelLimits,
   ModelTier,
   ToolCall,
 } from '@contentworker/ports';
@@ -14,6 +15,7 @@ import {
   gatewayRunOptions,
   WorkersAIError,
   type WorkersAiRun,
+  type WorkersAiRunOptions,
   withTimeout,
 } from './transport';
 
@@ -24,6 +26,7 @@ export {
   type WorkersAIDecisionOptions,
 } from './decisions';
 export {
+  AUDIO_TOKENS_PER_MINUTE,
   createWorkersAITextExtractor,
   WORKERS_AI_TRANSCRIBE_MODEL,
   type WorkersAITextExtractorOptions,
@@ -49,6 +52,45 @@ export const WORKERS_AI_MODEL_BY_TIER: Readonly<Record<ModelTier, string>> = {
   balanced: '@cf/meta/llama-3.3-70b-instruct-fp8-fast',
   fast: '@cf/zai-org/glm-4.7-flash',
 };
+
+/**
+ * Context windows (tokens) from the Workers AI model catalog (`context_window`), for the tier
+ * defaults and the models an override is likely to name. A model not listed is budgeted at
+ * {@link UNKNOWN_MODEL_CONTEXT_TOKENS}: a prompt sized for a window the model doesn't have would be
+ * cut or refused.
+ */
+export const WORKERS_AI_CONTEXT_WINDOWS: Readonly<Record<string, number>> = {
+  '@cf/moonshotai/kimi-k2.6': 262_144,
+  '@cf/moonshotai/kimi-k2.7-code': 262_144,
+  '@cf/meta/llama-3.3-70b-instruct-fp8-fast': 24_000,
+  '@cf/meta/llama-3.1-8b-instruct-fast': 60_000,
+  '@cf/meta/llama-3.1-8b-instruct-fp8': 32_000,
+  '@cf/meta/llama-4-scout-17b-16e-instruct': 131_000,
+  '@cf/openai/gpt-oss-120b': 128_000,
+  '@cf/openai/gpt-oss-20b': 128_000,
+  '@cf/qwen/qwen3-30b-a3b-fp8': 32_768,
+  '@cf/zai-org/glm-4.7-flash': 131_072,
+  '@cf/zai-org/glm-5.3': 1_048_576,
+  '@cf/deepseek-ai/deepseek-v4.1-flash-1017': 1_048_576,
+};
+
+/** The window assumed for a model the catalog table doesn't list: the smallest a tier ships with. */
+export const UNKNOWN_MODEL_CONTEXT_TOKENS = 24_000;
+
+/** The model a tier maps to, with the deployment's override when it has one. */
+const modelFor = (models: Partial<Record<ModelTier, string>> | undefined, tier: ModelTier) =>
+  models?.[tier] || WORKERS_AI_MODEL_BY_TIER[tier];
+
+/** What the model `tier` maps to can take (`AIProvider.limits`). */
+export function workersAiLimits(
+  tier: ModelTier,
+  models?: Partial<Record<ModelTier, string>>,
+): ModelLimits {
+  return {
+    contextTokens:
+      WORKERS_AI_CONTEXT_WINDOWS[modelFor(models, tier)] ?? UNKNOWN_MODEL_CONTEXT_TOKENS,
+  };
+}
 
 /**
  * Per-tier overrides from WORKERS_AI_MODEL_FLAGSHIP / _BALANCED / _FAST. Empty
@@ -173,9 +215,9 @@ export function createWorkersAIProvider(opts: WorkersAIProviderOptions): AIProvi
   const runOpts = gatewayRunOptions(opts.gatewayId, opts.collectLogs);
 
   return {
+    limits: (tier) => workersAiLimits(tier, opts.models),
     async generate(req: GenerateRequest): Promise<GenerateResult> {
-      const model =
-        opts.models?.[req.tier ?? 'balanced'] || WORKERS_AI_MODEL_BY_TIER[req.tier ?? 'balanced'];
+      const model = modelFor(opts.models, req.tier ?? 'balanced');
       const messages: WireMessage[] = [];
       if (req.system) messages.push({ role: 'system', content: req.system });
       for (const m of req.messages ?? []) messages.push(toWire(m));
@@ -199,8 +241,10 @@ export function createWorkersAIProvider(opts: WorkersAIProviderOptions): AIProvi
 
       let res: ModelAnswer;
       try {
-        res = ((await withTimeout(opts.run(model, input, runOpts), timeoutMs)) ??
-          {}) as ModelAnswer;
+        res = ((await withTimeout(
+          opts.run(model, input, callRunOptions(runOpts, req)),
+          timeoutMs,
+        )) ?? {}) as ModelAnswer;
       } catch (err) {
         throw asWorkersAIError(err);
       }
@@ -235,6 +279,26 @@ export function createWorkersAIProvider(opts: WorkersAIProviderOptions): AIProvi
       }
       return result;
     },
+  };
+}
+
+/**
+ * One call's run options: the gateway route with the request's metadata (ids and versions the
+ * caller set), and `x-session-affinity` so calls sharing a prompt prefix reach the replica that
+ * cached it. Without a gateway the affinity header still rides (Workers AI reads it directly).
+ */
+function callRunOptions(
+  base: WorkersAiRunOptions | undefined,
+  req: Pick<GenerateRequest, 'sessionAffinity' | 'metadata'>,
+): WorkersAiRunOptions | undefined {
+  const affinity = req.sessionAffinity ? { 'x-session-affinity': req.sessionAffinity } : undefined;
+  const metadata = req.metadata && Object.keys(req.metadata).length > 0 ? req.metadata : undefined;
+  if (!affinity && !metadata) return base;
+  return {
+    ...(base?.gateway ? { gateway: { ...base.gateway, ...(metadata ? { metadata } : {}) } } : {}),
+    ...(base?.extraHeaders || affinity
+      ? { extraHeaders: { ...base?.extraHeaders, ...affinity } }
+      : {}),
   };
 }
 

@@ -62,6 +62,11 @@ export interface WorkflowInput {
    * its verdict says nothing about them. Absent for system runs (on publish), which judge it all.
    */
   readonly deniedFields?: readonly string[];
+  /**
+   * The AI project the run's generation takes (a schedule's); absent: the environment's default
+   * (on publish, always). One that is gone refuses the run's generation.
+   */
+  readonly projectId?: string;
 }
 
 /** Structured outcome of one agent run — the audit record. */
@@ -86,8 +91,13 @@ export interface AgentRunResult {
 export interface Activities {
   /** Loads an entry with its content type, or null if missing. */
   loadEntry(scope: Scope, entryId: string): Promise<LoadedEntry | null>;
-  /** Generates values for the named empty fields; returns localized fields. */
-  generateFields(input: GenerateFieldsInput): Promise<{ fields: EntryFields; usage: Usage }>;
+  /**
+   * Generates values for the named fields; returns localized fields, and the AI project the call
+   * took as its ledger lines (`projectDecisions`).
+   */
+  generateFields(
+    input: GenerateFieldsInput,
+  ): Promise<{ fields: EntryFields; usage: Usage; project?: string[] }>;
   /** Saves field values as a new draft version (validated by the core), written as `agent`. */
   applyFields(
     scope: Scope,
@@ -170,6 +180,8 @@ export interface GenerateFieldsInput {
   readonly context: string;
   /** Task framing for the model (e.g. fill empty fields vs. improve vs. repurpose). */
   readonly instruction?: string;
+  /** The AI project to work in; absent: the environment's default. */
+  readonly projectId?: string;
 }
 
 export interface Usage {

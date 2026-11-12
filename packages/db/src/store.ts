@@ -1,6 +1,8 @@
 import {
   type AgentReview,
   type AgentSchedule,
+  AI_PROJECT_MAX_PER_ENVIRONMENT,
+  type AiProject,
   type AiSettings,
   type ApiKey,
   type AppOperationJob,
@@ -11,6 +13,7 @@ import {
   type AssetRendition,
   type AssetZipJob,
   aiCapabilitiesFrom,
+  aiProjectNameKey,
   assetKind,
   type BlockCatalog,
   type BlockCatalogSummary,
@@ -80,6 +83,9 @@ import type {
   AgentScheduleRepo,
   AIActionDefinition,
   AIActionRepo,
+  AiProjectRepo,
+  AiReferenceExtraction,
+  AiReferenceExtractionRepo,
   AiSettingsRepo,
   AppExtension,
   AppExtensionRepo,
@@ -3752,6 +3758,7 @@ function makeAiActionRepo(x: Exec): AIActionRepo {
     variables: r.variables,
     targetField: r.targetField ?? undefined,
     tier: r.tier,
+    ...(r.projectId && r.projectId !== BEHIND_0045 ? { projectId: r.projectId } : {}),
     createdAt: r.createdAt.toISOString(),
   });
   return {
@@ -3767,6 +3774,7 @@ function makeAiActionRepo(x: Exec): AIActionRepo {
           variables: [...action.variables],
           targetField: action.targetField ?? null,
           tier: action.tier,
+          projectId: action.projectId ?? null,
           createdAt: new Date(action.createdAt),
         }),
       );
@@ -5026,6 +5034,8 @@ const ENVIRONMENT_SCOPED_TABLES = [
   schema.references,
   schema.agentRuns,
   schema.aiActions,
+  schema.aiProjects,
+  schema.aiReferenceExtractions,
   schema.functions,
   schema.appExtensions,
   schema.releases,
@@ -5449,6 +5459,7 @@ function makeAgentScheduleRepo(x: Exec): AgentScheduleRepo {
     cursorEntryId: r.cursorEntryId ?? undefined,
     nextRunAt: r.nextRunAt.toISOString(),
     createdAt: r.createdAt.toISOString(),
+    ...(r.projectId && r.projectId !== BEHIND_0045 ? { projectId: r.projectId } : {}),
   });
   return {
     async create(scope, s) {
@@ -5466,6 +5477,7 @@ function makeAgentScheduleRepo(x: Exec): AgentScheduleRepo {
           cursorEntryId: s.cursorEntryId ?? null,
           nextRunAt: new Date(s.nextRunAt),
           createdAt: new Date(s.createdAt),
+          projectId: s.projectId ?? null,
         }),
       );
     },
@@ -5497,6 +5509,7 @@ function makeAgentScheduleRepo(x: Exec): AgentScheduleRepo {
             lastRunAt: s.lastRunAt ? new Date(s.lastRunAt) : null,
             cursorEntryId: s.cursorEntryId ?? null,
             nextRunAt: new Date(s.nextRunAt),
+            projectId: s.projectId ?? null,
           })
           .where(
             and(scopeFilter(schema.agentSchedules, scope), eq(schema.agentSchedules.id, s.id)),
@@ -7039,6 +7052,233 @@ function makeAiSettingsRepo(x: Exec): AiSettingsRepo {
   };
 }
 
+type AiProjectRow = typeof schema.aiProjects.$inferSelect;
+const toAiProject = (r: AiProjectRow): AiProject => ({
+  id: r.id,
+  name: r.name,
+  description: r.description,
+  instructions: r.instructions,
+  writer: r.writer ?? null,
+  reader: r.reader ?? null,
+  references: r.references,
+  isDefault: r.isDefault,
+  version: r.version,
+  createdAt: r.createdAt.toISOString(),
+  createdBy: r.createdBy,
+  updatedAt: r.updatedAt.toISOString(),
+  updatedBy: r.updatedBy,
+});
+
+/**
+ * AI projects, one row each, rewritten whole at its version. Writes are compare-and-sets on
+ * `version`; the unique indexes hold the name and the one default, so a racing writer's commit
+ * fails rather than leaving two.
+ */
+function makeAiProjectRepo(x: Exec): AiProjectRepo {
+  const db = x.db;
+  const t = schema.aiProjects;
+  const one = (scope: Scope, id: string) => and(scopeFilter(t, scope), eq(t.id, id));
+  const casWrite = async (query: Query) => {
+    if (x.inUnit) {
+      await x.write(query);
+      x.expectChanged(1);
+      return;
+    }
+    let changed: unknown[];
+    try {
+      changed = await (query as unknown as { returning(f: object): Promise<unknown[]> }).returning({
+        id: t.id,
+      });
+    } catch (err) {
+      throw mapD1Error(err);
+    }
+    if (changed.length === 0) throw new TransactionConflictError();
+  };
+  return {
+    // A replica behind 0045 has no projects yet: reads answer none rather than fail the call.
+    async list(scope) {
+      const rows = await db
+        .select()
+        .from(t)
+        .where(scopeFilter(t, scope))
+        .orderBy(asc(t.nameKey), asc(t.id))
+        .limit(AI_PROJECT_MAX_PER_ENVIRONMENT)
+        .catch((err: unknown) => {
+          if (isBehind0045(err)) return [];
+          throw err;
+        });
+      return rows.map(toAiProject);
+    },
+    async get(scope, id) {
+      const [row] = await db
+        .select()
+        .from(t)
+        .where(one(scope, id))
+        .catch((err: unknown) => {
+          if (isBehind0045(err)) return [];
+          throw err;
+        });
+      return row ? toAiProject(row) : null;
+    },
+    async getDefault(scope) {
+      const [row] = await db
+        .select()
+        .from(t)
+        .where(and(scopeFilter(t, scope), eq(t.isDefault, true)))
+        .catch((err: unknown) => {
+          if (isBehind0045(err)) return [];
+          throw err;
+        });
+      return row ? toAiProject(row) : null;
+    },
+    async save(scope, project, expected) {
+      const values = {
+        name: project.name,
+        nameKey: aiProjectNameKey(project.name),
+        description: project.description,
+        instructions: project.instructions,
+        writer: project.writer,
+        reader: project.reader,
+        references: project.references.map((r) => ({ assetId: r.assetId, version: r.version })),
+        isDefault: project.isDefault,
+        version: project.version,
+        updatedAt: new Date(project.updatedAt),
+        updatedBy: project.updatedBy,
+      };
+      if (expected === undefined) {
+        await x.write(
+          db.insert(t).values({
+            spaceId: scope.spaceId,
+            environmentId: scope.environmentId,
+            id: project.id,
+            createdAt: new Date(project.createdAt),
+            createdBy: project.createdBy,
+            ...values,
+          }),
+        );
+        return;
+      }
+      await casWrite(
+        db
+          .update(t)
+          .set(values)
+          .where(and(one(scope, project.id), eq(t.version, expected))),
+      );
+    },
+    async delete(scope, id, expected) {
+      // In the same statement as the version check: an AI action or a schedule that came to name
+      // the project since the caller looked (`usedBy`) makes the delete change nothing, so no
+      // stored id is left naming a project that is gone.
+      const a = schema.aiActions;
+      const s = schema.agentSchedules;
+      await casWrite(
+        db
+          .delete(t)
+          .where(
+            and(
+              one(scope, id),
+              eq(t.version, expected),
+              sql`NOT EXISTS (SELECT 1 FROM ${a} WHERE ${a.spaceId} = ${scope.spaceId} AND ${a.environmentId} = ${scope.environmentId} AND ${a.projectId} = ${id})`,
+              sql`NOT EXISTS (SELECT 1 FROM ${s} WHERE ${s.spaceId} = ${scope.spaceId} AND ${s.environmentId} = ${scope.environmentId} AND ${s.projectId} = ${id})`,
+            ),
+          ),
+      );
+    },
+    async usedBy(scope, id) {
+      const a = schema.aiActions;
+      const s = schema.agentSchedules;
+      const [actions, schedules] = await Promise.all([
+        db
+          .select({ id: a.id })
+          .from(a)
+          .where(and(scopeFilter(a, scope), eq(a.projectId, id))),
+        db
+          .select({ id: s.id })
+          .from(s)
+          .where(and(scopeFilter(s, scope), eq(s.projectId, id))),
+      ]);
+      return { aiActions: actions.map((r) => r.id), agentSchedules: schedules.map((r) => r.id) };
+    },
+  };
+}
+
+type ExtractionRow = typeof schema.aiReferenceExtractions.$inferSelect;
+const toExtraction = (r: ExtractionRow): AiReferenceExtraction => ({
+  assetId: r.assetId,
+  fileVersion: r.fileVersion,
+  status: r.status,
+  reason: r.reason,
+  triggeredBy: r.triggeredBy,
+  updatedAt: r.updatedAt.toISOString(),
+});
+
+/** Reference extraction records, one per asset file version, claimed on the primary key. */
+function makeAiReferenceExtractionRepo(x: Exec): AiReferenceExtractionRepo {
+  const db = x.db;
+  const t = schema.aiReferenceExtractions;
+  return {
+    async getMany(scope, keys) {
+      if (keys.length === 0) return [];
+      // The pairs ride as one JSON parameter: any number of them is one statement.
+      const pairs = JSON.stringify(keys.map((k) => [k.assetId, k.version]));
+      const rows = await db
+        .select()
+        .from(t)
+        .where(
+          and(
+            scopeFilter(t, scope),
+            sql`EXISTS (SELECT 1 FROM json_each(${pairs}) AS k WHERE json_extract(k.value, '$[0]') = ${t.assetId} AND json_extract(k.value, '$[1]') = ${t.fileVersion})`,
+          ),
+        );
+      return rows.map(toExtraction);
+    },
+    async claim(scope, record) {
+      directOnly(x, 'aiReferenceExtractions.claim');
+      const rows = await db
+        .insert(t)
+        .values({
+          spaceId: scope.spaceId,
+          environmentId: scope.environmentId,
+          assetId: record.assetId,
+          fileVersion: record.fileVersion,
+          status: record.status,
+          reason: record.reason,
+          triggeredBy: record.triggeredBy,
+          updatedAt: new Date(record.updatedAt),
+        })
+        .onConflictDoNothing()
+        .returning({ assetId: t.assetId });
+      return rows.length > 0;
+    },
+    async record(scope, record) {
+      const values = {
+        status: record.status,
+        reason: record.reason,
+        triggeredBy: record.triggeredBy,
+        updatedAt: new Date(record.updatedAt),
+      };
+      await x.write(
+        db
+          .insert(t)
+          .values({
+            spaceId: scope.spaceId,
+            environmentId: scope.environmentId,
+            assetId: record.assetId,
+            fileVersion: record.fileVersion,
+            ...values,
+          })
+          .onConflictDoUpdate({
+            target: [t.spaceId, t.environmentId, t.assetId, t.fileVersion],
+            set: values,
+          }),
+      );
+    },
+    async deleteForAsset(scope, assetId) {
+      await x.write(db.delete(t).where(and(scopeFilter(t, scope), eq(t.assetId, assetId))));
+    },
+  };
+}
+
 /** Saved views are the space's: every read and write keys on `scope.spaceId` alone. */
 function makeSavedViewRepo(x: Exec): SavedViewRepo {
   const db = x.db;
@@ -7809,6 +8049,7 @@ function makeTx(x: Exec, scanLimit: number, versionBodies?: BlobStore): ContentS
     invites: makeInviteRepo(x),
     members: makeMemberRepo(x),
     aiSettings: { save: makeAiSettingsRepo(x).save },
+    aiProjects: makeAiProjectRepo(x),
   };
 }
 
@@ -7868,6 +8109,8 @@ export function createD1Store(d1: D1Like, options: D1StoreOptions = {}): Content
     blockCatalogs: makeBlockCatalogRepo(x),
     blockConfigs: makeBlockConfigRepo(x),
     aiSettings: makeAiSettingsRepo(x),
+    aiProjects: makeAiProjectRepo(x),
+    aiReferenceExtractions: makeAiReferenceExtractionRepo(x),
     savedViews: makeSavedViewRepo(x),
     bulkJobs: makeBulkJobRepo(x),
     outbox: makeOutboxRepo(x),
@@ -7902,6 +8145,16 @@ const BEHIND_0032 = 'agent_instructions';
 
 /** What `preview_url_template` reads as on a replica behind 0035, as {@link BEHIND_0032}. */
 const BEHIND_0035 = 'preview_url_template';
+
+/**
+ * What `project_id` (on `ai_actions` and `agent_schedules`) reads as on a replica behind 0045, as
+ * {@link BEHIND_0032}: no project, so the run takes the default. Remove once every deployment is
+ * past 0045.
+ */
+const BEHIND_0045 = 'project_id';
+
+/** A read of `ai_projects` on a replica behind 0045, which has no such table yet. */
+const isBehind0045 = (err: unknown): boolean => /no such table: ai_projects/i.test(messageOf(err));
 
 const toContentType = (r: CtRow): ContentType => ({
   apiId: r.apiId,

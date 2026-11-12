@@ -6,6 +6,7 @@
 import {
   type AppContext,
   addToAssetCollection,
+  createAiProject,
   createAsset,
   createAssetCollection,
   createAssetFolder,
@@ -69,6 +70,16 @@ export async function seedEverySection(ctx: AppContext, blob: BlobStore, scope: 
     handle: 'main',
     name: 'Main',
     items: [{ label: 'Home', link: { type: 'url', url: '/' } }],
+  });
+  // A project pinned to a document: its id and pin are what a copy keeps.
+  const { asset: brief } = await createAsset(ctx, blob, scope, {
+    fileName: 'brief.pdf',
+    contentType: 'application/pdf',
+  });
+  await createAiProject(ctx, scope, SYSTEM_CALLER, {
+    name: 'Launch',
+    instructions: 'Say spec sheet.',
+    references: [{ assetId: brief.id }],
   });
   await seedBlocks(ctx, scope);
 }
@@ -162,6 +173,7 @@ interface ExportedSnapshot {
   workflows: Named[];
   redirects: Named[];
   menus: Named[];
+  aiProjects?: (Named & { references: { assetId: string; version: number }[] })[];
   blockCatalog?: { hash: string; blocks: { id: string }[] };
   blockConfig?: { targets: unknown[]; blocks: unknown[] };
 }
@@ -196,6 +208,7 @@ export function sections(raw: unknown) {
     workflows: names(s.workflows),
     redirects: ids(s.redirects),
     menus: ids(s.menus),
+    aiProjects: (s.aiProjects ?? []).map((p) => ({ id: p.id, references: p.references })),
     // The version restarts in the copy; the content (and so the hash) is the source's.
     blockCatalog: s.blockCatalog
       ? [s.blockCatalog.hash, ...s.blockCatalog.blocks.map((b) => b.id)]

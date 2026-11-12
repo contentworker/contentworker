@@ -423,7 +423,14 @@ None blocks a release.
 #### M5. AI context
 
 - [ ] **AI projects.** Reusable instructions, reader and writer personas, and reference assets (their
-  extracted text), with a tool to read a reference file; selectable in generation, canvas and agents.
+  extracted text), with a tool to read a reference file; selectable in generation, canvas and agents
+  (`docs/specs/ai-projects.md`).
+  - [x] **Backend.** Projects per environment (0045), the default held to `space:admin`, pinned
+    references, `resolveAiProject` in every project-taking call, excerpts within the tier's window,
+    text-only extraction under `media`, the read tool for Coworker and MCP, REST, MCP, the SDK,
+    audit, snapshots and clones, and the evaluation harness.
+  - [ ] **Admin.** Settings → Automation → AI projects, the project pickers and what was used;
+    rollout waits on the evaluation.
 - [x] **AI settings per capability.** Per space: enabled, `ModelTier`, and guidance appended to the
   built-in prompt.
   - [x] **Deployment tier cap.** `AI_MAX_TIER` (the registry's `aiMaxTier`) holds every model call

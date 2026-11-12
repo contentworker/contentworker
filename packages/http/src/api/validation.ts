@@ -10,6 +10,11 @@ import {
   SCHEDULER_ALERT_MAX_RECIPIENTS,
 } from '@contentworker/application';
 import {
+  AI_PROJECT_DESCRIPTION_MAX,
+  AI_PROJECT_INSTRUCTIONS_MAX,
+  AI_PROJECT_MAX_PER_ENVIRONMENT,
+  AI_PROJECT_MAX_REFERENCES,
+  AI_PROJECT_NAME_MAX,
   BLOCK_CATALOG_LIMITS,
   BLOCK_CONFIG_LIMITS,
   BLOCK_LOCK_LIMITS,
@@ -45,6 +50,7 @@ import {
 import { STARTERS } from '@contentworker/seed';
 import type { Context } from 'hono';
 import { z } from 'zod';
+import * as aiProjectDocs from './docs/schemas/ai-projects';
 import * as aiSettingsDocs from './docs/schemas/ai-settings';
 import * as blockCatalogDocs from './docs/schemas/block-catalog';
 import * as blockConfigDocs from './docs/schemas/block-config';
@@ -101,6 +107,25 @@ export const zIdList = z.array(zId).max(1000);
 export const zTier = z.enum(['flagship', 'balanced', 'fast']);
 /** Free-form prompt/prose text, bounded to keep prompts sane. */
 export const zText = z.string().max(100_000);
+/**
+ * The AI project a call works in: an id, `null` for none, absent for the environment's default.
+ * Whether it names a project here is the use-case's check (404).
+ */
+export const zProjectId = zId
+  .nullable()
+  .optional()
+  .describe(
+    'The AI project to work in (GET …/ai-projects): an id, null for none; absent, the ' +
+      'environment’s default project, if one is set',
+  );
+/** A project id stored on an AI action or a schedule: checked on save (422 when unknown). */
+export const zStoredProjectId = zId
+  .nullable()
+  .optional()
+  .describe(
+    'The AI project its runs take, in this environment (422 when there is none by that id); ' +
+      'null or absent: the environment’s default at each run. One deleted since refuses the run',
+  );
 
 // ---- request schemas (one per mutating route) -----------------------------
 // Deeply nested content (field values, content-type field arrays, workflow
@@ -182,6 +207,8 @@ export const snapshotBody = z.object({
   workflows: z.array(z.any()).max(1000).optional(),
   redirects: z.array(z.any()).max(MAX_REDIRECTS).optional(),
   menus: z.array(z.any()).max(MAX_MENUS).optional(),
+  // Checked by the domain on replay (lengths, personas, references), as a save checks them.
+  aiProjects: z.array(z.any()).max(AI_PROJECT_MAX_PER_ENVIRONMENT).optional(),
   // Checked by the domain, as a push and a set check them: one that fails is left behind and
   // named in the report, not a refusal of the whole import.
   blockCatalog: z.object({}).loose().optional(),
@@ -518,11 +545,13 @@ export const draftEntryBody = z.object({
   contentTypeApiId: zId,
   prompt: zText,
   tier: zTier.optional(),
+  projectId: zProjectId,
 });
 export const canvasBody = z.object({
   contentTypeApiId: zId,
   prose: zText,
   tier: zTier.optional(),
+  projectId: zProjectId,
 });
 export const previewLinkBody = z.object({
   ttlHours: z.number().positive().max(8760).optional(),
@@ -627,6 +656,7 @@ export const generateBlocksShape = {
     .describe('A slot of one of the entry’s blocks; absent, the field’s top level'),
   locale: zLocale.optional().describe('The locale to compose for (default: the default locale)'),
   tier: zTier.optional().describe("Model tier (default: the space's layout tier, else flagship)"),
+  projectId: zProjectId,
 };
 export const generateBlocksBody = z
   .object(generateBlocksShape)
@@ -638,6 +668,10 @@ export const translateBody = z.object({
   sourceLocale: zLocale.optional(),
   apply: z.boolean().optional(),
   tier: zTier.optional(),
+  projectId: zProjectId.describe(
+    'The AI project: its instructions (terminology) and reader persona only, never its writer ' +
+      'or references. An id, null for none; absent, the environment’s default',
+  ),
 });
 export const summarizeBody = z.object({
   locale: zLocale.optional(),
@@ -645,6 +679,7 @@ export const summarizeBody = z.object({
   targetField: zId.optional(),
   apply: z.boolean().optional(),
   tier: zTier.optional(),
+  projectId: zProjectId,
 });
 export const autofillBody = z.object({
   field: zId,
@@ -652,6 +687,7 @@ export const autofillBody = z.object({
   instructions: zText.optional(),
   apply: z.boolean().optional(),
   tier: zTier.optional(),
+  projectId: zProjectId,
 });
 export const tierOnlyBody = z.object({ apply: z.boolean().optional(), tier: zTier.optional() });
 export const applyTagsBody = z.object({
@@ -694,6 +730,7 @@ export const auditBody = z.object({
   taskSeverity: z.enum(['error', 'warning', 'info']).optional(),
   assignee: zShort.optional(),
   tier: zTier.optional(),
+  projectId: zProjectId,
 });
 export const reindexBody = z.object({ contentTypeApiId: zId.optional() });
 export const createAssetBody = z.object({
@@ -874,12 +911,17 @@ export const createAiActionBody = z.object({
   promptTemplate: zText,
   targetField: zId.optional(),
   tier: zTier.optional(),
+  projectId: zStoredProjectId,
 });
 export const runAiActionBody = z.object({
   variables: z.record(z.string().max(128), z.string().max(10_000)).optional(),
   entryId: zId.optional(),
   locale: zLocale.optional(),
   apply: z.boolean().optional(),
+  projectId: zProjectId.describe(
+    'The AI project for this run: an id, null for none; absent, the action’s own (or, when it ' +
+      'names none, the environment’s default)',
+  ),
 });
 export const webhookBody = z.object({
   url: z.string().max(2048),
@@ -918,6 +960,7 @@ export const agentScheduleBody = z.object({
   contentTypeApiId: zId.optional(),
   enabled: z.boolean().optional(),
   autoApply: z.boolean().optional(),
+  projectId: zStoredProjectId,
 });
 export const agentSchedulePatchBody = z.object({
   cron: z.string().min(9).max(100).optional(),
@@ -925,6 +968,8 @@ export const agentSchedulePatchBody = z.object({
   autoApply: z.boolean().optional(),
   // null clears the content-type restriction.
   contentTypeApiId: zId.nullable().optional(),
+  // null goes back to the environment's default.
+  projectId: zStoredProjectId,
 });
 export const commentBody = z.object({
   body: z.string().min(1).max(20_000),
@@ -1095,6 +1140,68 @@ export const blockCatalogPushBody = z.object({
     .boolean()
     .optional()
     .describe('Publish each changed type (default true); false leaves draft revisions'),
+});
+
+/**
+ * An AI project as a create or an update sends it: every editable part, whole. Lengths are the
+ * domain's (`checkAiProjectInput`) once normalized; here, the outline and room for whitespace.
+ */
+export const aiProjectBody = z.object({
+  name: z
+    .string()
+    .max(AI_PROJECT_NAME_MAX * 2)
+    .describe('Unique in the environment, ignoring case'),
+  description: z
+    .string()
+    .max(AI_PROJECT_DESCRIPTION_MAX * 2)
+    .nullable()
+    .optional()
+    .describe('Shown in pickers; never sent to a model'),
+  instructions: z
+    .string()
+    .max(AI_PROJECT_INSTRUCTIONS_MAX * 2)
+    .nullable()
+    .optional()
+    .describe(
+      `What to do and avoid, terminology, facts to prefer: at most ${AI_PROJECT_INSTRUCTIONS_MAX} ` +
+        'characters, fenced as guidance (it shapes how the model writes, never its task)',
+    ),
+  writer: aiProjectDocs.aiPersona
+    .nullable()
+    .optional()
+    .describe('The voice the work is written in'),
+  reader: aiProjectDocs.aiPersona.nullable().optional().describe('The audience it is written for'),
+  references: z
+    .array(
+      z.object({
+        assetId: zId,
+        version: z
+          .int()
+          .min(1)
+          .optional()
+          .describe(
+            'The file version to pin; absent: the one already pinned, or for a new reference the ' +
+              'asset’s current file',
+          ),
+      }),
+    )
+    .max(AI_PROJECT_MAX_REFERENCES)
+    .optional()
+    .describe(
+      `Documents or recordings in this environment, in order of importance (at most ` +
+        `${AI_PROJECT_MAX_REFERENCES}); the first three are excerpted into calls, the rest listed`,
+    ),
+});
+export const aiProjectUpdateBody = aiProjectBody.extend({
+  expectedVersion: z.int().min(1).describe('The version you read; another is a 409'),
+});
+export const aiProjectDefaultBody = z.object({
+  projectId: zId.nullable().describe('The project to make the default; null clears it'),
+  expectedVersion: z
+    .int()
+    .min(1)
+    .optional()
+    .describe('The project’s version as you read it: one changed since is a 409'),
 });
 
 /**

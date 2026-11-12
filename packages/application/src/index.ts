@@ -7,6 +7,8 @@ export * from './ai-actions';
 export * from './ai-budget';
 export * from './ai-decide';
 export * from './ai-json';
+export * from './ai-project-excerpts';
+export * from './ai-projects';
 export * from './ai-prompt';
 export * from './ai-provenance';
 export * from './ai-settings';

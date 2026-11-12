@@ -1,5 +1,6 @@
 import {
   type AppContext,
+  createAiProject,
   createContentType,
   createEntry,
   createSpace,
@@ -110,6 +111,34 @@ describe('P8: durable agents (in-process executor)', () => {
     expect(result.status).not.toBe('needs_review');
     expect(ai.requests).toHaveLength(0);
     expect((await ctx.store.entries.get(scope, id))?.entry.currentVersion).toBe(1);
+  });
+
+  it('enrich takes its AI project, and refuses (without retrying) once the project is gone', async () => {
+    const id = await seed(ctx);
+    const project = await createAiProject(ctx, scope, SYSTEM_CALLER, {
+      name: 'House style',
+      instructions: 'Plain words only.',
+    });
+    const ai = new StubAIProvider(() => ({ summary: 'x', seoDescription: 'y' }));
+    const runtime = new InProcessAgentRuntime(makeActivities({ ctx, ai }));
+    const ran = await runtime.run('enrich', {
+      scope,
+      entryId: id,
+      autoApply: false,
+      projectId: project.id,
+    });
+    expect(ai.requests[0]?.system).toContain('Plain words only.');
+    expect(ran.decisions.join('\n')).toContain(`AI project ${project.id} v1`);
+    await ctx.store.aiProjects.delete(scope, project.id, 1);
+    const refused = await runtime.run('enrich', {
+      scope,
+      entryId: id,
+      autoApply: false,
+      projectId: project.id,
+    });
+    expect(ai.requests).toHaveLength(1);
+    expect(refused.status).toBe('skipped');
+    expect(refused.decisions.join('\n')).toContain(`the AI project ${project.id} is gone`);
   });
 
   it('enrich runs on the space’s agents tier, with its guidance fenced after the prompt', async () => {

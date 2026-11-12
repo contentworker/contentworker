@@ -1,4 +1,5 @@
 import {
+  type AiProjectUse,
   type AssetRequestSite,
   applyBlockPatch,
   assetRequestSites,
@@ -38,6 +39,7 @@ import type { AIProvider, ModelTier } from '@contentworker/ports';
 import { recordAgentRun } from './agent-audit';
 import { AiTimeoutError, generateWithBudget, withTimeout } from './ai-budget';
 import { conforms, DEFAULT_AI_TIMEOUT_MS } from './ai-json';
+import { type AiProjectCaller, projectDecisions, resolveAiProject } from './ai-projects';
 import {
   describeBlockForModel,
   describeFieldForModel,
@@ -54,6 +56,7 @@ import {
   type PatchEntryBlocksOptions,
   visibleBlockIssues,
 } from './block-patches';
+import { SYSTEM_CALLER } from './content-types';
 import type { AppContext } from './context';
 import { assertAssetMimeTypes, getEntry, validateEntry } from './entries';
 
@@ -238,6 +241,8 @@ export interface GenerateBlocksInput {
   readonly locale?: LocaleCode;
   /** The flagship tier unless given: a layout is the hardest structured answer we ask for. */
   readonly tier?: ModelTier;
+  /** The AI project to work in; `null` for none; absent for the environment's default. */
+  readonly projectId?: string | null;
 }
 
 export interface GenerateBlocksOptions extends PatchEntryBlocksOptions {
@@ -248,6 +253,11 @@ export interface GenerateBlocksOptions extends PatchEntryBlocksOptions {
   readonly assets?: AssetSearchDeps;
   /** Overrides the call's cap ({@link layoutTimeoutMs}). */
   readonly timeoutMs?: number;
+  /**
+   * Who asked: the project's references are read as they may read them. Absent: the system,
+   * which reads only published files.
+   */
+  readonly caller?: AiProjectCaller;
 }
 
 export interface GeneratedBlocks {
@@ -278,6 +288,8 @@ export interface GeneratedBlocks {
    */
   readonly issues: readonly FieldIssue[];
   readonly usage: { inputTokens: number; outputTokens: number };
+  /** The AI project the blocks took, and what of its references they used; null for none. */
+  readonly project: AiProjectUse | null;
 }
 
 /**
@@ -493,6 +505,17 @@ export async function generateBlocks(
     `Request: ${input.prompt}`,
   ].join('\n');
 
+  const project = await resolveAiProject(ctx, scope, options.caller ?? SYSTEM_CALLER, {
+    capability: 'layout',
+    ...(input.projectId !== undefined ? { projectId: input.projectId } : {}),
+    task: { terms: `${input.prompt} ${contentType.name} ${def?.name ?? input.field}` },
+  });
+  const fullSystem = policy.system(project.system(system));
+  const tier = policy.tier('flagship', input.tier);
+  const placed = project.call(
+    { system: fullSystem, prompt, maxTokens: LAYOUT_MAX_TOKENS, tier, outputSchema: built.schema },
+    ai,
+  );
   const timeoutMs = options.timeoutMs ?? layoutTimeoutMs(ctx);
   const started = ctx.clock.now().getTime();
   const result = await generateWithBudget(
@@ -500,11 +523,12 @@ export async function generateBlocks(
     ai,
     scope,
     {
-      system: policy.system(system),
-      prompt,
-      tier: policy.tier('flagship', input.tier),
+      system: fullSystem,
+      prompt: placed.prompt,
+      tier,
       maxTokens: LAYOUT_MAX_TOKENS,
       outputSchema: built.schema,
+      ...placed.request,
     },
     { timeoutMs },
   );
@@ -514,7 +538,7 @@ export async function generateBlocks(
       workflow: 'generate',
       entryId: entry?.id ?? '',
       status: 'failed',
-      decisions: [`Refused blocks for ${path}: ${why}`],
+      decisions: [`Refused blocks for ${path}: ${why}`, ...projectDecisions(placed.use)],
       usage: result.usage,
     });
     throw err;
@@ -609,7 +633,10 @@ export async function generateBlocks(
     workflow: 'generate',
     entryId: entry?.id ?? '',
     status: 'completed',
-    decisions: [`Composed ${ops.length} ${ops.length === 1 ? 'block' : 'blocks'} for ${path}`],
+    decisions: [
+      `Composed ${ops.length} ${ops.length === 1 ? 'block' : 'blocks'} for ${path}`,
+      ...projectDecisions(placed.use),
+    ],
     usage: result.usage,
   });
 
@@ -624,5 +651,6 @@ export async function generateBlocks(
     unresolvedImages: gaps.unresolved,
     issues,
     usage: result.usage,
+    project: placed.use,
   };
 }
