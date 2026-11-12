@@ -162,6 +162,25 @@ Everything below is built and tested on v2.
     `caps.connection.fetch` with auth injected and never sees the secret. Sync operations get
     about 10 s; longer work is declared `async` and runs on a durable workflow that returns a
     job id.
+
+  Follow-ups from step 2 (sync and async operations), each small and planned:
+  - **Audit names the caller.** An operation call's audit row names the principal that made it
+    (key, person or token), not only its kind; an async job's `createdBy` is the same identity,
+    so jobs from two API keys can be told apart (today every key's job reads `cma`).
+  - **Rate limit per caller.** A per-space, per-caller limit on operation calls, beside the
+    environment-wide caps, so one key can't spend another's share of the 10 running async jobs.
+  - **An exact running-jobs cap.** The 10-job cap is counted before the insert, so accepts at the
+    same moment can pass it; make the count and the insert one conditional write.
+  - **Repeat-safe runs.** Workflow steps run at least once, so a restart mid-run can call the
+    plugin twice. Hand the plugin a stable idempotency key (the job id) to pass to outside
+    systems.
+  - **Job input visibility.** A job's `input` is shown to every principal allowed to read the
+    job; decide whether only its caller and administrators should see it.
+  - **Wider input schemas.** The operation schema subset grows where packages need it (formats,
+    `oneOf`, references between definitions), still checked the same way on both surfaces.
+  - **Deployment admins' jobs.** A deployment admin acting in a space whose team they are not on
+    isn't checked again before a bulk or async job runs, since the admin web app holds their
+    role; give the application a way to resolve it.
 - [ ] **Attribute-based access to assets (ABAC).** Administrators govern assets by the attributes
   each one carries (classification, brand, region, client, license, kind), not by the folder it
   sits in. Roles gain asset grants beside their content grants: each grant has an effect
