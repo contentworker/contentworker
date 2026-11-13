@@ -351,8 +351,9 @@ export function EntryFilterBar(props: {
           />
         </div>
         {/* The statuses people look for most, one click each: they are the panel's Status
-            condition, so the panel and the chips always agree. */}
-        <fieldset className="flex items-center gap-1 border-0 p-0 max-sm:basis-full">
+            condition, so the panel and the chips always agree. On a phone, a row of their own
+            after the buttons, so Views, Filters and Mine stay side by side. */}
+        <fieldset className="flex items-center gap-1 border-0 p-0 max-sm:order-last max-sm:basis-full">
           <legend className="sr-only">Status</legend>
           {CHIP_STATUSES.map((s) => {
             const on = chosen.includes(s);
