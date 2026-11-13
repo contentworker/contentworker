@@ -333,6 +333,8 @@ describe('dragging a block with a fine pointer', () => {
     select('c3');
     expect(grip()).toBeNull();
     cleanup();
+    // A new canvas, as on a first visit: Layers would open again, remembered from the one before.
+    localStorage.clear();
 
     media.fine = true;
     // The section's items locked by the block config: its cards keep their place.

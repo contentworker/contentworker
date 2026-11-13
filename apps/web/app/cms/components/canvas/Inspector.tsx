@@ -26,6 +26,11 @@
  * `lock` action on the type, the inspector offers **Lock** on the selected block (or the run
  * selected with it in one slot), **Unlock** on a locked one. A lock is its own request, not the
  * draft's save: it is keyed to stored blocks, so it waits for unsaved block changes to be saved.
+ * Locking is a rare, governing act beside the block's own settings, so it stays folded under one
+ * quiet "Lock…" row at the foot of the inspector, open from the start only when a run is chosen to
+ * lock together or the last lock was refused. Unlock on a locked block is always in view.
+ *
+ * With one tab's worth of settings there is no tab strip: the settings are simply there.
  */
 import {
   type Breakpoint,
@@ -40,6 +45,7 @@ import {
 import { Alert, AlertDescription, AlertTitle } from '@contentworker/ui/alert';
 import { Button } from '@contentworker/ui/button';
 import { Checkbox } from '@contentworker/ui/checkbox';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@contentworker/ui/collapsible';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -53,6 +59,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@contentworker/ui/tabs
 import {
   ArrowDown,
   ArrowUp,
+  ChevronRight,
   Copy,
   CornerDownRight,
   Lock,
@@ -173,6 +180,40 @@ export function Inspector(props: InspectorProps) {
   /** Move to moved the block: focus goes to its heading as the menu closes, not to the trigger. */
   const movedTo = useRef(false);
   const heading = useRef<HTMLHeadingElement>(null);
+  /** One tab's settings: its breakpoint line on Look, then each prop. */
+  const panel = (t: InspectorTab) => (
+    <div data-inspector-panel={t} className="flex flex-col gap-4">
+      {t === 'look' && breakpoints.length > 0 ? (
+        <p className="max-w-measure text-muted-foreground text-xs">
+          {at ? (
+            <>
+              Editing <b className="font-medium text-foreground">{at.name}</b>, from {at.minWidth}px
+              up. Change the width above the page to edit another.
+            </>
+          ) : (
+            <>
+              Editing <b className="font-medium text-foreground">{BASE_NAME}</b>
+              {baseInView(breakpoints)
+                ? ': every width shows it unless a breakpoint changes it.'
+                : `: no width shows it, as ${breakpoints[0]?.name} starts at 1px. A frontend that reads no breakpoints shows it.`}
+            </>
+          )}
+        </p>
+      ) : null}
+      {byTab(t).map((f) => (
+        <Prop
+          key={f.apiId}
+          field={f}
+          {...props}
+          look={
+            t === 'look' && breakpoints.length > 0
+              ? { at, breakpoints, responsive: responsive.includes(f.apiId) }
+              : undefined
+          }
+        />
+      ))}
+    </div>
+  );
 
   return (
     <section aria-labelledby={headingId} className="flex flex-col gap-4">
@@ -293,7 +334,8 @@ export function Inspector(props: InspectorProps) {
             size="icon-sm"
             aria-label={`Remove ${block.name}`}
             title="Remove (Delete)"
-            className="text-destructive hover:text-destructive"
+            // Undoable (its toast offers Undo): quiet at rest, destructive only when reached for.
+            className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive focus-visible:text-destructive"
             onClick={props.onRemove}
           >
             <Trash2 aria-hidden="true" />
@@ -336,7 +378,7 @@ export function Inspector(props: InspectorProps) {
         </Alert>
       )}
 
-      {block.variant && tabs.length > 0 ? (
+      {block.variant && tabs.length > 1 ? (
         <Tabs value={tab} onValueChange={(v) => props.onTab(v as InspectorTab)}>
           <TabsList>
             {tabs.map((t) => (
@@ -346,39 +388,14 @@ export function Inspector(props: InspectorProps) {
             ))}
           </TabsList>
           {tabs.map((t) => (
-            <TabsContent key={t} value={t} className="flex flex-col gap-4 pt-3">
-              {t === 'look' && breakpoints.length > 0 ? (
-                <p className="max-w-measure text-muted-foreground text-xs">
-                  {at ? (
-                    <>
-                      Editing <b className="font-medium text-foreground">{at.name}</b>, from{' '}
-                      {at.minWidth}px up. Change the width above the page to edit another.
-                    </>
-                  ) : (
-                    <>
-                      Editing <b className="font-medium text-foreground">{BASE_NAME}</b>
-                      {baseInView(breakpoints)
-                        ? ': every width shows it unless a breakpoint changes it.'
-                        : `: no width shows it, as ${breakpoints[0]?.name} starts at 1px. A frontend that reads no breakpoints shows it.`}
-                    </>
-                  )}
-                </p>
-              ) : null}
-              {byTab(t).map((f) => (
-                <Prop
-                  key={f.apiId}
-                  field={f}
-                  {...props}
-                  look={
-                    t === 'look' && breakpoints.length > 0
-                      ? { at, breakpoints, responsive: responsive.includes(f.apiId) }
-                      : undefined
-                  }
-                />
-              ))}
+            <TabsContent key={t} value={t} className="pt-3">
+              {panel(t)}
             </TabsContent>
           ))}
         </Tabs>
+      ) : block.variant && tabs[0] ? (
+        // One tab's worth: no strip to choose from, only the settings.
+        panel(tabs[0])
       ) : block.variant ? (
         <p className="text-muted-foreground text-sm">This block has no settings of its own.</p>
       ) : null}
@@ -427,6 +444,8 @@ function LockPanel(props: LockingProps & { block: CanvasBlock; directory?: Actor
   const reasonId = useId();
   const [depth, setDepth] = useState<'subtree' | 'self'>('subtree');
   const [freeze, setFreeze] = useState(false);
+  // Folded or not, as the person last chose; until they do, by what's happening (below).
+  const [unfolded, setUnfolded] = useState<boolean | null>(null);
   const mark = block.lock;
   if (mark && !mark.own) return null;
   const errors =
@@ -442,7 +461,7 @@ function LockPanel(props: LockingProps & { block: CanvasBlock; directory?: Actor
     const { lock } = mark.region;
     const many = lock.keys.length > 1;
     return (
-      <section aria-labelledby={headingId} className="flex flex-col gap-2">
+      <section aria-labelledby={headingId} className="flex flex-col gap-2 border-t pt-3">
         <h3 id={headingId} className="caption">
           Lock
         </h3>
@@ -471,82 +490,109 @@ function LockPanel(props: LockingProps & { block: CanvasBlock; directory?: Actor
   // A block already in a region, or holding a region inside it, can't be in another.
   const taken = blocks.find((b) => b.lock);
   const reason = props.held ?? (taken ? `${taken.name} is already in a locked region.` : undefined);
+  // Folded until asked for; open while a run is chosen to lock together, or a lock was refused,
+  // unless the person folded it again themselves.
+  const open = unfolded ?? (many || props.refused.length > 0);
   return (
-    <section aria-labelledby={headingId} className="flex flex-col gap-3">
-      <div className="flex flex-col gap-1">
-        <h3 id={headingId} className="caption">
-          Lock
-        </h3>
-        <p className="max-w-measure text-muted-foreground text-xs">
-          {many
-            ? `${blocks.length} blocks together: ${blocks.map((b) => b.name).join(', ')}.`
-            : `${
-                depth === 'subtree'
-                  ? 'Keeps this block where it is, and the blocks inside it as they are, until it is unlocked.'
-                  : 'Keeps this block where it is until it is unlocked; blocks inside it can still change.'
-              } Shift-click a neighbour in Layers to lock several together.`}
-        </p>
-      </div>
-      <Segmented
-        aria-label="What the lock holds"
-        orientation="vertical"
-        value={depth}
-        onValueChange={(v) => setDepth(v as 'subtree' | 'self')}
-        className="w-full grid-flow-row auto-rows-fr rounded-2xl"
-      >
-        <SegmentedItem
-          value="subtree"
-          className="justify-start rounded-xl whitespace-normal text-left"
-        >
-          {many ? 'These blocks and everything inside' : 'This block and everything inside'}
-        </SegmentedItem>
-        <SegmentedItem
-          value="self"
-          className="justify-start rounded-xl whitespace-normal text-left"
-        >
-          {many ? 'Only these blocks' : 'Only this block'}
-        </SegmentedItem>
-      </Segmented>
-      <div className="flex items-start gap-2">
-        <Checkbox
-          id={freezeId}
-          aria-label="Also freeze the content"
-          checked={freeze}
-          onCheckedChange={(on) => setFreeze(on === true)}
-          className="mt-0.5"
-        />
-        <div className="flex flex-col gap-0.5">
-          <Label htmlFor={freezeId}>Also freeze the content</Label>
-          <p className="max-w-measure text-muted-foreground text-xs">
-            No one can edit what it says either.
-          </p>
-        </div>
-      </div>
-      <Button
-        type="button"
-        size="sm"
-        variant="outline"
-        className="self-start"
-        disabled={props.busy || reason !== undefined}
-        aria-describedby={reason ? reasonId : undefined}
-        onClick={() =>
-          props.onLock({
-            field: block.slot.address.field,
-            keys: blocks.map((b) => b.key),
-            depth,
-            freeze: freeze ? 'all' : 'structure',
-          })
-        }
-      >
-        <Lock aria-hidden="true" /> {many ? `Lock ${blocks.length} blocks` : 'Lock'}
-      </Button>
-      {reason ? (
-        <p id={reasonId} className="max-w-measure text-muted-foreground text-xs">
-          {reason}
-        </p>
-      ) : null}
-      {errors}
-    </section>
+    <Collapsible
+      open={open}
+      onOpenChange={setUnfolded}
+      className="flex flex-col gap-3 border-t pt-3"
+    >
+      {/* As the form's folded groups: the heading holds the trigger, so heading navigation finds
+          Lock while it is folded. */}
+      <h3 id={headingId} className="section-title">
+        <CollapsibleTrigger asChild>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="group/lock -mx-2 self-start text-muted-foreground"
+          >
+            <Lock aria-hidden="true" />
+            Lock…
+            <ChevronRight
+              aria-hidden="true"
+              className="transition-transform duration-(--motion-instant) group-data-[state=open]/lock:rotate-90 motion-reduce:transition-none"
+            />
+          </Button>
+        </CollapsibleTrigger>
+      </h3>
+      <CollapsibleContent asChild>
+        <section aria-labelledby={headingId} className="flex flex-col gap-3">
+          <div className="flex flex-col gap-1">
+            <p className="max-w-measure text-muted-foreground text-xs">
+              {many
+                ? `${blocks.length} blocks together: ${blocks.map((b) => b.name).join(', ')}.`
+                : `${
+                    depth === 'subtree'
+                      ? 'Keeps this block where it is, and the blocks inside it as they are, until it is unlocked.'
+                      : 'Keeps this block where it is until it is unlocked; blocks inside it can still change.'
+                  } Shift-click a neighbour in Layers to lock several together.`}
+            </p>
+          </div>
+          <Segmented
+            aria-label="What the lock holds"
+            orientation="vertical"
+            value={depth}
+            onValueChange={(v) => setDepth(v as 'subtree' | 'self')}
+            className="w-full grid-flow-row auto-rows-fr rounded-2xl"
+          >
+            <SegmentedItem
+              value="subtree"
+              className="justify-start rounded-xl whitespace-normal text-left"
+            >
+              {many ? 'These blocks and everything inside' : 'This block and everything inside'}
+            </SegmentedItem>
+            <SegmentedItem
+              value="self"
+              className="justify-start rounded-xl whitespace-normal text-left"
+            >
+              {many ? 'Only these blocks' : 'Only this block'}
+            </SegmentedItem>
+          </Segmented>
+          <div className="flex items-start gap-2">
+            <Checkbox
+              id={freezeId}
+              aria-label="Also freeze the content"
+              checked={freeze}
+              onCheckedChange={(on) => setFreeze(on === true)}
+              className="mt-0.5"
+            />
+            <div className="flex flex-col gap-0.5">
+              <Label htmlFor={freezeId}>Also freeze the content</Label>
+              <p className="max-w-measure text-muted-foreground text-xs">
+                No one can edit what it says either.
+              </p>
+            </div>
+          </div>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="self-start"
+            disabled={props.busy || reason !== undefined}
+            aria-describedby={reason ? reasonId : undefined}
+            onClick={() =>
+              props.onLock({
+                field: block.slot.address.field,
+                keys: blocks.map((b) => b.key),
+                depth,
+                freeze: freeze ? 'all' : 'structure',
+              })
+            }
+          >
+            <Lock aria-hidden="true" /> {many ? `Lock ${blocks.length} blocks` : 'Lock'}
+          </Button>
+          {reason ? (
+            <p id={reasonId} className="max-w-measure text-muted-foreground text-xs">
+              {reason}
+            </p>
+          ) : null}
+          {errors}
+        </section>
+      </CollapsibleContent>
+    </Collapsible>
   );
 }
 
@@ -598,9 +644,11 @@ function Prop(props: InspectorProps & { field: FieldDefinition; look: LookAt | u
   const describedBy =
     [note ? noteId : undefined, f.help ? `${id}-hint` : undefined].filter(Boolean).join(' ') ||
     undefined;
+  // An empty prop someone may fill: where focus starts when a new block arrives.
+  const empty = !disabled && isEmpty(value) ? '' : undefined;
   if (tabOf(f) === 'look' && options.length > 0 && options.length <= SEGMENTS) {
     return (
-      <div data-prop={id} className="flex flex-col gap-1.5">
+      <div data-prop={id} data-empty={empty} className="flex flex-col gap-1.5">
         <span id={`${id}-label`} className="font-medium text-sm">
           {f.name}
           {f.required ? <RequiredMark /> : null}
@@ -632,7 +680,7 @@ function Prop(props: InspectorProps & { field: FieldDefinition; look: LookAt | u
     );
   }
   return (
-    <div className="flex flex-col gap-1.5">
+    <div data-prop={id} data-empty={empty} className="flex flex-col gap-1.5">
       <Label id={`${id}-label`} htmlFor={id} className="gap-1">
         {f.name}
         {f.required ? <RequiredMark /> : null}
@@ -656,6 +704,32 @@ function Prop(props: InspectorProps & { field: FieldDefinition; look: LookAt | u
       ) : null}
     </div>
   );
+}
+
+const isEmpty = (v: unknown) =>
+  v === undefined ||
+  v === null ||
+  (typeof v === 'string' && v.trim() === '') ||
+  (Array.isArray(v) && v.length === 0);
+
+/**
+ * Where focus goes when a block has just been put in: its first empty Content field someone may
+ * fill, so typing can start at once; else the inspector's heading. False while the inspector
+ * isn't drawn yet.
+ */
+export function focusInspectorStart(): boolean {
+  const empty = document.querySelector<HTMLElement>(
+    '[data-inspector-panel="content"] [data-prop][data-empty]',
+  );
+  if (empty?.dataset.prop) {
+    focusProp(empty.dataset.prop);
+    const now = document.activeElement;
+    if (now && empty.contains(now)) return true;
+  }
+  const heading = document.querySelector<HTMLElement>('[data-inspector-heading]');
+  if (!heading) return false;
+  heading.focus();
+  return true;
 }
 
 /** Focuses a prop's control: a segmented one's chosen segment (else its first), or its input. */

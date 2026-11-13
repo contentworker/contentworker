@@ -47,6 +47,9 @@ vi.mock('~/cms/components/ReferencedBy', () => ({ ReferencedBy: () => null }));
 vi.mock('~/cms/components/SemanticPanel', () => ({ SemanticPanel: () => null }));
 vi.mock('~/cms/components/AiAssistPanel', () => ({ AiAssistPanel: () => null }));
 
+const { clearHandedDraft, draftId, handOffDraft, peekDraft } = await import(
+  '~/cms/lib/draft-handoff'
+);
 const { ToastProvider } = await import('~/cms/lib/toast');
 const { EntryEditor } = await import('~/cms/routes/EntryEditor');
 
@@ -54,6 +57,7 @@ afterEach(() => {
   cleanup();
   vi.clearAllMocks();
   assistantEdit.mockImplementation(async () => null);
+  clearHandedDraft();
 });
 
 const article = {
@@ -96,7 +100,7 @@ const stale = (theirs: number) =>
     error: { code: 'conflict', details: { currentVersion: theirs, expectedVersion: 2 } },
   });
 
-async function edited(title = 'Mine') {
+async function open() {
   client.getEntry.mockResolvedValue(entry(2, 'Pricing'));
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const outlet = { types: [article], locales: ['en-US'], defaultLocale: 'en-US', reload() {} };
@@ -105,7 +109,11 @@ async function edited(title = 'Mine') {
       {
         path: '/content',
         element: <Outlet context={outlet} />,
-        children: [{ path: ':typeId/:entryId', element: <EntryEditor /> }],
+        children: [
+          { path: ':typeId/:entryId', element: <EntryEditor /> },
+          { path: ':typeId/:entryId/canvas', element: <p>The canvas</p> },
+          { index: true, element: <p>The list</p> },
+        ],
       },
     ],
     { initialEntries: ['/content/article/e1'] },
@@ -117,8 +125,14 @@ async function edited(title = 'Mine') {
       </ToastProvider>
     </QueryClientProvider>,
   );
+  return router;
+}
+
+async function edited(title = 'Mine') {
+  const router = await open();
   await screen.findByRole('heading', { level: 1, name: 'Pricing' });
   fireEvent.change(screen.getByRole('textbox', { name: /Title/ }), { target: { value: title } });
+  return router;
 }
 const saveDraft = () => act(() => screen.getByRole('button', { name: 'Save draft' }).click());
 const fieldsOf = (call: number) =>
@@ -237,5 +251,43 @@ describe('the entry form’s save', () => {
     saveDraft();
     await waitFor(() => expect(assistantEdit).toHaveBeenCalledTimes(2));
     expect(screen.queryByRole('alertdialog')).toBeNull();
+  });
+});
+
+describe('one draft, two views', () => {
+  it('takes in the canvas’s unsaved edits, held to the version the canvas had', async () => {
+    handOffDraft(draftId('s', 'main', 'e1'), 1, { title: { 'en-US': 'From the canvas' } });
+    client.updateEntry.mockResolvedValueOnce(view(3, 'From the canvas'));
+    await open();
+    await waitFor(() =>
+      expect(screen.getByRole('textbox', { name: /Title/ })).toHaveProperty(
+        'value',
+        'From the canvas',
+      ),
+    );
+    expect(screen.getByText('Unsaved changes')).toBeTruthy();
+    saveDraft();
+    await waitFor(() => expect(client.updateEntry).toHaveBeenCalledTimes(1));
+    expect(client.updateEntry.mock.calls[0]?.[2]).toEqual({ expectedVersion: 1 });
+    expect(fieldsOf(0)).toBe('From the canvas');
+    expect(peekDraft(draftId('s', 'main', 'e1'))).toBeNull();
+  });
+
+  it('hands its edits to the canvas instead of asking to discard them', async () => {
+    const router = await edited('For the canvas');
+    act(() => void router.navigate('/content/article/e1/canvas'));
+    expect(await screen.findByText('The canvas')).toBeTruthy();
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    const handed = peekDraft(draftId('s', 'main', 'e1'));
+    expect(handed?.version).toBe(2);
+    expect(handed?.fields).toEqual({ title: { 'en-US': 'For the canvas' } });
+  });
+
+  it('still asks before leaving the entry altogether', async () => {
+    const router = await edited();
+    act(() => void router.navigate('/content'));
+    const dialog = await screen.findByRole('alertdialog');
+    expect(within(dialog).getByText('Discard unsaved changes?')).toBeTruthy();
+    expect(peekDraft(draftId('s', 'main', 'e1'))).toBeNull();
   });
 });

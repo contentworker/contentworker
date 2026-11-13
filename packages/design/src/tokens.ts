@@ -71,6 +71,10 @@ export const LIGHT = {
   edge: 'oklch(0.62 0 0)',
   'edge-active': 'var(--ink)',
   'edge-idle': 'oklch(0.88 0 0)',
+  // The canvas's overlays, over the customer's page: one pair in both themes (no dark override).
+  'overlay-ink': 'oklch(0.205 0 0)',
+  'overlay-halo': 'oklch(1 0 0)',
+  'overlay-brand': 'oklch(0.49 0.16 310)',
 } as const;
 
 export type Token = keyof typeof LIGHT;

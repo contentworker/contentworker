@@ -22,6 +22,9 @@ idle: "oklch(0.48 0 0)"
 brand: "oklch(0.49 0.16 310)"
 brand-foreground: "oklch(0.985 0 0)"
 ai: "var(--brand)"
+overlay-ink: "oklch(0.205 0 0)"
+overlay-halo: "oklch(1 0 0)"
+overlay-brand: "oklch(0.49 0.16 310)"
 sidebar: "oklch(0.985 0 0)"
 sidebar-accent: "oklch(0.945 0 0)"
 paper-dark: "oklch(0.145 0 0)"
@@ -1119,15 +1122,23 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   entry's own page on the customer's site, framed nearly full width; the guardrails are the
   toolbox. Full-bleed, the window's height (the page never scrolls; the frame and the panels do),
   reached from the entry editor's **Form | Canvas** switch (a segmented control in its facts row),
-  for a type with a preview URL and a blocks field. At lg it edits: Layers (on demand) | the page |
+  for a type with a preview URL and a blocks field. Form and Canvas are **one draft**: switching
+  between them carries the unsaved edits across (held to the version the view left had, so a save
+  someone made meanwhile still asks), and only leaving the entry asks to discard. A canvas that
+  can only review says so when it holds edits from the form, with a link back to save them there.
+  At lg it edits: Layers (on demand) | the page |
   the right column, which is the selected block's inspector or, with nothing selected, the page's
   Checks. Everything over the page is drawn by the admin outside it, from the boxes the page
-  reports (never a copy of the page): a slot is a dashed grey seam between blocks, its name and
+  reports (never a copy of the page), in the **overlay pair** rather than the admin's theme
+  (`--overlay-ink`, `--overlay-halo`, `--overlay-brand`: the same in light and dark, since the page
+  under them is the customer's colours): every edge is an ink line with a halo beside it, so one of
+  the two holds 3:1 on a white page, a black one or a photo. A slot is a dashed seam between blocks
+  (ink dashes on a halo strip, softened at rest), its name and
   fill shown on hover ("Main · 3 of 8"; a range when the slot has a least and a most, "Features ·
   0 of 2–4"; "1 block, needs 2" with a least alone; the same words in Layers and the inspector); a
-  selected block is an ink edge with the focus ring; colour on the canvas is for status only.
-  Choosing a seam (a click, a tap, or `/` after the selected block) marks it with a solid brand
-  insertion line (brand is what you chose; it goes when the dock closes or the block is in) and
+  hovered block is a haloed ink hairline and a selected one a 2px ink edge haloed on both sides;
+  colour on the canvas is for status only. Choosing a seam (a click, a tap, or `/` after the
+  selected block) marks it with a solid brand insertion line (`--overlay-brand`, haloed) (brand is what you chose; it goes when the dock closes or the block is in) and
   opens the **dock**: one compact row along the bottom edge, at most 160px tall, of block cards
   (name and one line of description, led by the block's asset thumbnail when it names one: a 4:3
   picture at the card's inner height, `rounded-lg`, `alt=""`; never a `{ url }` one, which
@@ -1141,11 +1152,13 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   its place); the config's refusals are checks on the block or slot, as validation's are. A
   **locked region** of the entry (one block, or a run of neighbours in one slot) draws no seams
   between its blocks or inside a block locked with everything inside, a quiet grey outline round
-  its blocks with a `Lock` on a paper chip at its corner (grey: a lock is a fact, not a status),
+  its blocks with a `Lock` on a halo chip at its corner (grey: a lock is a fact, not a status),
   a `Lock` on its rows in Layers with "Locked by … · date" under its first ("Locked · date" when
   who isn't shown), and the inspector's muted lock line; its blocks show no move, duplicate or
   remove, and with the content frozen its settings read only. Someone with the type's `lock`
-  action sees **Lock** in the inspector (a vertical `Segmented` "This block and everything
+  action finds **Lock…** at the foot of the inspector: a `section-title` heading holding a ghost
+  trigger with a turning chevron, folded until asked for (open by itself while a run is chosen or
+  a lock was refused, until folded again). Inside it, a vertical `Segmented` "This block and everything
   inside" / "Only this block", an "Also freeze the content" checkbox, an outline `sm` button;
   shift-click or Shift with ↑ ↓ in Layers takes neighbours in one slot into the run), and
   **Unlock** on a locked block. A lock waits for unsaved block changes, saying why; a refused one
@@ -1157,13 +1170,18 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   mark in `ai`; held, with a muted line saying why, while the canvas has unsaved edits or another
   proposal waits or saves); never at a full or locked place. Asked from the dock's sheet (below lg), focus stays in Coworker's prompt. Coworker's proposal comes back as a card in the
   panel, the one place it is decided; while it waits the page draws its blocks as ghosts and the
-  canvas outlines each in a dashed `ai` edge with "Proposed" (or "Proposed change", "Proposed
-  removal") and the mark on a paper chip at its corner (`GhostMark`), Layers lists the proposed
+  canvas outlines each in a dashed `ai` edge (`--overlay-brand`, haloed) with "Proposed" (or
+  "Proposed change", "Proposed removal") and the mark on a halo chip at its corner (`GhostMark`), Layers lists the proposed
   blocks after their slot's blocks with an `ai` "Proposed" stamp and where each goes (not tree
   items: they aren't the entry's), and a quiet status line under the header says it is on the page
   and that nothing is saved until it is confirmed (or that the page can't show it, so the card is
-  where to review it). The Site view beside the form draws the same marks and line. The dock's first block takes focus, and the block put in hands
-  focus to the inspector's heading; closing it hands focus back to what opened it. The inspector's tabs are Content (the
+  where to review it). The Site view beside the form draws the same marks and line. The dock's title says where the block goes ("Add after Hero", "Add the first
+  block"), with the field and its fill under it in the seam's words ("In Main · 3 of 8"). While it
+  is open the selection steps back (no selected edge) and the inspector dims and is `inert`: what
+  is being added is the one question. The dock's first block takes focus, and the block put in
+  hands focus to its first empty field on Content (the inspector's heading when it has none);
+  closing it hands focus back to what opened it. A block opened from Layers hands focus to the
+  inspector's heading. The inspector's tabs (no tab strip when a block has only one) are Content (the
   block's own fields, the entry form's editors), Data (references) and Look (props limited to
   listed values, four or fewer as a segmented control, more as a select, and the Booleans a block
   lists in `responsive`; never free CSS). The header's width control is the Site view's: with the
@@ -1189,8 +1207,15 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   inspector's Move to (a ghost icon button and menu of the slots that take the block) is the
   keyboard's and a finger's way. **Layers** is
   a tree, and the keyboard and screen-reader path to every block (the seams are pointer-only,
-  out of the tab order). Undo and redo are in the header beside Save draft; a remove's toast offers
-  Undo. From md to lg it edits by tap: the dock comes from the bottom, the inspector from the side
+  out of the tab order). Undo and redo are in the header before Save draft and **Publish** (as in the form: Publish is
+  the primary verb for someone with `content:publish`, Save draft steps back to outline; with
+  unsaved edits Publish saves first, then asks in the one publish confirm; it reads "Published"
+  while the page is live and unchanged, and publishing keeps the canvas editing). Beside the width
+  control a muted readout names the device in view ("Tablet · 768px"; catalog breakpoints are
+  named on the switch itself). Layers, open or closed, is remembered per browser at lg; below lg it
+  is a sheet, never opened on arrival. The browser tab names the entry ("Spring launch · Canvas").
+  A remove's toast offers Undo, and the inspector's Remove is muted until hovered or focused (it
+  can be undone). From md to lg it edits by tap: the dock comes from the bottom, the inspector from the side
   and Layers from the left, as sheets. Below md it is review-only, saying so in place ("Arranging
   blocks needs a wider screen…"). It says in place, in a strip under the header, why it is
   reviewing (a role that can only read, the published version until **Edit a draft**), where a

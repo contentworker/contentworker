@@ -309,20 +309,23 @@ function distance(rect: LiveRect, x: number, y: number): number {
 }
 
 /**
- * A block's outline: selected is the ink edge with the focus ring, hover a lighter edge. Carried
- * (a drag under way), the selected one's edge is dashed: it is still there until it lands.
+ * A block's outline, drawn in the overlay pair (`--overlay-ink` with an `--overlay-halo` beside it)
+ * rather than the admin's theme, since it sits on the customer's page: one of the two holds against
+ * a white page, a black one or a photo. Hover is the hairline with a halo outside; selected is a
+ * 2px ink edge haloed on both sides, so it reads heavier at a glance. Carried (a drag under way),
+ * the selected one's edge is dashed: it is still there until it lands.
  */
 function Box({ rect, selected, moving }: { rect: LiveRect; selected?: boolean; moving?: boolean }) {
   return (
     <div
       data-outline={moving ? 'moving' : selected ? 'selected' : 'hover'}
       className={cn(
-        'absolute rounded-sm border',
+        'absolute rounded-sm border-overlay-ink',
         moving
-          ? 'border-foreground border-dashed'
+          ? 'border-2 border-dashed shadow-[0_0_0_1px_var(--overlay-halo)]'
           : selected
-            ? 'border-foreground shadow-[0_0_0_2px_var(--ring)]'
-            : 'border-foreground/40',
+            ? 'border-2 shadow-[0_0_0_1px_var(--overlay-halo),inset_0_0_0_1px_var(--overlay-halo)]'
+            : 'border shadow-[0_0_0_1px_var(--overlay-halo)]',
       )}
       style={{ left: rect.x, top: rect.y, width: rect.w, height: rect.h }}
     />
@@ -330,18 +333,18 @@ function Box({ rect, selected, moving }: { rect: LiveRect; selected?: boolean; m
 }
 
 /**
- * A locked region's outline: a quiet grey edge around its blocks with a lock at its top corner, on
- * a paper chip so it holds against the customer's page. Grey, not a status hue: a lock is a fact of
+ * A locked region's outline: a quiet edge around its blocks (the overlay ink, softened, with its
+ * halo) and a lock at its top corner on a halo chip, so both hold against the customer's page. Grey, not a status hue: a lock is a fact of
  * the page, not something wrong with it. Who locked it is said in Layers and the inspector.
  */
 function RegionMark({ rect }: { rect: LiveRect }) {
   return (
     <div
       data-region-outline
-      className="absolute rounded-sm border border-muted-foreground/60"
+      className="absolute rounded-sm border border-overlay-ink/55 shadow-[0_0_0_1px_color-mix(in_oklch,var(--overlay-halo)_70%,transparent)]"
       style={{ left: rect.x, top: rect.y, width: rect.w, height: rect.h }}
     >
-      <span className="absolute -top-2.5 left-1.5 inline-flex size-5 items-center justify-center rounded-full border bg-background text-muted-foreground shadow-sm">
+      <span className="absolute -top-2.5 left-1.5 inline-flex size-5 items-center justify-center rounded-full border border-overlay-ink/20 bg-overlay-halo text-overlay-ink shadow-sm">
         <Lock className="size-3" />
       </span>
     </div>
@@ -360,8 +363,10 @@ const SEAM_MAX = 48;
 
 /**
  * One seam: a dashed rule across the gap, its slot's name and fill shown on hover and once chosen.
- * Dashed grey at rest, ink under the pointer; the chosen one, while the dock is open, is a solid
- * brand line (brand marks what you chose; it is never a status).
+ * Drawn in the overlay pair, as the outlines are: ink dashes laid on a solid halo strip, so the rule
+ * shows on a white page by its dashes and on a dark one by its strip. Softened at rest, full under
+ * the pointer; the chosen one, while the dock is open, is a solid brand line on the same halo
+ * (brand marks what you chose; it is never a status).
  *
  * While a block is carried (`drop`), a seam it may go to is a dashed ink rule, one it can't go to
  * or its own place isn't drawn, and the one nearest the pointer is the brand line with its slot's
@@ -410,8 +415,8 @@ function SeamMark({
         <span
           data-insertion-line
           className={cn(
-            // A paper halo, so the line holds against whatever the customer's page is drawn in.
-            'absolute rounded-full bg-brand shadow-[0_0_0_2px_var(--background)]',
+            // The brand at its light value on a halo: it holds whatever the page is drawn in.
+            'absolute rounded-full bg-overlay-brand shadow-[0_0_0_2px_var(--overlay-halo)]',
             across
               ? 'inset-x-0 top-1/2 h-0.5 -translate-y-1/2'
               : 'inset-y-0 left-1/2 w-0.5 -translate-x-1/2',
@@ -419,18 +424,29 @@ function SeamMark({
         />
       ) : says ? null : (
         <span
+          data-seam-line
           className={cn(
-            'absolute border-dashed transition-[border-color] duration-(--motion-instant) group-hover:border-foreground',
-            drop ? 'border-foreground/70' : 'border-muted-foreground/50',
-            across ? 'inset-x-0 top-1/2 border-t' : 'inset-y-0 left-1/2 border-l',
+            'absolute bg-overlay-halo transition-opacity duration-(--motion-instant) group-hover:opacity-100',
+            drop ? 'opacity-90' : 'opacity-60',
+            across
+              ? 'inset-x-0 top-1/2 h-[3px] -translate-y-1/2'
+              : 'inset-y-0 left-1/2 w-[3px] -translate-x-1/2',
           )}
-        />
+        >
+          <span
+            className={cn(
+              'absolute border-overlay-ink border-dashed',
+              across ? 'inset-x-0 top-px border-t' : 'inset-y-0 left-px border-l',
+            )}
+          />
+        </span>
       )}
       <span
         data-seam-says={says ? '' : undefined}
         className={cn(
-          'relative rounded-full border bg-background px-2 py-0.5 text-2xs text-foreground shadow-sm',
-          chosen ? 'border-brand' : says ? 'inline-block' : 'hidden group-hover:inline-block',
+          'relative rounded-full border bg-overlay-halo px-2 py-0.5 text-2xs text-overlay-ink shadow-sm',
+          chosen ? 'border-overlay-brand' : 'border-overlay-ink/20',
+          chosen ? null : says ? 'inline-block' : 'hidden group-hover:inline-block',
           // A reason stays on one line, even on a narrow vertical seam.
           says && 'whitespace-nowrap',
         )}

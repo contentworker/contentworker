@@ -77,6 +77,11 @@
   --color-idle: var(--idle);
   --color-ai: var(--ai);
 
+  /* The canvas's overlays over the customer's page: the same in both themes. */
+  --color-overlay-ink: var(--overlay-ink);
+  --color-overlay-halo: var(--overlay-halo);
+  --color-overlay-brand: var(--overlay-brand);
+
   /* The preset's neutral chart ramp, lightest to darkest in light. */
   --color-chart-1: var(--chart-1);
   --color-chart-2: var(--chart-2);
@@ -176,6 +181,15 @@
   --edge: oklch(0.62 0 0);
   --edge-active: var(--ink);
   --edge-idle: oklch(0.88 0 0);
+
+  /* The canvas's overlays, drawn over the customer's page rather than the admin: one pair in both
+     themes, since the page under them is the customer's colours, not ours. Every edge is the ink
+     line with a halo beside it, so one of the two holds 3:1 on any page, white, black or a photo
+     (ink 17:1 on white; the halo 21:1 on black). The chosen seam keeps the brand, at its light-theme
+     value (6:1 on white), haloed the same way. */
+  --overlay-ink: oklch(0.205 0 0);
+  --overlay-halo: oklch(1 0 0);
+  --overlay-brand: oklch(0.49 0.16 310);
 
   color-scheme: light;
 }
