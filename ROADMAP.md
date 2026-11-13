@@ -422,19 +422,22 @@ None blocks a release.
 
 #### M5. AI context
 
-- [ ] **AI projects.** Reusable instructions, reader and writer personas, and reference assets (their
+- [x] **AI projects.** Reusable instructions, reader and writer personas, and reference assets (their
   extracted text), with a tool to read a reference file; selectable in generation, canvas and agents
   (`docs/specs/ai-projects.md`).
   - [x] **Backend.** Projects per environment (0045), the default held to `space:admin`, pinned
     references, `resolveAiProject` in every project-taking call, excerpts within the tier's window,
     text-only extraction under `media`, the read tool for Coworker and MCP, REST, MCP, the SDK,
     audit, snapshots and clones, and the evaluation harness.
-  - [ ] **Admin.** Settings → Automation → AI projects, the project pickers and what was used;
-    rollout waits on the evaluation. Built (the list, the editor sheet with reference statuses,
+  - [x] **Admin.** Settings → Automation → AI projects, the project pickers and what was used,
+    shipped 2026-11-12 (#281) ahead of the evaluation, by the owner's call: the list, the editor sheet with reference statuses,
     Retry and Use the new file, the default for `space:admin`, `project_in_use`, stale saves, the
     pickers in Generate, Draft from prose, AI assist, AI actions and Coworker's header, the
-    provenance line, and the production signal, `POST …/ai-projects/:id/outcomes`); ticked once the
-    rollout clears the evaluation. The agent schedule form waits for a schedules screen.
+    provenance line, and the production signal, `POST …/ai-projects/:id/outcomes`.
+  - [ ] **Evaluation.** Run the golden set (`packages/http/eval/ai-projects/`) on a dev deployment,
+    with and without a project per capability and tier, and act on what it shows.
+  - [ ] **Schedule picker.** A project picker for agent schedules, once the admin has a schedules
+    screen (schedules take `projectId` over the API today).
 - [x] **AI settings per capability.** Per space: enabled, `ModelTier`, and guidance appended to the
   built-in prompt.
   - [x] **Deployment tier cap.** `AI_MAX_TIER` (the registry's `aiMaxTier`) holds every model call
