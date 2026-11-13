@@ -1157,11 +1157,12 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   who isn't shown), and the inspector's muted lock line; its blocks show no move, duplicate or
   remove, and with the content frozen its settings read only. Someone with the type's `lock`
   action finds **Lock…** at the foot of the inspector: a `section-title` heading holding a ghost
-  trigger with a turning chevron, folded until asked for (open by itself while a run is chosen or
+  trigger led by a turning chevron, as the form's folded groups are, folded until asked for (open by itself while a run is chosen or
   a lock was refused, until folded again). Inside it, a vertical `Segmented` "This block and everything
   inside" / "Only this block", an "Also freeze the content" checkbox, an outline `sm` button;
   shift-click or Shift with ↑ ↓ in Layers takes neighbours in one slot into the run), and
-  **Unlock** on a locked block. A lock waits for unsaved block changes, saying why; a refused one
+  **Unlock** on a locked block. A lock waits for unsaved block changes: the Lock button gives way to **Save draft first**,
+  described by why; a refused one
   is said under the button in plain words; stale locks are listed under the Checks with Clear.
   The entry form's block cards carry the same lock line, and its Add block menu leads each item
   with the block's asset thumbnail as the dock does (4:3, 24px tall, `rounded-md`, a `muted`
@@ -1207,9 +1208,10 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   inspector's Move to (a ghost icon button and menu of the slots that take the block) is the
   keyboard's and a finger's way. **Layers** is
   a tree, and the keyboard and screen-reader path to every block (the seams are pointer-only,
-  out of the tab order). Undo and redo are in the header before Save draft and **Publish** (as in the form: Publish is
+  out of the tab order). Undo and redo are in the header before the form's ⋯ (Copy preview link), Save draft and **Publish** (as in the form: Publish is
   the primary verb for someone with `content:publish`, Save draft steps back to outline; with
-  unsaved edits Publish saves first, then asks in the one publish confirm; it reads "Published"
+  unsaved edits Publish saves first, then asks in the one publish confirm, which says the edits were just saved ("v2") since the save's
+  toast sits under it; it reads "Published"
   while the page is live and unchanged, and publishing keeps the canvas editing). Beside the width
   control a muted readout names the device in view ("Tablet · 768px"; catalog breakpoints are
   named on the switch itself). Layers, open or closed, is remembered per browser at lg; below lg it
@@ -1220,7 +1222,11 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   blocks needs a wider screen…"). It says in place, in a strip under the header, why it is
   reviewing (a role that can only read, the published version until **Edit a draft**), where a
   workflow has the entry, and when the page reports no layout (no seams; select by click or in
-  Layers). The Site view's notices stand for the frame's states. Its header names the entry at
+  Layers). The Site view's notices stand for the frame's states; a page that didn't load says so on the
+  stage itself, over the frame (the notice, Try again, and that the form and Layers still edit).
+  The stage is a region named "The page", described by how to reach the blocks by key, and the
+  inspector ends with a muted key line (⌘↑ ⌘↓ move · / add after · Esc deselect · ? every
+  shortcut). Its header names the entry at
   `text-lg`, as a toolbar does, not at the Title tier: the page is the content. Below lg the
   right column's sheet holds the inspector or, with nothing selected, the Checks; the header's
   "N checks to fix" and a refused save open it. A save someone else's beat asks

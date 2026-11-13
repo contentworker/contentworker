@@ -158,6 +158,8 @@ export interface LockingProps {
   readonly run: readonly CanvasBlock[];
   /** Why nothing can be locked now (unsaved block changes), or undefined. */
   readonly held?: string;
+  /** With `held` for unsaved changes: saves the draft, after which Lock is offered. */
+  readonly onSaveFirst?: () => void;
   readonly busy: boolean;
   /** Why the last lock or unlock was refused, in the inspector's words. */
   readonly refused: readonly string[];
@@ -429,6 +431,15 @@ export function Inspector(props: InspectorProps) {
         // Keyed by block: the choices start over for each one.
         <LockPanel key={block.key} block={block} directory={props.directory} {...props.locking} />
       ) : null}
+      {readOnly ? null : (
+        // The keys, where the hands are: the arrange buttons above are icons, and the Checks
+        // column's hint is gone once a block is selected.
+        <p className="border-t pt-3 text-muted-foreground text-xs">
+          <kbd className="font-mono">⌘↑</kbd> <kbd className="font-mono">⌘↓</kbd> move ·{' '}
+          <kbd className="font-mono">/</kbd> add after · <kbd className="font-mono">Esc</kbd>{' '}
+          deselect · <kbd className="font-mono">?</kbd> every shortcut
+        </p>
+      )}
     </section>
   );
 }
@@ -507,30 +518,26 @@ function LockPanel(props: LockingProps & { block: CanvasBlock; directory?: Actor
             type="button"
             variant="ghost"
             size="sm"
-            className="group/lock -mx-2 self-start text-muted-foreground"
+            className="group/lock -ml-2 gap-1.5 self-start text-muted-foreground"
           >
-            <Lock aria-hidden="true" />
-            Lock…
             <ChevronRight
               aria-hidden="true"
-              className="transition-transform duration-(--motion-instant) group-data-[state=open]/lock:rotate-90 motion-reduce:transition-none"
+              className="size-4 transition-transform duration-(--motion-instant) group-data-[state=open]/lock:rotate-90 motion-reduce:transition-none"
             />
+            <span className="font-medium text-sm">Lock…</span>
           </Button>
         </CollapsibleTrigger>
       </h3>
       <CollapsibleContent asChild>
         <section aria-labelledby={headingId} className="flex flex-col gap-3">
-          <div className="flex flex-col gap-1">
-            <p className="max-w-measure text-muted-foreground text-xs">
-              {many
-                ? `${blocks.length} blocks together: ${blocks.map((b) => b.name).join(', ')}.`
-                : `${
-                    depth === 'subtree'
-                      ? 'Keeps this block where it is, and the blocks inside it as they are, until it is unlocked.'
-                      : 'Keeps this block where it is until it is unlocked; blocks inside it can still change.'
-                  } Shift-click a neighbour in Layers to lock several together.`}
-            </p>
-          </div>
+          {/* One line: what a lock does here. Locking several together is in the shortcuts (?). */}
+          <p className="max-w-measure text-muted-foreground text-xs">
+            {many
+              ? `${blocks.length} blocks together: ${blocks.map((b) => b.name).join(', ')}.`
+              : depth === 'subtree'
+                ? 'Holds this block, and what’s inside it, in place.'
+                : 'Holds this block in place; what’s inside it can still change.'}
+          </p>
           <Segmented
             aria-label="What the lock holds"
             orientation="vertical"
@@ -566,24 +573,39 @@ function LockPanel(props: LockingProps & { block: CanvasBlock; directory?: Actor
               </p>
             </div>
           </div>
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            className="self-start"
-            disabled={props.busy || reason !== undefined}
-            aria-describedby={reason ? reasonId : undefined}
-            onClick={() =>
-              props.onLock({
-                field: block.slot.address.field,
-                keys: blocks.map((b) => b.key),
-                depth,
-                freeze: freeze ? 'all' : 'structure',
-              })
-            }
-          >
-            <Lock aria-hidden="true" /> {many ? `Lock ${blocks.length} blocks` : 'Lock'}
-          </Button>
+          {props.held && props.onSaveFirst ? (
+            // Unsaved block changes: the way on is a save, offered as the action itself.
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="self-start"
+              disabled={props.busy}
+              aria-describedby={reasonId}
+              onClick={props.onSaveFirst}
+            >
+              Save draft first
+            </Button>
+          ) : (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="self-start"
+              disabled={props.busy || reason !== undefined}
+              aria-describedby={reason ? reasonId : undefined}
+              onClick={() =>
+                props.onLock({
+                  field: block.slot.address.field,
+                  keys: blocks.map((b) => b.key),
+                  depth,
+                  freeze: freeze ? 'all' : 'structure',
+                })
+              }
+            >
+              <Lock aria-hidden="true" /> {many ? `Lock ${blocks.length} blocks` : 'Lock'}
+            </Button>
+          )}
           {reason ? (
             <p id={reasonId} className="max-w-measure text-muted-foreground text-xs">
               {reason}

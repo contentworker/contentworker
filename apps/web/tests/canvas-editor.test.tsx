@@ -525,6 +525,18 @@ describe('saving', () => {
     expect(client.updateEntry.mock.calls[1]?.[2]).toEqual({ expectedVersion: 5 });
   });
 
+  it('says a page that didn’t load on the stage itself, with Try again and the form', async () => {
+    await setup();
+    await screen.findByRole('heading', { level: 1, name: 'Home' });
+    frame().say({ type: 'status', status: 'failed' });
+    const stage = screen.getByRole('region', { name: 'The page' });
+    expect(within(stage).getByText('The page didn’t load')).toBeTruthy();
+    expect(within(stage).getByRole('button', { name: 'Try again' })).toBeTruthy();
+    expect(within(stage).getByRole('link', { name: 'the form' }).getAttribute('href')).toBe(
+      '/content/page/e1',
+    );
+  });
+
   it('offers Publish only to someone who may publish', async () => {
     await setup();
     await screen.findByRole('heading', { level: 1, name: 'Home' });
@@ -547,6 +559,8 @@ describe('saving', () => {
     await waitFor(() => expect(client.updateEntry).toHaveBeenCalledTimes(1));
     const dialog = await screen.findByRole('alertdialog');
     expect(within(dialog).getByText('Publish “Home”?')).toBeTruthy();
+    // It says the edits were saved first, since the save's toast is under the dialog.
+    expect(within(dialog).getByText(/saved as a draft just now \(v4\)/)).toBeTruthy();
     act(() => within(dialog).getByRole('button', { name: 'Publish entry' }).click());
     await waitFor(() => expect(client.publishEntry).toHaveBeenCalledWith('e1'));
     expect(await screen.findByRole('button', { name: 'Published' })).toBeTruthy();

@@ -381,11 +381,11 @@ describe('locking from the inspector', () => {
     act(() => layer('a1').click());
     act(() => screen.getByRole('button', { name: 'Move Call to action up' }).click());
     unfoldLock();
-    const lockButton = screen.getByRole('button', { name: 'Lock' }) as HTMLButtonElement;
-    expect(lockButton.disabled).toBe(true);
-    expect(
-      screen.getByText('Save the draft first: a lock holds the blocks as they are saved.'),
-    ).toBeTruthy();
+    // No Lock while the blocks are unsaved: the way on is the save itself, said why.
+    expect(screen.queryByRole('button', { name: 'Lock' })).toBeNull();
+    const saveFirst = screen.getByRole('button', { name: 'Save draft first' });
+    expect(saveFirst.getAttribute('aria-describedby')).toBeTruthy();
+    expect(screen.getByText('A lock holds the blocks as they are saved.')).toBeTruthy();
   });
 
   it('says a refused lock in the inspector’s words', async () => {

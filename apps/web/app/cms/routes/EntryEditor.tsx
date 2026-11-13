@@ -171,6 +171,8 @@ export function EntryEditor() {
   const [publishConfirm, setPublishConfirm] = useState<{
     changes: FieldDiff[] | null;
     hiddenChanges: number;
+    /** The version Publish saved just before asking, when it saved edits first. */
+    savedAs?: number;
   } | null>(null);
   if (patchState.target !== `${typeId}:${entryId ?? 'new'}`) {
     setPatchState({ target: `${typeId}:${entryId ?? 'new'}`, patch: null });
@@ -440,7 +442,7 @@ export function EntryEditor() {
   // Builds the publish confirmation, diffing published → current when we know
   // the published version (fresh save/publish response). No `run` here: callers
   // wrap it, and `run` doesn't nest.
-  const computePublishConfirm = async (agg: EntryAggregate | null) => {
+  const computePublishConfirm = async (agg: EntryAggregate | null, savedAs?: number) => {
     if (!entryId) return;
     let changes: FieldDiff[] | null = null;
     let hiddenChanges = 0;
@@ -450,7 +452,7 @@ export function EntryEditor() {
       hiddenChanges = diff.hiddenChanges;
     }
     publishAnswered.current = false;
-    setPublishConfirm({ changes, hiddenChanges });
+    setPublishConfirm({ changes, hiddenChanges, ...(savedAs !== undefined ? { savedAs } : {}) });
   };
 
   // Set just before a Publish-triggered form submit; consumed synchronously by
@@ -514,7 +516,9 @@ export function EntryEditor() {
         if (entryId) void blockLocks.refetch();
         toast.success('Draft updated');
         // Named as just saved: this render's title is from before the save.
-        if (chainPublish) await publish(view.entry, titleOf(fields) ?? about);
+        if (chainPublish) {
+          await publish(view.entry, titleOf(fields) ?? about, view.entry.currentVersion);
+        }
       } catch (err) {
         // The config, or a lock, changed since the form read it: its issues land on the fields
         // they name, with the locks read again so the form holds what the server does.
@@ -550,7 +554,7 @@ export function EntryEditor() {
 
   // Publishing: a card in the assistant, or, when it can't be reached, the page's own dialog. No
   // `run` here: callers wrap it, and `run` doesn't nest.
-  const publish = async (agg: EntryAggregate | null, label = about) => {
+  const publish = async (agg: EntryAggregate | null, label = about, savedAs?: number) => {
     if (!entryId) return;
     // Held to the version on screen: confirmed after someone saved a newer draft, it is refused.
     const version = agg?.currentVersion ?? meta?.version;
@@ -559,7 +563,7 @@ export function EntryEditor() {
       { id: entryId, ...(version ? { expectedVersion: version } : {}) },
       label,
     );
-    if (r === null) return computePublishConfirm(agg);
+    if (r === null) return computePublishConfirm(agg, savedAs);
     if ('output' in r) published(r.output, neverPublished(agg));
   };
 
@@ -1228,6 +1232,7 @@ export function EntryEditor() {
         status={lastAggregate && lastAggregate.id === entryId ? lastAggregate.status : meta?.status}
         changes={publishConfirm?.changes}
         hiddenChanges={publishConfirm?.hiddenChanges ?? 0}
+        {...(publishConfirm?.savedAs !== undefined ? { savedAs: publishConfirm.savedAs } : {})}
         compare={
           entryQuery.data ? { client, entry: entryQuery.data, locale: conn.locale } : undefined
         }
