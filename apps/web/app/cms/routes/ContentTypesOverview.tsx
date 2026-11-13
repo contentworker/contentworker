@@ -30,6 +30,7 @@ import { LoadingStatus } from '~/cms/components/loading';
 import { Empty, PageHeader } from '~/cms/components/page';
 import { StatusBadge } from '~/cms/components/status';
 import { contentTypeIcon, suggestedContentTypeIcon } from '~/cms/lib/content-type-icons';
+import { listStateToParams } from '~/cms/lib/entry-url';
 import { count, plural } from '~/cms/lib/format';
 import { typeMark } from '~/lib/initials';
 import { useClient } from '../lib/client-context';
@@ -129,6 +130,28 @@ export function ContentTypesOverview() {
       <span className={n === 0 ? 'text-muted-foreground' : undefined}>{count(n)}</span>
     );
 
+  /**
+   * A Drafts or Changed figure that opens the type's list filtered to that status: the overview is
+   * where an editor sees what needs them. A zero (or a singleton's one entry) stays a figure.
+   */
+  const statusFigure = (ct: ContentType, n: number | undefined, status: 'draft' | 'changed') => {
+    if (countsQuery.isPending || n === undefined || n === 0 || ct.singleton) return figure(n);
+    const params = listStateToParams({
+      query: { filters: [{ field: 'sys.status', op: 'eq', value: status }] },
+    });
+    const what =
+      status === 'draft' ? plural(n, 'draft') : plural(n, 'changed entry', 'changed entries');
+    return (
+      <Link
+        to={`/content/${ct.apiId}?${params}`}
+        aria-label={`${what} in ${ct.name}`}
+        className="hit-area underline-offset-4 hover:underline"
+      >
+        {count(n)}
+      </Link>
+    );
+  };
+
   return (
     <div>
       <PageHeader
@@ -218,9 +241,20 @@ export function ContentTypesOverview() {
                     aside={
                       <>
                         {ct.status === 'draft' ? <StatusBadge status="draft" /> : null}
-                        <CatalogFigure label="Entries">{figure(n?.total)}</CatalogFigure>
-                        <CatalogFigure label="Drafts">{figure(n?.draft)}</CatalogFigure>
-                        <CatalogFigure label="Changed">{figure(n?.changed)}</CatalogFigure>
+                        {n?.total === 0 ? (
+                          // One line for an empty type, not a row of noughts.
+                          <span className="text-muted-foreground text-sm">No entries</span>
+                        ) : (
+                          <>
+                            <CatalogFigure label="Entries">{figure(n?.total)}</CatalogFigure>
+                            <CatalogFigure label="Drafts">
+                              {statusFigure(ct, n?.draft, 'draft')}
+                            </CatalogFigure>
+                            <CatalogFigure label="Changed">
+                              {statusFigure(ct, n?.changed, 'changed')}
+                            </CatalogFigure>
+                          </>
+                        )}
                       </>
                     }
                     actions={

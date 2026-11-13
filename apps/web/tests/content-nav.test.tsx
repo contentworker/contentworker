@@ -36,7 +36,8 @@ afterEach(() => {
   types = modelled;
 });
 
-const renderNav = (at = '/content') =>
+// A page beside the nav (the overview at /content lists the types itself, with no nav).
+const renderNav = (at = '/content/space-import') =>
   render(
     <QueryClientProvider client={new QueryClient()}>
       <MemoryRouter initialEntries={[at]}>
@@ -88,9 +89,23 @@ describe('the content nav', () => {
       { apiId: 'event', name: 'Event', status: 'draft' },
     ];
     renderNav();
-    expect(screen.getByRole('link', { name: 'Event, Draft' })).toBeTruthy();
-    expect(screen.getByRole('link', { name: 'Event, Draft' }).textContent).toBe('Event');
+    expect(screen.getByRole('link', { name: /^Event\W+Draft$/ })).toBeTruthy();
+    // Seen too, on touch as at a pointer: the word beside the name, hidden from the name's reading.
+    const event = screen.getByRole('link', { name: /^Event\W+Draft$/ });
+    // Named by what it shows (no aria-label for its words to drift from), Draft in words.
+    expect(event.getAttribute('aria-label')).toBeNull();
+    expect(event.lastElementChild?.textContent).toBe('Draft');
     expect(screen.getByRole('link', { name: 'Post' }).getAttribute('aria-label')).toBeNull();
+  });
+
+  it('leaves the nav out beside the overview, which lists the types itself', () => {
+    renderNav('/content');
+    expect(screen.queryByRole('navigation', { name: 'Content types', hidden: true })).toBeNull();
+    cleanup();
+    renderNav('/content/faq');
+    expect(
+      screen.getByRole('navigation', { name: 'Content types' }).getAttribute('class'),
+    ).toContain('@[40rem]:block');
   });
 
   it('heads the lists with the groups’ own captions when every type is grouped', () => {

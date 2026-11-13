@@ -1695,13 +1695,8 @@ test('a singleton type opens its one entry, and refuses a second', async ({ page
   await dialog.getByRole('button', { name: 'Create content type' }).click();
   await expect(dialog).toBeHidden();
 
-  // The sidebar and the overview open the entry, not a list: a new one while there is none.
-  const navLink = page.locator(
-    `nav[aria-labelledby="content-types-nav"] a[href="/content/${apiId}/entry"]`,
-  );
-  await expect(navLink).toHaveCount(1);
-  // Where the nav shows (wide enough), it draws the icon picked.
-  if (await navLink.isVisible()) await expect(navLink.locator('svg.lucide-star')).toBeVisible();
+  // The overview (which lists the types itself, with no sidebar) opens the entry, not a list: a
+  // new one while there is none.
   const row = page
     .getByRole('main')
     .getByRole('list', { name: 'Content types' })
@@ -1721,6 +1716,12 @@ test('a singleton type opens its one entry, and refuses a second', async ({ page
   await openCms(page, `/content/${apiId}/entry`);
   await expect(page).toHaveURL(editorUrl);
   await expect(page.getByRole('heading', { name: 'Our site' })).toBeVisible();
+  // Beside the editor, the sidebar opens the entry too, and draws the icon picked where it shows.
+  const navLink = page.locator(
+    `nav[aria-labelledby="content-types-nav"] a[href="/content/${apiId}/entry"]`,
+  );
+  await expect(navLink).toHaveCount(1);
+  if (await navLink.isVisible()) await expect(navLink.locator('svg.lucide-star')).toBeVisible();
 
   // A second entry is refused, whoever asks.
   const second = await api(request, 'POST', `${MGMT}/entries`, {

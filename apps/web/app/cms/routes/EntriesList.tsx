@@ -65,21 +65,24 @@ import {
   useQueryKeys,
   useScopedQuery,
 } from '../lib/queries';
+import { plainKeyAllowed } from '../lib/shortcuts';
 import { type ToastOptions, useToast } from '../lib/toast';
 import { useContentOutlet } from './content-context';
 
 type BulkSummary = Awaited<ReturnType<ReturnType<typeof useClient>['client']['bulkEntryAction']>>;
 
+/** The list's order when none is chosen: the most recently changed first, what an editor wants. */
+export const DEFAULT_ORDER: EntryOrder = { field: SORT_UPDATED, direction: 'desc' };
+
 /**
  * The order a column header asks for. Title and Status go ascending first, then flip. Updated
- * flips between newest first and the list's default (least recently changed first), which is no
- * order at all: the plain list, walked in SQL.
+ * flips between the default (newest first, no order in the URL) and oldest first.
  */
 export function nextOrder(current: EntryOrder | undefined, field: string): EntryOrder | undefined {
   if (field === SORT_UPDATED) {
-    return current?.field === SORT_UPDATED && current.direction === 'desc'
+    return current?.field === SORT_UPDATED && current.direction === 'asc'
       ? undefined
-      : { field, direction: 'desc' };
+      : { field, direction: 'asc' };
   }
   if (current?.field === field)
     return { field, direction: current.direction === 'asc' ? 'desc' : 'asc' };
@@ -174,7 +177,7 @@ export function EntriesList() {
   const navigate = useNavigate();
   const toast = useToast();
   const { client, conn, busy, run } = useClient();
-  const { types, typesPending } = useContentOutlet();
+  const { types, typesPending, reload } = useContentOutlet();
   const queryClient = useQueryClient();
   const keys = useQueryKeys();
   const edit = useAssistantEdit();
@@ -267,7 +270,9 @@ export function EntriesList() {
   // The list is keyed by type + debounced filters; edits to the filter bar
   // re-key the query after 250ms while the previous page stays visible.
   const debounced = useDebouncedValue(filterState, 250);
-  const debouncedQuery = debounced.typeId === typeId ? debounced.query : {};
+  const chosen = debounced.typeId === typeId ? debounced.query : {};
+  // No order chosen reads newest first (`DEFAULT_ORDER`); the URL stays bare for it.
+  const debouncedQuery = chosen.order?.length ? chosen : { ...chosen, order: [DEFAULT_ORDER] };
   // The list reads a page at a time and Load more walks on with the last page's cursor. Another
   // type, filter, search or sort is another key: it starts again from the first page.
   const listKey = JSON.stringify([typeId, debouncedQuery]);
@@ -575,6 +580,12 @@ export function EntriesList() {
   // A bulk change through the assistant's card. Without it, the page confirms the batch itself
   // (`confirmBulk`), and `bulk` runs it straight through the API.
   const requestBulk = (action: 'publish' | 'unpublish') => {
+    // Unpublishing takes entries off the site: the page asks itself, naming them, whether or not
+    // the assistant is there (a page-started destructive change is decided on the page).
+    if (action === 'unpublish') {
+      setConfirmBulk('unpublish');
+      return;
+    }
     const ids = bulkIds(action);
     const verb = action === 'publish' ? 'Published' : 'Unpublished';
     return mutateEntries(async () => {
@@ -595,10 +606,9 @@ export function EntriesList() {
   };
 
   // The trash's bulk actions run as a job on the server over everything ticked, and this tab
-  // watches it, as the asset library does. Moving to the trash and deleting for good stop at the
-  // assistant's card (`bulk_job_start`), whose answer is the job, followed here as if this page
-  // had started it; without the assistant, the page asks itself. Restoring runs at once,
-  // straight through the API, as a row's Restore does. The bar waits while a job runs.
+  // watches it, as the asset library does. Moving to the trash and deleting for good are asked
+  // on the page, by name (`requestJob`), assistant or not. Restoring runs at once, straight
+  // through the API, as a row's Restore does. The bar waits while a job runs.
   const followJob = (action: TrashJobAction, job: BulkJobSummary) => {
     setBulkFailures(null);
     setUnnamedFailures(null);
@@ -609,22 +619,11 @@ export function EntriesList() {
     if (ids.length === 0) return;
     return run(async () => followJob(action, await client.startEntryBulkJob(action, ids)));
   };
+  // Moving to the trash and deleting for good are destructive: the page asks itself, naming the
+  // entries and what happens to them, then starts the job (the audit log records it).
   const requestJob = (action: 'trash' | 'purge') => {
-    const ids = [...picked];
-    if (ids.length === 0) return;
-    const many = plural(ids.length, 'entry', 'entries');
-    return run(async () => {
-      const r = await edit<BulkJobSummary>(
-        'bulk_job_start',
-        { action, entryIds: ids },
-        action === 'trash' ? `Move ${many} to the trash` : `Permanently delete ${many}`,
-      );
-      if (r === null) {
-        setConfirmBulk(action);
-        return;
-      }
-      if ('output' in r) followJob(action, r.output);
-    });
+    if (picked.size === 0) return;
+    setConfirmBulk(action);
   };
   const jobRunning = entryJob?.job.status === 'running';
   // Trash, restore and delete run as bulk jobs, which the api starts only for a role holding
@@ -763,6 +762,42 @@ export function EntriesList() {
     purge: (e) => void requestPurge(e),
   };
 
+  // The tab names the type, so a list kept open all day reads apart from the others.
+  const typeName = selectedType?.name;
+  useEffect(() => {
+    if (!typeName) return;
+    const prev = document.title;
+    document.title = `${typeName} · Content · ContentWorker`;
+    return () => {
+      document.title = prev;
+    };
+  }, [typeName]);
+
+  // Esc lets go of a selection (unless a dialog or menu is taking it); / goes to the search.
+  const pickedRef = useRef(picked);
+  pickedRef.current = picked;
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented) return;
+      if (e.key === 'Escape' && pickedRef.current.size > 0) {
+        if (document.querySelector('[role="dialog"], [role="alertdialog"], [role="menu"]')) return;
+        e.preventDefault();
+        setPicked(new Set());
+        return;
+      }
+      if (e.key === '/' && plainKeyAllowed(e)) {
+        const search = document.querySelector<HTMLInputElement>(
+          'input[aria-label="Search entries"]',
+        );
+        if (!search) return;
+        e.preventDefault();
+        search.focus();
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, []);
+
   const rowLink = (id: string | null) => {
     if (!id || !selectedType) return null;
     const href = `/content/${selectedType.apiId}/${id}`;
@@ -795,6 +830,14 @@ export function EntriesList() {
     );
   }
 
+  // A content type never published takes no entries yet: the list says what to do first.
+  const typeDraft = selectedType.status === 'draft';
+  const publishType = () =>
+    run(async () => {
+      await client.publishContentType(selectedType.apiId);
+      reload();
+      toast.success(`Published “${selectedType.name}”`);
+    });
   const count = entries.length;
   const hasQuery =
     (query.filters?.length ?? 0) > 0 ||
@@ -869,7 +912,7 @@ export function EntriesList() {
             `${counted} in the trash — restore, or delete permanently`
           ) : total !== undefined && total > count ? (
             `Showing ${count} of ${total} ${entriesWord(total)}`
-          ) : total !== undefined ? (
+          ) : total === 0 && !hasQuery ? undefined : total !== undefined ? (
             `${total} ${entriesWord(total)}`
           ) : (
             `${counted} ${entriesWord(count)}`
@@ -885,7 +928,7 @@ export function EntriesList() {
           {viewingTrash ? 'Back to entries' : 'View trash'}
         </Button>
         {/* A singleton holds one entry, so there is nothing to import into it. */}
-        {!viewingTrash && !selectedType.singleton && (
+        {!viewingTrash && !selectedType.singleton && !typeDraft && (
           <>
             <Button
               type="button"
@@ -1064,11 +1107,21 @@ export function EntriesList() {
             onPick={() => {}}
             onPickAll={() => {}}
             actions={rowActions}
-            order={query.order?.[0]}
+            order={query.order?.[0] ?? DEFAULT_ORDER}
             columns={listState.columns}
             pending={rememberedCount(countKey)}
           />
         </>
+      ) : entries.length === 0 && !hasQuery && typeDraft && !viewingTrash ? (
+        <EmptyState
+          icon={FileText}
+          title="Publish this content type first"
+          description={`Entries can be written once ${selectedType.name} is published. Until then its fields can still change freely.`}
+        >
+          <Button type="button" onClick={() => void publishType()} disabled={busy}>
+            Publish {selectedType.name}
+          </Button>
+        </EmptyState>
       ) : entries.length === 0 && !hasQuery ? (
         <EmptyState
           icon={FileText}
@@ -1106,7 +1159,7 @@ export function EntriesList() {
               onPick={pick}
               onPickAll={(all) => setPicked(all ? new Set(entries.map((e) => e.id)) : new Set())}
               actions={rowActions}
-              order={query.order?.[0]}
+              order={query.order?.[0] ?? DEFAULT_ORDER}
               columns={listState.columns}
               onSort={sortBy}
               onLoadMore={hasMore ? () => void entriesQuery.fetchNextPage() : undefined}

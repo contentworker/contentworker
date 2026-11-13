@@ -66,7 +66,10 @@ export function EntryBulkBar(props: {
       {props.onPublish && (props.publishable ?? 0) > 0 ? (
         <Button type="button" size="sm" disabled={props.busy} onClick={props.onPublish}>
           <Send aria-hidden="true" />
-          Publish selected
+          {/* Says how many go when not every ticked entry has anything to publish. */}
+          {(props.publishable ?? 0) < props.count
+            ? `Publish ${props.publishable} of ${props.count}`
+            : 'Publish selected'}
         </Button>
       ) : null}
       {props.onUnpublish && (props.unpublishable ?? 0) > 0 ? (
@@ -79,7 +82,9 @@ export function EntryBulkBar(props: {
           onClick={props.onUnpublish}
         >
           <CircleSlash aria-hidden="true" />
-          Unpublish selected
+          {(props.unpublishable ?? 0) < props.count
+            ? `Unpublish ${props.unpublishable} of ${props.count}`
+            : 'Unpublish selected'}
         </Button>
       ) : null}
       {props.onTrash ? (

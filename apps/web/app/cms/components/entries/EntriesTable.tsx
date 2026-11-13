@@ -42,6 +42,9 @@ export const ENTRIES_LIST_SHORTCUTS: ShortcutGroup = {
     { keys: ['K'], label: 'Previous entry (or ↑)' },
     { keys: ['Enter'], label: 'Open entry' },
     { keys: ['X'], label: 'Select or deselect entry' },
+    { keys: ['Shift', 'Click'], label: 'Select the entries in between' },
+    { keys: ['Esc'], label: 'Clear the selection' },
+    { keys: ['/'], label: 'Search entries' },
   ],
 };
 
@@ -288,8 +291,8 @@ export function EntriesTable(props: EntriesTableProps) {
 
   const sortOf = (field: string): 'ascending' | 'descending' | undefined => {
     const order = props.order;
-    // No order is the default: least recently changed first.
-    if (!order) return field === SORT_UPDATED ? 'ascending' : undefined;
+    // No order is the default: the most recently changed first.
+    if (!order) return field === SORT_UPDATED ? 'descending' : undefined;
     if (order.field !== field) return undefined;
     return order.direction === 'asc' ? 'ascending' : 'descending';
   };

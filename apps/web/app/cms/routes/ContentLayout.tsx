@@ -47,6 +47,9 @@ export function ContentLayout() {
   });
 
   const sections = useMemo(() => groupContentTypes(types), [types]);
+  // The overview lists every type itself, as a catalog: beside it the nav would be a second copy of
+  // the same list, so there the page takes the whole width.
+  const overview = pathname === '/content' || pathname === '/content/';
   // Every type filed under a group: the groups' own captions head the lists (as Settings' do), and
   // "Content types" names the nav without stacking a second caption over the first group's.
   const allGrouped = sections.length > 0 && sections.every((s) => s.group);
@@ -88,100 +91,102 @@ export function ContentLayout() {
     // Sized by the room the page has, not the screen: beside the assistant's column the page is
     // narrower than the screen says, and the entries table needs the width more than this nav.
     <div className="@container">
-      <div className="grid grid-cols-1 gap-6 @[40rem]:grid-cols-[13rem_1fr]">
+      <div className={cn('grid grid-cols-1 gap-6', !overview && '@[40rem]:grid-cols-[13rem_1fr]')}>
         {/* The space's content types beside the page, given 40rem for both (a phone, or a page beside
           the assistant, reaches them from the Content overview's cards). Drawn as the Settings
           section nav is. */}
-        <nav aria-labelledby="content-types-nav" className="hidden pt-6 @[40rem]:block">
-          {/* A model with more types than the window is tall scrolls here, on its own, so the last
+        {/* Not on the overview, whose catalog is this list: not drawn there at all, hidden or not. */}
+        {overview ? null : (
+          <nav aria-labelledby="content-types-nav" className="hidden pt-6 @[40rem]:block">
+            {/* A model with more types than the window is tall scrolls here, on its own, so the last
               type is never a page of entries away, and never behind the tab bar where that still
               shows. The 0.25rem around the links (and of scroll padding, for a link that focus
               scrolls to an edge) is room for their focus outline, which the scroller would
               otherwise clip. */}
-          <div
-            ref={scroller}
-            className="cw-scroll sticky top-[calc(var(--shell-h)+1.5rem)] -mx-1 max-h-[calc(100dvh-var(--shell-h)-var(--tabbar-h,0px)-3rem)] scroll-py-1 overflow-y-auto px-1 pb-1"
-          >
-            <h2 id="content-types-nav" className={allGrouped ? 'sr-only' : 'caption px-2.5 pb-1'}>
-              Content types
-            </h2>
-            {/* Types without a group first, then each group under its name: the order an
+            <div
+              ref={scroller}
+              className="cw-scroll sticky top-[calc(var(--shell-h)+1.5rem)] -mx-1 max-h-[calc(100dvh-var(--shell-h)-var(--tabbar-h,0px)-3rem)] scroll-py-1 overflow-y-auto px-1 pb-1"
+            >
+              <h2 id="content-types-nav" className={allGrouped ? 'sr-only' : 'caption px-2.5 pb-1'}>
+                Content types
+              </h2>
+              {/* Types without a group first, then each group under its name: the order an
                 author filed them in, found the same way every time. */}
-            {sections.map((section, index) => (
-              <div key={section.group ?? ''} className={index > 0 ? 'pt-5' : undefined}>
-                {section.group && (
-                  <h3 id={sectionId(index)} className="caption px-2.5 pb-1">
-                    {section.group}
-                  </h3>
-                )}
-                <ul
-                  className="flex flex-col gap-0.5"
-                  {...(section.group ? { 'aria-labelledby': sectionId(index) } : {})}
-                >
-                  {section.types.map((t) => {
-                    // Active anywhere under the type, so a singleton's entry (reached through
-                    // `/entry`) marks it as the list does its entries.
-                    const base = `/content/${t.apiId}`;
-                    const active = pathname === base || pathname.startsWith(`${base}/`);
-                    const status = t.status !== 'published' ? statusLabel(t.status) : null;
-                    return (
-                      <li key={t.apiId}>
-                        <Link
-                          // A singleton opens its one entry, not a list of one.
-                          to={t.singleton ? `${base}/entry` : base}
-                          aria-current={active ? 'page' : undefined}
-                          // Named whole, so the status follows the name without the stray space
-                          // a browser puts between two boxes ("Event , Draft").
-                          aria-label={status ? `${t.name}, ${status}` : undefined}
-                          className={cn(
-                            'relative flex items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-sm transition-[background-color,color] touch:min-h-11',
-                            active
-                              ? 'bg-accent font-medium text-accent-foreground current-item'
-                              : 'text-muted-foreground hover:bg-accent/60 hover:text-foreground',
-                          )}
-                        >
-                          <span className="flex min-w-0 items-center gap-2">
-                            {/* Every type has an icon (its own, one its name suggests, or a
+              {sections.map((section, index) => (
+                <div key={section.group ?? ''} className={index > 0 ? 'pt-5' : undefined}>
+                  {section.group && (
+                    <h3 id={sectionId(index)} className="caption px-2.5 pb-1">
+                      {section.group}
+                    </h3>
+                  )}
+                  <ul
+                    className="flex flex-col gap-0.5"
+                    {...(section.group ? { 'aria-labelledby': sectionId(index) } : {})}
+                  >
+                    {section.types.map((t) => {
+                      // Active anywhere under the type, so a singleton's entry (reached through
+                      // `/entry`) marks it as the list does its entries.
+                      const base = `/content/${t.apiId}`;
+                      const active = pathname === base || pathname.startsWith(`${base}/`);
+                      const status = t.status !== 'published' ? statusLabel(t.status) : null;
+                      return (
+                        <li key={t.apiId}>
+                          <Link
+                            // A singleton opens its one entry, not a list of one.
+                            to={t.singleton ? `${base}/entry` : base}
+                            aria-current={active ? 'page' : undefined}
+                            className={cn(
+                              'relative flex items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-sm transition-[background-color,color] touch:min-h-11',
+                              active
+                                ? 'bg-accent font-medium text-accent-foreground current-item'
+                                : 'text-muted-foreground hover:bg-accent/60 hover:text-foreground',
+                            )}
+                          >
+                            <span className="flex min-w-0 items-center gap-2">
+                              {/* Every type has an icon (its own, one its name suggests, or a
                                   blank page), so no name sits in like a child of the row above.
                                   The brand accent marks where you are, on the icon alone. */}
-                            <ContentTypeIcon
-                              type={t}
-                              className={cn('size-4 shrink-0', active && 'text-brand')}
-                            />
-                            <span className="truncate">{t.name}</span>
-                          </span>
-                          {/* The dot says the type isn't published; its word is in the link's
-                                name and there for a pointer at rest. Forced colours drop the dot's
-                                fill, so there it is drawn as a ring. */}
-                          {status ? (
-                            <span className="flex shrink-0 items-center" title={status}>
-                              <StatusDot
-                                status={t.status}
-                                className="forced-colors:border forced-colors:border-[CanvasText]"
+                              <ContentTypeIcon
+                                type={t}
+                                className={cn('size-4 shrink-0', active && 'text-brand')}
                               />
+                              <span className="truncate">{t.name}</span>
                             </span>
-                          ) : null}
-                        </Link>
-                      </li>
-                    );
-                  })}
+                            {/* A type that isn't published says so in words, on touch too, and
+                                the link is named by what it shows ("Event Draft"). Forced colours
+                                drop the dot's fill, so there it is drawn as a ring. */}
+                            {status ? <span className="sr-only">, </span> : null}
+                            {status ? (
+                              <span className="flex shrink-0 items-center gap-1.5 text-muted-foreground text-xs">
+                                <StatusDot
+                                  status={t.status}
+                                  className="forced-colors:border forced-colors:border-[CanvasText]"
+                                />
+                                {status}
+                              </span>
+                            ) : null}
+                          </Link>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              ))}
+              {typesQuery.isPending ? (
+                <ul className="flex flex-col gap-0.5">
+                  {['72%', '55%', '64%', '48%'].map((w) => (
+                    <li key={w} aria-hidden="true" className="px-2.5 py-1.5 text-sm touch:min-h-11">
+                      <SkeletonText width={w} />
+                    </li>
+                  ))}
                 </ul>
-              </div>
-            ))}
-            {typesQuery.isPending ? (
-              <ul className="flex flex-col gap-0.5">
-                {['72%', '55%', '64%', '48%'].map((w) => (
-                  <li key={w} aria-hidden="true" className="px-2.5 py-1.5 text-sm touch:min-h-11">
-                    <SkeletonText width={w} />
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-            {types.length === 0 && !typesQuery.isPending && (
-              <p className="px-2.5 py-1 text-muted-foreground text-sm">No content types yet.</p>
-            )}
-          </div>
-        </nav>
+              ) : null}
+              {types.length === 0 && !typesQuery.isPending && (
+                <p className="px-2.5 py-1 text-muted-foreground text-sm">No content types yet.</p>
+              )}
+            </div>
+          </nav>
+        )}
 
         <section className="min-w-0">
           <Outlet context={outlet} />

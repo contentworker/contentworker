@@ -525,8 +525,11 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   Save as new view…, Save changes, Rename…, Share with the space or Stop sharing, and a destructive
   Delete view… confirmed in an alert dialog; naming a view is a small dialog with Name and, with
   `content:manage`, a Share with the space switch whose hint says each person sees only what their
-  role allows), the search, named "Search entries" (below `sm` on a row of its own, above the buttons), Filters (`aria-expanded`, whose panel holds
-  filters only, status values in the status words, and a muted line with a link-button to remove
+  role allows), the search, named "Search entries" (below `sm` on a row of its own, above the buttons), **Status** chips (Draft · Changed ·
+  Published, a `fieldset` of toggles with `aria-pressed`, the status dot and word, the ink fill
+  while on; one chip is "is", several "is any of", none removes it), Filters (`aria-expanded`, whose
+  panel holds filters only, a condition applied only once it has a value, its count counting
+  conditions and never the search, Esc closing it back to its button, status values in the status words, and a muted line with a link-button to remove
   grouped conditions a view or link brought, and another for a link's `links_to_entry`), **Mine**, a toggle, `aria-pressed`, an outline pill at
   rest and the ink fill while pressed, with no tooltip since its word says it: only the entries the
   signed-in person created, `sys.createdBy=me`, which Clear clears with the filters, and **Columns** at the row's end, from `md` (an outline `sm`
@@ -538,9 +541,11 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   ("Rich text", "3 items"), hidden on a phone, and only Symbol, Text, Integer, Number, Date and
   Boolean columns sort from their headers), the row's quiet Publish (ghost `xs`, shown on hover, focus, the J/K row, a
   ticked row, and always on touch), and the ⋯ menu. Title, Status and Updated sort from their
-  headers; Updated flips between newest first and the default, least recently changed first.
+  headers; the default is the most recently changed first, and Updated flips between it and
+  oldest first. Esc lets go of a selection; `/` goes to the search. The tab names the type.
   **Ticking** anything swaps the filter bar for a bulk bar (`role="group"`, "2 selected · Publish
-  selected · Unpublish selected · Move to trash · Clear"), held under the shell's header, offering
+  selected · Unpublish selected · Move to trash · Clear"; "Publish 2 of 3" when not every ticked
+  entry has something to publish), held under the shell's header, offering
   only what applies (no Publish when every ticked entry is live as it is, no Unpublish when none is
   live) and sending only the entries it changes. A polite sr-only line says "2 entries selected".
   The header checkbox is mixed while some are ticked. A new order or a search leaves ticked only
@@ -554,8 +559,11 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   trash ("Move 2 entries to the trash?", saying live ones are unpublished first) and Delete
   permanently ("Permanently delete 2 entries?", naming them, saying it can't be undone and that an
   entry published entries link to is kept; Keep in trash, then a destructive Delete permanently)
-  confirm at the assistant's card; without it the page asks, in place for the trash and in a
-  dialog for Delete permanently. Restore selected runs at
+  are asked on the page, assistant or not (a destructive change started here is decided here, by
+  name): in place for the trash and in a dialog for Delete permanently. Unpublish selected is
+  asked on the page the same way; only Publish selected goes to the assistant's card when it is on.
+  A content type that was never published lists no entries and says "Publish this content type
+  first", with Publish, and offers no Import. Restore selected runs at
   once, as a row's Restore does. Each of the three a role can't start (it doesn't hold that job's
   actions on every type, as the api's `bulkJobs` answer says) is disabled, with the reason under
   the bar (`aria-describedby`). The job shows

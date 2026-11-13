@@ -244,9 +244,9 @@ describe('EntriesTable sorting from its headers', () => {
   it('sorts Title, Status and Updated from their headers, the sorted one aria-sorted', () => {
     const onSort = vi.fn();
     const props = renderTable({ onSort });
-    // No order is least recently changed first: Updated, ascending.
+    // No order is the most recently changed first: Updated, descending.
     expect(screen.getByRole('columnheader', { name: 'Updated' }).getAttribute('aria-sort')).toBe(
-      'ascending',
+      'descending',
     );
     // The sorted column reads in ink; the others hint that they sort with an arrow that is
     // decoration, so their names stay the column's.

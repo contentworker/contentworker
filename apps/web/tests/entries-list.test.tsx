@@ -16,6 +16,7 @@ Element.prototype.scrollIntoView ??= () => {};
 
 type ListPage = (type?: string, query?: EntryListQuery, cursor?: string) => Promise<EntryPage>;
 const client = {
+  publishContentType: vi.fn(),
   listEntryPage: vi.fn<ListPage>(),
   contentTypeEntryCounts: vi.fn(async (): Promise<{ contentType: string; total: number }[]> => []),
   trashEntry: vi.fn(async () => {}),
@@ -505,7 +506,7 @@ describe('EntriesList through the assistant', () => {
     expect(screen.queryByText(/moved to the trash/)).toBeNull();
   });
 
-  it('sends a bulk change as one card, with no dialog of its own', async () => {
+  it('sends a bulk publish as one card, with no dialog of its own', async () => {
     const edit = vi.fn(async (_tool: string, input: unknown) => {
       const ids = (input as { ids: string[] }).ids;
       return {
@@ -519,17 +520,33 @@ describe('EntriesList through the assistant', () => {
     });
     assistant.edit = edit;
     setup();
-    for (const t of ['About us', 'Careers'])
+    for (const t of ['Spring launch', 'Pricing page'])
       fireEvent.click(await screen.findByRole('checkbox', { name: `Select “${t}”` }));
-    fireEvent.click(screen.getByRole('button', { name: 'Unpublish selected' }));
-    await screen.findByText('Unpublished 2 entries');
+    fireEvent.click(screen.getByRole('button', { name: 'Publish selected' }));
+    await screen.findByText('Published 2 entries');
     expect(edit).toHaveBeenCalledExactlyOnceWith(
       'entries_bulk_action',
-      { action: 'unpublish', ids: ['e-live', 'e-live2'] },
-      'Unpublish 2 entries',
+      { action: 'publish', ids: ['e-draft', 'e-changed'] },
+      'Publish 2 entries',
     );
     expect(screen.queryByRole('alertdialog')).toBeNull();
     expect(client.bulkEntryAction).not.toHaveBeenCalled();
+  });
+
+  it('asks on the page before unpublishing, naming the entries, even with the assistant there', async () => {
+    const edit = vi.fn();
+    assistant.edit = edit;
+    setup();
+    for (const t of ['About us', 'Careers'])
+      fireEvent.click(await screen.findByRole('checkbox', { name: `Select “${t}”` }));
+    fireEvent.click(screen.getByRole('button', { name: 'Unpublish selected' }));
+    const dialog = await screen.findByRole('alertdialog', { name: 'Unpublish 2 entries?' });
+    expect(within(dialog).getByText('About us')).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Unpublish entries' }));
+    await waitFor(() =>
+      expect(client.bulkEntryAction).toHaveBeenCalledWith('unpublish', ['e-live', 'e-live2']),
+    );
+    expect(edit).not.toHaveBeenCalled();
   });
 
   it('duplicates at once and opens the copy', async () => {
@@ -604,8 +621,39 @@ describe('EntriesList counts and paging', () => {
   );
 });
 
+describe('EntriesList for a content type', () => {
+  it('names the type in the tab', async () => {
+    setup();
+    await screen.findByRole('link', { name: 'About us' }, { timeout: FIRST_RENDER_MS });
+    expect(document.title).toBe('Article · Content · ContentWorker');
+  });
+
+  it('says to publish a draft content type before its first entry, and offers no Import', async () => {
+    client.publishContentType.mockResolvedValue({} as never);
+    setup(async () => ({ items: [] }), { ...article, status: 'draft' });
+    const empty = await screen.findByText(
+      'Publish this content type first',
+      {},
+      { timeout: FIRST_RENDER_MS },
+    );
+    expect(empty).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Create entry' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Import' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Publish Article' }));
+    await waitFor(() => expect(client.publishContentType).toHaveBeenCalledWith('article'));
+  });
+});
+
 describe('EntriesList sorting from the headers', () => {
-  it('asks for the column’s order, and Updated flips newest first and back to the default', async () => {
+  it('reads newest first by default', async () => {
+    setup();
+    await screen.findByRole('link', { name: 'About us' }, { timeout: FIRST_RENDER_MS });
+    expect(client.listEntryPage.mock.calls[0]?.[1]?.order).toEqual([
+      { field: 'sys.updatedAt', direction: 'desc' },
+    ]);
+  });
+
+  it('asks for the column’s order, and Updated flips oldest first and back to the default', async () => {
     setup();
     const header = await screen.findByRole(
       'button',
@@ -620,16 +668,21 @@ describe('EntriesList sorting from the headers', () => {
         undefined,
       ),
     );
+    // Updated flips to oldest first, then back to the default: newest first.
     fireEvent.click(screen.getByRole('button', { name: 'Updated' }));
     await waitFor(() =>
       expect(client.listEntryPage).toHaveBeenLastCalledWith(
         'article',
-        expect.objectContaining({ order: [{ field: 'sys.updatedAt', direction: 'desc' }] }),
+        expect.objectContaining({ order: [{ field: 'sys.updatedAt', direction: 'asc' }] }),
         undefined,
       ),
     );
     fireEvent.click(screen.getByRole('button', { name: 'Updated' }));
-    await waitFor(() => expect(client.listEntryPage.mock.lastCall?.[1]?.order).toBeUndefined());
+    await waitFor(() =>
+      expect(client.listEntryPage.mock.lastCall?.[1]?.order).toEqual([
+        { field: 'sys.updatedAt', direction: 'desc' },
+      ]),
+    );
   });
 });
 
@@ -663,6 +716,17 @@ describe('EntriesList bulk bar', () => {
       await screen.findByRole('checkbox', { name: `Select “${t}”` }, { timeout: FIRST_RENDER_MS }),
     );
 
+  it('lets go of a selection on Esc, and / goes to the search', async () => {
+    setup();
+    await tick('About us');
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    await waitFor(() =>
+      expect(screen.queryByRole('group', { name: 'Selected entries' })).toBeNull(),
+    );
+    fireEvent.keyDown(document.body, { key: '/' });
+    expect(document.activeElement).toBe(screen.getByRole('searchbox', { name: 'Search entries' }));
+  });
+
   it('replaces the filter bar while anything is ticked, says how many, and clears', async () => {
     setup();
     await tick('About us');
@@ -690,7 +754,8 @@ describe('EntriesList bulk bar', () => {
   it('names the entries in the confirm, and sends only those the action changes', async () => {
     setup();
     for (const t of ['About us', 'Spring launch', 'Pricing page']) await tick(t);
-    fireEvent.click(screen.getByRole('button', { name: 'Publish selected' }));
+    // Two of the three have anything to publish, and the button says so.
+    fireEvent.click(screen.getByRole('button', { name: 'Publish 2 of 3' }));
     const dialog = await screen.findByRole('alertdialog', { name: 'Publish 2 entries?' });
     expect(within(dialog).getByText('Spring launch')).toBeTruthy();
     expect(within(dialog).getByText('Pricing page')).toBeTruthy();
@@ -749,8 +814,9 @@ describe('EntriesList bulk bar', () => {
   it('leaves ticked only what a new order still shows', async () => {
     // Sorted, the first page holds two of the four: Careers is past it.
     setup(async (_type, query) => ({
-      items: query?.order ? ENTRIES.filter((e) => e.id !== 'e-live2') : ENTRIES,
-      ...(query?.order ? { nextCursor: 'c2' } : {}),
+      items:
+        query?.order?.[0]?.field === 'title' ? ENTRIES.filter((e) => e.id !== 'e-live2') : ENTRIES,
+      ...(query?.order?.[0]?.field === 'title' ? { nextCursor: 'c2' } : {}),
     }));
     await tick('About us');
     await tick('Careers');
@@ -932,43 +998,35 @@ describe('EntriesList trash jobs', () => {
     expect(within(bar).getByText('1 selected')).toBeTruthy();
   });
 
-  it('sends Move to trash to the assistant as one job card, and follows the job it started', async () => {
-    const edit = vi.fn(async (_tool: string, input: unknown) => {
-      const { entryIds } = input as { entryIds: string[] };
-      return { output: jobOf('trash', { totalItems: entryIds.length }) };
-    });
+  it('asks on the page before moving to the trash, even with the assistant there', async () => {
+    const edit = vi.fn();
     assistant.edit = edit;
     setup();
     await tick('About us');
     await tick('Careers');
     fireEvent.click(screen.getByRole('button', { name: 'Move to trash' }));
-    await screen.findByText('Trashed 2 entries', { selector: '[role="status"]' });
-    expect(edit).toHaveBeenCalledExactlyOnceWith(
-      'bulk_job_start',
-      { action: 'trash', entryIds: ['e-live', 'e-live2'] },
-      'Move 2 entries to the trash',
+    const dialog = await screen.findByRole('alertdialog', {
+      name: 'Move 2 entries to the trash?',
+    });
+    expect(within(dialog).getByText('About us')).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Move to trash' }));
+    await waitFor(() =>
+      expect(client.startEntryBulkJob).toHaveBeenCalledWith('trash', ['e-live', 'e-live2']),
     );
-    // The card was the confirm: no dialog of the page's own, and nothing started a second time.
-    expect(screen.queryByRole('alertdialog')).toBeNull();
-    expect(client.startEntryBulkJob).not.toHaveBeenCalled();
+    expect(edit).not.toHaveBeenCalled();
   });
 
-  it('sends Delete permanently to the assistant’s card, and does nothing when it is declined', async () => {
-    const edit = vi.fn(async () => ({ declined: true }));
+  it('asks on the page before deleting for good, even with the assistant there', async () => {
+    const edit = vi.fn();
     assistant.edit = edit;
     setup(withTrash);
     await openTrash();
     await tick('Old promo');
     fireEvent.click(screen.getByRole('button', { name: 'Delete permanently…' }));
-    await waitFor(() =>
-      expect(edit).toHaveBeenCalledWith(
-        'bulk_job_start',
-        { action: 'purge', entryIds: ['t-1'] },
-        'Permanently delete 1 entry',
-      ),
-    );
-    expect(screen.queryByRole('alertdialog')).toBeNull();
-    expect(screen.queryByRole('region', { name: 'Bulk job' })).toBeNull();
+    const dialog = await screen.findByRole('alertdialog', { name: 'Permanently delete 1 entry?' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Keep in trash' }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    expect(edit).not.toHaveBeenCalled();
     expect(client.startEntryBulkJob).not.toHaveBeenCalled();
     expect(screen.getByText('1 selected')).toBeTruthy();
   });
