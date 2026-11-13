@@ -47,6 +47,9 @@ export function ContentLayout() {
   });
 
   const sections = useMemo(() => groupContentTypes(types), [types]);
+  // The overview lists every type itself, as a catalog: beside it the nav would be a second copy of
+  // the same list, so there the page takes the whole width.
+  const overview = pathname === '/content' || pathname === '/content/';
   // Every type filed under a group: the groups' own captions head the lists (as Settings' do), and
   // "Content types" names the nav without stacking a second caption over the first group's.
   const allGrouped = sections.length > 0 && sections.every((s) => s.group);
@@ -88,11 +91,14 @@ export function ContentLayout() {
     // Sized by the room the page has, not the screen: beside the assistant's column the page is
     // narrower than the screen says, and the entries table needs the width more than this nav.
     <div className="@container">
-      <div className="grid grid-cols-1 gap-6 @[40rem]:grid-cols-[13rem_1fr]">
+      <div className={cn('grid grid-cols-1 gap-6', !overview && '@[40rem]:grid-cols-[13rem_1fr]')}>
         {/* The space's content types beside the page, given 40rem for both (a phone, or a page beside
           the assistant, reaches them from the Content overview's cards). Drawn as the Settings
           section nav is. */}
-        <nav aria-labelledby="content-types-nav" className="hidden pt-6 @[40rem]:block">
+        <nav
+          aria-labelledby="content-types-nav"
+          className={cn('hidden pt-6', !overview && '@[40rem]:block')}
+        >
           {/* A model with more types than the window is tall scrolls here, on its own, so the last
               type is never a page of entries away, and never behind the tab bar where that still
               shows. The 0.25rem around the links (and of scroll padding, for a link that focus
@@ -150,15 +156,19 @@ export function ContentLayout() {
                             />
                             <span className="truncate">{t.name}</span>
                           </span>
-                          {/* The dot says the type isn't published; its word is in the link's
-                                name and there for a pointer at rest. Forced colours drop the dot's
-                                fill, so there it is drawn as a ring. */}
+                          {/* A type that isn't published says so in words, on touch too (the
+                                link's name carries it for assistive tech). Forced colours drop the
+                                dot's fill, so there it is drawn as a ring. */}
                           {status ? (
-                            <span className="flex shrink-0 items-center" title={status}>
+                            <span
+                              aria-hidden="true"
+                              className="flex shrink-0 items-center gap-1.5 text-muted-foreground text-xs"
+                            >
                               <StatusDot
                                 status={t.status}
                                 className="forced-colors:border forced-colors:border-[CanvasText]"
                               />
+                              {status}
                             </span>
                           ) : null}
                         </Link>

@@ -3,6 +3,7 @@ import { Badge } from '@contentworker/ui/badge';
 import { Button } from '@contentworker/ui/button';
 import { ListSearch } from '@contentworker/ui/catalog';
 import { Input } from '@contentworker/ui/input';
+import { cn } from '@contentworker/ui/lib/utils';
 import {
   Select,
   SelectContent,
@@ -14,6 +15,7 @@ import { ListFilter, Plus, UserRound, X } from 'lucide-react';
 import { type ReactNode, useEffect, useId, useRef, useState } from 'react';
 import { statusLabel } from '../lib/format';
 import type { EntryFilter, EntryListQuery } from '../lib/management';
+import { StatusDot } from './status';
 
 /** Operators offered per field category — narrows the menu to what makes sense. */
 const OPS_BY_CATEGORY = {
@@ -62,6 +64,45 @@ const OPS_BY_CATEGORY = {
 type Category = keyof typeof OPS_BY_CATEGORY;
 
 const ENTRY_STATUSES = ['draft', 'changed', 'published', 'archived'] as const;
+
+/** The statuses a person looks for most, one click each on the toolbar (archived is rare). */
+const CHIP_STATUSES = ['draft', 'changed', 'published'] as const;
+
+/**
+ * Whether a condition says what it matches: one without a value is a row still being built in
+ * the panel, and never reaches the list (a half-built "Status is …" would match nothing).
+ */
+export function filterComplete(f: EntryFilter): boolean {
+  if (f.op === 'exists') return typeof f.value === 'boolean';
+  const v = f.value;
+  if (Array.isArray(v)) return v.some((x) => String(x).trim() !== '');
+  if (typeof v === 'boolean' || typeof v === 'number') return true;
+  return typeof v === 'string' && v.trim() !== '';
+}
+
+/** The statuses the toolbar's chips show as chosen: a `sys.status` that is, or is any of. */
+export function chosenStatuses(filters: readonly EntryFilter[]): string[] {
+  const f = filters.find((x) => x.field === 'sys.status' && (x.op === 'eq' || x.op === 'in'));
+  if (!f) return [];
+  const v = f.value;
+  return (Array.isArray(v) ? v : [v]).map((x) => String(x)).filter((x) => x !== '');
+}
+
+/** `filters` with the chips' status condition set to `statuses` (is one, is any of several, none). */
+export function withStatuses(filters: readonly EntryFilter[], statuses: readonly string[]) {
+  const rest = filters.filter(
+    (x) => !(x.field === 'sys.status' && (x.op === 'eq' || x.op === 'in')),
+  );
+  if (statuses.length === 0) return rest;
+  const status: EntryFilter =
+    statuses.length === 1
+      ? { field: 'sys.status', op: 'eq', value: statuses[0] as string }
+      : { field: 'sys.status', op: 'in', value: [...statuses] };
+  return [status, ...rest];
+}
+
+const same = (a: readonly EntryFilter[], b: readonly EntryFilter[]) =>
+  JSON.stringify(a) === JSON.stringify(b);
 
 function categoryOf(type: FieldType): Category {
   switch (type) {
@@ -123,7 +164,8 @@ function ValueInput(props: {
     if (filter.op === 'in') {
       return (
         <Input
-          className="h-8 w-[200px]"
+          aria-label="Filter value"
+          className="h-8 w-[200px] max-sm:w-full"
           placeholder="draft, published"
           value={Array.isArray(filter.value) ? filter.value.join(', ') : String(filter.value ?? '')}
           onChange={(e) => onChange(e.target.value.split(',').map((s) => s.trim()))}
@@ -131,9 +173,9 @@ function ValueInput(props: {
       );
     }
     return (
-      <Select value={String(filter.value ?? 'draft')} onValueChange={onChange}>
-        <SelectTrigger aria-label="Filter value" className="h-8 w-[140px]">
-          <SelectValue />
+      <Select value={typeof filter.value === 'string' ? filter.value : ''} onValueChange={onChange}>
+        <SelectTrigger aria-label="Filter value" className="h-8 w-[140px] max-sm:flex-1">
+          <SelectValue placeholder="Choose…" />
         </SelectTrigger>
         <SelectContent>
           {ENTRY_STATUSES.map((s) => (
@@ -147,9 +189,12 @@ function ValueInput(props: {
   }
   if (option.category === 'boolean') {
     return (
-      <Select value={String(filter.value ?? 'true')} onValueChange={(v) => onChange(v === 'true')}>
-        <SelectTrigger aria-label="Filter value" className="h-8 w-[120px]">
-          <SelectValue />
+      <Select
+        value={typeof filter.value === 'boolean' ? String(filter.value) : ''}
+        onValueChange={(v) => onChange(v === 'true')}
+      >
+        <SelectTrigger aria-label="Filter value" className="h-8 w-[120px] max-sm:flex-1">
+          <SelectValue placeholder="Choose…" />
         </SelectTrigger>
         <SelectContent>
           <SelectItem value="true">true</SelectItem>
@@ -161,7 +206,8 @@ function ValueInput(props: {
   const isList = filter.op === 'in' || filter.op === 'nin';
   return (
     <Input
-      className="h-8 w-[200px]"
+      aria-label="Filter value"
+      className="h-8 w-[200px] max-sm:w-full"
       type={option.category === 'date' && !isList ? 'date' : 'text'}
       placeholder={isList ? 'a, b, c' : 'value'}
       value={Array.isArray(filter.value) ? filter.value.join(', ') : String(filter.value ?? '')}
@@ -227,35 +273,71 @@ export function EntryFilterBar(props: {
   const { type, value, onChange } = props;
   const [open, setOpen] = useState(false);
   const panelId = useId();
+  const trigger = useRef<HTMLButtonElement>(null);
   const options = fieldOptions(type);
   const filters = value.filters ?? [];
+
+  // The panel's rows: the list's conditions, and any still being built. Only complete ones are
+  // the list's (`filterComplete`); a row without a value waits here until it has one.
+  const [rows, setRows] = useState<readonly EntryFilter[]>(filters);
+  const [seen, setSeen] = useState<readonly EntryFilter[]>(filters);
+  if (!same(filters, seen)) {
+    // Changed from outside (a view, Clear, Back, a chip): those, and the rows still being built.
+    setSeen(filters);
+    setRows([...filters, ...rows.filter((r) => !filterComplete(r))]);
+  }
+  const commit = (next: readonly EntryFilter[]) => {
+    setRows(next);
+    const complete = next.filter(filterComplete);
+    setSeen(complete);
+    if (!same(complete, filters)) {
+      onChange({ ...value, filters: complete.length > 0 ? complete : undefined });
+    }
+  };
 
   const optionFor = (field: string) => options.find((o) => o.field === field) ?? STATUS_OPTION;
 
   const patchFilter = (i: number, patch: Partial<EntryFilter>) =>
-    onChange({ ...value, filters: filters.map((f, j) => (j === i ? { ...f, ...patch } : f)) });
+    commit(
+      rows.map((f, j) => {
+        if (j !== i) return f;
+        const next = { ...f, ...patch };
+        // "exists" asks present or absent, present until chosen; leaving it starts the value over.
+        if (patch.op === 'exists' && f.op !== 'exists') return { ...next, value: true };
+        if (patch.op && patch.op !== 'exists' && f.op === 'exists') return { ...next, value: '' };
+        return next;
+      }),
+    );
 
   const addFilter = () => {
     const first = options[0];
     if (!first) return;
-    onChange({
-      ...value,
-      filters: [...filters, { field: first.field, op: 'eq', value: '' }],
-    });
+    commit([...rows, { field: first.field, op: 'eq', value: '' }]);
     setOpen(true);
   };
 
-  const removeFilter = (i: number) =>
-    onChange({ ...value, filters: filters.filter((_, j) => j !== i) });
+  const removeFilter = (i: number) => commit(rows.filter((_, j) => j !== i));
+
+  const chosen = chosenStatuses(filters);
+  const toggleStatus = (status: string) => {
+    const next = chosen.includes(status) ? chosen.filter((s) => s !== status) : [...chosen, status];
+    const nextFilters = withStatuses(filters, next);
+    onChange({ ...value, filters: nextFilters.length > 0 ? nextFilters : undefined });
+  };
+
+  const close = () => {
+    setOpen(false);
+    trigger.current?.focus();
+  };
 
   // A `where` tree (from a saved view or a link) counts as one: the bar doesn't edit its groups.
   const grouped = value.where !== undefined;
   // So does a `links_to_entry`, from a link or a view: the bar has no row for "any field".
   const linked = (value.linksToEntry?.length ?? 0) > 0;
-  const activeCount =
-    filters.length + (value.search ? 1 : 0) + (grouped ? 1 : 0) + (linked ? 1 : 0);
-  // "Mine" is a toggle of its own, beside the panel's filters; Clear clears it with them.
-  const clearable = activeCount > 0 || value.mine === true;
+  // The panel's conditions only: the search shows itself in its box.
+  const activeCount = filters.length + (grouped ? 1 : 0) + (linked ? 1 : 0);
+  // "Mine" and the search are their own, beside the panel's filters; Clear clears them with them.
+  const clearable = activeCount > 0 || value.mine === true || Boolean(value.search);
 
   return (
     <div className="space-y-3">
@@ -268,7 +350,31 @@ export function EntryFilterBar(props: {
             onChange={(text) => onChange({ ...value, search: text || undefined })}
           />
         </div>
+        {/* The statuses people look for most, one click each: they are the panel's Status
+            condition, so the panel and the chips always agree. */}
+        <fieldset className="flex items-center gap-1 border-0 p-0 max-sm:basis-full">
+          <legend className="sr-only">Status</legend>
+          {CHIP_STATUSES.map((s) => {
+            const on = chosen.includes(s);
+            return (
+              <Button
+                key={s}
+                type="button"
+                // Pressed reads as the ink fill, as Mine does: on and off differ by more than a tint.
+                variant={on ? 'default' : 'outline'}
+                size="sm"
+                aria-pressed={on}
+                onClick={() => toggleStatus(s)}
+                className="gap-1.5"
+              >
+                <StatusDot status={s} className={cn(on && 'ring-1 ring-background')} />
+                {statusLabel(s)}
+              </Button>
+            );
+          })}
+        </fieldset>
         <Button
+          ref={trigger}
           type="button"
           variant="outline"
           size="sm"
@@ -322,8 +428,18 @@ export function EntryFilterBar(props: {
       </div>
 
       {open && (
-        <div id={panelId} className="card space-y-3 p-3">
-          {filters.length === 0 && !grouped && !linked && (
+        // biome-ignore lint/a11y/noStaticElementInteractions: Escape closes the panel from anywhere in it.
+        <div
+          id={panelId}
+          className="card space-y-3 p-3"
+          onKeyDown={(e) => {
+            // A select's own Escape (its menu closing) is handled before this and marked so.
+            if (e.key !== 'Escape' || e.defaultPrevented) return;
+            e.preventDefault();
+            close();
+          }}
+        >
+          {rows.length === 0 && !grouped && !linked && (
             <p className="text-muted-foreground text-sm">No filters. Add one to narrow the list.</p>
           )}
           {grouped && (
@@ -359,7 +475,7 @@ export function EntryFilterBar(props: {
               </Button>
             </div>
           )}
-          {filters.map((filter, i) => {
+          {rows.map((filter, i) => {
             const option = optionFor(filter.field);
             const ops = OPS_BY_CATEGORY[option.category];
             return (
@@ -374,11 +490,11 @@ export function EntryFilterBar(props: {
                       op: ok.some((o) => o.value === filter.op)
                         ? filter.op
                         : (ok[0]?.value ?? 'eq'),
-                      value: '',
+                      value: filter.op === 'exists' ? true : '',
                     });
                   }}
                 >
-                  <SelectTrigger aria-label="Filter field" className="h-8 w-[160px]">
+                  <SelectTrigger aria-label="Filter field" className="h-8 w-[160px] max-sm:flex-1">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -393,7 +509,10 @@ export function EntryFilterBar(props: {
                   value={filter.op}
                   onValueChange={(op) => patchFilter(i, { op: op as FilterOp })}
                 >
-                  <SelectTrigger aria-label="Filter operator" className="h-8 w-[140px]">
+                  <SelectTrigger
+                    aria-label="Filter operator"
+                    className="h-8 w-[140px] max-sm:flex-1"
+                  >
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>

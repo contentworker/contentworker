@@ -145,8 +145,13 @@ describe('content types overview', () => {
 
     const article = rowOf('Article');
     expect(await article.findByText('1,240')).toBeTruthy();
-    expect(article.getByText('3')).toBeTruthy();
-    expect(article.getByText('2')).toBeTruthy();
+    // Drafts and Changed open the type's list filtered to that status.
+    expect(article.getByRole('link', { name: '3 drafts in Article' }).getAttribute('href')).toBe(
+      '/content/article?sys.status=draft',
+    );
+    expect(
+      article.getByRole('link', { name: '2 changed entries in Article' }).getAttribute('href'),
+    ).toBe('/content/article?sys.status=changed');
     // A published schema is the normal case: no badge to say so.
     expect(article.queryByText('Published')).toBeNull();
     expect(screen.getByRole('link', { name: 'Article' }).getAttribute('href')).toBe(
@@ -155,6 +160,9 @@ describe('content types overview', () => {
 
     const author = rowOf('Author');
     expect(author.getByText('Draft')).toBeTruthy();
+    // An empty type says so once, not as a row of noughts, and links nowhere.
+    expect(author.getByText('No entries')).toBeTruthy();
+    expect(author.queryByText('Drafts')).toBeNull();
     expect(author.getByRole('button', { name: /^Publish “/ })).toBeTruthy();
   });
 

@@ -89,8 +89,22 @@ describe('the content nav', () => {
     ];
     renderNav();
     expect(screen.getByRole('link', { name: 'Event, Draft' })).toBeTruthy();
-    expect(screen.getByRole('link', { name: 'Event, Draft' }).textContent).toBe('Event');
+    // Seen too, on touch as at a pointer: the word beside the name, hidden from the name's reading.
+    const event = screen.getByRole('link', { name: 'Event, Draft' });
+    expect(event.textContent).toBe('EventDraft');
+    expect(event.querySelector('[aria-hidden="true"]:last-child')?.textContent).toBe('Draft');
     expect(screen.getByRole('link', { name: 'Post' }).getAttribute('aria-label')).toBeNull();
+  });
+
+  it('leaves the nav out beside the overview, which lists the types itself', () => {
+    renderNav('/content');
+    const nav = screen.getByRole('navigation', { name: 'Content types', hidden: true });
+    expect(nav.getAttribute('class')).not.toContain('@[40rem]:block');
+    cleanup();
+    renderNav('/content/faq');
+    expect(
+      screen.getByRole('navigation', { name: 'Content types' }).getAttribute('class'),
+    ).toContain('@[40rem]:block');
   });
 
   it('heads the lists with the groups’ own captions when every type is grouped', () => {
