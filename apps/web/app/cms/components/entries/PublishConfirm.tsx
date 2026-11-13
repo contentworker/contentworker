@@ -50,6 +50,11 @@ export interface PublishConfirmProps {
     readonly locale: string;
   };
   readonly busy: boolean;
+  /**
+   * The version Publish saved just before asking, when it saved unsaved edits first: said in the
+   * dialog, since the save's own toast sits under it: answering no still keeps that draft.
+   */
+  readonly savedAs?: number;
   onConfirm(): void;
   /**
    * Where focus goes once the dialog closes, when the control that asked may be gone (a row's
@@ -127,6 +132,12 @@ export function PublishConfirm(props: PublishConfirmProps) {
                         : 'Everything changed since the last publish goes live.'}
               </p>
               {hiddenOnly ? <HiddenChanges count={hiddenChanges} alone /> : null}
+              {props.savedAs !== undefined ? (
+                <p className="text-muted-foreground text-xs">
+                  Your edits were saved as a draft just now (v{props.savedAs}), whatever you answer
+                  here.
+                </p>
+              ) : null}
             </div>
           </AlertDialogDescription>
         </AlertDialogHeader>

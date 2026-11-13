@@ -59,12 +59,18 @@ import {
   AlertDialogTitle,
 } from '@contentworker/ui/alert-dialog';
 import { Button } from '@contentworker/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@contentworker/ui/dropdown-menu';
 import { cn } from '@contentworker/ui/lib/utils';
 import { Segmented, SegmentedItem } from '@contentworker/ui/segmented';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@contentworker/ui/sheet';
 import { Skeleton } from '@contentworker/ui/skeleton';
 import { useQueryClient } from '@tanstack/react-query';
-import { ListTree, Redo2, Undo2 } from 'lucide-react';
+import { Ellipsis, Link2, ListTree, Redo2, Undo2 } from 'lucide-react';
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Link, useBlocker, useNavigate, useParams, useSearchParams } from 'react-router';
 import { CanvasStage } from '~/cms/components/canvas/CanvasStage';
@@ -386,7 +392,8 @@ function Canvas({
   /** A save refused as stale; `publish` when it was Publish's save, which goes on once answered. */
   const [conflict, setConflict] = useState<{ theirs: number; publish?: boolean } | null>(null);
   /** Publish's confirm, open: the entry's status before publishing (what the dialog compares). */
-  const [publishing, setPublishing] = useState<{ status: string } | null>(null);
+  /** With `savedAs` when Publish saved the edits first, which the confirm says. */
+  const [publishing, setPublishing] = useState<{ status: string; savedAs?: number } | null>(null);
   /** What the server's block config (or override check) refused of a save, for those fields. */
   const [refused, setRefused] = useState<{
     fields: EntryFields;
@@ -904,7 +911,9 @@ function Canvas({
         // A save can leave a lock stale (its blocks gone): read which are now.
         void locksQuery.refetch();
         toast.success('Draft updated');
-        if (andPublish) setPublishing({ status: saved.entry.status });
+        if (andPublish) {
+          setPublishing({ status: saved.entry.status, savedAs: saved.entry.currentVersion });
+        }
       } catch (err) {
         const stale = staleSave(err);
         if (stale) {
@@ -943,6 +952,16 @@ function Canvas({
         throw err;
       }
     });
+  /** As the form's: the entry on the customer's site when the type names a preview URL. */
+  const copyPreviewLink = () =>
+    void run(async () => {
+      const link = await client.createPreviewLink(entryId, {
+        previewBaseUrl: window.location.origin,
+      });
+      await navigator.clipboard.writeText(link.frontendUrl ?? link.url);
+      toast.success('Preview link copied');
+    });
+
   // --- publishing ---------------------------------------------------------------------------
   // As the form publishes: with unsaved edits Publish saves first, then asks in the one publish
   // confirm (`PublishConfirm`), which shows what goes live. The person needs `content:publish`.
@@ -1324,7 +1343,8 @@ function Canvas({
               run: chosenRun,
               ...(blocksDirty
                 ? {
-                    held: 'Save the draft first: a lock holds the blocks as they are saved.',
+                    held: 'A lock holds the blocks as they are saved.',
+                    onSaveFirst: () => void save(),
                   }
                 : {}),
               busy,
@@ -1468,6 +1488,23 @@ function Canvas({
               >
                 <Redo2 aria-hidden="true" />
               </Button>
+            </>
+          ) : null}
+          {/* The form's ⋯ too, so both views end in the same row: ⋯, Save draft, Publish. */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button type="button" variant="ghost" size="icon-sm" aria-label="More entry actions">
+                <Ellipsis aria-hidden="true" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-56">
+              <DropdownMenuItem onSelect={copyPreviewLink}>
+                <Link2 /> Copy preview link
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          {editable ? (
+            <>
               {/* As in the form: Save draft steps back once the entry can publish; Publish is the
                   one primary verb, reading "Published" while the page is live and unchanged. */}
               <Button
@@ -1505,7 +1542,9 @@ function Canvas({
         ruledFields={ruledNames}
         carried={carriedInReview}
       />
-      {site.status.status === 'loading' || site.status.status === 'live' ? null : (
+      {site.status.status === 'loading' ||
+      site.status.status === 'live' ||
+      site.status.status === 'failed' ? null : (
         <div className="border-b px-4 py-3 sm:px-5">
           <SiteNotice status={site.status} origin={site.origin} onReload={site.reload} />
         </div>
@@ -1529,6 +1568,8 @@ function Canvas({
       >
         {wide && layersOpen ? (
           <aside aria-label="Layers" className="min-h-0 overflow-y-auto border-r p-3">
+            {/* The outline's slot captions are h3s: under this, not straight under the page's h1. */}
+            <h2 className="sr-only">Layers</h2>
             {layersBody}
           </aside>
         ) : null}
@@ -1554,6 +1595,22 @@ function Canvas({
                 <LoadingStatus>Loading the entry’s page…</LoadingStatus>
                 <Skeleton aria-hidden="true" className="absolute inset-0 rounded-none" />
               </>
+            ) : null}
+            {site.status.status === 'failed' ? (
+              // A page that didn't load says so where the page would be, over whatever the
+              // browser drew in the frame: the words, Try again, and the form, which still edits.
+              <div className="absolute inset-0 grid place-items-center overflow-y-auto bg-muted p-6">
+                <div className="flex w-full max-w-md flex-col gap-3">
+                  <SiteNotice status={site.status} origin={site.origin} onReload={site.reload} />
+                  <p className="text-muted-foreground text-sm">
+                    The blocks can still be edited in{' '}
+                    <Link to={formPath} className="underline underline-offset-2">
+                      the form
+                    </Link>{' '}
+                    or from Layers.
+                  </p>
+                </div>
+              </div>
             ) : null}
             {wide && dockOpenAt ? (
               // max-h-40 is DOCK_HEIGHT: what the chosen seam is kept clear of.
@@ -1582,7 +1639,7 @@ function Canvas({
             inert={!!dockOpenAt || undefined}
             className={cn(
               'min-h-0 overflow-y-auto border-l p-4 transition-opacity duration-(--motion-instant)',
-              dockOpenAt && 'opacity-50',
+              dockOpenAt && 'opacity-60',
             )}
           >
             {inspectorBody ?? pageBody}
@@ -1662,6 +1719,7 @@ function Canvas({
         }}
         title={title}
         status={publishing?.status}
+        {...(publishing?.savedAs !== undefined ? { savedAs: publishing.savedAs } : {})}
         compare={
           entryQuery.data ? { client, entry: entryQuery.data, locale: conn.locale } : undefined
         }

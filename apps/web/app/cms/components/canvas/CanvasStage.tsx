@@ -22,7 +22,7 @@
 import type { LiveRect } from '@contentworker/sdk-core/live-preview';
 import { cn } from '@contentworker/ui/lib/utils';
 import { GripVertical, Lock } from 'lucide-react';
-import { type RefObject, useEffect, useRef, useState } from 'react';
+import { type RefObject, useEffect, useId, useRef, useState } from 'react';
 import { edgeScroll, REDUCED_MS, STEP_MS } from '~/cms/lib/canvas/autoscroll';
 import type { DropVerdict } from '~/cms/lib/canvas/drag';
 import { slotFill } from '~/cms/lib/canvas/model';
@@ -92,7 +92,7 @@ interface Moving {
 export function CanvasStage(props: CanvasStageProps) {
   const coarse = useMedia('(pointer: coarse)');
   const still = useMedia('(prefers-reduced-motion: reduce)');
-  const stage = useRef<HTMLDivElement>(null);
+  const stage = useRef<HTMLElement>(null);
   const [moving, setMoving] = useState<Moving | null>(null);
   /** Where the press on the grip began, until it is a drag or a click. */
   const pressed = useRef<{ x: number; y: number } | null>(null);
@@ -184,12 +184,16 @@ export function CanvasStage(props: CanvasStageProps) {
 
   const drag = props.drag;
   const dragging = moving && drag ? drag : null;
+  const hintId = useId();
   return (
-    // Focusable, so focus has somewhere to land on the canvas when the dock closes from a seam.
-    <div
+    // Focusable, so focus has somewhere to land on the canvas when the dock closes from a seam;
+    // named, and it says how to reach the blocks from here (the seams are pointer-only).
+    <section
       ref={stage}
       data-canvas-stage
       data-dragging={dragging ? '' : undefined}
+      aria-label="The page"
+      aria-describedby={hintId}
       tabIndex={-1}
       className="relative size-full min-h-0 overflow-hidden bg-muted outline-none"
     >
@@ -296,8 +300,12 @@ export function CanvasStage(props: CanvasStageProps) {
           </span>
         ) : null}
       </div>
+      <p id={hintId} className="sr-only">
+        Press ↓ to choose a block, / to add one after it, or ? for every shortcut. Layers lists
+        every block.
+      </p>
       {props.children}
-    </div>
+    </section>
   );
 }
 
