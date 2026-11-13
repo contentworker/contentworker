@@ -132,6 +132,20 @@ background and nobody waits on a cold render. One call carries one mode; a tag p
 needs no invalidation. The edge cache is per worker, so the media worker drains its own queue with
 the same function (it has no `invalidate`, so it purges every message).
 
+After a batch, the consumer warms the cache (`apps/delivery/src/warm.ts`): for every
+space:environment whose tag it purged or invalidated, it requests the hottest URLs again through
+`Delivery` (at most `CACHE_WARM_URLS` each, default 200, six at a time, within a minute), so readers
+find them fresh rather than waiting on a cold render or being served the previous copy. Workers
+Caching is tiered, so one request refills the upper tier every colo's lower tier fills from. Which
+URLs: `Delivery` records each read it renders (a miss or a revalidation; it never runs on a hit) in
+the environment's `HotSetDO`, at most once per URL per isolate every five minutes, as the canonical
+URL and the reader's profile shape (space, kind, scopes, content grants: never a key id or a
+person), ranked by a hit count that halves every six hours, capped at 500 URLs and forgotten after
+seven days unread. Warming is best effort (a failure costs a reader one cold render) and is off
+when `CACHE_WARMING` is `false` or `HOT_SET` is unbound. It counts
+`contentworker_cache_warm_requests_total{outcome}` (the `cf-cache-status` it saw) and
+`contentworker_cache_warm_skipped_total`.
+
 A `301` from the deprecated `…/assets/:id/transform` (a redirect to an immutable media URL) is
 cached and tagged like a `200`.
 
@@ -191,6 +205,7 @@ delivery bind them by `script_name`) and handles:
 | `LiveHubDO`      | space:environment                                    | Live Content SSE fan-out                                            |
 | `SearchShardDO`  | space:environment:shard (8 default, `SEARCH_SHARDS`) | FTS5 lexical index (`packages/platform/src/do/search-shard.ts`)     |
 | `CostGuardDO`    | space                                                | AI request/token budget windows (interactive and background)        |
+| `HotSetDO`       | space:environment                                    | The Delivery URLs readers ask for, warmed after a purge             |
 | `RateLimiterDO`  | client IP                                            | Failed-authentication limiter                                       |
 | `AssistantAgent` | person (`usr_…`, or `local`)                         | The admin's assistant: its conversation, model turns and page edits |
 

@@ -45,7 +45,9 @@
   "durable_objects": {
     "bindings": [
       { "name": "LIVE_HUB", "class_name": "LiveHubDO", "script_name": "contentworker-engine" },
-      { "name": "SEARCH", "class_name": "SearchShardDO", "script_name": "contentworker-engine" }
+      { "name": "SEARCH", "class_name": "SearchShardDO", "script_name": "contentworker-engine" },
+      // The URLs readers ask for, recorded on a cache miss and requested again after a purge.
+      { "name": "HOT_SET", "class_name": "HotSetDO", "script_name": "contentworker-engine" }
     ]
   },
   "ratelimits": [
@@ -80,6 +82,10 @@
     // assets keep the api's signed URLs, without renditions or a srcset.
     "MEDIA_PUBLIC_URL": "",
     "DELIVERY_CACHE_TTL_SECONDS": "86400",
-    "DELIVERY_LIST_TTL_SECONDS": "3600"
+    "DELIVERY_LIST_TTL_SECONDS": "3600",
+    // After each purge or invalidation, request again the hottest URLs of the environments it
+    // touched (at most CACHE_WARM_URLS each), so readers find them fresh. "false" turns it off.
+    "CACHE_WARMING": "true",
+    "CACHE_WARM_URLS": "200"
   }
 }

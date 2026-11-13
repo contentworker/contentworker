@@ -107,6 +107,8 @@
       { "name": "LIVE_HUB", "class_name": "LiveHubDO" },
       { "name": "AI_BUDGET", "class_name": "CostGuardDO" },
       { "name": "SEARCH", "class_name": "SearchShardDO" },
+      // The Delivery URLs readers ask for, per space:environment (delivery records and warms them).
+      { "name": "HOT_SET", "class_name": "HotSetDO" },
       // The admin's assistant, one object per person (the api forwards its socket here).
       { "name": "ASSISTANT_AGENT", "class_name": "AssistantAgent" }
     ]
@@ -117,7 +119,8 @@
     { "tag": "v2", "new_sqlite_classes": ["RateLimiterDO"] },
     { "tag": "v3", "new_sqlite_classes": ["CostGuardDO"] },
     { "tag": "v4", "new_sqlite_classes": ["SearchShardDO"] },
-    { "tag": "v5", "new_sqlite_classes": ["AssistantAgent"] }
+    { "tag": "v5", "new_sqlite_classes": ["AssistantAgent"] },
+    { "tag": "v6", "new_sqlite_classes": ["HotSetDO"] }
   ],
   "workflows": [
     { "binding": "AGENT_WF", "name": "contentworker-agent", "class_name": "AgentWorkflow" },

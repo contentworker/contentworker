@@ -5,6 +5,7 @@ import type { ImagesBindingLike } from '@contentworker/adapters/images-cf';
 import type { WorkerLoaderBinding } from '@contentworker/adapters/plugins-cf-loader';
 import type { StreamBindingLike } from '@contentworker/adapters/video-stream';
 import type { CostGuardDO } from './do/cost-guard';
+import type { HotSetDO } from './do/hot-set';
 import type { LiveHubDO } from './do/live-hub';
 import type { RateLimiterDO } from './do/rate-limiter';
 import type { SearchShardDO } from './do/search-shard';
@@ -113,6 +114,15 @@ export interface EdgeEnv {
   readonly SEARCH?: DurableObjectNamespace<SearchShardDO>;
   /** Shards per space:environment (default 8). Changing it requires a reindex. */
   readonly SEARCH_SHARDS?: string;
+  /**
+   * The Delivery URLs readers ask for, one object per space:environment: recorded by the delivery
+   * Worker on a cache miss, and requested again after a purge or invalidation. Absent → no warming.
+   */
+  readonly HOT_SET?: DurableObjectNamespace<HotSetDO>;
+  /** `false` turns cache warming off (default on whenever HOT_SET is bound). */
+  readonly CACHE_WARMING?: string;
+  /** Most URLs warmed per space:environment after a purge (default 200). */
+  readonly CACHE_WARM_URLS?: string;
   /**
    * The deployment's resource suffix (scripts/fleet.ts renders it; `""` for the base names). Queue
    * consumers route by queue name, and a deployment's queues are named `<base><suffix>`.
@@ -326,7 +336,14 @@ export type BindingShapeChecks = [
 ];
 
 /** Durable Object namespaces an EdgeEnv may carry. */
-const DO_BINDINGS = ['LIVE_HUB', 'AUTH_LIMITER', 'AI_BUDGET', 'SEARCH', 'ASSISTANT_AGENT'] as const;
+const DO_BINDINGS = [
+  'LIVE_HUB',
+  'AUTH_LIMITER',
+  'AI_BUDGET',
+  'SEARCH',
+  'ASSISTANT_AGENT',
+  'HOT_SET',
+] as const;
 const pinned = new WeakSet<object>();
 
 /**

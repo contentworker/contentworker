@@ -24,11 +24,13 @@ import { liveRoutes } from '@contentworker/http/routes/live';
 import { recordDeadLetters } from '@contentworker/platform/dead-letters';
 import { type EdgeEnv, queueName, withJurisdiction } from '@contentworker/platform/env';
 import type { PurgeMessage } from '@contentworker/platform/messages';
+import { makeMetrics } from '@contentworker/platform/metrics';
 import { drain } from '@contentworker/platform/purge';
 import { wireEdge } from '@contentworker/platform/wire';
 import { clientCacheControl } from './client-cache';
 import { type Delivery, matches, PRINCIPAL_HEADER } from './delivery';
 import { canonicalUrl, visibilityProfile } from './profile';
+import { type Fetcher, warm, warmingEnabled } from './warm';
 
 export { Delivery } from './delivery';
 
@@ -164,9 +166,20 @@ export default {
       return;
     }
     const exports = (ctx as unknown as { exports: Exports }).exports;
-    await drain(batch as MessageBatch<PurgeMessage>, {
+    const drained = await drain(batch as MessageBatch<PurgeMessage>, {
       purge: (tags) => exports.Delivery.purge(tags),
       invalidate: (tags) => exports.Delivery.invalidate(tags),
     });
+    // Request the hottest URLs of what was just settled again, so readers find them fresh. After
+    // the messages are acked: warming is best effort and never sends a purge round again.
+    const settled = [...drained.purged, ...drained.invalidated];
+    if (settled.length > 0 && warmingEnabled(env)) {
+      const fetcher: Fetcher = (url, principal) =>
+        exports.Delivery.fetch(
+          new Request(url, { headers: { [PRINCIPAL_HEADER]: JSON.stringify(principal) } }),
+        );
+      const outcome = await warm(withJurisdiction(env), settled, fetcher, makeMetrics(env.METRICS));
+      console.log(JSON.stringify({ msg: 'cache warmed', tags: settled.length, ...outcome }));
+    }
   },
 } satisfies ExportedHandler<EdgeEnv>;

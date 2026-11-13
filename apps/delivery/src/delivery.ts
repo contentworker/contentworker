@@ -5,11 +5,12 @@ import { NotFoundError, type Principal } from '@contentworker/domain';
 import type { AuthDeps } from '@contentworker/http/api/auth';
 import { toHttpError } from '@contentworker/http/api/http';
 import { deliveryApp, deliveryRoutes } from '@contentworker/http/api/routes/delivery';
-import type { EdgeEnv } from '@contentworker/platform/env';
+import { type EdgeEnv, withJurisdiction } from '@contentworker/platform/env';
 import { deliveryScopeTag } from '@contentworker/platform/messages';
 import { wireEdge } from '@contentworker/platform/wire';
 import { hasGraphqlErrors } from './client-cache';
 import { fromCanonical } from './profile';
+import { recordRead } from './warm';
 
 /** Header the gateway uses to hand the authenticated principal to this entrypoint. */
 export const PRINCIPAL_HEADER = 'x-cw-delivery-principal';
@@ -101,6 +102,15 @@ export class Delivery extends WorkerEntrypoint<EdgeEnv> {
         'cache-tag',
         [...new Set([deliveryScopeTag(space, named), deliveryScopeTag(space, concrete)])].join(','),
       );
+      // Kept under the environment it resolves to: that is the tag a publish there settles.
+      const recorded = recordRead(
+        withJurisdiction(this.env),
+        { spaceId: space, environmentId: concrete },
+        request.url,
+        parsed.profile,
+        principal,
+      );
+      if (recorded) this.ctx.waitUntil(recorded);
       // The gateway never forwards a reader's conditional headers (it answers those itself), so an
       // If-None-Match here comes from Workers Caching revalidating an invalidated or expired copy:
       // a 304 tells it to keep the stored body. Anything else gets the full body, which is what

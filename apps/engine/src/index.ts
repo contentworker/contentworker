@@ -42,6 +42,7 @@ import { recordDeadLetters } from '@contentworker/platform/dead-letters';
 import { CostGuardDO, doAgentCostGuardFromEnv } from '@contentworker/platform/do/cost-guard';
 import { createDoEventBus, LiveHubDO } from '@contentworker/platform/do/live-hub';
 import { RateLimiterDO } from '@contentworker/platform/do/rate-limiter';
+import { HotSetDO } from '@contentworker/platform/do/hot-set';
 import { SearchShardDO } from '@contentworker/platform/do/search-shard';
 import { type EdgeEnv, queueName, withJurisdiction } from '@contentworker/platform/env';
 import {
@@ -92,6 +93,7 @@ export {
   AssistantAgent,
   CostGuardDO,
   EditorialWorkflow,
+  HotSetDO,
   LiveHubDO,
   RateLimiterDO,
   SearchShardDO,
