@@ -12,6 +12,11 @@
  * thumbnail isn't drawn (the admin's `img-src` takes no other origin), and neither is an asset
  * that's gone or fails to load: that block is its name, as before.
  *
+ * Its title says where the block goes in plain words ("Add after Hero", "Add the first block"), and
+ * under it which field and how full it is, in the words the seam and Layers use ("In Main · 3 of 8",
+ * `slotCount`); its accessible name
+ * keeps the field first ("Add to Main, after Hero"), as the seam it was opened from reads.
+ *
  * One tab stop: ← → (and ↑ ↓) move across the cards, Home and End go to either end, Enter or Space
  * puts the block in, Escape closes the dock.
  *
@@ -58,10 +63,11 @@ export function Dock({ place, catalog, onInsert, onClose, inSheet, ask }: DockPr
   const [active, setActive] = useState(0);
   const where =
     slot.blocks.length === 0
-      ? 'empty'
+      ? null
       : index === 0
         ? `before ${slot.blocks[0]?.name ?? 'the first block'}`
         : `after ${slot.blocks[index - 1]?.name ?? 'the last block'}`;
+  const title = where ? `Add ${where}` : 'Add the first block';
 
   const cards = () => [...(row.current?.querySelectorAll<HTMLElement>('[data-dock-item]') ?? [])];
   const focusCard = (at: number) => {
@@ -102,8 +108,7 @@ export function Dock({ place, catalog, onInsert, onClose, inSheet, ask }: DockPr
   let n = -1;
   return (
     <section
-      aria-label={inSheet ? `Add to ${slot.name}` : undefined}
-      aria-labelledby={inSheet ? undefined : titleId}
+      aria-label={`Add to ${slot.name}${where ? `, ${where}` : ''}`}
       ref={box}
       tabIndex={-1}
       data-dock={slot.path}
@@ -121,11 +126,17 @@ export function Dock({ place, catalog, onInsert, onClose, inSheet, ask }: DockPr
         {/* In a sheet, the sheet's title names it. */}
         {inSheet ? null : (
           <h2 id={titleId} className="section-title">
-            Add to {slot.name}
+            {title}
           </h2>
         )}
         <span className="text-muted-foreground text-xs tabular-nums">
-          {slotCount(slot)} · {where}
+          {/* A sheet's title already names the field ("Add to Main"): there, the place. */}
+          {inSheet
+            ? where
+              ? `${where[0]?.toUpperCase()}${where.slice(1)}`
+              : 'First block'
+            : `In ${slot.name}`}{' '}
+          · {slotCount(slot)}
         </span>
         {/* Only where the dock offers blocks: Coworker is asked for what a person could add. */}
         {ask && items.length > 0 ? (

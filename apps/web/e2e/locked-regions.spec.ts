@@ -151,6 +151,8 @@ test('a section locked on the canvas keeps its place, refuses a save that breaks
   const tree = page.getByRole('tree', { name: 'Main blocks' });
   await tree.getByRole('treeitem', { name: /^Section/ }).click();
   await expect(settings.getByRole('button', { name: 'Remove Section' })).toBeVisible();
+  // Locking is folded away under the block's settings until asked for.
+  await settings.getByRole('button', { name: 'Lock…' }).click();
   await expect(
     settings.getByRole('radio', { name: 'This block and everything inside' }),
   ).toBeChecked();

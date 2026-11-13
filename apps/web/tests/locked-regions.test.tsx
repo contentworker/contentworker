@@ -295,11 +295,16 @@ describe('a locked region on the canvas', () => {
 });
 
 describe('locking from the inspector', () => {
+  /** Lock is folded under one quiet row until asked for (or a run is chosen). */
+  const unfoldLock = () => act(() => screen.getByRole('button', { name: 'Lock…' }).click());
+
   it('locks the selected block, everything inside by default, at the canvas’s version', async () => {
     client.setEntryBlockLocks.mockResolvedValue({ ...locksOf([sectionLock]), unchanged: false });
     await setup();
     openLayers();
     act(() => layer('s1').click());
+    expect(screen.queryByRole('button', { name: 'Lock' })).toBeNull();
+    unfoldLock();
     const lockButton = await screen.findByRole('button', { name: 'Lock' });
     expect(screen.getByRole('radio', { name: 'This block and everything inside' })).toHaveProperty(
       'ariaChecked',
@@ -375,6 +380,7 @@ describe('locking from the inspector', () => {
     openLayers();
     act(() => layer('a1').click());
     act(() => screen.getByRole('button', { name: 'Move Call to action up' }).click());
+    unfoldLock();
     const lockButton = screen.getByRole('button', { name: 'Lock' }) as HTMLButtonElement;
     expect(lockButton.disabled).toBe(true);
     expect(
@@ -391,6 +397,7 @@ describe('locking from the inspector', () => {
     await setup();
     openLayers();
     act(() => layer('h1').click());
+    unfoldLock();
     act(() => screen.getByRole('button', { name: 'Lock' }).click());
     expect(
       await screen.findByText('Part of this is already in a locked region. Unlock that first.'),
@@ -407,6 +414,7 @@ describe('locking from the inspector', () => {
     const reads = client.getEntry.mock.calls.length;
     openLayers();
     act(() => layer('h1').click());
+    unfoldLock();
     act(() => screen.getByRole('button', { name: 'Lock' }).click());
     expect(
       await screen.findByText(/Someone changed this entry since the canvas opened it/),

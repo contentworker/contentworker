@@ -164,7 +164,8 @@ test('a seam opens the dock with only what fits there; a block put in shows unsa
   const blocks = site.locator('#app > [data-cw-slot] > section');
   await expect(blocks).toHaveText(['Welcome', 'cta', /^Features/, 'Start']);
   await expect(page.getByText('Unsaved changes')).toBeVisible();
-  await expect(page.getByRole('heading', { level: 2, name: 'Call to action' })).toBeFocused();
+  // Its first empty field has focus, ready to type.
+  await expect(page.getByRole('textbox', { name: /^Label/ })).toBeFocused();
   await scan(page, testInfo, 'inspector');
 
   // Undo takes it out of the page; redo puts it back.
@@ -190,6 +191,47 @@ test('a seam opens the dock with only what fits there; a block put in shows unsa
     'cta',
   ]);
   expect(items[0]?.fields.body['en-US']?.[1]?.label).toBe('Read more');
+});
+
+test('Form and Canvas are one draft: switching carries unsaved edits, and the canvas publishes', async ({
+  page,
+  request,
+}, testInfo) => {
+  const { id, site } = await openCanvas(page, request, `Views ${testInfo.workerIndex}`);
+  await page.getByRole('button', { name: 'Layers' }).click();
+  await page
+    .getByRole('tree', { name: 'Main blocks' })
+    .getByRole('treeitem', { name: /^Hero/ })
+    .click();
+  await page.getByRole('textbox', { name: /^Heading/ }).fill('Hello from the canvas');
+  await expect(page.getByText('Unsaved changes')).toBeVisible();
+
+  // To the form: no question, and the edit is there, unsaved.
+  await page.getByRole('radio', { name: 'Form' }).click();
+  await expect(page).toHaveURL(new RegExp(`/content/canvasPage/${id}$`));
+  await expect(page.getByRole('alertdialog')).toHaveCount(0);
+  await expect(page.getByText('Unsaved changes')).toBeVisible();
+  await expect(page.getByRole('textbox', { name: 'Heading' }).first()).toHaveValue(
+    'Hello from the canvas',
+  );
+
+  // And back: still unsaved, still on the page.
+  await page.getByRole('radio', { name: 'Canvas' }).click();
+  await expect(page.getByRole('alertdialog')).toHaveCount(0);
+  await expect(site.locator('#app > [data-cw-slot] > section').first()).toHaveText(
+    'Hello from the canvas',
+  );
+  await expect(page.getByText('Unsaved changes')).toBeVisible();
+
+  // Publish saves first, then asks in the one publish confirm.
+  await page.getByRole('button', { name: 'Publish', exact: true }).click();
+  const confirm = page.getByRole('alertdialog');
+  await expect(confirm.getByText(/^Publish “/)).toBeVisible();
+  await confirm.getByRole('button', { name: 'Publish entry' }).click();
+  await expect(page.getByRole('button', { name: 'Published' })).toBeDisabled();
+  const live = await api(request, 'GET', `/preview/${SPACE}/main/entries?sys.id=${id}&limit=1`);
+  const { items } = (await live.json()) as { items: { status: string }[] };
+  expect(items[0]?.status).toBe('published');
 });
 
 test('Layers reaches every block by keyboard', async ({ page, request }, testInfo) => {
@@ -661,7 +703,11 @@ test('the canvas sets a prop’s override at the breakpoint in view, and it save
   });
   await expect(widths.getByRole('radio', { name: 'Base, 390 pixels' })).toBeChecked();
   await widths.getByRole('radio', { name: 'Tablet, 768 pixels' }).click();
-  await page.getByRole('button', { name: 'Layers' }).click();
+  // Layers was open before the reload: it is open again, remembered per browser.
+  await expect(page.getByRole('button', { name: 'Layers' })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
   const hero = page.getByRole('treeitem', { name: /^Hero/ });
   await expect(hero.getByRole('img', { name: 'Has overrides at Tablet' })).toBeVisible();
   await hero.click();

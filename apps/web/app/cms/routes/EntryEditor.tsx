@@ -73,6 +73,14 @@ import { configRefusal, rulesOver } from '../lib/block-rules';
 import { useBlockThumbnails } from '../lib/block-thumbnails';
 import { canvasAvailable } from '../lib/canvas/model';
 import { useClient } from '../lib/client-context';
+import {
+  changedFields,
+  draftId,
+  handOffDraft,
+  isOtherView,
+  peekDraft,
+  settleDraft,
+} from '../lib/draft-handoff';
 import { fieldAccessFor, withoutHiddenFields, writableFields } from '../lib/field-access';
 import { dateTime, toMs } from '../lib/format';
 import { capabilitiesFor, SELECT_ONLY } from '../lib/live-preview/host';
@@ -193,10 +201,20 @@ export function EntryEditor() {
     dirtyRef.current = d;
     setDirty(d);
   };
-  const blocker = useBlocker(
-    ({ currentLocation, nextLocation }) =>
-      dirtyRef.current && currentLocation.pathname !== nextLocation.pathname,
-  );
+  // The canvas is the same draft's other view: the form's edits go with it, nothing to discard.
+  const blocker = useBlocker(({ currentLocation, nextLocation }) => {
+    if (!dirtyRef.current || currentLocation.pathname === nextLocation.pathname) return false;
+    if (!isOtherView(currentLocation.pathname, nextLocation.pathname)) return true;
+    const fields = draftRef.current?.fields;
+    const base = baseRef.current;
+    if (!entryId || !fields || !base) return true;
+    handOffDraft(
+      draftId(conn.space, conn.environment, entryId),
+      base.version,
+      changedFields(fields, base.fields),
+    );
+    return false;
+  });
   const blockerProceededRef = useRef(false);
   useEffect(() => {
     if (!dirty) return;
@@ -216,7 +234,12 @@ export function EntryEditor() {
   // The version the form was filled from, and then the version of its last save: what a save is
   // held to. A refetch of the entry (someone else's save) never moves it.
   const [baseVersion, setBaseVersion] = useState<number | null>(null);
-  if (baseVersion === null && meta) setBaseVersion(meta.version);
+  // The canvas's unsaved edits, when the form was opened from it: they open here as the form's
+  // own, held to the version the canvas had (`cms/lib/draft-handoff.ts`).
+  const handedId = entryId ? draftId(conn.space, conn.environment, entryId) : null;
+  const [handedFor] = useState(() => (handedId ? peekDraft(handedId) : null));
+  const handed = handedFor && handedFor.id === handedId ? handedFor : null;
+  if (baseVersion === null && meta) setBaseVersion(handed?.version ?? meta.version);
   /** A save refused as stale: the dialog's question, with the fields it would have saved. */
   const [conflict, setConflict] = useState<{
     theirs: number;
@@ -634,6 +657,19 @@ export function EntryEditor() {
   const [siteSelected, setSiteSelected] = useState<string | null>(null);
   const draftRef = useRef(draft);
   draftRef.current = draft;
+  // What the form's draft is over: what a handed-off draft names as changed, and is held to.
+  const baseRef = useRef<{ version: number; fields: EntryFields } | null>(null);
+  baseRef.current =
+    baseVersion !== null && initial ? { version: baseVersion, fields: initial } : null;
+  // The canvas's edits merge in once the form is drawn, as any other merge: unsaved, and marked so.
+  const handedIn = useRef(false);
+  const formDrawn = initial !== null && accessKnown && !swapping;
+  useEffect(() => {
+    if (!handed || handedIn.current || !formDrawn) return;
+    handedIn.current = true;
+    settleDraft(handed);
+    applyPatch(handed.fields);
+  });
   const formBox = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const box = formBox.current;

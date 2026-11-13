@@ -69,9 +69,14 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { Link, useBlocker, useNavigate, useParams, useSearchParams } from 'react-router';
 import { CanvasStage } from '~/cms/components/canvas/CanvasStage';
 import { Dock } from '~/cms/components/canvas/Dock';
-import { Inspector, type InspectorTab } from '~/cms/components/canvas/Inspector';
+import {
+  focusInspectorStart,
+  Inspector,
+  type InspectorTab,
+} from '~/cms/components/canvas/Inspector';
 import { Layers } from '~/cms/components/canvas/Layers';
 import { ProposalLine } from '~/cms/components/canvas/ProposalLine';
+import { PublishConfirm } from '~/cms/components/entries/PublishConfirm';
 import { SaveConflictDialog } from '~/cms/components/entries/SaveConflictDialog';
 import { LoadingStatus } from '~/cms/components/loading';
 import { SiteNotice, useWidthPreset, WidthSwitch } from '~/cms/components/pane/SitePane';
@@ -143,6 +148,14 @@ import {
 } from '~/cms/lib/canvas/seams';
 import { useClient } from '~/cms/lib/client-context';
 import { useMedia, WIDE } from '~/cms/lib/device';
+import {
+  changedFields,
+  draftId,
+  handOffDraft,
+  isOtherView,
+  peekDraft,
+  settleDraft,
+} from '~/cms/lib/draft-handoff';
 import { fieldAccessFor, withoutHiddenFields, writableFields } from '~/cms/lib/field-access';
 import type { FrameGeometry } from '~/cms/lib/live-preview/frame-channel';
 import { capabilitiesFor, SELECT_ONLY } from '~/cms/lib/live-preview/host';
@@ -337,17 +350,25 @@ function Canvas({
     history: CanvasHistory;
   } | null>(null);
   const [reloading, setReloading] = useState(false);
+  // The form's unsaved edits, when the canvas was opened from it: they open here as the canvas's
+  // own, held to the version the form had (`cms/lib/draft-handoff.ts`).
+  const handedId = draftId(conn.space, conn.environment, entryId);
+  const [handed] = useState(() => peekDraft(handedId));
   useEffect(() => {
     const data = entryQuery.data;
     if (!data || (doc && !reloading)) return;
-    const fields = data.fields as EntryFields;
+    const stored = data.fields as EntryFields;
+    const carried = !doc && handed ? handed : null;
+    // Taken in only now, as it becomes the canvas's draft: a canvas left before the entry loaded
+    // leaves it waiting, and the form takes it back.
+    if (carried) settleDraft(carried);
     setDoc({
-      base: { version: data.version, fields, status: data.status },
-      fields,
+      base: { version: carried?.version ?? data.version, fields: stored, status: data.status },
+      fields: carried ? { ...stored, ...carried.fields } : stored,
       history: EMPTY_HISTORY,
     });
     setReloading(false);
-  }, [entryQuery.data, doc, reloading]);
+  }, [entryQuery.data, doc, reloading, handed]);
   const docRef = useRef(doc);
   docRef.current = doc;
 
@@ -358,11 +379,14 @@ function Canvas({
   const [lockRefused, setLockRefused] = useState<readonly string[]>([]);
   const [dockAt, setDockAt] = useState<{ path: string; index: number } | null>(null);
   const [inspectorOpen, setInspectorOpen] = useState(false);
-  const [layersOpen, setLayersOpen] = useState(false);
+  const [layersOpen, setLayersOpen] = useLayersOpen();
   const [tab, setTab] = useState<InspectorTab>('content');
   const [kept, setKept] = useState<ReadonlySet<string>>(new Set());
   const [draftStarted, setDraftStarted] = useState(false);
-  const [conflict, setConflict] = useState<{ theirs: number } | null>(null);
+  /** A save refused as stale; `publish` when it was Publish's save, which goes on once answered. */
+  const [conflict, setConflict] = useState<{ theirs: number; publish?: boolean } | null>(null);
+  /** Publish's confirm, open: the entry's status before publishing (what the dialog compares). */
+  const [publishing, setPublishing] = useState<{ status: string } | null>(null);
   /** What the server's block config (or override check) refused of a save, for those fields. */
   const [refused, setRefused] = useState<{
     fields: EntryFields;
@@ -609,8 +633,13 @@ function Canvas({
     setDockAt(null);
     setSelected(made._key as string);
     setInspectorOpen(true);
+    // A new block's fields are on Content, whichever tab the last block was left on.
+    setTab('content');
+    focusNewField.current = true;
     setFocusInspector(true);
   };
+  /** The next inspector focus is a new block's: its first empty field rather than the heading. */
+  const focusNewField = useRef(false);
   /**
    * Ask Coworker to fill the dock's place: the blocks the dock offers there, the slot's bounds and
    * the blocks around it go with that one message, and Coworker's answer is a card to confirm.
@@ -799,7 +828,8 @@ function Canvas({
   };
 
   // --- saving -------------------------------------------------------------------------------
-  const save = (over?: number) =>
+  /** Saves the draft; with `andPublish`, Publish's confirm opens once it has saved. */
+  const save = (over?: number, andPublish = false) =>
     run(async () => {
       const d = docRef.current;
       if (!d || !editable || !contentType) return;
@@ -820,7 +850,7 @@ function Canvas({
       if (blocking.length > 0) {
         showChecks();
         toast.error(
-          `Fix ${blocking.length} ${blocking.length === 1 ? 'check' : 'checks'} to save the draft`,
+          `Fix ${blocking.length} ${blocking.length === 1 ? 'check' : 'checks'} to ${andPublish ? 'publish' : 'save the draft'}`,
         );
         return;
       }
@@ -874,10 +904,12 @@ function Canvas({
         // A save can leave a lock stale (its blocks gone): read which are now.
         void locksQuery.refetch();
         toast.success('Draft updated');
+        if (andPublish) setPublishing({ status: saved.entry.status });
       } catch (err) {
         const stale = staleSave(err);
         if (stale) {
-          setConflict(stale);
+          // Publish waits on the answer: saving over theirs goes on to publish, as was asked.
+          setConflict({ ...stale, publish: andPublish });
           return;
         }
         // The config, or a lock, changed since the canvas read it: said on the blocks and slots
@@ -911,6 +943,61 @@ function Canvas({
         throw err;
       }
     });
+  // --- publishing ---------------------------------------------------------------------------
+  // As the form publishes: with unsaved edits Publish saves first, then asks in the one publish
+  // confirm (`PublishConfirm`), which shows what goes live. The person needs `content:publish`.
+  const canPublish = !!scopes?.includes(SCOPES.contentPublish);
+  const live = doc?.base.status === 'published' && !dirty;
+  const requestPublish = () => {
+    const d = docRef.current;
+    if (!d || live) return;
+    if (dirtyRef.current) {
+      void save(undefined, true);
+      return;
+    }
+    setPublishing({ status: d.base.status });
+  };
+  const confirmPublish = (status: string) =>
+    run(async () => {
+      const agg = await client.publishEntry(entryId);
+      setPublishing(null);
+      const d = docRef.current;
+      if (d) {
+        const next = { ...d, base: { ...d.base, status: agg.status } };
+        docRef.current = next;
+        setDoc(next);
+      }
+      // Still editing here: the canvas doesn't turn into the published version's review.
+      setDraftStarted(true);
+      void queryClient.invalidateQueries({ queryKey: keys.entry(entryId) });
+      void queryClient.invalidateQueries({ queryKey: keys.entryActivityPages(entryId) });
+      void queryClient.invalidateQueries({ queryKey: keys.entriesRoot });
+      // Nothing was live before: unpublishing is the exact inverse, so the toast offers it.
+      toast.success(
+        `Published v${agg.publishedVersion ?? agg.currentVersion}`,
+        status === 'draft'
+          ? {
+              action: {
+                label: 'Undo',
+                onAction: () =>
+                  void run(async () => {
+                    const back = await client.unpublishEntry(entryId);
+                    const now = docRef.current;
+                    if (now) {
+                      const reset = { ...now, base: { ...now.base, status: back.status } };
+                      docRef.current = reset;
+                      setDoc(reset);
+                    }
+                    void queryClient.invalidateQueries({ queryKey: keys.entry(entryId) });
+                    void queryClient.invalidateQueries({ queryKey: keys.entriesRoot });
+                    toast.success(`“${title}” is back to draft`);
+                  }),
+              },
+            }
+          : undefined,
+      );
+    });
+
   const loadTheirs = () => {
     setConflict(null);
     setSelected(null);
@@ -920,10 +1007,16 @@ function Canvas({
   };
 
   // --- leaving with unsaved changes ------------------------------------------------------------
-  const blocker = useBlocker(
-    ({ currentLocation, nextLocation }) =>
-      dirtyRef.current && currentLocation.pathname !== nextLocation.pathname,
-  );
+  // The form is the same draft's other view: the canvas's edits go with it, nothing to discard.
+  const blocker = useBlocker(({ currentLocation, nextLocation }) => {
+    if (!dirtyRef.current || currentLocation.pathname === nextLocation.pathname) return false;
+    if (!isOtherView(currentLocation.pathname, nextLocation.pathname)) return true;
+    const d = docRef.current;
+    if (d) handOffDraft(handedId, d.base.version, changedFields(d.fields, d.base.fields));
+    return false;
+  });
+  // Edits the form handed over that this canvas can't save (it reviews here): said in place.
+  const carriedInReview = dirty && review !== null;
   const leaving = useRef(false);
   useEffect(() => {
     if (!dirty) return;
@@ -1037,12 +1130,18 @@ function Canvas({
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-  // A block just put in from the dock: its settings take focus (the dock went with the insert).
+  // A block just put in from the dock: its first empty field takes focus, ready to type (the dock
+  // went with the insert). Opened from Layers, its settings' heading does: the keyboard was there.
   useEffect(() => {
     if (!focusInspector) return;
-    const heading = document.querySelector<HTMLElement>('[data-inspector-heading]');
-    if (!heading) return;
-    heading.focus();
+    if (focusNewField.current) {
+      if (!focusInspectorStart()) return;
+      focusNewField.current = false;
+    } else {
+      const heading = document.querySelector<HTMLElement>('[data-inspector-heading]');
+      if (!heading) return;
+      heading.focus();
+    }
     setFocusInspector(false);
   });
 
@@ -1126,6 +1225,14 @@ function Canvas({
         })
       : [];
   const title = titleOf(contentType, fields, defaultLocale) ?? 'Untitled entry';
+  // The tab names the page, as the form's does: several canvases open read apart.
+  useEffect(() => {
+    const prev = document.title;
+    document.title = `${title} · Canvas · ContentWorker admin`;
+    return () => {
+      document.title = prev;
+    };
+  }, [title]);
   const history = doc?.history ?? EMPTY_HISTORY;
   const loading = site.status.status === 'loading';
   const dockOpenAt = dockPlace && editable ? dockPlace : undefined;
@@ -1317,6 +1424,16 @@ function Canvas({
           {said}
         </span>
         <div className="ml-auto flex flex-wrap items-center gap-2">
+          {/* The device in view, in words: its icon names it only on hover and aloud. (The
+              catalog's breakpoints are named on the switch itself.) */}
+          {preset.device ? (
+            <span
+              aria-hidden="true"
+              className="hidden text-muted-foreground text-xs tabular-nums xl:inline"
+            >
+              {preset.label} · {preset.width}px
+            </span>
+          ) : null}
           <WidthSwitch presets={presets} value={preset} onChange={setPreset} />
           <Button
             type="button"
@@ -1351,10 +1468,23 @@ function Canvas({
               >
                 <Redo2 aria-hidden="true" />
               </Button>
-              <Button type="button" size="sm" disabled={busy || !dirty} onClick={() => void save()}>
+              {/* As in the form: Save draft steps back once the entry can publish; Publish is the
+                  one primary verb, reading "Published" while the page is live and unchanged. */}
+              <Button
+                type="button"
+                size="sm"
+                variant={canPublish ? 'outline' : 'default'}
+                disabled={busy || !dirty}
+                onClick={() => void save()}
+              >
                 Save draft
               </Button>
             </>
+          ) : null}
+          {canPublish && (editable || live) ? (
+            <Button type="button" size="sm" disabled={busy || live} onClick={requestPublish}>
+              {live ? 'Published' : 'Publish'}
+            </Button>
           ) : null}
         </div>
       </header>
@@ -1373,6 +1503,7 @@ function Canvas({
         onStartDraft={() => setDraftStarted(true)}
         formPath={formPath}
         ruledFields={ruledNames}
+        carried={carriedInReview}
       />
       {site.status.status === 'loading' || site.status.status === 'live' ? null : (
         <div className="border-b px-4 py-3 sm:px-5">
@@ -1410,7 +1541,8 @@ function Canvas({
             seams={seams}
             chosenSeam={chosenSeam}
             hovered={editable || site.live ? hoverRect : null}
-            selected={selectedRect}
+            // Adding is one focus: the seam chosen. The selection steps back until the dock closes.
+            selected={dockOpenAt ? null : selectedRect}
             regions={regions}
             ghosts={ghostBoxes}
             onChooseSeam={(seam) => openDock(seam)}
@@ -1446,7 +1578,12 @@ function Canvas({
         {wide ? (
           <aside
             aria-label={block ? 'Block settings' : 'Page'}
-            className="min-h-0 overflow-y-auto border-l p-4"
+            // While the dock is open the settings wait: what is being added is the one question.
+            inert={!!dockOpenAt || undefined}
+            className={cn(
+              'min-h-0 overflow-y-auto border-l p-4 transition-opacity duration-(--motion-instant)',
+              dockOpenAt && 'opacity-50',
+            )}
           >
             {inspectorBody ?? pageBody}
           </aside>
@@ -1512,8 +1649,25 @@ function Canvas({
         onLoadTheirs={loadTheirs}
         onSaveOver={() => {
           const theirs = conflict?.theirs;
+          const andPublish = conflict?.publish === true;
           setConflict(null);
-          if (theirs) void save(theirs);
+          if (theirs) void save(theirs, andPublish);
+        }}
+      />
+
+      <PublishConfirm
+        open={publishing !== null}
+        onOpenChange={(open) => {
+          if (!open) setPublishing(null);
+        }}
+        title={title}
+        status={publishing?.status}
+        compare={
+          entryQuery.data ? { client, entry: entryQuery.data, locale: conn.locale } : undefined
+        }
+        busy={busy}
+        onConfirm={() => {
+          if (publishing) void confirmPublish(publishing.status);
         }}
       />
 
@@ -1554,6 +1708,47 @@ function Canvas({
   );
 }
 
+const LAYERS_KEY = 'cw.canvas.layers';
+
+/**
+ * Whether Layers is open at lg, remembered per browser: someone who works from the outline finds
+ * it open again. Below lg it is a sheet, opened by tap and never on arrival.
+ */
+function useLayersOpen(): [boolean, (next: boolean | ((open: boolean) => boolean)) => void] {
+  const wide = useMedia(WIDE);
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    // Below lg the same state opens the sheet: narrowing (an iPad turned upright, Split View)
+    // closes it rather than putting a sheet over the page unasked.
+    if (!wide) {
+      setOpen(false);
+      return;
+    }
+    try {
+      if (localStorage.getItem(LAYERS_KEY) === 'open') setOpen(true);
+    } catch {
+      // Storage blocked: closed, as on a first visit.
+    }
+  }, [wide]);
+  const set = useCallback(
+    (next: boolean | ((open: boolean) => boolean)) =>
+      setOpen((was) => {
+        const now = typeof next === 'function' ? next(was) : next;
+        if (wide) {
+          try {
+            if (now) localStorage.setItem(LAYERS_KEY, 'open');
+            else localStorage.removeItem(LAYERS_KEY);
+          } catch {
+            // Storage blocked: the choice lasts for this page.
+          }
+        }
+        return now;
+      }),
+    [wide],
+  );
+  return [open, set];
+}
+
 function titleOf(
   contentType: { displayField?: string | null } | undefined,
   fields: EntryFields,
@@ -1576,8 +1771,22 @@ function Notices(props: {
   formPath: string;
   /** The blocks fields the person's role makes read-only, by name (none named when hidden). */
   ruledFields: readonly string[];
+  /** The form's unsaved edits came along, and this canvas can't save them. */
+  carried: boolean;
 }) {
   const lines: React.ReactNode[] = [];
+  if (props.carried) {
+    lines.push(
+      <span key="carried">
+        Your unsaved edits from the form are shown here, but can’t be saved from this view. Save
+        them in{' '}
+        <Link to={props.formPath} className="underline underline-offset-2">
+          the form
+        </Link>
+        .
+      </span>,
+    );
+  }
   if (props.review === 'narrow') {
     lines.push(
       <span key="narrow">
@@ -1700,7 +1909,8 @@ function PagePanel(props: {
       {props.editable ? (
         <p className="max-w-measure text-muted-foreground text-sm">
           Choose a seam between blocks to see what fits there, or a block to edit it. Press{' '}
-          <kbd className="font-mono">/</kbd> to add after the selected block.
+          <kbd className="font-mono">/</kbd> to add after the selected block, and{' '}
+          <kbd className="font-mono">?</kbd> for every shortcut.
         </p>
       ) : null}
       {props.stale.length > 0 ? (

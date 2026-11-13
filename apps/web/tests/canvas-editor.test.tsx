@@ -37,6 +37,8 @@ const client = {
   listAssets: vi.fn(async () => ({ items: [] })),
   suggestEntries: vi.fn(async () => []),
   updateEntry: vi.fn(),
+  publishEntry: vi.fn(),
+  unpublishEntry: vi.fn(),
 };
 vi.mock('~/cms/lib/client-context', () => ({
   useClient: () => ({
@@ -51,6 +53,9 @@ vi.mock('~/cms/lib/client-context', () => ({
   }),
 }));
 
+const { clearHandedDraft, draftId, handOffDraft, peekDraft } = await import(
+  '~/cms/lib/draft-handoff'
+);
 const { ToastProvider } = await import('~/cms/lib/toast');
 const { EntryCanvas } = await import('~/cms/routes/EntryCanvas');
 
@@ -73,6 +78,7 @@ afterEach(() => {
   cleanup();
   vi.clearAllMocks();
   localStorage.clear();
+  clearHandedDraft();
 });
 
 function entry(over: Partial<PreviewEntry> = {}): PreviewEntry {
@@ -86,8 +92,9 @@ function entry(over: Partial<PreviewEntry> = {}): PreviewEntry {
   };
 }
 
-async function setup(over: Partial<PreviewEntry> = {}) {
-  client.getEntry.mockResolvedValue(entry(over));
+async function setup(over: Partial<PreviewEntry> = {}, opts: { loading?: boolean } = {}) {
+  if (opts.loading) client.getEntry.mockReturnValue(new Promise(() => {}));
+  else client.getEntry.mockResolvedValue(entry(over));
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const router = createMemoryRouter(
     [
@@ -178,6 +185,10 @@ describe('seams and the dock', () => {
     act(() => seam('body#1').click());
     const top = dock();
     expect(within(top).getByText('after Hero', { exact: false })).toBeTruthy();
+    // Where it goes in plain words, the field and its room under it; named field first.
+    expect(within(top).getByRole('heading', { level: 2 }).textContent).toBe('Add after Hero');
+    expect(top.getAttribute('aria-label')).toBe('Add to Main, after Hero');
+    expect(within(top).getByText(/^In Main · /)).toBeTruthy();
     const offered = [...top.querySelectorAll('[data-dock-item]')].map((b) =>
       b.getAttribute('data-dock-item'),
     );
@@ -319,8 +330,8 @@ describe('editing on the canvas', () => {
     act(() => (dock().querySelector('[data-dock-item="cta"]') as HTMLElement).click());
 
     expect(screen.getByText('Unsaved changes')).toBeTruthy();
-    // Selected, and its settings have focus.
-    expect(document.activeElement?.textContent).toBe('Call to action');
+    // Selected, and its first empty field has focus, ready to type.
+    expect(document.activeElement).toBe(screen.getByLabelText(/^Label/));
     // The page was sent the insert as a key-addressed op, before anything was saved.
     const sent = f.posted.at(-2) as { type: string; edits: { blocks: { ops: unknown[] }[] } };
     expect(sent.type).toBe('entry');
@@ -512,6 +523,134 @@ describe('saving', () => {
     act(() => within(dialog).getByRole('button', { name: 'Save mine over it' }).click());
     await waitFor(() => expect(client.updateEntry).toHaveBeenCalledTimes(2));
     expect(client.updateEntry.mock.calls[1]?.[2]).toEqual({ expectedVersion: 5 });
+  });
+
+  it('offers Publish only to someone who may publish', async () => {
+    await setup();
+    await screen.findByRole('heading', { level: 1, name: 'Home' });
+    expect(screen.queryByRole('button', { name: 'Publish' })).toBeNull();
+  });
+
+  it('publishes from the canvas: unsaved edits save first, then the publish confirm asks', async () => {
+    client.getSpaceAccess.mockResolvedValueOnce({
+      subject: 'me',
+      scopes: ['content:write', 'content:publish'],
+    });
+    client.updateEntry.mockResolvedValue(saved(4));
+    client.publishEntry.mockResolvedValue({
+      ...saved(4).entry,
+      status: 'published',
+      publishedVersion: 4,
+    });
+    await edited();
+    act(() => screen.getByRole('button', { name: 'Publish' }).click());
+    await waitFor(() => expect(client.updateEntry).toHaveBeenCalledTimes(1));
+    const dialog = await screen.findByRole('alertdialog');
+    expect(within(dialog).getByText('Publish “Home”?')).toBeTruthy();
+    act(() => within(dialog).getByRole('button', { name: 'Publish entry' }).click());
+    await waitFor(() => expect(client.publishEntry).toHaveBeenCalledWith('e1'));
+    expect(await screen.findByRole('button', { name: 'Published' })).toBeTruthy();
+    // Still editing: publishing doesn't turn the canvas into the published version's review.
+    expect(screen.queryByText(/This is the published version/)).toBeNull();
+  });
+
+  // One draft, two views: the form and the canvas hand unsaved edits across.
+  it('opens with the form’s unsaved edits, held to the version the form had', async () => {
+    handOffDraft(draftId('sp', 'main', 'e1'), 2, { title: { 'en-US': 'From the form' } });
+    client.updateEntry.mockResolvedValue({
+      entry: { id: 'e1', contentTypeApiId: 'page', status: 'draft', currentVersion: 4 },
+      fields: pageFields(),
+    });
+    await setup();
+    await screen.findByRole('heading', { level: 1, name: 'From the form' });
+    expect(screen.getByText('Unsaved changes')).toBeTruthy();
+    act(() => screen.getByRole('button', { name: 'Save draft' }).click());
+    await waitFor(() => expect(client.updateEntry).toHaveBeenCalled());
+    expect(client.updateEntry.mock.calls[0]?.[2]).toEqual({ expectedVersion: 2 });
+    // Taken in once: a later canvas on this entry starts from what is saved.
+    expect(peekDraft(draftId('sp', 'main', 'e1'))).toBeNull();
+  });
+
+  it('leaves the form’s edits waiting when it is left before the entry loads', async () => {
+    handOffDraft(draftId('sp', 'main', 'e1'), 2, { title: { 'en-US': 'From the form' } });
+    const router = await setup({}, { loading: true });
+    act(() => void router.navigate('/content/page/e1'));
+    expect(await screen.findByText('The form')).toBeTruthy();
+    expect(peekDraft(draftId('sp', 'main', 'e1'))?.fields).toEqual({
+      title: { 'en-US': 'From the form' },
+    });
+  });
+
+  it('says where to save the form’s edits when it can only review them', async () => {
+    client.getSpaceAccess.mockResolvedValueOnce({ subject: 'me', scopes: ['content:read'] });
+    handOffDraft(draftId('sp', 'main', 'e1'), 3, { title: { 'en-US': 'From the form' } });
+    await setup();
+    await screen.findByRole('heading', { level: 1, name: 'From the form' });
+    expect(await screen.findByText(/can’t be saved from this view/)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Save draft' })).toBeNull();
+  });
+
+  it('holds the settings while the dock is open: dimmed, inert, the selection stepped back', async () => {
+    await setup();
+    await screen.findByRole('heading', { level: 1, name: 'Home' });
+    const f = frame();
+    f.connect();
+    f.geometry(GEOMETRY);
+    openLayers();
+    act(() => layer('h1').click());
+    const settings = screen.getByRole('complementary', { name: 'Block settings' });
+    expect(settings.hasAttribute('inert')).toBe(false);
+    expect(document.querySelector('[data-outline="selected"]')).not.toBeNull();
+    act(() => seam('body#1').click());
+    expect(settings.hasAttribute('inert')).toBe(true);
+    expect(document.querySelector('[data-outline="selected"]')).toBeNull();
+    act(() => fireEvent.keyDown(window, { key: 'Escape' }));
+    await waitFor(() => expect(settings.hasAttribute('inert')).toBe(false));
+  });
+
+  it('remembers Layers open at lg, and never opens its sheet below lg on arrival', async () => {
+    await setup();
+    await screen.findByRole('heading', { level: 1, name: 'Home' });
+    openLayers();
+    expect(localStorage.getItem('cw.canvas.layers')).toBe('open');
+    cleanup();
+    await setup();
+    await screen.findByRole('heading', { level: 1, name: 'Home' });
+    expect(screen.getByRole('button', { name: 'Layers' }).getAttribute('aria-pressed')).toBe(
+      'true',
+    );
+    cleanup();
+    media = { wide: false, tablet: true };
+    await setup();
+    await screen.findByRole('heading', { level: 1, name: 'Home' });
+    expect(screen.queryByRole('dialog', { name: 'Layers' })).toBeNull();
+  });
+
+  it('hands its edits to the form instead of asking to discard them', async () => {
+    const router = await setup();
+    await screen.findByRole('heading', { level: 1, name: 'Home' });
+    openLayers();
+    act(() => layer('a1').click());
+    fireEvent.change(screen.getByLabelText(/^Label/), { target: { value: 'Go' } });
+    act(() => screen.getByRole('radio', { name: 'Form' }).click());
+    expect(await screen.findByText('The form')).toBeTruthy();
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(router.state.location.pathname).toBe('/content/page/e1');
+    const handed = peekDraft(draftId('sp', 'main', 'e1'));
+    expect(handed?.version).toBe(3);
+    expect(Object.keys(handed?.fields ?? {})).toEqual(['body']);
+  });
+
+  it('still asks before leaving the entry altogether', async () => {
+    const router = await setup();
+    await screen.findByRole('heading', { level: 1, name: 'Home' });
+    openLayers();
+    act(() => layer('a1').click());
+    fireEvent.change(screen.getByLabelText(/^Label/), { target: { value: 'Go' } });
+    act(() => void router.navigate('/content/page'));
+    const dialog = await screen.findByRole('alertdialog');
+    expect(within(dialog).getByText('Discard unsaved changes?')).toBeTruthy();
+    expect(peekDraft(draftId('sp', 'main', 'e1'))).toBeNull();
   });
 
   it('refuses to save while a required slot is empty, and lists it in the checks', async () => {
