@@ -12,8 +12,8 @@
  * key or changed role is dropped from the principal cache at once (its space's tag is
  * invalidated); KV's edge propagation and the 60s principal TTL bound how long another colo may
  * still accept it. Requests that cannot be cached (the live SSE stream,
- * GraphQL POSTs) are answered here directly. Its queue consumer drains the purge queue, rationed
- * to Cloudflare's purge limits.
+ * GraphQL POSTs) are answered here directly. Its queue consumer drains the purge queue (purges and
+ * invalidations), rationed to Cloudflare's purge limits.
  */
 import { InProcessAgentRuntime, makeActivities } from '@contentworker/agent-runtime';
 import { authenticateCached, createHasher } from '@contentworker/application';
@@ -164,6 +164,9 @@ export default {
       return;
     }
     const exports = (ctx as unknown as { exports: Exports }).exports;
-    await drain(batch as MessageBatch<PurgeMessage>, (tags) => exports.Delivery.purge(tags));
+    await drain(batch as MessageBatch<PurgeMessage>, {
+      purge: (tags) => exports.Delivery.purge(tags),
+      invalidate: (tags) => exports.Delivery.invalidate(tags),
+    });
   },
 } satisfies ExportedHandler<EdgeEnv>;

@@ -43,7 +43,16 @@ export function isAgentJob(body: unknown): body is AgentJobMessage {
  */
 export interface PurgeMessage {
   readonly tags: readonly string[];
+  /**
+   * `invalidate` marks the tagged responses stale instead of deleting them, so readers keep being
+   * served while the Worker revalidates. For changes where a moment of the previous version is
+   * harmless (a publish, an edit). Anything that must stop being served (an unpublish, a revoked
+   * right, a delete) is a `purge`, the default: a consumer that predates `mode` purges everything.
+   */
+  readonly mode?: PurgeMode;
 }
+
+export type PurgeMode = 'purge' | 'invalidate';
 
 /** Cache tag for everything delivered from one space:environment (delivery responses carry it). */
 export const deliveryScopeTag = (spaceId: string, environmentId: string) =>

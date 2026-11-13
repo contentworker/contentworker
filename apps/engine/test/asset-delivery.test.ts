@@ -128,7 +128,8 @@ describe('asset events in the engine', () => {
     const { q, sent } = queues();
     await sendPurges(q, published, () => {});
     expect(sent).toEqual([
-      { queue: 'purge', body: { tags: [`cw:${scope.spaceId}:main`] } },
+      // A publish only invalidates delivery responses; the unpublish below purges them.
+      { queue: 'purge', body: { tags: [`cw:${scope.spaceId}:main`], mode: 'invalidate' } },
       { queue: 'media-purge', body: { tags: [`cwa:${scope.spaceId}:main:${asset.id}`] } },
     ]);
 

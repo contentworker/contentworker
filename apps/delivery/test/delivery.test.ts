@@ -52,7 +52,7 @@ describe('canonical URLs', () => {
 });
 
 type Msg = {
-  body: { tags: string[] };
+  body: { tags: string[]; mode?: 'purge' | 'invalidate' };
   timestamp: Date;
   attempts: number;
   acked: boolean;
@@ -60,8 +60,8 @@ type Msg = {
   ack(): void;
   retry(o?: { delaySeconds?: number }): void;
 };
-const msg = (tags: string[], at = 0): Msg => ({
-  body: { tags },
+const msg = (tags: string[], at = 0, mode?: 'purge' | 'invalidate'): Msg => ({
+  body: mode ? { tags, mode } : { tags },
   timestamp: new Date(at),
   attempts: 1,
   acked: false,
@@ -119,6 +119,63 @@ describe('purge drain', () => {
     expect(calls).toBe(PURGE_CALLS);
     expect(ms.filter((m) => m.acked)).toHaveLength(PURGE_CALLS);
     expect(ms.filter((m) => m.retried !== undefined)).toHaveLength(2);
+  });
+});
+
+describe('purge drain with invalidation', () => {
+  const recording = () => {
+    const calls: [string, string[]][] = [];
+    const op = (name: string) => async (tags: string[]) => {
+      calls.push([name, tags]);
+      return { success: true };
+    };
+    return { calls, ops: { purge: op('purge'), invalidate: op('invalidate') } };
+  };
+
+  it('invalidates what a publish left stale and purges what must stop being served', async () => {
+    const { calls, ops } = recording();
+    const ms = [msg(['cw:s1:main'], 0, 'invalidate'), msg(['cw:s2:main'], 1)];
+    const drained = await drain(batch(ms), ops, async () => {});
+    expect(calls).toEqual([
+      ['invalidate', ['cw:s1:main']],
+      ['purge', ['cw:s2:main']],
+    ]);
+    expect(drained).toEqual({ purged: ['cw:s2:main'], invalidated: ['cw:s1:main'] });
+    expect(ms.every((m) => m.acked)).toBe(true);
+  });
+
+  it('skips an invalidation a purge in the same batch already covered', async () => {
+    const { calls, ops } = recording();
+    const ms = [msg(['cw:s1:main']), msg(['cw:s1:main', 'cw:s2:main'], 1, 'invalidate')];
+    const drained = await drain(batch(ms), ops, async () => {});
+    expect(calls).toEqual([
+      ['purge', ['cw:s1:main']],
+      ['invalidate', ['cw:s2:main']],
+    ]);
+    expect(drained.invalidated).toEqual(['cw:s2:main']);
+    expect(ms.every((m) => m.acked)).toBe(true);
+  });
+
+  it('still purges a tag invalidated earlier in the batch, and reports it purged', async () => {
+    const { calls, ops } = recording();
+    const ms = [msg(['cw:s1:main'], 0, 'invalidate'), msg(['cw:s1:main'], 1)];
+    const drained = await drain(batch(ms), ops, async () => {});
+    expect(calls.map(([name]) => name)).toEqual(['invalidate', 'purge']);
+    expect(drained).toEqual({ purged: ['cw:s1:main'], invalidated: [] });
+  });
+
+  it('purges invalidation messages where the Worker has no invalidate', async () => {
+    const calls: string[][] = [];
+    const ms = [msg(['a'], 0, 'invalidate'), msg(['b'], 1)];
+    await drain(
+      batch(ms),
+      async (tags) => {
+        calls.push(tags);
+        return { success: true };
+      },
+      async () => {},
+    );
+    expect(calls).toEqual([['a', 'b']]);
   });
 });
 
