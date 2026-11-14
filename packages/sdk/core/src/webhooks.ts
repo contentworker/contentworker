@@ -92,3 +92,71 @@ export async function verifyWebhook(
     return null;
   }
 }
+
+// --- delivery.refreshed: revalidate your own cache once ContentWorker's edge is fresh ---------
+
+/** Cache tag for one entry's pages: tag your fetches with it, and `delivery.refreshed` clears it. */
+export const entryTag = (entryId: string): string => `cw:entry:${entryId}`;
+/** Cache tag for pages that list or render a content type's entries. */
+export const typeTag = (contentTypeApiId: string): string => `cw:type:${contentTypeApiId}`;
+/** Cache tag for everything a site read from one space:environment. */
+export const environmentTag = (spaceId: string, environmentId: string): string =>
+  `cw:env:${spaceId}:${environmentId}`;
+
+/**
+ * `delivery.refreshed`: an environment's Delivery cache has settled after a change, so a fetch now
+ * gets the new content. Revalidate on this rather than on `entry.published`, which can reach you
+ * before the edge is fresh.
+ */
+export interface DeliveryRefreshedEvent extends WebhookEvent {
+  readonly type: 'delivery.refreshed';
+  readonly scope: { readonly spaceId: string; readonly environmentId: string };
+  /** `refreshed` after a publish or edit; `purged` after an unpublish or revocation. */
+  readonly mode: 'refreshed' | 'purged';
+  readonly entryIds: readonly string[];
+  readonly contentTypeApiIds: readonly string[];
+  /** Revalidate everything from this environment (the lists don't say all that changed). */
+  readonly everything: boolean;
+  readonly sourceEventIds: readonly string[];
+}
+
+export const isDeliveryRefreshed = (event: WebhookEvent): event is DeliveryRefreshedEvent =>
+  event.type === 'delivery.refreshed';
+
+/**
+ * The cache tags a `delivery.refreshed` event makes stale: the environment's tag when it says
+ * `everything`, otherwise each entry's and type's tag.
+ */
+export function staleTags(event: DeliveryRefreshedEvent): string[] {
+  if (event.everything) return [environmentTag(event.scope.spaceId, event.scope.environmentId)];
+  return [...event.entryIds.map(entryTag), ...event.contentTypeApiIds.map(typeTag)];
+}
+
+export interface DeliveryRefreshedHandlerOptions extends VerifyWebhookOptions {
+  /** The webhook's signing secret. */
+  readonly secret: string;
+  /** Clears one cache tag (Next.js: `revalidateTag` from `next/cache`). */
+  readonly revalidateTag: (tag: string) => unknown;
+}
+
+/**
+ * A webhook route that revalidates your cache on `delivery.refreshed`: verifies the signature
+ * (401 when it fails), clears the stale tags, and answers 204. Any other event is acknowledged
+ * (204) and ignored, so the same URL can subscribe to more topics.
+ *
+ *   // app/api/contentworker/route.ts (Next.js)
+ *   import { revalidateTag } from 'next/cache';
+ *   export const POST = (request: Request) =>
+ *     handleDeliveryRefreshed(request, { secret: process.env.CW_WEBHOOK_SECRET!, revalidateTag });
+ */
+export async function handleDeliveryRefreshed(
+  request: Request,
+  { secret, revalidateTag, ...options }: DeliveryRefreshedHandlerOptions,
+): Promise<Response> {
+  const event = await verifyWebhook(request, secret, options);
+  if (!event) return new Response('Invalid signature', { status: 401 });
+  if (isDeliveryRefreshed(event)) {
+    for (const tag of staleTags(event)) await revalidateTag(tag);
+  }
+  return new Response(null, { status: 204 });
+}

@@ -69,12 +69,15 @@ describe('hot set', () => {
 
   it('forgets the coldest URLs beyond its cap', async () => {
     const hot = stub();
-    for (let i = 0; i < HOT_SET_MAX_URLS + 5; i++) {
-      await hot.record(`https://d/_p/a/${i}`, 'p1', reader);
-      await hot.record(`https://d/_p/a/${i}`, 'p1', reader);
-    }
-    // The first URLs, read most often, stay.
-    for (let i = 0; i < 5; i++) await hot.record(`https://d/_p/a/${i}`, 'p1', reader);
+    // In batches, as isolates flush: one call per URL is too slow for a shared CI runner.
+    const reads = Array.from({ length: HOT_SET_MAX_URLS + 5 }, (_, i) => ({
+      url: `https://d/_p/a/${i}`,
+      profile: 'p1',
+      principal: reader,
+      // The first URLs, read most often, stay.
+      weight: i < 5 ? 3 : 2,
+    }));
+    for (let at = 0; at < reads.length; at += 100) await hot.recordMany(reads.slice(at, at + 100));
     await hot.prune();
     const top = await hot.top(HOT_SET_MAX_URLS + 10);
     expect(top).toHaveLength(HOT_SET_MAX_URLS);

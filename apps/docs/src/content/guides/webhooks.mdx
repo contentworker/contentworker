@@ -108,6 +108,8 @@ Every event has an `id` (stable, so you can deduplicate), a `type`, the `scope`
 | `release.published`      | `releaseId`, `entryIds`                               | A release is published (after its entries' own events) |
 | `environment_alias.changed` | `targetEnvironmentId` (`null` when removed)        | An alias is created, repointed or removed; `scope.environmentId` is the alias name |
 | `environment.deleted`    | `entryIds`                                            | An environment is deleted; `scope` is the deleted environment, and a large one sends several events splitting `entryIds`. Reliably delivered only to space-wide webhooks (the deleted environment's own are being removed) |
+| `delivery.refreshed` | `mode` (`refreshed` or `purged`), `entryIds`, `contentTypeApiIds`, `everything`, `sourceEventIds` | An environment's Delivery cache has settled after a change: fetches now get the new content. Revalidate your own cache on this, not on the publish (see below) |
+| `delivery.refresh_requested` | none | Someone asked for the environment's Delivery cache to be refreshed (`POST …/delivery-cache/refresh`); `delivery.refreshed` follows |
 | `bulk.job_completed`     | `jobId`, `action` (`publish`, `unpublish`, `trash`, `restore`, `purge`, `import`, `asset_reindex`, `asset_move`, `asset_tag`, `asset_publish`, `asset_unpublish`, `asset_archive`, `content_type_delete`, `set_fields`, `search_reindex`, `starter_install`), `total`, `succeeded`, `failed` | A bulk job finishes |
 | `workflow_run.completed`, `workflow_run.declined`, `workflow_run.cancelled`, `workflow_run.failed`, `workflow_run.rolled_back` | `runId`, `workflowId`, `version`, `entryId`, `contentTypeApiId`, `reason` | A workflow run ends, one topic per outcome |
 | `workflow.task_opened`   | `taskId`, `runId`, `nodeId`, `kind` (`approval`, `event`, `review`), `entryId`, `contentTypeApiId`, `title`, `assignee`, `requiredScope`, `deadline` | A run opens an approval, event wait or agent review |
@@ -134,6 +136,39 @@ subscriptions. It is signed with an empty secret, so don't treat its signature a
 
 An event is recorded in the same transaction as the change it describes, so you receive it if and
 only if the change happened, never for a publish that was rolled back.
+
+## Revalidate your site's cache
+
+If your site keeps its own cache of Delivery responses (Next.js `fetch` caching, a CDN, a static
+build), refresh it on `delivery.refreshed`. A publish's own event can reach you before the edge is
+fresh, so a fetch made on `entry.published` may cache the previous version again.
+`delivery.refreshed` arrives once the environment's Delivery cache has settled: it names the
+entries and content types that changed, or says `everything` when the change touched more (a
+menu, a redirect, a locale setting, a manual refresh, a large release).
+
+Tag your fetches with `entryTag(id)`, `typeTag(apiId)` and `environmentTag(space, environment)`,
+and point a webhook subscribed to `delivery.refreshed` at a route like this one:
+
+```ts
+// app/api/contentworker/route.ts
+import { revalidateTag } from 'next/cache';
+import { handleDeliveryRefreshed } from '@contentworker/sdk/webhooks';
+
+export const POST = (request: Request) =>
+  handleDeliveryRefreshed(request, {
+    secret: process.env.CW_WEBHOOK_SECRET!,
+    revalidateTag,
+  });
+```
+
+It verifies the signature (answering `401` when it fails), clears the stale tags, and answers
+`204`; other events are acknowledged and ignored. Outside Next.js, `staleTags(event)` gives the
+same tags for your own cache.
+
+To refresh an environment by hand, when published content looks out of date with no publish to
+blame, call `POST /spaces/{space}/environments/{environment}/delivery-cache/refresh` (or the
+`delivery_cache_refresh` MCP tool) with `content:publish`. It runs as a publish does, at most once
+a minute per environment.
 
 ## Verify the signature
 

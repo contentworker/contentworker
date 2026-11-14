@@ -149,7 +149,11 @@ carry readers' query text). `Delivery` renders only for a principal whose visibi
 one in its URL, whoever set the header. Warming is best effort (a failure costs a reader one cold render) and is off
 when `CACHE_WARMING` is `false` or `HOT_SET` is unbound. It counts
 `contentworker_cache_warm_requests_total{outcome}` (the `cf-cache-status` it saw) and
-`contentworker_cache_warm_skipped_total`.
+`contentworker_cache_warm_skipped_total`. Then it sends `delivery.refreshed` for every
+space:environment it settled (see [Events & webhooks](./events-and-webhooks.md#delivery-cache-purges)),
+so a site that keeps its own cache revalidates once the edge is fresh. A manual refresh
+(`POST …/delivery-cache/refresh`, `delivery_cache_refresh`) runs the same path from a
+`delivery.refresh_requested` outbox event.
 
 A `301` from the deprecated `…/assets/:id/transform` (a redirect to an immutable media URL) is
 cached and tagged like a `200`.

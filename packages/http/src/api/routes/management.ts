@@ -29,6 +29,7 @@ import { blocksRoutes } from './management/blocks';
 import { bulkRoutes } from './management/bulk';
 import { collaborationRoutes } from './management/collaboration';
 import { contentTypesRoutes } from './management/content-types';
+import { deliveryCacheRoutes } from './management/delivery-cache';
 import { deploymentRoutes } from './management/deployment';
 import { docsRoutes } from './management/docs';
 import { entriesRoutes } from './management/entries';
@@ -95,6 +96,7 @@ const AREAS: readonly ((deps: AuthDeps) => Hono<AuthVars>)[] = [
   bulkRoutes,
   agentActionsRoutes,
   semanticsRoutes,
+  deliveryCacheRoutes,
   versionsRoutes,
   assetsRoutes,
   assetCollectionsRoutes,

@@ -42,6 +42,8 @@ export type DomainEvent =
   | RedirectsChangedEvent
   | MenusChangedEvent
   | SpaceLocalesChangedEvent
+  | DeliveryRefreshRequestedEvent
+  | DeliveryRefreshedEvent
   | WebhookTestEvent;
 
 export interface BaseEvent {
@@ -509,6 +511,37 @@ export interface WebhookTestEvent extends BaseEvent {
   readonly webhookId: string;
   /** A fixed sentence, so a receiver can tell a test from real traffic in its own logs. */
   readonly message: string;
+}
+
+/**
+ * Someone asked for an environment's Delivery responses to be refreshed (the manual counterpart of
+ * a publish): the engine invalidates its cache tag, and the delivery Worker warms it again.
+ */
+export interface DeliveryRefreshRequestedEvent extends BaseEvent {
+  readonly type: 'delivery.refresh_requested';
+}
+
+/**
+ * The Delivery cache of an environment has settled after a change: what a publish or edit left
+ * stale was invalidated and its most-read responses fetched again (`refreshed`), or what must stop
+ * being served was purged (`purged`). A site with its own cache revalidates on this rather than on
+ * the publish itself, which can arrive before the edge is fresh. Sent by the delivery Worker
+ * straight to the events queue (it writes no database): a derived notice, not a state change.
+ */
+export interface DeliveryRefreshedEvent extends BaseEvent {
+  readonly type: 'delivery.refreshed';
+  readonly mode: 'refreshed' | 'purged';
+  /** Entries whose change it follows, when known; at most 100. */
+  readonly entryIds: readonly string[];
+  /** Content types whose change, or whose entries' change, it follows; at most 100. */
+  readonly contentTypeApiIds: readonly string[];
+  /**
+   * True when it follows more than those lists hold, or a change no entry names (a menu, a
+   * redirect, a locale setting, a manual refresh): revalidate everything from this environment.
+   */
+  readonly everything: boolean;
+  /** The events it follows, at most 100. */
+  readonly sourceEventIds: readonly string[];
 }
 
 export type EventType = DomainEvent['type'];

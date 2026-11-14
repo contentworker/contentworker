@@ -23,6 +23,7 @@ import { deliveryApp, deliveryRoutes } from '@contentworker/http/api/routes/deli
 import { liveRoutes } from '@contentworker/http/routes/live';
 import { recordDeadLetters } from '@contentworker/platform/dead-letters';
 import { type EdgeEnv, queueName, withJurisdiction } from '@contentworker/platform/env';
+import { newId } from '@contentworker/platform/ids';
 import type { PurgeMessage } from '@contentworker/platform/messages';
 import { makeMetrics } from '@contentworker/platform/metrics';
 import { drain } from '@contentworker/platform/purge';
@@ -30,7 +31,14 @@ import { wireEdge } from '@contentworker/platform/wire';
 import { clientCacheControl } from './client-cache';
 import { type Delivery, matches, PRINCIPAL_HEADER } from './delivery';
 import { canonicalUrl, visibilityProfile } from './profile';
-import { type Fetcher, WARM_HEADER, warm, warmingEnabled, warmTargets } from './warm';
+import {
+  type Fetcher,
+  refreshedNotices,
+  WARM_HEADER,
+  warm,
+  warmingEnabled,
+  warmTargets,
+} from './warm';
 
 export { Delivery } from './delivery';
 
@@ -184,6 +192,16 @@ export default {
         );
       const outcome = await warm(withJurisdiction(env), settled, fetcher, makeMetrics(env.METRICS));
       console.log(JSON.stringify({ msg: 'cache warmed', tags: settled.length, ...outcome }));
+    }
+    // Now the edge is settled, say so: sites with their own cache revalidate on this, not on the
+    // publish, which can reach them before the edge is fresh. Straight to the events queue (this
+    // Worker writes no database); the engine fans it out to webhooks like any event.
+    const notices = refreshedNotices(drained);
+    if (notices.length > 0 && env.EVENTS_QUEUE) {
+      const occurredAt = new Date().toISOString();
+      await env.EVENTS_QUEUE.sendBatch(
+        notices.map((n) => ({ body: { ...n, id: newId(), occurredAt } })),
+      ).catch((err: unknown) => console.error('delivery.refreshed enqueue failed', String(err)));
     }
   },
 } satisfies ExportedHandler<EdgeEnv>;

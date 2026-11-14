@@ -3,7 +3,7 @@
  * a minute, up to 100 tags each). Workers Caching is per Worker, so each Worker that caches drains
  * its own queue with this: delivery `contentworker-purge`, media `contentworker-media-purge`.
  */
-import type { PurgeMessage, PurgeMode } from './messages';
+import type { PurgeMessage, PurgeMode, PurgeRef } from './messages';
 
 /** Tags per purge call, and the pause after each call: Cloudflare allows 5 calls a minute. */
 export const PURGE_TAGS = 100;
@@ -46,6 +46,8 @@ export interface Drained {
   readonly invalidated: readonly string[];
   /** Messages handed back to the queue (rate limited, or past the call budget). */
   readonly retried: number;
+  /** What changed, from the messages settled (acked) in this batch. */
+  readonly refs: readonly PurgeRef[];
 }
 
 const modeOf = (m: Message<PurgeMessage>): PurgeMode =>
@@ -71,10 +73,12 @@ export async function drain(
   const settled = (mode: PurgeMode, t: string) =>
     done.purge.has(t) || (mode === 'invalidate' && done.invalidate.has(t));
   let retried = 0;
+  const refs: PurgeRef[] = [];
   const result = (): Drained => ({
     purged: [...done.purge],
     invalidated: [...done.invalidate].filter((t) => !done.purge.has(t)),
     retried,
+    refs,
   });
   let calls = 0;
   while (queue.length) {
@@ -113,7 +117,10 @@ export async function drain(
       for (const t of chunk) done[r.purged ? 'purge' : mode].add(t);
       if (!r.skipped) await wait(PURGE_PACE_MS);
     }
-    for (const m of take) m.ack();
+    for (const m of take) {
+      m.ack();
+      refs.push(...(m.body.refs ?? []));
+    }
   }
   return result();
 }

@@ -50,7 +50,26 @@ export interface PurgeMessage {
    * right, a delete) is a `purge`, the default: a consumer that predates `mode` purges everything.
    */
   readonly mode?: PurgeMode;
+  /**
+   * What changed under each delivery tag, so the consumer can say so once the cache has settled
+   * (`delivery.refreshed`). Absent from media messages and from engines that predate it.
+   */
+  readonly refs?: readonly PurgeRef[];
 }
+
+/** What changed in one space:environment, for {@link PurgeMessage.refs}. */
+export interface PurgeRef {
+  readonly spaceId: string;
+  readonly environmentId: string;
+  readonly entryIds: readonly string[];
+  readonly contentTypeApiIds: readonly string[];
+  /** A change no entry names, or more than the lists hold: everything is stale. */
+  readonly everything: boolean;
+  readonly eventIds: readonly string[];
+}
+
+/** Most ids a {@link PurgeRef} list holds; past it, `everything` is set instead. */
+export const PURGE_REF_IDS = 100;
 
 export type PurgeMode = 'purge' | 'invalidate';
 

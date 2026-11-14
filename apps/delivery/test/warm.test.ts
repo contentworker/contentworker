@@ -4,6 +4,7 @@ import type { HotUrl } from '@contentworker/platform/hot-urls';
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   recordRead,
+  refreshedNotices,
   resetRecorded,
   scopeOfTag,
   warm,
@@ -167,5 +168,69 @@ describe('recording reads', () => {
     expect(
       recordRead(envWith(ns, { CACHE_WARMING: 'false' }), scope, 'u', 'p', principal),
     ).toBeUndefined();
+  });
+});
+
+describe('delivery.refreshed notices', () => {
+  const ref = (env: string, over: Record<string, unknown> = {}) => ({
+    spaceId: 's1',
+    environmentId: env,
+    entryIds: ['x'],
+    contentTypeApiIds: ['post'],
+    everything: false,
+    eventIds: ['e1'],
+    ...over,
+  });
+
+  it('says per environment whether it was refreshed or purged, and what changed', () => {
+    const notices = refreshedNotices({
+      purged: ['cw:s1:staging'],
+      invalidated: ['cw:s1:main'],
+      retried: 0,
+      refs: [ref('main'), ref('main', { entryIds: ['y'], eventIds: ['e2'] }), ref('staging')],
+    });
+    expect(notices).toEqual([
+      {
+        type: 'delivery.refreshed',
+        scope: { spaceId: 's1', environmentId: 'staging' },
+        mode: 'purged',
+        entryIds: ['x'],
+        contentTypeApiIds: ['post'],
+        everything: false,
+        sourceEventIds: ['e1'],
+      },
+      {
+        type: 'delivery.refreshed',
+        scope: { spaceId: 's1', environmentId: 'main' },
+        mode: 'refreshed',
+        entryIds: ['x', 'y'],
+        contentTypeApiIds: ['post'],
+        everything: false,
+        sourceEventIds: ['e1', 'e2'],
+      },
+    ]);
+  });
+
+  it('says everything for a tag no message described, or a change no entry names', () => {
+    const [bare] = refreshedNotices({
+      purged: [],
+      invalidated: ['cw:s1:main'],
+      retried: 0,
+      refs: [],
+    });
+    expect(bare).toMatchObject({ everything: true, entryIds: [], sourceEventIds: [] });
+    const [named] = refreshedNotices({
+      purged: [],
+      invalidated: ['cw:s1:main'],
+      retried: 0,
+      refs: [ref('main', { everything: true })],
+    });
+    expect(named?.everything).toBe(true);
+  });
+
+  it('announces nothing when nothing settled', () => {
+    expect(
+      refreshedNotices({ purged: [], invalidated: [], retried: 1, refs: [ref('main')] }),
+    ).toEqual([]);
   });
 });

@@ -8,7 +8,7 @@
  * never runs on a hit) toward the space:environment's HotSetDO, batched per isolate. Best effort
  * throughout: a failure costs a reader one cold render, never a wrong answer.
  */
-import type { Principal } from '@contentworker/domain';
+import type { DeliveryRefreshedEvent, Principal } from '@contentworker/domain';
 import type { HotSetDO } from '@contentworker/platform/do/hot-set';
 import type { EdgeEnv } from '@contentworker/platform/env';
 import {
@@ -17,7 +17,9 @@ import {
   type ProfilePrincipal,
   profilePrincipal,
 } from '@contentworker/platform/hot-urls';
+import { deliveryScopeTag, PURGE_REF_IDS, type PurgeRef } from '@contentworker/platform/messages';
 import type { makeMetrics } from '@contentworker/platform/metrics';
+import type { Drained } from '@contentworker/platform/purge';
 
 type Counter = ReturnType<typeof makeMetrics>;
 
@@ -182,4 +184,40 @@ export async function warm(
   const skipped = queue.length - requested;
   if (skipped > 0) metrics.count('contentworker_cache_warm_skipped_total', skipped);
   return { requested, failed, skipped };
+}
+
+/** What `delivery.refreshed` says for one space:environment, before it gets an id. */
+export type RefreshedNotice = Omit<DeliveryRefreshedEvent, 'id' | 'occurredAt'>;
+
+/**
+ * The `delivery.refreshed` notices for a settled drain: one per space:environment it purged or
+ * invalidated, merging what every settled message said changed there. A tag no message described
+ * (an engine that predates refs) is announced as `everything`.
+ */
+export function refreshedNotices(drained: Drained): RefreshedNotice[] {
+  const byTag = new Map<string, PurgeRef[]>();
+  for (const r of drained.refs) {
+    const tag = deliveryScopeTag(r.spaceId, r.environmentId);
+    byTag.set(tag, [...(byTag.get(tag) ?? []), r]);
+  }
+  const purged = new Set(drained.purged);
+  const out: RefreshedNotice[] = [];
+  for (const tag of [...drained.purged, ...drained.invalidated]) {
+    const scope = scopeOfTag(tag);
+    if (!scope) continue;
+    const refs = byTag.get(tag) ?? [];
+    const entryIds = new Set(refs.flatMap((r) => r.entryIds));
+    const types = new Set(refs.flatMap((r) => r.contentTypeApiIds));
+    const big = entryIds.size > PURGE_REF_IDS || types.size > PURGE_REF_IDS;
+    out.push({
+      type: 'delivery.refreshed',
+      scope,
+      mode: purged.has(tag) ? 'purged' : 'refreshed',
+      entryIds: big ? [] : [...entryIds],
+      contentTypeApiIds: big ? [] : [...types],
+      everything: big || refs.length === 0 || refs.some((r) => r.everything),
+      sourceEventIds: [...new Set(refs.flatMap((r) => r.eventIds))].slice(0, PURGE_REF_IDS),
+    });
+  }
+  return out;
 }

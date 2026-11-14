@@ -54,6 +54,8 @@
     { "name": "RATE_LIMIT_READ", "namespace_id": "1004", "simple": { "limit": 1200, "period": 60 } }
   ],
   "queues": {
+    // `delivery.refreshed`, once a purge or invalidation has settled (the engine fans it out).
+    "producers": [{ "binding": "EVENTS_QUEUE", "queue": "contentworker-events" }],
     "consumers": [
       {
         "queue": "contentworker-purge",

@@ -45,6 +45,7 @@ export * from './content-type-lifecycle';
 export * from './content-types';
 export * from './context';
 export * from './delivery';
+export * from './delivery-cache';
 export * from './delivery-graphql';
 export * from './delivery-reads';
 export * from './embeds';

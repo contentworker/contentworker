@@ -110,6 +110,7 @@ export const TOOL_SCOPES: Readonly<Record<string, readonly PermissionScope[]>> =
   comments_list: [SCOPES.previewRead],
   content_duplicates: [SCOPES.searchRead],
   content_reindex_embeddings: [SCOPES.contentManage],
+  delivery_cache_refresh: [SCOPES.contentPublish],
   search_reindex_job: [SCOPES.contentManage],
   content_related: [SCOPES.searchRead],
   content_search: [SCOPES.searchRead],
