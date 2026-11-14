@@ -168,7 +168,14 @@ purges nothing), `content_type.published` (Delivery
 serves each published type's `urlPattern` at `…/routes`, the sitemap built from it, and GraphQL's schema), `content_type.deleted` (the same, for a type that is gone), `release.published`,
 `environment_alias.changed`, `environment.deleted`, `space_locales.changed`. The sitemap (`…/sitemap`, `…/sitemap.xml`) has no
 event of its own: it is a delivery read under the scope's tag, so the publishes that change it purge it. It sends them as **one** message on `contentworker-purge`, so a burst
-of publishes costs one tag, not one purge call per entry. An alias change carries the alias name as
+of publishes costs one tag, not one purge call per entry: a purge when the batch has any of `REVOKING_EVENTS`
+(`entry.unpublished`, `asset.unpublished`, `asset.deleted`, `asset.rights_changed`,
+`asset_collection.changed`, `content_type.published`, `content_type.deleted`,
+`environment_alias.changed`, `environment.deleted`) and an `asset.published` that replaced the
+file, or an invalidation (`mode: 'invalidate'`) when the batch has none of those. A batch that must
+purge purges every delivery tag it touched in that one message (purge calls, which invalidations
+share, are rationed per account). An invalidated response is kept but marked stale, so
+readers are served it while it revalidates. An alias change carries the alias name as
 `scope.environmentId`, so the alias's tag is purged; delivery responses are tagged with both the
 path's environment and the one it resolves to. `asset_renditions.changed` and
 `space_locales.changed` add the tag of every environment of the space (presets and locale settings
@@ -182,8 +189,10 @@ to 100 tags per purge call, a 12 s pause after each (the platform allows 5 calls
 40 calls per batch; the rest, or a refused call, goes back with exponential backoff. After 10
 retries a message lands in `contentworker-purge-dlq`, whose consumer (the delivery worker) keeps a
 record of the tags, counts `contentworker_purge_dead_letters_total` and drops it. Those responses age out on their
-`max-age` plus stale-while-revalidate. The cache layers these purges feed are described in
-[Consistency & guarantees](./consistency.md#delivery-cache).
+`max-age` plus stale-while-revalidate. After each batch it requests the hottest URLs of every
+invalidated environment again, from its `HotSetDO`, so readers find them fresh
+([Architecture](./architecture.md) has the details). The cache layers these purges feed are
+described in [Consistency & guarantees](./consistency.md#delivery-cache).
 
 ### Media purges and the gate
 

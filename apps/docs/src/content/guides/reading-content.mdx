@@ -311,8 +311,11 @@ answers the XML a crawler reads. See [SEO and sitemaps](/guides/seo/).
 Delivery answers from a cache in front of the database. Your key is checked on every request,
 before the cache, so revoking a key or narrowing its role takes effect at once where it was made
 and within about a minute in other locations; keys that may see the same content share cached
-responses. A cached response is fresh for a minute and is purged
-when anything in its environment is published, unpublished, re-pointed by an alias change or has its redirects or menus changed;
+responses. A cached response is fresh for a minute. When anything in its environment is
+published or its redirects or menus change, it is refreshed in the background (the previous copy
+is served for the moment that takes) and the most-read responses are fetched again straight away,
+so readers rarely wait on a render. When something is unpublished or an alias is re-pointed, it is
+removed from the cache at once;
 responses carry an `ETag`, so `If-None-Match` gets a `304` when nothing changed.
 
 You don't need a long cache of your own in front of it. For static sites, rebuild on the

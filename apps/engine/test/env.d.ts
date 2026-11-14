@@ -1,4 +1,5 @@
 import type { CostGuardDO } from '@contentworker/platform/do/cost-guard';
+import type { HotSetDO } from '@contentworker/platform/do/hot-set';
 import type { LiveHubDO } from '@contentworker/platform/do/live-hub';
 import type { RateLimiterDO } from '@contentworker/platform/do/rate-limiter';
 import type { SearchShardDO } from '@contentworker/platform/do/search-shard';
@@ -17,6 +18,7 @@ declare global {
       readonly AUTH_LIMITER: DurableObjectNamespace<RateLimiterDO>;
       readonly AI_BUDGET: DurableObjectNamespace<CostGuardDO>;
       readonly SEARCH: DurableObjectNamespace<SearchShardDO>;
+      readonly HOT_SET: DurableObjectNamespace<HotSetDO>;
       readonly EDITORIAL_WF: Workflow;
       readonly ASSET_INGEST_WF: Workflow;
       readonly ASSET_ZIP_WF: Workflow;

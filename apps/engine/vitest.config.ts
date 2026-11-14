@@ -49,6 +49,7 @@ export default defineConfig(async () => ({
           AUTH_LIMITER: 'RateLimiterDO',
           AI_BUDGET: 'CostGuardDO',
           SEARCH: { className: 'SearchShardDO', useSQLite: true },
+          HOT_SET: { className: 'HotSetDO', useSQLite: true },
           ASSISTANT_AGENT: { className: 'AssistantAgent', useSQLite: true },
         },
         d1Databases: { DB: 'contentworker-engine-test' },

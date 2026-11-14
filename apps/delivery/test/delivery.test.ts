@@ -140,7 +140,7 @@ describe('purge drain with invalidation', () => {
       ['invalidate', ['cw:s1:main']],
       ['purge', ['cw:s2:main']],
     ]);
-    expect(drained).toEqual({ purged: ['cw:s2:main'], invalidated: ['cw:s1:main'] });
+    expect(drained).toEqual({ purged: ['cw:s2:main'], invalidated: ['cw:s1:main'], retried: 0 });
     expect(ms.every((m) => m.acked)).toBe(true);
   });
 
@@ -161,7 +161,31 @@ describe('purge drain with invalidation', () => {
     const ms = [msg(['cw:s1:main'], 0, 'invalidate'), msg(['cw:s1:main'], 1)];
     const drained = await drain(batch(ms), ops, async () => {});
     expect(calls.map(([name]) => name)).toEqual(['invalidate', 'purge']);
-    expect(drained).toEqual({ purged: ['cw:s1:main'], invalidated: [] });
+    expect(drained).toEqual({ purged: ['cw:s1:main'], invalidated: [], retried: 0 });
+  });
+
+  it('reports an invalidation the Worker could only purge as purged, so it is not warmed', async () => {
+    const ms = [msg(['a'], 0, 'invalidate')];
+    const drained = await drain(
+      batch(ms),
+      {
+        purge: async () => ({ success: true }),
+        invalidate: async () => ({ success: true, purged: true }),
+      },
+      async () => {},
+    );
+    expect(drained).toEqual({ purged: ['a'], invalidated: [], retried: 0 });
+  });
+
+  it('counts what it handed back, so warming can wait', async () => {
+    const ms = [msg(['a'], 0, 'invalidate'), msg(['b'], 1)];
+    const drained = await drain(
+      batch(ms),
+      { purge: async () => ({ success: false }), invalidate: async () => ({ success: true }) },
+      async () => {},
+    );
+    expect(drained.retried).toBe(1);
+    expect(drained.invalidated).toEqual(['a']);
   });
 
   it('purges invalidation messages where the Worker has no invalidate', async () => {

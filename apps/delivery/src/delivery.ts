@@ -5,11 +5,12 @@ import { NotFoundError, type Principal } from '@contentworker/domain';
 import type { AuthDeps } from '@contentworker/http/api/auth';
 import { toHttpError } from '@contentworker/http/api/http';
 import { deliveryApp, deliveryRoutes } from '@contentworker/http/api/routes/delivery';
-import type { EdgeEnv } from '@contentworker/platform/env';
+import { type EdgeEnv, withJurisdiction } from '@contentworker/platform/env';
 import { deliveryScopeTag } from '@contentworker/platform/messages';
 import { wireEdge } from '@contentworker/platform/wire';
 import { hasGraphqlErrors } from './client-cache';
-import { fromCanonical } from './profile';
+import { fromCanonical, visibilityProfile } from './profile';
+import { recordRead, WARM_HEADER } from './warm';
 
 /** Header the gateway uses to hand the authenticated principal to this entrypoint. */
 export const PRINCIPAL_HEADER = 'x-cw-delivery-principal';
@@ -44,6 +45,11 @@ export class Delivery extends WorkerEntrypoint<EdgeEnv> {
     const raw = request.headers.get(PRINCIPAL_HEADER);
     if (!parsed || !raw) return new Response('not found', { status: 404 });
     const principal = JSON.parse(raw) as Principal;
+    // The URL's profile is the cache key: a principal of another shape must never render under it
+    // (both are set inside this Worker, by the gateway and by the cache warmer).
+    if ((await visibilityProfile(principal)) !== parsed.profile) {
+      return new Response('not found', { status: 404, headers: { 'cache-control': NO_STORE } });
+    }
 
     const wired = wireEdge(this.env, { bookmark: 'first-unconstrained' });
     const deps: AuthDeps = {
@@ -101,6 +107,18 @@ export class Delivery extends WorkerEntrypoint<EdgeEnv> {
         'cache-tag',
         [...new Set([deliveryScopeTag(space, named), deliveryScopeTag(space, concrete)])].join(','),
       );
+      // Kept under the environment it resolves to: that is the tag a publish there settles. The
+      // warmer's own requests are not reads.
+      const recorded = request.headers.has(WARM_HEADER)
+        ? undefined
+        : recordRead(
+            withJurisdiction(this.env),
+            { spaceId: space, environmentId: concrete },
+            request.url,
+            parsed.profile,
+            principal,
+          );
+      if (recorded) this.ctx.waitUntil(recorded);
       // The gateway never forwards a reader's conditional headers (it answers those itself), so an
       // If-None-Match here comes from Workers Caching revalidating an invalidated or expired copy:
       // a 304 tells it to keep the stored body. Anything else gets the full body, which is what
@@ -117,7 +135,7 @@ export class Delivery extends WorkerEntrypoint<EdgeEnv> {
   }
 
   /** Purges cached responses by tag. Workers Caching scopes a purge to the entrypoint calling it. */
-  async purge(tags: string[]): Promise<{ success: boolean; skipped?: true }> {
+  async purge(tags: string[]): Promise<{ success: boolean; skipped?: true; purged?: true }> {
     return this.tagOp('purge', tags);
   }
 
@@ -126,21 +144,22 @@ export class Delivery extends WorkerEntrypoint<EdgeEnv> {
    * (stale-while-revalidate restarts at the invalidation). Purges instead where the runtime has no
    * `invalidate`, which is stricter, never staler.
    */
-  async invalidate(tags: string[]): Promise<{ success: boolean; skipped?: true }> {
+  async invalidate(tags: string[]): Promise<{ success: boolean; skipped?: true; purged?: true }> {
     return this.tagOp('invalidate', tags);
   }
 
   private async tagOp(
     op: 'purge' | 'invalidate',
     tags: string[],
-  ): Promise<{ success: boolean; skipped?: true }> {
+  ): Promise<{ success: boolean; skipped?: true; purged?: true }> {
     const cache = (this.ctx as unknown as { cache?: WorkerCache }).cache;
     // Local dev and tests have no Workers Caching.
     if (!cache) return { success: true, skipped: true };
-    const call = op === 'invalidate' && cache.invalidate ? cache.invalidate : cache.purge;
+    const purging = op === 'purge' || !cache.invalidate;
+    const call = purging ? cache.purge : (cache.invalidate as CacheTagOp);
     const r = await call.call(cache, { tags });
     if (!r.success) console.error(`${op} refused`, JSON.stringify(r.errors));
-    return { success: r.success };
+    return { success: r.success, ...(op === 'invalidate' && purging ? { purged: true } : {}) };
   }
 }
 

@@ -7,6 +7,7 @@ import { isAssistantPath, routeAssistant } from '@contentworker/http/assistant/g
 import type { EdgeEnv } from '@contentworker/platform/env';
 
 export { CostGuardDO } from '@contentworker/platform/do/cost-guard';
+export { HotSetDO } from '@contentworker/platform/do/hot-set';
 export { LiveHubDO } from '@contentworker/platform/do/live-hub';
 export { RateLimiterDO } from '@contentworker/platform/do/rate-limiter';
 export { SearchShardDO } from '@contentworker/platform/do/search-shard';

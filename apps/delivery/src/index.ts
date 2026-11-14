@@ -24,11 +24,13 @@ import { liveRoutes } from '@contentworker/http/routes/live';
 import { recordDeadLetters } from '@contentworker/platform/dead-letters';
 import { type EdgeEnv, queueName, withJurisdiction } from '@contentworker/platform/env';
 import type { PurgeMessage } from '@contentworker/platform/messages';
+import { makeMetrics } from '@contentworker/platform/metrics';
 import { drain } from '@contentworker/platform/purge';
 import { wireEdge } from '@contentworker/platform/wire';
 import { clientCacheControl } from './client-cache';
 import { type Delivery, matches, PRINCIPAL_HEADER } from './delivery';
 import { canonicalUrl, visibilityProfile } from './profile';
+import { type Fetcher, WARM_HEADER, warm, warmingEnabled, warmTargets } from './warm';
 
 export { Delivery } from './delivery';
 
@@ -164,9 +166,24 @@ export default {
       return;
     }
     const exports = (ctx as unknown as { exports: Exports }).exports;
-    await drain(batch as MessageBatch<PurgeMessage>, {
+    const drained = await drain(batch as MessageBatch<PurgeMessage>, {
       purge: (tags) => exports.Delivery.purge(tags),
       invalidate: (tags) => exports.Delivery.invalidate(tags),
     });
+    // Request the hottest URLs of what was just invalidated again, so readers find them fresh.
+    // Not what was purged: that is what must stop being served, and a read replica that hasn't
+    // caught up yet could render it straight back into the cache. Best effort, after the acks.
+    const settled = warmTargets(drained);
+    // Not while the queue is backed up either: a revocation behind this batch must not wait on it.
+    if (settled.length > 0 && drained.retried === 0 && warmingEnabled(env)) {
+      const fetcher: Fetcher = (url, principal) =>
+        exports.Delivery.fetch(
+          new Request(url, {
+            headers: { [PRINCIPAL_HEADER]: JSON.stringify(principal), [WARM_HEADER]: '1' },
+          }),
+        );
+      const outcome = await warm(withJurisdiction(env), settled, fetcher, makeMetrics(env.METRICS));
+      console.log(JSON.stringify({ msg: 'cache warmed', tags: settled.length, ...outcome }));
+    }
   },
 } satisfies ExportedHandler<EdgeEnv>;
