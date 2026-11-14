@@ -60,3 +60,44 @@ describe('a field editor extension', () => {
     );
   });
 });
+
+describe('a sidebar extension', () => {
+  const sidebar = { ...extension, name: 'Discoverability', target: 'sidebar' as const };
+
+  it('is told the entry’s fields, their values and the admin’s theme, and again on a change', () => {
+    document.documentElement.dataset.theme = 'dark';
+    const context = {
+      target: 'sidebar' as const,
+      spaceId: 's1',
+      environmentId: 'main',
+      entryId: 'e1',
+      locale: 'en-US',
+      displayField: 'title',
+      fields: [{ apiId: 'title', name: 'Title', type: 'Symbol' }],
+      values: { title: { 'en-US': 'Winter tyres' } },
+    };
+    const { rerender } = render(<ExtensionFrame extension={sidebar} context={context} />);
+    const frame = screen.getByTitle('Discoverability') as HTMLIFrameElement;
+    const sent = vi.spyOn(frame.contentWindow as Window, 'postMessage');
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: { type: 'contentworker-extension:ready' },
+          source: frame.contentWindow,
+        }),
+      );
+    });
+    expect(sent).toHaveBeenLastCalledWith(
+      { type: 'contentworker-extension:init', context: { ...context, theme: 'dark' } },
+      '*',
+    );
+
+    const edited = { ...context, values: { title: { 'en-US': 'Winter tyres, explained' } } };
+    rerender(<ExtensionFrame extension={sidebar} context={edited} />);
+    expect(sent).toHaveBeenLastCalledWith(
+      { type: 'contentworker-extension:init', context: { ...edited, theme: 'dark' } },
+      '*',
+    );
+    document.documentElement.dataset.theme = 'light';
+  });
+});

@@ -10,6 +10,13 @@ export interface CreateAppExtensionInput {
   readonly active?: boolean;
 }
 
+/**
+ * A page the admin serves itself (`apps/web/public/extensions`), named by its path so any
+ * deployment can install it without knowing its own origin. One path segment of plain characters:
+ * never `//` (another host), `..` or a query that could point it elsewhere.
+ */
+const BUILT_IN = /^\/extensions\/[a-z0-9][a-z0-9-]*\.html$/;
+
 /** Registers a UI extension the admin renders in a sandboxed iframe. */
 export async function createAppExtension(
   ctx: AppContext,
@@ -24,8 +31,13 @@ export async function createAppExtension(
       { field: 'target', message: 'target must be "field-editor" or "sidebar"' },
     ]);
   }
-  if (!/^https?:\/\//.test(input.entryUrl)) {
-    throw new ValidationError([{ field: 'entryUrl', message: 'entryUrl must be an http(s) URL' }]);
+  if (!/^https?:\/\//.test(input.entryUrl) && !BUILT_IN.test(input.entryUrl)) {
+    throw new ValidationError([
+      {
+        field: 'entryUrl',
+        message: 'entryUrl must be an http(s) URL or a built-in extension path (/extensions/…)',
+      },
+    ]);
   }
   const app: AppExtension = {
     id: ctx.ids.newId(),

@@ -3,6 +3,7 @@ import {
   createAppExtension,
   createFunction,
   createWebhook,
+  deleteAppExtension,
   listAIActions,
   listAppExtensions,
   listFunctions,
@@ -67,11 +68,26 @@ export async function seedAutomation(
     });
   }
 
-  if ((await listAppExtensions(ctx, scope)).length === 0) {
+  // Databases seeded before the built-in extension have a placeholder that framed nothing: swap it.
+  const extensions = await listAppExtensions(ctx, scope);
+  const placeholder = extensions.find(
+    (e) => e.entryUrl === 'https://example.com/apps/seo-checklist',
+  );
+  if (placeholder) {
+    await deleteAppExtension(ctx, scope, placeholder.id);
     await createAppExtension(ctx, scope, {
-      name: 'SEO checklist',
+      name: 'Discoverability',
       target: 'sidebar',
-      entryUrl: 'https://example.com/apps/seo-checklist',
+      entryUrl: '/extensions/discoverability.html',
+    });
+  }
+
+  if (extensions.length === 0) {
+    // Built in: the admin serves it (apps/web/public/extensions), so it works on every deployment.
+    await createAppExtension(ctx, scope, {
+      name: 'Discoverability',
+      target: 'sidebar',
+      entryUrl: '/extensions/discoverability.html',
     });
     await createAppExtension(ctx, scope, {
       name: 'Markdown editor',

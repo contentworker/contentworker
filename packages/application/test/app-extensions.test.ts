@@ -50,6 +50,26 @@ describe('app extensions CRUD', () => {
     expect(app.fieldTypes).toEqual(['Symbol']);
   });
 
+  it('takes a built-in extension by its path on the admin, and no other relative URL', async () => {
+    const app = await createAppExtension(ctx, scope, {
+      name: 'Discoverability',
+      target: 'sidebar',
+      entryUrl: '/extensions/discoverability.html',
+    });
+    expect(app.entryUrl).toBe('/extensions/discoverability.html');
+    for (const entryUrl of [
+      '//evil.example/extensions/x.html',
+      '/extensions/../content',
+      '/extensions/x.html?next=//evil.example',
+      '/content/blog',
+      'javascript:alert(1)',
+    ]) {
+      await expect(
+        createAppExtension(ctx, scope, { name: 'x', target: 'sidebar', entryUrl }),
+      ).rejects.toThrow(ValidationError);
+    }
+  });
+
   it('rejects an unknown target', async () => {
     await expect(
       createAppExtension(ctx, scope, {
