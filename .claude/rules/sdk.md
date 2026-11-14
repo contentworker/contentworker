@@ -1,11 +1,14 @@
 ---
+
 paths:
-  - packages/sdk/**
+
+- packages/sdk/**
+
 ---
 
 # Public SDK (`packages/sdk/*`)
 
-- These ship to customers' browsers, apps and Workers as one npm package, `@contentworker/sdk`
+- These ship to integrators' browsers, apps and Workers as one npm package, `@contentworker/sdk`
   (`packages/sdk/sdk`), which bundles the private workspace packages (`@contentworker/sdk-core`,
   `sdk-web`, `sdk-vue`, `sdk-react-native`, `sdk-edge`, `sdk-management`, `sdk-codegen`,
   `sdk-rich-text`) and the CLI, one subpath each. A new workspace SDK module adds a subpath there

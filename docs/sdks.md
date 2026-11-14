@@ -387,7 +387,7 @@ import { draftMode } from 'next/headers';
 import { createDraftRoute } from '@contentworker/sdk/next';
 
 export const GET = createDraftRoute({
-  baseUrl: 'https://api.your-workspace.contentworker.app', // the Preview API's host
+  baseUrl: 'https://api.cms.example.com', // the Preview API's host
   space: 'your-space',
   environment: 'main',
   draftMode,
@@ -443,12 +443,12 @@ export const getClient = createDraftClient({
   draftMode,
   cookies,
   delivery: {
-    baseUrl: 'https://cdn.your-workspace.contentworker.app',
+    baseUrl: 'https://cdn.cms.example.com',
     space: 'your-space',
     environment: 'main',
     token: process.env.CONTENTWORKER_DELIVERY_KEY!,
   },
-  preview: { baseUrl: 'https://api.your-workspace.contentworker.app' },
+  preview: { baseUrl: 'https://api.cms.example.com' },
 });
 ```
 

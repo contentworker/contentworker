@@ -14,7 +14,7 @@ MCP clients that support remote connectors (Claude, ChatGPT, MCP-capable IDEs) c
 the URL:
 
 ```
-https://your-workspace.contentworker.app/mcp
+https://cms.example.com/mcp
 ```
 
 The client discovers where to sign in, registers itself, and opens an approval screen on the
@@ -39,7 +39,7 @@ For CI, scripts and agents you run yourself, use a
 scopes the agent needs:
 
 ```sh
-claude mcp add --transport http contentworker https://api.your-workspace.contentworker.app/mcp \
+claude mcp add --transport http contentworker https://api.cms.example.com/mcp \
   --header "Authorization: Bearer $CONTENTWORKER_TOKEN"
 ```
 

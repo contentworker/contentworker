@@ -1,9 +1,0 @@
-// Test fixture: a fake held demo deployment.
-{
-  "id": "fixture-demo",
-  "ring": "internal",
-  "slot": 2,
-  "domain": "demo.fixture.example.test",
-  "hold": true,
-  "demo": true
-}

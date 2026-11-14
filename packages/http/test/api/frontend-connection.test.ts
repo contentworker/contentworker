@@ -15,7 +15,7 @@ const M = '/spaces/s1/environments/main';
 const admin = { Authorization: 'Bearer admin', 'Content-Type': 'application/json' };
 const TEMPLATE = 'https://site.example/blog/{field:slug}?entry={id}&token={token}';
 
-function setup(overrides: Partial<ApiConfig> = { oauthIssuer: 'https://acme.contentworker.app' }) {
+function setup(overrides: Partial<ApiConfig> = { oauthIssuer: 'https://cms.example.com' }) {
   const config = testConfig({ seed, ...overrides });
   const { ctx, rag, blob, ai } = wire(config);
   const app = createApp(ctx, config, rag, blob, ai);
@@ -72,9 +72,9 @@ describe('connecting a frontend over HTTP', () => {
       space: 's1',
       environment: 'main',
       endpoints: {
-        admin: 'https://acme.contentworker.app',
-        delivery: 'https://cdn.acme.contentworker.app',
-        preview: 'https://api.acme.contentworker.app',
+        admin: 'https://cms.example.com',
+        delivery: 'https://cdn.cms.example.com',
+        preview: 'https://api.cms.example.com',
       },
     });
     expect(c.previewUrls).toContainEqual(

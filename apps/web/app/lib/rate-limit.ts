@@ -1,8 +1,8 @@
 /**
  * Request budgets per caller on the programmatic surfaces: each API token or person on
  * `/api/v1`, each grant's principal on `/mcp` and `/a2a`, each integration on the signed
- * webhooks. The budgets are Workers rate-limit bindings (`apps/web/wrangler.jsonc`, overridden per
- * deployment by the registry's `limits`), counted per Cloudflare location, so they stop a runaway
+ * webhooks. The budgets are Workers rate-limit bindings (`apps/web/wrangler.jsonc`), counted per
+ * Cloudflare location, so they stop a runaway
  * client rather than meter it exactly.
  */
 

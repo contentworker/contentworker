@@ -13,7 +13,7 @@ import { createDeliveryClient, imageProps } from '@contentworker/sdk';
 import { toHtml } from '@contentworker/sdk/rich-text';
 
 const client = createDeliveryClient({
-  baseUrl: 'https://cdn.your-workspace.contentworker.app',
+  baseUrl: 'https://cdn.cms.example.com',
   space: 'your-space',
   environment: 'main',
   token: process.env.CONTENTWORKER_CDA_TOKEN!,
@@ -48,7 +48,7 @@ import files and generate types. Every command takes `--json` for scripts and ag
 later.
 
 ```sh
-npx contentworker login --url https://api.your-workspace.contentworker.app
+npx contentworker login --url https://api.cms.example.com
 npx contentworker model export --out content-model.ts
 npx contentworker types --out src/generated/content-types.ts
 ```

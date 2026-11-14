@@ -2,11 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { frontendEndpoints } from '../src/index';
 
 describe('the endpoints a frontend reaches', () => {
-  it('follows the fleet’s hosts: cdn. for Delivery, api. for Preview', () => {
-    expect(frontendEndpoints('https://acme.contentworker.app')).toEqual({
-      admin: 'https://acme.contentworker.app',
-      delivery: 'https://cdn.acme.contentworker.app',
-      preview: 'https://api.acme.contentworker.app',
+  it('follows the install’s hosts: cdn. for Delivery, api. for Preview', () => {
+    expect(frontendEndpoints('https://cms.example.com')).toEqual({
+      admin: 'https://cms.example.com',
+      delivery: 'https://cdn.cms.example.com',
+      preview: 'https://api.cms.example.com',
     });
     // A trailing slash or path is the same origin.
     expect(frontendEndpoints('https://cms.example.com/')?.delivery).toBe(

@@ -15,7 +15,7 @@ npx contentworker --help
 ## Sign in
 
 ```sh
-contentworker login --url https://api.your-workspace.contentworker.app
+contentworker login --url https://api.cms.example.com
 ```
 
 `login` uses the device flow: it prints a code and an address on the admin. Open it, sign in if
@@ -29,7 +29,7 @@ Changing the content model needs `content:manage`, so for `model apply` sign in 
 [personal access token](/guides/api-keys/#personal-access-tokens) or a Management key instead:
 
 ```sh
-contentworker login --url https://api.your-workspace.contentworker.app --token "$TOKEN"
+contentworker login --url https://api.cms.example.com --token "$TOKEN"
 ```
 
 Tokens are kept in `credentials.json` in your user config directory (`~/.config/contentworker`,

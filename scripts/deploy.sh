@@ -1,32 +1,37 @@
 #!/usr/bin/env bash
-# Ships the checked-out commit to one deployment: render, collect secrets, record a D1 bookmark,
-# migrate, deploy the Workers, smoke-test, and roll back on a failure. Workflows only check out the
-# code and call this, so the steps always come from the commit being shipped. See
+# Ships the checked-out commit to your install: render the Workers' configs, collect secrets, record
+# a D1 bookmark, migrate, deploy the Workers, smoke-test, and roll back on a failure. See
 # docs/deployment.md.
 #
-#   scripts/deploy.sh <id>
+#   pnpm contentworker:deploy [--env-file <path>]
 #
-# Reads CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID, the deployment's secrets (fleet.ts SECRETS)
-# and, for a registry outside this repo, FLEET_REGISTRY. It refuses to run outside GitHub Actions
-# unless CONTENTWORKER_DEPLOY=1, which a self-hoster on other CI sets. contentworker's fleet deploys
-# from CI only.
+# Reads the install's settings from the environment and its settings file (.env by default), and
+# its secrets from the environment or the secrets file scripts/setup.sh wrote. Deploys with
+# wrangler's login, or CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID (required in CI). Run it as
+# `pnpm contentworker:deploy` (or in CI); started directly, it refuses unless CONTENTWORKER_DEPLOY=1.
 set -euo pipefail
-id="${1:?usage: scripts/deploy.sh <id>}"
+env_file=.env
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --env-file) env_file="${2:?--env-file needs a path}"; shift 2 ;;
+    *) echo "usage: pnpm contentworker:deploy [--env-file <path>]" >&2; exit 2 ;;
+  esac
+done
 if [ "${GITHUB_ACTIONS:-}" != true ] && [ "${CONTENTWORKER_DEPLOY:-}" != 1 ]; then
-  echo "scripts/deploy.sh ships to production and runs in CI. To run it elsewhere, set CONTENTWORKER_DEPLOY=1." >&2
+  echo "This ships to production. Run it as \`pnpm contentworker:deploy\`, or set CONTENTWORKER_DEPLOY=1." >&2
   exit 1
 fi
 cd "$(dirname "$0")/.."
 
-sha="${GITHUB_SHA:-$(git rev-parse HEAD)}"
+# The commit being shipped: the checkout's, which a workflow_run job's GITHUB_SHA is not.
+sha="${DEPLOY_SHA:-$(git rev-parse HEAD)}"
 short="${sha::7}"
-config="wrangler.$id.json"
+config="wrangler.deploy.json"
 work=$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/deploy.XXXXXX")
 current="start"
 group_open=""
 cancelled=""
 app_live=""
-docs_deployed=""
 # What deployed, so a failure rolls back only those.
 engine_deployed=""
 media_deployed=""
@@ -34,12 +39,17 @@ api_deployed=""
 delivery_deployed=""
 web_deployed=""
 
-# A titled, collapsible section of the Actions log. `current` names it in the failure message.
+# A titled, collapsible section of the Actions log (a heading elsewhere). `current` names it in the
+# failure message.
 step() {
+  current="$1"
+  if [ "${GITHUB_ACTIONS:-}" != true ]; then
+    printf '\n== %s\n' "$1"
+    return
+  fi
   [ -n "$group_open" ] && echo "::endgroup::"
   echo "::group::$1"
   group_open=1
-  current="$1"
 }
 
 summary() {
@@ -53,7 +63,7 @@ retry() {
   local attempt
   for attempt in 1 2 3; do
     if "$@"; then return 0; fi
-    echo "::warning::attempt $attempt failed: $*"
+    echo "::warning::attempt $attempt failed: $*" >&2
     if [ "$attempt" -lt 3 ]; then sleep $((attempt * 15)); fi
   done
   return 1
@@ -107,22 +117,16 @@ finish() {
   local failed_at=$current
   if [ "$rc" != 0 ]; then
     echo
-    echo "::error::Deploy of $id failed at: $failed_at"
-    # A cancelled or timed-out job doesn't roll back: a person decides what happens next.
-    if [ -z "$cancelled" ]; then
-      if [ -n "$engine_deployed" ] && [ -z "$app_live" ]; then
-        step "Roll back"
-        roll_back_app
-      fi
-      if [ -n "$docs_deployed" ]; then
-        step "Roll back docs"
-        retry pnpm --filter @contentworker/docs-site exec wrangler rollback -y -m "Docs smoke test failed for $short"
-      fi
+    echo "::error::Deploy failed at: $failed_at"
+    # A cancelled or timed-out deploy doesn't roll back: a person decides what happens next.
+    if [ -z "$cancelled" ] && [ -n "$engine_deployed" ] && [ -z "$app_live" ]; then
+      step "Roll back"
+      roll_back_app
     fi
   fi
   [ -n "$group_open" ] && echo "::endgroup::"
   # Last, so it is what a truncated failure log ends on.
-  if [ "$rc" != 0 ]; then echo "::error::Deploy of $id failed at: $failed_at"; fi
+  if [ "$rc" != 0 ]; then echo "::error::Deploy failed at: $failed_at"; fi
   exit "$rc"
 }
 trap finish EXIT
@@ -131,26 +135,50 @@ trap finish EXIT
 # reaches it. A closed log pipe counts as a cancel, so it can't start a rollback.
 trap 'cancelled=1; exit 130' INT TERM HUP PIPE
 
-# A merge that silently skips its deploy looks like a deploy: fail instead.
+# A merge that silently skips its deploy looks like a deploy: fail instead. On a workstation,
+# wrangler's own login will do.
 step "Check deploy credentials"
 if [ -z "${CLOUDFLARE_API_TOKEN:-}" ] || [ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]; then
-  echo "::error::CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID must be set to deploy"
-  exit 1
+  if [ "${GITHUB_ACTIONS:-}" = true ]; then
+    echo "::error::CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID must be set to deploy"
+    exit 1
+  fi
+  if ! pnpm --filter @contentworker/engine exec wrangler whoami >/dev/null 2>&1; then
+    echo "Not signed in to Cloudflare: run \`pnpm --filter @contentworker/engine exec wrangler login\`, or set CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID." >&2
+    exit 1
+  fi
 fi
 
 step "Render config"
-node scripts/fleet.ts render "$id"
-names=$(node scripts/fleet.ts names "$id")
-eval "$names"
+eval "$(node scripts/install.ts names --settings "$env_file")"
+config="$DEPLOY_CONFIG"
+# The database and KV namespace ids, looked up by the names scripts/setup.sh created them with
+# (or given as D1_ID and KV_ID).
+lookup_d1() {
+  pnpm --filter @contentworker/engine exec wrangler d1 list --json </dev/null |
+    sed -n '/^\[/,$p' | jq -er --arg n "$D1" '.[] | select(.name == $n) | .uuid'
+}
+lookup_kv() {
+  pnpm --filter @contentworker/engine exec wrangler kv namespace list </dev/null |
+    sed -n '/^\[/,$p' | jq -er --arg t "$KV" '.[] | select(.title == $t) | .id'
+}
+if [ -z "${D1_ID:-}" ]; then
+  D1_ID=$(retry lookup_d1) || { echo "::error::no D1 database $D1: run scripts/setup.sh first"; exit 1; }
+fi
+if [ -z "${KV_ID:-}" ]; then
+  KV_ID=$(retry lookup_kv) || { echo "::error::no KV namespace $KV: run scripts/setup.sh first"; exit 1; }
+fi
+export D1_ID KV_ID
+node scripts/install.ts render --settings "$env_file"
 
-# Only the secrets set in the environment; `--secrets-file` adds to a Worker's secrets and never
-# removes one, so a secret set by hand survives. The engine's ASSISTANT_PRINCIPAL_KEY and
-# ASSISTANT_PRINCIPAL_KEY_PREVIOUS aren't in the environment: `fleet.ts secrets` derives them from
+# Only the secrets that are set; `--secrets-file` adds to a Worker's secrets and never removes one,
+# so a secret set by hand survives. The engine's ASSISTANT_PRINCIPAL_KEY and
+# ASSISTANT_PRINCIPAL_KEY_PREVIOUS aren't set anywhere: `install.ts secrets` derives them from
 # PRINCIPAL_KEY and PRINCIPAL_KEY_PREVIOUS (HKDF, scripts/derive-assistant-key.ts) straight into the
 # engine's secrets file, never printing them.
 step "Collect secrets"
 for app in engine media api delivery web; do
-  node scripts/fleet.ts secrets "$app" "$work/$app-secrets.json"
+  node scripts/install.ts secrets "$app" "$work/$app-secrets.json" --settings "$env_file"
 done
 # Nothing after this needs them in the environment, and builds and their dependencies shouldn't see
 # them: from here each Worker's secrets exist only in its 0600 file.
@@ -166,8 +194,8 @@ read_bookmark() {
 }
 retry read_bookmark
 bookmark=$(jq -er .bookmark "$work/d1-bookmark.json")
-summary "D1 bookmark for $id before $short: \`$bookmark\`"
-echo "::notice::D1 bookmark for $id before this deploy: $bookmark"
+summary "D1 bookmark before $short: \`$bookmark\`"
+echo "::notice::D1 bookmark before this deploy: $bookmark"
 
 # Migrations run before the new code, and old code runs against the new schema until the Workers
 # below are live: a migration must be additive (expand).
@@ -243,17 +271,4 @@ check_latency "https://$CDN_DOMAIN/health" 0.3 || true
 
 # The app is live: nothing below can roll it back.
 app_live=1
-
-# Static docs Worker; independent of the app, so it goes last and can't block a deploy above.
-if [ "$DOCS" = true ]; then
-  step "Deploy docs"
-  retry pnpm --filter @contentworker/docs-site run deploy
-  docs_deployed=1
-
-  step "Smoke test docs"
-  host=$(node -e "const {parse}=require('jsonc-parser');console.log(parse(require('fs').readFileSync('apps/docs/wrangler.jsonc','utf8')).routes[0].pattern)")
-  get -o /dev/null "https://$host/"
-  get -o /dev/null "https://$host/reference/rest-api/"
-  status=$(curl -s -o /dev/null -w '%{http_code}' "https://$host/no-such-page-$short/")
-  [ "$status" = 404 ] || { echo "::error::an unknown docs page answered $status, not 404"; exit 1; }
-fi
+summary "Deployed $short to https://$DOMAIN"

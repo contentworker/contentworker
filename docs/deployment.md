@@ -1,172 +1,182 @@
 # Deployment
 
-ContentWorker deploys to the edge platform as **one isolated stack per customer**: each deployment
-has its own database, object storage bucket, key-value namespace, vector index, queues, AI gateway
-and five edge workers (engine, media, api, delivery, web). Spaces and environments live inside a
-deployment's database. Merging to `main` is releasing: CI migrates the database and deploys every
-deployment, ring by ring. Nobody deploys from a workstation or an agent session.
-
-The code, `scripts/fleet.ts`, `scripts/deploy.sh`, `scripts/provision.sh` and `deploy.yml` are in
-this repository. The registry of real deployments, the rings and each deployment's secrets are not:
-they live in the maintainers' private `contentworker/fleet` repository, which this repository's CI
-calls after `verify` (see [The pipeline](#the-pipeline)). To run your own fleet, keep your registry
-as described under [Provisioning](#provisioning-a-deployment).
+ContentWorker is self-hosted: one install in your own Cloudflare account, with its own database,
+object storage bucket, key-value namespace, vector index, queues, AI gateway and five edge workers
+(engine, media, api, delivery, web). Spaces and environments live inside the install's database.
+You run two scripts from a checkout: `pnpm contentworker:setup` creates the resources and the secrets once,
+and `pnpm contentworker:deploy` ships the checked-out commit. Merging to `main` of this repository deploys
+nothing, and an agent session never deploys.
 
 For bindings and vars, see [Configuration](./configuration.md); for what each worker does, see
 [Architecture](./architecture.md); for restore points, see
-[Backup & restore](./backup-and-restore.md).
+[Backup & restore](./backup-and-restore.md). The operator's short version is
+https://docs.contentworker.app/start/self-hosting/.
 
-## The registry: `<id>.jsonc` files
+## Prerequisites
 
-One file per deployment, in the directory `FLEET_REGISTRY` names (this repository ships none; a
-fork's own is `deployments/`, and `examples/fleet/example.jsonc` is a held starting point), parsed by `toDeployment` in `scripts/fleet.ts`:
+- A Cloudflare account on the Workers Paid plan, and a zone in it for the install's `DOMAIN`.
+- Node 24 and pnpm.
+- `wrangler login` (used by setup and by a deploy from your workstation), or `CLOUDFLARE_API_TOKEN`
+  and `CLOUDFLARE_ACCOUNT_ID` in the environment (required in CI; see
+  [The deploy token](#the-deploy-token)).
 
-| Field           | Meaning                                                                                                                                                                                                                                 |
-| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `id`            | Lowercase id; reserved words (`api`, `cdn`, `admin`, `docs`, …) need an explicit `domain`                                                                                                                                               |
-| `ring`          | `staging`, `internal`, `canary` or `general`                                                                                                                                                                                            |
-| `slot`          | 1–999, unique; keeps each deployment's rate-limit namespaces apart (`slot × 1000 + n`)                                                                                                                                                  |
-| `domain`        | The admin host; default `<id>.contentworker.app`. The api is `api.<domain>`, delivery `cdn.<domain>`, media `media.<domain>`                                                                                                            |
-| `suffix`        | Appended to every account-wide resource name; default `-<id>` (`""` keeps the base names in `apps/*/wrangler.jsonc`)                                                                                                                    |
-| `environment`   | The GitHub environment holding its secrets; default `deploy-<id>`                                                                                                                                                                       |
-| `d1Id`, `kvId`  | Recorded by `scripts/provision.sh`; required to render                                                                                                                                                                                  |
-| `jurisdiction`  | `eu` or `fedramp`, for the database, object storage and stateful objects (set at creation)                                                                                                                                              |
-| `hold`          | Skipped by CI: stays on what it runs now                                                                                                                                                                                                |
-| `docs`          | Also deploys the public docs site                                                                                                                                                                                                       |
-| `demo`          | Public demo: models mocked (`AI_MODE=mock`, no AI gateway), no vector index, `ALLOW_FAKE_ADAPTERS=ai,vectors` on the api, delivery and engine, and the enterprise starter offered (`DEMO_STARTERS=true` on the api); never in `general` |
-| `aiGatewayLogs` | Rendered as `AI_GATEWAY_LOGS`: whether the AI gateway logs each call (prompts and answers never)                                                                                                                                        |
-| `aiMaxTier`     | `flagship`, `balanced` or `fast`, rendered as `AI_MAX_TIER` on the api and the engine: the most capable model tier the deployment runs (its price ceiling per call). Default: no cap                                                    |
-| `sso`           | `{ issuer, clientId, trustEmail? }`: the customer's OIDC provider for admin sign-in (secret `OIDC_CLIENT_SECRET`)                                                                                                                       |
-| `email`         | `{ from, fromName? }`: edge email sender (workflow notify nodes, invitations, scheduler alerts; password reset codes on web); adds the engine's and web's `send_email` binding                                                          |
-
-`scripts/fleet.ts` commands (`pnpm fleet <command>` is the same script):
+## First install
 
 ```sh
-node scripts/fleet.ts render <id>          # write apps/{engine,api,delivery,web}/wrangler.<id>.json
-node scripts/fleet.ts matrix               # deployments per ring, for CI (holds excluded)
-node scripts/fleet.ts secrets <app> <out>  # that app's secrets from the environment, as JSON
-node scripts/fleet.ts names <id>           # resource names as shell variables
-node scripts/fleet.ts set-d1 <id> <uuid>   # record the D1 id in the registry
-node scripts/fleet.ts set-kv <id> <kv id>  # record the KV namespace id
-node scripts/fleet.ts status               # /health/deep of every deployment
-node scripts/fleet.ts doctor <id>          # check one deployment's configs, then its scheduler
-node scripts/fleet.ts demos                # provisioned demo deployments (those with a D1 id), as JSON
+git clone <your clone of the repository> contentworker && cd contentworker
+pnpm install
+pnpm --filter @contentworker/engine exec wrangler login
+cp .env.example .env        # set DOMAIN, and any optional setting you want
+pnpm contentworker:setup               # resources and secrets; safe to re-run
+pnpm contentworker:deploy
 ```
 
-A rendered config is the app's `wrangler.jsonc` with the deployment's names, ids, routes
-(custom domains) and vars filled in: `OAUTH_ISSUER=https://<domain>` on the api (OAuth for MCP
-clients is served on the admin host, so its consent screen can use the person's web sign-in) and
-`MEDIA_BASE_URL=https://api.<domain>`, the AI gateway id with `AI_GATEWAY_LOGS` on every worker
-that sets `AI_GATEWAY_ID`, `DATA_JURISDICTION`, SSO vars on web, and edge email on the engine and web.
+1. **Settings.** `.env.example` lists every setting as a flat environment variable; copy it to
+   `.env` (gitignored). A variable already set in the environment wins over the file, and an empty
+   one counts as unset. `scripts/install.ts` parses them.
+2. **`pnpm contentworker:setup`** (`scripts/setup.sh [--env-file <path>] [--github]`) needs `wrangler login`
+   (or the token variables) and is safe to re-run; it keeps what exists. It:
+   - creates the database and turns on read replication (`mode: auto`; when the API refuses, it
+     says how to do it in the dashboard);
+   - creates the shared key-value namespace;
+   - creates the object storage bucket with lifecycle rules (`imports/` 7 days, `dlq/` 30 days,
+     `zips/` 2 days, and `abort-multipart`, which aborts multipart uploads left unfinished for 2
+     days anywhere in the bucket);
+   - creates the vector index (768 dimensions, cosine; metadata indexes on `spaceId` and
+     `environmentId`), skipped with `AI_MODE=mock`;
+   - creates the queues (events, events DLQ, bulk, agents, purge, purge DLQ, media purge, media
+     purge DLQ, asset events, asset events DLQ) with 14-day retention;
+   - creates the storage event notification rule that sends the bucket's `object-create` events
+     to `contentworker-asset-events<suffix>` (asset ingest), unless one to that queue exists;
+   - creates the AI gateway (authenticated, rate-limited, retries, logs per `AI_GATEWAY_LOGS`);
+   - generates `PRINCIPAL_KEY`, `DATA_KEY`, `TOKEN_PEPPER`, `MEDIA_SIGNING_SECRET`,
+     `PASSWORD_PEPPER` and the first administrator's `SETUP_TOKEN` into `.secrets/secrets.env`
+     (`.secrets/secrets-<instance>.env` with `INSTANCE`; mode 0600, gitignored, never printed). It
+     refuses to generate a new `DATA_KEY`, `TOKEN_PEPPER` or `PASSWORD_PEPPER` while the api or
+     web worker already holds one: restore the file from your backup instead;
+   - with `--github`, also sets the secrets on the repository's `production` environment, which it
+     limits to `main`, for [deploy on merge](#deploy-on-merge) (needs `gh auth login`; not with
+     `INSTANCE`, since the workflow ships one install).
+3. **Back up `.secrets/`.** `DATA_KEY` seals every stored secret, and `TOKEN_PEPPER` and
+   `PASSWORD_PEPPER` are in every API key and password hash. Losing one makes what it protects
+   unreadable, and none can be regenerated. Keep a copy outside the machine, in a password manager
+   or a secrets store (see [Backup & restore](./backup-and-restore.md#backing-up-secrets)).
+4. **`pnpm contentworker:deploy`** (`scripts/deploy.sh [--env-file <path>]`) ships the checked-out commit; see
+   [What a deploy does](#what-a-deploy-does).
+5. **The first admin.** Open `https://<DOMAIN>/setup` and enter `SETUP_TOKEN` from the secrets file
+   to create the first administrator.
 
-`doctor <id>` is read-only. It renders every app for the deployment and checks that each has the
-bindings its code reads (`REQUIRED_BINDINGS` in `scripts/fleet.ts`), the database and key-value
-ids are the deployment's, the engine has its `* * * * *` cron and consumes its queues, every
-stateful object and durable workflow bound by `script_name` names this deployment's engine and a
-class or workflow it defines, each public worker has its custom-domain route, and no secret is
-declared as a plain var; it lists the secrets the deployment's GitHub environment must hold. Then,
-for a provisioned deployment CI deploys (or with `--url <api base>`, e.g.
-`http://localhost:8787`), it reads `https://api.<domain>/health` and fails on `scheduler: stale`.
-`--offline` skips the fetch. It exits `1` on any error.
+Edge image transforms and the video streaming service are account features; their bindings need
+no ids. The routes (`<DOMAIN>`, `api.`, `cdn.` and `media.<DOMAIN>`) are custom domains on the
+edge workers: the deploy creates each one and its certificate, on a zone in the same Cloudflare
+account, so there is no DNS record to add by hand. To receive the video streaming service's
+webhook, point it at `https://api.<DOMAIN>/webhooks/stream` and set `STREAM_WEBHOOK_SECRET`.
+
+## Settings
+
+| Variable                                            | Meaning                                                                                                                                                 |
+| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `DOMAIN`                                            | Required. The admin host. The api is `api.<DOMAIN>`, Delivery `cdn.<DOMAIN>`, media `media.<DOMAIN>`                                                    |
+| `DATA_JURISDICTION`                                 | `eu` or `fedramp`, for the database, object storage and stateful objects. Set before the first setup: it can't change once they exist                   |
+| `AI_MAX_TIER`                                       | `flagship`, `balanced` or `fast`: the most capable model tier the install runs (its price ceiling per call). Unset: no cap                              |
+| `AI_GATEWAY_LOGS`                                   | Whether the AI gateway logs each call (prompts and answers never). Default `false`                                                                      |
+| `AI_MODE`                                           | `mock` runs without Workers AI: models mocked, no AI gateway or vector index, `ALLOW_FAKE_ADAPTERS=ai,vectors` on the api, delivery and engine          |
+| `DEMO_STARTERS`                                     | Offer the enterprise sample starter when a space is created (`DEMO_STARTERS=true` on the api)                                                           |
+| `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_TRUST_EMAIL` | Admin single sign-on with your OIDC provider; the client secret is the secret `OIDC_CLIENT_SECRET`                                                      |
+| `EMAIL_FROM`, `EMAIL_FROM_NAME`                     | Edge email sender (workflow notify nodes, invitations, scheduler alerts; password reset codes on web); adds the engine's and web's `send_email` binding |
+| `INSTANCE`, `RATE_LIMIT_SLOT`                       | A second install in the same account; see [Two installs in one account](#two-installs-in-one-account)                                                   |
+
+`scripts/install.ts` renders each app's `wrangler.jsonc` into `apps/<app>/wrangler.deploy.json`
+(`wrangler.deploy-<instance>.json` with `INSTANCE`) with the install's names, ids, routes (custom
+domains) and vars filled in: `OAUTH_ISSUER=https://<DOMAIN>` on the api (OAuth for MCP clients is
+served on the admin host, so its consent screen can use the person's web sign-in) and
+`MEDIA_BASE_URL=https://api.<DOMAIN>`, the AI gateway id with `AI_GATEWAY_LOGS` on every worker
+that sets `AI_GATEWAY_ID`, `DATA_JURISDICTION`, SSO vars on web, and edge email on the engine and
+web. Its commands (each takes `--env-file <path>`):
+
+```sh
+node scripts/install.ts render               # write apps/<app>/wrangler.deploy.json
+node scripts/install.ts names                # resource names as shell variables
+node scripts/install.ts secrets <app> <out>  # that app's secrets, as JSON
+```
+
+## Upgrading
+
+```sh
+git pull
+pnpm install
+pnpm contentworker:deploy
+```
+
+A deploy migrates the database before the new code ships, so every migration is expand-only
+(additive; see [Migrations](#migrations)). Re-run `pnpm contentworker:setup` first when a release adds a
+resource (a queue, a bucket rule): it creates only what is missing, and a deploy that needs a
+resource that isn't there fails at the step that binds it.
+
+### Upgrade notes
+
+A release that needs more than `pnpm contentworker:deploy` is listed here, newest first, with what to do
+before deploying it. A release not listed needs nothing extra.
+
+- None yet.
+
+## What a deploy does
+
+`scripts/deploy.sh` runs from the commit it ships. It refuses to start outside GitHub Actions unless
+`CONTENTWORKER_DEPLOY=1` (`pnpm contentworker:deploy` sets it) and removes the secrets from its environment
+once they are written to files, so builds never see them. Each step is a titled group in a CI log,
+and a failure names the one it stopped at.
+
+1. Check credentials: `wrangler login`, or `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`
+   (required in CI).
+2. Render the config: the database and key-value ids are looked up by the names setup created them
+   with (or taken from `D1_ID` and `KV_ID`), then each app's secrets are collected, from the
+   environment first, else the secrets file.
+3. **Record a point-in-time recovery bookmark** (the restore point for this deploy).
+4. **Migrate the database**: `wrangler d1 migrations apply DB --remote`. Migrations run before
+   the new code, so they must be additive (expand).
+5. Deploy **engine** (it owns the stateful object and workflow classes the others bind), then
+   **media** (so it already verifies the URLs the api and delivery hand out), then **api**, then
+   **delivery**, then build and deploy **web**.
+6. Smoke test: `https://<DOMAIN>/health`, `/health/deep` (the database and the api over the
+   binding), `/login`, `https://api.<DOMAIN>/health` and `/openapi.json`,
+   `https://cdn.<DOMAIN>/health`, `https://media.<DOMAIN>/health`; an anonymous delivery read must
+   answer 401 and an unknown media URL 404.
+7. Latency check (warns only): `/login` 1.5 s, `/health/deep` 1.0 s, `cdn.<DOMAIN>/health` 0.3 s.
+
+On any failure after the engine shipped, the deploy **rolls back in order**: engine first (the
+platform refuses to roll a worker back past a stateful-object migration; if the engine can't go
+back, nothing else is rolled back and a person decides), then media, api, delivery and web, each
+only if it deployed. A first deploy has no earlier version and stays. Database migrations are not
+rolled back. All platform API calls retry up to three times; each step is idempotent.
 
 ## Scheduler alerts
 
 The engine's per-minute cron runs the sweeps nothing else would notice stopping: the outbox relay,
 scheduled actions, asset expiry, retention, the reseal and the rest. Two things watch it:
 
-- **The cron watches its sweeps.** At the end of each tick it checks every sweep the deployment
+- **The cron watches its sweeps.** At the end of each tick it checks every sweep the install
   runs; one that has gone two of its runs without a success (five minutes for the every-minute
-  sweeps, two hours for the hourly ones, two days for the daily ones) is stale. The deployment's
+  sweeps, two hours for the hourly ones, two days for the daily ones) is stale. The install's
   alert recipients get one email when it goes stale and one when it succeeds again, never one per
   tick. Set them with `PUT /deployment/scheduler/alerts` (or the `scheduler_alerts_set_recipients`
-  MCP tool) as a deployment administrator; the emails need the deployment's `email` sender. With no
-  recipients or no sender the engine still logs every episode (`scheduler job stale`), which a
-  platform log alert can match. `GET /deployment/scheduler/alerts` shows what is stale and how
-  each email went.
+  MCP tool) as an install administrator; the emails need `EMAIL_FROM`. With no recipients or no
+  sender the engine still logs every episode (`scheduler job stale`), which a platform log alert
+  can match. `GET /deployment/scheduler/alerts` shows what is stale and how each email went.
 - **Something outside watches the cron.** When the cron itself stops (the engine fails to deploy
   or boot, the trigger is gone) nothing of it runs to say so. Point an uptime monitor (a
   platform health check with a notification, or any external checker) at
-  `https://api.<domain>/health/scheduler`, which answers `503` once the last tick is more than
-  five minutes old. `/health` itself stays `200`: it is the api's liveness, and CI's smoke test
-  reads it right after a deploy, before a new deployment's first tick. When the cron comes back,
-  its first tick emails the recipients that it is ticking again, with how long it was out.
-
-`doctor <id>` reads the same state from `/health` and fails on `scheduler: stale`.
-
-## Provisioning a deployment
-
-`FLEET_REGISTRY` names the registry directory for `scripts/fleet.ts`, `scripts/deploy.sh` and
-`scripts/provision.sh`; unset, they read `deployments/` in the checkout, and with neither they stop
-with "no deployment registry at ...". `FLEET_REPO` (`owner/name`) sets the GitHub repository
-`provision.sh` creates the environment and secrets on. The maintainers set both to their private
-fleet repository, so a customer's entry and secrets never land in a public one:
-
-    FLEET_REGISTRY=../fleet/deployments FLEET_REPO=contentworker/fleet ./scripts/provision.sh <id>
-
-To start your own, copy `examples/fleet/example.jsonc` to `deployments/<id>.jsonc` (or into your
-`FLEET_REGISTRY` directory) and edit it; it is held (`hold: true`) until you remove that.
-
-1. Add `<id>.jsonc` to the registry (`id`, `ring`, `slot`, optionally `domain`, `sso`, `email`).
-2. Run `./scripts/provision.sh <id>` (needs `wrangler login` and `gh auth login`; no token to
-   paste: its two API calls use `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` when set, else
-   wrangler's login). It is safe to re-run; it:
-   - creates the database, records its id, and turns on read replication (`mode: auto`; when the
-     API refuses, it says how);
-   - creates the shared key-value namespace and records its id;
-   - creates the object storage bucket with lifecycle rules (`imports/` 7 days, `dlq/` 30 days,
-     `zips/` 2 days, and `abort-multipart`, which aborts multipart uploads left unfinished for 2
-     days anywhere in the bucket);
-   - creates the vector index (768 dimensions, cosine; metadata indexes on `spaceId` and
-     `environmentId`), except for a demo;
-   - creates the queues (events, events DLQ, bulk, agents, purge, purge DLQ, media purge, media
-     purge DLQ, asset events, asset events DLQ) with 14-day retention;
-   - creates the storage event notification rule that sends the bucket's `object-create` events to
-     `contentworker-asset-events<suffix>` (asset ingest), unless one to that queue exists;
-   - creates the AI gateway (authenticated, rate-limited, retries, logs per `aiGatewayLogs`);
-   - creates the GitHub environment and generates `PRINCIPAL_KEY`, `DATA_KEY`, `TOKEN_PEPPER`,
-     `MEDIA_SIGNING_SECRET` and `PASSWORD_PEPPER` if absent (refusing to generate a new
-     `DATA_KEY`, `TOKEN_PEPPER` or `PASSWORD_PEPPER` when the api worker already holds one);
-   - writes the first administrator's one-time setup code to `.secrets/<id>/setup-code`
-     (gitignored) and sets it as `SETUP_TOKEN`.
-3. Add `CLOUDFLARE_API_TOKEN` (with the permissions in [The deploy token](#the-deploy-token))
-   and `CLOUDFLARE_ACCOUNT_ID` to the environment if they are not repository secrets of the fleet
-   repository, commit the registry file, and merge. CI deploys it in its ring.
-4. Send the customer's first admin `https://<domain>/setup` and the setup code.
-
-Edge image transforms and the video streaming service are account features; their bindings need
-no ids. The routes (`<domain>`, `api.`, `cdn.` and `media.<domain>`) are custom domains on the
-edge workers: the deploy creates each one and its certificate, on a zone in the same platform
-account, so there is no DNS record to add by hand.
-
-**A deployment that predates the media worker** needs its two queues before the merge that ships
-it (`contentworker-media-purge<suffix>` and `…-dlq<suffix>`; the engine binds the first as a
-producer and the media worker consumes both, so a deploy without them fails). Re-run
-`./scripts/provision.sh <id>` for each such deployment first: it creates only what is missing. To
-receive the video streaming service's webhook, point it at
-`https://api.<domain>/webhooks/stream` and set `STREAM_WEBHOOK_SECRET`.
-
-**A deployment that predates async plugin operations** needs migration `0044_app_operation_jobs` (CI applies it) and, in the fleet render, the `APP_OPERATION_WF` workflow binding (`scripts/fleet.ts` renders it). Without the binding an accepted async job fails at once.
-
-**A deployment that predates zip downloads and multipart uploads** needs the two object storage
-lifecycle rules (`zips/` and `abort-multipart`) and, in the fleet render, the `ASSET_ZIP_WF`
-workflow binding and the media worker's `RATE_LIMIT_SHARE_UNLOCK` rate limit (`scripts/fleet.ts`
-renders both; the namespace is `slot × 1000 + 6`). Re-run `./scripts/provision.sh <id>` for the
-rules; they are backstops for the engine's hourly sweeps, so nothing fails without them, but an
-abandoned part or an archive then stays until the sweep removes it. The workflow
-(`contentworker-asset-zip<suffix>`) is created by the engine's deploy.
-
-**A deployment that predates asset ingest** needs `contentworker-asset-events<suffix>`, its
-`…-dlq<suffix>` and the storage notification rule before the merge that ships it: the engine
-consumes both queues and the api binds the first as a producer, so a deploy without them fails.
-Re-run `./scripts/provision.sh <id>` for each such deployment first. Assets uploaded before then
-were never ingested; once deployed, `POST /spaces/<space>/environments/<env>/assets/reindex` (or
-the `assets_reindex` MCP tool) sends them through ingest as a bulk job, per environment.
+  `https://api.<DOMAIN>/health/scheduler`, which answers `503` once the last tick is more than
+  five minutes old. `/health` itself stays `200`: it is the api's liveness, and a deploy's smoke
+  test reads it right after the deploy, before a new install's first tick. When the cron comes
+  back, its first tick emails the recipients that it is ticking again, with how long it was out.
 
 ## Secrets
 
-Secrets live in each deployment's GitHub environment and reach the workers through
-`wrangler deploy --secrets-file` (which adds and never removes, so a secret set by hand
-survives). Which worker gets which is `SECRETS` in `scripts/fleet.ts`:
+Secrets live in `.secrets/secrets.env` (or the environment, which wins; in CI, repository or
+`production` environment secrets) and reach the workers through `wrangler deploy --secrets-file`
+(which adds and never removes, so a secret set by hand survives). Which worker gets which is
+`SECRETS` in `scripts/install.ts`:
 
 | Worker   | Secrets                                                                                                                                                                                               |
 | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -177,19 +187,20 @@ survives). Which worker gets which is `SECRETS` in `scripts/fleet.ts`:
 | media    | `MEDIA_SIGNING_SECRET` (verifies published paths' tokens and Preview's short-lived signed reads; it signs nothing)                                                                                    |
 
 `PRINCIPAL_KEY`, `DATA_KEY`, `TOKEN_PEPPER` and `MEDIA_SIGNING_SECRET` are required
-(`REQUIRED_SECRETS`); keys must be at least 32 characters (`openssl rand -hex 32`). Every
-worker of a deployment holds the same value of each. `TOKEN_PEPPER` and `PASSWORD_PEPPER` never
-change once a deployment runs (escrow them, and `DATA_KEY` with them). `DATA_KEY` and
-`PRINCIPAL_KEY` rotate through their `*_PREVIOUS` companions: `DATA_KEY` by the procedure in
+(`REQUIRED_SECRETS`); keys must be at least 32 characters (`openssl rand -hex 32`). Every worker of
+an install holds the same value of each. `TOKEN_PEPPER` and `PASSWORD_PEPPER` never change once an
+install runs (back them up, and `DATA_KEY` with them). `DATA_KEY` and `PRINCIPAL_KEY` rotate
+through their `*_PREVIOUS` companions: `DATA_KEY` by the procedure in
 [Auth & RBAC](./auth-and-rbac.md#secrets-at-rest), `PRINCIPAL_KEY` below.
 
 **Rotating `PRINCIPAL_KEY`:** set `PRINCIPAL_KEY_PREVIOUS` to the current key and `PRINCIPAL_KEY`
-to a new one in the GitHub environment and deploy; once every worker runs the new key, remove
-`PRINCIPAL_KEY_PREVIOUS` and deploy again. The engine's assistant pair follows on its own: `fleet.ts
-secrets` derives `ASSISTANT_PRINCIPAL_KEY` from `PRINCIPAL_KEY` and `ASSISTANT_PRINCIPAL_KEY_PREVIOUS`
-from `PRINCIPAL_KEY_PREVIOUS` on every deploy. Because `--secrets-file` never removes a secret,
-delete `ASSISTANT_PRINCIPAL_KEY_PREVIOUS` from the engine (`wrangler secret delete`, by hand, with
-the user's approval) when you remove `PRINCIPAL_KEY_PREVIOUS`, as for any `*_PREVIOUS`.
+to a new one in the secrets file (or the CI secrets) and deploy; once every worker runs the new
+key, remove `PRINCIPAL_KEY_PREVIOUS` and deploy again. The engine's assistant pair follows on its
+own: `install.ts secrets` derives `ASSISTANT_PRINCIPAL_KEY` from `PRINCIPAL_KEY` and
+`ASSISTANT_PRINCIPAL_KEY_PREVIOUS` from `PRINCIPAL_KEY_PREVIOUS` on every deploy. Because
+`--secrets-file` never removes a secret, delete `ASSISTANT_PRINCIPAL_KEY_PREVIOUS` from the engine
+(`wrangler secret delete`, by hand) when you remove `PRINCIPAL_KEY_PREVIOUS`, as for any
+`*_PREVIOUS`.
 
 ### The assistant's principal key
 
@@ -199,9 +210,9 @@ The web gateway signs the assistant's paths (`/agents/*`) with a key derived fro
 and every other path with `PRINCIPAL_KEY` itself. The api's gate for `/agents/*` derives the key
 from `PRINCIPAL_KEY` (and `_PREVIOUS`); its REST surface accepts only the main key. The engine holds
 only the derived pair, so a principal it could sign is good for the assistant's socket and nothing
-else. Nothing to set by hand: CI derives the pair at each deploy (`fleet.ts secrets`, with
+else. Nothing to set by hand: each deploy derives the pair (`install.ts secrets`, with
 `scripts/derive-assistant-key.ts`; it reads the key from stdin or `PRINCIPAL_KEY`, never an
-argument), and `provision.sh` generates nothing new for it.
+argument), and `setup.sh` generates nothing new for it.
 
 The api gate and the engine accept only the derived key on `/agents/*`; a principal signed with
 `PRINCIPAL_KEY` is refused there, and one signed with the derived key is refused on every other
@@ -210,20 +221,18 @@ then only the new).
 
 ### The deploy token
 
-`CLOUDFLARE_API_TOKEN` is an account-owned API token for the deployment's account. It needs
-exactly what `scripts/deploy.sh` does, and nothing `provision.sh` does (provisioning runs by hand
-under `wrangler login`). One token can serve every deployment on the account: hold it, with
-`CLOUDFLARE_ACCOUNT_ID`, as repository secrets of the fleet repository, and every deployment's
-environment uses them (a secret of the same name on an environment overrides them). Each
-deployment's zone goes on the token:
+A deploy from your workstation uses `wrangler login`. In CI (the optional
+[deploy on merge](#deploy-on-merge)) it uses `CLOUDFLARE_API_TOKEN`, an account-owned API token,
+with `CLOUDFLARE_ACCOUNT_ID`. The token needs exactly what `scripts/deploy.sh` does, and nothing
+`scripts/setup.sh` does (setup runs by hand under `wrangler login`). Put your zone on the token:
 
-| Scope                   | Permission                        | Used by                                                                      |
-| ----------------------- | --------------------------------- | ---------------------------------------------------------------------------- |
-| Account                 | Workers Admin, on **all** Workers | `wrangler deploy`, `--secrets-file` and `wrangler rollback` for every Worker |
-| Account                 | D1: Edit                          | `d1 time-travel info` (the bookmark) and `d1 migrations apply --remote`      |
-| Account                 | Queues: Edit                      | registering the engine's and media worker's queue consumers on deploy        |
-| Account                 | Account Settings: Read            | Wrangler's account lookup                                                    |
-| Zone (the deployment's) | Workers Routes: Edit, Zone: Read  | the custom domains (`<domain>`, `api.`, `cdn.`, `media.`, the docs host)     |
+| Scope              | Permission                        | Used by                                                                      |
+| ------------------ | --------------------------------- | ---------------------------------------------------------------------------- |
+| Account            | Workers Admin, on **all** Workers | `wrangler deploy`, `--secrets-file` and `wrangler rollback` for every Worker |
+| Account            | D1: Edit                          | `d1 time-travel info` (the bookmark) and `d1 migrations apply --remote`      |
+| Account            | Queues: Edit                      | registering the engine's and media worker's queue consumers on deploy        |
+| Account            | Account Settings: Read            | Wrangler's account lookup                                                    |
+| Zone (your domain) | Workers Routes: Edit, Zone: Read  | the custom domains (`<DOMAIN>`, `api.`, `cdn.`, `media.`)                    |
 
 Binding a key-value namespace, bucket, vector index, gateway or other resource needs no permission
 on it, so the token carries none. The Workers permission must cover every Worker in the account,
@@ -232,23 +241,38 @@ all Workers, because a Worker missing from the list fails its deploy with "No ac
 specified service". A token that lacks a permission fails at the step that needs it, and the log
 names the request.
 
-## The pipeline
+## Deploy on merge
 
-`.github/workflows/ci.yml`:
+`.github/workflows/deploy.yml` is optional, for a fork that wants a push to its `main` to deploy.
+It does nothing until the repository variable `DEPLOY_ON_MERGE` is `true`. Then it runs when `CI`
+completes successfully for a push to `main` (a `workflow_run`), or by hand
+(`gh workflow run deploy.yml`), checks out the commit CI passed, and runs `scripts/deploy.sh`. Runs
+queue one at a time (`deploy-production`) and never cancel each other.
+
+- **Settings** are repository variables with the names in `.env.example` (`DOMAIN` is required).
+- **Secrets** are secrets of the `production` environment, limited to `main` (never repository
+  secrets, which a workflow on any branch can read; add required reviewers there to approve each
+  deploy): the ones `pnpm contentworker:setup --github` sets, the optional
+  ones you use (`OIDC_CLIENT_SECRET`, `STREAM_WEBHOOK_SECRET`, `MCP_TOKEN`, `ADMIN_TOKEN`, the
+  `*_PREVIOUS` keys during a rotation), and `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`
+  ([the deploy token](#the-deploy-token)).
+
+## CI
+
+`.github/workflows/ci.yml` only verifies; it deploys nothing.
 
 - **verify** (every push and pull request): lint, type-check and build in one parallel turbo
   run (the build is `wrangler deploy --dry-run` for engine, media, api and delivery), then the
   tests on their own (including the engine's durable workflow runs in the local runtime with
-  `AI_MODE=mock`),
-  `pnpm test:fleet`, `pnpm test:toolkit`, and `pnpm audit --prod --audit-level high`. Turbo's task
-  cache is kept between runs (`.turbo/cache`, restored and saved with `actions/cache`), so a
-  package no change touched replays its lint, type check, build and tests. What a task's hash
-  covers is declared in `turbo.json` (the root files every package reads, the `transit` task that
-  carries a dependency's files down the whole graph) and the packages' own `turbo.json` (a suite
-  that reads another package's files, the docs embed's `docs/*.md`); `scripts/turbo-cache.test.ts`
-  changes each such file in a scratch copy and checks the hash moves. Pull requests and the merge
-  queue read the cache; a push to `main` (which gates `release`), the nightly and the manual run
-  do not read it, so they run every task, and they all write it.
+  `AI_MODE=mock`), `pnpm test:scripts`, `pnpm test:toolkit`, and
+  `pnpm audit --prod --audit-level high`. Turbo's task cache is kept between runs
+  (`.turbo/cache`, restored and saved with `actions/cache`), so a package no change touched replays
+  its lint, type check, build and tests. What a task's hash covers is declared in `turbo.json` (the
+  root files every package reads, the `transit` task that carries a dependency's files down the
+  whole graph) and the packages' own `turbo.json` (a suite that reads another package's files, the
+  docs embed's `docs/*.md`); `scripts/turbo-cache.test.ts` changes each such file in a scratch copy
+  and checks the hash moves. Pull requests and the merge queue read the cache; a push to `main`,
+  the nightly and the manual run do not read it, so they run every task, and they all write it.
 - **devices**: the web app's Playwright suite in WebKit (iPhone, iPad, desktop) and Chromium
   against an offline dev server (`apps/web/e2e`), in three jobs at once, each with its own server:
   `devices (webkit)` (which ends with the sign-in specs), `devices (axe)` and `devices (cms)`,
@@ -261,45 +285,22 @@ names the request.
   files outside a package that feed a generated embed (`docs/*.md`), the lockfile, workspace file
   and root configs, and `ci.yml`; unit-test files and READMEs in those packages are left out
   (`node scripts/device-paths.ts list` prints it).
-- **release** (push to `main` only): needs only `verify`, so deploys do not wait for `devices`. It
-  dispatches `release.yml` in the private `contentworker/fleet` repository with the commit sha, using
-  the repository secret `FLEET_DISPATCH_TOKEN` (a fine-grained token with Actions write on that
-  repository only). While the secret is unset the job succeeds and dispatches nothing, so a fork's
-  CI stays green and deploys nothing. In the fleet repository, `release.yml` refuses any commit
-  that is not on this repository's `main`, runs `fleet.ts matrix` against the registry, and calls
-  its `deploy.yml` ring by ring (staging → internal → canary → general, each waiting for the
-  previous to finish cleanly, `general` four at a time).
 
-A fork that runs its own fleet adds a `release` of its own (or ring jobs that call `deploy.yml` once
-per deployment from `fleet.ts matrix`, with `FLEET_REGISTRY` set).
+## Two installs in one account
 
-`.github/workflows/deploy.yml` checks out the commit and runs `scripts/deploy.sh <id>`, so the steps
-always come from the commit being shipped. Each step below is a titled group in the job's log, and a
-failure names the one it stopped at. The script refuses to run outside GitHub Actions unless
-`CONTENTWORKER_DEPLOY=1`, and removes the deployment's secrets from its environment once they are
-written to files, so builds never see them. Per deployment:
+A second install (a staging copy, say) shares the Cloudflare account. Give it its own settings
+file, for example `.env.staging`, with its own `DOMAIN` and:
 
-1. Render the config and collect each app's secrets.
-2. **Record a point-in-time recovery bookmark** (the restore point for this deploy).
-3. **Migrate the database**: `wrangler d1 migrations apply DB --remote`. Migrations run before
-   the new code, so they must be additive (expand).
-4. Deploy **engine** (it owns the stateful object and workflow classes the others bind), then
-   **media** (so it already verifies the URLs the api and delivery hand out), then **api**, then
-   **delivery**, then build and deploy **web**.
-5. Smoke test: `https://<domain>/health`, `/health/deep` (the database and the api over the
-   binding), `/login`, `https://api.<domain>/health` and `/openapi.json`,
-   `https://cdn.<domain>/health`, `https://media.<domain>/health`; an anonymous delivery read must
-   answer 401 and an unknown media URL 404.
-6. Latency check (warns only): `/login` 1.5 s, `/health/deep` 1.0 s, `cdn.<domain>/health` 0.3 s.
-7. On any failure after the engine shipped, **roll back in order**: engine first (the platform
-   refuses to roll a worker back past a stateful-object migration; if the engine can't go back,
-   nothing else is rolled back and a person decides), then media, api, delivery and web, each only
-   if it deployed. A first deploy has no earlier version and stays. Database migrations are not
-   rolled back.
-8. The deployment with `docs: true` then deploys and smoke-tests the docs site, rolling it back
-   alone on failure.
+- `INSTANCE`: a lowercase name (letters, digits and dashes, starting with a letter) appended to
+  every account-wide resource name (`contentworker-api-staging`, …) and to the rendered config and
+  secrets file names (`wrangler.deploy-staging.json`, `.secrets/secrets-staging.env`).
+- `RATE_LIMIT_SLOT`: a number from 2 to 999 that no other install in the account uses. Rate-limit
+  namespaces are account-wide and derive from it (`slot × 1000 + n`; slot 1 is the default).
 
-All platform API calls retry up to three times; each step is idempotent.
+```sh
+pnpm contentworker:setup --env-file .env.staging
+pnpm contentworker:deploy --env-file .env.staging
+```
 
 ## Releasing the SDK
 
@@ -325,25 +326,28 @@ first publish is done by an owner of the npm org, before that can be set.
 
 ## Migrations
 
-CI applies the hand-written migrations in `packages/db/migrations/` to each deployment's database
-with `wrangler d1 migrations apply DB --remote`, after recording the point-in-time recovery
-bookmark and before the new code ships (see the deploy steps above). That ordering is why they
-are expand-only; the rules for writing one, and applying it locally with `pnpm db:migrate:local`,
-are in [Development](./development.md#changing-the-database-schema). Remote databases are
-migrated only by CI.
+A deploy applies the hand-written migrations in `packages/db/migrations/` to the install's
+database with `wrangler d1 migrations apply DB --remote`, after recording the point-in-time
+recovery bookmark and before the new code ships (see [What a deploy does](#what-a-deploy-does)).
+That ordering is why they are expand-only; the rules for writing one, and applying it locally with
+`pnpm db:migrate:local`, are in [Development](./development.md#changing-the-database-schema).
+Migrate a remote database only through a deploy.
 
 ## Recovering admin access
 
-When no administrator can sign in, `./scripts/setup-code.sh <id>` issues a new one-time setup
-code: it writes it to `.secrets/<id>/setup-code`, sets it on the GitHub environment (so the next
-deploy keeps it) and on the web worker (so it works now). The code opens `/setup` once to create
-one admin account; its use and every wrong guess go to the audit log.
+When no administrator can sign in, `pnpm contentworker:setup-code` (`scripts/setup-code.sh [--env-file <path>] [--github]`; pass `--github` with deploy on merge, or its next deploy puts the old code back)
+issues a new one-time setup code: it replaces `SETUP_TOKEN` in the secrets file (so the next deploy
+keeps it) and on the web worker (so it works now), and never prints it. Send the person recovering
+access `https://<DOMAIN>/setup` and the code. It opens `/setup` once to create one admin account;
+its use and every wrong guess go to the audit log. With deploy on merge, update the `SETUP_TOKEN`
+secret too.
 
 ## Rollback by hand
 
-CI rolls back a failed deploy itself. A later rollback is a revert merged to `main`, which CI
-ships like any change. Rolling code back never rolls the schema back; restoring data is a
-point-in-time recovery restore (see [Backup & restore](./backup-and-restore.md)).
+A failed deploy rolls itself back. To go back later, check out the earlier commit and deploy it
+again, or run `wrangler rollback` per worker (engine first, as the deploy does). Rolling code back
+never rolls the schema back; restoring data is a point-in-time recovery restore (see
+[Backup & restore](./backup-and-restore.md)).
 
 Mind what the older code doesn't know about. Code from before environment purging
 (`0003_environment_purges.sql`) ignores the purge markers: while a deleted environment is still
@@ -354,7 +358,7 @@ purges normally finish within minutes.
 
 Code from before `0004_version_bodies.sql` reads an archived version's emptied `fields` (`{}`)
 as its body, so the archive sweep ships off (`VERSION_ARCHIVE=false`). Turn it on in a later change,
-once the release that reads archived bodies runs on every worker of every ring. Once it's on, don't
+once the release that reads archived bodies runs on every worker. Once it's on, don't
 roll back past that release: history views and restores of superseded versions would show empty
 content. Current and published versions are never archived, so entries themselves read
 correctly.

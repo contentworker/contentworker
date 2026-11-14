@@ -9,7 +9,7 @@ takes `--json` for scripts and agents. Node 24 or later.
 ```sh
 npm install -D @contentworker/sdk
 
-npx contentworker login --url https://api.your-workspace.contentworker.app
+npx contentworker login --url https://api.cms.example.com
 npx contentworker doctor
 npx contentworker model export --out content-model.ts
 npx contentworker model apply content-model.ts --dry-run

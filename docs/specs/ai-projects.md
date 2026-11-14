@@ -366,7 +366,7 @@ Amendment H: the rollout is gated on this.
 - **A golden set in the repo**: two synthetic projects, one in a language other than English,
   each with planted facts and banned terms in its references and instructions, run against every
   capability that takes a project, on each tier's model, with and without the project. On a dev
-  deployment only, never a customer's.
+  deployment only, never a production install.
 - **Checks**: schema conformance and the heuristic fallback rate; planted-fact recall; banned-term
   violations; adversarial references (instructions planted in a file, delimiter forgery);
   project versus space guidance on conflict; overflow on `balanced`.
@@ -415,7 +415,7 @@ from the security and AI reviews (A–H above):
 
 ## Open questions
 
-- Does any fleet deployment run with `AI_MAX_TIER=balanced`? If so, the context-window budget
+- Does any install run with `AI_MAX_TIER=balanced`? If so, the context-window budget
   (F) is blocking for it: the balanced model's window is the one overflow tests target.
 - What does Workers AI return when a prompt overflows the context window: an error, or a silent
   truncation? Check on a dev deployment with #268's checks before `limits(tier)` is trusted.

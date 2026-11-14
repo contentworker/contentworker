@@ -1,14 +1,15 @@
 ---
+
 name: security-model
 description: ContentWorker's trust boundaries and what to check at each, for security review of a diff or a design. Covers the signed x-cw-principal header from the web Worker to the api, the delivery gateway and its unroutable Delivery entrypoint, API keys and scopes per space, the admin and MCP tokens, OAuth for MCP, human sign-in (passwords, passkeys, TOTP, OIDC, SCIM, setup), preview tokens and signed media URLs, outbound webhooks and fetches, plugins on Worker Loader, secrets at rest under DATA_KEY, untrusted content in model prompts, and CI's supply chain. Preloaded by the security-reviewer agent; use it directly when a change touches auth, roles, scopes, signing, secrets, webhooks, external fetches, plugins or model prompts.
 ---
 
 # ContentWorker security model
 
-ContentWorker is one dedicated deployment per customer (no sharing across customers), so the
-boundaries that matter are _inside_ a deployment: the public internet → the Workers, between the
+ContentWorker is self-hosted: each install is its own stack in the operator's Cloudflare account,
+shared with no other install, so the boundaries that matter are _inside_ an install: the public internet → the Workers, between the
 web Worker and the api, between spaces and environments, between API keys of different kinds and
-scopes, and between the platform and the code it runs for a customer (plugins, functions, models).
+scopes, and between the platform and the code it runs for a space (plugins, functions, models).
 Read [references/checklist.md](references/checklist.md) for the per-boundary checks; this page is
 the map.
 
@@ -58,7 +59,7 @@ apps/web (public) ─── API service binding ──► apps/api (public)     
    (`packages/application/src/url-safety.ts`); the engine and api run with
    `global_fetch_strictly_public` as a backstop. Outbound webhooks are signed
    (`packages/adapters/src/http-effects/webhook-sender.ts`).
-6. **Customer code is sandboxed.** Plugins run on Worker Loader isolates with only the
+6. **Plugin code is sandboxed.** Plugins run on Worker Loader isolates with only the
    capabilities their manifest grants (`packages/adapters/src/plugins-cf-loader`,
    `packages/domain/src/plugin/`); `PLUGIN_SOURCE_HOSTS` and `PLUGIN_MIN_RELEASE_AGE_HOURS` gate
    what may be installed.

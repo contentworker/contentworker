@@ -2,7 +2,7 @@
 
 These are the maintainer docs: how ContentWorker is built and how to run, extend and integrate
 with it. They are not published; the public site is `apps/docs`. ContentWorker runs entirely at
-the edge, one isolated stack per customer: five edge workers (`apps/web`, `apps/api`,
+the edge, self-hosted in your own Cloudflare account: five edge workers (`apps/web`, `apps/api`,
 `apps/delivery`, `apps/media`, `apps/engine`) on an edge SQL database, with object storage, a
 key-value cache, queues, stateful edge objects, durable workflows, a vector index, edge inference
 through an AI gateway, edge image transforms, video streaming, edge email and plugin isolates.
@@ -35,8 +35,8 @@ through an AI gateway, edge image transforms, video streaming, edge email and pl
    delivery cache and its staleness bounds, and durable state that isn't derived.
 10. **[Configuration](./configuration.md)**: every binding, var and secret, and which worker uses
     it.
-11. **[Deployment](./deployment.md)**: the fleet registry, provisioning, secrets, the CI pipeline
-    (migrate, deploy engine → media → api → delivery → web, smoke, rollback) and admin recovery.
+11. **[Deployment](./deployment.md)**: self-hosting: settings, setup, secrets, deploys
+    (migrate, deploy engine → media → api → delivery → web, smoke, rollback), deploy on merge and admin recovery.
 12. **[Environments & snapshots](./environments-and-snapshots.md)**: export, import and clone,
     their background jobs, environment delete and purge, and importing from other formats.
 13. **[Backup & restore](./backup-and-restore.md)**: what holds state, point-in-time recovery,
@@ -56,8 +56,8 @@ through an AI gateway, edge image transforms, video streaming, edge email and pl
 ## Conventions used in these docs
 
 - **Scope** means `{ spaceId, environmentId }`, the boundary carried through every operation. An
-  _environment_ is a branch within a _space_ (e.g. `main`, `staging`). A _deployment_ is one
-  customer's whole stack; spaces live inside it.
+  _environment_ is a branch within a _space_ (e.g. `main`, `staging`). An _install_ is one
+  ContentWorker stack in one Cloudflare account; spaces live inside it.
 - **CMA / CDA / CPA** are the Content Management / Delivery / Preview API key kinds.
 - Hosts: the admin at `<domain>`, the api at `api.<domain>`, public delivery at `cdn.<domain>`.
 - Paths shown like `/spaces/:space/environments/:env/...` use `:param` for path segments.

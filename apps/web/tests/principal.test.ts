@@ -50,7 +50,7 @@ vi.mock('~/lib/settings.server', () => ({
 const { principal } = await import('~/lib/auth.server');
 
 const page = (path = '/orders/ord_1') =>
-  new Request(`https://acme.contentworker.app${path}`, {
+  new Request(`https://cms.example.com${path}`, {
     headers: { cookie: '__Host-cw_session=tok_abc' },
   });
 

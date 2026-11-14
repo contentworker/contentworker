@@ -134,7 +134,7 @@ with your key, passing the query string through:
 // A route in your site, or an edge function in front of it.
 export async function sitemap(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
-  const upstream = new URL(`https://cdn.your-workspace.contentworker.app/delivery/site/main/sitemap.xml`);
+  const upstream = new URL(`https://cdn.cms.example.com/delivery/site/main/sitemap.xml`);
   upstream.searchParams.set('base', url.origin);
   const page = url.searchParams.get('page');
   if (page) upstream.searchParams.set('page', page);

@@ -1,4 +1,5 @@
 ---
+
 name: d1-migration
 description: Add a D1 schema change to ContentWorker safely. Picks the next migration number, writes a hand-written expand-only SQL migration in packages/db/migrations that works with the code already deployed, mirrors it in packages/db/src/schema.ts (or auth-schema.ts), applies it to the local D1 and tests it in workerd. Use for any new table, column, index or backfill, and when planning a rename or drop as expand-then-contract.
 argument-hint: "[short_snake_name]"
@@ -9,7 +10,7 @@ argument-hint: "[short_snake_name]"
 Migrations are `packages/db/migrations/NNNN_name.sql`, hand-written SQL. The Drizzle schema in
 `packages/db/src/schema.ts` (content) and `packages/db/src/auth-schema.ts` (the admin's people,
 sessions and sign-in) mirrors them column for column and index for index; it describes the
-database to the query code and changes no database on its own. There is one D1 per deployment
+database to the query code and changes no database on its own. There is one D1 per install
 (binding `DB`, database `contentworker`, `migrations_dir: ../../packages/db/migrations` in the
 apps' `wrangler.jsonc`).
 
@@ -34,9 +35,9 @@ asks before a new one that drops or renames.
    - `CREATE TABLE`, `CREATE INDEX` (`IF NOT EXISTS` where a re-run is possible);
    - `ALTER TABLE … ADD COLUMN` that is nullable or has a constant default;
    - backfills (`UPDATE`) the old code tolerates, in statements small enough for one D1 batch.
-   Not in the same change as the code that stops using it: `DROP TABLE`, `DROP COLUMN`,
-   `RENAME`, a `NOT NULL` column without a default, a tightened `CHECK`, a table rebuild. Those are
-   a **contract** step: a later PR, after a deploy where nothing reads or writes the old shape.
+     Not in the same change as the code that stops using it: `DROP TABLE`, `DROP COLUMN`,
+     `RENAME`, a `NOT NULL` column without a default, a tightened `CHECK`, a table rebuild. Those are
+     a **contract** step: a later PR, after a deploy where nothing reads or writes the old shape.
 3. **Mirror it** in `schema.ts` / `auth-schema.ts` (same names, types, defaults, indexes). If a
    port or the store changes, keep the in-memory store in `packages/test-kit` in step.
 4. **Apply locally** to the D1 `pnpm dev` uses: `pnpm db:migrate:local`
@@ -56,7 +57,8 @@ asks before a new one that drops or renames.
 
 1. PR 1 (expand): add the new column or table; write both; read the new one with a fallback to the
    old; backfill.
-2. Let CI deploy it to every ring.
+2. Release it. Installs upgrade on their own schedule, so the contract waits for a later release,
+   and `docs/deployment.md`'s upgrade notes say which release an install must deploy first.
 3. PR 2 (contract): stop writing the old one, then drop it in a new migration (the hook asks; say
    yes knowingly).
 

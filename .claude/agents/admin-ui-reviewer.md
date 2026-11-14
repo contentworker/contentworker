@@ -1,4 +1,5 @@
 ---
+
 name: admin-ui-reviewer
 description: Reviews ContentWorker admin changes (apps/web, packages/ui, packages/design) against PRODUCT.md and DESIGN.md ("Ledger" tokens, typography, components, named rules), accessibility (accessible names, focus, keyboard, contrast), layering (no business rules in screens) and test coverage (vitest node and jsdom projects, Playwright device and axe tests). Use after any apps/web/app change. Read-only; may run tests, never edits.
 tools: Read, Grep, Glob, Bash

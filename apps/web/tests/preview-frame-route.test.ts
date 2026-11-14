@@ -37,7 +37,7 @@ const {
 const PATH = '/preview-frame/s1/main/e1';
 const args = (path = PATH, headers: Record<string, string> = { 'sec-fetch-dest': 'iframe' }) =>
   ({
-    request: new Request(`https://acme.contentworker.app${path}`, { headers }),
+    request: new Request(`https://cms.example.com${path}`, { headers }),
     params: { spaceId: 's1', environmentId: 'main', entryId: 'e1' },
     context: {},
   }) as never;
@@ -62,7 +62,7 @@ function policy(headers: Headers) {
         'x-frame-options': headers.get('x-frame-options') ?? '',
       },
     }),
-    new URL('https://acme.contentworker.app/'),
+    new URL('https://cms.example.com/'),
   );
   return {
     csp,
@@ -84,7 +84,7 @@ describe('the Site frame route', () => {
           { preview: { urlTemplate: 'https://site.example/{id}?t={token}' } },
           { preview: { urlTemplate: 'https://shop.example/p/{id}#token={token}' } },
           // The admin itself is never framed, nor a template the policy can't carry.
-          { preview: { urlTemplate: 'https://acme.contentworker.app/x?t={token}' } },
+          { preview: { urlTemplate: 'https://cms.example.com/x?t={token}' } },
           { preview: { urlTemplate: 'https://*.example/{id}?t={token}' } },
           {},
         ],
@@ -92,7 +92,7 @@ describe('the Site frame route', () => {
     answer = () =>
       Response.json(
         {
-          url: 'https://acme.contentworker.app/preview/s1/main/entries/e1?preview_token=pw_x',
+          url: 'https://cms.example.com/preview/s1/main/entries/e1?preview_token=pw_x',
           frontendUrl: 'https://site.example/blog/hello?entry=e1#token=pw_x',
           token: 'pw_x',
           expiresAt: '2026-11-07T01:00:00.000Z',
@@ -113,7 +113,7 @@ describe('the Site frame route', () => {
     expect(url).toBe('https://api/spaces/s1/environments/main/entries/e1/preview-link');
     expect(init.method).toBe('POST');
     expect(JSON.parse(String(init.body))).toEqual({
-      previewBaseUrl: 'https://acme.contentworker.app',
+      previewBaseUrl: 'https://cms.example.com',
       ttlHours: 1,
       locale: 'de',
     });
@@ -162,7 +162,7 @@ describe('the Site frame route', () => {
       Response.json(
         {
           url: 'u',
-          frontendUrl: 'https://acme.contentworker.app/preview-frame/s1/main/e1?t=pw_x',
+          frontendUrl: 'https://cms.example.com/preview-frame/s1/main/e1?t=pw_x',
           token: 't',
           expiresAt: 'x',
         },

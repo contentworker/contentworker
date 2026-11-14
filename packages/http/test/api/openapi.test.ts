@@ -203,8 +203,8 @@ describe('OpenAPI spec + docs UI', () => {
   });
 
   it('loads the explorer from the admin origin when the api runs on its own host', () => {
-    expect(scalarBundleUrl({ oauthIssuer: 'https://acme.contentworker.app' })).toBe(
-      'https://acme.contentworker.app/vendor/scalar/standalone.js',
+    expect(scalarBundleUrl({ oauthIssuer: 'https://cms.example.com' })).toBe(
+      'https://cms.example.com/vendor/scalar/standalone.js',
     );
     expect(scalarBundleUrl({})).toBe('/vendor/scalar/standalone.js');
   });

@@ -1,4 +1,5 @@
 ---
+
 name: docs-audit
 description: Full audit of the ContentWorker docs (apps/docs and docs/) against the code, page by page. Use for a periodic sweep, before a release, or when many changes have landed without doc updates. Slower and broader than docs-sync, which follows a diff; this reads every page and checks every claim.
 disable-model-invocation: true
@@ -25,7 +26,7 @@ maintainer docs in `docs/`.
    `.claude/skills/docs-sync/references/surface-map.tsv` and ask what a reader would need that no
    page says: a new route in `packages/http/src/api/routes`, a new MCP tool in
    `packages/http/src/mcp/tools/`, a new table in `packages/db/migrations`, a new binding or var
-   in an `apps/*/wrangler.jsonc` or `EdgeEnv`, a new registry field in `scripts/fleet.ts`. Also check
+   in an `apps/*/wrangler.jsonc` or `EdgeEnv`, a new install setting in `scripts/install.ts` or `.env.example`. Also check
    for source files that should be in the map but aren't.
 4. **Repo docs.** Compare `README.md`, `AGENTS.md` (the rules) and `ROADMAP.md` with the docs; they
    must not disagree. A roadmap item that has shipped is a doc change in two places.

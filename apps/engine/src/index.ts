@@ -735,7 +735,7 @@ export default {
                 })),
               }),
             );
-            // Recorded on the heartbeat, so /health and `fleet.ts doctor` show an expiry that
+            // Recorded on the heartbeat, so /health shows an expiry that
             // keeps failing (an expired asset still in Delivery), not only the log.
             throw new Error(`${errors.length} asset expiries failed`);
           }

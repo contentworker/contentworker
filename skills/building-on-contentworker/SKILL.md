@@ -26,7 +26,7 @@ Docs: https://docs.contentworker.app/guides/sdks/ and https://docs.contentworker
 import { createDeliveryClient } from '@contentworker/sdk';
 
 const client = createDeliveryClient({
-  baseUrl: 'https://cdn.your-workspace.contentworker.app',
+  baseUrl: 'https://cdn.cms.example.com',
   space: 'your-space',
   environment: 'main',
   token: process.env.CONTENTWORKER_CDA_TOKEN!,
@@ -56,7 +56,7 @@ Filters, ordering and every parameter: https://docs.contentworker.app/guides/rea
 ```ts
 import { createManagementClient } from '@contentworker/sdk/management';
 
-const cma = createManagementClient({ baseUrl: 'https://api.your-workspace.contentworker.app', space: 'your-space', environment: 'main', token: process.env.CONTENTWORKER_CMA_TOKEN! });
+const cma = createManagementClient({ baseUrl: 'https://api.cms.example.com', space: 'your-space', environment: 'main', token: process.env.CONTENTWORKER_CMA_TOKEN! });
 const { entry } = await cma.entries.create({ contentTypeApiId: 'article', fields: { title: { 'en-US': 'Hello' } } });
 await cma.entries.publish(entry.id, { expectedVersion: entry.currentVersion });
 ```
@@ -124,7 +124,7 @@ https://docs.contentworker.app/guides/webhooks/
 ## Check your setup
 
 ```sh
-contentworker login --url https://api.your-workspace.contentworker.app
+contentworker login --url https://api.cms.example.com
 contentworker doctor
 contentworker whoami --json
 ```

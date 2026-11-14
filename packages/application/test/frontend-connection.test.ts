@@ -64,12 +64,12 @@ describe('connecting a frontend', () => {
       spaceId: S,
       environment: 'main',
       name: 'Marketing site',
-      adminOrigin: 'https://acme.contentworker.app',
+      adminOrigin: 'https://cms.example.com',
       issuer: operator,
     });
     expect(c).toMatchObject({ space: S, environment: 'main' });
     expect(c.previewKey).toBeUndefined();
-    expect(c.endpoints?.delivery).toBe('https://cdn.acme.contentworker.app');
+    expect(c.endpoints?.delivery).toBe('https://cdn.cms.example.com');
     expect(c.previewUrls).toEqual(
       expect.arrayContaining([
         { contentType: 'post', name: 'Post', urlTemplate: TEMPLATE },

@@ -1,8 +1,7 @@
 # Reference architecture
 
-ContentWorker is a headless CMS that runs entirely at the edge. Each customer gets an isolated
-deployment: five edge workers split by traffic profile, one edge SQL database as the system of
-record, and object storage, a key-value cache, queues, stateful edge objects, durable workflows, a
+ContentWorker is a headless CMS that runs entirely at the edge. One self-hosted install runs five edge workers split by traffic profile, one edge SQL database as
+the system of record, and object storage, a key-value cache, queues, stateful edge objects, durable workflows, a
 vector index, edge inference through the AI gateway, edge image transforms and video streaming
 around it. Writes commit to the primary database with an outbox row in the same batch, and
 everything downstream (webhooks, search, cache purges, the media gate) follows from the event
@@ -23,7 +22,7 @@ object storage, a queue, a stateful object's storage, an index). A stadium with 
 a client or a platform service ContentWorker calls but does not run (edge inference, image
 transforms, video streaming). A double-bordered box is a step detailed elsewhere. Purple, with a
 bold label, marks the one or two nodes each diagram is about. A subgraph is a boundary: the
-customer deployment, or the line between what is publicly routed and what is reachable only from
+install, or the line between what is publicly routed and what is reachable only from
 inside the worker.
 
 ## The deployment
@@ -40,8 +39,8 @@ _Figure: A ContentWorker deployment, with numbered callouts. Source: [`overview.
 `contentworker-events` queue, where every write lands and from which everything downstream
 follows.
 
-Each customer gets its own deployment (a registry entry, rendered by `scripts/fleet.ts`)
-with its own database, object storage, key-value store, vector index, queues, AI gateway and
+An install (settings rendered by `scripts/install.ts`)
+has its own database, object storage, key-value store, vector index, queues, AI gateway and
 edge workers. Inside it, the workers are split by traffic profile. Four are publicly routed and
 verify every credential they receive: `web` at `<domain>`, `api` at `api.<domain>`, `delivery` at
 `cdn.<domain>` and `media` at `media.<domain>`. The rest have no public route: the `engine`
@@ -241,7 +240,7 @@ services, and serving branches on the gate. A sequence diagram would have to pic
    content type. A single `PUT` takes at most 100 MiB (larger files go in parts), and the api
    stores the bytes in `MEDIA_BUCKET`.
 2. **Two triggers, one run.** The object-create notification from object storage, created by
-   `scripts/provision.sh`, sends a message to `contentworker-asset-events`. The api's signed `PUT`
+   `scripts/setup.sh`, sends a message to `contentworker-asset-events`. The api's signed `PUT`
    also enqueues a message of the same shape there when it succeeds. The engine starts the run under
    `assetIngestInstanceId(scope, assetId, version, { etag })`, so both triggers and any
    redelivery start exactly one run per file version.
@@ -302,7 +301,7 @@ services, and serving branches on the gate. A sequence diagram would have to pic
 
 - [Architecture](./architecture.md): the workers, the layers and the request flow in depth.
 - [Configuration](./configuration.md): every binding, var and secret.
-- [Deployment](./deployment.md): the fleet registry, provisioning and the release rings.
+- [Deployment](./deployment.md): self-hosting, settings, deploys and rollback.
 - [Consistency & guarantees](./consistency.md): the unit of work, replicas and bookmarks.
 - [Events & webhooks](./events-and-webhooks.md): the outbox, the queues and cache purges.
 - [Auth & RBAC](./auth-and-rbac.md): the signed web principal, API keys and scopes.

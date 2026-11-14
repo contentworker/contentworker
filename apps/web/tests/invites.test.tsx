@@ -13,7 +13,7 @@ globalThis.ResizeObserver ??= class {
 
 afterEach(cleanup);
 
-const LINK = `https://acme.contentworker.app/invite/cwi_${'b'.repeat(43)}`;
+const LINK = `https://cms.example.com/invite/cwi_${'b'.repeat(43)}`;
 const invite = (over: Partial<Invite> = {}): Invite => ({
   id: 'inv-1',
   email: 'grace@example.com',

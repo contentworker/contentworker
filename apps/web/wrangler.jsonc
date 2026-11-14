@@ -2,8 +2,8 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   // The admin web app and the public front door: it renders the admin (React Router, SSR) and
   // forwards the api's surfaces to the api Worker over the API service binding
-  // (app/lib/gateway.server.ts). Rendered per deployment from the registry; ids here are
-  // placeholders.
+  // (app/lib/gateway.server.ts). scripts/install.ts renders the install's config from it; ids here
+  // are placeholders.
   "name": "contentworker-web",
   "main": "./workers/app.ts",
   "compatibility_date": "2026-10-01",
@@ -49,8 +49,8 @@
     // "true" when the provider leaves out email_verified for addresses it owns (Entra ID).
     "OIDC_TRUST_EMAIL": "",
     // Password reset codes (app/lib/password-reset.server.ts) go out through Email Sending:
-    // scripts/fleet.ts adds the `send_email` binding (EMAIL) and these when the deployment names a
-    // sender. Empty: no email, and only an admin resets a password (local development prints the
+    // scripts/install.ts adds the `send_email` binding (EMAIL) and these when the install sets
+    // EMAIL_FROM. Empty: no email, and only an admin resets a password (local development prints the
     // email to the log instead).
     "EMAIL_FROM": "",
     "EMAIL_FROM_NAME": ""

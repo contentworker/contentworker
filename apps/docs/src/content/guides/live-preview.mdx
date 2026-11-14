@@ -113,7 +113,7 @@ Layers, and added from Layers. A page that never connects shows the same notices
 import { connectPreview } from '@contentworker/sdk/live-preview';
 
 const preview = connectPreview({
-  adminOrigin: 'https://your-workspace.contentworker.app',
+  adminOrigin: 'https://cms.example.com',
   capabilities: ['select', 'patch.fields', 'patch.blocks', 'proposals', 'scroll'],
   async onState(entryId, locale, fields, view) {
     // Re-render the entry from `view.withProposals` (the unsaved values, plus any proposals).
@@ -162,7 +162,7 @@ import { useLivePreview } from '@contentworker/sdk/react';
 
 function Landing({ entry }) {
   const live = useLivePreview({
-    adminOrigin: 'https://your-workspace.contentworker.app',
+    adminOrigin: 'https://cms.example.com',
     page: { entries: [{ entryId: entry.id, contentType: entry.contentType, locale: 'en-US' }] },
   });
   const fields = live.entries[entry.id]?.view.withProposals ?? entry.fields;

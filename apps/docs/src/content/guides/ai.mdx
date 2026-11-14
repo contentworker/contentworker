@@ -148,11 +148,11 @@ Each row has:
   it has got ("Reindexing search: 40%"); over the API, follow it at
   `GET /spaces/{space}/environments/{environment}/search/reindex-job` (or `search_reindex_job` over
   MCP; both need `content:manage`). Turning it again while one runs replaces it.
-  The moderation your deployment's administrator turns on is not a space setting, and keeps running.
+  The moderation your install's administrator turns on is not a space setting, and keeps running.
 - **A model tier** (Default, Flagship, Balanced or Fast). Default keeps what each feature uses on
   its own (see [Model tiers](#model-tiers)). A request that names a tier still gets it; in the
   editor, Generate with AI and Draft from prose start at **Space default**, which uses this one.
-  Your deployment may cap the tier (see [Model tiers](#model-tiers)): the tiers above the cap
+  Your install may cap the tier (see [Model tiers](#model-tiers)): the tiers above the cap
   can't be chosen, and the row says "Capped at Balanced by this deployment".
 - **Guidance**, up to 2,000 characters, added after the built-in instructions: house style,
   terminology, tone. It shapes how the model writes, not what it does: it can't change the task,

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { crossOrigin, isLocalHost } from '../app/lib/origin';
 
-const ORIGIN = 'https://contentworker.app';
+const ORIGIN = 'https://cms.example.com';
 const req = (method: string, headers: Record<string, string> = {}) =>
   new Request(`${ORIGIN}/orders/ord_1/action`, { method, headers });
 
@@ -13,18 +13,16 @@ describe('crossOrigin', () => {
 
   it('refuses writes from other origins, sibling subdomains included', () => {
     expect(crossOrigin(req('POST', { origin: ORIGIN }), ORIGIN)).toBe(false);
-    expect(crossOrigin(req('POST', { origin: 'https://api.contentworker.app' }), ORIGIN)).toBe(
-      true,
-    );
+    expect(crossOrigin(req('POST', { origin: 'https://api.cms.example.com' }), ORIGIN)).toBe(true);
     expect(crossOrigin(req('DELETE', { origin: 'https://evil.example' }), ORIGIN)).toBe(true);
     expect(crossOrigin(req('POST', { origin: 'null' }), ORIGIN)).toBe(true);
-    expect(crossOrigin(req('POST', { origin: 'http://contentworker.app' }), ORIGIN)).toBe(true);
+    expect(crossOrigin(req('POST', { origin: 'http://cms.example.com' }), ORIGIN)).toBe(true);
   });
 
   it('checks the WebSocket handshake although it is a GET', () => {
     const ws = (origin: string) => req('GET', { upgrade: 'websocket', origin });
     expect(crossOrigin(ws(ORIGIN), ORIGIN)).toBe(false);
-    expect(crossOrigin(ws('https://app.contentworker.app'), ORIGIN)).toBe(true);
+    expect(crossOrigin(ws('https://app.cms.example.com'), ORIGIN)).toBe(true);
   });
 
   it('falls back to Sec-Fetch-Site, and leaves non-browser clients alone', () => {
@@ -45,7 +43,7 @@ describe('isLocalHost', () => {
     ])
       expect(isLocalHost(new URL(u))).toBe(true);
     for (const u of [
-      'https://contentworker.app/',
+      'https://cms.example.com/',
       'https://contentworker-web.example.workers.dev/',
       'http://localhost.evil.example/',
     ])

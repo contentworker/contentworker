@@ -30,7 +30,7 @@ Which surfaces mount is controlled by `ROLE` (see [Configuration](./configuratio
 | `api.<domain>`            | `apps/api`      | `management,preview,delivery` | Management, Preview, MCP, OAuth, `/media/*`; delivery routes for the admin's own reads                                                                                                                                                                                                        |
 | `cdn.<domain>`            | `apps/delivery` | `delivery`                    | The public Delivery API (`/delivery/*`, `/graphiql/*`), cached; auth on every request                                                                                                                                                                                                         |
 | `media.<domain>`          | `apps/media`    | `media`                       | Published asset files (`/<space>/<env>/<id>/v<n>/<token>/<variant>/<file>`), cached (immutable unless rights expire); Preview's signed `/media/*` reads (GET only, `exp` required); share links (`/s/<space>/<env>/<link>/<token>`, [below](#asset-collections-share-links-uploads-and-zips)) |
-| `<domain>` (admin origin) | `apps/web`      | —                             | Forwards the api's surfaces to it ([the list](./architecture.md#appsweb-the-admin-and-the-gateway)); OAuth's issuer on a fleet deployment                                                                                                                                                     |
+| `<domain>` (admin origin) | `apps/web`      | —                             | Forwards the api's surfaces to it ([the list](./architecture.md#appsweb-the-admin-and-the-gateway)); OAuth's issuer on an install                                                                                                                                                             |
 
 Public delivery clients should use `cdn.<domain>`; it answers only `GET`/`HEAD` (cached) and
 `POST` for GraphQL (uncached), and anonymous reads get 401 before the cache.
@@ -68,7 +68,7 @@ A credential is resolved in this order (`principalMiddleware`, `packages/http/sr
 
 When `OAUTH_ISSUER` is configured the API also runs an OAuth 2.1 authorization server at
 `/oauth/*` plus `/.well-known/oauth-authorization-server`, so MCP clients authenticate through a
-consent flow rather than a static key. A fleet deployment serves it on the admin host
+consent flow rather than a static key. An install serves it on the admin host
 (`OAUTH_ISSUER=https://<domain>`, forwarded by the web gateway), and a person approves after
 signing in to the web app. See [Auth & RBAC](./auth-and-rbac.md#oauth-21-for-mcp-clients).
 

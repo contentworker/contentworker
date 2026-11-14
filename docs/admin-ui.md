@@ -14,7 +14,7 @@ database has no people the admin is open; once someone is added through `/setup`
 
 ## In production
 
-The web worker is deployed at `<domain>` (custom domain rendered by `scripts/fleet.ts`). Static
+The web worker is deployed at `<domain>` (custom domain rendered by `scripts/install.ts` from `DOMAIN`). Static
 assets are served by the platform; HTML responses default to `private, no-cache`. Every response
 carries the security headers from `app/lib/csp.ts`, and state-changing browser requests from
 another origin are refused (403).

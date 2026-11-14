@@ -8,9 +8,9 @@ It runs entirely **at the edge**, on edge workers: an edge SQL database is the s
 with queues, a key-value cache, object storage, stateful edge objects, durable workflows, a vector
 index, edge AI inference, image and video delivery, email and sandboxed plugin isolates behind it.
 The core is strict **ports & adapters**, so every platform service sits behind an interface and the
-business logic never touches a binding. Each customer gets one isolated deployment (its own
-database, storage, caches, queues and workers); spaces and environments live inside that
-deployment's database.
+business logic never touches a binding. It is self-hosted: one install in your own
+Cloudflare account (its own database, storage, caches, queues and workers); spaces and
+environments live inside the install's database.
 
 ---
 
@@ -60,13 +60,13 @@ maintainer docs live in [`docs/`](./docs) (start at [the index](./docs/README.md
 | [Events & webhooks](./docs/events-and-webhooks.md)    | Outbox → relay → queue consumers, functions, scheduled actions, live updates      |
 | [Consistency](./docs/consistency.md)                  | The unit of work, read replicas and bookmarks, delivery staleness bounds          |
 | [SDKs](./docs/sdks.md)                                | Delivery clients (core, web, vue, edge, react-native), Management client, codegen |
-| [Deployment](./docs/deployment.md)                    | The fleet registry format, provisioning, ring deploys, rollback                     |
+| [Deployment](./docs/deployment.md)                    | Self-hosting: settings, setup, deploys, rollback                                  |
 | [Configuration](./docs/configuration.md)              | Every var, secret and binding, and which worker uses it                           |
 | [Backup & restore](./docs/backup-and-restore.md)      | Point-in-time recovery, environment snapshots, outbox replay                      |
 | [Development](./docs/development.md)                  | Workspace commands, local stack, testing, adding a use-case                       |
 | [Admin UI](./docs/admin-ui.md)                        | The React Router admin in `apps/web`                                              |
 | [Plugins](./docs/plugins.md)                          | Sandboxed write-path plugins in isolated edge workers                             |
-| [Developer tooling](./docs/developer-tooling.md)      | The `contentworker` CLI and the developer agent skills in `skills/`              |
+| [Developer tooling](./docs/developer-tooling.md)      | The `contentworker` CLI and the developer agent skills in `skills/`               |
 
 For coding agents, the rules every change keeps are in [`AGENTS.md`](./AGENTS.md).
 
@@ -105,8 +105,7 @@ packages/
   sdk/            core, web, vue, edge, react-native, management, codegen
   cli/            the `contentworker` command (login, model as code, entries, import, types)
 skills/           agent skills for developers building on contentworker (SKILL.md format)
-examples/fleet/   a held example registry entry to start a self-hosted fleet from
-scripts/          fleet.ts (render configs, CI matrix, secrets), provision.sh, setup-code.sh
+scripts/          install.ts (render configs, secrets), setup.sh, setup-code.sh, the deploy script
 ```
 
 **The dependency rule:** `domain` → (nothing); `application` → `domain` + `ports`; adapters →
@@ -169,12 +168,19 @@ drives the CMS through the identical use-cases. See
 
 ## Deploy
 
-Merging to `main` is releasing: CI migrates each deployment's database (after recording a
-point-in-time recovery bookmark) and deploys engine → api → delivery → web, ring by ring, rolling back in order on a
-failed smoke test. A deployment answers at `<domain>` (admin), `api.<domain>` and `cdn.<domain>`.
-Add one with a registry file (start from `examples/fleet/example.jsonc`) and
-`./scripts/provision.sh <id>`; see
-[Deployment](./docs/deployment.md).
+ContentWorker runs in your own Cloudflare account (Workers Paid plan, and a zone for your domain):
+
+```sh
+cp .env.example .env     # set DOMAIN
+pnpm contentworker:setup            # creates the resources and the secrets (back up .secrets/)
+pnpm contentworker:deploy           # migrates D1, deploys the workers, smoke tests, rolls back on failure
+```
+
+The install answers at `<DOMAIN>` (admin), `api.<DOMAIN>`, `cdn.<DOMAIN>` and `media.<DOMAIN>`;
+open `https://<DOMAIN>/setup` to create the first admin. Upgrade with `git pull` and the deploy
+command again. Merging to `main` deploys nothing unless you turn on the optional deploy-on-merge
+workflow. See [Deployment](./docs/deployment.md) and the
+[self-hosting guide](https://docs.contentworker.app/start/self-hosting/).
 
 ---
 

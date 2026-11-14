@@ -1,6 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  // Template; scripts/fleet.ts renders wrangler.<id>.json per deployment (route cdn.<domain>).
+  // Template; scripts/install.ts renders wrangler.deploy.json for the install (route cdn.<domain>).
   // The public Content Delivery API. The default entrypoint is the uncached gateway (auth, rate
   // limit, canonical URL); `Delivery` is the cached entrypoint behind Workers Caching.
   "name": "contentworker-delivery",
@@ -70,7 +70,7 @@
     ]
   },
   "vars": {
-    // Rendered per deployment (scripts/fleet.ts): queue consumers route by the suffixed queue name.
+    // Rendered by scripts/install.ts (INSTANCE): queue consumers route by the suffixed queue name.
     "QUEUE_SUFFIX": "",
     "ROLE": "delivery",
     "REQUIRE_SECURE_SECRETS": "true",
@@ -80,7 +80,7 @@
     "EMBEDDINGS_DIM": "768",
     "EMBEDDINGS_MODEL": "",
     "MEDIA_BASE_URL": "",
-    // The media Worker's origin (https://media.<domain>), rendered per deployment. Empty: delivered
+    // The media Worker's origin (https://media.<domain>), rendered at deploy. Empty: delivered
     // assets keep the api's signed URLs, without renditions or a srcset.
     "MEDIA_PUBLIC_URL": "",
     "DELIVERY_CACHE_TTL_SECONDS": "86400",

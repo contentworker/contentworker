@@ -2,7 +2,7 @@
  * Single sign-on with the workspace's OpenID Connect identity provider (Okta, Entra ID, Google
  * Workspace, …): the authorization code flow with PKCE, a state and a nonce.
  *
- * The provider is set per deployment: `OIDC_ISSUER` and `OIDC_CLIENT_ID` (vars) and the `OIDC_CLIENT_SECRET` secret. Admins choose the rest on the Team page
+ * The provider is set per install: `OIDC_ISSUER` and `OIDC_CLIENT_ID` (vars) and the `OIDC_CLIENT_SECRET` secret. Admins choose the rest on the Team page
  * (`ssoSettings`). `/login/sso` starts a sign-in and keeps its state, nonce and code verifier in a
  * short-lived `__Host-cw_sso` cookie, sealed with `PRINCIPAL_KEY` (`signSsoFlow`) so the browser
  * can't change it or bring it back after it expires; `/login/sso/callback` checks the state, swaps the code for
@@ -294,7 +294,7 @@ export async function verifyCallback(
   }
   // Only an email the provider says it verified matches or creates anyone. A provider that leaves
   // the claim out (Entra ID: its addresses belong to the organization's directory) is trusted only when the
-  // deployment says so (`OIDC_TRUST_EMAIL`, the registry's `sso.trustEmail`).
+  // install says so (`OIDC_TRUST_EMAIL`).
   // Entra can say whether the domain of `email` is verified (`xms_edov`, an optional claim): a
   // `false` there is believed even when the deployment trusts the provider's addresses.
   const verified =

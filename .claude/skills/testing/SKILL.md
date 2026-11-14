@@ -1,6 +1,7 @@
 ---
+
 name: testing
-description: How ContentWorker is tested, where a new test goes, and how to run one package, one file or one test. Covers each package's vitest environment (packages/db and apps/engine in workerd via @cloudflare/vitest-plugin; packages/http, application, domain and adapters in node; apps/web's node and jsdom projects), the D1 contract tests, the engine's real Durable Objects and Workflows, the Playwright device and axe tests in apps/web/e2e (WebKit and Chromium projects), the fleet and DO-migration golden tests and the toolkit tests. Preloaded by the test-engineer agent; use it when writing, fixing, de-flaking or choosing where to put a test, or to run a narrow slice of the suite.
+description: How ContentWorker is tested, where a new test goes, and how to run one package, one file or one test. Covers each package's vitest environment (packages/db and apps/engine in workerd via @cloudflare/vitest-plugin; packages/http, application, domain and adapters in node; apps/web's node and jsdom projects), the D1 contract tests, the engine's real Durable Objects and Workflows, the Playwright device and axe tests in apps/web/e2e (WebKit and Chromium projects), the install, deploy and DO-migration golden tests and the toolkit tests. Preloaded by the test-engineer agent; use it when writing, fixing, de-flaking or choosing where to put a test, or to run a narrow slice of the suite.
 argument-hint: "[package] [file.test.ts | -t 'test name']"
 ---
 
@@ -11,24 +12,24 @@ you add or run a test. Read the neighbouring tests before writing one, and reuse
 
 ## Where a test goes
 
-| Change in                                                        | Test in                                                     | Runs in                          |
-| ---------------------------------------------------------------- | ----------------------------------------------------------- | -------------------------------- |
-| `packages/domain/src/**`                                         | `packages/domain/test/<capability>.test.ts`                 | node                             |
-| `packages/application/src/<capability>.ts`                       | `packages/application/test/<capability>.test.ts`, test-kit  | node                             |
-| `packages/ports` / `packages/test-kit` (a store behaviour)       | `packages/db/test/store*.test.ts` (contract) + application  | workerd (D1) + node              |
-| `packages/db/src/**`, `packages/db/migrations/*`                 | `packages/db/test/*.test.ts`                                | workerd, Miniflare D1            |
-| `packages/http/src/api/**`                                       | `packages/http/test/api/*.test.ts`                          | node, `app.request()` on fakes   |
-| `packages/http/src/mcp/**`                                       | `packages/http/test/mcp/*.test.ts`, `test/mcp.test.ts`       | node, in-memory MCP transport    |
-| `packages/adapters/src/<name>/`                                  | `packages/adapters/test/<name>/`                            | node, binding stubbed            |
-| `packages/platform/src/do/*`, `apps/engine/src/workflows/*`      | `apps/engine/test/*.test.ts` (fixture worker)               | workerd, real DOs and Workflows  |
-| `apps/delivery/src/**` (profiles, canonical URLs, purge)          | `apps/delivery/test/*.test.ts`                              | node                             |
-| `apps/web/app/lib/**`, server code                               | `apps/web/tests/*.test.ts` (project `node`)                 | node                             |
-| `apps/web/app/cms/**`, components and screens                     | `apps/web/tests/*.test.tsx` (project `dom`)                 | jsdom + Testing Library          |
-| A route, flow, layout or accessibility in the admin              | `apps/web/e2e/*.spec.ts`                                    | Playwright, WebKit and Chromium  |
-| `packages/design/src/tokens.ts` / `apps/web/app/app.css`          | `packages/design/tests/tokens.test.ts`                      | node                             |
-| `docs/*.md`, `packages/http/skills/**`                           | drift tests in `packages/docs/test`, `packages/http/test`   | node                             |
-| `examples/fleet/`, `scripts/*.ts`, DO migration tags, the catalog    | `scripts/*.test.ts` (`pnpm test:fleet`)                     | `node --test`                    |
-| `.claude/` hooks and toolkit                                     | `.claude/hooks/tests/*.test.sh` (`pnpm test:toolkit`)       | bash                             |
+| Change in                                                      | Test in                                                    | Runs in                         |
+| -------------------------------------------------------------- | ---------------------------------------------------------- | ------------------------------- |
+| `packages/domain/src/**`                                       | `packages/domain/test/<capability>.test.ts`                | node                            |
+| `packages/application/src/<capability>.ts`                     | `packages/application/test/<capability>.test.ts`, test-kit | node                            |
+| `packages/ports` / `packages/test-kit` (a store behaviour)     | `packages/db/test/store*.test.ts` (contract) + application | workerd (D1) + node             |
+| `packages/db/src/**`, `packages/db/migrations/*`               | `packages/db/test/*.test.ts`                               | workerd, Miniflare D1           |
+| `packages/http/src/api/**`                                     | `packages/http/test/api/*.test.ts`                         | node, `app.request()` on fakes  |
+| `packages/http/src/mcp/**`                                     | `packages/http/test/mcp/*.test.ts`, `test/mcp.test.ts`     | node, in-memory MCP transport   |
+| `packages/adapters/src/<name>/`                                | `packages/adapters/test/<name>/`                           | node, binding stubbed           |
+| `packages/platform/src/do/*`, `apps/engine/src/workflows/*`    | `apps/engine/test/*.test.ts` (fixture worker)              | workerd, real DOs and Workflows |
+| `apps/delivery/src/**` (profiles, canonical URLs, purge)       | `apps/delivery/test/*.test.ts`                             | node                            |
+| `apps/web/app/lib/**`, server code                             | `apps/web/tests/*.test.ts` (project `node`)                | node                            |
+| `apps/web/app/cms/**`, components and screens                  | `apps/web/tests/*.test.tsx` (project `dom`)                | jsdom + Testing Library         |
+| A route, flow, layout or accessibility in the admin            | `apps/web/e2e/*.spec.ts`                                   | Playwright, WebKit and Chromium |
+| `packages/design/src/tokens.ts` / `apps/web/app/app.css`       | `packages/design/tests/tokens.test.ts`                     | node                            |
+| `docs/*.md`, `packages/http/skills/**`                         | drift tests in `packages/docs/test`, `packages/http/test`  | node                            |
+| `scripts/*.ts`, `scripts/*.sh`, DO migration tags, the catalog | `scripts/*.test.ts` (`pnpm test:scripts`)                  | `node --test`                   |
+| `.claude/` hooks and toolkit                                   | `.claude/hooks/tests/*.test.sh` (`pnpm test:toolkit`)      | bash                            |
 
 ## Running a slice
 
@@ -39,7 +40,7 @@ pnpm --filter @contentworker/<pkg> test                         # one package
 pnpm --filter @contentworker/<pkg> test -- <file>.test.ts       # one file
 pnpm --filter @contentworker/<pkg> test -- -t 'name of test'    # one test by name
 pnpm --filter @contentworker/web exec vitest run --project dom  # one apps/web project
-pnpm test:fleet                                                 # node --test scripts/*.test.ts
+pnpm test:scripts                                               # node --test scripts/*.test.ts
 pnpm test:toolkit                                               # .claude toolkit
 pnpm test                                                       # everything, through turbo
 ```
@@ -93,8 +94,8 @@ sign-in on.
 - **Test the second run**: a redelivered queue message, a retried step, a lost
   `TransactionConflictError` race, an expired or forged `x-cw-principal`, a reused token.
 - **Test isolation**: data written under one `Scope` is invisible under another.
-- **Never edit a golden value** in `scripts/do-migrations.test.ts` or `scripts/fleet.test.ts` to
-  make a test pass; a failing golden test means the change is wrong.
+- **Never edit a golden value** in `scripts/do-migrations.test.ts` or `scripts/install.test.ts`
+  to make a test pass; a failing golden test means the change is wrong.
 - No sleeps to make a test pass: disable or force the wait. A "flaky" e2e is a real race until the
   trace proves otherwise; never add retries or `waitForTimeout`.
 - Use `@contentworker/test-kit` fakes in node suites; no network, no Cloudflare account.

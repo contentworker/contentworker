@@ -32,7 +32,7 @@ and infrastructure is bound only at the edges.
 Each deployment runs five edge workers (plus the docs site on ContentWorker's own deployment). They
 are split by how their traffic behaves, so each has its own CPU limit, placement, sampling rate
 and failure blast radius. `AGENTS.md` lists each worker's role; this table adds where it is
-served and how it is configured. Routes are rendered per deployment by `scripts/fleet.ts`
+served and how it is configured. Routes are rendered per install by `scripts/install.ts`
 (`hosts()`): the admin at `<domain>`, the api at `api.<domain>`, delivery at `cdn.<domain>`,
 media at `media.<domain>`.
 
@@ -257,7 +257,7 @@ actions answer 501 while definitions and reads keep working. An instance has a s
 (about 1024), so long loops should pass through a `control.continue_as_new` node.
 
 `content.notify` nodes send through edge email when the engine has the `EMAIL` binding and
-`EMAIL_FROM` (rendered from the registry's `email`); unbound, they fail with "email sending is not
+`EMAIL_FROM` (rendered from the install's `EMAIL_FROM`); unbound, they fail with "email sending is not
 configured".
 
 ### Assets: object storage, image transforms, video and the media worker
@@ -482,7 +482,7 @@ api signed PUT completed ───────┴→ contentworker-asset-events 
                                                                           (one per file version)
 ```
 
-- **Triggers.** `scripts/provision.sh` creates an object-storage event notification rule
+- **Triggers.** `scripts/setup.sh` creates an object-storage event notification rule
   (`object-create`, no prefix: asset keys `space/env/asset/file` share none) to
   `contentworker-asset-events`. Wherever `ASSET_EVENTS_QUEUE` is bound, the api's signed
   `PUT /media/<key>` also sends a message shaped like a storage notification there when the upload
@@ -730,8 +730,8 @@ a human API client can't**, and the reverse.
 
 ## Multi-tenancy
 
-Each customer gets its own deployment (one registry entry, `<id>.jsonc`): its own database, object storage,
-key-value store, vector index, queues, AI gateway and workers. Inside a deployment, every store and
+An install has its own database, object storage, key-value store, vector index, queues, AI gateway
+and workers. Inside an install, every store and
 use-case operation carries a `Scope` of `{ spaceId, environmentId }`; `(space_id, environment_id)`
 leads the primary key or a unique index on every content table.
 

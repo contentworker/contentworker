@@ -1,4 +1,5 @@
 ---
+
 name: ship
 description: Take finished work in ContentWorker from a working tree to an open pull request. Checks the branch and worktree, runs preflight, commits with the attribution trailer, confirms an existing PR is still open before pushing to it, pushes the branch and opens the PR. Never merges or deploys. Use when the user says ship it, open a PR, or push this.
 argument-hint: "[branch-name]"
@@ -8,7 +9,8 @@ allowed-tools: Bash(git status *) Bash(git diff *) Bash(git log *) Bash(git bran
 
 # Ship a change as a PR
 
-Merging to `main` deploys to every deployment in the fleet, so this skill stops at an open PR. It
+Merging to `main` is releasing (a fork with the Deploy workflow on deploys it), so this skill
+stops at an open PR. It
 never merges, never pushes `main`, never deploys.
 
 ## Where you are
@@ -47,6 +49,6 @@ never merges, never pushes `main`, never deploys.
    that touches `main` or force-pushes).
 8. **Open the PR:** `gh pr create --head <branch> --base main --title … --body …`. The body says
    what changed and why, how it was verified (the preflight commands and results), any rollout
-   step that must happen before merge (provisioning a resource in each deployment, a contract
-   migration that follows), and ends with the PR attribution line from the system prompt.
+   step operators must take (re-running `pnpm contentworker:setup` for a new resource, a new setting or
+   secret, a contract migration that follows), and ends with the PR attribution line from the system prompt.
 9. **Report** the PR URL and anything the user must do before merging. Stop there.

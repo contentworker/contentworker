@@ -1,6 +1,6 @@
 /**
  * A dead-letter queue's consumer body: a message that used up its retries is logged and kept under
- * `dlq/` in the media bucket (30-day lifecycle rule, `scripts/provision.sh`), then acked.
+ * `dlq/` in the media bucket (30-day lifecycle rule, `scripts/setup.sh`), then acked.
  *
  * Bodies can carry customer content (`entry.published` has every field value), and a record outlives
  * the entry it came from, so a record holds only what identifies the message. That list is an

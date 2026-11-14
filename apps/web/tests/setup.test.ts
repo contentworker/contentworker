@@ -39,7 +39,7 @@ vi.mock('~/lib/team.server', () => ({ insertAdmin, TeamError }));
 
 const { redeemSetupCode, setupOpen } = await import('~/lib/setup.server');
 const admin = { email: 'ada@example.com', name: 'Ada', password: 'correct horse battery' };
-const req = () => new Request('https://acme.contentworker.app/setup', { method: 'POST' });
+const req = () => new Request('https://cms.example.com/setup', { method: 'POST' });
 
 describe('setup code', () => {
   beforeEach(() => {

@@ -64,9 +64,9 @@ whose reasoning is always on) get neither. Free-text calls and Coworker keep eac
 An answer cut off at `max_tokens` is still an error, and the tokens it billed are counted against
 the space's AI budget.
 
-With `AI_GATEWAY_ID` set (the fleet renders one gateway per deployment), calls route through
+With `AI_GATEWAY_ID` set (setup creates one gateway per install), calls route through
 the AI gateway via the binding's `gateway` option; the gateway applies its rate limit,
-retries and, when `aiGatewayLogs` is on, request logging. Without the `AI` binding the stub
+retries and, when `AI_GATEWAY_LOGS` is on, request logging. Without the `AI` binding the stub
 provider answers with placeholder values, which the fail-closed adapter guard refuses on a
 persistent deployment. `AI_MODE=mock` (local dev, demos, tests) answers every `generateJson` from
 its heuristic without calling a model. See [Configuration](./configuration.md) for
@@ -243,7 +243,7 @@ behind it. An AI action names its own tier, which stands under the cap.
 **The deployment's tier cap.** `CostGuardDO` counts requests and tokens, not price, so a space that
 pins background work (agents, workflows, media) to `flagship` would cost several times what it did
 at `fast` without tripping anything. `AI_MAX_TIER` (`balanced` or `fast`; `flagship` or empty is no
-cap; anything else fails at boot; the registry's `aiMaxTier`) is the deployment's price ceiling per
+cap; anything else fails at boot; the install's `AI_MAX_TIER` setting) is the deployment's price ceiling per
 call: the effective tier of every generation and decision call is the lower of the cap and the tier it resolved to
 (`capModelTier`, order `fast` < `balanced` < `flagship`). It is one cap for every capability, not a
 split by interactive and background work: the space's per-capability tiers already express that

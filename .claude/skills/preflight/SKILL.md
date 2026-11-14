@@ -1,14 +1,15 @@
 ---
+
 name: preflight
-description: Run the checks CI's verify job runs (lint, type-check, build, tests, Worker bundles, fleet tests, toolkit tests), scoped to the packages a change touches, and report pass or fail verbatim. Use before saying a change is done, before committing, before opening a PR, or when asked whether something is green.
+description: Run the checks CI's verify job runs (lint, type-check, build, tests, Worker bundles, scripts tests, toolkit tests), scoped to the packages a change touches, and report pass or fail verbatim. Use before saying a change is done, before committing, before opening a PR, or when asked whether something is green.
 argument-hint: "[base-ref, default origin/main]"
-allowed-tools: Bash(git diff *) Bash(git status *) Bash(git merge-base *) Bash(pnpm turbo run *) Bash(pnpm lint) Bash(pnpm check-types) Bash(pnpm test) Bash(pnpm build) Bash(pnpm test:fleet) Bash(pnpm test:toolkit) Bash(pnpm docs:build)
+allowed-tools: Bash(git diff *) Bash(git status *) Bash(git merge-base *) Bash(pnpm turbo run *) Bash(pnpm lint) Bash(pnpm check-types) Bash(pnpm test) Bash(pnpm build) Bash(pnpm test:scripts) Bash(pnpm test:toolkit) Bash(pnpm docs:build)
 ---
 
 # Preflight
 
 CI's `verify` job (`.github/workflows/ci.yml`) runs lint, type-check, build, test, the Worker
-bundles (`wrangler deploy --dry-run` for engine, api and delivery), the fleet tests, the toolkit
+bundles (`wrangler deploy --dry-run` for engine, api and delivery), the scripts tests, the toolkit
 tests and `pnpm audit --prod --audit-level high`, each even when an earlier one failed. A separate
 `devices` job runs the apps/web Playwright suite. Run the same locally, scoped to what changed, so a
 PR is green the first time.
@@ -43,8 +44,8 @@ Uncommitted:
    ```
 
    `apps/web` bundles through `pnpm --filter @contentworker/web build`.
-4. **Fleet.** If anything under `examples/fleet/` or `scripts/` changed, an `apps/*/wrangler.jsonc`,
-   or any `package.json` (the catalog test): `pnpm test:fleet`.
+4. **Scripts.** If anything under `scripts/` changed, `.env.example`, a workflow, an
+   `apps/*/wrangler.jsonc`, or any `package.json` (the catalog test): `pnpm test:scripts`.
 5. **Toolkit.** If anything under `.claude/` changed: `pnpm test:toolkit`.
 6. **Generated files.** If `docs/*.md`, `packages/http/skills/**` or `packages/design/src/tokens.ts`
    changed, run the `regen` skill: a stale embed or theme fails the docs, http or design tests.

@@ -1,4 +1,5 @@
 ---
+
 name: dx-reviewer
 description: Reviews ContentWorker's developer experience. Covers whether a new contributor (human or agent) can install, run, test and change the code from what the repo says, and finds drift between README, AGENTS.md (which CLAUDE.md imports), docs/development.md, the .claude toolkit and the actual scripts, configs and package names. Read-only; returns prioritized fixes. Delegate for an onboarding audit, after changing scripts, tooling or the .claude toolkit, or when instructions and reality seem to disagree.
 tools: Read, Grep, Glob, Bash
@@ -29,7 +30,7 @@ install, build, run dev servers or touch the network unless the user asked for a
    dev default (`LOCAL_STACK_VARS` in `apps/web/vite.config.ts`) or documentation?
 4. **Feedback loops.** How long until a contributor learns they broke something: hooks, scoped test
    commands (`turbo --filter`), the workerd suites' startup, error messages that say what to do
-   next (in `fleet.ts`, `provision.sh`, `do-migrations.test.ts`, the hooks).
+   next (in `install.ts`, `setup.sh`, `deploy.sh`, `do-migrations.test.ts`, the hooks).
 5. **Toolkit hygiene.** `.claude/settings.json` hooks point at executable scripts; its permission
    allowlist names real `@contentworker/*` packages and scripts; hook messages are actionable;
    `pnpm test:toolkit` covers new hooks; skill bodies stay under ~500 lines with detail in
