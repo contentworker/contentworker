@@ -40,6 +40,7 @@ import {
   withReadLimit,
 } from '../../src/assistant/tools';
 import type { McpDeps } from '../../src/mcp/deps';
+import { mcpRoutes } from '../../src/mcp/routes';
 
 function makeDeps(): McpDeps {
   const ctx: AppContext = {
@@ -420,5 +421,75 @@ describe('a stale save through the assistant', () => {
     expect(JSON.parse((refused as Error).message)).toMatchObject({
       error: { code: 'conflict', details: { currentVersion: 2, expectedVersion: 1 } },
     });
+  });
+});
+
+describe('who an assistant call’s audit row says started it', () => {
+  const rowsAbout = async (deps: McpDeps, id: string) =>
+    (await deps.ctx.store.audit.list('space-a', { targetId: id })).map((r) => ({
+      action: r.action,
+      actor: r.actor,
+      detail: r.detail,
+    }));
+
+  it('marks a page’s button as the person’s, and anything else as Coworker’s', async () => {
+    const deps = makeDeps();
+    const entry = await seedSpace(deps.ctx, 'space-a', 'Seen');
+    // The editor's Save draft: what it changed, and that the person did it there.
+    await callAssistantTool(
+      deps,
+      editorOfA,
+      'entries_update',
+      { id: entry.id, fields: { title: { 'en-US': 'Mine' } } },
+      SCOPE_A,
+      'editor',
+    );
+    // A publish Coworker proposed (the default): it saves nothing, so its detail says only who.
+    await callAssistantTool(deps, editorOfA, 'entries_publish', { id: entry.id }, SCOPE_A);
+    // The fixed clock gives both rows one time, so they are told apart by what they did.
+    const rows = await rowsAbout(deps, entry.id);
+    const publish = rows.find((r) => r.action === 'MCP entries_publish');
+    const save = rows.find((r) => r.action === 'MCP entries_update');
+    expect(publish).toEqual({
+      action: 'MCP entries_publish',
+      actor: 'usr_ada',
+      detail: { entries: [], via: 'assistant' },
+    });
+    expect(save).toMatchObject({
+      action: 'MCP entries_update',
+      actor: 'usr_ada',
+      detail: { entries: [{ entryId: entry.id, paths: ['fields.title'] }], via: 'editor' },
+    });
+  });
+
+  it('never takes it from an MCP client, whatever the call says', async () => {
+    const deps = makeDeps();
+    const entry = await seedSpace(deps.ctx, 'space-a', 'Seen');
+    const res = await mcpRoutes(deps).fetch(
+      new Request('https://cms.test/mcp', {
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer admin',
+          'content-type': 'application/json',
+          accept: 'application/json, text/event-stream',
+          'x-cw-via': 'editor',
+        },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'tools/call',
+          params: {
+            name: 'entries_publish',
+            arguments: { space: 'space-a', environment: 'main', id: entry.id },
+            _meta: { via: 'editor' },
+          },
+        }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(await res.text()).not.toContain('"isError":true');
+    expect(await rowsAbout(deps, entry.id)).toEqual([
+      { action: 'MCP entries_publish', actor: 'admin-token', detail: undefined },
+    ]);
   });
 });

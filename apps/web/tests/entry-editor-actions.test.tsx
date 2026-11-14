@@ -19,7 +19,7 @@ const client = {
   getEntry: vi.fn<(id: string) => Promise<PreviewEntry>>(),
   listEntries: vi.fn(async () => []),
   listAssets: vi.fn(async () => []),
-  listAppExtensions: vi.fn(async () => []),
+  listAppExtensions: vi.fn(async (): Promise<unknown[]> => []),
   publishEntry: vi.fn(async (id: string) => ({
     id,
     contentTypeApiId: 'article',
@@ -70,13 +70,27 @@ vi.mock('~/cms/lib/client-context', () => ({
   }),
 }));
 
-// The side pane's panels fetch their own data; this file is about the action row.
-vi.mock('~/cms/components/CollaborationPanel', () => ({ CollaborationPanel: () => null }));
-vi.mock('~/cms/components/EntryMetadataPanel', () => ({ EntryMetadataPanel: () => null }));
-vi.mock('~/cms/components/VersionHistory', () => ({ VersionHistory: () => null }));
-vi.mock('~/cms/components/ReferencedBy', () => ({ ReferencedBy: () => null }));
-vi.mock('~/cms/components/SemanticPanel', () => ({ SemanticPanel: () => null }));
-vi.mock('~/cms/components/AiAssistPanel', () => ({ AiAssistPanel: () => null }));
+// The side pane's panels fetch their own data; this file is about the header and the pane's
+// order, so each stands in as its heading (AI assist saying which assist it was asked to open).
+vi.mock('~/cms/components/CollaborationPanel', () => ({
+  CollaborationPanel: () => <h2>Collaboration</h2>,
+}));
+vi.mock('~/cms/components/EntryMetadataPanel', () => ({
+  EntryMetadataPanel: () => <h2>Tags & concepts</h2>,
+}));
+vi.mock('~/cms/components/VersionHistory', () => ({
+  VersionHistory: () => <h2>Version history</h2>,
+}));
+vi.mock('~/cms/components/ReferencedBy', () => ({ ReferencedBy: () => <h2>Referenced by</h2> }));
+vi.mock('~/cms/components/SemanticPanel', () => ({
+  SemanticPanel: () => <h2>Content semantics</h2>,
+}));
+vi.mock('~/cms/components/AiAssistPanel', async (original) => ({
+  ...(await original<typeof import('~/cms/components/AiAssistPanel')>()),
+  AiAssistPanel: (props: { request?: { action: string } | null }) => (
+    <h2 data-request={props.request?.action}>AI assist</h2>
+  ),
+}));
 
 const { ToastProvider } = await import('~/cms/lib/toast');
 const { EntryEditor } = await import('~/cms/routes/EntryEditor');
@@ -203,23 +217,121 @@ describe('EntryEditor action row', () => {
     });
     setup('/content/article/e1', saved('draft'));
     await screen.findByRole('heading', { level: 1, name: 'Pricing page' });
-    await waitFor(() =>
-      expect(screen.queryByRole('button', { name: 'Generate with AI', hidden: true })).toBeNull(),
-    );
-    expect(screen.queryByRole('button', { name: 'Draft from prose', hidden: true })).toBeNull();
+    await waitFor(() => expect(client.getAiSettings).toHaveBeenCalled());
+    // The assists are still offered (they aren't drafting); the drafts aren't.
+    expect(await openAiMenu()).toEqual([
+      'Summarize…',
+      'Autofill a field…',
+      'Suggest tags…',
+      'Audit the entry…',
+    ]);
+    fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
     // What isn't AI is still there.
     expect(button('Publish')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Copy preview link', hidden: true })).toBeTruthy();
   });
+});
 
-  it('the AI actions are quieter than the verbs: ghost, never outline or ink', async () => {
+/** Opens the header's AI menu and reads its items, in order. */
+async function openAiMenu() {
+  fireEvent.keyDown(screen.getByRole('button', { name: 'AI' }), { key: 'Enter' });
+  const menu = await screen.findByRole('menu');
+  return within(menu)
+    .getAllByRole('menuitem')
+    .map((item) => item.textContent);
+}
+
+describe('EntryEditor AI menu', () => {
+  it('is the header’s one AI control: ghost, quieter than the verbs, holding every AI action', async () => {
     setup('/content/article/e1', saved('draft'));
     await screen.findByRole('heading', { level: 1, name: 'Pricing page' });
-    for (const name of ['Draft from prose', 'Generate with AI']) {
-      expect(screen.getByRole('button', { name, hidden: true }).getAttribute('data-variant')).toBe(
-        'ghost',
-      );
-    }
+    const ai = screen.getByRole('button', { name: 'AI' });
+    expect(ai.getAttribute('data-variant')).toBe('ghost');
+    expect(ai.querySelector('.text-ai')).not.toBeNull();
+    // Nothing else in the header speaks of the model.
+    expect(screen.queryByRole('button', { name: 'Generate with AI', hidden: true })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Draft from prose', hidden: true })).toBeNull();
+
+    expect(await openAiMenu()).toEqual([
+      'Draft from prose',
+      'Generate with AI',
+      'Summarize…',
+      'Autofill a field…',
+      'Suggest tags…',
+      'Audit the entry…',
+    ]);
+    expect(within(screen.getByRole('menu')).getByText('AI assist')).toBeTruthy();
+  });
+
+  it('a new entry’s menu holds the drafts alone: there are no panels to assist in yet', async () => {
+    setup('/content/article/new');
+    await screen.findByRole('heading', { level: 1, name: 'New Article' });
+    expect(await openAiMenu()).toEqual(['Draft from prose', 'Generate with AI']);
+  });
+
+  it('an assist opens the AI assist panel at it, in Details, whichever view the pane was on', async () => {
+    setup('/content/article/e1', saved('draft'));
+    await screen.findByRole('heading', { level: 1, name: 'Pricing page' });
+    fireEvent.click(screen.getByRole('radio', { name: 'Preview' }));
+    expect(screen.queryByRole('heading', { name: 'AI assist' })).toBeNull();
+
+    await openAiMenu();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Summarize…' }));
+
+    const assist = await screen.findByRole('heading', { name: 'AI assist' });
+    expect(assist.getAttribute('data-request')).toBe('summarize');
+    expect(screen.getByRole('radio', { name: 'Details' }).getAttribute('aria-checked')).toBe(
+      'true',
+    );
+  });
+});
+
+describe('EntryEditor header', () => {
+  it('links back to the type’s entries where the breadcrumbs are gone (below md)', async () => {
+    setup('/content/article/e1', saved('draft'));
+    await screen.findByRole('heading', { level: 1, name: 'Pricing page' });
+    const back = screen.getByRole('link', { name: 'Back to Article entries' });
+    expect(back.getAttribute('href')).toBe('/content/article');
+    expect(back.textContent).toBe('Article');
+    expect(back.className).toContain('md:hidden');
+  });
+});
+
+describe('EntryEditor Details', () => {
+  it('orders the panels by how often an editor reaches for them, AI assist last', async () => {
+    client.listAppExtensions.mockResolvedValue([
+      {
+        id: 'x-seo',
+        name: 'SEO checklist',
+        target: 'sidebar',
+        entryUrl: 'https://ext.example',
+        active: true,
+        createdAt: '2026-11-01T00:00:00.000Z',
+      },
+    ]);
+    setup('/content/article/e1', saved('draft'));
+    await screen.findByRole('heading', { level: 1, name: 'Pricing page' });
+    await screen.findByRole('heading', { name: 'SEO checklist' });
+    const pane = screen.getByRole('complementary', { name: 'Side pane' });
+    expect(
+      within(pane)
+        .getAllByRole('heading', { level: 2 })
+        .map((h) => h.textContent),
+    ).toEqual([
+      'Collaboration',
+      'Version history',
+      'Tags & concepts',
+      'Referenced by',
+      'SEO checklist',
+      'Content semantics',
+      'AI assist',
+    ]);
+    // A rarely used card starts folded, its heading holding the trigger.
+    expect(
+      within(pane).getByRole('button', { name: 'SEO checklist' }).getAttribute('aria-expanded'),
+    ).toBe('false');
+    client.listAppExtensions.mockResolvedValue([]);
   });
 });
 
@@ -227,18 +339,18 @@ describe('EntryEditor secondary actions', () => {
   it.each([
     ['Generate with AI', /^Generate Article draft/],
     ['Draft from prose', /^Draft Article from prose/],
-  ])('%s from ⋯ hands focus back to ⋯ as it closes', async (item, title) => {
+  ])('%s from the AI menu hands focus back to it as it closes', async (item, title) => {
     setup('/content/article/e1', saved('draft'));
     await screen.findByRole('heading', { level: 1, name: 'Pricing page' });
-    const more = screen.getByRole('button', { name: 'More entry actions' });
-    fireEvent.keyDown(more, { key: 'Enter' });
+    const ai = screen.getByRole('button', { name: 'AI' });
+    fireEvent.keyDown(ai, { key: 'Enter' });
     fireEvent.click(await screen.findByRole('menuitem', { name: item }));
     const dialog = await screen.findByRole('dialog', { name: title });
 
     fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
 
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-    await waitFor(() => expect(document.activeElement).toBe(more));
+    await waitFor(() => expect(document.activeElement).toBe(ai));
   });
 });
 

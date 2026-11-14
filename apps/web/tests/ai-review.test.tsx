@@ -39,8 +39,8 @@ const client = {
   relatedEntries: vi.fn(async () => [
     { entryId: 'e-rel', score: 0.71, snippet: 'Related body text' },
   ]),
-  findDuplicates: vi.fn(async () => [
-    { entryId: 'e-dup', score: 0.93, snippet: 'Long body '.repeat(80) },
+  findDuplicates: vi.fn(async (_id: string, _threshold?: number) => [
+    { entryId: 'e-dup', score: 0.995, snippet: 'Long body '.repeat(80) },
   ]),
 };
 
@@ -55,13 +55,14 @@ vi.mock('~/cms/lib/queries', () => ({
 }));
 
 const { GenerateEntryDialog } = await import('~/cms/components/GenerateEntryDialog');
-const { AiAssistPanel } = await import('~/cms/components/AiAssistPanel');
-const { SemanticPanel } = await import('~/cms/components/SemanticPanel');
+const { AiAssistPanel, assistActions } = await import('~/cms/components/AiAssistPanel');
+const { DUPLICATE_THRESHOLD, SemanticPanel } = await import('~/cms/components/SemanticPanel');
 const { ToastProvider } = await import('~/cms/lib/toast');
 
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  localStorage.clear();
 });
 
 const draft: GeneratedDraft = {
@@ -337,6 +338,53 @@ describe('AiAssistPanel', () => {
     expect(screen.queryByRole('button', { name: 'Summarize' })).toBeNull();
   });
 
+  it('keeps its fold per browser', () => {
+    setup();
+    fireEvent.click(screen.getByRole('button', { name: /AI assist/ }));
+    cleanup();
+    setup();
+    expect(screen.getByRole('button', { name: /AI assist/ }).getAttribute('aria-expanded')).toBe(
+      'true',
+    );
+    expect(screen.getByRole('button', { name: 'Summarize' })).toBeTruthy();
+  });
+
+  it('opens at the assist the AI menu picked, focusing its control, and says it is done', async () => {
+    const onRequestDone = vi.fn();
+    render(
+      <ToastProvider>
+        <AiAssistPanel
+          entryId="e1"
+          contentType={article}
+          locales={['en-US', 'de-DE']}
+          defaultLocale="en-US"
+          onMergeFields={() => {}}
+          request={{ action: 'summarize', seq: 1 }}
+          onRequestDone={onRequestDone}
+        />
+      </ToastProvider>,
+    );
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole('combobox', { name: 'Summarize into' })),
+    );
+    expect(screen.getByRole('button', { name: /AI assist/ }).getAttribute('aria-expanded')).toBe(
+      'true',
+    );
+    expect(onRequestDone).toHaveBeenCalledOnce();
+    // Picking from the menu only takes you there: nothing was asked of the model.
+    expect(client.summarizeEntry).not.toHaveBeenCalled();
+  });
+
+  it('offers the menu the assists its panel shows for the type and locales', () => {
+    expect(assistActions(article, ['en-US'], 'en-US').map((a) => a.action)).toEqual([
+      'summarize',
+      'autofill',
+      'tags',
+      'audit',
+    ]);
+    expect(assistActions(article, ['en-US', 'de-DE'], 'en-US')[0]?.action).toBe('translate');
+  });
+
   it('renders a summary as a reviewable proposal with provenance; Apply merges it', async () => {
     const { onMergeFields } = setup();
     fireEvent.click(screen.getByRole('button', { name: /AI assist/ }));
@@ -414,6 +462,10 @@ describe('AiAssistPanel', () => {
 });
 
 describe('SemanticPanel', () => {
+  /** The card starts folded (consulted now and then); opens it. */
+  const openCard = () =>
+    fireEvent.click(screen.getByRole('button', { name: /^Content semantics/ }));
+
   it('shows duplicates as a collapsed, non-error line with one row per match', async () => {
     render(
       <MemoryRouter>
@@ -423,7 +475,10 @@ describe('SemanticPanel', () => {
         />
       </MemoryRouter>,
     );
-    const summary = await screen.findByRole('button', { name: /1 possible duplicate/ });
+    // Folded, the card's heading still says a likely copy is there.
+    await screen.findByRole('button', { name: /^Content semantics\s*· 1 possible duplicate$/ });
+    openCard();
+    const summary = screen.getByRole('button', { name: /^Review\s*1 possible duplicate/ });
     expect(screen.queryByRole('alert')).toBeNull();
     expect(summary.getAttribute('aria-expanded')).toBe('false');
     expect(screen.queryByRole('link', { name: 'Launch post' })).toBeNull();
@@ -431,7 +486,7 @@ describe('SemanticPanel', () => {
     fireEvent.click(summary);
     const link = screen.getByRole('link', { name: 'Launch post' });
     expect(link.getAttribute('href')).toBe('/content/article/e-dup');
-    expect(screen.getByText('93% similar')).toBeTruthy();
+    expect(screen.getByText('100% similar')).toBeTruthy();
     // The snippet stays behind its own toggle.
     expect(screen.queryByText(/Long body/)).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Show excerpt from Launch post' }));
@@ -444,9 +499,29 @@ describe('SemanticPanel', () => {
         <SemanticPanel entryId="e1" />
       </MemoryRouter>,
     );
+    await screen.findByRole('button', { name: /1 possible duplicate/ });
+    openCard();
     expect(await screen.findByText('“Related body text…”')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: /possible duplicate/ }));
+    fireEvent.click(screen.getByRole('button', { name: /^Review\s*1 possible duplicate/ }));
     // Eight words at most in the title; the 160-word snippet stays behind its toggle.
     expect(screen.getByText('“Long body Long body Long body Long body…”')).toBeTruthy();
+  });
+
+  it('calls nothing a duplicate below the threshold: a merely alike entry is only related', async () => {
+    client.findDuplicates.mockResolvedValueOnce([
+      { entryId: 'e-alike', score: 0.93, snippet: 'Written from the same template' },
+      { entryId: 'e-near', score: DUPLICATE_THRESHOLD - 0.001, snippet: 'Same topic too' },
+    ]);
+    render(
+      <MemoryRouter>
+        <SemanticPanel entryId="e1" />
+      </MemoryRouter>,
+    );
+    openCard();
+    await screen.findByText('“Related body text…”');
+    expect(client.findDuplicates).toHaveBeenCalledWith('e1', DUPLICATE_THRESHOLD);
+    expect(DUPLICATE_THRESHOLD).toBeGreaterThan(0.9);
+    expect(screen.queryByText(/possible duplicate/)).toBeNull();
+    expect(screen.queryByText('Review')).toBeNull();
   });
 });

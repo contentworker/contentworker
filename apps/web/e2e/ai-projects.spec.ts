@@ -68,7 +68,7 @@ test('a project is listed, edited in a sheet, and picked in Generate with proven
 
     const entry = await createDraft(request, `Project draft ${Date.now()}`);
     await openCms(page, `/content/article/${entry}`);
-    await page.getByRole('button', { name: 'More entry actions' }).click(EDITOR_READY);
+    await page.getByRole('button', { name: 'AI', exact: true }).click(EDITOR_READY);
     await page.getByRole('menuitem', { name: 'Generate with AI' }).click();
     const dialog = page.getByRole('dialog');
     await dialog.getByLabel('Project', { exact: true }).click();

@@ -9,6 +9,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { EntryPreview } from '~/cms/components/EntryPreview';
 import { RichTextEditor } from '~/cms/components/RichTextEditor';
+import { chooseInsert } from './rich-text-insert';
 
 const resolveEmbed = vi.fn<(url: string) => Promise<{ embed: EmbedData; resolved: boolean }>>();
 
@@ -109,9 +110,7 @@ describe('rich-text external embeds', () => {
     resolveEmbed.mockResolvedValue({ embed: RESOLVED, resolved: true });
     const { last } = mount();
 
-    await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: 'Embed media' }));
-    });
+    await chooseInsert('Embed media');
     const field = screen.getByRole('textbox', { name: 'Media URL' });
     const button = screen.getByRole('button', { name: 'Embed' }) as HTMLButtonElement;
     fireEvent.change(field, { target: { value: 'http://www.youtube.com/watch?v=dQw4w9WgXcQ' } });

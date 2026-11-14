@@ -4,7 +4,7 @@ import {
   createdEntryOf,
   recordAudit,
 } from '@contentworker/application';
-import type { AuditDetail, Principal } from '@contentworker/domain';
+import type { AuditDetail, AuditVia, Principal } from '@contentworker/domain';
 
 /**
  * The MCP half of the audit trail. REST's `auditMiddleware` records every successful mutating
@@ -112,6 +112,8 @@ export interface ToolAuditInput {
   readonly targetId?: string;
   /** What the call's saves changed, from the `ChangeLog` it ran with. */
   readonly detail?: AuditDetail;
+  /** The admin's assistant ran it (`AuditVia`): kept in the row's `detail`, beside what changed. */
+  readonly via?: AuditVia;
 }
 
 /**
@@ -130,6 +132,11 @@ export async function auditToolCall(ctx: AppContext, input: ToolAuditInput): Pro
   const named = input.targetId ?? str(args.id) ?? str(args.apiId) ?? str(args.alias);
   // A create's arguments can't name what it made; what it saved can, as on REST.
   const created = named ? undefined : createdEntryOf(input.detail);
+  // Who started it rides in `detail`, so the row needs no column of its own; a call that saved
+  // nothing (a publish) has a detail of that alone.
+  const detail = input.via
+    ? { ...(input.detail ?? { entries: [] }), via: input.via }
+    : input.detail;
   try {
     await recordAudit(ctx, {
       spaceId,
@@ -154,7 +161,7 @@ export async function auditToolCall(ctx: AppContext, input: ToolAuditInput): Pro
             ? String(input.detail.aiSettings.to)
             : input.detail?.aiProjects?.[input.detail.aiProjects.length - 1]?.projectId),
       status: 200,
-      detail: input.detail,
+      detail,
     });
   } catch {
     /* auditing must never break the tool call */

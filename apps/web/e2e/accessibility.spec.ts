@@ -1435,7 +1435,11 @@ test('a version compare with its change summary has no accessibility violations'
   await openCms(page, `/content/article/${id}`);
   const pane = page.getByRole('complementary', { name: 'Side pane' });
   await pane.getByRole('radio', { name: 'Details' }).click();
-  await pane.getByRole('button', { name: 'Version history' }).click();
+  // Version history starts open (a fresh browser remembers no fold).
+  await expect(pane.getByRole('button', { name: 'Version history' })).toHaveAttribute(
+    'aria-expanded',
+    'true',
+  );
   await pane.getByRole('button', { name: 'Compare version 1' }).click();
   await pane.getByRole('button', { name: 'Summarize changes' }).click();
   const summary = pane.getByRole('region', { name: 'Summary of changes' });

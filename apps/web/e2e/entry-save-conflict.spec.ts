@@ -55,6 +55,8 @@ test('a save someone beat asks, keeps editing, and saves over theirs when told t
     name: 'Someone saved this entry while you worked',
   });
   await expect(dialog).toContainText('It’s at v2 now, and the form started from v1');
+  // The safe answer is the one under the hand.
+  await expect(dialog.getByRole('button', { name: 'Keep editing' })).toBeFocused();
   await settle(page);
   const results = await new AxeBuilder({ page })
     .withTags(WCAG)

@@ -60,6 +60,7 @@ export function ReferencedBy(props: { id: string; types: ContentType[] }) {
 
   return (
     <CollapsibleCard
+      rememberAs="referenced-by"
       title={
         <>
           <Link2 className="size-4 text-muted-foreground" />

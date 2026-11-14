@@ -19,10 +19,12 @@ import {
   AlertDialogTitle,
 } from '@contentworker/ui/alert-dialog';
 import { Button } from '@contentworker/ui/button';
+import { ComposeLoader } from '@contentworker/ui/compose-loader';
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@contentworker/ui/dropdown-menu';
@@ -30,15 +32,15 @@ import { cn } from '@contentworker/ui/lib/utils';
 import { Segmented, SegmentedItem } from '@contentworker/ui/segmented';
 import { Skeleton } from '@contentworker/ui/skeleton';
 import { useQueryClient } from '@tanstack/react-query';
-import { Ellipsis, FileText, Link2, PenLine } from 'lucide-react';
+import { ChevronLeft, Ellipsis, Link2 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useBlocker, useNavigate, useParams, useSearchParams } from 'react-router';
-import { AiAssistPanel } from '~/cms/components/AiAssistPanel';
+import { Link, useBlocker, useNavigate, useParams, useSearchParams } from 'react-router';
+import { AiAssistPanel, type AssistAction, assistActions } from '~/cms/components/AiAssistPanel';
 import { CollaborationPanel } from '~/cms/components/CollaborationPanel';
-import { CollapsibleCard } from '~/cms/components/CollapsibleCard';
 import { EntryMetadataPanel } from '~/cms/components/EntryMetadataPanel';
 import { EntryPreview } from '~/cms/components/EntryPreview';
 import { ExtensionFrame } from '~/cms/components/ExtensionFrame';
+import { PaneCard } from '~/cms/components/pane/PaneCard';
 import { PaneDivider } from '~/cms/components/pane/PaneDivider';
 import { SitePane } from '~/cms/components/pane/SitePane';
 import {
@@ -181,6 +183,15 @@ export function EntryEditor() {
   }
   const [genOpen, setGenOpen] = useState(false);
   const drafting = useAiCapability('drafting');
+  // An assist picked from the AI menu, for the AI assist panel to open at (it lives in Details).
+  const [assistRequest, setAssistRequest] = useState<{
+    action: AssistAction;
+    seq: number;
+  } | null>(null);
+  const assistSeq = useRef(0);
+  const clearAssistRequest = useCallback(() => setAssistRequest(null), []);
+  // The menu hands focus back to its trigger as it closes, unless a pick sent it into the pane.
+  const focusLeavesMenu = useRef(false);
   const [canvasOpen, setCanvasOpen] = useState(false);
   const publishButton = useRef<HTMLButtonElement>(null);
   const publishAnswered = useRef(false);
@@ -826,14 +837,26 @@ export function EntryEditor() {
       .filter((b): b is HTMLButtonElement => b instanceof HTMLButtonElement)
       .findLast((b) => b !== publish && b.type === 'button' && (b.checkVisibility?.() ?? true));
   };
-  // Both draft with the model: with drafting turned off for the space they aren't offered (the API
-  // refuses them anyway, 409 ai_capability_disabled).
-  const secondary = drafting
+  // Everything the model can do for the entry is in one quiet AI menu, so the header carries one
+  // AI control however many there are. Both drafts write with the model: with drafting turned off
+  // for the space they aren't offered (the API refuses them anyway, 409 ai_capability_disabled).
+  const drafts = drafting
     ? [
-        { label: 'Draft from prose', icon: PenLine, onSelect: () => setCanvasOpen(true) },
-        { label: 'Generate with AI', icon: FileText, onSelect: () => setGenOpen(true) },
+        { label: 'Draft from prose', onSelect: () => setCanvasOpen(true) },
+        { label: 'Generate with AI', onSelect: () => setGenOpen(true) },
       ]
     : [];
+  // The assists need a choice and a review that live in the AI assist panel (in Details), so a
+  // pick opens the panel at that assist's control rather than running it from the menu. A new
+  // entry has none: it has no panels yet.
+  const assists =
+    isEdit && entryId ? assistActions(fillableType ?? selectedType, locales, defaultLocale) : [];
+  const openAssist = (action: AssistAction) => {
+    focusLeavesMenu.current = true;
+    setPaneView('details');
+    assistSeq.current += 1;
+    setAssistRequest({ action, seq: assistSeq.current });
+  };
 
   return (
     // A named container: the secondary actions show by the room the editor has (beside the
@@ -844,7 +867,18 @@ export function EntryEditor() {
           facts (status, version, save state) and the one primary verb for the entry's state. From
           md it stays under the shell's header on a long entry; below md its buttons sit above the
           tab bar, in thumb reach. */}
-      <h1 className={cn(h1, 'pt-3 sm:pt-5')}>{loadingEntry ? titleSkeleton : pageTitle}</h1>
+      <div className="pt-3 sm:pt-5">
+        {/* Below md the shell's breadcrumbs are gone, so the way back to the list is said here. */}
+        <Link
+          to={backTo}
+          aria-label={`Back to ${selectedType.name} entries`}
+          className="-ml-1 mb-1 inline-flex items-center gap-0.5 rounded-md text-muted-foreground text-sm hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:hidden"
+        >
+          <ChevronLeft className="size-4" aria-hidden="true" />
+          {selectedType.name}
+        </Link>
+        <h1 className={h1}>{loadingEntry ? titleSkeleton : pageTitle}</h1>
+      </div>
       <div
         ref={barRef}
         className="-mt-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border-b bg-background py-2 md:sticky md:top-(--shell-h) md:z-20"
@@ -882,20 +916,53 @@ export function EntryEditor() {
           data-page-bar
           className="flex items-center gap-2 max-md:fixed max-md:inset-x-0 max-md:bottom-(--tabbar-h) max-md:z-20 max-md:border-t max-md:bg-background max-md:px-safe-4 max-md:py-2 max-md:in-data-keyboard:hidden"
         >
-          <span className="hidden @4xl/editor:contents">
-            {secondary.map(({ label, icon: Icon, onSelect }) => (
-              <Button key={label} type="button" variant="ghost" size="sm" onClick={onSelect}>
-                <Icon className="size-4" aria-hidden="true" /> {label}
-              </Button>
-            ))}
-            {isEdit && entryId && (
+          {drafts.length > 0 || assists.length > 0 ? (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button type="button" variant="ghost" size="sm">
+                  {/* The mark at rest, in `ai`: the one place the header speaks of the model. */}
+                  <ComposeLoader playing={false} className="text-ai" /> AI
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent
+                align="end"
+                className="w-56"
+                onCloseAutoFocus={(e) => {
+                  if (!focusLeavesMenu.current) return;
+                  focusLeavesMenu.current = false;
+                  e.preventDefault();
+                }}
+              >
+                {drafts.map(({ label, onSelect }) => (
+                  <DropdownMenuItem key={label} onSelect={onSelect}>
+                    {label}
+                  </DropdownMenuItem>
+                ))}
+                {assists.length > 0 ? (
+                  <>
+                    {drafts.length > 0 ? <DropdownMenuSeparator /> : null}
+                    <DropdownMenuLabel>AI assist</DropdownMenuLabel>
+                    {assists.map(({ action, label }) => (
+                      <DropdownMenuItem key={action} onSelect={() => openAssist(action)}>
+                        {label}
+                      </DropdownMenuItem>
+                    ))}
+                  </>
+                ) : null}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          ) : null}
+          {isEdit && entryId ? (
+            <span className="hidden @4xl/editor:contents">
               <Button type="button" variant="ghost" size="sm" onClick={copyPreviewLink}>
                 <Link2 className="size-4" aria-hidden="true" /> Copy preview link
               </Button>
-            )}
-            <span aria-hidden="true" className="mx-1 h-5 w-px bg-border" />
-          </span>
-          {secondary.length > 0 || (isEdit && entryId) ? (
+            </span>
+          ) : null}
+          {drafts.length > 0 || assists.length > 0 || (isEdit && entryId) ? (
+            <span aria-hidden="true" className="mx-1 hidden h-5 w-px bg-border @4xl/editor:block" />
+          ) : null}
+          {isEdit && entryId ? (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button
@@ -909,19 +976,9 @@ export function EntryEditor() {
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-56">
-                {secondary.map(({ label, icon: Icon, onSelect }) => (
-                  <DropdownMenuItem key={label} onSelect={onSelect}>
-                    <Icon /> {label}
-                  </DropdownMenuItem>
-                ))}
-                {isEdit && entryId && (
-                  <>
-                    {secondary.length > 0 ? <DropdownMenuSeparator /> : null}
-                    <DropdownMenuItem onSelect={() => void copyPreviewLink()}>
-                      <Link2 /> Copy preview link
-                    </DropdownMenuItem>
-                  </>
-                )}
+                <DropdownMenuItem onSelect={() => void copyPreviewLink()}>
+                  <Link2 /> Copy preview link
+                </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
           ) : null}
@@ -1114,9 +1171,10 @@ export function EntryEditor() {
           {isEdit && entryId && paneView === 'details' && (
             <>
               {authorship && <EntryAuthorship authorship={authorship} directory={directory} />}
-              {/* Editor work first; AI assist sits last and starts collapsed. */}
+              {/* By how often an editor reaches for them: the conversation and the versions open
+                  near the top, then what describes the entry, then what is consulted now and then
+                  (extensions, semantics) folded, and AI assist last. Each fold is kept per browser. */}
               <CollaborationPanel key={`collab:${entryId}`} entryId={entryId} />
-              <EntryMetadataPanel key={`metadata:${entryId}`} entryId={entryId} />
               {meta && (
                 <VersionHistory
                   key={`versions:${entryId}`}
@@ -1136,12 +1194,12 @@ export function EntryEditor() {
                   onRestored={() => void reseedFromServer()}
                 />
               )}
+              <EntryMetadataPanel key={`metadata:${entryId}`} entryId={entryId} />
               <ReferencedBy id={entryId} types={types} />
-              <SemanticPanel entryId={entryId} entries={pickers.entries} />
               {extensions
                 .filter((e) => e.target === 'sidebar')
                 .map((ext) => (
-                  <CollapsibleCard key={ext.id} defaultOpen title={ext.name}>
+                  <PaneCard key={ext.id} rememberAs={`extension:${ext.id}`} title={ext.name}>
                     <ExtensionFrame
                       extension={ext}
                       context={{
@@ -1152,8 +1210,9 @@ export function EntryEditor() {
                         contentType: selectedType.apiId,
                       }}
                     />
-                  </CollapsibleCard>
+                  </PaneCard>
                 ))}
+              <SemanticPanel entryId={entryId} entries={pickers.entries} />
               <AiAssistPanel
                 key={`assist:${entryId}`}
                 entryId={entryId}
@@ -1161,6 +1220,8 @@ export function EntryEditor() {
                 locales={locales}
                 defaultLocale={defaultLocale}
                 onMergeFields={applyPatch}
+                request={assistRequest}
+                onRequestDone={clearAssistRequest}
               />
             </>
           )}

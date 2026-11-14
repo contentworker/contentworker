@@ -13,6 +13,7 @@ import { cn } from '@contentworker/ui/lib/utils';
 import { TriangleAlert } from 'lucide-react';
 import { type RefObject, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { humanize } from '../../lib/format';
+import { type Hunk, lineHunks } from '../../lib/line-hunks';
 import { ApiError, type ManagementClient, type PreviewEntry } from '../../lib/management';
 import { entryRef, fetchEntriesById } from '../dashboard/entry-titles';
 import { FieldValue, type LinkTitles, linkOf, valueText } from '../EntryDiff';
@@ -304,22 +305,7 @@ export function FieldReview({
             f.rows.map((r) => (
               <li key={`${f.field}:${r.locale ?? ''}`} className="space-y-1 py-2 first:pt-0">
                 <FieldHeading field={f} {...(r.locale ? { locale: r.locale } : {})} />
-                <dl className={cn('grid gap-x-4 gap-y-1', labels.before && '@md:grid-cols-2')}>
-                  {labels.before ? (
-                    <div className="min-w-0">
-                      <dt className="caption">{labels.before}</dt>
-                      <dd>
-                        <FieldValue value={r.before} muted />
-                      </dd>
-                    </div>
-                  ) : null}
-                  <div className="min-w-0">
-                    <dt className="caption">{labels.after}</dt>
-                    <dd>
-                      <FieldValue value={r.after} />
-                    </dd>
-                  </div>
-                </dl>
+                <RowValues row={r} labels={labels} />
               </li>
             )),
           )}
@@ -353,6 +339,126 @@ export function FieldReview({
         </Collapsible>
       ) : null}
     </div>
+  );
+}
+
+/** Past this many lines a side, a changed value shows where it changed, not its first lines. */
+const WHOLE_LINES = 4;
+/** Past this many runs of changes, the rest are counted: the whole field is a press away. */
+const HUNKS_SHOWN = 3;
+
+/** Where a row's long values differ, or `null` when they read fine whole. */
+function rowHunks(row: ReviewRow): Hunk[] | null {
+  if (!row.before || !row.after) return null;
+  const lines = Math.max(row.before.split('\n').length, row.after.split('\n').length);
+  return lines > WHOLE_LINES ? lineHunks(row.before, row.after) : null;
+}
+
+/**
+ * One row's two sides. A long value (a rich text's blocks, a Text field's lines) shows the lines
+ * that changed, each with a line of context and a gap mark between runs, the first few runs and
+ * how many more; "Show the whole field" shows both values in full. A short one shows whole.
+ */
+function RowValues({ row, labels }: { row: ReviewRow; labels: ReviewLabels }) {
+  const hunks = useMemo(() => rowHunks(row), [row]);
+  const [whole, setWhole] = useState(false);
+  const shown = hunks && !whole ? hunks.slice(0, HUNKS_SHOWN) : null;
+  const more = hunks ? hunks.length - HUNKS_SHOWN : 0;
+  return (
+    <div className="space-y-1">
+      <dl className={cn('grid gap-x-4 gap-y-1', labels.before && '@md:grid-cols-2')}>
+        {labels.before ? (
+          <div className="min-w-0">
+            <dt className="caption">{labels.before}</dt>
+            <dd>
+              {shown ? (
+                <HunkLines hunks={shown} side="before" />
+              ) : (
+                <FieldValue value={row.before} muted />
+              )}
+            </dd>
+          </div>
+        ) : null}
+        <div className="min-w-0">
+          <dt className="caption">{labels.after}</dt>
+          <dd>
+            {shown ? <HunkLines hunks={shown} side="after" /> : <FieldValue value={row.after} />}
+          </dd>
+        </div>
+      </dl>
+      {hunks ? (
+        <p className="flex flex-wrap items-center gap-x-2 text-muted-foreground text-xs">
+          {shown && more > 0 ? (
+            <span>
+              and {more} more {more === 1 ? 'change' : 'changes'}
+            </span>
+          ) : null}
+          <Button
+            type="button"
+            variant="link"
+            size="xs"
+            className="px-0"
+            aria-expanded={whole}
+            onClick={() => setWhole((w) => !w)}
+          >
+            {whole ? 'Show only what changed' : 'Show the whole field'}
+          </Button>
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * One side of a long value's changes: context lines muted, a changed line tinted and marked in its
+ * gutter (− went, + came), and said in words, so it never rests on colour alone.
+ */
+function HunkLines({ hunks, side }: { hunks: readonly Hunk[]; side: 'before' | 'after' }) {
+  return (
+    <div className="space-y-1">
+      {/* Fixed for the values shown, hunks and their lines are their places. */}
+      {hunks.map((h, k) => (
+        <div key={k}>
+          {k > 0 ? (
+            <p aria-hidden="true" className="text-muted-foreground text-xs">
+              ⋯
+            </p>
+          ) : null}
+          {h[side].length === 0 ? (
+            <p className="text-muted-foreground italic">Nothing here</p>
+          ) : (
+            h[side].map((line, i) =>
+              line.changed ? (
+                <ChangedLine key={i} text={line.text} side={side} />
+              ) : (
+                <p key={i} className="wrap-anywhere whitespace-pre-wrap pl-4 text-muted-foreground">
+                  {line.text || '\u00a0'}
+                </p>
+              ),
+            )
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ChangedLine({ text, side }: { text: string; side: 'before' | 'after' }) {
+  const Tag = side === 'before' ? 'del' : 'ins';
+  return (
+    <Tag
+      className={cn(
+        'relative block rounded-xs pl-4 text-foreground no-underline',
+        'wrap-anywhere whitespace-pre-wrap',
+        side === 'before' ? 'bg-bad/10' : 'bg-ok/10',
+      )}
+    >
+      <span aria-hidden="true" className="absolute left-1 font-mono text-muted-foreground">
+        {side === 'before' ? '−' : '+'}
+      </span>
+      <span className="sr-only">{side === 'before' ? 'Removed: ' : 'Added: '}</span>
+      {text || '\u00a0'}
+    </Tag>
   );
 }
 

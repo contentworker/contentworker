@@ -7,8 +7,14 @@ import { useEffect, useMemo, useRef } from 'react';
 import { Ago } from '~/cms/components/ago';
 import { LoadingStatus, Refreshing } from '~/cms/components/loading';
 import { Empty } from '~/cms/components/page';
-import { type ActivityChange, activityAction, activityChange, pathLabel } from '~/cms/lib/activity';
-import { type ActorDirectory, actorLabel } from '~/cms/lib/authorship';
+import {
+  type ActivityChange,
+  activityAction,
+  activityBy,
+  activityChange,
+  pathLabel,
+} from '~/cms/lib/activity';
+import type { ActorDirectory } from '~/cms/lib/authorship';
 import { type AuditEntry, apiErrorMessage } from '~/cms/lib/management';
 import { useEntryActivityPagesQuery, useInvalidate } from '~/cms/lib/queries';
 
@@ -63,7 +69,7 @@ function ActivityItem(props: {
   directory?: ActorDirectory;
 }) {
   const { row, entryId } = props;
-  const { words, viaMcp } = activityAction(row, entryId);
+  const { words, via } = activityAction(row, entryId);
   return (
     // Focusable, so Load more can hand the keyboard on to the first row it brought, read whole:
     // what, who and when. The ring is the buttons' own, as focus must always show.
@@ -76,8 +82,7 @@ function ActivityItem(props: {
         {words ?? <span className="break-all font-mono font-normal text-xs">{row.action}</span>}
       </p>
       <p className="break-words text-muted-foreground text-xs">
-        {actorLabel(row.actor, props.directory)}
-        {viaMcp ? ' · through MCP' : ''}
+        {activityBy(row.actor, via, props.directory)}
         {' · '}
         <Ago at={row.at} />
       </p>

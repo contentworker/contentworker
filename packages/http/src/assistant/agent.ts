@@ -41,8 +41,10 @@ import {
   ASSISTANT_TOOLS,
   type AssistantContext,
   type AssistantFill,
+  type AssistantPage,
   type AssistantScope,
   type AssistantTool,
+  type AuditVia,
   DIRECT_CALL_PREFIX,
   type FillTurn,
   ForbiddenError,
@@ -175,6 +177,8 @@ type Made = {
    * call must keep to it when it runs (`fillRefusal`), whatever a client shows or sends later.
    */
   fill?: FillTurn;
+  /** A page's call (`act`): which page's button, for its audit row. A model's call has none. */
+  via?: Extract<AuditVia, 'editor' | 'admin'>;
 };
 
 /**
@@ -504,11 +508,14 @@ export abstract class AssistantAgentBase extends AIChatAgent<AgentEnv> {
       await this.touch();
       const toolCallId = `${DIRECT_CALL_PREFIX}${crypto.randomUUID()}`;
       const { confirm } = ASSISTANT_TOOLS[name];
+      // The person's own button, run as a tool call: its audit row and its line say it was theirs,
+      // from the editor when the page was an entry's.
+      const via = pageVia(ctx.page);
       const base = {
         type: `tool-${name}`,
         toolCallId,
         input: confirm ? args : idsOf(args),
-        toolMetadata: { direct: true, ...(note ? { about: note } : {}) },
+        toolMetadata: { direct: true, via, ...(note ? { about: note } : {}) },
       };
       const say = (part: Record<string, unknown>) =>
         this.persistMessages([
@@ -530,6 +537,7 @@ export abstract class AssistantAgentBase extends AIChatAgent<AgentEnv> {
           digest: await fingerprintOf(name, args, ctx.scope),
           scope: ctx.scope,
           at: Date.now(),
+          via,
           ...(bound ? { bound } : {}),
         } satisfies Made);
         await say({ ...base, state: 'approval-requested', approval: { id: toolCallId } });
@@ -537,7 +545,7 @@ export abstract class AssistantAgentBase extends AIChatAgent<AgentEnv> {
       }
       try {
         const principal = await this.principalIn(deps, who, ctx.scope);
-        const output = await callAssistantTool(deps, principal, name, args, ctx.scope);
+        const output = await callAssistantTool(deps, principal, name, args, ctx.scope, via);
         await say({ ...base, state: 'output-available', output: kept(output) });
         return { callId: toolCallId, output };
       } catch (err) {
@@ -603,6 +611,8 @@ export abstract class AssistantAgentBase extends AIChatAgent<AgentEnv> {
             name,
             heldInput(input, made.bound),
             made.scope,
+            // A card made before pages said which they were is still a page's.
+            made.via ?? 'admin',
           );
           await write({ state: 'output-available', approval, output: kept(output) });
           return { output };
@@ -929,7 +939,7 @@ export abstract class AssistantAgentBase extends AIChatAgent<AgentEnv> {
                   turn.referenceChars -= reserved;
                   let output: unknown;
                   try {
-                    output = await callAssistantTool(now, p, name, held, made.scope);
+                    output = await callAssistantTool(now, p, name, held, made.scope, 'assistant');
                   } catch (err) {
                     turn.referenceChars += reserved;
                     throw err;
@@ -980,6 +990,10 @@ export async function versionHold(
     return null;
   }
 }
+
+/** Which page a page's call came from, for its audit row: an entry's is the editor. */
+export const pageVia = (page: AssistantPage): Extract<AuditVia, 'editor' | 'admin'> =>
+  page.kind === 'entry' ? 'editor' : 'admin';
 
 /** A call's input as it runs: what it was made with, held to its version when it has a hold. */
 function heldInput(input: unknown, bound: Made['bound']): unknown {

@@ -104,6 +104,8 @@ test('an entry offers no drafting where drafting is off', async ({ page }) => {
   await answered;
   await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Save draft' })).toBeVisible();
+  // A new entry's AI menu holds only the drafts, so with drafting off there is no menu at all.
+  await expect(page.getByRole('button', { name: 'AI', exact: true })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Generate with AI' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Draft from prose' })).toHaveCount(0);
 });

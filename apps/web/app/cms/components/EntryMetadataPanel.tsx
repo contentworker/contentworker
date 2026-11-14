@@ -5,8 +5,8 @@ import { SkeletonPill, SkeletonText } from '@contentworker/ui/skeleton';
 import { Link as LinkIcon } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router';
-import { CollapsibleCard } from '~/cms/components/CollapsibleCard';
 import { LoadingStatus } from '~/cms/components/loading';
+import { PaneCard } from '~/cms/components/pane/PaneCard';
 import { useClient, useLocalRun } from '../lib/client-context';
 import { useScopedQuery } from '../lib/queries';
 import { useToast } from '../lib/toast';
@@ -76,7 +76,7 @@ export function EntryMetadataPanel(props: { entryId: string }) {
   const empty = tags.length === 0 && concepts.length === 0;
 
   return (
-    <CollapsibleCard title="Tags & concepts" contentClassName="space-y-4">
+    <PaneCard title="Tags & concepts" rememberAs="tags" contentClassName="space-y-4">
       {loading ? (
         <div className="space-y-2">
           <LoadingStatus>Loading tags and concepts…</LoadingStatus>
@@ -140,6 +140,6 @@ export function EntryMetadataPanel(props: { entryId: string }) {
           </div>
         </>
       )}
-    </CollapsibleCard>
+    </PaneCard>
   );
 }

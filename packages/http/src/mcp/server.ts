@@ -10,6 +10,7 @@ import {
 import {
   AiCapabilityDisabledError,
   AiProjectInUseError,
+  type AuditVia,
   authorize,
   authorizeContent,
   authorizeTrash,
@@ -205,11 +206,15 @@ function narrowToolList(server: McpServer, principal: Principal): () => void {
  * `skills` is the process-wide catalog from `loadSkillCatalog()`. Like the docs
  * tools, skills describe the product rather than any space's content, so
  * being authenticated is the only gate.
+ *
+ * `via` is set only by the admin's assistant, which runs tools in-process (`authInfoFor`): its
+ * calls' audit rows say so, and an MCP client's never can.
  */
 export function buildServer(
   deps: McpDeps,
   principal: Principal,
   skills?: SkillsExtension,
+  via?: AuditVia,
 ): McpServer {
   const { ai, rag, agents } = deps;
   // Every tool writes as this session's principal: entries it creates or changes record it as
@@ -279,6 +284,7 @@ export function buildServer(
                 defaultEnvironment: DEFAULT_ENV,
                 targetId: args && typeof args === 'object' ? auditTarget.get(args) : undefined,
                 detail: changes.detail(),
+                via,
               });
             }
             return result;

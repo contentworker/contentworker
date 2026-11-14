@@ -272,7 +272,11 @@ describe('VersionHistory compare', () => {
       </QueryClientProvider>,
     );
   /** The panel starts folded, as it does beside the editor. */
-  const open = () => fireEvent.click(screen.getByRole('button', { name: 'Version history' }));
+  // Version history starts open now (an editor checks it often): opened only if it is folded.
+  const open = () => {
+    const trigger = screen.getByRole('button', { name: 'Version history' });
+    if (trigger.getAttribute('aria-expanded') !== 'true') fireEvent.click(trigger);
+  };
 
   it('compares a version with the current draft, then with the live version', async () => {
     renderHistory(true);

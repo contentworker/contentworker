@@ -15,17 +15,20 @@ import { Textarea } from '@contentworker/ui/textarea';
 import { CheckSquare, GitBranch, MessageSquare, Trash2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Ago } from '~/cms/components/ago';
-import { CollapsibleCard } from '~/cms/components/CollapsibleCard';
 import { ConfirmButton } from '~/cms/components/InlineConfirm';
+import { PaneCard } from '~/cms/components/pane/PaneCard';
 import { useClient, useLocalRun } from '../lib/client-context';
 import { useInvalidate, useScopedQuery } from '../lib/queries';
 import { useToast } from '../lib/toast';
 
-/** Comments + tasks + workflow status for one entry — the P13 editorial sidebar. */
+/**
+ * Comments, tasks and workflow status for one entry. Where editors talk about the entry, so it is
+ * the first panel under who wrote it and never folds away.
+ */
 export function CollaborationPanel(props: { entryId: string }) {
   const { entryId } = props;
   return (
-    <CollapsibleCard defaultOpen title="Collaboration">
+    <PaneCard title="Collaboration">
       <Tabs defaultValue="comments">
         <TabsList>
           <TabsTrigger value="comments">
@@ -51,7 +54,7 @@ export function CollaborationPanel(props: { entryId: string }) {
           <WorkflowTab entryId={entryId} />
         </TabsContent>
       </Tabs>
-    </CollapsibleCard>
+    </PaneCard>
   );
 }
 

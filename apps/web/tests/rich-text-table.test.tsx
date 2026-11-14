@@ -7,6 +7,7 @@ import { validateRichText } from '@contentworker/domain';
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { RichTextEditor } from '~/cms/components/RichTextEditor';
+import { chooseInsert, closeMenu, openInsertMenu } from './rich-text-insert';
 
 const PICKERS = { entries: [], assets: [] };
 
@@ -24,6 +25,18 @@ const tableOf = (doc: RichTextDocument | undefined): RichTextNode | undefined =>
 const shape = (table: RichTextNode | undefined) =>
   table?.content?.map((row) => row.content?.map((cell) => cell.nodeType));
 
+/** Insert → Table, which puts the cursor in the new table's first cell. */
+const insertTable = () => chooseInsert('Table');
+
+/** Whether Insert offers a table now (not while the cursor is in one). */
+const tableOffered = async () => {
+  const menu = await openInsertMenu();
+  const offered =
+    within(menu).getByRole('menuitem', { name: 'Table' }).dataset.disabled === undefined;
+  await closeMenu();
+  return offered;
+};
+
 const press = async (name: string) => {
   // mousedown is prevented (the editor keeps its selection); the click runs the command.
   await act(async () => {
@@ -36,7 +49,7 @@ describe('rich-text tables', () => {
     const { last } = mount();
     expect(screen.queryByRole('toolbar', { name: 'Table' })).toBeNull();
 
-    await press('Insert table');
+    await insertTable();
 
     const doc = last();
     expect(shape(tableOf(doc))).toEqual([
@@ -49,7 +62,7 @@ describe('rich-text tables', () => {
 
   it('shows the table controls while the cursor is in a table, each with an accessible name', async () => {
     mount();
-    await press('Insert table');
+    await insertTable();
 
     const controls = screen.getByRole('toolbar', { name: 'Table' });
     const names = within(controls)
@@ -72,14 +85,12 @@ describe('rich-text tables', () => {
       within(controls).getByRole('button', { name: 'Header row' }).getAttribute('aria-pressed'),
     ).toBe('true');
     // One table at a time from the toolbar: the cursor's table is edited, not nested into.
-    expect(
-      (screen.getByRole('button', { name: 'Insert table' }) as HTMLButtonElement).disabled,
-    ).toBe(true);
+    expect(await tableOffered()).toBe(false);
   });
 
   it('toggles the header row off and back on', async () => {
     const { last } = mount();
-    await press('Insert table');
+    await insertTable();
     const headerRow = () =>
       screen.getByRole('button', { name: 'Header row' }).getAttribute('aria-pressed');
 
@@ -98,7 +109,7 @@ describe('rich-text tables', () => {
 
   it('adds and removes rows and columns at the cursor', async () => {
     const { last } = mount();
-    await press('Insert table');
+    await insertTable();
 
     await press('Row below');
     expect(tableOf(last())?.content).toHaveLength(4);
@@ -118,7 +129,7 @@ describe('rich-text tables', () => {
 
   it('keeps the last row and column: removing those is deleting the table', async () => {
     const { last } = mount();
-    await press('Insert table');
+    await insertTable();
     // Down to one column, then one row, from the toolbar alone.
     await press('Delete column');
     await press('Delete column');
@@ -134,14 +145,12 @@ describe('rich-text tables', () => {
 
   it('deletes the table, and the table controls go with it', async () => {
     const { last } = mount();
-    await press('Insert table');
+    await insertTable();
     await press('Delete table');
 
     expect(tableOf(last())).toBeUndefined();
     expect(screen.queryByRole('toolbar', { name: 'Table' })).toBeNull();
-    expect(
-      (screen.getByRole('button', { name: 'Insert table' }) as HTMLButtonElement).disabled,
-    ).toBe(false);
+    expect(await tableOffered()).toBe(true);
   });
 
   it('renders a stored table as a grid in the editor', () => {

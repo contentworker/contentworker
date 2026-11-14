@@ -133,10 +133,10 @@ for (const way of ['pointer', 'keyboard'] as const) {
       await expect(share).toBeVisible();
     });
 
-    test('Generate, from the ⋯ menu, goes back to ⋯', async ({ page, request }) => {
+    test('Generate, from the AI menu, goes back to it', async ({ page, request }) => {
       const id = await createDraft(request, `Focus generate ${Date.now()}`);
       await openCms(page, `/content/article/${id}`);
-      const more = page.getByRole('button', { name: 'More entry actions' });
+      const more = page.getByRole('button', { name: 'AI', exact: true });
       await press(page, more, way);
       await press(page, page.getByRole('menuitem', { name: 'Generate with AI' }), way);
       const dialog = page.getByRole('dialog');

@@ -15,12 +15,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@contentworker/ui/select';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Confirmation, ProposedValue } from '~/cms/components/ai/Confirmation';
 import { ProjectPicker } from '~/cms/components/ai/ProjectPicker';
 import { ProjectUsed } from '~/cms/components/ai/ProjectUsed';
 import { Task, TaskItem } from '~/cms/components/ai/Task';
-import { CollapsibleCard } from '~/cms/components/CollapsibleCard';
+import { PaneCard } from '~/cms/components/pane/PaneCard';
+import { useCardOpen } from '~/cms/components/pane/use-card-open';
 import { ToneBadge } from '~/cms/components/status';
 import { choiceOf, type PickerValue, useProjectOutcome } from '~/cms/lib/ai-projects';
 import { humanize } from '~/cms/lib/format';
@@ -62,6 +63,34 @@ type Proposal = { operation: string; steps: string[] } & (
   | { kind: 'tags'; title: string; tagIds: string[]; newTags: string[] }
 );
 
+/** What AI assist can do, each one a control in the panel the editor's AI menu can take you to. */
+export type AssistAction = 'translate' | 'summarize' | 'autofill' | 'tags' | 'audit';
+
+/**
+ * The assists offered for an entry of `contentType`, in the panel's order, as the AI menu names
+ * them. Each needs another choice or press in the panel (a locale, a field, a look at the
+ * proposal), hence the ellipsis.
+ */
+export function assistActions(
+  contentType: ContentType,
+  locales: readonly string[],
+  defaultLocale: string,
+): { action: AssistAction; label: string }[] {
+  return [
+    ...(locales.some((l) => l !== defaultLocale)
+      ? [{ action: 'translate' as const, label: 'Translate…' }]
+      : []),
+    ...(contentType.fields.some((f) => TEXT_TYPES.has(f.type))
+      ? [{ action: 'summarize' as const, label: 'Summarize…' }]
+      : []),
+    ...(contentType.fields.some((f) => SCALAR_TYPES.has(f.type))
+      ? [{ action: 'autofill' as const, label: 'Autofill a field…' }]
+      : []),
+    { action: 'tags', label: 'Suggest tags…' },
+    { action: 'audit', label: 'Audit the entry…' },
+  ];
+}
+
 function previewOf(value: unknown): string {
   const s = typeof value === 'string' ? value : JSON.stringify(value);
   return s.length > 160 ? `${s.slice(0, 157)}…` : s;
@@ -87,8 +116,32 @@ export function AiAssistPanel(props: {
     fields: EntryFields,
     from?: { use: AiProjectUse | null | undefined; capability: AiProjectCapability },
   ) => number | void;
+  /**
+   * An assist picked from the editor's AI menu: the panel opens, scrolls into view and focuses
+   * that assist's first control. `seq` tells one pick from the next; `onRequestDone` lets the
+   * editor drop it, so a panel drawn again later doesn't take focus again.
+   */
+  request?: { readonly action: AssistAction; readonly seq: number } | null;
+  onRequestDone?: () => void;
 }) {
   const { entryId, contentType, locales, defaultLocale, onMergeFields } = props;
+  const [open, setOpen] = useCardOpen('ai-assist', false);
+  const body = useRef<HTMLDivElement>(null);
+  const [focusing, setFocusing] = useState<AssistAction | null>(null);
+  const { request, onRequestDone } = props;
+  useEffect(() => {
+    if (!request) return;
+    setOpen(true);
+    setFocusing(request.action);
+    onRequestDone?.();
+  }, [request, setOpen, onRequestDone]);
+  useEffect(() => {
+    if (!focusing || !open) return;
+    const target = body.current?.querySelector<HTMLElement>(`[data-assist="${focusing}"]`);
+    target?.scrollIntoView?.({ block: 'center' });
+    target?.focus();
+    setFocusing(null);
+  }, [focusing, open]);
   const { client } = useClient();
   const toast = useToast();
   const invalidate = useInvalidate();
@@ -264,7 +317,10 @@ export function AiAssistPanel(props: {
   });
 
   return (
-    <CollapsibleCard
+    <PaneCard
+      rememberAs="ai-assist"
+      open={open}
+      onOpenChange={setOpen}
       title={
         <>
           {/* The mark at rest; it composes itself while a task runs. */}
@@ -272,204 +328,207 @@ export function AiAssistPanel(props: {
         </>
       }
       description="Translate, summarize, autofill, and classify. Every result is proposed for your review before anything is written."
-      contentClassName="space-y-3"
     >
-      <ProjectPicker
-        value={project}
-        onChange={setProject}
-        capabilities={['field-assist', 'translation']}
-        disabled={busy !== null}
-        variant="compact"
-      />
-      {otherLocales.length > 0 && (
-        <div className="flex items-end gap-2">
-          <div className="flex-1 space-y-1">
-            <Label className="text-muted-foreground text-xs">Translate to</Label>
-            <Select value={target} onValueChange={setTarget}>
-              <SelectTrigger aria-label="Translate to" className="h-8">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {otherLocales.map((l) => (
-                  <SelectItem key={l} value={l}>
-                    {l}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+      <div ref={body} className="space-y-3">
+        <ProjectPicker
+          value={project}
+          onChange={setProject}
+          capabilities={['field-assist', 'translation']}
+          disabled={busy !== null}
+          variant="compact"
+        />
+        {otherLocales.length > 0 && (
+          <div className="flex items-end gap-2">
+            <div className="flex-1 space-y-1">
+              <Label className="text-muted-foreground text-xs">Translate to</Label>
+              <Select value={target} onValueChange={setTarget}>
+                <SelectTrigger aria-label="Translate to" data-assist="translate" className="h-8">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {otherLocales.map((l) => (
+                    <SelectItem key={l} value={l}>
+                      {l}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <Button type="button" size="sm" disabled={!target || busy !== null} onClick={translate}>
+              {runs('translate', composeIcons.write)}
+              {busy === 'translate' ? 'Translating…' : 'Translate'}
+            </Button>
           </div>
-          <Button type="button" size="sm" disabled={!target || busy !== null} onClick={translate}>
-            {runs('translate', composeIcons.write)}
-            {busy === 'translate' ? 'Translating…' : 'Translate'}
-          </Button>
-        </div>
-      )}
+        )}
 
-      {textFields.length > 0 && (
-        <div className="flex items-end gap-2">
-          <div className="flex-1 space-y-1">
-            <Label className="text-muted-foreground text-xs">Summarize into</Label>
-            <Select value={summaryField} onValueChange={setSummaryField}>
-              <SelectTrigger aria-label="Summarize into" className="h-8">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {textFields.map((f) => (
-                  <SelectItem key={f.apiId} value={f.apiId}>
-                    {f.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+        {textFields.length > 0 && (
+          <div className="flex items-end gap-2">
+            <div className="flex-1 space-y-1">
+              <Label className="text-muted-foreground text-xs">Summarize into</Label>
+              <Select value={summaryField} onValueChange={setSummaryField}>
+                <SelectTrigger aria-label="Summarize into" data-assist="summarize" className="h-8">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {textFields.map((f) => (
+                    <SelectItem key={f.apiId} value={f.apiId}>
+                      {f.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <Button
+              type="button"
+              size="sm"
+              disabled={!summaryField || busy !== null}
+              onClick={summarize}
+            >
+              {runs('summarize', composeIcons.write)}
+              {busy === 'summarize' ? 'Summarizing…' : 'Summarize'}
+            </Button>
           </div>
-          <Button
-            type="button"
-            size="sm"
-            disabled={!summaryField || busy !== null}
-            onClick={summarize}
-          >
-            {runs('summarize', composeIcons.write)}
-            {busy === 'summarize' ? 'Summarizing…' : 'Summarize'}
-          </Button>
-        </div>
-      )}
+        )}
 
-      {scalarFields.length > 0 && (
-        <div className="flex items-end gap-2">
-          <div className="flex-1 space-y-1">
-            <Label className="text-muted-foreground text-xs">Autofill field</Label>
-            <Select value={autofill} onValueChange={setAutofill}>
-              <SelectTrigger aria-label="Autofill field" className="h-8">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {scalarFields.map((f) => (
-                  <SelectItem key={f.apiId} value={f.apiId}>
-                    {f.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+        {scalarFields.length > 0 && (
+          <div className="flex items-end gap-2">
+            <div className="flex-1 space-y-1">
+              <Label className="text-muted-foreground text-xs">Autofill field</Label>
+              <Select value={autofill} onValueChange={setAutofill}>
+                <SelectTrigger aria-label="Autofill field" data-assist="autofill" className="h-8">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {scalarFields.map((f) => (
+                    <SelectItem key={f.apiId} value={f.apiId}>
+                      {f.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <Button type="button" size="sm" disabled={!autofill || busy !== null} onClick={fill}>
+              {runs('autofill', composeIcons.schema)}
+              {busy === 'autofill' ? 'Autofilling…' : 'Autofill'}
+            </Button>
           </div>
-          <Button type="button" size="sm" disabled={!autofill || busy !== null} onClick={fill}>
-            {runs('autofill', composeIcons.schema)}
-            {busy === 'autofill' ? 'Autofilling…' : 'Autofill'}
-          </Button>
-        </div>
-      )}
+        )}
 
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        className="w-full"
-        disabled={busy !== null}
-        onClick={tag}
-      >
-        {runs('tags', composeIcons.search)}
-        {busy === 'tags' ? 'Classifying…' : 'Suggest taxonomy tags'}
-      </Button>
-
-      {proposal && (
-        <Confirmation
-          title={proposal.title}
-          note={
-            proposal.kind === 'fields'
-              ? 'Fills the form; nothing is saved until you save the draft.'
-              : 'Assigns the tags to this entry now.'
-          }
-          provenance={
-            <>
-              <Task title={`AI assist · ${proposal.operation}`}>
-                {proposal.steps.map((step) => (
-                  <TaskItem key={step}>{step}</TaskItem>
-                ))}
-              </Task>
-              {proposal.kind === 'fields' ? (
-                <ProjectUsed use={proposal.project} className="mt-1.5" />
-              ) : null}
-            </>
-          }
-          busy={busy !== null}
-          applyLabel={busy === 'apply' ? 'Applying…' : 'Apply'}
-          onApply={applyProposal}
-          onDismiss={() => {
-            if (proposal.kind === 'fields') {
-              recordOutcome(proposal.project, proposal.capability, 'discarded');
-            }
-            setProposal(null);
-          }}
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="w-full"
+          data-assist="tags"
+          disabled={busy !== null}
+          onClick={tag}
         >
-          {proposal.kind === 'fields' ? (
-            <div className="space-y-2">
-              {proposal.items.map((item) => (
-                <ProposedValue key={item.label} label={item.label}>
-                  {item.preview}
-                </ProposedValue>
-              ))}
-            </div>
-          ) : (
-            <div className="flex flex-wrap gap-1">
-              {proposal.newTags.map((t) => (
-                <Badge key={t} variant="secondary">
-                  {t} (new)
-                </Badge>
-              ))}
-              {proposal.tagIds.map((id) => (
-                <Badge key={id} variant="outline">
-                  {tagName(id)}
-                </Badge>
-              ))}
-            </div>
-          )}
-        </Confirmation>
-      )}
+          {runs('tags', composeIcons.search)}
+          {busy === 'tags' ? 'Classifying…' : 'Suggest taxonomy tags'}
+        </Button>
 
-      <div className="space-y-2 border-t pt-3">
-        <div className="flex gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="flex-1"
-            disabled={busy !== null}
-            onClick={audit}
+        {proposal && (
+          <Confirmation
+            title={proposal.title}
+            note={
+              proposal.kind === 'fields'
+                ? 'Fills the form; nothing is saved until you save the draft.'
+                : 'Assigns the tags to this entry now.'
+            }
+            provenance={
+              <>
+                <Task title={`AI assist · ${proposal.operation}`}>
+                  {proposal.steps.map((step) => (
+                    <TaskItem key={step}>{step}</TaskItem>
+                  ))}
+                </Task>
+                {proposal.kind === 'fields' ? (
+                  <ProjectUsed use={proposal.project} className="mt-1.5" />
+                ) : null}
+              </>
+            }
+            busy={busy !== null}
+            applyLabel={busy === 'apply' ? 'Applying…' : 'Apply'}
+            onApply={applyProposal}
+            onDismiss={() => {
+              if (proposal.kind === 'fields') {
+                recordOutcome(proposal.project, proposal.capability, 'discarded');
+              }
+              setProposal(null);
+            }}
           >
-            {runs('audit', composeIcons.search)}
-            {busy === 'audit' ? 'Auditing…' : 'Audit entry'}
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="flex-1"
-            disabled={busy !== null}
-            onClick={createTasks}
-          >
-            {runs('tasks-create', composeIcons.workflow)}
-            {busy === 'tasks-create' ? 'Creating…' : 'Audit → tasks'}
-          </Button>
+            {proposal.kind === 'fields' ? (
+              <div className="space-y-2">
+                {proposal.items.map((item) => (
+                  <ProposedValue key={item.label} label={item.label}>
+                    {item.preview}
+                  </ProposedValue>
+                ))}
+              </div>
+            ) : (
+              <div className="flex flex-wrap gap-1">
+                {proposal.newTags.map((t) => (
+                  <Badge key={t} variant="secondary">
+                    {t} (new)
+                  </Badge>
+                ))}
+                {proposal.tagIds.map((id) => (
+                  <Badge key={id} variant="outline">
+                    {tagName(id)}
+                  </Badge>
+                ))}
+              </div>
+            )}
+          </Confirmation>
+        )}
+
+        <div className="space-y-2 border-t pt-3">
+          <div className="flex gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="flex-1"
+              data-assist="audit"
+              disabled={busy !== null}
+              onClick={audit}
+            >
+              {runs('audit', composeIcons.search)}
+              {busy === 'audit' ? 'Auditing…' : 'Audit entry'}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="flex-1"
+              disabled={busy !== null}
+              onClick={createTasks}
+            >
+              {runs('tasks-create', composeIcons.workflow)}
+              {busy === 'tasks-create' ? 'Creating…' : 'Audit → tasks'}
+            </Button>
+          </div>
+          {findings && findings.length === 0 && (
+            <p className="text-muted-foreground text-sm">No issues found.</p>
+          )}
+          {findings && findings.length > 0 && (
+            <ul className="space-y-1.5">
+              {findings.map((f) => (
+                <li key={`${f.severity}:${f.message}`} className="text-sm">
+                  <div className="flex items-center gap-1.5">
+                    <ToneBadge tone={SEVERITY_TONE[f.severity]} label={humanize(f.severity)} />
+                    {f.field && (
+                      <span className="font-mono text-muted-foreground text-xs">{f.field}</span>
+                    )}
+                  </div>
+                  <p>{f.message}</p>
+                  <p className="text-muted-foreground text-xs">→ {f.suggestedAction}</p>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
-        {findings && findings.length === 0 && (
-          <p className="text-muted-foreground text-sm">No issues found.</p>
-        )}
-        {findings && findings.length > 0 && (
-          <ul className="space-y-1.5">
-            {findings.map((f) => (
-              <li key={`${f.severity}:${f.message}`} className="text-sm">
-                <div className="flex items-center gap-1.5">
-                  <ToneBadge tone={SEVERITY_TONE[f.severity]} label={humanize(f.severity)} />
-                  {f.field && (
-                    <span className="font-mono text-muted-foreground text-xs">{f.field}</span>
-                  )}
-                </div>
-                <p>{f.message}</p>
-                <p className="text-muted-foreground text-xs">→ {f.suggestedAction}</p>
-              </li>
-            ))}
-          </ul>
-        )}
       </div>
-    </CollapsibleCard>
+    </PaneCard>
   );
 }

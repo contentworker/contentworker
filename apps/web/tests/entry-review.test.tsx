@@ -523,3 +523,76 @@ describe('the page’s confirmation', () => {
     expect(screen.queryByRole('region', { name: 'What changes' })).toBeNull();
   });
 });
+
+describe('a long value that changed', () => {
+  const para = (text: string) => ({
+    nodeType: 'paragraph',
+    data: {},
+    content: [{ nodeType: 'text', value: text, marks: [], data: {} }],
+  });
+  const doc = (lines: readonly string[]) => ({
+    nodeType: 'document',
+    data: {},
+    content: lines.map(para),
+  });
+  const PARAS = Array.from({ length: 30 }, (_, i) => `Paragraph ${i + 1}.`);
+  const edit = (at: readonly number[]) =>
+    PARAS.map((p, i) => (at.includes(i + 1) ? `${p} Edited.` : p));
+  const withBody = (after: readonly string[]) =>
+    client.diffVersions.mockResolvedValue({
+      changes: [field('body', 'Body', 'RichText', doc(PARAS), doc(after))],
+    });
+
+  it('shows the blocks that changed with a line of context, not the first lines', async () => {
+    withBody(edit([12]));
+    diffOf();
+    await screen.findByText('1 field changed');
+    const row = screen.getByRole('list', { name: 'Changes' });
+    expect(row.textContent).not.toContain('Paragraph 1.');
+    const removed = row.querySelector('del');
+    const added = row.querySelector('ins');
+    expect(removed?.textContent).toBe('−Removed: Paragraph 12.');
+    expect(added?.textContent).toBe('+Added: Paragraph 12. Edited.');
+    // A line either side, on both sides.
+    expect(within(row).getAllByText('Paragraph 11.').length).toBe(2);
+    expect(within(row).getAllByText('Paragraph 13.').length).toBe(2);
+    expect(row.textContent).not.toContain('Paragraph 10.');
+    expect(row.textContent).not.toContain('more change');
+  });
+
+  it('shows the first few runs of changes and counts the rest', async () => {
+    withBody(edit([3, 9, 15, 21, 27]));
+    diffOf();
+    await screen.findByText('1 field changed');
+    const row = screen.getByRole('list', { name: 'Changes' });
+    expect(row.querySelectorAll('ins').length).toBe(3);
+    expect(within(row).getByText('and 2 more changes')).toBeTruthy();
+    expect(row.textContent).not.toContain('Paragraph 21. Edited.');
+  });
+
+  it('shows both values whole on request, and only what changed again', async () => {
+    withBody(edit([12]));
+    diffOf();
+    await screen.findByText('1 field changed');
+    const whole = screen.getByRole('button', { name: 'Show the whole field' });
+    fireEvent.click(whole);
+    expect(whole.getAttribute('aria-expanded')).toBe('true');
+    const row = screen.getByRole('list', { name: 'Changes' });
+    expect(row.querySelector('ins')).toBeNull();
+    expect(row.textContent).toContain('Paragraph 1.');
+    fireEvent.click(screen.getByRole('button', { name: 'Show only what changed' }));
+    expect(row.querySelector('ins')).not.toBeNull();
+  });
+
+  it('shows a short value whole, as before', async () => {
+    client.diffVersions.mockResolvedValue({
+      changes: [field('body', 'Body', 'RichText', doc(['One', 'Two']), doc(['One', 'Three']))],
+    });
+    diffOf();
+    await screen.findByText('1 field changed');
+    expect(screen.queryByRole('button', { name: 'Show the whole field' })).toBeNull();
+    const row = screen.getByRole('list', { name: 'Changes' });
+    expect(row.querySelector('ins')).toBeNull();
+    expect(row.textContent).toContain('One\nThree');
+  });
+});

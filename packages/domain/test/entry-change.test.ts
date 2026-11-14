@@ -260,4 +260,11 @@ describe('capAuditDetail', () => {
     expect(size(capped)).toBeLessThanOrEqual(MAX_AUDIT_DETAIL_SIZE);
     expect(capped.truncated).toBe(true);
   });
+
+  it('keeps who started the call when the paths are cut', () => {
+    const many = Array.from({ length: 500 }, (_, i) => `fields.${'f'.repeat(50)}${i}`);
+    const capped = capAuditDetail({ entries: [entry(1, { paths: many })], via: 'editor' });
+    expect(size(capped)).toBeLessThanOrEqual(MAX_AUDIT_DETAIL_SIZE);
+    expect(capped).toMatchObject({ truncated: true, via: 'editor' });
+  });
 });

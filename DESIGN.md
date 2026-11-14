@@ -567,15 +567,21 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   card stays, when another content type is opened. The entry editor: the title wraps; under it an action bar (status,
   version and save state, then the one primary verb for the state: Save draft for a new entry,
   Publish while anything isn't live, a disabled "Published" when live and clean) stays under the
-  shell's header from md, and below md its buttons sit above the tab bar. The secondary actions
-  (Draft from prose, Generate with AI, Copy preview link) are ghost and fold into a ghost ⋯ menu
-  ("More entry actions") when the editor is narrower than 56rem. Publishing always confirms, from
+  shell's header from md, and below md its buttons sit above the tab bar. AI has one entry
+  point: a ghost **AI** menu led by the `ai` mark, holding Draft from prose and Generate with AI
+  (when drafting is on) and, under an "AI assist" label, the assists (Translate…, Summarize…,
+  Autofill a field…, Suggest tags…, Audit the entry…), which open the pane's AI assist card at that
+  assist rather than running from the menu. Copy preview link is ghost, and folds into a ghost ⋯
+  ("More entry actions") when the editor is narrower than 56rem. Below md a caption link above the
+  title goes back to the type's list ("‹ Article", named "Back to Article entries"). Publishing always confirms, from
   the editor and from an entries row alike, with the assistant or without it: readers and webhooks
   have a publish at once, and no undo calls that back. An entry that has been live confirms with
   what changed (`entries/PublishConfirm.tsx`), held as the card is (Publish entry stays off until the read has
   something to show, says why, and a failed read offers Try again; the cancel always works): each
   changed field by name, its published and draft values side
-  by side where the container has room and stacked where it hasn't (a container query, so a dialog
+  by side where the container has room and stacked where it hasn't (a long value shows only its
+  changed lines, a line of context each side, `<del>`/`<ins>` with −/+ marks, at most three runs
+  then "and N more changes", and Show the whole field; a container query, so a dialog
   or the Coworker column narrows it as a phone does), links by the title of what they point at,
   unchanged fields behind "Show 4 unchanged fields". Fields the role can't read are counted with the
   rest ("1 field you can't read changed", as every diff counts them, never "0 fields changed") and
@@ -645,12 +651,17 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   button isn't offered. Another comparison starts without a summary. The publish confirmation and
   approvals read the diff through `EntryReview`, not this view, and offer no summary: where a
   person commits, the diff is the record.
-  A new entry's pane is its preview alone. Details opens on **who wrote it**, a
+  A new entry's pane is its preview alone. Details orders its cards by use: who wrote it,
+  Collaboration (always open), Version history, Tags & concepts, Referenced by, sidebar extensions,
+  Content semantics and AI assist; the rarely used ones fold under a heading-held trigger led by a
+  turning chevron, as the form's groups do, each remembered per browser. Content semantics flags
+  "possible duplicates" only at a match of 0.99 or more. Details opens on **who wrote it**, a
   card of its own that never folds away (two lines read faster than a toggle; no card inside it):
   "Created by" with the date (`When`) and "Last edited by" with how long ago (`Ago`), each writer
   a teammate's name (the team is read only by administrators), "You", or the kind of writer ("An
-  API key", "The enrich agent", "A workflow", "A schedule"), never an id; an entry from before
-  authorship was recorded reads "Unknown". Long names wrap, never truncate. One helper words a
+  API key", "The enrich agent", "A workflow", "A schedule"), never an id; where the writer
+  wasn't recorded it says only when ("Created" and the date), and with neither the line is left
+  out. Long names wrap, never truncate. One helper words a
   writer everywhere (`cms/lib/authorship.ts` `actorLabel`), with an in-sentence form ("by an API
   key") for an asset version's line. **Locales in the form:** a localized field is written one
   locale at a time, a row of locale buttons over the card. The inputs that hold a locale's words
@@ -722,7 +733,9 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   review when its blocks field is ruled, and its notice names the field ("Your role can’t change
   Main: …") and links to the form; when the field is hidden it names nothing.
 - **Dates and lists:** a Date's input follows its format: a date picker, `datetime-local`, or a
-  `time` input (minutes; seconds kept when stored). A list of Text, Integer, Number or Date
+  `time` input (minutes; seconds kept when stored). A stored ISO date-time shows its day in a date
+  picker, changing only the day keeps the stored time, and an untouched date saves exactly as
+  stored. A Text field grows with its text (to 40rem, then scrolls). A list of Text, Integer, Number or Date
   values is one row per value, each named "<Field> item N" with its own input and a ghost Remove,
   then an outline Add item; focus goes to an added row, and after a Remove to the row that took
   its place (or Add). A row's own error sits under it, marked `aria-invalid` and linked. A list of
@@ -731,7 +744,8 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   type in an outline `Badge`, then Move up, Move down and Remove as ghost icon buttons named for
   the row, as a collection's are (focus stays on a moved row, a move or removal is said in a polite
   line); under it the single link's picker, holding the field's id, adds one ("Add an entry…"),
-  offering only what the field takes. A link past the pickers' page is looked up by id; one that
+  offering only what the field takes, each option its title and an outline type `Badge`, with
+  "Added" muted on what the list already holds. A link past the pickers' page is looked up by id; one that
   still has no name shows its id, never a blank.
 - **Compare & merge** (`cms/components/BranchMerge.tsx`, in Settings → Environments): a merge the
   target refuses (422) lists the API's issues under the selection, above Merge, as a destructive
@@ -1164,7 +1178,7 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   **Unlock** on a locked block. A lock waits for unsaved block changes: the Lock button gives way to **Save draft first**,
   described by why; a refused one
   is said under the button in plain words; stale locks are listed under the Checks with Clear.
-  The entry form's block cards carry the same lock line, and its Add block menu leads each item
+  The entry form's blocks (sections in a hairline-divided list, each body under a 1px left rule, no tint inside the form's card; a header that folds the block to a one-line summary, opening itself on a refused save; Remove muted until hovered or focused) carry the same lock line, and its Add block menu leads each item
   with the block's asset thumbnail as the dock does (4:3, 24px tall, `rounded-md`, a `muted`
   place held for one without while any has one). With Coworker on, a dock that offers
   blocks also offers **Ask Coworker to fill this** in its header (a ghost `xs` button led by the
@@ -1230,7 +1244,9 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   `text-lg`, as a toolbar does, not at the Title tier: the page is the content. Below lg the
   right column's sheet holds the inspector or, with nothing selected, the Checks; the header's
   "N checks to fix" and a refused save open it. A save someone else's beat asks
-  in an alert dialog: Keep editing, Load theirs, or Save mine over it
+  in an alert dialog naming who saved the newer version and when ("An API key saved v5 · 1m
+  ago"), with See what changed (the version diff, read only when asked); Keep editing is the
+  primary, focused answer, then Load theirs (destructive) and Save mine over it (outline)
   (`cms/components/entries/SaveConflictDialog.tsx`, which the entry form asks too: its save is
   held to the version it was filled from).
 
@@ -1438,7 +1454,14 @@ for code and data blocks only.
   reference links in the work blue with dotted underlines; code in mono on muted; tables in
   hairline cells, header cells semibold on muted, scrolling inside their wrapper when wide. Table
   controls (icon and words, since "delete row" isn't something an icon says alone) appear in a
-  second toolbar row only while the cursor is in a table.
+  second toolbar row only while the cursor is in a table. The toolbar is one Tab stop (← → Home End
+  move across it), every button has a tooltip with its key for a mouse (never to a finger), and
+  the links and embeds (link to an entry or asset, embed an entry, asset or media, an inline
+  entry) and Table and Horizontal rule live in one **Insert** menu under captions. Headings 1–6
+  render as stored, h4–h6 below h3 (semibold, base then small, h6 muted); the toolbar offers H1–H3.
+  An embedded entry is named by its title (a skeleton while it is read, "Entry not found" when
+  gone), never its id. The `?` sheet lists the editor's keys while a rich-text field is on the
+  page.
 
 ## Installed
 

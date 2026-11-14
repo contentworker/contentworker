@@ -64,6 +64,8 @@ export interface DirectMeta {
   readonly direct?: boolean;
   /** The human label the card or line shows: "Spring launch notes". */
   readonly about?: string;
+  /** Which page's button made it: an entry's (`editor`) or another (`admin`). Older calls: none. */
+  readonly via?: 'editor' | 'admin';
 }
 
 type ToolPartLike = { toolCallId: string; toolMetadata?: unknown };
@@ -76,3 +78,12 @@ export const metaOf = (part: ToolPartLike): DirectMeta =>
 /** A call a page made (`act`), never one the model proposed. */
 export const isDirectCall = (part: ToolPartLike) =>
   part.toolCallId.startsWith(DIRECT_CALL_PREFIX) || metaOf(part).direct === true;
+
+/**
+ * Whose a page's call is, for its card and its line: the person's, from the page they pressed
+ * it on. It runs as a tool call so it shows here, but it is their edit, never Coworker's.
+ */
+export const askedOn = (part: ToolPartLike) =>
+  metaOf(part).via === 'editor'
+    ? 'You asked for this in the editor'
+    : 'You asked for this on the page';

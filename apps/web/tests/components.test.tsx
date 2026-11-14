@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import type { ContentType, FieldDefinition } from '@contentworker/domain';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { EntityPicker } from '~/cms/components/EntityPicker';
 import { EntryForm } from '~/cms/components/EntryForm';
@@ -200,6 +200,31 @@ describe('EntityPicker', () => {
     expect(shown).toHaveLength(1);
     fireEvent.click(shown[0]!);
     expect(onChange).toHaveBeenCalledWith('b2', expect.objectContaining({ id: 'b2' }));
+  });
+
+  it('lists each entry by its name with its content type as a badge, the picked one checked', () => {
+    render(<EntityPicker id="pick" options={options} value="a1" onChange={vi.fn()} />);
+    fireEvent.click(screen.getByRole('combobox'));
+    const [alpha, beta] = screen.getAllByRole('option');
+    // The name and the type apart, never "Alpha post (article)" as one run of words.
+    expect(alpha?.textContent).not.toContain('(article)');
+    expect(alpha?.getAttribute('aria-selected')).toBe('true');
+    expect(within(alpha as HTMLElement).getByText('Alpha post')).toBeTruthy();
+    expect(within(alpha as HTMLElement).getByText('article').dataset.slot).toBe('badge');
+    expect(within(beta as HTMLElement).getByText('page')).toBeTruthy();
+  });
+
+  it('lists an option with no content type by its label alone', () => {
+    render(
+      <EntityPicker
+        id="pick"
+        options={[{ id: 'm1', label: 'Main menu' }]}
+        value=""
+        onChange={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByRole('combobox'));
+    expect(screen.getByRole('option', { name: 'Main menu' })).toBeTruthy();
   });
 
   it('shows the selected label and clears via the clear button', () => {
