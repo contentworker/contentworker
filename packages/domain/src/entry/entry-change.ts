@@ -51,6 +51,15 @@ export interface AiReferenceExtractionNote {
   readonly triggeredBy: string;
 }
 
+/**
+ * How a tool call reached the MCP server when it wasn't an MCP client's own: through the admin's
+ * assistant (Coworker), in-process, as the person. `assistant`: Coworker proposed it and the
+ * person confirmed it. `editor`: the person's own button in the entry editor, run as a tool call
+ * so it shows in their conversation; `admin`: the same from another admin page (the entries list).
+ * Only the assistant's server-side path sets it, never anything a client sends.
+ */
+export type AuditVia = 'assistant' | 'editor' | 'admin';
+
 /** A row's structured `detail`: paths and small structural facts, never a value. */
 export interface AuditDetail {
   readonly entries: readonly EntryChange[];
@@ -72,6 +81,13 @@ export interface AuditDetail {
   readonly aiReferenceExtraction?: AiReferenceExtractionNote;
   /** Some of what changed isn't listed: the row hit a cap, or a change could not be read. */
   readonly truncated?: true;
+  /**
+   * A tool call the admin's assistant ran (`AuditVia`); absent on an MCP client's call and on
+   * REST. The only key of a row that saved nothing (`entries` empty). Who acted and whether it was
+   * Coworker's proposal (`assistant`) are the server's; `editor` vs `admin` is the page the
+   * person's own admin client reported, so it only words where their own action started.
+   */
+  readonly via?: AuditVia;
 }
 
 /** The paths under a component, or null when part of the change has no name in the model. */
@@ -155,6 +171,7 @@ export function capAuditDetail(detail: AuditDetail): AuditDetail {
     ...(detail.aiReferenceExtraction
       ? { aiReferenceExtraction: detail.aiReferenceExtraction }
       : {}),
+    ...(detail.via ? { via: detail.via } : {}),
   };
   let room = MAX_AUDIT_DETAIL_SIZE - sizeOf({ ...kept, entries: [], truncated: true });
   const fit = (items: readonly string[]): string[] => {

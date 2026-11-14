@@ -1,5 +1,6 @@
+import { Badge } from '@contentworker/ui/badge';
 import { cn } from '@contentworker/ui/lib/utils';
-import { ChevronsUpDown, X } from 'lucide-react';
+import { Check, ChevronsUpDown, X } from 'lucide-react';
 import { Popover } from 'radix-ui';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { PickOption } from './EntryForm';
@@ -22,6 +23,11 @@ export function EntityPicker(props: {
   ariaLabel?: string;
   invalid?: boolean;
   errorId?: string;
+  /**
+   * Ids already in what the picker adds to (a list of links): each is marked "Added" in the list,
+   * and still offered, since a list may hold a link twice.
+   */
+  added?: ReadonlySet<string>;
   /**
    * Resolves matches on the server instead of filtering `options`.
    *
@@ -224,16 +230,45 @@ export function EntityPicker(props: {
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={() => pick(o)}
                 className={cn(
-                  'flex w-full items-center rounded-xl px-2 py-1.5 text-left text-sm',
+                  'flex w-full items-center gap-2 rounded-xl px-2 py-1.5 text-left text-sm',
                   idx === active ? 'bg-accent text-accent-foreground' : 'text-popover-foreground',
                 )}
               >
-                <span className="truncate">{o.label}</span>
+                <OptionText option={o} />{' '}
+                {props.added?.has(o.id) ? (
+                  <span className="ml-auto shrink-0 pl-2 text-muted-foreground text-xs">Added</span>
+                ) : o.id === value ? (
+                  <Check aria-hidden="true" className="ml-auto size-3.5 shrink-0 text-brand" />
+                ) : null}
               </button>
             ))}
           </div>
         </Popover.Content>
       </Popover.Portal>
     </Popover.Root>
+  );
+}
+
+/**
+ * An option as the list draws it: an entry by its name with its content type as a badge beside it
+ * (its `label` runs the two together as words, "Pricing (article)", for the field and for search),
+ * an untitled one by its id; anything else by its label.
+ */
+function OptionText({ option }: { option: PickOption }) {
+  const type = option.contentType;
+  if (!type) return <span className="min-w-0 truncate">{option.label}</span>;
+  const suffix = ` (${type})`;
+  const name =
+    option.title ??
+    (option.label.endsWith(suffix) ? option.label.slice(0, -suffix.length) : option.label);
+  return (
+    <>
+      <span className={cn('min-w-0 truncate', name === option.id && 'font-mono text-xs')}>
+        {name}
+      </span>{' '}
+      <Badge variant="outline" className="shrink-0 font-normal">
+        {type}
+      </Badge>
+    </>
   );
 }

@@ -123,6 +123,9 @@ export function VersionHistory(props: {
 
   return (
     <CollapsibleCard
+      // Open by default: an editor checks it often; folded, it stays folded (remembered).
+      rememberAs="versions"
+      defaultOpen
       title={
         <>
           <History className="size-4" />

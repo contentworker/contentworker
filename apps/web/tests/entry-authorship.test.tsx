@@ -40,11 +40,41 @@ describe('EntryAuthorship', () => {
     expect(screen.queryByRole('button')).toBeNull();
   });
 
-  it('says Unknown for an entry from before authorship was recorded, with no date', () => {
-    render(<EntryAuthorship authorship={{ createdAt: null, createdBy: null, updatedBy: null }} />);
-    expect(screen.getByText('Created by').nextElementSibling?.textContent).toBe('Unknown');
-    expect(screen.getByText('Last edited by').nextElementSibling?.textContent).toBe('Unknown');
-    expect(document.querySelector('time')).toBeNull();
+  it('says only when for a writer that wasn’t recorded (seeded, imported), never “Unknown”', () => {
+    render(
+      <EntryAuthorship
+        authorship={{
+          createdAt: '2026-05-01T09:00:00.000Z',
+          createdBy: null,
+          updatedBy: null,
+          updatedAt: new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString(),
+        }}
+      />,
+    );
+    expect(screen.queryByText('Created by')).toBeNull();
+    const created = screen.getByText('Created').nextElementSibling as HTMLElement;
+    expect(created.querySelector('time')?.textContent).toContain('2026');
+    expect(created.textContent).not.toContain('·');
+    expect(screen.getByText('Last edited').nextElementSibling?.textContent).toBe('3h ago');
+    expect(screen.queryByText(/Unknown/)).toBeNull();
+  });
+
+  it('keeps the line it knows and leaves out the one it doesn’t', () => {
+    render(
+      <EntryAuthorship
+        authorship={{ createdAt: null, createdBy: null, updatedBy: 'u-me' }}
+        directory={{ me: 'u-me' }}
+      />,
+    );
+    expect(screen.queryByText(/^Created/)).toBeNull();
+    expect(screen.getByText('Last edited by').nextElementSibling?.textContent).toBe('You');
+  });
+
+  it('draws nothing when neither writer nor date was recorded', () => {
+    const { container } = render(
+      <EntryAuthorship authorship={{ createdAt: null, createdBy: null, updatedBy: null }} />,
+    );
+    expect(container.innerHTML).toBe('');
   });
 });
 

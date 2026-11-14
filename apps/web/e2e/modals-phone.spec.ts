@@ -52,7 +52,7 @@ const targetHeight = (control: Locator) =>
 async function openGenerate(page: Page, request: Parameters<typeof createDraft>[0]) {
   const id = await createDraft(request, `Phone modal ${Date.now()}`);
   await openCms(page, `/content/article/${id}`);
-  await page.getByRole('button', { name: 'More entry actions' }).click(EDITOR_READY);
+  await page.getByRole('button', { name: 'AI', exact: true }).click(EDITOR_READY);
   await page.getByRole('menuitem', { name: 'Generate with AI' }).click();
   const dialog = page.getByRole('dialog');
   await expect(dialog).toBeVisible();

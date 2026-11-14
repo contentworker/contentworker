@@ -17,6 +17,7 @@ import {
   ASSISTANT_TOOLS,
   type AssistantScope,
   type AssistantTool,
+  type AuditVia,
   isSetupScope,
   offeredIn,
   type Principal,
@@ -155,7 +156,8 @@ export function scopedArguments(
 /**
  * Calls one assistant tool as `principal`, in `scope`. Its result as data (the JSON the tool
  * answered, or its text); a refusal (an MCP tool error) throws `ToolRefused` with the tool's own
- * words; anything else throws as it is, for `errorLine` to keep out of sight.
+ * words; anything else throws as it is, for `errorLine` to keep out of sight. `via` is who started
+ * it, for its audit row: Coworker unless a page's own button did (`act`).
  */
 export async function callAssistantTool(
   deps: McpDeps,
@@ -163,6 +165,7 @@ export async function callAssistantTool(
   name: AssistantTool,
   input: unknown,
   scope: AssistantScope,
+  via: AuditVia = 'assistant',
 ): Promise<unknown> {
   // A tool runs only where it is offered: never a space's tool without a space, nor the reverse.
   if (!offeredIn(scope, name))
@@ -181,10 +184,13 @@ export async function callAssistantTool(
   // itself, with the scope it needs.
   const tool = (await assistantCatalogue(deps)).get(name);
   if (!tool) throw new ToolRefused(`${ASSISTANT_TOOLS[name].title} isn’t available here.`);
-  const result = (await rpc(deps, principal, 'tools/call', {
-    name,
-    arguments: scopedArguments(tool, input, scope),
-  })) as { content?: { type: string; text?: string }[]; isError?: boolean };
+  const result = (await rpc(
+    deps,
+    principal,
+    'tools/call',
+    { name, arguments: scopedArguments(tool, input, scope) },
+    via,
+  )) as { content?: { type: string; text?: string }[]; isError?: boolean };
   const text = (result.content ?? [])
     .flatMap((c) => (c.type === 'text' && typeof c.text === 'string' ? [c.text] : []))
     .join('\n');
@@ -215,12 +221,13 @@ export function forModel(output: unknown): string {
   );
 }
 
-/** One JSON-RPC request to the in-process MCP handler. */
+/** One JSON-RPC request to the in-process MCP handler; a call's `via` goes to its audit row. */
 async function rpc(
   deps: McpDeps,
   principal: Principal,
   method: string,
   params: Record<string, unknown>,
+  via?: AuditVia,
 ): Promise<unknown> {
   const res = await createHandler(deps, (err) => console.error('assistant: mcp failed', err)).fetch(
     new Request('https://assistant.invalid/mcp', {
@@ -232,7 +239,7 @@ async function rpc(
       body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
     }),
     // No token: the principal is already resolved, and nothing here is forwarded.
-    { authInfo: authInfoFor(principal, '') },
+    { authInfo: authInfoFor(principal, '', via) },
   );
   const body = await readJsonRpc(res);
   if (!body) throw new Error(`mcp ${method}: HTTP ${res.status} with no JSON-RPC answer`);

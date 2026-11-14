@@ -30,7 +30,10 @@ streaming is held above the prompt, where you can remove it, and is sent when th
 Changes you make on the Content pages go through Coworker. The page's button doesn't change
 anything itself: Coworker runs the tool for exactly what you pressed, with no model involved.
 Each edit stays in the conversation as a line that says what it did and links to the entry, such
-as **Published · Spring launch notes**.
+as **Published · Spring launch notes**, with **You asked for this in the editor** (or **on the
+page**) under it: the edit is yours, not Coworker's. The entry's Activity says the same, as
+**You · in the editor**, while a change Coworker proposed reads **Coworker, confirmed by you**,
+and the audit log records which it was (`detail.via`).
 
 - **An action** stops at a confirm card in the panel, which opens if it was closed, and the page
   waits for your answer. **Confirm** does it; **Not now** leaves everything as it was. Actions
@@ -56,7 +59,8 @@ conversation, such as **Found entries · 10 results** once done.
 
 Anything the model proposes that changes something stops at a confirm card, the same as a page
 action, and nothing is sent until you confirm. Each card says who asked for it: **You asked for
-this on the page**, or **Coworker suggests this**, with the time it was made.
+this in the editor** (or **on the page**), or **Coworker suggests this**, with the time it was
+made.
 
 A proposal's card shows what it would change, read from ContentWorker rather than from anything
 the model wrote. A publish lists the fields that go live, from the entry's version history. A

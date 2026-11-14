@@ -1,4 +1,5 @@
-import type { ContentType, EntryChange } from '@contentworker/domain';
+import type { AuditVia, ContentType, EntryChange } from '@contentworker/domain';
+import { type ActorDirectory, actorLabel } from './authorship';
 import type { AuditEntry } from './management';
 
 /**
@@ -58,24 +59,53 @@ const WORDS: Readonly<Record<string, string>> = {
   'workflow.task.rejected': 'Rejected a workflow step',
 };
 
+/**
+ * How an action came in. `api`: a REST call (the admin's own, when Coworker is off, or an API
+ * client's). `mcp`: an MCP client's tool call. A tool call Coworker ran says who started it
+ * (`AuditVia`): Coworker's own proposal (`assistant`), or the person's button in the editor
+ * (`editor`) or on another admin page (`admin`), which runs through Coworker by design.
+ */
+export type ActivityVia = 'api' | 'mcp' | AuditVia;
+
 export interface ActivityAction {
   /** What happened, in words; `null` when only the recorded action can say. */
   readonly words: string | null;
-  /** Came through a tool call (an agent or an MCP client), not the API or the admin. */
-  readonly viaMcp: boolean;
+  readonly via: ActivityVia;
 }
 
 /** A row's action as a person reads it, for the entry `entryId` whose activity this is. */
 export function activityAction(row: AuditEntry, entryId: string): ActivityAction {
-  const viaMcp = row.action.startsWith('MCP ');
-  const key = viaMcp
+  const tool = row.action.startsWith('MCP ');
+  const key = tool
     ? row.action.slice('MCP '.length)
     : row.action.replace(` ${SCOPED}/`, ' /').replace(/^(\w+) \/spaces\/:space\//, '$1 /');
   const words = WORDS[key] ?? null;
   // A duplicate's row targets its source: on the copy's own activity, it is where it came from.
   const copied =
     (words === 'Duplicated' && row.targetType === 'entry' && row.targetId !== entryId) || false;
-  return { words: copied ? 'Created as a copy' : words, viaMcp };
+  // Only the assistant's in-process calls record `via` (the MCP server takes it from no client).
+  const via: ActivityVia = tool ? (row.detail?.via ?? 'mcp') : 'api';
+  return { words: copied ? 'Created as a copy' : words, via };
+}
+
+/**
+ * Who did it, and how, for a row's byline. A person's own button reads as theirs wherever it ran
+ * ("You · in the editor"); what Coworker proposed reads as Coworker's, with who confirmed it, so
+ * nothing it did passes for the person's own edit, nor the reverse.
+ */
+export function activityBy(actor: string, via: ActivityVia, directory?: ActorDirectory): string {
+  switch (via) {
+    case 'assistant':
+      return `Coworker, confirmed by ${actorLabel(actor, directory, 'inSentence')}`;
+    case 'editor':
+      return `${actorLabel(actor, directory)} · in the editor`;
+    case 'admin':
+      return `${actorLabel(actor, directory)} · in the admin`;
+    case 'mcp':
+      return `${actorLabel(actor, directory)} · through MCP`;
+    default:
+      return actorLabel(actor, directory);
+  }
 }
 
 /**
@@ -108,7 +138,8 @@ export type ActivityChange =
     };
 
 export function activityChange(row: AuditEntry, entryId: string): ActivityChange {
-  if (!row.detail) return { kind: 'unrecorded' };
+  // A detail that only says who started it (a publish through Coworker) says nothing of changes.
+  if (!row.detail || isOnlyVia(row.detail)) return { kind: 'unrecorded' };
   const change = row.detail.entries.find((e) => e.entryId === entryId);
   if (!change) return { kind: 'unlisted' };
   return {
@@ -118,3 +149,6 @@ export function activityChange(row: AuditEntry, entryId: string): ActivityChange
     truncated: row.detail.truncated === true,
   };
 }
+
+const isOnlyVia = (detail: NonNullable<AuditEntry['detail']>) =>
+  detail.entries.length === 0 && Object.keys(detail).every((k) => k === 'entries' || k === 'via');

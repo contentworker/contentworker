@@ -45,7 +45,10 @@ vi.mock('~/cms/components/EntryMetadataPanel', () => ({ EntryMetadataPanel: () =
 vi.mock('~/cms/components/VersionHistory', () => ({ VersionHistory: () => null }));
 vi.mock('~/cms/components/ReferencedBy', () => ({ ReferencedBy: () => null }));
 vi.mock('~/cms/components/SemanticPanel', () => ({ SemanticPanel: () => null }));
-vi.mock('~/cms/components/AiAssistPanel', () => ({ AiAssistPanel: () => null }));
+vi.mock('~/cms/components/AiAssistPanel', () => ({
+  AiAssistPanel: () => null,
+  assistActions: () => [],
+}));
 
 const { clearHandedDraft, draftId, handOffDraft, peekDraft } = await import(
   '~/cms/lib/draft-handoff'

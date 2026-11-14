@@ -968,6 +968,50 @@ describe('an edit line', () => {
     );
     const link = screen.getByRole('link', { name: 'Published · Spring launch notes' });
     expect(link.getAttribute('href')).toBe('/content/article/e1');
+    // A page's call: the person's, said under the line and outside its link.
+    expect(screen.getByText('You asked for this on the page')).toBeTruthy();
+  });
+
+  it('says a page’s save and a declined publish were the person’s, in the editor', () => {
+    const editor = { direct: true, via: 'editor', about: 'Spring launch notes' };
+    inRouter(
+      <>
+        <EditLine
+          part={card({
+            type: 'tool-entries_update',
+            state: 'output-available',
+            output: { id: 'e1', contentTypeApiId: 'article', status: 'draft' },
+            toolMetadata: editor,
+          })}
+        />
+        <EditLine
+          part={card({
+            state: 'output-denied',
+            approval: { id: 'direct_1', approved: false },
+            toolMetadata: editor,
+          })}
+        />
+      </>,
+    );
+    expect(screen.getByRole('link', { name: 'Saved a draft · Spring launch notes' })).toBeTruthy();
+    expect(screen.getByText('Not published · Spring launch notes')).toBeTruthy();
+    expect(screen.getAllByText('You asked for this in the editor')).toHaveLength(2);
+  });
+
+  it('says nothing of the person on a line for Coworker’s own call', () => {
+    inRouter(
+      <EditLine
+        part={card({
+          toolCallId: 'call_model_1',
+          state: 'output-available',
+          output: { id: 'e1', contentTypeApiId: 'article', publishedVersion: 2 },
+          approval: { id: 'appr_1', approved: true },
+          toolMetadata: undefined,
+        })}
+      />,
+    );
+    expect(screen.getByRole('link', { name: 'Published' })).toBeTruthy();
+    expect(screen.queryByText(/You asked for this/)).toBeNull();
   });
 
   it('links a saved draft through its view, and an edit without an entry not at all', () => {
@@ -1057,6 +1101,13 @@ describe('a model’s proposal', () => {
     cleanup();
     inRouter(<ActionCard part={card()} respond={vi.fn()} actionKey="m1:0" direct />);
     expect(screen.getByText('You asked for this on the page')).toBeTruthy();
+    cleanup();
+    // The editor's own Publish, confirmed here: the card says where the person pressed it.
+    const fromEditor = card({
+      toolMetadata: { direct: true, via: 'editor', about: 'Spring launch notes' },
+    });
+    inRouter(<ActionCard part={fromEditor} respond={vi.fn()} actionKey="m1:0" direct />);
+    expect(screen.getByText('You asked for this in the editor')).toBeTruthy();
   });
 
   it('shows a draft save as the change from what the draft holds now, and holds Confirm until then', async () => {

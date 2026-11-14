@@ -377,6 +377,17 @@ capped at 4096 characters and 20 entries; a row past either has `truncated: true
 fit. `audit_log_list` serves it unchanged, and a REST write and a tool call that made the same edit
 carry the same detail.
 
+An `MCP <tool>` row the admin's assistant (Coworker) ran also says who started it, as `detail.via`:
+`assistant` when Coworker proposed the call and the person confirmed it, `editor` when it was the
+person's own button in the entry editor (the editor's edits run through Coworker, so they show in
+its conversation), `admin` for their button on another admin page. A call that saved nothing (a
+publish) then has a `detail` of `{ "entries": [], "via": … }`, so `entries` can be empty. Only the
+assistant's in-process calls set it; an MCP client's row never has it, whatever the request says.
+Who acted, and whether it was Coworker's proposal, come from the server; `editor` vs `admin` is the
+page the person's own admin client reported, so it only words where their own action started. The admin's Activity
+view reads it to show the person's own edits as theirs ("You · in the editor"), Coworker's as
+Coworker's, and an MCP client's as "through MCP".
+
 #### An entry's activity
 
 `GET …/entries/:id/activity` (MCP: `entries_list_activity`) is the audit log read for one entry in

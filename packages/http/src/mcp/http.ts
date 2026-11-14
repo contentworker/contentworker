@@ -1,4 +1,4 @@
-import type { Principal } from '@contentworker/domain';
+import type { AuditVia, Principal } from '@contentworker/domain';
 import { type AuthInfo, createMcpHandler, type McpHttpHandler } from '@modelcontextprotocol/server';
 import type { SkillCatalog } from '@modelcontextprotocol/server/ext/skills';
 import type { McpDeps } from './deps';
@@ -11,9 +11,19 @@ import { loadSkillCatalog } from './skills';
  */
 export const MAX_REQUEST_BODY_BYTES = 32 * 1024 * 1024;
 
-/** Carries a resolved principal to the server factory through the SDK's pass-through auth. */
-export function authInfoFor(principal: Principal, token: string): AuthInfo {
-  return { token, clientId: principal.kind, scopes: [...principal.scopes], extra: { principal } };
+/**
+ * Carries a resolved principal to the server factory through the SDK's pass-through auth. `via`
+ * marks a call the admin's assistant runs in-process (`AuditVia`), for its audit row: only that
+ * caller passes it. `/mcp` never does, and nothing in a request can, as `authInfo` is built here,
+ * after authentication, never read from the request.
+ */
+export function authInfoFor(principal: Principal, token: string, via?: AuditVia): AuthInfo {
+  return {
+    token,
+    clientId: principal.kind,
+    scopes: [...principal.scopes],
+    extra: { principal, ...(via ? { via } : {}) },
+  };
 }
 
 /**
@@ -35,7 +45,8 @@ export function createHandler(deps: McpDeps, onerror?: (error: Error) => void): 
     async ({ authInfo }) => {
       const principal = authInfo?.extra?.principal as Principal | undefined;
       if (!principal) throw new Error('mcp: request reached the handler unauthenticated');
-      return buildServer(deps, principal, await skillsOrNone(onerror));
+      const via = authInfo?.extra?.via as AuditVia | undefined;
+      return buildServer(deps, principal, await skillsOrNone(onerror), via);
     },
     { maxRequestBodySize: MAX_REQUEST_BODY_BYTES, onerror },
   );

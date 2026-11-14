@@ -37,7 +37,7 @@ import { MessageAction, MessageResponse } from '~/components/ai-elements/message
 import { Mark } from '~/components/mark';
 import { useProjectOutcome } from '../../lib/ai-projects';
 import { type ProposedBlocks, useAssistantIfAny } from '../../lib/assistant';
-import { metaOf } from '../../lib/assistant-client';
+import { askedOn, isDirectCall, metaOf } from '../../lib/assistant-client';
 import { useClient } from '../../lib/client-context';
 import type { Connection, SpaceStarterInfo } from '../../lib/management';
 import { ProjectUsed } from '../ai/ProjectUsed';
@@ -191,6 +191,7 @@ function Line({
   tone = 'muted',
   href,
   at,
+  by,
   children,
 }: {
   icon: LucideIcon;
@@ -198,6 +199,8 @@ function Line({
   href?: string | null;
   /** When it happened (ms), for an edit's line. */
   at?: number | undefined;
+  /** Whose it was, under the line and outside its link: a page's call is the person's. */
+  by?: string | undefined;
   children: React.ReactNode;
 }) {
   const line = (
@@ -222,12 +225,22 @@ function Line({
       </span>
     </span>
   );
-  if (!at) return href ? <LineLink href={href}>{line}</LineLink> : line;
+  const linked = href ? <LineLink href={href}>{line}</LineLink> : line;
   // The time sits outside the link: it says when, it isn't where the link goes.
-  return (
+  const timed = at ? (
     <span className="flex min-w-0 items-start">
-      {href ? <LineLink href={href}>{line}</LineLink> : line}
+      {linked}
       <When at={at} />
+    </span>
+  ) : (
+    linked
+  );
+  if (!by) return timed;
+  // Under the words, past the icon's width and gap.
+  return (
+    <span className="block min-w-0">
+      {timed}
+      <span className="block pl-5.5 text-muted-foreground text-xs">{by}</span>
     </span>
   );
 }
@@ -291,20 +304,22 @@ export function ReadLine({ part, streaming }: { part: Part; streaming: boolean }
 export function EditLine({ part, at }: { part: Part; at?: number | undefined }) {
   const name = getToolName(part);
   const about = aboutOf(part);
+  // A page's own button: the line says it was the person's, so it never reads as Coworker's.
+  const by = isDirectCall(part) ? askedOn(part) : undefined;
   const info = isAssistantTool(name) ? ASSISTANT_TOOLS[name] : null;
   const declined =
     part.state === 'output-denied' ||
     (part.state === 'approval-responded' && part.approval?.approved === false);
   if (declined)
     return (
-      <Line icon={Ban} at={at}>
+      <Line icon={Ban} at={at} by={by}>
         {info?.declined ?? `${info?.title ?? name}: left as it was`}
         {about ? ` · ${about}` : ''}
       </Line>
     );
   if (part.state === 'output-error')
     return (
-      <Line icon={CircleAlert} tone="bad" at={at}>
+      <Line icon={CircleAlert} tone="bad" at={at} by={by}>
         {info?.title ?? name} didn’t go through{about ? ` · ${about}` : ''}
         {part.errorText ? (
           <span className="block text-muted-foreground text-xs">{part.errorText}</span>
@@ -313,7 +328,7 @@ export function EditLine({ part, at }: { part: Part; at?: number | undefined }) 
     );
   if (part.state === 'output-available')
     return (
-      <Line icon={ArrowUpRight} tone="ink" href={entryHref(part.output)} at={at}>
+      <Line icon={ArrowUpRight} tone="ink" href={entryHref(part.output)} at={at} by={by}>
         {info?.done ?? name}
         {about ? (
           <>
@@ -455,11 +470,11 @@ function PublishReview({
  * Who asked for a card: the person, from the page (they just pressed for it), or Coworker, which
  * proposed it. Said on every card, so a proposal never passes for something the person did.
  */
-function Source({ direct }: { direct: boolean }) {
+function Source({ part, direct }: { part: Part; direct: boolean }) {
   return (
     <p className="flex items-center gap-1.5 text-muted-foreground text-xs">
       {direct ? (
-        'You asked for this on the page'
+        askedOn(part)
       ) : (
         <>
           <Mark className="size-3 shrink-0 text-ai" />
@@ -691,7 +706,7 @@ export function ActionCard({
                 </h3>
                 <When at={at} />
               </CardTitle>
-              <Source direct={direct} />
+              <Source part={part} direct={direct} />
             </CardHeader>
             {about || target || proposal || offFill || name === 'space_create' ? (
               <CardContent className="space-y-2">

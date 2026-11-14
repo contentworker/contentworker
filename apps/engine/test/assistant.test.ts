@@ -90,6 +90,14 @@ async function entryIn(spaceId: string, title: string) {
 const statusOf = async (spaceId: string, id: string) =>
   (await getPreviewEntry(ctx(), { spaceId, environmentId: 'main' }, id)).status;
 
+/** The audit rows about an entry, newest first: what each recorded and who started it. */
+const auditOf = async (spaceId: string, id: string) =>
+  (await ctx().store.audit.list(spaceId, { targetId: id, limit: 20 })).map((r) => ({
+    action: r.action,
+    actor: r.actor,
+    via: r.detail?.via,
+  }));
+
 /** A person with a live session, as the web gateway signs them. */
 async function person(name: string, role: 'admin' | 'member' = 'admin'): Promise<WebPrincipal> {
   const id = `usr_${name}`;
@@ -416,10 +424,14 @@ describe('a page’s edits (no model)', () => {
       state: 'output-available',
       input: { contentType: 'article' },
       output: { id: output.entry.id, status: 'draft' },
-      toolMetadata: { direct: true, about: 'New article' },
+      toolMetadata: { direct: true, via: 'admin', about: 'New article' },
     });
     // The field values stay in the page's own result, not the stored conversation.
     expect(JSON.stringify(part)).not.toContain('A private draft title');
+    // The person's own button, from a page that isn't an entry's: theirs in the audit log too.
+    expect(await auditOf(SPACE_A, output.entry.id)).toEqual([
+      { action: 'MCP entries_create', actor: ada.sub, via: 'admin' },
+    ]);
     panel.close();
   });
 
@@ -492,6 +504,10 @@ describe('a page’s edits (no model)', () => {
       approval: { id: callId, approved: true },
       output: { id, status: 'published' },
     });
+    // Confirmed in Coworker's card, but the editor's Publish: the row says the person did it there.
+    expect(await auditOf(SPACE_A, id)).toEqual([
+      { action: 'MCP entries_publish', actor: ada.sub, via: 'editor' },
+    ]);
     expect(await panel.call('resolve', [callId, true])).toMatchObject({
       success: false,
       error: ALREADY_ANSWERED,
@@ -786,6 +802,10 @@ describe('a confirm is held to the entry as its card showed it', () => {
     });
     await continued;
     expect(await statusOf(SPACE_A, id)).toBe('published');
+    // Coworker proposed it, so the row is Coworker's, from the same entry page as the editor's.
+    expect(await auditOf(SPACE_A, id)).toEqual([
+      { action: 'MCP entries_publish', actor: ada.sub, via: 'assistant' },
+    ]);
     panel.close();
   });
 });

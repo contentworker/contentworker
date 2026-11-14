@@ -3,10 +3,12 @@ import { EditorContent, useEditor } from '@tiptap/react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useOptionalClient } from '~/cms/lib/client-context';
 import { toDocument, toTiptap } from '~/cms/lib/rich-text-mapper';
+import { useModKeyLabel, usePageShortcuts } from '~/cms/lib/shortcuts';
 import type { Pickers } from './EntryForm';
 import { RichTextPickersContext } from './rich-text/EmbedNodeView';
 import { buildExtensions } from './rich-text/extensions';
 import type { EmbedResolver } from './rich-text/external-embed';
+import { EDITOR_SHORTCUTS, EDITOR_SHORTCUTS_APPLE } from './rich-text/keys';
 import { Toolbar } from './rich-text/Toolbar';
 
 /**
@@ -34,6 +36,11 @@ export function RichTextEditor(props: {
   // external value changes apart from the echo of our own onChange (avoids a
   // setContent feedback loop).
   const lastEmitted = useRef(props.value as RichTextDocument | undefined);
+
+  // The "?" list's Editor group (⌘S, the marks, the toolbar's arrows) while a rich-text field is
+  // on the page; one listing however many fields there are.
+  const apple = useModKeyLabel() === '⌘';
+  usePageShortcuts(apple ? EDITOR_SHORTCUTS_APPLE : EDITOR_SHORTCUTS);
 
   // Embeds resolve their metadata through the api for the current space and
   // environment; outside the CMS (no client) they go in with what the URL says.

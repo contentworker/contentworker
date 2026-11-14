@@ -109,7 +109,10 @@ export const UnknownInline = unknownNode('unknownInline', { inline: true });
 export function buildExtensions(opts: { resolveEmbed?: () => EmbedResolver | undefined } = {}) {
   return [
     StarterKit.configure({
-      heading: { levels: [1, 2, 3] },
+      // Every level the domain stores. With fewer, Tiptap draws an unlisted level as the first
+      // (a stored heading-4 showed as an h1) and a pasted <h4> drops to a paragraph. The toolbar
+      // still offers H1–H3; the rest stay reachable by their keys (⌘⌥4–6).
+      heading: { levels: [1, 2, 3, 4, 5, 6] },
       link: { openOnClick: false },
     }),
     // Column widths aren't part of the stored model, so there is nothing to

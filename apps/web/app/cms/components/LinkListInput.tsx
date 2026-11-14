@@ -17,7 +17,7 @@ const isLink = (v: unknown): v is LinkValue =>
 /**
  * A list of links (an Array of Link items): each linked entry or asset a row, by its title and
  * type, in the order the editor gave them. Add is the single link's picker, offering what the
- * field takes; Move up, Move down and Remove are ghost icon buttons named for their row, as an
+ * field takes, with what the list already holds marked "Added"; Move up, Move down and Remove are ghost icon buttons named for their row, as an
  * asset collection's are. Focus stays on a moved row (on its other arrow at an end) and goes to
  * the row that took a removed one's place (or Add); each change is said in a polite line.
  *
@@ -227,6 +227,7 @@ export function LinkListInput(props: {
         placeholder={noun === 'asset' ? 'Add an asset…' : 'Add an entry…'}
         invalid={props.invalid}
         errorId={props.describedBy}
+        added={new Set(items.map((l) => l.id))}
         {...(props.onSearch ? { onSearch: props.onSearch } : {})}
         onChange={add}
       />

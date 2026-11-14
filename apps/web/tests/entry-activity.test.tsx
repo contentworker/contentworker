@@ -44,10 +44,13 @@ vi.mock('~/cms/components/EntryMetadataPanel', () => ({ EntryMetadataPanel: () =
 vi.mock('~/cms/components/VersionHistory', () => ({ VersionHistory: () => null }));
 vi.mock('~/cms/components/ReferencedBy', () => ({ ReferencedBy: () => null }));
 vi.mock('~/cms/components/SemanticPanel', () => ({ SemanticPanel: () => null }));
-vi.mock('~/cms/components/AiAssistPanel', () => ({ AiAssistPanel: () => null }));
+vi.mock('~/cms/components/AiAssistPanel', () => ({
+  AiAssistPanel: () => null,
+  assistActions: () => [],
+}));
 
 const { EntryActivity } = await import('~/cms/components/entries/EntryActivity');
-const { activityAction } = await import('~/cms/lib/activity');
+const { activityAction, activityBy } = await import('~/cms/lib/activity');
 const { ToastProvider } = await import('~/cms/lib/toast');
 const { EntryEditor } = await import('~/cms/routes/EntryEditor');
 
@@ -276,8 +279,61 @@ describe('the entry’s activity', () => {
   it('names a block patch the same through the API and a tool', () => {
     const viaApi = row(1, { action: 'PATCH /spaces/:space/environments/:env/entries/:id/blocks' });
     const viaTool = row(2, { action: 'MCP entry_blocks_patch' });
-    expect(activityAction(viaApi, 'e1')).toEqual({ words: 'Changed blocks', viaMcp: false });
-    expect(activityAction(viaTool, 'e1')).toEqual({ words: 'Changed blocks', viaMcp: true });
+    expect(activityAction(viaApi, 'e1')).toEqual({ words: 'Changed blocks', via: 'api' });
+    expect(activityAction(viaTool, 'e1')).toEqual({ words: 'Changed blocks', via: 'mcp' });
+  });
+
+  it('shows the person’s own buttons as theirs, and Coworker’s proposals as Coworker’s', async () => {
+    client.listEntryActivity.mockResolvedValue({
+      items: [
+        // The editor's Publish, confirmed in Coworker's card: it saves nothing, so only who.
+        row(5, {
+          action: 'MCP entries_publish',
+          actor: 'usr_me',
+          detail: { entries: [], via: 'editor' },
+        }),
+        row(4, {
+          action: 'MCP entries_update',
+          actor: 'usr_ada',
+          detail: { entries: [change()], via: 'editor' },
+        }),
+        row(3, {
+          action: 'MCP entries_trash',
+          actor: 'usr_me',
+          detail: { entries: [], via: 'admin' },
+        }),
+        row(2, {
+          action: 'MCP entries_publish',
+          actor: 'usr_me',
+          detail: { entries: [], via: 'assistant' },
+        }),
+        // An MCP client's call: no `via`, as only the admin's assistant records one.
+        row(1, { action: 'MCP entries_unpublish', actor: 'usr_me' }),
+      ],
+    });
+    show();
+    const items = within(
+      await screen.findByRole('list', { name: 'Activity, newest first' }),
+    ).getAllByRole('listitem');
+    expect(items.map((i) => i.querySelector('p:nth-child(2)')?.textContent)).toEqual([
+      expect.stringMatching(/^You · in the editor · /),
+      expect.stringMatching(/^Ada · in the editor · /),
+      expect.stringMatching(/^You · in the admin · /),
+      expect.stringMatching(/^Coworker, confirmed by you · /),
+      expect.stringMatching(/^You · through MCP · /),
+    ]);
+    // A detail with only who started it says nothing about changes.
+    expect(items[0]?.textContent).not.toContain('aren’t listed');
+    expect(items[1]?.textContent).toContain('Title, Hero › alt in de');
+  });
+
+  it('reads `via` only from a tool call’s row', () => {
+    const rest = row(1, {
+      action: 'POST /spaces/:space/environments/:env/entries/:id/published',
+      detail: { entries: [], via: 'editor' },
+    });
+    expect(activityAction(rest, 'e1').via).toBe('api');
+    expect(activityBy('usr_me', 'api', { me: 'usr_me' })).toBe('You');
   });
 });
 

@@ -2,12 +2,23 @@ import { SkeletonText } from '@contentworker/ui/skeleton';
 import { GitCompare } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Source, Sources } from '~/cms/components/ai/Sources';
-import { CollapsibleCard } from '~/cms/components/CollapsibleCard';
 import { LoadingStatus } from '~/cms/components/loading';
+import { PaneCard } from '~/cms/components/pane/PaneCard';
 import { ToneBadge } from '~/cms/components/status';
 import { useClient } from '../lib/client-context';
 import type { SearchHit } from '../lib/management';
 import type { PickOption } from './EntryForm';
+
+/**
+ * How alike an entry must be to be called a possible duplicate (cosine similarity, 0–1). The api's
+ * own default, 0.9, flagged nearly every seeded article: entries written from one template score
+ * 0.86–0.93 with each other, and 0.97–0.99 when they share a topic as well (the local dev index,
+ * measured over the seeded space's long entries), so at 0.9 three in four were "duplicates". A copy
+ * of an entry with 2% of its words changed still scores about 0.99, and that copy (duplicated,
+ * re-imported, lightly retitled) is what the warning is for; an entry that is merely alike is
+ * listed among the related entries with its score instead.
+ */
+export const DUPLICATE_THRESHOLD = 0.99;
 
 /**
  * Content Semantics for an entry: surfaces near-duplicates (informational, collapsed) and
@@ -30,12 +41,13 @@ export function SemanticPanel(props: {
     setDupes([]);
     Promise.all([
       client.relatedEntries(props.entryId, 5),
-      client.findDuplicates(props.entryId, 0.9),
+      client.findDuplicates(props.entryId, DUPLICATE_THRESHOLD),
     ])
       .then(([r, d]) => {
         if (!live) return;
         setRelated(r);
-        setDupes(d);
+        // The api applies the threshold; held here too, so no weaker match ever wears the badge.
+        setDupes(d.filter((hit) => hit.score >= DUPLICATE_THRESHOLD));
       })
       .catch(() => {
         if (live) setRelated([]);
@@ -64,11 +76,17 @@ export function SemanticPanel(props: {
   };
 
   return (
-    <CollapsibleCard
-      defaultOpen
+    <PaneCard
+      rememberAs="semantics"
       title={
         <>
           <GitCompare className="size-4 text-muted-foreground" /> Content semantics
+          {/* Said folded too, as Referenced by's count is: a likely copy is worth opening for. */}
+          {dupes.length > 0 && (
+            <span className="font-normal text-muted-foreground text-sm">
+              · {dupes.length} possible duplicate{dupes.length > 1 ? 's' : ''}
+            </span>
+          )}
         </>
       }
       description="Related entries and near-duplicates, from the vector index."
@@ -131,6 +149,6 @@ export function SemanticPanel(props: {
           ))}
         </ul>
       )}
-    </CollapsibleCard>
+    </PaneCard>
   );
 }

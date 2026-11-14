@@ -69,6 +69,15 @@ const auditDetail = z.object({
     .literal(true)
     .optional()
     .describe('Some of what changed is not listed: the row reached its size or entry cap'),
+  via: z
+    .enum(['assistant', 'editor', 'admin'])
+    .optional()
+    .describe(
+      'On an `MCP <tool>` row the admin’s assistant ran: `assistant` when it proposed the call ' +
+        'and the person confirmed it; `editor` or `admin` when it was the person’s own button in ' +
+        'the entry editor or on another admin page (the page the person’s admin client reported). ' +
+        'Absent for an MCP client’s call and on REST',
+    ),
 });
 
 export const auditEntry = z.object({

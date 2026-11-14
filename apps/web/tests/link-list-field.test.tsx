@@ -134,10 +134,20 @@ describe('a list of links', () => {
     fireEvent.click(add);
     const listbox = await screen.findByRole('listbox');
     expect(within(listbox).queryByText(/Launch notes/)).toBeNull();
-    fireEvent.click(within(listbox).getByText('About us (page)'));
+    // Each entry by its title, its type a badge beside it.
+    fireEvent.click(within(listbox).getByRole('option', { name: 'About us page' }));
     expect(within(rows()[0] as HTMLElement).getByText('About us')).toBeTruthy();
     save();
     expect(saved(onSave)).toEqual([link('e3')]);
+  });
+
+  it('marks what the list already holds as Added, still offering it', async () => {
+    renderForm(ENTRY_LINKS, { related: { 'en-US': [link('e1')] } });
+    fireEvent.click(screen.getByRole('combobox', { name: 'Add an entry to Related' }));
+    const listbox = await screen.findByRole('listbox');
+    // A list may hold a link twice, so it is marked, not hidden.
+    expect(within(listbox).getByRole('option', { name: 'Pricing page Added' })).toBeTruthy();
+    expect(within(listbox).getByRole('option', { name: 'About us page' })).toBeTruthy();
   });
 
   it('keeps the title of a link found by a server search', async () => {
@@ -146,7 +156,7 @@ describe('a list of links', () => {
     const add = screen.getByRole('combobox', { name: 'Add an entry to Related' });
     fireEvent.click(add);
     fireEvent.change(add, { target: { value: 'far' } });
-    fireEvent.click(await screen.findByText('Far away (page)'));
+    fireEvent.click(await screen.findByRole('option', { name: 'Far away page' }));
     // Not in the seeded pickers, and still named.
     expect(within(rows()[0] as HTMLElement).getByText('Far away')).toBeTruthy();
   });

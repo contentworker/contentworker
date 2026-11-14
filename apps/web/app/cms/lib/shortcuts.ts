@@ -93,6 +93,11 @@ export interface ShortcutGroup {
 }
 
 let pageGroups: readonly ShortcutGroup[] = [];
+/**
+ * How many mounted components hold each group: one listed once by several (every rich-text field
+ * on a form registers the editor's keys) stays listed until the last of them goes.
+ */
+const holders = new Map<ShortcutGroup, number>();
 const listeners = new Set<() => void>();
 const emit = () => {
   for (const l of listeners) l();
@@ -103,9 +108,21 @@ const emit = () => {
  * Prefer `usePageShortcuts` inside a component.
  */
 export function registerShortcuts(group: ShortcutGroup): () => void {
-  pageGroups = [...pageGroups.filter((g) => g.id !== group.id), group];
-  emit();
+  holders.set(group, (holders.get(group) ?? 0) + 1);
+  if (!pageGroups.includes(group)) {
+    pageGroups = [...pageGroups.filter((g) => g.id !== group.id), group];
+    emit();
+  }
+  let released = false;
   return () => {
+    if (released) return;
+    released = true;
+    const left = (holders.get(group) ?? 1) - 1;
+    if (left > 0) {
+      holders.set(group, left);
+      return;
+    }
+    holders.delete(group);
     const before = pageGroups.length;
     pageGroups = pageGroups.filter((g) => g !== group);
     if (pageGroups.length !== before) emit();

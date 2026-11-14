@@ -58,7 +58,7 @@ import { cn } from '@contentworker/ui/lib/utils';
 import { NativeSelect, NativeSelectOption } from '@contentworker/ui/native-select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@contentworker/ui/tabs';
 import { Textarea } from '@contentworker/ui/textarea';
-import { ChevronRight, Lock, Plus } from 'lucide-react';
+import { ArrowDown, ArrowUp, ChevronRight, Lock, Plus } from 'lucide-react';
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router';
 import type { ActorDirectory } from '../lib/authorship';
@@ -1538,16 +1538,20 @@ export function FieldInput(props: {
     );
   }
   if (field.type === 'Text') {
+    const text = typeof value === 'string' ? value : '';
     return (
       <Textarea
         id={id}
-        className={inputClass}
+        // Grows with its text (`field-sizing: content`) up to about 30 lines, then scrolls; never
+        // a fixed box that cuts a long body off mid-line. `rows` is the fallback where the
+        // browser can't size it: a line per paragraph held, between 4 and 20.
+        className={cn('field-sizing-content max-h-[40rem] min-h-24 overflow-y-auto', inputClass)}
         {...aria}
         {...writing}
-        rows={4}
+        rows={textRows(text)}
         readOnly={readOnly}
         placeholder={field.placeholder}
-        value={typeof value === 'string' ? value : ''}
+        value={text}
         onChange={(e) => change(e.target.value)}
       />
     );
@@ -1786,13 +1790,18 @@ function ComponentInput(
      * judged by their own blocks' locks, so they are left as they are here.
      */
     frozen?: boolean;
+    /**
+     * Drawn on what holds it, with no fill of its own: a block's or a repeater item's fields,
+     * which their section already sets apart. A fill there would be a box in a box.
+     */
+    flush?: boolean;
   },
 ) {
   const { fields, path, errorFor, onEdited, pickers, locale, onChange, hint } = props;
   const current = asObject(props.value);
 
   return (
-    <div className="space-y-4 rounded-xl bg-secondary/40 p-4">
+    <div className={cn('space-y-4', !props.flush && 'rounded-xl bg-secondary/40 p-4')}>
       {fields.map((f) => {
         // Rules read the siblings inside this component value. Inside a list's element only
         // `hide` can apply: the domain refuses `disable` there.
@@ -1901,32 +1910,32 @@ function RepeaterInput(props: NestedProps & { label: string }) {
               <span className="font-medium text-sm">
                 {noun} {index + 1}
               </span>
-              <div className="flex items-center gap-1">
+              <div className="flex items-center gap-0.5 pointer-coarse:gap-5">
                 <Button
                   type="button"
                   variant="ghost"
-                  size="sm"
+                  size="icon-xs"
                   aria-label={`Move ${noun} ${index + 1} up`}
                   disabled={index === 0}
                   onClick={() => move(index, -1)}
                 >
-                  ↑
+                  <ArrowUp aria-hidden="true" />
                 </Button>
                 <Button
                   type="button"
                   variant="ghost"
-                  size="sm"
+                  size="icon-xs"
                   aria-label={`Move ${noun} ${index + 1} down`}
                   disabled={index === items.length - 1}
                   onClick={() => move(index, 1)}
                 >
-                  ↓
+                  <ArrowDown aria-hidden="true" />
                 </Button>
                 <Button
                   type="button"
                   variant="ghost"
-                  size="sm"
-                  className="text-destructive"
+                  size="xs"
+                  className={REMOVE_QUIET}
                   aria-label={`Remove ${noun} ${index + 1}`}
                   onClick={() => onChange(items.filter((_, i) => i !== index))}
                 >
@@ -1943,6 +1952,7 @@ function RepeaterInput(props: NestedProps & { label: string }) {
               onEdited={onEdited}
               pickers={pickers}
               locale={locale}
+              flush
               onChange={(v) => replace(index, v)}
             />
           </div>
@@ -1953,6 +1963,27 @@ function RepeaterInput(props: NestedProps & { label: string }) {
       </Button>
     </div>
   );
+}
+
+/**
+ * A Remove that waits to be meant: muted ink at rest, destructive on hover or focus. Taking a block
+ * or an item out is undone by not saving, so it needn't shout on every row.
+ */
+const REMOVE_QUIET =
+  'text-muted-foreground hover:bg-destructive/10 hover:text-destructive focus-visible:text-destructive dark:hover:bg-destructive/20';
+
+/** A block's one line when folded: its first text value, in its variant's field order. */
+export function blockSummary(
+  variant: ComponentVariant,
+  block: Record<string, unknown>,
+): string | undefined {
+  for (const f of variant.fields) {
+    const v = block[f.apiId];
+    if (f.type !== 'Symbol' && f.type !== 'Text') continue;
+    const line = typeof v === 'string' ? v.trim().split('\n')[0] : undefined;
+    if (line) return line;
+  }
+  return undefined;
 }
 
 /** What `focusRequest` asks for: a field, its locale, and the block in it to focus. */
@@ -2066,133 +2097,205 @@ function BlocksInput(
     onChange(next);
   };
 
+  // Folded blocks, by key (or place, for a block saved before keys): a long page reads as a list
+  // of its blocks. Folding only hides a body, never unmounts it, so a rich text's undo history
+  // survives; a block holding an error opens itself, so a rejected save never hides the reason.
+  const [folded, setFolded] = useState<ReadonlySet<string>>(() => new Set());
+  const bodies = useRef(new Map<string, HTMLElement>());
+  const fold = (id: string, shut: boolean) =>
+    setFolded((prev) => {
+      const next = new Set(prev);
+      if (shut) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  useEffect(() => {
+    const invalid = [...folded].filter((id) =>
+      bodies.current.get(id)?.querySelector('[aria-invalid="true"]'),
+    );
+    if (invalid.length > 0)
+      setFolded((prev) => new Set([...prev].filter((id) => !invalid.includes(id))));
+  });
+
   return (
-    <div className="space-y-2">
+    <div className="space-y-3">
       {items.length === 0 && <p className="text-muted-foreground text-sm">No blocks yet.</p>}
-      {items.map((item, index) => {
-        const at = `${path}[${index}]`;
-        const variant = variantOf(variants, item);
-        const type = asObject(item)[BLOCK_TYPE_KEY];
-        const key = asObject(item)[BLOCK_KEY];
-        const noun = `${variant?.name ?? 'Unknown'} block ${index + 1}`;
-        const err = errorFor?.(at);
-        const mark = typeof key === 'string' ? view.marks.get(key) : undefined;
-        const own = mark?.own ? mark : undefined;
-        const keeps = held || !!own;
-        // Moving past a block of a locked run of several would land inside the run.
-        const past = (by: number) => {
-          const next = asObject(items[index + by])[BLOCK_KEY];
-          return inLongRun(view, typeof next === 'string' ? next : undefined);
-        };
-        return (
-          <fieldset
-            key={typeof key === 'string' ? key : `${path}-${index}`}
-            // A group named for its block, focusable by a pick in the Site pane (by its key).
-            data-block-key={typeof key === 'string' ? key : undefined}
-            aria-label={noun}
-            tabIndex={-1}
-            // The ring marks a block a pick focused (`data-picked`), never a click on its padding.
-            className="m-0 min-w-0 space-y-2 rounded-xl border-0 bg-secondary/40 p-3 outline-none data-picked:shadow-[0_0_0_2px_var(--ring)]"
-          >
-            <div className="flex items-center justify-between gap-2">
-              <span className="font-medium text-sm">
-                {variant?.name ?? 'Unknown block'}
-                <span className="ml-1.5 font-normal text-muted-foreground">{index + 1}</span>
-              </span>
-              {/* A locked field (or region) keeps its blocks in place: no move, no Remove. */}
-              {own ? (
-                <span className="inline-flex items-center gap-1 text-muted-foreground text-xs">
-                  <Lock className="size-3" aria-hidden="true" />
-                  Locked
-                </span>
-              ) : keeps ? null : (
-                <div className="flex items-center gap-1">
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    aria-label={`Move ${noun} up`}
-                    disabled={index === 0 || past(-1)}
-                    onClick={() => move(index, -1)}
-                  >
-                    ↑
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    aria-label={`Move ${noun} down`}
-                    disabled={index === items.length - 1 || past(1)}
-                    onClick={() => move(index, 1)}
-                  >
-                    ↓
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="text-destructive"
-                    aria-label={`Remove ${noun}`}
-                    onClick={() => {
-                      onEdited?.(at);
-                      onChange(items.filter((_, i) => i !== index));
-                    }}
-                  >
-                    Remove
-                  </Button>
-                </div>
-              )}
-            </div>
-            {own && variant ? (
-              <div className="max-w-measure space-y-0.5 text-muted-foreground text-xs">
-                <p>{lockSays(own, variant.name)}</p>
-                <p>{lockedLine(own.region.lock, locks?.directory)}</p>
-              </div>
-            ) : null}
-            {variant ? (
-              // Its own blocks fields are its slots: the config names them by this block.
-              <BlockParentContext.Provider
-                value={{ type: variant.apiId, ...(typeof key === 'string' ? { key } : {}) }}
+      {items.length > 0 && (
+        <div className="divide-y border-y">
+          {items.map((item, index) => {
+            const at = `${path}[${index}]`;
+            const variant = variantOf(variants, item);
+            const type = asObject(item)[BLOCK_TYPE_KEY];
+            const key = asObject(item)[BLOCK_KEY];
+            const noun = `${variant?.name ?? 'Unknown'} block ${index + 1}`;
+            const err = errorFor?.(at);
+            const mark = typeof key === 'string' ? view.marks.get(key) : undefined;
+            const own = mark?.own ? mark : undefined;
+            const keeps = held || !!own;
+            // Moving past a block of a locked run of several would land inside the run.
+            const past = (by: number) => {
+              const next = asObject(items[index + by])[BLOCK_KEY];
+              return inLongRun(view, typeof next === 'string' ? next : undefined);
+            };
+            const foldId = typeof key === 'string' ? key : `${path}-${index}`;
+            const open = !folded.has(foldId);
+            const bodyId = `${props.id}-${index}-body`;
+            const summary = variant ? blockSummary(variant, asObject(item)) : undefined;
+            return (
+              <fieldset
+                key={foldId}
+                // A group named for its block, focusable by a pick in the Site pane (by its key).
+                data-block-key={typeof key === 'string' ? key : undefined}
+                aria-label={noun}
+                tabIndex={-1}
+                // A pick lands on the block itself: a folded one opens to show what was picked.
+                onFocus={(e) => {
+                  if (e.target === e.currentTarget && !open) fold(foldId, false);
+                }}
+                // A section of the field, not a card in the card: a hairline between blocks, the
+                // body under a rule from the header's chevron. The ring marks a block a pick focused
+                // (`data-picked`), never a click on its padding.
+                className="m-0 min-w-0 space-y-2 rounded-sm border-0 p-0 py-3 outline-none data-picked:shadow-[0_0_0_2px_var(--ring)]"
               >
-                <BreakpointsContext.Provider value={breakpoints}>
-                  <ComponentInput
-                    id={`${props.id}-${index}`}
-                    fields={variant.fields}
-                    value={item}
-                    path={at}
-                    errorFor={errorFor}
-                    onEdited={onEdited}
-                    pickers={pickers}
-                    locale={locale}
-                    frozen={!!mark?.frozen}
-                    onChange={(v) => replace(index, v)}
-                  />
-                </BreakpointsContext.Provider>
-                <BlockOverrides
-                  variant={variant}
-                  block={asObject(item)}
-                  breakpoints={breakpoints}
-                  noun={noun}
-                />
-              </BlockParentContext.Provider>
-            ) : (
-              // A block whose type the model no longer declares: there is no
-              // shape to edit it by, so it is said plainly and can be removed.
-              <p className="text-muted-foreground text-sm">
-                {typeof type === 'string'
-                  ? `This block’s type “${type}” is not in the content model, so it can’t be edited here.`
-                  : 'This block has no type, so it can’t be edited here.'}
-                {locked
-                  ? ` ${label} is locked, so it can’t be removed here: an admin can unlock it in Build → Blocks.`
-                  : keeps
-                    ? ' It is in a locked region, so it can’t be removed here until it is unlocked.'
-                    : ''}
-              </p>
-            )}
-            {err && <p className="text-xs text-destructive">{err}</p>}
-          </fieldset>
-        );
-      })}
+                <div className="flex items-center justify-between gap-2">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    aria-expanded={open}
+                    aria-controls={bodyId}
+                    onClick={() => fold(foldId, open)}
+                    className="-ml-2 min-w-0 shrink justify-start aria-expanded:bg-transparent aria-expanded:hover:bg-muted"
+                  >
+                    <ChevronRight
+                      aria-hidden="true"
+                      className={cn(
+                        'size-4 text-muted-foreground transition-transform motion-reduce:transition-none',
+                        open && 'rotate-90',
+                      )}
+                    />
+                    <span>{variant?.name ?? 'Unknown block'}</span>{' '}
+                    <span className="font-normal text-muted-foreground tabular-nums">
+                      {index + 1}
+                    </span>
+                    {/* Folded, a block reads as its first line of text: a long page scans as a list. */}
+                    {!open && summary ? (
+                      <span className="min-w-0 truncate font-normal text-muted-foreground">
+                        {' · '}
+                        {summary}
+                      </span>
+                    ) : null}
+                  </Button>
+                  {/* A locked field (or region) keeps its blocks in place: no move, no Remove. */}
+                  {own ? (
+                    <span className="inline-flex shrink-0 items-center gap-1 text-muted-foreground text-xs">
+                      <Lock className="size-3" aria-hidden="true" />
+                      Locked
+                    </span>
+                  ) : keeps ? null : (
+                    // A finger's 44px targets (hit-area) must not overlap: icon-xs is 24px, so 20px
+                    // apart on a coarse pointer, as a list of links' rows are.
+                    <div className="flex shrink-0 items-center gap-0.5 pointer-coarse:gap-5">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon-xs"
+                        aria-label={`Move ${noun} up`}
+                        disabled={index === 0 || past(-1)}
+                        onClick={() => move(index, -1)}
+                      >
+                        <ArrowUp aria-hidden="true" />
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon-xs"
+                        aria-label={`Move ${noun} down`}
+                        disabled={index === items.length - 1 || past(1)}
+                        onClick={() => move(index, 1)}
+                      >
+                        <ArrowDown aria-hidden="true" />
+                      </Button>
+                      {/* Quiet until meant: a removal is undone by not saving, so it needn't shout. */}
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="xs"
+                        className={REMOVE_QUIET}
+                        aria-label={`Remove ${noun}`}
+                        onClick={() => {
+                          onEdited?.(at);
+                          onChange(items.filter((_, i) => i !== index));
+                        }}
+                      >
+                        Remove
+                      </Button>
+                    </div>
+                  )}
+                </div>
+                <div
+                  id={bodyId}
+                  hidden={!open}
+                  ref={(el) => {
+                    if (el) bodies.current.set(foldId, el);
+                    else bodies.current.delete(foldId);
+                  }}
+                  className="ml-[7px] space-y-2 border-l pl-4"
+                >
+                  {own && variant ? (
+                    <div className="max-w-measure space-y-0.5 text-muted-foreground text-xs">
+                      <p>{lockSays(own, variant.name)}</p>
+                      <p>{lockedLine(own.region.lock, locks?.directory)}</p>
+                    </div>
+                  ) : null}
+                  {variant ? (
+                    // Its own blocks fields are its slots: the config names them by this block.
+                    <BlockParentContext.Provider
+                      value={{ type: variant.apiId, ...(typeof key === 'string' ? { key } : {}) }}
+                    >
+                      <BreakpointsContext.Provider value={breakpoints}>
+                        <ComponentInput
+                          id={`${props.id}-${index}`}
+                          fields={variant.fields}
+                          value={item}
+                          path={at}
+                          errorFor={errorFor}
+                          onEdited={onEdited}
+                          pickers={pickers}
+                          locale={locale}
+                          frozen={!!mark?.frozen}
+                          flush
+                          onChange={(v) => replace(index, v)}
+                        />
+                      </BreakpointsContext.Provider>
+                      <BlockOverrides
+                        variant={variant}
+                        block={asObject(item)}
+                        breakpoints={breakpoints}
+                        noun={noun}
+                      />
+                    </BlockParentContext.Provider>
+                  ) : (
+                    // A block whose type the model no longer declares: there is no
+                    // shape to edit it by, so it is said plainly and can be removed.
+                    <p className="text-muted-foreground text-sm">
+                      {typeof type === 'string'
+                        ? `This block’s type “${type}” is not in the content model, so it can’t be edited here.`
+                        : 'This block has no type, so it can’t be edited here.'}
+                      {locked
+                        ? ` ${label} is locked, so it can’t be removed here: an admin can unlock it in Build → Blocks.`
+                        : keeps
+                          ? ' It is in a locked region, so it can’t be removed here until it is unlocked.'
+                          : ''}
+                    </p>
+                  )}
+                </div>
+                {err && <p className="text-xs text-destructive">{err}</p>}
+              </fieldset>
+            );
+          })}
+        </div>
+      )}
       {locked ? (
         <p className="flex max-w-measure items-start gap-1.5 text-muted-foreground text-xs">
           <Lock className="mt-0.5 size-3 shrink-0" aria-hidden="true" />
@@ -2395,6 +2498,14 @@ function SymbolListInput(props: {
   );
 }
 
+/**
+ * A Text field's rows where the browser can't size it to its text: one per line it holds and one
+ * to type into, between 4 and 20 (wrapped lines aren't counted; past 20 it scrolls).
+ */
+export function textRows(text: string): number {
+  return Math.min(20, Math.max(4, text.split('\n').length + 1));
+}
+
 /** The input type and the value it edits, per Date format. */
 const DATE_INPUT: Readonly<Record<DateFormat, 'date' | 'datetime-local' | 'time'>> = {
   date: 'date',
@@ -2403,14 +2514,33 @@ const DATE_INPUT: Readonly<Record<DateFormat, 'date' | 'datetime-local' | 'time'
 };
 
 /**
- * What a date input can show of a stored value. A `datetime-local` input takes no seconds' fraction
- * or offset, so a stored `2026-11-03T14:30:00Z` shows as `2026-11-03T14:30`; the stored value is
- * only replaced when the editor changes the input.
+ * What a date input can show of a stored value. Each input takes only its own shape and shows
+ * anything else as empty, so the stored value is cut to it: a date picker shows the date of a
+ * stored `2026-11-15T09:00:00.000Z` (a field with no format holds any ISO date) as `2026-11-15`, a
+ * `datetime-local` input takes no seconds' fraction or offset (`2026-11-03T14:30`), and a time
+ * input the time of day. The stored value is only replaced when the editor changes the input.
  */
-function dateInputValue(value: unknown, format: DateFormat | undefined): string {
+export function dateInputValue(value: unknown, format: DateFormat | undefined): string {
   if (typeof value !== 'string') return '';
   if (format === 'datetime') return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.exec(value)?.[0] ?? '';
-  return value;
+  if (format === 'time') return /(?:^|T)(\d{2}:\d{2}(?::\d{2})?)/.exec(value)?.[1] ?? '';
+  return /^\d{4}-\d{2}-\d{2}/.exec(value)?.[0] ?? '';
+}
+
+/**
+ * What a picked date stores. A field with no format holds any ISO date, so a stored date and time
+ * keeps its time when only the day is changed (`2026-11-15T09:00:00.000Z`, picked the 20th, stores
+ * `2026-11-20T09:00:00.000Z`); every other format stores what its input says. Emptied, nothing.
+ */
+export function dateFromInput(
+  input: string,
+  stored: unknown,
+  format: DateFormat | undefined,
+): string | undefined {
+  if (input === '') return undefined;
+  if (format !== undefined || typeof stored !== 'string') return input;
+  const time = /^\d{4}-\d{2}-\d{2}(T.+)$/.exec(stored)?.[1];
+  return time ? `${input}${time}` : input;
 }
 
 /** A Date value, picked by its format: a date, a date and time, or a time of day. */
@@ -2437,7 +2567,7 @@ function DateInput(props: {
       // Seconds are kept when typed or stored; the picker offers minutes.
       step={props.format === 'time' || props.format === 'datetime' ? 60 : undefined}
       value={dateInputValue(props.value, props.format)}
-      onChange={(e) => props.onChange(e.target.value === '' ? undefined : e.target.value)}
+      onChange={(e) => props.onChange(dateFromInput(e.target.value, props.value, props.format))}
     />
   );
 }

@@ -625,7 +625,8 @@
 .cw-prose strong {
   font-weight: 600;
 }
-.cw-prose :where(h1, h2, h3, h4) {
+/* Every level a stored document may hold, so an h5 is never the browser's default. */
+.cw-prose :where(h1, h2, h3, h4, h5, h6) {
   font-size: 13.5px;
   font-weight: 600;
   margin-top: 1em;
@@ -1041,6 +1042,18 @@
   }
   .rich-text-editor h3 {
     @apply mt-2 font-semibold text-lg;
+  }
+  /* The toolbar writes H1–H3, but a stored or pasted document may hold all six levels: each sits
+     below the one above it, down to body size, where weight (and, at h6, the muted ink) tells
+     them apart. Never uppercase: that is a caption's. */
+  .rich-text-editor h4 {
+    @apply mt-2 font-semibold text-base;
+  }
+  .rich-text-editor h5 {
+    @apply mt-2 font-semibold text-sm;
+  }
+  .rich-text-editor h6 {
+    @apply mt-2 font-semibold text-muted-foreground text-sm;
   }
   .rich-text-editor blockquote {
     @apply border-border border-l-2 pl-3 text-muted-foreground;
