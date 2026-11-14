@@ -7,7 +7,9 @@ import type { AppExtension } from '../lib/management';
  *  guest → host  `{ type: 'contentworker-extension:ready' }`             — guest mounted, request context
  *  host  → guest `{ type: 'contentworker-extension:init', context }`     — editing context (+ field value,
  *                                                                          and `readOnly` while the field's rules
- *                                                                          disable it: a setValue is then ignored)
+ *                                                                          disable it: a setValue is then ignored;
+ *                                                                          for a sidebar, the entry's fields and
+ *                                                                          their current values)
  *  guest → host  `{ type: 'contentworker-extension:setValue', value }`   — field-editor value update
  *  guest → host  `{ type: 'contentworker-extension:resize', height }`    — request a new iframe height
  *
@@ -34,6 +36,29 @@ export interface ExtensionContext {
    * value without letting it change; the host ignores a `setValue` meanwhile.
    */
   readonly readOnly?: boolean;
+  /** The admin's colour scheme, so the page can match it (sent again when it changes). */
+  readonly theme?: 'light' | 'dark';
+  /**
+   * For `sidebar`: the entry as the form has it now, saved or not, in the form's `locale`. Only
+   * the fields this person can see: `fields` describes them, `values` holds each one by locale
+   * (`{ title: { 'en-US': '…' } }`), and `displayField` names the title.
+   */
+  readonly locale?: string;
+  readonly displayField?: string;
+  readonly fields?: readonly ExtensionField[];
+  readonly values?: Readonly<Record<string, unknown>>;
+}
+
+/** A field of the entry's content type, as a sidebar extension sees it. */
+export interface ExtensionField {
+  readonly apiId: string;
+  readonly name: string;
+  readonly type: string;
+  readonly help?: string;
+}
+
+function currentTheme(): 'light' | 'dark' {
+  return document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light';
 }
 
 /**
@@ -57,6 +82,10 @@ export function ExtensionFrame(props: {
   const post = useCallback((message: unknown) => {
     frameRef.current?.contentWindow?.postMessage(message, '*');
   }, []);
+  const init = useCallback(
+    () => post({ type: INIT, context: { ...contextRef.current, theme: currentTheme() } }),
+    [post],
+  );
 
   useEffect(() => {
     const onMessage = (e: MessageEvent) => {
@@ -64,7 +93,7 @@ export function ExtensionFrame(props: {
       if (!frameRef.current || e.source !== frameRef.current.contentWindow) return;
       const data = e.data as { type?: string; value?: unknown; height?: number };
       if (data?.type === READY) {
-        post({ type: INIT, context: contextRef.current });
+        init();
       } else if (data?.type === SET_VALUE) {
         // A read-only field takes no value, whatever the guest posts.
         if (!contextRef.current.readOnly) onChange?.(data.value);
@@ -74,12 +103,19 @@ export function ExtensionFrame(props: {
     };
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
-  }, [post, onChange]);
+  }, [init, onChange]);
 
   // Re-send context whenever it changes (e.g. value edited elsewhere, locale switch).
   useEffect(() => {
-    post({ type: INIT, context });
-  }, [post, context]);
+    init();
+  }, [init, context]);
+
+  // And when the admin's theme changes (root.tsx sets `data-theme` on <html>).
+  useEffect(() => {
+    const seen = new MutationObserver(init);
+    seen.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+    return () => seen.disconnect();
+  }, [init]);
 
   return (
     <iframe

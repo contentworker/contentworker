@@ -2,3 +2,9 @@
 # cache it for a year. Not /assets/: that is the admin's asset library.
 /_static/*
   Cache-Control: public, max-age=31536000, immutable
+
+# Built-in extensions (app extensions at /extensions/…): the editor frames them sandboxed. They run
+# their own script and nothing else, and only this origin may frame them.
+/extensions/*
+  Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'
+  X-Frame-Options: SAMEORIGIN

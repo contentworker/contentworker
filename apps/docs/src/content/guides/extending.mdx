@@ -228,7 +228,8 @@ curl -s "$API/spaces/$SPACE/environments/main/app-extensions" \
   input).
 - **`fieldTypes`** limits a field editor to those field types; leave it out to offer it for every
   type. It applies to top-level fields and is ignored for a sidebar widget.
-- **`entryUrl`** must be an `http` or `https` URL, which the browser loads, so use `https`.
+- **`entryUrl`** must be an `http` or `https` URL, which the browser loads, so use `https`. A
+  built-in extension is named by its path on the admin instead (see below).
 - **`active: false`** keeps it registered but switched off.
 
 The list and delete routes mirror functions' (`GET …/app-extensions`, `DELETE …/app-extensions/:id`),
@@ -240,12 +241,22 @@ can't reach the admin's cookies or DOM. It talks to the editor through `postMess
 | Message | Direction | Carries |
 | --- | --- | --- |
 | `contentworker-extension:ready` | page → admin | Sent when the page has loaded, to ask for context |
-| `contentworker-extension:init` | admin → page | `context`: target, space, environment, entry, content type; for a field editor, the field and its current `value`, and `readOnly` |
+| `contentworker-extension:init` | admin → page | `context`: target, space, environment, entry, content type and `theme` (`light` or `dark`); for a field editor, the field and its current `value`, and `readOnly`; for a sidebar widget, the form's `locale`, the type's `displayField`, its `fields` (`apiId`, `name`, `type`, `help`) and their current `values` by locale |
 | `contentworker-extension:setValue` | page → admin | `value`: the new field value (ignored while `readOnly`) |
 | `contentworker-extension:resize` | page → admin | `height` in pixels (minimum 40) |
 
-The admin sends `init` again whenever the context changes, such as an edit elsewhere or a locale
-switch.
+The admin sends `init` again whenever the context changes, such as an edit, a locale switch or a
+theme change. A sidebar widget sees the entry as the form has it, saved or not, and only the fields
+the editor's role can see.
+
+### Built-in extensions
+
+The admin serves these itself, so they work on any deployment. Register one with its path as the
+`entryUrl`:
+
+| Path | Target | What it does |
+| --- | --- | --- |
+| `/extensions/discoverability.html` | `sidebar` | Checks how well search engines, assistants and agents can find, understand and quote the entry: its title, summary, address, body length, opening paragraph, heading order and link text. It runs in the browser and sends nothing anywhere. |
 
 ## Next steps
 

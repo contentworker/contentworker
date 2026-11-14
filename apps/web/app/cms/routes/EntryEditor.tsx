@@ -39,7 +39,7 @@ import { AiAssistPanel, type AssistAction, assistActions } from '~/cms/component
 import { CollaborationPanel } from '~/cms/components/CollaborationPanel';
 import { EntryMetadataPanel } from '~/cms/components/EntryMetadataPanel';
 import { EntryPreview } from '~/cms/components/EntryPreview';
-import { ExtensionFrame } from '~/cms/components/ExtensionFrame';
+import { type ExtensionContext, ExtensionFrame } from '~/cms/components/ExtensionFrame';
 import { PaneCard } from '~/cms/components/pane/PaneCard';
 import { PaneDivider } from '~/cms/components/pane/PaneDivider';
 import { SitePane } from '~/cms/components/pane/SitePane';
@@ -639,6 +639,28 @@ export function EntryEditor() {
     (fields: EntryFields, locale: string) => setDraft({ fields, locale }),
     [],
   );
+  // What a sidebar extension is told: the entry as the form has it now (re-sent on every edit).
+  const sidebarContext = useMemo<ExtensionContext | null>(
+    () =>
+      selectedType && entryId
+        ? {
+            target: 'sidebar',
+            spaceId: conn.space,
+            environmentId: conn.environment,
+            entryId,
+            contentType: selectedType.apiId,
+            displayField: selectedType.displayField,
+            fields: selectedType.fields.map((f) => ({
+              apiId: f.apiId,
+              name: f.name,
+              type: f.type,
+              ...(f.help ? { help: f.help } : {}),
+            })),
+            ...(draft ? { locale: draft.locale, values: draft.fields } : {}),
+          }
+        : null,
+    [selectedType, entryId, conn.space, conn.environment, draft],
+  );
   const pane = usePaneLayout();
   const [chosenView, setPaneView] = usePaneView();
   // Activity is the audit log for this entry, so it takes what the log takes (space:admin): anyone
@@ -1196,22 +1218,18 @@ export function EntryEditor() {
               )}
               <EntryMetadataPanel key={`metadata:${entryId}`} entryId={entryId} />
               <ReferencedBy id={entryId} types={types} />
-              {extensions
-                .filter((e) => e.target === 'sidebar')
-                .map((ext) => (
-                  <PaneCard key={ext.id} rememberAs={`extension:${ext.id}`} title={ext.name}>
-                    <ExtensionFrame
-                      extension={ext}
-                      context={{
-                        target: 'sidebar',
-                        spaceId: conn.space,
-                        environmentId: conn.environment,
-                        entryId,
-                        contentType: selectedType.apiId,
-                      }}
-                    />
-                  </PaneCard>
-                ))}
+              {sidebarContext &&
+                extensions
+                  .filter((e) => e.target === 'sidebar')
+                  .map((ext) => (
+                    <PaneCard key={ext.id} rememberAs={`extension:${ext.id}`} title={ext.name}>
+                      <ExtensionFrame
+                        extension={ext}
+                        context={sidebarContext}
+                        className="h-40 w-full"
+                      />
+                    </PaneCard>
+                  ))}
               <SemanticPanel entryId={entryId} entries={pickers.entries} />
               <AiAssistPanel
                 key={`assist:${entryId}`}
