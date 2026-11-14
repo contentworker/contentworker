@@ -75,8 +75,20 @@ describe('delivery invalidation', () => {
     expect(out).toEqual([{ tags: [tag], mode: 'invalidate' }]);
   });
 
-  it('purges when the environment or its alias goes away', async () => {
-    for (const type of ['environment.deleted', 'environment_alias.changed']) {
+  it('purges everything in one call when a batch must purge anything', async () => {
+    const out = await sent([
+      { ...base, type: 'menus.changed', scope: { spaceId: 's1', environmentId: 'other' } },
+      { ...base, type: 'entry.unpublished', entryId: 'y', contentTypeApiId: 'post' },
+    ]);
+    expect(out).toEqual([{ tags: [deliveryScopeTag('s1', 'other'), tag] }]);
+  });
+
+  it('purges when the environment, its alias or a type’s shape changes', async () => {
+    for (const type of [
+      'environment.deleted',
+      'environment_alias.changed',
+      'content_type.published',
+    ]) {
       expect(await sent([{ ...base, type }]), type).toEqual([{ tags: [tag] }]);
     }
   });

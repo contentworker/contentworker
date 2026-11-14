@@ -1,18 +1,18 @@
 /**
- * Cache warming: after a purge or invalidation, the delivery Worker requests the hottest URLs of
- * each space:environment it touched again, through the cached entrypoint, so readers find them
- * fresh instead of waiting on a cold render (a purged URL) or being served the previous copy (an
- * invalidated one). Workers Caching is tiered, so one request from here refills the upper tier
+ * Cache warming: after an invalidation, the delivery Worker requests the hottest URLs of each
+ * space:environment it touched again, through the cached entrypoint, so readers find them fresh
+ * instead of being served the previous copy. Workers Caching is tiered, so one request from here refills the upper tier
  * that every colo's lower tier fills from.
  *
- * Which URLs: the cached entrypoint records each read it renders (a miss or a revalidation; it
- * never runs on a hit) in the space:environment's HotSetDO, throttled per isolate. Best effort
+ * Which URLs: the cached entrypoint counts each read it renders (a miss or a revalidation; it
+ * never runs on a hit) toward the space:environment's HotSetDO, batched per isolate. Best effort
  * throughout: a failure costs a reader one cold render, never a wrong answer.
  */
 import type { Principal } from '@contentworker/domain';
 import type { HotSetDO } from '@contentworker/platform/do/hot-set';
 import type { EdgeEnv } from '@contentworker/platform/env';
 import {
+  type HotRead,
   hotSetName,
   type ProfilePrincipal,
   profilePrincipal,
@@ -23,13 +23,19 @@ type Counter = ReturnType<typeof makeMetrics>;
 
 /** Requests in flight at once while warming. */
 export const WARM_CONCURRENCY = 6;
-/** Wall-clock budget for one warm run (the purge consumer's batch runs for up to 15 minutes). */
-export const WARM_BUDGET_MS = 60_000;
+/**
+ * Wall-clock budget for one warm run. Short: the purge consumer runs one batch at a time, so a
+ * revocation that arrives meanwhile waits for it.
+ */
+export const WARM_BUDGET_MS = 15_000;
 /** URLs warmed per space:environment when CACHE_WARM_URLS is unset. */
 export const DEFAULT_WARM_URLS = 200;
-/** How long an isolate waits before recording the same URL again. */
-export const RECORD_THROTTLE_MS = 5 * 60 * 1000;
-const RECORD_MEMORY = 5_000;
+/** How often an isolate flushes the reads it saw to a space:environment's hot set. */
+export const RECORD_FLUSH_MS = 60 * 1000;
+/** Distinct URLs an isolate holds per space:environment between flushes; new ones past it wait. */
+export const RECORD_BUFFER_URLS = 1_000;
+/** Header on the warmer's own requests: they are not reads, so they are not recorded. */
+export const WARM_HEADER = 'x-cw-warm';
 
 /** Whether this deployment warms its cache. */
 export const warmingEnabled = (env: EdgeEnv): boolean =>
@@ -38,12 +44,17 @@ export const warmingEnabled = (env: EdgeEnv): boolean =>
 const hotSet = (ns: DurableObjectNamespace<HotSetDO>, spaceId: string, environmentId: string) =>
   ns.get(ns.idFromName(hotSetName(spaceId, environmentId)));
 
-const recent = new Map<string, number>();
+interface Buffer {
+  last: number;
+  reads: Map<string, HotRead>;
+}
+const buffers = new Map<string, Buffer>();
 
 /**
- * Records one rendered read of a canonical URL in its environment's hot set, at most once per
- * {@link RECORD_THROTTLE_MS} per isolate (a hot URL is re-rendered every minute in every colo).
- * Returns the write to hand to `waitUntil`, or nothing when there is nothing to write.
+ * Counts one rendered read of a canonical URL toward its environment's hot set. Reads are held in
+ * the isolate and flushed as one batch at most every {@link RECORD_FLUSH_MS} per space:environment
+ * (a hot URL is re-rendered every minute in every colo, so one write per read would swamp the
+ * object). Returns the flush to hand to `waitUntil`, or nothing when there is nothing to write yet.
  */
 export function recordRead(
   env: EdgeEnv,
@@ -54,19 +65,44 @@ export function recordRead(
   now = Date.now(),
 ): Promise<void> | undefined {
   if (!env.HOT_SET || !warmingEnabled(env)) return undefined;
-  const last = recent.get(url);
-  if (last !== undefined && now - last < RECORD_THROTTLE_MS) return undefined;
-  recent.delete(url);
-  recent.set(url, now);
-  // Oldest first in insertion order: forget the coldest memory beyond the cap.
-  while (recent.size > RECORD_MEMORY) recent.delete(recent.keys().next().value as string);
+  if (!recordable(new URL(url).pathname)) return undefined;
+  const key = hotSetName(scope.spaceId, scope.environmentId);
+  let buffer = buffers.get(key);
+  if (!buffer) {
+    buffer = { last: Number.NEGATIVE_INFINITY, reads: new Map() };
+    buffers.set(key, buffer);
+  }
+  const held = buffer.reads.get(url);
+  if (held) buffer.reads.set(url, { ...held, weight: held.weight + 1 });
+  else if (buffer.reads.size < RECORD_BUFFER_URLS) {
+    buffer.reads.set(url, { url, profile, principal: profilePrincipal(principal), weight: 1 });
+  }
+  if (now - buffer.last < RECORD_FLUSH_MS || buffer.reads.size === 0) return undefined;
+  const reads = [...buffer.reads.values()];
+  buffer.reads = new Map();
+  buffer.last = now;
   return hotSet(env.HOT_SET, scope.spaceId, scope.environmentId)
-    .record(url, profile, profilePrincipal(principal))
+    .recordMany(reads)
     .catch((err: unknown) => console.error('hot set record failed', String(err)));
 }
 
+/**
+ * Whether a rendered read is worth recording. Not search: its URLs carry readers' query text (kept
+ * out of storage) and are as many as the queries people type, so they are never hot.
+ */
+export function recordable(path: string): boolean {
+  return !/\/search$/.test(path);
+}
+
+/**
+ * The tags a drain settled that are worth warming: the invalidated ones. Never the purged ones:
+ * those must stop being served, and a read replica that hasn't caught up could render them back.
+ */
+export const warmTargets = (drained: { invalidated: readonly string[] }): readonly string[] =>
+  drained.invalidated;
+
 /** Forgets what this isolate recorded (tests). */
-export const resetRecorded = () => recent.clear();
+export const resetRecorded = () => buffers.clear();
 
 /** The space:environment a delivery scope tag (`cw:<space>:<environment>`) names. */
 export function scopeOfTag(tag: string): { spaceId: string; environmentId: string } | null {
@@ -102,20 +138,24 @@ export async function warm(
     const s = scopeOfTag(t);
     if (s) scopes.set(`${s.spaceId}:${s.environmentId}`, s);
   }
-  const queue: { url: string; principal: ProfilePrincipal; space: string }[] = [];
-  const seen = new Set<string>();
-  for (const s of scopes.values()) {
-    try {
-      for (const hot of await hotSet(ns, s.spaceId, s.environmentId).top(limit)) {
-        if (seen.has(hot.url)) continue;
-        seen.add(hot.url);
-        queue.push({ ...hot, space: s.spaceId });
-      }
-    } catch (err) {
-      console.error('hot set read failed', String(err));
-    }
-  }
   const deadline = Date.now() + budgetMs;
+  const tops = await Promise.all(
+    [...scopes.values()].map((s) =>
+      hotSet(ns, s.spaceId, s.environmentId)
+        .top(limit)
+        .catch((err: unknown) => {
+          console.error('hot set read failed', String(err));
+          return [];
+        }),
+    ),
+  );
+  const queue: { url: string; principal: ProfilePrincipal }[] = [];
+  const seen = new Set<string>();
+  for (const hot of tops.flat()) {
+    if (seen.has(hot.url)) continue;
+    seen.add(hot.url);
+    queue.push(hot);
+  }
   let requested = 0;
   let failed = 0;
   let next = 0;

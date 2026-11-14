@@ -107,8 +107,6 @@
       { "name": "LIVE_HUB", "class_name": "LiveHubDO" },
       { "name": "AI_BUDGET", "class_name": "CostGuardDO" },
       { "name": "SEARCH", "class_name": "SearchShardDO" },
-      // The Delivery URLs readers ask for, per space:environment (delivery records and warms them).
-      { "name": "HOT_SET", "class_name": "HotSetDO" },
       // The admin's assistant, one object per person (the api forwards its socket here).
       { "name": "ASSISTANT_AGENT", "class_name": "AssistantAgent" }
     ]

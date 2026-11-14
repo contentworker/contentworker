@@ -133,15 +133,20 @@ needs no invalidation. The edge cache is per worker, so the media worker drains 
 the same function (it has no `invalidate`, so it purges every message).
 
 After a batch, the consumer warms the cache (`apps/delivery/src/warm.ts`): for every
-space:environment whose tag it purged or invalidated, it requests the hottest URLs again through
-`Delivery` (at most `CACHE_WARM_URLS` each, default 200, six at a time, within a minute), so readers
-find them fresh rather than waiting on a cold render or being served the previous copy. Workers
+space:environment whose tag it invalidated, it requests the hottest URLs again through `Delivery`
+(at most `CACHE_WARM_URLS` each, default 200, six at a time, within 15 s; skipped when the batch
+handed messages back, so a revocation queued behind it never waits), so readers find them
+fresh rather than being served the previous copy. A purged tag is not warmed: what it served must
+stop being served, and a read replica that hasn't caught up could render it straight back. Workers
 Caching is tiered, so one request refills the upper tier every colo's lower tier fills from. Which
-URLs: `Delivery` records each read it renders (a miss or a revalidation; it never runs on a hit) in
-the environment's `HotSetDO`, at most once per URL per isolate every five minutes, as the canonical
-URL and the reader's profile shape (space, kind, scopes, content grants: never a key id or a
-person), ranked by a hit count that halves every six hours, capped at 500 URLs and forgotten after
-seven days unread. Warming is best effort (a failure costs a reader one cold render) and is off
+URLs: `Delivery` counts each read it renders (a miss or a revalidation; it never runs on a hit, and
+the warmer's own requests, marked `x-cw-warm`, are not counted) toward the environment's `HotSetDO`;
+each isolate holds its counts and flushes them as one weighted batch at most once a minute per
+environment. The object keeps the canonical URL and the reader's profile shape (space, kind, scopes, content grants: never a key id or a
+person), ranked by a hit count that halves every six hours, capped at 500 URLs (pruned on write once
+it holds twice that, and daily) and forgotten after seven days unread. Only URLs read at least twice are warmed, and search is never recorded (its URLs
+carry readers' query text). `Delivery` renders only for a principal whose visibility profile is the
+one in its URL, whoever set the header. Warming is best effort (a failure costs a reader one cold render) and is off
 when `CACHE_WARMING` is `false` or `HOT_SET` is unbound. It counts
 `contentworker_cache_warm_requests_total{outcome}` (the `cf-cache-status` it saw) and
 `contentworker_cache_warm_skipped_total`.
@@ -171,8 +176,10 @@ delivery bind them by `script_name`) and handles:
   `environment.deleted`; the sitemap is purged with the rest of the scope; `asset.ingested` only
   when `published`; `asset_renditions.changed` purges every environment of the space). Only the
   events in `REVOKING_EVENTS` (an unpublish, an asset unpublished, deleted or with changed rights,
-  a collection change, a deleted type, an alias repoint, a deleted environment) and a republish
-  that replaces an asset's file purge the tag; the rest are sent as an invalidation. Asset events
+  a collection change, a published or deleted type, an alias repoint, a deleted environment) and a
+  republish that replaces an asset's file purge the tag; the rest are sent as an invalidation. A
+  batch that purges anything purges every delivery tag it touched in that one message: purge calls
+  are rationed per account, and invalidations spend the same ration. Asset events
   also write or remove the media gate (`assetGate`, key-value store) and send the media worker's
   tags on `contentworker-media-purge` (`apps/engine/src/purges.ts`): see
   [Assets](#assets-object-storage-image-transforms-video-and-the-media-worker).

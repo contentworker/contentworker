@@ -62,6 +62,8 @@ export const REVOKING_EVENTS = new Set<string>([
   // A member removed from a collection must not stay listed.
   'asset_collection.changed',
   'content_type.deleted',
+  // A republished type can hide a field or a whole type from Delivery: no stale copy of it.
+  'content_type.published',
   // Responses under the alias now belong to another environment.
   'environment_alias.changed',
   'environment.deleted',
@@ -229,8 +231,11 @@ export async function sendPurges(
   const sends: Promise<unknown>[] = [];
   const deliveryQueue = queues.PURGE_QUEUE;
   if (deliveryQueue) {
-    const revoked = [...plan.deliveryRevoked];
-    const stale = [...plan.delivery].filter((t) => !plan.deliveryRevoked.has(t));
+    // Purge calls are rationed per account, and invalidations count against the same ration: a
+    // batch that must purge anything purges everything it touched in that one call (stricter, so
+    // never staler) rather than spending a second on the invalidation.
+    const revoked = plan.deliveryRevoked.size > 0 ? [...plan.delivery] : [];
+    const stale = revoked.length > 0 ? [] : [...plan.delivery];
     if (revoked.length > 0) {
       const message: PurgeMessage = { tags: revoked };
       sends.push(

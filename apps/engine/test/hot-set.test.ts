@@ -29,24 +29,48 @@ describe('hot set', () => {
     await hot.record('https://d/_p/a/y', 'p1', reader);
     for (let i = 0; i < 2; i++) await hot.record('https://d/_p/a/z', 'p1', reader);
     const top = await hot.top(10);
-    expect(top.map((h) => h.url)).toEqual([
-      'https://d/_p/a/x',
-      'https://d/_p/a/z',
-      'https://d/_p/a/y',
-    ]);
+    // `y`, read once, is not worth warming yet.
+    expect(top.map((h) => h.url)).toEqual(['https://d/_p/a/x', 'https://d/_p/a/z']);
     expect((await hot.top(1)).map((h) => h.url)).toEqual(['https://d/_p/a/x']);
   });
 
   it('keeps the reader shape only: no key id, no person', async () => {
     const hot = stub();
     await hot.record('https://d/_p/a/x', 'p1', reader);
+    await hot.record('https://d/_p/a/x', 'p1', reader);
     const [only] = await hot.top(1);
     expect(only?.principal).toEqual({ spaceId: 's1', kind: 'cda', scopes: ['delivery:read'] });
+  });
+
+  it('weighs a batch of reads by how many each stands for', async () => {
+    const hot = stub();
+    await hot.recordMany([
+      { url: 'https://d/_p/a/once', profile: 'p1', principal: reader, weight: 2 },
+      { url: 'https://d/_p/a/often', profile: 'p1', principal: reader, weight: 9 },
+      { url: 'https://d/_p/a/single', profile: 'p1', principal: reader, weight: 1 },
+    ]);
+    expect((await hot.top(10)).map((h) => h.url)).toEqual([
+      'https://d/_p/a/often',
+      'https://d/_p/a/once',
+    ]);
+  });
+
+  it('never holds more than twice its cap, however many unique URLs it is sent', async () => {
+    const hot = stub();
+    const reads = Array.from({ length: 3 * HOT_SET_MAX_URLS }, (_, i) => ({
+      url: `https://d/_p/a/junk-${i}`,
+      profile: 'p1',
+      principal: reader,
+      weight: 2,
+    }));
+    for (let at = 0; at < reads.length; at += 100) await hot.recordMany(reads.slice(at, at + 100));
+    expect(await hot.size()).toBeLessThanOrEqual(2 * HOT_SET_MAX_URLS);
   });
 
   it('forgets the coldest URLs beyond its cap', async () => {
     const hot = stub();
     for (let i = 0; i < HOT_SET_MAX_URLS + 5; i++) {
+      await hot.record(`https://d/_p/a/${i}`, 'p1', reader);
       await hot.record(`https://d/_p/a/${i}`, 'p1', reader);
     }
     // The first URLs, read most often, stay.

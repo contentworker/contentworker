@@ -24,8 +24,11 @@ export const PURGE_CALLS = 40;
 export const backoff = (attempts: number, base: number, cap: number) =>
   Math.min(base * 2 ** Math.max(attempts - 1, 0), cap);
 
-/** `skipped`: nothing was purged (no Workers Caching here), so nothing was rationed either. */
-type Purge = (tags: string[]) => Promise<{ success: boolean; skipped?: true }>;
+/**
+ * `skipped`: nothing was purged (no Workers Caching here), so nothing was rationed either.
+ * `purged`: an invalidation the Worker could only do as a purge (its runtime has no invalidate).
+ */
+type Purge = (tags: string[]) => Promise<{ success: boolean; skipped?: true; purged?: true }>;
 
 /**
  * What a drain calls. `invalidate` marks responses stale instead of deleting them (Workers Cache
@@ -41,6 +44,8 @@ export interface DrainOps {
 export interface Drained {
   readonly purged: readonly string[];
   readonly invalidated: readonly string[];
+  /** Messages handed back to the queue (rate limited, or past the call budget). */
+  readonly retried: number;
 }
 
 const modeOf = (m: Message<PurgeMessage>): PurgeMode =>
@@ -65,14 +70,17 @@ export async function drain(
   // Settled by an earlier call of either mode, as far as `mode` is concerned.
   const settled = (mode: PurgeMode, t: string) =>
     done.purge.has(t) || (mode === 'invalidate' && done.invalidate.has(t));
+  let retried = 0;
   const result = (): Drained => ({
     purged: [...done.purge],
     invalidated: [...done.invalidate].filter((t) => !done.purge.has(t)),
+    retried,
   });
   let calls = 0;
   while (queue.length) {
     if (calls >= PURGE_CALLS) {
       for (const m of queue) m.retry({ delaySeconds: backoff(m.attempts, 12, 300) });
+      retried += queue.length;
       return result();
     }
     // Whole messages of one mode, up to PURGE_TAGS tags (one larger than that goes alone, split
@@ -98,10 +106,11 @@ export async function drain(
         // Rate limited (or refused): try these again once the bucket refills.
         for (const m of [...take, ...queue])
           m.retry({ delaySeconds: backoff(m.attempts, 30, 900) });
+        retried += take.length + queue.length;
         return result();
       }
       calls++;
-      for (const t of chunk) done[mode].add(t);
+      for (const t of chunk) done[r.purged ? 'purge' : mode].add(t);
       if (!r.skipped) await wait(PURGE_PACE_MS);
     }
     for (const m of take) m.ack();

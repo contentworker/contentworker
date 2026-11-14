@@ -11,6 +11,15 @@ import type { Principal } from '@contentworker/domain';
  */
 export type ProfilePrincipal = Pick<Principal, 'spaceId' | 'kind' | 'scopes' | 'contentGrants'>;
 
+/** Reads of one URL an isolate saw since its last flush to the hot set. */
+export interface HotRead {
+  readonly url: string;
+  readonly profile: string;
+  readonly principal: ProfilePrincipal;
+  /** How many reads this stands for. */
+  readonly weight: number;
+}
+
 /** One URL worth keeping warm, with the reader to request it as. */
 export interface HotUrl {
   readonly url: string;
@@ -21,6 +30,8 @@ export interface HotUrl {
 export const HOT_SET_MAX_URLS = 500;
 /** A request counts half as much after this long: recent reads outrank old ones. */
 export const HOT_SET_HALF_LIFE_MS = 6 * 60 * 60 * 1000;
+/** Reads a URL needs before it is warmed. */
+export const HOT_SET_MIN_HITS = 2;
 /** A URL nobody has read for this long is forgotten. */
 export const HOT_SET_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -39,10 +50,10 @@ export function profilePrincipal(p: Principal): ProfilePrincipal {
  * Comparing ranks compares scores decayed to any common instant, so the hottest URLs are an index
  * scan, with no rewrite of every row as time passes.
  */
-export function nextRank(previous: number | undefined, now: number): number {
+export function nextRank(previous: number | undefined, now: number, weight = 1): number {
   const at = now / HOT_SET_HALF_LIFE_MS;
   const decayed = previous === undefined ? 0 : 2 ** (previous - at);
-  return at + Math.log2(decayed + 1);
+  return at + Math.log2(decayed + weight);
 }
 
 /** The object holding one space:environment's hot set. */

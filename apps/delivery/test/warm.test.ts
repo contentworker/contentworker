@@ -2,17 +2,24 @@ import type { Principal } from '@contentworker/domain';
 import type { EdgeEnv } from '@contentworker/platform/env';
 import type { HotUrl } from '@contentworker/platform/hot-urls';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { recordRead, resetRecorded, scopeOfTag, warm, warmingEnabled } from '../src/warm';
+import {
+  recordRead,
+  resetRecorded,
+  scopeOfTag,
+  warm,
+  warmingEnabled,
+  warmTargets,
+} from '../src/warm';
 
 /** A HOT_SET namespace whose objects answer from a map, and record what they were told. */
 function hotSets(sets: Record<string, HotUrl[]>) {
-  const recorded: { name: string; url: string; profile: string; principal: unknown }[] = [];
+  const recorded: { name: string; reads: unknown[] }[] = [];
   const ns = {
     idFromName: (name: string) => name,
     get: (name: string) => ({
       top: async (limit: number) => (sets[name] ?? []).slice(0, limit),
-      record: async (url: string, profile: string, principal: unknown) => {
-        recorded.push({ name, url, profile, principal });
+      recordMany: async (reads: unknown[]) => {
+        recorded.push({ name, reads });
       },
     }),
   };
@@ -105,6 +112,13 @@ describe('cache warming', () => {
     ).toEqual({ requested: 0, failed: 0, skipped: 0 });
   });
 
+  it('never warms what a drain purged: only what it invalidated', () => {
+    expect(warmTargets({ purged: ['cw:s1:main'], invalidated: [] } as never)).toEqual([]);
+    expect(warmTargets({ purged: ['cw:s1:main'], invalidated: ['cw:s2:main'] } as never)).toEqual([
+      'cw:s2:main',
+    ]);
+  });
+
   it('reads the environment a scope tag names, and nothing else', () => {
     expect(scopeOfTag('cw:s1:main')).toEqual({ spaceId: 's1', environmentId: 'main' });
     expect(scopeOfTag('cwa:s1:main:a')).toBeNull();
@@ -117,16 +131,35 @@ describe('recording reads', () => {
   const principal = { ...reader, keyId: 'k1', subject: 'x' } as unknown as Principal;
   const scope = { spaceId: 's1', environmentId: 'main' };
 
-  it('records the reader shape under the environment, at most once per throttle window', async () => {
+  it('flushes the reads it held, weighted, at most once a minute per environment', async () => {
     const { ns, recorded } = hotSets({});
     const env = envWith(ns);
+    // The first read of an environment goes out at once.
     await recordRead(env, scope, 'https://d/_p/a/1', 'pa', principal, 0);
     expect(recordRead(env, scope, 'https://d/_p/a/1', 'pa', principal, 1000)).toBeUndefined();
-    await recordRead(env, scope, 'https://d/_p/a/1', 'pa', principal, 10 * 60 * 1000);
+    expect(recordRead(env, scope, 'https://d/_p/a/2', 'pa', principal, 2000)).toBeUndefined();
+    expect(recordRead(env, scope, 'https://d/_p/a/1', 'pa', principal, 3000)).toBeUndefined();
+    await recordRead(env, scope, 'https://d/_p/a/2', 'pa', principal, 61_000);
     expect(recorded).toEqual([
-      { name: 's1:main', url: 'https://d/_p/a/1', profile: 'pa', principal: reader },
-      { name: 's1:main', url: 'https://d/_p/a/1', profile: 'pa', principal: reader },
+      {
+        name: 's1:main',
+        reads: [{ url: 'https://d/_p/a/1', profile: 'pa', principal: reader, weight: 1 }],
+      },
+      {
+        name: 's1:main',
+        reads: [
+          { url: 'https://d/_p/a/1', profile: 'pa', principal: reader, weight: 2 },
+          { url: 'https://d/_p/a/2', profile: 'pa', principal: reader, weight: 2 },
+        ],
+      },
     ]);
+  });
+
+  it('never records search: its URLs carry what readers typed', () => {
+    const { ns } = hotSets({});
+    expect(
+      recordRead(envWith(ns), scope, 'https://d/_p/a/delivery/s1/main/search?q=x', 'p', principal),
+    ).toBeUndefined();
   });
 
   it('records nothing when warming is off', () => {
