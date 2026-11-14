@@ -83,8 +83,8 @@ database's point-in-time recovery to the bookmark the deploy printed.
 
 For a fork that wants a push to `main` to deploy, the repository includes an optional workflow. It
 does nothing until the repository variable `DEPLOY_ON_MERGE` is `true`. It then runs after CI
-passes on `main`, with your settings as repository variables, your secrets as repository (or
-`production` environment) secrets (`pnpm cw:setup --github` sets the generated ones), and a
+passes on `main`, with your settings as repository variables, your secrets on a `production`
+environment limited to `main` (`pnpm cw:setup --github` sets the generated ones), and a
 Cloudflare API token and account id.
 
 ## Two installs in one account

@@ -4,10 +4,11 @@ name: Deploy
 # until you set the repository variable DEPLOY_ON_MERGE to `true` (a skipped run uses no minutes).
 #
 # Settings are repository variables with the names in .env.example (DOMAIN is required). Secrets
-# are repository (or `production` environment) secrets: the ones `scripts/setup.sh --github` sets,
-# any optional ones you use (OIDC_CLIENT_SECRET, STREAM_WEBHOOK_SECRET, MCP_TOKEN, ADMIN_TOKEN, the
-# *_PREVIOUS keys during a rotation), and CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID. See
-# docs/deployment.md, "Deploy on merge".
+# are the `production` environment's, limited to main (never repository secrets, which any branch's
+# workflow can read): the ones `scripts/setup.sh --github` sets, any optional ones you use
+# (OIDC_CLIENT_SECRET, STREAM_WEBHOOK_SECRET, MCP_TOKEN, ADMIN_TOKEN, the *_PREVIOUS keys during a
+# rotation), and CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID. See docs/deployment.md, "Deploy on
+# merge".
 on:
   workflow_run:
     workflows: [CI]
@@ -20,9 +21,14 @@ permissions:
 
 jobs:
   deploy:
+    # Only main ships: a hand run from main, or CI's push run on main in this repository (not a
+    # fork's pull request, whose CI run is a `pull_request` event).
     if: >-
-      vars.DEPLOY_ON_MERGE == 'true' && (github.event_name == 'workflow_dispatch' ||
-      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'))
+      vars.DEPLOY_ON_MERGE == 'true' &&
+      ((github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_repository.full_name == github.repository))
     runs-on: ubuntu-latest
     timeout-minutes: 25
     environment:
@@ -33,8 +39,6 @@ jobs:
       group: deploy-production
       cancel-in-progress: false
     env:
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       DOMAIN: ${{ vars.DOMAIN }}
       DATA_JURISDICTION: ${{ vars.DATA_JURISDICTION }}
       AI_MAX_TIER: ${{ vars.AI_MAX_TIER }}
@@ -56,6 +60,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          persist-credentials: false
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -64,9 +69,12 @@ jobs:
       - run: pnpm install --frozen-lockfile
       # The deploy: render, secrets, D1 bookmark, migrations, the Workers in order, smoke tests and
       # rollback. It runs from the commit it ships. `exec` makes it the process the runner signals
-      # on a cancel, not an orphan that keeps deploying.
+      # on a cancel, not an orphan that keeps deploying. The Cloudflare token is this step's alone,
+      # so `pnpm install` and its dependencies' scripts never see it.
       - name: Deploy
         env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           PRINCIPAL_KEY: ${{ secrets.PRINCIPAL_KEY }}
           PRINCIPAL_KEY_PREVIOUS: ${{ secrets.PRINCIPAL_KEY_PREVIOUS }}
           DATA_KEY: ${{ secrets.DATA_KEY }}

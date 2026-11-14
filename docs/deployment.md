@@ -54,8 +54,9 @@ pnpm cw:deploy
      (`.secrets/secrets-<instance>.env` with `INSTANCE`; mode 0600, gitignored, never printed). It
      refuses to generate a new `DATA_KEY`, `TOKEN_PEPPER` or `PASSWORD_PEPPER` while the api or
      web worker already holds one: restore the file from your backup instead;
-   - with `--github`, also sets the secrets as the repository's Actions secrets, for
-     [deploy on merge](#deploy-on-merge) (needs `gh auth login`).
+   - with `--github`, also sets the secrets on the repository's `production` environment, which it
+     limits to `main`, for [deploy on merge](#deploy-on-merge) (needs `gh auth login`; not with
+     `INSTANCE`, since the workflow ships one install).
 3. **Back up `.secrets/`.** `DATA_KEY` seals every stored secret, and `TOKEN_PEPPER` and
    `PASSWORD_PEPPER` are in every API key and password hash. Losing one makes what it protects
    unreadable, and none can be regenerated. Keep a copy outside the machine, in a password manager
@@ -249,8 +250,9 @@ completes successfully for a push to `main` (a `workflow_run`), or by hand
 queue one at a time (`deploy-production`) and never cancel each other.
 
 - **Settings** are repository variables with the names in `.env.example` (`DOMAIN` is required).
-- **Secrets** are repository secrets, or secrets of the `production` environment (add required
-  reviewers there to approve each deploy): the ones `pnpm cw:setup --github` sets, the optional
+- **Secrets** are secrets of the `production` environment, limited to `main` (never repository
+  secrets, which a workflow on any branch can read; add required reviewers there to approve each
+  deploy): the ones `pnpm cw:setup --github` sets, the optional
   ones you use (`OIDC_CLIENT_SECRET`, `STREAM_WEBHOOK_SECRET`, `MCP_TOKEN`, `ADMIN_TOKEN`, the
   `*_PREVIOUS` keys during a rotation), and `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`
   ([the deploy token](#the-deploy-token)).
@@ -333,7 +335,7 @@ Migrate a remote database only through a deploy.
 
 ## Recovering admin access
 
-When no administrator can sign in, `pnpm cw:setup-code` (`scripts/setup-code.sh [--env-file <path>]`)
+When no administrator can sign in, `pnpm cw:setup-code` (`scripts/setup-code.sh [--env-file <path>] [--github]`; pass `--github` with deploy on merge, or its next deploy puts the old code back)
 issues a new one-time setup code: it replaces `SETUP_TOKEN` in the secrets file (so the next deploy
 keeps it) and on the web worker (so it works now), and never prints it. Send the person recovering
 access `https://<DOMAIN>/setup` and the code. It opens `/setup` once to create one admin account;

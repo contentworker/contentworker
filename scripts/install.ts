@@ -169,7 +169,9 @@ export function toInstall(env: Env): Install {
   };
   const domain = env.DOMAIN?.trim().toLowerCase();
   if (!domain || !HOST_RE.test(domain))
-    fail('DOMAIN must be the admin host name, on a zone in your Cloudflare account (cms.example.com)');
+    fail(
+      'DOMAIN must be the admin host name, on a zone in your Cloudflare account (cms.example.com)',
+    );
   const instance = env.INSTANCE?.trim() ?? '';
   if (instance && !INSTANCE_RE.test(instance))
     fail('INSTANCE must be lowercase letters, digits and dashes, starting with a letter');
@@ -196,7 +198,8 @@ export function toInstall(env: Env): Install {
   const d1Id = env.D1_ID?.trim() || undefined;
   if (d1Id && !/^[0-9a-f-]{36}$/.test(d1Id)) fail("D1_ID must be the D1 database's id");
   const kvId = env.KV_ID?.trim() || undefined;
-  if (kvId && !/^[0-9a-f]{32}$/.test(kvId)) fail("KV_ID must be the KV namespace's 32-character id");
+  if (kvId && !/^[0-9a-f]{32}$/.test(kvId))
+    fail("KV_ID must be the KV namespace's 32-character id");
   return {
     domain: domain as string,
     instance,
@@ -274,7 +277,8 @@ type Config = Record<string, any>;
 
 /** Everything account-wide every app may bind, renamed for the install. */
 function common(base: Config, i: Install, app: App): Config {
-  if (!i.d1Id) throw new Error('no D1_ID: run scripts/setup.sh, then deploy with scripts/deploy.sh');
+  if (!i.d1Id)
+    throw new Error('no D1_ID: run scripts/setup.sh, then deploy with scripts/deploy.sh');
   if (!i.kvId && app !== 'web')
     throw new Error('no KV_ID: run scripts/setup.sh, then deploy with scripts/deploy.sh');
   const n = names(i);
@@ -516,7 +520,9 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     if (cmd === 'render') render(toInstall(env));
     else if (cmd === 'secrets') secrets(rest[0], rest[1], env);
     else if (cmd === 'names')
-      for (const [k, v] of Object.entries(shellVars(toInstall(env)))) console.log(`${k}='${v}'`);
+      // Single-quoted for the scripts' `eval`, a quote in a value (a checkout path) escaped.
+      for (const [k, v] of Object.entries(shellVars(toInstall(env))))
+        console.log(`${k}='${v.replaceAll("'", `'\\''`)}'`);
     else throw new Error('usage: install.ts render|names|secrets [--settings <path>]');
   } catch (err) {
     console.error((err as Error).message);

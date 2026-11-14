@@ -354,7 +354,10 @@ test('secrets come from the install’s secrets file when the environment has no
     // An empty variable (an unset CI secret) counts as unset, so the file's value is used.
     const r = deploy(Object.fromEntries(Object.keys(SECRETS).map((k) => [k, ''])));
     assert.equal(r.status, 0, r.out);
-    assert.match(r.out, /engine: ASSISTANT_PRINCIPAL_KEY, DATA_KEY, TOKEN_PEPPER, MEDIA_SIGNING_SECRET/);
+    assert.match(
+      r.out,
+      /engine: ASSISTANT_PRINCIPAL_KEY, DATA_KEY, TOKEN_PEPPER, MEDIA_SIGNING_SECRET/,
+    );
   } finally {
     rmSync(SECRETS_FILE, { force: true });
   }
@@ -370,7 +373,9 @@ test('deploy.yml hands over every secret a Worker reads', () => {
 });
 
 test('no build or wrangler call sees the deployment secrets', () => {
-  const all = [...workflow.matchAll(/^ {10}([A-Z_]+): \$\{\{ secrets\./gm)].map((m) => m[1]);
+  const all = [...workflow.matchAll(/^ {10}([A-Z_]+): \$\{\{ secrets\./gm)]
+    .map((m) => m[1])
+    .filter((k) => !k?.startsWith('CLOUDFLARE_'));
   assert.ok(all.includes('DATA_KEY'));
   const env = Object.fromEntries(all.map((k) => [k as string, KEY]));
   const r = deploy(env);

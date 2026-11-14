@@ -13,8 +13,8 @@
 #
 # The secrets are generated into .secrets/ (gitignored, 0600) and never printed. Back that file up:
 # DATA_KEY seals every stored secret and TOKEN_PEPPER is in every API key hash, so losing them
-# loses what they protect. --github also sets them as this repository's Actions secrets, for the
-# optional deploy-on-merge workflow (needs `gh auth login`).
+# loses what they protect. --github also sets them on this repository's `production` environment,
+# limited to main, for the optional deploy-on-merge workflow (needs `gh auth login`).
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$root"
@@ -27,6 +27,11 @@ while [ $# -gt 0 ]; do
     *) echo "usage: scripts/setup.sh [--env-file <path>] [--github]" >&2; exit 2 ;;
   esac
 done
+if [ -n "$github" ] && [ -n "${INSTANCE:-}$(grep -E '^INSTANCE=.+' "$env_file" 2>/dev/null || true)" ]; then
+  # The deploy workflow ships one install; a second one's keys would overwrite the first's.
+  echo "--github is for the one install the Deploy workflow ships; it can't be used with INSTANCE." >&2
+  exit 2
+fi
 if [ ! -f "$env_file" ] && [ -z "${DOMAIN:-}" ]; then
   echo "No $env_file: copy .env.example to $env_file and set DOMAIN first." >&2
   exit 1
@@ -56,7 +61,7 @@ wrangler d1 create "$D1" ${j[@]+"${j[@]}"} || echo "D1 database $D1 already exis
 uuid=$(wrangler d1 list --json | jq -er --arg n "$D1" '.[] | select(.name == $n) | .uuid')
 if [ -n "$cf_token" ] && [ -n "$cf_account" ] &&
   curl -fsS -X PUT "https://api.cloudflare.com/client/v4/accounts/$cf_account/d1/database/$uuid" \
-    -H "Authorization: Bearer $cf_token" -H 'Content-Type: application/json' \
+    -H @<(printf 'Authorization: Bearer %s\n' "$cf_token") -H 'Content-Type: application/json' \
     --data '{"read_replication":{"mode":"auto"}}' >/dev/null; then
   echo "D1 read replication: auto"
 else
@@ -121,9 +126,11 @@ if [ -z "$AI_GATEWAY" ]; then
   :
 elif [ -n "$cf_token" ] && [ -n "$cf_account" ]; then
   api="https://api.cloudflare.com/client/v4/accounts/$cf_account/ai-gateway/gateways"
-  if curl -fsS -H "Authorization: Bearer $cf_token" "$api/$AI_GATEWAY" >/dev/null 2>&1; then
+  # The token goes in on a file descriptor, never on curl's command line (visible in `ps`).
+  auth() { printf 'Authorization: Bearer %s\n' "$cf_token"; }
+  if curl -fsS -H @<(auth) "$api/$AI_GATEWAY" >/dev/null 2>&1; then
     echo "AI Gateway $AI_GATEWAY already exists"
-  elif curl -fsS -X POST "$api" -H "Authorization: Bearer $cf_token" \
+  elif curl -fsS -X POST "$api" -H @<(auth) \
       -H 'Content-Type: application/json' \
       --data "$(jq -n --arg id "$AI_GATEWAY" --argjson logs "$AI_GATEWAY_LOGS" '{
         id: $id, authentication: true, collect_logs: $logs,
@@ -173,11 +180,23 @@ for key in PRINCIPAL_KEY DATA_KEY TOKEN_PEPPER MEDIA_SIGNING_SECRET PASSWORD_PEP
 done
 
 if [ -n "$github" ]; then
-  # Repository secrets for .github/workflows/deploy.yml, set from the file without printing them.
+  # The `production` environment's secrets, for .github/workflows/deploy.yml, set from the file
+  # without printing them. Only main may read the environment: a repository secret would reach a
+  # workflow on any branch. An environment already limited to its branches is left as it is,
+  # because a PUT replaces its protection settings.
+  repo=$(gh repo view --json nameWithOwner -q .nameWithOwner)
+  env_api="repos/$repo/environments/production"
+  if [ "$(gh api "$env_api" --jq '.deployment_branch_policy.custom_branch_policies' 2>/dev/null)" != true ]; then
+    gh api --method PUT "$env_api" --input - >/dev/null <<<'{"deployment_branch_policy":{"protected_branches":false,"custom_branch_policies":true}}'
+  fi
+  if ! gh api "$env_api/deployment-branch-policies" --jq '.branch_policies[].name' | grep -qx main; then
+    gh api --method POST "$env_api/deployment-branch-policies" -f name=main -f type=branch >/dev/null
+  fi
   while IFS='=' read -r key value; do
-    [ -n "$key" ] && printf '%s' "$value" | gh secret set "$key"
+    [ -n "$key" ] && printf '%s' "$value" | gh secret set "$key" -R "$repo" --env production
   done <"$SECRETS_FILE"
-  echo "Set the secrets on $(gh repo view --json nameWithOwner -q .nameWithOwner)"
+  echo "Set the secrets on $repo's production environment (main only). Add CLOUDFLARE_API_TOKEN and"
+  echo "CLOUDFLARE_ACCOUNT_ID there too: gh secret set CLOUDFLARE_API_TOKEN --env production"
 fi
 
 echo
