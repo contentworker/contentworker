@@ -1767,7 +1767,6 @@ trashed. The store keeps it as it writes snapshots (`TaxonomyRepo.listUsage`, `r
 [Consistency](./consistency.md#database-limits-as-design-inputs)); `summarizeUsage` sums it per
 term, leaving out the content types a key may not read. Every term change emits `taxonomy.changed`.
 
-
 ## RBAC types
 
 See [Auth & RBAC](./auth-and-rbac.md) for the full model. The domain owns: the `SCOPES` map,

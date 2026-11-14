@@ -1540,7 +1540,6 @@ Pages are embedded into the build rather than read from disk: the endpoints have
 identically from an edge worker, which has no filesystem, and from a container image that
 may not have shipped the Markdown. A test fails if the embedded copy drifts from `docs/`.
 
-
 ## Notes
 
 - All write bodies are JSON; set `Content-Type: application/json`.

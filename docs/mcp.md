@@ -88,6 +88,7 @@ web app, choosing the space the connection works in (a fleet deployment's issuer
 the device flow, and CI uses a personal access token. Whatever the route, the resulting token is
 an ordinary API key — so an agent can still never exceed the scopes the approving human holds.
 See [Auth & RBAC](./auth-and-rbac.md#oauth-21-for-mcp-clients).
+
 ## Tools
 
 The server exposes **275 tools**, one per major Management/Delivery capability (the canonical list
