@@ -1,6 +1,6 @@
 # Backup, restore & disaster recovery
 
-What holds state, what is derivable, and how to recover a deployment.
+What holds state, what is derivable, and how to recover an install.
 
 ## What holds state
 
@@ -18,10 +18,10 @@ What holds state, what is derivable, and how to recover a deployment.
 | **Queues**                             | In-flight events                                                                                                                                                                                                                                                                                                                               | Queues persist messages; lost events can be replayed from the outbox                                                                                                    |
 | **Durable workflows**                  | `AgentWorkflow` instances (on-publish and scheduled agent runs, review watchers) and `EditorialWorkflow` instances (one per editorial workflow run, `EDITORIAL_WF`)                                                                                                                                                                            | Agent runs are recorded proposals. Editorial runs have their records in the database (`workflow_runs`), but the instance holds the execution and is not rebuilt from it |
 
-Everything else (worker code, `wrangler.jsonc` templates, the fleet registry, migrations) is
-in git (the registry in the private fleet repo). Secrets live in each deployment's GitHub environment; `DATA_KEY`, `TOKEN_PEPPER` and
-`PASSWORD_PEPPER` must be escrowed, because losing one makes what it protects unreadable
-(sealed secrets, API key hashes, password hashes). See [Escrowing secrets](#escrowing-secrets).
+Everything else (worker code, `wrangler.jsonc` templates, migrations) is in git. Your settings are
+`.env`, and the install's secrets are `.secrets/secrets.env`: `DATA_KEY`, `TOKEN_PEPPER` and
+`PASSWORD_PEPPER` must be backed up, because losing one makes what it protects unreadable (sealed
+secrets, API key hashes, password hashes). See [Backing up secrets](#backing-up-secrets).
 
 ## Point-in-time recovery
 
@@ -29,16 +29,17 @@ The database keeps a point-in-time history (the retention window depends on the 
 Before each migration, the deploy job records a restore point:
 
 ```sh
-wrangler d1 time-travel info DB --json --config wrangler.<id>.json   # → .bookmark
+wrangler d1 time-travel info DB --json --config wrangler.deploy.json   # → .bookmark
 ```
 
-`wrangler.<id>.json` is the engine's rendered config (`node scripts/fleet.ts render <id>` writes
-`apps/engine/wrangler.<id>.json`, see [Deployment](./deployment.md)). Run the `wrangler` commands
-on this page inside `apps/engine`, or from the repo root as
-`pnpm --filter @contentworker/engine exec wrangler …` (as CI does), so `--config` resolves.
+`wrangler.deploy.json` is the engine's rendered config (`node scripts/install.ts render` writes
+`apps/engine/wrangler.deploy.json`, `wrangler.deploy-<instance>.json` with `INSTANCE`; see
+[Deployment](./deployment.md)). Run the `wrangler` commands on this page inside `apps/engine`, or
+from the repo root as `pnpm --filter @contentworker/engine exec wrangler …` (as a deploy does), so
+`--config` resolves.
 
-The bookmark is written to the run's step summary and as a notice (`D1 bookmark for <id> before
-this deploy`). A migration cannot be rolled back, but the database can be restored to that
+The bookmark is printed in the deploy's log and, in CI, written to the run's step summary and as a
+notice (`D1 bookmark before this deploy`). A migration cannot be rolled back, but the database can be restored to that
 bookmark.
 
 ## Environment snapshots
@@ -85,9 +86,9 @@ pipeline.
 ## Restore procedure
 
 1. Find the bookmark: the deploy run's summary for a bad migration, or
-   `wrangler d1 time-travel info DB --timestamp <unix or RFC3339> --config wrangler.<id>.json`
+   `wrangler d1 time-travel info DB --timestamp <unix or RFC3339> --config wrangler.deploy.json`
    for a point in time.
-2. Restore the database: `wrangler d1 time-travel restore DB --bookmark <bookmark> --config wrangler.<id>.json`.
+2. Restore the database: `wrangler d1 time-travel restore DB --bookmark <bookmark> --config wrangler.deploy.json`.
    The restore itself returns a bookmark from just before it, so it can be undone.
 3. If the restored schema is older than the deployed code expects, roll the workers back (CI's
    rollback order: engine, api, delivery, web) or fix forward with an expand-only migration.
@@ -110,96 +111,39 @@ pipeline.
 7. Replay events from the outbox for the incident window if downstream systems may have missed
    them.
 
-## Escrowing secrets
+## Backing up secrets
 
-GitHub and Cloudflare both hold secrets write-only, so nobody needs to have seen a value to escrow
-it: the `Escrow secrets` workflow reads them inside the deployment's GitHub environment and encrypts
-them to a key only the escrow holder has. Nothing from the repository runs beside the secrets, and
-the job fails if a required secret or `PASSWORD_PEPPER` is missing. It reaches only what the
-environment holds: a secret set by hand on a Worker is not escrowed.
+`pnpm cw:setup` generates the install's secrets into `.secrets/secrets.env` (or
+`.secrets/secrets-<instance>.env`), mode 0600 and gitignored, and never prints them. That file is
+the only copy outside the workers, which hold their secrets write-only. Copy the whole `.secrets/`
+folder somewhere outside the machine (a password manager, an encrypted store) once after setup, and
+again after any change to a secret. Keep every generation, dated, for at least the database's
+recovery window: a restore to before a `DATA_KEY` rotation brings back values sealed under the old
+key. During a rotation, copy it before removing `DATA_KEY_PREVIOUS`.
 
-The job must run in the repository that holds the environment, and only a branch the environment
-allows can read it (`provision.sh` limits each to `main`). Prefer a private repository: there the
-artifact and the environment's name aren't public. A fleet in its own repository doesn't copy the
-workflow; it calls this one, so the job runs there with that repository's environment, and the
-check that every deployed secret is escrowed (`scripts/escrow-secrets.test.ts`) keeps covering it:
-
-```yaml
-# <fleet repo>/.github/workflows/escrow-secrets.yml
-name: Escrow secrets
-on:
-  workflow_dispatch:
-    inputs:
-      environment:
-        { description: The deployment's GitHub environment, required: true, type: string }
-permissions:
-  contents: read
-jobs:
-  escrow:
-    uses: contentworker/contentworker/.github/workflows/escrow-secrets.yml@main
-    with:
-      environment: ${{ inputs.environment }}
-    secrets: inherit # without it, the job sees none of the environment's secrets
-```
-
-contentworker's own fleet runs it from `contentworker/fleet`; add `-R contentworker/fleet` to the
-`gh` commands below.
-
-**Once, make the key** on the holder's machine, outside any checkout. Put the private half in a
-password manager outside GitHub and Cloudflare, delete the file, and pin the public half as
-`ESCROW_RECIPIENT` in `.github/workflows/escrow-secrets.yml`, through a pull request:
-
-```sh
-age-keygen -o ~/escrow.key     # prints the public key (age1...)
-```
-
-**After provisioning and after any change to a secret,** run it from `main`, then check where the
-file came from before keeping it. Anyone can encrypt to a public key, so a file that opens isn't
-proof: the run must be this workflow, on `main`, and a success.
-
-```sh
-gh workflow run escrow-secrets.yml --ref main -f environment=production
-gh run view <run-id> --json workflowName,headBranch,event,conclusion
-gh run download <run-id> --name escrow-production
-age --decrypt --identity ~/escrow.key escrow.age | cut -d= -f1    # names only
-gh api --method DELETE repos/<owner>/<repo>/actions/artifacts/<artifact-id>
-```
-
-The artifact is ciphertext, but a public repository's artifacts are public, so delete it as soon as
-it is down; it expires after a day regardless. Keep every generation, named with its date and run id,
-for at least the database's recovery window: a restore to before a `DATA_KEY` rotation brings back
-values sealed under the old key. During a rotation, run it before removing `DATA_KEY_PREVIOUS`.
-
-**To recover,** set each value back on the environment. Values can contain `=`, so split on the first
-one only:
-
-```sh
-age --decrypt --identity ~/escrow.key escrow.age | while IFS= read -r line; do
-  printf %s "${line#*=}" | gh secret set "${line%%=*}" --env production
-done
-```
-
-Losing the private key loses the escrow, not the deployment: make a new key and run the workflow
-again while the environment still holds the values. If the private key leaks, make a new one and
-rotate what can rotate (`DATA_KEY`, `PRINCIPAL_KEY`, `MEDIA_SIGNING_SECRET`). `TOKEN_PEPPER` and
-`PASSWORD_PEPPER` can't rotate, so treat them as exposed: hashes alone still need the database too.
+**To recover,** put the folder back at `.secrets/` and run the deploy again: it reads the secrets
+file and sets each secret on the workers. `pnpm cw:setup` refuses to generate a new `DATA_KEY`,
+`TOKEN_PEPPER` or `PASSWORD_PEPPER` while a worker holds one, so a lost file can't be replaced by
+accident. If the folder leaks, rotate what can rotate (`DATA_KEY`, `PRINCIPAL_KEY`,
+`MEDIA_SIGNING_SECRET`). `TOKEN_PEPPER` and `PASSWORD_PEPPER` can't rotate, so treat them as
+exposed: hashes alone still need the database too.
 
 ## Recovery objectives
 
 The targets each store is held to. **RPO** is how much recent data a recovery may lose; **RTO** is
 how long the recovery may take. "Met" says whether the target can be reached today.
 
-| Store                                         | RPO                                 | RTO                   | Met                                                                                              |
-| --------------------------------------------- | ----------------------------------- | --------------------- | ------------------------------------------------------------------------------------------------ |
-| The database                                  | 1 minute, within the 30-day window  | 1 hour, plus reindex  | Not proven: the procedure above has not been timed in a drill                                    |
-| Object storage: asset bytes and plugins       | 24 hours                            | 8 hours               | **No**: nothing holds a copy of the bytes                                                        |
-| Object storage: `versions/`                   | 24 hours                            | 8 hours               | **No**: nothing holds a copy of the bodies                                                       |
-| The vector index, `SearchShardDO`             | n/a (rebuildable)                   | 24 hours              | Not proven: a reindex runs per space and environment, by hand                                    |
-| Key-value cache, edge caches                  | n/a (rebuildable)                   | Minutes               | Yes: rebuilt on demand                                                                           |
-| `AssistantAgent`                              | Best effort, 30-day object recovery | 1 day                 | **No**: nothing calls the object's point-in-time recovery                                        |
-| Durable workflows                             | None                                | 1 day, re-run by hand | Not proven: instances are not rebuilt from their rows                                            |
-| Queues                                        | The outbox window (168 hours)       | 1 hour                | Domain events only: messages the outbox doesn't feed can't replay                                |
-| `DATA_KEY`, `TOKEN_PEPPER`, `PASSWORD_PEPPER` | Zero                                | 1 hour                | Not proven: [escrowed](#escrowing-secrets) and decrypted, but no restore has set the values back |
+| Store                                         | RPO                                 | RTO                   | Met                                                                                  |
+| --------------------------------------------- | ----------------------------------- | --------------------- | ------------------------------------------------------------------------------------ |
+| The database                                  | 1 minute, within the 30-day window  | 1 hour, plus reindex  | Not proven: the procedure above has not been timed in a drill                        |
+| Object storage: asset bytes and plugins       | 24 hours                            | 8 hours               | **No**: nothing holds a copy of the bytes                                            |
+| Object storage: `versions/`                   | 24 hours                            | 8 hours               | **No**: nothing holds a copy of the bodies                                           |
+| The vector index, `SearchShardDO`             | n/a (rebuildable)                   | 24 hours              | Not proven: a reindex runs per space and environment, by hand                        |
+| Key-value cache, edge caches                  | n/a (rebuildable)                   | Minutes               | Yes: rebuilt on demand                                                               |
+| `AssistantAgent`                              | Best effort, 30-day object recovery | 1 day                 | **No**: nothing calls the object's point-in-time recovery                            |
+| Durable workflows                             | None                                | 1 day, re-run by hand | Not proven: instances are not rebuilt from their rows                                |
+| Queues                                        | The outbox window (168 hours)       | 1 hour                | Domain events only: messages the outbox doesn't feed can't replay                    |
+| `DATA_KEY`, `TOKEN_PEPPER`, `PASSWORD_PEPPER` | Zero                                | 1 hour                | Not proven: [backed up](#backing-up-secrets), but no restore has set the values back |
 
 Workers redeploy or roll back in seconds, so a database restore's RTO is dominated by the restore
 itself.

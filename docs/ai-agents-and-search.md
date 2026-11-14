@@ -64,9 +64,9 @@ whose reasoning is always on) get neither. Free-text calls and Coworker keep eac
 An answer cut off at `max_tokens` is still an error, and the tokens it billed are counted against
 the space's AI budget.
 
-With `AI_GATEWAY_ID` set (the fleet renders one gateway per deployment), calls route through
+With `AI_GATEWAY_ID` set (setup creates one gateway per install), calls route through
 the AI gateway via the binding's `gateway` option; the gateway applies its rate limit,
-retries and, when `aiGatewayLogs` is on, request logging. Without the `AI` binding the stub
+retries and, when `AI_GATEWAY_LOGS` is on, request logging. Without the `AI` binding the stub
 provider answers with placeholder values, which the fail-closed adapter guard refuses on a
 persistent deployment. `AI_MODE=mock` (local dev, demos, tests) answers every `generateJson` from
 its heuristic without calling a model. See [Configuration](./configuration.md) for
@@ -77,6 +77,7 @@ its heuristic without calling a model. See [Configuration](./configuration.md) f
 Some AI work is a decision, not a text: which label, which route, is this unsafe, does this need a
 person. That goes to a second port, `DecisionModel`. It takes a state (text or JSON) and up to 64
 typed questions, and answers each with a probability for every allowed answer:
+
 - `noul`: yes/no, answered with the probability of yes;
 - `choice`: one of a set of options, answered with each option's probability and a confidence;
 - `score`: a level on an ordered rubric, answered with a probability-weighted score.
@@ -89,6 +90,7 @@ still sway an answer, but it can't make the model answer outside the options.
 gateway settings as generation: `@cf/cloudflare/clef` for `flagship` and `balanced`, and
 `@cf/cloudflare/clef-flash` (much faster and cheaper) for `fast`. Clef bills input tokens only.
 Calls go through `decide()` (`ai-decide.ts`), with the same guarantees as `generateJson`:
+
 - `decideWithBudget` meters input tokens against the space's AI budget;
 - `AI_MODE=mock` and budget refusals answer with the caller's heuristic;
 - a failure retries while the durable step can, then falls back;
@@ -98,6 +100,7 @@ Without the `AI` binding the stub answers the first option, no, or the lowest le
 adapter guard refuses it on a persistent deployment. The platform binds it both to the workflow
 node deps and to `ctx.decisions`, so use-cases reach it without another parameter. Beyond the nodes
 below:
+
 - The **moderation agent** asks the same questions as `ai.moderate` (see [moderate](#moderate)).
 - **Tag suggestions** (`suggestEntryTags`, the `ai.suggest_tags` node, `entry_suggest_tags`) ask
   one yes/no per existing tag, 64 to a request, and take the tags at or above 0.5. A new tag name is
@@ -240,7 +243,7 @@ behind it. An AI action names its own tier, which stands under the cap.
 **The deployment's tier cap.** `CostGuardDO` counts requests and tokens, not price, so a space that
 pins background work (agents, workflows, media) to `flagship` would cost several times what it did
 at `fast` without tripping anything. `AI_MAX_TIER` (`balanced` or `fast`; `flagship` or empty is no
-cap; anything else fails at boot; the registry's `aiMaxTier`) is the deployment's price ceiling per
+cap; anything else fails at boot; the install's `AI_MAX_TIER` setting) is the deployment's price ceiling per
 call: the effective tier of every generation and decision call is the lower of the cap and the tier it resolved to
 (`capModelTier`, order `fast` < `balanced` < `flagship`). It is one cap for every capability, not a
 split by interactive and background work: the space's per-capability tiers already express that

@@ -1,51 +1,70 @@
 name: Deploy
 
-# Ships main to one deployment of the fleet (its registry entry, <id>.jsonc). CI calls this once per
-# deployment, ring by ring; see docs/deployment.md.
+# Optional: deploys your install whenever CI passes on main, or when run by hand. It does nothing
+# until you set the repository variable DEPLOY_ON_MERGE to `true` (a skipped run uses no minutes).
+#
+# Settings are repository variables with the names in .env.example (DOMAIN is required). Secrets
+# are repository (or `production` environment) secrets: the ones `scripts/setup.sh --github` sets,
+# any optional ones you use (OIDC_CLIENT_SECRET, STREAM_WEBHOOK_SECRET, MCP_TOKEN, ADMIN_TOKEN, the
+# *_PREVIOUS keys during a rotation), and CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID. See
+# docs/deployment.md, "Deploy on merge".
 on:
-  workflow_call:
-    inputs:
-      deployment:
-        description: One deployment from `node scripts/fleet.ts matrix`, as JSON
-        required: true
-        type: string
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
   deploy:
-    name: ${{ fromJSON(inputs.deployment).id }}
+    if: >-
+      vars.DEPLOY_ON_MERGE == 'true' && (github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'))
     runs-on: ubuntu-latest
     timeout-minutes: 25
-    # The deployment's GitHub environment holds its secrets: PRINCIPAL_KEY, DATA_KEY, TOKEN_PEPPER
-    # and MEDIA_SIGNING_SECRET (required), PASSWORD_PEPPER and SETUP_TOKEN (web), the *_PREVIOUS
-    # keys during a rotation, OIDC_CLIENT_SECRET, STREAM_WEBHOOK_SECRET, MCP_TOKEN, ADMIN_TOKEN.
-    # CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID can be repository secrets.
     environment:
-      name: ${{ fromJSON(inputs.deployment).environment }}
-      url: https://${{ fromJSON(inputs.deployment).domain }}
+      name: production
+      url: https://${{ vars.DOMAIN }}
+    # One deploy at a time; a newer commit waits for the one shipping now.
     concurrency:
-      group: deploy-${{ fromJSON(inputs.deployment).id }}
+      group: deploy-production
       cancel-in-progress: false
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-      ID: ${{ fromJSON(inputs.deployment).id }}
+      DOMAIN: ${{ vars.DOMAIN }}
+      DATA_JURISDICTION: ${{ vars.DATA_JURISDICTION }}
+      AI_MAX_TIER: ${{ vars.AI_MAX_TIER }}
+      AI_GATEWAY_LOGS: ${{ vars.AI_GATEWAY_LOGS }}
+      AI_MODE: ${{ vars.AI_MODE }}
+      DEMO_STARTERS: ${{ vars.DEMO_STARTERS }}
+      OIDC_ISSUER: ${{ vars.OIDC_ISSUER }}
+      OIDC_CLIENT_ID: ${{ vars.OIDC_CLIENT_ID }}
+      OIDC_TRUST_EMAIL: ${{ vars.OIDC_TRUST_EMAIL }}
+      EMAIL_FROM: ${{ vars.EMAIL_FROM }}
+      EMAIL_FROM_NAME: ${{ vars.EMAIL_FROM_NAME }}
+      INSTANCE: ${{ vars.INSTANCE }}
+      RATE_LIMIT_SLOT: ${{ vars.RATE_LIMIT_SLOT }}
     defaults:
       run:
         shell: bash
     steps:
+      # The commit CI passed, not whatever main is now.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      # scripts/deploy.sh is the deploy: render, secrets, D1 bookmark, migrations, the Workers in
-      # order, smoke tests and rollback. It runs from the commit it ships. `exec` makes it the process
-      # the runner signals on a cancel, not an orphan that keeps deploying.
+      # The deploy: render, secrets, D1 bookmark, migrations, the Workers in order, smoke tests and
+      # rollback. It runs from the commit it ships. `exec` makes it the process the runner signals
+      # on a cancel, not an orphan that keeps deploying.
       - name: Deploy
         env:
           PRINCIPAL_KEY: ${{ secrets.PRINCIPAL_KEY }}
@@ -60,4 +79,4 @@ jobs:
           STREAM_WEBHOOK_SECRET: ${{ secrets.STREAM_WEBHOOK_SECRET }}
           MCP_TOKEN: ${{ secrets.MCP_TOKEN }}
           ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
-        run: exec scripts/deploy.sh "$ID"
+        run: exec scripts/deploy.sh

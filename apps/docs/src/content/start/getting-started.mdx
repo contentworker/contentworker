@@ -6,7 +6,8 @@ description: Model a content type, write and publish an entry, then read it back
 import { Steps } from '@astrojs/starlight/components';
 
 You will model a content type, write and publish an entry, create a delivery key and read the
-published entry back. Each step shows the admin and the API; use whichever you prefer.
+published entry back. Each step shows the admin and the API; use whichever you prefer. To run your
+own install first, see [Self-hosting](/start/self-hosting/).
 
 ## Before you start
 
@@ -18,12 +19,12 @@ The examples use shell variables. Set the first three to your workspace's values
 set the rest:
 
 ```sh
-export API=https://api.your-workspace.contentworker.app   # the Management and Preview API
-export CDN=https://cdn.your-workspace.contentworker.app   # the public Delivery API
+export API=https://api.cms.example.com   # the Management and Preview API
+export CDN=https://cdn.cms.example.com   # the public Delivery API
 export SPACE=your-space                                   # the space id, shown in the admin's header
 ```
 
-A workspace (one ContentWorker deployment) has three addresses: the admin at its own domain, the
+A workspace (one ContentWorker install) has three addresses: the admin at its own domain, the
 API at `api.` and the cached public Delivery API at `cdn.`.
 
 Every Management route lives under `/spaces/$SPACE/environments/main/…`; `main` is the
@@ -45,7 +46,7 @@ a default locale, and choose what it starts with:
   entries in each state (draft, changed and published), tags and two concept schemes, sample
   images and documents, and one open release. It is ordinary content: edit or delete any of it.
 - **Empty space**: no content types and no entries, to model your own from scratch.
-- **Enterprise demo (Aldermoor)**, on demo workspaces only: a fictional global professional-services
+- **Enterprise demo (Aldermoor)**, when the install's administrator enables it: a fictional global professional-services
   firm in 13 locales, with its content model, teams, workflows and releases. It is too big to
   install while you wait, so the space opens at once and the dialog follows the install step by
   step; closing it doesn't stop it. If a step fails, the dialog says which, and creating the space

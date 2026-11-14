@@ -77,8 +77,8 @@ candidate finding that still needs a concrete attacker before it is reported.
   through a `DATA_KEY_PREVIOUS` rotation (`secrets-at-rest.test.ts`)?
 - Does anything log, return in a response, or put in an error message a secret, a token, a session
   id or a password hash? Does it pass through `packages/redaction` first?
-- New wrangler `vars`: no secrets there (secrets come from the GitHub environment via
-  `scripts/fleet.ts secrets`).
+- New wrangler `vars`: no secrets there (each deploy writes secrets from the install's
+  secrets file or CI secrets via `scripts/install.ts secrets`).
 
 ## Models and untrusted input
 

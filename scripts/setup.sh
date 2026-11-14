@@ -1,26 +1,38 @@
 #!/usr/bin/env bash
-# Creates the Cloudflare resources and the GitHub environment for one deployment in
-# its registry entry (<id>.jsonc), and records its D1 and KV ids there. Safe to re-run: existing resources,
-# and secrets already set, are kept. See docs/deployment.md.
+# Creates your install's Cloudflare resources and its secrets. Run it once before the first
+# deploy, and again after changing a setting that adds a resource; it is safe to re-run: existing
+# resources, and secrets already generated, are kept. See docs/deployment.md.
 #
-#   ./scripts/provision.sh <id>
+#   scripts/setup.sh [--env-file <path>] [--github]
 #
-# FLEET_REGISTRY names the registry directory and FLEET_REPO the GitHub repository (owner/name)
-# that holds the deployment's environment. Set both to work against the private ops repo; without
-# them, this repository's deployments/ and its own environments are used.
+# Reads the install's settings from the environment and its settings file (.env by default).
+# Needs `wrangler login` (or CLOUDFLARE_API_TOKEN). D1 read replication and the AI Gateway go
+# through the API with the same credentials: CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID when set,
+# else wrangler's own login (`wrangler auth token`, and the account from `wrangler whoami` when it
+# has exactly one). What the API refuses is printed for the dashboard instead.
 #
-# Needs `wrangler login` (or CLOUDFLARE_API_TOKEN) and `gh auth login`. D1 read replication and the
-# AI Gateway go through the API with the same credentials: CLOUDFLARE_API_TOKEN and
-# CLOUDFLARE_ACCOUNT_ID when set, else wrangler's own login (`wrangler auth token`, and the account
-# from `wrangler whoami` when it has exactly one). Nothing to paste; what the API refuses is printed
-# for the dashboard instead.
+# The secrets are generated into .secrets/ (gitignored, 0600) and never printed. Back that file up:
+# DATA_KEY seals every stored secret and TOKEN_PEPPER is in every API key hash, so losing them
+# loses what they protect. --github also sets them as this repository's Actions secrets, for the
+# optional deploy-on-merge workflow (needs `gh auth login`).
 set -euo pipefail
-id="${1:?usage: scripts/provision.sh <id>}"
 root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$root"
-repo="${FLEET_REPO:-$(gh repo view --json nameWithOwner -q .nameWithOwner)}"
+env_file=.env
+github=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --env-file) env_file="${2:?--env-file needs a path}"; shift 2 ;;
+    --github) github=1; shift ;;
+    *) echo "usage: scripts/setup.sh [--env-file <path>] [--github]" >&2; exit 2 ;;
+  esac
+done
+if [ ! -f "$env_file" ] && [ -z "${DOMAIN:-}" ]; then
+  echo "No $env_file: copy .env.example to $env_file and set DOMAIN first." >&2
+  exit 1
+fi
 
-eval "$(node scripts/fleet.ts names "$id")"
+eval "$(node scripts/install.ts names --settings "$env_file")"
 wrangler() { pnpm --filter @contentworker/engine exec wrangler "$@"; }
 j=()
 [ -n "$JURISDICTION" ] && j=(--jurisdiction "$JURISDICTION")
@@ -33,8 +45,8 @@ cf_account="${CLOUDFLARE_ACCOUNT_ID:-$(wrangler whoami --json 2>/dev/null | sed 
 [[ "$cf_token" =~ ^[A-Za-z0-9._-]{20,}$ ]] || cf_token=""
 [[ "$cf_account" =~ ^[0-9a-f]{32}$ ]] || cf_account=""
 
-echo "== $id: D1 $D1, KV $KV, R2 $MEDIA, index ${VECTORS:-none}, gateway $AI_GATEWAY"
-echo "   https://$DOMAIN (admin), https://$API_DOMAIN (api), https://$CDN_DOMAIN (delivery), https://$MEDIA_DOMAIN (media); environment $ENVIRONMENT"
+echo "== D1 $D1, KV $KV, R2 $MEDIA, index ${VECTORS:-none}, gateway ${AI_GATEWAY:-none}"
+echo "   https://$DOMAIN (admin), https://$API_DOMAIN (api), https://$CDN_DOMAIN (delivery), https://$MEDIA_DOMAIN (media)"
 
 # D1, the system of record, with read replication on: delivery and admin reads go to the nearest
 # replica (the Workers open Sessions API sessions; writes always go to the primary).
@@ -42,7 +54,6 @@ wrangler d1 create "$D1" ${j[@]+"${j[@]}"} || echo "D1 database $D1 already exis
 # Look the database up by name in the account's list: `d1 info <name>` resolves the name against
 # apps/engine/wrangler.jsonc first, where the binding carries the placeholder id.
 uuid=$(wrangler d1 list --json | jq -er --arg n "$D1" '.[] | select(.name == $n) | .uuid')
-node scripts/fleet.ts set-d1 "$id" "$uuid"
 if [ -n "$cf_token" ] && [ -n "$cf_account" ] &&
   curl -fsS -X PUT "https://api.cloudflare.com/client/v4/accounts/$cf_account/d1/database/$uuid" \
     -H "Authorization: Bearer $cf_token" -H 'Content-Type: application/json' \
@@ -55,8 +66,8 @@ fi
 # The KV namespace the api, engine, delivery and media share (delivery cache, cached principals,
 # the published-asset gate).
 kv_id() { wrangler kv namespace list | jq -er --arg t "$KV" '.[] | select(.title == $t) | .id'; }
-kv=$(kv_id 2>/dev/null) || { wrangler kv namespace create "$KV" >/dev/null; kv=$(kv_id); }
-node scripts/fleet.ts set-kv "$id" "$kv"
+kv_id >/dev/null 2>&1 || wrangler kv namespace create "$KV" >/dev/null
+echo "KV namespace $KV: $(kv_id)"
 
 # Media, import staging, plugin bundles, dead letters and zip downloads. Staged imports, dead
 # letters and zips expire (a zip is kept a day; the engine's sweep removes it, this is the
@@ -73,8 +84,8 @@ done
 wrangler r2 bucket lifecycle remove "$MEDIA" --name abort-multipart ${j[@]+"${j[@]}"} >/dev/null 2>&1 || true
 wrangler r2 bucket lifecycle add "$MEDIA" abort-multipart "" --abort-multipart-days 2 --force ${j[@]+"${j[@]}"}
 
-# Embeddings for semantic and hybrid search (Workers AI bge-base-en-v1.5: 768 dims). A demo
-# mocks every model and has no index.
+# Embeddings for semantic and hybrid search (Workers AI bge-base-en-v1.5: 768 dims). With
+# AI_MODE=mock every model is mocked and there is no index.
 if [ -n "$VECTORS" ]; then
   if wrangler vectorize get "$VECTORS" >/dev/null 2>&1; then
     echo "Vectorize index $VECTORS already exists"
@@ -106,7 +117,9 @@ else
 fi
 
 # The AI Gateway every model call goes through.
-if [ -n "$cf_token" ] && [ -n "$cf_account" ]; then
+if [ -z "$AI_GATEWAY" ]; then
+  :
+elif [ -n "$cf_token" ] && [ -n "$cf_account" ]; then
   api="https://api.cloudflare.com/client/v4/accounts/$cf_account/ai-gateway/gateways"
   if curl -fsS -H "Authorization: Bearer $cf_token" "$api/$AI_GATEWAY" >/dev/null 2>&1; then
     echo "AI Gateway $AI_GATEWAY already exists"
@@ -128,60 +141,46 @@ else
   echo "\"$AI_GATEWAY\" in the dashboard (AI > AI Gateway)."
 fi
 
-# The GitHub environment the deploy job runs in, and its secrets. A secret already set is left
-# alone. DATA_KEY seals every stored secret and TOKEN_PEPPER is in every API key hash, and
-# PASSWORD_PEPPER in every password hash: once a deployment runs, none may change, so none is
-# generated while a Worker already holds one. None is ever written to disk.
-#
-# Only main may read the environment: a branch that could would hold every secret. An environment
-# already limited to its branches is left as it is, because a PUT replaces its protection settings.
-environment="repos/$repo/environments/$ENVIRONMENT"
-if [ "$(gh api "$environment" --jq '.deployment_branch_policy.custom_branch_policies' 2>/dev/null)" != true ]; then
-  gh api --method PUT "$environment" --input - >/dev/null <<<'{"deployment_branch_policy":{"protected_branches":false,"custom_branch_policies":true}}'
-fi
-if ! gh api "$environment/deployment-branch-policies" --jq '.branch_policies[].name' | grep -qx main; then
-  gh api --method POST "$environment/deployment-branch-policies" -f name=main -f type=branch >/dev/null
-fi
-API_WORKER="contentworker-api$SUFFIX"
-EXISTING=$(gh secret list -R "$repo" --env "$ENVIRONMENT" --json name -q '.[].name')
-# The api holds DATA_KEY and TOKEN_PEPPER, and web alone holds PASSWORD_PEPPER.
-WORKER_SECRETS=""
-for WORKER in "$API_WORKER" "contentworker-web$SUFFIX"; do
-  if HELD=$(wrangler secret list --name "$WORKER" 2>/dev/null); then
-    WORKER_SECRETS+=$'\n'$(jq -r '.[].name' <<<"$HELD" 2>/dev/null || true)
+# The secrets, generated once. DATA_KEY seals every stored secret, TOKEN_PEPPER is in every API key
+# hash and PASSWORD_PEPPER in every password hash: once an install runs, none may change, so none is
+# generated while a Worker already holds one (restore the file from your backup instead).
+mkdir -p "$(dirname "$SECRETS_FILE")"
+chmod 700 "$(dirname "$SECRETS_FILE")"
+[ -f "$SECRETS_FILE" ] || (umask 077 && : >"$SECRETS_FILE")
+chmod 600 "$SECRETS_FILE"
+held=""
+for worker in "$API" "$WEB"; do
+  if out=$(wrangler secret list --name "$worker" 2>/dev/null); then
+    held+=$'\n'$(jq -r '.[].name' <<<"$out" 2>/dev/null || true)
   fi
 done
-# The engine's ASSISTANT_PRINCIPAL_KEY (and _PREVIOUS) isn't generated here: it is derived from
-# PRINCIPAL_KEY (and PRINCIPAL_KEY_PREVIOUS) at every deploy, by `fleet.ts secrets`, so a new
-# deployment gets it on its first deploy and a rotation of PRINCIPAL_KEY carries it along.
-for KEY in PRINCIPAL_KEY DATA_KEY TOKEN_PEPPER MEDIA_SIGNING_SECRET PASSWORD_PEPPER; do
-  if grep -qx "$KEY" <<<"$EXISTING"; then
-    echo "$ENVIRONMENT already has $KEY"
-  elif [ "$KEY" != PRINCIPAL_KEY ] && [ "$KEY" != MEDIA_SIGNING_SECRET ] && grep -qx "$KEY" <<<"$WORKER_SECRETS"; then
-    echo "$ENVIRONMENT has no $KEY, but a Worker already holds one. Set the deployment's own"
-    echo "value on $ENVIRONMENT from its escrowed copy; a new one would make what it protects unreadable."
+# The engine's ASSISTANT_PRINCIPAL_KEY (and _PREVIOUS) isn't generated: it is derived from
+# PRINCIPAL_KEY (and PRINCIPAL_KEY_PREVIOUS) at every deploy, so a rotation carries it along.
+for key in PRINCIPAL_KEY DATA_KEY TOKEN_PEPPER MEDIA_SIGNING_SECRET PASSWORD_PEPPER SETUP_TOKEN; do
+  if grep -q "^$key=" "$SECRETS_FILE"; then
+    echo "$key already generated"
+  elif [ "$key" != PRINCIPAL_KEY ] && [ "$key" != MEDIA_SIGNING_SECRET ] && [ "$key" != SETUP_TOKEN ] &&
+    grep -qx "$key" <<<"$held"; then
+    echo "$SECRETS_FILE has no $key, but a Worker already holds one. Restore the file from your"
+    echo "backup; a new $key would make what it protects unreadable."
     exit 1
   else
-    openssl rand -hex 32 | tr -d '\n' | gh secret set "$KEY" -R "$repo" --env "$ENVIRONMENT"
-    echo "Set $KEY on $ENVIRONMENT"
+    bytes=32
+    [ "$key" = SETUP_TOKEN ] && bytes=16
+    printf '%s=%s\n' "$key" "$(openssl rand -hex "$bytes")" >>"$SECRETS_FILE"
+    echo "Generated $key"
   fi
 done
 
-# The first administrator's one-time setup code, kept in .secrets/<id>/ (gitignored).
-mkdir -p ".secrets/$id"
-chmod 700 ".secrets/$id"
-file=".secrets/$id/setup-code"
-if grep -qx SETUP_TOKEN <<<"$EXISTING"; then
-  echo "$ENVIRONMENT already has SETUP_TOKEN"
-else
-  [ -s "$file" ] || (umask 077 && openssl rand -hex 16 | tr -d '\n' >"$file")
-  gh secret set SETUP_TOKEN -R "$repo" --env "$ENVIRONMENT" <"$file"
-  echo "Set SETUP_TOKEN on $ENVIRONMENT (value in $file)"
+if [ -n "$github" ]; then
+  # Repository secrets for .github/workflows/deploy.yml, set from the file without printing them.
+  while IFS='=' read -r key value; do
+    [ -n "$key" ] && printf '%s' "$value" | gh secret set "$key"
+  done <"$SECRETS_FILE"
+  echo "Set the secrets on $(gh repo view --json nameWithOwner -q .nameWithOwner)"
 fi
 
 echo
-echo "Next: if $repo doesn't hold CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID as repository"
-echo "secrets, add them to $ENVIRONMENT. Then commit $id.jsonc in the registry, and merge: CI deploys it in its ring."
-echo "Then send the customer's first admin https://$DOMAIN/setup and the setup code in $file."
-echo "Escrow its secrets: run the Escrow secrets workflow on $repo for $ENVIRONMENT"
-echo "(docs/backup-and-restore.md, \"Escrowing secrets\")."
+echo "Done. Back up $SECRETS_FILE somewhere safe (a password manager or vault)."
+echo "Next: pnpm cw:deploy$([ "$env_file" != .env ] && echo " --env-file $env_file"). Then open https://$DOMAIN/setup and enter the"
+echo "setup code (SETUP_TOKEN in $SECRETS_FILE) to create the first admin."

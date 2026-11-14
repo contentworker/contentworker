@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { nextPath, withNext } from '../app/lib/next-path';
 
 const at = (next: string) =>
-  nextPath(new Request(`https://contentworker.app/login?next=${encodeURIComponent(next)}`));
+  nextPath(new Request(`https://cms.example.com/login?next=${encodeURIComponent(next)}`));
 
 describe('nextPath', () => {
   it('keeps a path on this site', () => {

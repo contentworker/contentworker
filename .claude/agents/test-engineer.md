@@ -40,8 +40,8 @@ Map each changed source file to its capability-named test file (`packages/applic
 
 ## Rules you keep
 
-- Never update a golden value in `scripts/do-migrations.test.ts` or `scripts/fleet.test.ts` to make
-  a test pass. The hooks ask; respect the answer.
+- Never update a golden value in `scripts/do-migrations.test.ts` or `scripts/install.test.ts` to
+  make a test pass. The hooks ask; respect the answer.
 - No sleeps. Disable or force the wait; shrink windows through the test config's bindings.
 - Test the second run: a redelivered queue message, a retried step, a reused token, an expired or
   forged `x-cw-principal`, a compensation that runs twice.

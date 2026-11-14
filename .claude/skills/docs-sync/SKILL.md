@@ -1,6 +1,6 @@
 ---
 name: docs-sync
-description: Keep the published Starlight docs in apps/docs and the maintainer docs in docs/ true to ContentWorker's code after a change. Use when a change touches a documented surface (workflow nodes and templates, permission scopes, REST routes and OpenAPI, MCP tools and skills, content model, publishing, webhooks, auth, D1 schema, wrangler config, the fleet, Ledger tokens), when the docs-drift hook fires, or when docs look stale. Maps changed files to pages, separates generated reference pages from hand-written prose, regenerates the docs embed and verifies with the docs build.
+description: Keep the published Starlight docs in apps/docs and the maintainer docs in docs/ true to ContentWorker's code after a change. Use when a change touches a documented surface (workflow nodes and templates, permission scopes, REST routes and OpenAPI, MCP tools and skills, content model, publishing, webhooks, auth, D1 schema, wrangler config, the install scripts and settings, Ledger tokens), when the docs-drift hook fires, or when docs look stale. Maps changed files to pages, separates generated reference pages from hand-written prose, regenerates the docs embed and verifies with the docs build.
 ---
 
 # Syncing the docs
@@ -79,8 +79,8 @@ to check.
   backticks or code blocks.
 - Node catalog anchors are node types. Renaming a node type breaks links; the link check names them.
 - Never name a competing CMS in either doc set; say "the surveyed CMS".
-- The live site only changes when CI deploys the docs Worker after a merge. Never run the docs
-  deploy yourself.
+- The live site only changes when the docs Worker is deployed, which is never an agent session's
+  job. Never run the docs deploy yourself.
 
 ## Report
 

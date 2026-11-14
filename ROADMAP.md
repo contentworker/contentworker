@@ -6,16 +6,16 @@ edge workers
 split by traffic profile: `apps/web` (admin + human auth), `apps/api` (Management and Preview
 REST, MCP, OAuth, uploads and signed reads, live), `apps/delivery` (the cached public Delivery
 API), `apps/media` (published asset files at the edge) and `apps/engine` (queues, cron, stateful
-edge objects, durable workflows). Tenancy is one isolated deployment per
-customer (a registry entry each, rendered by `scripts/fleet.ts`). The domain and application
+edge objects, durable workflows). It is self-hosted: one install in your own Cloudflare account, rendered by
+`scripts/install.ts`. The domain and application
 layers, and their tests, carried over.
 
 Removed in v2, and not coming back:
 
 - Postgres, its hosted provider and connection pooling, the Node migrator and its container: the
   edge SQL database with hand-written, expand-only SQL migrations (`packages/db/migrations`)
-  applied by CI.
-- The managed multi-tenant control plane and hostname dispatch: one deployment per customer.
+  applied by a deploy.
+- The managed multi-tenant control plane and hostname dispatch: one install per Cloudflare account.
 - External AI providers and external vector and search stores: edge inference through an AI
   gateway, an edge vector index, and full-text search shards in stateful edge objects.
 - Per-request payment for delivery content, the email SDK, and the S3-API blob adapter (object
@@ -100,9 +100,10 @@ Everything below is built and tested on v2.
 - **SDK.** One npm package, `@contentworker/sdk`: Delivery and Preview, rich text, webhooks,
   redirects, inline editing, React, Vue, edge, React Native, Management and codegen as subpaths, and
   the `contentworker` CLI as its binary.
-- **Operations.** The fleet registry and renderer, idempotent provisioning, CI ring deploys
-  (engine → media → api → delivery → web) with a point-in-time recovery bookmark before each
-  migration, smoke and latency checks, and ordered rollback.
+- **Operations.** Self-hosting: `.env` settings rendered by `scripts/install.ts`, idempotent setup
+  (`pnpm cw:setup`), and `pnpm cw:deploy` (engine → media → api → delivery → web) with a
+  point-in-time recovery bookmark before each migration, smoke and latency checks, and ordered
+  rollback; an optional deploy-on-merge workflow for a fork.
 
 ## Planned
 
@@ -250,29 +251,13 @@ Everything below is built and tested on v2.
   can enable one whose `source` is `generated`: a deliberate, documented exception to both
   surfaces, because prompt-injected code must not go live without a human.
 
-### Before the first customer
+### Recovery
 
-Recovery targets not met yet (`docs/backup-and-restore.md`) and the move to a private fleet repo.
+Recovery targets not met yet (`docs/backup-and-restore.md`).
 
-- [x] **Secret escrow.** The `Escrow secrets` workflow encrypts a deployment's secrets to a key held
-  outside GitHub and the edge account. Run for the live deployment and decrypted; setting the values
-  back joins the restore drill.
 - [ ] **Off-account object storage copy.** Asset bytes, plugins and `versions/` have no second copy.
-  Deferred until a customer is close; the plan is in the private fleet repo.
 - [ ] **Restore drill.** Time a database restore against its 1-hour target.
 - [ ] **Assistant recovery.** Nothing calls the conversation object's point-in-time recovery.
-- [ ] **Fleet cutover.** Live since 2026-11-07: the registry, rings and every deployment's secrets
-  are in the private repo, and this repo only dispatches to it. One deploy token, shared as the
-  private repo's repository secrets, serves every deployment. Staging (its own zone) ships first in
-  every release, and a registry change ships on its own push. The escrow workflow stays defined
-  here and the private repo calls it, so its runs and artifacts aren't public; the first escrow of
-  both environments from there succeeded on 2026-11-07. Left, in order:
-  - [ ] Download both escrow generations, check they decrypt, keep them offline and delete the
-    artifacts (`docs/backup-and-restore.md`).
-  - [ ] Delete this repo's `production` environment and its repository-level edge account secrets,
-    which any branch can read. Nothing reads them since the cutover.
-  - [ ] Tick this item, and mark the cutover done in the private repo's README.
-  - [ ] Provision the demo deployment, still held in the registry.
 
 ### Parity milestones
 
@@ -366,7 +351,7 @@ Found while building and reviewing M1 and M2. None blocks a release.
 - [ ] **Flaky browser tests.** Find the cause of the webhook dialog, webhook deliveries and asset
   library tests that fail under a full parallel run and pass alone.
 - [x] **Unused api email config.** Dropped `EMAIL_FROM`, `EMAIL_FROM_NAME` and the `send_email`
-  comment from `apps/api/wrangler.jsonc`: the fleet binds `EMAIL` only on the engine and web, so
+  comment from `apps/api/wrangler.jsonc`: `EMAIL` is bound only on the engine and web, so
   the api's `makeEmail` never had a sender to read them for.
 - [ ] **Last admin across rows.** Two demotions, disables or removals of the last two admins, made
   at once, can both land: each member's compare-and-set guards only its own row. A team-level
@@ -441,7 +426,7 @@ None blocks a release.
     screen (schedules take `projectId` over the API today).
 - [x] **AI settings per capability.** Per space: enabled, `ModelTier`, and guidance appended to the
   built-in prompt.
-  - [x] **Deployment tier cap.** `AI_MAX_TIER` (the registry's `aiMaxTier`) holds every model call
+  - [x] **Install tier cap.** `AI_MAX_TIER` holds every model call
     to at most that tier, whatever its source; settings above it are kept and reported as
     `effectiveTier`, and the admin's select disables the tiers above it.
   - [x] **Reindex when search is toggled.** Turning `search` on or off starts a `search_reindex` bulk
@@ -599,6 +584,7 @@ From the live preview spec and a review of a second implementation of its channe
   the guard, with a test that sets a lock mid-merge.
 
 Checked against the merged channel and not needed:
+
 - **An admin-started reconnect.** The frame route creates its host before it gives the iframe a
   `src`, and never revalidates (`shouldRevalidate`), so no host starts after, or is rebuilt under,
   a page that already loaded.

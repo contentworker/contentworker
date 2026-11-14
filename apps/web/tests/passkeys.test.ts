@@ -112,7 +112,7 @@ vi.mock('@simplewebauthn/server', async (actual) => ({
 
 const { addPasskey, removePasskey, signInOptions, signInWithPasskey, registrationOptions } =
   await import('~/lib/passkeys.server');
-const req = () => new Request('https://acme.contentworker.app/login/passkey', { method: 'POST' });
+const req = () => new Request('https://cms.example.com/login/passkey', { method: 'POST' });
 const ada = {
   kind: 'user' as const,
   id: 'usr_ada',
@@ -154,8 +154,8 @@ describe('passkeys', () => {
     expect(verifyAuthenticationResponse).toHaveBeenCalledWith(
       expect.objectContaining({
         expectedChallenge: options.challenge,
-        expectedOrigin: 'https://acme.contentworker.app',
-        expectedRPID: 'acme.contentworker.app',
+        expectedOrigin: 'https://cms.example.com',
+        expectedRPID: 'cms.example.com',
         requireUserVerification: true,
       }),
     );

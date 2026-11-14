@@ -29,13 +29,13 @@ const config = {
   defaultHttpClient: { targetKey: 'shell', clientKey: 'curl' },
   servers: [
     {
-      url: 'https://{workspace}.contentworker.app',
-      description: 'Your ContentWorker workspace',
-      variables: { workspace: { default: 'your-workspace' } },
+      url: 'https://api.{domain}',
+      description: 'Your install’s api',
+      variables: { domain: { default: 'cms.example.com' } },
     },
     {
       url: '{origin}',
-      description: 'A local or self-hosted API',
+      description: 'Local development',
       variables: { origin: { default: 'http://localhost:8787' } },
     },
   ],

@@ -75,9 +75,9 @@ function fakeClient() {
       deliveryKey: { id: 'k1', token: 'cwk_cda_minted' },
       ...(input.preview ? { previewKey: { id: 'k2', token: 'cwk_cpa_minted' } } : {}),
       endpoints: {
-        admin: 'https://acme.contentworker.app',
-        delivery: 'https://cdn.acme.contentworker.app',
-        preview: 'https://api.acme.contentworker.app',
+        admin: 'https://cms.example.com',
+        delivery: 'https://cdn.cms.example.com',
+        preview: 'https://api.cms.example.com',
       },
       previewUrls: [],
     })),
@@ -118,7 +118,7 @@ describe('Connect a frontend', () => {
     expect(screen.getByRole('button', { name: 'Copy preview key' })).toBeTruthy();
     // The runtime's vars name the backend from the answer's endpoints, never the token.
     expect(screen.getByLabelText('wrangler.jsonc').textContent).toContain(
-      'https://cdn.acme.contentworker.app/acme/main',
+      'https://cdn.cms.example.com/acme/main',
     );
     expect(screen.getByLabelText('wrangler.jsonc').textContent).not.toContain('cwk_');
 

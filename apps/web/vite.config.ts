@@ -86,7 +86,7 @@ export default defineConfig({
     ...agents(),
     cloudflare({
       viteEnvironment: { name: 'ssr' },
-      // A fleet deploy builds against its rendered config.
+      // A deploy builds against the install's rendered config (scripts/install.ts).
       configPath: process.env.CONTENTWORKER_WRANGLER_CONFIG,
       // Offline by default: models are mocked and vectors live in KV locally, so no binding needs
       // the remote resource, and a remote one would ask for a login and bill an account.
@@ -109,7 +109,7 @@ export default defineConfig({
       // (queues, cron, Durable Objects, Workflows), media (its purge queue; MEDIA_PUBLIC_URL is
       // unset locally, so delivered assets keep the api's signed URLs) and delivery Workers, all on
       // one local D1.
-      // Unless a fleet config is being built, which deploys each Worker on its own.
+      // Unless a deploy config is being built, which deploys each Worker on its own.
       ...(process.env.CONTENTWORKER_WRANGLER_CONFIG
         ? {}
         : {

@@ -1,7 +1,7 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  // The template for every deployment: scripts/fleet.ts renders wrangler.<id>.json from this file
-  // and the deployment's registry entry <id>.jsonc (names, ids, routes, vars). Never deploy this file by hand.
+  // The template for your install: scripts/install.ts renders wrangler.deploy.json from this file
+  // and the install's settings (.env: names, ids, routes, vars). Never deploy this file by hand.
   //
   // The engine: queue consumers, the cron sweeper, and the owner of every Durable Object and
   // Workflow class. No route, no workers.dev: the api and delivery Workers reach its objects and
@@ -31,7 +31,7 @@
 
   // ---- Data -----------------------------------------------------------------------------------
   // D1 is the system of record. Requests open a read-replica session (wire.ts); turn on read
-  // replication per database (scripts/provision.sh does).
+  // replication per database (scripts/setup.sh does).
   "d1_databases": [
     {
       "binding": "DB",
@@ -88,7 +88,7 @@
         "dead_letter_queue": "contentworker-events-dlq"
       },
       { "queue": "contentworker-events-dlq", "max_batch_size": 25, "max_batch_timeout": 5 },
-      // R2 object-create notifications for the media bucket (scripts/provision.sh creates the
+      // R2 object-create notifications for the media bucket (scripts/setup.sh creates the
       // rule), plus the api's upload and re-ingest messages: each starts an AssetIngestWorkflow.
       {
         "queue": "contentworker-asset-events",
@@ -149,14 +149,14 @@
       "class_name": "AppOperationWorkflow"
     }
   ],
-  // `send_email` (EMAIL) is added per deployment by scripts/fleet.ts when the deployment sets an
-  // Email Sending sender (EMAIL_FROM); a bound EMAIL without a sender is refused at boot.
+  // `send_email` (EMAIL) is added by scripts/install.ts when the install sets an Email Sending
+  // sender (EMAIL_FROM); a bound EMAIL without a sender is refused at boot.
 
   // ---- Vars (secrets: DATA_KEY, TOKEN_PEPPER, SETUP_TOKEN, ADMIN_TOKEN, MCP_TOKEN,
   // MEDIA_SIGNING_SECRET, STREAM_WEBHOOK_SECRET, and ASSISTANT_PRINCIPAL_KEY(_PREVIOUS), derived
-  // from PRINCIPAL_KEY by CI, with which the assistant checks its socket's signed principal) ----
+  // from PRINCIPAL_KEY at deploy time, with which the assistant checks its socket's signed principal) ----
   "vars": {
-    // Rendered per deployment (scripts/fleet.ts): queue consumers route by the suffixed queue name.
+    // Rendered by scripts/install.ts (INSTANCE): queue consumers route by the suffixed queue name.
     "QUEUE_SUFFIX": "",
     "ROLE": "all",
     "REQUIRE_SECURE_SECRETS": "true",
@@ -173,7 +173,7 @@
     "AI_PROVIDER": "workers-ai",
     "AI_MODE": "live",
     "AI_TIMEOUT_MS": "20000",
-    // The deployment's model tier cap (flagship, balanced or fast); empty: none. From the registry.
+    // The install's model tier cap (flagship, balanced or fast); empty: none. From AI_MAX_TIER.
     "AI_MAX_TIER": "",
     "AI_GATEWAY_ID": "contentworker",
     "WORKERS_AI_MODEL_FLAGSHIP": "",
@@ -184,7 +184,7 @@
     "EMBEDDINGS_MODEL": "",
     "ALLOW_FAKE_ADAPTERS": "",
     "MEDIA_BASE_URL": "",
-    // The media Worker's origin (https://media.<domain>), rendered per deployment. Empty: delivered
+    // The media Worker's origin (https://media.<domain>), rendered at deploy. Empty: delivered
     // assets keep the api's signed URLs, without renditions or a srcset.
     "MEDIA_PUBLIC_URL": "",
     "IMAGES_ZONE_ORIGIN": "",

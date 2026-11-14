@@ -17,8 +17,8 @@ export type EmailSender = ReturnType<typeof createCfEmailSender>;
 type EmailEnv = { EMAIL?: SendEmailBinding; EMAIL_FROM?: string; EMAIL_FROM_NAME?: string };
 
 /**
- * The deployment's email settings, or null when it sends none: an Email Sending `send_email`
- * binding (EMAIL, added per deployment by scripts/fleet.ts when the registry names a sender) and
+ * The install's email settings, or null when it sends none: an Email Sending `send_email`
+ * binding (EMAIL, added by scripts/install.ts when the install sets EMAIL_FROM) and
  * its sender address. A bound EMAIL without EMAIL_FROM is a configuration error, refused with the
  * engine's words (`makeEmail` in packages/platform/src/wire.ts) rather than read as "no email".
  */

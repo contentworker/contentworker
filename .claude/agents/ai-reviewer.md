@@ -28,8 +28,8 @@ to find feature gaps and propose use cases, not to rewrite the code. You never e
   - The vars in `apps/engine/wrangler.jsonc` and `apps/api/wrangler.jsonc`: `AI_PROVIDER`,
     `AI_MODE`, `AI_TIMEOUT_MS`, `AI_GATEWAY_ID`, `WORKERS_AI_MODEL_{FLAGSHIP,BALANCED,FAST}`,
     `EMBEDDINGS_PROVIDER`, `EMBEDDINGS_MODEL`, `EMBEDDINGS_DIM`, `AI_MAX_REQUESTS_PER_WINDOW`,
-    `AI_MAX_TOKENS_PER_WINDOW`, `AI_BUDGET_WINDOW_SECONDS`, `AGENTS_*`; per deployment from
-    `node scripts/fleet.ts render <id>` (and `aiGatewayLogs` in the registry).
+    `AI_MAX_TOKENS_PER_WINDOW`, `AI_BUDGET_WINDOW_SECONDS`, `AGENTS_*`; per install from
+    `scripts/install.ts` (`AI_MAX_TIER`, `AI_GATEWAY_LOGS`, `AI_MODE=mock` in `.env.example`).
   - Tests: `packages/application/test/ai-*.test.ts`, `apps/engine/test/cost-guard.test.ts`,
     `packages/adapters/test/ai-workers/`.
   - Docs: `docs/ai-agents-and-search.md`, `docs/configuration.md`, `apps/docs/src/content/guides/ai.mdx`.
@@ -60,8 +60,8 @@ Cite every claim with a file:line, a rendered value, an MCP path and field, or a
   a use-case.
 - **Untrusted content** goes in through `wrapUntrusted`; deeper prompt-injection review is the
   `security-reviewer` agent's job. Here, flag robustness gaps only.
-- **One deployment per customer.** Each has its own gateway settings, budget, index and data. Never
-  propose a shared index, cache, dataset or fine-tune across customers.
+- **One install, one stack.** Each install has its own gateway settings, budget, index and data.
+  Never propose an index, cache, dataset or fine-tune shared across installs.
 - **Cloudflare-native.** Prefer Workers AI models; an external provider through AI Gateway only
   when no Workers AI model fits, saying that content would leave Cloudflare.
 
@@ -74,7 +74,7 @@ Cite every claim with a file:line, a rendered value, an MCP path and field, or a
 2. **AI Gateway gaps.** For each feature, used / not used / partly used, and whether it's worth
    adopting _here_: authentication, rate limiting, caching (safe only for deterministic prompts),
    retries and fallbacks, Dynamic Routing, logging, retention and Logpush (prompts contain
-   customer content), DLP and guardrails, cost tracking and spend limits, custom metadata (space,
+   the install's content), DLP and guardrails, cost tracking and spend limits, custom metadata (space,
    feature, without content), Evaluations and datasets.
 3. **Workers AI gaps.** Each tier's model against the current catalog for the same task (newer,
    cheaper, deprecated? context window, JSON mode), native tool calling for agents, streaming for

@@ -15,7 +15,7 @@ npm install @contentworker/sdk
 import { createManagementClient } from '@contentworker/sdk/management';
 
 const cma = createManagementClient({
-  baseUrl: 'https://api.your-workspace.contentworker.app',
+  baseUrl: 'https://api.cms.example.com',
   space: 'your-space',
   environment: 'main',
   token: process.env.CONTENTWORKER_CMA_TOKEN!,

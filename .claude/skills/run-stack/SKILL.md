@@ -9,7 +9,7 @@ disable-model-invocation: true
 `pnpm dev` runs `apps/web` under Vite with the Cloudflare plugin and the api, engine and delivery
 Workers as auxiliary Workers (`apps/web/vite.config.ts`), all on one local D1 under
 `apps/web/.wrangler`. The auxiliary Workers get `LOCAL_STACK_VARS`: mock AI, local hash
-embeddings, KV-backed vectors (`VECTOR_STORE=kv`), fakes allowed, and dev secrets that are never a deployment's.
+embeddings, KV-backed vectors (`VECTOR_STORE=kv`), fakes allowed, and dev secrets that are never an install's.
 
 ## Start
 

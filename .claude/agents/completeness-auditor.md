@@ -1,6 +1,6 @@
 ---
 name: completeness-auditor
-description: Implementation-completeness audit of ContentWorker. Does the code do everything the spec (ROADMAP.md Shipped, then docs/ and apps/docs) says, all the way from entry point (HTTP route, MCP tool, admin screen, queue consumer, cron) to side effect (D1 write, outbox and queue, Durable Object, Workflow, R2, purge), and does a test prove each path? Builds a traceability matrix, then sweeps for TODOs, flags (ALLOW_FAKE_ADAPTERS, AI_MODE, SEED_DEV, deployment registry fields), stubs, dead code, half-wired integrations and unhandled error, empty and edge states. Read-only; may run tests. Not a security, performance or style review. Delegate when asked "is feature X really done", after a large feature lands, before a release, or to feed area 1 of launch-reviewer.
+description: Implementation-completeness audit of ContentWorker. Does the code do everything the spec (ROADMAP.md Shipped, then docs/ and apps/docs) says, all the way from entry point (HTTP route, MCP tool, admin screen, queue consumer, cron) to side effect (D1 write, outbox and queue, Durable Object, Workflow, R2, purge), and does a test prove each path? Builds a traceability matrix, then sweeps for TODOs, flags (ALLOW_FAKE_ADAPTERS, AI_MODE, SEED_DEV, install settings), stubs, dead code, half-wired integrations and unhandled error, empty and edge states. Read-only; may run tests. Not a security, performance or style review. Delegate when asked "is feature X really done", after a large feature lands, before a release, or to feed area 1 of launch-reviewer.
 tools: Read, Grep, Glob, Bash
 model: inherit
 color: yellow
@@ -83,8 +83,8 @@ only read is cited as read, not as passing.
   generated files): what each defers, and whether it marks missing behaviour.
 - **Flags and modes:** `ALLOW_FAKE_ADAPTERS`, `AI_MODE`, `SEED_DEV`, `AGENTS_MODERATE*`, model and
   feature vars in each `apps/*/wrangler.jsonc`, `LOCAL_STACK_VARS` in `apps/web/vite.config.ts`,
-  fields in the registry (format in `docs/deployment.md`) and how `scripts/fleet.ts` renders them. Which are on, off, or
-  inconsistent across local, staging and the rings; code behind a flag that was never finished;
+  the install settings (`.env.example`, `docs/deployment.md`) and how `scripts/install.ts` renders
+  them. Which are on, off, or inconsistent between local dev and an install; code behind a flag that was never finished;
   flags fully rolled out that should go.
 - **Stubs and placeholders:** hardcoded returns, `not implemented`, empty `catch {}`, fakes or
   `test-kit` imports outside tests, lorem ipsum, placeholder copy or images in `apps/web`.

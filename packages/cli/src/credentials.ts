@@ -9,7 +9,7 @@ import type { Io } from './io.js';
  */
 
 export interface Profile {
-  /** The deployment's API origin, e.g. https://api.your-workspace.contentworker.app */
+  /** The install's API origin, e.g. https://api.cms.example.com */
   readonly url: string;
   readonly space: string;
   readonly environment: string;

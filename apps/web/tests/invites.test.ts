@@ -113,7 +113,7 @@ const {
 const { INVITE_INVALID, INVITE_NOT_ACCEPTED } = await import('~/lib/invites');
 
 const TOKEN = `cwi_${'a'.repeat(43)}`;
-const req = () => new Request('https://acme.contentworker.app/invite/x', { method: 'POST' });
+const req = () => new Request('https://cms.example.com/invite/x', { method: 'POST' });
 const preview = (over: Record<string, unknown> = {}) => ({
   invite: {
     id: 'inv-1',
@@ -328,7 +328,7 @@ describe('managing invitations', () => {
       space: 'blog',
       spaceRole: 'editor',
     });
-    expect(made.link).toBe(`https://acme.contentworker.app/invite/${TOKEN}`);
+    expect(made.link).toBe(`https://cms.example.com/invite/${TOKEN}`);
     expect(calls[0]).toMatchObject({
       by: { id: 'usr_ada', role: 'admin' },
       body: {
@@ -391,23 +391,21 @@ describe('the invitation page’s inputs', async () => {
     ]);
     for (const c of forgetInviteToken()) expect(c).toMatch(/^cw_invite=; Path=\S+; .*Max-Age=0$/);
     const carrying = (cookie: string) =>
-      new Request('https://acme.contentworker.app/invite', { headers: { cookie } });
+      new Request('https://cms.example.com/invite', { headers: { cookie } });
     expect(inviteTokenFrom(carrying(`theme=dark; cw_invite=${TOKEN}`))).toBe(TOKEN);
     expect(inviteTokenFrom(carrying('cw_invite=cwi_short'))).toBeNull();
-    expect(inviteTokenFrom(new Request('https://acme.contentworker.app/invite'))).toBeNull();
+    expect(inviteTokenFrom(new Request('https://cms.example.com/invite'))).toBeNull();
     expect(isInviteToken(`${TOKEN}x`)).toBe(false);
   });
 
   it('refuses a cross-site accept, as every form here (the Worker checks before the route)', () => {
     const from = (origin: string) =>
-      new Request(`https://acme.contentworker.app/invite/${TOKEN}`, {
+      new Request(`https://cms.example.com/invite/${TOKEN}`, {
         method: 'POST',
         headers: { origin },
       });
-    expect(crossOrigin(from('https://evil.example'), 'https://acme.contentworker.app')).toBe(true);
-    expect(
-      crossOrigin(from('https://acme.contentworker.app'), 'https://acme.contentworker.app'),
-    ).toBe(false);
+    expect(crossOrigin(from('https://evil.example'), 'https://cms.example.com')).toBe(true);
+    expect(crossOrigin(from('https://cms.example.com'), 'https://cms.example.com')).toBe(false);
   });
 
   it('lists only what can still be resent or revoked, and audits in plain words', () => {

@@ -9,7 +9,7 @@ argument-hint: "[short_snake_name]"
 Migrations are `packages/db/migrations/NNNN_name.sql`, hand-written SQL. The Drizzle schema in
 `packages/db/src/schema.ts` (content) and `packages/db/src/auth-schema.ts` (the admin's people,
 sessions and sign-in) mirrors them column for column and index for index; it describes the
-database to the query code and changes no database on its own. There is one D1 per deployment
+database to the query code and changes no database on its own. There is one D1 per install
 (binding `DB`, database `contentworker`, `migrations_dir: ../../packages/db/migrations` in the
 apps' `wrangler.jsonc`).
 
@@ -56,7 +56,8 @@ asks before a new one that drops or renames.
 
 1. PR 1 (expand): add the new column or table; write both; read the new one with a fallback to the
    old; backfill.
-2. Let CI deploy it to every ring.
+2. Release it. Installs upgrade on their own schedule, so the contract waits for a later release,
+   and `docs/deployment.md`'s upgrade notes say which release an install must deploy first.
 3. PR 2 (contract): stop writing the old one, then drop it in a new migration (the hook asks; say
    yes knowingly).
 

@@ -8,13 +8,13 @@ import EndpointIndex from '../../components/EndpointIndex.astro';
 ## Base URL and paths
 
 A workspace serves the API from two addresses, for example for a workspace at
-`your-workspace.contentworker.app`:
+`cms.example.com`:
 
 | Surface    | Address                                    | Paths                                       | Key kind |
 | ---------- | ------------------------------------------ | ------------------------------------------- | -------- |
-| Management | `https://api.your-workspace.contentworker.app` | `/spaces/{space}/environments/{env}/…`, plus space-level `/spaces/{space}/…` | CMA |
-| Preview    | `https://api.your-workspace.contentworker.app` | `/preview/{space}/{env}/…`                  | CPA      |
-| Delivery   | `https://cdn.your-workspace.contentworker.app` | `/delivery/{space}/{env}/…`                 | CDA      |
+| Management | `https://api.cms.example.com` | `/spaces/{space}/environments/{env}/…`, plus space-level `/spaces/{space}/…` | CMA |
+| Preview    | `https://api.cms.example.com` | `/preview/{space}/{env}/…`                  | CPA      |
+| Delivery   | `https://cdn.cms.example.com` | `/delivery/{space}/{env}/…`                 | CDA      |
 
 The `cdn.` address is the cached, read-only Delivery API meant for sites and apps. The admin's own
 address forwards these paths to the API too, which is how the admin itself calls it.

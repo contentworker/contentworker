@@ -70,13 +70,14 @@ export default defineConfig({
       // Explicit sidebar: autogenerate expects src/content/docs/. A new page is invisible until it
       // is listed here. Start reads as a sequence (Starlight's prev/next follows this order).
       // The site is for people who use a workspace and developers who integrate with one;
-      // deployment, configuration and internals stay in the repo's docs/ folder, unpublished.
+      // configuration and internals stay in the repo's docs/ folder, unpublished (the Self-hosting page is the one exception).
       sidebar: [
         {
           label: 'Start',
           items: [
             { label: 'Getting started', slug: 'start/getting-started' },
             { label: 'Concepts', slug: 'start/concepts' },
+            { label: 'Self-hosting', slug: 'start/self-hosting' },
           ],
         },
         {

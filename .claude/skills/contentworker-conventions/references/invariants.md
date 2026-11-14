@@ -112,9 +112,10 @@ renamed step misses its cached result for every running instance.
 
 **Rule.** `packages/db/migrations/NNNN_*.sql`, hand-written SQL, mirrored column for column in
 `packages/db/src/schema.ts` (or `auth-schema.ts`). Expand-only: add a column or table now; drop or
-rename only in a later change once no deployed code reads it. A migration on `origin/main` has been
-applied by CI to every deployment and is never edited. Remote databases are migrated only by CI
-(`scripts/deploy.sh`: bookmark, `wrangler d1 migrations apply DB --remote`, then the Workers).
+rename only in a later change once no deployed code reads it. A migration on `origin/main` may already
+be applied by any install and is never edited. Remote databases are migrated only by the operator's
+deploy (`scripts/deploy.sh`: bookmark, `wrangler d1 migrations apply DB --remote`, then the
+Workers).
 
 **Why.** CI migrates before it deploys and never rolls D1 back, so the old code runs on the new
 schema during every deploy and after any Worker rollback.
@@ -133,7 +134,7 @@ the class's data. A new class appends its tag in the config and in `APPLIED` in
 delete destroys every object of the class. The engine also can't roll back past a DO migration
 (`scripts/deploy.sh` stops the rollback there).
 
-**Check.** `pnpm test:fleet` (runs `node --test scripts/*.test.ts`, including do-migrations).
+**Check.** `pnpm test:scripts` (runs `node --test scripts/*.test.ts`, including do-migrations).
 
 ## Generated files
 
@@ -160,9 +161,10 @@ handler. Details: the `security-model` skill.
 **Rule.** A new env var or binding is typed in `EdgeEnv` (`packages/platform/src/env.ts`), read
 in `packages/platform/src/config.ts` or `wire.ts`, declared in every `apps/*/wrangler.jsonc` that
 reads it (and the local stack's vars in `apps/web/vite.config.ts` when it needs a dev value),
-rendered per deployment in `scripts/fleet.ts` when it varies, created in `scripts/provision.sh`
-when it is a resource, and documented in `docs/configuration.md`. Secrets are never `vars`: CI
-writes them from the deployment's GitHub environment (`SECRETS` in `scripts/fleet.ts`).
+rendered for the install in `scripts/install.ts` (plus `.env.example` and `deploy.yml`'s job env)
+when it varies per install, created in `scripts/setup.sh` when it is a resource, and documented in
+`docs/configuration.md`. Secrets are never `vars`: each deploy writes them from the install's
+secrets file or CI secrets (`SECRETS` in `scripts/install.ts`).
 
 **Check.** The `infra-change` skill; the `workers-reviewer` agent.
 

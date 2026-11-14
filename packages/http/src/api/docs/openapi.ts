@@ -347,7 +347,7 @@ export function mountDocs(app: Hono, config: ApiConfig): void {
  * assets (`apps/web/scripts/vendor-scalar.mjs`), pinned by the lockfile. Never Scalar's default, an
  * unversioned third-party CDN: /docs is also served on the admin origin, where a script runs with
  * the signed-in person's session. The admin origin is the OAuth issuer's (`OAUTH_ISSUER`, which
- * the fleet sets to it); with none configured, as in local dev, /docs is only reached through the
+ * the install's rendered config sets to it); with none configured, as in local dev, /docs is only reached through the
  * admin origin, so a same-origin path is right.
  */
 export function scalarBundleUrl(config: Pick<ApiConfig, 'oauthIssuer'>): string {

@@ -43,7 +43,7 @@ curl -s "$API/spaces/$SPACE/environments/main/share-links" \
 
 The response (`201`) is the link: `id`, `expiresAt`, `allowDownload`, `hasPassword`, `createdAt`,
 `createdBy` and `url`, which looks like
-`https://media.your-workspace.contentworker.app/s/{space}/{env}/{linkId}/{token}`. The token is part of the address, so
+`https://media.cms.example.com/s/{space}/{env}/{linkId}/{token}`. The token is part of the address, so
 the address can't be guessed or edited into another link's. `GET …/share-links` lists links newest
 first (`targetType`, `targetId` and `includeInactive=true` filter; expired and revoked links are
 left out by default), and `GET …/share-links/{id}` reads one.

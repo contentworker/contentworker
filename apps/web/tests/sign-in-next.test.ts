@@ -66,9 +66,9 @@ const RELOAD = 'X-Remix-Reload-Document';
 const post = (path: string, fields: Record<string, string>) => {
   const body = new FormData();
   for (const [k, v] of Object.entries(fields)) body.set(k, v);
-  return new Request(`https://acme.contentworker.app${path}`, { method: 'POST', body });
+  return new Request(`https://cms.example.com${path}`, { method: 'POST', body });
 };
-const get = (path: string) => new Request(`https://acme.contentworker.app${path}`);
+const get = (path: string) => new Request(`https://cms.example.com${path}`);
 /** What a loader or action answered, returned or thrown. */
 const answer = async (run: () => Promise<unknown>) => {
   try {
@@ -148,7 +148,7 @@ describe('the invitation page', () => {
     expect(first.headers.get('location')).toBe('/invite');
     expect(first.headers.get('set-cookie')).toContain(`cw_invite=${TOKEN}; Path=/invite;`);
     const page = (await invite.loader({
-      request: new Request('https://acme.contentworker.app/invite', {
+      request: new Request('https://cms.example.com/invite', {
         headers: { cookie: `cw_invite=${TOKEN}` },
       }),
       params: {},

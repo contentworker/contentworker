@@ -6,7 +6,7 @@
  *   PRINCIPAL_KEY=… node scripts/derive-assistant-key.ts
  *
  * The key comes from stdin or the PRINCIPAL_KEY variable, never an argument (arguments show up in
- * process listings and shell history). `fleet.ts secrets` derives the engine's pair the same way.
+ * process listings and shell history). `install.ts secrets` derives the engine's pair the same way.
  */
 import { hkdfSync } from 'node:crypto';
 import { readFileSync } from 'node:fs';

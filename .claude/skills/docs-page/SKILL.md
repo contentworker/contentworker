@@ -10,21 +10,24 @@ description: Add or restructure a page in the ContentWorker docs (the published 
 The published site (`docs.contentworker.app`) is for two readers: people who work in a space
 (model content, edit and publish, run workflows and approvals, manage the team) and developers
 who integrate with one (API keys, the Delivery, Management and Preview APIs, webhooks, SDKs,
-MCP). It is not for people who deploy, configure or develop ContentWorker.
+MCP). Operators get one page there, Start → Self-hosting
+(`apps/docs/src/content/start/self-hosting.mdx`): what an install is and how to set it up and
+deploy it. Everything else about deploying, configuring or developing ContentWorker stays in
+`docs/deployment.md` and the rest of `docs/`.
 
 Material only someone with the source or a Cloudflare account needs goes in the repo-root `docs/`
 folder instead: plain Markdown, indexed by `docs/README.md`, embedded into
 `packages/docs/src/generated.ts` so agents can read it over MCP. That covers source paths and
 function names, bindings, env vars and secrets, `wrangler`, D1 tables, R2 keys, Workflow and
-Durable Object mechanics, the fleet, deploys, CI and local development. On the site, describe a
-deployment setting by what it does and say the deployment's administrator sets it, never by its
-variable name.
+Durable Object mechanics, deploy and rollback details, CI and local development. Outside the
+Self-hosting page, describe an install setting by what it does and say the install's operator sets
+it, never by its variable name.
 
 ## Where it goes
 
 | Section             | Directory                                  | For                                                    |
 | ------------------- | ------------------------------------------ | ------------------------------------------------------ |
-| Start               | `apps/docs/src/content/start/`             | Reading in order: getting started, concepts            |
+| Start               | `apps/docs/src/content/start/`             | Reading in order: getting started, concepts, self-hosting |
 | Working with content | `apps/docs/src/content/guides/`           | A task or feature in the admin, end to end             |
 | Integrating         | `apps/docs/src/content/guides/`            | Keys, reading content, webhooks, SDKs, MCP             |
 | Reference           | `apps/docs/src/content/reference/`         | Things you look up: routes, nodes, templates, scopes   |

@@ -54,7 +54,7 @@ Every worker opens its database access through `env.DB.withSession(…)` (`wireE
 | engine (queues, cron)              | `first-primary` (the `wireEdge` default)                        |
 
 The web worker forwards `x-cw-bookmark` both ways untouched, so the admin gets read-your-writes
-through the gateway. Read replication is turned on per database by `scripts/provision.sh`
+through the gateway. Read replication is turned on per database by `scripts/setup.sh`
 (`read_replication.mode = auto`); writes always go to the primary.
 
 ## Database limits as design inputs

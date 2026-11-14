@@ -34,7 +34,7 @@ optional peer dependencies: install the one you use (`npm install react` or `npm
 import { createDeliveryClient, imageProps } from '@contentworker/sdk';
 
 const client = createDeliveryClient({
-  baseUrl: 'https://cdn.your-workspace.contentworker.app',
+  baseUrl: 'https://cdn.cms.example.com',
   space: 'your-space',
   environment: 'main',
   token: process.env.CONTENTWORKER_CDA_TOKEN!,
@@ -118,7 +118,7 @@ The client takes the same filters, ordering and projection as the
 `status`, the API's error `code` and the parsed `body`), and can keep a short in-memory cache
 (`cacheTtlMs`). Pass `preview: true` with a Preview key to read drafts;
 Preview is served from the workspace's `api.` address, so point `baseUrl` there
-(`https://api.your-workspace.contentworker.app`) for a preview client.
+(`https://api.cms.example.com`) for a preview client.
 
 ### React and Vue
 
@@ -195,7 +195,7 @@ you name:
 import { createEdgeClient } from '@contentworker/sdk/edge';
 
 const edge = createEdgeClient({
-  baseUrl: 'https://cdn.your-workspace.contentworker.app',
+  baseUrl: 'https://cdn.cms.example.com',
   space: 'your-space',
   environment: 'main',
   token: process.env.CONTENTWORKER_CDA_TOKEN!,
@@ -311,7 +311,7 @@ resolved for rendering, published entries only. The management client has
 import { createManagementClient } from '@contentworker/sdk/management';
 
 const cma = createManagementClient({
-  baseUrl: 'https://api.your-workspace.contentworker.app',
+  baseUrl: 'https://api.cms.example.com',
   space: 'your-space',
   environment: 'main',
   token: process.env.CONTENTWORKER_CMA_TOKEN!,
@@ -478,7 +478,7 @@ function Title({ entry }) {
 }
 
 // Once, near the root of the preview site:
-<InlineEditor adminUrl="https://your-workspace.contentworker.app" />
+<InlineEditor adminUrl="https://cms.example.com" />
 ```
 
 `editable()` adds a `data-cw-ref` attribute only when the client was created with `preview: true`.
@@ -513,7 +513,7 @@ import { draftMode } from 'next/headers';
 import { createDraftRoute } from '@contentworker/sdk/next';
 
 export const GET = createDraftRoute({
-  baseUrl: 'https://api.your-workspace.contentworker.app',
+  baseUrl: 'https://api.cms.example.com',
   space: 'your-space',
   environment: 'main',
   draftMode,
@@ -551,12 +551,12 @@ export const getClient = createDraftClient({
   draftMode,
   cookies,
   delivery: {
-    baseUrl: 'https://cdn.your-workspace.contentworker.app',
+    baseUrl: 'https://cdn.cms.example.com',
     space: 'your-space',
     environment: 'main',
     token: process.env.CONTENTWORKER_DELIVERY_KEY!,
   },
-  preview: { baseUrl: 'https://api.your-workspace.contentworker.app' },
+  preview: { baseUrl: 'https://api.cms.example.com' },
 });
 
 // In a page: const entry = await (await getClient()).getEntry(id);

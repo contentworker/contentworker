@@ -9,10 +9,9 @@ ContentWorker is an API-first, AI-agentic-first headless CMS that runs **entirel
 Cloudflare**: D1 is the system of record, with Workers, Queues, KV, R2, Durable Objects,
 Workflows, Vectorize, Workers AI (through AI Gateway), Images, Stream, Email Sending and Worker
 Loader. Content is **structured, not serialized HTML**: rich text is a typed document tree
-(`RichTextDocument`), and every channel renders it for itself. It is a pnpm + Turborepo monorepo with a **ports & adapters (hexagonal)** core, deployed
-as one isolated stack per customer (a registry entry each, rendered by `scripts/fleet.ts`; the registry of real
-deployments lives in the private `contentworker/fleet` repo, not here); spaces
-and environments live inside a deployment's D1. Shipped and planned work is in `ROADMAP.md`.
+(`RichTextDocument`), and every channel renders it for itself. It is a pnpm + Turborepo monorepo with a **ports & adapters (hexagonal)** core, self-hosted
+as one install in your own Cloudflare account (settings in `.env`, rendered by `scripts/install.ts`);
+spaces and environments live inside the install's D1. Shipped and planned work is in `ROADMAP.md`.
 
 ## Workers (split by traffic profile)
 
@@ -34,11 +33,10 @@ clients, Workflow clients), `@contentworker/http` (the Hono surface: routes, aut
 
 ## Rules
 
-- **Branch in a worktree; merging is releasing.** Never push `main`; open a PR. CI migrates D1
-  and deploys every Worker ring by ring (after `verify`, it hands the commit to the private
-  `contentworker/fleet` repo, which holds the registry and the rings). Nobody deploys from an agent session (`wrangler deploy`
-  without `--dry-run`, `versions deploy`, `rollback`, `pnpm … deploy`); `wrangler deploy
-  --dry-run` checks a bundle.
+- **Branch in a worktree; never push `main`; open a PR.** Merging deploys nothing from this
+  repository: an install deploys with `pnpm cw:deploy` (or the operator's optional deploy-on-merge
+  workflow). Agents never deploy (`wrangler deploy` without `--dry-run`, `versions deploy`,
+  `rollback`, `pnpm cw:deploy`); `wrangler deploy --dry-run` checks a bundle.
 - **Never migrate a remote database by hand.** `wrangler d1 migrations apply DB --local` only.
 - **Migrations are hand-written SQL, expand-only, and never edited once applied**
   (`packages/db/migrations/NNNN_*.sql`, mirrored in `packages/db/src/schema.ts`). Add a column
@@ -103,7 +101,7 @@ pnpm --filter @contentworker/db test            # the D1 store, in workerd again
 pnpm --filter @contentworker/engine test        # Durable Objects + Workflows, in workerd
 pnpm --filter @contentworker/http test          # HTTP API + MCP against in-memory fakes (node)
 pnpm --filter @contentworker/application test   # use-cases against test-kit fakes
-node --test scripts/*.test.ts                   # fleet + DO-migration golden tests
+node --test scripts/*.test.ts                   # install + deploy + DO-migration tests
 pnpm --filter @contentworker/api exec wrangler deploy --dry-run --outdir /tmp/api   # bundle check
 pnpm dev                                        # migrates the local D1, then the stack in one Vite session
 pnpm dev:reset                                  # wipe and re-migrate the local D1

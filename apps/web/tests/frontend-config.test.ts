@@ -20,7 +20,7 @@ const deployed: FrontendConfigInput = {
   space: 'acme',
   environment: 'main',
   locale: 'en-US',
-  endpoints: frontendEndpoints('https://acme.contentworker.app')!,
+  endpoints: frontendEndpoints('https://cms.example.com')!,
   deliveryToken: 'cwk_cda_secret',
   previewToken: 'cwk_cpa_secret',
 };
@@ -34,7 +34,7 @@ describe('the frontend runtime config', () => {
     const vars = runtimeVars(deployed);
     expect(JSON.parse(`{${vars}}`)).toEqual({
       vars: {
-        CONTENTWORKER: 'https://cdn.acme.contentworker.app/acme/main',
+        CONTENTWORKER: 'https://cdn.cms.example.com/acme/main',
         CONTENTWORKER_LOCALE: 'en-US',
       },
     });
@@ -72,8 +72,8 @@ describe('the SDK and Next.js config', () => {
   });
 
   it('reads Delivery from cdn and drafts from the api', () => {
-    expect(sdkClient(deployed)).toContain("baseUrl: 'https://cdn.acme.contentworker.app'");
-    expect(nextDraftRoute(deployed)).toContain("baseUrl: 'https://api.acme.contentworker.app'");
+    expect(sdkClient(deployed)).toContain("baseUrl: 'https://cdn.cms.example.com'");
+    expect(nextDraftRoute(deployed)).toContain("baseUrl: 'https://api.cms.example.com'");
     expect(nextDraftRoute(deployed)).toContain("from '@contentworker/sdk/next'");
     expect(nextClient(deployed)).toContain('createDraftClient');
   });
@@ -83,7 +83,7 @@ describe('the SDK and Next.js config', () => {
     expect(code).not.toContain('CONTENTWORKER_PREVIEW_KEY');
     expect(code).toContain("import { cookies, draftMode } from 'next/headers';");
     expect(code).toContain('  cookies,');
-    expect(code).toContain("preview: { baseUrl: 'https://api.acme.contentworker.app' }");
+    expect(code).toContain("preview: { baseUrl: 'https://api.cms.example.com' }");
   });
 
   it('quotes a value that could end its string', () => {
@@ -94,7 +94,7 @@ describe('the SDK and Next.js config', () => {
 
 describe('the live preview config', () => {
   it('names this admin as the origin the page connects to', () => {
-    expect(livePreview(deployed)).toContain("adminOrigin: 'https://acme.contentworker.app'");
+    expect(livePreview(deployed)).toContain("adminOrigin: 'https://cms.example.com'");
     expect(livePreview(deployed)).not.toContain('cwk_');
   });
 });

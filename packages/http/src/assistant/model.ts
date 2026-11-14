@@ -47,7 +47,7 @@ const sha256 = async (text: string) =>
  * The model for one turn. `used.source` says which model answered once it has, so the turn is
  * metered only when a real one did. `tier` is the space's tier for Coworker (flagship unless an
  * administrator chose another), mapped to a model exactly as the Workers AI adapter maps it
- * (`WORKERS_AI_MODEL_BY_TIER`, overridden per deployment by the WORKERS_AI_MODEL_* vars), with the fast
+ * (`WORKERS_AI_MODEL_BY_TIER`, overridden per install by the WORKERS_AI_MODEL_* vars), with the fast
  * tier behind it.
  */
 export async function assistantModel(

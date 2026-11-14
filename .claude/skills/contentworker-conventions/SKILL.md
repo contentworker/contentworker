@@ -14,8 +14,8 @@ sections your change touches. Path-specific reminders live in
 
 ## The shape of the system
 
-One isolated stack per customer (a registry entry each, rendered by `scripts/fleet.ts`; the registry is in the private fleet repo), D1 as
-the system of record, five Workers split by traffic profile:
+Self-hosted: an install is one stack in the operator's Cloudflare account (rendered by
+`scripts/install.ts`, created by `scripts/setup.sh`), D1 as the system of record, five Workers split by traffic profile:
 
 | Worker          | Entry                    | Job                                                                                                      |
 | --------------- | ------------------------ | -------------------------------------------------------------------------------------------------------- |
@@ -50,7 +50,7 @@ These fail fast, so you'll hear about them; the reasons are in invariants.md.
 | -------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
 | No hand deploys, rollbacks, resource deletes, Time Travel restores, `pnpm … deploy`                 | `guard-bash.sh` denies                                            |
 | No remote D1 migrations (`--remote`, `db:migrate:remote`)                                           | `guard-bash.sh` denies                                            |
-| Pushing `main`, force pushes, merging a PR, remote D1 SQL, secrets, provisioning                    | `guard-bash.sh` asks                                              |
+| Pushing `main`, force pushes, merging a PR, remote D1 SQL, secrets, `pnpm cw:setup`                 | `guard-bash.sh` asks                                              |
 | An applied migration (on `origin/main`) is never edited; a new one that drops or renames asks first | `guard-invariants.sh` denies / asks                               |
 | Every external dependency version comes from the pnpm catalog (`catalog:` / `workspace:`)           | `guard-invariants.sh` denies; `scripts/catalog.test.ts` fails     |
 | Durable Object migration tags are append-only                                                      | `guard-invariants.sh` asks; `scripts/do-migrations.test.ts` fails |
@@ -76,7 +76,8 @@ In the order reviews most often find them broken:
 6. **Trust boundaries.** `x-cw-principal` only signed, path-bound and fresh; the `Delivery`
    entrypoint is never routable; no trusted header on a publicly routed handler.
 7. **Env parity.** A new var or binding is in `EdgeEnv`, config, every `wrangler.jsonc` that reads
-   it, `scripts/fleet.ts` when it varies per deployment, and `docs/configuration.md`.
+   it, `scripts/install.ts` + `.env.example` + `deploy.yml` when it varies per install, and
+   `docs/configuration.md`.
 8. **Structured content.** Content is typed fields and `RichTextDocument` trees, never an HTML
    or Markdown string: HTML is converted on the way in (`richTextFromHtml`) and rendered by the
    consumer on the way out.

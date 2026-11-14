@@ -5,10 +5,10 @@ description: ContentWorker's trust boundaries and what to check at each, for sec
 
 # ContentWorker security model
 
-ContentWorker is one dedicated deployment per customer (no sharing across customers), so the
-boundaries that matter are _inside_ a deployment: the public internet → the Workers, between the
+ContentWorker is self-hosted: each install is its own stack in the operator's Cloudflare account,
+shared with no other install, so the boundaries that matter are _inside_ an install: the public internet → the Workers, between the
 web Worker and the api, between spaces and environments, between API keys of different kinds and
-scopes, and between the platform and the code it runs for a customer (plugins, functions, models).
+scopes, and between the platform and the code it runs for a space (plugins, functions, models).
 Read [references/checklist.md](references/checklist.md) for the per-boundary checks; this page is
 the map.
 
@@ -58,7 +58,7 @@ apps/web (public) ─── API service binding ──► apps/api (public)     
    (`packages/application/src/url-safety.ts`); the engine and api run with
    `global_fetch_strictly_public` as a backstop. Outbound webhooks are signed
    (`packages/adapters/src/http-effects/webhook-sender.ts`).
-6. **Customer code is sandboxed.** Plugins run on Worker Loader isolates with only the
+6. **Plugin code is sandboxed.** Plugins run on Worker Loader isolates with only the
    capabilities their manifest grants (`packages/adapters/src/plugins-cf-loader`,
    `packages/domain/src/plugin/`); `PLUGIN_SOURCE_HOSTS` and `PLUGIN_MIN_RELEASE_AGE_HOURS` gate
    what may be installed.

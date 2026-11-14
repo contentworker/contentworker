@@ -10,16 +10,18 @@ build
 *.log
 .turbo/
 .DS_Store
+# The install's settings (.env.example is the template) and its generated secrets: back up .secrets/
+.env
+.env.*
+!.env.example
 .secrets/
-escrow*.key
-escrow*.age
 
 # Claude Code local state
 .claude/logs/
 .claude/settings.local.json
 .claude/worktrees/
 
-# Rendered per deployment by scripts/fleet.ts render <id>
+# Rendered at deploy time by scripts/install.ts render (wrangler.deploy[-<instance>].json)
 apps/*/wrangler.*.json
 
 # Playwright (apps/web/e2e)

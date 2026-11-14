@@ -13,7 +13,7 @@ npm install @contentworker/sdk
 import { createEdgeClient } from '@contentworker/sdk/edge';
 
 const edge = createEdgeClient({
-  baseUrl: 'https://cdn.your-workspace.contentworker.app',
+  baseUrl: 'https://cdn.cms.example.com',
   space: 'your-space',
   environment: 'main',
   token: process.env.CONTENTWORKER_CDA_TOKEN!,

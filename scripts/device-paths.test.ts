@@ -70,10 +70,10 @@ describe('device test path filter', () => {
     assert.equal(hit('apps/docs/src/content/index.mdx'), undefined);
     assert.equal(hit('packages/sdk/vue/src/index.ts'), undefined);
     assert.equal(
-      hit('scripts/fleet.ts', '.claude/hooks/x.sh', 'README.md', 'docs/specs/x.md'),
+      hit('scripts/install.ts', '.claude/hooks/x.sh', 'README.md', 'docs/specs/x.md'),
       undefined,
     );
-    assert.equal(hit('.github/workflows/deploy.yml', 'examples/fleet/x.jsonc'), undefined);
+    assert.equal(hit('.github/workflows/deploy.yml', '.env.example'), undefined);
   });
 
   it('returns the first path that matters', () => {

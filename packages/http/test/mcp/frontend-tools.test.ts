@@ -45,7 +45,7 @@ beforeEach(async () => {
     hasher,
     adminToken: 'admin',
     agents: new InProcessAgentRuntime(makeActivities({ ctx, ai: new StubAIProvider(() => ({})) })),
-    inviteOrigin: 'https://acme.contentworker.app',
+    inviteOrigin: 'https://cms.example.com',
   };
   await createSpace(ctx, {
     spaceId: SPACE,
@@ -83,8 +83,8 @@ describe('frontend_connect', () => {
     };
     expect(c.environment).toBe('main');
     expect(c.endpoints).toMatchObject({
-      admin: 'https://acme.contentworker.app',
-      delivery: 'https://cdn.acme.contentworker.app',
+      admin: 'https://cms.example.com',
+      delivery: 'https://cdn.cms.example.com',
     });
     expect((await authenticate(deps.ctx, hasher, c.deliveryKey.token)).kind).toBe('cda');
     expect((await authenticate(deps.ctx, hasher, c.previewKey.token)).kind).toBe('cpa');

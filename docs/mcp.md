@@ -83,11 +83,12 @@ Claude, ChatGPT and MCP-capable IDEs: an unauthenticated request answers with
 `WWW-Authenticate: Bearer resource_metadata="…"` (RFC 9728), the client fetches
 `/.well-known/oauth-protected-resource`, registers itself dynamically, and runs an
 authorization-code + PKCE flow that a human approves on the admin origin after signing in to the
-web app, choosing the space the connection works in (a fleet deployment's issuer and resource are
+web app, choosing the space the connection works in (an install's issuer and resource are
 `https://<domain>` and `https://<domain>/mcp`). CLI clients that cannot open a browser use
 the device flow, and CI uses a personal access token. Whatever the route, the resulting token is
 an ordinary API key — so an agent can still never exceed the scopes the approving human holds.
 See [Auth & RBAC](./auth-and-rbac.md#oauth-21-for-mcp-clients).
+
 ## Tools
 
 The server exposes **275 tools**, one per major Management/Delivery capability (the canonical list

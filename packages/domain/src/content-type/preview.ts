@@ -184,8 +184,8 @@ export function previewTemplateVariesByLocale(
 }
 
 /**
- * Where a frontend reaches this deployment, from the admin's origin: by the fleet's convention
- * (`scripts/fleet.ts`, `hosts()`), Delivery answers on `cdn.<domain>` and the api (Preview, and the
+ * Where a frontend reaches this install, from the admin's origin: by the install's convention
+ * (`scripts/install.ts`, `hosts()`), Delivery answers on `cdn.<domain>` and the api (Preview, and the
  * live stream) on `api.<domain>`. On a local stack everything is the one origin: the web Worker
  * forwards bearer `/delivery/*` and `/preview/*` calls to the Workers behind it.
  */

@@ -1,6 +1,6 @@
 /**
  * Cross-site request protection. A browser attaches the session cookie to requests from other
- * sites on the same registrable domain (every *.contentworker.app host counts as the same site, so
+ * sites on the same registrable domain (every host under one domain counts as the same site, so
  * SameSite=Lax doesn't stop them). Anything that changes state, and any WebSocket, must therefore
  * come from this app's own origin.
  */

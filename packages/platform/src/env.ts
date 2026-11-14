@@ -124,8 +124,8 @@ export interface EdgeEnv {
   /** Most URLs warmed per space:environment after a purge (default 200). */
   readonly CACHE_WARM_URLS?: string;
   /**
-   * The deployment's resource suffix (scripts/fleet.ts renders it; `""` for the base names). Queue
-   * consumers route by queue name, and a deployment's queues are named `<base><suffix>`.
+   * The install's resource suffix (`-<INSTANCE>`, rendered by scripts/install.ts; `""` for the base
+   * names). Queue consumers route by queue name, and an install's queues are named `<base><suffix>`.
    */
   readonly QUEUE_SUFFIX?: string;
   /** `eu` or `fedramp`: Durable Objects are pinned there with D1 and R2 (see withJurisdiction). */
@@ -232,10 +232,10 @@ export interface EdgeEnv {
   /** Per-call cap for generateJson, ms (default 20000). */
   readonly AI_TIMEOUT_MS?: string;
   /**
-   * The most capable model tier this deployment runs: `flagship` (or empty: no cap), `balanced` or
+   * The most capable model tier this install runs: `flagship` (or empty: no cap), `balanced` or
    * `fast`. Every generation and decision call is held to it, whatever its capability's tier, the
    * request or the call site asks for (embeddings and text extraction have no tier). Rendered from
-   * the registry's `aiMaxTier`.
+   * the install's AI_MAX_TIER setting.
    */
   readonly AI_MAX_TIER?: string;
   /** Cloudflare AI Gateway id: when set, Workers AI calls route through it (logs, caching, limits). */
@@ -260,7 +260,7 @@ export interface EdgeEnv {
    */
   readonly MEDIA_BASE_URL?: string;
   /**
-   * Public origin of the media Worker (`https://media.<domain>`; scripts/fleet.ts renders it).
+   * Public origin of the media Worker (`https://media.<domain>`; scripts/install.ts renders it).
    * Delivered assets' URLs are built on it at read time, and Preview's signed draft URLs point
    * there. Empty → the api's signed `/media/*` URLs, without renditions or a srcset.
    */
@@ -297,7 +297,7 @@ export interface EdgeEnv {
   readonly AGENTS_SCHEDULES?: string;
   /**
    * `true` moves superseded entry version bodies to the media bucket from the cron trigger.
-   * Off until every Worker in the ring reads archived bodies (0004_version_bodies).
+   * Off until every Worker reads archived bodies (0004_version_bodies).
    */
   readonly VERSION_ARCHIVE?: string;
   readonly AGENT_SCHEDULE_MAX_ENTRIES?: string;
@@ -347,8 +347,8 @@ const DO_BINDINGS = [
 const pinned = new WeakSet<object>();
 
 /**
- * The env with every Durable Object namespace pinned to the deployment's data jurisdiction
- * (`DATA_JURISDICTION`: `eu` or `fedramp`, rendered by scripts/fleet.ts for a deployment whose
+ * The env with every Durable Object namespace pinned to the install's data jurisdiction
+ * (`DATA_JURISDICTION`: `eu` or `fedramp`, rendered by scripts/install.ts for an install whose
  * D1 and R2 live there), so objects are created and found only inside it, as its data is. Without
  * a jurisdiction it is the env unchanged. Idempotent: every Worker entry point and `wireEdge` call
  * it, and only the first pins.

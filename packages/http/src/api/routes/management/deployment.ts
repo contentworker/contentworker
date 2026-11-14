@@ -69,7 +69,7 @@ export function deploymentRoutes(deps: AuthDeps): Hono<AuthVars> {
       description:
         'Replaces the recipients (at most 50; trimmed, lowercased, deduplicated). An empty list ' +
         'turns the emails off: the engine still logs every episode. The emails need the ' +
-        "deployment's Email Sending sender (`email.from` in its registry entry). Deployment " +
+        "deployment's Email Sending sender (the install's `EMAIL_FROM` setting). Deployment " +
         'administrators only.',
     }),
     async (c) => {
