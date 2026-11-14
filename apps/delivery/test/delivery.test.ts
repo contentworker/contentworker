@@ -140,7 +140,12 @@ describe('purge drain with invalidation', () => {
       ['invalidate', ['cw:s1:main']],
       ['purge', ['cw:s2:main']],
     ]);
-    expect(drained).toEqual({ purged: ['cw:s2:main'], invalidated: ['cw:s1:main'], retried: 0 });
+    expect(drained).toEqual({
+      purged: ['cw:s2:main'],
+      invalidated: ['cw:s1:main'],
+      retried: 0,
+      refs: [],
+    });
     expect(ms.every((m) => m.acked)).toBe(true);
   });
 
@@ -161,7 +166,7 @@ describe('purge drain with invalidation', () => {
     const ms = [msg(['cw:s1:main'], 0, 'invalidate'), msg(['cw:s1:main'], 1)];
     const drained = await drain(batch(ms), ops, async () => {});
     expect(calls.map(([name]) => name)).toEqual(['invalidate', 'purge']);
-    expect(drained).toEqual({ purged: ['cw:s1:main'], invalidated: [], retried: 0 });
+    expect(drained).toEqual({ purged: ['cw:s1:main'], invalidated: [], retried: 0, refs: [] });
   });
 
   it('reports an invalidation the Worker could only purge as purged, so it is not warmed', async () => {
@@ -174,7 +179,28 @@ describe('purge drain with invalidation', () => {
       },
       async () => {},
     );
-    expect(drained).toEqual({ purged: ['a'], invalidated: [], retried: 0 });
+    expect(drained).toEqual({ purged: ['a'], invalidated: [], retried: 0, refs: [] });
+  });
+
+  it('collects what changed from the messages it settled, and only those', async () => {
+    const r = (env: string) => ({
+      spaceId: 's1',
+      environmentId: env,
+      entryIds: [],
+      contentTypeApiIds: [],
+      everything: true,
+      eventIds: [env],
+    });
+    const settled = { ...msg(['cw:s1:main'], 0, 'invalidate') };
+    (settled.body as { refs?: unknown }).refs = [r('main')];
+    const handedBack = { ...msg(['cw:s1:other'], 1) };
+    (handedBack.body as { refs?: unknown }).refs = [r('other')];
+    const drained = await drain(
+      batch([settled, handedBack]),
+      { purge: async () => ({ success: false }), invalidate: async () => ({ success: true }) },
+      async () => {},
+    );
+    expect(drained.refs).toEqual([r('main')]);
   });
 
   it('counts what it handed back, so warming can wait', async () => {

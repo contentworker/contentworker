@@ -172,7 +172,10 @@ of publishes costs one tag, not one purge call per entry: a purge when the batch
 (`entry.unpublished`, `asset.unpublished`, `asset.deleted`, `asset.rights_changed`,
 `asset_collection.changed`, `content_type.published`, `content_type.deleted`,
 `environment_alias.changed`, `environment.deleted`) and an `asset.published` that replaced the
-file, or an invalidation (`mode: 'invalidate'`) when the batch has none of those. A batch that must
+file, or an invalidation (`mode: 'invalidate'`) when the batch has none of those. Each message carries `refs`: per
+space:environment, the entries and content types its events named (`everything` when one named
+none, or past 100), and the event ids. `delivery.refresh_requested` (a manual refresh) is a purging
+event too, sent as an invalidation. A batch that must
 purge purges every delivery tag it touched in that one message (purge calls, which invalidations
 share, are rationed per account). An invalidated response is kept but marked stale, so
 readers are served it while it revalidates. An alias change carries the alias name as
@@ -191,7 +194,10 @@ retries a message lands in `contentworker-purge-dlq`, whose consumer (the delive
 record of the tags, counts `contentworker_purge_dead_letters_total` and drops it. Those responses age out on their
 `max-age` plus stale-while-revalidate. After each batch it requests the hottest URLs of every
 invalidated environment again, from its `HotSetDO`, so readers find them fresh
-([Architecture](./architecture.md) has the details). The cache layers these purges feed are
+([Architecture](./architecture.md) has the details), then sends one `delivery.refreshed` per
+space:environment it settled, merging the `refs` of the messages it acked, to `contentworker-events`
+(the delivery worker's only producer; it writes no database). The engine fans it out to webhooks
+like any event; it is not a purging event. The cache layers these purges feed are
 described in [Consistency & guarantees](./consistency.md#delivery-cache).
 
 ### Media purges and the gate
@@ -387,6 +393,8 @@ Domain events (`packages/domain/src/events.ts`):
 | `asset.ingested`                                                                   | `assetId`, `version`, `published`, `contentHash` (absent over 512 MiB), `duplicateOf` (ingest finished a file version: hashed, measured, enriched where empty, indexed)                                                                                                                                     |
 | `asset_renditions.changed`                                                         | `name` (a space's rendition preset was created, replaced or deleted; every environment of the space is purged; `scope` is the environment it was changed through, so other environments' scoped hooks don't hear it)                                                                                        |
 | `space_locales.changed`                                                            | `undelivered` (the locales Delivery no longer serves; a space's locale settings changed, and every environment of the space is purged, in Delivery's cache and at the edge)                                                                                                                                 |
+| `delivery.refresh_requested`                                                       | none (a manual refresh, `requestDeliveryRefresh`, once a minute per environment; the engine invalidates the environment's delivery tag as for a publish)                                                                                                                                                    |
+| `delivery.refreshed`                                                               | `mode` (`refreshed`, `purged`), `entryIds`, `contentTypeApiIds`, `everything`, `sourceEventIds` (sent by the delivery worker straight to `contentworker-events` once a purge batch has settled and been warmed; not in the outbox; at most 100 ids per list, past which `everything`)                       |
 | `asset_collection.changed`                                                         | `collectionId` (a collection was created, renamed or deleted, or its members were added, removed or reordered; also sent for each collection a deleted asset leaves; Delivery's collection read and every share page that shows it are purged)                                                              |
 | `asset_share.created` / `asset_share.revoked`                                      | `linkId` (the media origin reads the link's row itself; a revoke purges its cached page, now and after 90 s)                                                                                                                                                                                                |
 | `taxonomy.changed`                                                                 | `termKind` (`tag` or `concept`), `termId` (a tag or concept was created, changed or deleted; Delivery's taxonomy reads are purged with the scope's tag)                                                                                                                                                     |

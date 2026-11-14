@@ -19,7 +19,12 @@ const scope = { spaceId: 's1', environmentId: 'main' };
 const base = { id: 'e', scope, occurredAt: '2026-11-13T00:00:00Z' };
 const tag = deliveryScopeTag('s1', 'main');
 
+/** The messages, without what they say changed (tested on its own below). */
 async function sent(events: object[]): Promise<PurgeMessage[]> {
+  return (await sentWithRefs(events)).map(({ refs: _refs, ...m }) => m);
+}
+
+async function sentWithRefs(events: object[]): Promise<PurgeMessage[]> {
   const plan = newPurgePlan();
   for (const e of events) await planPurges(ctx, plan, e as DomainEvent);
   const messages: PurgeMessage[] = [];
@@ -91,5 +96,64 @@ describe('delivery invalidation', () => {
     ]) {
       expect(await sent([{ ...base, type }]), type).toEqual([{ tags: [tag] }]);
     }
+  });
+
+  it('invalidates on a manual refresh, as everything in the environment', async () => {
+    const out = await sentWithRefs([{ ...base, id: 'r1', type: 'delivery.refresh_requested' }]);
+    expect(out).toEqual([
+      {
+        tags: [tag],
+        mode: 'invalidate',
+        refs: [
+          {
+            spaceId: 's1',
+            environmentId: 'main',
+            entryIds: [],
+            contentTypeApiIds: [],
+            everything: true,
+            eventIds: ['r1'],
+          },
+        ],
+      },
+    ]);
+  });
+
+  it('says which entries and types changed, merged per environment', async () => {
+    const out = await sentWithRefs([
+      {
+        ...base,
+        id: 'e1',
+        type: 'entry.published',
+        entryId: 'x',
+        contentTypeApiId: 'post',
+        version: 2,
+      },
+      { ...base, id: 'e2', type: 'release.published', releaseId: 'r', entryIds: ['y', 'z'] },
+    ]);
+    expect(out[0]?.refs).toEqual([
+      {
+        spaceId: 's1',
+        environmentId: 'main',
+        entryIds: ['x', 'y', 'z'],
+        contentTypeApiIds: ['post'],
+        everything: false,
+        eventIds: ['e1', 'e2'],
+      },
+    ]);
+  });
+
+  it('says everything when a change names no entry', async () => {
+    const out = await sentWithRefs([
+      {
+        ...base,
+        id: 'e1',
+        type: 'entry.published',
+        entryId: 'x',
+        contentTypeApiId: 'post',
+        version: 2,
+      },
+      { ...base, id: 'm1', type: 'menus.changed' },
+    ]);
+    expect(out[0]?.refs?.[0]?.everything).toBe(true);
   });
 });

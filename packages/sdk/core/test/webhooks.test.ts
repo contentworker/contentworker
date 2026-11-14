@@ -1,6 +1,14 @@
 import { createHmac } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { verifyWebhook, verifyWebhookSignature } from '../src/webhooks.js';
+import {
+  entryTag,
+  environmentTag,
+  handleDeliveryRefreshed,
+  staleTags,
+  typeTag,
+  verifyWebhook,
+  verifyWebhookSignature,
+} from '../src/webhooks.js';
 
 const SECRET = 'whsec_test';
 const NOW = Date.parse('2026-11-02T12:00:00Z');
@@ -94,5 +102,54 @@ describe('@contentworker/sdk-core/webhooks', () => {
         now: NOW,
       }),
     ).toBe(false);
+  });
+});
+
+describe('delivery.refreshed', () => {
+  const refreshed = (over: object = {}) => ({
+    id: 'ev2',
+    type: 'delivery.refreshed',
+    occurredAt: new Date(NOW).toISOString(),
+    scope: { spaceId: 's1', environmentId: 'main' },
+    mode: 'refreshed',
+    entryIds: ['e1', 'e2'],
+    contentTypeApiIds: ['post'],
+    everything: false,
+    sourceEventIds: ['ev1'],
+    ...over,
+  });
+
+  it('clears the tag of each entry and type it names', async () => {
+    const cleared: string[] = [];
+    const res = await handleDeliveryRefreshed(delivery(refreshed()), {
+      secret: SECRET,
+      now: NOW,
+      revalidateTag: (t) => cleared.push(t),
+    });
+    expect(res.status).toBe(204);
+    expect(cleared).toEqual([entryTag('e1'), entryTag('e2'), typeTag('post')]);
+  });
+
+  it('clears the environment’s tag when it says everything', async () => {
+    const event = refreshed({ everything: true, entryIds: [], contentTypeApiIds: [] });
+    expect(staleTags(event as never)).toEqual([environmentTag('s1', 'main')]);
+  });
+
+  it('refuses a bad signature and ignores other events', async () => {
+    const cleared: string[] = [];
+    const revalidateTag = (t: string) => cleared.push(t);
+    const forged = await handleDeliveryRefreshed(delivery(refreshed(), { secret: 'wrong' }), {
+      secret: SECRET,
+      now: NOW,
+      revalidateTag,
+    });
+    expect(forged.status).toBe(401);
+    const other = await handleDeliveryRefreshed(delivery(event), {
+      secret: SECRET,
+      now: NOW,
+      revalidateTag,
+    });
+    expect(other.status).toBe(204);
+    expect(cleared).toEqual([]);
   });
 });

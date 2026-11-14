@@ -48,6 +48,7 @@ import { registerBlockConfigTools } from './tools/block-config';
 import { registerBlockLockTools } from './tools/block-locks';
 import { registerBlockTools } from './tools/blocks';
 import { registerCollaborationTools } from './tools/collaboration';
+import { registerDeliveryCacheTools } from './tools/delivery-cache';
 import { registerDocsTools } from './tools/docs';
 import { registerEnvironmentAliasTools } from './tools/environment-aliases';
 import { registerEnvironmentMergeTools } from './tools/environment-merge';
@@ -110,6 +111,7 @@ function validationResult(err: ValidationError) {
 const TOOL_AREAS: readonly ((server: McpServer, t: ToolContext) => void)[] = [
   registerDocsTools,
   registerReadTools,
+  registerDeliveryCacheTools,
   registerAiContentTools,
   registerRoleTools,
   registerAiSettingsTools,

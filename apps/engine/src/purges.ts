@@ -12,7 +12,9 @@ import {
   mediaEnvironmentTag,
   mediaRenditionTag,
   mediaShareLinkTag,
+  PURGE_REF_IDS,
   type PurgeMessage,
+  type PurgeRef,
 } from '@contentworker/platform/messages';
 
 /** Events after which a space:environment's delivery responses may be stale. */
@@ -45,6 +47,8 @@ export const PURGING_EVENTS = new Set<string>([
   'release.published',
   'environment_alias.changed',
   'environment.deleted',
+  // A manual refresh: invalidated (and warmed) like a publish.
+  'delivery.refresh_requested',
 ]);
 
 /**
@@ -81,6 +85,8 @@ export interface PurgePlan {
   readonly delivery: Set<string>;
   /** Delivery tags purged outright: what they served must stop being served. */
   readonly deliveryRevoked: Set<string>;
+  /** What changed under each delivery tag. */
+  readonly refs: Map<string, MutableRef>;
   /** Purged now. */
   readonly media: Set<string>;
   /** Purged now and again after {@link REVOCATION_REPURGE_SECONDS}: what stopped being served. */
@@ -90,6 +96,7 @@ export interface PurgePlan {
 export const newPurgePlan = (): PurgePlan => ({
   delivery: new Set(),
   deliveryRevoked: new Set(),
+  refs: new Map(),
   media: new Set(),
   revoked: new Set(),
 });
@@ -100,6 +107,79 @@ export const newPurgePlan = (): PurgePlan => ({
  */
 export const MAX_COLLECTIONS_PURGED = 100;
 
+interface MutableRef {
+  spaceId: string;
+  environmentId: string;
+  entryIds: Set<string>;
+  contentTypeApiIds: Set<string>;
+  everything: boolean;
+  eventIds: Set<string>;
+}
+
+/** The entries and types an event names, or `null` when it names none (everything changed). */
+function namedBy(event: DomainEvent): { entryIds: string[]; types: string[] } | null {
+  switch (event.type) {
+    case 'entry.published':
+    case 'entry.unpublished':
+    case 'entry.moved':
+      return { entryIds: [event.entryId], types: [event.contentTypeApiId] };
+    case 'entries.published_bulk':
+    case 'release.published':
+      return { entryIds: [...event.entryIds], types: [] };
+    case 'content_type.published':
+    case 'content_type.deleted':
+      return { entryIds: [], types: [event.contentTypeApiId] };
+    default:
+      return null;
+  }
+}
+
+function addRef(plan: PurgePlan, spaceId: string, environmentId: string, event: DomainEvent) {
+  const tag = deliveryScopeTag(spaceId, environmentId);
+  let ref = plan.refs.get(tag);
+  if (!ref) {
+    ref = {
+      spaceId,
+      environmentId,
+      entryIds: new Set(),
+      contentTypeApiIds: new Set(),
+      everything: false,
+      eventIds: new Set(),
+    };
+    plan.refs.set(tag, ref);
+  }
+  if (ref.eventIds.size < PURGE_REF_IDS) ref.eventIds.add(event.id);
+  const named = namedBy(event);
+  if (!named) {
+    ref.everything = true;
+    return;
+  }
+  for (const id of named.entryIds) ref.entryIds.add(id);
+  for (const t of named.types) ref.contentTypeApiIds.add(t);
+  if (ref.entryIds.size > PURGE_REF_IDS || ref.contentTypeApiIds.size > PURGE_REF_IDS) {
+    ref.everything = true;
+  }
+}
+
+/** The plan's refs for one message's tags, lists capped (`everything` says the rest). */
+function refsFor(plan: PurgePlan, tags: readonly string[]): PurgeRef[] {
+  const out: PurgeRef[] = [];
+  for (const t of tags) {
+    const r = plan.refs.get(t);
+    if (!r) continue;
+    const big = r.entryIds.size > PURGE_REF_IDS || r.contentTypeApiIds.size > PURGE_REF_IDS;
+    out.push({
+      spaceId: r.spaceId,
+      environmentId: r.environmentId,
+      entryIds: big ? [] : [...r.entryIds],
+      contentTypeApiIds: big ? [] : [...r.contentTypeApiIds],
+      everything: r.everything || big,
+      eventIds: [...r.eventIds],
+    });
+  }
+  return out;
+}
+
 /** Adds what `event` makes stale to `plan`. */
 export async function planPurges(
   ctx: Pick<AppContext, 'store'>,
@@ -107,8 +187,12 @@ export async function planPurges(
   event: DomainEvent,
 ): Promise<void> {
   const { spaceId, environmentId } = event.scope;
+  const deliver = (space: string, env: string) => {
+    plan.delivery.add(deliveryScopeTag(space, env));
+    addRef(plan, space, env, event);
+  };
   if (PURGING_EVENTS.has(event.type)) {
-    plan.delivery.add(deliveryScopeTag(spaceId, environmentId));
+    deliver(spaceId, environmentId);
     // A republish with a new file takes the old version's URLs out of service: a response still
     // pointing at them must not be served either.
     const replaced = event.type === 'asset.published' && event.replacedVersion !== undefined;
@@ -119,12 +203,12 @@ export async function planPurges(
   // Ingest changes what Delivery serves (its search, the measured dimensions) only for a published
   // asset; a draft's ingest leaves every delivery response as it was.
   if (event.type === 'asset.ingested' && event.published) {
-    plan.delivery.add(deliveryScopeTag(spaceId, environmentId));
+    deliver(spaceId, environmentId);
   }
   // A move changes the manual order Delivery serves (`order=sys.position`) only for a published
   // entry: a draft's place is in no delivery response yet.
   if (event.type === 'entry.moved' && event.published) {
-    plan.delivery.add(deliveryScopeTag(spaceId, environmentId));
+    deliver(spaceId, environmentId);
   }
   // A share page of a collection lists its members' published files: a member published or
   // unpublished makes every such page stale. (A deleted asset has left its collections by now;
@@ -177,7 +261,7 @@ export async function planPurges(
       // images were made with them.
       plan.revoked.add(mediaRenditionTag(spaceId, event.name));
       for (const env of await ctx.store.spaces.listEnvironments(spaceId)) {
-        plan.delivery.add(deliveryScopeTag(spaceId, env.id));
+        deliver(spaceId, env.id);
       }
       break;
     }
@@ -185,7 +269,7 @@ export async function planPurges(
       // Locale settings belong to the space: what every environment delivers changes with them
       // (a locale turned off is no longer served, nor reached by a fallback, nor in the sitemap).
       for (const env of await ctx.store.spaces.listEnvironments(spaceId)) {
-        plan.delivery.add(deliveryScopeTag(spaceId, env.id));
+        deliver(spaceId, env.id);
       }
       break;
     case 'environment.deleted':
@@ -237,13 +321,13 @@ export async function sendPurges(
     const revoked = plan.deliveryRevoked.size > 0 ? [...plan.delivery] : [];
     const stale = revoked.length > 0 ? [] : [...plan.delivery];
     if (revoked.length > 0) {
-      const message: PurgeMessage = { tags: revoked };
+      const message: PurgeMessage = { tags: revoked, refs: refsFor(plan, revoked) };
       sends.push(
         deliveryQueue.send(message).catch((err: unknown) => onError('delivery purge', err)),
       );
     }
     if (stale.length > 0) {
-      const message: PurgeMessage = { tags: stale, mode: 'invalidate' };
+      const message: PurgeMessage = { tags: stale, mode: 'invalidate', refs: refsFor(plan, stale) };
       sends.push(
         deliveryQueue.send(message).catch((err: unknown) => onError('delivery purge', err)),
       );
