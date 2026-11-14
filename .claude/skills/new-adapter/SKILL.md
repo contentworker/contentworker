@@ -1,4 +1,5 @@
 ---
+
 name: new-adapter
 description: Add a Cloudflare adapter to ContentWorker. A new subpath of @contentworker/adapters implementing a port, its tests, the test-kit fake, the binding and env wiring in packages/platform, every wrangler.jsonc and the install scripts, and the docs. Use when adding a new backing service for an existing port (vector store, queue, blob store, AI or embeddings provider, email, images, video), or a new port with its first adapter.
 argument-hint: "<port> <adapter-name>"
@@ -40,7 +41,7 @@ Adapters live in one package, `packages/adapters`, one subpath each:
    stack's `LOCAL_STACK_VARS` in `apps/web/vite.config.ts` when local dev needs a value or a fake,
    `scripts/install.ts` (resource names in `names`/`shellVars`, a per-install setting in
    `toInstall`, `.env.example` and `deploy.yml`) and `scripts/setup.sh` (a resource that must exist
-   before deploy; operators re-run `pnpm cw:setup`), then `pnpm test:scripts`.
+   before deploy; operators re-run `pnpm contentworker:setup`), then `pnpm test:scripts`.
 
 7. **Docs:** `docs/configuration.md`, `docs/architecture.md` and the topic page (e.g.
    `docs/ai-agents-and-search.md`), then `pnpm --filter @contentworker/docs generate`.

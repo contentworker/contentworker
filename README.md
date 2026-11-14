@@ -172,8 +172,8 @@ ContentWorker runs in your own Cloudflare account (Workers Paid plan, and a zone
 
 ```sh
 cp .env.example .env     # set DOMAIN
-pnpm cw:setup            # creates the resources and the secrets (back up .secrets/)
-pnpm cw:deploy           # migrates D1, deploys the workers, smoke tests, rolls back on failure
+pnpm contentworker:setup            # creates the resources and the secrets (back up .secrets/)
+pnpm contentworker:deploy           # migrates D1, deploys the workers, smoke tests, rolls back on failure
 ```
 
 The install answers at `<DOMAIN>` (admin), `api.<DOMAIN>`, `cdn.<DOMAIN>` and `media.<DOMAIN>`;

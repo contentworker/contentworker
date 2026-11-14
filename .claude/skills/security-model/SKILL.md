@@ -1,4 +1,5 @@
 ---
+
 name: security-model
 description: ContentWorker's trust boundaries and what to check at each, for security review of a diff or a design. Covers the signed x-cw-principal header from the web Worker to the api, the delivery gateway and its unroutable Delivery entrypoint, API keys and scopes per space, the admin and MCP tokens, OAuth for MCP, human sign-in (passwords, passkeys, TOTP, OIDC, SCIM, setup), preview tokens and signed media URLs, outbound webhooks and fetches, plugins on Worker Loader, secrets at rest under DATA_KEY, untrusted content in model prompts, and CI's supply chain. Preloaded by the security-reviewer agent; use it directly when a change touches auth, roles, scopes, signing, secrets, webhooks, external fetches, plugins or model prompts.
 ---

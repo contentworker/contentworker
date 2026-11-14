@@ -117,8 +117,8 @@
       "Bash(scripts/setup.sh *)",
       "Bash(./scripts/setup-code.sh *)",
       "Bash(scripts/setup-code.sh *)",
-      "Bash(pnpm cw:setup*)",
-      "Bash(pnpm run cw:setup*)"
+      "Bash(pnpm contentworker:setup*)",
+      "Bash(pnpm run contentworker:setup*)"
     ],
     "deny": [
       "Bash(pnpm docs:deploy*)",
@@ -131,8 +131,8 @@
       "Bash(./scripts/deploy.sh*)",
       "Bash(scripts/deploy.sh*)",
       "Bash(bash scripts/deploy.sh*)",
-      "Bash(pnpm cw:deploy*)",
-      "Bash(pnpm run cw:deploy*)",
+      "Bash(pnpm contentworker:deploy*)",
+      "Bash(pnpm run contentworker:deploy*)",
       "Bash(pnpm db:migrate:remote*)",
       "Bash(pnpm --filter @contentworker/web db:migrate:remote*)",
       "Read(/.secrets/**)",

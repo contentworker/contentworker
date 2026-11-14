@@ -294,7 +294,7 @@ space); a recovery admin lands on `/team`. On the space step Coworker proposes t
 creates it once they confirm its card, or they fill in the New space form, or skip to the admin.
 `pnpm dev:first-run` walks the same path locally (see [Development](./development.md)).
 
-**Recovery**: `pnpm cw:setup-code` replaces `SETUP_TOKEN` in `.secrets/secrets.env` and on the web
+**Recovery**: `pnpm contentworker:setup-code` replaces `SETUP_TOKEN` in `.secrets/secrets.env` and on the web
 worker. Redeeming it creates one more
 admin account even though others exist.
 

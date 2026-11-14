@@ -1,4 +1,5 @@
 ---
+
 name: docs-page
 description: Add or restructure a page in the ContentWorker docs (the published apps/docs site, or the maintainer docs in docs/ that are embedded for MCP). Use when a new feature, API surface or integration needs its own page, or when a page should split or move. Covers where the page goes, frontmatter, sidebar and index registration, the generated components, the surface map, the writing voice and the checks.
 ---
@@ -25,13 +26,13 @@ it, never by its variable name.
 
 ## Where it goes
 
-| Section             | Directory                                  | For                                                    |
-| ------------------- | ------------------------------------------ | ------------------------------------------------------ |
-| Start               | `apps/docs/src/content/start/`             | Reading in order: getting started, concepts, self-hosting |
-| Working with content | `apps/docs/src/content/guides/`           | A task or feature in the admin, end to end             |
-| Integrating         | `apps/docs/src/content/guides/`            | Keys, reading content, webhooks, SDKs, MCP             |
-| Reference           | `apps/docs/src/content/reference/`         | Things you look up: routes, nodes, templates, scopes   |
-| Maintainer docs     | `docs/` (repo root)                        | How it is built, configured, deployed and tested       |
+| Section              | Directory                          | For                                                       |
+| -------------------- | ---------------------------------- | --------------------------------------------------------- |
+| Start                | `apps/docs/src/content/start/`     | Reading in order: getting started, concepts, self-hosting |
+| Working with content | `apps/docs/src/content/guides/`    | A task or feature in the admin, end to end                |
+| Integrating          | `apps/docs/src/content/guides/`    | Keys, reading content, webhooks, SDKs, MCP                |
+| Reference            | `apps/docs/src/content/reference/` | Things you look up: routes, nodes, templates, scopes      |
+| Maintainer docs      | `docs/` (repo root)                | How it is built, configured, deployed and tested          |
 
 A maintainer page is `docs/<slug>.md` with an `#` title and a one-line summary under it, an entry
 in `docs/README.md`, and relative links between maintainer pages; it links site pages as

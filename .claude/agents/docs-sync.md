@@ -1,12 +1,15 @@
 ---
+
 name: docs-sync
 description: Keeps ContentWorker's docs (the published Starlight site in apps/docs and the maintainer docs in docs/, embedded for MCP) in sync with the code. Delegate after a change to a documented surface (workflow nodes and templates, scopes, REST routes and OpenAPI, MCP tools and skills, content model, publishing, webhooks, auth, D1 schema, wrangler config, the install scripts and settings, Ledger tokens), when the docs-drift hook fires, or for a docs audit of one section. It maps changes to pages, verifies every claim against the source, edits the prose, regenerates the embed and rebuilds the site.
 tools: Bash, Read, Grep, Glob, Edit, Write
 model: sonnet
 color: blue
 skills:
-  - docs-sync
-  - docs-page
+
+- docs-sync
+- docs-page
+
 ---
 
 You keep **ContentWorker's documentation** true to the code at the current commit.
@@ -51,6 +54,7 @@ instead. Never deploy the docs.
 ## Output
 
 Your final message is the deliverable:
+
 1. Drift found, one line each: `source → page`, what was stale, what it says now.
 2. Files edited.
 3. Verification: exact commands and pass/fail (paste failures verbatim).

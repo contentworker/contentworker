@@ -1,4 +1,5 @@
 ---
+
 name: docs-sync
 description: Keep the published Starlight docs in apps/docs and the maintainer docs in docs/ true to ContentWorker's code after a change. Use when a change touches a documented surface (workflow nodes and templates, permission scopes, REST routes and OpenAPI, MCP tools and skills, content model, publishing, webhooks, auth, D1 schema, wrangler config, the install scripts and settings, Ledger tokens), when the docs-drift hook fires, or when docs look stale. Maps changed files to pages, separates generated reference pages from hand-written prose, regenerates the docs embed and verifies with the docs build.
 ---
@@ -20,14 +21,14 @@ The `docs-page` skill says which material goes where.
 
 **Generated at build time. Never hand-copy these into prose:**
 
-| Output                                   | Source                                                        | Component                                |
-| ---------------------------------------- | ------------------------------------------------------------- | ---------------------------------------- |
-| Node catalog (`reference/nodes`)         | `NODE_SPECS`, `packages/domain/src/workflow/nodes.ts`          | `NodeCatalog.astro`, `NodeIcon.astro`    |
-| Workflow templates (`reference/workflow-templates`) | `WORKFLOW_TEMPLATES`, `packages/domain/src/workflow/templates.ts` | `WorkflowTemplates.astro`       |
-| Permission scopes (`reference/scopes`)   | `SCOPES`, `scopesForKind`, `packages/domain/src/auth/auth.ts`  | `Scopes.astro`                           |
+| Output                                                                            | Source                                                                                                                    | Component                                          |
+| --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
+| Node catalog (`reference/nodes`)                                                  | `NODE_SPECS`, `packages/domain/src/workflow/nodes.ts`                                                                     | `NodeCatalog.astro`, `NodeIcon.astro`              |
+| Workflow templates (`reference/workflow-templates`)                               | `WORKFLOW_TEMPLATES`, `packages/domain/src/workflow/templates.ts`                                                         | `WorkflowTemplates.astro`                          |
+| Permission scopes (`reference/scopes`)                                            | `SCOPES`, `scopesForKind`, `packages/domain/src/auth/auth.ts`                                                             | `Scopes.astro`                                     |
 | `/openapi.json`, the `/api/` explorer, the endpoint index on `reference/rest-api` | the routes the api registers (`packages/http/src/api`), via `apps/docs/scripts/openapi.ts` → `src/generated/openapi.json` | `src/pages/openapi.json.ts`, `EndpointIndex.astro` |
-| Docs theme (`src/styles/theme.css`)      | `packages/design/src/tokens.ts`                               | `pnpm sync:theme`                        |
-| `packages/docs/src/generated.ts`         | `docs/*.md`                                                   | `pnpm --filter @contentworker/docs generate` |
+| Docs theme (`src/styles/theme.css`)                                               | `packages/design/src/tokens.ts`                                                                                           | `pnpm sync:theme`                                  |
+| `packages/docs/src/generated.ts`                                                  | `docs/*.md`                                                                                                               | `pnpm --filter @contentworker/docs generate`       |
 
 Rebuilding refreshes the site's generated pages. The prose _around_ them still makes claims (a
 node's behaviour, a scope named in a sentence, a status code in an example), and those are yours

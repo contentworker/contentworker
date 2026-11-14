@@ -1,9 +1,12 @@
 ---
+
 paths:
-  - docs/**
-  - apps/docs/**
-  - README.md
-  - ROADMAP.md
+
+- docs/**
+- apps/docs/**
+- README.md
+- ROADMAP.md
+
 ---
 
 # Documentation

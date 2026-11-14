@@ -113,7 +113,7 @@ pipeline.
 
 ## Backing up secrets
 
-`pnpm cw:setup` generates the install's secrets into `.secrets/secrets.env` (or
+`pnpm contentworker:setup` generates the install's secrets into `.secrets/secrets.env` (or
 `.secrets/secrets-<instance>.env`), mode 0600 and gitignored, and never prints them. That file is
 the only copy outside the workers, which hold their secrets write-only. Copy the whole `.secrets/`
 folder somewhere outside the machine (a password manager, an encrypted store) once after setup, and
@@ -122,7 +122,7 @@ recovery window: a restore to before a `DATA_KEY` rotation brings back values se
 key. During a rotation, copy it before removing `DATA_KEY_PREVIOUS`.
 
 **To recover,** put the folder back at `.secrets/` and run the deploy again: it reads the secrets
-file and sets each secret on the workers. `pnpm cw:setup` refuses to generate a new `DATA_KEY`,
+file and sets each secret on the workers. `pnpm contentworker:setup` refuses to generate a new `DATA_KEY`,
 `TOKEN_PEPPER` or `PASSWORD_PEPPER` while a worker holds one, so a lost file can't be replaced by
 accident. If the folder leaks, rotate what can rotate (`DATA_KEY`, `PRINCIPAL_KEY`,
 `MEDIA_SIGNING_SECRET`). `TOKEN_PEPPER` and `PASSWORD_PEPPER` can't rotate, so treat them as

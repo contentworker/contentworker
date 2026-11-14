@@ -34,9 +34,9 @@ clients, Workflow clients), `@contentworker/http` (the Hono surface: routes, aut
 ## Rules
 
 - **Branch in a worktree; never push `main`; open a PR.** Merging deploys nothing from this
-  repository: an install deploys with `pnpm cw:deploy` (or the operator's optional deploy-on-merge
+  repository: an install deploys with `pnpm contentworker:deploy` (or the operator's optional deploy-on-merge
   workflow). Agents never deploy (`wrangler deploy` without `--dry-run`, `versions deploy`,
-  `rollback`, `pnpm cw:deploy`); `wrangler deploy --dry-run` checks a bundle.
+  `rollback`, `pnpm contentworker:deploy`); `wrangler deploy --dry-run` checks a bundle.
 - **Never migrate a remote database by hand.** `wrangler d1 migrations apply DB --local` only.
 - **Migrations are hand-written SQL, expand-only, and never edited once applied**
   (`packages/db/migrations/NNNN_*.sql`, mirrored in `packages/db/src/schema.ts`). Add a column

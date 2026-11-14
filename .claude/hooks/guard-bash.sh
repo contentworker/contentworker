@@ -13,7 +13,7 @@ cmd=$(field .tool_input.command)
 [ -z "$cmd" ] && exit 0
 cwd=$(field .cwd)
 
-ci="Deploys are the operator's to run (\`pnpm cw:deploy\`, or the optional Deploy workflow on a fork), never an agent session's. scripts/deploy.sh renders the install's configs, records a D1 bookmark, migrates D1, deploys engine, media, api, delivery and web, smoke-tests, and rolls the Workers back (engine first) on a failure. Check a bundle with \`wrangler deploy --dry-run --outdir <dir>\`; if a Deploy run failed, see the ci-triage skill."
+ci="Deploys are the operator's to run (\`pnpm contentworker:deploy\`, or the optional Deploy workflow on a fork), never an agent session's. scripts/deploy.sh renders the install's configs, records a D1 bookmark, migrates D1, deploys engine, media, api, delivery and web, smoke-tests, and rolls the Workers back (engine first) on a failure. Check a bundle with \`wrangler deploy --dry-run --outdir <dir>\`; if a Deploy run failed, see the ci-triage skill."
 
 S='[[:space:]]'
 while IFS= read -r seg; do
@@ -50,7 +50,7 @@ while IFS= read -r seg; do
   if m "^(pnpm|npm|yarn|bun|turbo|npx$S+turbo)($S|$)"; then
     # `pnpm … exec wrangler deploy --dry-run` is the dry run above, run through pnpm: allowed.
     if ! { m "$S(exec$S+)?wrangler$S+deploy($S|$)" && m "$S--dry-run($S|$)"; }; then
-      m "($S)(run$S+)?(docs:|cw:)?deploy($S|$)" && deny PreToolUse "Blocked \`$seg\`. $ci"
+      m "($S)(run$S+)?(docs:|contentworker:)?deploy($S|$)" && deny PreToolUse "Blocked \`$seg\`. $ci"
     fi
     m "($S)(run$S+)?db:migrate:remote($S|$)" &&
       deny PreToolUse "Blocked \`$seg\`. Remote D1 migrations run in the operator's deploy before the Workers. Apply locally with \`pnpm db:migrate:local\`. $ci"
@@ -59,7 +59,7 @@ while IFS= read -r seg; do
   # scripts/deploy.sh runs everything above in one command. Reading or linting it is fine; anything
   # else that names it is treated as running it, by its bare name too (`cd scripts && ./deploy.sh`).
   # This is a tripwire, not the boundary: the script itself refuses to run unless started as
-  # `pnpm cw:deploy` (or in CI).
+  # `pnpm contentworker:deploy` (or in CI).
   m "(^|$S|/|\(|\`)deploy\.sh([^a-zA-Z0-9.]|$)" &&
     ! m "^(cat|sed|grep|rg|head|tail|wc|ls|diff|shellcheck|chmod|git|gh|bash$S+-n)($S|$)" &&
     deny PreToolUse "Blocked \`$seg\`. $ci"
@@ -90,9 +90,9 @@ while IFS= read -r seg; do
   # Creating the install's resources and secrets, or issuing a setup code, touches the live
   # account. Reading or linting the scripts is fine.
   if m "(^|$S|/)scripts/(setup|setup-code)\.sh($S|$)" ||
-    { m "^(pnpm|npm|yarn|bun)($S|$)" && m "$S(run$S+)?cw:setup(-code)?($S|$)"; }; then
+    { m "^(pnpm|npm|yarn|bun)($S|$)" && m "$S(run$S+)?contentworker:setup(-code)?($S|$)"; }; then
     m "^(cat|sed|grep|rg|head|tail|wc|ls|diff|shellcheck|chmod|git|gh|bash$S+-n)($S|$)" ||
-      ask PreToolUse "\`$seg\` creates or changes the install's Cloudflare resources and secrets (\`pnpm cw:setup\`), or issues a new admin setup code (\`pnpm cw:setup-code\`). Run it only when the user asked for it."
+      ask PreToolUse "\`$seg\` creates or changes the install's Cloudflare resources and secrets (\`pnpm contentworker:setup\`), or issues a new admin setup code (\`pnpm contentworker:setup-code\`). Run it only when the user asked for it."
   fi
   m "^gh$S+pr$S+merge($S|$)" &&
     ask PreToolUse "Merging to main ships the change (a fork with the Deploy workflow on deploys it). Confirm with the user before merging."

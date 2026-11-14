@@ -1,6 +1,9 @@
 ---
+
 paths:
-  - packages/sdk/**
+
+- packages/sdk/**
+
 ---
 
 # Public SDK (`packages/sdk/*`)

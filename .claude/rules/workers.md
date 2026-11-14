@@ -28,8 +28,8 @@ paths:
 - Each `wrangler.jsonc` is the template `scripts/install.ts` renders for the install
   (`apps/<app>/wrangler.deploy.json`); never deploy it by hand. A new resource is created in
   `scripts/setup.sh` (and named in `shellVars` in `install.ts`), and operators re-run
-  `pnpm cw:setup` before deploying the release that binds it (`infra-change`).
-- A deploy (`scripts/deploy.sh`, run by the operator as `pnpm cw:deploy` or by the optional Deploy
+  `pnpm contentworker:setup` before deploying the release that binds it (`infra-change`).
+- A deploy (`scripts/deploy.sh`, run by the operator as `pnpm contentworker:deploy` or by the optional Deploy
   workflow) goes engine → media → api → delivery → web and rolls back engine first; the engine
   can't roll back past a Durable Object migration. DO migration tags only append (`apps/engine/wrangler.jsonc` and
   `scripts/do-migrations.test.ts`, same change).

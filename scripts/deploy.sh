@@ -3,22 +3,22 @@
 # a D1 bookmark, migrate, deploy the Workers, smoke-test, and roll back on a failure. See
 # docs/deployment.md.
 #
-#   pnpm cw:deploy [--env-file <path>]
+#   pnpm contentworker:deploy [--env-file <path>]
 #
 # Reads the install's settings from the environment and its settings file (.env by default), and
 # its secrets from the environment or the secrets file scripts/setup.sh wrote. Deploys with
 # wrangler's login, or CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID (required in CI). Run it as
-# `pnpm cw:deploy` (or in CI); started directly, it refuses unless CONTENTWORKER_DEPLOY=1.
+# `pnpm contentworker:deploy` (or in CI); started directly, it refuses unless CONTENTWORKER_DEPLOY=1.
 set -euo pipefail
 env_file=.env
 while [ $# -gt 0 ]; do
   case "$1" in
     --env-file) env_file="${2:?--env-file needs a path}"; shift 2 ;;
-    *) echo "usage: pnpm cw:deploy [--env-file <path>]" >&2; exit 2 ;;
+    *) echo "usage: pnpm contentworker:deploy [--env-file <path>]" >&2; exit 2 ;;
   esac
 done
 if [ "${GITHUB_ACTIONS:-}" != true ] && [ "${CONTENTWORKER_DEPLOY:-}" != 1 ]; then
-  echo "This ships to production. Run it as \`pnpm cw:deploy\`, or set CONTENTWORKER_DEPLOY=1." >&2
+  echo "This ships to production. Run it as \`pnpm contentworker:deploy\`, or set CONTENTWORKER_DEPLOY=1." >&2
   exit 1
 fi
 cd "$(dirname "$0")/.."

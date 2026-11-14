@@ -1,4 +1,5 @@
 ---
+
 name: docs-audit
 description: Full audit of the ContentWorker docs (apps/docs and docs/) against the code, page by page. Use for a periodic sweep, before a release, or when many changes have landed without doc updates. Slower and broader than docs-sync, which follows a diff; this reads every page and checks every claim.
 disable-model-invocation: true

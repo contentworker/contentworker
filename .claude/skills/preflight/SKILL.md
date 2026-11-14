@@ -1,4 +1,5 @@
 ---
+
 name: preflight
 description: Run the checks CI's verify job runs (lint, type-check, build, tests, Worker bundles, scripts tests, toolkit tests), scoped to the packages a change touches, and report pass or fail verbatim. Use before saying a change is done, before committing, before opening a PR, or when asked whether something is green.
 argument-hint: "[base-ref, default origin/main]"

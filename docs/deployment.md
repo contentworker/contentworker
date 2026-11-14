@@ -3,8 +3,8 @@
 ContentWorker is self-hosted: one install in your own Cloudflare account, with its own database,
 object storage bucket, key-value namespace, vector index, queues, AI gateway and five edge workers
 (engine, media, api, delivery, web). Spaces and environments live inside the install's database.
-You run two scripts from a checkout: `pnpm cw:setup` creates the resources and the secrets once,
-and `pnpm cw:deploy` ships the checked-out commit. Merging to `main` of this repository deploys
+You run two scripts from a checkout: `pnpm contentworker:setup` creates the resources and the secrets once,
+and `pnpm contentworker:deploy` ships the checked-out commit. Merging to `main` of this repository deploys
 nothing, and an agent session never deploys.
 
 For bindings and vars, see [Configuration](./configuration.md); for what each worker does, see
@@ -27,14 +27,14 @@ git clone <your clone of the repository> contentworker && cd contentworker
 pnpm install
 pnpm --filter @contentworker/engine exec wrangler login
 cp .env.example .env        # set DOMAIN, and any optional setting you want
-pnpm cw:setup               # resources and secrets; safe to re-run
-pnpm cw:deploy
+pnpm contentworker:setup               # resources and secrets; safe to re-run
+pnpm contentworker:deploy
 ```
 
 1. **Settings.** `.env.example` lists every setting as a flat environment variable; copy it to
    `.env` (gitignored). A variable already set in the environment wins over the file, and an empty
    one counts as unset. `scripts/install.ts` parses them.
-2. **`pnpm cw:setup`** (`scripts/setup.sh [--env-file <path>] [--github]`) needs `wrangler login`
+2. **`pnpm contentworker:setup`** (`scripts/setup.sh [--env-file <path>] [--github]`) needs `wrangler login`
    (or the token variables) and is safe to re-run; it keeps what exists. It:
    - creates the database and turns on read replication (`mode: auto`; when the API refuses, it
      says how to do it in the dashboard);
@@ -61,7 +61,7 @@ pnpm cw:deploy
    `PASSWORD_PEPPER` are in every API key and password hash. Losing one makes what it protects
    unreadable, and none can be regenerated. Keep a copy outside the machine, in a password manager
    or a secrets store (see [Backup & restore](./backup-and-restore.md#backing-up-secrets)).
-4. **`pnpm cw:deploy`** (`scripts/deploy.sh [--env-file <path>]`) ships the checked-out commit; see
+4. **`pnpm contentworker:deploy`** (`scripts/deploy.sh [--env-file <path>]`) ships the checked-out commit; see
    [What a deploy does](#what-a-deploy-does).
 5. **The first admin.** Open `https://<DOMAIN>/setup` and enter `SETUP_TOKEN` from the secrets file
    to create the first administrator.
@@ -105,17 +105,17 @@ node scripts/install.ts secrets <app> <out>  # that app's secrets, as JSON
 ```sh
 git pull
 pnpm install
-pnpm cw:deploy
+pnpm contentworker:deploy
 ```
 
 A deploy migrates the database before the new code ships, so every migration is expand-only
-(additive; see [Migrations](#migrations)). Re-run `pnpm cw:setup` first when a release adds a
+(additive; see [Migrations](#migrations)). Re-run `pnpm contentworker:setup` first when a release adds a
 resource (a queue, a bucket rule): it creates only what is missing, and a deploy that needs a
 resource that isn't there fails at the step that binds it.
 
 ### Upgrade notes
 
-A release that needs more than `pnpm cw:deploy` is listed here, newest first, with what to do
+A release that needs more than `pnpm contentworker:deploy` is listed here, newest first, with what to do
 before deploying it. A release not listed needs nothing extra.
 
 - None yet.
@@ -123,7 +123,7 @@ before deploying it. A release not listed needs nothing extra.
 ## What a deploy does
 
 `scripts/deploy.sh` runs from the commit it ships. It refuses to start outside GitHub Actions unless
-`CONTENTWORKER_DEPLOY=1` (`pnpm cw:deploy` sets it) and removes the secrets from its environment
+`CONTENTWORKER_DEPLOY=1` (`pnpm contentworker:deploy` sets it) and removes the secrets from its environment
 once they are written to files, so builds never see them. Each step is a titled group in a CI log,
 and a failure names the one it stopped at.
 
@@ -252,7 +252,7 @@ queue one at a time (`deploy-production`) and never cancel each other.
 - **Settings** are repository variables with the names in `.env.example` (`DOMAIN` is required).
 - **Secrets** are secrets of the `production` environment, limited to `main` (never repository
   secrets, which a workflow on any branch can read; add required reviewers there to approve each
-  deploy): the ones `pnpm cw:setup --github` sets, the optional
+  deploy): the ones `pnpm contentworker:setup --github` sets, the optional
   ones you use (`OIDC_CLIENT_SECRET`, `STREAM_WEBHOOK_SECRET`, `MCP_TOKEN`, `ADMIN_TOKEN`, the
   `*_PREVIOUS` keys during a rotation), and `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`
   ([the deploy token](#the-deploy-token)).
@@ -298,8 +298,8 @@ file, for example `.env.staging`, with its own `DOMAIN` and:
   namespaces are account-wide and derive from it (`slot × 1000 + n`; slot 1 is the default).
 
 ```sh
-pnpm cw:setup --env-file .env.staging
-pnpm cw:deploy --env-file .env.staging
+pnpm contentworker:setup --env-file .env.staging
+pnpm contentworker:deploy --env-file .env.staging
 ```
 
 ## Releasing the SDK
@@ -335,7 +335,7 @@ Migrate a remote database only through a deploy.
 
 ## Recovering admin access
 
-When no administrator can sign in, `pnpm cw:setup-code` (`scripts/setup-code.sh [--env-file <path>] [--github]`; pass `--github` with deploy on merge, or its next deploy puts the old code back)
+When no administrator can sign in, `pnpm contentworker:setup-code` (`scripts/setup-code.sh [--env-file <path>] [--github]`; pass `--github` with deploy on merge, or its next deploy puts the old code back)
 issues a new one-time setup code: it replaces `SETUP_TOKEN` in the secrets file (so the next deploy
 keeps it) and on the web worker (so it works now), and never prints it. Send the person recovering
 access `https://<DOMAIN>/setup` and the code. It opens `/setup` once to create one admin account;

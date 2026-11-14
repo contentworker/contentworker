@@ -17,6 +17,7 @@ store in workerd, and what keeps the core testable without bindings. One adapter
 inner package drags a Cloudflare binding type into every runtime.
 
 **Check.**
+
 - `grep -rn "from '@contentworker/" packages/domain/src`
 - `grep -rnE "from '@contentworker/(adapters|platform|http|db|security)" packages/ports/src packages/application/src packages/test-kit/src packages/agent-runtime/src`
 - `grep -rnE "from '(drizzle-orm|hono|cloudflare:)" packages/domain/src packages/ports/src packages/application/src`
@@ -193,6 +194,7 @@ scraping markup. Stored HTML couples content to one presentation and smuggles sc
 into every channel.
 
 **Check.**
+
 - A new field or AI feature that produces rich text emits a `RichTextDocument` that passes
   `validateRichText`, not a string; model output is parsed into nodes, never stored as markup.
 - `grep -rniE "innerHTML|dangerouslySetInnerHTML|toHtml|\.html\b" packages/domain/src packages/application/src packages/db/src`

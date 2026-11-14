@@ -19,21 +19,21 @@ git clone <your clone of the repository> contentworker && cd contentworker
 pnpm install
 pnpm --filter @contentworker/engine exec wrangler login
 cp .env.example .env     # set DOMAIN
-pnpm cw:setup
-pnpm cw:deploy
+pnpm contentworker:setup
+pnpm contentworker:deploy
 ```
 
 1. **Settings.** `.env` holds the install's settings as flat variables. `DOMAIN` is required: the
    admin is served at `DOMAIN`, the API at `api.DOMAIN`, the Delivery API at `cdn.DOMAIN` and
    published media at `media.DOMAIN`. A variable already in the environment wins over the file,
    and an empty one counts as unset. `.env` is gitignored.
-2. **`pnpm cw:setup`** creates the database (with read replication), key-value namespace, object
+2. **`pnpm contentworker:setup`** creates the database (with read replication), key-value namespace, object
    storage bucket, vector index, queues and AI gateway, and generates the install's secrets into
    `.secrets/secrets.env`. It is safe to re-run: what exists is kept. It never prints a secret.
 3. **Back up `.secrets/`.** It is the only copy of the keys that seal stored secrets and hash API
    keys and passwords. Losing them makes what they protect unreadable, and they can't be
    regenerated. Copy the folder to a password manager or an encrypted store.
-4. **`pnpm cw:deploy`** records a database restore point, migrates the database, deploys the
+4. **`pnpm contentworker:deploy`** records a database restore point, migrates the database, deploys the
    workers (engine, media, api, delivery, web), smoke-tests the install and rolls back on a
    failure. It uses your `wrangler login`, or `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`.
 5. **Create the first admin.** Open `https://DOMAIN/setup` and enter `SETUP_TOKEN` from
@@ -54,22 +54,22 @@ pnpm cw:deploy
 | `EMAIL_FROM`, `EMAIL_FROM_NAME`                     | Send mail (notifications, invitations, password reset codes) with Email Sending from a domain onboarded to it |
 | `INSTANCE`, `RATE_LIMIT_SLOT`                       | A second install in the same account; see [Two installs](#two-installs-in-one-account)                        |
 
-Change a setting, then run `pnpm cw:setup` (when it adds a resource) and `pnpm cw:deploy` again.
+Change a setting, then run `pnpm contentworker:setup` (when it adds a resource) and `pnpm contentworker:deploy` again.
 
 ## Upgrade
 
 ```sh
 git pull
 pnpm install
-pnpm cw:deploy
+pnpm contentworker:deploy
 ```
 
 Migrations run before the new code ships and are expand-only, so the running version keeps working
-while a deploy is in progress. Run `pnpm cw:setup` first when a release adds a resource.
+while a deploy is in progress. Run `pnpm contentworker:setup` first when a release adds a resource.
 
 ## Recover access
 
-When no administrator can sign in, run `pnpm cw:setup-code`. It writes a new one-time setup code to
+When no administrator can sign in, run `pnpm contentworker:setup-code`. It writes a new one-time setup code to
 `.secrets/secrets.env` and sets it on the web worker. Open `https://DOMAIN/setup` with it to create
 one more admin account; its use is recorded in the audit log.
 
@@ -84,7 +84,7 @@ database's point-in-time recovery to the bookmark the deploy printed.
 For a fork that wants a push to `main` to deploy, the repository includes an optional workflow. It
 does nothing until the repository variable `DEPLOY_ON_MERGE` is `true`. It then runs after CI
 passes on `main`, with your settings as repository variables, your secrets on a `production`
-environment limited to `main` (`pnpm cw:setup --github` sets the generated ones), and a
+environment limited to `main` (`pnpm contentworker:setup --github` sets the generated ones), and a
 Cloudflare API token and account id.
 
 ## Two installs in one account
@@ -94,8 +94,8 @@ own `DOMAIN`, an `INSTANCE` name appended to every resource, and a `RATE_LIMIT_S
 that no other install in the account uses:
 
 ```sh
-pnpm cw:setup --env-file .env.staging
-pnpm cw:deploy --env-file .env.staging
+pnpm contentworker:setup --env-file .env.staging
+pnpm contentworker:deploy --env-file .env.staging
 ```
 
 Its secrets go to `.secrets/secrets-<instance>.env`: back that file up too.

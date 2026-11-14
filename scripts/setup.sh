@@ -201,5 +201,5 @@ fi
 
 echo
 echo "Done. Back up $SECRETS_FILE somewhere safe (a password manager or vault)."
-echo "Next: pnpm cw:deploy$([ "$env_file" != .env ] && echo " --env-file $env_file"). Then open https://$DOMAIN/setup and enter the"
+echo "Next: pnpm contentworker:deploy$([ "$env_file" != .env ] && echo " --env-file $env_file"). Then open https://$DOMAIN/setup and enter the"
 echo "setup code (SETUP_TOKEN in $SECRETS_FILE) to create the first admin."

@@ -1,4 +1,5 @@
 ---
+
 name: review-change
 description: Review the current branch's change before a PR or merge. Runs the code-reviewer, hexagonal-guardian, security-reviewer, workers-reviewer and admin-ui-reviewer agents in parallel where the diff warrants each, checks docs drift and the mechanical invariants, then merges the findings into one ranked list. Use when asked to review a change, before /ship, or after a large edit.
 argument-hint: "[base-ref, default origin/main]"
@@ -34,7 +35,7 @@ Uncommitted:
      `apps/{api,delivery,media,engine}/src`, `scripts/install.ts`, `scripts/setup.sh` or
      `.env.example`.
    - `admin-ui-reviewer`: when the diff touches `apps/web/app/**` or `packages/ui`.
-   Say which you skipped and why.
+     Say which you skipped and why.
 3. **Meanwhile, the mechanical checks yourself:**
    - Docs: `git diff --name-only <base>...HEAD | .claude/hooks/docs-map.sh` lists documented
      surfaces; check whether their pages changed in the same diff.

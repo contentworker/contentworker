@@ -1,4 +1,5 @@
 ---
+
 name: infra-change
 description: Change ContentWorker's Cloudflare configuration safely, and validate that an install still deploys. Covers adding or changing a binding, var, queue, bucket, KV namespace, Vectorize index, Durable Object, Workflow, route or compatibility flag in an app's wrangler.jsonc (web, api, delivery, media, engine, docs); typing it in EdgeEnv; rendering it for the install in scripts/install.ts; creating it in scripts/setup.sh; install settings (.env.example) and secrets; dry-run bundles and env parity; and ordering a release so a deploy never needs a resource that doesn't exist yet. Use for any edit to wrangler.jsonc, scripts/install.ts, scripts/setup.sh, scripts/deploy.sh, .env.example, .github/workflows/deploy.yml or packages/platform/src/env.ts.
 ---
@@ -19,14 +20,14 @@ resource names as shell variables (`shellVars`) for `setup.sh` and `deploy.sh`.
 `docs/configuration.md` (vars, secrets, bindings) are the references; read the relevant section
 first.
 
-| Worker          | Owns                                                                                   |
-| --------------- | -------------------------------------------------------------------------------------- |
+| Worker          | Owns                                                                                    |
+| --------------- | --------------------------------------------------------------------------------------- |
 | `apps/engine`   | Queue consumers, the cron sweeper, every Durable Object and Workflow class; no route    |
 | `apps/api`      | HTTP only; binds the engine's DOs and Workflows by `script_name`; Smart Placement       |
 | `apps/delivery` | Public delivery gateway + cached `Delivery` entrypoint; reads D1 replicas; purge queue  |
-| `apps/media`    | Published asset files at `media.<domain>`; cached `Media` entrypoint; media purge queue  |
-| `apps/web`      | The admin and human auth; `API` service binding to the api                             |
-| `apps/docs`     | Static docs site; not part of an install's deploy                                      |
+| `apps/media`    | Published asset files at `media.<domain>`; cached `Media` entrypoint; media purge queue |
+| `apps/web`      | The admin and human auth; `API` service binding to the api                              |
+| `apps/docs`     | Static docs site; not part of an install's deploy                                       |
 
 ## Checklist for a wrangler.jsonc change
 
@@ -63,14 +64,14 @@ first.
 ## Rollout order
 
 Merging to `main` deploys nothing from this repo: CI only verifies. The operator deploys a release
-with `pnpm cw:deploy` (or the optional Deploy workflow on a fork, on when the repo variable
+with `pnpm contentworker:deploy` (or the optional Deploy workflow on a fork, on when the repo variable
 `DEPLOY_ON_MERGE` is `true`), which migrates D1 and then deploys engine → media → api → delivery →
 web, smoke-tests, and rolls back engine first on a failure. Nothing creates resources during a
 deploy.
 
 - **A new resource a deploy needs** (a queue the engine consumes, a bucket, an index) must exist
   **before** the release that binds it is deployed: add it to `scripts/setup.sh`, and operators
-  re-run `pnpm cw:setup` (safe to re-run) before deploying. Say so in the PR description and in
+  re-run `pnpm contentworker:setup` (safe to re-run) before deploying. Say so in the PR description and in
   `docs/deployment.md`'s upgrade notes. The `guard-bash` hook asks before you run setup; it is the
   user's to run.
 - A deploy whose D1 or KV namespace can't be found stops before it changes anything ("run
@@ -103,11 +104,11 @@ new secret means: add it to `SECRETS` for each app that reads it (and to the loo
 ## Never
 
 `wrangler deploy` (without `--dry-run`), `wrangler versions deploy`, `wrangler rollback`,
-`wrangler d1 migrations apply --remote`, deleting one of the install's resources, `pnpm cw:deploy`,
+`wrangler d1 migrations apply --remote`, deleting one of the install's resources, `pnpm contentworker:deploy`,
 `scripts/deploy.sh` or `pnpm … deploy`. The `guard-bash` hook denies them; the operator runs them.
 
 ## Report
 
 What changed by file; each validation command with pass/fail (first failure verbatim); the steps
-operators must take before deploying the release (re-run `pnpm cw:setup`, set a new setting or
+operators must take before deploying the release (re-run `pnpm contentworker:setup`, set a new setting or
 secret).

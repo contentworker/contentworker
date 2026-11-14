@@ -101,7 +101,7 @@ Everything below is built and tested on v2.
   redirects, inline editing, React, Vue, edge, React Native, Management and codegen as subpaths, and
   the `contentworker` CLI as its binary.
 - **Operations.** Self-hosting: `.env` settings rendered by `scripts/install.ts`, idempotent setup
-  (`pnpm cw:setup`), and `pnpm cw:deploy` (engine → media → api → delivery → web) with a
+  (`pnpm contentworker:setup`), and `pnpm contentworker:deploy` (engine → media → api → delivery → web) with a
   point-in-time recovery bookmark before each migration, smoke and latency checks, and ordered
   rollback; an optional deploy-on-merge workflow for a fork.
 

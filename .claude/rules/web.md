@@ -1,8 +1,11 @@
 ---
+
 paths:
-  - apps/web/**
-  - packages/ui/**
-  - packages/design/**
+
+- apps/web/**
+- packages/ui/**
+- packages/design/**
+
 ---
 
 # apps/web (the admin: React Router 8 SSR + human auth)

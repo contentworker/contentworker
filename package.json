@@ -18,9 +18,9 @@
     "db:migrate:local": "pnpm --filter @contentworker/web exec wrangler d1 migrations apply DB --local",
     "test:scripts": "node --test scripts/*.test.ts",
     "test:toolkit": ".claude/scripts/toolkit-check.sh && .claude/hooks/tests/docs-hooks.test.sh && .claude/hooks/tests/guard-hooks.test.sh",
-    "cw:setup": "scripts/setup.sh",
-    "cw:deploy": "CONTENTWORKER_DEPLOY=1 scripts/deploy.sh",
-    "cw:setup-code": "scripts/setup-code.sh",
+    "contentworker:setup": "scripts/setup.sh",
+    "contentworker:deploy": "CONTENTWORKER_DEPLOY=1 scripts/deploy.sh",
+    "contentworker:setup-code": "scripts/setup-code.sh",
     "dev:reset": "rm -rf apps/web/.wrangler/state && pnpm db:migrate:local",
     "dev:first-run": "turbo run generate && rm -rf apps/web/.wrangler/first-run && pnpm --filter @contentworker/web exec wrangler d1 migrations apply DB --local --persist-to .wrangler/first-run && CONTENTWORKER_FIRST_RUN=1 pnpm --filter @contentworker/web dev"
   },
