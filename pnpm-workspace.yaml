@@ -92,7 +92,7 @@ catalog:
   jsonc-parser: 3.3.1
 
   # Testing
-  jsdom: ^30.0.1
+  jsdom: ^31.0.0
   "@testing-library/dom": ^10.4.1
   "@testing-library/react": ^16.3.2
   "@playwright/test": 1.65.0
