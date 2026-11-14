@@ -48,6 +48,26 @@ export const PURGING_EVENTS = new Set<string>([
 ]);
 
 /**
+ * Events after which something a delivery response served must stop being served: their tags are
+ * purged (deleted from the cache). Every other purging event only invalidates (marks stale, so
+ * readers keep the previous copy for the moment a background revalidation takes, and nobody waits
+ * on a cold render). A release's own event invalidates: the unpublishes it carries arrive as their
+ * own `entry.unpublished` events in the same transaction.
+ */
+export const REVOKING_EVENTS = new Set<string>([
+  'entry.unpublished',
+  'asset.unpublished',
+  'asset.deleted',
+  'asset.rights_changed',
+  // A member removed from a collection must not stay listed.
+  'asset_collection.changed',
+  'content_type.deleted',
+  // Responses under the alias now belong to another environment.
+  'environment_alias.changed',
+  'environment.deleted',
+]);
+
+/**
  * Seconds before a revoked asset's media is purged a second time. A colo may still read the gate
  * entry it cached (KV's 60 s read cache) or a lagging D1 replica just after the first purge, and
  * cache the bytes again; by now every colo sees the removal, so the second purge is the last.
@@ -55,7 +75,10 @@ export const PURGING_EVENTS = new Set<string>([
 export const REVOCATION_REPURGE_SECONDS = 90;
 
 export interface PurgePlan {
+  /** Every delivery tag left stale: invalidated, unless also in {@link deliveryRevoked}. */
   readonly delivery: Set<string>;
+  /** Delivery tags purged outright: what they served must stop being served. */
+  readonly deliveryRevoked: Set<string>;
   /** Purged now. */
   readonly media: Set<string>;
   /** Purged now and again after {@link REVOCATION_REPURGE_SECONDS}: what stopped being served. */
@@ -64,6 +87,7 @@ export interface PurgePlan {
 
 export const newPurgePlan = (): PurgePlan => ({
   delivery: new Set(),
+  deliveryRevoked: new Set(),
   media: new Set(),
   revoked: new Set(),
 });
@@ -83,6 +107,12 @@ export async function planPurges(
   const { spaceId, environmentId } = event.scope;
   if (PURGING_EVENTS.has(event.type)) {
     plan.delivery.add(deliveryScopeTag(spaceId, environmentId));
+    // A republish with a new file takes the old version's URLs out of service: a response still
+    // pointing at them must not be served either.
+    const replaced = event.type === 'asset.published' && event.replacedVersion !== undefined;
+    if (REVOKING_EVENTS.has(event.type) || replaced) {
+      plan.deliveryRevoked.add(deliveryScopeTag(spaceId, environmentId));
+    }
   }
   // Ingest changes what Delivery serves (its search, the measured dimensions) only for a published
   // asset; a draft's ingest leaves every delivery response as it was.
@@ -186,7 +216,8 @@ export interface PurgeQueues {
 }
 
 /**
- * Sends the plan: one delivery message, one media message for everything stale now, and a delayed
+ * Sends the plan: up to two delivery messages (what is purged, then what is only invalidated), one
+ * media message for everything stale now, and a delayed
  * one for what was revoked. A failed send is logged, not thrown: the events it came from are
  * already handled, and retrying them would re-run every effect for a cache that ages out anyway.
  */
@@ -196,11 +227,22 @@ export async function sendPurges(
   onError: (what: string, err: unknown) => void,
 ): Promise<void> {
   const sends: Promise<unknown>[] = [];
-  if (plan.delivery.size > 0 && queues.PURGE_QUEUE) {
-    const message: PurgeMessage = { tags: [...plan.delivery] };
-    sends.push(
-      queues.PURGE_QUEUE.send(message).catch((err: unknown) => onError('delivery purge', err)),
-    );
+  const deliveryQueue = queues.PURGE_QUEUE;
+  if (deliveryQueue) {
+    const revoked = [...plan.deliveryRevoked];
+    const stale = [...plan.delivery].filter((t) => !plan.deliveryRevoked.has(t));
+    if (revoked.length > 0) {
+      const message: PurgeMessage = { tags: revoked };
+      sends.push(
+        deliveryQueue.send(message).catch((err: unknown) => onError('delivery purge', err)),
+      );
+    }
+    if (stale.length > 0) {
+      const message: PurgeMessage = { tags: stale, mode: 'invalidate' };
+      sends.push(
+        deliveryQueue.send(message).catch((err: unknown) => onError('delivery purge', err)),
+      );
+    }
   }
   // Revoked tags first, in messages of MEDIA_TAGS_PER_MESSAGE: a batch that touched many
   // collections can't make one message too large to send and lose the revocations with it.

@@ -92,8 +92,9 @@ Everything below is built and tested on v2.
   tools).
 - **Delivery at the edge.** An uncached gateway that authenticates every request (principal
   cached at the edge) in front of an edge-cached entrypoint keyed by visibility profile, with ETags,
-  `stale-while-revalidate`, and one coalesced purge tag per space and environment, drained
-  rationed from a queue. Reads use read-replica sessions.
+  `stale-while-revalidate`, and one coalesced tag per space and environment, drained
+  rationed from a queue: publishes and edits invalidate it (readers keep the stored copy while it
+  revalidates), unpublishes and revocations purge it. Reads use read-replica sessions.
 - **Read-your-writes.** The api returns the database session bookmark in `x-cw-bookmark`; a client
   that sends it back reads at least that fresh.
 - **SDK.** One npm package, `@contentworker/sdk`: Delivery and Preview, rich text, webhooks,

@@ -117,13 +117,20 @@ On a miss, `Delivery` (`apps/delivery/src/delivery.ts`) runs the same delivery r
 mounts against a database read-replica session (`first-unconstrained`), sets a strong ETag, and
 caches 200s with `public, max-age=60, stale-while-revalidate=86400, stale-if-error=604800` and a
 `cache-tag` for the path's environment and the environment it resolves to (so alias repoints purge
-too). It always returns the full body, because a `304` stored in the cache would be an empty answer;
-the gateway compares `If-None-Match` with the ETag and answers `304` itself.
+too). The gateway never forwards a reader's conditional headers: it compares `If-None-Match` with
+the ETag and answers `304` itself. So an `If-None-Match` reaching `Delivery` comes from the cache
+revalidating an invalidated or expired copy, and an unchanged body is answered `304` (the cache keeps
+what it stored); otherwise it returns the full body.
 
 Its queue consumer drains `contentworker-purge` with `drain` (`@contentworker/platform/purge`):
-up to 100 tags per purge call, one call every 12 s (the platform allows 5 a minute), at most 40
-calls per batch, handing the rest back with exponential backoff. The edge cache is per worker, so
-the media worker drains its own queue with the same function.
+up to 100 tags per call, one call every 12 s (the platform allows 5 a minute), at most 40 calls per
+batch, handing the rest back with exponential backoff. A message is a purge (deleted from the
+cache) or, with `mode: 'invalidate'`, an invalidation (`Delivery.invalidate`, Workers Cache
+`invalidate()`): the responses are kept but marked stale, and `stale-while-revalidate` restarts at
+the invalidation, so the next reader is served the stored copy while it is revalidated in the
+background and nobody waits on a cold render. One call carries one mode; a tag purged in a batch
+needs no invalidation. The edge cache is per worker, so the media worker drains its own queue with
+the same function (it has no `invalidate`, so it purges every message).
 
 A `301` from the deprecated `…/assets/:id/transform` (a redirect to an immutable media URL) is
 cached and tagged like a `200`.
@@ -148,7 +155,10 @@ delivery bind them by `script_name`) and handles:
   `asset.rights_changed`, `asset_collection.changed`, `taxonomy.changed`, `redirects.changed`,
   `menus.changed`, `content_type.published`, `content_type.deleted`, `release.published`, `environment_alias.changed`,
   `environment.deleted`; the sitemap is purged with the rest of the scope; `asset.ingested` only
-  when `published`; `asset_renditions.changed` purges every environment of the space). Asset events
+  when `published`; `asset_renditions.changed` purges every environment of the space). Only the
+  events in `REVOKING_EVENTS` (an unpublish, an asset unpublished, deleted or with changed rights,
+  a collection change, a deleted type, an alias repoint, a deleted environment) and a republish
+  that replaces an asset's file purge the tag; the rest are sent as an invalidation. Asset events
   also write or remove the media gate (`assetGate`, key-value store) and send the media worker's
   tags on `contentworker-media-purge` (`apps/engine/src/purges.ts`): see
   [Assets](#assets-object-storage-image-transforms-video-and-the-media-worker).

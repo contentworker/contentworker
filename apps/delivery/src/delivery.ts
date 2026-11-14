@@ -15,16 +15,17 @@ import { fromCanonical } from './profile';
 export const PRINCIPAL_HEADER = 'x-cw-delivery-principal';
 
 /**
- * Fresh for a minute, then served stale while revalidating for a day. Staleness is bounded by
- * purges: every publish in a space:environment purges its tag (the purge queue). Authorization is
- * never stale: the gateway authenticates every request before the cache.
+ * Fresh for a minute, then served stale while revalidating for a day. Staleness is bounded by the
+ * purge queue: a publish or edit invalidates its space:environment's tag (marked stale, so the next
+ * reader is served the stored copy while it revalidates in the background: the stale window
+ * restarts at the invalidation), and an unpublish, revocation or delete purges it outright.
+ * Authorization is never stale: the gateway authenticates every request before the cache.
  */
 export const FRESH = 'public, max-age=60, stale-while-revalidate=86400, stale-if-error=604800';
 const NO_STORE = 'private, no-store';
 
-type CachePurge = {
-  purge(o: { tags: string[] }): Promise<{ success: boolean; errors: unknown[] }>;
-};
+type CacheTagOp = (o: { tags: string[] }) => Promise<{ success: boolean; errors: unknown[] }>;
+type WorkerCache = { purge: CacheTagOp; invalidate?: CacheTagOp };
 
 /**
  * Delivery: the cached entrypoint. Workers Caching sits in front of it (wrangler `exports`), keyed
@@ -100,8 +101,13 @@ export class Delivery extends WorkerEntrypoint<EdgeEnv> {
         'cache-tag',
         [...new Set([deliveryScopeTag(space, named), deliveryScopeTag(space, concrete)])].join(','),
       );
-      // Always the full body: this response is what Workers Caching stores, so a 304 here would
-      // be cached as an empty answer. Conditional requests are answered by the gateway.
+      // The gateway never forwards a reader's conditional headers (it answers those itself), so an
+      // If-None-Match here comes from Workers Caching revalidating an invalidated or expired copy:
+      // a 304 tells it to keep the stored body. Anything else gets the full body, which is what
+      // the cache stores.
+      if (res.status === 200 && matches(request.headers.get('if-none-match'), etag)) {
+        return new Response(null, { status: 304, headers });
+      }
       return new Response(body, { status: res.status, headers });
     }
     // Errors and empty answers are not cached: a 404 for an entry about to be published must not
@@ -112,11 +118,28 @@ export class Delivery extends WorkerEntrypoint<EdgeEnv> {
 
   /** Purges cached responses by tag. Workers Caching scopes a purge to the entrypoint calling it. */
   async purge(tags: string[]): Promise<{ success: boolean; skipped?: true }> {
-    const cache = (this.ctx as unknown as { cache?: CachePurge }).cache;
+    return this.tagOp('purge', tags);
+  }
+
+  /**
+   * Marks cached responses stale by tag: kept, and served while this entrypoint revalidates them
+   * (stale-while-revalidate restarts at the invalidation). Purges instead where the runtime has no
+   * `invalidate`, which is stricter, never staler.
+   */
+  async invalidate(tags: string[]): Promise<{ success: boolean; skipped?: true }> {
+    return this.tagOp('invalidate', tags);
+  }
+
+  private async tagOp(
+    op: 'purge' | 'invalidate',
+    tags: string[],
+  ): Promise<{ success: boolean; skipped?: true }> {
+    const cache = (this.ctx as unknown as { cache?: WorkerCache }).cache;
     // Local dev and tests have no Workers Caching.
     if (!cache) return { success: true, skipped: true };
-    const r = await cache.purge({ tags });
-    if (!r.success) console.error('purge refused', JSON.stringify(r.errors));
+    const call = op === 'invalidate' && cache.invalidate ? cache.invalidate : cache.purge;
+    const r = await call.call(cache, { tags });
+    if (!r.success) console.error(`${op} refused`, JSON.stringify(r.errors));
     return { success: r.success };
   }
 }
