@@ -16,32 +16,42 @@ export interface SyncState<F extends Fields> {
 export function useOfflineEntries<F extends Fields = Fields>(
   store: OfflineDelivery<F>,
 ): SyncState<F> {
-  const [entries, setEntries] = useState<import('@contentworker/sdk-core').DeliveredEntry<F>[]>([]);
-  const [syncing, setSyncing] = useState(false);
-  const [error, setError] = useState<Error | undefined>();
+  type View = Omit<SyncState<F>, 'sync'> & { store: OfflineDelivery<F> };
+  const [view, setView] = useState<View>({ store, entries: [], syncing: false });
+  if (view.store !== store) setView({ store, entries: [], syncing: false });
+
+  const update = useCallback(
+    (patch: Partial<Omit<View, 'store'>>) => {
+      setView((current) => (current.store === store ? { ...current, ...patch } : current));
+    },
+    [store],
+  );
 
   const sync = useCallback(async () => {
-    setSyncing(true);
-    setError(undefined);
+    update({ syncing: true, error: undefined });
     try {
       await store.sync();
-      setEntries(await store.list());
-    } catch (e) {
-      setError(e as Error);
-    } finally {
-      setSyncing(false);
+      update({ entries: await store.list(), syncing: false });
+    } catch (err) {
+      update({ error: err as Error, syncing: false });
     }
-  }, [store]);
+  }, [store, update]);
 
   useEffect(() => {
     let active = true;
-    // Serve cache first, then sync.
-    store.list().then((cached) => active && setEntries(cached));
+    store.list().then(
+      (entries) => {
+        if (active) update({ entries });
+      },
+      (err) => {
+        if (active) update({ error: err as Error });
+      },
+    );
     void sync();
     return () => {
       active = false;
     };
-  }, [store, sync]);
+  }, [store, sync, update]);
 
-  return { entries, syncing, error, sync };
+  return { entries: view.entries, syncing: view.syncing, error: view.error, sync };
 }

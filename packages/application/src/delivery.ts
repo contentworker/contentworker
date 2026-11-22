@@ -437,7 +437,7 @@ export async function listPublishedEntries(
   ctx: AppContext,
   scope: Scope,
   requested: EntryQuery = {},
-  opts: RenderOptions = {},
+  opts: RenderOptions & { readonly principal?: Principal } = {},
 ): Promise<DeliveredEntry[]> {
   const reads = opts.reads ?? deliveryReads(ctx);
   // A filter on a term's slug reads the terms it names alongside the config (same round trip),
@@ -446,9 +446,10 @@ export async function listPublishedEntries(
   // A reference filter reads the content model in the same round trip: the store answers it from
   // the links the model declares, as the reference edges do.
   const refs = usesReferenceFilters(requested);
+  const restricted = opts.principal?.contentGrants !== undefined;
   const first = await reads.read(scope, {
     config: true,
-    ...(refs ? { contentTypes: true } : {}),
+    ...(refs || (restricted && !requested.contentTypeApiId) ? { contentTypes: true } : {}),
     ...(slugs?.tags.length ? { tags: { slugs: slugs.tags } } : {}),
     ...(slugs?.concepts.length ? { concepts: { slugs: slugs.concepts } } : {}),
   });
@@ -461,6 +462,20 @@ export async function listPublishedEntries(
   // Filtering/ordering/search compare against a single resolved locale; default
   // to the requested locale, then the space default.
   const locale = query.locale ?? opts.locale ?? config.defaultLocale;
+  const principal = opts.principal;
+  if (
+    restricted &&
+    principal &&
+    query.contentTypeApiId &&
+    !canAccessContentType(principal, 'read', query.contentTypeApiId)
+  )
+    return [];
+  const readablePublishedTypes =
+    restricted && principal && !query.contentTypeApiId
+      ? (first.contentTypes
+          ?.map((t) => t.apiId)
+          .filter((id) => canAccessContentType(principal, 'read', id)) ?? [])
+      : undefined;
   const depth = clampDepth(opts.include);
   const cacheable = Boolean(ctx.cache) && isCacheableListQuery(query);
   const key = cacheable ? listCacheKey(scope, query, locale, depth, opts.locale) : '';
@@ -474,6 +489,7 @@ export async function listPublishedEntries(
 
   const rows = await ctx.store.entries.listPublished(scope, {
     ...query,
+    readablePublishedTypes,
     ...(refs ? { contentTypes: first.contentTypes ?? [] } : {}),
     locale,
     fallbackLocales: localeFallbackChain(config, locale),

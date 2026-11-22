@@ -28,10 +28,35 @@ describe('@contentworker/sdk-edge', () => {
     const client = createEdgeClient({ ...base, fetch: fn });
 
     const e = await client.get('e1', ['title', 'icon']);
-    expect(calls[0]).toBe('https://cms.test/delivery/s1/main/entries/e1?locale=en-US');
+    expect(calls[0]).toBe(
+      'https://cms.test/delivery/s1/main/entries/e1?locale=en-US&select=title%2Cicon',
+    );
     // Projected to the requested fields only — compact payload for the device.
     expect(e.fields).toEqual({ title: 'Hi', icon: 'x' });
     expect(e.fields.body).toBeUndefined();
+  });
+
+  it('iterates projected pages until the playlist ends', async () => {
+    const offsets: number[] = [];
+    const client = createEdgeClient({
+      ...base,
+      fetch: async (input) => {
+        const q = new URL(String(input)).searchParams;
+        expect(q.get('select')).toBe('title');
+        const skip = Number(q.get('skip'));
+        offsets.push(skip);
+        return Response.json({
+          items: ['a', 'b', 'c']
+            .slice(skip, skip + 2)
+            .map((id) => ({ id, contentType: 'post', fields: { title: id } })),
+        });
+      },
+    });
+    const ids = [];
+    for await (const entry of client.iterate('post', { limit: 2, pick: ['title'] }))
+      ids.push(entry.id);
+    expect(ids).toEqual(['a', 'b', 'c']);
+    expect(offsets).toEqual([0, 2]);
   });
 
   it('lists with content_type + locale', async () => {

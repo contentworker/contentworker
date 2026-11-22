@@ -2,6 +2,8 @@ import {
   createDeliveryClient,
   type DeliveredEntry,
   type DeliveryClient,
+  type EntryQuery,
+  type Fields,
 } from '@contentworker/sdk-core';
 import { describe, expect, it } from 'vitest';
 import { createOfflineDelivery, InMemoryStorage } from '../src/index.js';
@@ -150,12 +152,62 @@ describe('@contentworker/sdk-react-native offline delivery', () => {
       const { listEntries } = fakeClient(data, { preview });
       const store = createOfflineDelivery({
         client: { listEntries } as unknown as DeliveryClient,
+        namespace: 'custom-test',
         storage: new InMemoryStorage(),
         contentType: 'article',
         pageSize: 2,
       });
       expect((await store.sync()).synced).toBe(5);
     }
+  });
+
+  it('isolates locales, environments and preview in shared storage, including resets', async () => {
+    const storage = new InMemoryStorage();
+    const data = [entry('a', '2026-01-01')];
+    const client = fakeClient(data);
+    const options = { client, storage, contentType: 'article' };
+    const english = createOfflineDelivery({ ...options, locale: 'en' });
+    await english.sync();
+    for (const overrides of [
+      { locale: 'fr' },
+      { locale: 'en', client: { ...client, feedUrl: `${client.feedUrl}-staging` } },
+      { locale: 'en', client: fakeClient(data, { preview: true }) },
+    ]) {
+      const other = createOfflineDelivery({ ...options, ...overrides });
+      expect(await other.get('a')).toBeNull();
+      expect((await other.sync()).synced).toBe(1);
+      await other.reset();
+      expect(await english.get('a')).toEqual(data[0]);
+    }
+  });
+
+  it('reconciles withdrawals and keeps the last successful snapshot if a page fails', async () => {
+    const data = [entry('a', '2026-01-01'), entry('b', '2026-01-02')];
+    const client = fakeClient(data);
+    let fail = false;
+    const store = createOfflineDelivery({
+      client: {
+        ...client,
+        async *iterateEntries<F extends Fields = Fields>(q?: EntryQuery) {
+          for await (const e of client.iterateEntries<F>(q)) {
+            yield e;
+            if (fail) throw new Error('offline');
+          }
+        },
+      },
+      storage: new InMemoryStorage(),
+      contentType: 'article',
+      reconcileIntervalMs: 0,
+    });
+    await store.sync();
+    data.splice(0, 2, entry('b', '2026-02-01'));
+    fail = true;
+    await expect(store.sync()).rejects.toThrow('offline');
+    expect((await store.list()).map((e) => e.publishedAt)).toEqual(['2026-01-01', '2026-01-02']);
+    fail = false;
+    await store.sync();
+    expect(await store.get('a')).toBeNull();
+    expect(await store.list()).toEqual(data);
   });
 
   it('reset clears the local cache and cursor', async () => {

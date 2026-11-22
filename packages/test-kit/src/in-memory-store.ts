@@ -940,6 +940,10 @@ export class InMemoryContentStore implements ContentStore {
       if (query.contentTypeApiId) {
         rows = rows.filter((r) => r.contentTypeApiId === query.contentTypeApiId);
       }
+      if (query.readablePublishedTypes) {
+        const allowed = new Set(query.readablePublishedTypes);
+        rows = rows.filter((r) => allowed.has(r.contentTypeApiId));
+      }
       if (query.since) rows = rows.filter((r) => r.publishedAt > (query.since as string));
       if (query.afterEntryId !== undefined && query.afterEntryId !== '') {
         const cursor = query.afterEntryId;

@@ -113,10 +113,7 @@ client.bookmark: string | undefined     // read-your-writes position (preview); 
   `nextCursor` to the last page, so `break` stops fetching. A `skip` applies to the first page
   only, and a cursor the server repeats (the starting `cursor` included) throws a plain `Error`
   rather than looping. On Delivery, which answers no entry cursor, `iterateEntries` advances
-  `skip` by `limit` (held to 1..100, 100 by default) until a page comes back short. Delivery drops
-  entries of types a key isn't granted after reading each page, so a page can come back short
-  mid-list for a key limited to some content types: give that key's iteration a `contentType` it
-  may read.
+  `skip` by `limit` (held to 1..100, 100 by default) until a page comes back short. Delivery applies content-type grants before paging.
 - `getAsset` / `listAssets` read `/assets` (or `/preview/…/assets` with `preview: true`) and return
   the delivered asset shape (see [API reference](./api-reference.md#delivery-api-cda));
   `AssetPage` is `{ items, total, nextCursor? }`, and a `cursor` wins over `skip`.
@@ -463,8 +460,14 @@ import { createEdgeClient } from '@contentworker/sdk/edge';
 const client = createEdgeClient({ baseUrl, space, environment, token, locale: 'en-US' });
 
 await client.get('entry-42', ['title', 'body']); // pick only these fields
-await client.list('article', { limit: 20, pick: ['title'] });
+await client.list('article', { limit: 20, skip: 20, pick: ['title'] });
+for await (const entry of client.iterate('article', { limit: 20, pick: ['title'] })) {
+  console.log(entry.fields.title);
+}
 ```
+
+Both reads send `pick` as `select` to reduce the transferred JSON. `list` reads one page, while
+`iterate` walks pages of up to 100 entries.
 
 Returns `CompactEntry` = `{ id, contentType, fields }` where `fields` is already flattened to the
 client locale (no locale nesting). It asks for no `include`, so an asset field is the bare link
@@ -565,12 +568,16 @@ import {
 } from '@contentworker/sdk/react-native';
 ```
 
-- **Storage is injected.** `createOfflineDelivery({ client, storage, contentType, locale?, pageSize? })`
+- **Storage is injected.** `createOfflineDelivery({ client, storage, contentType, locale?, pageSize?, namespace?, reconcileIntervalMs? })`
   writes through a `Storage` interface (`getItem` / `setItem` / `removeItem`, sync or async), which
   both AsyncStorage and MMKV satisfy. `InMemoryStorage` ships for tests.
 - `store.sync()` delta-syncs entries published since the stored cursor and returns
-  `{ synced, cursor }`; `get(id)`, `list()` and `reset()` read and clear local storage. An entry
-  unpublished on the server is not removed locally yet. It pages through `client.iterateEntries`
+  `{ synced, cursor }`; `get(id)`, `list()` and `reset()` read and clear local storage. The first sync and the first sync after 24 hours replace the local feed with the
+  current published set, removing withdrawals. Set `reconcileIntervalMs: 0` for every sync or call
+  `sync({ reconcile: true })` to reconcile now. Storage separates install, surface, space,
+  environment, type and locale. Use a distinct stable `namespace` for each audience when clients
+  share storage with different grants. A custom client without `feedUrl` requires a namespace.
+  The first sync after upgrade downloads the feed again and ignores the old unscoped keys. It pages through `client.iterateEntries`
   (or, for a client without it, `listEntries` by `nextCursor` or `skip`), with `pageSize` held to
   1..100. Over a preview client every sync reads the whole type again: Preview ignores `since` and
   its entries carry no `publishedAt`, so `cursor` stays `null`.

@@ -37,6 +37,7 @@ const DOCS = {
       ok: publishedEntryList,
       query: {
         content_type: 'Filter by content type apiId',
+        select: 'Comma-separated field apiIds',
         locale: 'Resolve fields for one locale',
         include: 'Reference resolution depth',
         where:
@@ -54,7 +55,11 @@ const DOCS = {
   getEntry: () =>
     doc('Delivery', 'Get a published entry', {
       ok: publishedEntry,
-      query: { locale: 'Resolve fields for one locale', include: 'Reference resolution depth' },
+      query: {
+        locale: 'Resolve fields for one locale',
+        include: 'Reference resolution depth',
+        select: 'Comma-separated field apiIds',
+      },
     }),
   getSingleton: () =>
     doc('Delivery', 'Get a singleton’s entry', {

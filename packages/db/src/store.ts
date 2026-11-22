@@ -1265,10 +1265,15 @@ function makeEntryRepo(
       return rows.map(toPublished);
     },
     async listPublished(scope, query: EntryQuery) {
-      const advanced = isAdvancedQuery(query);
+      const advanced = isAdvancedQuery({ ...query, select: undefined });
       const conditions = [scopeFilter(schema.entryPublished, scope)];
       if (query.contentTypeApiId) {
         conditions.push(eq(schema.entryPublished.contentTypeApiId, query.contentTypeApiId));
+      }
+      if (query.readablePublishedTypes) {
+        conditions.push(
+          sql`${schema.entryPublished.contentTypeApiId} IN (SELECT value FROM json_each(${JSON.stringify(query.readablePublishedTypes)}))`,
+        );
       }
       if (query.since)
         conditions.push(gt(schema.entryPublished.publishedAt, new Date(query.since)));
@@ -1345,24 +1350,27 @@ function makeEntryRepo(
         select = select.limit(scanLimit + 1);
       }
       const published = (await select).map(toPublished);
-      if (!advanced) return published;
-      if (published.length > scanLimit) {
+      if (advanced && published.length > scanLimit) {
         throw new QueryTooBroadError(scanLimit);
       }
-      const filtered = runEntryQuery(
-        published,
-        decided.size ? { ...query, filters: query.filters?.filter((f) => !decided.has(f)) } : query,
-        (r) => r.fields,
-        (r) => ({
-          id: r.entryId,
-          contentType: r.contentTypeApiId,
-          publishedAt: r.publishedAt,
-          firstPublishedAt: r.firstPublishedAt,
-          position: r.position ?? r.entryId,
-          'metadata.tags': r.metadata?.tags ?? [],
-          'metadata.concepts': r.metadata?.concepts ?? [],
-        }),
-      );
+      const filtered = advanced
+        ? runEntryQuery(
+            published,
+            decided.size
+              ? { ...query, filters: query.filters?.filter((f) => !decided.has(f)) }
+              : query,
+            (r) => r.fields,
+            (r) => ({
+              id: r.entryId,
+              contentType: r.contentTypeApiId,
+              publishedAt: r.publishedAt,
+              firstPublishedAt: r.firstPublishedAt,
+              position: r.position ?? r.entryId,
+              'metadata.tags': r.metadata?.tags ?? [],
+              'metadata.concepts': r.metadata?.concepts ?? [],
+            }),
+          )
+        : published;
       if (!query.select) return filtered;
       return filtered.map((r) => ({
         ...r,

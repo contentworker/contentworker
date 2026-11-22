@@ -815,6 +815,13 @@ describe('granular RBAC over HTTP', () => {
       return (await res.json()) as { fields: Record<string, unknown> };
     };
 
+    // A page sorts before both readable types; it must not consume the first page's slot.
+    const listed = await app.request('/delivery/s1/main/entries?order=sys.contentType&limit=1', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    expect(await listed.json()).toMatchObject({ items: [{ id: postId }], total: 1 });
+    expect(Object.keys((await fetchStory(token, 'select=title')).fields)).toEqual(['title']);
+
     // Locale-flattened read: post embed masked, page embed reverted to stub.
     const flat = await fetchStory(token, 'include=1&locale=en-US');
     const refPost = flat.fields.refPost as Embedded;

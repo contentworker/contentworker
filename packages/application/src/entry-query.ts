@@ -69,6 +69,14 @@ function fieldName(path: string): string {
 
 const list = (raw: string) => raw.split(',').map((s) => s.trim());
 
+export function parseFieldSelection(raw: string | undefined): string[] | undefined {
+  return raw === undefined
+    ? undefined
+    : list(raw)
+        .map(fieldName)
+        .filter((s) => s && !s.startsWith('sys.'));
+}
+
 function toFilter(path: string, op: string, raw: string): QueryFilter | null {
   if (!OPS.has(op)) return null;
   const field = fieldName(path);
@@ -148,10 +156,7 @@ export function entryQueryFrom(entries: Iterable<[string, string]>): EntryQuery 
       continue;
     }
     if (key === 'select') {
-      select = value
-        .split(',')
-        .map((s) => fieldName(s.trim()))
-        .filter((s) => s && !s.startsWith('sys.'));
+      select = parseFieldSelection(value);
       continue;
     }
     if (key === 'query') {
