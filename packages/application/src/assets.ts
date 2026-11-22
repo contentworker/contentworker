@@ -134,11 +134,15 @@ export async function prepareUploadDraft(
   blob: BlobStore,
   scope: Scope,
   input: CreateAssetInput,
-  opts: { readonly createdBy?: string; readonly folderId?: string } = {},
+  opts: {
+    readonly createdBy?: string;
+    readonly folderId?: string;
+    readonly reservedId?: string;
+  } = {},
 ): Promise<{ readonly asset: Asset; readonly key: string; readonly contentType: string }> {
   const checked = await runHook(ctx, 'asset:beforeCreate', scope, input);
   if (opts.folderId) await getAssetFolderOrThrow(ctx, scope, opts.folderId);
-  const id = ctx.ids.newId();
+  const id = opts.reservedId ?? ctx.ids.newId();
   const key = assetObjectKey(scope, id, checked.fileName);
   const url = await blob.getDownloadUrl(key);
   const asset: Asset = {

@@ -1165,6 +1165,7 @@ export class InMemoryContentStore implements ContentStore {
     listAwaitingUpload: async (createdBefore, limit) => {
       const out: { scope: Scope; asset: Asset }[] = [];
       for (const [key, a] of this.assetData) {
+        if ([...this.uploadData.keys()].some((k) => k.startsWith(key + '::'))) continue;
         const created = a.createdAt ? Date.parse(a.createdAt) : 0;
         if (a.status !== 'draft' || a.ingestStatus || a.file.size !== undefined) continue;
         if (!a.r2Key || created <= 0 || created >= createdBefore.getTime()) continue;
@@ -1185,6 +1186,15 @@ export class InMemoryContentStore implements ContentStore {
         if (value === null) delete next[field];
         else next[field] = value;
       };
+      if (patch.tagsIfEmpty?.length && !current.metadata.tags.length) {
+        next.metadata = { ...current.metadata, tags: patch.tagsIfEmpty };
+        next.aiSuggestions = { ...current.aiSuggestions, tags: patch.tagsIfEmpty };
+      }
+      if (patch.descriptionIfEmpty) {
+        const { locale, value } = patch.descriptionIfEmpty;
+        if (!String(current.description[locale] ?? '').trim())
+          next.description = { ...current.description, [locale]: value };
+      }
       if (patch.status !== undefined) next.ingestStatus = patch.status;
       setOrClear('ingestError', patch.error);
       setOrClear('contentHash', patch.contentHash);
@@ -1774,6 +1784,23 @@ export class InMemoryContentStore implements ContentStore {
   private readonly uploadData = new JournaledMap<string, AssetUpload>();
 
   readonly assetUploads: AssetUploadRepo = {
+    renew: async (scope, assetId, uploadId, now) => {
+      const key = `${scopeKey(scope)}::${assetId}::${uploadId}`;
+      const row = this.uploadData.get(key);
+      if (!row || row.activityAt === 0) return false;
+      this.uploadData.set(key, {
+        ...row,
+        activityAt: Math.max(row.activityAt ?? Date.parse(row.createdAt), now.getTime()),
+      });
+      return true;
+    },
+    claimExpired: async (scope, assetId, uploadId, before) => {
+      const key = `${scopeKey(scope)}::${assetId}::${uploadId}`;
+      const row = this.uploadData.get(key);
+      if (!row || (row.activityAt ?? Date.parse(row.createdAt)) >= before.getTime()) return false;
+      this.uploadData.set(key, { ...row, activityAt: 0 });
+      return true;
+    },
     get: async (scope, assetId, uploadId) =>
       this.uploadData.get(`${scopeKey(scope)}::${assetId}::${uploadId}`) ?? null,
     create: async (scope, upload) => {
@@ -1789,7 +1816,7 @@ export class InMemoryContentStore implements ContentStore {
         .sort((a, b) => a.createdAt.localeCompare(b.createdAt)),
     listStartedBefore: async (before, limit) =>
       [...this.uploadData.entries()]
-        .filter(([, u]) => Date.parse(u.createdAt) < before.getTime())
+        .filter(([, u]) => (u.activityAt ?? Date.parse(u.createdAt)) < before.getTime())
         .sort(([, a], [, b]) => a.createdAt.localeCompare(b.createdAt))
         .slice(0, Math.max(1, limit))
         .map(([k, upload]) => {

@@ -3,9 +3,15 @@ import {
   type AppContext,
   type AssetIngestDeps,
   type IngestSummary,
+  importDocumentInbox,
   runAssetIngest,
 } from '@contentworker/application';
-import type { AssetIngestParams, AssetIngestStarter, WorkflowSteps } from '@contentworker/ports';
+import type {
+  AssetIngestParams,
+  AssetIngestQueue,
+  AssetIngestStarter,
+  WorkflowSteps,
+} from '@contentworker/ports';
 
 /** Workflows' code for "an instance with this ID already exists" (createBatch's per-entry error). */
 export const WORKFLOW_INSTANCE_EXISTS = 10405;
@@ -40,6 +46,8 @@ export class CloudflareAssetIngestStarter implements AssetIngestStarter {
 export interface AssetIngestHostDeps {
   readonly ctx: AppContext;
   readonly deps: AssetIngestDeps;
+  readonly queue?: AssetIngestQueue;
+  readonly starter?: AssetIngestStarter;
   close(): Promise<void>;
 }
 
@@ -62,11 +70,24 @@ export abstract class AssetIngestWorkflowBase<Env = unknown> extends WorkflowEnt
   ): Promise<IngestSummary> {
     const host = await this.open();
     try {
+      if (event.payload.inbox) {
+        if (!host.queue) throw new Error('Document inbox requires the asset queue');
+        await importDocumentInbox(
+          step as unknown as WorkflowSteps,
+          host.ctx,
+          host.deps.blob,
+          host.queue,
+          event.payload,
+        );
+        return { outcome: 'continued' };
+      }
       // The port is the slice of `WorkflowStep` the run uses; every step result is plain JSON.
       return await runAssetIngest(
         step as unknown as WorkflowSteps,
         host.ctx,
-        host.deps,
+        host.starter
+          ? { ...host.deps, continuation: { starter: host.starter, instanceId: event.instanceId } }
+          : host.deps,
         event.payload,
       );
     } finally {

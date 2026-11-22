@@ -7,6 +7,8 @@ import {
   generateAltText,
   getAsset,
   getAssetUsage,
+  getDocumentPage,
+  getDocumentTemplate,
   listAssetVersions,
   parseImageTransform,
   publishAsset,
@@ -17,6 +19,7 @@ import {
   restoreAssetVersion,
   setAssetMetadata,
   setAssetRights,
+  setDocumentTemplate,
   startMultipartAssetFileReplacement,
   transformAssetUrl,
   unpublishAsset,
@@ -45,6 +48,25 @@ export function assetItemRoutes(deps: AuthDeps): Hono<AuthVars> {
   const { signedOne } = assetUrls(blob);
   const app = new Hono<AuthVars>();
 
+  app.get(
+    `${BASE}/document-ingestion/template`,
+    doc('Assets', 'Read the document ingestion template', { ok: assetDocs.documentTemplate }),
+    requireScope(SCOPES.assetsRead),
+    async (c) => c.json(await getDocumentTemplate(ctx, scopeOf(c))),
+  );
+  app.put(
+    `${BASE}/document-ingestion/template`,
+    doc('Assets', 'Edit the document ingestion template', {
+      body: assetDocs.documentTemplate,
+      ok: assetDocs.documentTemplate,
+    }),
+    requireScope(SCOPES.assetsWrite),
+    async (c) =>
+      c.json(
+        await setDocumentTemplate(ctx, scopeOf(c), await parseBody(c, assetDocs.documentTemplate)),
+      ),
+  );
+
   // --- one asset (read, edit, AI, publishing, file versions, rights) ----------
   app.get(
     `${BASE}/assets/:id`,
@@ -56,6 +78,27 @@ export function assetItemRoutes(deps: AuthDeps): Hono<AuthVars> {
     }),
     requireScope(SCOPES.assetsRead),
     async (c) => c.json(await signedOne(c, await getAsset(ctx, scopeOf(c), c.req.param('id')))),
+  );
+  app.get(
+    `${BASE}/assets/:id/document/pages/:page`,
+    doc('Assets', 'Read a parsed document page or slide', {
+      ok: assetDocs.documentPage,
+      query: { mediaOffset: 'Offset into embedded media, 100 per page' },
+      description:
+        'Ordered text, static preview and embedded files of the current asset version, with short-lived signed read URLs.',
+    }),
+    requireScope(SCOPES.assetsRead),
+    async (c) =>
+      c.json(
+        await getDocumentPage(
+          ctx,
+          blob,
+          scopeOf(c),
+          c.req.param('id'),
+          Number(c.req.param('page')),
+          Number(c.req.query('mediaOffset') ?? 0),
+        ),
+      ),
   );
   app.post(
     `${BASE}/assets/:id/video/refresh`,
@@ -175,7 +218,7 @@ export function assetItemRoutes(deps: AuthDeps): Hono<AuthVars> {
   );
   app.post(
     `${BASE}/assets/:id/auto-tag`,
-    doc('AI & agents', 'Suggest tags for an image asset', {
+    doc('AI & agents', 'Suggest tags for an image or document asset', {
       body: tierOnlyBody,
       ok: assetDocs.autoTagResult,
       description:

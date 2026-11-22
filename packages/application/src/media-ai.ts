@@ -1,4 +1,4 @@
-import { NotFoundError, type Scope, ValidationError } from '@contentworker/domain';
+import { assetKind, NotFoundError, type Scope, ValidationError } from '@contentworker/domain';
 import type { AIProvider, ModelTier } from '@contentworker/ports';
 import { recordAgentRun } from './agent-audit';
 import { generateWithBudget } from './ai-budget';
@@ -135,6 +135,8 @@ const AUTO_TAG_SCHEMA = {
 };
 
 export interface AutoTagInput {
+  /** Bounded text read from the pinned file by document ingest. */
+  readonly documentExcerpt?: string;
   /** When true, create any suggested new tags and apply all tags to the asset. */
   readonly apply?: boolean;
   readonly tier?: ModelTier;
@@ -150,7 +152,7 @@ export interface AutoTagResult {
 }
 
 /**
- * Suggests taxonomy tags for an image: matches against the space's existing tag
+ * Suggests taxonomy tags for an image or document: matches against the space's existing tag
  * vocabulary and proposes new tag names. With `apply`, creates the new tags and
  * writes the full tag set onto the asset metadata.
  */
@@ -163,7 +165,10 @@ export async function autoTagAsset(
 ): Promise<AutoTagResult> {
   const policy = await requireAiCapability(ctx, scope, 'media');
   const asset = await getAsset(ctx, scope, id);
-  assertImage(asset.file.contentType);
+  const kind = assetKind(asset.file.contentType);
+  if (kind !== 'image' && kind !== 'document') {
+    throw new ValidationError([{ field: 'asset', message: 'Expected an image or document' }]);
+  }
   const config = await ctx.store.spaces.getConfig(scope);
   const defaultLocale = config?.defaultLocale;
   const existing = await listTags(ctx, scope);
@@ -179,6 +184,9 @@ export async function autoTagAsset(
     `File: ${wrapUntrusted(asset.file.fileName)} (${asset.file.contentType}).`,
     title ? `Title: ${wrapUntrusted(String(title))}` : '',
     description ? `Description: ${wrapUntrusted(String(description))}` : '',
+    kind === 'document' && input.documentExcerpt
+      ? `Document excerpt: ${wrapUntrusted(input.documentExcerpt.slice(0, 8192))}`
+      : '',
     `Existing tags: ${existing.length ? wrapUntrusted(existing.map((t) => t.name).join(', ')) : '(none)'}`,
     'Pick relevant existing tags and optionally suggest new ones.',
   ]

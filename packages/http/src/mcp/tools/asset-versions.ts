@@ -7,12 +7,15 @@ import {
   createVideoAsset,
   generateAltText,
   getAssetUsage,
+  getDocumentPage,
+  getDocumentTemplate,
   listAssetVersions,
   MAX_ASSET_BULK_TAGS,
   refreshVideoAsset,
   replaceAssetFile,
   restoreAssetVersion,
   setAssetRights,
+  setDocumentTemplate,
   startAssetBulkJob,
   startMultipartAssetFileReplacement,
   transformAssetUrl,
@@ -21,6 +24,7 @@ import { MAX_ASSET_RIGHTS_TEXT, NotConfiguredError, SCOPES } from '@contentworke
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { assetVersionResponse } from '../../api/asset-response';
+import { documentTemplate } from '../../api/docs/schemas/assets';
 import {
   ok,
   rightsRefusal,
@@ -44,6 +48,55 @@ export function registerAssetVersionTools(server: McpServer, t: ToolContext): vo
   };
   // The same author the REST routes record, so a version shows one name whichever surface made it.
   const actor = auditActor(principal);
+
+  server.registerTool(
+    'document_ingestion_template_get',
+    {
+      description: 'Read the document ingestion settings and their revision.',
+      annotations: { readOnlyHint: true },
+      inputSchema: toolSchema('document_ingestion_template_get', () => z.object(scopeArgs)),
+    },
+    async (args) => {
+      guard(SCOPES.assetsRead, scopeOf(args));
+      return ok(await getDocumentTemplate(ctx, scopeOf(args)));
+    },
+  );
+  server.registerTool(
+    'document_ingestion_template_set',
+    {
+      description:
+        'Set the DAM media draft, tag and description options for new document runs using the current revision.',
+      inputSchema: toolSchema('document_ingestion_template_set', () =>
+        documentTemplate.extend(scopeArgs),
+      ),
+    },
+    async (args) => {
+      guard(SCOPES.assetsWrite, scopeOf(args));
+      return ok(await setDocumentTemplate(ctx, scopeOf(args), args));
+    },
+  );
+  server.registerTool(
+    'asset_document_page',
+    {
+      description:
+        'Read a numbered page or slide from the current document version, including text, a static preview and embedded media. Use nextMediaOffset to read more media.',
+      annotations: { readOnlyHint: true },
+      inputSchema: toolSchema('asset_document_page', () =>
+        z.object({
+          id: z.string(),
+          page: z.int().positive(),
+          mediaOffset: z.int().nonnegative().optional(),
+          ...scopeArgs,
+        }),
+      ),
+    },
+    async (args) => {
+      guard(SCOPES.assetsRead, scopeOf(args));
+      return ok(
+        await getDocumentPage(ctx, fileBlob(), scopeOf(args), args.id, args.page, args.mediaOffset),
+      );
+    },
+  );
 
   server.registerTool(
     'asset_replace_file',
@@ -227,12 +280,12 @@ export function registerAssetVersionTools(server: McpServer, t: ToolContext): vo
     {
       description:
         'Act on many assets as a resumable bulk job: move (folderId; null for the root), tag ' +
-        '(addTags, removeTags), publish, unpublish or archive. Each asset gets the same checks ' +
+        '(addTags, removeTags), ingest (queue each current file), publish, unpublish or archive. Each asset gets the same checks ' +
         'as one at a time. Follow it with bulk_job_status; bulk_job_report names each asset that ' +
-        'failed. move and tag need assets:write; publish, unpublish and archive content:publish.',
+        'failed. ingest, move and tag need assets:write; publish, unpublish and archive content:publish.',
       inputSchema: toolSchema('assets_bulk', () =>
         z.object({
-          action: z.enum(['move', 'tag', 'publish', 'unpublish', 'archive']),
+          action: z.enum(['ingest', 'move', 'tag', 'publish', 'unpublish', 'archive']),
           ids: z.array(z.string().min(1).max(128)).min(1).max(BULK_JOB_MAX_ITEMS),
           folderId: z.string().min(1).max(128).nullable().optional(),
           addTags: z.array(z.string().min(1).max(128)).max(MAX_ASSET_BULK_TAGS).optional(),
@@ -247,13 +300,18 @@ export function registerAssetVersionTools(server: McpServer, t: ToolContext): vo
         scopeOf(args),
       );
       return ok(
-        await startAssetBulkJob(ctx, scopeOf(args), {
-          action: args.action,
-          ids: args.ids,
-          ...(args.folderId !== undefined ? { folderId: args.folderId } : {}),
-          ...(args.addTags ? { addTags: args.addTags } : {}),
-          ...(args.removeTags ? { removeTags: args.removeTags } : {}),
-        }),
+        await startAssetBulkJob(
+          ctx,
+          scopeOf(args),
+          {
+            action: args.action,
+            ids: args.ids,
+            ...(args.folderId !== undefined ? { folderId: args.folderId } : {}),
+            ...(args.addTags ? { addTags: args.addTags } : {}),
+            ...(args.removeTags ? { removeTags: args.removeTags } : {}),
+          },
+          Boolean(deps.assetIngest),
+        ),
       );
     },
   );
@@ -303,7 +361,7 @@ export function registerAssetVersionTools(server: McpServer, t: ToolContext): vo
     'asset_auto_tag',
     {
       description:
-        'Suggest taxonomy tags for an image asset (matching the existing vocabulary ' +
+        'Suggest taxonomy tags for an image or document asset (matching the existing vocabulary ' +
         'and proposing new names); set apply=true to create + assign them.',
       inputSchema: toolSchema('asset_auto_tag', () =>
         z.object({ id: z.string(), apply: z.boolean().optional(), ...scopeArgs }),

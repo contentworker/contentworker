@@ -1,5 +1,6 @@
 import { type DomainEvent, NotFoundError, ValidationError } from '@contentworker/domain';
 import {
+  FakeAssetIngestQueue,
   FakeBlobStore,
   FixedClock,
   InMemoryContentStore,
@@ -31,6 +32,7 @@ function setup() {
   const store = new InMemoryContentStore();
   const blob = new FakeBlobStore();
   const ctx: AppContext = { store, clock: new FixedClock(), ids: new SequenceIdGenerator('a') };
+  const assetIngest = new FakeAssetIngestQueue();
   let dispatched = 0;
   /** Runs the outbox's new events through dispatch, as the engine does (chunks included). */
   const drain = async () => {
@@ -39,11 +41,15 @@ function setup() {
       const batch = events.slice(dispatched);
       dispatched = events.length;
       for (const e of batch) {
-        await dispatchEvent(ctx, { sender: new RecordingWebhookSender(), blob }, e as DomainEvent);
+        await dispatchEvent(
+          ctx,
+          { sender: new RecordingWebhookSender(), blob, assetIngest },
+          e as DomainEvent,
+        );
       }
     }
   };
-  return { ctx, store, blob, drain };
+  return { ctx, store, blob, assetIngest, drain };
 }
 
 type Harness = ReturnType<typeof setup>;
@@ -58,6 +64,24 @@ describe('asset bulk jobs', () => {
   beforeEach(async () => {
     h = setup();
     await createSpace(h.ctx, { spaceId: 'shop', name: 'Shop', defaultLocale: 'en-US' });
+  });
+
+  it('queues the selected files and reports missing IDs through the job', async () => {
+    const selected = await upload(h, 'selected.pdf');
+    await upload(h, 'other.pdf');
+    const request = { action: 'ingest' as const, ids: [selected.id, selected.id, 'missing'] };
+    await expect(startAssetBulkJob(h.ctx, scope, request)).rejects.toThrow(/ASSET_EVENTS_QUEUE/);
+    const job = await startAssetBulkJob(h.ctx, scope, request, true);
+    await h.drain();
+    expect(h.assetIngest.requested).toEqual([
+      { scope, assetId: selected.id, version: 1, rerun: job.id },
+    ]);
+    expect(await getBulkJob(h.ctx, scope, job.id)).toMatchObject({
+      action: 'asset_ingest',
+      status: 'completed',
+      succeeded: 1,
+      failed: 1,
+    });
   });
 
   it('moves a selection larger than one chunk into a folder', async () => {

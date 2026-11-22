@@ -19,6 +19,8 @@ export class AssetIngestWorkflow extends AssetIngestWorkflowBase<EdgeEnv> {
     const wired = wireEdge(this.env);
     return {
       ctx: wired.ctx,
+      starter: wired.assetIngestStarter,
+      queue: wired.assetIngest,
       deps: makeAssetIngestDeps(this.env, wired),
       close: () => wired.close(),
     };

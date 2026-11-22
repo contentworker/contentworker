@@ -161,9 +161,9 @@ export function assetsRoutes(deps: AuthDeps): Hono<AuthVars> {
       description:
         'A resumable bulk job over a selection of assets (follow it at /bulk/jobs/{id}, failures ' +
         'at /bulk/jobs/{id}/report, each named by the asset’s title or file name): move ' +
-        '(folderId, null for the root), tag (addTags, removeTags), publish, unpublish or ' +
+        '(folderId, null for the root), tag (addTags, removeTags), ingest (queue each current file), publish, unpublish or ' +
         'archive. Each asset goes through the same checks as one at a time (publishing refuses ' +
-        'an archived or embargoed asset). move and tag need assets:write; publish, unpublish ' +
+        'an archived or embargoed asset). ingest, move and tag need assets:write; publish, unpublish ' +
         'and archive need content:publish.',
     }),
     // No route-level scope: it depends on the action, so it is checked once the body is read.
@@ -176,13 +176,18 @@ export function assetsRoutes(deps: AuthDeps): Hono<AuthVars> {
         assetBulkActionPublishes(action) ? SCOPES.contentPublish : SCOPES.assetsWrite,
         c.req.param('space'),
       );
-      const job = await startAssetBulkJob(actingCtx(ctx, c), scopeOf(c), {
-        action,
-        ids: body.ids,
-        ...(body.folderId !== undefined ? { folderId: body.folderId } : {}),
-        ...(body.addTags ? { addTags: body.addTags } : {}),
-        ...(body.removeTags ? { removeTags: body.removeTags } : {}),
-      });
+      const job = await startAssetBulkJob(
+        actingCtx(ctx, c),
+        scopeOf(c),
+        {
+          action,
+          ids: body.ids,
+          ...(body.folderId !== undefined ? { folderId: body.folderId } : {}),
+          ...(body.addTags ? { addTags: body.addTags } : {}),
+          ...(body.removeTags ? { removeTags: body.removeTags } : {}),
+        },
+        Boolean(deps.assetIngest),
+      );
       return c.json(job, 202);
     },
   );

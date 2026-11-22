@@ -57,6 +57,15 @@ export interface DownloadUrlOptions {
 
 /** Object storage for assets (R2). */
 export interface BlobStore {
+  listKeys?(
+    prefix: string,
+    limit: number,
+    cursor?: string,
+  ): Promise<{ keys: string[]; cursor?: string }>;
+  /** Create a small reservation once; concurrent attempts receive the winning value. */
+  reserve?(key: string, value: string): Promise<string>;
+  /** Stream a private object to its own immutable DAM file key, only if missing. */
+  copyOnce?(source: string, destination: string, contentType: string): Promise<void>;
   getUploadUrl(
     key: string,
     contentType: string,
@@ -133,6 +142,16 @@ export interface UploadedPart {
 
 /** Multipart uploads of one object key (R2's `createMultipartUpload` and its parts). */
 export interface MultipartBlobStore {
+  /** Stream one range of the pinned source directly into the destination upload. */
+  copyPart?(
+    source: string,
+    etag: string,
+    offset: number,
+    length: number,
+    destination: string,
+    uploadId: string,
+    number: number,
+  ): Promise<UploadedPart>;
   create(key: string, contentType: string): Promise<{ readonly uploadId: string }>;
   /**
    * A signed URL a client PUTs one part to: bound to the key, the upload, the part number and the
@@ -1019,7 +1038,28 @@ export interface AssetIngestQueue {
 }
 
 /** What one ingest run is about. Plain JSON: it is a Workflow instance's payload. */
+export interface DocumentIngestOptions {
+  readonly createMediaDrafts: boolean;
+  readonly suggestTags: boolean;
+  readonly describeDocument: boolean;
+}
+
 export interface AssetIngestParams {
+  readonly inbox?: {
+    readonly key: string;
+    readonly etag: string;
+    readonly size: number;
+    readonly folderId: string | null;
+  };
+  /** Next chunk of a pinned document, after earlier page manifests have committed. */
+  readonly documentCursor?: {
+    readonly page: number;
+    readonly pages: number;
+    readonly partial: boolean;
+    readonly etag: string;
+    readonly template: DocumentIngestOptions;
+  };
+
   readonly scope: Scope;
   readonly assetId: string;
   readonly version: number;
@@ -1044,4 +1084,23 @@ export interface AssetIngestStarter {
 export interface Counter {
   /** Increment `metric` by `value` (default 1) with optional labels. */
   count(metric: string, value?: number, labels?: Record<string, string>): void;
+}
+
+/** A single page of an immutable source. The caller owns its private derived-object prefix. */
+export interface DocumentPageRequest {
+  readonly sourceKey: string;
+  readonly etag: string;
+  readonly size: number;
+  readonly format: 'pdf' | 'pptx' | 'key';
+  readonly page: number;
+  readonly outputPrefix: string;
+}
+
+export interface DocumentPageResult {
+  readonly pages: number;
+  readonly partial: boolean;
+}
+
+export interface DocumentParser {
+  render(input: DocumentPageRequest): Promise<DocumentPageResult>;
 }

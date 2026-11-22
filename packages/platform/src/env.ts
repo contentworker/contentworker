@@ -23,6 +23,11 @@ export interface CfRateLimiter {
  * the fail-closed adapter guard refuses on a persistent deployment.
  */
 export interface EdgeEnv {
+  readonly DOCUMENT_PARSER?: DurableObjectNamespace<
+    import('./do/document-parser').DocumentParserDO
+  >;
+  readonly DOCUMENT_PARSER_ENABLED?: string;
+  readonly DOCUMENT_FOLDER_SCHEDULE?: import('@contentworker/application').DocumentFolderSchedule;
   /**
    * Worker Loader binding. Present only where sandboxed plugins are enabled;
    * absent means installed plugins are never executed, which is the safe
@@ -337,6 +342,7 @@ export type BindingShapeChecks = [
 
 /** Durable Object namespaces an EdgeEnv may carry. */
 const DO_BINDINGS = [
+  'DOCUMENT_PARSER',
   'LIVE_HUB',
   'AUTH_LIMITER',
   'AI_BUDGET',

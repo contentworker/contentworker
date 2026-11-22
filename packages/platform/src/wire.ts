@@ -409,6 +409,16 @@ export function makeAssetIngestDeps(env: EdgeEnv, wired: EdgeWired): AssetIngest
     ai: wired.ai,
     ...(env.IMAGES ? { images: createCfImageProbe(env.IMAGES) } : {}),
     ...(extractor ? { extractor } : {}),
+    ...(env.DOCUMENT_PARSER_ENABLED === 'true' && env.DOCUMENT_PARSER
+      ? {
+          documentParser: {
+            render(input) {
+              const ns = withJurisdiction(env).DOCUMENT_PARSER!;
+              return ns.get(ns.newUniqueId()).render(input);
+            },
+          },
+        }
+      : {}),
     search: wired.assetSearch,
     ...(extractionGuard ? { extractionGuard } : {}),
   };

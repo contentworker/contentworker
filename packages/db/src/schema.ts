@@ -579,12 +579,14 @@ export const assetUploads = sqliteTable(
     r2Key: text('r2_key').notNull(),
     size: integer('size').notNull(),
     partSize: integer('part_size').notNull(),
+    activityAt: integer('activity_at'),
     contentType: text('content_type').notNull(),
     createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
   },
   (t) => [
     primaryKey({ columns: [t.spaceId, t.environmentId, t.assetId, t.uploadId] }),
     index('asset_uploads_by_created').on(t.createdAt),
+    index('asset_uploads_by_activity').on(sql`COALESCE(${t.activityAt}, ${t.createdAt})`),
   ],
 );
 

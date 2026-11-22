@@ -310,3 +310,23 @@ describe('asset bulk jobs over HTTP', () => {
     expect(tag.status).toBe(403);
   });
 });
+
+it('reads and revises the environment document template and scopes document page reads', async () => {
+  const { app } = makeApp();
+  const url = M + '/document-ingestion/template';
+  const first = await app.request(url, { headers: cma });
+  expect(first.status).toBe(200);
+  const template = (await first.json()) as Record<string, unknown>;
+  expect(template).toMatchObject({ version: 0, createMediaDrafts: true });
+  const request = {
+    method: 'PUT',
+    headers: cma,
+    body: JSON.stringify({ ...template, describeDocument: false }),
+  };
+  expect((await app.request(url, request)).status).toBe(200);
+  expect((await app.request(url, request)).status).toBe(409);
+  expect((await app.request(M + '/assets/missing/document/pages/1', { headers: cma })).status).toBe(
+    404,
+  );
+  expect((await app.request(M + '/assets/missing/document/pages/1')).status).toBe(401);
+});

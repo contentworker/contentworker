@@ -259,13 +259,14 @@ export const ASSET_BULK_JOB_THRESHOLD = 50;
 /** Whether acting on `count` assets runs as a job. */
 export const runsAsJob = (count: number): boolean => count > ASSET_BULK_JOB_THRESHOLD;
 
-export type AssetBulkAction = 'move' | 'tag' | 'publish' | 'unpublish' | 'archive';
+export type AssetBulkAction = 'ingest' | 'move' | 'tag' | 'publish' | 'unpublish' | 'archive';
 
 /** A bulk action's words, done ("Published") and under way ("Publishing"). */
 export const BULK_VERBS: Record<
   AssetBulkAction,
   { readonly done: string; readonly doing: string }
 > = {
+  ingest: { done: 'Queued', doing: 'Queuing' },
   move: { done: 'Moved', doing: 'Moving' },
   tag: { done: 'Tagged', doing: 'Tagging' },
   publish: { done: 'Published', doing: 'Publishing' },

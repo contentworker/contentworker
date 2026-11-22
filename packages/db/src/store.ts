@@ -1749,6 +1749,7 @@ function makeAssetRepo(x: Exec): AssetRepo {
             eq(t.status, 'draft'),
             isNull(t.ingestStatus),
             isNull(t.size),
+            sql`NOT EXISTS (SELECT 1 FROM asset_uploads u WHERE u.space_id = ${t.spaceId} AND u.environment_id = ${t.environmentId} AND u.asset_id = ${t.id})`,
             isNotNull(t.r2Key),
             gt(t.createdAt, new Date(0)),
             lt(t.createdAt, createdBefore),
@@ -1764,6 +1765,18 @@ function makeAssetRepo(x: Exec): AssetRepo {
     async recordIngest(scope, id, version, patch) {
       const t = schema.assets;
       const set: Record<string, unknown> = {};
+      if (patch.tagsIfEmpty?.length) {
+        const empty = sql`COALESCE(json_array_length(${t.metadata}, '$.tags'),0)=0`;
+        const tags = JSON.stringify(patch.tagsIfEmpty);
+        set.metadata = sql`CASE WHEN ${empty} THEN json_set(${t.metadata}, '$.tags',json(${tags})) ELSE ${t.metadata} END`;
+        set.aiSuggestions = sql`CASE WHEN ${empty} THEN json_set(COALESCE(${t.aiSuggestions},'{}'),'$.tags',json(${tags})) ELSE ${t.aiSuggestions} END`;
+      }
+      if (patch.descriptionIfEmpty) {
+        const path = '$.' + JSON.stringify(patch.descriptionIfEmpty.locale);
+        set.description = sql`CASE WHEN COALESCE(TRIM(json_extract(${t.description}, ${path})), '') = ''
+          THEN json_set(${t.description}, ${path}, ${patch.descriptionIfEmpty.value})
+          ELSE ${t.description} END`;
+      }
       if (patch.status !== undefined) set.ingestStatus = patch.status;
       if (patch.error !== undefined) set.ingestError = patch.error;
       if (patch.contentHash !== undefined) set.contentHash = patch.contentHash;
@@ -2846,6 +2859,7 @@ function makeAssetZipJobRepo(x: Exec): AssetZipJobRepo {
 
 type AssetUploadRow = typeof schema.assetUploads.$inferSelect;
 const toAssetUpload = (r: AssetUploadRow): AssetUpload => ({
+  ...(r.activityAt !== null ? { activityAt: r.activityAt } : {}),
   assetId: r.assetId,
   uploadId: r.uploadId,
   r2Key: r.r2Key,
@@ -2860,7 +2874,26 @@ function makeAssetUploadRepo(x: Exec): AssetUploadRepo {
   const u = schema.assetUploads;
   const one = (scope: Scope, assetId: string, uploadId: string) =>
     and(scopeFilter(u, scope), eq(u.assetId, assetId), eq(u.uploadId, uploadId));
+  const activity = sql`COALESCE(${u.activityAt}, ${u.createdAt})`;
   return {
+    async renew(scope, assetId, uploadId, now) {
+      directOnly(x, 'assetUploads.renew');
+      const rows = await db
+        .update(u)
+        .set({ activityAt: sql`MAX(${activity}, ${now.getTime()})` })
+        .where(and(one(scope, assetId, uploadId), sql`${activity} != 0`))
+        .returning({ id: u.uploadId });
+      return rows.length > 0;
+    },
+    async claimExpired(scope, assetId, uploadId, before) {
+      directOnly(x, 'assetUploads.claimExpired');
+      const rows = await db
+        .update(u)
+        .set({ activityAt: 0 })
+        .where(and(one(scope, assetId, uploadId), sql`${activity} < ${before.getTime()}`))
+        .returning({ id: u.uploadId });
+      return rows.length > 0;
+    },
     async get(scope, assetId, uploadId) {
       const [row] = await db
         .select()
@@ -2900,8 +2933,8 @@ function makeAssetUploadRepo(x: Exec): AssetUploadRepo {
       const rows = await db
         .select()
         .from(u)
-        .where(lt(u.createdAt, before))
-        .orderBy(asc(u.createdAt))
+        .where(sql`${activity} < ${before.getTime()}`)
+        .orderBy(asc(activity))
         .limit(Math.max(1, Math.min(limit, MAX_ASSET_PAGE)));
       return rows.map((r) => ({
         scope: { spaceId: r.spaceId, environmentId: r.environmentId },

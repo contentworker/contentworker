@@ -36,6 +36,27 @@ export class FakeBlobStore implements BlobStore {
   /** Actually holds bytes, so checksum verification is exercised for real. */
   private readonly objects = new Map<string, string | Uint8Array>();
 
+  async listKeys(prefix: string, limit: number, cursor?: string) {
+    const all = [...this.objects.keys()]
+      .filter((k) => k.startsWith(prefix) && (!cursor || k > cursor))
+      .sort();
+    const keys = all.slice(0, limit);
+    return { keys, cursor: all.length > limit ? keys.at(-1) : undefined };
+  }
+
+  async reserve(key: string, value: string) {
+    const existing = this.objects.get(key);
+    if (typeof existing === 'string') return existing;
+    await this.put(key, value, 'text/plain');
+    return value;
+  }
+
+  async copyOnce(source: string, destination: string, contentType: string) {
+    const value = this.objects.get(source);
+    if (value === undefined) throw new Error('Missing embedded media');
+    if (!this.objects.has(destination)) await this.put(destination, value, contentType);
+  }
+
   async put(key: string, body: string | Uint8Array, contentType: string) {
     this.objects.set(key, body);
     this.types.set(key, contentType);
@@ -146,6 +167,17 @@ export class FakeBlobStore implements BlobStore {
   private uploadSeq = 0;
 
   readonly multipart: MultipartBlobStore = {
+    copyPart: async (source, etag, offset, length, destination, uploadId, number) => {
+      if (this.etags.get(source) !== etag) throw new Error('Inbox object changed during import');
+      const bytes = this.bytes(source);
+      if (!bytes) throw new Error('Missing source');
+      return this.multipart.uploadPart(
+        destination,
+        uploadId,
+        number,
+        bytes.subarray(offset, offset + length),
+      );
+    },
     create: async (key, contentType) => {
       const uploadId = `upload-${++this.uploadSeq}`;
       this.uploadsInProgress.set(uploadId, { key, contentType, parts: new Map() });

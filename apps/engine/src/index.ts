@@ -19,6 +19,7 @@ import {
   drainOutbox,
   failStalePromotions,
   pruneEventHistory,
+  queueScheduledDocuments,
   redeliverWebhook,
   repairAllTaxonomies,
   resealSecrets,
@@ -40,6 +41,7 @@ import { isWebhookSendRequest, type Scope } from '@contentworker/domain';
 import { isResealTick } from '@contentworker/platform/data-key';
 import { recordDeadLetters } from '@contentworker/platform/dead-letters';
 import { CostGuardDO, doAgentCostGuardFromEnv } from '@contentworker/platform/do/cost-guard';
+import { DocumentParserDO } from '@contentworker/platform/do/document-parser';
 import { HotSetDO } from '@contentworker/platform/do/hot-set';
 import { createDoEventBus, LiveHubDO } from '@contentworker/platform/do/live-hub';
 import { RateLimiterDO } from '@contentworker/platform/do/rate-limiter';
@@ -92,6 +94,7 @@ export {
   AssetZipWorkflow,
   AssistantAgent,
   CostGuardDO,
+  DocumentParserDO,
   EditorialWorkflow,
   HotSetDO,
   LiveHubDO,
@@ -685,6 +688,20 @@ export default {
           },
           (err) => console.error('taxonomy repair failed', redactCredentials(err)),
         );
+      }
+      if (env.DOCUMENT_FOLDER_SCHEDULE && wired.assetIngest) {
+        try {
+          await queueScheduledDocuments(
+            wired.ctx,
+            wired.blob,
+            wired.assetIngest,
+            env.DOCUMENT_FOLDER_SCHEDULE,
+            ctrl.scheduledTime,
+            wired.assetIngestStarter,
+          );
+        } catch (error) {
+          console.error('document folder schedule failed', redactCredentials(error));
+        }
       }
       // Actions first: their outbox events are then picked up by the relay
       // sweep below instead of waiting a full cron interval.

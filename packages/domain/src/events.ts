@@ -422,6 +422,7 @@ export interface BulkJobCompletedEvent extends BaseEvent {
     | 'purge'
     | 'import'
     | 'asset_reindex'
+    | 'asset_ingest'
     | 'asset_move'
     | 'asset_tag'
     | 'asset_publish'

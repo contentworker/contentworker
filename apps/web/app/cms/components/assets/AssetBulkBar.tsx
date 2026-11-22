@@ -6,6 +6,7 @@ import {
   Archive,
   CircleSlash,
   Download,
+  FileInput,
   FolderInput,
   GalleryVerticalEnd,
   Send,
@@ -34,6 +35,7 @@ export function AssetBulkBar(props: {
   onPublish: () => void;
   onUnpublish: () => void;
   onArchive: () => void;
+  onIngest: () => void;
   collections?: readonly AssetCollection[];
   onAddToCollection?: (collectionId: string) => void;
   onZip?: () => void;
@@ -52,6 +54,16 @@ export function AssetBulkBar(props: {
       <Button type="button" size="sm" disabled={props.busy} onClick={props.onPublish}>
         <Send aria-hidden="true" />
         Publish selected
+      </Button>
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        disabled={props.busy}
+        onClick={props.onIngest}
+      >
+        <FileInput aria-hidden="true" />
+        Queue ingest
       </Button>
       <ConfirmButton
         message={`Unpublish ${noun}?`}

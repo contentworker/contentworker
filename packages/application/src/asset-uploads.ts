@@ -239,6 +239,13 @@ export async function signAssetUploadParts(
       },
     ]);
   }
+  const now = ctx.clock.now();
+  if (
+    upload.activityAt === 0 ||
+    (now.getTime() - (upload.activityAt ?? Date.parse(upload.createdAt)) >= 15 * 60_000 &&
+      !(await ctx.store.assetUploads.renew(scope, assetId, uploadId, now)))
+  )
+    throw new NotFoundError('AssetUpload', uploadId);
   const multipart = multipartOf(blob);
   const parts = await Promise.all(
     numbers.map(async (n) => {
@@ -382,7 +389,7 @@ export async function abortMultipartAssetUpload(
 export const ABANDONED_MULTIPART_SWEEP_LIMIT = 100;
 
 /**
- * Aborts multipart uploads started more than {@link ABANDONED_MULTIPART_TTL_MS} ago that were
+ * Aborts multipart uploads inactive for {@link ABANDONED_MULTIPART_TTL_MS} that were
  * never completed or aborted, across every space (R2 keeps, and bills, their parts until then;
  * the bucket's lifecycle rule is the backstop). Each is forgotten once aborted, so a rerun finds
  * the rest. Their drafts go with the abandoned-upload sweep.
@@ -402,6 +409,10 @@ export async function sweepAbandonedMultipartUploads(
   let failed = 0;
   for (const { scope, upload } of stale) {
     try {
+      if (
+        !(await ctx.store.assetUploads.claimExpired(scope, upload.assetId, upload.uploadId, before))
+      )
+        continue;
       await blob.multipart.abort(upload.r2Key, upload.uploadId);
       await ctx.store.assetUploads.delete(scope, upload.assetId, upload.uploadId);
       aborted += 1;

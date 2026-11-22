@@ -974,6 +974,9 @@ export interface AssetRepo {
 
 /** What one ingest step writes. `null` clears a value; an omitted key is left as it is. */
 export interface AssetIngestPatch {
+  readonly tagsIfEmpty?: readonly string[];
+  /** Apply at commit only if the file version matches and this locale remains empty. */
+  readonly descriptionIfEmpty?: { readonly locale: string; readonly value: string };
   readonly status?: AssetIngestStatus;
   readonly error?: string | null;
   readonly contentHash?: string;
@@ -1187,6 +1190,8 @@ export interface AppOperationJobRepo {
  * started for and the part size every part but the last has (R2 needs them equal).
  */
 export interface AssetUpload {
+  /** Last lease renewal in milliseconds; zero marks an abort already claimed. */
+  readonly activityAt?: number;
   readonly assetId: string;
   readonly uploadId: string;
   readonly r2Key: string;
@@ -1201,12 +1206,14 @@ export interface AssetUpload {
  * aborts the ones left behind (R2 keeps their parts, billed, until aborted).
  */
 export interface AssetUploadRepo {
+  renew(scope: Scope, assetId: string, uploadId: string, now: Date): Promise<boolean>;
+  claimExpired(scope: Scope, assetId: string, uploadId: string, before: Date): Promise<boolean>;
   get(scope: Scope, assetId: string, uploadId: string): Promise<AssetUpload | null>;
   create(scope: Scope, upload: AssetUpload): Promise<void>;
   delete(scope: Scope, assetId: string, uploadId: string): Promise<void>;
   /** One asset's uploads in progress (a file replacement's among them), oldest first. */
   listForAsset(scope: Scope, assetId: string): Promise<AssetUpload[]>;
-  /** Uploads started before `before`, in every scope, oldest first, at most `limit`. */
+  /** Uploads inactive since before `before`, across scopes, up to `limit`. */
   listStartedBefore(
     before: Date,
     limit: number,
@@ -2548,6 +2555,7 @@ export type BulkJobAction =
   | 'unpublish'
   | 'import'
   | 'asset_reindex'
+  | 'asset_ingest'
   | EntryTrashBulkJobAction
   | AssetBulkJobAction
   /**

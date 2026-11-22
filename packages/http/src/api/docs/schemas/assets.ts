@@ -261,7 +261,14 @@ export const assetVersionList = z.object({
 
 export const assetBulkJob = z.looseObject({
   id: z.string(),
-  action: z.enum(['asset_move', 'asset_tag', 'asset_publish', 'asset_unpublish', 'asset_archive']),
+  action: z.enum([
+    'asset_ingest',
+    'asset_move',
+    'asset_tag',
+    'asset_publish',
+    'asset_unpublish',
+    'asset_archive',
+  ]),
   status: z.enum(['running', 'completed', 'cancelled']),
   totalItems: z.int(),
   totalChunks: z.int(),
@@ -278,4 +285,34 @@ export const videoUploadTicket = z.object({
     method: z.literal('POST'),
     fileField: z.string().describe('Multipart form field carrying the file'),
   }),
+});
+
+export const documentPage = z.object({
+  assetId: z.string(),
+  version: z.int(),
+  page: z.int(),
+  pages: z.int(),
+  text: z.string(),
+  textMethod: z.enum(['native', 'ocr']),
+  status: z.enum(['complete', 'partial']),
+  documentStatus: z.enum(['processing', 'partial', 'complete']),
+  preview: z.literal('preview.png').nullable(),
+  previewUrl: z.string().optional(),
+  media: z.array(
+    z.object({
+      part: z.string(),
+      sha256: z.string(),
+      assetId: z.string().optional(),
+      url: z.string(),
+    }),
+  ),
+  nextMediaOffset: z.int().optional(),
+  warnings: z.array(z.string()),
+});
+
+export const documentTemplate = z.object({
+  version: z.int().nonnegative(),
+  createMediaDrafts: z.boolean(),
+  suggestTags: z.boolean(),
+  describeDocument: z.boolean(),
 });
