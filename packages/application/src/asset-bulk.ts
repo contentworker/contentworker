@@ -2,6 +2,7 @@ import {
   type Asset,
   clearAcceptedSuggestions,
   DomainError,
+  NotConfiguredError,
   NotFoundError,
   type Scope,
   ValidationError,
@@ -27,9 +28,10 @@ import type { AppContext } from './context';
  */
 
 /** What a bulk action does to each selected asset. */
-export type AssetBulkAction = 'move' | 'tag' | 'publish' | 'unpublish' | 'archive';
+export type AssetBulkAction = 'ingest' | 'move' | 'tag' | 'publish' | 'unpublish' | 'archive';
 
 export const ASSET_BULK_ACTION_NAMES: readonly AssetBulkAction[] = [
+  'ingest',
   'move',
   'tag',
   'publish',
@@ -67,7 +69,8 @@ interface AssetBulkConfig {
   readonly removeTags?: readonly string[];
 }
 
-const jobAction = (action: AssetBulkAction): AssetBulkJobAction => `asset_${action}`;
+const jobAction = (action: Exclude<AssetBulkAction, 'ingest'>): AssetBulkJobAction =>
+  `asset_${action}`;
 
 /**
  * Starts a bulk job over a selection of assets. Validated up front (a folder that exists, tags to
@@ -78,7 +81,14 @@ export async function startAssetBulkJob(
   ctx: AppContext,
   scope: Scope,
   input: StartAssetBulkJobInput,
+  ingestAvailable = false,
 ): Promise<BulkJob> {
+  if (input.action === 'ingest') {
+    if (!ingestAvailable) {
+      throw new NotConfiguredError('asset ingest', 'Bind ASSET_EVENTS_QUEUE to ingest assets');
+    }
+    return startBulkJob(ctx, scope, { action: 'asset_ingest', entryIds: input.ids });
+  }
   let config: AssetBulkConfig | undefined;
   switch (input.action) {
     case 'move': {

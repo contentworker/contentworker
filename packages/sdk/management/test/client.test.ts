@@ -525,6 +525,7 @@ describe('@contentworker/sdk-management client', () => {
     await c.assets.versions('a1');
     await c.assets.restoreVersion('a1', 1);
     await c.assets.setRights('a1', { license: 'CC BY', expiresAt: '2030-01-01T00:00:00Z' });
+    await c.assets.bulk({ action: 'ingest', ids: ['a1'] });
     await c.assets.bulk({ action: 'move', ids: ['a1'], folderId: null });
     await c.bulkJobs.list({ limit: 5 });
     await c.bulkJobs.get('j1');
@@ -582,6 +583,7 @@ describe('@contentworker/sdk-management client', () => {
       `GET ${env}/assets/a1/versions`,
       `POST ${env}/assets/a1/versions/1/restore`,
       `PUT ${env}/assets/a1/rights`,
+      `POST ${env}/assets/bulk`,
       `POST ${env}/assets/bulk`,
       `GET ${env}/bulk/jobs?limit=5`,
       `GET ${env}/bulk/jobs/j1`,

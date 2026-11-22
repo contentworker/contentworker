@@ -2548,6 +2548,7 @@ export type BulkJobAction =
   | 'unpublish'
   | 'import'
   | 'asset_reindex'
+  | 'asset_ingest'
   | EntryTrashBulkJobAction
   | AssetBulkJobAction
   /**

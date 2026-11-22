@@ -1234,6 +1234,7 @@ export function AssetLibrary(props: { locale: string }) {
               onPublish={() => act('publish')}
               onUnpublish={() => act('unpublish')}
               onArchive={() => act('archive')}
+              onIngest={() => void startJob({ action: 'ingest', ids })}
               collections={collections}
               onAddToCollection={(id) => void addSelectedTo(id)}
               onZip={() => void zip.start({ assetIds: ids })}

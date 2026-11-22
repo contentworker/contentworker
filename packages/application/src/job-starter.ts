@@ -205,6 +205,7 @@ function scopesToRun(job: BulkJob): readonly PermissionScope[] {
       ];
     case 'asset_move':
     case 'asset_tag':
+    case 'asset_ingest':
     case 'asset_reindex':
       return [SCOPES.assetsWrite];
     case 'search_reindex':

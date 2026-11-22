@@ -422,7 +422,7 @@ export async function runBulkChunk(
     return runChunkAndFold(ctx, deps.importChunk, scope, job, chunk);
   }
   // An asset reindex chunk hands its assets to ingest: nothing is written here but the report.
-  if (job.action === 'asset_reindex') {
+  if (job.action === 'asset_reindex' || job.action === 'asset_ingest') {
     return runChunkAndFold(ctx, deps.assetReindexChunk, scope, job, chunk);
   }
   // Trash, restore or purge: each entry through its single-entry use-case.

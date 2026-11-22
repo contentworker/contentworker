@@ -1213,6 +1213,7 @@ export interface BulkJobSummary {
     | 'purge'
     | 'import'
     | 'asset_reindex'
+    | 'asset_ingest'
     | 'asset_move'
     | 'asset_tag'
     | 'asset_publish'
@@ -1285,7 +1286,10 @@ export type AssetBulkRequest =
       readonly addTags?: readonly string[];
       readonly removeTags?: readonly string[];
     }
-  | { readonly action: 'publish' | 'unpublish' | 'archive'; readonly ids: readonly string[] };
+  | {
+      readonly action: 'ingest' | 'publish' | 'unpublish' | 'archive';
+      readonly ids: readonly string[];
+    };
 
 /** Rights as the form sends them: a value, or null for none. */
 export type AssetRightsInput = { readonly [K in keyof AssetRights]-?: string | null };

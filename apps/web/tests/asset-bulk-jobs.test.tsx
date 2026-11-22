@@ -119,6 +119,19 @@ async function selectAll() {
 const tick = () => act(() => vi.advanceTimersByTimeAsync(2100));
 
 describe('acting on more assets than a page shows', () => {
+  it('queues a single selected file as a durable ingest job', async () => {
+    assets = many(1);
+    const bar = await selectAll();
+    fireEvent.click(within(bar).getByRole('button', { name: 'Queue ingest' }));
+    await waitFor(() =>
+      expect(client.startAssetBulkJob).toHaveBeenCalledWith({
+        action: 'ingest',
+        ids: ['a1'],
+      }),
+    );
+    expect(await screen.findByRole('region', { name: 'Bulk job' })).toBeTruthy();
+  });
+
   it('publishes them as a job, shows its progress, and names what failed', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     assets = many(51);

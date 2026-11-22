@@ -16,6 +16,7 @@ export function AssetBulkJobProgress(props: {
   return (
     <BulkJobProgress
       {...rest}
+      takeFocus={action === 'ingest'}
       verbs={BULK_VERBS[action]}
       nouns={['asset', 'assets']}
       where="the library"

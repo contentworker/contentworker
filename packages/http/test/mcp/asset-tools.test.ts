@@ -458,6 +458,13 @@ describe('asset search and ingest tools (MCP), on the same use-cases as the HTTP
       await client.callTool({ name: 'assets_reindex', arguments: { space: SPACE, all: true } }),
     );
     expect(job).toMatchObject({ assets: 1, job: { action: 'asset_reindex' } });
+    const selected = payload(
+      await client.callTool({
+        name: 'assets_bulk',
+        arguments: { space: SPACE, action: 'ingest', ids: [a.id] },
+      }),
+    );
+    expect(selected).toMatchObject({ action: 'asset_ingest', totalItems: 1 });
     // Without the queue it says so rather than doing nothing.
     const bare = await connect(deps, admin);
     expect(

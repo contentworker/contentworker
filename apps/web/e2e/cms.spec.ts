@@ -1198,6 +1198,31 @@ test('an asset’s file is replaced, republished and restored from its Versions 
   await expect(restored.getByText(name)).toBeVisible();
 });
 
+test('queue ingest sends the selected asset to a background job', async ({ page, request }) => {
+  const name = `Ingest ${Date.now()}`;
+  const folderId = await seedAssetFolder(request, name);
+  const id = await seedAsset(request, name, { folderId });
+  await openCms(page, '/assets');
+  await page
+    .getByRole('navigation', { name: 'Folders' })
+    .getByRole('button', { name, exact: true })
+    .click();
+  const library = page.getByRole('region', { name: 'Asset library' });
+  await library.getByRole('radio', { name: 'List' }).click();
+  await library.getByRole('checkbox', { name: `Select “${name}”` }).check();
+  const response = page.waitForResponse(
+    (r) => r.url().endsWith('/assets/bulk') && r.request().method() === 'POST',
+  );
+  await page.getByRole('button', { name: 'Queue ingest' }).click();
+  const queued = await response;
+  expect(queued.status()).toBe(202);
+  expect(queued.request().postDataJSON()).toEqual({ action: 'ingest', ids: [id] });
+  await expect(page.getByRole('region', { name: 'Bulk job' }).getByRole('status')).toHaveText(
+    'Queued 1 asset',
+    { timeout: 120_000 },
+  );
+});
+
 test('publishing more assets than a page shows runs as a job and names the one it refused', async ({
   page,
   request,

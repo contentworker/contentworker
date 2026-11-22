@@ -1611,7 +1611,10 @@ export type AssetBulkInput =
       readonly addTags?: readonly string[];
       readonly removeTags?: readonly string[];
     }
-  | { readonly action: 'publish' | 'unpublish' | 'archive'; readonly ids: readonly string[] };
+  | {
+      readonly action: 'ingest' | 'publish' | 'unpublish' | 'archive';
+      readonly ids: readonly string[];
+    };
 
 /** A durable bulk job; poll `bulkJobs.get` until `status` is no longer `running`. */
 export interface BulkJob {

@@ -261,7 +261,14 @@ export const assetVersionList = z.object({
 
 export const assetBulkJob = z.looseObject({
   id: z.string(),
-  action: z.enum(['asset_move', 'asset_tag', 'asset_publish', 'asset_unpublish', 'asset_archive']),
+  action: z.enum([
+    'asset_ingest',
+    'asset_move',
+    'asset_tag',
+    'asset_publish',
+    'asset_unpublish',
+    'asset_archive',
+  ]),
   status: z.enum(['running', 'completed', 'cancelled']),
   totalItems: z.int(),
   totalChunks: z.int(),

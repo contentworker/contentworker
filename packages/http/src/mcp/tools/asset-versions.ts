@@ -227,12 +227,12 @@ export function registerAssetVersionTools(server: McpServer, t: ToolContext): vo
     {
       description:
         'Act on many assets as a resumable bulk job: move (folderId; null for the root), tag ' +
-        '(addTags, removeTags), publish, unpublish or archive. Each asset gets the same checks ' +
+        '(addTags, removeTags), ingest (queue each current file), publish, unpublish or archive. Each asset gets the same checks ' +
         'as one at a time. Follow it with bulk_job_status; bulk_job_report names each asset that ' +
-        'failed. move and tag need assets:write; publish, unpublish and archive content:publish.',
+        'failed. ingest, move and tag need assets:write; publish, unpublish and archive content:publish.',
       inputSchema: toolSchema('assets_bulk', () =>
         z.object({
-          action: z.enum(['move', 'tag', 'publish', 'unpublish', 'archive']),
+          action: z.enum(['ingest', 'move', 'tag', 'publish', 'unpublish', 'archive']),
           ids: z.array(z.string().min(1).max(128)).min(1).max(BULK_JOB_MAX_ITEMS),
           folderId: z.string().min(1).max(128).nullable().optional(),
           addTags: z.array(z.string().min(1).max(128)).max(MAX_ASSET_BULK_TAGS).optional(),
@@ -247,13 +247,18 @@ export function registerAssetVersionTools(server: McpServer, t: ToolContext): vo
         scopeOf(args),
       );
       return ok(
-        await startAssetBulkJob(ctx, scopeOf(args), {
-          action: args.action,
-          ids: args.ids,
-          ...(args.folderId !== undefined ? { folderId: args.folderId } : {}),
-          ...(args.addTags ? { addTags: args.addTags } : {}),
-          ...(args.removeTags ? { removeTags: args.removeTags } : {}),
-        }),
+        await startAssetBulkJob(
+          ctx,
+          scopeOf(args),
+          {
+            action: args.action,
+            ids: args.ids,
+            ...(args.folderId !== undefined ? { folderId: args.folderId } : {}),
+            ...(args.addTags ? { addTags: args.addTags } : {}),
+            ...(args.removeTags ? { removeTags: args.removeTags } : {}),
+          },
+          Boolean(deps.assetIngest),
+        ),
       );
     },
   );
