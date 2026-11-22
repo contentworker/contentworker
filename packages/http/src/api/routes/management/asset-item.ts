@@ -175,7 +175,7 @@ export function assetItemRoutes(deps: AuthDeps): Hono<AuthVars> {
   );
   app.post(
     `${BASE}/assets/:id/auto-tag`,
-    doc('AI & agents', 'Suggest tags for an image asset', {
+    doc('AI & agents', 'Suggest tags for an image or document asset', {
       body: tierOnlyBody,
       ok: assetDocs.autoTagResult,
       description:

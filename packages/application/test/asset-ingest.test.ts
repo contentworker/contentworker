@@ -298,6 +298,22 @@ describe('asset ingest', () => {
     expect(found.items.map((a) => a.id)).toEqual([asset.id]);
   });
 
+  it('matches document text against existing DAM tags and records the suggestion', async () => {
+    const tag = await createTag(t.ctx, scope, { name: 'launch' });
+    const asset = await t.upload('brief.pdf', 'application/pdf', '%PDF-bytes');
+    t.extractor.setText('brief.pdf', 'Heliotrope launch brief');
+    t.ai.respondWith = async (req) => {
+      expect(req.prompt).toContain('Heliotrope launch brief');
+      return { existingTags: ['launch'], newTags: ['unlisted'] };
+    };
+    const result = await t.run(asset.id);
+    expect(result).toMatchObject({ value: { outcome: 'ready', tags: 'suggested' } });
+    expect(await getAsset(t.ctx, scope, asset.id)).toMatchObject({
+      metadata: { tags: [tag.id] },
+      aiSuggestions: { tags: [tag.id] },
+    });
+  });
+
   it('skips extraction of a file over the size cap', async () => {
     const asset = await t.upload('huge.pdf', 'application/pdf', 'x'.repeat(16));
     const original = t.blob.open.bind(t.blob);

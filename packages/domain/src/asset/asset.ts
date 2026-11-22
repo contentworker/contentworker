@@ -74,6 +74,8 @@ export const ASSET_KINDS: readonly AssetKind[] = ['image', 'video', 'audio', 'do
 /** Office, PDF and text formats an editor thinks of as documents rather than files. */
 const DOCUMENT_TYPES = new Set([
   'application/pdf',
+  'application/vnd.apple.keynote',
+  'application/x-iwork-keynote-sffkey',
   'application/rtf',
   'application/msword',
   'application/vnd.ms-excel',

@@ -31,6 +31,8 @@ describe('asset kind', () => {
     ['video/mp4', 'video'],
     ['audio/mpeg', 'audio'],
     ['application/pdf', 'document'],
+    ['application/vnd.apple.keynote', 'document'],
+    ['application/x-iwork-keynote-sffkey', 'document'],
     ['text/markdown', 'document'],
     ['application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'document'],
     ['application/zip', 'other'],

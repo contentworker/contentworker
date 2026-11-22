@@ -381,8 +381,8 @@ export async function runAssetIngest(
       // A placeholder is a nicety: one the service kept failing to make is simply not there.
       .catch(() => false);
     const altText = await enrichStep(steps, 'alt-text', () => enrichAltText(ctx, deps, params));
-    const tags = await enrichStep(steps, 'tags', () => enrichTags(ctx, deps, params));
     const text = await steps.do('extract-text', SLOW_STEP, () => extractText(ctx, deps, params));
+    const tags = await enrichStep(steps, 'tags', () => enrichTags(ctx, deps, params));
     await steps.do('embed', STEP, async () =>
       deps.search
         ? embedAssetForSearch(ctx, deps.search, deps.blob, params.scope, params.assetId)
@@ -702,17 +702,23 @@ export async function enrichTags(
   params: AssetIngestParams,
 ): Promise<EnrichOutcome> {
   const asset = await currentAsset(ctx, params);
-  if (!asset || !deps.ai || assetKind(asset.file.contentType) !== 'image') return 'skipped';
+  if (!asset || !deps.ai) return 'skipped';
+  const kind = assetKind(asset.file.contentType);
+  if (kind !== 'image' && kind !== 'document') return 'skipped';
   if (asset.metadata.tags.length > 0) return 'kept';
   // An empty vocabulary has nothing to choose from: no call.
   if ((await ctx.store.taxonomy.listTags(params.scope)).length === 0) return 'none';
   let tagIds: readonly string[];
   try {
+    const textKey =
+      kind === 'document' && assetTextKey(params.scope, params.assetId, params.version);
+    const excerpt = textKey && (await deps.blob.getRange?.(textKey, 0, 8192));
     ({ tagIds } = await autoTagAsset(
       ctx,
       markingModelFailures(deps.ai),
       params.scope,
       params.assetId,
+      excerpt ? { documentExcerpt: excerpt.text } : {},
     ));
   } catch (err) {
     if (err instanceof RateLimitedError) return 'budget';

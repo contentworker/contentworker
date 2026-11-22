@@ -303,7 +303,7 @@ export function registerAssetVersionTools(server: McpServer, t: ToolContext): vo
     'asset_auto_tag',
     {
       description:
-        'Suggest taxonomy tags for an image asset (matching the existing vocabulary ' +
+        'Suggest taxonomy tags for an image or document asset (matching the existing vocabulary ' +
         'and proposing new names); set apply=true to create + assign them.',
       inputSchema: toolSchema('asset_auto_tag', () =>
         z.object({ id: z.string(), apply: z.boolean().optional(), ...scopeArgs }),
