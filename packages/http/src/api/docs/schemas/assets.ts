@@ -286,3 +286,19 @@ export const videoUploadTicket = z.object({
     fileField: z.string().describe('Multipart form field carrying the file'),
   }),
 });
+
+export const documentPage = z.object({
+  assetId: z.string(),
+  version: z.int(),
+  page: z.int(),
+  pages: z.int(),
+  text: z.string(),
+  textMethod: z.enum(['native', 'ocr']),
+  status: z.enum(['complete', 'partial']),
+  documentStatus: z.enum(['processing', 'partial', 'complete']),
+  preview: z.literal('preview.png').nullable(),
+  previewUrl: z.string().optional(),
+  media: z.array(z.object({ part: z.string(), sha256: z.string(), url: z.string() })),
+  nextMediaOffset: z.int().optional(),
+  warnings: z.array(z.string()),
+});

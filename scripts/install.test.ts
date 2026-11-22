@@ -335,3 +335,21 @@ test('`secrets` derives the assistant’s pair from PRINCIPAL_KEY and its previo
   run('web', webOut);
   assert.ok(!('ASSISTANT_PRINCIPAL_KEY' in JSON.parse(readFileSync(webOut, 'utf8'))));
 });
+
+test('the document parser image is private to the engine and enabled per install', () => {
+  const basic = renderEngine(base('engine'), plain);
+  assert.equal(basic.containers, undefined);
+  const enabled = renderEngine(base('engine'), { ...acme, documentParser: true });
+  assert.equal(enabled.vars.DOCUMENT_PARSER_ENABLED, 'true');
+  assert.equal(
+    renderApi(base('api'), { ...acme, documentParser: true }).vars.ASSET_UPLOAD_MAX_BYTES,
+    '1000000000000',
+  );
+  assert.equal(
+    renderApi(base('api'), { ...acme, documentParser: true, maxUploadBytes: 4000 }).vars
+      .ASSET_UPLOAD_MAX_BYTES,
+    '4000',
+  );
+  assert.equal(enabled.containers[0].name, enabled.name + '-documents');
+  assert.equal(enabled.containers[0].images.parser.dockerfile, './document-parser/Dockerfile');
+});

@@ -60,6 +60,7 @@ export const TOOL_SCOPES: Readonly<Record<string, readonly PermissionScope[]>> =
   asset_folders_list: [SCOPES.assetsRead],
   asset_folders_update: [SCOPES.assetsWrite],
   asset_generate_alt_text: [SCOPES.assetsWrite],
+  asset_document_page: [SCOPES.assetsRead],
   asset_get: [SCOPES.assetsRead],
   asset_preview_get: [SCOPES.assetsRead],
   asset_preview_list: [SCOPES.assetsRead],

@@ -22,6 +22,7 @@ import type {
   BulkJobChunk,
   ByteStream,
   CostGuard,
+  DocumentParser,
   GenerateRequest,
   GenerateResult,
   ImageProbe,
@@ -38,6 +39,7 @@ import { allAssets, assetFileKey, assetTextKey, parseAssetObjectKey } from './as
 import type { BulkChunkOutcome } from './bulk-jobs';
 import { readableBulkJob, startBulkJob } from './bulk-jobs';
 import type { AppContext } from './context';
+import { parseAssetDocument } from './document-ingest';
 import { autoTagAsset, generateAltText, NoAltTextError } from './media-ai';
 
 /**
@@ -75,6 +77,7 @@ export interface AssetIngestDeps {
   readonly blob: BlobStore;
   readonly images?: ImageProbe;
   readonly extractor?: TextExtractor;
+  readonly documentParser?: DocumentParser;
   /** Generation model for alt text and tags; absent, enrichment is skipped. */
   readonly ai?: AIProvider;
   readonly search?: AssetSearchDeps;
@@ -381,7 +384,11 @@ export async function runAssetIngest(
       // A placeholder is a nicety: one the service kept failing to make is simply not there.
       .catch(() => false);
     const altText = await enrichStep(steps, 'alt-text', () => enrichAltText(ctx, deps, params));
-    const text = await steps.do('extract-text', SLOW_STEP, () => extractText(ctx, deps, params));
+    const parsed =
+      deps.documentParser &&
+      (await parseAssetDocument(steps, ctx, deps.blob, deps.documentParser, params));
+    const text =
+      parsed ?? (await steps.do('extract-text', SLOW_STEP, () => extractText(ctx, deps, params)));
     const tags = await enrichStep(steps, 'tags', () => enrichTags(ctx, deps, params));
     await steps.do('embed', STEP, async () =>
       deps.search

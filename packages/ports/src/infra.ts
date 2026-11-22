@@ -1045,3 +1045,22 @@ export interface Counter {
   /** Increment `metric` by `value` (default 1) with optional labels. */
   count(metric: string, value?: number, labels?: Record<string, string>): void;
 }
+
+/** A single page of an immutable source. The caller owns its private derived-object prefix. */
+export interface DocumentPageRequest {
+  readonly sourceKey: string;
+  readonly etag: string;
+  readonly size: number;
+  readonly format: 'pdf' | 'pptx' | 'key';
+  readonly page: number;
+  readonly outputPrefix: string;
+}
+
+export interface DocumentPageResult {
+  readonly pages: number;
+  readonly partial: boolean;
+}
+
+export interface DocumentParser {
+  render(input: DocumentPageRequest): Promise<DocumentPageResult>;
+}

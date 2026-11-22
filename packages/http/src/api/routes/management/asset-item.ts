@@ -7,6 +7,7 @@ import {
   generateAltText,
   getAsset,
   getAssetUsage,
+  getDocumentPage,
   listAssetVersions,
   parseImageTransform,
   publishAsset,
@@ -56,6 +57,27 @@ export function assetItemRoutes(deps: AuthDeps): Hono<AuthVars> {
     }),
     requireScope(SCOPES.assetsRead),
     async (c) => c.json(await signedOne(c, await getAsset(ctx, scopeOf(c), c.req.param('id')))),
+  );
+  app.get(
+    `${BASE}/assets/:id/document/pages/:page`,
+    doc('Assets', 'Read a parsed document page or slide', {
+      ok: assetDocs.documentPage,
+      query: { mediaOffset: 'Offset into embedded media, 100 per page' },
+      description:
+        'Ordered text, static preview and embedded files of the current asset version, with short-lived signed read URLs.',
+    }),
+    requireScope(SCOPES.assetsRead),
+    async (c) =>
+      c.json(
+        await getDocumentPage(
+          ctx,
+          blob,
+          scopeOf(c),
+          c.req.param('id'),
+          Number(c.req.param('page')),
+          Number(c.req.query('mediaOffset') ?? 0),
+        ),
+      ),
   );
   app.post(
     `${BASE}/assets/:id/video/refresh`,

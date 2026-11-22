@@ -48,6 +48,7 @@ export * from './delivery';
 export * from './delivery-cache';
 export * from './delivery-graphql';
 export * from './delivery-reads';
+export * from './document-ingest';
 export * from './embeds';
 export * from './entries';
 export * from './entry-fields-bulk';

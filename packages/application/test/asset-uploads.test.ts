@@ -54,6 +54,22 @@ describe('multipart uploads', () => {
     expect([1, 2, 3].map((n) => partLength(upload, n))).toEqual([8 * MiB, 8 * MiB, 4 * MiB + 3]);
   });
 
+  it('starts a decimal terabyte file and signs its last bounded part', async () => {
+    const size = 1_000_000_000_000;
+    const { asset, upload } = await startMultipartAssetUpload(
+      { ...ctx, maxUploadBytes: size },
+      blob,
+      scope,
+      { fileName: 'archive.pdf', contentType: 'application/pdf', size },
+    );
+    expect(upload.partCount).toBeLessThanOrEqual(10_000);
+    expect(upload.partSize).toBeLessThanOrEqual(100 * MiB);
+    const { parts } = await signAssetUploadParts(ctx, blob, scope, asset.id, upload.uploadId, [
+      upload.partCount,
+    ]);
+    expect((upload.partCount - 1) * upload.partSize + parts[0]!.length).toBe(size);
+  });
+
   it('starts, signs exact-length parts, completes and hands the file to ingest', async () => {
     const ingest = new FakeAssetIngestQueue();
     const size = 2 * DEFAULT_PART_BYTES + 5;

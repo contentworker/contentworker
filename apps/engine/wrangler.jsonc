@@ -104,6 +104,7 @@
   "triggers": { "crons": ["* * * * *"] },
   "durable_objects": {
     "bindings": [
+      { "name": "DOCUMENT_PARSER", "class_name": "DocumentParserDO" },
       { "name": "LIVE_HUB", "class_name": "LiveHubDO" },
       { "name": "AI_BUDGET", "class_name": "CostGuardDO" },
       { "name": "SEARCH", "class_name": "SearchShardDO" },
@@ -118,7 +119,8 @@
     { "tag": "v3", "new_sqlite_classes": ["CostGuardDO"] },
     { "tag": "v4", "new_sqlite_classes": ["SearchShardDO"] },
     { "tag": "v5", "new_sqlite_classes": ["AssistantAgent"] },
-    { "tag": "v6", "new_sqlite_classes": ["HotSetDO"] }
+    { "tag": "v6", "new_sqlite_classes": ["HotSetDO"] },
+    { "tag": "v7", "new_sqlite_classes": ["DocumentParserDO"] }
   ],
   "workflows": [
     { "binding": "AGENT_WF", "name": "contentworker-agent", "class_name": "AgentWorkflow" },

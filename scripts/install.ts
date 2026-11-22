@@ -149,6 +149,8 @@ export type Install = {
   aiMock: boolean;
   /** Offers the enterprise sample starter when a space is created. */
   demoStarters: boolean;
+  documentParser?: boolean;
+  maxUploadBytes?: number;
   /** Your OIDC provider for admin single sign-on (secret: OIDC_CLIENT_SECRET). */
   sso?: { issuer: string; clientId: string; trustEmail?: boolean };
   /** Email Sending sender for notifications, invitations and password reset codes. */
@@ -185,6 +187,14 @@ export function toInstall(env: Env): Install {
   const aiMaxTier = env.AI_MAX_TIER?.trim() || undefined;
   if (aiMaxTier && !['flagship', 'balanced', 'fast'].includes(aiMaxTier))
     fail('AI_MAX_TIER must be "flagship", "balanced" or "fast"');
+  const maxUploadBytes = env.ASSET_UPLOAD_MAX_BYTES?.trim();
+  if (
+    maxUploadBytes &&
+    (!/^\d+$/.test(maxUploadBytes) ||
+      Number(maxUploadBytes) < 1 ||
+      Number(maxUploadBytes) > 10_000 * 100 * 1024 * 1024)
+  )
+    fail('ASSET_UPLOAD_MAX_BYTES must be 1 to 1048576000000 bytes');
   const aiMode = env.AI_MODE?.trim() || undefined;
   if (aiMode && aiMode !== 'mock') fail('AI_MODE must be "mock" or unset');
   const issuer = env.OIDC_ISSUER?.trim();
@@ -209,6 +219,8 @@ export function toInstall(env: Env): Install {
     ...(aiMaxTier ? { aiMaxTier: aiMaxTier as Tier } : {}),
     aiMock: aiMode === 'mock',
     demoStarters: TRUE(env.DEMO_STARTERS),
+    ...(maxUploadBytes ? { maxUploadBytes: Number(maxUploadBytes) } : {}),
+    ...(TRUE(env.DOCUMENT_PARSER_ENABLED) ? { documentParser: true } : {}),
     ...(issuer && clientId
       ? { sso: { issuer, clientId, ...(TRUE(env.OIDC_TRUST_EMAIL) ? { trustEmail: true } : {}) } }
       : {}),
@@ -378,11 +390,25 @@ function withEmail(c: Config, i: Install): Config {
 }
 
 export function renderEngine(base: Config, i: Install): Config {
-  return withEmail(common(base, i, 'engine'), i);
+  const c = withEmail(common(base, i, 'engine'), i);
+  if (i.documentParser) {
+    c.containers = [
+      {
+        class_name: 'DocumentParserDO',
+        scheduling_policy: 'durable_object',
+        name: `${c.name}-documents`,
+        images: { parser: { dockerfile: './document-parser/Dockerfile' } },
+      },
+    ];
+    c.vars.DOCUMENT_PARSER_ENABLED = 'true';
+  }
+  return c;
 }
 
 export function renderApi(base: Config, i: Install): Config {
   const c = common(base, i, 'api');
+  const uploadLimit = i.maxUploadBytes ?? (i.documentParser ? 1_000_000_000_000 : undefined);
+  if (uploadLimit) c.vars.ASSET_UPLOAD_MAX_BYTES = String(uploadLimit);
   c.routes = [{ pattern: hosts(i).api, custom_domain: true }];
   // OAuth for MCP clients is served on the admin's origin: the consent screen needs the person's
   // web session (the gateway forwards /oauth/* and /mcp with the signed principal).

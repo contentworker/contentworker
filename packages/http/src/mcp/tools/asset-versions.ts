@@ -7,6 +7,7 @@ import {
   createVideoAsset,
   generateAltText,
   getAssetUsage,
+  getDocumentPage,
   listAssetVersions,
   MAX_ASSET_BULK_TAGS,
   refreshVideoAsset,
@@ -44,6 +45,29 @@ export function registerAssetVersionTools(server: McpServer, t: ToolContext): vo
   };
   // The same author the REST routes record, so a version shows one name whichever surface made it.
   const actor = auditActor(principal);
+
+  server.registerTool(
+    'asset_document_page',
+    {
+      description:
+        'Read a numbered page or slide from the current document version, including text, a static preview and embedded media. Use nextMediaOffset to read more media.',
+      annotations: { readOnlyHint: true },
+      inputSchema: toolSchema('asset_document_page', () =>
+        z.object({
+          id: z.string(),
+          page: z.int().positive(),
+          mediaOffset: z.int().nonnegative().optional(),
+          ...scopeArgs,
+        }),
+      ),
+    },
+    async (args) => {
+      guard(SCOPES.assetsRead, scopeOf(args));
+      return ok(
+        await getDocumentPage(ctx, fileBlob(), scopeOf(args), args.id, args.page, args.mediaOffset),
+      );
+    },
+  );
 
   server.registerTool(
     'asset_replace_file',

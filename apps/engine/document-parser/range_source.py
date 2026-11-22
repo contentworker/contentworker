@@ -30,6 +30,11 @@ class RangeSource(io.RawIOBase):
         self.position = offset + base
         return self.position
 
+    def readinto(self, buffer):
+        data = self.read(len(buffer))
+        buffer[:len(data)] = data
+        return len(data)
+
     def read(self, size=-1):
         available = max(0, self.size - self.position)
         length = available if size < 0 else min(size, available)

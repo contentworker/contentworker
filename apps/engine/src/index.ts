@@ -40,6 +40,7 @@ import { isWebhookSendRequest, type Scope } from '@contentworker/domain';
 import { isResealTick } from '@contentworker/platform/data-key';
 import { recordDeadLetters } from '@contentworker/platform/dead-letters';
 import { CostGuardDO, doAgentCostGuardFromEnv } from '@contentworker/platform/do/cost-guard';
+import { DocumentParserDO } from '@contentworker/platform/do/document-parser';
 import { HotSetDO } from '@contentworker/platform/do/hot-set';
 import { createDoEventBus, LiveHubDO } from '@contentworker/platform/do/live-hub';
 import { RateLimiterDO } from '@contentworker/platform/do/rate-limiter';
@@ -92,6 +93,7 @@ export {
   AssetZipWorkflow,
   AssistantAgent,
   CostGuardDO,
+  DocumentParserDO,
   EditorialWorkflow,
   HotSetDO,
   LiveHubDO,

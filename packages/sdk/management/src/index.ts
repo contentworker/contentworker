@@ -1602,6 +1602,27 @@ export interface AssetRights {
   readonly embargoUntil?: string;
 }
 
+/** Extracted text, preview and embedded media from a single document page. */
+export interface DocumentPage {
+  readonly assetId: string;
+  readonly version: number;
+  readonly page: number;
+  readonly pages: number;
+  readonly text: string;
+  readonly textMethod: 'native' | 'ocr';
+  readonly status: 'partial' | 'complete';
+  readonly documentStatus: 'processing' | 'partial' | 'complete';
+  readonly preview: 'preview.png' | null;
+  readonly previewUrl?: string;
+  readonly media: readonly {
+    readonly part: string;
+    readonly sha256: string;
+    readonly url: string;
+  }[];
+  readonly nextMediaOffset?: number;
+  readonly warnings: readonly string[];
+}
+
 /** A bulk action over a selection of assets (`assets.bulk`). */
 export type AssetBulkInput =
   | { readonly action: 'move'; readonly ids: readonly string[]; readonly folderId: string | null }
@@ -2811,6 +2832,8 @@ export function createManagementClient(opts: ManagementClientOptions) {
           get<AssetPage>(`${envBase}/assets`, { ...assetListParams(query), cursor }),
         ),
       get: (id: string) => get<Asset>(`${envBase}/assets/${e(id)}`),
+      documentPage: (id: string, page: number, mediaOffset?: number) =>
+        get<DocumentPage>(`${envBase}/assets/${e(id)}/document/pages/${page}`, { mediaOffset }),
       /** Hybrid search of the library (full text and semantic), with facet counts. */
       search: (query: AssetSearchQuery) =>
         get<AssetSearchPage>(`${envBase}/assets/search`, { ...query }),

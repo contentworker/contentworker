@@ -115,7 +115,20 @@ export default defineConfig({
         : {
             auxiliaryWorkers: ['../api', '../engine', '../media', '../delivery'].map((dir) => ({
               configPath: `${dir}/wrangler.jsonc`,
-              config: () => ({ vars: LOCAL_STACK_VARS }),
+              config: () =>
+                dir === '../engine' && process.env.DOCUMENT_PARSER_ENABLED === 'true'
+                  ? {
+                      vars: { ...LOCAL_STACK_VARS, DOCUMENT_PARSER_ENABLED: 'true' },
+                      containers: [
+                        {
+                          class_name: 'DocumentParserDO',
+                          name: 'contentworker-documents',
+                          scheduling_policy: 'durable_object' as const,
+                          images: { parser: { dockerfile: './document-parser/Dockerfile' } },
+                        },
+                      ],
+                    }
+                  : { vars: LOCAL_STACK_VARS },
             })),
           }),
     }),

@@ -12,6 +12,7 @@
     "./config": "./src/config.ts",
     "./dead-letters": "./src/dead-letters.ts",
     "./data-key": "./src/data-key.ts",
+    "./do/document-parser": "./src/do/document-parser.ts",
     "./do/cost-guard": "./src/do/cost-guard.ts",
     "./do/hot-set": "./src/do/hot-set.ts",
     "./hot-urls": "./src/hot-urls.ts",

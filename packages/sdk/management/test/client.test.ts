@@ -509,6 +509,7 @@ describe('@contentworker/sdk-management client', () => {
     await c.assets.delete('a1');
     await c.assets.move(['a1', 'a2'], 'f1');
     await c.assets.search({ q: 'mug', kind: 'image', folder: 'root' });
+    await c.assets.documentPage('a1', 7, 100);
     await c.assets.reingest('a1');
     await c.assets.reindex({ all: true });
     await c.assets.folders.list();
@@ -571,6 +572,7 @@ describe('@contentworker/sdk-management client', () => {
       `DELETE ${env}/assets/a1`,
       `POST ${env}/assets/move`,
       `GET ${env}/assets/search?q=mug&kind=image&folder=root`,
+      `GET ${env}/assets/a1/document/pages/7?mediaOffset=100`,
       `POST ${env}/assets/a1/reingest`,
       `POST ${env}/assets/reindex`,
       `GET ${env}/asset-folders`,
