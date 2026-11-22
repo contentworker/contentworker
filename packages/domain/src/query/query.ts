@@ -620,9 +620,12 @@ function matchesSearch(
 }
 
 /** Projects an entry's fields down to `select` (field apiIds). */
-export function projectFields(fields: EntryFields, select: readonly string[]): EntryFields {
+export function projectFields<T>(
+  fields: Record<string, T>,
+  select: readonly string[],
+): Record<string, T> {
   const keep = new Set(select);
-  const out: EntryFields = {};
+  const out: Record<string, T> = {};
   for (const [k, v] of Object.entries(fields)) {
     if (keep.has(k)) out[k] = v;
   }

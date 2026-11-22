@@ -547,6 +547,8 @@ export function createDeliveryClient(opts: ClientOptions) {
   };
 
   return {
+    /** Install, surface, space and environment for persistent channel caches. */
+    feedUrl: base,
     /**
      * The newest `x-cw-bookmark` this preview client has seen (or was given), sent with its next
      * request; hand it to another client to carry read-your-writes across. Assigning replaces it,
@@ -598,10 +600,6 @@ export function createDeliveryClient(opts: ClientOptions) {
      * `for await (const entry of client.iterateEntries({ contentType: 'post' })) …`. Preview
      * follows `nextCursor`; Delivery advances `skip` until a page comes back short. A `skip` or
      * `cursor` sets where it starts, and `limit` is held to 1..100, as the server holds it.
-     *
-     * Delivery drops the entries of types a key isn't granted from each page after reading it, so
-     * with a key limited to some content types a page can come back short mid-list and end the
-     * loop early: give such a key's iteration a `contentType` it may read.
      */
     iterateEntries<F extends Fields = Fields>(
       q: EntryQuery = {},
@@ -975,8 +973,11 @@ export class EntryQueryBuilder<F extends Fields> {
  * A Delivery client. `iterateEntries` is optional so a hand-written client or a test double
  * made before it existed still fits; `createDeliveryClient` always has it.
  */
-export type DeliveryClient = Omit<ReturnType<typeof createDeliveryClient>, 'iterateEntries'> &
-  Partial<Pick<ReturnType<typeof createDeliveryClient>, 'iterateEntries'>>;
+export type DeliveryClient = Omit<
+  ReturnType<typeof createDeliveryClient>,
+  'iterateEntries' | 'feedUrl'
+> &
+  Partial<Pick<ReturnType<typeof createDeliveryClient>, 'iterateEntries' | 'feedUrl'>>;
 
 export {
   adminEditUrl,

@@ -201,17 +201,28 @@ const edge = createEdgeClient({
   token: process.env.CONTENTWORKER_CDA_TOKEN!,
   locale: 'en-US',
 });
-const posts = await edge.list('article', { limit: 10, pick: ['title', 'slug'] });
+// One page, with only title and slug transferred.
+const posts = await edge.list('article', { limit: 10, skip: 0, pick: ['title', 'slug'] });
+// A complete playlist, fetched one page at a time.
+for await (const slide of edge.iterate('slide', { limit: 20, pick: ['title'] })) {
+  console.log(slide.fields.title);
+}
 ```
 
 `@contentworker/sdk/react-native` adds offline sync. `createOfflineDelivery` pulls entries
 published since its last cursor (the [`since`](/guides/reading-content/#entries) parameter) into
 storage you pass it, then reads from there without a network. Storage is pluggable: any object
 with `getItem`, `setItem` and `removeItem`, such as `AsyncStorage` or MMKV; `InMemoryStorage` is
-there for tests. Entries unpublished since the last sync are not removed locally yet. `useOfflineEntries(store)` wraps it in a hook.
+there for tests. The first sync and the first sync after 24 hours reconcile withdrawals. For a time-sensitive
+feed, set `reconcileIntervalMs: 0` or call `store.sync({ reconcile: true })` on reconnect.
+Install, environment, delivery or preview, type, and locale each scope the persisted feed.
+Pass a distinct stable `namespace` for each audience sharing storage. Custom clients without
+`feedUrl` require a namespace. After upgrading, sync once online to populate the scoped cache. `useOfflineEntries(store)` wraps it in a hook.
 Over a preview client every sync reads the whole content type again: Preview has no `since`.
 `imageSource(asset, { width, dpr: PixelRatio.get() })` is an `<Image source>` with the width step
-for the device's density and the image's size in dp.
+for the device's density and the image's size in dp. For offline playback, download needed images
+while online, store them in the app's file cache by immutable media URL, and use the local URI.
+Retire files after the last cached entry referencing them is withdrawn.
 
 ### Rendering rich text
 
@@ -230,6 +241,53 @@ const html = toHtml(entry.fields.body, {
 Embedded images come out sized and lazy, with the delivered `srcset`. `toMarkdown`,
 `toPlainText` and `excerpt` cover agents, search and meta descriptions. Override any node with
 `nodes: { paragraph: (node, next) => … }`.
+
+### Send a published article by email
+
+Subscribe a receiver to `entry.published` in the intended environment and verify its signature.
+Use the event's field snapshot so the email carries that publication even if the edge cache is
+still refreshing. This example uses an `article` with English `title` and rich-text `body` fields.
+Its website serves referenced entries at `/read/{id}`. An embedded entry is a “Read more” link.
+The sender supplied by your application selects the audience and deduplicates by event ID.
+
+```ts
+import { verifyWebhook } from '@contentworker/sdk/webhooks';
+import { escapeHtml, isRichTextDocument, toHtml, toPlainText } from '@contentworker/sdk/rich-text';
+
+type Send = (message: {
+  subject: string; html: string; text: string; idempotencyKey: string;
+}) => Promise<void>;
+
+export async function articleEmail(request: Request, secret: string, send: Send) {
+  const event = await verifyWebhook(request, secret);
+  if (!event) return new Response(null, { status: 401 });
+  if (event.type !== 'entry.published' || event.contentTypeApiId !== 'article') {
+    return new Response(null, { status: 204 });
+  }
+  const fields = event.fields as Record<string, Record<string, unknown>> | undefined;
+  const subject = fields?.title?.['en-US'];
+  const body = fields?.body?.['en-US'];
+  if (typeof subject !== 'string' || !isRichTextDocument(body)) {
+    return new Response('Missing English article title or body', { status: 422 });
+  }
+  const links = new Set<string>();
+  const entryHref = ({ id }: { id: string }) => {
+    const href = `https://www.example.com/read/${encodeURIComponent(id)}`;
+    links.add(href);
+    return href;
+  };
+  const html = toHtml(body, {
+    entryHref,
+    renderEntry: target => `<a href="${escapeHtml(entryHref(target))}">Read more</a>`,
+  });
+  const text = [toPlainText(body), ...links].join('\n\n');
+  await send({ subject, html, text, idempotencyKey: event.id });
+  return new Response(null, { status: 204 });
+}
+```
+
+Use absolute URLs for ordinary hyperlinks in the email model. Configure the receiver and sender
+using the [webhook delivery and retry guide](/guides/webhooks/).
 
 ### Site features
 

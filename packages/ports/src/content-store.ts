@@ -2080,6 +2080,8 @@ export interface UniqueConflict {
 }
 
 export interface EntryQuery {
+  /** Internal visibility restriction applied before paging published entries. */
+  readonly readablePublishedTypes?: readonly string[];
   readonly contentTypeApiId?: string;
   readonly limit?: number;
   readonly skip?: number;

@@ -301,6 +301,18 @@ describe('D1 ≡ in-memory query equivalence', { timeout: 60_000 }, () => {
     expect(await d1Ctx.store.entries.countByStatus(elsewhere)).toEqual([]);
   });
 
+  it('pages projected visible types inside SQL even with a small scan budget', async () => {
+    const store = createD1Store(testDb, { queryScanLimit: 2 });
+    const q = { readablePublishedTypes: ['doc'], select: ['title'], limit: 3, skip: 2 };
+    const page = await store.entries.listPublished(scope, q);
+    expect(page).toHaveLength(3);
+    expect(Object.keys(page[0]!.fields)).toEqual(['title']);
+    expect(page).toEqual(await memCtx.store.entries.listPublished(scope, q));
+    expect(await store.entries.listPublished(scope, { ...q, readablePublishedTypes: [] })).toEqual(
+      [],
+    );
+  });
+
   it('raises QueryTooBroadError instead of silently truncating', async () => {
     const tiny = createD1Store(testDb, { queryScanLimit: 2 });
     // `exists:true` on `views` matches every fixture > the limit of 2.

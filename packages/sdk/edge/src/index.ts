@@ -50,28 +50,42 @@ export function createEdgeClient(opts: EdgeClientOptions) {
     return (await res.json()) as T;
   }
 
+  type ListOptions = { limit?: number; skip?: number; pick?: readonly string[] };
+  async function list(contentType: string, options: ListOptions = {}): Promise<CompactEntry[]> {
+    const qs = new URLSearchParams({ locale: opts.locale, content_type: contentType });
+    if (options.limit !== undefined) qs.set('limit', String(options.limit));
+    if (options.skip !== undefined) qs.set('skip', String(options.skip));
+    if (options.pick?.length) qs.set('select', options.pick.join(','));
+    const res = await get<{ items: RawEntry[] }>(`${base}/entries?${qs}`);
+    return res.items.map((e) => ({
+      id: e.id,
+      contentType: e.contentType,
+      fields: project(e.fields, options.pick),
+    }));
+  }
+
   return {
     /** Fetch one entry, flattened to the client locale, optionally field-projected. */
     async get(id: string, pick?: readonly string[]): Promise<CompactEntry> {
-      const e = await get<RawEntry>(
-        `${base}/entries/${encodeURIComponent(id)}?locale=${encodeURIComponent(opts.locale)}`,
-      );
+      const qs = new URLSearchParams({ locale: opts.locale });
+      if (pick?.length) qs.set('select', pick.join(','));
+      const e = await get<RawEntry>(`${base}/entries/${encodeURIComponent(id)}?${qs}`);
       return { id: e.id, contentType: e.contentType, fields: project(e.fields, pick) };
     },
 
-    /** List entries of a content type, flattened + projected. */
-    async list(
-      contentType: string,
-      opts2: { limit?: number; pick?: readonly string[] } = {},
-    ): Promise<CompactEntry[]> {
-      const qs = new URLSearchParams({ locale: opts.locale, content_type: contentType });
-      if (opts2.limit) qs.set('limit', String(opts2.limit));
-      const res = await get<{ items: RawEntry[] }>(`${base}/entries?${qs}`);
-      return res.items.map((e) => ({
-        id: e.id,
-        contentType: e.contentType,
-        fields: project(e.fields, opts2.pick),
-      }));
+    list,
+    /** Walk a playlist one page at a time, stopping when the consumer breaks. */
+    async *iterate(contentType: string, options: ListOptions = {}): AsyncGenerator<CompactEntry> {
+      const limit = Math.min(100, Math.max(1, Math.trunc(options.limit ?? 100) || 1));
+      for (
+        let skip = Number.isFinite(options.skip) ? Math.max(0, Math.trunc(options.skip ?? 0)) : 0;
+        ;
+        skip += limit
+      ) {
+        const page = await list(contentType, { ...options, limit, skip });
+        yield* page;
+        if (page.length < limit) return;
+      }
     },
   };
 }

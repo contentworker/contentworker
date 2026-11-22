@@ -31,6 +31,10 @@ export interface OfflineOptions {
   readonly locale?: string;
   /** Page size for the sync fetch loop, held to 1..100 as the server holds it. */
   readonly pageSize?: number;
+  /** A stable reader/audience identifier. Required for custom clients without a feed URL. */
+  readonly namespace?: string;
+  /** Milliseconds between full reconciliations. Defaults to one day; zero reconciles every sync. */
+  readonly reconcileIntervalMs?: number;
 }
 
 export interface SyncResult {
@@ -38,80 +42,114 @@ export interface SyncResult {
   readonly cursor: string | null;
 }
 
-/**
- * Offline-first delivery for mobile. `sync()` performs **delta sync** — it asks
- * the Delivery API only for entries published since the last cursor, persists
- * them locally, and advances the cursor; `get`/`list` read from local storage so
- * the app works offline. (Deletion tracking would need a server tombstone feed —
- * unpublished entries are not removed locally yet.)
- *
- * Over a preview client every sync reads the whole type again: Preview ignores `since` and its
- * entries carry no `publishedAt` to advance the cursor by.
- */
+interface Manifest {
+  entries: [id: string, slot: number][];
+  cursor: string | null;
+  reconciledAt: number;
+}
+
+// Serialize operations on the same physical store and feed, including separate hook instances.
+const pending = new WeakMap<Storage, Map<string, Promise<unknown>>>();
+
+/** Persist one feed and periodically reconcile the complete set to remove withdrawn entries. */
 export function createOfflineDelivery<F extends Fields = Fields>(opts: OfflineOptions) {
   const { client, storage, contentType, locale } = opts;
-  // A page larger than the server serves would read as the last one and drop the rest.
+  if (!client.feedUrl && !opts.namespace) {
+    throw new Error('Offline delivery requires a namespace for a custom client without feedUrl');
+  }
+  const interval = opts.reconcileIntervalMs ?? 86_400_000;
+  if (!Number.isFinite(interval) || interval < 0) throw new Error('Invalid reconcileIntervalMs');
   const pageSize = Math.min(Math.max(1, Math.trunc(opts.pageSize ?? 100)), 100);
-  const entryKey = (id: string) => `contentworker:entry:${contentType}:${id}`;
-  const indexKey = `contentworker:index:${contentType}`;
-  const cursorKey = `contentworker:cursor:${contentType}`;
+  const prefix = `contentworker:offline:v2:${JSON.stringify([client.feedUrl, opts.namespace, contentType, locale])}`;
+  const indexKey = `${prefix}:index`;
+  const entryKey = (id: string, slot: number) => `${prefix}:entry:${slot}:${id}`;
 
-  const readIndex = async (): Promise<string[]> => {
+  function serialized<T>(work: () => Promise<T>): Promise<T> {
+    const queue = pending.get(storage) ?? new Map<string, Promise<unknown>>();
+    pending.set(storage, queue);
+    const task = (queue.get(prefix) ?? Promise.resolve()).then(work, work);
+    queue.set(prefix, task);
+    return task.finally(() => {
+      if (queue.get(prefix) === task) queue.delete(prefix);
+    });
+  }
+
+  async function manifest(): Promise<Manifest> {
     const raw = await storage.getItem(indexKey);
-    return raw ? (JSON.parse(raw) as string[]) : [];
-  };
+    return raw ? JSON.parse(raw) : { entries: [], cursor: null, reconciledAt: 0 };
+  }
+
+  async function read(id: string, slot: number): Promise<DeliveredEntry<F> | null> {
+    const raw = await storage.getItem(entryKey(id, slot));
+    return raw ? JSON.parse(raw) : null;
+  }
 
   return {
-    /** Delta-sync from the server into local storage. Returns count + new cursor. */
-    async sync(): Promise<SyncResult> {
-      const since = (await storage.getItem(cursorKey)) ?? undefined;
-      const fetched: DeliveredEntry<F>[] = [];
-      for await (const entry of entries<F>(client, {
-        contentType,
-        locale,
-        since,
-        limit: pageSize,
-      })) {
-        fetched.push(entry);
-      }
-
-      const index = new Set(await readIndex());
-      let cursor = since ?? null;
-      for (const entry of fetched) {
-        await storage.setItem(entryKey(entry.id), JSON.stringify(entry));
-        index.add(entry.id);
-        // A preview entry has no publishedAt: it never moves the cursor.
-        if (entry.publishedAt && (!cursor || entry.publishedAt > cursor)) {
-          cursor = entry.publishedAt;
+    sync(options: { reconcile?: boolean } = {}): Promise<SyncResult> {
+      return serialized(async () => {
+        const previous = await manifest();
+        const now = Date.now();
+        const full =
+          options.reconcile || !previous.cursor || now - previous.reconciledAt >= interval;
+        const since = full ? undefined : (previous.cursor ?? undefined);
+        const old = new Map(previous.entries);
+        const next = new Map(full ? [] : previous.entries);
+        let cursor = since ?? null;
+        let synced = 0;
+        for await (const entry of entries<F>(client, {
+          contentType,
+          locale,
+          since,
+          limit: pageSize,
+        })) {
+          const slot = old.get(entry.id) === 0 ? 1 : 0;
+          await storage.setItem(entryKey(entry.id, slot), JSON.stringify(entry));
+          next.set(entry.id, slot);
+          synced++;
+          if (entry.publishedAt && (!cursor || cursor < entry.publishedAt))
+            cursor = entry.publishedAt;
         }
-      }
-      await storage.setItem(indexKey, JSON.stringify([...index]));
-      if (cursor) await storage.setItem(cursorKey, cursor);
-      return { synced: fetched.length, cursor };
+        // Flip the manifest only when every new value is durable. A failed page leaves the prior
+        // snapshot readable. A retry overwrites staged slots without advancing the cursor.
+        await storage.setItem(
+          indexKey,
+          JSON.stringify({
+            entries: [...next],
+            cursor,
+            reconciledAt: full ? now : previous.reconciledAt,
+          }),
+        );
+        for (const [id, slot] of old) {
+          if (next.get(id) !== slot) await storage.removeItem(entryKey(id, slot));
+        }
+        return { synced, cursor };
+      });
     },
 
-    /** Read a cached entry (offline). */
-    async get(id: string): Promise<DeliveredEntry<F> | null> {
-      const raw = await storage.getItem(entryKey(id));
-      return raw ? (JSON.parse(raw) as DeliveredEntry<F>) : null;
+    get(id: string) {
+      return serialized(async () => {
+        const slot = new Map((await manifest()).entries).get(id);
+        return slot === undefined ? null : read(id, slot);
+      });
     },
 
-    /** Read all cached entries for the content type (offline). */
-    async list(): Promise<DeliveredEntry<F>[]> {
-      const ids = await readIndex();
-      const out: DeliveredEntry<F>[] = [];
-      for (const id of ids) {
-        const e = await this.get(id);
-        if (e) out.push(e);
-      }
-      return out;
+    list(): Promise<DeliveredEntry<F>[]> {
+      return serialized(async () => {
+        const out: DeliveredEntry<F>[] = [];
+        for (const [id, slot] of (await manifest()).entries) {
+          const entry = await read(id, slot);
+          if (entry) out.push(entry);
+        }
+        return out;
+      });
     },
 
-    /** Clears local cache + cursor for this content type. */
-    async reset(): Promise<void> {
-      for (const id of await readIndex()) await storage.removeItem(entryKey(id));
-      await storage.removeItem(indexKey);
-      await storage.removeItem(cursorKey);
+    reset(): Promise<void> {
+      return serialized(async () => {
+        const previous = await manifest();
+        await storage.removeItem(indexKey);
+        for (const [id, slot] of previous.entries) await storage.removeItem(entryKey(id, slot));
+      });
     },
   };
 }

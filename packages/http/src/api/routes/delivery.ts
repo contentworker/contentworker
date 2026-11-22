@@ -27,6 +27,7 @@ import {
   MAX_SITEMAP_PAGE,
   maskDeliveredFields,
   parseEntryQuery,
+  parseFieldSelection,
   parseImageTransform,
   resolveDeliveredRedirect,
   searchDeliveredAssets,
@@ -38,6 +39,7 @@ import {
   authorize,
   authorizeContent,
   canAccessContentType,
+  projectFields,
   SCOPES,
   type Scope,
 } from '@contentworker/domain';
@@ -183,6 +185,7 @@ export function deliveryRoutes(deps: AuthDeps, describe: Describe = undocumented
       // Filters, ordering and search over a field the caller can't read would reveal it.
       assertQueryRespectsFieldRules(c.get('principal'), query);
       const items = await listPublishedEntries(ctx, scopeOf(c), query, {
+        principal: c.get('principal'),
         locale: c.req.query('locale'),
         include: clampCount(c.req.query('include'), MAX_INCLUDE_DEPTH, { min: 0 }),
       });
@@ -206,9 +209,11 @@ export function deliveryRoutes(deps: AuthDeps, describe: Describe = undocumented
       });
       const principal = c.get('principal');
       authorizeContent(principal, 'read', entry.contentType);
+      const fields = maskDeliveredFields(principal, entry.contentType, entry.fields);
+      const select = parseFieldSelection(c.req.query('select'));
       return c.json({
         ...entry,
-        fields: maskDeliveredFields(principal, entry.contentType, entry.fields),
+        fields: select ? projectFields(fields, select) : fields,
       });
     },
   );
