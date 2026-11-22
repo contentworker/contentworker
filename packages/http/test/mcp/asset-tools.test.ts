@@ -863,3 +863,32 @@ describe('single-asset tools (MCP), on the same use-cases, scopes and serializer
     for (const [name, body] of texts) expect(JSON.stringify(body), name).not.toContain('r2Key');
   });
 });
+
+it('exposes the editable document template and page reads through MCP', async () => {
+  const { deps } = await setup();
+  const client = await connect(deps, admin);
+  const read = await client.callTool({
+    name: 'document_ingestion_template_get',
+    arguments: { space: SPACE },
+  });
+  expect(payload(read)).toMatchObject({ version: 0, createMediaDrafts: true });
+  const saved = await client.callTool({
+    name: 'document_ingestion_template_set',
+    arguments: {
+      space: SPACE,
+      version: 0,
+      createMediaDrafts: true,
+      describeDocument: true,
+      suggestTags: false,
+    },
+  });
+  expect(payload(saved)).toMatchObject({ version: 1, suggestTags: false });
+  expect(
+    (
+      await client.callTool({
+        name: 'asset_document_page',
+        arguments: { space: SPACE, id: 'missing', page: 1 },
+      })
+    ).isError,
+  ).toBe(true);
+});

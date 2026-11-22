@@ -151,6 +151,13 @@ export type Install = {
   demoStarters: boolean;
   documentParser?: boolean;
   maxUploadBytes?: number;
+  documentFolderSchedule?: {
+    spaceId: string;
+    environmentId: string;
+    folderId: string | null;
+    cron: string;
+    inbox?: boolean;
+  };
   /** Your OIDC provider for admin single sign-on (secret: OIDC_CLIENT_SECRET). */
   sso?: { issuer: string; clientId: string; trustEmail?: boolean };
   /** Email Sending sender for notifications, invitations and password reset codes. */
@@ -187,6 +194,31 @@ export function toInstall(env: Env): Install {
   const aiMaxTier = env.AI_MAX_TIER?.trim() || undefined;
   if (aiMaxTier && !['flagship', 'balanced', 'fast'].includes(aiMaxTier))
     fail('AI_MAX_TIER must be "flagship", "balanced" or "fast"');
+  let documentFolderSchedule: Install['documentFolderSchedule'];
+  if (env.DOCUMENT_FOLDER_SCHEDULE?.trim()) {
+    const rule = JSON.parse(env.DOCUMENT_FOLDER_SCHEDULE);
+    if (
+      !rule ||
+      typeof rule.spaceId !== 'string' ||
+      !rule.spaceId ||
+      typeof rule.environmentId !== 'string' ||
+      !rule.environmentId ||
+      (rule.folderId !== null && (typeof rule.folderId !== 'string' || !rule.folderId)) ||
+      (rule.inbox !== undefined && typeof rule.inbox !== 'boolean') ||
+      typeof rule.cron !== 'string' ||
+      rule.cron.trim().split(/\s+/).length !== 5
+    )
+      fail(
+        'DOCUMENT_FOLDER_SCHEDULE requires spaceId, environmentId, folderId and a five-field UTC cron',
+      );
+    documentFolderSchedule = {
+      spaceId: rule.spaceId,
+      environmentId: rule.environmentId,
+      folderId: rule.folderId,
+      cron: rule.cron,
+      ...(rule.inbox ? { inbox: true } : {}),
+    };
+  }
   const maxUploadBytes = env.ASSET_UPLOAD_MAX_BYTES?.trim();
   if (
     maxUploadBytes &&
@@ -219,6 +251,7 @@ export function toInstall(env: Env): Install {
     ...(aiMaxTier ? { aiMaxTier: aiMaxTier as Tier } : {}),
     aiMock: aiMode === 'mock',
     demoStarters: TRUE(env.DEMO_STARTERS),
+    ...(documentFolderSchedule ? { documentFolderSchedule } : {}),
     ...(maxUploadBytes ? { maxUploadBytes: Number(maxUploadBytes) } : {}),
     ...(TRUE(env.DOCUMENT_PARSER_ENABLED) ? { documentParser: true } : {}),
     ...(issuer && clientId
@@ -391,6 +424,8 @@ function withEmail(c: Config, i: Install): Config {
 
 export function renderEngine(base: Config, i: Install): Config {
   const c = withEmail(common(base, i, 'engine'), i);
+  if (i.maxUploadBytes) c.vars.ASSET_UPLOAD_MAX_BYTES = String(i.maxUploadBytes);
+  if (i.documentFolderSchedule) c.vars.DOCUMENT_FOLDER_SCHEDULE = i.documentFolderSchedule;
   if (i.documentParser) {
     c.containers = [
       {

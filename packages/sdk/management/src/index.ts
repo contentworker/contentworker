@@ -1602,6 +1602,14 @@ export interface AssetRights {
   readonly embargoUntil?: string;
 }
 
+/** Environment document-ingestion settings and their editing revision. */
+export interface DocumentTemplate {
+  readonly version: number;
+  readonly createMediaDrafts: boolean;
+  readonly suggestTags: boolean;
+  readonly describeDocument: boolean;
+}
+
 /** Extracted text, preview and embedded media from a single document page. */
 export interface DocumentPage {
   readonly assetId: string;
@@ -1616,6 +1624,7 @@ export interface DocumentPage {
   readonly previewUrl?: string;
   readonly media: readonly {
     readonly part: string;
+    readonly assetId?: string;
     readonly sha256: string;
     readonly url: string;
   }[];
@@ -2832,6 +2841,9 @@ export function createManagementClient(opts: ManagementClientOptions) {
           get<AssetPage>(`${envBase}/assets`, { ...assetListParams(query), cursor }),
         ),
       get: (id: string) => get<Asset>(`${envBase}/assets/${e(id)}`),
+      documentTemplate: () => get<DocumentTemplate>(`${envBase}/document-ingestion/template`),
+      setDocumentTemplate: (template: DocumentTemplate) =>
+        put<DocumentTemplate>(`${envBase}/document-ingestion/template`, template),
       documentPage: (id: string, page: number, mediaOffset?: number) =>
         get<DocumentPage>(`${envBase}/assets/${e(id)}/document/pages/${page}`, { mediaOffset }),
       /** Hybrid search of the library (full text and semantic), with facet counts. */

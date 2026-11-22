@@ -254,3 +254,19 @@ session and overrides their vars with `LOCAL_STACK_VARS` (`apps/web/vite.config.
 `MEDIA_PUBLIC_URL` is left empty: the media worker runs (it consumes its purge queue) but isn't
 routable from the browser, so delivered assets keep the api's signed URLs locally. The values,
 the seed settings and how to reset them are in [Development](./development.md#running-locally).
+
+### Schedule document ingestion for a DAM folder
+
+Set `DOCUMENT_FOLDER_SCHEDULE` in the install environment to select the space, environment, folder and UTC cadence. Use a folder ID for a named folder or `null` for assets at the root.
+
+```dotenv
+DOCUMENT_FOLDER_SCHEDULE='{"spaceId":"library","environmentId":"main","folderId":null,"cron":"*/15 * * * *"}'
+```
+
+Each firing scans up to 50 assets in creation order and queues existing PDF, PPTX and packaged Keynote files awaiting their first ingest or retry. After the last page the next firing starts a new pass. The engine records progress in R2 after the queue accepts the batch. Manual selections in the DAM use the same file ingestion workflow. Enable `DOCUMENT_PARSER_ENABLED` for page previews, full page text and embedded files.
+
+Each environment starts at template revision zero with media drafts, taxonomy tags and a document description enabled. Read the template at `GET …/document-ingestion/template`. Send its current `version` and the three boolean fields `createMediaDrafts`, `suggestTags` and `describeDocument` to `PUT …/document-ingestion/template` to save a revision. Concurrent edits return 409. MCP exposes `document_ingestion_template_get` and `document_ingestion_template_set`. A running document keeps its options across 128-page Workflow continuations.
+
+Add `"inbox": true` to the schedule to import files placed in the media bucket under `imports/document-inbox/<spaceId>/<environmentId>/`. Each firing checks up to 16 keys. A changed object ETag creates a new draft in the configured folder. The importer copies pinned 256 MiB ranges into its own DAM original through R2 multipart, checkpoints every eight parts and keeps the inbox source intact. Each file can be up to 1 TB (1,000,000,000,000 bytes).
+
+Multipart clients renew their upload lease when they request fresh part URLs. The abandoned-upload sweep uses 24 hours of inactivity, so a transfer can continue past its first day.

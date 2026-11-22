@@ -8,6 +8,7 @@ import {
   getAsset,
   getAssetUsage,
   getDocumentPage,
+  getDocumentTemplate,
   listAssetVersions,
   parseImageTransform,
   publishAsset,
@@ -18,6 +19,7 @@ import {
   restoreAssetVersion,
   setAssetMetadata,
   setAssetRights,
+  setDocumentTemplate,
   startMultipartAssetFileReplacement,
   transformAssetUrl,
   unpublishAsset,
@@ -45,6 +47,25 @@ export function assetItemRoutes(deps: AuthDeps): Hono<AuthVars> {
   const { ctx, blob, ai } = deps;
   const { signedOne } = assetUrls(blob);
   const app = new Hono<AuthVars>();
+
+  app.get(
+    `${BASE}/document-ingestion/template`,
+    doc('Assets', 'Read the document ingestion template', { ok: assetDocs.documentTemplate }),
+    requireScope(SCOPES.assetsRead),
+    async (c) => c.json(await getDocumentTemplate(ctx, scopeOf(c))),
+  );
+  app.put(
+    `${BASE}/document-ingestion/template`,
+    doc('Assets', 'Edit the document ingestion template', {
+      body: assetDocs.documentTemplate,
+      ok: assetDocs.documentTemplate,
+    }),
+    requireScope(SCOPES.assetsWrite),
+    async (c) =>
+      c.json(
+        await setDocumentTemplate(ctx, scopeOf(c), await parseBody(c, assetDocs.documentTemplate)),
+      ),
+  );
 
   // --- one asset (read, edit, AI, publishing, file versions, rights) ----------
   app.get(

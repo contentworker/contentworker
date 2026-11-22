@@ -289,6 +289,30 @@ export function createR2BlobStore(bucket: R2BucketLike, opts: R2BlobOptions): Bl
       const params = new URLSearchParams({ exp: String(exp) });
       return signedMediaUrl(opts.signer, read.origin ?? base, 'GET', key, params);
     },
+    async listKeys(prefix, limit, cursor) {
+      const page = await bucket.list({ prefix, limit, cursor });
+      return {
+        keys: page.objects.map((o) => o.key),
+        cursor: page.truncated ? page.cursor : undefined,
+      };
+    },
+    async reserve(key, value) {
+      const stored = await bucket.put(key, value, {
+        onlyIf: new Headers({ 'if-none-match': '*' }),
+      });
+      if (stored) return value;
+      const winner = await bucket.get(key);
+      if (!winner) throw new Error('Missing asset reservation');
+      return winner.text();
+    },
+    async copyOnce(source, destination, contentType) {
+      const file = await bucket.get(source);
+      if (!file) throw new Error('Missing embedded media');
+      await bucket.put(destination, file.body, {
+        onlyIf: new Headers({ 'if-none-match': '*' }),
+        httpMetadata: { contentType },
+      });
+    },
     async delete(key) {
       await bucket.delete(key);
     },
@@ -398,6 +422,14 @@ function r2Multipart(
       if (!bucket.createMultipartUpload) throw new Error('R2 multipart is not available');
       const upload = await bucket.createMultipartUpload(key, { httpMetadata: { contentType } });
       return { uploadId: upload.uploadId };
+    },
+    async copyPart(source, etag, offset, length, destination, uploadId, number) {
+      const object = await bucket.get(source, { range: { offset, length } });
+      if (!object || object.httpEtag !== etag) {
+        await object?.body.cancel();
+        throw new Error('Inbox object changed during import');
+      }
+      return resume(destination, uploadId).uploadPart(number, object.body);
     },
     async partUrl(key, uploadId, partNumber, length) {
       const exp = now() + ttl;

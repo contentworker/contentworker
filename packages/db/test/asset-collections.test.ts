@@ -250,6 +250,19 @@ describe('share links, zip jobs and uploads on D1', () => {
       1000,
     );
     expect(stale.map((s) => s.upload.uploadId)).toContain(started.upload.uploadId);
+    const id = started.asset.id;
+    const uploadId = started.upload.uploadId;
+    const cutoff = new Date(clock.now().getTime() + 10);
+    expect(
+      await store.assetUploads.renew(scope, id, uploadId, new Date(cutoff.getTime() + 1)),
+    ).toBe(true);
+    expect(await store.assetUploads.claimExpired(scope, id, uploadId, cutoff)).toBe(false);
+    expect(
+      await store.assetUploads.claimExpired(scope, id, uploadId, new Date(cutoff.getTime() + 2)),
+    ).toBe(true);
+    expect(
+      await store.assetUploads.renew(scope, id, uploadId, new Date(cutoff.getTime() + 3)),
+    ).toBe(false);
   });
 
   it('clears every new table with its environment', async () => {

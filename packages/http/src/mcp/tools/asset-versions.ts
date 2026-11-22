@@ -8,12 +8,14 @@ import {
   generateAltText,
   getAssetUsage,
   getDocumentPage,
+  getDocumentTemplate,
   listAssetVersions,
   MAX_ASSET_BULK_TAGS,
   refreshVideoAsset,
   replaceAssetFile,
   restoreAssetVersion,
   setAssetRights,
+  setDocumentTemplate,
   startAssetBulkJob,
   startMultipartAssetFileReplacement,
   transformAssetUrl,
@@ -22,6 +24,7 @@ import { MAX_ASSET_RIGHTS_TEXT, NotConfiguredError, SCOPES } from '@contentworke
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { assetVersionResponse } from '../../api/asset-response';
+import { documentTemplate } from '../../api/docs/schemas/assets';
 import {
   ok,
   rightsRefusal,
@@ -46,6 +49,32 @@ export function registerAssetVersionTools(server: McpServer, t: ToolContext): vo
   // The same author the REST routes record, so a version shows one name whichever surface made it.
   const actor = auditActor(principal);
 
+  server.registerTool(
+    'document_ingestion_template_get',
+    {
+      description: 'Read the document ingestion settings and their revision.',
+      annotations: { readOnlyHint: true },
+      inputSchema: toolSchema('document_ingestion_template_get', () => z.object(scopeArgs)),
+    },
+    async (args) => {
+      guard(SCOPES.assetsRead, scopeOf(args));
+      return ok(await getDocumentTemplate(ctx, scopeOf(args)));
+    },
+  );
+  server.registerTool(
+    'document_ingestion_template_set',
+    {
+      description:
+        'Set the DAM media draft, tag and description options for new document runs using the current revision.',
+      inputSchema: toolSchema('document_ingestion_template_set', () =>
+        documentTemplate.extend(scopeArgs),
+      ),
+    },
+    async (args) => {
+      guard(SCOPES.assetsWrite, scopeOf(args));
+      return ok(await setDocumentTemplate(ctx, scopeOf(args), args));
+    },
+  );
   server.registerTool(
     'asset_document_page',
     {

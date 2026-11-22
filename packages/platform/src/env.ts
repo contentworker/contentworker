@@ -27,6 +27,7 @@ export interface EdgeEnv {
     import('./do/document-parser').DocumentParserDO
   >;
   readonly DOCUMENT_PARSER_ENABLED?: string;
+  readonly DOCUMENT_FOLDER_SCHEDULE?: import('@contentworker/application').DocumentFolderSchedule;
   /**
    * Worker Loader binding. Present only where sandboxed plugins are enabled;
    * absent means installed plugins are never executed, which is the safe

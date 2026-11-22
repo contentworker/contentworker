@@ -298,7 +298,21 @@ export const documentPage = z.object({
   documentStatus: z.enum(['processing', 'partial', 'complete']),
   preview: z.literal('preview.png').nullable(),
   previewUrl: z.string().optional(),
-  media: z.array(z.object({ part: z.string(), sha256: z.string(), url: z.string() })),
+  media: z.array(
+    z.object({
+      part: z.string(),
+      sha256: z.string(),
+      assetId: z.string().optional(),
+      url: z.string(),
+    }),
+  ),
   nextMediaOffset: z.int().optional(),
   warnings: z.array(z.string()),
+});
+
+export const documentTemplate = z.object({
+  version: z.int().nonnegative(),
+  createMediaDrafts: z.boolean(),
+  suggestTags: z.boolean(),
+  describeDocument: z.boolean(),
 });

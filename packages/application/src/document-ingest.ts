@@ -2,7 +2,9 @@ import { createHash } from 'node:crypto';
 import { type Asset, NotFoundError, type Scope, ValidationError } from '@contentworker/domain';
 import type {
   AssetIngestParams,
+  AssetIngestStarter,
   BlobStore,
+  DocumentIngestOptions,
   DocumentPageRequest,
   DocumentParser,
   WorkflowSteps,
@@ -11,10 +13,13 @@ import {
   assetDerivedPrefix,
   assetFileKey,
   assetTextKey,
+  createUploadDraft,
   getAsset,
+  prepareUploadDraft,
   READ_URL_TTL_SECONDS,
 } from './assets';
 import type { AppContext } from './context';
+import { getDocumentTemplate } from './document-template';
 
 export interface DocumentPage {
   readonly page: number;
@@ -22,7 +27,11 @@ export interface DocumentPage {
   readonly text: string;
   readonly textMethod: 'native' | 'ocr';
   readonly preview: 'preview.png' | null;
-  readonly media: readonly { readonly part: string; readonly sha256: string }[];
+  readonly media: readonly {
+    readonly part: string;
+    readonly sha256: string;
+    readonly assetId?: string;
+  }[];
   readonly warnings: readonly string[];
   readonly status: 'complete' | 'partial';
 }
@@ -32,7 +41,10 @@ const pageStep = {
   timeout: '10 minutes',
 };
 
+export const DOCUMENT_MEDIA_ACTOR = 'system:document-parser';
+
 function documentFormat(asset: Asset): DocumentPageRequest['format'] | undefined {
+  if (asset.createdBy === DOCUMENT_MEDIA_ACTOR && (asset.version ?? 1) === 1) return undefined;
   const extension = asset.file.fileName.split('.').at(-1)?.toLowerCase();
   if (extension === 'key' || extension === 'pdf' || extension === 'pptx') return extension;
   return undefined;
@@ -47,6 +59,64 @@ async function current(ctx: AppContext, params: AssetIngestParams) {
   return asset && (asset.version ?? 1) === params.version ? asset : undefined;
 }
 
+const mediaTypes: Record<string, string> = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  tiff: 'image/tiff',
+  tif: 'image/tiff',
+  mp4: 'video/mp4',
+  mov: 'video/quicktime',
+  mp3: 'audio/mpeg',
+  wav: 'audio/wav',
+};
+
+async function registerMedia(
+  ctx: AppContext,
+  blob: BlobStore,
+  scope: Scope,
+  parent: Asset,
+  prefix: string,
+  manifest: DocumentPage,
+) {
+  if (!manifest.media.length) return;
+  if (!blob.reserve || !blob.copyOnce) throw new Error('Document media storage unavailable');
+  const media = [];
+  for (const item of manifest.media) {
+    if (!/^[a-f0-9]{64}$/.test(item.sha256)) throw new Error('Invalid embedded media digest');
+    const key = `${prefix}media/${item.sha256}`;
+    const id = await blob.reserve(`${key}.asset`, ctx.ids.newId());
+    if (!(await ctx.store.assets.get(scope, id))) {
+      const fileName = item.part.split('/').at(-1) || 'file';
+      const ext = fileName.split('.').at(-1)?.toLowerCase() ?? '';
+      const contentType = Object.hasOwn(mediaTypes, ext)
+        ? mediaTypes[ext]!
+        : 'application/octet-stream';
+      const draft = await prepareUploadDraft(
+        ctx,
+        blob,
+        scope,
+        { fileName, contentType },
+        { reservedId: id, folderId: parent.folderId ?? undefined, createdBy: DOCUMENT_MEDIA_ACTOR },
+      );
+      await blob.copyOnce(key, draft.key, draft.contentType);
+      try {
+        await createUploadDraft(ctx, scope, draft.asset);
+      } catch (err) {
+        if (!(await ctx.store.assets.get(scope, id))) throw err;
+      }
+    }
+    media.push({ ...item, assetId: id });
+  }
+  await blob.put(
+    `${prefix}pages/${manifest.page}/manifest.json`,
+    JSON.stringify({ ...manifest, media }),
+    'application/json',
+  );
+}
+
 /** The parser writes a manifest last: a retried page with a manifest has all of its bytes. */
 export async function parseAssetDocument(
   steps: Pick<WorkflowSteps, 'do'>,
@@ -54,7 +124,13 @@ export async function parseAssetDocument(
   blob: BlobStore,
   parser: DocumentParser,
   params: AssetIngestParams,
-): Promise<{ chars: number; pages: number; partial: boolean } | null> {
+  continuation?: { starter: AssetIngestStarter; instanceId: string },
+): Promise<
+  | { chars: number; pages: number; partial: boolean; template: DocumentIngestOptions }
+  | 'continued'
+  | 'stale'
+  | null
+> {
   const prefix = assetDerivedPrefix(params.scope, params.assetId, params.version);
   if (!prefix || !blob.head) return null;
   const source = await steps.do('document-source', pageStep, async () => {
@@ -65,6 +141,7 @@ export async function parseAssetDocument(
     const object = await blob.head?.(sourceKey);
     if (!object?.etag) throw new Error('Document source unavailable');
     return {
+      template: params.documentCursor?.template ?? (await getDocumentTemplate(ctx, params.scope)),
       format,
       sourceKey,
       etag: object.etag,
@@ -72,20 +149,41 @@ export async function parseAssetDocument(
       outputPrefix: documentPrefix(prefix, object.etag),
     };
   });
-  if (!source) return null;
-  let pages = 1;
-  let partial = false;
-  for (let page = 1; page <= pages; page++) {
+  if (!source) return params.documentCursor ? 'stale' : null;
+  const cursor = params.documentCursor;
+  if (cursor && cursor.etag !== source.etag) return 'stale';
+  const first = cursor?.page ?? 1;
+  let pages = cursor?.pages ?? 1;
+  let partial = cursor?.partial ?? false;
+  for (let page = first; page <= pages; page++) {
+    if (page - first === 128 && continuation) {
+      const nextId = createHash('sha256')
+        .update(`${continuation.instanceId}/${page}`)
+        .digest('hex');
+      await steps.do('continue-document', pageStep, () =>
+        continuation.starter.start(nextId, {
+          ...params,
+          documentCursor: { page, pages, partial, etag: source.etag, template: source.template },
+        }),
+      );
+      return 'continued';
+    }
     const result = await steps.do(`document-page-${page}`, pageStep, async () => {
-      if (!(await current(ctx, params))) return null;
-      const cached = await blob.get(`${source.outputPrefix}pages/${page}/manifest.json`);
-      if (cached) {
-        const manifest: DocumentPage = JSON.parse(cached);
-        return { pages: manifest.pages, partial: manifest.status === 'partial' };
+      const parent = await current(ctx, params);
+      if (!parent) return null;
+      const key = `${source.outputPrefix}pages/${page}/manifest.json`;
+      let raw = await blob.get(key);
+      if (!raw) {
+        await parser.render({ ...source, page });
+        raw = await blob.get(key);
       }
-      return parser.render({ ...source, page });
+      if (!raw) throw new Error('Missing rendered document page');
+      const manifest: DocumentPage = JSON.parse(raw);
+      if (source.template.createMediaDrafts)
+        await registerMedia(ctx, blob, params.scope, parent, source.outputPrefix, manifest);
+      return { pages: manifest.pages, partial: manifest.status === 'partial' };
     });
-    if (!result) return null;
+    if (!result) return 'stale';
     pages = result.pages;
     partial ||= result.partial;
   }
@@ -108,7 +206,7 @@ export async function parseAssetDocument(
     );
     return excerpt.length;
   });
-  return { chars, pages, partial };
+  return { chars, pages, partial, template: source.template };
 }
 
 /** One numbered page of the current DAM file, within its owning environment. */

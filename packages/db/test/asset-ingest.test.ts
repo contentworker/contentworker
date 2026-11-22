@@ -33,6 +33,35 @@ const asset = (over: Partial<Asset> = {}): Asset => {
 };
 
 describe('asset ingest columns on D1', () => {
+  it('applies AI tags only to an empty taxonomy selection', async () => {
+    const scope = freshScope();
+    const a = asset();
+    await store.assets.create(scope, a);
+    await store.assets.recordIngest(scope, a.id, 1, { tagsIfEmpty: ['brand'] });
+    await store.assets.recordIngest(scope, a.id, 1, { tagsIfEmpty: ['other'] });
+    expect(await store.assets.get(scope, a.id)).toMatchObject({
+      metadata: { tags: ['brand'] },
+      aiSuggestions: { tags: ['brand'] },
+    });
+  });
+  it('fills only the current empty description locale and preserves editorial changes', async () => {
+    const scope = freshScope();
+    const a = asset({ description: { fr: 'Éditorial' } });
+    await store.assets.create(scope, a);
+    for (const [locale, value, version] of [
+      ['en-US', 'Old version', 2],
+      ['fr', 'Other', 1],
+      ['en-US', 'Summary', 1],
+      ['en-US', 'Second', 1],
+    ] as const)
+      await store.assets.recordIngest(scope, a.id, version, {
+        descriptionIfEmpty: { locale, value },
+      });
+    expect((await store.assets.get(scope, a.id))?.description).toEqual({
+      fr: 'Éditorial',
+      'en-US': 'Summary',
+    });
+  });
   it('records findings, measurements and a sniffed type without touching editorial fields', async () => {
     const scope = freshScope();
     const a = asset();

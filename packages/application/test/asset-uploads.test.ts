@@ -54,6 +54,19 @@ describe('multipart uploads', () => {
     expect([1, 2, 3].map((n) => partLength(upload, n))).toEqual([8 * MiB, 8 * MiB, 4 * MiB + 3]);
   });
 
+  it('keeps a multipart upload and its draft while fresh parts are being signed', async () => {
+    const { asset, upload } = await startMultipartAssetUpload(ctx, blob, scope, {
+      fileName: 'book.pdf',
+      contentType: 'application/pdf',
+      size: 3 * DEFAULT_PART_BYTES,
+    });
+    clock.advance(ABANDONED_MULTIPART_TTL_MS - 100);
+    await signAssetUploadParts(ctx, blob, scope, asset.id, upload.uploadId, [2]);
+    clock.advance(200);
+    expect(await sweepAbandonedMultipartUploads(ctx, blob)).toEqual({ aborted: 0, failed: 0 });
+    expect(await ctx.store.assets.listAwaitingUpload(clock.now(), 100)).toHaveLength(0);
+  });
+
   it('starts a decimal terabyte file and signs its last bounded part', async () => {
     const size = 1_000_000_000_000;
     const { asset, upload } = await startMultipartAssetUpload(

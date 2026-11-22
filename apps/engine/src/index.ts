@@ -19,6 +19,7 @@ import {
   drainOutbox,
   failStalePromotions,
   pruneEventHistory,
+  queueScheduledDocuments,
   redeliverWebhook,
   repairAllTaxonomies,
   resealSecrets,
@@ -687,6 +688,20 @@ export default {
           },
           (err) => console.error('taxonomy repair failed', redactCredentials(err)),
         );
+      }
+      if (env.DOCUMENT_FOLDER_SCHEDULE && wired.assetIngest) {
+        try {
+          await queueScheduledDocuments(
+            wired.ctx,
+            wired.blob,
+            wired.assetIngest,
+            env.DOCUMENT_FOLDER_SCHEDULE,
+            ctrl.scheduledTime,
+            wired.assetIngestStarter,
+          );
+        } catch (error) {
+          console.error('document folder schedule failed', redactCredentials(error));
+        }
       }
       // Actions first: their outbox events are then picked up by the relay
       // sweep below instead of waiting a full cron interval.

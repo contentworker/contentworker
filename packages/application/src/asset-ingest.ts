@@ -31,8 +31,10 @@ import type {
   WorkflowSteps,
 } from '@contentworker/ports';
 import { redactCredentials } from '@contentworker/redaction';
-import { runWithBudget } from './ai-budget';
+import { recordAgentRun } from './agent-audit';
+import { generateWithBudget, runWithBudget } from './ai-budget';
 import { stripPdfMetadata } from './ai-project-excerpts';
+import { UNTRUSTED_CONTENT_GUARD, wrapUntrusted } from './ai-prompt';
 import { aiCapability } from './ai-settings';
 import { type AssetSearchDeps, embedAssetForSearch, indexAssetText } from './asset-search';
 import { allAssets, assetFileKey, assetTextKey, parseAssetObjectKey } from './assets';
@@ -78,6 +80,7 @@ export interface AssetIngestDeps {
   readonly images?: ImageProbe;
   readonly extractor?: TextExtractor;
   readonly documentParser?: DocumentParser;
+  readonly continuation?: { starter: AssetIngestStarter; instanceId: string };
   /** Generation model for alt text and tags; absent, enrichment is skipped. */
   readonly ai?: AIProvider;
   readonly search?: AssetSearchDeps;
@@ -345,7 +348,7 @@ export function assetReindexChunkRunner(
 // ---- the run ---------------------------------------------------------------------------------
 
 /** How a run ended: `stale` when the asset was deleted or its file replaced along the way. */
-export type IngestOutcome = 'ready' | 'error' | 'stale';
+export type IngestOutcome = 'ready' | 'error' | 'stale' | 'continued';
 
 /** What each step did, as the run's result records it (JSON, for the Workflows journal). */
 export interface IngestSummary {
@@ -373,9 +376,20 @@ export async function runAssetIngest(
   params: AssetIngestParams,
 ): Promise<IngestSummary> {
   if (params.textOnly) return runReferenceExtraction(steps, ctx, deps, params);
-  const begun = await steps.do('begin', STEP, () => beginIngest(ctx, params));
-  if (!begun) return { outcome: 'stale' };
+  if (!params.documentCursor && !(await steps.do('begin', STEP, () => beginIngest(ctx, params))))
+    return { outcome: 'stale' };
   try {
+    const parsed =
+      deps.documentParser &&
+      (await parseAssetDocument(
+        steps,
+        ctx,
+        deps.blob,
+        deps.documentParser,
+        params,
+        deps.continuation,
+      ));
+    if (parsed === 'continued' || parsed === 'stale') return { outcome: parsed };
     const hashed = await steps.do('hash', STEP, () => hashAsset(ctx, deps, params));
     if (!hashed) return { outcome: 'stale' };
     await steps.do('probe', STEP, () => probeAsset(ctx, deps, params));
@@ -384,12 +398,14 @@ export async function runAssetIngest(
       // A placeholder is a nicety: one the service kept failing to make is simply not there.
       .catch(() => false);
     const altText = await enrichStep(steps, 'alt-text', () => enrichAltText(ctx, deps, params));
-    const parsed =
-      deps.documentParser &&
-      (await parseAssetDocument(steps, ctx, deps.blob, deps.documentParser, params));
     const text =
       parsed ?? (await steps.do('extract-text', SLOW_STEP, () => extractText(ctx, deps, params)));
-    const tags = await enrichStep(steps, 'tags', () => enrichTags(ctx, deps, params));
+    const tags =
+      parsed && !parsed.template.suggestTags
+        ? 'skipped'
+        : await enrichStep(steps, 'tags', () => enrichTags(ctx, deps, params));
+    if (parsed && parsed.template.describeDocument && parsed.chars > 0 && deps.ai)
+      await enrichStep(steps, 'document-description', () => describeDocument(ctx, deps, params));
     await steps.do('embed', STEP, async () =>
       deps.search
         ? embedAssetForSearch(ctx, deps.search, deps.blob, params.scope, params.assetId)
@@ -698,6 +714,49 @@ export async function enrichAltText(
     : 'kept';
 }
 
+async function describeDocument(
+  ctx: AppContext,
+  deps: AssetIngestDeps,
+  params: AssetIngestParams,
+): Promise<EnrichOutcome> {
+  const asset = await currentAsset(ctx, params);
+  const locale = (await ctx.store.spaces.getConfig(params.scope))?.defaultLocale;
+  if (!asset || !locale || !deps.ai) return 'skipped';
+  if (hasText(asset.description[locale])) return 'kept';
+  const policy = await aiCapability(ctx, params.scope, 'media');
+  if (!policy.enabled) return 'skipped';
+  const key = assetTextKey(params.scope, params.assetId, params.version);
+  const excerpt = key && (await deps.blob.getRange?.(key, 0, 8192));
+  if (!excerpt || !excerpt.text.trim()) return 'none';
+  try {
+    const result = await generateWithBudget(ctx, markingModelFailures(deps.ai), params.scope, {
+      system: policy.system(
+        'Write one plain-text sentence describing the document using only the supplied excerpt. ' +
+          UNTRUSTED_CONTENT_GUARD,
+      ),
+      prompt: 'Output language: ' + locale + '\n' + wrapUntrusted(excerpt.text),
+      tier: policy.tier('fast'),
+      maxTokens: 180,
+    });
+    const value = plainLine(result.text ?? '', 600);
+    if (!value) return 'none';
+    await ctx.store.assets.recordIngest(params.scope, asset.id, params.version, {
+      descriptionIfEmpty: { locale, value },
+    });
+    await recordAgentRun(ctx, params.scope, {
+      workflow: 'document-description',
+      entryId: asset.id,
+      status: 'completed',
+      decisions: ['Generated document description'],
+      usage: result.usage,
+    });
+    return 'suggested';
+  } catch (error) {
+    if (error instanceof RateLimitedError) return 'budget';
+    throw error;
+  }
+}
+
 /**
  * Suggests tags for an image that has none: only tags already in the space's vocabulary. The
  * model may propose new names; ingest never creates them (a person's "Suggest tags" does), so
@@ -761,6 +820,12 @@ async function applySuggestions(
       : {}),
     ...(tags.length > 0 ? { tags } : {}),
   });
+  if (tags.length && Object.keys(altText).length === 0) {
+    await ctx.store.assets.recordIngest(params.scope, params.assetId, params.version, {
+      tagsIfEmpty: updated.metadata.tags,
+    });
+    return true;
+  }
   const marks: AssetAiSuggestions = {
     ...(Object.keys(altText).length > 0
       ? {

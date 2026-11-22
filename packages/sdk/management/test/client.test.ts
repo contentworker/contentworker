@@ -509,6 +509,13 @@ describe('@contentworker/sdk-management client', () => {
     await c.assets.delete('a1');
     await c.assets.move(['a1', 'a2'], 'f1');
     await c.assets.search({ q: 'mug', kind: 'image', folder: 'root' });
+    await c.assets.documentTemplate();
+    await c.assets.setDocumentTemplate({
+      version: 0,
+      createMediaDrafts: true,
+      suggestTags: true,
+      describeDocument: false,
+    });
     await c.assets.documentPage('a1', 7, 100);
     await c.assets.reingest('a1');
     await c.assets.reindex({ all: true });
@@ -572,6 +579,8 @@ describe('@contentworker/sdk-management client', () => {
       `DELETE ${env}/assets/a1`,
       `POST ${env}/assets/move`,
       `GET ${env}/assets/search?q=mug&kind=image&folder=root`,
+      `GET ${env}/document-ingestion/template`,
+      `PUT ${env}/document-ingestion/template`,
       `GET ${env}/assets/a1/document/pages/7?mediaOffset=100`,
       `POST ${env}/assets/a1/reingest`,
       `POST ${env}/assets/reindex`,
