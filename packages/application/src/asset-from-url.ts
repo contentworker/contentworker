@@ -100,8 +100,7 @@ export async function createAssetFromUrl(
       ...(input.folderId ? { folderId: input.folderId } : {}),
     },
   );
-  // The bytes first: a record never points at a file that isn't there. A failure after the write
-  // leaves only an object under an id nothing names, which the bucket's lifecycle tidies.
+  // The bytes first: a record never points at a file that isn't there.
   await deps.blob.put(prepared.key, file.bytes, prepared.contentType);
   const asset: Asset = {
     ...prepared.asset,
@@ -110,17 +109,34 @@ export async function createAssetFromUrl(
       ? { ...emptyAssetMetadata, altText: { [locale]: input.alt } }
       : emptyAssetMetadata,
   };
-  await createUploadDraft(ctx, scope, asset);
+  try {
+    await createUploadDraft(ctx, scope, asset);
+  } catch (err) {
+    // No record names the object, so nothing ever would: removed now rather than left behind (a
+    // caller bringing in a whole site retries many of these). The refusal is what the caller sees.
+    await deps.blob.delete(prepared.key).catch((cleanup: unknown) => {
+      console.error('asset from URL cleanup failed', {
+        key: prepared.key,
+        error: String(cleanup),
+      });
+    });
+    throw err;
+  }
+  // From here the record holds the file, so nothing deletes it: a lost notice only waits for R2's
+  // own notification of the write (or a reindex).
   if (deps.ingest) {
-    // Named by its etag, as a finished upload's notice is, so R2's own notification of the write
-    // starts no second run.
-    const etag = (await deps.blob.head?.(prepared.key))?.etag;
-    await deps.ingest.objectCreated(prepared.key, etag).catch((err: unknown) => {
+    const ingest = deps.ingest;
+    try {
+      // Named by its etag, as a finished upload's notice is, so R2's own notification of the write
+      // starts no second run.
+      const etag = (await deps.blob.head?.(prepared.key))?.etag;
+      await ingest.objectCreated(prepared.key, etag);
+    } catch (err) {
       console.error('asset from URL ingest notice failed', {
         key: prepared.key,
         error: String(err),
       });
-    });
+    }
   }
   return { asset, deduplicated: false };
 }

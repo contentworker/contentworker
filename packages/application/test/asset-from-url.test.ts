@@ -8,7 +8,7 @@ import {
   InMemoryContentStore,
   SequenceIdGenerator,
 } from '@contentworker/test-kit';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   type AppContext,
   ASSET_FROM_URL_MAX_BYTES,
@@ -48,6 +48,10 @@ describe('create an asset from a URL', () => {
   let store: InMemoryContentStore;
   let blob: FakeBlobStore;
   let ingest: FakeAssetIngestQueue;
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
 
   beforeEach(async () => {
     store = new InMemoryContentStore();
@@ -190,6 +194,44 @@ describe('create an asset from a URL', () => {
     expect((await store.assets.list(scope, { filters: { status: 'all' } })).items).toEqual([]);
     expect(await blob.listKeys('shop/', 100)).toEqual({ keys: [], cursor: undefined });
     expect(ingest.created).toEqual([]);
+  });
+
+  it('deletes the stored file when the record cannot be written, and rethrows why', async () => {
+    const failure = new Error('D1 unavailable');
+    vi.spyOn(store.assets, 'create').mockRejectedValueOnce(failure);
+    const err = await createAssetFromUrl(ctx, { blob, fetcher: files, ingest }, scope, {
+      url: 'https://cdn.example.com/media/hero%20shot.png',
+    }).catch((e: unknown) => e);
+    expect(err).toBe(failure);
+    expect(blob.deletes).toHaveLength(1);
+    expect(blob.deletes[0]).toMatch(/^shop\/main\/.+\/hero shot\.png$/);
+    expect(await blob.listKeys('shop/', 100)).toEqual({ keys: [], cursor: undefined });
+    expect(ingest.created).toEqual([]);
+  });
+
+  it('still rethrows the record’s failure when the cleanup fails too', async () => {
+    const failure = new Error('D1 unavailable');
+    vi.spyOn(store.assets, 'create').mockRejectedValueOnce(failure);
+    vi.spyOn(blob, 'delete').mockRejectedValueOnce(new Error('R2 unavailable'));
+    const quiet = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await expect(
+      createAssetFromUrl(ctx, { blob, fetcher: files }, scope, {
+        url: 'https://cdn.example.com/media/hero%20shot.png',
+      }),
+    ).rejects.toBe(failure);
+    expect(blob.delete).toHaveBeenCalledTimes(1);
+    quiet.mockRestore();
+  });
+
+  it('keeps the file once the record holds it, even when the ingest notice fails', async () => {
+    vi.spyOn(ingest, 'objectCreated').mockRejectedValueOnce(new Error('queue down'));
+    const quiet = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { asset } = await createAssetFromUrl(ctx, { blob, fetcher: files, ingest }, scope, {
+      url: 'https://cdn.example.com/media/hero%20shot.png',
+    });
+    expect(blob.deletes).toEqual([]);
+    expect(await store.assets.get(scope, asset.id)).toBeTruthy();
+    quiet.mockRestore();
   });
 
   it('falls back to a generic type and name when the response names neither', async () => {
