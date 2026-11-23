@@ -1,9 +1,5 @@
 # Product
 
-## Register
-
-product
-
 ## Users
 
 Content editors first: writers, marketers, and content ops people who live in entries,
