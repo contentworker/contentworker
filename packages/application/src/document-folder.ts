@@ -3,6 +3,7 @@ import { nextCronOccurrence, type Scope } from '@contentworker/domain';
 import type { AssetIngestQueue, AssetIngestStarter, BlobStore } from '@contentworker/ports';
 import { assetFileKey } from './assets';
 import type { AppContext } from './context';
+import { documentFileFormat } from './document-format';
 import { scanDocumentInbox } from './document-inbox';
 import { DOCUMENT_MEDIA_ACTOR } from './document-ingest';
 
@@ -46,7 +47,7 @@ export async function queueScheduledDocuments(
   const candidates = page.items.filter(
     (a) =>
       (a.createdBy !== DOCUMENT_MEDIA_ACTOR || (a.version ?? 1) > 1) &&
-      /\.(pdf|pptx|key)$/i.test(a.file.fileName) &&
+      documentFileFormat(a.file.fileName) &&
       (!a.ingestStatus || a.ingestStatus === 'error'),
   );
   const found = await Promise.all(candidates.map((a) => blob.head?.(assetFileKey(scope, a))));

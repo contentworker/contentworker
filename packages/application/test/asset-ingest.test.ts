@@ -298,17 +298,27 @@ describe('asset ingest', () => {
     expect(found.items.map((a) => a.id)).toEqual([asset.id]);
   });
 
-  it('matches document text against existing DAM tags and records the suggestion', async () => {
+  it.each([
+    ['brief.pdf', 'application/pdf', 'application/pdf'],
+    ['brief.PDF', 'application/octet-stream', 'application/pdf'],
+    [
+      'brief.PpTx',
+      'application/octet-stream',
+      'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    ],
+  ])('tags extracted text from %s uploaded as %s', async (fileName, contentType, extractedType) => {
     const tag = await createTag(t.ctx, scope, { name: 'launch' });
-    const asset = await t.upload('brief.pdf', 'application/pdf', '%PDF-bytes');
-    t.extractor.setText('brief.pdf', 'Heliotrope launch brief');
+    const asset = await t.upload(fileName, contentType, 'document bytes');
+    t.extractor.setText(fileName, 'Heliotrope launch brief');
     t.ai.respondWith = async (req) => {
       expect(req.prompt).toContain('Heliotrope launch brief');
       return { existingTags: ['launch'], newTags: ['unlisted'] };
     };
     const result = await t.run(asset.id);
     expect(result).toMatchObject({ value: { outcome: 'ready', tags: 'suggested' } });
+    expect(t.extractor.read[0]?.contentType).toBe(extractedType);
     expect(await getAsset(t.ctx, scope, asset.id)).toMatchObject({
+      file: { contentType },
       metadata: { tags: [tag.id] },
       aiSuggestions: { tags: [tag.id] },
     });

@@ -7,6 +7,7 @@ import { UNTRUSTED_CONTENT_GUARD, wrapUntrusted } from './ai-prompt';
 import { requireAiCapability } from './ai-settings';
 import { getAsset, setAssetMetadata } from './assets';
 import type { AppContext } from './context';
+import { enrichmentContentType } from './document-format';
 import { createTag, listTags } from './taxonomy';
 
 function assertImage(contentType: string): void {
@@ -165,7 +166,7 @@ export async function autoTagAsset(
 ): Promise<AutoTagResult> {
   const policy = await requireAiCapability(ctx, scope, 'media');
   const asset = await getAsset(ctx, scope, id);
-  const kind = assetKind(asset.file.contentType);
+  const kind = assetKind(enrichmentContentType(asset.file));
   if (kind !== 'image' && kind !== 'document') {
     throw new ValidationError([{ field: 'asset', message: 'Expected an image or document' }]);
   }

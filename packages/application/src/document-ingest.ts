@@ -6,7 +6,6 @@ import type {
   AssetIngestStarter,
   BlobStore,
   DocumentIngestOptions,
-  DocumentPageRequest,
   DocumentParser,
   WorkflowSteps,
 } from '@contentworker/ports';
@@ -20,6 +19,7 @@ import {
   READ_URL_TTL_SECONDS,
 } from './assets';
 import type { AppContext } from './context';
+import { documentFileFormat } from './document-format';
 import { getDocumentTemplate } from './document-template';
 
 export interface DocumentPage {
@@ -44,11 +44,9 @@ const pageStep = {
 
 export const DOCUMENT_MEDIA_ACTOR = 'system:document-parser';
 
-function documentFormat(asset: Asset): DocumentPageRequest['format'] | undefined {
+function documentFormat(asset: Asset) {
   if (asset.createdBy === DOCUMENT_MEDIA_ACTOR && (asset.version ?? 1) === 1) return undefined;
-  const extension = asset.file.fileName.split('.').at(-1)?.toLowerCase();
-  if (extension === 'key' || extension === 'pdf' || extension === 'pptx') return extension;
-  return undefined;
+  return documentFileFormat(asset.file.fileName);
 }
 
 function documentPrefix(prefix: string, etag: string): string {
