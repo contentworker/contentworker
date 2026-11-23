@@ -31,6 +31,7 @@ import {
   uploadSummary,
 } from '~/cms/components/assets/AssetUploadList';
 import { AssetZipProgress, useAssetZip } from '~/cms/components/assets/AssetZipProgress';
+import { DocumentTemplateSettings } from '~/cms/components/assets/DocumentTemplateSettings';
 import { ConfirmDialog } from '~/cms/components/ConfirmDialog';
 import {
   LoadingStatus,
@@ -1057,6 +1058,7 @@ export function AssetLibrary(props: { locale: string }) {
           aria-label="Upload asset files"
           onChange={(e) => void upload([...(e.target.files ?? [])])}
         />
+        <DocumentTemplateSettings />
         <Button type="button" size="sm" onClick={pick}>
           <Upload aria-hidden="true" />
           {openCollection && collectionId !== null

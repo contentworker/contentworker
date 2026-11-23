@@ -1305,6 +1305,13 @@ export type AssetBulkRequest =
       readonly ids: readonly string[];
     };
 
+export interface DocumentTemplate {
+  readonly version: number;
+  readonly createMediaDrafts: boolean;
+  readonly suggestTags: boolean;
+  readonly describeDocument: boolean;
+}
+
 /** Rights as the form sends them: a value, or null for none. */
 export type AssetRightsInput = { readonly [K in keyof AssetRights]-?: string | null };
 
@@ -2220,6 +2227,12 @@ export function createManagementClient(
     },
 
     // --- assets ----------------------------------------------------------
+    getDocumentTemplate(signal?: AbortSignal): Promise<DocumentTemplate> {
+      return req('GET', `${mgmt}/document-ingestion/template`, undefined, signal);
+    },
+    setDocumentTemplate(template: DocumentTemplate): Promise<DocumentTemplate> {
+      return req('PUT', `${mgmt}/document-ingestion/template`, template);
+    },
     /** One page of the asset library, filtered and sorted server-side. */
     listAssets(query: AssetListQuery = {}): Promise<AssetPage> {
       const qs = assetQueryParams(query).toString();
