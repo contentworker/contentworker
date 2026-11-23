@@ -88,7 +88,8 @@ import { LoadingStatus } from '~/cms/components/loading';
 import { SiteNotice, useWidthPreset, WidthSwitch } from '~/cms/components/pane/SitePane';
 import { useSiteFrame } from '~/cms/components/pane/use-site-frame';
 import { ResponsiveSheetContent } from '~/cms/components/responsive-sheet';
-import { StatusBadge, ToneBadge } from '~/cms/components/status';
+import { RichTextHistoryButtons } from '~/cms/components/rich-text/Toolbar';
+import { EntryStateBadge } from '~/cms/components/status';
 import { useAssistantIfAny, useProposedBlocks } from '~/cms/lib/assistant';
 import type { ActorDirectory } from '~/cms/lib/authorship';
 import {
@@ -212,13 +213,24 @@ export const CANVAS_LOCK_SHORTCUTS: ShortcutGroup = {
   ...CANVAS_SHORTCUTS,
   items: [
     ...CANVAS_SHORTCUTS.items.slice(0, 4),
-    { keys: ['Shift', '↑'], label: 'Take the block above in too, to lock them together' },
-    { keys: ['Shift', '↓'], label: 'Take the block below in too, to lock them together' },
+    {
+      keys: ['Shift', '↑'],
+      label: 'Take the block above in too, to lock them together',
+      chord: true,
+    },
+    {
+      keys: ['Shift', '↓'],
+      label: 'Take the block below in too, to lock them together',
+      chord: true,
+    },
     ...CANVAS_SHORTCUTS.items.slice(4),
   ],
 };
 
 const newKey = () => crypto.randomUUID();
+/** What Tab can land on: where focus may go back to and still be in the keyboard's reach. */
+const TABBABLE =
+  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 /** The dock's height at lg: its `max-h-40` below, in pixels. Keep the two together. */
 const DOCK_HEIGHT = 160;
@@ -703,7 +715,21 @@ function Canvas({
     // The selection steps to a neighbour, so the keyboard keeps its place.
     const sibling = b.slot.blocks[b.index + 1] ?? b.slot.blocks[b.index - 1];
     setSelected(sibling?.key ?? parentBlock(tree, b)?.key ?? null);
-    toast.success(`Removed ${b.name}`, { action: { label: 'Undo', onAction: () => revert(step) } });
+    // Said as a note, not a success: a removal is a change to weigh, and the toast takes it back.
+    // Its Undo hands focus to the stage (the button goes with the toast), so the keys carry on.
+    toast.note(`Removed ${b.name}`, {
+      action: {
+        label: 'Undo',
+        onAction: () => {
+          revert(step);
+          requestAnimationFrame(() =>
+            document
+              .querySelector<HTMLElement>('[data-canvas-stage]')
+              ?.focus({ preventScroll: true }),
+          );
+        },
+      },
+    });
   };
   const duplicate = (b: CanvasBlock) => {
     if (!canDuplicate(b)) return;
@@ -1184,7 +1210,14 @@ function Canvas({
     if (!restoreFocus) return;
     setRestoreFocus(null);
     const opener = dockOpener.current;
-    if (restoreFocus === 'dock' && opener?.isConnected && !opener.closest('[aria-hidden="true"]')) {
+    // Only an opener the keyboard could reach again: a seam (pointer-only, hidden from assistive
+    // technology), the body or a bare container would leave the keys nowhere.
+    if (
+      restoreFocus === 'dock' &&
+      opener?.isConnected &&
+      !opener.closest('[aria-hidden="true"]') &&
+      opener.matches(TABBABLE)
+    ) {
       opener.focus();
       return;
     }
@@ -1315,52 +1348,55 @@ function Canvas({
   });
 
   const inspectorBody = block ? (
-    <Inspector
-      block={block}
-      locale={block.slot.locale}
-      pickers={pickers}
-      onSearchEntries={searchEntries}
-      readOnly={!editable}
-      tab={tab}
-      onTab={setTab}
-      onChange={(prop, value) => setProp(block, prop, value)}
-      preset={preset}
-      onOverride={(bp, prop, value) => setOverride(block, bp, prop, value)}
-      onMove={(by) => move(block, by)}
-      moveTargets={moveTargets(tree, block)
-        .filter(
-          (t) => judgeMove(block, { slot: t.slot, index: t.slot.blocks.length }).kind === 'move',
-        )
-        .map((t) => ({ path: t.slot.path, name: slotTitle(tree, t.slot) }))}
-      onMoveTo={(path) => {
-        const slot = findSlot(tree, path);
-        return slot ? moveTo(block, { slot, index: slot.blocks.length }) : false;
-      }}
-      onDuplicate={() => duplicate(block)}
-      onRemove={() => remove(block)}
-      onAdd={(slot) => openDock({ slot, index: slot.blocks.length })}
-      inSheet={!wide}
-      kept={kept.has(block.key)}
-      onKeep={() => setKept((k) => new Set(k).add(block.key))}
-      directory={directory}
-      {...(locking
-        ? {
-            locking: {
-              run: chosenRun,
-              ...(blocksDirty
-                ? {
-                    held: 'A lock holds the blocks as they are saved.',
-                    onSaveFirst: () => void save(),
-                  }
-                : {}),
-              busy,
-              refused: lockRefused,
-              onLock: lock,
-              onUnlock: unlock,
-            },
-          }
-        : {})}
-    />
+    // The header's undo is the canvas's one history: the rich-text toolbar drops its own pair.
+    <RichTextHistoryButtons.Provider value={false}>
+      <Inspector
+        block={block}
+        locale={block.slot.locale}
+        pickers={pickers}
+        onSearchEntries={searchEntries}
+        readOnly={!editable}
+        tab={tab}
+        onTab={setTab}
+        onChange={(prop, value) => setProp(block, prop, value)}
+        preset={preset}
+        onOverride={(bp, prop, value) => setOverride(block, bp, prop, value)}
+        onMove={(by) => move(block, by)}
+        moveTargets={moveTargets(tree, block)
+          .filter(
+            (t) => judgeMove(block, { slot: t.slot, index: t.slot.blocks.length }).kind === 'move',
+          )
+          .map((t) => ({ path: t.slot.path, name: slotTitle(tree, t.slot) }))}
+        onMoveTo={(path) => {
+          const slot = findSlot(tree, path);
+          return slot ? moveTo(block, { slot, index: slot.blocks.length }) : false;
+        }}
+        onDuplicate={() => duplicate(block)}
+        onRemove={() => remove(block)}
+        onAdd={(slot) => openDock({ slot, index: slot.blocks.length })}
+        inSheet={!wide}
+        kept={kept.has(block.key)}
+        onKeep={() => setKept((k) => new Set(k).add(block.key))}
+        directory={directory}
+        {...(locking
+          ? {
+              locking: {
+                run: chosenRun,
+                ...(blocksDirty
+                  ? {
+                      held: 'A lock holds the blocks as they are saved.',
+                      onSaveFirst: () => void save(),
+                    }
+                  : {}),
+                busy,
+                refused: lockRefused,
+                onLock: lock,
+                onUnlock: unlock,
+              },
+            }
+          : {})}
+      />
+    </RichTextHistoryButtons.Provider>
   ) : null;
   const pageBody = (
     <PagePanel
@@ -1430,11 +1466,7 @@ function Canvas({
           <SegmentedItem value="canvas">Canvas</SegmentedItem>
         </Segmented>
         <div className="flex items-center gap-2 text-muted-foreground text-sm">
-          <StatusBadge
-            status={dirty && doc.base.status === 'published' ? 'changed' : doc.base.status}
-          />
-          <span className="font-mono text-xs">v{doc.base.version}</span>
-          {dirty ? <ToneBadge tone="wait" label="Unsaved changes" /> : null}
+          <EntryStateBadge status={doc.base.status} version={doc.base.version} dirty={dirty} />
           {checks.length > 0 ? (
             // The checks are the right column's when nothing is selected: this shows them.
             <button

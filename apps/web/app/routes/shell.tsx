@@ -268,8 +268,6 @@ function ShortcutsSheet({
   // The page's own keys (J/K/X in a table, the editor's ⌘S), as the screen registers them.
   const pageGroups = usePageShortcutGroups();
   const mod = useModKeyLabel();
-  const sidebar = useShortcutLabel('\\');
-  const assistant = useShortcutLabel('J');
   const { enabled: assistantOn } = useAssistant();
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -280,6 +278,20 @@ function ShortcutsSheet({
             Single keys work outside fields, with no menu open.
           </SheetDescription>
         </div>
+        {/* The page's own keys first: they are what the list was opened for, here. */}
+        {pageGroups.map((g) => (
+          <section key={g.id} className="border-b px-4 pt-3 pb-2">
+            <h3 className="caption mb-1">{g.title}</h3>
+            <ul>
+              {g.items.map((it) => (
+                <li key={it.label} className={row}>
+                  {it.label}
+                  <Keys keys={it.keys.map((k) => (k === 'Mod' ? mod : k))} chord={it.chord} />
+                </li>
+              ))}
+            </ul>
+          </section>
+        ))}
         <section className="px-4 pt-3 pb-2">
           <h3 className="caption mb-1">Everywhere</h3>
           <ul>
@@ -296,12 +308,12 @@ function ShortcutsSheet({
             {assistantOn ? (
               <li className={row}>
                 Open or close Coworker
-                <Keys keys={[assistant]} />
+                <Keys keys={[mod, 'J']} chord />
               </li>
             ) : null}
             <li className={`${row} max-md:hidden`}>
               Collapse or expand the sidebar
-              <Keys keys={[sidebar]} />
+              <Keys keys={[mod, '\\']} chord />
             </li>
             <li className={row}>
               This list
@@ -309,19 +321,6 @@ function ShortcutsSheet({
             </li>
           </ul>
         </section>
-        {pageGroups.map((g) => (
-          <section key={g.id} className="border-t px-4 pt-3 pb-2">
-            <h3 className="caption mb-1">{g.title}</h3>
-            <ul>
-              {g.items.map((it) => (
-                <li key={it.label} className={row}>
-                  {it.label}
-                  <Keys keys={it.keys.map((k) => (k === 'Mod' ? mod : k))} chord={it.chord} />
-                </li>
-              ))}
-            </ul>
-          </section>
-        ))}
       </SheetContent>
     </Sheet>
   );

@@ -25,7 +25,7 @@ import { GripVertical, Lock } from 'lucide-react';
 import { type RefObject, useEffect, useId, useRef, useState } from 'react';
 import { edgeScroll, REDUCED_MS, STEP_MS } from '~/cms/lib/canvas/autoscroll';
 import type { DropVerdict } from '~/cms/lib/canvas/drag';
-import { slotFill } from '~/cms/lib/canvas/model';
+import { slotFill, slotHeld } from '~/cms/lib/canvas/model';
 import type { Seam } from '~/cms/lib/canvas/seams';
 import { useMedia } from '~/cms/lib/device';
 import type { GhostKind } from '~/cms/lib/live-preview/proposals';
@@ -186,17 +186,22 @@ export function CanvasStage(props: CanvasStageProps) {
   const dragging = moving && drag ? drag : null;
   const hintId = useId();
   return (
-    // Focusable, so focus has somewhere to land on the canvas when the dock closes from a seam;
-    // named, and it says how to reach the blocks from here (the seams are pointer-only).
+    // A tab stop, where the canvas's keys start (↓ chooses a block, / adds, ? lists the rest), and
+    // where focus comes back to when the dock, a sheet or an undo lets go of it. Named, and it says
+    // how to reach the blocks from here (the seams are pointer-only). Its focus edge is drawn over
+    // the page, so in the overlay pair: an ink line inside a halo, on any page.
     <section
       ref={stage}
       data-canvas-stage
       data-dragging={dragging ? '' : undefined}
       aria-label="The page"
       aria-describedby={hintId}
-      tabIndex={-1}
-      className="relative size-full min-h-0 overflow-hidden bg-muted outline-none"
+      // biome-ignore lint/a11y/noNoninteractiveTabindex: the stage takes the canvas's own keys (↓ / ? Delete ⌘↑ ⌘↓), which its description names; it is the keyboard's way onto the page.
+      tabIndex={0}
+      className="relative size-full min-h-0 overflow-hidden bg-muted outline-none after:pointer-events-none after:absolute after:inset-0 after:z-10 after:content-[''] focus-visible:after:shadow-[inset_0_0_0_2px_var(--overlay-ink),inset_0_0_0_4px_var(--overlay-halo)]"
     >
+      {/* The next tab stop after the stage: the page itself stays reachable by key (to read it,
+          follow its links), but the canvas's keys come first. A click in it hands focus back. */}
       <iframe
         key={props.frameKey}
         ref={props.frameRef}
@@ -459,7 +464,12 @@ function SeamMark({
           says && 'whitespace-nowrap',
         )}
       >
-        {says ?? slotFill(seam.slot)}
+        {says ??
+          // At rest the pill says what a click does; chosen (the dock says where), full, held
+          // or under a carried block, it says only where this is.
+          (chosen || drop || seam.slot.full || slotHeld(seam.slot)
+            ? slotFill(seam.slot)
+            : `Add here · ${slotFill(seam.slot)}`)}
       </span>
     </button>
   );

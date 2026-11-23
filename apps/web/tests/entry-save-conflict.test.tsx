@@ -149,7 +149,7 @@ describe('the entry form’s save', () => {
     saveDraft();
     await waitFor(() => expect(client.updateEntry).toHaveBeenCalledTimes(1));
     expect(client.updateEntry.mock.calls[0]?.[2]).toEqual({ expectedVersion: 2 });
-    await screen.findByText('All changes saved');
+    await waitFor(() => expect(screen.queryByText('Unsaved changes')).toBeNull());
     fireEvent.change(screen.getByRole('textbox', { name: /Title/ }), {
       target: { value: 'Mine again' },
     });

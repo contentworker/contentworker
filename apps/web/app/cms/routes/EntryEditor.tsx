@@ -51,7 +51,7 @@ import {
 } from '~/cms/components/pane/use-pane-layout';
 import { ReferencedBy } from '~/cms/components/ReferencedBy';
 import { SemanticPanel } from '~/cms/components/SemanticPanel';
-import { StatusBadge, ToneBadge } from '~/cms/components/status';
+import { EntryStateBadge } from '~/cms/components/status';
 import { VersionHistory } from '~/cms/components/VersionHistory';
 import { CanvasDialog } from '../components/CanvasDialog';
 import type { FocusRequest } from '../components/EntryForm';
@@ -923,13 +923,11 @@ export function EntryEditor() {
                   <SegmentedItem value="canvas">Canvas</SegmentedItem>
                 </Segmented>
               ) : null}
-              {meta && <StatusBadge status={meta.status} />}
-              {meta && <span className="font-mono text-xs">v{meta.version}</span>}
-              {dirty ? (
-                <ToneBadge tone="wait" label="Unsaved changes" />
-              ) : (
-                isEdit && meta && <span>All changes saved</span>
-              )}
+              {meta ? (
+                <EntryStateBadge status={meta.status} version={meta.version} dirty={dirty} />
+              ) : dirty ? (
+                <EntryStateBadge status="draft" version={0} dirty />
+              ) : null}
             </>
           )}
         </div>

@@ -173,7 +173,8 @@ export function Layers({
           ) : (
             <div
               role="tree"
-              aria-label={`${slot.name} blocks`}
+              // A field already named for its blocks ("Blocks") isn't called "Blocks blocks".
+              aria-label={/\bblocks$/i.test(slot.name) ? slot.name : `${slot.name} blocks`}
               aria-multiselectable={onExtend ? true : undefined}
               className="flex flex-col"
               onKeyDown={onKeyDown}

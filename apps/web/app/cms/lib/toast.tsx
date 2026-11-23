@@ -9,7 +9,11 @@ import {
   useState,
 } from 'react';
 
-type ToastKind = 'success' | 'error';
+/**
+ * `success` is work done (an ok dot), `error` work refused (a bad one), and `note` a change
+ * worth saying that is neither, such as a removal the toast offers to undo (a muted dot).
+ */
+type ToastKind = 'success' | 'error' | 'note';
 
 /**
  * One follow-up the toast offers, e.g. `{ label: 'Undo', onAction: restore }`.
@@ -35,6 +39,7 @@ interface Toast {
 export interface ToastApi {
   success(message: string, options?: ToastOptions): void;
   error(message: string, options?: ToastOptions): void;
+  note(message: string, options?: ToastOptions): void;
 }
 
 const ToastCtx = createContext<ToastApi | null>(null);
@@ -105,6 +110,7 @@ export function ToastProvider(props: { children: React.ReactNode }) {
     () => ({
       success: (m, o) => push('success', m, o),
       error: (m, o) => push('error', m, o),
+      note: (m, o) => push('note', m, o),
     }),
     [push],
   );
@@ -136,7 +142,11 @@ export function ToastProvider(props: { children: React.ReactNode }) {
               aria-hidden="true"
               className={cn(
                 'size-2 shrink-0 rounded-full',
-                t.kind === 'success' ? 'bg-ok' : 'bg-bad',
+                t.kind === 'success'
+                  ? 'bg-ok'
+                  : t.kind === 'error'
+                    ? 'bg-bad'
+                    : 'bg-muted-foreground',
               )}
             />
             <span className="min-w-0 flex-1 break-words">{t.message}</span>
