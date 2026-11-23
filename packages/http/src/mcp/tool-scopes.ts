@@ -1,7 +1,7 @@
 import { holdsScope, type PermissionScope, type Principal, SCOPES } from '@contentworker/domain';
 
 /**
- * Which tools `tools/list` shows a caller. This is a courtesy, not a control: 245 tool definitions
+ * Which tools `tools/list` shows a caller. This is a courtesy, not a control: 288 tool definitions
  * cost an agent real context, so a caller is spared the tools it can't use. Every handler still
  * authorizes for itself, and a tool left off the list stays callable and answers with the scope it
  * needs, so a mistake here can only show or hide a tool, never grant anything.
