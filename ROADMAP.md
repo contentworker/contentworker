@@ -2,13 +2,12 @@
 
 **v2: edge-only (2026-10-31).** ContentWorker was rebuilt on edge workers end to end. An edge
 SQL database replaced Postgres as the system of record, and the single platform worker became five
-edge workers
-split by traffic profile: `apps/web` (admin + human auth), `apps/api` (Management and Preview
-REST, MCP, OAuth, uploads and signed reads, live), `apps/delivery` (the cached public Delivery
-API), `apps/media` (published asset files at the edge) and `apps/engine` (queues, cron, stateful
-edge objects, durable workflows). It is self-hosted: one install in your own Cloudflare account, rendered by
-`scripts/install.ts`. The domain and application
-layers, and their tests, carried over.
+edge workers split by traffic profile: `apps/web` (admin + human auth), `apps/api` (Management
+and Preview REST, MCP, OAuth, uploads and signed reads, live), `apps/delivery` (the cached public
+Delivery API), `apps/media` (published asset files at the edge) and `apps/engine` (queues, cron,
+stateful edge objects, durable workflows). It is self-hosted: one install in your own Cloudflare
+account, rendered by `scripts/install.ts`. The domain and application layers, and their tests,
+carried over.
 
 Removed in v2, and not coming back:
 
@@ -35,7 +34,8 @@ Everything below is built and tested on v2.
   ergonomics (a group, description and icon per content type, the sidebar grouped by them, an
   editor-only layout of tabs and field groups, date, date-and-time and time-of-day formats with
   `dateRange`, lists of Text, Integer, Number and Date values, asset MIME rules on asset links,
-  named pattern presets); the entry lifecycle (draft → published → archived,
+  named pattern presets, and a content-type save held to the `expectedVersion` it read, refused
+  with a `409` when someone else saved first); the entry lifecycle (draft → published → archived,
   trash, purge, duplicate); versions with a readable diff (per field and locale, by type: words,
   rich-text blocks, list moves) and restore; references and `include`; rich text
   with HTML import; slugs; redirects (delivery data a front end or edge worker applies: exact and
@@ -63,8 +63,18 @@ Everything below is built and tested on v2.
   enforces and an embargo that blocks publishing, and move, tag, publish, unpublish and archive as
   resumable bulk jobs. Collections (named, ordered, many-to-many, carried by export, import and
   clone, served by Delivery), expiring revocable share links on the media origin (published assets
-  only, optional password), multipart uploads past 100 MiB (up to 5 GiB), and zip downloads built by
-  a durable workflow.
+  only, optional password), multipart uploads past 100 MiB (5 GiB by default, set by
+  `ASSET_UPLOAD_MAX_BYTES`; 1 TB with the document parser), and zip downloads built by a durable
+  workflow.
+- **Document ingestion.** PDF, PPTX and packaged Keynote files split into numbered pages by an
+  opt-in parser container (`DOCUMENT_PARSER_ENABLED`, no internet access): per page, native or OCR
+  text, a static preview and embedded media as draft assets (shared within a revision), with
+  warnings and a partial status. Runs resume across pages and continue past 128; a rerun retries
+  only partial pages. A template per environment (media drafts, AI tags and descriptions, filling
+  only empty fields) edited in Assets → Ingestion settings with stale-save recovery; an `ingest`
+  bulk action for selected assets; scheduled imports from a DAM folder and an object-storage inbox;
+  and a page viewer in the DAM (previews, text, embedded files, reingest). REST, MCP
+  (`document_ingestion_template_*`, `asset_document_page`) and the admin.
 - **Taxonomy and collaboration.** Concept schemes, concepts and tags, each with a slug, description
   and localized labels, served on Delivery with published usage counts and filterable by slug for
   archive pages; comments, tasks, legacy
@@ -76,8 +86,11 @@ Everything below is built and tested on v2.
   AI settings per capability (on or off, tier, fenced guidance), provenance,
   related and duplicate detection, hybrid and semantic search, RAG.
 - **Integration.** Signed webhooks with a delivery log, event-triggered functions, app
-  extensions, sandboxed plugins in isolated edge workers (with per-plugin `kv:storage` and
-  operator settings, secrets sealed), the transactional outbox with lease-claimed relay.
+  extensions (sidebar extensions get the fields the person may see, their live values, the locale
+  and the theme; a built-in Discoverability extension scores how well search engines and agents
+  can find and quote an entry), sandboxed plugins in isolated edge workers (with per-plugin
+  `kv:storage` and operator settings, secrets sealed, and sync and `async` operations from a
+  manifest), the transactional outbox with lease-claimed relay.
 - **Access.** CMA/CDA/CPA keys, ten scopes (`assets:read` and `assets:write` held by
   implication with `preview:read` and `content:write`), roles with per-type and per-field grants (read,
   write, publish, and delete and unpublish implied unless withheld) and presets, the last-administrator guard, OAuth 2.1 with the device flow for MCP clients, personal
@@ -88,22 +101,29 @@ Everything below is built and tested on v2.
   recovery codes, self-service password reset by an emailed code, with the person forwarded to the
   api as a signed `x-cw-principal`.
 - **APIs.** Management, Preview and Delivery REST, GraphQL, live SSE through a stateful edge object,
-  OpenAPI 3.1 with a Scalar explorer, and the MCP server (245 tools, plus skills and the docs
-  tools).
+  OpenAPI 3.1 with a Scalar explorer, and the MCP server (288 tools, including the three docs
+  tools, plus skills).
 - **Delivery at the edge.** An uncached gateway that authenticates every request (principal
   cached at the edge) in front of an edge-cached entrypoint keyed by visibility profile, with ETags,
   `stale-while-revalidate`, and one coalesced tag per space and environment, drained
   rationed from a queue: publishes and edits invalidate it (readers keep the stored copy while it
-  revalidates), unpublishes and revocations purge it. Reads use read-replica sessions.
+  revalidates), unpublishes and revocations purge it. After an invalidation the hottest URLs of
+  that environment are requested again (ranked per environment by a stateful edge object, off with
+  `CACHE_WARMING=false`), then a `delivery.refreshed` webhook names what changed, so a site's own
+  cache can revalidate once the edge is fresh (`handleDeliveryRefreshed` in the SDK). A manual
+  refresh (`…/delivery-cache/refresh`, `delivery_cache_refresh`) does the same on demand. Lists
+  apply content-type grants before paging, and entries take field projection. Reads use
+  read-replica sessions.
 - **Read-your-writes.** The api returns the database session bookmark in `x-cw-bookmark`; a client
   that sends it back reads at least that fresh.
-- **SDK.** One npm package, `@contentworker/sdk`: Delivery and Preview, rich text, webhooks,
-  redirects, inline editing, React, Vue, edge, React Native, Management and codegen as subpaths, and
-  the `contentworker` CLI as its binary.
+- **SDK.** One npm package, `@contentworker/sdk` (0.5.0): Delivery and Preview, rich text,
+  webhooks, redirects, inline editing, blocks, live preview, Next.js draft mode, React, Vue, edge,
+  React Native (an offline cache per feed, with delta syncs and a full reconciliation at least
+  daily), Management and codegen as subpaths, and the `contentworker` CLI as its binary.
 - **Operations.** Self-hosting: `.env` settings rendered by `scripts/install.ts`, idempotent setup
-  (`pnpm contentworker:setup`), and `pnpm contentworker:deploy` (engine → media → api → delivery → web) with a
-  point-in-time recovery bookmark before each migration, smoke and latency checks, and ordered
-  rollback; an optional deploy-on-merge workflow for a fork.
+  (`pnpm contentworker:setup`), and `pnpm contentworker:deploy` (engine → media → api → delivery →
+  web) with a point-in-time recovery bookmark before its migrations, smoke and latency checks, and
+  rollback engine first; an optional deploy-on-merge workflow for a fork.
 
 ## Planned
 
@@ -111,9 +131,6 @@ Everything below is built and tested on v2.
   storage (and list cards to the key-value cache) on publish, so a cache miss is served without the
   database. Deferred: the edge cache, the key-value tag cache and read replicas already keep
   delivery reads off the primary database.
-- [x] **Separate media worker.** Published asset files, renditions and the width ladder are served
-  by their own edge-cached worker at `media.<domain>`, gated by key-value entries the engine
-  writes. Signed uploads and video streaming stay on the api.
 - [ ] **Load testing, rewritten.** A delivery and management load profile against a seeded
   deployment (`SEED_SCALE`), confirming cache hits never reach the database.
 - [ ] **Version history without the bodies.** Store a content hash and a change summary on each
@@ -121,11 +138,6 @@ Everything below is built and tested on v2.
   per version today) and identical bodies can share an object.
 - [ ] **Required plugins.** A per-plugin `required` flag so a plugin whose refusal is load-bearing
   blocks the write when it throws or times out, instead of being skipped.
-- [x] **Refuse a stale content-type save.** A save sends every detail field, so a dialog opened
-  before someone else's save overwrote it (`group`, `description`, `agentInstructions`). A save
-  now carries the `expectedVersion` it read (REST, MCP, the management SDK and `model apply`) and
-  is refused with a `409` naming the stored version when it changed; the admin's dialog keeps the
-  edits and offers to load the latest or copy them.
 - [ ] **Extension runtime: apps as packages.** Grow sandboxed plugins into installable packages
   that bring their own operations, workflow nodes, content types and admin UI, so integrations
   ship as packages on the runtime rather than in core. Seven PRs, each usable on its own:
@@ -147,8 +159,8 @@ Everything below is built and tested on v2.
      targets, import or replace from a URL), `asset.created`, event subscriptions.
   6. **Dogfood.** The in-house HTML renderer and a social campaigns package, built only on steps
      1–5 with no change to core.
-  7. **Adobe packages.** PDF Services first, then Express once beta access is confirmed and it
-     accepts signed object-storage URLs.
+  7. **Adobe packages.** PDF Services first, then Express once it accepts signed object-storage
+     URLs.
 
   Decided (2026-11-10), shaping step 2 onward:
   - **Operations on MCP** go through two generic tools, `app_operations_list` (each installed
@@ -349,7 +361,9 @@ Found while building and reviewing M1 and M2. None blocks a release.
 - [x] **SDK paging.** `entries.list` sends `skip`, which the Preview list refuses; use `cursor` and
   return `nextCursor`.
 - [ ] **Flaky browser tests.** Find the cause of the webhook dialog, webhook deliveries and asset
-  library tests that fail under a full parallel run and pass alone.
+  library tests that fail under a full parallel run and pass alone. Several asset library flakes
+  have been fixed since; CI's two retries would hide what's left, so check with a full parallel
+  run and no retries.
 - [x] **Unused api email config.** Dropped `EMAIL_FROM`, `EMAIL_FROM_NAME` and the `send_email`
   comment from `apps/api/wrangler.jsonc`: `EMAIL` is bound only on the engine and web, so
   the api's `makeEmail` never had a sender to read them for.
@@ -366,18 +380,16 @@ None blocks a release.
   the whole `/account` page inside the shell; give it a bare step like `/setup/two-factor`.
 - [ ] **Back to Coworker after skipping.** "Skip for now" leaves the New space dialog as the only
   way to a first space; offer setting up with Coworker from the no-spaces notice too.
-- [ ] **No space to reach.** A person whose role covers no space sees the no-spaces notice with
-  nothing to do; say who can give them access.
+- [x] **No space to reach.** The no-spaces notice tells a person who isn't an admin to ask a
+  deployment admin to add them.
 - [ ] **Setup without a model.** Where the assistant has no model, open `/setup/space` on the New
   space form rather than a conversation that can't answer. Check it on a deployment.
 - [ ] **Background installs in the conversation.** After Coworker creates a space with a starter
   that installs in the background, follow the install on its card, as the New space dialog does.
-- [ ] **Keep recovery codes.** Copy all and download on the recovery codes shown after turning on
-  two-factor, the one time they're shown.
+- [x] **Keep recovery codes.** Copy and Download on the recovery codes, in setup and on Account.
 - [ ] **Setup at phone width.** Walk the three setup pages on a phone and add them to the device
-  tests.
-- [ ] **One landing after setup.** Skipping lands on `/dashboard` and finishing lands on `/`; pick
-  one.
+  tests (`first-space.spec.ts` runs on desktop only).
+- [x] **One landing after setup.** Skipping and finishing both land on `/dashboard`.
 
 #### M3. Collaboration
 
@@ -459,8 +471,7 @@ Built on Blocks and the frontend runtime. Layouts stay a typed tree; rich text s
   from `_key`, ghosts from `view.ghosts`, and `data-cw-ref` / `data-cw-slot` marks only with
   `preview`. Codegen emits a type per block and `BlockTypes` from the catalog in force (or the
   variants), and `contentworker types --blocks` takes a blocks file. Still to come: the frontend
-  runtime (`@contentworker/frontend`) rendering with `renderBlocks`, and an SDK release (0.4.0) to
-  ship it.
+  runtime (`@contentworker/frontend`) rendering with `renderBlocks`.
 - [x] **Layout patches.** `patchBlocks` with key-addressed create, update, move and remove, for
   agents and the editor alike (#185): insert, update, move, remove and duplicate ops by `_key`,
   held to `expectedVersion`, over REST (`PATCH …/entries/:id/blocks`, an outline at
@@ -542,7 +553,7 @@ Built on Blocks and the frontend runtime. Layouts stay a typed tree; rich text s
   Connect a frontend, which mints a Delivery key (and a Preview key) through `connectFrontend`
   (`POST …/frontend-connections`, `frontend_connect`), prints the config for the frontend runtime,
   the SDK, Next.js and live preview, sets the preview URLs, and checks a page connects through the
-  Site frame. Ships to sites in the next SDK release. Runtime sites connect for live preview
+  Site frame. Runtime sites connect for live preview
   from `@contentworker/frontend` 0.5.0 (contentworker/site #7): `/__preview` pages may be framed
   only by the admin's origin (`CONTENTWORKER_ADMIN`, else the deployment's own domain).
 
@@ -551,8 +562,8 @@ Built on Blocks and the frontend runtime. Layouts stay a typed tree; rich text s
 From the live preview spec and a review of a second implementation of its channel.
 
 - [x] **Page report cap.** A page reports at most 50 entries (`PAGE_REPORT_LIMIT`), as the owner
-  chose; the admin still accepts up to 200 (`MAX_PAGE_ENTRIES`) from sites on SDK 0.3.0. Ships to
-  sites in the next SDK release. The other channel decisions are recorded in the spec.
+  chose; the admin still accepts up to 200 (`MAX_PAGE_ENTRIES`) from sites on SDK 0.3.0. The
+  other channel decisions are recorded in the spec.
 - [x] **One block patch engine.** The page keeps its own engine (`applyLivePatch`), and
   `packages/http/test/live-preview-patch-parity.test.ts` runs the same patches through it and the
   domain's `applyBlockPatch`.
@@ -619,14 +630,15 @@ server).
 #### M8. Platform
 
 - [ ] **Space lifecycle.** Rename, disable, and delete as a purge workflow.
-- [ ] **One jobs view.** `jobs_list` and `job_cancel` across bulk, import, snapshot and zip jobs.
+- [ ] **One jobs view.** `jobs_list` and `job_cancel` across bulk, import, snapshot, zip and app
+  operation jobs (each lists only its own kind today).
 - [ ] **Workflow bypass.** An audited emergency publish for space admins.
 - [ ] **External references.** An `ExternalRef` field (`provider`, `id`, `snapshot`) whose provider
   is a sandboxed plugin with `search` and `get`; resolved by Delivery, pickable by agents. Rides on
   the extension runtime.
 - [ ] **More extension points.** `beforeUnpublish`, `asset:beforeDelete` and
-  `contentType:beforeSave` hooks; `page` and `dashboard-widget` admin targets with a per-person
-  dashboard layout.
+  `contentType:beforeSave` hooks; `page` and `dashboard-widget` admin targets, with a per-person
+  layout for the Overview dashboard (a fixed page today).
 - [ ] **Developer setup.** `contentworker mcp setup --client <name>`; developer skills for building a
   plugin, integrating a frontend and configuring SSO; a debug header on the api for principals with a
   debug grant.
@@ -634,10 +646,10 @@ server).
 - [ ] **Experiments.** A/B variants of an entry, bucketed at the edge by cookie without varying the
   cache key, with a workflow that graduates the winner.
 
-#### M9. Parity from the second survey
+#### M9. More parity
 
-Gaps found by auditing the surveyed CMS against this codebase. Every item is a use-case with an HTTP
-route and an MCP tool unless it says otherwise. Not taken, by design: adapters for other databases,
+More gaps in what a headless CMS is expected to do. Every item is a use-case with an HTTP route
+and an MCP tool unless it says otherwise. Not taken, by design: adapters for other databases,
 storage or email; multi-tenancy inside a deployment; code-defined models and admin overrides; and
 Markdown or HTML in any API response.
 
@@ -684,15 +696,19 @@ Forms:
 
 Assets, admin and hardening:
 
-- [ ] **Asset from a URL.** Paste a URL to upload, through the `url-safety.ts` guard.
+- [ ] **Asset from a URL.** Paste a URL to upload, through the `url-safety.ts` guard. The guarded
+  copy exists (`copyRemoteAsset`, used by snapshot import); the route, tool and admin don't.
 - [ ] **Saved crop rectangle.**
 - [ ] **Entry list export.** A filtered list as CSV or JSON, as a resumable job.
-- [ ] **Search-result preview.** Beside the `Seo` field's length hints.
+- [ ] **Search-result preview.** Beside the `Seo` field's length hints (the Discoverability
+  extension checks lengths but draws no preview).
 - [ ] **Group-by in the entry list.**
 - [ ] **Share a saved view with named people.** After M4 Teams.
-- [ ] **Floating admin bar.** An SDK component for customer sites, over `adminEditUrl`.
-- [ ] **GraphQL cost limit.** Beside the depth limit.
-- [ ] **Admin translations.** Only with non-English customers.
+- [ ] **Floating admin bar.** An SDK component for sites, over `adminEditUrl` (inline editing's
+  click-to-edit toggle is the nearest thing today).
+- [ ] **GraphQL cost limit.** Beside the depth limit (`depthLimitRule`).
+- [ ] **Admin translations.** Only once an install needs a language other than English.
 
 Additions to earlier items: a read-only view for whoever doesn't hold an M3 entry lock, device-size
-breakpoints in the M6 preview channel, and a Recently Viewed and Pinned widget on the M8 dashboard.
+breakpoints in the M6 preview channel, and a Recently Viewed and Pinned widget on the Overview
+dashboard (after M8's widget target).
