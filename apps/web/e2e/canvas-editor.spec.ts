@@ -250,6 +250,19 @@ test('Layers reaches every block by keyboard', async ({ page, request }, testInf
   await scan(page, testInfo, 'layers');
 });
 
+test('a block clicked in the page keeps the keys on the canvas', async ({
+  page,
+  request,
+}, testInfo) => {
+  const { site } = await openCanvas(page, request, `Keys ${testInfo.workerIndex}`);
+  // The click lands in the customer's page; the canvas takes focus back, so its keys still work.
+  await site.getByText('Start', { exact: true }).click();
+  await expect(page.getByRole('heading', { level: 2, name: 'Call to action' })).toBeVisible();
+  await expect(page.locator('[data-canvas-stage]')).toBeFocused();
+  await page.keyboard.press('?');
+  await expect(page.getByRole('dialog', { name: 'Keyboard shortcuts' })).toBeVisible();
+});
+
 test('below md the canvas is review-only, and says so', async ({ page, request }, testInfo) => {
   await page.setViewportSize({ width: 700, height: 900 });
   await openCanvas(page, request, `Narrow ${testInfo.workerIndex}`);

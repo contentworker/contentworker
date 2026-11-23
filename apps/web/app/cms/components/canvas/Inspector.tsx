@@ -434,10 +434,24 @@ export function Inspector(props: InspectorProps) {
       {readOnly ? null : (
         // The keys, where the hands are: the arrange buttons above are icons, and the Checks
         // column's hint is gone once a block is selected.
-        <p className="border-t pt-3 text-muted-foreground text-xs">
-          <kbd className="font-mono">⌘↑</kbd> <kbd className="font-mono">⌘↓</kbd> move ·{' '}
-          <kbd className="font-mono">/</kbd> add after · <kbd className="font-mono">Esc</kbd>{' '}
-          deselect · <kbd className="font-mono">?</kbd> every shortcut
+        // Each key stays with its words when the line wraps. Not on a touch screen, which has no
+        // keys to press.
+        <p className="border-t pt-3 text-muted-foreground text-xs pointer-coarse:hidden">
+          <span className="whitespace-nowrap">
+            <kbd className="font-mono">⌘↑</kbd> <kbd className="font-mono">⌘↓</kbd> move
+          </span>{' '}
+          ·{' '}
+          <span className="whitespace-nowrap">
+            <kbd className="font-mono">/</kbd> add after
+          </span>{' '}
+          ·{' '}
+          <span className="whitespace-nowrap">
+            <kbd className="font-mono">Esc</kbd> deselect
+          </span>{' '}
+          ·{' '}
+          <span className="whitespace-nowrap">
+            <kbd className="font-mono">?</kbd> every shortcut
+          </span>
         </p>
       )}
     </section>
