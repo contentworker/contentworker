@@ -159,8 +159,8 @@ Everything below is built and tested on v2.
      targets, import or replace from a URL), `asset.created`, event subscriptions.
   6. **Dogfood.** The in-house HTML renderer and a social campaigns package, built only on steps
      1–5 with no change to core.
-  7. **Adobe packages.** PDF Services first, then Express once beta access is confirmed and it
-     accepts signed object-storage URLs.
+  7. **Adobe packages.** PDF Services first, then Express once it accepts signed object-storage
+     URLs.
 
   Decided (2026-11-10), shaping step 2 onward:
   - **Operations on MCP** go through two generic tools, `app_operations_list` (each installed
