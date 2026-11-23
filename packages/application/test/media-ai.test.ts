@@ -123,6 +123,33 @@ describe('autoTagAsset', () => {
     expect(result.applied).toBe(false);
   });
 
+  it('uses a parsed Keynote excerpt for a generic upload', async () => {
+    const tag = await createTag(ctx, scope, { name: 'launch' });
+    const { asset } = await createAsset(ctx, blob, scope, {
+      fileName: 'presentation.KEY',
+      contentType: 'application/octet-stream',
+    });
+    const ai = new StubAIProvider(() => ({ existingTags: ['launch'], newTags: [] }));
+    expect(
+      (
+        await autoTagAsset(ctx, ai, scope, asset.id, {
+          documentExcerpt: 'Autumn launch',
+        })
+      ).tagIds,
+    ).toEqual([tag.id]);
+    expect(ai.requests[0]?.prompt).toContain('Autumn launch');
+  });
+
+  it.each([
+    ['brief.pdf', 'video/mp4'],
+    ['brief.pdf.bin', 'application/octet-stream'],
+  ])('preserves the tagging boundary for %s uploaded as %s', async (fileName, contentType) => {
+    const { asset } = await createAsset(ctx, blob, scope, { fileName, contentType });
+    const ai = new StubAIProvider(() => ({}));
+    await expect(autoTagAsset(ctx, ai, scope, asset.id)).rejects.toThrow(ValidationError);
+    expect(ai.requests).toHaveLength(0);
+  });
+
   it('creates new tags and assigns the full set when apply=true', async () => {
     const id = await newImage(ctx, blob);
     const beach = await createTag(ctx, scope, { name: 'beach' });

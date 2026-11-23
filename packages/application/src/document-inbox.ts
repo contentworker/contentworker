@@ -10,12 +10,8 @@ import type {
 } from '@contentworker/ports';
 import { createUploadDraft, prepareUploadDraft } from './assets';
 import type { AppContext } from './context';
+import { documentFileFormat, documentMimeTypes } from './document-format';
 
-const formats: Record<string, string> = {
-  pdf: 'application/pdf',
-  pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-  key: 'application/vnd.apple.keynote',
-};
 const prefix = (scope: Scope) =>
   `imports/document-inbox/${encodeURIComponent(scope.spaceId)}/${encodeURIComponent(scope.environmentId)}/`;
 const digest = (value: string) => createHash('sha256').update(value).digest('hex');
@@ -42,7 +38,7 @@ export async function scanDocumentInbox(
   const cursor = await blob.get(checkpoint);
   const page = await blob.listKeys(sourcePrefix, 16, cursor || undefined);
   for (const key of page.keys) {
-    if (!key.startsWith(sourcePrefix) || !/\.(pdf|pptx|key)$/i.test(key)) continue;
+    if (!key.startsWith(sourcePrefix) || !documentFileFormat(key)) continue;
     const head = await blob.head(key);
     if (
       !head?.etag ||
@@ -84,14 +80,14 @@ export async function importDocumentInbox(
   )
     throw new Error('Invalid document inbox input');
   const fileName = src.key.split('/').at(-1)!;
-  const ext = fileName.split('.').at(-1)!.toLowerCase();
-  if (!Object.hasOwn(formats, ext)) throw new Error('Unsupported inbox format');
+  const ext = documentFileFormat(fileName);
+  if (!ext) throw new Error('Unsupported inbox format');
   const draft = await steps.do('prepare-inbox-draft', copyStep, () =>
     prepareUploadDraft(
       ctx,
       blob,
       params.scope,
-      { fileName, contentType: formats[ext]! },
+      { fileName, contentType: documentMimeTypes[ext] },
       { reservedId: params.assetId, folderId: src.folderId ?? undefined },
     ),
   );

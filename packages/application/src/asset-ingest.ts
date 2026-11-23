@@ -41,6 +41,7 @@ import { allAssets, assetFileKey, assetTextKey, parseAssetObjectKey } from './as
 import type { BulkChunkOutcome } from './bulk-jobs';
 import { readableBulkJob, startBulkJob } from './bulk-jobs';
 import type { AppContext } from './context';
+import { enrichmentContentType } from './document-format';
 import { parseAssetDocument } from './document-ingest';
 import { autoTagAsset, generateAltText, NoAltTextError } from './media-ai';
 
@@ -769,7 +770,7 @@ export async function enrichTags(
 ): Promise<EnrichOutcome> {
   const asset = await currentAsset(ctx, params);
   if (!asset || !deps.ai) return 'skipped';
-  const kind = assetKind(asset.file.contentType);
+  const kind = assetKind(enrichmentContentType(asset.file));
   if (kind !== 'image' && kind !== 'document') return 'skipped';
   if (asset.metadata.tags.length > 0) return 'kept';
   // An empty vocabulary has nothing to choose from: no call.
@@ -881,7 +882,7 @@ export async function extractText(
   const asset = await currentAsset(ctx, params);
   if (!asset) return { chars: 0, skipped: 'stale' };
   if (!deps.extractor || !deps.blob.open) return { chars: 0, skipped: 'unsupported' };
-  const contentType = mimeOf(asset.file.contentType);
+  const contentType = enrichmentContentType(asset.file);
   const kind = assetKind(contentType);
   if ((kind !== 'document' && kind !== 'audio') || !deps.extractor.supports(contentType)) {
     return { chars: 0, skipped: 'unsupported' };
