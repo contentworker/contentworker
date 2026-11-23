@@ -225,6 +225,12 @@ export const uploadTicket = z.object({
   }),
 });
 
+export const assetFromUrl = z.object({
+  asset,
+  deduplicated: z
+    .boolean()
+    .describe('True when an asset in the environment already held these bytes and was returned'),
+});
 export const assetFileReplacement = z.object({
   asset,
   upload: z.object({

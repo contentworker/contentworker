@@ -1330,6 +1330,28 @@ export interface CreateAssetInput {
   readonly folderId?: string;
 }
 
+/** A file at a public URL to make an asset of (`assets.createFromUrl`). */
+export interface CreateAssetFromUrlInput {
+  /** A public http(s) URL answering 2xx with the file; redirects are not followed. */
+  readonly url: string;
+  /** The stored file name; omitted, the URL path's last segment. */
+  readonly fileName?: string;
+  readonly title?: string;
+  /** Alt text, kept as given (ingest suggests one only where it is empty). */
+  readonly alt?: string;
+  /** The locale of `title` and `alt`; omitted, the space's default. */
+  readonly locale?: string;
+  /** File it in this folder. */
+  readonly folderId?: string;
+}
+
+/** What `assets.createFromUrl` answers. */
+export interface AssetFromUrl {
+  readonly asset: Asset;
+  /** True when an asset here already held these bytes and was returned; nothing was created. */
+  readonly deduplicated: boolean;
+}
+
 /** A named, ordered set of assets; an asset may be in any number of them. */
 /** How many published entries carry a term: in all, and per content type. */
 export interface TermUsage {
@@ -2867,6 +2889,13 @@ export function createManagementClient(opts: ManagementClientOptions) {
        * bytes to `upload.url` with `upload.headers`, then publish the asset.
        */
       create: (input: CreateAssetInput) => post<CreatedAsset>(`${envBase}/assets`, input),
+      /**
+       * Creates a draft asset from a file at a public URL, which the server downloads (no
+       * redirects, size-capped); ingest then runs as for an upload. When an asset here already
+       * holds exactly these bytes, that one comes back with `deduplicated: true` instead.
+       */
+      createFromUrl: (input: CreateAssetFromUrlInput) =>
+        post<AssetFromUrl>(`${envBase}/assets/from-url`, input),
       /** Changes only the keys sent; publish again to carry them into Delivery. */
       setMetadata: (id: string, metadata: AssetMetadataPatch) =>
         patch<Asset>(`${envBase}/assets/${e(id)}/metadata`, metadata),
