@@ -327,11 +327,7 @@ export function AssetLibrary(props: { locale: string }) {
   };
 
   // --- what ingest found ----------------------------------------------------
-  const openOriginal = (id: string) =>
-    void client
-      .getAsset(id)
-      .then(setOpen)
-      .catch(() => toast.error('The original asset is no longer in the library'));
+  const openOriginal = (id: string) => void client.getAsset(id).then(setOpen).catch(fail);
   const retryIngest = (a: Asset) =>
     void client
       .reingestAsset(a.id)

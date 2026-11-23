@@ -296,6 +296,7 @@ export const documentPage = z.object({
   textMethod: z.enum(['native', 'ocr']),
   status: z.enum(['complete', 'partial']),
   documentStatus: z.enum(['processing', 'partial', 'complete']),
+  firstPartialPage: z.int().positive().optional(),
   preview: z.literal('preview.png').nullable(),
   previewUrl: z.string().optional(),
   media: z.array(

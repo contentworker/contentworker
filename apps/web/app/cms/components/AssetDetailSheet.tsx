@@ -29,6 +29,7 @@ import { AssetIngestBadges, BADGE_BUTTON_FOCUS } from '~/cms/components/assets/A
 import { AssetRightsForm } from '~/cms/components/assets/AssetRightsForm';
 import { AssetShareDialog } from '~/cms/components/assets/AssetShareDialog';
 import { AssetVersions } from '~/cms/components/assets/AssetVersions';
+import { DocumentPreview } from '~/cms/components/assets/DocumentPreview';
 import { DiscardAsk, UNCONFIRMED_NOTE, useDiscardGuard } from '~/cms/components/discard-guard';
 import { InlineConfirm } from '~/cms/components/InlineConfirm';
 import { LoadingStatus } from '~/cms/components/loading';
@@ -154,7 +155,8 @@ export function AssetDetailSheet(props: {
 
   const retryIngest = async () => {
     try {
-      props.onAssetChange?.(await client.reingestAsset(asset.id));
+      const updated = await client.reingestAsset(asset.id);
+      props.onAssetChange?.(updated);
       toast.success('Processing again');
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
@@ -340,27 +342,6 @@ export function AssetDetailSheet(props: {
                   onRetry={() => void retryIngest()}
                 />
               </div>
-              {confirmOpen && (
-                <InlineConfirm
-                  message="Open the original and discard your changes?"
-                  note={guard.unconfirmed ? UNCONFIRMED_NOTE : unsaved}
-                  cancelLabel="Keep editing"
-                  onCancel={() => setConfirmOpen(null)}
-                >
-                  {/* The ink pill: nothing stored is deleted, only this form's unsaved values. */}
-                  <Button
-                    type="button"
-                    size="sm"
-                    onClick={() => {
-                      const id = confirmOpen;
-                      setConfirmOpen(null);
-                      props.onOpenAsset?.(id);
-                    }}
-                  >
-                    Discard and open
-                  </Button>
-                </InlineConfirm>
-              )}
               {asset.duplicateOf && (
                 <p className="text-muted-foreground text-xs">
                   The same file is already in the library.
@@ -369,6 +350,31 @@ export function AssetDetailSheet(props: {
             </div>
           )}
 
+          {confirmOpen && (
+            <InlineConfirm
+              message={
+                confirmOpen === asset.duplicateOf
+                  ? 'Open the original and discard your changes?'
+                  : 'Open the embedded file and discard your changes?'
+              }
+              note={guard.unconfirmed ? UNCONFIRMED_NOTE : unsaved}
+              cancelLabel="Keep editing"
+              onCancel={() => setConfirmOpen(null)}
+            >
+              {/* The ink pill: nothing stored is deleted, only this form's unsaved values. */}
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => {
+                  const id = confirmOpen;
+                  setConfirmOpen(null);
+                  props.onOpenAsset?.(id);
+                }}
+              >
+                Discard and open
+              </Button>
+            </InlineConfirm>
+          )}
           <Tabs value={tab} onValueChange={(v) => setTab(v as SheetTab)}>
             {/* Five tabs in a phone-wide sheet: the row scrolls rather than squeezing a word. */}
             <TabsList className="w-full overflow-x-auto">
@@ -380,6 +386,15 @@ export function AssetDetailSheet(props: {
             </TabsList>
 
             <TabsContent value="details" className="space-y-5 pt-3">
+              {props.open && /\.(pdf|pptx|key)$/i.test(asset.file.fileName) && (
+                <DocumentPreview
+                  key={`${asset.id}/${asset.version ?? 1}`}
+                  asset={asset}
+                  onOpen={props.onOpenAsset && openOriginal}
+                  onLatest={props.onAssetChange}
+                  onReingest={retryIngest}
+                />
+              )}
               {video && (
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
