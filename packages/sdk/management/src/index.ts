@@ -1620,6 +1620,7 @@ export interface DocumentPage {
   readonly textMethod: 'native' | 'ocr';
   readonly status: 'partial' | 'complete';
   readonly documentStatus: 'processing' | 'partial' | 'complete';
+  readonly firstPartialPage?: number;
   readonly preview: 'preview.png' | null;
   readonly previewUrl?: string;
   readonly media: readonly {

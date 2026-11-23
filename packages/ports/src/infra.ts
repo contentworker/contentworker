@@ -1045,6 +1045,8 @@ export interface DocumentIngestOptions {
 }
 
 export interface AssetIngestParams {
+  /** Explicit reingest retries pages whose extraction was partial. */
+  readonly retryPartialPages?: true;
   readonly inbox?: {
     readonly key: string;
     readonly etag: string;
@@ -1056,6 +1058,7 @@ export interface AssetIngestParams {
     readonly page: number;
     readonly pages: number;
     readonly partial: boolean;
+    readonly firstPartialPage?: number;
     readonly etag: string;
     readonly template: DocumentIngestOptions;
   };

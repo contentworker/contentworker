@@ -20,6 +20,12 @@ entries.
 
 `…` in the routes below stands for `/spaces/{space}/environments/{env}`.
 
+## Inspect a document
+
+With document parsing enabled, select a PDF, PowerPoint (.pptx) or packaged Keynote (.key) file in **Assets** and choose **Queue ingest**. Open the asset’s **Details** to browse its pages or slides. Each available preview includes the extracted text. Under **Embedded files**, select a file to open its DAM asset, or download it if the template kept only the extracted file.
+
+A partial extraction shows the parser’s warning on the affected page. New ingestion runs also record the first affected page, so you can jump directly to it. **Reingest document** retries partial pages and reuses completed ones. A file that still exceeds the parser’s extraction budget can remain partial after a retry.
+
 ## Upload a file
 
 In the admin, open **Assets** and press **Upload** (or drop files on the library); with a folder

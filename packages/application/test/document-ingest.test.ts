@@ -70,6 +70,16 @@ it('renders each page, reuses stored pages on retry, and exposes only the curren
     );
   }
   expect(rendered).toEqual([1, 2]);
+  const retry = new FakeWorkflowSteps(clock);
+  await retry.run(() =>
+    runAssetIngest(
+      retry,
+      ctx,
+      { blob, documentParser, ai },
+      { scope, assetId: asset.id, version: 1, retryPartialPages: true },
+    ),
+  );
+  expect(rendered).toEqual([1, 2, 2]);
   expect(ai.requests).toHaveLength(1);
   expect(ai.requests[0]?.prompt).toContain('Page 1');
   expect((await ctx.store.assets.get(scope, asset.id))?.description).toEqual({
@@ -77,6 +87,7 @@ it('renders each page, reuses stored pages on retry, and exposes only the curren
   });
   expect(await getDocumentPage(ctx, blob, scope, asset.id, 1)).toMatchObject({
     documentStatus: 'partial',
+    firstPartialPage: 2,
     status: 'complete',
     version: 1,
     text: 'Page 1',

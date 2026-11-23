@@ -155,6 +155,7 @@ export async function parseAssetDocument(
   const first = cursor?.page ?? 1;
   let pages = cursor?.pages ?? 1;
   let partial = cursor?.partial ?? false;
+  let firstPartialPage = cursor?.firstPartialPage;
   for (let page = first; page <= pages; page++) {
     if (page - first === 128 && continuation) {
       const nextId = createHash('sha256')
@@ -163,7 +164,14 @@ export async function parseAssetDocument(
       await steps.do('continue-document', pageStep, () =>
         continuation.starter.start(nextId, {
           ...params,
-          documentCursor: { page, pages, partial, etag: source.etag, template: source.template },
+          documentCursor: {
+            page,
+            pages,
+            partial,
+            firstPartialPage,
+            etag: source.etag,
+            template: source.template,
+          },
         }),
       );
       return 'continued';
@@ -173,7 +181,10 @@ export async function parseAssetDocument(
       if (!parent) return null;
       const key = `${source.outputPrefix}pages/${page}/manifest.json`;
       let raw = await blob.get(key);
-      if (!raw) {
+      if (
+        !raw ||
+        (params.retryPartialPages && (JSON.parse(raw) as DocumentPage).status === 'partial')
+      ) {
         await parser.render({ ...source, page });
         raw = await blob.get(key);
       }
@@ -186,6 +197,7 @@ export async function parseAssetDocument(
     if (!result) return 'stale';
     pages = result.pages;
     partial ||= result.partial;
+    if (result.partial) firstPartialPage ??= page;
   }
   const chars = await steps.do('document-text', pageStep, async () => {
     if (!(await current(ctx, params))) return 0;
@@ -201,7 +213,7 @@ export async function parseAssetDocument(
     if (textKey) await blob.put(textKey, excerpt, 'text/plain; charset=utf-8');
     await blob.put(
       `${source.outputPrefix}summary.json`,
-      JSON.stringify({ pages, status: partial ? 'partial' : 'complete' }),
+      JSON.stringify({ pages, firstPartialPage, status: partial ? 'partial' : 'complete' }),
       'application/json',
     );
     return excerpt.length;
@@ -230,9 +242,9 @@ export async function getDocumentPage(
   if (!raw) throw new NotFoundError('Document page', String(page));
   const stored: DocumentPage = JSON.parse(raw);
   const summary = await blob.get(`${prefix}summary.json`);
-  const status: 'processing' | 'partial' | 'complete' = summary
-    ? JSON.parse(summary).status
-    : 'processing';
+  const progress = summary
+    ? (JSON.parse(summary) as { status: 'partial' | 'complete'; firstPartialPage?: number })
+    : undefined;
   const url = (suffix: string) =>
     blob.getDownloadUrl(`${prefix}${suffix}`, { expiresInSeconds: READ_URL_TTL_SECONDS });
   const media = await Promise.all(
@@ -246,7 +258,8 @@ export async function getDocumentPage(
   return {
     ...stored,
     media,
-    documentStatus: status,
+    documentStatus: progress?.status ?? ('processing' as const),
+    ...(progress?.firstPartialPage ? { firstPartialPage: progress.firstPartialPage } : {}),
     assetId: id,
     version: asset.version ?? 1,
     ...(next < stored.media.length ? { nextMediaOffset: next } : {}),

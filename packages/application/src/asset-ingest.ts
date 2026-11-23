@@ -247,7 +247,7 @@ export async function startRequestedAssetIngest(
     ctx,
     starter,
     asset,
-    { scope, assetId, version },
+    { scope, assetId, version, ...(request.rerun ? { retryPartialPages: true as const } : {}) },
     assetIngestInstanceId(scope, assetId, version, request.rerun ? { rerun: request.rerun } : {}),
   );
   return 'started';

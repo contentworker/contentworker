@@ -197,6 +197,20 @@ const queryString = (q: object): string => {
   return s ? `?${s}` : '';
 };
 
+export interface DocumentPreviewPage {
+  readonly version: number;
+  readonly page: number;
+  readonly pages: number;
+  readonly text: string;
+  readonly previewUrl?: string;
+  readonly media: readonly { part: string; url: string; assetId?: string }[];
+  readonly nextMediaOffset?: number;
+  readonly warnings: readonly string[];
+  readonly status: 'complete' | 'partial';
+  readonly documentStatus: 'processing' | 'partial' | 'complete';
+  readonly firstPartialPage?: number;
+}
+
 /**
  * Which space, environment and locale the admin is working in. The browser talks to its own
  * origin: the web Worker's gateway forwards the API's paths to the api Worker with the signed-in
@@ -2218,6 +2232,19 @@ export function createManagementClient(
     },
     getAsset(id: string): Promise<Asset> {
       return req('GET', `${mgmt}/assets/${encodeURIComponent(id)}`);
+    },
+    documentPage(
+      id: string,
+      page: number,
+      mediaOffset: number,
+      signal?: AbortSignal,
+    ): Promise<DocumentPreviewPage> {
+      return req(
+        'GET',
+        `${mgmt}/assets/${encodeURIComponent(id)}/document/pages/${page}?mediaOffset=${mediaOffset}`,
+        undefined,
+        signal,
+      );
     },
     /** Runs ingest on the asset's file again (after it failed); comes back pending. */
     reingestAsset(id: string): Promise<Asset> {

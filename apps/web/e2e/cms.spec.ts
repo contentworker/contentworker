@@ -2009,3 +2009,58 @@ test('a list’s search filters, clears and keeps focus, and its rows fit a phon
   await expect(search).toBeFocused();
   await expect(search).toHaveValue('');
 });
+
+test('inspects a deck slide, reads its extraction warning and opens an embedded DAM file', async ({
+  page,
+  request,
+}) => {
+  const name = `Review deck ${Date.now()}`;
+  const folderId = await seedAssetFolder(request, name);
+  const child = await seedAsset(request, `${name} photo`, { folderId });
+  const created = await api(request, 'POST', `${MGMT}/assets`, {
+    fileName: 'results.pptx',
+    contentType: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    title: { 'en-US': name },
+    folderId,
+  });
+  expect(created.ok()).toBeTruthy();
+  const { asset } = await created.json();
+  // The browser suite runs without the optional parser container. Supply its two page responses.
+  await page.route(`**/assets/${asset.id}/document/pages/**`, (route) => {
+    const n = Number(new URL(route.request().url()).pathname.split('/').at(-1));
+    return route.fulfill({
+      json: {
+        version: 1,
+        page: n,
+        pages: 2,
+        documentStatus: 'partial',
+        status: n === 2 ? 'partial' : 'complete',
+        text: n === 1 ? 'Executive summary' : 'Campaign results',
+        warnings: n === 2 ? ['Media exceeds local extraction limit: ppt/media/launch.mp4'] : [],
+        media: n === 2 ? [{ part: 'team.png', url: '/media/team.png', assetId: child }] : [],
+      },
+    });
+  });
+  await openCms(page, '/assets');
+  await page
+    .getByRole('navigation', { name: 'Folders' })
+    .getByRole('button', { name, exact: true })
+    .click();
+  const library = page.getByRole('region', { name: 'Asset library' });
+  await library.getByRole('radio', { name: 'List' }).click();
+  await library.getByRole('checkbox', { name: `Select “${name}”` }).check();
+  const queued = page.waitForResponse(
+    (r) => r.url().endsWith('/assets/bulk') && r.request().method() === 'POST',
+  );
+  await page.getByRole('button', { name: 'Queue ingest' }).click();
+  expect((await queued).status()).toBe(202);
+  await library.getByRole('button', { name: `Open “${name}”` }).click();
+  const preview = page.getByRole('region', { name: 'Document preview' });
+  await expect(preview.getByRole('heading', { name: 'Slide 1 of 2' })).toBeVisible();
+  await preview.getByRole('button', { name: 'Next slide' }).click();
+  await expect(preview.getByText('Campaign results')).toBeVisible();
+  await expect(preview.getByText('Slide 2 was partially extracted.')).toBeVisible();
+  await expect(preview.getByText(/launch\.mp4/)).toBeVisible();
+  await preview.getByRole('button', { name: 'team.png' }).click();
+  await expect(page.getByRole('dialog').getByRole('heading', { name: /photo\.png/ })).toBeVisible();
+});
