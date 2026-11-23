@@ -1223,6 +1223,45 @@ test('queue ingest sends the selected asset to a background job', async ({ page,
   );
 });
 
+test('reviews a concurrent document template edit and saves both selections in its environment', async ({
+  page,
+  request,
+}) => {
+  const environment = `document-settings-${Date.now()}`;
+  const created = await api(request, 'POST', `/spaces/${SPACE}/environments`, { id: environment });
+  expect(created.ok(), await created.text()).toBeTruthy();
+  const path = `/spaces/${SPACE}/environments/${environment}/document-ingestion/template`;
+  await openCms(page, `/assets?env=${environment}`);
+  const opener = page.getByRole('button', { name: 'Ingestion settings' });
+  await opener.click();
+  const dialog = page.getByRole('dialog', { name: 'Document ingestion settings' });
+  const tags = dialog.getByRole('checkbox', { name: 'Apply AI tags when tags are empty' });
+  await tags.uncheck();
+  const first = await (await api(request, 'GET', path)).json();
+  const other = await api(request, 'PUT', path, { ...first, describeDocument: false });
+  expect(other.ok(), await other.text()).toBeTruthy();
+  await dialog.getByRole('button', { name: 'Save changes' }).click();
+  const review = dialog.getByRole('button', { name: 'Review latest settings' });
+  await expect(review).toBeFocused();
+  await review.click();
+  await expect(
+    dialog.getByRole('checkbox', { name: 'Create DAM drafts for embedded files' }),
+  ).toBeFocused();
+  await expect(tags).not.toBeChecked();
+  await expect(dialog.getByRole('checkbox', { name: /Write an AI description/ })).not.toBeChecked();
+  await dialog.getByRole('button', { name: 'Save changes' }).click();
+  await expect(dialog).toBeHidden();
+  await expect(opener).toBeFocused();
+  expect(await (await api(request, 'GET', path)).json()).toEqual({
+    ...first,
+    version: first.version + 2,
+    suggestTags: false,
+    describeDocument: false,
+  });
+  await opener.click();
+  await expect(tags).not.toBeChecked();
+});
+
 test('publishing more assets than a page shows runs as a job and names the one it refused', async ({
   page,
   request,

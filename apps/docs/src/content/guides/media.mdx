@@ -73,6 +73,12 @@ deleted. An upload nobody finishes is aborted automatically after a day. The MCP
 the Management SDK's `assets.upload(...)` does all of it for any size, retrying each part and
 reporting progress ([SDKs](/guides/sdks/#writing-content)). All four calls need `assets:write`.
 
+## Configure document ingestion
+
+In **Assets**, open **Ingestion settings** for the current environment. Choose whether the document parser creates DAM drafts for embedded files, applies AI tags to an untagged document, and writes a description when the default locale has none. These settings apply to new PDF, PowerPoint and Keynote parser runs.
+
+You need `assets:write` to save changes. If someone saves another revision first, choose **Review latest settings**. The dialog keeps your edits and loads their changes to the other options. Review the selections, then choose **Save changes**.
+
 ## Upload a video
 
 Video is hosted by an edge streaming service, not stored as a file, and plays as adaptive streaming
