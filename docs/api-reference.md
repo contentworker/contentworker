@@ -214,7 +214,8 @@ Base paths: `/spaces`, and `…` for `/spaces/:space/environments/:env`. Space-l
 | POST   | `/spaces/:space/promotions/:id/reject`                       | `content:publish`                    | Reject a waiting promotion (its requester may too, to withdraw it)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 
 A space id is 1–64 letters, digits, `.`, `_` or `-`, starting with a letter or digit, and is
-never one of the media bucket's own prefixes: `versions`, `imports`, `plugins`, `dlq` or `zips`, in any case
+never one of the media bucket's own prefixes: `versions`, `imports`, `plugins`, `dlq`, `zips` or
+`migrations`, in any case
 (`RESERVED_SPACE_IDS`). `POST /spaces` and the `space_create` MCP tool refuse one with a validation
 error (`422` over HTTP).
 

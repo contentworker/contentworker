@@ -28,6 +28,13 @@ import type {
   InviteRole,
   LocalizedValue,
   MenuItem,
+  MigrationArtifact,
+  MigrationInventory,
+  MigrationPageStage,
+  MigrationRunStatus,
+  MigrationScore,
+  MigrationSource,
+  MigrationTemplateStatus,
   PluginManifest,
   PluginSettingValue,
   PromotedBlocks,
@@ -61,6 +68,7 @@ import {
   index,
   integer,
   primaryKey,
+  real,
   sqliteTable,
   text,
   uniqueIndex,
@@ -1516,6 +1524,87 @@ export const aiReferenceExtractions = sqliteTable(
     updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
   },
   (t) => [primaryKey({ columns: [t.spaceId, t.environmentId, t.assetId, t.fileVersion] })],
+);
+
+/**
+ * Site migration runs (0048_site_migrations), each row rewritten whole at its version's
+ * compare-and-set.
+ */
+export const migrationRuns = sqliteTable(
+  'migration_runs',
+  {
+    spaceId: text('space_id').notNull(),
+    environmentId: text('environment_id').notNull(),
+    id: text('id').notNull(),
+    name: text('name').notNull(),
+    source: text('source', { mode: 'json' }).$type<MigrationSource>().notNull(),
+    status: text('status').$type<MigrationRunStatus>().notNull(),
+    threshold: real('threshold').notNull(),
+    inventory: text('inventory', { mode: 'json' }).$type<MigrationInventory>(),
+    error: text('error'),
+    version: integer('version').notNull(),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+    createdBy: text('created_by'),
+    updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.spaceId, t.environmentId, t.id] })],
+);
+
+/** A run's templates (0048_site_migrations), replaced together when its pages are clustered. */
+export const migrationTemplates = sqliteTable(
+  'migration_templates',
+  {
+    spaceId: text('space_id').notNull(),
+    environmentId: text('environment_id').notNull(),
+    runId: text('run_id').notNull(),
+    id: text('id').notNull(),
+    label: text('label').notNull(),
+    status: text('status').$type<MigrationTemplateStatus>().notNull(),
+    pageCount: integer('page_count').notNull(),
+    samplePageIds: text('sample_page_ids', { mode: 'json' }).$type<string[]>().notNull(),
+    fingerprint: text('fingerprint', { mode: 'json' }).$type<string[]>().notNull(),
+    contentTypeId: text('content_type_id'),
+    script: text('script', { mode: 'json' }).$type<MigrationArtifact>(),
+    version: integer('version').notNull(),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+    updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.spaceId, t.environmentId, t.runId, t.id] })],
+);
+
+/**
+ * A run's pages (0048_site_migrations), one per URL. The HTML and the script's output live in the
+ * bucket; `html` and `output` name them.
+ */
+export const migrationPages = sqliteTable(
+  'migration_pages',
+  {
+    spaceId: text('space_id').notNull(),
+    environmentId: text('environment_id').notNull(),
+    runId: text('run_id').notNull(),
+    id: text('id').notNull(),
+    url: text('url').notNull(),
+    path: text('path').notNull(),
+    stage: text('stage').$type<MigrationPageStage>().notNull(),
+    templateId: text('template_id'),
+    title: text('title'),
+    lastModified: text('last_modified'),
+    httpStatus: integer('http_status'),
+    html: text('html', { mode: 'json' }).$type<MigrationArtifact>(),
+    fingerprint: text('fingerprint', { mode: 'json' }).$type<string[]>(),
+    output: text('output', { mode: 'json' }).$type<MigrationArtifact>(),
+    score: text('score', { mode: 'json' }).$type<MigrationScore>(),
+    entryId: text('entry_id'),
+    error: text('error'),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+    updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.spaceId, t.environmentId, t.runId, t.id] }),
+    uniqueIndex('migration_pages_by_url').on(t.spaceId, t.environmentId, t.runId, t.url),
+    index('migration_pages_by_stage').on(t.spaceId, t.environmentId, t.runId, t.stage),
+    index('migration_pages_by_template').on(t.spaceId, t.environmentId, t.runId, t.templateId),
+  ],
 );
 
 /** Navigation menus, each a JSON tree of items written whole at its revision (0020_menus). */

@@ -466,6 +466,18 @@ reading a reference's text, claimed on its primary key; and the nullable `projec
 tables and nullable columns: code deployed before it never names them, and an existing action or
 schedule reads as "the default project", which is none until one is set.
 
+`0048_site_migrations.sql` adds `migration_runs` (`space_id`, `environment_id`, `id` primary key;
+`name`, `source` JSON, `status`, `threshold`, `inventory` JSON, `error`, `version`, `created_*`,
+`updated_at`), `migration_templates` (`space_id`, `environment_id`, `run_id`, `id` primary key;
+`label`, `status`, `page_count`, `sample_page_ids` and `fingerprint` JSON, `content_type_id`,
+`script` artifact JSON, `version`, `created_at`, `updated_at`) and `migration_pages` (`space_id`,
+`environment_id`, `run_id`, `id` primary key; `url`, unique per run by `migration_pages_by_url`;
+`path`, `stage`, `template_id`, `title`, `last_modified`, `http_status`, the `html` and `output`
+artifact JSON, `fingerprint` and `score` JSON, `entry_id`, `error`, `created_at`, `updated_at`;
+indexed by stage and by template). See [Site migrations](./domain-model.md#site-migrations). These
+are new tables, which code deployed before this migration never reads. Page HTML is stored in the
+media bucket, not in these tables.
+
 `0043_space_ai_settings.sql` adds `space_ai_settings` (`space_id` primary key, `version`,
 `document`, `updated_by`, `updated_at`): a space's AI settings, per capability on or off, its tier
 and its guidance, as one JSON document rewritten whole at each set, its `version` the

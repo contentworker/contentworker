@@ -1,4 +1,9 @@
-import type { RemoteDocument, RemoteFetcher, RemoteFile } from '@contentworker/ports';
+import type {
+  RemoteDocument,
+  RemoteFetcher,
+  RemoteFetchOptions,
+  RemoteFile,
+} from '@contentworker/ports';
 
 /**
  * HTTP fetcher for operator-initiated downloads (plugin packages, oEmbed metadata, the files a
@@ -18,14 +23,14 @@ export function createRemoteFetcher(
   opts: { timeoutMs?: number } = {},
 ): RemoteFetcher {
   const defaultTimeout = opts.timeoutMs ?? 15_000;
-  const request = async (
-    url: string,
-    options: { readonly maxBytes: number; readonly timeoutMs?: number },
-  ): Promise<RemoteFile> => {
+  const request = async (url: string, options: RemoteFetchOptions): Promise<RemoteFile> => {
     const res = await fetchImpl(url, {
       method: 'GET',
       redirect: 'manual',
-      headers: { accept: '*/*' },
+      headers: {
+        accept: '*/*',
+        ...(options.userAgent ? { 'user-agent': options.userAgent } : {}),
+      },
       signal: AbortSignal.timeout(options.timeoutMs ?? defaultTimeout),
     });
     const contentType = res.headers.get('content-type') ?? undefined;

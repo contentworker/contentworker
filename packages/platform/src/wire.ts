@@ -20,6 +20,7 @@ import { createCfImageProbe, createCfImageTransformer } from '@contentworker/ada
 import { createSpaceExportReader } from '@contentworker/adapters/import-space-export';
 import { createWorkerLoaderRuntime } from '@contentworker/adapters/plugins-cf-loader';
 import { createAssetIngestQueue, createCfQueueProducer } from '@contentworker/adapters/queue-cf';
+import { createSiteSource } from '@contentworker/adapters/site-source';
 import { createKvDevVectorStore } from '@contentworker/adapters/vector-kv-dev';
 import { createVectorizeStore } from '@contentworker/adapters/vector-vectorize';
 import { createStreamVideoHost } from '@contentworker/adapters/video-stream';
@@ -70,6 +71,7 @@ import type {
   Queue as QueuePort,
   RemoteFetcher,
   SecretSealer,
+  SiteSource,
   SpaceExportReader,
   TextExtractor,
   VectorStore,
@@ -148,6 +150,8 @@ export interface EdgeWired {
   /** Bounded, redirect-refusing outbound GETs, for callers outside the HTTP app (MCP's embed_resolve,
    *  the engine's copies of a space export's asset files). */
   readonly remoteFetcher: RemoteFetcher;
+  /** Sitemap and same-origin crawl reads over that fetcher, for site migrations. */
+  readonly siteSource: SiteSource;
   /** Reads the JSON space export format, for MCP's space export tools. A pure parser. */
   readonly spaceExportReader: SpaceExportReader;
   /** True when backed by D1 vs the in-memory demo store. */
@@ -316,6 +320,7 @@ export function wireEdge(rawEnv: EdgeEnv, options: EdgeWireOptions = {}): EdgeWi
     assetSearch: assetSearchDeps(rag, { embed: Boolean(env.EMBEDDINGS_PROVIDER) }),
     ...(workflowEngine ? { workflowEngine } : {}),
     remoteFetcher: createRemoteFetcher(),
+    siteSource: createSiteSource(createRemoteFetcher()),
     spaceExportReader: createSpaceExportReader(),
     workflowNodes: {
       ai,

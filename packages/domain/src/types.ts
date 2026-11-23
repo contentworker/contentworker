@@ -40,7 +40,14 @@ export function isEntryId(value: unknown): value is string {
  * space's asset files sit at `<space>/<environment>/…` in the same bucket, so a space named like one of these would reach
  * that data when its files are deleted. No space may take one of these ids, in any case.
  */
-export const RESERVED_SPACE_IDS = ['versions', 'imports', 'plugins', 'dlq', 'zips'] as const;
+export const RESERVED_SPACE_IDS = [
+  'versions',
+  'imports',
+  'plugins',
+  'dlq',
+  'zips',
+  'migrations',
+] as const;
 
 const RESERVED = new Set<string>(RESERVED_SPACE_IDS);
 
