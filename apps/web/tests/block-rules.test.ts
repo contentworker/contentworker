@@ -293,6 +293,8 @@ describe('the canvas under the config', () => {
     expect(main.offers.map((v) => v.apiId)).toEqual(['hero', 'section']);
     expect(main.max).toBe(4);
     expect(slotFill(main)).toBe('Main · 3 of 4');
+    // A field already named for its blocks says the count bare, never "Blocks · 3 blocks".
+    expect(slotFill({ ...main, name: 'Blocks', max: undefined })).toBe('Blocks · 3');
     expect(main.blocks.map((b) => b.key)).toEqual(['h1', 's1', 'a1']);
     // Ungrouped first, then each group: the call to action's group isn't offered at all.
     expect(dockGroups(main, catalog).flatMap((g) => g.items.map((i) => i.variant.apiId))).toEqual([

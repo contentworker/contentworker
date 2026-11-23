@@ -160,7 +160,8 @@ describe('EntryEditor action row', () => {
   it('a saved draft: Publish is the primary verb, Save draft rests until there are edits', async () => {
     setup('/content/article/e1', saved('draft'));
     await screen.findByRole('heading', { level: 1, name: 'Pricing page' });
-    expect(screen.getByText('All changes saved')).toBeTruthy();
+    // Saved: one chip, the status and its version.
+    expect(screen.getByText(/^Draft · v\d+$/)).toBeTruthy();
     expect((button('Save draft') as HTMLButtonElement).disabled).toBe(true);
     expect(variant('Save draft')).toBe('outline');
     expect((button('Publish') as HTMLButtonElement).disabled).toBe(false);
@@ -170,7 +171,7 @@ describe('EntryEditor action row', () => {
       target: { value: 'Pricing page v2' },
     });
     await screen.findByText('Unsaved changes');
-    expect(screen.queryByText('All changes saved')).toBeNull();
+    expect(screen.queryByText(/^Draft · v\d+$/)).toBeNull();
     expect((button('Save draft') as HTMLButtonElement).disabled).toBe(false);
     expect(variant('Publish')).toBe('default');
   });

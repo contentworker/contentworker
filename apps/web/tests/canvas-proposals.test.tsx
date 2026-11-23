@@ -308,7 +308,7 @@ describe('a proposal waiting in Coworker', () => {
     });
     act(() => assistant.setProposal('card-1', { ...GHOST, state: 'saved' }));
     await waitFor(() => expect(proposals(f).at(-1)).toMatchObject({ ops: null }));
-    await screen.findByText('v4');
+    await screen.findByText('Draft · v4');
     expect(screen.getByText('Saved Coworker’s change')).toBeTruthy();
     // The saved block is the entry's now: in Layers as a block, not as a proposal.
     act(() => screen.getByRole('button', { name: 'Layers' }).click());
@@ -342,7 +342,8 @@ describe('a proposal saved while the canvas holds edits of its own', () => {
     expect(
       await screen.findByText(/Saved Coworker’s change\. Your unsaved edits are kept/),
     ).toBeTruthy();
+    // The chip says the edits are unsaved; it doesn't claim the card's saved version as theirs.
     expect(screen.getByText('Unsaved changes')).toBeTruthy();
-    expect(screen.getByText('v3')).toBeTruthy();
+    expect(screen.queryByText(/· v4$/)).toBeNull();
   });
 });
