@@ -1152,17 +1152,19 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   can only review says so when it holds edits from the form, with a link back to save them there.
   At lg it edits: Layers (on demand) | the page |
   the right column, which is the selected block's inspector or, with nothing selected, the page's
-  Checks. Everything over the page is drawn by the admin outside it, from the boxes the page
+  Checks (ending in a muted hint: "Point between two blocks to add one there…" while seams are
+  drawn, "Choose a block in the page or in Layers…" while none are). Everything over the page is drawn by the admin outside it, from the boxes the page
   reports (never a copy of the page), in the **overlay pair** rather than the admin's theme
   (`--overlay-ink`, `--overlay-halo`, `--overlay-brand`: the same in light and dark, since the page
   under them is the customer's colours): every edge is an ink line with a halo beside it, so one of
   the two holds 3:1 on a white page, a black one or a photo. A slot is a dashed seam between blocks
   (ink dashes on a halo strip, softened at rest), on hover a pill saying what a click does and
-  where ("Add here · Main · 3 of 8"; the bare name and fill once chosen, full or under a carried
-  block; a range when the slot has a least and a most, "Features ·
-  0 of 2–4"; "1 block, needs 2" with a least alone; a field already named for its blocks says the
+  where ("Add here · Main · 3/8 used"; the bare name and fill once chosen, full or under a carried
+  block; "Main · full (8/8)" when full; a range when the slot has a least and a most, "Features ·
+  0/2–4 used"; "1 block, needs 2" with a least alone; a field already named for its blocks says the
   count bare, "Blocks · 3", and its Layers tree is "Blocks", never "Blocks blocks"; the same words in
-  Layers and the inspector); a
+  Layers and the inspector). A fill is always "used" against a slash, never "3 of 8": "of" is a
+  block's place, which the inspector says as "Block 1 of 3 in Main"; a
   hovered block is a haloed ink hairline and a selected one a 2px ink edge haloed on both sides;
   colour on the canvas is for status only. Choosing a seam (a click, a tap, or `/` after the
   selected block) marks it with a solid brand insertion line (`--overlay-brand`, haloed) (brand is what you chose; it goes when the dock closes or the block is in) and
@@ -1197,14 +1199,16 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   blocks also offers **Ask Coworker to fill this** in its header (a ghost `xs` button led by the
   mark in `ai`; held, with a muted line saying why, while the canvas has unsaved edits or another
   proposal waits or saves); never at a full or locked place. Asked from the dock's sheet (below lg), focus stays in Coworker's prompt. Coworker's proposal comes back as a card in the
-  panel, the one place it is decided; while it waits the page draws its blocks as ghosts and the
+  panel, the one place it is decided (its act reads **Confirm and save draft**, and its line says
+  confirming saves to the draft and doesn't publish; its count gives way to "In the draft:" under
+  the steps, which already say what it does); while it waits the page draws its blocks as ghosts and the
   canvas outlines each in a dashed `ai` edge (`--overlay-brand`, haloed) with "Proposed" (or
   "Proposed change", "Proposed removal") and the mark on a halo chip at its corner (`GhostMark`), Layers lists the proposed
   blocks after their slot's blocks with an `ai` "Proposed" stamp and where each goes (not tree
   items: they aren't the entry's), and a quiet status line under the header says it is on the page
   and that nothing is saved until it is confirmed (or that the page can't show it, so the card is
   where to review it). The Site view beside the form draws the same marks and line. The dock's title says where the block goes ("Add after Hero", "Add the first
-  block"), with the field and its fill under it in the seam's words ("In Main · 3 of 8"). While it
+  block"), with the field and its fill under it in the seam's words ("In Main · 3/8 used"). While it
   is open the selection steps back (no selected edge) and the inspector dims and is `inert`: what
   is being added is the one question. The dock's first block takes focus, and the block put in
   hands focus to its first empty field on Content (the inspector's heading when it has none);
@@ -1242,9 +1246,11 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   the primary verb for someone with `content:publish`, Save draft steps back to outline; with
   unsaved edits Publish saves first, then asks in the one publish confirm, which says the edits were just saved ("v2") since the save's
   toast sits under it; it reads "Published"
-  while the page is live and unchanged, and publishing keeps the canvas editing). Beside the width
-  control a muted readout names the device in view ("Tablet · 768px"; catalog breakpoints are
-  named on the switch itself). Layers, open or closed, is remembered per browser at lg; below lg it
+  while the page is live and unchanged, and publishing keeps the canvas editing). The width switch
+  names the device in view on its chosen segment from xl ("Tablet" beside its icon), as catalog
+  breakpoints are named on the switch itself; the width is in its tooltip and accessible name
+  only, since the frame scales the page to fit and a width in the row would read as its size on
+  screen. Undo and Redo sit together as one pair. Layers, open or closed, is remembered per browser at lg; below lg it
   is a sheet, never opened on arrival. The browser tab names the entry ("Spring launch · Canvas").
   A remove's toast is a note (a muted dot, not a success) and offers Undo, which hands focus back to
   the stage; the inspector's Remove is muted until hovered or focused (it
@@ -1253,7 +1259,9 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   blocks needs a wider screen…"). It says in place, in a strip under the header, why it is
   reviewing (a role that can only read, the published version until **Edit a draft**), where a
   workflow has the entry, and when the page reports no layout (no seams; select by click or in
-  Layers). The Site view's notices stand for the frame's states; a page that didn't load says so on the
+  Layers). The Site view's notices stand for the frame's states (a page that never offers to connect
+  can't be told from the browser's own error page, so that notice names both, a silent page and a
+  site down or refusing to be framed, with Try again); a page that didn't load says so on the
   stage itself, over the frame (the notice, Try again, and that the form and Layers still edit).
   The stage is a region named "The page", described by how to reach the blocks by key, and a tab
   stop of its own just before the frame (its focus edge in the overlay pair, inside the frame's

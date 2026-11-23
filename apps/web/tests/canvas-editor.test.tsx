@@ -291,7 +291,7 @@ describe('seams and the dock', () => {
     });
     expect(seam('body[s1].items#2').dataset.full).toBe('true');
     act(() => seam('body[s1].items#2').click());
-    expect(within(dock()).getByText(/Items is full: it holds 2 of 2/)).toBeTruthy();
+    expect(within(dock()).getByText(/Items is full \(2\/2\)/)).toBeTruthy();
     // With nothing to offer, the dock itself takes focus, so its words are heard.
     expect(dock().contains(document.activeElement)).toBe(true);
     expect(dock().querySelectorAll('[data-dock-item]')).toHaveLength(0);
@@ -733,7 +733,7 @@ describe('the block config', () => {
       [...document.querySelectorAll('[data-seam]')].map((el) => el.getAttribute('data-seam')),
     ).toEqual(['body#1', 'body#3']);
     openLayers();
-    expect(screen.getByRole('group', { name: 'Items · 1 of 1–2 · locked' })).toBeTruthy();
+    expect(screen.getByRole('group', { name: 'Items · 1/1–2 used · locked' })).toBeTruthy();
     act(() => layer('c1').click());
     expect(
       screen.getByText(
@@ -751,7 +751,7 @@ describe('the block config', () => {
     act(() => layer('s1').click());
     expect(screen.queryByRole('button', { name: 'Add to Items' })).toBeNull();
     const settings = screen.getByRole('complementary', { name: 'Block settings' });
-    expect(within(settings).getByText('Items · 1 of 1–2 · locked')).toBeTruthy();
+    expect(within(settings).getByText('Items · 1/1–2 used · locked')).toBeTruthy();
   });
 
   it('won’t duplicate a stored block the narrowed rule no longer takes', async () => {

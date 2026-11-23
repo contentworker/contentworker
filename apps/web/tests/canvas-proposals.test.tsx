@@ -226,7 +226,7 @@ describe('Ask Coworker to fill this', () => {
     expect(await screen.findByRole('button', { name: 'Ask Coworker to fill this' })).toBeTruthy();
     act(() => screen.getByRole('button', { name: /^Card/ }).click());
     act(() => seam('body[s1].items#1').click());
-    expect(await screen.findByText(/is full: it holds 2 of 2/)).toBeTruthy();
+    expect(await screen.findByText(/is full \(2\/2\)/)).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Ask Coworker to fill this' })).toBeNull();
   });
 

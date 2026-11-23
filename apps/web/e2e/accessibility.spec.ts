@@ -1388,7 +1388,7 @@ test('a block patch card, ready and refused, has no accessibility violations @co
   const panel = await askCoworker(page, 'Move the first block to the end');
   // The conversation is shared with tests running beside this one: this entry's card only.
   const card = panel.getByRole('region', { name: 'Change blocks' }).filter({ hasText: title });
-  await expect(card.getByRole('button', { name: 'Confirm' })).toBeEnabled();
+  await expect(card.getByRole('button', { name: 'Confirm and save draft' })).toBeEnabled();
   await card.getByRole('button', { name: 'Review changes' }).click();
   await expect(card.getByRole('list', { name: 'Changes' })).toBeVisible();
   await scan(page, testInfo);
@@ -1401,7 +1401,7 @@ test('a block patch card, ready and refused, has no accessibility violations @co
     .getByRole('region', { name: 'Change blocks' })
     .filter({ hasText: title });
   await expect(stale.getByText('The entry changed after this was proposed')).toBeVisible();
-  await expect(stale.getByRole('button', { name: 'Confirm' })).toBeDisabled();
+  await expect(stale.getByRole('button', { name: 'Confirm and save draft' })).toBeDisabled();
   await scan(page, testInfo);
   // The conversation is shared with every other test: a card left waiting would be in theirs.
   await stale.getByRole('button', { name: 'Not now' }).click();

@@ -18,7 +18,7 @@
 import { Button } from '@contentworker/ui/button';
 import { cn } from '@contentworker/ui/lib/utils';
 import { Lock, MonitorSmartphone, Plus } from 'lucide-react';
-import { useEffect, useRef } from 'react';
+import { useEffect, useId, useRef } from 'react';
 import { ToneBadge } from '~/cms/components/status';
 import type { ActorDirectory } from '~/cms/lib/authorship';
 import { blockIndent } from '~/cms/lib/block-indent';
@@ -266,9 +266,14 @@ function LayerItem(props: ItemProps & { block: CanvasBlock; level: number }) {
   const filled = block.slots.filter((s) => s.blocks.length > 0 || s.min !== undefined);
   const ghost = props.marked?.get(block.key);
   const overrides = overrideNames(block.value, block.slot.breakpoints);
+  // Named by its own row (and lock line) only: without it the item's name is every word inside,
+  // its nested blocks' too, run together ("SectionFeaturesCards · 1/2 usedCardFast").
+  const rowId = useId();
+  const lineId = useId();
   return (
     <div
       role="treeitem"
+      aria-labelledby={says ? `${rowId} ${lineId}` : rowId}
       aria-level={level}
       aria-selected={isSelected}
       aria-expanded={filled.length > 0 ? true : undefined}
@@ -283,6 +288,7 @@ function LayerItem(props: ItemProps & { block: CanvasBlock; level: number }) {
       className="rounded-lg outline-none focus-visible:outline-2 focus-visible:outline-ring"
     >
       <div
+        id={rowId}
         className={cn(
           'flex min-h-8 cursor-default items-center gap-2 rounded-lg py-1 pr-2 text-sm touch:min-h-11',
           isSelected
@@ -293,6 +299,7 @@ function LayerItem(props: ItemProps & { block: CanvasBlock; level: number }) {
       >
         {lock?.own ? <Lock aria-hidden="true" className="size-3 shrink-0" /> : null}
         <span className="truncate">{block.name}</span>
+        {block.label ? <span className="sr-only">, </span> : null}
         {block.label ? (
           <span className="min-w-0 truncate text-muted-foreground text-xs">{block.label}</span>
         ) : null}
@@ -317,12 +324,14 @@ function LayerItem(props: ItemProps & { block: CanvasBlock; level: number }) {
         ) : null}
         {block.variant ? null : (
           <span className="ml-auto shrink-0">
+            <span className="sr-only">, </span>
             <ToneBadge tone="bad" label="Removed from code" />
           </span>
         )}
       </div>
       {says ? (
         <p
+          id={lineId}
           data-locked-line
           className="pb-1 text-2xs text-muted-foreground"
           style={{ paddingLeft: `${0.5 + blockIndent(level - 1)}rem` }}

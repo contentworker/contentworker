@@ -38,10 +38,10 @@ describe('the slot tree', () => {
     expect(slots.map((s) => s.path)).toEqual(['body']);
     const main = slots[0];
     expect(main?.blocks.map((b) => b.key)).toEqual(['h1', 's1', 'a1']);
-    expect(slotFill(main as NonNullable<typeof main>)).toBe('Main · 3 of 8');
+    expect(slotFill(main as NonNullable<typeof main>)).toBe('Main · 3/8 used');
     const items = findSlot(slots, 'body[s1].items');
     expect(items?.address).toEqual({ field: 'body', parent: { key: 's1', slot: 'items' } });
-    expect(items && slotFill(items)).toBe('Items · 1 of 1–2');
+    expect(items && slotFill(items)).toBe('Items · 1/1–2 used');
     expect(flattenBlocks(slots).map((b) => b.key)).toEqual(['h1', 's1', 'c1', 'a1']);
   });
 
@@ -53,12 +53,12 @@ describe('the slot tree', () => {
         ...over,
         blocks: slot.blocks.slice(0, 0).concat(Array(n).fill(slot.blocks[0])),
       });
-    expect(at({ name: 'Features', min: 2, max: 4, full: false }, 0)).toBe('Features · 0 of 2–4');
+    expect(at({ name: 'Features', min: 2, max: 4, full: false }, 0)).toBe('Features · 0/2–4 used');
     expect(at({ name: 'Features', min: undefined, max: 4, full: false }, 0)).toBe(
-      'Features · 0 of 4',
+      'Features · 0/4 used',
     );
-    expect(at({ name: 'Features', min: 4, max: 4, full: false }, 1)).toBe('Features · 1 of 4');
-    expect(at({ name: 'Features', min: 2, max: 4, full: true }, 4)).toBe('Features · full, 4 of 4');
+    expect(at({ name: 'Features', min: 4, max: 4, full: false }, 1)).toBe('Features · 1/4 used');
+    expect(at({ name: 'Features', min: 2, max: 4, full: true }, 4)).toBe('Features · full (4/4)');
     expect(at({ name: 'Features', min: 2, max: undefined, full: false }, 1)).toBe(
       'Features · 1 block, needs 2',
     );
@@ -187,7 +187,7 @@ describe('the dock', () => {
     section.items.push({ _type: 'card', _key: 'c2', title: 'Kind' });
     const items = findSlot(tree(fields), 'body[s1].items');
     expect(items?.full).toBe(true);
-    expect(items && slotFill(items)).toBe('Items · full, 2 of 2');
+    expect(items && slotFill(items)).toBe('Items · full (2/2)');
     expect(dockGroups(items as NonNullable<typeof items>, catalog)).toEqual([]);
   });
 });
