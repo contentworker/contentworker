@@ -1248,9 +1248,11 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   stage itself, over the frame (the notice, Try again, and that the form and Layers still edit).
   The stage is a region named "The page", described by how to reach the blocks by key, and the
   inspector ends with a muted key line (⌘↑ ⌘↓ move · / add after · Esc deselect · ? every
-  shortcut). Its header names the entry at
+  shortcut; each key kept with its words, and not drawn on a touch screen). A block clicked in
+  the page hands focus back to the stage, so those keys act on it. Its header names the entry at
   `text-lg`, as a toolbar does, not at the Title tier: the page is the content. Below lg the
-  right column's sheet holds the inspector or, with nothing selected, the Checks; the header's
+  right column's sheet holds the inspector or, with nothing selected, the Checks, under the
+  sheet's title (the block's name or "Checks", not drawn again in the body); the header's
   "N checks to fix" and a refused save open it. A save someone else's beat asks
   in an alert dialog naming who saved the newer version and when ("An API key saved v5 · 1m
   ago"), with See what changed (the version diff, read only when asked); Keep editing is the

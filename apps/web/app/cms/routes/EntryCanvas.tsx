@@ -551,6 +551,12 @@ function Canvas({
       setSelected(key);
       setDockAt(null);
       setInspectorOpen(true);
+      // The click landed in the frame, which took focus with it: keys pressed there go to the
+      // customer's page, never here. Focus comes back to the stage, so / ? Esc and ⌘↑ ⌘↓ act on
+      // the block just chosen.
+      if (document.activeElement === site.frameRef.current) {
+        document.querySelector<HTMLElement>('[data-canvas-stage]')?.focus({ preventScroll: true });
+      }
     },
     onGeometry: setGeometry,
     onHover: (ref, rect) => setHover(ref && rect ? { ref, rect } : null),
@@ -1660,7 +1666,12 @@ function Canvas({
           </Sheet>
           {/* The right column's sheet: the selected block's settings, or with none, the checks. */}
           <Sheet open={inspectorOpen} onOpenChange={setInspectorOpen}>
-            <ResponsiveSheetContent className="sm:max-w-md" bodyClassName="px-4 pb-4">
+            {/* The sheet's title names the block (or the Checks), so the body's own heading, kept
+                as the place focus lands, isn't drawn a second time under it. */}
+            <ResponsiveSheetContent
+              className="sm:max-w-md"
+              bodyClassName="px-4 pb-4 [&_[data-checks-heading]]:sr-only [&_[data-inspector-heading]]:sr-only"
+            >
               <SheetHeader>
                 <SheetTitle>{block?.name ?? 'Checks'}</SheetTitle>
               </SheetHeader>
@@ -1966,9 +1977,11 @@ function PagePanel(props: {
       ) : null}
       {props.editable ? (
         <p className="max-w-measure text-muted-foreground text-sm">
-          Choose a seam between blocks to see what fits there, or a block to edit it. Press{' '}
-          <kbd className="font-mono">/</kbd> to add after the selected block, and{' '}
-          <kbd className="font-mono">?</kbd> for every shortcut.
+          Choose a seam between blocks to see what fits there, or a block to edit it.{' '}
+          <span className="pointer-coarse:hidden">
+            Press <kbd className="font-mono">/</kbd> to add after the selected block, and{' '}
+            <kbd className="font-mono">?</kbd> for every shortcut.
+          </span>
         </p>
       ) : null}
       {props.stale.length > 0 ? (

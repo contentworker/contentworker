@@ -240,7 +240,7 @@ export function CanvasStage(props: CanvasStageProps) {
             data-drag-handle={drag.key}
             title={`Drag to move ${drag.name}`}
             className={cn(
-              'pointer-events-auto absolute inline-flex size-6 touch-none items-center justify-center rounded-full border bg-background text-muted-foreground shadow-sm hover:text-foreground',
+              'pointer-events-auto absolute inline-flex size-6 touch-none items-center justify-center rounded-full border border-overlay-ink/20 bg-overlay-halo text-overlay-ink/70 shadow-sm hover:text-overlay-ink',
               dragging ? 'cursor-grabbing' : 'cursor-grab',
             )}
             style={{ left: drag.rect.x + Math.max(0, drag.rect.w - 30), top: drag.rect.y + 6 }}
@@ -292,7 +292,7 @@ export function CanvasStage(props: CanvasStageProps) {
           // The block in hand, beside the pointer.
           <span
             data-drag-chip
-            className="absolute inline-flex items-center gap-1 rounded-full border bg-background px-2 py-0.5 text-2xs text-foreground shadow-sm"
+            className="absolute inline-flex items-center gap-1 rounded-full border border-overlay-ink/20 bg-overlay-halo px-2 py-0.5 text-2xs text-overlay-ink shadow-sm"
             style={{ left: moving.x + 12, top: moving.y + 12 }}
           >
             <GripVertical className="size-3" />
