@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { type Asset, NotFoundError, type Scope, ValidationError } from '@contentworker/domain';
 import type {
   AssetIngestParams,
+  AssetIngestQueue,
   AssetIngestStarter,
   BlobStore,
   DocumentIngestOptions,
@@ -80,6 +81,7 @@ async function registerMedia(
   parent: Asset,
   prefix: string,
   manifest: DocumentPage,
+  queue?: AssetIngestQueue,
 ) {
   if (!manifest.media.length) return;
   if (!blob.reserve || !blob.copyOnce) throw new Error('Document media storage unavailable');
@@ -88,7 +90,8 @@ async function registerMedia(
     if (!/^[a-f0-9]{64}$/.test(item.sha256)) throw new Error('Invalid embedded media digest');
     const key = `${prefix}media/${item.sha256}`;
     const id = await blob.reserve(`${key}.asset`, ctx.ids.newId());
-    if (!(await ctx.store.assets.get(scope, id))) {
+    let child = await ctx.store.assets.get(scope, id);
+    if (!child) {
       const fileName = item.part.split('/').at(-1) || 'file';
       const ext = fileName.split('.').at(-1)?.toLowerCase() ?? '';
       const contentType = Object.hasOwn(mediaTypes, ext)
@@ -104,9 +107,19 @@ async function registerMedia(
       await blob.copyOnce(key, draft.key, draft.contentType);
       try {
         await createUploadDraft(ctx, scope, draft.asset);
+        child = draft.asset;
       } catch (err) {
-        if (!(await ctx.store.assets.get(scope, id))) throw err;
+        child = await ctx.store.assets.get(scope, id);
+        if (!child) throw err;
       }
+    }
+    // A bucket notification can arrive before the draft exists. Send after registration,
+    // including on retry if a previous queue send failed after committing the draft.
+    if (queue && !child.ingestStatus && (child.version ?? 1) === 1) {
+      const original = assetFileKey(scope, child);
+      const head = await blob.head?.(original);
+      if (!head?.etag) throw new Error('Extracted asset original unavailable');
+      await queue.objectCreated(original, head.etag);
     }
     media.push({ ...item, assetId: id });
   }
@@ -125,6 +138,7 @@ export async function parseAssetDocument(
   parser: DocumentParser,
   params: AssetIngestParams,
   continuation?: { starter: AssetIngestStarter; instanceId: string },
+  mediaIngestQueue?: AssetIngestQueue,
 ): Promise<
   | { chars: number; pages: number; partial: boolean; template: DocumentIngestOptions }
   | 'continued'
@@ -191,7 +205,15 @@ export async function parseAssetDocument(
       if (!raw) throw new Error('Missing rendered document page');
       const manifest: DocumentPage = JSON.parse(raw);
       if (source.template.createMediaDrafts)
-        await registerMedia(ctx, blob, params.scope, parent, source.outputPrefix, manifest);
+        await registerMedia(
+          ctx,
+          blob,
+          params.scope,
+          parent,
+          source.outputPrefix,
+          manifest,
+          mediaIngestQueue,
+        );
       return { pages: manifest.pages, partial: manifest.status === 'partial' };
     });
     if (!result) return 'stale';

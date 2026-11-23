@@ -411,6 +411,7 @@ export function makeAssetIngestDeps(env: EdgeEnv, wired: EdgeWired): AssetIngest
     ...(extractor ? { extractor } : {}),
     ...(env.DOCUMENT_PARSER_ENABLED === 'true' && env.DOCUMENT_PARSER
       ? {
+          mediaIngestQueue: wired.assetIngest,
           documentParser: {
             render(input) {
               const ns = withJurisdiction(env).DOCUMENT_PARSER!;

@@ -1,13 +1,15 @@
 import type { AssetIngestParams, DocumentParser } from '@contentworker/ports';
 import {
+  FakeAssetIngestQueue,
   FakeBlobStore,
   FakeWorkflowSteps,
   FixedClock,
   InMemoryContentStore,
+  RecordingAssetIngestStarter,
   SequenceIdGenerator,
   StubAIProvider,
 } from '@contentworker/test-kit';
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import {
   createAsset,
   createSpace,
@@ -15,6 +17,7 @@ import {
   getDocumentTemplate,
   runAssetIngest,
   setDocumentTemplate,
+  startAssetIngestForObject,
 } from '../src';
 
 it('renders each page, reuses stored pages on retry, and exposes only the current file in its scope', async () => {
@@ -51,6 +54,8 @@ it('renders each page, reuses stored pages on retry, and exposes only the curren
       return { pages: 2, partial };
     },
   };
+  const mediaIngestQueue = new FakeAssetIngestQueue();
+  vi.spyOn(mediaIngestQueue, 'objectCreated').mockRejectedValueOnce(new Error('Queue unavailable'));
   const initial = await getDocumentTemplate(ctx, scope);
   expect(initial.version).toBe(0);
   expect((await setDocumentTemplate(ctx, scope, { ...initial, suggestTags: false })).version).toBe(
@@ -60,14 +65,15 @@ it('renders each page, reuses stored pages on retry, and exposes only the curren
   const ai = new StubAIProvider(() => 'A short document description.');
   for (let attempt = 0; attempt < 2; attempt++) {
     const steps = new FakeWorkflowSteps(clock);
-    await steps.run(() =>
+    const result = await steps.run(() =>
       runAssetIngest(
         steps,
         ctx,
-        { blob, documentParser, ai },
+        { blob, documentParser, ai, mediaIngestQueue },
         { scope, assetId: asset.id, version: 1 },
       ),
     );
+    expect(result).toMatchObject({ status: 'complete', value: { outcome: 'ready' } });
   }
   expect(rendered).toEqual([1, 2]);
   const retry = new FakeWorkflowSteps(clock);
@@ -75,7 +81,7 @@ it('renders each page, reuses stored pages on retry, and exposes only the curren
     runAssetIngest(
       retry,
       ctx,
-      { blob, documentParser, ai },
+      { blob, documentParser, ai, mediaIngestQueue },
       { scope, assetId: asset.id, version: 1, retryPartialPages: true },
     ),
   );
@@ -100,7 +106,26 @@ it('renders each page, reuses stored pages on retry, and exposes only the curren
     status: 'draft',
     file: { fileName: 'image.png', contentType: 'image/png' },
   });
-  expect(await blob.get(children[0]!.r2Key!)).toBe('image');
+  const child = children[0]!;
+  const key = child.r2Key!;
+  expect(await blob.get(key)).toBe('image');
+  const starter = new RecordingAssetIngestStarter();
+  expect(mediaIngestQueue.created.length).toBeGreaterThan(0);
+  for (const event of mediaIngestQueue.created) {
+    expect(event).toEqual({ key, etag: (await blob.head(key))!.etag });
+    await startAssetIngestForObject(ctx, starter, event.key, event.etag);
+  }
+  expect(starter.started).toHaveLength(1);
+  expect(starter.started[0]!.params).toEqual({ scope, assetId: child.id, version: 1 });
+  const childSteps = new FakeWorkflowSteps(clock);
+  await childSteps.run(() =>
+    runAssetIngest(childSteps, ctx, { blob, documentParser }, starter.started[0]!.params),
+  );
+  expect(await ctx.store.assets.get(scope, child.id)).toMatchObject({
+    ingestStatus: 'ready',
+    status: 'draft',
+    contentHash: expect.any(String),
+  });
   await expect(
     getDocumentPage(ctx, blob, { ...scope, environmentId: 'other' }, asset.id, 1),
   ).rejects.toThrow();
