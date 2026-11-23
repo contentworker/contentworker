@@ -71,11 +71,11 @@ catalog:
   thumbhash: ^0.1.1
 
   # AI and MCP
-  ai: 7.0.165
+  ai: 7.0.177
   agents: 0.33.0
   "@cloudflare/ai-chat": 0.12.2
   "@ai-sdk/react": 4.0.169
-  streamdown: 2.7.1
+  streamdown: 2.8.0
   "@modelcontextprotocol/server": 2.4.0
   "@modelcontextprotocol/client": ^2.4.0
 
