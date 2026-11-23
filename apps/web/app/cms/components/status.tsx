@@ -95,3 +95,24 @@ export function StatusBadge({ status, label }: { status: string; label?: string 
 export function ToneBadge({ tone, label }: { tone: Tone; label: string }) {
   return <Stamp color={`var(--${tone})`} label={label} ended={ENDED[tone]} />;
 }
+
+/**
+ * An entry's state in its editor's header, as one stamp: its status and version while what is on
+ * screen is saved ("Published · v1"), or "Unsaved changes" once it isn't. One chip, so an edit
+ * never lights up a second one beside a status it is about to change.
+ */
+export function EntryStateBadge({
+  status,
+  version,
+  dirty,
+}: {
+  status: string;
+  version: number;
+  dirty: boolean;
+}) {
+  return dirty ? (
+    <ToneBadge tone="wait" label="Unsaved changes" />
+  ) : (
+    <StatusBadge status={status} label={`${statusLabel(status)} · v${version}`} />
+  );
+}

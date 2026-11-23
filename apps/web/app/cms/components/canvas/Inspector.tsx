@@ -88,6 +88,7 @@ import {
   slotFill,
   slotHeld,
 } from '~/cms/lib/canvas/model';
+import { humanize } from '~/cms/lib/format';
 import type { BlockLockInput, EntryBlockLock } from '~/cms/lib/management';
 
 export type InspectorTab = 'content' | 'data' | 'look';
@@ -640,6 +641,17 @@ interface LookAt {
   readonly responsive: boolean;
 }
 
+/**
+ * A Look choice in words: its label, or a bare code-style value read as one ("primary" →
+ * "Primary", "two-column" → "Two column"). Anything else (a number, "en-US") shows as written.
+ */
+function lookLabel(o: FieldOption): string {
+  if (typeof o === 'object' && o !== null) return optionLabel(o);
+  return typeof o === 'string' && /^[a-z][a-z0-9]*(?:[-_][a-z0-9]+)*$/.test(o)
+    ? humanize(o)
+    : String(o);
+}
+
 function Prop(props: InspectorProps & { field: FieldDefinition; look: LookAt | undefined }) {
   const { field: f, block, readOnly, look } = props;
   const id = `canvas-${block.key}-${f.apiId}`;
@@ -702,7 +714,7 @@ function Prop(props: InspectorProps & { field: FieldDefinition; look: LookAt | u
         >
           {options.map((o) => (
             <SegmentedItem key={String(optionValue(o))} value={String(optionValue(o))}>
-              {optionLabel(o)}
+              {lookLabel(o)}
             </SegmentedItem>
           ))}
         </Segmented>

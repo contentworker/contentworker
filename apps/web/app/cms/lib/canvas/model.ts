@@ -267,6 +267,8 @@ function buildSlot(
 function labelOf(variant: ComponentVariant, block: Record<string, unknown>): string | undefined {
   for (const f of variant.fields) {
     if (f.type !== 'Symbol' && f.type !== 'Text') continue;
+    // A field limited to listed values is a look (a style, "primary"), not what the block says.
+    if (Array.isArray(f.validations?.in) && f.validations.in.length > 0) continue;
     const value = block[f.apiId];
     if (typeof value !== 'string' || value.trim() === '') continue;
     const text = value.trim().replace(/\s+/g, ' ');
@@ -336,7 +338,11 @@ export function slotCount(slot: CanvasSlot): string {
  * "locked" when the config locks it or it is inside a locked region ("Main · 3 of 8 · locked").
  */
 export function slotFill(slot: CanvasSlot): string {
-  return `${slot.name} · ${slotCount(slot)}${slotHeld(slot) ? ' · locked' : ''}`;
+  // A field already named for its blocks says the count bare: "Blocks · 3", not "Blocks · 3 blocks".
+  const count = /\bblocks$/i.test(slot.name)
+    ? slotCount(slot).replace(/^(\d+) blocks?\b/, '$1')
+    : slotCount(slot);
+  return `${slot.name} · ${count}${slotHeld(slot) ? ' · locked' : ''}`;
 }
 
 /** Whether no block goes in or out of `slot`, and none moves: the config's lock, or a region's. */

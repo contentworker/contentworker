@@ -81,6 +81,7 @@ export interface AssetIngestDeps {
   readonly images?: ImageProbe;
   readonly extractor?: TextExtractor;
   readonly documentParser?: DocumentParser;
+  readonly mediaIngestQueue?: AssetIngestQueue;
   readonly continuation?: { starter: AssetIngestStarter; instanceId: string };
   /** Generation model for alt text and tags; absent, enrichment is skipped. */
   readonly ai?: AIProvider;
@@ -389,6 +390,7 @@ export async function runAssetIngest(
         deps.documentParser,
         params,
         deps.continuation,
+        deps.mediaIngestQueue,
       ));
     if (parsed === 'continued' || parsed === 'stale') return { outcome: parsed };
     const hashed = await steps.do('hash', STEP, () => hashAsset(ctx, deps, params));

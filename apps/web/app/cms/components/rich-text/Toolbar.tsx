@@ -342,9 +342,17 @@ function tableState(editor: Editor) {
 }
 
 /** Formatting toolbar for the rich-text editor. */
+/**
+ * Whether the toolbar draws its own Undo and Redo. The canvas turns them off: its header's undo is
+ * the one in view, and a second pair inside a block's settings reads as the same history. ⌘Z in
+ * the field still undoes the field's typing.
+ */
+export const RichTextHistoryButtons = createContext(true);
+
 export function Toolbar(props: { editor: Editor; resolveEmbed?: () => EmbedResolver | undefined }) {
   const { editor } = props;
   const pickers = useContext(RichTextPickersContext);
+  const history = useContext(RichTextHistoryButtons);
   const [row, setRow] = useState<PickerRow>(null);
   const [href, setHref] = useState('');
   const [embedUrl, setEmbedUrl] = useState('');
@@ -696,26 +704,30 @@ export function Toolbar(props: { editor: Editor; resolveEmbed?: () => EmbedResol
             </DropdownMenuGroup>
           </InsertMenu>
 
-          <Divider />
+          {history ? (
+            <>
+              <Divider />
 
-          <ToolbarButton
-            id="undo"
-            label="Undo"
-            keys={EDITOR_KEYS.undo}
-            disabled={!state.canUndo}
-            onClick={() => chain().undo().run()}
-          >
-            <Undo2 className="size-4" />
-          </ToolbarButton>
-          <ToolbarButton
-            id="redo"
-            label="Redo"
-            keys={EDITOR_KEYS.redo}
-            disabled={!state.canRedo}
-            onClick={() => chain().redo().run()}
-          >
-            <Redo2 className="size-4" />
-          </ToolbarButton>
+              <ToolbarButton
+                id="undo"
+                label="Undo"
+                keys={EDITOR_KEYS.undo}
+                disabled={!state.canUndo}
+                onClick={() => chain().undo().run()}
+              >
+                <Undo2 className="size-4" />
+              </ToolbarButton>
+              <ToolbarButton
+                id="redo"
+                label="Redo"
+                keys={EDITOR_KEYS.redo}
+                disabled={!state.canRedo}
+                onClick={() => chain().redo().run()}
+              >
+                <Redo2 className="size-4" />
+              </ToolbarButton>
+            </>
+          ) : null}
         </RovingToolbar>
 
         <div ref={rowsRef}>

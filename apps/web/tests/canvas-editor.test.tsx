@@ -432,8 +432,8 @@ describe('editing on the canvas', () => {
 
     fireEvent.mouseDown(screen.getByRole('tab', { name: 'Look' }));
     // A token prop is a segmented control of its choices, never a free CSS field.
-    act(() => screen.getByRole('radio', { name: 'dark' }).click());
-    expect(screen.getByRole('radio', { name: 'dark' }).getAttribute('aria-checked')).toBe('true');
+    act(() => screen.getByRole('radio', { name: 'Dark' }).click());
+    expect(screen.getByRole('radio', { name: 'Dark' }).getAttribute('aria-checked')).toBe('true');
     expect(screen.getByRole('tab', { name: 'Data' })).toBeTruthy();
   });
 

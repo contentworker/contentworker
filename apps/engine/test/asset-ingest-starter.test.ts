@@ -15,9 +15,13 @@ const params: AssetIngestParams = {
 };
 
 /** A Workflows binding whose createBatch answers what the test says. */
-function binding(answer: () => WorkflowBatchCreateResult) {
+function binding(answer: () => WorkflowBatchCreateResult, status = 'running') {
   const calls: unknown[] = [];
   const wf = {
+    async get(id: string) {
+      calls.push(id);
+      return { status: async () => ({ status }) };
+    },
     async createBatch(options: unknown) {
       calls.push(options);
       return answer();
@@ -27,6 +31,17 @@ function binding(answer: () => WorkflowBatchCreateResult) {
 }
 
 describe('CloudflareAssetIngestStarter', () => {
+  it.each(['errored', 'running', 'paused', 'terminated', 'complete'])(
+    'checks whether an inbox attempt in state %s can be retried',
+    async (status) => {
+      const { wf, calls } = binding(() => ({ created: [], errors: [] }), status);
+      expect(await new CloudflareAssetIngestStarter(wf).hasFailed('inbox-id')).toBe(
+        status === 'errored',
+      );
+      expect(calls).toEqual(['inbox-id']);
+    },
+  );
+
   it('reports a run it created', async () => {
     const { wf, calls } = binding(() => ({ created: [{ id: 'i1' } as never], errors: [] }));
     expect(await new CloudflareAssetIngestStarter(wf).start('i1', params)).toBe(true);

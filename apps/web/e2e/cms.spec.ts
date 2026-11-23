@@ -1,4 +1,4 @@
-import { writeFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import AxeBuilder from '@axe-core/playwright';
 import { expect, type Page, test } from '@playwright/test';
 import {
@@ -2102,4 +2102,39 @@ test('inspects a deck slide, reads its extraction warning and opens an embedded 
   await expect(preview.getByText(/launch\.mp4/)).toBeVisible();
   await preview.getByRole('button', { name: 'team.png' }).click();
   await expect(page.getByRole('dialog').getByRole('heading', { name: /photo\.png/ })).toBeVisible();
+});
+
+test('ingests a PDF and opens its extracted image in the DAM', async ({ page, request }) => {
+  test.skip(process.env.DOCUMENT_PARSER_ENABLED !== 'true', 'Requires the local parser container');
+  test.setTimeout(240_000);
+  const name = `document-ingestion-${Date.now()}.pdf`;
+  const bytes = await readFile(new URL('./fixtures/document-ingestion.pdf', import.meta.url));
+  const id = await uploadAssetBytes(request, name, bytes, 'application/pdf');
+  await expect
+    .poll(
+      async () => {
+        const response = await api(request, 'GET', `${MGMT}/assets/${id}/document/pages/1`);
+        if (response.status() === 404) return 'processing';
+        expect(response.ok(), await response.text()).toBe(true);
+        return (await response.json()).documentStatus;
+      },
+      { timeout: 180_000, intervals: [1000, 2000, 5000] },
+    )
+    .toBe('complete');
+
+  await openCms(page, '/assets');
+  const library = page.getByRole('region', { name: 'Asset library' });
+  await library.getByRole('radio', { name: 'List' }).click();
+  await library.getByRole('searchbox', { name: 'Search assets' }).fill(name);
+  await library.getByRole('button', { name: `Open “${name}”` }).click();
+  const preview = page.getByRole('region', { name: 'Document preview' });
+  await expect(preview.getByRole('heading', { name: 'Page 1 of 1' })).toBeVisible();
+  await expect(preview.getByText('DAM integration fixture')).toBeVisible();
+  await expect
+    .poll(() => preview.getByRole('img').evaluate((img) => (img as HTMLImageElement).naturalWidth))
+    .toBeGreaterThan(0);
+  await preview.getByRole('button', { name: 'image-000.png' }).click();
+  await expect(
+    page.getByRole('dialog').getByRole('heading', { name: /image-000\.png/ }),
+  ).toBeVisible();
 });

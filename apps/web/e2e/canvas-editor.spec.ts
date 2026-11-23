@@ -1,6 +1,15 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, type Page, type TestInfo, test } from '@playwright/test';
-import { api, MGMT, openCms, SPACE, saveContentType, seedCms, useCmsScope } from './cms';
+import {
+  api,
+  MGMT,
+  openCms,
+  SPACE,
+  saveContentType,
+  seedCms,
+  useCmsScope,
+  withoutAssistant,
+} from './cms';
 import { guestPort } from './live-guest/port';
 import { settle } from './settle';
 
@@ -197,6 +206,8 @@ test('Form and Canvas are one draft: switching carries unsaved edits, and the ca
   page,
   request,
 }, testInfo) => {
+  // Exercise the direct publish dialog even when the local assistant is available.
+  await withoutAssistant(page);
   const { id, site } = await openCanvas(page, request, `Views ${testInfo.workerIndex}`);
   await page.getByRole('button', { name: 'Layers' }).click();
   await page
@@ -261,6 +272,26 @@ test('a block clicked in the page keeps the keys on the canvas', async ({
   await expect(page.locator('[data-canvas-stage]')).toBeFocused();
   await page.keyboard.press('?');
   await expect(page.getByRole('dialog', { name: 'Keyboard shortcuts' })).toBeVisible();
+  await page.keyboard.press('Escape');
+  // Removed by key, put back from the toast: focus comes back to the stage, not the page body.
+  await page.locator('[data-canvas-stage]').focus();
+  await page.keyboard.press('Delete');
+  await page.locator('output').getByRole('button', { name: 'Undo' }).click();
+  await expect(page.locator('[data-canvas-stage]')).toBeFocused();
+});
+
+test('Tab reaches the canvas’s page before the customer’s page inside it', async ({
+  page,
+  request,
+}, testInfo) => {
+  await openCanvas(page, request, `Tab ${testInfo.workerIndex}`);
+  const stage = page.locator('[data-canvas-stage]');
+  await expect(stage).toHaveAttribute('tabindex', '0');
+  // A tab stop of its own, ahead of the frame inside it: the canvas's keys work from there.
+  await stage.focus();
+  await expect(stage).toBeFocused();
+  await page.keyboard.press('ArrowDown');
+  await expect(page.getByRole('heading', { level: 2, name: 'Hero' })).toBeVisible();
 });
 
 test('below md the canvas is review-only, and says so', async ({ page, request }, testInfo) => {

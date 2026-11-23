@@ -275,7 +275,7 @@ describe('opening the canvas from the entry form', () => {
     await waitFor(() => expect(page.lastWidth()).toBe(768));
     expect(screen.getByRole('heading', { level: 2, name: 'Hero' })).toBeTruthy();
     expect(screen.getByRole('tab', { name: 'Look' }).getAttribute('aria-selected')).toBe('true');
-    expect(checked(tone())).toBe('dark');
+    expect(checked(tone())).toBe('Dark');
     expect(toneSays()).toBe('Set for Tablet');
     // Taken once: the canvas's own choice stands after it.
     width('Base');
@@ -296,10 +296,10 @@ describe('the Look tab at a breakpoint', () => {
     width('Desktop');
     // Desktop inherits Tablet's override.
     expect(screen.getByText(/Editing/).textContent).toContain('Desktop, from 1280px up');
-    expect(checked(tone())).toBe('dark');
+    expect(checked(tone())).toBe('Dark');
     expect(toneSays()).toBe('From Tablet');
 
-    act(() => within(tone()).getByRole('radio', { name: 'light' }).click());
+    act(() => within(tone()).getByRole('radio', { name: 'Light' }).click());
     expect(page.lastOps().at(-1)).toEqual({
       op: 'update',
       field: 'body',
@@ -307,14 +307,14 @@ describe('the Look tab at a breakpoint', () => {
       key: 'h1',
       set: { _responsive: { md: { tone: 'dark' }, lg: { tone: 'light' } } },
     });
-    expect(checked(tone())).toBe('light');
+    expect(checked(tone())).toBe('Light');
     expect(toneSays()).toBe('Set for Desktop');
 
     // Reset inherits again: the emptied breakpoint goes.
     act(() => screen.getByRole('button', { name: 'Reset Tone at Desktop' }).click());
     // Reset goes with the override: focus lands on Tone's chosen segment, not the page.
     await waitFor(() =>
-      expect(document.activeElement).toBe(within(tone()).getByRole('radio', { name: 'dark' })),
+      expect(document.activeElement).toBe(within(tone()).getByRole('radio', { name: 'Dark' })),
     );
     expect(page.lastOps().at(-1)).toMatchObject({
       key: 'h1',
@@ -328,13 +328,13 @@ describe('the Look tab at a breakpoint', () => {
     act(() => screen.getByRole('button', { name: 'Reset Tone at Tablet' }).click());
     expect(page.lastOps().at(-1)).toMatchObject({ key: 'h1', unset: ['_responsive'] });
     expect(toneSays()).toBe('From Base');
-    expect(checked(tone())).toBe('light');
+    expect(checked(tone())).toBe('Light');
     expect(within(layer('h1')).queryByRole('img', { name: /Has overrides/ })).toBeNull();
 
     // Undo puts the override back.
     act(() => screen.getByTitle(/^Undo: /).click());
     expect(toneSays()).toBe('Set for Tablet');
-    expect(checked(tone())).toBe('dark');
+    expect(checked(tone())).toBe('Dark');
   });
 
   it('keeps a prop that isn’t responsive the same at every width, editable at Base only', async () => {
@@ -349,11 +349,11 @@ describe('the Look tab at a breakpoint', () => {
     expect(screen.getByText(/Editing/).textContent).toContain('Base');
     const atBase = screen.getByRole('radiogroup', { name: 'Align' });
     expect(atBase.getAttribute('data-disabled')).toBeNull();
-    act(() => within(atBase).getByRole('radio', { name: 'center' }).click());
+    act(() => within(atBase).getByRole('radio', { name: 'Center' }).click());
     expect(page.lastOps().at(-1)).toMatchObject({ key: 'h1', set: { align: 'center' } });
     // At Base a responsive prop sets the bare prop, and says where it changes.
     expect(screen.getByText('Changes at Tablet')).toBeTruthy();
-    act(() => within(tone()).getByRole('radio', { name: 'dark' }).click());
+    act(() => within(tone()).getByRole('radio', { name: 'Dark' }).click());
     expect(page.lastOps().at(-1)).toMatchObject({ key: 'h1', set: { tone: 'dark' } });
   });
 
@@ -476,7 +476,7 @@ describe('without the catalog', () => {
     expect(screen.getByText(/no width shows it, as Small starts at 1px/)).toBeTruthy();
     act(() =>
       within(screen.getByRole('radiogroup', { name: 'Align' }))
-        .getByRole('radio', { name: 'center' })
+        .getByRole('radio', { name: 'Center' })
         .click(),
     );
     expect(page.lastOps().at(-1)).toMatchObject({ key: 'h1', set: { align: 'center' } });

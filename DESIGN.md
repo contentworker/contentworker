@@ -572,8 +572,10 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   arrives, since the bar's buttons now wait. When it ends the list reloads, only what it still
   lists stays ticked, and what failed is named in the Alert from the job's report (a report that
   can't be read gives the count and why, in a destructive Alert). A job keeps running, and its
-  card stays, when another content type is opened. The entry editor: the title wraps; under it an action bar (status,
-  version and save state, then the one primary verb for the state: Save draft for a new entry,
+  card stays, when another content type is opened. The entry editor: the title wraps; under it an action bar (one state
+  stamp, `EntryStateBadge`: the status and its version while what is on screen is saved, "Published
+  · v1", or a `wait` "Unsaved changes" once it isn't, never both; the canvas's header shows the
+  same; then the one primary verb for the state: Save draft for a new entry,
   Publish while anything isn't live, a disabled "Published" when live and clean) stays under the
   shell's header from md, and below md its buttons sit above the tab bar. AI has one entry
   point: a ghost **AI** menu led by the `ai` mark, holding Draft from prose and Generate with AI
@@ -1155,9 +1157,12 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   (`--overlay-ink`, `--overlay-halo`, `--overlay-brand`: the same in light and dark, since the page
   under them is the customer's colours): every edge is an ink line with a halo beside it, so one of
   the two holds 3:1 on a white page, a black one or a photo. A slot is a dashed seam between blocks
-  (ink dashes on a halo strip, softened at rest), its name and
-  fill shown on hover ("Main · 3 of 8"; a range when the slot has a least and a most, "Features ·
-  0 of 2–4"; "1 block, needs 2" with a least alone; the same words in Layers and the inspector); a
+  (ink dashes on a halo strip, softened at rest), on hover a pill saying what a click does and
+  where ("Add here · Main · 3 of 8"; the bare name and fill once chosen, full or under a carried
+  block; a range when the slot has a least and a most, "Features ·
+  0 of 2–4"; "1 block, needs 2" with a least alone; a field already named for its blocks says the
+  count bare, "Blocks · 3", and its Layers tree is "Blocks", never "Blocks blocks"; the same words in
+  Layers and the inspector); a
   hovered block is a haloed ink hairline and a selected one a 2px ink edge haloed on both sides;
   colour on the canvas is for status only. Choosing a seam (a click, a tap, or `/` after the
   selected block) marks it with a solid brand insertion line (`--overlay-brand`, haloed) (brand is what you chose; it goes when the dock closes or the block is in) and
@@ -1207,7 +1212,10 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   inspector's heading. The inspector's tabs (no tab strip when a block has only one) are Content (the
   block's own fields, the entry form's editors), Data (references) and Look (props limited to
   listed values, four or fewer as a segmented control, more as a select, and the Booleans a block
-  lists in `responsive`; never free CSS). The header's width control is the Site view's: with the
+  lists in `responsive`; never free CSS; a choice without a label reads as words, "primary" as
+  "Primary"). Layers sums a block up by its first text field that isn't such a choice, never by a
+  style value. The rich-text editors in the inspector drop their own Undo and Redo: the header's
+  is the canvas's one history (⌘Z in the field still undoes its typing). The header's width control is the Site view's: with the
   catalog's breakpoints (the blocks field's own while the catalog can't be read), Look edits the
   breakpoint in view, said in a muted line at its top ("Editing Tablet, from 768px up"; at Base
   with a first breakpoint from 1px, that no width shows it). There a responsive prop shows what it inherits in a muted
@@ -1238,7 +1246,8 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   control a muted readout names the device in view ("Tablet · 768px"; catalog breakpoints are
   named on the switch itself). Layers, open or closed, is remembered per browser at lg; below lg it
   is a sheet, never opened on arrival. The browser tab names the entry ("Spring launch · Canvas").
-  A remove's toast offers Undo, and the inspector's Remove is muted until hovered or focused (it
+  A remove's toast is a note (a muted dot, not a success) and offers Undo, which hands focus back to
+  the stage; the inspector's Remove is muted until hovered or focused (it
   can be undone). From md to lg it edits by tap: the dock comes from the bottom, the inspector from the side
   and Layers from the left, as sheets. Below md it is review-only, saying so in place ("Arranging
   blocks needs a wider screen…"). It says in place, in a strip under the header, why it is
@@ -1246,7 +1255,10 @@ kept: `TableHeader` is the `<thead>`, `TableHead` a column header, `TableRow`, `
   workflow has the entry, and when the page reports no layout (no seams; select by click or in
   Layers). The Site view's notices stand for the frame's states; a page that didn't load says so on the
   stage itself, over the frame (the notice, Try again, and that the form and Layers still edit).
-  The stage is a region named "The page", described by how to reach the blocks by key, and the
+  The stage is a region named "The page", described by how to reach the blocks by key, and a tab
+  stop of its own just before the frame (its focus edge in the overlay pair, inside the frame's
+  edge); closing the dock hands focus back only to what the keyboard could reach again, else to the
+  stage. The
   inspector ends with a muted key line (⌘↑ ⌘↓ move · / add after · Esc deselect · ? every
   shortcut; each key kept with its words, and not drawn on a touch screen). A block clicked in
   the page hands focus back to the stage, so those keys act on it. Its header names the entry at
@@ -1440,7 +1452,8 @@ for code and data blocks only.
   since a run keeps the version it began on. An asset's Publish doesn't ask: unpublishing it puts
   back what was delivered.
 - **Toasts** (`cms/lib/toast.tsx`): a card above the tab bar with a status dot and the words; an undo
-  toast carries its Undo action.
+  toast carries its Undo action. The dot is `ok` for work done, `bad` for work refused, and muted for
+  a note: a change worth saying that is neither, such as a removal the toast can undo.
 - **Form sheet** (`cms/components/form-sheet.tsx`): a list page's create form behind one "New …"
   button, in a sheet from the side (from the bottom on a phone, as every sheet with a form or a
   detail is: `ResponsiveSheetContent`).
