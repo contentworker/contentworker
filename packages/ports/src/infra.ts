@@ -1076,6 +1076,8 @@ export interface AssetIngestParams {
  * notification free.
  */
 export interface AssetIngestStarter {
+  /** Whether an existing run exhausted its retries. Operator-paused or terminated runs stay put. */
+  hasFailed?(instanceId: string): Promise<boolean>;
   /** `true` when this call started the run; `false` when a run under that id already existed. */
   start(instanceId: string, params: AssetIngestParams): Promise<boolean>;
 }

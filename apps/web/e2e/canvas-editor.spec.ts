@@ -1,6 +1,15 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, type Page, type TestInfo, test } from '@playwright/test';
-import { api, MGMT, openCms, SPACE, saveContentType, seedCms, useCmsScope } from './cms';
+import {
+  api,
+  MGMT,
+  openCms,
+  SPACE,
+  saveContentType,
+  seedCms,
+  useCmsScope,
+  withoutAssistant,
+} from './cms';
 import { guestPort } from './live-guest/port';
 import { settle } from './settle';
 
@@ -197,6 +206,8 @@ test('Form and Canvas are one draft: switching carries unsaved edits, and the ca
   page,
   request,
 }, testInfo) => {
+  // Exercise the direct publish dialog even when the local assistant is available.
+  await withoutAssistant(page);
   const { id, site } = await openCanvas(page, request, `Views ${testInfo.workerIndex}`);
   await page.getByRole('button', { name: 'Layers' }).click();
   await page

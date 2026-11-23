@@ -269,4 +269,6 @@ Each environment starts at template revision zero with media drafts, taxonomy ta
 
 Add `"inbox": true` to the schedule to import files placed in the media bucket under `imports/document-inbox/<spaceId>/<environmentId>/`. Each firing checks up to 16 keys. A changed object ETag creates a new draft in the configured folder. The importer copies pinned 256 MiB ranges into its own DAM original through R2 multipart, checkpoints every eight parts and keeps the inbox source intact. Each file can be up to 1 TB (1,000,000,000,000 bytes).
 
+If an inbox workflow exhausts its retries, the next scan of that source revision starts another attempt using the same DAM asset ID. When the original has already been copied, recovery resumes the draft and queue handoff. Paused or terminated workflows require operator action.
+
 Multipart clients renew their upload lease when they request fresh part URLs. The abandoned-upload sweep uses 24 hours of inactivity, so a transfer can continue past its first day.

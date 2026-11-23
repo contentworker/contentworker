@@ -17,7 +17,7 @@ import type {
 export const WORKFLOW_INSTANCE_EXISTS = 10405;
 
 /** The slice of the Workflows binding the starter uses. */
-export type AssetIngestWorkflowBinding = Pick<Workflow<AssetIngestParams>, 'createBatch'>;
+export type AssetIngestWorkflowBinding = Pick<Workflow<AssetIngestParams>, 'createBatch' | 'get'>;
 
 /**
  * The AssetIngestStarter port over the `ASSET_INGEST_WF` binding. It creates through the object
@@ -28,6 +28,11 @@ export type AssetIngestWorkflowBinding = Pick<Workflow<AssetIngestParams>, 'crea
  */
 export class CloudflareAssetIngestStarter implements AssetIngestStarter {
   constructor(private readonly wf: AssetIngestWorkflowBinding) {}
+
+  async hasFailed(instanceId: string): Promise<boolean> {
+    const instance = await this.wf.get(instanceId);
+    return (await instance.status()).status === 'errored';
+  }
 
   async start(instanceId: string, params: AssetIngestParams): Promise<boolean> {
     const { created, errors } = await this.wf.createBatch({
