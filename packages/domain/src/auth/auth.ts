@@ -21,6 +21,11 @@ export const SCOPES = {
   assetsRead: 'assets:read',
   /** Upload, replace, edit, organize and restore assets (publishing stays `content:publish`). */
   assetsWrite: 'assets:write',
+  /**
+   * Run site migrations: create a run, and step it through inventory, fetching and clustering.
+   * Every step fetches from the run's source site, so it is a scope of its own.
+   */
+  migrationRun: 'migration:run',
 } as const;
 export type PermissionScope = (typeof SCOPES)[keyof typeof SCOPES];
 
@@ -30,12 +35,17 @@ export type PermissionScope = (typeof SCOPES)[keyof typeof SCOPES];
  * changing any stored key, role or token: everything that could reach assets before still can,
  * and a new key or role can now be granted asset access alone. Resolved at the decision point
  * ({@link holdsScope}), never written back, so a scope set is stored as it was granted.
+ *
+ * `migration:run` comes with `space:admin`: an administrator can already mint a key holding it,
+ * so the implication grants nothing new, and every Administrator role and admin key stored before
+ * the scope existed can run a migration without being rewritten.
  */
 export const IMPLIED_SCOPES: Readonly<
   Partial<Record<PermissionScope, readonly PermissionScope[]>>
 > = {
   [SCOPES.assetsRead]: [SCOPES.previewRead],
   [SCOPES.assetsWrite]: [SCOPES.contentWrite],
+  [SCOPES.migrationRun]: [SCOPES.spaceAdmin],
 };
 
 /**
@@ -72,6 +82,7 @@ export function scopesForKind(kind: ApiKeyKind): PermissionScope[] {
         SCOPES.workflowApprove,
         SCOPES.assetsRead,
         SCOPES.assetsWrite,
+        SCOPES.migrationRun,
       ];
     case 'cda':
       return [SCOPES.deliveryRead, SCOPES.searchRead];
@@ -395,6 +406,20 @@ export function authorize(
 ): void {
   if (!inScope(principal, targetSpaceId) || !holdsScope(principal.scopes, scope)) {
     throw new ForbiddenError(scope);
+  }
+}
+
+/**
+ * As {@link authorize}, for an operation any one of `scopes` permits (a read two roles share).
+ * The refusal names them all, so the caller knows which would do.
+ */
+export function authorizeAny(
+  principal: Principal,
+  scopes: readonly PermissionScope[],
+  targetSpaceId: string,
+): void {
+  if (!inScope(principal, targetSpaceId) || !scopes.some((s) => holdsScope(principal.scopes, s))) {
+    throw new ForbiddenError(scopes.join('" or "'));
   }
 }
 

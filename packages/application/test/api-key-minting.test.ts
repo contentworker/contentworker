@@ -59,7 +59,12 @@ describe('minting and widening API keys', () => {
   });
 
   it('resolves a personal access token as delegated', () => {
-    expect(pat).toMatchObject({ kind: 'user', issuance: 'pat', scopes: [SCOPES.spaceAdmin] });
+    // Capped by Ada's Administrator role, which lists `migration:run`: `space:admin` implies it.
+    expect(pat).toMatchObject({
+      kind: 'user',
+      issuance: 'pat',
+      scopes: [SCOPES.spaceAdmin, SCOPES.migrationRun],
+    });
   });
 
   it('refuses a personal access token and an OAuth token, and lets a person or operator key mint', async () => {

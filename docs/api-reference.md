@@ -1209,6 +1209,45 @@ type isn't in the environment. A person keeps at most 50 personal views in a spa
 Writes are audited. MCP: `views_list`, `views_get`, `views_run`, `views_create`, `views_update`,
 `views_delete`.
 
+### Site migration
+
+A migration run reads a published website and groups its pages into templates by structure
+(`packages/http/src/api/routes/management/migrations.ts`; the OpenAPI tag is "Site migration"). The
+routes live under `/spaces/:space/environments/:env/migrations/runs`, and a run belongs to one
+environment. Running a step needs `migration:run` (which `space:admin` implies); reading a run back
+needs `migration:run` or `content:manage`. Guide:
+[Migrate a website](https://docs.contentworker.app/guides/migrate-a-website/); the model is in
+[Domain model](./domain-model.md#site-migrations).
+
+| Method | Path                   | Scope                               | Notes                                                                                                                                                                                                                                                                                      |
+| ------ | ---------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| POST   | `…/runs`               | `migration:run`                     | Create `{ source: { kind: sitemap \| crawl, url, include?, exclude?, maxPages? }, name?, threshold? }` (`201`, the run); nothing is fetched. `422` naming `source.url` (or another `source.*` field) for a malformed source or a URL on a loopback, link-local or private address          |
+| GET    | `…/runs`               | `migration:run` or `content:manage` | `?limit=` (1..100, default 25) → `{ items }`, newest first                                                                                                                                                                                                                                 |
+| GET    | `…/runs/:id`           | `migration:run` or `content:manage` | `{ run, pages: { total, fetched, failed, byStage }, templates }`, templates largest first                                                                                                                                                                                                  |
+| POST   | `…/runs/:id/inventory` | `migration:run`                     | Add the pages the source lists (a sitemap) or its start page (a crawl); repeating it adds only new URLs. Returns the run with its `inventory` (`discovered`, `added`, `skipped`, `warnings`). `400` `invalid_state` once clustered; `503` `site_unavailable` when robots.txt can't be read |
+| POST   | `…/runs/:id/fetch`     | `migration:run`                     | `{ limit? }` (1..10, default 10) → `{ fetched, failed, added, more, unavailable? }`. Call again while `more`; a crawl adds the links it finds (`added`). With `unavailable` set nothing was written                                                                                        |
+| POST   | `…/runs/:id/cluster`   | `migration:run`                     | `{ threshold? }` (0..1, default 0.6) → the run view. Replaces an earlier grouping whole; `400` `invalid_state` before an inventory or once a template is being authored or approved; `409` `retryable` when another clustering won                                                         |
+| GET    | `…/runs/:id/pages`     | `migration:run` or `content:manage` | `?stage=&template=&limit=&cursor=` (limit 1..200, default 50) → `{ items, nextCursor? }` in discovery order; `nextCursor` is present only while more follow                                                                                                                                |
+| GET    | `…/runs/:id/templates` | `migration:run` or `content:manage` | `{ items }`, largest first, each with its `samplePageIds`                                                                                                                                                                                                                                  |
+
+Which pages and how: a sitemap source takes a sitemap URL, a sitemap index, or the site's origin
+(its robots.txt `Sitemap` lines, then `/sitemap.xml`); a crawl source follows links from a start
+page, up to eight links deep. `include` and `exclude` are path globs (`*` within a segment, `**`
+across; `exclude` wins), and `maxPages` defaults to 500, at most 10,000. Every request stays on the
+origin of `source.url`. robots.txt is read for the user agent token `ContentWorker`, a crawl delay
+is honoured up to 10 s, a `4xx` answer means no rules, and a server error or no answer means
+nothing is fetched. Query strings and fragments are dropped from page URLs.
+
+Responses carry no page content. A page's `html` and `output`, and a template's `script`, are
+`{ sha256, bytes }` of the stored copy or `null`; the object key and the structure fingerprint are
+never sent, and the HTML stays in object storage. Errors: `503` `site_unavailable` with
+`retryable: true` (the site's robots.txt can't be read; nothing was written), `409` `conflict`
+with `retryable: true` (another step wrote the run first), `501` when the deployment has no site
+source configured. MCP: `migration_create`, `migration_list`, `migration_status`,
+`migration_inventory`, `migration_fetch_pages`, `migration_cluster`, `migration_pages`,
+`migration_templates`; SDK: `cma.migrations`; CLI: `contentworker migrate`. Template authoring,
+loading and publishing are not part of the routes yet.
+
 ### Platform configuration
 
 | Method | Path                   | Scope            | Description                         |
@@ -1488,25 +1527,27 @@ The `onError` middleware (`toHttpError`, `packages/http/src/api/http.ts`) maps e
 responses. The body is `{ "error": { "code", "message", ... } }`, except for the two guards that
 run before routing (the last two rows).
 
-| Error                                                                | Status     | `error.code`        | Body extras                                     |
-| -------------------------------------------------------------------- | ---------- | ------------------- | ----------------------------------------------- |
-| `NotFoundError`                                                      | 404        | `not_found`         |                                                 |
-| `ValidationError`                                                    | 422        | `validation_failed` | `issues` (the `FieldIssue[]`)                   |
-| `HookRejectedError`                                                  | 422        | `hook_rejected`     |                                                 |
-| `ConflictError`, `TransactionConflictError`                          | 409        | `conflict`          | `details`, when the conflict carries them       |
-| `LastAdminError`                                                     | 409        | `last_admin`        |                                                 |
-| `PublishGatedError`                                                  | 409        | `publish_gated`     | `entries`: each `entryId` and its `workflows`   |
-| `DomainError` code `unauthorized`                                    | 401        | `unauthorized`      |                                                 |
-| `DomainError` code `forbidden`                                       | 403        | `forbidden`         |                                                 |
-| `RateLimitedError`                                                   | 429        | `rate_limited`      |                                                 |
-| `AiUnavailableError`                                                 | 503        | `ai_unavailable`    | `retryAfterSeconds` when given; retryable       |
-| `NotConfiguredError`                                                 | 501        | `not_configured`    |                                                 |
-| `SecretUnreadableError`                                              | 500        | `secret_unreadable` |                                                 |
-| other `DomainError` (`InvalidStateError`, `QueryTooBroadError`, ...) | 400        | its code            |                                                 |
-| Hono `HTTPException`                                                 | its status | `http_error`        |                                                 |
-| anything else                                                        | 500        | `internal`          | generic message                                 |
-| Request body over `MAX_BODY_BYTES`                                   | 413        | `payload_too_large` | **no `error` wrapper**: `{ "code", "message" }` |
-| Request-rate middleware (`RATE_LIMIT_*_PER_WINDOW` above 0)          | 429        | `rate_limited`      | **no `error` wrapper**; `Retry-After` header    |
+| Error                                                                | Status     | `error.code`        | Body extras                                         |
+| -------------------------------------------------------------------- | ---------- | ------------------- | --------------------------------------------------- |
+| `NotFoundError`                                                      | 404        | `not_found`         |                                                     |
+| `ValidationError`                                                    | 422        | `validation_failed` | `issues` (the `FieldIssue[]`)                       |
+| `HookRejectedError`                                                  | 422        | `hook_rejected`     |                                                     |
+| `ConflictError`                                                      | 409        | `conflict`          | `details`, when the conflict carries them           |
+| `TransactionConflictError`                                           | 409        | `conflict`          | `retryable: true` (the same request goes ahead)     |
+| `LastAdminError`                                                     | 409        | `last_admin`        |                                                     |
+| `PublishGatedError`                                                  | 409        | `publish_gated`     | `entries`: each `entryId` and its `workflows`       |
+| `DomainError` code `unauthorized`                                    | 401        | `unauthorized`      |                                                     |
+| `DomainError` code `forbidden`                                       | 403        | `forbidden`         |                                                     |
+| `RateLimitedError`                                                   | 429        | `rate_limited`      |                                                     |
+| `AiUnavailableError`                                                 | 503        | `ai_unavailable`    | `retryAfterSeconds` when given; retryable           |
+| `SiteUnavailableError`                                               | 503        | `site_unavailable`  | `retryable: true`; a migration's site can't be read |
+| `NotConfiguredError`                                                 | 501        | `not_configured`    |                                                     |
+| `SecretUnreadableError`                                              | 500        | `secret_unreadable` |                                                     |
+| other `DomainError` (`InvalidStateError`, `QueryTooBroadError`, ...) | 400        | its code            |                                                     |
+| Hono `HTTPException`                                                 | its status | `http_error`        |                                                     |
+| anything else                                                        | 500        | `internal`          | generic message                                     |
+| Request body over `MAX_BODY_BYTES`                                   | 413        | `payload_too_large` | **no `error` wrapper**: `{ "code", "message" }`     |
+| Request-rate middleware (`RATE_LIMIT_*_PER_WINDOW` above 0)          | 429        | `rate_limited`      | **no `error` wrapper**; `Retry-After` header        |
 
 MCP tools use the same mapping (`toHttpError`): a tool that fails with anything REST would answer
 with `internal` (a database or binding error) reports only `Internal server error`, and refusals

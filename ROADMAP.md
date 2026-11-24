@@ -50,6 +50,13 @@ Everything below is built and tested on v2.
   environment snapshots (export, plus import and clone as resumable jobs; a clone's export and
   checks run in the engine too), CSV, JSON and WordPress import, and whole-space import from the
   JSON space export format (model, locales, tags, entries with links remapped, asset files copied).
+- **Site migration: discovery and clustering.** A run reads a published website from its sitemap
+  or a same-origin crawl (path globs, a page cap, robots.txt and its crawl delay kept, private
+  addresses refused), fetches its pages a bounded batch at a time into object storage, and groups
+  them into templates by structure. REST (`…/migrations/runs`), eight MCP tools
+  (`migration_*`), the management SDK (`migrations`), `contentworker migrate`, the `site-migration`
+  agent skill and the `migration:run` scope; responses carry a page's stored HTML by hash and size
+  only.
 - **Assets.** Signed uploads to object storage, creating an asset from a public URL (REST, MCP and
   the management SDK: fetched through the SSRF guard, reused when the bytes are already in the
   environment), edge image transforms, streamed video, localized alt text and focal point, AI alt
@@ -92,8 +99,8 @@ Everything below is built and tested on v2.
   can find and quote an entry), sandboxed plugins in isolated edge workers (with per-plugin
   `kv:storage` and operator settings, secrets sealed, and sync and `async` operations from a
   manifest), the transactional outbox with lease-claimed relay.
-- **Access.** CMA/CDA/CPA keys, ten scopes (`assets:read` and `assets:write` held by
-  implication with `preview:read` and `content:write`), roles with per-type and per-field grants (read,
+- **Access.** CMA/CDA/CPA keys, eleven scopes (`assets:read` and `assets:write` held by
+  implication with `preview:read` and `content:write`, `migration:run` with `space:admin`), roles with per-type and per-field grants (read,
   write, publish, and delete and unpublish implied unless withheld) and presets, the last-administrator guard, OAuth 2.1 with the device flow for MCP clients, personal
   access tokens, preview links, rate limits, the audit log (filtered by actor, action, target and
   date, with keyset paging, a `detail` of the field paths an entry save changed, and each entry's
@@ -263,6 +270,10 @@ Everything below is built and tested on v2.
   Agents may draft, test and install a generated plugin disabled, but only a signed-in person
   can enable one whose `source` is `generated`: a deliberate, documented exception to both
   surfaces, because prompt-injected code must not go live without a human.
+- [ ] **Site migration: templates, loading and the admin.** Template authoring (a content type
+  with a blocks field and an import script per template, validated against the source pages),
+  loading the pages as entries with their assets and links, publishing them, and an admin screen
+  to follow a run. Discovery and clustering have shipped; none of the rest is built.
 
 ### Recovery
 

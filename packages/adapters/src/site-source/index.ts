@@ -372,7 +372,10 @@ function isHtml(contentType: string | undefined, body: string): boolean {
 
 /** Gunzips to text as it streams, bounded: the decompressed bytes are never held whole. */
 async function gunzipText(bytes: Uint8Array, maxBytes: number): Promise<string> {
-  const reader = new Response(bytes).body?.pipeThrough(new DecompressionStream('gzip')).getReader();
+  // The DOM lib types BodyInit as ArrayBuffer-backed views; this view is one, so cast rather than copy.
+  const reader = new Response(bytes as Uint8Array<ArrayBuffer>).body
+    ?.pipeThrough(new DecompressionStream('gzip'))
+    .getReader();
   if (!reader) return '';
   const decoder = new TextDecoder();
   const parts: string[] = [];

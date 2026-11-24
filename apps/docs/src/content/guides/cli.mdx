@@ -25,12 +25,16 @@ and never receives `space:admin` or `content:manage`, and its token is short-liv
 as you use it. Revoke it under **Settings → Access → Connected apps**, or with `contentworker
 logout`.
 
-Changing the content model needs `content:manage`, so for `model apply` sign in with a
-[personal access token](/guides/api-keys/#personal-access-tokens) or a Management key instead:
+Changing the content model needs `content:manage`, which a connected app can't be granted, so for
+`model apply` sign in with a [personal access token](/guides/api-keys/#personal-access-tokens) or
+a Management key instead:
 
 ```sh
 contentworker login --url https://api.cms.example.com --token "$TOKEN"
 ```
+
+The `migrate` commands need `migration:run`, which a `login` token carries when your role holds it
+(the Administrator role does).
 
 Tokens are kept in `credentials.json` in your user config directory (`~/.config/contentworker`,
 or `%APPDATA%\contentworker` on Windows), readable only by you. Name a profile with `--profile`
@@ -56,6 +60,10 @@ In CI, skip the file: set `CONTENTWORKER_TOKEN` and `CONTENTWORKER_URL` (and
 | `entries update <id>`                | A new draft version; merges `--fields` into the draft by field and locale (`--replace` sends them as the whole draft) | `content:write` |
 | `entries publish <id…>`              | Publish one entry (`--expected-version` holds it), or up to 1,000      | `content:publish`   |
 | `assets upload <file>`               | Upload a file of any size (`--title`, `--folder`, `--publish`)         | `assets:write`      |
+| `migrate create <url>`               | Start a [website migration](/guides/migrate-a-website/): `--crawl` (default: the sitemap), `--include`, `--exclude`, `--max-pages`, `--name`, `--threshold` | `migration:run` |
+| `migrate step <run>`                 | Inventory a new run, then fetch pages in batches until none wait (`--batch`, `--max-batches`); exits 1 with `site_unavailable` when the site's robots.txt can't be read | `migration:run` |
+| `migrate cluster <run>`              | Group the fetched pages into templates (`--threshold`, default 0.6)    | `migration:run`     |
+| `migrate list`, `migrate status <run>`, `migrate pages <run>` | Runs; one run with its pages by stage and templates; its pages (`--stage`, `--template`, `--limit`, `--cursor`) | `migration:run` or `content:manage` |
 | `import <file>`                      | Import a CSV, JSON or WordPress export as drafts                       | `content:write`     |
 | `types [--out file] [--blocks file]` | TypeScript types for the model and its blocks, as described in [typed content](/guides/sdks/#typed-content) | `preview:read` |
 | `doctor`                             | Check sign-in, reachability, the API version and access to the space   |                     |

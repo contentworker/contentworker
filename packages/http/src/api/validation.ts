@@ -46,6 +46,12 @@ import {
   MAX_VIEW_NAME_LENGTH,
   MAX_VIEW_ORDER,
   MAX_ZIP_ASSETS,
+  MIGRATION_CLUSTER_THRESHOLD,
+  MIGRATION_MAX_GLOB_LENGTH,
+  MIGRATION_MAX_GLOBS,
+  MIGRATION_MAX_NAME_LENGTH,
+  MIGRATION_MAX_PAGES,
+  MIGRATION_MAX_URL_LENGTH,
   PLUGIN_SETTING_MAX_STRING,
   SPACE_ID_PATTERN,
   ValidationError,
@@ -345,6 +351,72 @@ export const redirectImportBody = z.object({
     ),
   dryRun: z.boolean().optional().describe('Check and report without writing'),
 });
+// --- site migrations ------------------------------------------------------
+// The envelope only: the domain checks the source (globs start with "/", no credentials in the
+// URL) and the outbound guard screens its host, naming each field it refuses.
+export const migrationSourceBody = z.object({
+  kind: z.enum(['sitemap', 'crawl']).describe('Where pages come from: a sitemap, or a link crawl'),
+  url: z
+    .string()
+    .max(MIGRATION_MAX_URL_LENGTH)
+    .describe(
+      'sitemap: the sitemap (or index) URL, or the site origin (robots.txt Sitemap lines, then ' +
+        '/sitemap.xml). crawl: the start page. Every page the run takes shares its origin.',
+    ),
+  include: z
+    .array(z.string().max(MIGRATION_MAX_GLOB_LENGTH))
+    .max(MIGRATION_MAX_GLOBS)
+    .optional()
+    .describe('Path globs a page must match one of (`*` in a segment, `**` across); empty, all'),
+  exclude: z
+    .array(z.string().max(MIGRATION_MAX_GLOB_LENGTH))
+    .max(MIGRATION_MAX_GLOBS)
+    .optional()
+    .describe('Path globs that leave a page out, over include'),
+  maxPages: z
+    .number()
+    .int()
+    .min(1)
+    .max(MIGRATION_MAX_PAGES)
+    .optional()
+    .describe('Most pages the run takes (default 500)'),
+});
+export const migrationRunBody = z.object({
+  name: z.string().max(MIGRATION_MAX_NAME_LENGTH).optional().describe('Default: the source host'),
+  threshold: z
+    .number()
+    .min(0)
+    .max(1)
+    .optional()
+    .describe('Score a page needs to count as validated (default 0.8)'),
+  source: migrationSourceBody,
+});
+/**
+ * Pages one API request or MCP call fetches at most, and by default. A batch's pages are held in
+ * memory together (up to 5 MB each) inside the request's isolate, so a request takes fewer than a
+ * background step may.
+ */
+export const MIGRATION_FETCH_REQUEST_MAX = 10;
+export const migrationFetchBody = z.object({
+  limit: z
+    .number()
+    .int()
+    .min(1)
+    .max(MIGRATION_FETCH_REQUEST_MAX)
+    .optional()
+    .describe(`Pages this batch fetches (default and most: ${MIGRATION_FETCH_REQUEST_MAX})`),
+});
+export const migrationClusterBody = z.object({
+  threshold: z
+    .number()
+    .min(0)
+    .max(1)
+    .optional()
+    .describe(
+      `Structural similarity at which a page joins a template (default ${MIGRATION_CLUSTER_THRESHOLD})`,
+    ),
+});
+
 export const cloneBody = z.object({
   targetSpaceId: zId.optional(),
   targetEnvironmentId: zId,

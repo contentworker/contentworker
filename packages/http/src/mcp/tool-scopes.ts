@@ -1,7 +1,7 @@
 import { holdsScope, type PermissionScope, type Principal, SCOPES } from '@contentworker/domain';
 
 /**
- * Which tools `tools/list` shows a caller. This is a courtesy, not a control: 289 tool definitions
+ * Which tools `tools/list` shows a caller. This is a courtesy, not a control: 297 tool definitions
  * cost an agent real context, so a caller is spared the tools it can't use. Every handler still
  * authorizes for itself, and a tool left off the list stays callable and answers with the scope it
  * needs, so a mistake here can only show or hide a tool, never grant anything.
@@ -184,6 +184,14 @@ export const TOOL_SCOPES: Readonly<Record<string, readonly PermissionScope[]>> =
   menus_preview: [SCOPES.previewRead],
   menus_resolve: [SCOPES.previewRead],
   menus_update: [SCOPES.contentManage],
+  migration_cluster: [SCOPES.migrationRun],
+  migration_create: [SCOPES.migrationRun],
+  migration_fetch_pages: [SCOPES.migrationRun],
+  migration_inventory: [SCOPES.migrationRun],
+  migration_list: [SCOPES.contentManage, SCOPES.migrationRun],
+  migration_pages: [SCOPES.contentManage, SCOPES.migrationRun],
+  migration_status: [SCOPES.contentManage, SCOPES.migrationRun],
+  migration_templates: [SCOPES.contentManage, SCOPES.migrationRun],
   model_clone_content_type: [SCOPES.contentManage],
   model_content_type_dependents: [SCOPES.previewRead],
   model_create_content_type: [SCOPES.contentManage],

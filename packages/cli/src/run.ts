@@ -8,7 +8,7 @@ import {
   type OptionSpec,
 } from './commands.js';
 import type { Io } from './io.js';
-import { apiErrorText, CliError, EXIT, usageError } from './output.js';
+import { apiErrorText, CliError, EXIT, printable, usageError } from './output.js';
 import { clientFor, resolveSession, type Session } from './session.js';
 
 export const VERSION = '0.1.0';
@@ -67,14 +67,14 @@ export async function run(argv: readonly string[], io: Io): Promise<number> {
       client: async () => clientFor(await ctx.session(), io),
     };
     const result = await command.run(ctx);
-    io.stdout(json ? JSON.stringify(result.json, null, 2) : result.human);
+    io.stdout(json ? JSON.stringify(result.json, null, 2) : printable(result.human));
     return result.exitCode ?? EXIT.ok;
   } catch (err) {
     const failure = describe(err);
     io.stderr(
       json
         ? JSON.stringify({ error: failure.error }, null, 2)
-        : `contentworker: ${failure.error.message}`,
+        : `contentworker: ${printable(failure.error.message)}`,
     );
     return failure.exitCode;
   }

@@ -72,6 +72,9 @@ export function defaultOAuthConfig(issuer: string, resource: string): OAuthConfi
       SCOPES.searchRead,
       SCOPES.contentWrite,
       SCOPES.contentPublish,
+      // A site migration's steps: they fetch from the run's source site and write nothing past the
+      // run, so an agent can be handed one without being handed the space.
+      SCOPES.migrationRun,
     ],
   };
 }
@@ -650,7 +653,8 @@ function kindForScopes(scopes: readonly string[]): ApiKeyKind {
     scopes.includes(SCOPES.assetsWrite) ||
     scopes.includes(SCOPES.contentPublish) ||
     scopes.includes(SCOPES.contentManage) ||
-    scopes.includes(SCOPES.spaceAdmin)
+    scopes.includes(SCOPES.spaceAdmin) ||
+    scopes.includes(SCOPES.migrationRun)
   ) {
     return 'cma';
   }

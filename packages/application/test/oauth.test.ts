@@ -378,6 +378,28 @@ describe('OAuth: authorization code flow', () => {
     expect(principal.scopes).toEqual([SCOPES.deliveryRead]);
   });
 
+  it('grants migration:run to a client that asks, capped by the approver’s role', async () => {
+    const migrator = (await publicClient(c, cfg, `${SCOPES.previewRead} ${SCOPES.migrationRun}`))
+      .id;
+    // An administrator holds migration:run by way of space:admin.
+    const admin = await fullCodeFlow(c, cfg, migrator, {
+      spaceId: 's1',
+      subject: 'user@example.com',
+      approverScopes: [SCOPES.previewRead, SCOPES.spaceAdmin],
+    });
+    expect(admin.scope.split(' ').sort()).toEqual([SCOPES.migrationRun, SCOPES.previewRead]);
+    const principal = await authenticate(c, hasher, admin.access_token);
+    expect(principal.scopes).toContain(SCOPES.migrationRun);
+    expect(principal.scopes).not.toContain(SCOPES.spaceAdmin);
+    // A manager doesn't hold it, so the token goes without it.
+    const manager = await fullCodeFlow(c, cfg, migrator, {
+      spaceId: 's1',
+      subject: 'user@example.com',
+      approverScopes: [SCOPES.previewRead, SCOPES.contentManage],
+    });
+    expect(manager.scope).toBe(SCOPES.previewRead);
+  });
+
   it('refuses to approve when the human holds none of the requested scopes', async () => {
     const request = await validateAuthorizationRequest(c, cfg, {
       clientId,

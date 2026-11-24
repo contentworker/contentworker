@@ -45,7 +45,8 @@ Design points:
   login, and polls `/oauth/token` at the server's `interval`, five seconds more after each
   `slow_down`. The token is a space-bound API key with `issuance: 'oauth'`, capped by the
   approver's role and the OAuth scope ceiling, which excludes `space:admin` and `content:manage`.
-  So `model apply` needs a Management key or personal access token (`login --token`, or
+  It does hold `migration:run`, so `migrate` works after `login` when the approver's role holds it;
+  `model apply` needs a Management key or personal access token (`login --token`, or
   `CONTENTWORKER_TOKEN`). The space comes from `GET /auth/me`.
 - **Output contract.** `--json` prints exactly one JSON document on stdout; everything else goes
   to stderr (the device code as a JSON line, plans, errors as `{ error: { code, message, status?,

@@ -14,6 +14,7 @@ import type {
   Hasher,
   ImportSource,
   RemoteFetcher,
+  SiteSource,
   SpaceExportReader,
   WorkflowEngine,
 } from '@contentworker/ports';
@@ -56,6 +57,8 @@ export interface McpDeps {
   readonly assetIngest?: AssetIngestQueue;
   /** Bounded, redirect-refusing outbound GETs (embed metadata); absent, embed_resolve refuses. */
   readonly remoteFetcher?: RemoteFetcher;
+  /** Reads a site for a migration (as AuthDeps'); absent, the steps that fetch refuse. */
+  readonly siteSource?: SiteSource;
   /** Whether people sign in through SSO (for the last-administrator rule). Absent: no SSO. */
   readonly accessPolicy?: AccessPolicy;
   /** The admin's origin, where invitation links open (as AuthDeps' `inviteOrigin`). */

@@ -57,6 +57,7 @@ import { registerFunctionTools } from './tools/functions';
 import { registerImportTools } from './tools/imports';
 import { registerInviteTools } from './tools/invites';
 import { registerMenuTools } from './tools/menus';
+import { registerMigrationTools } from './tools/migrations';
 import { registerOAuthConnectionTools } from './tools/oauth-connections';
 import { registerPluginTools } from './tools/plugins';
 import { registerPromotionTools } from './tools/promotions';
@@ -135,6 +136,7 @@ const TOOL_AREAS: readonly ((server: McpServer, t: ToolContext) => void)[] = [
   registerCollaborationTools,
   registerWorkflowTools,
   registerRedirectTools,
+  registerMigrationTools,
   registerSeoTools,
   registerBlockTools,
   registerMenuTools,

@@ -66,6 +66,25 @@ A signed upload URL stores its file once; a second `PUT` through it is a `412`. 
 `upload` and `replaceFile` count that 412 as stored (an earlier attempt's bytes landed and only its
 answer was lost); on a first attempt they throw it.
 
+## Site migration
+
+```ts
+const run = await cma.migrations.create({
+  source: { kind: 'sitemap', url: 'https://example.com', exclude: ['/blog/**'] },
+});
+await cma.migrations.inventory(run.id);
+// One bounded batch a call (`limit` 1..10, default 10): fetch again while pages wait.
+for (let more = true; more; ) {
+  const batch = await cma.migrations.fetchPages(run.id);
+  more = batch.more && !batch.unavailable;
+}
+const { templates } = await cma.migrations.cluster(run.id); // `{ threshold }` 0..1, default 0.6
+```
+
+`migrations` also has `list`, `get`, `pages` (by `stage` or `template`, paged with `nextCursor`) and
+`templates`. Running a step needs `migration:run`; reading a run needs it or `content:manage`.
+Pages carry the hash and size of their stored HTML, never the HTML.
+
 ## Errors
 
 A failed call throws `ManagementError` with `status`, the API's error `code`, the parsed `error`

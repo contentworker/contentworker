@@ -41,6 +41,7 @@ import { frontendRoutes } from './management/frontend';
 import { functionsRoutes } from './management/functions';
 import { importsRoutes } from './management/imports';
 import { menusRoutes } from './management/menus';
+import { migrationsRoutes } from './management/migrations';
 import { oauthConnectionsRoutes } from './management/oauth-connections';
 import { pluginsRoutes } from './management/plugins';
 import { promotionsRoutes } from './management/promotions';
@@ -115,6 +116,7 @@ const AREAS: readonly ((deps: AuthDeps) => Hono<AuthVars>)[] = [
   workflowManagementRoutes,
   taxonomyRoutes,
   redirectsRoutes,
+  migrationsRoutes,
   seoRoutes,
   blocksRoutes,
   menusRoutes,

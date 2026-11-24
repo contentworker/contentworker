@@ -111,6 +111,8 @@ function buildApp(wired: EdgeWired, env: EdgeEnv): Hono {
       remoteFetcher: wired.remoteFetcher,
       // The space export tools read with it, as the HTTP API's routes do.
       spaceExportReader: wired.spaceExportReader,
+      // A site migration's inventory and fetch steps read the source site through it.
+      siteSource: wired.siteSource,
       signalReview: env.AGENT_WF
         ? (review, decision) => sendReviewDecision(env.AGENT_WF as Workflow, review.id, decision)
         : undefined,
@@ -149,6 +151,7 @@ function buildApp(wired: EdgeWired, env: EdgeEnv): Hono {
         ...(wired.workflowEngine ? { workflowEngine: wired.workflowEngine } : {}),
         workflowNodes: wired.workflowNodes,
         assetSearch: wired.assetSearch,
+        siteSource: wired.siteSource,
         ...(wired.assetIngest ? { assetIngest: wired.assetIngest } : {}),
       },
     ),
