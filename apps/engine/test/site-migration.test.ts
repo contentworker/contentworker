@@ -18,6 +18,7 @@ import {
 } from '@contentworker/application';
 import {
   type ContentTypeDraft,
+  MigrationClusteringHeldError,
   MigrationDriverFinishedError,
   NotFoundError,
   scopesForKind,
@@ -190,6 +191,82 @@ describe('MigrationWorkflow on Cloudflare Workflows', () => {
     expect((await ctx.store.migrations.countPages(scope, run.id)).byStage).toEqual({
       published: 2,
     });
+  });
+});
+
+describe('MigrationWorkflow and clustering again', () => {
+  async function clusteredByHand() {
+    const { ctx, scope } = context();
+    const run = await createMigrationRun(ctx, scope, { source: { kind: 'sitemap', url: O } });
+    const { blob, source } = migrationTestState as Required<typeof migrationTestState>;
+    await inventorySite(ctx, { blob, source }, scope, run.id);
+    while ((await fetchSourcePages(ctx, { blob, source }, scope, run.id)).more) {}
+    await clusterPages(ctx, scope, run.id);
+    const recluster = () => clusterPages(ctx, scope, run.id);
+    const ids = async () =>
+      (await ctx.store.migrations.listTemplates(scope, run.id)).map((t) => t.id);
+    const params = { scope, runId: run.id, startedBy: { kind: 'deployment' as const } };
+    const runner = new CloudflareMigrationRunner(env.MIGRATION_WF);
+    return { ctx, scope, run, recluster, ids, params, runner };
+  }
+
+  it('takes the templates made by hand last, then refuses another grouping, restarted or terminated', async () => {
+    const h = await clusteredByHand();
+    const { templates } = await h.recluster();
+    await using instance = await introspectWorkflowInstance(
+      env.MIGRATION_WF,
+      migrationInstanceId(h.run.id),
+    );
+    await h.runner.start(h.params);
+    const taken = (await instance.waitForStepResult({ name: 'cluster' })) as {
+      ok: { id: string }[];
+    };
+    expect(taken.ok.map((t) => t.id)).toEqual(templates.map((t) => t.id));
+    await expect(h.recluster()).rejects.toThrow(MigrationClusteringHeldError);
+    expect(await h.ids()).toEqual(templates.map((t) => t.id));
+
+    // Run from its first step again, it takes the same templates.
+    const driver = await env.MIGRATION_WF.get(migrationInstanceId(h.run.id));
+    await instance.waitForStepResult({ name: `start agent ${templates[0]?.id}` });
+    migrationTestState.started = [];
+    await driver.restart();
+    await expect
+      .poll(() => migrationTestState.started, { timeout: 10_000 })
+      .toEqual(templates.map((t) => t.id));
+
+    // Ended with nothing recorded on the run: the grouping is kept, and its templates authored.
+    await driver.terminate();
+    await instance.waitForStatus('terminated');
+    expect((await h.ctx.store.migrations.getRun(h.scope, h.run.id))?.status).toBe('clustered');
+    await expect(h.recluster()).rejects.toThrow(MigrationClusteringHeldError);
+    const ref = { runId: h.run.id, templateId: templates[0]?.id as string };
+    await expect(
+      proposeTemplateModel(h.ctx, h.scope, { ...ref, model: MODEL }),
+    ).resolves.toMatchObject({ status: 'authoring' });
+  });
+
+  it('goes on from a clustering recorded before there was a hold', async () => {
+    const h = await clusteredByHand();
+    const [templateId] = await h.ids();
+    await using instance = await introspectWorkflowInstance(
+      env.MIGRATION_WF,
+      migrationInstanceId(h.run.id),
+    );
+    await instance.modify(async (m) => {
+      await m.mockStepResult(
+        { name: 'cluster' },
+        { ok: [{ id: templateId, status: 'pending', held: false }] },
+      );
+    });
+    await h.runner.start(h.params);
+    await instance.waitForStepResult({ name: `start agent ${templateId}` });
+    expect(migrationTestState.started).toEqual([templateId]);
+    // Its step never runs again, so nothing holds the run; a template being authored does.
+    expect((await h.ctx.store.migrations.getRun(h.scope, h.run.id))?.clusteringHeldAt).toBeNull();
+    const ref = { runId: h.run.id, templateId: templateId as string };
+    await proposeTemplateModel(h.ctx, h.scope, { ...ref, model: MODEL });
+    await expect(h.recluster()).rejects.toThrow('already being authored');
+    await (await env.MIGRATION_WF.get(migrationInstanceId(h.run.id))).terminate();
   });
 });
 

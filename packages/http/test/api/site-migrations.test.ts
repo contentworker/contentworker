@@ -1,3 +1,4 @@
+import { takeClustering } from '@contentworker/application';
 import { SCOPES } from '@contentworker/domain';
 import type { ApiConfig } from '@contentworker/platform/config';
 import { TransactionConflictError } from '@contentworker/ports';
@@ -148,6 +149,35 @@ describe('site migration over HTTP', () => {
     expect(templates.items.map((t) => t.id)).toEqual(clustered.templates.map((t) => t.id));
     const list = await json<{ items: Run[] }>(await send('GET', ''));
     expect(list.items.map((r) => r.id)).toEqual([run.id]);
+  });
+
+  it('refuses to cluster again what the run in the background has taken on', async () => {
+    const { send, wired } = makeApp();
+    const run = await createRun(send);
+    expect(run).toMatchObject({ clusteringHeldAt: null });
+    await send('POST', `/${run.id}/inventory`);
+    await send('POST', `/${run.id}/fetch`, { limit: 10 });
+    // By hand, with no driver: again in place.
+    expect((await send('POST', `/${run.id}/cluster`, {})).status).toBe(200);
+    expect((await send('POST', `/${run.id}/cluster`, {})).status).toBe(200);
+    const scope = { spaceId: 's1', environmentId: 'main' };
+    const taken = await takeClustering(wired.ctx, scope, run.id);
+
+    const refused = await send('POST', `/${run.id}/cluster`, { threshold: 0.9 });
+    expect(refused.status).toBe(400);
+    const { error } = await json<{ error: { code: string; message: string; retryable?: true } }>(
+      refused,
+    );
+    expect(error).toMatchObject({
+      code: 'invalid_state',
+      message: expect.stringMatching(/taken on in the background/),
+    });
+    expect(error.retryable).not.toBe(true);
+    const view = await json<{ run: { clusteringHeldAt: string }; templates: { id: string }[] }>(
+      await send('GET', `/${run.id}`),
+    );
+    expect(view.run.clusteringHeldAt).toEqual(expect.any(String));
+    expect(view.templates.map((t) => t.id)).toEqual(taken.map((t) => t.id));
   });
 
   it('pages through pages by stage and template, never sending HTML or storage keys', async () => {

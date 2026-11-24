@@ -34,19 +34,19 @@ import {
 } from './site-migration-templates';
 import { assertSameApproval } from './site-migration-version';
 import {
-  clusterPages,
   fetchSourcePages,
   inventorySite,
   MIGRATION_FETCH_BATCH_MAX,
   type SiteMigrationDeps,
   SiteUnavailableError,
+  takeClustering,
 } from './site-migrations';
 
 /**
  * A site migration run, driven start to finish: one Workflow instance per run.
  *
  * inventory → fetch the pages a batch per step (waiting out a site that can't be read now) →
- * cluster → one template agent per template, to propose its model and write its script → for
+ * cluster, taking the templates on ({@link takeClustering}) → one template agent per template, to propose its model and write its script → for
  * each template, wait for a person to approve it, then transform its pages a batch per step and
  * load them → wait for the go-ahead to publish → publish. A template that is reopened on the way is
  * waited for again, and its newer version taken through ({@link DrivenTemplate}).
@@ -209,12 +209,9 @@ export async function runSiteMigration(
       await steps.do('cluster', STEP, () =>
         settle(async () => {
           await principalFor(ctx, scope, params.startedBy);
-          const run = await requireRun(ctx, scope, runId);
-          const view =
-            run.status === 'clustered'
-              ? { templates: await ctx.store.migrations.listTemplates(scope, runId) }
-              : await clusterPages(ctx, scope, runId);
-          return view.templates.map((t) => ({
+          // Held from here on: what is waited for below is these templates, by id.
+          const taken = await takeClustering(ctx, scope, runId);
+          return taken.map((t) => ({
             id: t.id,
             status: t.status,
             // Held by an approval: reopened by hand before the driver started.

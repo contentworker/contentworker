@@ -302,6 +302,31 @@ describe('the template agent', () => {
     expect(ai.requests).toHaveLength(0);
   });
 
+  it('stops at a template that is gone, without a model call', async () => {
+    const { ctx, store, blob, run, state, sandbox } = await harness();
+    const ai = new ScriptedAI([
+      // Clustered again while the model answers: its writes are refused, and it stops.
+      () => {
+        for (const key of [...store.migrations.templateData.keys()]) {
+          store.migrations.templateData.delete(key);
+        }
+        return [
+          call('propose_model', { model: MODEL }),
+          call('write_import_script', { script: SCRIPT }),
+          call('try_import_script'),
+          call('get_template'),
+        ];
+      },
+    ]);
+    const ended = await drive(ctx, { ai, blob, sandbox }, state);
+    expect(ended).toMatchObject({ status: 'stopped', summary: 'Stopped: the template is gone' });
+    expect(ai.requests).toHaveLength(1);
+    const results = ended.messages.filter((m) => m.role === 'tool');
+    expect(results).toHaveLength(4);
+    for (const r of results) expect(JSON.parse(r.content)).toHaveProperty('error');
+    expect(await store.migrations.listTemplates(scope, run.id)).toEqual([]);
+  });
+
   it('stops at a template a person approved, reopened or not', async () => {
     const { ctx, store, blob, run, blog, state, sandbox } = await harness();
     const author = new ScriptedAI([

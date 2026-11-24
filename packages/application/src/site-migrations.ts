@@ -7,6 +7,7 @@ import {
   MIGRATION_MAX_CRAWL_DEPTH,
   MIGRATION_PAGE_STAGES,
   type MigrationArtifact,
+  MigrationClusteringHeldError,
   type MigrationInventory,
   type MigrationPage,
   type MigrationPageStage,
@@ -19,13 +20,14 @@ import {
   sourceTakesPath,
   ValidationError,
 } from '@contentworker/domain';
-import type {
-  BlobStore,
-  DiscoveredPage,
-  FetchedPage,
-  MigrationCluster,
-  MigrationPageCounts,
-  SiteSource,
+import {
+  type BlobStore,
+  type DiscoveredPage,
+  type FetchedPage,
+  type MigrationCluster,
+  type MigrationPageCounts,
+  type SiteSource,
+  TransactionConflictError,
 } from '@contentworker/ports';
 import type { AppContext } from './context';
 import { outputVersions } from './site-migration-version';
@@ -102,6 +104,7 @@ export async function createMigrationRun(
     inventory: null,
     error: null,
     releaseId: null,
+    clusteringHeldAt: null,
     version: 1,
     createdAt: at,
     createdBy: ctx.actor ?? null,
@@ -463,7 +466,9 @@ async function crawlFrontier(
 /**
  * Groups the run's fetched pages into templates by structure, replacing any earlier grouping in
  * one unit with the run's compare-and-set: two clusterings at once can't leave a mix. Refused once
- * a template is past `pending` (being authored or approved), so authored work is never discarded.
+ * a template is past `pending` (being authored or approved), so authored work is never discarded,
+ * and (`MigrationClusteringHeldError`) once the run's driver has taken its templates on
+ * ({@link takeClustering}).
  */
 export async function clusterPages(
   ctx: AppContext,
@@ -472,9 +477,61 @@ export async function clusterPages(
   opts: { readonly threshold?: number } = {},
 ): Promise<MigrationRunView> {
   const run = await requireRun(ctx, scope, runId);
+  try {
+    return await groupPages(ctx, scope, run, opts);
+  } catch (err) {
+    // Lost to the driver taking the templates on: a refusal, not a race to try again.
+    if (err instanceof TransactionConflictError) {
+      const now = await requireRun(ctx, scope, runId);
+      if (now.status === 'clustered' && now.clusteringHeldAt) {
+        throw new MigrationClusteringHeldError();
+      }
+    }
+    throw err;
+  }
+}
+
+/**
+ * The run's templates, taken on by its driver: clustered now, or as a clustering left them, and
+ * held from being clustered again. The hold rides at the run's compare-and-set (with the templates,
+ * when they are written here), so of a clustering and a taking that cross, one loses: a clustering
+ * that commits first is the one taken (`TransactionConflictError`, and read again), and one that
+ * commits second is refused. Taken before, they are answered as they are: a step run again, or the
+ * driver of a run whose first one is gone. No templates, nothing to hold.
+ */
+export async function takeClustering(
+  ctx: AppContext,
+  scope: Scope,
+  runId: string,
+): Promise<readonly MigrationTemplate[]> {
+  // Before the templates: read as held, they can't change; not held, a change fails the save.
+  const run = await requireRun(ctx, scope, runId);
+  if (run.status !== 'clustered') {
+    return (await groupPages(ctx, scope, run, { hold: true })).templates;
+  }
+  const templates = await ctx.store.migrations.listTemplates(scope, runId);
+  if (run.clusteringHeldAt || templates.length === 0) return templates;
+  const at = ctx.clock.now().toISOString();
+  await ctx.store.migrations.saveRun(
+    scope,
+    { ...run, clusteringHeldAt: at, version: run.version + 1, updatedAt: at },
+    run.version,
+  );
+  return templates;
+}
+
+/** The run's pages grouped, as {@link clusterPages} and {@link takeClustering} say. */
+async function groupPages(
+  ctx: AppContext,
+  scope: Scope,
+  run: MigrationRun,
+  opts: { readonly threshold?: number; readonly hold?: boolean },
+): Promise<MigrationRunView> {
+  const runId = run.id;
   if (run.status !== 'inventoried' && run.status !== 'clustered') {
     throw new InvalidStateError(`Pages are clustered after an inventory; the run is ${run.status}`);
   }
+  if (run.clusteringHeldAt) throw new MigrationClusteringHeldError();
   const existing = await ctx.store.migrations.listTemplates(scope, runId);
   if (existing.some((t) => t.status !== 'pending')) {
     throw new InvalidStateError('A template is already being authored or approved');
@@ -514,6 +571,7 @@ export async function clusterPages(
   const next: MigrationRun = {
     ...run,
     status: 'clustered',
+    ...(opts.hold && clusters.length > 0 ? { clusteringHeldAt: at } : {}),
     version: run.version + 1,
     updatedAt: at,
   };

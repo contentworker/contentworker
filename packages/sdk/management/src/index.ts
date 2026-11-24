@@ -422,6 +422,8 @@ export interface MigrationRun {
   readonly error: string | null;
   /** The release its entries were added to, when publishing goes through one. */
   readonly releaseId: string | null;
+  /** When its templates were taken on in the background: it isn't clustered again after. */
+  readonly clusteringHeldAt: string | null;
   readonly version: number;
   readonly createdAt: string;
   readonly createdBy: string | null;

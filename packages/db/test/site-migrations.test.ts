@@ -40,6 +40,7 @@ const run = (over: Partial<MigrationRun> = {}): MigrationRun => ({
   inventory: null,
   error: null,
   releaseId: null,
+  clusteringHeldAt: null,
   version: 1,
   createdAt: AT,
   createdBy: 'ed@example.com',
@@ -127,6 +128,60 @@ describe('site migrations on D1', () => {
       }),
     ).rejects.toThrow(TransactionConflictError);
     expect((await store.migrations.getRun(scope, r.id))?.status).toBe('inventoried');
+  });
+
+  it('holds a run’s clustering at its version, and keeps the hold through a write that names none', async () => {
+    const scope = newScope();
+    const r = run();
+    await store.migrations.createRun(scope, r);
+    await store.migrations.addPages(scope, r.id, [page(r.id, 1)]);
+    const t = template(r.id);
+    // The driver clusters and holds in one unit (0053).
+    const held: MigrationRun = {
+      ...r,
+      status: 'clustered',
+      clusteringHeldAt: LATER,
+      version: 2,
+      updatedAt: LATER,
+    };
+    await store.withTransaction(async (tx) => {
+      await tx.migrations.replaceTemplates(
+        scope,
+        r.id,
+        [{ template: t, pageIds: ['p-00001'] }],
+        LATER,
+      );
+      await tx.migrations.saveRun(scope, held, 1);
+    });
+    expect(await store.migrations.getRun(scope, r.id)).toEqual(held);
+    expect(await store.migrations.listRuns(scope, { limit: 1 })).toEqual([held]);
+
+    // A clustering that read the run before it writes none of its templates.
+    await expect(
+      store.withTransaction(async (tx) => {
+        await tx.migrations.replaceTemplates(
+          scope,
+          r.id,
+          [{ template: template(r.id), pageIds: ['p-00001'] }],
+          LATER,
+        );
+        await tx.migrations.saveRun(scope, { ...r, status: 'clustered', version: 2 }, 1);
+      }),
+    ).rejects.toThrow(TransactionConflictError);
+    expect((await store.migrations.listTemplates(scope, r.id)).map((x) => x.id)).toEqual([t.id]);
+
+    // As code deployed before the column rewrites a run: every column it knows, by name.
+    await testDb
+      .prepare(
+        "UPDATE migration_runs SET status = 'stopped', error = 'why', release_id = NULL, version = 3 WHERE space_id = ? AND environment_id = ? AND id = ?",
+      )
+      .bind(scope.spaceId, scope.environmentId, r.id)
+      .run();
+    expect(await store.migrations.getRun(scope, r.id)).toMatchObject({
+      status: 'stopped',
+      clusteringHeldAt: LATER,
+      version: 3,
+    });
   });
 
   it('lists runs newest first, and keeps each scope to itself', async () => {

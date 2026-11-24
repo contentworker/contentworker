@@ -227,8 +227,9 @@ export function migrationsRoutes(deps: AuthDeps): Hono<AuthVars> {
       ok: migrationDocs.migrationRunView,
       description:
         'Groups the fetched pages by structure, replacing any earlier grouping whole. 400 ' +
-        '(`invalid_state`) before an inventory, or once a template is being authored or ' +
-        'approved; 409 (`retryable`) when another clustering won.',
+        '(`invalid_state`) before an inventory, once a template is being authored or approved, ' +
+        'or once the run in the background has taken its templates on (`clusteringHeldAt`); 409 ' +
+        '(`retryable`) when another clustering won.',
     }),
     requireScope(SCOPES.migrationRun),
     async (c) => {

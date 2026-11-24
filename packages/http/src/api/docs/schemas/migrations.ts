@@ -47,6 +47,10 @@ export const migrationRun = z.object({
     .string()
     .nullable()
     .describe('The release its entries were added to, when publishing goes through one'),
+  clusteringHeldAt: z.iso
+    .datetime()
+    .nullable()
+    .describe('When its templates were taken on in the background: it isn’t clustered again after'),
   version: z.int().describe('Counts up with every write'),
   createdAt: z.iso.datetime(),
   createdBy: z.string().nullable(),

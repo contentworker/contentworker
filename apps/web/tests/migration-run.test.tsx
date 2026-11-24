@@ -84,6 +84,7 @@ function seed(status: MigrationRun['status'], total: number, fetched = 0) {
             },
       error: null,
       releaseId: null,
+      clusteringHeldAt: null,
       version: 1,
       createdAt: T0,
       createdBy: null,

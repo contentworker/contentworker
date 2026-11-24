@@ -1,6 +1,11 @@
 import { createHash } from 'node:crypto';
 import { InProcessAgentRuntime, makeActivities } from '@contentworker/agent-runtime';
-import { type AppContext, createEnvironment, createSpace } from '@contentworker/application';
+import {
+  type AppContext,
+  createEnvironment,
+  createSpace,
+  takeClustering,
+} from '@contentworker/application';
 import { type Principal, SCOPES } from '@contentworker/domain';
 import {
   FakeBlobStore,
@@ -185,6 +190,26 @@ describe('site migration tools', () => {
     expect(toolListedFor({ ...editor, scopes: [SCOPES.spaceAdmin] }, 'migration_create')).toBe(
       true,
     );
+  });
+
+  it('refuse to cluster again what the run in the background has taken on', async () => {
+    const { ctx, deps } = await setup();
+    const call = await connect(deps, runner);
+    const run = (await call('migration_create', { source: { kind: 'crawl', url: `${O}/` } }))
+      .body as Run;
+    await call('migration_inventory', { run: run.id });
+    while (((await call('migration_fetch_pages', { run: run.id })).body as { more: boolean }).more);
+    expect((await call('migration_cluster', { run: run.id })).isError).toBe(false);
+    const taken = await takeClustering(ctx, { spaceId: SPACE, environmentId: 'main' }, run.id);
+    const refused = await call('migration_cluster', { run: run.id });
+    expect(refused.isError).toBe(true);
+    expect(refused.text).toMatch(/taken on in the background/);
+    const status = (await call('migration_status', { run: run.id })).body as {
+      run: { clusteringHeldAt: string };
+      templates: { id: string }[];
+    };
+    expect(status.run.clusteringHeldAt).toEqual(expect.any(String));
+    expect(status.templates.map((t) => t.id)).toEqual(taken.map((t) => t.id));
   });
 
   it('keep a run to its space and environment', async () => {

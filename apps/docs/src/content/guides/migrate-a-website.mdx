@@ -108,7 +108,8 @@ nothing links to.
 4. **Cluster.** Pages that share an HTML structure become one template. `threshold` (0 to 1,
    default 0.6) is how similar a page must be to join one: lower it if one page shape was split
    into several templates, raise it if unlike pages were merged. Clustering again replaces the
-   earlier grouping whole, until a template is being authored.
+   earlier grouping whole, until a template is being authored or a
+   [background run](#run-it-in-the-background) has taken the templates on.
 5. **Read the result.** The run shows its page counts by stage and its templates, largest first,
    each with sample pages. List a run's pages by `stage` or `template`; a one-page template is
    usually a one-off such as a home page.
@@ -208,7 +209,10 @@ loaded by then, a reopened template's too; its pages not loaded yet aren't publi
 on step by step once it is approved again. If no template is approved in time, or the go-ahead never comes, the engine stops waiting
 and the run's status becomes `stopped`. A stopped run, a failed one, or one whose engine run has
 finished can't be started or given the go-ahead again (`400`), but its templates can still be
-approved, loaded and published step by step. Follow the run with its status and pages as before.
+approved, loaded and published step by step. From the moment the engine takes a run's templates on,
+the run carries `clusteringHeldAt` and its pages can't be clustered again (`400`, `invalid_state`),
+whatever becomes of the engine run. Until then you can cluster it by hand as often as you need. To
+group the pages another way afterwards, create another run. Follow the run with its status and pages as before.
 
 ### With curl
 
@@ -319,7 +323,7 @@ loaded entries here instead, batch by batch.
 | Status | Code                | Means                                                                                                                      |
 | ------ | ------------------- | -------------------------------------------------------------------------------------------------------------------------- |
 | `403`  | `forbidden`         | The token lacks the scope; the message names it.                                                                           |
-| `400`  | `invalid_state`     | The step is out of order: clustering before an inventory or once a template is authored, a script change once a template is approved, a transform or load before approval, or a start or go-ahead for a run that failed, stopped or whose engine run has finished. |
+| `400`  | `invalid_state`     | The step is out of order: clustering before an inventory, once a template is authored or once a background run has taken the templates on, a script change once a template is approved, a transform or load before approval, or a start or go-ahead for a run that failed, stopped or whose engine run has finished. |
 | `404`  | `not_found`         | No such run or template in this environment, or no background driver to send a go-ahead to.                                |
 | `409`  | `conflict`          | Another step wrote the run first (`retryable: true`; send the call again), or the template changed since its `reviewDigest` was read (review it again), or it was reopened while its pages were transformed or loaded. |
 | `422`  | `validation_failed` | A source field is malformed, or the URL is on a private address. The issue names the field, such as `source.include[0]`. |
