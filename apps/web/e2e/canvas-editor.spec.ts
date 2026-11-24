@@ -22,6 +22,8 @@ import { settle } from './settle';
  * Blocks, the dock offers only the narrowed blocks and a locked slot draws no seams.
  */
 const GUEST = `http://localhost:${guestPort()}`;
+/** How long the admin, its preview frame and the guest inside it may take to load and connect. */
+const FRAME_LOAD = 15_000;
 const WCAG = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'];
 
 const field = (apiId: string, name: string, position = 0) => ({
@@ -118,7 +120,7 @@ async function openCanvas(page: Page, request: Parameters<typeof api>[0], title:
   const site = page
     .frameLocator('iframe[title="Site preview"]')
     .frameLocator('iframe[title="The entry on your site"]');
-  await expect(site.getByRole('heading', { level: 1 })).toHaveText(title, { timeout: 15_000 });
+  await expect(site.getByRole('heading', { level: 1 })).toHaveText(title, { timeout: FRAME_LOAD });
   return { id, site };
 }
 
@@ -226,20 +228,24 @@ test('Form and Canvas are one draft: switching carries unsaved edits, and the ca
     'Hello from the canvas',
   );
 
-  // And back: still unsaved, still on the page.
+  // And back: still unsaved, still on the page. The frame loads from scratch here, as it did when
+  // the canvas first opened, so it gets the same wait.
   await page.getByRole('radio', { name: 'Canvas' }).click();
   await expect(page.getByRole('alertdialog')).toHaveCount(0);
   await expect(site.locator('#app > [data-cw-slot] > section').first()).toHaveText(
     'Hello from the canvas',
+    { timeout: FRAME_LOAD },
   );
   await expect(page.getByText('Unsaved changes')).toBeVisible();
 
   // Publish saves first, then asks in the one publish confirm.
   await page.getByRole('button', { name: 'Publish', exact: true }).click();
   const confirm = page.getByRole('alertdialog');
-  await expect(confirm.getByText(/^Publish “/)).toBeVisible();
+  // Saving comes before the question.
+  await expect(confirm.getByText(/^Publish “/)).toBeVisible({ timeout: 15_000 });
   await confirm.getByRole('button', { name: 'Publish entry' }).click();
-  await expect(page.getByRole('button', { name: 'Published' })).toBeDisabled();
+  // Exact: the review's "What changed since it was last published?" is a button too.
+  await expect(page.getByRole('button', { name: 'Published', exact: true })).toBeDisabled();
   const live = await api(request, 'GET', `/preview/${SPACE}/main/entries?sys.id=${id}&limit=1`);
   const { items } = (await live.json()) as { items: { status: string }[] };
   expect(items[0]?.status).toBe('published');
